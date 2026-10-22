@@ -42,7 +42,7 @@ def commands():
             ["cargo", "metadata", "--no-deps", "--format-version", "1"],
             check=True,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
         ).stdout
     )
     members = set(meta["workspace_members"])
