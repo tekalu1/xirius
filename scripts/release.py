@@ -139,6 +139,9 @@ def lame(work: Path) -> Path:
                 "-Arch", ARCH, "-Work", str(work), "-NoInstall",
             ],
             cwd=ROOT,
+            # Windows PowerShell 5.1 started from PowerShell 7 (as on the CI runner) inherits
+            # PSModulePath and then cannot load its own modules (Get-FileHash is missing).
+            env={k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"},
         )
     for name in ("lame_enc.dll", "LAME-COPYING.txt", "LAME-SOURCE.txt"):
         if not (out / name).is_file():

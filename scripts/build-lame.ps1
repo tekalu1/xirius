@@ -46,7 +46,11 @@ if (-not (Test-Path $Tarball)) {
     & curl.exe -sSL --fail -o $Tarball $Url
     if ($LASTEXITCODE -ne 0) { throw "download failed: $Url" }
 }
-$Got = (Get-FileHash -Algorithm SHA256 $Tarball).Hash.ToLower()
+# .NET rather than Get-FileHash, which is missing when PSModulePath comes from PowerShell 7.
+$Sha = [System.Security.Cryptography.SHA256]::Create()
+$Stream = [System.IO.File]::OpenRead($Tarball)
+try { $Got = ([System.BitConverter]::ToString($Sha.ComputeHash($Stream)) -replace '-', '').ToLower() }
+finally { $Stream.Dispose(); $Sha.Dispose() }
 if ($Got -ne $Sha256) {
     Remove-Item $Tarball
     throw "SHA-256 mismatch for lame-$Version.tar.gz: got $Got, want $Sha256"
