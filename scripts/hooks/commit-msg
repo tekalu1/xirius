@@ -1,0 +1,46 @@
+#!/bin/sh
+# The DCO sign-off (LIC-008): add `Signed-off-by:` to a commit message that has none.
+#
+# Git runs this with the path of the message file. The line goes before the comment block that
+# `git commit` puts under the message (`# Please enter the commit message…`), so the message the
+# commit keeps has it. The address is the one the commit is made with (`git var
+# GIT_AUTHOR_IDENT`), which is what CONTRIBUTING.md asks for.
+#
+# Install it once per clone:
+#
+#     git config core.hooksPath scripts/hooks
+#
+# A message that already has a sign-off (a commit made with `git commit -s`, or a reworded one)
+# is left as it is.
+
+set -e
+
+message="$1"
+[ -n "$message" ] || exit 0
+
+if grep -q '^Signed-off-by: ' "$message"; then
+    exit 0
+fi
+
+ident=$(git var GIT_AUTHOR_IDENT) || exit 0
+name=$(printf '%s\n' "$ident" | sed 's/ <[^<>]*> .*$//')
+mail=$(printf '%s\n' "$ident" | sed 's/^.*<\([^<>]*\)>.*$/\1/')
+
+if [ -z "$name" ] || [ -z "$mail" ]; then
+    exit 0
+fi
+
+awk -v line="Signed-off-by: $name <$mail>" '
+    { text[NR] = $0 }
+    END {
+        n = NR
+        first_comment = n + 1
+        for (i = 1; i <= n; i++) {
+            if (text[i] ~ /^#/) { first_comment = i; break }
+        }
+        for (i = 1; i < first_comment; i++) print text[i]
+        print line
+        for (i = first_comment; i <= n; i++) print text[i]
+    }
+' "$message" > "$message.signoff"
+mv "$message.signoff" "$message"

@@ -1,0 +1,36 @@
+[package]
+name = "xirius-clap"
+description = "CLAP hosting on clack: bundle loading, parameters, state and processing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# The CLAP host side of clack (prokopyl/clack, MIT OR Apache-2.0).
+clack-host = "0.2"
+clack-extensions = { version = "0.2", features = [
+    "clack-host",
+    "audio-ports",
+    "latency",
+    "log",
+    "note-name",
+    "note-ports",
+    "params",
+    "render",
+    "state",
+] }
+rtrb = "0.4"
+
+[dev-dependencies]
+# The fixture plugin (built as a cdylib next to the tests).
+xirius-test-clap = { path = "../xirius-test-clap" }
+xirius-test-vst3 = { path = "../xirius-test-vst3" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_LibraryLoader"] }

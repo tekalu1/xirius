@@ -1,0 +1,92 @@
+[package]
+name = "xirius-ui"
+description = "Xirius UI (GPUI) and the performance spikes UI-023 / UI-024"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Pinned to the gpui-pre snapshot (zed@279fe07), the same one gpui-kit 0.7.x
+# uses (`=0.3.8`). Not the crates.io `gpui` 0.2.2. See crates/xirius-ui/GPUI.md.
+gpui = { package = "gpui-pre", version = "=0.3.8" }
+# gpui-pre has no `Application::new`; the platform crate builds the app.
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.8", features = [
+    "font-kit",
+    "x11",
+    "wayland",
+    "runtime_shaders",
+] }
+xirius-design = { path = "../xirius-design" }
+xirius-core = { path = "../xirius-core" }
+xirius-params = { path = "../xirius-params" }
+xirius-session = { path = "../xirius-session" }
+xirius-engine = { path = "../xirius-engine" }
+xirius-plugins = { path = "../xirius-plugins" }
+xirius-vst3 = { path = "../xirius-vst3" }
+# The app serves its song to an AI over MCP (AI-019: the AI is the client).
+xirius-mcp = { path = "../xirius-mcp" }
+# The settings (SET-001): the screen changes them through the same commands as the CLI.
+xirius-prefs = { path = "../xirius-prefs" }
+serde_json = "1"
+# The tools' cursors (pointer_os.rs) are bitmaps made for the system and handed to the window.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_HiDpi",
+    "Win32_System_Console",
+    "Win32_System_Time",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+# The input row lists the channels of the default input device (REC-017).
+cpal = "0.18"
+# The cmaps of the bundled faces, to draw a string in the one that has its characters (UI-005).
+# ttf-parser, the parser usvg uses, is unmaintained (RUSTSEC-2026-0192).
+skrifa = "0.44"
+
+# The open song's project.json is watched for another process's save (UI-289): the OS's own
+# notice (ReadDirectoryChangesW on Windows), with a look at its time where none comes.
+notify = "8"
+
+# The local clock for the times of the history (local_time.rs, PRJ-011).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# macOS の「視差効果を減らす」を既定値から読む（UI-055、motion_watch.rs）。
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+
+# The window icon and the version information (LIC-022, packaging/windows/version_info.rs).
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"
+
+[dev-dependencies]
+# A test's folder under the temp folder, removed when dropped even if the test fails (ARC-028).
+tempfile = "3"
+sha2 = "0.10"
+# The update tests make their own key and sign an installer with it (UI-282).
+ed25519-dalek = "2"
+# glyph_cover.rs reads the literals of the source and the JIS X 0208 table (UI-005).
+encoding_rs = "0.8"
+proc-macro2 = { version = "1", features = ["span-locations"] }
+syn = { version = "2", features = ["full", "visit"] }
+xirius-test-vst3 = { path = "../xirius-test-vst3" }
+
+# The tests read the version information back as Explorer does (LIC-022), and walk the
+# parked window's UI Automation tree (UI-026, tests/uia_window.rs).
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_LibraryLoader"] }
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Variant",
+    "Win32_UI_Accessibility",
+    "Win32_UI_WindowsAndMessaging",
+] }

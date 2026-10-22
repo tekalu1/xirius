@@ -1,0 +1,186 @@
+name: release
+
+# Windows の配布物を作って Release の下書きに載せる（LIC-020、UI-282）。作るのは
+# scripts/release.py だけで、手元で `python scripts/release.py --tag v<版> --sign-key <鍵>` を
+# 流したときと同じ物ができる。
+#
+# - 版のタグ（v1.0.0）を main の commit に push したときだけ動く。**下書きのまま**止めるので、
+#   中身を確かめてから人が公開する（docs/update-signing.md）。
+# - 配布物は setup.exe・マニフェスト（Xirius-<版>-win-x64-update.json）・その .sig・zip・
+#   LAME の tarball・SHA256SUMS.txt。
+# - 鍵は build の job に渡さない。sign の job（environment: release）が、タグの checkout にある
+#   `scripts/update_sign.py`（Python の標準ライブラリだけの ed25519）でマニフェストに署名し、
+#   同じ .py でアプリの UPDATE_KEY により確かめる。build の作ったプログラムは鍵の近くで
+#   走らせない。鍵のファイルは署名の直後と job の最後に消す。
+# - Release の本文は `docs/release-notes/<版>.md`（`- ` の箇条で書く。アプリの更新の知らせが
+#   これを読む）から取り、本文の無い版は作らない。
+# タグは Cargo.toml の [workspace.package] version に v を付けたもので、違えば作らずに落ちる。
+# 流せるのはリポジトリの持ち主だけ。
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.ref_name }}
+  # NSIS（zlib/libpng のライセンス）。公式の zip を、この SHA-256 と合うときだけ使う。
+  NSIS_VERSION: "3.13"
+  NSIS_SHA256: ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8
+
+jobs:
+  # No secret here: the dependencies' build.rs and proc-macros run without the key (UI-282).
+  build:
+    if: github.repository == 'tekalu1/xirius' && github.actor == github.repository_owner
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          fetch-depth: 0
+
+      - name: タグが main の上にある
+        shell: bash
+        run: git merge-base --is-ancestor HEAD origin/main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: タグが版と同じ
+        run: python scripts/release.py --tag $env:TAG --check-tag
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: NSIS
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'nsis.zip'
+          curl.exe -sSL --fail -o $zip "https://downloads.sourceforge.net/project/nsis/NSIS%203/$env:NSIS_VERSION/nsis-$env:NSIS_VERSION.zip"
+          $got = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+          if ($got -ne $env:NSIS_SHA256) { throw "NSIS SHA-256 mismatch: $got" }
+          Expand-Archive $zip -DestinationPath $env:RUNNER_TEMP
+          "MAKENSIS=$env:RUNNER_TEMP\nsis-$env:NSIS_VERSION\makensis.exe" >> $env:GITHUB_ENV
+
+      # LAME の DLL は scripts/build-lame.ps1 が公式の tarball から作る（MSVC は windows-latest にある）。
+      - name: 配布物を作る
+        run: python scripts/release.py --tag $env:TAG
+
+      # The update panel reads the `- ` bullets of this file (crates/xirius-session/src/update.rs).
+      - name: Release の本文
+        shell: bash
+        run: |
+          notes="docs/release-notes/${TAG#v}.md"
+          test -f "$notes" || { echo "::error::$notes がありません（- の箇条で書いてください）"; exit 1; }
+          cp "$notes" target/dist/RELEASE-NOTES.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          if-no-files-found: error
+          path: |
+            target/dist/*-setup.exe
+            target/dist/*-update.json
+            target/dist/*.zip
+            target/dist/lame-*.tar.gz
+            target/dist/SHA256SUMS.txt
+            target/dist/RELEASE-NOTES.md
+
+  # The only job with the key. The environment's deployment rules (a required reviewer and
+  # `v*` tags) are set in the repository's settings; see docs/update-signing.md.
+  # The actions are pinned by commit: they run in the same job as the key.
+  sign:
+    needs: build
+    runs-on: windows-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: windows
+          path: dist
+
+      - name: 署名の鍵
+        shell: pwsh
+        env:
+          XIRIUS_UPDATE_KEY: ${{ secrets.XIRIUS_UPDATE_KEY }}
+        run: |
+          if (-not $env:XIRIUS_UPDATE_KEY) {
+            throw "environment release の secret XIRIUS_UPDATE_KEY がありません（docs/update-signing.md）"
+          }
+          $path = Join-Path $env:RUNNER_TEMP 'xirius-update.key'
+          [IO.File]::WriteAllText($path, $env:XIRIUS_UPDATE_KEY.Trim())
+          "XIRIUS_UPDATE_KEY_FILE=$path" >> $env:GITHUB_ENV
+
+      # The signer is the tag's own Python file: nothing built by the build job touches the key.
+      - name: マニフェストに署名する
+        shell: pwsh
+        run: |
+          $manifest = Get-ChildItem dist/*-update.json | Select-Object -First 1
+          if (-not $manifest) { throw "マニフェストがありません" }
+          $m = Get-Content $manifest.FullName -Raw | ConvertFrom-Json
+          $version = $env:TAG -replace '^v', ''
+          python -I scripts/update_sign.py sign --key $env:XIRIUS_UPDATE_KEY_FILE `
+            --manifest $manifest.FullName --out "$($manifest.FullName).sig" `
+            --setup (Join-Path dist $m.file) --version $version
+          if ($LASTEXITCODE -ne 0) { throw "署名できません" }
+
+      - name: 署名の鍵を消す
+        if: always()
+        shell: pwsh
+        run: |
+          if ($env:XIRIUS_UPDATE_KEY_FILE -and (Test-Path $env:XIRIUS_UPDATE_KEY_FILE)) {
+            Remove-Item -Force -ErrorAction Stop $env:XIRIUS_UPDATE_KEY_FILE
+          }
+
+      - name: アプリの公開鍵で確かめる
+        shell: pwsh
+        run: |
+          $manifest = Get-ChildItem dist/*-update.json | Select-Object -First 1
+          $m = Get-Content $manifest.FullName -Raw | ConvertFrom-Json
+          $version = $env:TAG -replace '^v', ''
+          python -I scripts/update_sign.py verify `
+            --app crates/xirius-session/src/update.rs `
+            --manifest $manifest.FullName --sig "$($manifest.FullName).sig" `
+            --setup (Join-Path dist $m.file) --version $version
+          if ($LASTEXITCODE -ne 0) { throw "アプリの公開鍵で署名が通りません" }
+
+      - uses: actions/upload-artifact@26f96dfa697d77e81fd5907df203aa23a56210a8 # v4.3.0
+        with:
+          name: signed
+          if-no-files-found: error
+          path: dist/*
+
+  publish:
+    needs: sign
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed
+          path: dist
+
+      # Always a draft: a person checks the files (the .sig too) and publishes it by hand.
+      - name: 下書きを作って載せる
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum -c SHA256SUMS.txt
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+            --title "Xirius ${TAG#v}" --notes-file RELEASE-NOTES.md
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" \
+            ./*-setup.exe ./*-update.json ./*-update.json.sig ./*.zip ./lame-*.tar.gz SHA256SUMS.txt

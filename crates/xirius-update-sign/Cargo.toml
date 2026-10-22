@@ -1,0 +1,23 @@
+[package]
+name = "xirius-update-sign"
+description = "Makes the ed25519 key of the app's updates and signs the installer (UI-282)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+
+[[bin]]
+name = "xirius-update-sign"
+path = "src/main.rs"

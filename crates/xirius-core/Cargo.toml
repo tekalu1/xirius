@@ -1,0 +1,36 @@
+[package]
+name = "xirius-core"
+description = "Project model, commands and history shared by the UI, CLI and MCP"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# DAWproject files (EXP-006, EXP-007): the ZIP, its XML and the plugin states in base64.
+base64 = "0.22"
+flate2 = "1"
+roxmltree = "0.21"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+# The hash the AI's write over the song is checked by (AI-018).
+sha2 = "0.10"
+toml = "0.9"
+xirius-design = { path = "../xirius-design" }
+xirius-params = { path = "../xirius-params" }
+
+[dev-dependencies]
+# A test's folder under the temp folder, removed when dropped even if the test fails (ARC-028).
+tempfile = "3"
+
+# The CPU time of the test's thread, which a busy machine does not stretch (ARC-034).
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"

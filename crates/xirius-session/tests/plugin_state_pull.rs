@@ -1,0 +1,177 @@
+//! A plugin that changes its patch without saying so (Keyscape does) still reaches the song
+//! when the song is written or left (PLG-057). The fixture's "Latency" parameter is such a
+//! change: it moves the plugin's state and raises neither a gesture nor the values-changed
+//! flag, so the notifications the song waits for never come. Nothing here opens an audio
+//! device: the engine is pulled by the test.
+//!
+//! The remote case skips when `xirius-plugin-host` has not been built (`cargo test
+//! --workspace` builds it).
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use serde_json::{Value, json};
+use xirius_core::model::{PluginIsolation, Project};
+use xirius_core::session::{RunOptions, RunResult, Session};
+use xirius_engine::server::find_host;
+use xirius_plugins::{Catalog, decode_state, encode_state, probe};
+use xirius_session::commands::{self, shared_registry};
+use xirius_session::host::{
+    HostConfig, PULL_WAIT, SessionHost, collect_plugin_states, pull_plugin_states,
+};
+use xirius_session::plugins::Isolation;
+
+/// "Latency" 0.5 is a delay of 128, which the fixture saves as 4 little-endian bytes.
+const EDITED: [u8; 4] = 128u32.to_le_bytes();
+
+fn run(s: &mut Session, name: &str, args: Value) -> RunResult {
+    let Value::Object(raw) = args else {
+        unreachable!()
+    };
+    commands::run(s, None, name, &raw, &RunOptions::human())
+        .unwrap_or_else(|e| panic!("{name}: {e:?}"))
+}
+
+fn state_of(s: &Session) -> Option<Vec<u8>> {
+    let state = s
+        .project()
+        .tracks
+        .values()
+        .flat_map(|t| &t.inserts)
+        .next()
+        .unwrap()
+        .state
+        .clone()?;
+    let s = decode_state(&state).unwrap();
+    assert_eq!(s.component, s.controller, "the fixture keeps both alike");
+    Some(s.component)
+}
+
+/// A song with the fixture on a track, the plugin id, and the catalog that has it.
+fn song(isolation: PluginIsolation) -> (Session, Arc<Catalog>) {
+    xirius_test_vst3::fixture_marker();
+    let dll = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("xirius_test_vst3.dll");
+    assert!(
+        dll.exists(),
+        "the fixture's cdylib is built with its dev dependency"
+    );
+    let entries = probe(&dll).unwrap();
+    let uid = entries[0].uid.clone();
+    let mut s = Session::with_registry(Project::new("pull"), shared_registry());
+    let t = run(&mut s, "track.add.audio", json!({ "name": "A" })).data["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let r = run(
+        &mut s,
+        "plugin.add",
+        json!({ "track": t, "name": "Test Latency", "format": "vst3", "uid": uid }),
+    );
+    let id = r.data["id"].as_str().unwrap().to_string();
+    run(
+        &mut s,
+        "plugin.isolation.set",
+        json!({ "ids": id, "mode": isolation.name() }),
+    );
+    let catalog = Arc::new(Catalog {
+        entries,
+        failures: Vec::new(),
+    });
+    (s, catalog)
+}
+
+fn pull_check(isolation: Isolation, mode: PluginIsolation) {
+    let (mut s, catalog) = song(mode);
+    let id = s
+        .project()
+        .tracks
+        .values()
+        .flat_map(|t| &t.inserts)
+        .next()
+        .unwrap()
+        .id;
+    let (mut host, mut audio, warnings) = SessionHost::start(
+        s.project(),
+        HostConfig {
+            catalog: Some(catalog),
+            isolation: Some(isolation),
+            ..HostConfig::default()
+        },
+    )
+    .unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let mut buffer = [0.0; 256 * 2];
+    for _ in 0..4 {
+        audio.render(&mut buffer, 2);
+        host.poll();
+    }
+    let opts = RunOptions::human();
+
+    // The plugin's patch changes without a word.
+    if let Some(link) = host.plugins().link(id) {
+        let server = host.plugins().server_of(id).unwrap();
+        server.set_param(&link, "Latency", 0.5);
+    } else {
+        let (plugin, _) = host
+            .plugins()
+            .local(id)
+            .expect("the instance is in process");
+        assert!(plugin.set_param(1, 0.5));
+    }
+    for _ in 0..40 {
+        audio.render(&mut buffer, 2);
+        host.poll();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    // What the song waits for does not come: the song still has the old state.
+    let before = s.cursor();
+    let passive = collect_plugin_states(&mut s, &mut host, &opts).unwrap();
+    assert!(passive.result.is_none(), "no notification, no state");
+    assert_eq!(state_of(&s), None);
+    assert_eq!(s.cursor(), before);
+
+    // Asked, the plugin gives it: one step, and the song has the changed state.
+    let pulled = pull_plugin_states(&mut s, &mut host, &opts, PULL_WAIT).unwrap();
+    assert!(pulled.result.is_some(), "the changed state came");
+    assert_eq!(state_of(&s), Some(EDITED.to_vec()));
+    assert_eq!(s.cursor(), before + 1, "one step");
+    let state = encode_state(&xirius_vst3::PluginState {
+        component: EDITED.to_vec(),
+        controller: EDITED.to_vec(),
+    });
+    assert_eq!(
+        s.project()
+            .tracks
+            .values()
+            .flat_map(|t| &t.inserts)
+            .next()
+            .unwrap()
+            .state
+            .as_deref(),
+        Some(state.as_str())
+    );
+
+    // Asked again with nothing changed, it adds nothing.
+    let again = pull_plugin_states(&mut s, &mut host, &opts, PULL_WAIT).unwrap();
+    assert!(again.result.is_none());
+    assert_eq!(s.cursor(), before + 1);
+}
+
+#[test]
+fn a_silent_patch_change_in_a_plugin_in_the_app_reaches_the_song_when_it_is_asked() {
+    pull_check(Isolation::InProcess, PluginIsolation::InProcess);
+}
+
+#[test]
+fn a_silent_patch_change_in_a_plugin_in_the_host_process_reaches_the_song_when_it_is_asked() {
+    let Some(exe) = find_host() else {
+        eprintln!("skipped: xirius-plugin-host is not built");
+        return;
+    };
+    pull_check(Isolation::Separate(exe), PluginIsolation::Shared);
+}

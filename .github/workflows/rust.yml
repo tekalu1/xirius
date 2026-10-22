@@ -1,0 +1,59 @@
+name: rust
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      # The toolchain is the one in rust-toolchain.toml: rustup reads it and gets the same
+      # version (and the components the file names) as a build on a PC (LIC-036).
+      - uses: Swatinem/rust-cache@v2
+
+      - name: fmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: test
+        run: cargo test --workspace
+
+      # デザインの規則（docs/design-rules.md）。違反があれば落ちる。
+      - name: design lint
+        run: cargo run --locked -p xirius-design-lint
+
+      # モックの CSS の数。数えるだけで落とさない（実装に移す前の残りを見る）。
+      # 手元の調査資料があるときだけモックを検査する。資料は追跡・公開しない。
+      - name: design lint (mock css, informational)
+        if: hashFiles('temporary/research/2026-10-11/mockups/daw-main.html') != ''
+        run: cargo run --locked -p xirius-design-lint -- css temporary/research/2026-10-11/mockups/daw-main.html
+
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Project version="1.0">
+    <Application name="Test" version="1.0"/>
+    <Transport>
+        <Tempo unit="bpm" value="155.000000" id="id9"/>
+    </Transport>
+    <Structure>
+        <Track contentType="" id="id0" name="Master">
+            <Channel audioChannels="2" role="master" id="id1">
+                <Pan unit="normalized" value="0.500000" id="id3"/>
+                <Volume unit="linear" value="1.000000" id="id2"/>
+            </Channel>
+        </Track>
+        <Track contentType="audio" id="id4" name="Audio">
+            <Channel audioChannels="2" destination="id1" role="regular" id="id5">
+                <Pan unit="normalized" value="0.500000" id="id7"/>
+                <Volume unit="linear" value="1.000000" id="id6"/>
+            </Channel>
+        </Track>
+    </Structure>
+    <Arrangement id="id8">
+        <Lanes timeUnit="beats" id="id10">
+            <Clips track="id4" id="id12">
+                <Clip time="0.0" duration="8.0" contentTimeUnit="seconds" playStart="0.0" playStop="3.097">
+                    <Audio channels="2" sampleRate="44100" duration="3.097" timeUnit="seconds" id="id11">
+                        <File path="../test-data/white-glasses.wav" external="true"/>
+                    </Audio>
+                </Clip>
+            </Clips>
+        </Lanes>
+    </Arrangement>
+    <Scenes/>
+</Project>

@@ -1,0 +1,48 @@
+[package]
+name = "xirius-engine"
+description = "Real-time audio engine: device output, mixer graph and plugin hosting"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cpal = "0.18"
+rtrb = "0.4"
+hound = "3.5"
+midir = "0.11"
+xirius-vst3 = { path = "../xirius-vst3" }
+xirius-clap = { path = "../xirius-clap" }
+xirius-params = { path = "../xirius-params" }
+wasapi = "0.25"
+assert_no_alloc = "1.1"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Media",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_ErrorReporting",
+    "Win32_System_Kernel",
+    "Win32_System_IO",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+    "Win32_UI_HiDpi",
+] }
+
+[dev-dependencies]
+# A test's folder under the temp folder, removed when dropped even if the test fails (ARC-028).
+tempfile = "3"
+# Count allocations on the audio path instead of aborting, so the test can report them.
+assert_no_alloc = { version = "1.1", features = ["warn_debug"] }
+xirius-test-clap = { path = "../xirius-test-clap" }
+
+# The version information of the programs (LIC-022, packaging/windows/version_info.rs).
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"

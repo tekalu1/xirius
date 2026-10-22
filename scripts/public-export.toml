@@ -1,0 +1,113 @@
+# What the new public repository leaves out, and what must not be in what it carries.
+#
+# `python scripts/public-export.py --out <dir>` reads the files of a commit (HEAD by
+# default), drops every path that matches [[exclude]], writes the rest to <dir> and then
+# looks through what it wrote for [[forbid]]. It never changes this repository.
+#
+# Patterns are git-style globs on the path from the repository root: `**` crosses
+# folders, `*` and `?` stay inside one. A pattern that ends in `/` drops the whole folder.
+
+[[exclude]]
+pattern = "temporary/"
+reason = """
+Local scratch files and the research archive are ignored by git and never published.
+Keep this exclusion as a guard if any local files were accidentally tracked.
+"""
+
+[[exclude]]
+pattern = "scripts/public-export.private.toml"
+reason = """
+The [[forbid]] rules that name the author's own accounts and folders; publishing them
+would publish what they look for.
+"""
+
+# Notes to AI assistants, and what only the person at this PC needs. They are not part of the
+# project's documents for the public: they talk about worktrees, this PC's habits and the local
+# research archive, and they name files the public repository does not carry.
+[[exclude]]
+pattern = "CLAUDE.md"
+reason = """
+Instructions to AI assistants working on this repository (worktrees, local checks, the local
+research archive). Not a document of the product.
+"""
+
+[[exclude]]
+pattern = "AGENTS.md"
+reason = """
+The same kind of instructions, for assistants that read AGENTS.md.
+"""
+
+[[exclude]]
+pattern = "**/.claude/"
+reason = """
+Settings and notes of the local AI tools, under whatever folder they sit in.
+"""
+
+[[exclude]]
+pattern = "**/copilot-instructions.md"
+reason = """
+Editor-specific instructions to an assistant.
+"""
+
+[[exclude]]
+pattern = "docs/plugin-test-matrix.md"
+reason = """
+The table of the commercial plugins on this PC and how they behaved: a list of what the author
+owns, not a document of the product.
+"""
+
+# Text that must not appear in any carried file. `allow` lists the files (globs) where a
+# match is known to be harmless, with the reason in `why`. The rules of
+# `public-export.private.toml` beside this file, when there is one, are added to these.
+
+[[forbid]]
+name = "personal absolute path"
+regex = '''(?i)\b[A-Z]:[\\/]+(dev|users|home|work|src)[\\/]+[^\s"'`<>|]+'''
+allow = ["docs/licenses.md"]
+why = "docs/licenses.md describes `C:\\Users\\...` as the kind of path the release must not contain"
+
+[[forbid]]
+name = "user home path"
+regex = '''(?i)/(home|Users)/[a-z][a-z0-9._-]+/'''
+allow = []
+
+[[forbid]]
+name = "email address"
+regex = '''[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}'''
+# Test fixtures on example.com, the noreply addresses of the public commits. The
+# copyright lines of upstream licenses name their authors' published addresses.
+allow_match = '''(?i)@(example\.(com|org|net|invalid)|users\.noreply\.github\.com|anthropic\.com)$'''
+allow = ["THIRD-PARTY-LICENSES.txt"]
+why = "copyright lines of upstream licenses"
+
+[[forbid]]
+name = "private key"
+regex = '''-----BEGIN ([A-Z]+ )?PRIVATE KEY-----'''
+allow = []
+
+[[forbid]]
+name = "token"
+regex = '''\b(gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,}|sk-[A-Za-z0-9_-]{32,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35})\b'''
+allow = []
+
+# Files not looked through: the rules themselves and the examples their tests feed them.
+[scan]
+skip = ["scripts/public-export.toml", "scripts/test_public_export.py"]
+
+# Files that are expected in what is carried; the export stops when one is missing, so a
+# pattern that drops too much is noticed.
+[expect]
+files = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "LICENSE-MIT",
+  "LICENSE-APACHE",
+  "NOTICE",
+  "THIRD-PARTY-LICENSES.txt",
+  "README.md",
+  "CONTRIBUTING.md",
+  "SECURITY.md",
+  "docs/plan.toml",
+  "scripts/dco.py",
+  ".github/workflows/dco.yml",
+]

@@ -1,0 +1,17 @@
+[package]
+name = "xirius-design"
+description = "Design tokens and the typed API that keeps the design rules (no GPUI dependency)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+serde_json = "1"

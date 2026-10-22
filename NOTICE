@@ -1,0 +1,28 @@
+Xirius
+Copyright (c) 2026 The Xirius Authors. MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-APACHE).
+
+Xirius contains the work of others. What the app ships with, and its licence, is listed in the
+app under 「Xirius について」.
+
+The fonts named in crates/xirius-design/src/font.rs (Inter, Noto Sans JP) are licensed under the
+SIL Open Font License 1.1. The app has them built in: the files are in assets/fonts of the
+repository with their licence texts (OFL-Inter.txt, OFL-NotoSansJP.txt), which ship with the app
+in licenses/ and open under 「Xirius について」. Noto Sans JP is cut down to the characters the
+app uses; its name does not use the Reserved Font Name 'Source'. See
+crates/xirius-design/fonts/README.md.
+
+The GitHub mark of 「Xirius について」 is mark-github of Octicons (Copyright (c) 2026 GitHub Inc.,
+MIT), in crates/xirius-ui/assets/octicons with its licence text, which ships with the app in
+licenses/octicons-LICENSE.txt and opens under 「Xirius について」.
+
+LAME (MP3 export) is licensed under the GNU Lesser General Public License; its licence text and
+where its source is are under 「Xirius について」. The Rust libraries built into the app, and the
+code of others copied into the repository and built with it (signalsmith-stretch and
+signalsmith-linear, MIT), are listed there too, with their licence texts, and in
+THIRD-PARTY-LICENSES.txt.
+
+The DAWproject example project and reference files in
+crates/xirius-core/src/dawproject/testdata are from the DAWproject repository
+(https://github.com/bitwig/dawproject), Copyright (c) 2020 Bitwig, MIT. Their licence text is
+testdata/reference/LICENSE; they are listed as copied code in THIRD-PARTY-LICENSES.txt. The
+DAWproject screen reads them to draw its pictures.

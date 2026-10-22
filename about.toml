@@ -1,0 +1,31 @@
+# cargo about generate（LIC-007）: 配布物に入れる第三者のライセンスの一覧を作る。
+# 手順は scripts/licenses.py。許すライセンスは deny.toml の [licenses] の allow と同じにする。
+accepted = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "Unlicense",
+    "CC0-1.0",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "bzip2-1.0.6",
+    "MPL-2.0",
+]
+# 配る対象の OS だけを見る（deny.toml と同じ）。
+targets = [
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+# 試験とビルドだけに使う物は配らない。ワークスペースの中の物（publish = false）は Xirius 自身。
+ignore-dev-dependencies = true
+ignore-build-dependencies = true
+private = { ignore = true }

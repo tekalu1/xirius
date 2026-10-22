@@ -1,0 +1,14 @@
+Xirius に組み込まれた Rust のライブラリと、そのライセンス
+
+{{#each crates}}
+crate {{package.name}} {{package.version}} {{license}}
+{{/each}}
+{{#each licenses}}
+
+==== {{id}}
+{{#each used_by}}
+used {{crate.name}} {{crate.version}}
+{{/each}}
+
+{{{text}}}
+{{/each}}

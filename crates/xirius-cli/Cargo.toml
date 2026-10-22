@@ -1,0 +1,38 @@
+[package]
+name = "xirius-cli"
+description = "Command-line and MCP front end generated from the xirius-core command registry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "xirius"
+path = "src/main.rs"
+
+[dependencies]
+xirius-core = { path = "../xirius-core" }
+xirius-engine = { path = "../xirius-engine" }
+xirius-mcp = { path = "../xirius-mcp" }
+xirius-plugins = { path = "../xirius-plugins" }
+xirius-prefs = { path = "../xirius-prefs" }
+xirius-session = { path = "../xirius-session" }
+serde_json = "1"
+
+[dev-dependencies]
+# A test's folder under the temp folder, removed when dropped even if the test fails (ARC-028).
+tempfile = "3"
+hound = "3.5"
+
+# The version information of the programs (LIC-022, packaging/windows/version_info.rs).
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"
+
+# The tests read the version information back as Explorer does (LIC-022).
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }

@@ -1,0 +1,23 @@
+# Dependabot (LIC-036): the Rust crates and the actions of the workflows, once a week.
+#
+# A pull request it opens is checked by the `rust`, `plan` and `dco` workflows like any other;
+# the commits it makes are by a bot, so the DCO check does not ask them for a sign-off.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "cargo"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "actions"

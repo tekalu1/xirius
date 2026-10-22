@@ -1,0 +1,13 @@
+# gitleaks (https://github.com/gitleaks/gitleaks): the default rules, and what they
+# mistake for secrets here.
+#
+#   gitleaks git --log-opts="--all" --config .gitleaks.toml .
+#   gitleaks dir --config .gitleaks.toml .
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Key bindings (\"key\": \"Mod+Alt+Shift+F12\") read as generic API keys"
+regexTarget = "secret"
+regexes = ['''^(Mod|Ctrl|Cmd|Alt|Shift|Option)(\+[A-Za-z0-9]+)+$''']

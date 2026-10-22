@@ -1,0 +1,6 @@
+[toolchain]
+# The version the release is built with (LIC-036): the same one on every PC and in CI, so a build
+# here and a build there can give the same bytes. Change it in one place, here.
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

@@ -1,0 +1,582 @@
+//! The file tab of the browser, on the disk (BRW-002, BRW-005, BRW-006, BRW-008, BRW-015).
+//!
+//! The first tab is the song's folder (「この曲」), then the places the user added; what the
+//! browser keeps (the places, favourite and hidden instruments) is the user's file
+//! [`xirius_session::places`], so the commands `location.*` and `browser.*` change the same
+//! tabs. A folder lists its folders, then the audio and MIDI files the song takes, each by
+//! name; dot files and the song's own folders (history, peaks) are left out. A listing is read
+//! at most once a second; the length of each file is read off this thread and shown when it
+//! is known. A search looks through the folder shown and the folders in it.
+
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::time::{Duration, Instant, SystemTime};
+
+use xirius_session::places::{self, Place, Prefs, SONG};
+
+use crate::browser::{BRow, Browser};
+
+/// How long a listing is used before the folder is read again.
+const FRESH: Duration = Duration::from_secs(1);
+/// How deep a search goes below the folder shown.
+const SEARCH_DEPTH: usize = 8;
+/// How many entries a search looks at, and how many it lists.
+const SEARCH_SEEN: usize = 20_000;
+const SEARCH_FOUND: usize = 500;
+/// Folders of the song folder that are the song's own.
+const SONG_OWN: [&str; 2] = ["history", xirius_session::peaks::FOLDER];
+
+/// What the song tab says before the song has a folder.
+pub const NO_FOLDER: &str = "曲のフォルダーはまだありません";
+/// What a place whose folder is gone says.
+pub const GONE: &str = "フォルダーが見つかりません";
+/// What a folder with nothing the song takes says.
+pub const EMPTY: &str = "音声ファイルや MIDI ファイルはありません";
+
+/// A tab of the file tab.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Location {
+    pub name: String,
+    /// `None` for the song's tab of a song not saved yet.
+    pub path: Option<PathBuf>,
+    /// The song's folder: it cannot be taken away.
+    pub song: bool,
+}
+
+/// A folder or a file of a listing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Entry {
+    pub name: String,
+    pub path: PathBuf,
+    pub dir: bool,
+}
+
+pub fn is_midi(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "mid" | "midi"))
+}
+
+/// Files the song takes: audio files and MIDI files.
+pub fn takes(path: &Path) -> bool {
+    crate::drop_audio::is_audio(path) || is_midi(path)
+}
+
+fn read(dir: &Path) -> Vec<Entry> {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<Entry> = rd
+        .filter_map(Result::ok)
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                return None;
+            }
+            let path = e.path();
+            let dir = path.is_dir();
+            (dir || takes(&path)).then_some(Entry { name, path, dir })
+        })
+        .collect();
+    out.sort_by_cached_key(|e| (!e.dir, e.name.to_lowercase(), e.name.clone()));
+    out
+}
+
+/// A folder's entries, with when they were read.
+type Listed = (Instant, Arc<Vec<Entry>>);
+
+thread_local! {
+    static LISTS: RefCell<HashMap<PathBuf, Listed>> = RefCell::new(HashMap::new());
+    static LENGTHS: RefCell<Option<Lengths>> = const { RefCell::new(None) };
+}
+
+/// What `dir` holds (read again when the last read is a second old).
+pub fn list(dir: &Path) -> Arc<Vec<Entry>> {
+    let kept = LISTS.with(|l| {
+        l.borrow()
+            .get(dir)
+            .filter(|(at, _)| at.elapsed() < FRESH)
+            .map(|(_, v)| v.clone())
+    });
+    if let Some(v) = kept {
+        return v;
+    }
+    let v = Arc::new(read(dir));
+    LISTS.with(|l| {
+        l.borrow_mut()
+            .insert(dir.to_path_buf(), (Instant::now(), v.clone()))
+    });
+    v
+}
+
+/// The listings are read again on the next look.
+pub fn forget() {
+    LISTS.with(|l| l.borrow_mut().clear());
+}
+
+/// `dir`'s listing as the tab shows it: at the top of the song folder, without its own.
+fn shown(dir: &Path, song_top: bool) -> Vec<Entry> {
+    list(dir)
+        .iter()
+        .filter(|e| !(song_top && e.dir && SONG_OWN.contains(&e.name.as_str())))
+        .cloned()
+        .collect()
+}
+
+/// The files under `dir` whose name has `q` in it (`q` in lower case).
+fn search(
+    dir: &Path,
+    q: &str,
+    depth: usize,
+    song_top: bool,
+    seen: &mut usize,
+    out: &mut Vec<Entry>,
+) {
+    for e in shown(dir, song_top) {
+        if *seen >= SEARCH_SEEN || out.len() >= SEARCH_FOUND {
+            return;
+        }
+        *seen += 1;
+        if e.dir {
+            if depth < SEARCH_DEPTH {
+                search(&e.path, q, depth + 1, false, seen, out);
+            }
+        } else if e.name.to_lowercase().contains(q) {
+            out.push(e);
+        }
+    }
+}
+
+// --------------------------------------------------------------------- lengths
+
+/// The lengths of files, read by a thread of their own.
+struct Lengths {
+    known: HashMap<PathBuf, String>,
+    asked: HashSet<PathBuf>,
+    ask: Sender<PathBuf>,
+    told: Receiver<(PathBuf, String)>,
+}
+
+fn lengths<R>(f: impl FnOnce(&mut Lengths) -> R) -> R {
+    LENGTHS.with(|l| {
+        let mut l = l.borrow_mut();
+        let l = l.get_or_insert_with(|| {
+            let (ask, asks) = channel::<PathBuf>();
+            let (tell, told) = channel();
+            std::thread::Builder::new()
+                .name("browser-lengths".into())
+                .spawn(move || {
+                    for path in asks {
+                        let text = length_text(&path);
+                        if tell.send((path, text)).is_err() {
+                            break;
+                        }
+                    }
+                })
+                .expect("start the thread that reads file lengths");
+            Lengths {
+                known: HashMap::new(),
+                asked: HashSet::new(),
+                ask,
+                told,
+            }
+        });
+        f(l)
+    })
+}
+
+/// How long `path` is, as the row shows it; empty until it is known.
+pub fn length(path: &Path) -> String {
+    lengths(|l| {
+        if let Some(t) = l.known.get(path) {
+            return t.clone();
+        }
+        if l.asked.insert(path.to_path_buf()) {
+            let _ = l.ask.send(path.to_path_buf());
+        }
+        String::new()
+    })
+}
+
+/// Takes the lengths read since the last call; true when a row should be drawn again.
+pub fn poll() -> bool {
+    lengths(|l| {
+        let mut got = false;
+        while let Ok((path, text)) = l.told.try_recv() {
+            l.known.insert(path, text);
+            got = true;
+        }
+        got
+    })
+}
+
+/// Waits (up to `limit`) until every length asked for is known.
+pub fn settle(limit: Duration) {
+    let start = Instant::now();
+    loop {
+        poll();
+        if lengths(|l| l.asked.iter().all(|p| l.known.contains_key(p))) || start.elapsed() > limit {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// `0.4 秒` under a second (a drum hit is not `0:00`), then `0:24`, `12:05`, `1:02:03`.
+pub fn clock(secs: f64) -> String {
+    let secs = secs.max(0.0);
+    if secs < 0.95 {
+        return format!("{:.1} 秒", secs.max(0.1));
+    }
+    let s = secs.round() as u64;
+    if s >= 3600 {
+        format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
+    } else {
+        format!("{}:{:02}", s / 60, s % 60)
+    }
+}
+
+/// The length of a file as the row shows it: minutes and seconds, bars for a MIDI file
+/// (four beats a bar); empty when it cannot be read.
+pub fn length_text(path: &Path) -> String {
+    if is_midi(path) {
+        const PPQ: u32 = 960;
+        let Ok(notes) = std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|b| crate::smf::read(&b, PPQ))
+        else {
+            return String::new();
+        };
+        let end = notes.iter().map(|n| n.at + n.length).max().unwrap_or(0);
+        let bar = i64::from(PPQ) * 4;
+        return format!("{} 小節", ((end + bar - 1) / bar).max(1));
+    }
+    xirius_session::decode::probe(path)
+        .map(|i| clock(i.seconds()))
+        .unwrap_or_default()
+}
+
+// ------------------------------------------------------------------- the state
+
+fn stamp(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+impl Browser {
+    /// What the browser keeps, as it is now.
+    pub fn prefs(&self) -> Prefs {
+        Prefs {
+            favourites: self.favourites.clone(),
+            hidden: self.hidden.clone(),
+            show_hidden: self.show_hidden,
+            places: self.places.clone(),
+        }
+    }
+
+    fn apply(&mut self, p: Prefs) {
+        let here = self.location().name;
+        self.favourites = p.favourites;
+        self.hidden = p.hidden;
+        self.show_hidden = p.show_hidden;
+        self.places = p.places;
+        // The tab shown stays when it is still there.
+        let i = self.locations().iter().position(|l| l.name == here);
+        if i != Some(self.loc) {
+            self.set_location(i.unwrap_or(0));
+        }
+    }
+
+    /// The browser keeps what it keeps in `file` from now on, starting with what is there.
+    pub fn use_prefs(&mut self, file: PathBuf) -> Result<(), String> {
+        let p = places::load(&file);
+        self.prefs_stamp = stamp(&file);
+        self.prefs_file = Some(file);
+        self.apply(p?);
+        Ok(())
+    }
+
+    /// Reads the file again when another program (the CLI, MCP, a command) changed it.
+    pub fn reload_prefs(&mut self) -> bool {
+        let Some(file) = self.prefs_file.clone() else {
+            return false;
+        };
+        let now = stamp(&file);
+        if now == self.prefs_stamp {
+            return false;
+        }
+        self.prefs_stamp = now;
+        match places::load(&file) {
+            Ok(p) => {
+                let changed = p != self.prefs();
+                self.apply(p);
+                changed
+            }
+            Err(e) => {
+                self.prefs_error = Some(e);
+                true
+            }
+        }
+    }
+
+    /// Writes what the browser keeps (when it has a file).
+    fn save_prefs(&mut self) {
+        let Some(file) = self.prefs_file.clone() else {
+            return;
+        };
+        match places::save(&file, &self.prefs()) {
+            Ok(()) => self.prefs_stamp = stamp(&file),
+            Err(e) => self.prefs_error = Some(e),
+        }
+    }
+
+    pub fn toggle_favourite(&mut self, name: &str) {
+        if !self.favourites.remove(name) {
+            self.favourites.insert(name.to_string());
+        }
+        self.save_prefs();
+    }
+
+    /// Leaves an instrument or an effect out of the lists, or puts it back.
+    pub fn set_hidden(&mut self, name: &str, on: bool) {
+        if on {
+            self.hidden.insert(name.to_string());
+        } else {
+            self.hidden.remove(name);
+        }
+        self.save_prefs();
+    }
+
+    /// Shows the items left out of the lists, or leaves them out again.
+    pub fn set_show_hidden(&mut self, on: bool) {
+        self.show_hidden = on;
+        self.save_prefs();
+    }
+
+    // ------------------------------------------------------------- places
+
+    /// Gives the tab `i` another name (not the song's).
+    pub fn rename_place(&mut self, i: usize, name: &str) -> Result<String, String> {
+        let Some(old) = i.checked_sub(1).and_then(|k| self.places.get(k)) else {
+            return Err("曲のフォルダー（この曲）の名前は変えられません".into());
+        };
+        let mut p = self.prefs();
+        let old = old.name.clone();
+        p.rename_place(&old, name)?;
+        self.places = p.places;
+        self.save_prefs();
+        Ok(name.trim().to_string())
+    }
+
+    /// The song's folder (`None` before it is saved). The song tab starts again at its top
+    /// when it changes.
+    pub fn set_song_dir(&mut self, dir: Option<PathBuf>) {
+        if self.song_dir == dir {
+            return;
+        }
+        self.song_dir = dir;
+        if self.loc == 0 {
+            self.set_location(0);
+        }
+    }
+
+    /// The tabs: the song's folder, then the places.
+    pub fn locations(&self) -> Vec<Location> {
+        let mut out = vec![Location {
+            name: SONG.to_string(),
+            path: self.song_dir.clone(),
+            song: true,
+        }];
+        out.extend(self.places.iter().map(|p| Location {
+            name: p.name.clone(),
+            path: Some(p.path.clone()),
+            song: false,
+        }));
+        out
+    }
+
+    pub fn location(&self) -> Location {
+        let mut all = self.locations();
+        all.swap_remove(self.loc.min(all.len() - 1))
+    }
+
+    /// A tab for the folder `dir`, shown at once.
+    pub fn add_place(&mut self, dir: &Path) -> Result<String, String> {
+        let mut p = self.prefs();
+        let name = p.add_place(dir, None)?;
+        self.places = p.places;
+        self.save_prefs();
+        self.set_location(self.places.len());
+        Ok(name)
+    }
+
+    /// Takes the tab `i` away (not the song's); the folder stays as it is.
+    pub fn remove_place(&mut self, i: usize) -> Result<Place, String> {
+        if i == 0 {
+            return Err("曲のフォルダー（この曲）は外せません".into());
+        }
+        if i > self.places.len() {
+            return Err("その場所のタブはありません".into());
+        }
+        let gone = self.places.remove(i - 1);
+        self.save_prefs();
+        if self.loc >= i {
+            self.set_location(self.loc.saturating_sub(1).min(self.places.len()));
+        }
+        Ok(gone)
+    }
+
+    /// The folder the list shows.
+    pub fn here_dir(&self) -> Option<PathBuf> {
+        let mut dir = self.location().path?;
+        dir.extend(&self.path);
+        Some(dir)
+    }
+
+    pub fn set_location(&mut self, i: usize) {
+        if i <= self.places.len() {
+            self.loc = i;
+            self.path.clear();
+            self.selected_file = None;
+            self.playing = None;
+            self.scroll = 0.0;
+        }
+    }
+
+    /// Back to the first `n` parts of the breadcrumb (0 is the location itself).
+    pub fn go_up_to(&mut self, n: usize) {
+        self.path.truncate(n);
+        self.scroll = 0.0;
+    }
+
+    pub fn toggle_dir(&mut self, key: &str) {
+        if !self.open_dirs.remove(key) {
+            self.open_dirs.insert(key.to_string());
+        }
+    }
+
+    /// Selecting an audio file starts its audition (BRW-007); another file stops the one
+    /// that played.
+    pub fn select_file(&mut self, key: &str) {
+        self.selected_file = Some(key.to_string());
+        self.playing = crate::drop_audio::is_audio(Path::new(key)).then(|| key.to_string());
+    }
+
+    pub fn toggle_audition(&mut self) {
+        let Some(key) = self.selected_file.clone() else {
+            return;
+        };
+        self.playing = if self.playing.as_deref() == Some(&key) {
+            None
+        } else {
+            Some(key)
+        };
+    }
+
+    /// The folder `key` (a folder row's) becomes the one the list shows.
+    pub fn enter_dir(&mut self, key: &str) {
+        let Some(here) = self.here_dir() else {
+            return;
+        };
+        if let Ok(rest) = Path::new(key).strip_prefix(&here) {
+            self.path.extend(
+                rest.components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned()),
+            );
+            self.scroll = 0.0;
+        }
+    }
+
+    // --------------------------------------------------------------- rows
+
+    pub(crate) fn file_rows(&self) -> Vec<BRow> {
+        let loc = self.location();
+        let Some(top) = loc.path.clone() else {
+            return vec![BRow::Note(NO_FOLDER)];
+        };
+        if !top.is_dir() {
+            return vec![BRow::Note(GONE)];
+        }
+        let here = self.here_dir().unwrap_or(top);
+        let song_top = loc.song && self.path.is_empty();
+        let q = self.search.trim().to_lowercase();
+        let mut rows = Vec::new();
+        if q.is_empty() {
+            self.tree_rows(&here, 0, song_top, &mut rows);
+            if rows.is_empty() {
+                rows.push(BRow::Note(EMPTY));
+            }
+        } else {
+            let mut found = Vec::new();
+            search(&here, &q, 0, song_top, &mut 0, &mut found);
+            for e in found {
+                self.push_file(&mut rows, &e, 0);
+            }
+            if rows.is_empty() {
+                rows.push(BRow::Note("見つかりません"));
+            }
+        }
+        rows
+    }
+
+    fn push_file(&self, rows: &mut Vec<BRow>, e: &Entry, depth: usize) {
+        let key = e.path.to_string_lossy().into_owned();
+        let selected = self.selected_file.as_deref() == Some(&key);
+        rows.push(BRow::File {
+            key: key.clone(),
+            name: e.name.clone(),
+            len: length(&e.path),
+            depth,
+            selected,
+        });
+        if selected && crate::drop_audio::is_audio(&e.path) {
+            rows.push(BRow::Audition {
+                playing: self.playing.as_deref() == Some(&key),
+                key,
+                depth,
+            });
+        }
+    }
+
+    fn tree_rows(&self, dir: &Path, depth: usize, song_top: bool, rows: &mut Vec<BRow>) {
+        for e in shown(dir, song_top) {
+            if !e.dir {
+                self.push_file(rows, &e, depth);
+                continue;
+            }
+            let key = e.path.to_string_lossy().into_owned();
+            let open = self.open_dirs.contains(&key);
+            rows.push(BRow::Dir {
+                key,
+                name: e.name.clone(),
+                depth,
+                open,
+            });
+            if open && depth < SEARCH_DEPTH {
+                self.tree_rows(&e.path, depth + 1, false, rows);
+            }
+        }
+    }
+}
+
+impl crate::studio::Studio {
+    /// The browser follows the song's folder and what another program changed in its file.
+    /// True when the list should be drawn again.
+    pub fn follow_browser(&mut self) -> bool {
+        let dir = self.song().dir();
+        let moved = self.browser.song_dir != dir;
+        self.browser.set_song_dir(dir);
+        let reloaded = self.browser.reload_prefs();
+        if let Some(e) = self.browser.prefs_error.take() {
+            self.error = Some(e);
+        }
+        let pool = self.follow_pool();
+        let clip = self.follow_pool_clip();
+        moved || reloaded || pool || clip
+    }
+}
+
+#[cfg(test)]
+mod tests;

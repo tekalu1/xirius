@@ -1,0 +1,8 @@
+# The VST3 SDK, pinned at v3.8.0_build_66 (MIT since 3.8.0; LIC-003). Nothing in the build
+# reads it: the vst3 crate carries bindings generated from this same version. Check it out
+# (git submodule update --init --recursive) to build the SDK's validator, see
+# docs/plugin-hosting.md.
+[submodule "third_party/vst3sdk"]
+	path = third_party/vst3sdk
+	url = https://github.com/steinbergmedia/vst3sdk.git
+	shallow = true

@@ -1,0 +1,27 @@
+[package]
+name = "xirius-test-clap"
+description = "Headless CLAP fixture: a gain with a parameter, saved state, a note input and a reported latency"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# The CLAP plugin side of clack (prokopyl/clack, MIT OR Apache-2.0).
+clack-plugin = "0.2"
+clack-extensions = { version = "0.2", features = [
+    "clack-plugin",
+    "audio-ports",
+    "latency",
+    "note-name",
+    "note-ports",
+    "params",
+    "state",
+] }

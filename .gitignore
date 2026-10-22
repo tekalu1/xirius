@@ -1,0 +1,21 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Python (scripts/)
+__pycache__/
+*.pyc
+
+# Local scratch
+/temporary/
+/00-work/
+
+# Update keys are never kept in the repository (UI-282)
+*.key

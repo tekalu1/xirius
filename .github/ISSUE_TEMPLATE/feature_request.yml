@@ -1,0 +1,26 @@
+name: Feature request
+description: Something Xirius should do, or do differently.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The decided plan is `docs/plan.toml`; please look for the item first and name its id if there is one.
+        Japanese or English are both fine. 日本語でも英語でもかまいません。
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+      description: The work you are doing and where Xirius gets in the way, rather than the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help
+      description: How you would like it to work. How another DAW does it is useful to know.
+  - type: input
+    id: plan
+    attributes:
+      label: Plan item
+      description: The id in `docs/plan.toml`, if one covers it (for example UI-012).

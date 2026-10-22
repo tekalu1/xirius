@@ -1,0 +1,14 @@
+# cargo run -p xirius-design-lint が読む設定。規則は docs/design-rules.md。
+
+# 規則の持ち主の crate。この中は検査しない（トークンの値そのものを書く場所）。
+design_crates = ["xirius-design", "xirius-design-lint"]
+
+# tests/ も検査するか。テストは、試験用の色や線を書いてよい場所として外している。
+include_tests = false
+
+# 一時的に外す crate は `[[exempt]]` で書く（外した crate は、実行のたびに一覧に出る）。
+# 例:
+#   [[exempt]]
+#   crate = "<crate 名>"
+#   reason = "<外す理由と、いつ消すか>"
+# 今は外している crate は無い（xirius-ui は UI-049 で xirius-design に乗り換えた）。

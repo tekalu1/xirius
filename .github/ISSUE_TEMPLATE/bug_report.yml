@@ -1,0 +1,51 @@
+name: Bug report
+description: Something does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a security problem, do not open an issue: see `SECURITY.md` (report it privately).
+        Japanese or English are both fine. 日本語でも英語でもかまいません。
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The app menu's 「Xirius について」 (About Xirius), or `xirius --version`.
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Windows 11 24H2 (x64)"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps
+      description: What you did, from starting Xirius. A small song that shows it helps the most.
+      placeholder: |
+        1. Open ...
+        2. Click ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what happened instead
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: Audio device and plugins
+      description: The audio driver and device (Settings → Audio), and the plugins in the song, if they matter.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Messages or logs
+      description: Error messages, or the output of the `xirius` command. Remove anything private (paths with your name, tokens).
+      render: text

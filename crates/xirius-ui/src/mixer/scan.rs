@@ -1,0 +1,301 @@
+//! The plugin scan behind the insert list and the browser (PLG-021).
+//!
+//! The screen runs the same command as the CLI and MCP, `plugin.rescan --background`. Each
+//! bundle is opened in a child process (this program with `__scan-plugin`), so a plugin
+//! that crashes is one failure in the list and the scan goes on. The screen does not wait:
+//! [`Studio::tick`] asks `export.status` a few times a second, and when the job is done
+//! the insert list and the browser read the list again.
+//!
+//! Both places that show a running scan can stop it: `export.cancel` on the job ends the
+//! processes still opening a bundle, and the list keeps the bundles opened by then.
+
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use serde_json::json;
+use xirius_plugins::{CHILD_ARG, Catalog, ChildProgram, ScanOptions};
+
+use crate::popup::{Choice, PopupKind};
+use crate::studio::Studio;
+
+/// How often a running scan is asked how far it got.
+const POLL: Duration = Duration::from_millis(100);
+
+/// The insert list's choice that scans again.
+pub const RESCAN: &str = "plugin-rescan";
+/// The insert list's choice that stops the running scan.
+pub const STOP: &str = "plugin-scan-stop";
+
+/// Where this program looks for plugins: the standard folders and cache, each bundle
+/// opened by this program in a child process.
+pub fn options() -> ScanOptions {
+    ScanOptions {
+        program: std::env::current_exe().ok().map(|program| ChildProgram {
+            program,
+            args: vec![CHILD_ARG.to_string()],
+        }),
+        ..ScanOptions::default()
+    }
+}
+
+#[derive(Default)]
+pub struct PluginScan {
+    /// Scan by itself when there is no list yet (the real window; tests leave it off).
+    pub auto: bool,
+    checked: bool,
+    job: Option<String>,
+    pub done: u64,
+    pub total: u64,
+    /// The bundle it opens now (PLG-059); empty until it says.
+    pub file: String,
+    /// Why the last scan failed.
+    pub error: Option<String>,
+    polled: Option<Instant>,
+    /// Asked to stop; ending.
+    pub stopping: bool,
+}
+
+impl PluginScan {
+    pub fn running(&self) -> bool {
+        self.job.is_some()
+    }
+
+    /// `スキャン中 12 / 295` once the number of bundles is known.
+    fn progress_text(&self) -> String {
+        if self.stopping {
+            "中止しています…".to_string()
+        } else if self.total == 0 {
+            "検索中".to_string()
+        } else {
+            format!("スキャン中 {} / {}", self.done.min(self.total), self.total)
+        }
+    }
+}
+
+impl Studio {
+    /// Starts `plugin.rescan --background`; a scan already running is left to finish.
+    pub fn start_plugin_scan(&mut self) -> Result<(), String> {
+        self.start_scan(json!({ "background": true }))
+    }
+
+    /// Scans the unusable plugin `at` (an index into the browser's list of them) again; the
+    /// rest of the list stays as it is.
+    pub fn retry_plugin(&mut self, at: usize) -> Result<(), String> {
+        let Some(bad) = self.browser.bad.get(at) else {
+            return Ok(());
+        };
+        if self.mixer.scan.running() {
+            return Ok(());
+        }
+        let path = bad.path.clone();
+        self.start_scan(json!({ "background": true, "path": path.to_string_lossy() }))?;
+        self.browser.retrying = Some(path);
+        Ok(())
+    }
+
+    fn start_scan(&mut self, args: serde_json::Value) -> Result<(), String> {
+        if self.mixer.scan.running() {
+            return Ok(());
+        }
+        let data = self.song.run("plugin.rescan", args)?;
+        let job = data["job"].as_str().ok_or("plugin.rescan gave no job")?;
+        let scan = &mut self.mixer.scan;
+        scan.job = Some(job.to_string());
+        (scan.done, scan.total, scan.error, scan.polled) = (0, 0, None, None);
+        scan.stopping = false;
+        self.browser.scanning = true;
+        self.browser.scan_stopping = false;
+        (self.browser.scan_done, self.browser.scan_total) = (0, 0);
+        self.browser.retrying = None;
+        Ok(())
+    }
+
+    /// For the screenshots: a scan shown half way, which no frame polls and nothing ends.
+    pub(crate) fn pose_scan(&mut self, done: u64, total: u64) {
+        let scan = &mut self.mixer.scan;
+        scan.job = Some("pose".to_string());
+        (scan.done, scan.total, scan.stopping) = (done, total, false);
+        scan.polled = Some(Instant::now() + std::time::Duration::from_secs(3600));
+        self.browser.scanning = true;
+        self.browser.scan_stopping = false;
+        (self.browser.scan_done, self.browser.scan_total) = (done, total);
+    }
+
+    /// Asks the running scan to stop (`export.cancel`). It ends on a later frame, keeping
+    /// what it opened.
+    pub fn stop_plugin_scan(&mut self) {
+        let Some(job) = self.mixer.scan.job.clone() else {
+            return;
+        };
+        if self.mixer.scan.stopping {
+            return;
+        }
+        match self.song.run("export.cancel", json!({ "job": job })) {
+            Ok(_) => {
+                self.mixer.scan.stopping = true;
+                self.browser.scan_stopping = true;
+                // Asked at once, so the end shows on the next frame.
+                self.mixer.scan.polled = None;
+                self.refresh_insert_list();
+            }
+            Err(e) => self.error = Some(e),
+        }
+    }
+
+    fn refresh_insert_list(&mut self) {
+        if self
+            .popup
+            .as_ref()
+            .is_some_and(|p| matches!(p.kind, PopupKind::Insert(_) | PopupKind::Instrument(_)))
+        {
+            self.refresh_popup();
+        }
+    }
+
+    /// The real window: the list the last scan kept, and a scan of its own when there is none.
+    pub fn use_installed_plugins(&mut self) {
+        self.mixer.scan.auto = true;
+        let catalog = Catalog::load(self.song.plugin_cache());
+        self.use_plugins(catalog);
+    }
+
+    /// The insert list and the browser show these plugins.
+    pub fn use_plugins(&mut self, catalog: Catalog) {
+        self.browser.set_plugins(&catalog);
+        let catalog = Arc::new(catalog);
+        self.transport.set_catalog(catalog.clone());
+        self.mixer.catalog = Some(catalog);
+    }
+
+    /// The plugins the insert list offers; read from the cache when first needed. The player
+    /// looks its plugins up in the same list.
+    pub(crate) fn plugin_catalog(&mut self) -> Arc<Catalog> {
+        let cache = self.song.plugin_cache();
+        let catalog = self
+            .mixer
+            .catalog
+            .get_or_insert_with(|| Arc::new(Catalog::load(cache)))
+            .clone();
+        self.transport.set_catalog(catalog.clone());
+        catalog
+    }
+
+    /// Once a frame. True while a scan runs, so frames keep coming to show it.
+    pub(crate) fn poll_plugin_scan(&mut self) -> bool {
+        let scan = &mut self.mixer.scan;
+        if scan.auto && !scan.checked {
+            scan.checked = true;
+            if !xirius_plugins::CacheFile::is_current(self.song.plugin_cache()) {
+                // The frame that starts it only starts it: the next ones read how it goes.
+                match self.start_plugin_scan() {
+                    Ok(()) => return true,
+                    Err(e) => self.mixer.scan.error = Some(e),
+                }
+            }
+        }
+        let scan = &mut self.mixer.scan;
+        let Some(job) = scan.job.clone() else {
+            return false;
+        };
+        if scan.polled.is_some_and(|t| t.elapsed() < POLL) {
+            return true;
+        }
+        scan.polled = Some(Instant::now());
+        let status = self.song.run("export.status", json!({ "job": job }));
+        let scan = &mut self.mixer.scan;
+        let state = match &status {
+            Ok(v) => {
+                scan.done = v["done"].as_u64().unwrap_or(0);
+                scan.total = v["total"].as_u64().unwrap_or(0);
+                scan.file = v["file"].as_str().unwrap_or_default().to_string();
+                self.browser.scan_done = scan.done;
+                self.browser.scan_total = scan.total;
+                v["state"].as_str().unwrap_or("failed").to_string()
+            }
+            Err(_) => "failed".to_string(),
+        };
+        if state != "running" {
+            let again = self.browser.retrying.is_some();
+            let scan = &mut self.mixer.scan;
+            scan.job = None;
+            scan.stopping = false;
+            scan.file.clear();
+            self.browser.scanning = false;
+            self.browser.scan_stopping = false;
+            self.browser.retrying = None;
+            // A stopped scan kept what it opened: the list is read again all the same.
+            if state == "done" || state == "cancelled" {
+                let catalog = Catalog::load(self.song.plugin_cache());
+                let found = catalog.entries.len();
+                self.use_plugins(catalog);
+                // The settings' plugin page says how many a whole scan found.
+                if state == "done"
+                    && !again
+                    && let Some(ui) = &mut self.settings
+                {
+                    ui.tell(format!("{found} 個のプラグインが見つかりました"), None);
+                }
+            } else {
+                self.mixer.scan.error = Some(match status {
+                    Ok(v) => v["error"].as_str().unwrap_or(&state).to_string(),
+                    Err(e) => e,
+                });
+            }
+        }
+        self.refresh_insert_list();
+        true
+    }
+
+    /// The insert list: the effects, and how the scan is doing.
+    pub fn insert_list(&mut self) -> Vec<Choice> {
+        let catalog = self.plugin_catalog();
+        let out = super::insert_choices(&catalog);
+        let mut recent = self.recent_effects();
+        let rest = out
+            .into_iter()
+            .filter(|c| !recent.iter().any(|r| r.to == c.to))
+            .collect::<Vec<_>>();
+        recent.extend(rest);
+        self.with_scan_rows(recent)
+    }
+
+    /// `out` with how the scan is doing around it: while it runs, its progress and the choice
+    /// that stops it on top; otherwise the choice that scans again at the end.
+    pub(crate) fn with_scan_rows(&self, mut out: Vec<Choice>) -> Vec<Choice> {
+        let scan = &self.mixer.scan;
+        let none = out.len() == 1 && out[0].to.is_empty();
+        if scan.running() {
+            if none {
+                out.clear();
+            }
+            out.insert(
+                0,
+                Choice {
+                    to: String::new(),
+                    label: scan.progress_text(),
+                },
+            );
+            if !scan.stopping {
+                out.insert(
+                    1,
+                    Choice {
+                        to: STOP.to_string(),
+                        label: "スキャンを中止".to_string(),
+                    },
+                );
+            }
+        } else {
+            if let Some(e) = &scan.error {
+                out.push(Choice {
+                    to: String::new(),
+                    label: format!("スキャンに失敗しました: {e}"),
+                });
+            }
+            out.push(Choice {
+                to: RESCAN.to_string(),
+                label: "プラグインを再スキャン".to_string(),
+            });
+        }
+        out
+    }
+}
