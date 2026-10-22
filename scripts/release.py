@@ -284,7 +284,7 @@ def sign(manifest: Path, key: Path, setup: Path, version: str) -> Path:
     signature = manifest.with_name(manifest.name + ".sig")
     run(
         [
-            sys.executable, "-I", str(ROOT / "scripts" / "update_sign.py"),
+            sys.executable, "-I", "-X", "utf8", str(ROOT / "scripts" / "update_sign.py"),
             "sign", "--key", str(key), "--manifest", str(manifest),
             "--out", str(signature), "--setup", str(setup), "--version", version,
         ],

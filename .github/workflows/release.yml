@@ -30,6 +30,8 @@ concurrency:
 
 env:
   TAG: ${{ github.ref_name }}
+  # The scripts print Japanese; the runner's console is cp1252 otherwise.
+  PYTHONUTF8: "1"
   # NSIS（zlib/libpng のライセンス）。公式の zip を、この SHA-256 と合うときだけ使う。
   NSIS_VERSION: "3.13"
   NSIS_SHA256: ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8
@@ -131,7 +133,7 @@ jobs:
           if (-not $manifest) { throw "マニフェストがありません" }
           $m = Get-Content $manifest.FullName -Raw | ConvertFrom-Json
           $version = $env:TAG -replace '^v', ''
-          python -I scripts/update_sign.py sign --key $env:XIRIUS_UPDATE_KEY_FILE `
+          python -I -X utf8 scripts/update_sign.py sign --key $env:XIRIUS_UPDATE_KEY_FILE `
             --manifest $manifest.FullName --out "$($manifest.FullName).sig" `
             --setup (Join-Path dist $m.file) --version $version
           if ($LASTEXITCODE -ne 0) { throw "署名できません" }
@@ -150,7 +152,7 @@ jobs:
           $manifest = Get-ChildItem dist/*-update.json | Select-Object -First 1
           $m = Get-Content $manifest.FullName -Raw | ConvertFrom-Json
           $version = $env:TAG -replace '^v', ''
-          python -I scripts/update_sign.py verify `
+          python -I -X utf8 scripts/update_sign.py verify `
             --app crates/xirius-session/src/update.rs `
             --manifest $manifest.FullName --sig "$($manifest.FullName).sig" `
             --setup (Join-Path dist $m.file) --version $version
