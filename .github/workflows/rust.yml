@@ -24,7 +24,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        # Windows is the only build that is made and given out (README). macOS comes back
+        # here when its platform code exists.
+        os: [windows-latest]
     steps:
       - uses: actions/checkout@v4
       # The toolchain is the one in rust-toolchain.toml: rustup reads it and gets the same

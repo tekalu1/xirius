@@ -1170,8 +1170,18 @@ fn pid_alive(pid: u32) -> bool {
         }
         let state = WaitForSingleObject(process, 0);
         CloseHandle(process);
-        state == WAIT_TIMEOUT
+        if state != WAIT_TIMEOUT {
+            return false;
+        }
     }
+    // A PID is reused, and Windows ignores its low two bits: only a running Xirius program
+    // counts as the window that is writing the part.
+    image_path(pid)
+        .and_then(|path| {
+            path.file_name()
+                .map(|n| n.to_string_lossy().to_ascii_lowercase())
+        })
+        .is_some_and(|name| name.starts_with("xirius"))
 }
 
 #[cfg(not(windows))]
@@ -1999,6 +2009,18 @@ mod tests {
 
     /// UI-282: a download of another window (its `.part` belongs to a live process) is left
     /// alone; one left by a dead process is cleaned up.
+    #[test]
+    fn a_live_process_that_is_not_xirius_does_not_hold_a_part() {
+        // PID 4 is Windows' System process, and 9 is read as 8 (the low bits are ignored):
+        // neither is a window writing a download.
+        assert!(!pid_alive(4));
+        assert!(!pid_alive(9));
+        assert!(
+            pid_alive(std::process::id()),
+            "this test's own program is a Xirius one"
+        );
+    }
+
     #[test]
     fn a_part_of_a_live_window_is_not_cleaned_up() {
         let (_, public) = keypair();
