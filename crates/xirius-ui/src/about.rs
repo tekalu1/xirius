@@ -2564,7 +2564,8 @@ used {} {}
             prerelease: false,
             assets: Vec::new(),
         });
-        // The placeholder key.
+        // The placeholder key (the build itself has the real one).
+        s.update.key = update::PLACEHOLDER_KEY.to_string();
         s.update.location = Some(update::Location {
             exe_dir: tmp.path().join("app"),
             install_dir: tmp.path().join("app"),
