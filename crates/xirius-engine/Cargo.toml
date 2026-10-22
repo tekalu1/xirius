@@ -19,7 +19,7 @@ midir = "0.11"
 xirius-vst3 = { path = "../xirius-vst3" }
 xirius-clap = { path = "../xirius-clap" }
 xirius-params = { path = "../xirius-params" }
-wasapi = "0.25"
+wasapi = "0.26"
 assert_no_alloc = "1.1"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
