@@ -124,10 +124,13 @@ Function ${UN}WaitClosed
     MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(Running)" /SD IDCANCEL IDRETRY retry
     ; A silent update cannot ask: put the running Xirius back, and leave a note for the next
     ; start (UI-282).
-    ${If} ${Silent}
-    ${AndIf} "${UN}" == ""
-      Call UpdateFailed
-    ${EndIf}
+    ; Only the installer has UpdateFailed: the uninstaller may not call it (decided when
+    ; the script is compiled, not when it runs).
+    !if "${UN}" == ""
+      ${If} ${Silent}
+        Call UpdateFailed
+      ${EndIf}
+    !endif
     SetErrorLevel 3
     Abort
     retry:
