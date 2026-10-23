@@ -56,6 +56,7 @@ fn builtin(p: &mut Project, uid: &str) -> Plugin {
         samples: Vec::new(),
         isolation: PluginIsolation::default(),
         sidechain: None,
+        preset: None,
     }
 }
 
@@ -684,6 +685,7 @@ fn what_a_dawproject_cannot_carry_is_listed_on_export() {
             samples: Vec::new(),
             isolation: PluginIsolation::default(),
             sidechain: None,
+            preset: None,
         });
         let ClipBody::Midi { notes, .. } = &mut t.clips[0].body else {
             unreachable!()
@@ -919,6 +921,7 @@ fn plugin(p: &mut Project, format: &str, uid: &str, name: &str, kind: PluginKind
         samples: Vec::new(),
         isolation: PluginIsolation::default(),
         sidechain: None,
+        preset: None,
     }
 }
 

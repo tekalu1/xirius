@@ -76,6 +76,7 @@ mod track;
 mod track_clipboard;
 mod track_preset;
 pub mod visual;
+mod xpreset;
 
 /// Older names of commands, `(old, current)`. The old name still runs the command (a script, a
 /// keymap or an AI tool that has it keeps working); the palette, the docs and `commands` list
@@ -135,6 +136,7 @@ pub fn all() -> Vec<CommandDef> {
     v.extend(roll_view::defs());
     v.extend(channel_settings::defs());
     v.extend(track_preset::defs());
+    v.extend(xpreset::defs());
     v.extend(rack::defs());
     v.extend(jobs::defs());
     v.extend(key_more::defs());

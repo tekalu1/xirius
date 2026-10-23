@@ -142,6 +142,13 @@ fn real(mut args: impl Iterator<Item = String>) {
         // A script never takes the screen of whoever is using the PC.
         opts.place = Place::Parked;
     }
+    if opts.shots.is_none() {
+        // The factory presets are copied in once (PLG-063), off the window's thread; a
+        // folder that cannot be written is said by the first save.
+        std::thread::spawn(|| {
+            let _ = xirius_session::xpreset::seed(&xirius_session::xpreset::dir());
+        });
+    }
     screen::run(opts);
 }
 

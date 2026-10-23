@@ -702,6 +702,7 @@ mod tests {
             state: None,
             isolation: Default::default(),
             sidechain: None,
+            preset: None,
         };
         Arc::make_mut(p.tracks.get_mut(&t).unwrap())
             .inserts

@@ -849,6 +849,7 @@ impl Song {
             midi_out: None,
             trash: trash.clone(),
             track_presets: test_presets_dir(),
+            presets: test_presets_dir(),
         };
         xirius_session::commands::attach_with(&mut session, config, extras);
         // An edit returns before its step reaches the disk, so a slow disk does not stop the

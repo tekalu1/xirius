@@ -528,6 +528,13 @@ fn every_history_command_undoes_and_redoes() {
     rig.step("track.preset.put", json!({"ids":[pt],"preset":preset}));
     rig.step("track.preset.make", json!({"preset":preset}));
     rig.step("track.preset.origin", json!({"ids":[pt],"name":"Drums"}));
+    let xpreset = json!({
+        "format": "xirius-preset", "version": 1, "kind": "fx", "name": "Warm",
+        "devices": [{"name": "EQ", "kind": "effect", "format": "builtin", "uid": "EQ",
+                     "params": {"low_gain": 0.7}}]
+    })
+    .to_string();
+    rig.step("preset.put", json!({"track": pt, "preset": xpreset}));
     rig.step(
         "plugin.preset.apply",
         json!({"id":comp,"values":[{"param":"threshold","value":0.3}]}),

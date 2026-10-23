@@ -194,6 +194,16 @@ pub const LABELS: &[(&str, &str)] = &[
     ("plugin.preset.apply", "プリセットを適用"),
     ("plugin.preset.save", "プリセットを保存…"),
     ("plugin.preset.open", "プリセットを読み込む…"),
+    ("preset.save", "プリセットを保存"),
+    ("preset.load", "プリセットを読み込み"),
+    ("preset.list", "プリセットの一覧"),
+    ("preset.remove", "プリセットを削除"),
+    ("preset.rename", "プリセット名を変更"),
+    (
+        "preset.factory.restore",
+        "工場出荷のプリセットを読み込み直す",
+    ),
+    ("preset.put", "プリセットを機器に反映"),
     ("rack.show", "ラックを表示"),
     (
         "track.add.with-instrument",
@@ -655,6 +665,7 @@ pub fn argument(name: &str) -> &str {
         "prev" => "前へ",
         "only" => "貼り付ける内容",
         "missing" => "無いプラグイン",
+        "lost" => "外したサンプル",
         "follow" => "曲のテンポに合わせる",
         "percent" => "速さ",
         "semis" => "トランスポーズ",
@@ -679,6 +690,8 @@ pub fn argument(name: &str) -> &str {
         "paths" => "ファイル",
         "folder" => "探すフォルダー",
         "order" => "並べ方",
+        "of" => "プラグイン",
+        "device" => "機器",
         _ => name,
     }
 }

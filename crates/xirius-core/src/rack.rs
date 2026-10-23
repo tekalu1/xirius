@@ -1032,6 +1032,7 @@ mod tests {
             samples: Vec::new(),
             isolation: Default::default(),
             sidechain: None,
+            preset: None,
         }
     }
 

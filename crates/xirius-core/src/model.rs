@@ -163,6 +163,10 @@ pub struct Plugin {
     /// Songs without one write nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sidechain: Option<Sidechain>,
+    /// The preset last loaded on this device (PLG-063), so a window can name it. Turning a
+    /// knob does not clear it; the preset list is what says whether it still matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
 }
 
 impl Plugin {

@@ -68,3 +68,4 @@ pub mod track_preset;
 pub mod update;
 pub mod watch;
 pub mod wav;
+pub mod xpreset;

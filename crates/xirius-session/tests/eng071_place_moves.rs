@@ -55,6 +55,7 @@ fn song_with(
         state: None,
         isolation,
         sidechain: None,
+        preset: None,
     };
     t.inserts.push(plugin(PID, isolation));
     t.inserts.extend(other.map(|i| plugin(OTHER, i)));

@@ -259,6 +259,45 @@ fn squash(s: &str) -> String {
         .collect()
 }
 
+/// The named factory presets shipped with every built-in (PLG-063): name and the share of
+/// each parameter's sweep it moves by. The session writes them into the user's preset folder
+/// on the first run; after that they are plain preset files (`preset.factory.restore` adds
+/// back the ones still missing). `Default` is not among them: it is the device's own
+/// defaults, not a file.
+pub const FACTORY_PRESETS: &[(&str, f64)] =
+    &[("やさしく", -0.18), ("強め", 0.22), ("声を前に", 0.1)];
+
+/// The version of the factory set the session copies to the user's folder. Raise it when
+/// the set changes: a folder copied from an older set then gets the new presets, and loses
+/// the old ones it copied that the user left untouched.
+pub const FACTORY_VERSION: u32 = 1;
+
+/// The factory presets of a built-in: a name and the knob values (0..1) in `def.params`
+/// order. A stepped parameter keeps its default; the others move `share` of their sweep
+/// from the default, alternating the direction down the panel.
+pub fn factory_presets(def: &BuiltinDef) -> Vec<(&'static str, Vec<f64>)> {
+    FACTORY_PRESETS
+        .iter()
+        .map(|(name, share)| (*name, preset_values(def, *share)))
+        .collect()
+}
+
+/// The knob values (0..1) of one factory preset, in `def.params` order.
+fn preset_values(def: &BuiltinDef, share: f64) -> Vec<f64> {
+    def.params
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let d = p.default_norm();
+            if p.steps().is_some() {
+                return d;
+            }
+            let sign = if i % 2 == 1 { -1.0 } else { 1.0 };
+            (d + share * sign).clamp(0.0, 1.0)
+        })
+        .collect()
+}
+
 /// The most parameters a built-in has, for fixed-size tables on the audio thread.
 pub const MAX_PARAMS: usize = 32;
 

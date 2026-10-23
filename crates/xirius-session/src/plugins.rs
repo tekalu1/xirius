@@ -1844,6 +1844,7 @@ mod tests {
             params: Default::default(),
             state: None,
             sidechain: None,
+            preset: None,
             samples,
             isolation: PluginIsolation::default(),
         };
@@ -1906,6 +1907,7 @@ mod tests {
             params: Default::default(),
             state: None,
             sidechain: None,
+            preset: None,
             samples,
             isolation: PluginIsolation::default(),
         };

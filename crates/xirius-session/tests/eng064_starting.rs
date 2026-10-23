@@ -49,6 +49,7 @@ fn plugin(id: u64, kind: PluginKind, uid: &str) -> Plugin {
         state: None,
         isolation: PluginIsolation::InProcess,
         sidechain: None,
+        preset: None,
     }
 }
 

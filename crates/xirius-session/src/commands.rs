@@ -563,7 +563,7 @@ pub fn run(
                 "録音中は片付けできません（record.stop で止めてから実行してください）",
             ));
         }
-        if name == "plugin.preset.save" {
+        if matches!(name, "plugin.preset.save" | "preset.save") {
             session.check_permission(name, &opts.author)?;
             let registry = session.registry().clone();
             let def = registry.get(name).expect("preset definition");

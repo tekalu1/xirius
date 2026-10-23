@@ -99,6 +99,7 @@ fn a_plugin_in_its_own_process_reads_as_the_time_it_took_there() {
             state: None,
             isolation: PluginIsolation::InProcess,
             sidechain: None,
+            preset: None,
         });
         p.tracks.insert(id, Arc::new(track));
         p.root.push(Node::Track(id));

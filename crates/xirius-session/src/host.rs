@@ -1500,6 +1500,7 @@ mod tests {
             samples: Vec::new(),
             isolation: PluginIsolation::Dedicated,
             sidechain: Some(Sidechain { on: true, sources }),
+            preset: None,
         }
     }
 

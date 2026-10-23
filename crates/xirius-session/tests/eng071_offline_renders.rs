@@ -40,6 +40,7 @@ fn each_offline_render_plays_the_instance_it_opened() {
         state: None,
         isolation: PluginIsolation::InProcess,
         sidechain: None,
+        preset: None,
     });
     let mut p = Project::new("offline renders");
     p.root.push(Node::Track(track.id));

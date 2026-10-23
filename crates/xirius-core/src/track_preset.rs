@@ -30,7 +30,7 @@ const KEYS: [&str; 9] = [
     "inserts",
     "sends",
 ];
-const PLUGIN_KEYS: [&str; 10] = [
+const PLUGIN_KEYS: [&str; 11] = [
     "name",
     "kind",
     "format",
@@ -41,6 +41,7 @@ const PLUGIN_KEYS: [&str; 10] = [
     "state",
     "samples",
     "isolation",
+    "preset",
 ];
 const SEND_KEYS: [&str; 4] = ["to", "to_name", "level_db", "pre"];
 
@@ -500,6 +501,8 @@ fn parse_plugin(n: usize, v: &Value, rows: &mut Vec<Adjust>) -> Option<Plugin> {
         state,
         isolation,
         sidechain: None,
+        // The device preset it was on (PLG-063); carried along like the samples.
+        preset: o.get("preset").and_then(Value::as_str).map(str::to_string),
     })
 }
 
@@ -591,6 +594,7 @@ mod tests {
             params: Default::default(),
             state: None,
             sidechain: None,
+            preset: None,
             samples: vec![
                 "Media/Imports/Kick.wav".into(),
                 "Media/Imports/Snare.wav".into(),

@@ -126,6 +126,7 @@ fn replace_plugin(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Outpu
         state: None,
         isolation: Default::default(),
         sidechain: None,
+        preset: None,
     };
     let t = p.track_mut(tid)?;
     let at = match kind {
@@ -250,6 +251,7 @@ pub(super) fn add_with_instrument(p: &mut Project, _: &EditCtx<'_>, a: &Args) ->
         state: None,
         isolation: Default::default(),
         sidechain: None,
+        preset: None,
     });
     track.armed = armed;
     let count = notes.len();

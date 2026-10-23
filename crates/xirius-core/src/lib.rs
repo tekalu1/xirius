@@ -34,6 +34,7 @@ pub mod takes;
 pub mod tempo;
 pub mod time;
 pub mod track_preset;
+pub mod xpreset;
 
 pub use command::{Args, Author, CommandDef, Output, Registry, Risk};
 pub use error::{CmdError, CmdResult, ErrorCode};

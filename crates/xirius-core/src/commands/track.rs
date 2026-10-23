@@ -1497,6 +1497,7 @@ pub(super) fn place_new_plugin(
         state: None,
         isolation: Default::default(),
         sidechain: None,
+        preset: None,
     };
     // A built-in starts with every parameter at its default, so each can be listed and
     // automated before it is first moved (PLG-045).

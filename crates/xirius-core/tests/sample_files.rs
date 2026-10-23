@@ -35,6 +35,7 @@ fn project_with_samples(samples: &[String]) -> Project {
         params: Default::default(),
         state: None,
         sidechain: None,
+        preset: None,
         samples: samples.to_vec(),
         isolation: PluginIsolation::default(),
     });

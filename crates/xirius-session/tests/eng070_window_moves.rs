@@ -32,6 +32,7 @@ fn track(isolation: PluginIsolation, uid: &str) -> Arc<Track> {
         state: None,
         isolation,
         sidechain: None,
+        preset: None,
     });
     Arc::new(t)
 }

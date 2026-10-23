@@ -101,6 +101,8 @@ pub struct ExtExtras {
     pub trash: Option<Trash>,
     /// The folder of the track presets; `None`: [`crate::track_preset::dir`].
     pub track_presets: Option<PathBuf>,
+    /// The folder of the device presets; `None`: [`crate::xpreset::dir`].
+    pub presets: Option<PathBuf>,
 }
 
 /// The engine that plays, and where its sound goes.
@@ -339,6 +341,8 @@ pub struct SessionExt {
     trash: Trash,
     /// Where the track presets are kept.
     track_presets: Option<PathBuf>,
+    /// Where the device presets are kept.
+    presets: Option<PathBuf>,
     /// The `export.stale` events (EXP-023).
     watch: crate::export_watch::Watch,
 }
@@ -508,6 +512,7 @@ impl SessionExt {
             midi_out: extras.midi_out.map(|m| Arc::new(Mutex::new(m))),
             trash: extras.trash.unwrap_or_else(|| Arc::new(os::trash)),
             track_presets: extras.track_presets,
+            presets: extras.presets,
             watch: Default::default(),
         }
     }
@@ -1745,6 +1750,7 @@ impl Extension for SessionExt {
             || reveal::NAMES.contains(&name)
             || crate::preset::NAMES.contains(&name)
             || crate::track_preset::NAMES.contains(&name)
+            || crate::xpreset::NAMES.contains(&name)
             || crate::export_watch::NAMES.contains(&name)
             || crate::midi_export::NAMES.contains(&name)
             || crate::dawproject::NAMES.contains(&name)
@@ -1775,6 +1781,14 @@ impl Extension for SessionExt {
                     .unwrap_or_else(crate::track_preset::dir);
                 let (output, edits) =
                     crate::track_preset::run(&dir, cx.project, &catalog, n, args, dry)?;
+                self.pending.extend(edits);
+                Ok(output)
+            }
+            n if crate::xpreset::NAMES.contains(&n) => {
+                let catalog = self.catalog();
+                let dir = self.presets.clone().unwrap_or_else(crate::xpreset::dir);
+                let (output, edits) =
+                    crate::xpreset::run(&dir, cx.dir, cx.project, &catalog, n, args, dry)?;
                 self.pending.extend(edits);
                 Ok(output)
             }

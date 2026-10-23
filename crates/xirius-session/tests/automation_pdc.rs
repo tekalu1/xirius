@@ -86,6 +86,7 @@ fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek
                 state: None,
                 isolation: PluginIsolation::InProcess,
                 sidechain: None,
+                preset: None,
             });
         }
         let mut lane = AutoLane::new(AutoTarget::Mute);

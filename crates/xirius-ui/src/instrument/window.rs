@@ -68,31 +68,16 @@ fn snap(spec: &ParamSpec, norm: f64) -> f64 {
     }
 }
 
-/// The knobs' values (0..1) of a preset: each sweeping knob moved from its
-/// default by a share of its sweep, every other one the other way; the
-/// stepped ones stay at their defaults.
+/// The knobs' values (0..1) of a preset: `初期` is the defaults, the rest are the
+/// factory presets `xirius-params` ships (PLG-063).
 pub fn preset_values(def: &BuiltinDef, preset: &str) -> Option<Vec<f64>> {
-    let f = match preset {
-        "初期" => 0.0,
-        "やさしく" => -0.18,
-        "強め" => 0.22,
-        "声を前に" => 0.1,
-        _ => return None,
-    };
-    Some(
-        def.params
-            .iter()
-            .enumerate()
-            .map(|(i, p)| {
-                let d = p.default_norm();
-                if p.steps().is_some() {
-                    return d;
-                }
-                let sign = if i % 2 == 1 { -1.0 } else { 1.0 };
-                (d + f * sign).clamp(0.0, 1.0)
-            })
-            .collect(),
-    )
+    if preset == "初期" {
+        return Some(def.params.iter().map(|p| p.default_norm()).collect());
+    }
+    xirius_params::factory_presets(def)
+        .into_iter()
+        .find(|(name, _)| *name == preset)
+        .map(|(_, values)| values)
 }
 
 /// The knobs' values (0..1) of a built-in plugin: what it keeps, else the

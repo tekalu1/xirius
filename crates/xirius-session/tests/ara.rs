@@ -32,6 +32,7 @@ fn song(uid: &str, isolation: PluginIsolation) -> Project {
         state: None,
         isolation,
         sidechain: None,
+        preset: None,
     });
     p.tracks.insert(id, Arc::new(track));
     p.root.push(Node::Track(id));

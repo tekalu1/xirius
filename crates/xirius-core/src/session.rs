@@ -1093,7 +1093,9 @@ impl Session {
                 self.group = None;
             }
             let r = r?;
-            if !r.message.is_empty() {
+            if result.message.is_empty() {
+                result.message = r.message;
+            } else if !r.message.is_empty() {
                 result.message = format!("{}。{}", result.message, r.message);
             }
             if result.data.is_null() {

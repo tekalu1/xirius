@@ -7834,6 +7834,7 @@ area = "PLG"
 phase = "v1.1"
 source = "presets/report.md § 3.2 ; presets/report.md § 3.5 ; presets/report.md § 3.7 ; presets-v3/report.md § 8 ; v3-y-report.md § 1"
 done_when = "機器のプリセットを .xpreset（JSON。format は xirius-preset、version は 1、kind は fx か instrument）で presets/<kind>/ に置く。一覧は機器ごとに 1 つで、Default が先頭、ほかは名前の順。初めて起動したときに内蔵のプリセットをユーザーのフォルダーへ写し、以後は保存したものと同じに上書き・名前の変更・削除ができる。preset.factory.restore（画面では「工場出荷のプリセットを読み込み直す」）は一覧に無い内蔵分だけを足し直す。今の plugin.preset の JSON も読み、読み込みは PRJ-007 の決まりに従う。preset.save --track --kind --of --name・preset.load --track --preset・preset.list --kind --device --query・preset.remove・preset.rename を CLI と MCP（名前は _ 区切り）に置き、save・remove・rename は Guarded、load は 1 段の undo。Studio Pro のプリセットのファイルは読まない"
+status = "done"
 
 [[item]]
 id = "PLG-064"
@@ -8120,7 +8121,7 @@ area = "BRW"
 phase = "v1.1"
 source = "presets/report.md § 3.5 ; v3-y-report.md § 1"
 after = ["PLG-063", "UI-320"]
-done_when = "機器の下にその機器のプリセットを並べ（検索は PickList と同じ決まり）、トラックへのドラッグか Enter で読み込める。タイトルバーの「ブラウザーに表示」でその行が選ばれる。「工場出荷のプリセットを読み込み直す」をブラウザーに置く"
+done_when = "機器の下にその機器のプリセットを並べ（検索は PickList と同じ決まり）、トラックへのドラッグか Enter で読み込める。タイトルバーの「ブラウザーに表示」でその行が選ばれる。「工場出荷のプリセットを読み込み直す」をブラウザーに置く。プリセットの一覧は、更新時刻で無効にするキャッシュを通す"
 
 [[item]]
 id = "BRW-018"
