@@ -865,7 +865,7 @@ impl Studio {
             return;
         }
         self.close_wheel_group();
-        self.song.session_mut().begin_group();
+        self.song.session_mut().begin_turn();
         self.wheel_group = Some(WheelGroup {
             field: key,
             at: now,

@@ -836,3 +836,5 @@ mod tempo_tests;
 mod tests;
 #[cfg(test)]
 mod track_tests;
+#[cfg(test)]
+mod transpose_lag_tests;

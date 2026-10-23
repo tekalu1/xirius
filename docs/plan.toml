@@ -7561,6 +7561,15 @@ status = "partial"
 remaining = "既存の UI-313 の経路で MIDI・オーディオのホイール試験は通るが、実機で値が変わらない症状は未再現・原因未特定。別 PC での確認が必要"
 
 [[item]]
+id = "UI-319"
+title = "クリップのトランスポーズを変えたとき、待たずに効くようにする（ホイールで回しても重くならない）"
+area = "UI"
+phase = "v1"
+source = "transpose-lag-2026-10-23.md § 原因"
+done_when = "トランスポーズの変更が遅延なく反映される。画面の操作（人の編集）は `state_hash` のために曲を丸ごと書き出さず（`Session::hash_people_edits(false)`、AI・CLI・MCP の答えには今のまま付く）、同じ欄を続けて回した分（`Session::begin_turn`）は履歴の 1 つの手順を置き換えて 1 つの手順・1 つの取り消しになり（`--by` は足した値で残す）、裏の書き込みは次の同じ手順で上書きされるものを飛ばす。窓を出さない試験で、インスペクターとクリップのメニューを 12 ノッチ回して手順が 1 つ増え 1 回の取り消しで戻ること・画面の編集の答えに `state_hash` が無く AI の答えには有ること・遅いディスクで 12 回分を 1〜2 回の書き込みで済ませて開き直すと値と取り消しが残ることを確かめ、`transpose_lag_*`（ignored）で 1 ノッチの時間と内訳を測れる"
+status = "done"
+
+[[item]]
 id = "MCP-001"
 title = "画面だけが答えるコマンドを、CLI の MCP の tools/list に出さない（アプリの MCP には出す）。判定はコマンド表の screen_only の印だけで行い、曲を変えるものの readOnlyHint を false にする"
 area = "MCP"

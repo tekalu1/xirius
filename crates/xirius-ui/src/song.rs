@@ -854,6 +854,9 @@ impl Song {
         // An edit returns before its step reaches the disk, so a slow disk does not stop the
         // window (PRJ-022). Songs opened later take the same writer.
         session.write_in_background(true);
+        // The screen does not read `state_hash`: without it an edit does not write the whole
+        // song out twice (UI-319). The AI's edits keep it.
+        session.hash_people_edits(false);
         xirius_prefs::attach(&mut session, settings.clone());
         session.add_extension(Box::new(xirius_session::audio_settings::IoExt {
             io: io.clone(),

@@ -410,7 +410,8 @@ mod tests {
         assert_eq!(bpm(&s), was + 11.0, "Shift: ten");
         assert!(s.bar_wheel(&g, x, y, -1.0, false, true));
         assert!((bpm(&s) - (was + 10.9)).abs() < 1e-9, "Ctrl: a tenth");
-        assert_eq!(s.song.history().len(), before + 3);
+        // The turn is one row of the history (UI-319).
+        assert_eq!(s.song.history().len(), before + 1);
         // Over something else the wheel is not the readout's.
         let (mx, my) = at(&s, &g, BarButton::Meter);
         assert!(!s.bar_wheel(&g, mx, my, 1.0, false, false));

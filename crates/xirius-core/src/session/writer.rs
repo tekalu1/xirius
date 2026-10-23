@@ -11,6 +11,7 @@
 //! A write that fails is kept until [`Session::take_write_errors`] hands it over; one made
 //! on the spot for an edit comes back in the edit's message instead.
 
+use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
 use std::thread::{self, JoinHandle};
@@ -112,6 +113,29 @@ fn run(job: Job) -> CmdResult<()> {
     Ok(())
 }
 
+/// Whether `next`, the job right after `job`, writes over all `job` would: the same state of
+/// the same history again, with the index cut back first (a field turned on, UI-319). Then
+/// `job` need not be written.
+fn replaces(next: &Job, job: &Job) -> bool {
+    match (next, job) {
+        (
+            Job::Step {
+                store: a,
+                before: Some(_),
+                n: m,
+                ..
+            },
+            Job::Step {
+                store: b,
+                n,
+                remove,
+                ..
+            },
+        ) => a.dir == b.dir && a.lane == b.lane && m == n && remove.is_empty(),
+        _ => false,
+    }
+}
+
 fn number(info: &VersionInfo) -> u64 {
     info.id[1..].parse().unwrap_or(0)
 }
@@ -196,7 +220,13 @@ impl Writer {
         let handle = thread::Builder::new()
             .name("xirius-history-writer".into())
             .spawn(move || {
-                for job in rx {
+                let mut queued = VecDeque::new();
+                while let Some(job) = queued.pop_front().or_else(|| rx.recv().ok()) {
+                    queued.extend(rx.try_iter());
+                    if queued.front().is_some_and(|next| replaces(next, &job)) {
+                        shared.finish_one();
+                        continue;
+                    }
                     shared.wait_delay();
                     match catch_unwind(AssertUnwindSafe(|| run(job))) {
                         Ok(Ok(())) => {}

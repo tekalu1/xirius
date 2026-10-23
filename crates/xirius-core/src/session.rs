@@ -425,6 +425,12 @@ pub struct Session {
     /// Set while the edits of a macro run go in: `Some(0)` until the first step is made, then
     /// that step's number.
     group: Option<u64>,
+    /// The group is a turn of one field (a wheel): each step takes the place of the turn's
+    /// last one, so the turn is one step of the history (UI-319).
+    turn: bool,
+    /// Whether a person's edits answer with `state_hash`. The screen's session goes without:
+    /// nobody there reads it, and it is the whole song written out twice for each edit (UI-319).
+    hash_people: bool,
     /// Commands that left no step, for the history's lines (not saved with the song).
     notes: Vec<OpNote>,
     /// The SHA-256 of `project.json` as this session last read or wrote it: the AI writes over
@@ -506,6 +512,8 @@ impl Session {
             ai_work: AiWork::default(),
             extensions: Vec::new(),
             group: None,
+            turn: false,
+            hash_people: true,
             notes: Vec::new(),
             disk_hash: None,
             disk_stamp: None,
@@ -676,6 +684,8 @@ impl Session {
             ai_work: AiWork::default(),
             extensions: Vec::new(),
             group: None,
+            turn: false,
+            hash_people: true,
             notes: Vec::new(),
             disk_hash: None,
             disk_stamp: None,
@@ -854,10 +864,26 @@ impl Session {
     /// the screen runs step by step).
     pub fn begin_group(&mut self) {
         self.group = Some(0);
+        self.turn = false;
+    }
+
+    /// A group of one field turned again and again (a wheel or a drag): each step takes the
+    /// place of the last one the turn made, so the history keeps one step for the whole turn,
+    /// and the disk one state (UI-319). [`Session::end_group`] ends it.
+    pub fn begin_turn(&mut self) {
+        self.group = Some(0);
+        self.turn = true;
     }
 
     pub fn end_group(&mut self) {
         self.group = None;
+        self.turn = false;
+    }
+
+    /// Whether a person's edits answer with `state_hash` (on by default). The screen turns it
+    /// off; the AI's edits keep it, and so does a song opened later in this session.
+    pub fn hash_people_edits(&mut self, on: bool) {
+        self.hash_people = on;
     }
 
     pub fn can_redo(&self) -> bool {
@@ -936,12 +962,13 @@ impl Session {
                 .get(name)
                 .is_some_and(|def| def.risk != Risk::Read)
         {
-            let hashes =
-                json!({"before": before.content_hash(), "after": self.current.content_hash()});
             if !result.data.is_object() {
                 result.data = json!({"value": result.data});
             }
-            result.data["state_hash"] = hashes;
+            if self.hash_people || opts.author.is_ai() {
+                result.data["state_hash"] =
+                    json!({"before": before.content_hash(), "after": self.current.content_hash()});
+            }
         }
         if !Arc::ptr_eq(&before, &self.current) {
             drop(before);
@@ -1313,6 +1340,25 @@ impl Session {
         slim_args(&mut args);
         let mut warnings = Vec::new();
         let new = Arc::new(work);
+        // A turn of one field takes the place of its last step, so the turn is one step of the
+        // history and one state on the disk (UI-319). A relink's step stays: it moves files.
+        if self.turn
+            && let Some(g) = self.group.filter(|g| *g != 0)
+            && self.hist.cursor == self.hist.last()
+            && self.hist.cursor > self.hist.first
+            && command != "clip.relink"
+        {
+            let last = &self.hist.steps[self.hist.rel(self.hist.cursor) - 1];
+            if last.group == g && last.command == command {
+                if let (Some(a), Some(b)) = (
+                    last.args.get("by").and_then(Value::as_i64),
+                    args.get("by").and_then(Value::as_i64),
+                ) {
+                    args["by"] = Value::from(a.saturating_add(b));
+                }
+                self.hist.cursor -= 1;
+            }
+        }
         let base = self.unwritten_base();
         let h = &mut self.hist;
         h.id_floor = h.id_floor.max(new.next_id);
@@ -1971,6 +2017,7 @@ impl Session {
     fn hand_writer_to(&mut self, other: &mut Session) {
         self.writer.flush();
         std::mem::swap(&mut self.writer, &mut other.writer);
+        other.hash_people = self.hash_people;
     }
 
     /// Opens a version as a separate song in a new folder; this session stays
