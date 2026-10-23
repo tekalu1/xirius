@@ -1,0 +1,21 @@
+#!/bin/sh
+# The leak check of a push (LIC-041): gitleaks and the terms of .git/info/sensitive-terms over
+# the commits the push adds. The work is in scripts/pre_push.py (Python's standard library).
+#
+# Install it once per clone (CONTRIBUTING.md, Leaks):
+#
+#     git config core.hooksPath .githooks
+
+root=$(git rev-parse --show-toplevel) || exit 1
+export PYTHONUTF8=1
+
+# `python3` can be the Microsoft Store's stand-in on Windows: take the first that runs.
+for py in python3 python py; do
+    if command -v "$py" >/dev/null 2>&1 &&
+        "$py" -c "import sys; sys.exit(sys.version_info < (3, 8))" >/dev/null 2>&1; then
+        exec "$py" "$root/scripts/pre_push.py" "$@"
+    fi
+done
+
+echo "pre-push: no Python 3 on PATH, so the push was not checked for leaks; it is stopped" >&2
+exit 1

@@ -14,15 +14,18 @@ committer address. Git adds it for you:
 git commit -s -m "UI-012: describe the change"
 ```
 
-To stop forgetting it, install the hook of this repository once per clone; it adds the line to
-every commit message that has none:
+To stop forgetting it, install the hooks of this repository once per clone:
 
 ```sh
-git config core.hooksPath scripts/hooks
+git config core.hooksPath .githooks
 ```
 
-(The hook is `scripts/hooks/commit-msg`; setting `core.hooksPath` means `.git/hooks` is no
-longer read in that clone. `git commit -s` and the hook together leave one line, not two.)
+- `.githooks/commit-msg` adds the line to every commit message that has none. `git commit -s`
+  and the hook together leave one line, not two.
+- `.githooks/pre-push` looks for leaks in the commits being pushed (see below) and stops the
+  push when it finds one.
+
+Setting `core.hooksPath` means `.git/hooks` is no longer read in that clone.
 
 The line certifies the Developer Certificate of Origin, version 1.1:
 
@@ -80,6 +83,27 @@ pull request adds. `python scripts/test_dco.py` tests the check itself.
 The sign-off is required: a pull request with a commit that is not signed off is not merged.
 Commits made in GitHub's web editor are signed off too (the repository asks for it), so
 the check passes on them.
+
+## Leaks
+
+The repository is public, and so is every commit pushed to it. Two checks look for secrets
+before they get there:
+
+- **On your PC**, `.githooks/pre-push` (run by `scripts/pre_push.py`, Python's standard library
+  only) looks at the commits the push would add that no remote has yet:
+  - [gitleaks](https://github.com/gitleaks/gitleaks) over those commits, with `.gitleaks.toml`.
+    When `gitleaks` is not on `PATH`, the hook says so and goes on without it.
+  - The terms in `.git/info/sensitive-terms`, a file of your own that is never committed: one
+    term per line, `#` starts a comment, case does not matter. Names, addresses, host names or
+    paths that must not leave your PC go there. The hook looks for them in the added lines
+    and the file paths, the commit messages, the author and committer of each commit, the
+    messages of annotated tags and the names of the refs.
+
+  Any hit stops the push and names the commit and the file. Remove the term from the commits
+  (amend or rebase) and push again. `git push --no-verify` skips the hook; don't, unless the
+  hit is wrong.
+- **On GitHub**, the `gitleaks` job of the `rust` workflow scans the whole history on every
+  push and pull request, with gitleaks's own release pinned by version and SHA-256.
 
 ## Before sending a change
 

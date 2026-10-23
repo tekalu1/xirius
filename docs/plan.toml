@@ -6367,6 +6367,15 @@ source = "public-release-readiness.md § 2-1 ; § 5-1 ; § 6 段 2 #15"
 done_when = ".gitignore が /00-work/ を無視し、scripts/public-export.toml が CLAUDE.md・AGENTS.md・docs/plugin-test-matrix.md と AI への指示の文書を除外し、公開に出る README・CONTRIBUTING・docs にそれらへのリンクが無く、試しの書き出しにそのファイルが無い"
 status = "done"
 
+[[item]]
+id = "LIC-041"
+title = "漏れを push と CI で止める: .githooks/pre-push が出ていく commit を gitleaks と .git/info/sensitive-terms で調べ、rust.yml に版と SHA-256 を固定した gitleaks の job を置く"
+area = "LIC"
+phase = "v1"
+source = "public-release-readiness.md § 1-1"
+done_when = ".githooks/pre-push（scripts/pre_push.py）が push で増える commit の差分・パス・メッセージ・名乗り・注釈付きタグ・ref の名前を .git/info/sensitive-terms の語で調べ、gitleaks があれば同じ範囲を調べ（無ければ警告して続け）、当たれば push を止め、Windows の Git Bash で動き、commit-msg と一緒に .githooks に置かれ（core.hooksPath .githooks）、rust.yml の gitleaks の job が push と PR で履歴全体を調べ、scripts/test_pre_push.py が通る"
+status = "done"
+
 [[dropped]]
 id = "DROP-01"
 title = "トラックレイヤー（テイクと別の概念）"
