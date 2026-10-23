@@ -6377,6 +6377,15 @@ done_when = "release.yml が v* のタグで build・ci-gate・sign・publish �
 status = "done"
 
 [[item]]
+id = "LIC-040"
+title = "更新の確かめが pre-release を知らせるのを app.update.beta が入のときだけにする: 確かめに失敗したときに別の側の答えを使わない"
+area = "LIC"
+phase = "v1"
+source = "public-release-readiness.md § 4-1"
+done_when = "crates/xirius-session/src/update.rs の at_launch が app.update.beta が切のときは pre-release を返さず、確かめに失敗したときは同じ側（beta か否か）で取っておいた答えだけを使い、入と切・新しい正式版・オフラインで切り替えたときの単体の試験が通る"
+status = "done"
+
+[[item]]
 id = "LIC-041"
 title = "漏れを push と CI で止める: .githooks/pre-push が出ていく commit を gitleaks と .git/info/sensitive-terms で調べ、rust.yml に版と SHA-256 を固定した gitleaks の job を置く"
 area = "LIC"

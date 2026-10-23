@@ -577,7 +577,8 @@ impl UpdateCheck {
 
     /// What a launch does: asks when `enabled` and no answer is a day old (a failure is said
     /// nowhere), and gives the release newer than `current` that is known. Off, it asks nothing
-    /// and shows nothing.
+    /// and shows nothing. A pre-release is given only when `beta` (LIC-040): when the ask fails,
+    /// an answer kept for the other channel is not used.
     pub fn at_launch(
         &self,
         enabled: bool,
@@ -589,11 +590,15 @@ impl UpdateCheck {
             return None;
         }
         let checked = if self.due(now_ms, beta) {
-            self.ask(now_ms, beta).ok().or_else(|| self.stored())
+            self.ask(now_ms, beta)
+                .ok()
+                .or_else(|| self.stored().filter(|c| c.beta == beta))
         } else {
             self.stored()
         };
-        checked.and_then(|c| c.newer_than(current).cloned())
+        checked
+            .and_then(|c| c.newer_than(current).cloned())
+            .filter(|r| beta || !r.prerelease)
     }
 }
 
@@ -1578,6 +1583,60 @@ mod tests {
         assert_eq!(urls.lock().unwrap()[2], RELEASES);
         // The same version as this one: nothing to show.
         assert!(check.at_launch(true, false, t0 + DAY_MS, "1.0.1").is_none());
+    }
+
+    /// Only a window with `app.update.beta` on is told of a pre-release (LIC-040).
+    #[test]
+    fn a_pre_release_is_shown_only_with_the_beta_pref_on() {
+        const NEWER_STABLE: &str = r#"[
+            {"tag_name": "v1.2.0-beta.2", "html_url": "https://example.test/beta2", "body": "", "prerelease": true},
+            {"tag_name": "v1.2.0", "html_url": "https://example.test/stable", "body": "", "prerelease": false}
+        ]"#;
+        let t0 = 1_000_000_000_000;
+
+        // On: the list is read and its highest version, a pre-release here, is shown and kept.
+        let tmp = scratch("beta-on");
+        let (fetch, _, urls) = stub(Ok(LIST));
+        let check = UpdateCheck::in_dir(tmp.path(), fetch);
+        let r = check.at_launch(true, true, t0, "1.0.0").unwrap();
+        assert_eq!((r.version.as_str(), r.prerelease), ("1.2.0-beta.2", true));
+        assert_eq!(urls.lock().unwrap().as_slice(), [RELEASES]);
+        let kept = check.stored().unwrap();
+        assert!(kept.beta);
+
+        // Off: only the latest release is read, which GitHub never makes a pre-release.
+        let tmp = scratch("beta-off");
+        let (fetch, _, urls) = stub(Ok(ANSWER));
+        let check = UpdateCheck::in_dir(tmp.path(), fetch);
+        let r = check.at_launch(true, false, t0, "1.0.0").unwrap();
+        assert!(!r.prerelease);
+        assert_eq!(urls.lock().unwrap().as_slice(), [LATEST]);
+
+        // On, with a stable release newer than every pre-release: the stable one.
+        let tmp = scratch("beta-stable");
+        let (fetch, _, _) = stub(Ok(NEWER_STABLE));
+        let check = UpdateCheck::in_dir(tmp.path(), fetch);
+        let r = check.at_launch(true, true, t0, "1.0.0").unwrap();
+        assert_eq!((r.version.as_str(), r.prerelease), ("1.2.0", false));
+
+        // Turned off after a beta answer was kept, and offline: the kept pre-release is not
+        // shown (it was the other channel's answer).
+        let tmp = scratch("beta-turned-off");
+        let (fetch, _, _) = stub(Ok(LIST));
+        UpdateCheck::in_dir(tmp.path(), fetch)
+            .at_launch(true, true, t0, "1.0.0")
+            .unwrap();
+        let (offline, asked, _) = stub(Err("could not resolve host"));
+        let check = UpdateCheck::in_dir(tmp.path(), offline);
+        assert!(check.at_launch(true, false, t0 + 1, "1.0.0").is_none());
+        assert_eq!(
+            asked.load(Ordering::SeqCst),
+            1,
+            "the channel changed, so it asked"
+        );
+        // Turned on again, still offline: the kept beta answer is this channel's and is used.
+        let r = check.at_launch(true, true, t0 + 2, "1.0.0").unwrap();
+        assert_eq!(r.version, "1.2.0-beta.2");
     }
 
     #[test]
