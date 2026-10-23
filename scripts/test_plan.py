@@ -110,6 +110,27 @@ class CheckTests(unittest.TestCase):
         errs = ps.check(p, self.rd)
         self.assertTrue(any("decided is missing or empty" in e for e in errs), errs)
 
+    def test_after(self):
+        p = mini_plan()
+        p["item"][1]["after"] = ["UI-001"]
+        p["item"][2]["after"] = ["UI-001", "UI-002"]
+        self.assertEqual(ps.check(p, self.rd), [])
+        p["item"][0]["after"] = ["ENG-001"]
+        errs = ps.check(p, self.rd)
+        self.assertTrue(any("after loops" in e for e in errs), errs)
+
+    def test_after_names_items_only(self):
+        p = mini_plan()
+        p["item"][0]["after"] = ["UI-009", "DROP-01", "UI-001"]
+        p["item"][1]["after"] = []
+        p["item"][2]["after"] = "UI-001"
+        errs = ps.check(p, self.rd)
+        self.assertIn("item UI-001: after names UI-009, which is not an [[item]]", errs)
+        self.assertIn("item UI-001: after names DROP-01, which is not an [[item]]", errs)
+        self.assertIn("item UI-001: after names the item itself", errs)
+        self.assertIn("item UI-002: after must be a non-empty list of item ids", errs)
+        self.assertIn("item ENG-001: after must be a non-empty list of item ids", errs)
+
     def test_local_archive_checks_each_source_of_dropped_and_open_entries(self):
         p = mini_plan()
         p["dropped"][0]["source"] = "reports/a.md § 1 ; reports/missing.md § 2"
@@ -143,6 +164,12 @@ class StatusTests(unittest.TestCase):
         self.assertIn("## スパイク の残り（1）", text)
         self.assertIn("- [未着手] ENG-001 三つ目\n", text)
         self.assertNotIn("UI-001", text)
+
+    def test_report_open_list_names_unfinished_after(self):
+        p = with_status()
+        p["item"][2]["after"] = ["UI-001", "UI-002"]
+        text = ps.status_report(p, open_list=True)
+        self.assertIn("- [未着手] ENG-001 三つ目（先に UI-002）\n", text)
 
     def test_report_filters(self):
         text = ps.status_report(with_status(), phase="mvp", open_list=True)

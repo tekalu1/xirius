@@ -2339,7 +2339,7 @@ title = "トラックのプリセットとして保存"
 area = "MIX"
 phase = "v1"
 source = "mockups/context-matrix.md § 4/S06 ; mockups/daw-plan.html § 機能のマトリクス/プラグイン"
-done_when = "track.preset.save で保存し、プリセットとして適用できる（マクロのつまみ・FX チェーンの代わり）"
+done_when = "track.preset.save で保存し、プリセットとして適用できる"
 status = "done"
 
 [[item]]
@@ -6527,12 +6527,6 @@ reason = "クリップに挿せるのは ARA だけ。エフェクトはトラ�
 source = "mockups/context-matrix.md § 5"
 
 [[dropped]]
-id = "DROP-20"
-title = "マクロのつまみ・FX チェーン"
-reason = "トラックのプリセットにまとめる"
-source = "mockups/context-matrix.md § 5"
-
-[[dropped]]
 id = "DROP-21"
 title = "SampleOne・Impact へ送る"
 reason = "内蔵の音源の群は捨てる。内蔵の Sampler・Drum Kit へはドラッグで"
@@ -7647,3 +7641,475 @@ phase = "v1"
 source = "impl-17-cli-mcp-bugs-report.md § B-10"
 done_when = "空でないフォルダーへの project.save-as は error[conflict] のまま「… は空のフォルダーではありません。空のフォルダーか、まだ無いフォルダーを指定してください」と次の手を言い、上書きの選択肢は足さない。crates/xirius-core/tests/save_as_conflict.rs で、直す前のコードで落ちることを確かめる"
 status = "done"
+
+[[item]]
+id = "UI-320"
+title = "一覧を検索付きの共通の部品（PickList）で作り、ほかの作り方をできなくする"
+area = "UI"
+phase = "v1.1"
+source = "presets-v3/report.md § 9 ; v3-y-report.md § 3"
+done_when = "xirius-ui に一覧の部品 PickList を 1 つ置き、一覧のメニューを作る API はそれだけにする。頭に検索の欄（開くとフォーカスが入る）があり、名前で大文字・小文字を区別せず絞り込み、当たりの無い組見出しは隠し、↑↓ で選んで Enter で決め、Esc はまず語を消してもう一度で閉じ、当たりが無いと行を隠して「一致する…はありません」（UIA の status）を出す。検索の欄は一覧の外にあり、一覧を描き直しても入力とフォーカスが残る。高さは 480 と画面の端までで縮み、欄の下だけスクロールする。一覧の下の操作の段（プリセットの保存など）は絞り込みに掛からない。＋の追加の一覧（インサート・インストゥルメント）、インストゥルメントのメニュー、ストリップの入力・出力の行き先をこの部品に移し、後から足す一覧（プリセット・サイドチェーンの送り元・スプリッターのモード・X/Y パッドの軸）もこの部品で作る。一覧を開く試験で検索の欄・↑↓ Enter・Esc の 2 段・当たり無しの表示を数え、docs/design-rules.md の表に「一覧系は検索付きの共通部品（PickList）で作る | 一覧を作る API は PickList だけ | 一覧を開く試験で検索の欄・↑↓ Enter・Esc の 2 段を数える | —」の 1 行を足す"
+
+[[item]]
+id = "UI-321"
+title = "構造線を曲線へ広げる（四分円の曲がりだけ）"
+area = "UI"
+phase = "v1.1"
+source = "presets-v3/report.md § 4"
+done_when = "StructureLine が曲がりを持てる。曲がりは四分円だけで半径 Radius::S（8）、端は END_INSET（8）手前で止め、ストリップの 22 の行の中だけ端の離れを Space::X1（4）にする。点・矢印は描かず、分岐は括弧の形で束ねる。色は line_structure・hover・selected だけで、Pen の paint_path で描く。docs/design-rules.md の StructureLine の項と表の行に曲線の決まりを足し、structure の単体テストで四分円でない曲がりと端の離れを検査する"
+
+[[item]]
+id = "UI-322"
+title = "内蔵の機器の窓に共通のタイトルバーを置く"
+area = "UI"
+phase = "v1.1"
+source = "presets-v2/report.md § 1 ; devices-v2/report.md § 5 ; devices-v2/report.md § 6 ; v2-align-report.md § 揃えたこと"
+done_when = "内蔵の機器の窓のタイトルバーを 1 つの部品にする。高さ 36・ボタン 28・アイコン 16。左から電源（入は ok の色）、種類のアイコン（ins・piano・route）と「トラック › 機器」、プリセットの札「‹ ▾ 名前 ›」（高さ 28・s2 の面・値を変えると mark の色の点）、ドラッグできる空き、サイドチェーンの部品の席（受ける機器だけ。ほかは幅 0）、CE のボタン（route のアイコン）、ピン、閉じる。幅 380 未満では ‹ › を隠して名前を省略する。窓の中の語は Studio Pro の英語、窓の外は日本語で、呼び名はサイドチェーン。撮影の試験で 1280 と 360 のどちらでもボタンが窓に収まる"
+
+[[item]]
+id = "UI-323"
+title = "機器の窓と CE の窓をピンで留め、留めていない窓は中身を替える"
+area = "UI"
+phase = "v1.1"
+source = "presets-v2/report.md § 2 ; presets-v3/report.md § 7"
+after = ["UI-322"]
+done_when = "タイトルバーのピン（押した姿は primary と on_fill）で窓を留められる。留めていない窓は別の機器を開くと中身が替わり、留めた窓は残って次の機器は 28 ずらした新しい窓に出る。もう開いている機器を開くとその窓を前に出して目立たせる。留めていない窓が 2 つ以上あるときは最後に使った窓を替える。機器の窓と CE の窓は、留めていない窓をそれぞれ 1 つ持つ。UI-068 の「窓をいくつでも開ける」はこの決まりに置き換える。試験で開く・留める・替わるの組を確かめる"
+
+[[item]]
+id = "UI-324"
+title = "機器の窓のつまみと操作を共通の部品にする"
+area = "UI"
+phase = "v1.1"
+source = "devices/report.md § 4.1"
+done_when = "つまみは縦のドラッグ（Shift で 0.25 倍）・ホイール・ダブルクリックで打ち込み（「2k」「-3」「50%」「1/8」を読み、Enter で決めて Esc で戻す）・Alt+クリックか Delete で既定に戻す・右クリックで「既定に戻す」「オートメーションを表示」「MIDI 学習」・Tab と矢印・PgUp/PgDn・Home/End で扱える。5 つ以下の選択は区切りのボタン、オン・オフはボタンにする。どの部品も UIA の名前と値を持つ。ドラッグの間は表示と音だけを変え、離したときに plugin.param.set を 1 回だけ出す（undo は 1 段）。試験で打ち込みの読みと、ドラッグ 1 回で param.set が 1 回なことを確かめる"
+
+[[item]]
+id = "UI-325"
+title = "機器の窓のグラフを共通の部品にする"
+area = "UI"
+phase = "v1.1"
+source = "devices/report.md § 4.1 ; devices/report.md § 4.2"
+after = ["UI-324"]
+done_when = "曲線は Pen の paint_path で描いて形が変わるまで写しを使い、点は見た目 12・当たり 24 で UIA の slider を持ち、目盛りは細い線を引かずに描く。6 つの帯の EQ の点をドラッグしている間、フレームの時間の p99 が 16.7 ms 以下"
+
+[[item]]
+id = "UI-326"
+title = "EQ の窓を帯ごとのつまみの列とアナライザー付きのグラフにする"
+area = "UI"
+phase = "v1.1"
+source = "devices/report.md § 4.3 ; devices-v2/report.md § 1 ; devices-v2/report.md § 6"
+after = ["UI-322", "UI-325", "ENG-073", "PLG-062"]
+done_when = "グラフは残し、値の箱を帯ごとのつまみの列にする（幅 420 では帯ごとのタブ）。帯の名前は LC・LF・LMF・HMF・HF・HC。曲線は Coefs::response_db と 64 点で 0.01 dB 以内に合う。アナライザーは既定で Output を出し、1 kHz の試験の音のピークが 1/6 オクターブ以内に出る"
+
+[[item]]
+id = "UI-327"
+title = "Compressor の窓に入出力の曲線・履歴・メーターを出す"
+area = "UI"
+phase = "v1.1"
+source = "devices/report.md § 4.3 ; devices-v2/report.md § 1 ; devices-v2/report.md § 6"
+after = ["UI-322", "UI-325", "ENG-072"]
+done_when = "メイクアップを除いた入出力の曲線、4 秒の履歴、In・GR・Out のメーターを出す。値は ENG-072 の見張りから取り、窓を閉じると見張りを止める"
+
+[[item]]
+id = "UI-328"
+title = "Limiter の窓に履歴と Ceiling・Gain の点を出す"
+area = "UI"
+phase = "v1.1"
+source = "devices/report.md § 4.3 ; devices-v2/report.md § 1 ; devices-v2/report.md § 6"
+after = ["UI-322", "UI-325", "ENG-072"]
+done_when = "5 秒の履歴の上に Ceiling と Gain の点を置いてドラッグでき、Ceiling の点の右クリックで -0.1・-0.3・-1.0 dB を選べる。ピークはサンプルピークで出す"
+
+[[item]]
+id = "UI-329"
+title = "Delay の窓にタップの帯と 1 つの帯のフィルターを出す"
+area = "UI"
+phase = "v1.1"
+source = "devices/report.md § 4.3 ; devices-v2/report.md § 1 ; devices-v2/report.md § 6"
+after = ["UI-322", "UI-325", "ENG-072"]
+done_when = "タップの帯の 1 本目で Time・Beats、2 本目で Feedback を動かせる。Beats は 1 つの箱で「1/8・1/8 D・1/8 T」のように選び、Feel のパラメーターは残す。Low Cut と High Cut は 1 つの帯の両端で動かす。打ちごとに帯が光る（ENG-072 の打ちの数）"
+
+[[item]]
+id = "UI-330"
+title = "Reverb の窓に減衰のグラフを出す"
+area = "UI"
+phase = "v1.1"
+source = "devices/report.md § 4.3 ; devices-v2/report.md § 1 ; devices-v2/report.md § 6"
+after = ["UI-322", "UI-325", "ENG-072"]
+done_when = "減衰のグラフをパラメーターの数式から描き、-60 dB に落ちる時間がインパルスの試験の実測と 10 % 以内で合う"
+
+[[item]]
+id = "UI-331"
+title = "内蔵の機器の窓の大きさを変えられるようにする"
+area = "UI"
+phase = "v1.1"
+source = "devices/report.md § 4.1"
+after = ["UI-322", "UI-325"]
+done_when = "窓を広げると主のグラフ（曲線・波形・パッド）が育ち、つまみなどの部品は同じ大きさのまま。大きさは機器の種類ごとに覚え、次に開いたときに戻る"
+
+[[item]]
+id = "UI-332"
+title = "タイトルバーのプリセットの札から一覧・保存・送りを扱う"
+area = "UI"
+phase = "v1.1"
+source = "presets-v3/report.md § 8 ; v3-y-report.md § 1"
+after = ["UI-320", "UI-322", "PLG-063"]
+done_when = "▾ は PickList で機器のプリセットの一覧（Default が先頭、ほかは名前の順。内蔵と保存したものを分けない）を開き、その下に絞り込みに掛からない段「上書き保存 ／ 名前を付けて保存… ／ ブラウザーに表示」を線ではなく 8 の空きで分けて置く。上書き保存は Default 以外で値を変えたときだけ押せる。‹ › は同じ並びを送る。値を変えると札に mark の色の点が出て、保存か読み込みで消える"
+
+[[item]]
+id = "UI-333"
+title = "Sampler の窓をサンプルのゾーンと波形の画面にする"
+area = "UI"
+phase = "v1.1"
+source = "devices-v2/report.md § 1 ; devices-v2/report.md § 3 ; devices-v2/report.md § 6"
+after = ["UI-322", "UI-324", "UI-325", "PLG-066", "PLG-067"]
+done_when = "空のときは「Drop samples here」と Browse を出し、ファイルやフォルダーを落とすとゾーンができる。波形の上で Start・End・Loop・Loop Start・Loop End・X-Fade・Reverse・Normalize を扱い、Env・Filter（LP・BP・HP、Cutoff・Res・Drive）・Amp（Transpose・Tune・Gain・Pan・Vel）を楽器に 1 組出す。フォルダーの前後のサンプルへ送れる。波形・Env・Filter・Amp の部品は Drum Kit の窓と同じものを使う"
+
+[[item]]
+id = "UI-334"
+title = "Drum Kit の窓をバンクとパッドとレイヤーの帯の画面にする"
+area = "UI"
+phase = "v1.1"
+source = "devices-v2/report.md § 1 ; devices-v2/report.md § 3 ; devices-v2/report.md § 6"
+after = ["UI-333", "PLG-068"]
+done_when = "バンク A〜H × 16 のパッド（1 番は左下）を出し、パッドを選ぶと Sampler と同じ声の部品が出る。レイヤーの帯は境目をドラッグで動かせる。Trigger・Choke・Mute・Solo を出し、Output はミキサーが複数の出力を受けられるまで出さない。フォルダーを落とすとパッドに並べ（Shift でレイヤーにする）、ドラッグの間「21 パッド、A1–B5」のような見込みを出す"
+
+[[item]]
+id = "UI-335"
+title = "音名を C3 = 60 に揃える"
+area = "UI"
+phase = "v1.1"
+source = "devices-v2/report.md § 8 ; v2-align-report.md § 揃えたこと"
+done_when = "ピアノロール・鍵盤・Sampler・Drum Kit・マルチの鍵盤の範囲とコマンドの入出力で、音名を C3 = 60 にする（今の pitch_name は C4 = 60）。コマンドは「C3」のような音名を受け、数での指定は変わらない。試験で 60 が C3、0 が C-2、127 が G8 になる"
+
+[[item]]
+id = "UI-336"
+title = "受ける機器のタイトルバーにサイドチェーンの部品と送り元の一覧を置く"
+area = "UI"
+phase = "v1.1"
+source = "sidechain/report.md § 設計 ; v3-y-report.md § 2 ; v3-y-report.md § 3 ; presets-v3/report.md § 9"
+after = ["UI-320", "UI-322", "MIX-047", "ENG-078"]
+done_when = "受ける機器のタイトルバーに .scsel（高さ 28）を置く: オン・オフ、送り元の名前（2 つ以上は「Kick +1」）、▾。▾ は PickList で送り元の一覧（トラック・バスの組、行ごとにセンドの印と pre・post）を開き、印を付けた行に量のスライダー（-60〜+6 dB、ミキサーのセンドの行と同じ値）を出す。一覧は複数を選ぶ間は開いたまま。輪になる行は灰色にしてループの印だけを付け、説明は出さない。送り元があってオフのときは idle の印。色は mark（マクロの割り当てと同じ）。アイコン pre・post・sc を 24 のグリッド・1.6 の線で足す。どの変更も 1 段の undo"
+
+[[item]]
+id = "UI-337"
+title = "外部プラグインの窓にも共通のタイトルバーとピン留めを付ける"
+area = "UI"
+phase = "later"
+source = "presets-v2/report.md § 1"
+after = ["UI-322", "UI-323"]
+done_when = "VST3・CLAP の窓の上に共通のタイトルバー（電源・プリセット・CE・ピン・閉じる）を付け、プラグインの描く面をその下に置く。ピン留めの決まりが内蔵の窓と同じに効く"
+
+[[item]]
+id = "PLG-061"
+title = "ParamSpec::text で、丸めた後の値で単位と桁を選ぶ"
+area = "PLG"
+phase = "v1"
+source = "devices/report.md § 1.2"
+done_when = "999.6 Hz は「1.00 kHz」、9999.96 Hz は「10.0 kHz」、999.6 ms は「1.00 s」、99.96 ms は「100 ms」、9.996 ms は「10.0 ms」、-0.04 dB は「0.0 dB」と書く。この 6 つを単体テストにし、直す前のコードで落ちることを確かめる"
+
+[[item]]
+id = "PLG-062"
+title = "EQ に帯ごとの型・オン・Q・傾きのパラメーターを足す"
+area = "PLG"
+phase = "v1.1"
+source = "devices/report.md § 4.3 ; devices-v2/report.md § 6"
+done_when = "今の 17 の id は変えずに後ろへ足し、既定の値で今の音とビットまで同じ。帯 1・2 は LC・LowShelf・Bell・Notch、帯 3・4 は 6 つの型すべて、帯 5・6 は Bell・Notch・HighShelf・HC から選び、帯ごとに on・Q・slope を持つ。古い曲とプリセットは今の音のまま開く"
+
+[[item]]
+id = "PLG-063"
+title = "機器のプリセットを .xpreset で 1 つの一覧に置き、preset.* のコマンドで扱う"
+area = "PLG"
+phase = "v1.1"
+source = "presets/report.md § 3.2 ; presets/report.md § 3.5 ; presets/report.md § 3.7 ; presets-v3/report.md § 8 ; v3-y-report.md § 1"
+done_when = "機器のプリセットを .xpreset（JSON。format は xirius-preset、version は 1、kind は fx か instrument）で presets/<kind>/ に置く。一覧は機器ごとに 1 つで、Default が先頭、ほかは名前の順。初めて起動したときに内蔵のプリセットをユーザーのフォルダーへ写し、以後は保存したものと同じに上書き・名前の変更・削除ができる。preset.factory.restore（画面では「工場出荷のプリセットを読み込み直す」）は一覧に無い内蔵分だけを足し直す。今の plugin.preset の JSON も読み、読み込みは PRJ-007 の決まりに従う。preset.save --track --kind --of --name・preset.load --track --preset・preset.list --kind --device --query・preset.remove・preset.rename を CLI と MCP（名前は _ 区切り）に置き、save・remove・rename は Guarded、load は 1 段の undo。Studio Pro のプリセットのファイルは読まない"
+
+[[item]]
+id = "PLG-064"
+title = "内蔵のプリセットを日本語の名前の組に入れ替え、初めの名前を Default にする"
+area = "PLG"
+phase = "v1.1"
+source = "devices-v2/report.md § 2 ; devices-v2/report.md § 6 ; v2-align-report.md § 揃えたこと"
+after = ["PLG-063"]
+done_when = "EQ は Default（今の「初期」）・ボーカルを明るく・低域を締める・電話の声、Compressor はボーカルを整える・ドラムをまとめる・並列で太く、Limiter はマスターの仕上げ・配信の音量、Delay は 4 分のピンポン・スラップバック・3 連の広がり、Reverb は小さい部屋・ホール・ボーカルのプレート、Sampler と Drum Kit は Default（空）だけにする。やさしく・強め・声を前に と「カスタム」の表示は消す。足したばかりの機器のプリセットは Default"
+
+[[item]]
+id = "PLG-065"
+title = "FX チェーン・インストゥルメント + FX・マルチのプリセットと、ラック入りのトラックプリセットを扱う"
+area = "PLG"
+phase = "v1.1"
+source = "presets/report.md § 3.1 ; presets/report.md § 3.2 ; presets/report.md § 3.5 ; presets/report.md § 3.7"
+after = ["PLG-063", "PRJ-026", "ENG-075", "MIX-039"]
+done_when = "kind が fx-chain・instrument-fx・multi-instrument のプリセットと、ラックとマクロを含むトラックプリセット v2 を保存・読み込みできる。機器は ref で指し、読むと id を振り直す。無いプラグインは空の席にしてその割り当てを外す。マルチの中にマルチは入れず、FX チェーンの入れ子は 4 段まで。保存は範囲の中の割り当てだけを残して「n 件の割り当てを除きました」と言う。インストゥルメント + FX・マルチ・トラックのプリセットを読むとマクロを置き換え、FX チェーンを読むとぶつかるマクロの番号を空きへ移して知らせる。preset.load の --at（track・after:<id>・branch:<id>:<index>）と --replace が効き、読み込みは 1 段の undo。MIX-030 の古いトラックプリセットも読める"
+
+[[item]]
+id = "PLG-066"
+title = "Sampler の鍵盤と Drum Kit のパッドを窓から鳴らす"
+area = "PLG"
+phase = "v1.1"
+source = "devices-v2/report.md § 3"
+done_when = "窓の鍵盤やパッドを押すと、トラックの入力と同じ道で音が鳴る（録音はしない）。窓を閉じたときや押したまま外へ出たときに note-off を出す。試験で押す・離す・閉じるの後に鳴っている声が 0"
+
+[[item]]
+id = "PLG-067"
+title = "Sampler を合成の音から、読み込んだサンプルのゾーンで鳴らす形にする"
+area = "PLG"
+phase = "v1.1"
+source = "devices-v2/report.md § 1 ; devices-v2/report.md § 3"
+after = ["ENG-077"]
+done_when = "合成の音と sound のパラメーターを外し、ゾーンごとの Start・End・Loop（Loop Start・Loop End・X-Fade）・Reverse・Normalize と、楽器に 1 組の Env・Filter（LP・BP・HP、Cutoff・Res・Drive）・Amp（Transpose・Tune・Gain・Pan・Vel）で鳴らす。古い曲の sound の値は PLG-016 の決まりで Default に落ちる。plugin.param.set と曲の保存・読み込みで全部の値が戻る。声の処理は Drum Kit と共有する"
+
+[[item]]
+id = "PLG-068"
+title = "Drum Kit をバンクとパッドとサンプルのレイヤーで作り直す"
+area = "PLG"
+phase = "v1.1"
+source = "devices-v2/report.md § 3 ; devices-v2/report.md § 4"
+after = ["PLG-067"]
+done_when = "バンク A〜H × 16 のパッドで、パッドごとに Sampler と同じ声を持つ。レイヤーは Velocity と Round Robin、Trigger は One Shot（既定）・Loop・Normal・Toggle、Choke は None・Self・1〜32、パッドごとに Mute・Solo。フォルダーを落とすとファイルをパッドに並べ、名前の _v<n> はベロシティのレイヤー、_rr<n> はラウンドロビンにする。古い曲の Drum Kit は PLG-016 の決まりで開く"
+
+[[item]]
+id = "PLG-069"
+title = "Drum Kit に Random・Stack のレイヤー、パッドの出力、ループのスライスを足す"
+area = "PLG"
+phase = "later"
+source = "devices-v2/report.md § 3 ; devices-v2/report.md § 8"
+after = ["PLG-068"]
+done_when = "レイヤーに Random と Stack を足し、ミキサーが複数の出力を受けられるようになったらパッドの Output（Main・St 2〜16・Mono 1〜16）を出し、ループをスライスしてパッドに並べられる"
+
+[[item]]
+id = "PLG-070"
+title = "サンプル入りの内蔵のプリセットの組を同梱する"
+area = "PLG"
+phase = "later"
+source = "devices-v2/report.md § 2 ; devices-v2/report.md § 8"
+after = ["PLG-068"]
+done_when = "ライセンスを確かめたサンプルで Sampler と Drum Kit の内蔵のプリセットを作って同梱し、docs/licenses.md の禁止に当たらないことと出典を書く"
+
+[[item]]
+id = "PLG-071"
+title = "Compressor でサイドチェーンのキーを受ける"
+area = "PLG"
+phase = "v1.1"
+source = "sidechain/report.md § どこで受けるか ; devices-v2/report.md § 6"
+after = ["ENG-078"]
+done_when = "今の id は変えずに後ろへ Ext・Side Gain・Filter（Low Cut・High Cut、48 dB/oct は biquad 4 段、Swap）・Listen を足す。キーが無いときと Ext が切のときは今の音とビットまで同じ。試験でキーの拍ごとに GR が振れる"
+
+[[item]]
+id = "PLG-072"
+title = "Limiter に Int・Ext を足し、サイドチェーンのキーで検出する"
+area = "PLG"
+phase = "v1.1"
+source = "sidechain/report.md § どこで受けるか"
+after = ["PLG-071"]
+done_when = "Ext でキーから検出し、キーがあっても出力は Ceiling を超えない。Filter と Listen は持たない"
+
+[[item]]
+id = "PLG-073"
+title = "外部プラグインへサイドチェーンのキーを渡す"
+area = "PLG"
+phase = "later"
+source = "sidechain/report.md § エンジンの変更の大きさと段階"
+after = ["ENG-078"]
+done_when = "VST3 の kAux のバス、CLAP の main でない入力のポートへキーを渡す。サンドボックスとの間の輪のバッファーを 4 ch に広げ、プロトコルの版を上げる"
+
+[[item]]
+id = "PLG-074"
+title = "内蔵の機器に Gate を足す"
+area = "PLG"
+phase = "later"
+source = "sidechain/report.md § どこで受けるか"
+after = ["PLG-071"]
+done_when = "Gate を内蔵の機器に足し、サイドチェーンのキーで開け閉めできる（Ext・Filter・Listen は Compressor と同じ部品）"
+
+[[item]]
+id = "ENG-072"
+title = "内蔵の機器の GR・ピーク・打ちを、見ているときだけ画面へ出す"
+area = "ENG"
+phase = "v1.1"
+source = "devices/report.md § 4.2"
+done_when = "StockHandle に GR・入出力のピーク・打ちの数のアトミックの値を置き、窓かミキサーの GR が見ているときだけ書く。音の線では確保もロックもしない。試験で GR が reduction() と 0.1 dB 以内、Limiter の出力が Ceiling を超えない"
+
+[[item]]
+id = "ENG-073"
+title = "EQ のアナライザーへ音を渡す輪を置く"
+area = "ENG"
+phase = "v1.1"
+source = "devices/report.md § 4.2"
+done_when = "EQ が 2048 サンプルの SPSC の輪（rtrb）にサンプルを書き、満ちていたら捨てる。画面は 30 Hz で Hann の FFT を取り、1/6 オクターブでならす。1 kHz の試験の音のピークが 1/6 オクターブ以内に出る"
+
+[[item]]
+id = "ENG-074"
+title = "スプリッター（ノーマル）で FX を分岐させて鳴らす"
+area = "ENG"
+phase = "v1.1"
+source = "presets/report.md § 3.3 ; presets/report.md § 3.6 ; presets/report.md § 3.7"
+after = ["PRJ-026"]
+done_when = "SplitProc（Processor）で分岐を鳴らし、分岐ごとの遅れを最大の遅れへ揃える。Command::BranchGain{node,gain,pan,mute} で量を変え、mute の分岐は処理しない。分岐が 1 つになったスプリッターは直列へ畳み、直列と同じ重さにする。バッファーは Plan::build でだけ確保し、分岐の中のオートメーションは時刻をずらして当て、分岐を別のスレッドで並べない。rack.split.add --track --at --mode --branches・rack.split.mode・rack.branch.add・rack.branch.remove・rack.branch.set --gain --pan --mute・rack.node.move --id --to --index・rack.flatten を CLI と MCP に置き、どれも 1 段の undo。試験で遅れの違う分岐がサンプルまで揃う"
+
+[[item]]
+id = "ENG-075"
+title = "マルチインストゥルメントで鍵とベロシティの範囲ごとに層を鳴らす"
+area = "ENG"
+phase = "v1.1"
+source = "presets/report.md § 3.3 ; presets/report.md § 3.7 ; presets-v2/report.md § 4"
+after = ["PRJ-026", "ENG-074", "UI-335"]
+done_when = "MultiProc（Processor）がノートを層の鍵の範囲とベロシティの範囲で配り、note-off は note-on を受けた層にだけ送る。層ごとに transpose・gain・pan・mute が効く。rack.layer.add --keys C1-B3 --velocity 1-127・rack.layer.set・rack.layer.remove を CLI と MCP に置き、どれも 1 段の undo"
+
+[[item]]
+id = "ENG-076"
+title = "スプリッターのチャンネル分割と周波数分割を鳴らす"
+area = "ENG"
+phase = "later"
+source = "presets/report.md § 3.3 ; presets/report.md § 5.1"
+after = ["ENG-074"]
+done_when = "Channel（L/R・M/S。分岐は 2 つ）と Frequency（LR4。クロスオーバーの既定は 2 分岐で 1k、3 で 200・2k、4 で 150・800・4k、5 で 100・400・1.6k・6k）を鳴らす。周波数分割の帯の和が元の音と振幅で合う"
+
+[[item]]
+id = "ENG-077"
+title = "WAV・AIFF・FLAC のサンプルを読んで Sampler と Drum Kit の声へ渡す"
+area = "ENG"
+phase = "v1.1"
+source = "devices-v2/report.md § 3"
+done_when = "サンプルを音の線の外で読み、声へ渡す。曲のフォルダーへ写すかは曲の保存の決まりに従い、見つからないファイルは知らせて無音で開く"
+
+[[item]]
+id = "ENG-078"
+title = "サイドチェーンのキーを機器へ届け、本線と揃える"
+area = "ENG"
+phase = "v1.1"
+source = "sidechain/report.md § 処理の順序と遅延補正 ; sidechain/report.md § エンジンの変更の大きさと段階"
+after = ["MIX-047"]
+done_when = "AudioIo（と包むもの）に key: Option<(&[f32],&[f32])> を足し、キーのバッファーを置く。トラックの依存の段にキーの辺を入れて、キーと本線が揃うまで待つ（TrackPool は同じ段の中でだけ並べる）。遅延補正はキーか本線を遅らせて揃え、到着の時刻にキーの道を含める。試験でキーと本線のずれが 0 サンプル"
+
+[[item]]
+id = "PRJ-026"
+title = "トラックにラック（分岐・マルチの層）の形を持たせて保存する"
+area = "PRJ"
+phase = "v1.1"
+source = "presets/report.md § 3.2 ; presets/report.md § 3.6 ; presets/report.md § 3.7"
+done_when = "Track.rack: Option<Rack> を足す。Rack は source（Single か Multi{layers}）と fx: Vec<Node>（Node は Plugin か Split）を持ち、Split は mode（Normal・Channel・Frequency）・crossovers・2〜5 の branches（gain_db・pan・mute）、Layer は keys・velocity・transpose・gain・pan・mute を持つ。プラグインは Track.inserts に残し、IdKind::Node を足す。ラックの無い曲は今と同じ形で保存し、全部を直列へ戻すとラックを外す。インストゥルメントを 1 つに限る決まりは Multi のときだけ緩める。rack.show が形を返し、保存と読み込みで形が戻る"
+
+[[item]]
+id = "MIX-039"
+title = "トラックのマクロコントロールと割り当て・値の流れ・control.* のコマンドを足す"
+area = "MIX"
+phase = "v1.1"
+source = "presets/report.md § 3.2 ; presets/report.md § 3.4 ; presets/report.md § 3.6 ; presets/report.md § 3.7"
+after = ["PRJ-026"]
+done_when = "トラックごとにつまみ 8・ボタン 8・X/Y パッド 2 をデータに持つ。名前の既定は Macro 1〜8 で、割り当てると割り当て先のパラメーターの名前になる。割り当ては 1 対多で from・to（from > to で逆）・curve（-1〜1）を持ち、target = from + (to-from)×shape(curve,v)。割り当て先は param:<id>:<name>・branch:<id>:gain|pan|mute・volume・pan・send:<id> で、control:* は不可。同じ先への 2 つ目のマクロは断る。値は今のオートメーションの at_each を通って ParamFollow・BranchGain へ流れる。control.set・control.assign・control.unassign・control.rename・control.list を CLI と MCP に置き、どれも 1 段の undo。MIDI 学習でマクロへ割り当てられる"
+
+[[item]]
+id = "MIX-040"
+title = "マクロへの割り当てを右クリック・一覧の ＋・学習の 3 つから行う"
+area = "MIX"
+phase = "v1.1"
+source = "presets/report.md § 3.4 ; presets-v3/report.md § 7"
+after = ["MIX-039", "UI-320", "UI-324"]
+done_when = "機器のつまみかミキサーの部品の右クリックの「マクロコントロールに割り当て ›」、マクロの一覧の ＋（PickList で検索できる）、学習（最後に触ったパラメーター。VST3 の performEdit・CLAP の値の知らせで拾う）で割り当てられ、control.assign.touched を足す。つまみのドラッグは離したときに 1 段の undo、外のつまみからの値は 300 ms 静かになったら 1 段にまとめる"
+
+[[item]]
+id = "MIX-041"
+title = "CE のマクロの列と、Macro 1〜8 と X/Y パッドの別の窓を置く"
+area = "MIX"
+phase = "v1.1"
+source = "presets-v3/report.md § 7"
+after = ["MIX-039", "MIX-042", "UI-323"]
+done_when = "CE の Macro Controls の列（つまみ 8）と、左に Macro 1〜8（4×2）、右に 216 四方の X/Y パッドの別の窓を置く。X と Y に当てるマクロはパッドの下の 2 つの札（PickList）で選び、読み上げは「X Macro 1 40 %, Y Macro 2 70 %」、←→↑↓ で動く。窓はピン留めでき、留めていないと選んだチャンネルのマクロに替わる。画面に出すのは Macro 1〜8 と X/Y パッド 1 つだけ"
+
+[[item]]
+id = "MIX-042"
+title = "チャンネルエディター（CE）の窓で、インサートとスプリッターの経路を見て組む"
+area = "MIX"
+phase = "v1.1"
+source = "presets-v2/report.md § 2 ; presets-v3/report.md § 3 ; presets-v3/report.md § 4"
+after = ["UI-320", "UI-321", "UI-322", "UI-323", "ENG-074"]
+done_when = "CE を窓で開く（ルーティングの表示だけ・幅 520・題はトラックの名前だけで電源は無い）。ツールバーに + Insert・+ Splitter・+ Instrument（PickList）、右に Macro Controls。信号は上から下へ、入力 → 136×30 の札（電源の点・名前・▾ で Edit・Rename・Delete）→ 出力と並ぶ。分岐の列の頭の番号・Level（-∞〜+10 dB）・M・× はホバーか選んだときだけ出す。ドラッグで並べ替え（分岐をまたいでも）、ダブルクリックで機器の窓を開く。線は UI-321 の構造線。機器の窓のタイトルバーとストリップの CE のボタンでこの窓を開く。チャンネル分割は分岐を 2 つに決め、周波数分割は帯の範囲とドラッグできるクロスオーバーを出す"
+
+[[item]]
+id = "MIX-043"
+title = "CE でマルチインストゥルメントの層と鍵盤の範囲の図を扱う"
+area = "MIX"
+phase = "v1.1"
+source = "presets-v2/report.md § 4 ; presets-v3/report.md § 11"
+after = ["MIX-042", "ENG-075"]
+done_when = "CE で層を並べ（幅 720 以上）、鍵盤の範囲の図を鍵 × ベロシティの四角と取っ手で描いて動かせる。図は薄い色の面を使わず（v2 の色の帯の形は使わない）、層の色は小さな塗りの札だけ。動かすと rack.layer.set と同じ 1 段の undo"
+
+[[item]]
+id = "MIX-044"
+title = "ストリップにインストゥルメントの欄を置き、FX と分岐を流れで見せる"
+area = "MIX"
+phase = "v1.1"
+source = "presets-v3/report.md § 2 ; presets-v3/report.md § 3"
+after = ["UI-320", "UI-321", "ENG-074", "ENG-075"]
+done_when = "ストリップに「インストゥルメント」の欄を置き、インサートと同じ部品（見出し・22 の行・電源の点・＋）で描く。インストゥルメントごとの FX は 16 字下げて構造線で範囲を示し、直列には線を引かない。スプリッターは数と ▸ の付いた 1 行で、開くと分岐を曲線でつなぐ（合流の点は描かない）"
+
+[[item]]
+id = "MIX-045"
+title = "ストリップの行のホバー・選択・キー・タッチ・広げるを揃える"
+area = "MIX"
+phase = "v1.1"
+source = "presets-v3/report.md § 5"
+after = ["MIX-044"]
+done_when = "ホバーで M と ＋ を出し、選んだ行は塗り（primary + on_fill）で下に音量の行を出す。CE と広げる（⟷、幅 252）のボタンはホバー・フォーカス・選んだときだけ出す。キーは ↑↓・Enter・Space（電源）・M・Alt+←→（音量）・Insert か ＋（足す）・Delete・Alt+↑↓（並べ替え）。タッチでは行を 32 にする。幅 116 で名前が切れない"
+
+[[item]]
+id = "MIX-046"
+title = "広げたミキサーの右に選んだ機器の面を置く"
+area = "MIX"
+phase = "v1.1"
+source = "presets-v3/report.md § 6"
+after = ["UI-322", "MIX-045"]
+done_when = "左にミキサー、右に選んだ機器の面を置き、面の題はピンの代わりに「窓で開く」を持つ。間の仕切りで大きさを変え、キーの ←→ で 16 ずつ動く。ミキサーが 240 より狭くなると名前とメーターだけの 40 の帯に畳み、選んだストリップだけ 252 で出す"
+
+[[item]]
+id = "MIX-047"
+title = "サイドチェーンの送り元を機器に持たせ、輪を断り、plugin.sidechain.* のコマンドを足す"
+area = "MIX"
+phase = "v1.1"
+source = "sidechain/report.md § データの形 ; sidechain/report.md § 輪になるつなぎの拒み方 ; sidechain/report.md § undo ; sidechain/report.md § CLI / MCP"
+done_when = "Plugin.sidechain: Option<Sidechain{on, sources: Vec<KeySource{id, track, mode}>}>（mode は Send{pre, level_db, muted_level} か Output）を足し、serde(default) で古い曲を読む。キーの辺を check_routing・Graph::of・画面の send_ok・output_ok の輪の検査に入れて輪になるつなぎを断る（ENG-013 の範囲に無かった分）。plugin.sidechain.add <plugin> --from <track> [--pre] [--output] [--level dB]・plugin.sidechain.remove・plugin.sidechain.set・plugin.sidechain.enable on|off・plugin.sidechain.list と別名の send.add --to <plugin> を CLI と MCP（名前は _ 区切り）に置き、どれも 1 段の undo。MIDI のサイドチェーンは持たない"
+
+[[item]]
+id = "MIX-048"
+title = "ミキサーにサイドチェーンの印・GR のメーター・センドの量を出す"
+area = "MIX"
+phase = "v1.1"
+source = "sidechain/report.md § モック ; v3-y-report.md § 2"
+after = ["UI-320", "MIX-047", "ENG-072", "ENG-078"]
+done_when = "キーを送るセンドの行と受けるインサートの行に mark の色の印を付け、受ける機器のインサートの行に GR のメーターを出す。センドの行の帯をドラッグでき（-60〜+6 dB、← → で 1 dB、Shift で 0.2）、送り元の一覧の量と同じ値になる。センドの ＋ の一覧に受ける機器を出す。印の行にホバーすると相手の行を目立たせる"
+
+[[item]]
+id = "MIX-049"
+title = "トラックの出力をそのままサイドチェーンのキーにする"
+area = "MIX"
+phase = "v1.1"
+source = "sidechain/report.md § どこから送るか ; sidechain/report.md § エンジンの変更の大きさと段階"
+after = ["MIX-047", "ENG-078", "UI-336"]
+done_when = "送り元の mode Output（量は掛けない）を鳴らし、送り元の一覧に出力の行を出す。輪の検査は Send と同じに効く"
+
+[[item]]
+id = "AUT-018"
+title = "マクロと分岐の量をオートメーションで動かす"
+area = "AUT"
+phase = "v1.1"
+source = "presets/report.md § 3.2 ; presets/report.md § 3.4"
+after = ["MIX-039", "ENG-074"]
+done_when = "AutoTarget に control:k1〜k8・b1〜b8・x1・y1・x2・y2 と branch:<id>:gain|pan|mute を足す。マクロのレーンの名前は「マクロコントロール · <名前>」。マクロに割り当てた先のレーンは止めて印を出す。保存と読み込みでレーンが戻る"
+
+[[item]]
+id = "BRW-017"
+title = "ブラウザーの機器の下にプリセットを並べ、工場出荷のプリセットを読み込み直せる"
+area = "BRW"
+phase = "v1.1"
+source = "presets/report.md § 3.5 ; v3-y-report.md § 1"
+after = ["PLG-063", "UI-320"]
+done_when = "機器の下にその機器のプリセットを並べ（検索は PickList と同じ決まり）、トラックへのドラッグか Enter で読み込める。タイトルバーの「ブラウザーに表示」でその行が選ばれる。「工場出荷のプリセットを読み込み直す」をブラウザーに置く"
+
+[[item]]
+id = "BRW-018"
+title = "外部プラグインの出荷時のプリセットをブラウザーに並べる"
+area = "BRW"
+phase = "later"
+source = "presets/report.md § 5.1"
+after = ["BRW-017"]
+done_when = "VST3 の .vstpreset と CLAP の preset-discovery で見つけたプリセットを、ブラウザーのその機器の下に並べて読み込める"

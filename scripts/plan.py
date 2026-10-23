@@ -3,6 +3,7 @@
 
 docs/plan.toml is the only source of truth. Progress is the `status` of each item:
 absent = not started, "partial" (with a one-line `remaining`), "done".
+An item may name the items to build first in `after = ["UI-001", ...]`.
 
 Subcommands:
   check                          validate docs/plan.toml (exit 1 on failure)
@@ -127,9 +128,54 @@ def check(plan: dict, research_dir: Path = RESEARCH_DIR) -> list[str]:
                     errors.append(f"open {o['id']}: decided must be one line")
                 elif not DECIDED_RE.match(decided):
                     errors.append(f"open {o['id']}: decided must start with the date, YYYY-MM-DD: ...")
+    check_after(plan.get("item", []), errors)
     if not plan.get("item"):
         errors.append("plan has no [[item]]")
     return errors
+
+
+def check_after(items: list[dict], errors: list[str]) -> None:
+    """`after` (optional): the ids of the items to build first. They must be items, and must not loop."""
+    ids = {it.get("id") for it in items}
+    graph: dict[str, list[str]] = {}
+    for it in items:
+        if "after" not in it:
+            continue
+        eid = it.get("id", "?")
+        after = it["after"]
+        if not isinstance(after, list) or not after or not all(isinstance(a, str) for a in after):
+            errors.append(f"item {eid}: after must be a non-empty list of item ids")
+            continue
+        for a in after:
+            if a == eid:
+                errors.append(f"item {eid}: after names the item itself")
+            elif a not in ids:
+                errors.append(f"item {eid}: after names {a}, which is not an [[item]]")
+        graph[eid] = [a for a in after if a in ids and a != eid]
+    # A loop means no order can satisfy every `after`.
+    done: set[str] = set()
+    for start in graph:
+        path: list[str] = []
+        on_path: set[str] = set()
+        stack = [(start, iter(graph.get(start, [])))]
+        path.append(start)
+        on_path.add(start)
+        while stack:
+            node, rest = stack[-1]
+            nxt = next(rest, None)
+            if nxt is None:
+                stack.pop()
+                path.pop()
+                on_path.discard(node)
+                done.add(node)
+            elif nxt in on_path:
+                loop = path[path.index(nxt):] + [nxt]
+                errors.append(f"item {start}: after loops: {' -> '.join(loop)}")
+                return
+            elif nxt not in done:
+                stack.append((nxt, iter(graph.get(nxt, []))))
+                path.append(nxt)
+                on_path.add(nxt)
 
 
 # -------------------------------------------------------------- status
@@ -179,6 +225,7 @@ def status_report(plan: dict, phase: str | None = None, area: str | None = None,
         out.append("")
     if open_list:
         mark = {"partial": "一部", "none": "未着手"}
+        by_id = {i["id"]: i for i in plan.get("item", [])}
         for p in PHASES:
             left = [i for i in items if i["phase"] == p and state(i) != "done"]
             if not left:
@@ -187,7 +234,9 @@ def status_report(plan: dict, phase: str | None = None, area: str | None = None,
             out.append("")
             for i in left:
                 tail = f" — {i['remaining']}" if state(i) == "partial" else ""
-                out.append(f"- [{mark[state(i)]}] {i['id']} {i['title']}{tail}")
+                waiting = [a for a in i.get("after", []) if a in by_id and state(by_id[a]) != "done"]
+                wait = f"（先に {'・'.join(waiting)}）" if waiting else ""
+                out.append(f"- [{mark[state(i)]}] {i['id']} {i['title']}{wait}{tail}")
             out.append("")
     return "\n".join(out).rstrip("\n") + "\n"
 
