@@ -588,6 +588,12 @@ fn every_history_command_undoes_and_redoes() {
         json!({"id": comp, "state": "off"}),
     );
     rig.step("plugin.sidechain.remove", json!({"id": comp, "from": lead}));
+    let key = id_of(&rig.step("plugin.add", json!({"track": kick, "name": "Compressor"})));
+    rig.step(
+        "plugin.param.set",
+        json!({"id": key, "param": "low_cut", "plain": "200"}),
+    );
+    rig.step("plugin.sidechain.swap", json!({"id": key}));
     rig.step("send.add", json!({"ids": [lead], "to": comp, "level": -6}));
     rig.step(
         "plugin.add",

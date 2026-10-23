@@ -1302,3 +1302,176 @@ fn z3_default_in_any_letter_case_is_not_a_name() {
         assert!(m.contains("使えません"), "{n}: {m}");
     }
 }
+
+/// The Compressor's knobs from before the sidechain (PLG-071); the five after them are the
+/// sidechain's, which no preset sets.
+const COMP_OLD: [&str; 7] = [
+    "threshold",
+    "ratio",
+    "attack",
+    "release",
+    "knee",
+    "makeup",
+    "mix",
+];
+const COMP_SIDECHAIN: [&str; 5] = ["gain", "filter", "low_cut", "high_cut", "listen"];
+
+fn read_json(p: &Path) -> Value {
+    serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
+}
+
+/// The Compressor's sidechain knobs (PLG-071) are not a preset's: loading a factory preset,
+/// `Default`, the user's own or a file someone wrote them into leaves them where they were
+/// set, a saved preset is written without them, and a Compressor a preset inserts starts
+/// with them at their defaults.
+#[test]
+fn a_compressor_preset_leaves_the_sidechain_knobs_where_they_are() {
+    let mut r = rig("comp-sidechain");
+    let t = audio(&mut r.s, "Bus");
+    let comp = plugin(&mut r.s, &t, "Compressor");
+    for (param, v) in COMP_SIDECHAIN.iter().zip(["6", "on", "200", "5000", "on"]) {
+        run(
+            &mut r.s,
+            "plugin.param.set",
+            json!({ "id": comp, "param": param, "plain": v }),
+        );
+    }
+    run(
+        &mut r.s,
+        "preset.save",
+        json!({ "track": t, "kind": "fx", "of": comp, "name": "mine" }),
+    );
+    let dir = r.dir.join("fx").join("compressor");
+    let mine = read_json(&dir.join("mine.xpreset"));
+    let held = mine["devices"][0]["params"].as_object().unwrap();
+    let mut keys: Vec<&str> = held.keys().map(String::as_str).collect();
+    keys.sort();
+    let mut old = COMP_OLD.to_vec();
+    old.sort();
+    assert_eq!(keys, old, "{mine}");
+
+    run(
+        &mut r.s,
+        "plugin.param.set",
+        json!({ "id": comp, "param": "gain", "plain": "-3" }),
+    );
+    let knobs = |s: &Session| -> Vec<f64> {
+        let x = &track(s, &t).inserts[0];
+        COMP_SIDECHAIN.iter().map(|k| x.params[*k]).collect()
+    };
+    let set = knobs(&r.s);
+    let mut written = mine.clone();
+    written["name"] = json!("written");
+    for k in COMP_SIDECHAIN {
+        written["devices"][0]["params"][k] = json!(0.9);
+    }
+    std::fs::write(
+        dir.join("written.xpreset"),
+        serde_json::to_vec_pretty(&written).unwrap(),
+    )
+    .unwrap();
+    let def = xirius_params::find("Compressor").unwrap();
+    let strong = xirius_params::factory_presets(def)
+        .into_iter()
+        .find(|(n, _)| *n == "強め")
+        .unwrap()
+        .1;
+    for name in ["強め", "Default", "mine", "written"] {
+        run(
+            &mut r.s,
+            "preset.load",
+            json!({ "track": t, "preset": name, "of": comp }),
+        );
+        assert_eq!(knobs(&r.s), set, "{name}");
+        if name == "強め" {
+            let at = param(&r.s, &t, "compressor", "threshold");
+            assert!((at - strong[0]).abs() < 1e-9, "{at} {}", strong[0]);
+        }
+    }
+
+    let bare = audio(&mut r.s, "Bare");
+    run(
+        &mut r.s,
+        "preset.load",
+        json!({ "track": bare, "preset": "written", "device": "Compressor" }),
+    );
+    let x = &track(&r.s, &bare).inserts[0];
+    for k in COMP_SIDECHAIN {
+        assert!(!x.params.contains_key(k), "{k}: {:?}", x.params);
+    }
+}
+
+/// The factory Compressor files hold the seven knobs it had before the sidechain (PLG-071),
+/// at the values they had: each sweeping knob a share of its sweep off its default, every
+/// other one the other way.
+#[test]
+fn the_factory_compressor_presets_hold_the_seven_knobs_they_did() {
+    let r = rig("comp-factory");
+    xirius_session::xpreset::seed(&r.dir).unwrap();
+    let def = xirius_params::find("Compressor").unwrap();
+    for (name, share) in xirius_params::FACTORY_PRESETS {
+        let v = read_json(
+            &r.dir
+                .join("fx")
+                .join("compressor")
+                .join(format!("{name}.xpreset")),
+        );
+        let held = v["devices"][0]["params"].as_object().unwrap();
+        assert_eq!(held.len(), COMP_OLD.len(), "{name}: {v}");
+        for (i, k) in COMP_OLD.iter().enumerate() {
+            let (at, p) = def.param(k).unwrap();
+            assert_eq!(at, i, "{k} kept its place");
+            let d = p.default_norm();
+            let sign = if i % 2 == 1 { -1.0 } else { 1.0 };
+            let want = if p.steps().is_some() {
+                d
+            } else {
+                (d + share * sign).clamp(0.0, 1.0)
+            };
+            let at = held[*k].as_f64().unwrap();
+            assert!((at - want).abs() < 1e-9, "{name}: {k} {at} {want}");
+        }
+    }
+}
+
+/// A song saved before the sidechain (PLG-071) holds the Compressor's seven knobs at 「強め」
+/// and that name. It opens with them, and loading 「強め」 again moves none of its knobs.
+#[test]
+fn an_old_songs_compressor_opens_at_its_preset_and_reloads_it_unchanged() {
+    let mut r = rig("comp-old");
+    let t = audio(&mut r.s, "Bus");
+    plugin(&mut r.s, &t, "Compressor");
+    let def = xirius_params::find("Compressor").unwrap();
+    let strong = xirius_params::factory_presets(def)
+        .into_iter()
+        .find(|(n, _)| *n == "強め")
+        .unwrap()
+        .1;
+    let mut p = r.s.project().clone();
+    let tid: TrackId = t.parse().unwrap();
+    let x = &mut Arc::make_mut(p.tracks.get_mut(&tid).unwrap()).inserts[0];
+    x.params = COMP_OLD
+        .iter()
+        .zip(&strong)
+        .map(|(k, v)| (k.to_string(), *v))
+        .collect();
+    x.preset = Some("強め".into());
+    let comp = x.id.to_string();
+    let song = r.dir.with_extension("song");
+    let _ = std::fs::remove_dir_all(&song);
+    session_with(&r.dir, p).save_as(&song).unwrap();
+    let opened = Session::open(&song).unwrap().project().clone();
+    let _ = std::fs::remove_dir_all(&song);
+    r.s = session_with(&r.dir, opened);
+    let before = track(&r.s, &t).inserts[0].clone();
+    assert_eq!(before.preset.as_deref(), Some("強め"));
+    assert_eq!(before.params.len(), COMP_OLD.len(), "{:?}", before.params);
+    run(
+        &mut r.s,
+        "preset.load",
+        json!({ "track": t, "preset": "強め", "of": comp }),
+    );
+    let after = &track(&r.s, &t).inserts[0];
+    assert_eq!(after.params, before.params);
+    assert_eq!(after.preset.as_deref(), Some("強め"));
+}

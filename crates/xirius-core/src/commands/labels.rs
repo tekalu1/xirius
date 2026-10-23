@@ -158,6 +158,7 @@ pub const LABELS: &[(&str, &str)] = &[
     ("plugin.sidechain.remove", "サイドチェーンの送り元を削除"),
     ("plugin.sidechain.set", "サイドチェーンの送り元を設定"),
     ("plugin.sidechain.enable", "サイドチェーンを切り替え"),
+    ("plugin.sidechain.swap", "サイドチェーンのカットを入れ替え"),
     ("plugin.sidechain.list", "サイドチェーンの送り元の一覧"),
     ("view.dock", "ドックを開閉"),
     ("track.reveal", "チャンネルを表示"),

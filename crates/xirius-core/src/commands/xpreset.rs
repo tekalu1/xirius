@@ -232,10 +232,19 @@ fn put(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
     ))
 }
 
-/// The preset's settings on the plug-in: parameters and state are the preset's; samples
-/// only when the file carried them (an old `plugin.preset` file leaves them alone).
+/// The preset's settings on the plug-in: parameters and state are the preset's, but for the
+/// knobs no preset holds ([`xpreset::holds`]), which stay as they are; samples only when the
+/// file carried them (an old `plugin.preset` file leaves them alone).
 fn apply(x: &mut Plugin, dev: &PresetDevice, name: &str) {
-    x.params = dev.params.clone();
+    let mut params = dev.params.clone();
+    params.retain(|k, _| xpreset::holds(x, k));
+    params.extend(
+        x.params
+            .iter()
+            .filter(|(k, _)| !xpreset::holds(x, k))
+            .map(|(k, v)| (k.clone(), *v)),
+    );
+    x.params = params;
     x.state = dev.state.clone();
     if let Some(samples) = &dev.samples {
         x.samples = samples.clone();
@@ -295,9 +304,10 @@ fn replace_instrument(
     Ok(id)
 }
 
-/// A new plug-in row carrying the preset's device and settings.
+/// A new plug-in row carrying the preset's device and settings; the knobs no preset holds
+/// start at their defaults.
 fn plugin_of(dev: &PresetDevice, name: &str, id: PluginId) -> Plugin {
-    Plugin {
+    let mut x = Plugin {
         samples: dev.samples.clone().unwrap_or_default(),
         id,
         name: dev.name.clone(),
@@ -311,5 +321,10 @@ fn plugin_of(dev: &PresetDevice, name: &str, id: PluginId) -> Plugin {
         isolation: Default::default(),
         sidechain: None,
         preset: Some(name.to_string()),
-    }
+    };
+    x.params = std::mem::take(&mut x.params)
+        .into_iter()
+        .filter(|(k, _)| xpreset::holds(&x, k))
+        .collect();
+    x
 }

@@ -388,3 +388,64 @@ fn a_saved_song_with_a_sidechain_opens_and_validates() {
     back.validate_deep().unwrap();
     assert_eq!(*s.project(), back);
 }
+
+/// PLG-071: Swap keeps no value of its own. It trades the frequencies of the Low Cut and the
+/// High Cut in one step, an Off for the other Off, as Studio Pro's button does.
+#[test]
+fn swap_trades_the_low_cut_and_the_high_cut_in_one_step() {
+    let (mut s, _kick, _bass, comp) = song();
+    let id = comp.to_string();
+    let plain = |s: &Session, param: &str| {
+        let x = s
+            .project()
+            .tracks
+            .values()
+            .flat_map(|t| &t.inserts)
+            .find(|x| x.id == comp)
+            .unwrap();
+        let (_, spec) = x.builtin().unwrap().param(param).unwrap();
+        let norm = x.params.get(param).copied();
+        spec.to_plain(norm.unwrap_or_else(|| spec.default_norm()))
+    };
+    let set = |s: &mut Session, param: &str, v: &str| {
+        run(
+            s,
+            "plugin.param.set",
+            json!({"id": comp.to_string(), "param": param, "plain": v}),
+        );
+    };
+    let at = |s: &Session, low: f64, high: f64| {
+        let (l, h) = (plain(s, "low_cut"), plain(s, "high_cut"));
+        assert!((l - low).abs() < low * 1e-6, "low {l}, not {low}");
+        assert!((h - high).abs() < high * 1e-6, "high {h}, not {high}");
+    };
+    // Swap is a step, not a knob a song keeps.
+    let def = xirius_params::COMPRESSOR.params;
+    assert!(def.iter().all(|p| p.id != "swap"));
+    set(&mut s, "low_cut", "200");
+    set(&mut s, "high_cut", "5000");
+    let steps = s.steps().len();
+    run(&mut s, "plugin.sidechain.swap", json!({"id": id}));
+    assert_eq!(s.steps().len(), steps + 1);
+    at(&s, 5000.0, 200.0);
+    s.undo(1).unwrap();
+    at(&s, 200.0, 5000.0);
+    // The Low Cut's Off (20 Hz) becomes the High Cut's Off (20 kHz), and back.
+    set(&mut s, "low_cut", "Off");
+    run(&mut s, "plugin.sidechain.swap", json!({"id": id}));
+    at(&s, 5000.0, 20_000.0);
+    run(&mut s, "plugin.sidechain.swap", json!({"id": id}));
+    at(&s, 20.0, 5000.0);
+    // A High Cut above the Low Cut's range lands on its top.
+    set(&mut s, "high_cut", "18000");
+    run(&mut s, "plugin.sidechain.swap", json!({"id": id}));
+    at(&s, 16_000.0, 20_000.0);
+    // Only a device with the two cuts has the swap.
+    let bass = comp_owner(&s);
+    let eq = run(&mut s, "plugin.add", json!({"track": bass, "name": "EQ"}))["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let e = run_err(&mut s, "plugin.sidechain.swap", json!({"id": eq}));
+    assert!(e.contains("Low Cut"), "{e}");
+}

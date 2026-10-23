@@ -708,3 +708,122 @@ fn a_real_signal_keys_an_insert() {
     assert!(out_r.iter().any(|&x| x.abs() > 0.01));
     assert!(out_r.iter().zip(&l).any(|(k, m)| (*k - *m).abs() > 0.01));
 }
+
+/// A kick: loud for `long` frames every `every` frames from `first`, silent
+/// between, counted on its own running frame so a beat lands on one sample.
+struct Kick {
+    frame: usize,
+    first: usize,
+    every: usize,
+    long: usize,
+}
+
+impl Processor for Kick {
+    fn name(&self) -> &str {
+        "kick"
+    }
+
+    fn prepare(&mut self, _setup: &ProcessSetup) {}
+
+    fn process(&mut self, io: &mut AudioIo<'_>, _events: &[NoteEvent]) {
+        for (l, r) in io.left.iter_mut().zip(io.right.iter_mut()) {
+            let f = self.frame;
+            let on = f >= self.first && (f - self.first) % self.every < self.long;
+            *l = if on { 0.9 } else { 0.0 };
+            *r = *l;
+            self.frame += 1;
+        }
+    }
+}
+
+/// A steady pad, under the threshold of the Compressor below.
+struct Pad;
+
+impl Processor for Pad {
+    fn name(&self) -> &str {
+        "pad"
+    }
+
+    fn prepare(&mut self, _setup: &ProcessSetup) {}
+
+    fn process(&mut self, io: &mut AudioIo<'_>, _events: &[NoteEvent]) {
+        io.left.fill(0.05);
+        io.right.fill(0.05);
+    }
+}
+
+/// PLG-071: a stock Compressor on a pad, keyed by a kick on another track,
+/// ducks the pad on every beat and only then. The kick's fader is down and the
+/// key is its pre tap, so the master holds the pad alone.
+#[test]
+fn a_kick_on_another_track_ducks_the_compressor_on_its_beats() {
+    const FIRST: usize = 700;
+    const EVERY: usize = 24_000;
+    const LONG: usize = 2_400;
+    let run = |key: Option<bool>| {
+        let mut kick = TrackSpec::new(
+            "kick",
+            Box::new(Kick {
+                frame: 0,
+                first: FIRST,
+                every: EVERY,
+                long: LONG,
+            }),
+        );
+        kick.gain = 0.0;
+        let (comp, h) = xirius_engine::stock::create("compressor").unwrap();
+        for (id, v) in [
+            ("threshold", -18.0),
+            ("ratio", 4.0),
+            ("knee", 0.0),
+            ("attack", 1.0),
+            ("release", 50.0),
+        ] {
+            let (_, spec) = h.def().param(id).unwrap();
+            assert!(h.set(id, spec.to_norm(v)));
+        }
+        let mut pad = TrackSpec::new("pad", Box::new(Pad));
+        pad.inserts = vec![comp];
+        if let Some(on) = key {
+            pad.keys = vec![KeySpec {
+                insert: 0,
+                plugin: 71,
+                on,
+                sources: vec![src(1, KeyFrom::Track(0), true, 1.0)],
+            }];
+        }
+        let spec = MixSpec {
+            tracks: vec![TrackSlot::New(kick), TrackSlot::New(pad)],
+            ..MixSpec::default()
+        };
+        render(spec, 375, 256).0
+    };
+    let ducked = run(Some(true));
+    let gr: Vec<f64> = ducked
+        .iter()
+        .map(|o| -20.0 * (f64::from(*o) / 0.05).log10())
+        .collect();
+    assert!(
+        gr[..FIRST].iter().all(|g| g.abs() < 1e-5),
+        "untouched before the first beat"
+    );
+    for b in (FIRST..ducked.len() - LONG - 2_400).step_by(EVERY) {
+        assert!(gr[b - 1] < 0.01, "before beat {b}: {}", gr[b - 1]);
+        assert!(gr[b] > 0.2, "on beat {b}: {}", gr[b]);
+        assert!(
+            gr[b + LONG - 1] > 12.0,
+            "through beat {b}: {}",
+            gr[b + LONG - 1]
+        );
+        assert!(gr[b + LONG + 2_400] < gr[b + LONG - 1] / 2.0);
+    }
+    // With the sidechain off, or no key at all, the pad comes through as it is.
+    let off = run(Some(false));
+    let none = run(None);
+    assert!(
+        off.iter()
+            .zip(&none)
+            .all(|(a, b)| a.to_bits() == b.to_bits())
+    );
+    assert!(none.iter().all(|x| (*x - 0.05).abs() < 1e-6));
+}

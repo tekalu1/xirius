@@ -87,6 +87,12 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 )))
             },
         ),
+        edit(
+            "plugin.sidechain.swap",
+            "サイドチェーンのフィルターの Low Cut と High Cut を入れ替えます（Off は Off に）",
+            vec![plugin()],
+            |p, _, a| swap_cuts(p, a.id("id")?),
+        ),
         read(
             "plugin.sidechain.list",
             "サイドチェーンの送り元を一覧します",
@@ -121,6 +127,56 @@ pub(super) fn defs() -> Vec<CommandDef> {
 /// The channel whose inserts hold the plug-in.
 fn owner(p: &Project, id: PluginId) -> CmdResult<TrackId> {
     super::track::plugin_owner(p, id)
+}
+
+/// Swap (PLG-071): the Low Cut takes the High Cut's frequency and the High Cut the Low
+/// Cut's, in one step, as Studio Pro's button does. An Off becomes the other's Off, and a
+/// frequency past the other's range lands on its end.
+fn swap_cuts(p: &mut Project, id: PluginId) -> CmdResult<Output> {
+    let tid = owner(p, id)?;
+    let x = p
+        .track_mut(tid)?
+        .inserts
+        .iter_mut()
+        .find(|x| x.id == id)
+        .expect("found");
+    let cuts = x
+        .builtin()
+        .and_then(|d| Some((d.param("low_cut")?.1, d.param("high_cut")?.1)));
+    let Some((low, high)) = cuts else {
+        return Err(CmdError::not_found(format!(
+            "{} に Low Cut と High Cut がありません",
+            x.name
+        )));
+    };
+    let plain = |s: &xirius_params::ParamSpec| {
+        s.to_plain(
+            x.params
+                .get(s.id)
+                .copied()
+                .unwrap_or_else(|| s.default_norm()),
+        )
+    };
+    let (lc, hc) = (plain(low), plain(high));
+    let (low_lo, low_hi) = low.range();
+    let (high_lo, high_hi) = high.range();
+    let to_low = if high.is_off(hc) {
+        low_lo
+    } else {
+        hc.clamp(low_lo, low_hi)
+    };
+    let to_high = if low.is_off(lc) {
+        high_hi
+    } else {
+        lc.clamp(high_lo, high_hi)
+    };
+    x.params.insert(low.id.to_string(), low.to_norm(to_low));
+    x.params.insert(high.id.to_string(), high.to_norm(to_high));
+    Ok(Output::msg(format!(
+        "{id} の Low Cut を {}、High Cut を {} にしました",
+        low.text(to_low),
+        high.text(to_high)
+    )))
 }
 
 fn source_json(p: &Project, s: &KeySource) -> Value {

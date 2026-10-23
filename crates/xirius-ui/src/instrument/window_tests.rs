@@ -550,3 +550,145 @@ fn the_tag_keeps_a_preset_loaded_from_the_cli() {
     nudge(&mut s, &g, id, "cutoff");
     assert_eq!(s.instruments.tag_of(&plugin(&s, t)), ("強め", true));
 }
+
+/// A Compressor in a song from before the sidechain (PLG-071) keeps only its seven knobs. At
+/// 「強め」 it opens again as 「強め」, its knobs reading as they did.
+#[test]
+fn an_old_songs_compressor_opens_at_its_preset() {
+    let (mut s, _, t, _) = studio();
+    assert!(s.run_command(
+        "plugin.add",
+        serde_json::json!({ "track": t.to_string(), "name": "Compressor" }),
+    ));
+    let comp = added(&s, t, "Compressor");
+    let def = insert(&s, comp).builtin().unwrap();
+    let old = [
+        "threshold",
+        "ratio",
+        "attack",
+        "release",
+        "knee",
+        "makeup",
+        "mix",
+    ];
+    // 「強め」 as it was: each sweeping knob 0.22 of its sweep off its default, every
+    // other one the other way.
+    let strong: Vec<f64> = old
+        .iter()
+        .enumerate()
+        .map(|(i, id)| {
+            let (k, p) = def.param(id).unwrap();
+            assert_eq!(k, i, "{id} kept its place");
+            let d = p.default_norm();
+            let f = if i % 2 == 1 { -0.22 } else { 0.22 };
+            if p.steps().is_some() {
+                d
+            } else {
+                (d + f).clamp(0.0, 1.0)
+            }
+        })
+        .collect();
+    assert_eq!(preset_values(def, "強め").unwrap()[..old.len()], strong);
+    let values_of: Vec<_> = old
+        .iter()
+        .zip(&strong)
+        .map(|(id, v)| serde_json::json!({ "param": id, "value": v }))
+        .collect();
+    assert!(s.run_command(
+        "plugin.preset.load",
+        serde_json::json!({ "id": comp.to_string(), "preset": "強め", "values": values_of }),
+    ));
+    let texts = |x: &Plugin| -> Vec<String> {
+        def.params
+            .iter()
+            .zip(values(x))
+            .map(|(p, v)| text(p, v))
+            .collect()
+    };
+    let before = texts(&insert(&s, comp));
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let dir = root.join(format!("target/comp-old-preset-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    s.command(|song| song.save_as(&dir));
+    assert!(s.error.is_none(), "{:?}", s.error);
+    // The song as the version before wrote it: none of the new knobs.
+    let file = dir.join("project.json");
+    let mut song: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    fn strip(v: &mut serde_json::Value, id: &str, old: &[&str]) -> bool {
+        match v {
+            serde_json::Value::Object(m) if m.get("id").and_then(|x| x.as_str()) == Some(id) => {
+                let params = m.get_mut("params").and_then(|p| p.as_object_mut()).unwrap();
+                params.retain(|k, _| old.contains(&k.as_str()));
+                true
+            }
+            serde_json::Value::Object(m) => m.values_mut().any(|x| strip(x, id, old)),
+            serde_json::Value::Array(a) => a.iter_mut().any(|x| strip(x, id, old)),
+            _ => false,
+        }
+    }
+    assert!(strip(&mut song, &comp.to_string(), &old));
+    std::fs::write(&file, serde_json::to_string(&song).unwrap()).unwrap();
+    // Its history and versions are from before too; here they would bring the new knobs back.
+    for d in ["history", "versions"] {
+        std::fs::remove_dir_all(dir.join(d)).unwrap();
+    }
+    let mut s = Studio::sample();
+    s.finish_file_request(crate::studio::FileRequest::Open, &dir);
+    assert!(s.error.is_none(), "{:?}", s.error);
+    let _ = std::fs::remove_dir_all(&dir);
+    s.show_instrument(t, comp);
+    let x = insert(&s, comp);
+    assert_eq!(x.params.len(), old.len(), "the old knobs only");
+    assert_eq!(texts(&x), before);
+    assert_eq!(preset_of(&x), "強め");
+    assert_eq!(s.instruments.tag_of(&x), ("強め", false));
+}
+
+/// A preset is the compressor's own knobs (PLG-071): the Gain and the key's filter and
+/// Listen stay where they were set, and the preset is still read with them so.
+#[test]
+fn a_preset_leaves_the_sidechain_knobs_where_they_are() {
+    let (mut s, _, t, _) = studio();
+    assert!(s.run_command(
+        "plugin.add",
+        serde_json::json!({ "track": t.to_string(), "name": "Compressor" }),
+    ));
+    let comp = added(&s, t, "Compressor");
+    s.show_instrument(t, comp);
+    let set = [
+        ("gain", "6"),
+        ("filter", "on"),
+        ("low_cut", "200"),
+        ("high_cut", "5000"),
+        ("listen", "on"),
+    ];
+    for (param, v) in set {
+        assert!(s.run_command(
+            "plugin.param.set",
+            serde_json::json!({ "id": comp.to_string(), "param": param, "plain": v }),
+        ));
+    }
+    let kept = |s: &Studio| -> Vec<String> {
+        let x = insert(s, comp);
+        let def = x.builtin().unwrap();
+        let now = values(&x);
+        set.iter()
+            .map(|(id, _)| {
+                let (k, p) = def.param(id).unwrap();
+                text(p, now[k])
+            })
+            .collect()
+    };
+    let before = kept(&s);
+    for preset in ["強め", "やさしく", "初期"] {
+        assert!(s.load_preset(comp, preset));
+        assert_eq!(kept(&s), before, "{preset}");
+        assert_eq!(preset_of(&insert(&s, comp)), preset);
+        assert_eq!(s.instruments.tag_of(&insert(&s, comp)), (preset, false));
+    }
+}

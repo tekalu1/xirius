@@ -38,6 +38,17 @@ pub fn render(
     right: &[f32],
     notes: &[(usize, NoteKind)],
 ) -> (Vec<f32>, Vec<f32>) {
+    render_keyed(p, left, right, None, notes)
+}
+
+/// As `render`, with a sidechain key (as long as the input) handed over beside it.
+pub fn render_keyed(
+    p: &mut dyn Processor,
+    left: &[f32],
+    right: &[f32],
+    key: Option<(&[f32], &[f32])>,
+    notes: &[(usize, NoteKind)],
+) -> (Vec<f32>, Vec<f32>) {
     let (mut l, mut r) = (left.to_vec(), right.to_vec());
     let mut at = 0;
     let mut k = 0;
@@ -58,7 +69,7 @@ pub fn render(
         let mut io = AudioIo {
             left: &mut l[at..at + n],
             right: &mut r[at..at + n],
-            key: None,
+            key: key.map(|(kl, kr)| (&kl[at..at + n], &kr[at..at + n])),
         };
         p.process(&mut io, &events);
         at += n;

@@ -4707,6 +4707,23 @@ MIDI 学習
 | `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
 | `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
 
+## `plugin.sidechain.swap`
+
+サイドチェーンのカットを入れ替え
+
+サイドチェーンのフィルターの Low Cut と High Cut を入れ替えます（Off は Off に）
+
+事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 1 操作で取り消し可能。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `id` | 必須 | `{"type":"string"}` | キーを受けるプラグイン（plugin の ID） |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
 ## `plugin.state.set`
 
 プラグインの状態を置き換え

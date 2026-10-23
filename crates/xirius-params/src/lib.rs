@@ -64,6 +64,17 @@ pub enum Curve {
     Toggle,
 }
 
+/// Where a cut's knob is off, letting everything through, and reads `Off`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Off {
+    /// Every value does something.
+    Never,
+    /// At or below this plain value (a low cut at the bottom of its range).
+    AtOrBelow(f64),
+    /// At or above it (a high cut at the top of its range).
+    AtOrAbove(f64),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ParamSpec {
     /// The key a song keeps the value under (`plugin.param.set --param`).
@@ -75,6 +86,11 @@ pub struct ParamSpec {
     /// In the unit.
     pub default: f64,
     pub curve: Curve,
+    pub off: Off,
+    /// Whether the built-in presets set it and are told apart by it. The sidechain's knobs
+    /// are not (PLG-071): a preset leaves them where they are, and a song from before them
+    /// still reads the preset it was at.
+    pub preset: bool,
 }
 
 impl ParamSpec {
@@ -153,10 +169,22 @@ impl ParamSpec {
         }
     }
 
-    /// A plain value as the UI and the CLI show it (`-12.0 dB`, `1.20 kHz`, `付点`).
+    /// Whether a plain value is where the knob is off ([`Off`]).
+    pub fn is_off(&self, plain: f64) -> bool {
+        match self.off {
+            Off::Never => false,
+            Off::AtOrBelow(at) => plain <= at,
+            Off::AtOrAbove(at) => plain >= at,
+        }
+    }
+
+    /// A plain value as the UI and the CLI show it (`-12.0 dB`, `1.20 kHz`, `付点`, `Off`).
     pub fn text(&self, plain: f64) -> String {
         let (lo, hi) = self.range();
         let v = plain.clamp(lo, hi);
+        if self.is_off(v) {
+            return "Off".to_string();
+        }
         match self.curve {
             Curve::Choice(labels) => {
                 return labels
@@ -204,7 +232,11 @@ impl ParamSpec {
                 "off" | "false" | "オフ" => Some(0.0),
                 _ => None,
             },
-            _ => None,
+            _ => match (self.off, t.to_ascii_lowercase().as_str()) {
+                (Off::AtOrBelow(_), "off" | "オフ") => Some(lo),
+                (Off::AtOrAbove(_), "off" | "オフ") => Some(hi),
+                _ => None,
+            },
         }
     }
 }
@@ -273,8 +305,9 @@ pub const FACTORY_PRESETS: &[(&str, f64)] =
 pub const FACTORY_VERSION: u32 = 1;
 
 /// The factory presets of a built-in: a name and the knob values (0..1) in `def.params`
-/// order. A stepped parameter keeps its default; the others move `share` of their sweep
-/// from the default, alternating the direction down the panel.
+/// order. A stepped parameter and one no preset sets ([`ParamSpec::preset`]) keep their
+/// default; the others move `share` of their sweep from the default, alternating the
+/// direction down the panel.
 pub fn factory_presets(def: &BuiltinDef) -> Vec<(&'static str, Vec<f64>)> {
     FACTORY_PRESETS
         .iter()
@@ -289,7 +322,7 @@ fn preset_values(def: &BuiltinDef, share: f64) -> Vec<f64> {
         .enumerate()
         .map(|(i, p)| {
             let d = p.default_norm();
-            if p.steps().is_some() {
+            if p.steps().is_some() || !p.preset {
                 return d;
             }
             let sign = if i % 2 == 1 { -1.0 } else { 1.0 };
@@ -399,6 +432,27 @@ mod tests {
         assert_eq!(ratio.text(4.0), "4.0:1");
         let (_, time) = DELAY.param("time").unwrap();
         assert_eq!(time.text(1500.0), "1.50 s");
+    }
+
+    #[test]
+    fn the_compressors_cuts_read_off_at_their_ends() {
+        // PLG-071: the Low Cut is off at the bottom of its range, the High Cut at the top,
+        // as Studio Pro's knobs read; a hair off the end still is (the engine keeps a value
+        // in an f32).
+        let (_, low) = COMPRESSOR.param("low_cut").unwrap();
+        let (_, high) = COMPRESSOR.param("high_cut").unwrap();
+        assert_eq!(low.text(20.0), "Off");
+        assert_eq!(low.text(20.3), "Off");
+        assert_eq!(low.text(21.0), "21 Hz");
+        assert_eq!(high.text(20_000.0), "Off");
+        assert_eq!(high.text(19_999.5), "Off");
+        assert_eq!(high.text(19_000.0), "19.0 kHz");
+        assert_eq!(low.parse("Off"), Some(20.0));
+        assert_eq!(high.parse("off"), Some(20_000.0));
+        // A cut with no Off reads its frequency at its end.
+        let (_, delay) = DELAY.param("high_cut").unwrap();
+        assert_eq!(delay.text(20_000.0), "20.0 kHz");
+        assert_eq!(delay.parse("off"), None);
     }
 
     #[test]

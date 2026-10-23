@@ -637,7 +637,10 @@ impl<'a> Writer<'a> {
                 el.push(self.knob(t, x, def, "ratio", "Ratio", "linear", 1.0));
                 el.push(self.knob(t, x, def, "release", "Release", "seconds", 0.001));
                 el.push(self.knob(t, x, def, "threshold", "Threshold", "decibel", 1.0));
-                for key in ["knee", "mix"] {
+                let unwritten = [
+                    "knee", "mix", "gain", "filter", "low_cut", "high_cut", "listen",
+                ];
+                for key in unwritten {
                     let (_, spec) = def.param(key).expect("a parameter of the catalogue");
                     if (norm(key) - spec.default_norm()).abs() > 1e-6 {
                         self.skips

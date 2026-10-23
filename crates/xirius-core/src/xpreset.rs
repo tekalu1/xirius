@@ -87,7 +87,12 @@ impl DevicePreset {
                 kind: x.kind,
                 format: x.format.clone(),
                 uid: x.uid.clone(),
-                params: x.params.clone(),
+                params: x
+                    .params
+                    .iter()
+                    .filter(|(k, _)| holds(x, k))
+                    .map(|(k, v)| (k.clone(), *v))
+                    .collect(),
                 state: x.state.clone(),
                 samples: Some(x.samples.clone()),
             },
@@ -95,12 +100,16 @@ impl DevicePreset {
         }
     }
 
-    /// The `Default` preset of `x`'s device: a built-in's own defaults, an empty state for
-    /// anything else.
+    /// The `Default` preset of `x`'s device: a built-in's own defaults of the knobs a preset
+    /// holds, an empty state for anything else.
     pub fn factory_default(x: &Plugin) -> DevicePreset {
         let (params, samples) = match x.builtin() {
             Some(def) => (
-                def.defaults().map(|(k, v)| (k.to_string(), v)).collect(),
+                def.params
+                    .iter()
+                    .filter(|p| p.preset)
+                    .map(|p| (p.id.to_string(), p.default_norm()))
+                    .collect(),
                 Some(Vec::new()),
             ),
             None => (BTreeMap::new(), None),
@@ -168,6 +177,15 @@ impl DevicePreset {
             ))
         }
     }
+}
+
+/// Whether a preset of the plug-in `x`'s device holds its parameter `id`: every one but a
+/// built-in's knobs no preset sets ([`xirius_params::ParamSpec::preset`]; the Compressor's
+/// sidechain, PLG-071). A preset is not saved with those, and loading one leaves them be.
+pub fn holds(x: &Plugin, id: &str) -> bool {
+    x.builtin()
+        .and_then(|def| def.param(id))
+        .is_none_or(|(_, p)| p.preset)
 }
 
 /// Whether the plug-in `x` is the device `format`/`uid` of a preset name: the same uid, or

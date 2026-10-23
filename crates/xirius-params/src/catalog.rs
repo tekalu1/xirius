@@ -4,7 +4,7 @@
 //! in, and the index the engine reads them by. Ids are never renamed once a song can hold
 //! them; a new parameter goes at the end of its group.
 
-use crate::{BuiltinDef, Curve, Kind, ParamSpec, Unit};
+use crate::{BuiltinDef, Curve, Kind, Off, ParamSpec, Unit};
 
 const fn spec(
     id: &'static str,
@@ -23,6 +23,29 @@ const fn spec(
         max,
         default,
         curve,
+        off: Off::Never,
+        preset: true,
+    }
+}
+
+/// A knob the built-in presets leave where it is.
+const fn no_preset(p: ParamSpec) -> ParamSpec {
+    ParamSpec { preset: false, ..p }
+}
+
+/// A cut that is off at or below `at` (the bottom of its range).
+const fn off_below(p: ParamSpec, at: f64) -> ParamSpec {
+    ParamSpec {
+        off: Off::AtOrBelow(at),
+        ..p
+    }
+}
+
+/// A cut that is off at or above `at` (the top of its range).
+const fn off_above(p: ParamSpec, at: f64) -> ParamSpec {
+    ParamSpec {
+        off: Off::AtOrAbove(at),
+        ..p
     }
 }
 
@@ -131,6 +154,23 @@ pub static COMPRESSOR: BuiltinDef = BuiltinDef {
         db("knee", "ニー", 0.0, 24.0, 6.0),
         db("makeup", "メイクアップ", 0.0, 24.0, 0.0),
         pct("mix", "ミックス", 100.0, 100.0),
+        // The sidechain (PLG-071), in Studio Pro's words. Int or Ext is the plug-in's
+        // sidechain switch (the title bar's), not a knob: the key comes from the sources
+        // whenever it is on. One Gain: the Input Gain at Int, the Side Gain (on the key
+        // alone) at Ext. The presets leave all of them where they are.
+        no_preset(db("gain", "Gain", -12.0, 24.0, 0.0)),
+        no_preset(toggle("filter", "Filter", false)),
+        // At the bottom of its range the low cut is off, at the top the high cut (Studio
+        // Pro's Off past 16 kHz is the top's 20 kHz here).
+        no_preset(off_below(
+            hz("low_cut", "Low Cut", 20.0, 16_000.0, 20.0),
+            20.5,
+        )),
+        no_preset(off_above(
+            hz("high_cut", "High Cut", 20.0, 20_000.0, 20_000.0),
+            19_999.0,
+        )),
+        no_preset(toggle("listen", "Listen", false)),
     ],
 };
 

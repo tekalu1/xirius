@@ -310,10 +310,13 @@ fn factory_set() -> Vec<(&'static BuiltinDef, &'static str, Vec<u8>)> {
                     kind: PluginKind::Effect,
                     format: "builtin".into(),
                     uid: def.uid.into(),
+                    // The knobs no preset sets (the Compressor's sidechain, PLG-071) are
+                    // not in the file, so the set's bytes stay as they were before them.
                     params: def
                         .params
                         .iter()
                         .zip(values.iter().copied())
+                        .filter(|(p, _)| p.preset)
                         .map(|(p, v)| (p.id.to_string(), v))
                         .collect(),
                     state: None,

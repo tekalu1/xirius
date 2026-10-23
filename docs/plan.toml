@@ -7901,11 +7901,13 @@ done_when = "ライセンスを確かめたサンプルで Sampler と Drum Kit 
 [[item]]
 id = "PLG-071"
 title = "Compressor でサイドチェーンのキーを受ける"
+status = "done"
 area = "PLG"
 phase = "v1.1"
 source = "sidechain/report.md § どこで受けるか ; devices-v2/report.md § 6"
 after = ["ENG-078"]
-done_when = "今の id は変えずに後ろへ Ext・Side Gain・Filter（Low Cut・High Cut、48 dB/oct は biquad 4 段、Swap）・Listen を足す。キーが無いときと Ext が切のときは今の音とビットまで同じ。試験でキーの拍ごとに GR が振れる"
+done_when = "今の id は変えずに後ろへ Gain・Filter（Low Cut・High Cut、48 dB/oct は biquad 4 段）・Listen を足し、Low Cut と High Cut を入れ替える Swap のコマンドを足す。キーが無いとき（Int）は、Gain が 0 dB なら今の音とビットまで同じ。内蔵のプリセットは新しいつまみを動かさず、古い曲のプリセットの名前は変わらない。試験でキーの拍ごとに GR が振れる"
+notes = "決め事: Int / Ext はつまみに持たず、機器のサイドチェーンの入切（タイトルバーの値）だけで決める。キーが届けば Ext で、送り元を足すとすぐ効く。Gain は 1 つのつまみで、Int では入力（音と検出）に、Ext では外のキーにだけ掛ける（表記は Int で Input Gain、Ext で Side Gain）。Filter は Int でも検出の入力に掛かる。Low Cut は 20 Hz〜16 kHz で下端が Off、High Cut は 20 Hz〜20 kHz（モックと同じ）で上端が Off。Studio Pro の 16 kHz の先の Off は、上端の 20 kHz が受け持つ。Swap は値を持たず、Low Cut と High Cut の周波数を 1 回の操作で入れ替える（plugin.sidechain.swap。Off は Off へ移す）。Low Cut が High Cut より上のときは、そのまま直列に掛かる。内蔵のプリセットは Gain・Filter・Low Cut・High Cut・Listen を動かさず、比べもしない（PLG-072・PLG-074 も同じ印を使う）。Listen はフィルター後のキーを出力に出す"
 
 [[item]]
 id = "PLG-072"

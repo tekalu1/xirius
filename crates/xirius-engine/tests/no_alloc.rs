@@ -232,6 +232,7 @@ fn the_builtins_do_not_allocate_while_their_values_move() {
     let mut handles = Vec::new();
     let mut tracks = Vec::new();
     let mut effects = Vec::new();
+    let mut compressor = None;
     for def in BUILTINS {
         let Some((p, h)) = stock::create(def.uid) else {
             continue;
@@ -239,12 +240,30 @@ fn the_builtins_do_not_allocate_while_their_values_move() {
         handles.push(h);
         match def.kind {
             Kind::Instrument => tracks.push(TrackSlot::New(TrackSpec::new(def.name, p))),
-            Kind::Effect => effects.push(p),
+            Kind::Effect => {
+                if def.uid == "compressor" {
+                    compressor = Some(effects.len());
+                }
+                effects.push(p)
+            }
         }
     }
     assert!(!handles.is_empty());
     let mut fx = TrackSpec::new("fx", Box::new(Sine::new(220.0, 0.5)));
     fx.inserts = effects;
+    // The Compressor takes the first instrument as its key (PLG-071), filtered, listened to
+    // and switched between Int and Ext as its values move.
+    fx.keys = vec![KeySpec {
+        insert: compressor.unwrap(),
+        plugin: 71,
+        on: true,
+        sources: vec![KeySourceSpec {
+            id: 1,
+            from: KeyFrom::Track(0),
+            pre: false,
+            level: 1.0,
+        }],
+    }];
     tracks.push(TrackSlot::New(fx));
     let n = tracks.len();
     let spec = MixSpec {
@@ -266,6 +285,11 @@ fn the_builtins_do_not_allocate_while_their_values_move() {
                 }
                 h.set_tempo(80.0 + f64::from(i % 90));
             }
+            let on = i % 15 != 10;
+            control
+                .send(Command::KeyOn { plugin: 71, on })
+                .ok()
+                .unwrap();
         }
         for track in 0..n {
             let pitch = 36 + ((i + track as u32 * 5) % 48) as u8;

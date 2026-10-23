@@ -7,7 +7,7 @@
 //! The knobs are the built-in's parameters as `xirius-params` lists them, in
 //! its order: a parameter added there gets its knob here. A knob turns while
 //! it is dragged and goes into the song when it is let go (`plugin.param.set`,
-//! 0..1, one step); a preset sets every knob at once (`plugin.preset.load`,
+//! 0..1, one step); a preset sets its knobs at once (`plugin.preset.load`,
 //! one step).
 
 use std::collections::HashMap;
@@ -69,7 +69,8 @@ fn snap(spec: &ParamSpec, norm: f64) -> f64 {
 }
 
 /// The knobs' values (0..1) of a preset: `初期` is the defaults, the rest are the
-/// factory presets `xirius-params` ships (PLG-063).
+/// factory presets `xirius-params` ships (PLG-063), which leave the knobs no preset
+/// sets ([`ParamSpec::preset`]) at their defaults.
 pub fn preset_values(def: &BuiltinDef, preset: &str) -> Option<Vec<f64>> {
     if preset == "初期" {
         return Some(def.params.iter().map(|p| p.default_norm()).collect());
@@ -97,7 +98,7 @@ pub fn values(plugin: &Plugin) -> Vec<f64> {
     })
 }
 
-/// The preset the knobs are at, or [`CUSTOM`].
+/// The preset the knobs a preset sets are at, or [`CUSTOM`].
 pub fn preset_of(plugin: &Plugin) -> &'static str {
     let Some(def) = plugin.builtin() else {
         return CUSTOM;
@@ -106,8 +107,12 @@ pub fn preset_of(plugin: &Plugin) -> &'static str {
     PRESETS
         .iter()
         .find(|p| {
-            preset_values(def, p)
-                .is_some_and(|v| v.iter().zip(&now).all(|(a, b)| (a - b).abs() < 1e-6))
+            preset_values(def, p).is_some_and(|v| {
+                def.params
+                    .iter()
+                    .zip(v.iter().zip(&now))
+                    .all(|(s, (a, b))| !s.preset || (a - b).abs() < 1e-6)
+            })
         })
         .copied()
         .unwrap_or(CUSTOM)
@@ -602,7 +607,7 @@ impl Studio {
         true
     }
 
-    /// Sets every knob of a built-in plugin to a preset (one step). The tag
+    /// Sets every knob a preset sets of a built-in plugin (one step). The tag
     /// keeps the preset's name while the knobs stay on it.
     pub fn load_preset(&mut self, id: PluginId, preset: &str) -> bool {
         let p = self.project();
@@ -622,6 +627,7 @@ impl Studio {
             .params
             .iter()
             .zip(v)
+            .filter(|(p, _)| p.preset)
             .map(|(p, v)| json!({ "param": p.id, "value": v }))
             .collect();
         // The edit's own pass learns the preset as the tag's base.
