@@ -188,6 +188,9 @@ pub enum IdKind {
     /// What a copy takes: notes, clips (meaning all their notes) or tracks.
     Copyable,
     Plugin,
+    /// A channel or a plug-in: `send.add --to` takes a bus or the plug-in
+    /// whose sidechain the send feeds (MIX-047).
+    TrackOrPlugin,
     Send,
     Section,
     Marker,
@@ -212,6 +215,7 @@ impl IdKind {
             IdKind::NoteScope => "note|clip",
             IdKind::Copyable => "note|clip|track",
             IdKind::Plugin => "plugin",
+            IdKind::TrackOrPlugin => "track|plugin",
             IdKind::Send => "send",
             IdKind::Section => "section",
             IdKind::Marker => "marker",
@@ -238,6 +242,7 @@ impl IdKind {
                     AnyId::Note(_) | AnyId::Clip(_) | AnyId::Track(_)
                 )
                 | (IdKind::Plugin, AnyId::Plugin(_))
+                | (IdKind::TrackOrPlugin, AnyId::Track(_) | AnyId::Plugin(_))
                 | (IdKind::Send, AnyId::Send(_))
                 | (IdKind::Section, AnyId::Section(_))
                 | (IdKind::Marker, AnyId::Marker(_))

@@ -700,6 +700,7 @@ mod tests {
             params: [("Gain".to_string(), 0.5)].into(),
             state: None,
             isolation: Default::default(),
+            sidechain: None,
         };
         Arc::make_mut(p.tracks.get_mut(&t).unwrap())
             .inserts

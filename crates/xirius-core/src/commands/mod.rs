@@ -68,6 +68,7 @@ mod roll_view;
 pub mod screen_ops;
 mod select;
 mod send_menu;
+mod sidechain;
 mod take_menu;
 mod tempo_move;
 mod time_shift;
@@ -85,6 +86,7 @@ pub fn all() -> Vec<CommandDef> {
     let mut v = Vec::new();
     v.extend(track::defs());
     v.extend(send_menu::defs());
+    v.extend(sidechain::defs());
     v.extend(insert::defs());
     v.extend(group::defs());
     v.extend(preset::defs());

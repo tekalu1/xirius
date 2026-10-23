@@ -8066,6 +8066,7 @@ done_when = "左にミキサー、右に選んだ機器の面を置き、面の�
 [[item]]
 id = "MIX-047"
 title = "サイドチェーンの送り元を機器に持たせ、輪を断り、plugin.sidechain.* のコマンドを足す"
+status = "done"
 area = "MIX"
 phase = "v1.1"
 source = "sidechain/report.md § データの形 ; sidechain/report.md § 輪になるつなぎの拒み方 ; sidechain/report.md § undo ; sidechain/report.md § CLI / MCP"

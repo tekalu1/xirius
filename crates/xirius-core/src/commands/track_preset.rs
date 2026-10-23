@@ -235,7 +235,14 @@ fn apply_to(
         volume_db: preset.volume_db,
         pan: preset.pan,
     };
-    super::channel_settings::replace_inserts(p, id, &copy)?;
+    let keys = super::channel_settings::replace_inserts(p, id, &copy)?;
+    if keys > 0 {
+        rows.push(Adjust::new(
+            AdjustKind::Rejected,
+            "サイドチェーンの送り元",
+            format!("{keys} 件は、送り元が無いかルーティングがループするため外しました"),
+        ));
+    }
     let dropped = super::channel_settings::replace_sends(p, id, &copy)?;
     if dropped > 0 {
         rows.push(Adjust::new(

@@ -122,6 +122,7 @@ fn a_latency_notification_rebuilds_pdc_while_the_transport_keeps_playing() {
                     params: BTreeMap::new(),
                     state: None,
                     isolation: PluginIsolation::InProcess,
+                    sidechain: None,
                 });
                 if scenario == 3 {
                     let mut lane =

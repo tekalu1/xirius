@@ -82,6 +82,10 @@ fn transfer(
         .collect();
     if copy {
         plugin.id = PluginId(p.alloc());
+        // The copy's send rows need ids of their own, and rows the target
+        // cannot take are left out (MIX-047).
+        plugin.refresh_key_ids(p);
+        p.prune_key_sources(&mut plugin, to);
     } else {
         let src = p.track_mut(from)?;
         src.inserts.remove(pos);

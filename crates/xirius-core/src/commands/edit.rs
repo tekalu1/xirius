@@ -681,6 +681,11 @@ fn put(
                 };
                 let mut copy = c.plugin.clone();
                 copy.id = PluginId(p.alloc());
+                // The copy's send rows get ids of their own; rows the target
+                // cannot take (itself, a gone channel, a loop) are left out
+                // (MIX-047).
+                copy.refresh_key_ids(p);
+                p.prune_key_sources(&mut copy, tid);
                 made.push(copy.id.to_string());
                 track::place_plugin(p, tid, copy, index)?;
             }

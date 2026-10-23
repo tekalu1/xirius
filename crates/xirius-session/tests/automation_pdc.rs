@@ -84,6 +84,7 @@ fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek
                 params: BTreeMap::from([("1".into(), 1.0)]),
                 state: None,
                 isolation: PluginIsolation::InProcess,
+                sidechain: None,
             });
         }
         let mut lane = AutoLane::new(AutoTarget::Mute);

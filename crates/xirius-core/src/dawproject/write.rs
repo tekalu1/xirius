@@ -440,6 +440,15 @@ impl<'a> Writer<'a> {
     // ---- devices -----------------------------------------------------------
 
     fn device(&mut self, t: &Track, x: &Plugin) -> Option<El> {
+        // The sidechain's key routing has no DAWproject shape yet (MIX-047);
+        // name it rather than dropping it in silence.
+        if x.sidechain
+            .as_ref()
+            .is_some_and(|sc| !sc.sources.is_empty())
+        {
+            self.skips
+                .item(format!("{} の {} のサイドチェーン", t.name, x.name));
+        }
         if let Some(def) = x.builtin() {
             return self.builtin(t, x, def);
         }

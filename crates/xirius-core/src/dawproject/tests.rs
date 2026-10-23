@@ -54,6 +54,7 @@ fn builtin(p: &mut Project, uid: &str) -> Plugin {
         params: def.defaults().map(|(k, v)| (k.to_string(), v)).collect(),
         state: None,
         isolation: PluginIsolation::default(),
+        sidechain: None,
     }
 }
 
@@ -680,6 +681,7 @@ fn what_a_dawproject_cannot_carry_is_listed_on_export() {
             params: Default::default(),
             state: None,
             isolation: PluginIsolation::default(),
+            sidechain: None,
         });
         let ClipBody::Midi { notes, .. } = &mut t.clips[0].body else {
             unreachable!()
@@ -913,6 +915,7 @@ fn plugin(p: &mut Project, format: &str, uid: &str, name: &str, kind: PluginKind
         params: [("3".to_string(), 0.25), ("17".to_string(), 1.0)].into(),
         state: Some(vstpreset::to_text(&state)),
         isolation: PluginIsolation::default(),
+        sidechain: None,
     }
 }
 

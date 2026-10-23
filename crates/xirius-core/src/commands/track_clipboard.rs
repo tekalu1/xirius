@@ -4,6 +4,14 @@ use crate::clipboard::Clipboard;
 use crate::id::TrackId;
 use crate::model::TrackKind;
 
+fn key_rows(t: &crate::model::Track) -> impl Iterator<Item = crate::id::SendId> + '_ {
+    t.inserts.iter().flat_map(|x| {
+        x.sidechain
+            .iter()
+            .flat_map(|sc| sc.sources.iter().map(|s| s.id))
+    })
+}
+
 pub(super) fn gather(p: &Project, a: &Args) -> CmdResult<Clipboard> {
     let ids = a.ids::<TrackId>("ids")?;
     if ids.is_empty() {
@@ -63,7 +71,37 @@ pub(super) fn put(p: &mut Project, source: &Project, ids: &[TrackId]) -> CmdResu
                     .is_some_and(|t| t.kind == TrackKind::Bus)
             }
         });
-        c.automation.retain(|l| !matches!(&l.target, crate::auto::AutoTarget::Send(id) if !c.sends.iter().any(|s| s.id == *id)));
+        // Key sources retarget to a pasted copy's id, keep one that names a
+        // channel of this song, and lose the rest (MIX-047).
+        for x in &mut c.inserts {
+            if let Some(sc) = &mut x.sidechain {
+                sc.sources.retain_mut(|s| {
+                    if let Some(to) = map.get(&s.track) {
+                        s.track = *to;
+                        true
+                    } else {
+                        p.tracks.contains_key(&s.track)
+                    }
+                });
+                if sc.sources.is_empty() {
+                    x.sidechain = None;
+                }
+            }
+        }
+        let live: std::collections::HashSet<crate::id::SendId> = c
+            .sends
+            .iter()
+            .map(|s| s.id)
+            .chain(p.tracks.values().flat_map(|t| key_rows(t)))
+            .chain(c.inserts.iter().flat_map(|x| {
+                x.sidechain
+                    .iter()
+                    .flat_map(|sc| sc.sources.iter().map(|s| s.id))
+            }))
+            .collect();
+        c.automation.retain(
+            |l| !matches!(&l.target, crate::auto::AutoTarget::Send(id) if !live.contains(id)),
+        );
         for cl in &c.clips {
             if let Some(fx) = snapshot.clip_fx.get(&cl.id) {
                 p.clip_fx.insert(cl.id, fx.clone());

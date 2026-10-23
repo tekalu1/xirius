@@ -87,7 +87,32 @@ impl Graph {
 }
 
 /// Where a channel plays to or sends to: the buses it reaches in one step.
+/// Sidechain keys count too (MIX-047): a channel that keys a plug-in feeds
+/// the plug-in's channel, so the bus order, the stems' reach and the loop
+/// check see it.
 pub fn bus_targets(p: &Project, id: TrackId) -> Vec<TrackId> {
+    let Some(t) = p.tracks.get(&id) else {
+        return Vec::new();
+    };
+    let mut v = Vec::new();
+    if let Some(Output::Bus(b)) = p.effective_output(id) {
+        v.push(b);
+    }
+    v.extend(t.sends.iter().map(|s| s.to));
+    v.extend(
+        p.key_edges()
+            .into_iter()
+            .filter_map(|(from, to)| (from == id).then_some(to)),
+    );
+    v
+}
+
+/// Where a channel plays to or sends to, without the sidechain key edges
+/// (MIX-047): solo walks these alone. A soloed key source keeps what it
+/// plays to audible, but the plug-in it keys does not count as its sound,
+/// and a soloed channel does not pull the sources it is keyed by. Whether
+/// the key keeps feeding a soloed receiver is for ENG-078.
+fn audio_targets(p: &Project, id: TrackId) -> Vec<TrackId> {
     let Some(t) = p.tracks.get(&id) else {
         return Vec::new();
     };
@@ -124,10 +149,10 @@ pub fn silenced(p: &Project) -> HashMap<TrackId, bool> {
         let mut down: Vec<TrackId> = soloed.clone();
         while let Some(n) = down.pop() {
             if audible.insert(n) {
-                down.extend(bus_targets(p, n));
+                down.extend(audio_targets(p, n));
             }
         }
-        let reverse = reverse_edges(p);
+        let reverse = audio_reverse_edges(p);
         let mut up: Vec<TrackId> = soloed
             .iter()
             .copied()
@@ -151,9 +176,20 @@ pub fn silenced(p: &Project) -> HashMap<TrackId, bool> {
 }
 
 fn reverse_edges(p: &Project) -> HashMap<TrackId, Vec<TrackId>> {
+    reverse_of(p, bus_targets)
+}
+
+fn audio_reverse_edges(p: &Project) -> HashMap<TrackId, Vec<TrackId>> {
+    reverse_of(p, audio_targets)
+}
+
+fn reverse_of(
+    p: &Project,
+    targets: fn(&Project, TrackId) -> Vec<TrackId>,
+) -> HashMap<TrackId, Vec<TrackId>> {
     let mut reverse: HashMap<TrackId, Vec<TrackId>> = HashMap::new();
     for t in p.tracks.values().filter(|t| !t.id.is_master()) {
-        for to in bus_targets(p, t.id) {
+        for to in targets(p, t.id) {
             reverse.entry(to).or_default().push(t.id);
         }
     }
@@ -466,6 +502,49 @@ mod tests {
         // Mute wins over solo.
         run(&mut s, "track.mute", json!({"ids": [a.to_string()]}));
         assert!(silenced(s.project())[&a]);
+    }
+
+    #[test]
+    fn a_key_edge_orders_buses_but_solo_walks_outputs_and_sends_only() {
+        // Kick keys a plug-in on Bass's bus. The key edge orders Kick's bus
+        // before Bass's (the render feeds the key before the receiver), but
+        // solo sees only the output/send edges: soloing Kick does not wake
+        // Bass's bus, and soloing Bass's bus does not pull Kick in.
+        let (mut s, ids) =
+            session_with(&["track.add.bus", "track.add.bus", "track.add.instrument"]);
+        let (kick_bus, bass_bus, kick) = (ids[0], ids[1], ids[2]);
+        run(
+            &mut s,
+            "track.output.set",
+            json!({"ids": [kick.to_string()], "to": kick_bus.to_string()}),
+        );
+        let comp = s
+            .run_value(
+                "plugin.add",
+                json!({"track": bass_bus.to_string(), "name": "Comp"}),
+                &Default::default(),
+            )
+            .unwrap()
+            .data["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        run(
+            &mut s,
+            "plugin.sidechain.add",
+            json!({"id": comp, "from": kick.to_string()}),
+        );
+        // The key edge kick_bus? No: the edge is kick -> bass_bus. Kick's bus
+        // is not in the chain; buses are ordered kick's own chain first.
+        assert!(feeding(s.project(), bass_bus).contains(&kick));
+        run(&mut s, "track.solo", json!({"ids": [kick.to_string()]}));
+        let m = silenced(s.project());
+        assert!(!m[&kick] && !m[&kick_bus] && m[&bass_bus]);
+        run(&mut s, "track.solo.clear", json!({}));
+        run(&mut s, "track.solo", json!({"ids": [bass_bus.to_string()]}));
+        let m = silenced(s.project());
+        // The bus it is keyed by does not get pulled into the solo.
+        assert!(!m[&bass_bus] && m[&kick] && m[&kick_bus]);
     }
 
     #[test]

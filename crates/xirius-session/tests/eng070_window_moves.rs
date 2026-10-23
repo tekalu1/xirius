@@ -30,6 +30,7 @@ fn track(isolation: PluginIsolation, uid: &str) -> Arc<Track> {
         params: BTreeMap::new(),
         state: None,
         isolation,
+        sidechain: None,
     });
     Arc::new(t)
 }

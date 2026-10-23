@@ -153,6 +153,11 @@ pub struct Plugin {
     /// Which process the plugin runs in (PLG-022).
     #[serde(default, skip_serializing_if = "PluginIsolation::is_default")]
     pub isolation: PluginIsolation,
+    /// The sidechain keys this plug-in takes (MIX-047): held on the
+    /// receiving plug-in, so the sources move, copy and go away with it.
+    /// Songs without one write nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidechain: Option<Sidechain>,
 }
 
 impl Plugin {
@@ -226,6 +231,96 @@ pub struct AuxSend {
     /// The fader value held while the send is silent. level_db is MIN_DB while muted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub muted_level: Option<f64>,
+}
+
+/// The quietest a sidechain send may be set (MIX-047); the same fader range
+/// the mixer draws for a send row.
+pub const KEY_MIN_DB: f64 = -60.0;
+/// The loudest a sidechain send may be set.
+pub const KEY_MAX_DB: f64 = 6.0;
+
+/// A plug-in's sidechain (MIX-047): whether it listens to an external key,
+/// and the channels the key is summed from.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct Sidechain {
+    /// Ext when on, Int when off (the title bar's switch).
+    #[serde(default)]
+    pub on: bool,
+    /// The sources, in the order they were added.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<KeySource>,
+}
+
+/// One channel a plug-in's key is taken from.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct KeySource {
+    /// The send row's id, so the mixer can grab the row on the source
+    /// channel's strip. Shares the `AuxSend` id space.
+    pub id: SendId,
+    /// The channel that sends the key.
+    pub track: TrackId,
+    /// How the channel's sound is taken.
+    #[serde(flatten)]
+    pub mode: KeyMode,
+}
+
+/// How a [`KeySource`] takes its channel's sound.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum KeyMode {
+    /// A send: the source's signal before or after its fader, at `level_db`.
+    Send {
+        /// Before the fader. The default (`false`) is after.
+        #[serde(default)]
+        pre: bool,
+        #[serde(default)]
+        level_db: f64,
+        /// The fader value held while the row is silent, as an `AuxSend` has.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        muted_level: Option<f64>,
+    },
+    /// The source's channel output, as it is (no level is applied).
+    Output,
+}
+
+impl KeyMode {
+    /// The send fields, when this is a send.
+    pub fn send(&self) -> Option<(bool, f64, Option<f64>)> {
+        match self {
+            KeyMode::Send {
+                pre,
+                level_db,
+                muted_level,
+            } => Some((*pre, *level_db, *muted_level)),
+            KeyMode::Output => None,
+        }
+    }
+}
+
+impl Sidechain {
+    /// The row `id` names, and where it sits.
+    pub fn source(&self, id: SendId) -> Option<(usize, &KeySource)> {
+        self.sources.iter().enumerate().find(|(_, s)| s.id == id)
+    }
+
+    /// `true` when the sidechain has nothing to play; an emptied one is
+    /// stored as `None` again so the file stays clean.
+    pub fn is_empty(&self) -> bool {
+        self.sources.is_empty()
+    }
+}
+
+impl Plugin {
+    /// Fresh ids for the sidechain's send rows, for a copy (MIX-047): a copy
+    /// keeps pointing at the same source channels but its rows get ids of
+    /// their own.
+    pub fn refresh_key_ids(&mut self, p: &mut Project) {
+        if let Some(sc) = &mut self.sidechain {
+            for s in &mut sc.sources {
+                s.id = SendId(p.alloc());
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -1184,6 +1279,13 @@ impl Project {
     /// Fails with the loop spelled out when outputs, folder buses and sends
     /// make a cycle.
     pub fn check_routing(&self) -> CmdResult<()> {
+        self.routing_ok_with(&[])
+    }
+
+    /// [`check_routing`] with the extra edges of `extra` (each `from -> to`)
+    /// laid on top: the check a paste makes for the key edges it is about to
+    /// lay down (MIX-047).
+    pub fn routing_ok_with(&self, extra: &[(TrackId, TrackId)]) -> CmdResult<()> {
         let pm = self.parent_map();
         let eff = |id: TrackId, t: &Track| -> Option<TrackId> {
             if let Some(o) = t.output {
@@ -1213,6 +1315,11 @@ impl Project {
             for s in &t.sends {
                 e.push(s.to);
             }
+        }
+        // A sidechain key is signal flow like a send (MIX-047): a channel's
+        // output or send may never point back into a channel it keys.
+        for (from, to) in self.key_edges().iter().chain(extra).copied() {
+            edges.entry(from).or_default().push(to);
         }
         // iterative DFS with colours; 1 = on the stack, 2 = done
         let mut colour: HashMap<TrackId, u8> = HashMap::new();
@@ -1255,6 +1362,86 @@ impl Project {
         Ok(())
     }
 
+    /// The sidechain key edges of the song, `source channel -> the channel
+    /// that owns the receiving plug-in` (MIX-047). Signal flow like a send:
+    /// the routing's cycle checks and the engine's graph count them.
+    pub fn key_edges(&self) -> Vec<(TrackId, TrackId)> {
+        let mut out = Vec::new();
+        for (id, t) in &self.tracks {
+            for x in &t.inserts {
+                if let Some(sc) = &x.sidechain {
+                    for s in &sc.sources {
+                        out.push((s.track, *id));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Drops the key sources `plugin` may not keep on the channel `owner`
+    /// (MIX-047): its own channel, a channel that is gone, and one whose key
+    /// edge would make the routing loop. Returns the dropped count; an
+    /// emptied sidechain folds back to `None`.
+    pub fn prune_key_sources(&mut self, plugin: &mut Plugin, owner: TrackId) -> usize {
+        let Some(mut sc) = plugin.sidechain.take() else {
+            return 0;
+        };
+        let mut kept = Vec::with_capacity(sc.sources.len());
+        let mut extra: Vec<(TrackId, TrackId)> = Vec::new();
+        let mut dropped = 0;
+        for s in sc.sources.drain(..) {
+            if s.track == owner || !self.tracks.contains_key(&s.track) {
+                dropped += 1;
+                continue;
+            }
+            extra.push((s.track, owner));
+            if self.routing_ok_with(&extra).is_ok() {
+                kept.push(s);
+            } else {
+                extra.pop();
+                dropped += 1;
+            }
+        }
+        sc.sources = kept;
+        plugin.sidechain = (!sc.sources.is_empty()).then_some(sc);
+        dropped
+    }
+
+    /// Whether `source` may feed the plug-in `plugin`'s sidechain without a
+    /// routing loop (the check the screens' source lists make, MIX-047).
+    pub fn sidechain_ok(&self, plugin: PluginId, source: TrackId) -> bool {
+        let mut q = self.clone();
+        let Some(tid) = q
+            .tracks
+            .iter()
+            .find(|(_, t)| t.inserts.iter().any(|x| x.id == plugin))
+            .map(|(id, _)| *id)
+        else {
+            return false;
+        };
+        let Ok(t) = q.track_mut(tid) else {
+            return false;
+        };
+        let Some(x) = t.inserts.iter_mut().find(|x| x.id == plugin) else {
+            return false;
+        };
+        let sc = x.sidechain.get_or_insert(Sidechain {
+            on: false,
+            sources: Vec::new(),
+        });
+        sc.sources.push(KeySource {
+            id: SendId(u64::MAX),
+            track: source,
+            mode: KeyMode::Send {
+                pre: false,
+                level_db: 0.0,
+                muted_level: None,
+            },
+        });
+        q.check_routing().is_ok()
+    }
+
     // ---- structure edits shared by commands -----------------------------
 
     /// Removes a track and every reference to it. The tracks that used it as
@@ -1264,17 +1451,55 @@ impl Project {
             return Err(CmdError::conflict("マスターは削除できません"));
         }
         self.track(id)?;
+        // The send rows the deleted channel's sidechains made on other
+        // strips die with it; lanes that wrote them are let go below.
+        let mut dead: HashSet<SendId> = self.tracks[&id]
+            .inserts
+            .iter()
+            .flat_map(|x| {
+                x.sidechain
+                    .iter()
+                    .flat_map(|sc| sc.sources.iter().map(|s| s.id))
+            })
+            .collect();
         self.detach(Node::Track(id));
         self.tracks.remove(&id);
         for t in self.tracks.values_mut() {
             let refs = t.output == Some(Output::Bus(id)) || t.sends.iter().any(|s| s.to == id);
-            if refs {
+            let keys = t
+                .inserts
+                .iter()
+                .filter_map(|x| x.sidechain.as_ref())
+                .any(|sc| sc.sources.iter().any(|s| s.track == id));
+            if refs || keys {
                 let t = Arc::make_mut(t);
                 if t.output == Some(Output::Bus(id)) {
                     t.output = Some(Output::Master);
                 }
+                dead.extend(t.sends.iter().filter(|s| s.to == id).map(|s| s.id));
                 t.sends.retain(|s| s.to != id);
-                t.automation.retain(|l|!matches!(l.target,crate::auto::AutoTarget::Send(id) if !t.sends.iter().any(|s|s.id==id)));
+                for x in &mut t.inserts {
+                    let Some(sc) = &mut x.sidechain else {
+                        continue;
+                    };
+                    dead.extend(sc.sources.iter().filter(|s| s.track == id).map(|s| s.id));
+                    sc.sources.retain(|s| s.track != id);
+                    if sc.sources.is_empty() {
+                        x.sidechain = None;
+                    }
+                }
+            }
+        }
+        // The automation lanes of every send row that went with it.
+        if !dead.is_empty() {
+            for t in self.tracks.values_mut() {
+                if t.automation.iter().any(
+                    |l| matches!(&l.target, crate::auto::AutoTarget::Send(s) if dead.contains(s)),
+                ) {
+                    Arc::make_mut(t)
+                        .automation
+                        .retain(|l| !matches!(&l.target, crate::auto::AutoTarget::Send(s) if dead.contains(s)));
+                }
             }
         }
         for f in self.folders.values_mut() {
@@ -1374,6 +1599,7 @@ impl Project {
             }
         }
 
+        let mut seen_sends = HashSet::new();
         for (id, t) in &self.tracks {
             if t.id != *id {
                 return Err(CmdError::conflict(format!("{id} の中の ID が一致しません")));
@@ -1396,6 +1622,64 @@ impl Project {
                         t.name, s.to
                     ))
                 })?;
+                if !seen_sends.insert(s.id) {
+                    return Err(CmdError::conflict(format!(
+                        "センドの ID {} が重複しています",
+                        s.id
+                    )));
+                }
+            }
+            for x in &t.inserts {
+                let Some(sc) = &x.sidechain else {
+                    continue;
+                };
+                let mut sources = HashSet::new();
+                for s in &sc.sources {
+                    if !seen_sends.insert(s.id) {
+                        return Err(CmdError::conflict(format!(
+                            "センドの ID {} が重複しています",
+                            s.id
+                        )));
+                    }
+                    if s.track.is_master() {
+                        return Err(CmdError::conflict(format!(
+                            "{} のサイドチェーンの送り元にマスターは使えません",
+                            x.name
+                        )));
+                    }
+                    if s.track == *id {
+                        return Err(CmdError::conflict(format!(
+                            "{} のサイドチェーンの送り元と受ける機器が同じチャンネルです",
+                            x.name
+                        )));
+                    }
+                    self.track(s.track).map_err(|_| {
+                        CmdError::conflict(format!(
+                            "{} のサイドチェーンの送り元 {} がありません",
+                            x.name, s.track
+                        ))
+                    })?;
+                    if !sources.insert(s.track) {
+                        return Err(CmdError::conflict(format!(
+                            "{} のサイドチェーンの送り元 {} が重複しています",
+                            x.name, s.track
+                        )));
+                    }
+                    if let KeyMode::Send {
+                        level_db,
+                        muted_level,
+                        ..
+                    } = &s.mode
+                    {
+                        let held = muted_level.unwrap_or(*level_db);
+                        if !(KEY_MIN_DB..=KEY_MAX_DB).contains(&held) {
+                            return Err(CmdError::range(format!(
+                                "{} のサイドチェーンの送り元の量 {held} が範囲外です",
+                                x.name
+                            )));
+                        }
+                    }
+                }
             }
             if !t.has_clips() && !t.clips.is_empty() {
                 return Err(CmdError::conflict(format!(
@@ -1581,6 +1865,13 @@ impl Project {
             }
             for s in &t.sends {
                 take(s.id.0, "センド")?;
+            }
+            for x in &t.inserts {
+                if let Some(sc) = &x.sidechain {
+                    for s in &sc.sources {
+                        take(s.id.0, "サイドチェーンの送り元")?;
+                    }
+                }
             }
             for c in &t.clips {
                 take(c.id.0, "クリップ")?;

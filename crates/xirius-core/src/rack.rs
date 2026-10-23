@@ -1030,6 +1030,7 @@ mod tests {
             params: Default::default(),
             state: None,
             isolation: Default::default(),
+            sidechain: None,
         }
     }
 

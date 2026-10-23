@@ -53,6 +53,7 @@ fn song_with(
         params: BTreeMap::from([("1".to_string(), delay)]),
         state: None,
         isolation,
+        sidechain: None,
     };
     t.inserts.push(plugin(PID, isolation));
     t.inserts.extend(other.map(|i| plugin(OTHER, i)));

@@ -106,6 +106,7 @@ fn prepare(s: &mut Studio, _: u8) {
                     params: BTreeMap::from([("1".into(), 1.0)]),
                     state: None,
                     isolation: PluginIsolation::InProcess,
+                    sidechain: None,
                 });
             }
         }

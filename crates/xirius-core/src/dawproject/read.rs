@@ -789,6 +789,7 @@ impl Reader<'_> {
             params: Default::default(),
             state: None,
             isolation: PluginIsolation::default(),
+            sidechain: None,
         };
         if let Some(ps) = kid(d, "Parameters") {
             for prm in ps.children().filter(|n| n.is_element()) {
@@ -895,6 +896,7 @@ impl Reader<'_> {
             params: def.defaults().map(|(k, v)| (k.to_string(), v)).collect(),
             state: None,
             isolation: PluginIsolation::default(),
+            sidechain: None,
         };
         x.bypass = !self.enabled(tid, d, def.name);
         // (element, parameter, seconds to milliseconds)

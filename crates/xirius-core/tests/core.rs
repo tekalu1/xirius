@@ -552,6 +552,20 @@ fn every_history_command_undoes_and_redoes() {
     );
     rig.step("plugin.remove", json!({"ids": [eq]}));
     rig.step(
+        "plugin.sidechain.add",
+        json!({"id": comp, "from": lead, "level": -6, "pre": true}),
+    );
+    rig.step(
+        "plugin.sidechain.set",
+        json!({"id": comp, "from": lead, "position": "post", "level": -3}),
+    );
+    rig.step(
+        "plugin.sidechain.enable",
+        json!({"id": comp, "state": "off"}),
+    );
+    rig.step("plugin.sidechain.remove", json!({"id": comp, "from": lead}));
+    rig.step("send.add", json!({"ids": [lead], "to": comp, "level": -6}));
+    rig.step(
         "plugin.add",
         json!({"track": lead, "name": "Synth", "kind": "instrument"}),
     );

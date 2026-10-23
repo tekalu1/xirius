@@ -30,6 +30,7 @@ fn song(uid: &str, isolation: PluginIsolation) -> Project {
         params: BTreeMap::new(),
         state: None,
         isolation,
+        sidechain: None,
     });
     p.tracks.insert(id, Arc::new(track));
     p.root.push(Node::Track(id));

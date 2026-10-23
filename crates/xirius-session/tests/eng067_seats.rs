@@ -29,6 +29,7 @@ fn track(i: u64, uid: &str, plugin: bool) -> Arc<Track> {
             params: BTreeMap::from([("1".to_string(), 0.25)]),
             state: None,
             isolation: PluginIsolation::Dedicated,
+            sidechain: None,
         });
     }
     Arc::new(t)

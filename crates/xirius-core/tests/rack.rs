@@ -35,6 +35,7 @@ fn plugin(id: u64, kind: PluginKind) -> Plugin {
         params: Default::default(),
         state: None,
         isolation: Default::default(),
+        sidechain: None,
     }
 }
 

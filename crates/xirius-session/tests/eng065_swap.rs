@@ -27,6 +27,7 @@ fn track(i: u64, uid: &str) -> Arc<Track> {
         params: BTreeMap::new(),
         state: None,
         isolation: PluginIsolation::Dedicated,
+        sidechain: None,
     });
     Arc::new(t)
 }

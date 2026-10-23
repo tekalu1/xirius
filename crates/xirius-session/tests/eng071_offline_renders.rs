@@ -38,6 +38,7 @@ fn each_offline_render_plays_the_instance_it_opened() {
         params: BTreeMap::from([("1".into(), 0.5)]),
         state: None,
         isolation: PluginIsolation::InProcess,
+        sidechain: None,
     });
     let mut p = Project::new("offline renders");
     p.root.push(Node::Track(track.id));

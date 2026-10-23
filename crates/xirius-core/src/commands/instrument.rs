@@ -124,6 +124,7 @@ fn replace_plugin(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Outpu
         params: Default::default(),
         state: None,
         isolation: Default::default(),
+        sidechain: None,
     };
     let t = p.track_mut(tid)?;
     let at = match kind {
@@ -134,10 +135,16 @@ fn replace_plugin(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Outpu
             .map(|_| 0),
         PluginKind::Effect => t.inserts.iter().position(|x| Some(x.id) == old),
     };
+    // The send rows a replaced plug-in's sidechain made go with it.
+    let mut gone_keys: Vec<crate::id::SendId> = Vec::new();
     let gone = match at {
         Some(i) => {
             let old_id = t.inserts[i].id;
-            let name = std::mem::replace(&mut t.inserts[i], x).name;
+            let before = std::mem::replace(&mut t.inserts[i], x);
+            if let Some(sc) = before.sidechain {
+                gone_keys = sc.sources.iter().map(|s| s.id).collect();
+            }
+            let name = before.name;
             // The rack's seat follows the plug-in put in it (PRJ-026).
             if let Some(r) = t.rack.as_mut() {
                 r.replace_plugin(old_id, id);
@@ -150,6 +157,13 @@ fn replace_plugin(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Outpu
         }
     };
     let tid = t.id;
+    if !gone_keys.is_empty() {
+        for t in p.tracks.values_mut() {
+            Arc::make_mut(t)
+                .automation
+                .retain(|l| !matches!(&l.target, crate::auto::AutoTarget::Send(id) if gone_keys.contains(id)));
+        }
+    }
     p.fix_track_rack(tid);
     let msg = match gone {
         Some(before) => format!("「{before}」を「{name}」に差し替えました"),
@@ -233,6 +247,7 @@ pub(super) fn add_with_instrument(p: &mut Project, _: &EditCtx<'_>, a: &Args) ->
         params: Default::default(),
         state: None,
         isolation: Default::default(),
+        sidechain: None,
     });
     track.armed = armed;
     let count = notes.len();

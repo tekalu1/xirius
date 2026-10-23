@@ -299,6 +299,9 @@ fn plugin_value(x: &Plugin) -> Value {
     let mut v = serde_json::to_value(x).unwrap_or(Value::Null);
     if let Some(o) = v.as_object_mut() {
         o.remove("id");
+        // Sidechain sources name this song's channels; a preset carries the
+        // plug-in's settings, not the wiring around it (MIX-047).
+        o.remove("sidechain");
     }
     v
 }
@@ -477,6 +480,7 @@ fn parse_plugin(n: usize, v: &Value, rows: &mut Vec<Adjust>) -> Option<Plugin> {
         params,
         state,
         isolation,
+        sidechain: None,
     })
 }
 

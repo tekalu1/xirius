@@ -51,6 +51,7 @@ fn plugins_in_hosts_of_their_own_open_at_once() {
             params: BTreeMap::new(),
             state: None,
             isolation: PluginIsolation::Dedicated,
+            sidechain: None,
         });
         p.tracks.insert(id, Arc::new(t));
         p.root.push(Node::Track(id));

@@ -140,7 +140,7 @@ fn paste(
             p.track_mut(*id)?.pan = copy.pan;
         }
         if only.contains("inserts") {
-            replace_inserts(p, *id, copy)?;
+            dropped += replace_inserts(p, *id, copy)?;
         }
         if only.contains("sends") && !master && !copy.master {
             dropped += replace_sends(p, *id, copy)?;
@@ -165,13 +165,22 @@ fn paste(
 }
 
 /// The channel's effects become new copies of the source's; the instrument stays.
-pub(super) fn replace_inserts(p: &mut Project, to: TrackId, copy: &ChannelCopy) -> CmdResult<()> {
+/// A sidechain's send rows get ids of their own; a source the pasted channel
+/// cannot take (itself, or a channel that is gone) is left out (MIX-047).
+pub(super) fn replace_inserts(
+    p: &mut Project,
+    to: TrackId,
+    copy: &ChannelCopy,
+) -> CmdResult<usize> {
+    let mut dropped = 0;
     let fresh: Vec<_> = copy
         .inserts
         .iter()
         .map(|x| {
             let mut x = x.clone();
             x.id = PluginId(p.alloc());
+            x.refresh_key_ids(p);
+            dropped += p.prune_key_sources(&mut x, to);
             x
         })
         .collect();
@@ -182,12 +191,27 @@ pub(super) fn replace_inserts(p: &mut Project, to: TrackId, copy: &ChannelCopy) 
         .filter(|x| x.kind != PluginKind::Instrument)
         .map(|x| x.id)
         .collect();
+    // The send rows the replaced sidechains made on other strips go too.
+    let gone_keys: HashSet<SendId> = t
+        .inserts
+        .iter()
+        .filter(|x| gone.contains(&x.id))
+        .filter_map(|x| x.sidechain.as_ref())
+        .flat_map(|sc| sc.sources.iter().map(|s| s.id))
+        .collect();
     t.inserts.retain(|x| x.kind == PluginKind::Instrument);
     t.inserts.extend(fresh);
     t.automation
         .retain(|l| !matches!(&l.target, AutoTarget::Param(id, _) if gone.contains(id)));
+    if !gone_keys.is_empty() {
+        for t in p.tracks.values_mut() {
+            Arc::make_mut(t)
+                .automation
+                .retain(|l| !matches!(&l.target, AutoTarget::Send(id) if gone_keys.contains(id)));
+        }
+    }
     p.fix_track_rack(to);
-    Ok(())
+    Ok(dropped)
 }
 
 /// The channel's sends become new copies of the source's. A send that would loop back into the

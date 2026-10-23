@@ -312,11 +312,16 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         edit(
             "send.add",
-            "バスへのセンドを追加します（既定はポストフェーダー）",
+            "バスへのセンドを追加します（既定はポストフェーダー）。--to にプラグインを指定すると、その機器のサイドチェーンの送り元を追加します",
             vec![
                 ArgDef::ids(IdKind::Track, "送り元のトラック"),
-                ArgDef::id("to", IdKind::Track, "送り先のバス").req(),
-                ArgDef::float("level", "センド量（dB）")
+                ArgDef::id(
+                    "to",
+                    IdKind::TrackOrPlugin,
+                    "送り先のバス、またはキーを受けるプラグイン",
+                )
+                .req(),
+                ArgDef::float("level", "センド量（dB。--to がプラグインのときは -60〜6）")
                     .default(json!(0.0))
                     .range(MIN_DB, MAX_DB),
                 ArgDef::flag("pre", "プリフェーダーで送る"),
@@ -410,10 +415,19 @@ pub(super) fn defs() -> Vec<CommandDef> {
             |p, _, a| {
                 let ids = a.require_ids::<PluginId>("プラグイン")?;
                 let mut n = 0;
+                // The send rows the removed sidechains made on other strips.
+                let mut gone_keys: Vec<SendId> = Vec::new();
                 for tid in p.tracks.keys().copied().collect::<Vec<_>>() {
                     if p.tracks[&tid].inserts.iter().any(|x| ids.contains(&x.id)) {
                         let t = p.track_mut(tid)?;
                         let before = t.inserts.len();
+                        gone_keys.extend(
+                            t.inserts
+                                .iter()
+                                .filter(|x| ids.contains(&x.id))
+                                .filter_map(|x| x.sidechain.as_ref())
+                                .flat_map(|sc| sc.sources.iter().map(|s| s.id)),
+                        );
                         t.inserts.retain(|x| !ids.contains(&x.id));
                         n += before - t.inserts.len();
                         p.fix_track_rack(tid);
@@ -421,6 +435,11 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 }
                 if n != ids.len() {
                     return Err(CmdError::not_found("見つからないプラグインがあります"));
+                }
+                for tid in p.tracks.keys().copied().collect::<Vec<_>>() {
+                    p.track_mut(tid)?.automation.retain(
+                        |l| !matches!(&l.target, AutoTarget::Send(id) if gone_keys.contains(id)),
+                    );
                 }
                 Ok(Output::msg(format!("プラグイン {n} 件を削除しました")))
             },
@@ -913,6 +932,17 @@ pub(super) fn clone_track(p: &mut Project, t: &Track, settings_only: bool) -> Tr
         sends.insert(s.id, new);
         s.id = new;
     }
+    // A sidechain's send rows get ids of their own too (MIX-047); they keep
+    // pointing at the same source channels.
+    for x in &mut copy.inserts {
+        if let Some(sc) = &mut x.sidechain {
+            for s in &mut sc.sources {
+                let new = SendId(p.alloc());
+                sends.insert(s.id, new);
+                s.id = new;
+            }
+        }
+    }
     // the lanes follow the new send and plug-in ids
     for (k, l) in copy.automation.iter_mut().enumerate() {
         l.target = match &t.automation[k].target {
@@ -1168,27 +1198,49 @@ fn move_nodes(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
 // ---- sends -----------------------------------------------------------------------
 
 fn add_send(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
-    let to: TrackId = a.id("to")?;
-    p.bus(to)?;
-    let level = a.opt_f64("level").unwrap_or(0.0);
-    let pre = a.flag("pre");
-    let ids = track_ids(p, a, false)?;
-    let mut made = Vec::new();
-    for id in &ids {
-        let sid = SendId(p.alloc());
-        p.track_mut(*id)?.sends.push(AuxSend {
-            id: sid,
-            to,
-            level_db: level,
-            pre,
-            muted_level: None,
-        });
-        made.push(sid.to_string());
+    match a.id::<AnyId>("to")? {
+        // A plug-in: the same add as `plugin.sidechain.add`, seen from the
+        // sending side (MIX-047).
+        AnyId::Plugin(plugin) => {
+            let level = a.opt_f64("level");
+            let pre = a.flag("pre");
+            let ids = track_ids(p, a, false)?;
+            let mut made = Vec::new();
+            for id in &ids {
+                let out = super::sidechain::add_source(p, plugin, *id, false, pre, level)?;
+                made.push(out.data["id"].as_str().unwrap_or_default().to_string());
+            }
+            Ok(Output::with(
+                format!("サイドチェーンの送り元 {} 件を追加しました", made.len()),
+                json!({ "ids": made }),
+            ))
+        }
+        AnyId::Track(to) => {
+            p.bus(to)?;
+            let level = a.opt_f64("level").unwrap_or(0.0);
+            let pre = a.flag("pre");
+            let ids = track_ids(p, a, false)?;
+            let mut made = Vec::new();
+            for id in &ids {
+                let sid = SendId(p.alloc());
+                p.track_mut(*id)?.sends.push(AuxSend {
+                    id: sid,
+                    to,
+                    level_db: level,
+                    pre,
+                    muted_level: None,
+                });
+                made.push(sid.to_string());
+            }
+            Ok(Output::with(
+                format!("センド {} 件を追加しました", made.len()),
+                json!({ "ids": made }),
+            ))
+        }
+        _ => Err(CmdError::invalid(
+            "--to にはバスかプラグインの ID を指定してください",
+        )),
     }
-    Ok(Output::with(
-        format!("センド {} 件を追加しました", made.len()),
-        json!({ "ids": made }),
-    ))
 }
 
 /// `track.add.bus` and `send.add` as one step: the bus goes where `--into`
@@ -1443,6 +1495,7 @@ pub(super) fn place_new_plugin(
         params: Default::default(),
         state: None,
         isolation: Default::default(),
+        sidechain: None,
     };
     // A built-in starts with every parameter at its default, so each can be listed and
     // automated before it is first moved (PLG-045).

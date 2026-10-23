@@ -47,6 +47,7 @@ fn plugin(id: u64, kind: PluginKind, uid: &str) -> Plugin {
         params: BTreeMap::new(),
         state: None,
         isolation: PluginIsolation::InProcess,
+        sidechain: None,
     }
 }
 
