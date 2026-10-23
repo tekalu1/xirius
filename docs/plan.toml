@@ -6403,6 +6403,15 @@ source = "public-release-readiness.md § 4-2 ; § 6 段 3 #21"
 done_when = ".github/workflows/mac-build.yml が workflow_dispatch で macos-latest の上で cargo build --workspace --all-targets --keep-going と crate ごとの cargo test --no-run を失敗の後も続けて流し、crate ごとのエラーの数と番号を job の要約に書き、ログを artifact に上げる"
 status = "done"
 
+[[item]]
+id = "LIC-043"
+title = "公開のリポジトリで直に開発する形にする: 書き出しの道具（public-export）を外し、CLAUDE.md と AGENTS.md を公開の側の前提で置く"
+area = "LIC"
+phase = "v1"
+source = "public-release-readiness.md § 2-1 ; § 5-1"
+done_when = "scripts/public-export.py・public-export.toml・test_public_export.py が無く、CLAUDE.md と AGENTS.md が同じ中身で公開の側で開発すること・DCO・hooks・Actions・Release の自動の流れを今の形で書き、個人や組織の情報を含まない"
+status = "done"
+
 [[dropped]]
 id = "DROP-01"
 title = "トラックレイヤー（テイクと別の概念）"
