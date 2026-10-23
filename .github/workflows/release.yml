@@ -95,7 +95,7 @@ jobs:
           test -f "$notes" || { echo "::error::$notes がありません（- の箇条で書いてください）"; exit 1; }
           cp "$notes" target/dist/RELEASE-NOTES.md
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           if-no-files-found: error
@@ -217,7 +217,7 @@ jobs:
             --setup (Join-Path dist $m.file) --version $version
           if ($LASTEXITCODE -ne 0) { throw "アプリの公開鍵で署名が通りません" }
 
-      - uses: actions/upload-artifact@26f96dfa697d77e81fd5907df203aa23a56210a8 # v4.3.0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: signed
           if-no-files-found: error
