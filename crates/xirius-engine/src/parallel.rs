@@ -1,5 +1,7 @@
 //! Persistent workers for independent tracks (ENG-014). The caller lends disjoint track
-//! ranges for one block and joins them before routing sends, buses and the master.
+//! index lists for one block and joins them before routing sends, buses and the master.
+//! With sidechain keys the caller is a render level: every node's sources are
+//! in an earlier level, so a level's tracks are independent (ENG-078).
 
 use std::cell::UnsafeCell;
 use std::sync::Arc;
@@ -12,6 +14,7 @@ use crate::sandbox::Event;
 #[derive(Clone, Copy)]
 struct Work {
     tracks: *mut Option<Box<TrackNode>>,
+    indices: *const usize,
     len: usize,
     frames: usize,
     position: Option<u64>,
@@ -86,21 +89,31 @@ impl TrackPool {
 
     unsafe fn run_work(work: Work) {
         let _audio = crate::rt_lock::AudioScope::enter();
-        // SAFETY: work lends this range exclusively until all workers have joined.
-        let tracks = unsafe { std::slice::from_raw_parts_mut(work.tracks, work.len) };
-        for t in tracks.iter_mut().flatten() {
-            assert_no_alloc::assert_no_alloc(|| Plan::render_track(t, work.frames, work.position));
+        // SAFETY: work lends this index list exclusively until all workers have joined.
+        let indices = unsafe { std::slice::from_raw_parts(work.indices, work.len) };
+        for &i in indices {
+            // SAFETY: a level lists each node once, and no two levels run at once.
+            let t = unsafe { &mut *work.tracks.add(i) };
+            if let Some(t) = t {
+                assert_no_alloc::assert_no_alloc(|| {
+                    Plan::render_track(t, work.frames, work.position)
+                });
+            }
         }
     }
 
+    /// Renders the listed tracks across the workers and joins them before
+    /// returning. `indices` names the tracks of one level: every index is a
+    /// track slot, and no index appears twice (ENG-078).
     pub fn render(
         &mut self,
         tracks: &mut [Option<Box<TrackNode>>],
+        indices: &[usize],
         frames: usize,
         position: Option<u64>,
     ) {
         assert!(!self.failed, "a failed track pool cannot be reused");
-        let width = tracks.len().div_ceil(self.workers.len() + 1);
+        let width = indices.len().div_ceil(self.workers.len() + 1);
         if width == 0 {
             return;
         }
@@ -108,14 +121,16 @@ impl TrackPool {
         let mut started = 0;
         for (i, worker) in self.workers.iter().enumerate() {
             let begin = i * width;
-            if begin >= tracks.len() {
+            if begin >= indices.len() {
                 break;
             }
-            // SAFETY: chunks are disjoint, belong to tracks, and outlive the join below.
+            // SAFETY: index chunks are disjoint, belong to `indices`, and
+            // outlive the join below; the level's indices are all distinct.
             unsafe {
                 *worker.work.get() = Some(Work {
-                    tracks: base.add(begin),
-                    len: width.min(tracks.len() - begin),
+                    tracks: base,
+                    indices: indices.as_ptr().add(begin),
+                    len: width.min(indices.len() - begin),
                     frames,
                     position,
                 });
@@ -125,12 +140,13 @@ impl TrackPool {
             started += 1;
         }
         // The calling audio thread renders the last chunk instead of idling at the join.
-        let begin = (started * width).min(tracks.len());
+        let begin = (started * width).min(indices.len());
         // SAFETY: this tail is disjoint from all published ranges.
         let local = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
             Self::run_work(Work {
-                tracks: base.add(begin),
-                len: tracks.len() - begin,
+                tracks: base,
+                indices: indices.as_ptr().add(begin),
+                len: indices.len() - begin,
                 frames,
                 position,
             });

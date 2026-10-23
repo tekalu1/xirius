@@ -1864,6 +1864,7 @@ mod tests {
         let mut io = AudioIo {
             left: &mut left,
             right: &mut right,
+            key: None,
         };
         p.process(
             &mut io,
@@ -1935,6 +1936,7 @@ mod tests {
             &mut AudioIo {
                 left: &mut left,
                 right: &mut right,
+                key: None,
             },
             &[],
         );

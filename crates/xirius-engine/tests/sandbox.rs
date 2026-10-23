@@ -127,6 +127,7 @@ fn automation_sent_before_a_block_matches_the_same_process() {
             &mut xirius_engine::AudioIo {
                 left: &mut l,
                 right: &mut r,
+                key: None,
             },
             &[],
         );
@@ -190,6 +191,7 @@ fn automation_keeps_its_offsets_inside_the_input_block() {
             &mut xirius_engine::AudioIo {
                 left: &mut l,
                 right: &mut r,
+                key: None,
             },
             &[],
         );

@@ -46,6 +46,10 @@ impl NoteKind {
 pub struct AudioIo<'a> {
     pub left: &'a mut [f32],
     pub right: &'a mut [f32],
+    /// The sidechain key summed for this block, aligned to the main signal at
+    /// this insert (ENG-078). `None` (everywhere but the key's insert): the
+    /// processor takes its own signal as its key.
+    pub key: Option<(&'a [f32], &'a [f32])>,
 }
 
 impl AudioIo<'_> {

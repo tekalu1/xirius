@@ -8,8 +8,9 @@ use xirius_engine::builtin::{Delay, Gain, Sine, SineSynth};
 use xirius_engine::click::Click;
 use xirius_engine::engine::{self, EngineConfig};
 use xirius_engine::{
-    AudioData, BusSpec, CTRL_PITCH_BEND, Command, MixSpec, NoteKind, Plan, ProcessSetup, Region,
-    RenderMode, SendSpec, TimedNote, Timeline, TrackSlot, TrackSpec,
+    AudioData, BusSpec, CTRL_PITCH_BEND, Command, KeyFrom, KeySourceSpec, KeySpec, MixSpec,
+    NoteKind, Plan, ProcessSetup, Region, RenderMode, SendSpec, TimedNote, Timeline, TrackSlot,
+    TrackSpec,
 };
 
 #[global_allocator]
@@ -31,8 +32,33 @@ fn spec() -> MixSpec {
     }];
     let mut bus = BusSpec::new("fx");
     bus.inserts = vec![Box::new(Delay::new(4800))];
+    let mut keyed = TrackSpec::new("keyed", Box::new(Sine::new(330.0, 0.2)));
+    keyed.inserts = vec![Box::new(Gain::new(0.9))];
+    keyed.keys = vec![KeySpec {
+        insert: 0,
+        plugin: 9001,
+        on: true,
+        sources: vec![
+            KeySourceSpec {
+                id: 9101,
+                from: KeyFrom::Track(0),
+                pre: true,
+                level: 0.6,
+            },
+            KeySourceSpec {
+                id: 9102,
+                from: KeyFrom::Bus(0),
+                pre: false,
+                level: 0.3,
+            },
+        ],
+    }];
     MixSpec {
-        tracks: vec![TrackSlot::New(sine), TrackSlot::New(synth)],
+        tracks: vec![
+            TrackSlot::New(sine),
+            TrackSlot::New(synth),
+            TrackSlot::New(keyed),
+        ],
         buses: vec![bus],
         ..MixSpec::default()
     }
@@ -80,6 +106,20 @@ fn render_commands_and_plan_swap_do_not_allocate() {
             s.tracks[0] = TrackSlot::Keep(0);
             control.swap(s).unwrap();
         }
+        control
+            .send(Command::KeyOn {
+                plugin: 9001,
+                on: i % 20 < 10,
+            })
+            .ok()
+            .unwrap();
+        control
+            .send(Command::KeyLevel {
+                send: 9101,
+                level: (i % 8) as f32 / 8.0,
+            })
+            .ok()
+            .unwrap();
         audio.render(&mut out, 2);
         control.poll(|_| {});
     }

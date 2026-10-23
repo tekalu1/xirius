@@ -993,7 +993,7 @@ impl SessionHost {
         let (old, new) = (rows(&self.structure), rows(new));
         let loader = self.builder.plugins_mut();
         for (a, b) in old.iter().zip(&new) {
-            if a != b {
+            if !same_values(a, b) {
                 let running = is_hosted(b) || loader.is_stock(b.id);
                 if !b.runs() || a.deactivated != b.deactivated || !running || !loader.apply(b) {
                     return false;
@@ -1226,6 +1226,9 @@ impl SessionHost {
                 report.deferred += 1;
             }
         }
+        let mut cur = std::mem::take(&mut self.mix.master_keys);
+        self.diff_keys(&mix.master_keys, &mut cur, report);
+        self.mix.master_keys = cur;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1265,6 +1268,66 @@ impl SessionHost {
                 }
             }
         }
+        self.diff_keys(&new.keys, &mut cur.keys, report);
+    }
+
+    /// The keyed inserts' on flags and source levels (ENG-078). Entries that
+    /// appear or disappear are structure (a new plan), so only values that
+    /// stay are diffed; a snapshot's values change only when queued.
+    fn diff_keys(
+        &mut self,
+        new: &[crate::graph::KeyMix],
+        cur: &mut [crate::graph::KeyMix],
+        report: &mut SyncReport,
+    ) {
+        for k in new {
+            let Some(pos) = cur.iter().position(|o| o.plugin == k.plugin) else {
+                continue;
+            };
+            let old = cur[pos].clone();
+            let mut merged = k.clone();
+            if old.on != k.on {
+                let ok = self.send(Command::KeyOn {
+                    plugin: k.plugin.0,
+                    on: k.on,
+                });
+                if !tally(report, ok) {
+                    merged.on = old.on;
+                }
+            }
+            for (j, &(id, level)) in k.sends.iter().enumerate() {
+                let was = old.sends.iter().find(|(s, _)| *s == id).map(|(_, l)| *l);
+                if Some(level) != was {
+                    let ok = self.send(Command::KeyLevel { send: id.0, level });
+                    if !tally(report, ok)
+                        && let Some(l) = was
+                    {
+                        merged.sends[j].1 = l;
+                    }
+                }
+            }
+            cur[pos] = merged;
+        }
+    }
+}
+
+/// A sidechain's live values: `on` and the send levels (ENG-078). What
+/// remains — the sources and their modes — is structure.
+fn strip_sidechain(x: &mut Plugin) {
+    let Some(sc) = &mut x.sidechain else {
+        return;
+    };
+    sc.on = false;
+    for s in &mut sc.sources {
+        if let xirius_core::model::KeyMode::Send {
+            level_db,
+            muted_level,
+            ..
+        } = &mut s.mode
+        {
+            *level_db = 0.0;
+            *muted_level = None;
+        }
     }
 }
 
@@ -1273,12 +1336,12 @@ impl SessionHost {
 fn without_plugin_values(s: &Structure) -> Structure {
     let mut s = s.clone();
     let strip = |row: &mut Vec<Plugin>| {
-        for x in row
-            .iter_mut()
-            .filter(|x| is_hosted(x) || x.builtin().is_some())
-        {
-            x.params.clear();
-            x.state = None;
+        for x in row.iter_mut() {
+            if is_hosted(x) || x.builtin().is_some() {
+                x.params.clear();
+                x.state = None;
+            }
+            strip_sidechain(x);
         }
     };
     for n in s.tracks.iter_mut().chain(s.buses.iter_mut()) {
@@ -1286,6 +1349,18 @@ fn without_plugin_values(s: &Structure) -> Structure {
     }
     strip(&mut s.master_inserts);
     s
+}
+
+/// Plugins equal in what a running plugin takes in place: the sidechain's on
+/// flag and levels are the engine's, sent by `send_mix` (ENG-078).
+fn same_values(a: &Plugin, b: &Plugin) -> bool {
+    if a == b {
+        return true;
+    }
+    let (mut a, mut b) = (a.clone(), b.clone());
+    strip_sidechain(&mut a);
+    strip_sidechain(&mut b);
+    a == b
 }
 
 /// Takes what the user changed in the plugins' editors into the song, as one step that one
@@ -1403,4 +1478,75 @@ fn tally(report: &mut SyncReport, ok: bool) -> bool {
         report.deferred += 1;
     }
     ok
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xirius_core::id::SendId;
+    use xirius_core::model::{KeyMode, KeySource, PluginIsolation, PluginKind, Sidechain};
+
+    fn keyed(id: u64, sources: Vec<KeySource>) -> Plugin {
+        Plugin {
+            id: PluginId(id),
+            name: "g".into(),
+            kind: PluginKind::Effect,
+            format: "builtin".into(),
+            uid: "gain".into(),
+            bypass: false,
+            deactivated: false,
+            params: BTreeMap::new(),
+            state: None,
+            samples: Vec::new(),
+            isolation: PluginIsolation::Dedicated,
+            sidechain: Some(Sidechain { on: true, sources }),
+        }
+    }
+
+    fn source(id: u64, pre: bool) -> KeySource {
+        KeySource {
+            id: SendId(id),
+            track: TrackId(1),
+            mode: KeyMode::Send {
+                pre,
+                level_db: -6.0,
+                muted_level: None,
+            },
+        }
+    }
+
+    /// The on flag and the source levels are live values (ENG-078): they move
+    /// through `KeyOn`/`KeyLevel` without a new plan, so `same_values` must
+    /// not see them.
+    #[test]
+    fn the_sidechains_live_values_are_not_structure() {
+        let a = keyed(7, vec![source(1, true)]);
+        let mut b = a.clone();
+        let sc = b.sidechain.as_mut().unwrap();
+        sc.on = false;
+        let KeyMode::Send {
+            level_db,
+            muted_level,
+            ..
+        } = &mut sc.sources[0].mode
+        else {
+            unreachable!()
+        };
+        *level_db = 3.0;
+        *muted_level = Some(-12.0);
+        assert!(same_values(&a, &b), "on and levels are live");
+
+        // The wiring — which sources, from where, pre or post — is structure.
+        let mut c = a.clone();
+        c.sidechain.as_mut().unwrap().sources[0].track = TrackId(9);
+        assert!(!same_values(&a, &c), "a different source is structure");
+        let mut c = a.clone();
+        c.sidechain.as_mut().unwrap().sources[0].id = SendId(99);
+        assert!(!same_values(&a, &c), "a different send row is structure");
+        let c = keyed(7, vec![source(1, false)]);
+        assert!(!same_values(&a, &c), "pre/post is structure");
+        let mut c = a.clone();
+        c.sidechain.as_mut().unwrap().sources.push(source(2, true));
+        assert!(!same_values(&a, &c), "a source more is structure");
+    }
 }

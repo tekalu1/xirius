@@ -58,6 +58,7 @@ pub fn render(
         let mut io = AudioIo {
             left: &mut l[at..at + n],
             right: &mut r[at..at + n],
+            key: None,
         };
         p.process(&mut io, &events);
         at += n;

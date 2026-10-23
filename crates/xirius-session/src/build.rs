@@ -14,12 +14,13 @@ use std::sync::Arc;
 
 use xirius_core::clipfx::{Fade, fade_exponent, pieces};
 use xirius_core::model::{
-    Clip, ClipBody, CtrlKind, CtrlShape, Plugin, PluginKind, Project, Track, TrackKind,
+    Clip, ClipBody, CtrlKind, CtrlShape, KeyMode, KeySource, Plugin, PluginKind, Project, Track,
+    TrackKind,
 };
 use xirius_engine::{
-    BusSpec, CTRL_AFTERTOUCH, CTRL_PITCH_BEND, EnvPoint, MidiTarget, MixSpec, NoteKind,
-    Output as EOut, ProcessSetup, Processor, Region, RenderMode, SendSpec, Shape, TimedNote,
-    Timeline, TrackSlot, TrackSpec,
+    BusSpec, CTRL_AFTERTOUCH, CTRL_PITCH_BEND, EnvPoint, KeyFrom, KeySourceSpec, KeySpec,
+    MidiTarget, MixSpec, NoteKind, Output as EOut, ProcessSetup, Processor, Region, RenderMode,
+    SendSpec, Shape, TimedNote, Timeline, TrackSlot, TrackSpec,
     builtin::Gain,
     timing::{Timed, Timings},
 };
@@ -268,7 +269,10 @@ impl Builder {
             };
             let mut spec = TrackSpec::new(t.name.clone(), source);
             spec.live = crate::automation::realtime(t);
-            spec.inserts = self.inserts_for(&t.name, &shape.inserts, &mut warnings);
+            let (inserts, keys) =
+                self.inserts_for(&t.name, &shape.inserts, &graph, &scope, &mut warnings);
+            spec.inserts = inserts;
+            spec.keys = keys;
             spec.gain = strip.gain;
             spec.pan = strip.pan;
             spec.mute = strip.mute;
@@ -294,7 +298,10 @@ impl Builder {
                 p.tracks[&shape.id].name.clone()
             };
             let mut spec = BusSpec::new(name.clone());
-            spec.inserts = self.inserts_for(&name, &shape.inserts, &mut warnings);
+            let (inserts, keys) =
+                self.inserts_for(&name, &shape.inserts, &graph, &scope, &mut warnings);
+            spec.inserts = inserts;
+            spec.keys = keys;
             spec.gain = strip.gain;
             spec.pan = strip.pan;
             spec.mute = strip.mute;
@@ -303,7 +310,13 @@ impl Builder {
             buses.push(spec);
         }
 
-        let master_inserts = self.inserts_for("master", &structure.master_inserts, &mut warnings);
+        let (master_inserts, master_keys) = self.inserts_for(
+            "master",
+            &structure.master_inserts,
+            &graph,
+            &scope,
+            &mut warnings,
+        );
         self.plugins.end_build();
         // A whole-song build keeps the meters of the plugins it used; a partial one (a track
         // rendered alone) leaves the song's meters as they are.
@@ -317,6 +330,7 @@ impl Builder {
                 buses,
                 master_inserts,
                 master_gain: mix.master_gain,
+                master_keys,
             },
             end_frame: tmap.frame_at(song_end_tick(p), f64::from(self.rate)),
             graph,
@@ -582,21 +596,33 @@ impl Builder {
         }
     }
 
-    /// The effects of an insert row: the built-in Gain and VST3 plugins.
+    /// The effects of an insert row: the built-in Gain and VST3 plugins; and
+    /// the sidechain keys they take, against the built insert order — plugins
+    /// that cannot be built are skipped, so a key's `insert` is not the
+    /// position in the project's row (ENG-078).
     fn inserts_for(
         &mut self,
         owner: &str,
         plugins: &[Plugin],
+        g: &Graph,
+        scope: &Scope,
         warnings: &mut Vec<String>,
-    ) -> Vec<Box<dyn Processor>> {
+    ) -> (Vec<Box<dyn Processor>>, Vec<KeySpec>) {
         let mut out: Vec<Box<dyn Processor>> = Vec::new();
+        let mut keys = Vec::new();
+        let mut keyed = |x: &Plugin, p: Box<dyn Processor>| {
+            if let Some(k) = key_spec(g, scope, x, out.len()) {
+                keys.push(k);
+            }
+            out.push(p);
+        };
         for x in plugins
             .iter()
             .filter(|x| x.kind == PluginKind::Effect && x.runs())
         {
             if x.format == "builtin" && x.uid.eq_ignore_ascii_case("gain") {
                 let db = x.params.get("gain_db").copied().unwrap_or(0.0);
-                out.push(self.timed(x.id.0, Box::new(Gain::new(db_to_gain(db)))));
+                keyed(x, self.timed(x.id.0, Box::new(Gain::new(db_to_gain(db)))));
             } else if let Some(def) = x.builtin() {
                 if def.kind == Kind::Instrument {
                     warnings.push(format!(
@@ -608,7 +634,7 @@ impl Builder {
                 match self.plugins.stock(x) {
                     Some((p, w)) => {
                         warnings.extend(w.into_iter().map(|w| format!("{owner}: {w}")));
-                        out.push(self.timed(x.id.0, p));
+                        keyed(x, self.timed(x.id.0, p));
                     }
                     None => warnings.push(format!(
                         "{owner}: {} はまだ用意していないため、スキップします",
@@ -619,7 +645,7 @@ impl Builder {
                 match self.plugins.instantiate(owner, x) {
                     Ok((p, w)) => {
                         warnings.extend(w.into_iter().map(|w| format!("{owner}: {w}")));
-                        out.push(self.timed(x.id.0, p));
+                        keyed(x, self.timed(x.id.0, p));
                     }
                     Err(e) => warnings.push(format!("{owner}: {e}。スキップします")),
                 }
@@ -630,7 +656,7 @@ impl Builder {
                 ));
             }
         }
-        out
+        (out, keys)
     }
 
     fn resolve(&self, file: &str) -> PathBuf {
@@ -640,6 +666,47 @@ impl Builder {
             _ => path.to_path_buf(),
         }
     }
+}
+
+/// A plug-in's key as the engine takes it (MIX-047's `KeySource`s resolved to
+/// node indices). `insert` is the index in the built insert row. `None` when
+/// no source survives scope and indexing.
+fn key_spec(g: &Graph, scope: &Scope, x: &Plugin, insert: usize) -> Option<KeySpec> {
+    let sc = x.sidechain.as_ref()?;
+    let sources: Vec<KeySourceSpec> = sc
+        .sources
+        .iter()
+        .filter_map(|s| key_source(g, scope, s))
+        .collect();
+    if sources.is_empty() {
+        return None;
+    }
+    Some(KeySpec {
+        insert,
+        plugin: x.id.0,
+        on: sc.on,
+        sources,
+    })
+}
+
+fn key_source(g: &Graph, scope: &Scope, s: &KeySource) -> Option<KeySourceSpec> {
+    if !scope.includes(s.track) {
+        return None;
+    }
+    let from = g
+        .track_index(s.track)
+        .map(KeyFrom::Track)
+        .or_else(|| g.bus_index(s.track).map(KeyFrom::Bus))?;
+    let (pre, level) = match s.mode {
+        KeyMode::Send { pre, level_db, .. } => (pre, db_to_gain(level_db)),
+        KeyMode::Output => (false, 1.0),
+    };
+    Some(KeySourceSpec {
+        id: s.id.0,
+        from,
+        pre,
+        level,
+    })
 }
 
 fn sends_for(shape: &[(usize, bool)], levels: &[f32]) -> Vec<SendSpec> {

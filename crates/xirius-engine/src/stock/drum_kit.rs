@@ -1052,6 +1052,7 @@ mod tests {
             &mut AudioIo {
                 left: &mut l,
                 right: &mut r,
+                key: None,
             },
             &[],
         );

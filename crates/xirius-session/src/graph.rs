@@ -4,8 +4,8 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use xirius_core::id::TrackId;
-use xirius_core::model::{MidiOut, Output, Plugin, Project, Track, TrackKind};
+use xirius_core::id::{PluginId, SendId, TrackId};
+use xirius_core::model::{KeyMode, MidiOut, Output, Plugin, PluginKind, Project, Track, TrackKind};
 use xirius_engine::Output as EOut;
 
 /// What a render takes: the whole mix, or one track or bus on its own (a stem).
@@ -110,8 +110,8 @@ pub fn bus_targets(p: &Project, id: TrackId) -> Vec<TrackId> {
 /// Where a channel plays to or sends to, without the sidechain key edges
 /// (MIX-047): solo walks these alone. A soloed key source keeps what it
 /// plays to audible, but the plug-in it keys does not count as its sound,
-/// and a soloed channel does not pull the sources it is keyed by. Whether
-/// the key keeps feeding a soloed receiver is for ENG-078.
+/// and a soloed channel does not pull the sources it is keyed by. A channel
+/// hidden by solo is silent — its sidechain keys stop too (ENG-078).
 fn audio_targets(p: &Project, id: TrackId) -> Vec<TrackId> {
     let Some(t) = p.tracks.get(&id) else {
         return Vec::new();
@@ -350,6 +350,18 @@ impl Structure {
     }
 }
 
+/// One keyed insert's live values (ENG-078): the model `SendId`s keep
+/// addressing each source whatever its engine slot is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KeyMix {
+    /// The plug-in that takes the key.
+    pub plugin: PluginId,
+    /// `false`: the insert takes its own signal as its key.
+    pub on: bool,
+    /// (send row id, linear level) for each source that has a level.
+    pub sends: Vec<(SendId, f32)>,
+}
+
 /// The numbers on one channel strip.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StripMix {
@@ -357,6 +369,8 @@ pub struct StripMix {
     pub pan: f32,
     pub mute: bool,
     pub sends: Vec<f32>,
+    /// The keyed inserts' on flags and source levels, in insert order.
+    pub keys: Vec<KeyMix>,
 }
 
 /// The values a running plan can take without being replaced.
@@ -365,15 +379,51 @@ pub struct Mix {
     pub tracks: Vec<StripMix>,
     pub buses: Vec<StripMix>,
     pub master_gain: f32,
+    /// The master row's keyed inserts.
+    pub master_keys: Vec<KeyMix>,
 }
 
 impl Mix {
     pub fn of(p: &Project, g: &Graph, scope: &Scope) -> Mix {
-        // In a stem the solo buttons are ignored; mute still counts.
+        // In a stem the solo buttons are ignored; mute still counts. What a
+        // channel cannot be heard for — the user's mute or another channel's
+        // solo — silences its sidechain keys the same way (ENG-078).
         let silent: HashMap<TrackId, bool> = if scope.is_stem() {
             p.tracks.values().map(|t| (t.id, t.mute)).collect()
         } else {
             silenced(p)
+        };
+        // A plug-in's keys as live values, matching what `key_spec` in build
+        // keeps (sources that resolve inside the scope).
+        let keys_of = |t: &Track| -> Vec<KeyMix> {
+            t.inserts
+                .iter()
+                .filter(|x| x.kind == PluginKind::Effect)
+                .filter_map(|x| {
+                    let sc = x.sidechain.as_ref()?;
+                    let sources: Vec<&xirius_core::model::KeySource> = sc
+                        .sources
+                        .iter()
+                        .filter(|s| scope.includes(s.track))
+                        .collect();
+                    if sources.is_empty() {
+                        return None;
+                    }
+                    Some(KeyMix {
+                        plugin: x.id,
+                        on: sc.on,
+                        sends: sources
+                            .iter()
+                            .filter_map(|s| match s.mode {
+                                KeyMode::Send { level_db, .. } => {
+                                    Some((s.id, db_to_gain(level_db)))
+                                }
+                                KeyMode::Output => None,
+                            })
+                            .collect(),
+                    })
+                })
+                .collect()
         };
         let strip = |id: &TrackId| {
             let t = &p.tracks[id];
@@ -386,6 +436,7 @@ impl Mix {
                     .iter()
                     .map(|&(_, _, level)| level)
                     .collect(),
+                keys: keys_of(t),
             }
         };
         let mut buses: Vec<StripMix> = g.buses.iter().map(strip).collect();
@@ -395,6 +446,7 @@ impl Mix {
                 pan: 0.0,
                 mute: true,
                 sends: Vec::new(),
+                keys: Vec::new(),
             });
         }
         let master = p.tracks.get(&TrackId::MASTER);
@@ -405,6 +457,11 @@ impl Mix {
                 1.0
             } else {
                 master.map_or(1.0, |m| if m.mute { 0.0 } else { db_to_gain(m.volume_db) })
+            },
+            master_keys: if scope.is_stem() {
+                Vec::new()
+            } else {
+                master.map_or_else(Vec::new, |m| keys_of(m))
             },
         }
     }

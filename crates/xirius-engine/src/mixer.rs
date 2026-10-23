@@ -13,6 +13,7 @@
 //! paths meeting there equally late. Sends and pre-fader sends are compensated the same way. The
 //! whole mix is then [`Plan::latency`] frames late, which offline rendering skips.
 
+use std::collections::{BTreeSet, HashMap};
 use std::f32::consts::FRAC_PI_2;
 
 use crate::control::{CONTROL_NUMBERS, index as control_index, rest_value};
@@ -56,8 +57,11 @@ pub struct TrackSpec {
     pub midi: Option<Box<MidiTarget>>,
     /// Whether the instrument and inserts may be rendered ahead of the transport by a worker
     /// (ENG-015). A track that is `live`, or has a MIDI port, is rendered on the audio thread
-    /// whatever this says; an offline plan never prefetches.
+    /// whatever this says; an offline plan never prefetches. A keyed track is never lent out:
+    /// its inserts need this block's key, not the key a worker rendered ahead.
     pub prefetch: bool,
+    /// The sidechain keys the track's inserts take, in insert order (ENG-078).
+    pub keys: Vec<KeySpec>,
 }
 
 /// A MIDI output port and the channel a track sends on.
@@ -122,6 +126,7 @@ impl TrackSpec {
             timeline: Timeline::default(),
             midi: None,
             prefetch: true,
+            keys: Vec::new(),
         }
     }
 }
@@ -134,6 +139,41 @@ pub struct SendSpec {
     pub pre_fader: bool,
 }
 
+/// The node a sidechain key's signal is taken from (ENG-078).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyFrom {
+    Track(usize),
+    Bus(usize),
+}
+
+/// One signal summed into a sidechain key (ENG-078).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct KeySourceSpec {
+    /// The send row's id, for [`Plan::set_key_level`].
+    pub id: u64,
+    /// The node the signal is taken from.
+    pub from: KeyFrom,
+    /// `true`: taken after the inserts and before the fader (the mute still
+    /// applies); `false`: after fader and pan.
+    pub pre: bool,
+    /// Linear amplitude.
+    pub level: f32,
+}
+
+/// A sidechain key one insert takes: the signals summed into it, and whether
+/// the insert listens to them at all (ENG-078).
+#[derive(Clone, Debug, PartialEq)]
+pub struct KeySpec {
+    /// The insert in the node's `inserts` that hears the key.
+    pub insert: usize,
+    /// The receiving plug-in's id, for [`Plan::set_key_on`].
+    pub plugin: u64,
+    /// `false`: the insert takes its own signal as its key (the model's Int).
+    pub on: bool,
+    /// The signals the key is summed from, in order.
+    pub sources: Vec<KeySourceSpec>,
+}
+
 pub struct BusSpec {
     pub name: String,
     pub inserts: Vec<Box<dyn Processor>>,
@@ -144,6 +184,8 @@ pub struct BusSpec {
     pub output: Output,
     /// To buses with a higher index than this one.
     pub sends: Vec<SendSpec>,
+    /// The sidechain keys the bus's inserts take, in insert order (ENG-078).
+    pub keys: Vec<KeySpec>,
 }
 
 impl BusSpec {
@@ -156,12 +198,14 @@ impl BusSpec {
             mute: false,
             output: Output::Master,
             sends: Vec::new(),
+            keys: Vec::new(),
         }
     }
 }
 
 /// A track in a new plan: either built fresh, or carried over from the plan being replaced so
 /// that its processors keep their state (oscillator phase, plugin instance) across the swap.
+#[allow(clippy::large_enum_variant)] // The spec is moved once at build; `Keep` is the rare case.
 pub enum TrackSlot {
     New(TrackSpec),
     Keep(usize),
@@ -172,6 +216,8 @@ pub struct MixSpec {
     pub buses: Vec<BusSpec>,
     pub master_inserts: Vec<Box<dyn Processor>>,
     pub master_gain: f32,
+    /// The sidechain keys the master's inserts take, in insert order (ENG-078).
+    pub master_keys: Vec<KeySpec>,
 }
 
 impl Default for MixSpec {
@@ -181,6 +227,7 @@ impl Default for MixSpec {
             buses: Vec::new(),
             master_inserts: Vec::new(),
             master_gain: 1.0,
+            master_keys: Vec::new(),
         }
     }
 }
@@ -201,6 +248,23 @@ pub enum PlanError {
         bus: usize,
         to: usize,
     },
+    /// A key sits on an insert that is not in the node's inserts (ENG-078).
+    /// Nodes number tracks first, then buses; `usize::MAX` is the master.
+    KeyInsert {
+        node: usize,
+        insert: usize,
+    },
+    /// A key's source is not a node in the plan (ENG-078); `from` is the
+    /// source it asked for, numbered as `node`.
+    UnknownKey {
+        node: usize,
+        from: usize,
+    },
+    /// The keys and the audio paths make a loop; no order renders them all
+    /// first (ENG-078). `node` is a node in the loop.
+    KeyLoop {
+        node: usize,
+    },
     MaxBlockZero,
     /// The command queue to the audio thread is full.
     QueueFull,
@@ -214,6 +278,19 @@ impl std::fmt::Display for PlanError {
             Self::BusOrder { bus, to } => {
                 write!(f, "bus {bus} feeds bus {to}, which does not come after it")
             }
+            Self::KeyInsert { node, insert } => {
+                write!(
+                    f,
+                    "node {node} has a key on insert {insert} it does not have"
+                )
+            }
+            Self::UnknownKey { node, from } => {
+                write!(
+                    f,
+                    "node {node} listens to key source {from}, which is not a node"
+                )
+            }
+            Self::KeyLoop { node } => write!(f, "node {node} is in a key routing loop"),
             Self::MaxBlockZero => write!(f, "max_block is 0"),
             Self::QueueFull => write!(f, "the command queue is full"),
         }
@@ -316,6 +393,25 @@ impl Delay {
         }
         self.pos = (self.pos + n) & mask;
     }
+
+    /// Delays the signal in place by this line's frames (a main signal waiting
+    /// for its key, or a keyed insert's own). No-op for a zero delay.
+    fn apply(&mut self, l: &mut [f32], r: &mut [f32], n: usize) {
+        if self.frames == 0 {
+            return;
+        }
+        let mask = self.l.len() - 1;
+        for i in 0..n {
+            let w = (self.pos + i) & mask;
+            let read = w.wrapping_sub(self.frames) & mask;
+            let (sl, sr) = (l[i], r[i]);
+            l[i] = self.l[read];
+            r[i] = self.r[read];
+            self.l[w] = sl;
+            self.r[w] = sr;
+        }
+        self.pos = (self.pos + n) & mask;
+    }
 }
 
 struct NodeDelays {
@@ -393,6 +489,7 @@ impl Stereo {
         AudioIo {
             left: &mut self.l[..n],
             right: &mut self.r[..n],
+            key: None,
         }
     }
 
@@ -495,6 +592,57 @@ pub struct TrackNode {
     buf: Stereo,
 }
 
+/// A keyed insert's input (ENG-078): the summed key for the block, swapped in
+/// from the plan's accumulators before the node renders, and the delay that
+/// lines the main signal up with it.
+struct KeyIn {
+    /// The insert in the node's `inserts` this key belongs to.
+    insert: usize,
+    /// The summed key, ready for the insert when the node renders.
+    buf: Stereo,
+    /// The delay on the main signal that puts it at the same time as the key.
+    main_delay: Delay,
+    /// `false`: the insert takes its own signal as its key.
+    on: bool,
+    /// The slot in the plan's `key_acc` this receiver sums into; `usize::MAX`
+    /// for a kept node whose key wiring is gone.
+    acc: usize,
+}
+
+impl KeyIn {
+    /// Delays the main signal in place and returns the key for this block
+    /// (`None` when the insert takes its own signal).
+    fn feed<'a>(
+        &'a mut self,
+        left: &mut [f32],
+        right: &mut [f32],
+        n: usize,
+    ) -> Option<(&'a [f32], &'a [f32])> {
+        self.main_delay.apply(&mut left[..n], &mut right[..n], n);
+        (self.on && self.acc != usize::MAX).then_some((&self.buf.l[..n], &self.buf.r[..n]))
+    }
+}
+
+/// One outgoing key tap on a node (ENG-078): the receiver's accumulator, the
+/// tap point, the level and the compensation delay.
+struct KeySend {
+    /// The slot in the plan's `key_acc` this tap adds into.
+    acc: usize,
+    /// `true`: taken after the inserts and before the fader.
+    pre: bool,
+    delay: Delay,
+    level: Smoothed,
+}
+
+/// The nodes rendered at the same height (ENG-078): every key source and
+/// audio feeder of a level's nodes is in an earlier level, so a level's
+/// tracks can render in any order (the pool parallelizes them) and its buses
+/// after them.
+struct Level {
+    tracks: Vec<usize>,
+    buses: Vec<usize>,
+}
+
 /// The part of a track that keeps state between blocks: the instrument, the inserts, and what
 /// the timeline has started. It is what a prefetch worker renders ahead (ENG-015).
 struct Chain {
@@ -512,6 +660,8 @@ struct Chain {
     /// position (the transport jumped, or the timeline changed).
     chase: bool,
     midi: Option<Box<MidiRoute>>,
+    /// The keyed inserts' summed keys and main delays, in insert order (ENG-078).
+    keys: Vec<KeyIn>,
 }
 
 impl Chained for Chain {
@@ -533,6 +683,8 @@ struct BusNode {
     sends: Vec<SendNode>,
     output: Output,
     buf: Stereo,
+    /// The keyed inserts' summed keys and main delays, in insert order (ENG-078).
+    keys: Vec<KeyIn>,
 }
 
 struct MasterNode {
@@ -540,6 +692,8 @@ struct MasterNode {
     gain: Smoothed,
     buf: Stereo,
     meter: MeterAcc,
+    /// The keyed inserts' summed keys and main delays, in insert order (ENG-078).
+    keys: Vec<KeyIn>,
 }
 
 pub struct Plan {
@@ -552,6 +706,19 @@ pub struct Plan {
     master: MasterNode,
     /// Scratch for pre-fader sends: holds the post-insert signal while the fader is applied.
     pre: Stereo,
+    /// Render heights (ENG-078): every node's key sources and audio feeders
+    /// rendered in an earlier level, so a level's tracks are independent.
+    levels: Vec<Level>,
+    /// The summed key buffers, one per keyed insert in the plan. A source adds
+    /// its delayed signal during its own routing; the receiver swaps the slot
+    /// for its `KeyIn` buffer before it renders.
+    key_acc: Vec<Stereo>,
+    /// The outgoing key taps of each node, tracks first then buses.
+    key_sends: Vec<Vec<KeySend>>,
+    /// plug-in id → (receiving node, its key) for `set_key_on`.
+    key_on: HashMap<u64, (NodeId, usize)>,
+    /// send id → (the source's node index in `key_sends`, its tap) for `set_key_level`.
+    key_send: HashMap<u64, (usize, usize)>,
     routes: Vec<Route>,
     automation: crate::automation_time::Timing,
     track_delays: Vec<NodeDelays>,
@@ -577,6 +744,108 @@ fn prepare_all(list: &mut [Box<dyn Processor>], setup: &ProcessSetup) {
     }
 }
 
+/// A key's insert index must be in the node's inserts, and every source a
+/// node in the plan (ENG-078). `node` is the receiver numbered the
+/// `PlanError` way: tracks first, then buses, `usize::MAX` for the master.
+fn check_keys(
+    node: usize,
+    keys: &[KeySpec],
+    inserts: usize,
+    tracks: usize,
+    buses: usize,
+) -> Result<(), PlanError> {
+    let mut last = None;
+    for k in keys {
+        if k.insert >= inserts || last.is_some_and(|l| k.insert <= l) {
+            return Err(PlanError::KeyInsert {
+                node,
+                insert: k.insert,
+            });
+        }
+        last = Some(k.insert);
+        for s in &k.sources {
+            let ok = match s.from {
+                KeyFrom::Track(f) => f < tracks,
+                KeyFrom::Bus(f) => f < buses,
+            };
+            if !ok {
+                let from = match s.from {
+                    KeyFrom::Track(f) => f,
+                    KeyFrom::Bus(f) => tracks + f,
+                };
+                return Err(PlanError::UnknownKey { node, from });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One node's keyed inserts (ENG-078). For each key, the main signal takes a
+/// delay so it meets the key at the same time as the slowest source; the
+/// faster sources take the matching delay, and the taps are pushed onto the
+/// sources' `sends` rows.
+///
+/// `input`: the latency the node's signal arrives with (a track's source
+/// latency, a bus's input arrival). `lats`: each insert's latency. `eff`:
+/// the finished latency of every node that can feed a key — the level
+/// ordering puts a key's sources in an earlier level. Returns the node's
+/// `KeyIn`s, the delay to apply before each insert, and the node's finished
+/// latency.
+#[allow(clippy::too_many_arguments)]
+fn keys_for(
+    node_id: NodeId,
+    keys: &[KeySpec],
+    input: u32,
+    lats: &[u32],
+    eff: &[u32],
+    node_of: impl Fn(KeyFrom) -> usize,
+    n: usize,
+    accs: &mut Vec<Stereo>,
+    sends: &mut [Vec<KeySend>],
+    on: &mut HashMap<u64, (NodeId, usize)>,
+    send_ids: &mut HashMap<u64, (usize, usize)>,
+) -> (Vec<KeyIn>, Vec<u32>, u32) {
+    let mut out = Vec::with_capacity(keys.len());
+    let mut d = vec![0u32; lats.len()];
+    let mut at = input;
+    let mut keyed = keys.iter().peekable();
+    for (i, &lat) in lats.iter().enumerate() {
+        if keyed.peek().is_some_and(|k| k.insert == i) {
+            let k = keyed.next().expect("peeked");
+            // The main signal waits for the slowest key; the faster keys wait.
+            let target = k
+                .sources
+                .iter()
+                .map(|s| eff[node_of(s.from)])
+                .fold(at, u32::max);
+            d[i] = target - at;
+            let acc = accs.len();
+            accs.push(Stereo::new(n));
+            on.insert(k.plugin, (node_id, out.len()));
+            for s in &k.sources {
+                let from = node_of(s.from);
+                send_ids.insert(s.id, (from, sends[from].len()));
+                sends[from].push(KeySend {
+                    acc,
+                    pre: s.pre,
+                    delay: Delay::new(target - eff[from], n),
+                    level: Smoothed::new(s.level),
+                });
+            }
+            out.push(KeyIn {
+                insert: i,
+                buf: Stereo::new(n),
+                main_delay: Delay::new(d[i], n),
+                on: k.on,
+                acc,
+            });
+            at = target;
+        }
+        at += lat;
+    }
+    (out, d, at)
+}
+
 impl Plan {
     /// Builds and prepares a plan. `previous` is the shape of the plan it will replace and is
     /// required when any track is [`TrackSlot::Keep`].
@@ -590,10 +859,12 @@ impl Plan {
         }
         let n = setup.max_block;
         let bus_count = spec.buses.len();
-        let mut tracks = Vec::with_capacity(spec.tracks.len());
-        let mut keep_from = Vec::with_capacity(spec.tracks.len());
-        let mut routes = Vec::with_capacity(spec.tracks.len());
-        let mut track_timing = Vec::with_capacity(spec.tracks.len());
+        let track_count = spec.tracks.len();
+        let mut tracks = Vec::with_capacity(track_count);
+        let mut keep_from = Vec::with_capacity(track_count);
+        let mut routes = Vec::with_capacity(track_count);
+        let mut track_timing = Vec::with_capacity(track_count);
+        let mut track_keys = Vec::with_capacity(track_count);
         for (i, slot) in spec.tracks.into_iter().enumerate() {
             match slot {
                 TrackSlot::Keep(old) => {
@@ -615,6 +886,7 @@ impl Plan {
                     );
                     tracks.push(None);
                     keep_from.push(Some(old));
+                    track_keys.push(Vec::new());
                 }
                 TrackSlot::New(mut t) => {
                     let bad_bus = t
@@ -629,6 +901,9 @@ impl Plan {
                     if let Some(bus) = bad_bus {
                         return Err(PlanError::UnknownBus { track: i, bus });
                     }
+                    check_keys(i, &t.keys, t.inserts.len(), track_count, bus_count)?;
+                    let keyed = !t.keys.is_empty();
+                    track_keys.push(std::mem::take(&mut t.keys));
                     t.source.prepare(&setup);
                     t.timeline
                         .set_offline(setup.mode == crate::processor::RenderMode::Offline);
@@ -646,6 +921,7 @@ impl Plan {
                     // Only a track with state to keep ahead is lent out; a pure timeline has its
                     // own cache, and a MIDI track makes no audio.
                     let prefetch = (t.prefetch
+                        && !keyed
                         && !pure
                         && t.midi.is_none()
                         && setup.mode == crate::processor::RenderMode::Realtime)
@@ -686,6 +962,7 @@ impl Plan {
                                     sounding: [false; 128],
                                 })
                             }),
+                            keys: Vec::new(),
                         })),
                     })));
                     keep_from.push(None);
@@ -693,6 +970,8 @@ impl Plan {
             }
         }
         let mut buses = Vec::with_capacity(bus_count);
+        let mut bus_keys = Vec::with_capacity(bus_count);
+        let mut bus_lats = Vec::with_capacity(bus_count);
         for (i, mut b) in spec.buses.into_iter().enumerate() {
             let feeds = b.sends.iter().map(|s| s.bus).chain(match b.output {
                 Output::Bus(to) => Some(to),
@@ -706,7 +985,16 @@ impl Plan {
                     return Err(PlanError::BusOrder { bus: i, to });
                 }
             }
+            check_keys(
+                track_count + i,
+                &b.keys,
+                b.inserts.len(),
+                track_count,
+                bus_count,
+            )?;
             prepare_all(&mut b.inserts, &setup);
+            bus_lats.push(b.inserts.iter().map(|p| p.latency()).collect::<Vec<u32>>());
+            bus_keys.push(std::mem::take(&mut b.keys));
             buses.push(BusNode {
                 name: b.name,
                 inserts: b.inserts,
@@ -722,11 +1010,20 @@ impl Plan {
                     .collect(),
                 output: b.output,
                 buf: Stereo::new(n),
+                keys: Vec::new(),
             });
         }
         let mut master_inserts = spec.master_inserts;
         prepare_all(&mut master_inserts, &setup);
-        let bus_routes: Vec<Route> = buses
+        let master_keys = spec.master_keys;
+        check_keys(
+            usize::MAX,
+            &master_keys,
+            master_inserts.len(),
+            track_count,
+            bus_count,
+        )?;
+        let mut bus_routes: Vec<Route> = buses
             .iter()
             .map(|b| Route {
                 latency: latency_of(&b.inserts),
@@ -734,22 +1031,200 @@ impl Plan {
                 sends: sends_of(&b.sends),
             })
             .collect();
+
+        // Key taps are dependencies: a receiver renders after the nodes it
+        // listens to (ENG-078). Order the nodes into levels so a level's
+        // sources are always in an earlier level; within a level the tracks
+        // are independent and the buses come after them.
+        let node_count = track_count + bus_count;
+        let node_of = |f: KeyFrom| match f {
+            KeyFrom::Track(i) => i,
+            KeyFrom::Bus(j) => track_count + j,
+        };
+        let mut deps: Vec<BTreeSet<usize>> = std::iter::repeat_with(BTreeSet::new)
+            .take(node_count)
+            .collect();
+        let mut feeds: Vec<BTreeSet<usize>> = std::iter::repeat_with(BTreeSet::new)
+            .take(bus_count)
+            .collect();
+        for (i, r) in routes.iter().enumerate() {
+            if let Output::Bus(b) = r.output {
+                deps[track_count + b].insert(i);
+                feeds[b].insert(i);
+            }
+            for &b in &r.sends {
+                deps[track_count + b].insert(i);
+                feeds[b].insert(i);
+            }
+        }
+        for (j, b) in buses.iter().enumerate() {
+            if let Output::Bus(to) = b.output {
+                deps[track_count + to].insert(track_count + j);
+                feeds[to].insert(track_count + j);
+            }
+            for s in &b.sends {
+                deps[track_count + s.bus].insert(track_count + j);
+                feeds[s.bus].insert(track_count + j);
+            }
+        }
+        for (i, keys) in track_keys.iter().enumerate() {
+            for s in keys.iter().flat_map(|k| &k.sources) {
+                deps[i].insert(node_of(s.from));
+            }
+        }
+        for (j, keys) in bus_keys.iter().enumerate() {
+            for s in keys.iter().flat_map(|k| &k.sources) {
+                deps[track_count + j].insert(node_of(s.from));
+            }
+        }
+        // The height of each node: 0 for none, else 1 + the highest dependency.
+        let mut height = vec![0usize; node_count];
+        let mut waiting: Vec<usize> = deps.iter().map(BTreeSet::len).collect();
+        let mut ready: Vec<usize> = (0..node_count).filter(|&i| waiting[i] == 0).collect();
+        let mut placed = 0usize;
+        while !ready.is_empty() {
+            let mut next = Vec::new();
+            for &i in &ready {
+                placed += 1;
+                for (m, d) in deps.iter().enumerate() {
+                    if d.contains(&i) {
+                        waiting[m] -= 1;
+                        height[m] = height[m].max(height[i] + 1);
+                        if waiting[m] == 0 {
+                            next.push(m);
+                        }
+                    }
+                }
+            }
+            ready = next;
+        }
+        if placed < node_count {
+            let node = waiting.iter().position(|&w| w > 0).unwrap_or(0);
+            return Err(PlanError::KeyLoop { node });
+        }
+        // With no keys the mix renders as before: every track, then the buses
+        // in index order, so a key-less song keeps its sums bit for bit.
+        let any_keys =
+            track_keys.iter().chain(&bus_keys).any(|k| !k.is_empty()) || !master_keys.is_empty();
+        let levels: Vec<Level> = if !any_keys {
+            vec![Level {
+                tracks: (0..track_count).collect(),
+                buses: (0..bus_count).collect(),
+            }]
+        } else {
+            (0..=height.iter().copied().max().unwrap_or(0))
+                .map(|l| Level {
+                    tracks: (0..track_count).filter(|&i| height[i] == l).collect(),
+                    buses: (0..bus_count)
+                        .filter(|&j| height[track_count + j] == l)
+                        .collect(),
+                })
+                .collect()
+        };
+
+        // The finished latency of each node, in level order: a key's `eff`
+        // lookup only ever sees nodes that render before it. Key taps and the
+        // keyed inserts' main delays come out of this pass, and the main
+        // delays are folded into the automation timings.
+        let mut eff = vec![0u32; node_count];
+        let mut arrive = vec![0u32; bus_count];
+        let mut key_acc: Vec<Stereo> = Vec::new();
+        let mut key_sends: Vec<Vec<KeySend>> =
+            std::iter::repeat_with(Vec::new).take(node_count).collect();
+        let mut key_on = HashMap::new();
+        let mut key_send = HashMap::new();
+        let mut bus_timing: Vec<Option<crate::automation_time::Chain>> = vec![None; bus_count];
+        for level in &levels {
+            for &i in &level.tracks {
+                if keep_from[i].is_some() {
+                    eff[i] = routes[i].latency;
+                    continue;
+                }
+                let lats = track_timing[i].inserts.clone();
+                let (keys, d, e) = keys_for(
+                    NodeId::Track(i),
+                    &track_keys[i],
+                    track_timing[i].input,
+                    &lats,
+                    &eff,
+                    node_of,
+                    n,
+                    &mut key_acc,
+                    &mut key_sends,
+                    &mut key_on,
+                    &mut key_send,
+                );
+                if let Some(&d0) = d.first() {
+                    track_timing[i].input += d0;
+                }
+                for (k, &dj) in d.iter().skip(1).enumerate() {
+                    track_timing[i].inserts[k] += dj;
+                }
+                if let Some(c) = tracks[i].as_mut().and_then(|t| t.chain.as_mut()) {
+                    c.keys = keys;
+                }
+                eff[i] = e;
+                routes[i].latency = e;
+            }
+            for &j in &level.buses {
+                arrive[j] = feeds[j].iter().map(|&f| eff[f]).max().unwrap_or(0);
+                let (keys, d, e) = keys_for(
+                    NodeId::Bus(j),
+                    &bus_keys[j],
+                    arrive[j],
+                    &bus_lats[j],
+                    &eff,
+                    node_of,
+                    n,
+                    &mut key_acc,
+                    &mut key_sends,
+                    &mut key_on,
+                    &mut key_send,
+                );
+                buses[j].keys = keys;
+                eff[track_count + j] = e;
+                bus_routes[j].latency = e - arrive[j];
+                bus_timing[j] = Some(crate::automation_time::Chain {
+                    input: arrive[j] + d.first().copied().unwrap_or(0),
+                    inserts: bus_lats[j]
+                        .iter()
+                        .enumerate()
+                        .map(|(k, &l)| l + d.get(k + 1).copied().unwrap_or(0))
+                        .collect(),
+                });
+            }
+        }
+        let master_lats: Vec<u32> = master_inserts.iter().map(|p| p.latency()).collect();
+        let (_, master_arrive) = crate::automation_time::arrivals(&routes, &bus_routes);
+        let (master_key_ins, _d, master_eff) = keys_for(
+            NodeId::Master,
+            &master_keys,
+            master_arrive,
+            &master_lats,
+            &eff,
+            node_of,
+            n,
+            &mut key_acc,
+            &mut key_sends,
+            &mut key_on,
+            &mut key_send,
+        );
         let (track_comp, bus_comp, latency) =
-            compensate(&routes, &bus_routes, latency_of(&master_inserts));
-        let (arrive, _) = crate::automation_time::arrivals(&routes, &bus_routes);
+            compensate(&routes, &bus_routes, master_eff - master_arrive);
         let automation = crate::automation_time::Timing {
             tracks: track_timing,
-            buses: buses
-                .iter()
-                .enumerate()
-                .map(|(i, b)| crate::automation_time::Chain {
-                    input: arrive[i],
-                    inserts: b.inserts.iter().map(|p| p.latency()).collect(),
-                })
+            buses: bus_timing
+                .into_iter()
+                .map(Option::unwrap_or_default)
                 .collect(),
         };
         let mut plan = Plan {
             pool: None,
+            levels,
+            key_acc,
+            key_sends,
+            key_on,
+            key_send,
             track_delays: track_comp.iter().map(|c| NodeDelays::new(c, n)).collect(),
             bus_delays: bus_comp.iter().map(|c| NodeDelays::new(c, n)).collect(),
             compensation: (track_comp, bus_comp),
@@ -765,6 +1240,7 @@ impl Plan {
                 gain: Smoothed::new(spec.master_gain),
                 buf: Stereo::new(n),
                 meter: MeterAcc::default(),
+                keys: master_key_ins,
             },
             pre: Stereo::new(n),
             #[cfg(test)]
@@ -832,6 +1308,11 @@ impl Plan {
                 send.level.settle();
             }
         }
+        for sends in &mut self.key_sends {
+            for s in sends {
+                s.level.settle();
+            }
+        }
         self.master.gain.settle();
     }
 
@@ -849,6 +1330,14 @@ impl Plan {
         for (slot, from) in self.tracks.iter_mut().zip(self.keep_from.iter()) {
             if let Some(from) = *from {
                 *slot = old.tracks.get_mut(from).and_then(Option::take);
+                // A carried node's keys are not wired into this plan: their
+                // accumulator slots were the old plan's. The main-signal
+                // delays keep running; `feed` gives no key.
+                if let Some(c) = slot.as_mut().and_then(|t| t.chain.as_mut()) {
+                    for k in &mut c.keys {
+                        k.acc = usize::MAX;
+                    }
+                }
             }
         }
     }
@@ -910,6 +1399,36 @@ impl Plan {
     pub fn set_bus_send_level(&mut self, bus: usize, send: usize, level: f32) {
         if let Some(b) = self.buses.get_mut(bus)
             && let Some(s) = b.sends.get_mut(send)
+        {
+            s.level.target = level;
+        }
+    }
+
+    /// Turns a keyed insert's external sidechain on or off (ENG-078).
+    /// `plugin` is the receiving plug-in's id.
+    pub fn set_key_on(&mut self, plugin: u64, on: bool) {
+        let Some(&(node, i)) = self.key_on.get(&plugin) else {
+            return;
+        };
+        let keys: Option<&mut Vec<KeyIn>> = match node {
+            NodeId::Track(t) => self
+                .tracks
+                .get_mut(t)
+                .and_then(Option::as_mut)
+                .and_then(|t| t.chain.as_mut())
+                .map(|c| &mut c.keys),
+            NodeId::Bus(b) => self.buses.get_mut(b).map(|b| &mut b.keys),
+            NodeId::Master => Some(&mut self.master.keys),
+        };
+        if let Some(k) = keys.and_then(|ks| ks.get_mut(i)) {
+            k.on = on;
+        }
+    }
+
+    /// The level of one key source, by the send row's id (ENG-078).
+    pub fn set_key_level(&mut self, send: u64, level: f32) {
+        if let Some(&(node, i)) = self.key_send.get(&send)
+            && let Some(s) = self.key_sends.get_mut(node).and_then(|v| v.get_mut(i))
         {
             s.level.target = level;
         }
@@ -1070,76 +1589,134 @@ impl Plan {
         for b in &mut self.buses {
             b.buf.clear(n);
         }
+        for a in &mut self.key_acc {
+            a.clear(n);
+        }
         self.master.buf.clear(n);
 
-        if let Some(pool) = &mut self.pool {
-            pool.render(&mut self.tracks, n, pos);
-        } else {
-            for t in self.tracks.iter_mut().flatten() {
-                Self::render_track(t, n, pos);
-            }
-        }
-
-        for (t, delays) in self.tracks.iter_mut().zip(&mut self.track_delays) {
-            let Some(t) = t else { continue };
-            let has_pre = t.sends.iter().any(|s| s.pre_fader);
-            if has_pre {
-                // Pre-fader sends still follow the mute.
-                for i in 0..n {
-                    let m = t.strip.mute.at(i, n);
-                    self.pre.l[i] = t.buf.l[i] * m;
-                    self.pre.r[i] = t.buf.r[i] * m;
+        let track_count = self.tracks.len();
+        for level in 0..self.levels.len() {
+            // Feed each receiver the key its sources pushed in earlier levels.
+            for &i in &self.levels[level].tracks {
+                if let Some(c) = self.tracks[i].as_mut().and_then(|t| t.chain.as_mut()) {
+                    for k in &mut c.keys {
+                        if k.acc != usize::MAX {
+                            std::mem::swap(&mut k.buf, &mut self.key_acc[k.acc]);
+                        }
+                    }
                 }
             }
-            t.strip.apply(&mut t.buf, n);
-            for (s, d) in t.sends.iter_mut().zip(&mut delays.sends) {
-                let src = if s.pre_fader { &self.pre } else { &t.buf };
-                d.add(&mut self.buses[s.bus].buf, src, n, &s.level);
-                s.level.settle();
-            }
-            let dest = match t.output {
-                Output::Master => &mut self.master.buf,
-                Output::Bus(b) => &mut self.buses[b].buf,
-            };
-            delays.output.add(dest, &t.buf, n, &Smoothed::new(1.0));
-            t.strip.settle();
-            t.strip.meter.add(&t.buf, n);
-        }
-
-        for i in 0..self.buses.len() {
-            // Everything a bus feeds comes after it, so the rest of the list can be borrowed.
-            let (head, later) = self.buses.split_at_mut(i + 1);
-            let b = &mut head[i];
-            for p in &mut b.inserts {
-                p.process(&mut b.buf.io(n), &[]);
-            }
-            let has_pre = b.sends.iter().any(|s| s.pre_fader);
-            if has_pre {
-                for k in 0..n {
-                    let m = b.strip.mute.at(k, n);
-                    self.pre.l[k] = b.buf.l[k] * m;
-                    self.pre.r[k] = b.buf.r[k] * m;
+            for &j in &self.levels[level].buses {
+                for k in &mut self.buses[j].keys {
+                    if k.acc != usize::MAX {
+                        std::mem::swap(&mut k.buf, &mut self.key_acc[k.acc]);
+                    }
                 }
             }
-            b.strip.apply(&mut b.buf, n);
-            let delays = &mut self.bus_delays[i];
-            for (s, d) in b.sends.iter_mut().zip(&mut delays.sends) {
-                let src = if s.pre_fader { &self.pre } else { &b.buf };
-                d.add(&mut later[s.bus - i - 1].buf, src, n, &s.level);
-                s.level.settle();
+
+            if let Some(pool) = &mut self.pool {
+                pool.render(&mut self.tracks, &self.levels[level].tracks, n, pos);
+            } else {
+                for &i in &self.levels[level].tracks {
+                    if let Some(t) = &mut self.tracks[i] {
+                        Self::render_track(t, n, pos);
+                    }
+                }
             }
-            b.strip.settle();
-            b.strip.meter.add(&b.buf, n);
-            let dest = match b.output {
-                Output::Master => &mut self.master.buf,
-                Output::Bus(to) => &mut later[to - i - 1].buf,
-            };
-            delays.output.add(dest, &b.buf, n, &Smoothed::new(1.0));
+
+            for &i in &self.levels[level].tracks {
+                let delays = &mut self.track_delays[i];
+                let Some(t) = &mut self.tracks[i] else {
+                    continue;
+                };
+                let has_pre =
+                    t.sends.iter().any(|s| s.pre_fader) || self.key_sends[i].iter().any(|s| s.pre);
+                if has_pre {
+                    // Pre-fader sends and key taps still follow the mute.
+                    for k in 0..n {
+                        let m = t.strip.mute.at(k, n);
+                        self.pre.l[k] = t.buf.l[k] * m;
+                        self.pre.r[k] = t.buf.r[k] * m;
+                    }
+                }
+                t.strip.apply(&mut t.buf, n);
+                for (s, d) in t.sends.iter_mut().zip(&mut delays.sends) {
+                    let src = if s.pre_fader { &self.pre } else { &t.buf };
+                    d.add(&mut self.buses[s.bus].buf, src, n, &s.level);
+                    s.level.settle();
+                }
+                let dest = match t.output {
+                    Output::Master => &mut self.master.buf,
+                    Output::Bus(b) => &mut self.buses[b].buf,
+                };
+                delays.output.add(dest, &t.buf, n, &Smoothed::new(1.0));
+                for s in &mut self.key_sends[i] {
+                    let src = if s.pre { &self.pre } else { &t.buf };
+                    s.delay.add(&mut self.key_acc[s.acc], src, n, &s.level);
+                    s.level.settle();
+                }
+                t.strip.settle();
+                t.strip.meter.add(&t.buf, n);
+            }
+
+            for &j in &self.levels[level].buses {
+                // Everything a bus feeds comes after it, so the rest of the list can be borrowed.
+                let (head, later) = self.buses.split_at_mut(j + 1);
+                let b = &mut head[j];
+                let mut key = 0;
+                for (i, p) in b.inserts.iter_mut().enumerate() {
+                    let mut io = b.buf.io(n);
+                    if key < b.keys.len() && b.keys[key].insert == i {
+                        io.key = b.keys[key].feed(&mut io.left[..], &mut io.right[..], n);
+                        key += 1;
+                    }
+                    p.process(&mut io, &[]);
+                }
+                let has_pre = b.sends.iter().any(|s| s.pre_fader)
+                    || self.key_sends[track_count + j].iter().any(|s| s.pre);
+                if has_pre {
+                    for k in 0..n {
+                        let m = b.strip.mute.at(k, n);
+                        self.pre.l[k] = b.buf.l[k] * m;
+                        self.pre.r[k] = b.buf.r[k] * m;
+                    }
+                }
+                b.strip.apply(&mut b.buf, n);
+                let delays = &mut self.bus_delays[j];
+                for (s, d) in b.sends.iter_mut().zip(&mut delays.sends) {
+                    let src = if s.pre_fader { &self.pre } else { &b.buf };
+                    d.add(&mut later[s.bus - j - 1].buf, src, n, &s.level);
+                    s.level.settle();
+                }
+                b.strip.settle();
+                b.strip.meter.add(&b.buf, n);
+                let dest = match b.output {
+                    Output::Master => &mut self.master.buf,
+                    Output::Bus(to) => &mut later[to - j - 1].buf,
+                };
+                delays.output.add(dest, &b.buf, n, &Smoothed::new(1.0));
+                for s in &mut self.key_sends[track_count + j] {
+                    let src = if s.pre { &self.pre } else { &b.buf };
+                    s.delay.add(&mut self.key_acc[s.acc], src, n, &s.level);
+                    s.level.settle();
+                }
+            }
         }
 
         let m = &mut self.master;
-        for p in &mut m.inserts {
-            p.process(&mut m.buf.io(n), &[]);
+        for k in &mut m.keys {
+            if k.acc != usize::MAX {
+                std::mem::swap(&mut k.buf, &mut self.key_acc[k.acc]);
+            }
+        }
+        let mut key = 0;
+        for (i, p) in m.inserts.iter_mut().enumerate() {
+            let mut io = m.buf.io(n);
+            if key < m.keys.len() && m.keys[key].insert == i {
+                io.key = m.keys[key].feed(&mut io.left[..], &mut io.right[..], n);
+                key += 1;
+            }
+            p.process(&mut io, &[]);
         }
         for i in 0..n {
             let g = m.gain.at(i, n);
@@ -1225,6 +1802,7 @@ impl Plan {
             &mut AudioIo {
                 left: &mut left[..n],
                 right: &mut right[..n],
+                key: None,
             },
             &c.events,
         );
@@ -1236,11 +1814,20 @@ impl Plan {
                 c.timeline.mix_audio(pos, &mut left[..n], &mut right[..n]);
             }
         }
-        for p in &mut c.inserts {
+        let mut key = 0;
+        for (i, p) in c.inserts.iter_mut().enumerate() {
+            let io_key = if key < c.keys.len() && c.keys[key].insert == i {
+                let k = &mut c.keys[key];
+                key += 1;
+                k.feed(&mut left[..n], &mut right[..n], n)
+            } else {
+                None
+            };
             p.process(
                 &mut AudioIo {
                     left: &mut left[..n],
                     right: &mut right[..n],
+                    key: io_key,
                 },
                 &[],
             );

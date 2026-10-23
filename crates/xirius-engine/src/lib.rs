@@ -37,7 +37,10 @@ pub mod wire;
 
 pub use control::ControlState;
 pub use engine::{AudioEngine, Command, Controller, EngineConfig, EngineEvent, render_offline};
-pub use mixer::{BusSpec, MidiTarget, MixSpec, Output, Plan, SendSpec, TrackSlot, TrackSpec};
+pub use mixer::{
+    BusSpec, KeyFrom, KeySourceSpec, KeySpec, MidiTarget, MixSpec, Output, Plan, SendSpec,
+    TrackSlot, TrackSpec,
+};
 pub use processor::{
     AudioIo, CTRL_AFTERTOUCH, CTRL_PITCH_BEND, NoteEvent, NoteKind, ProcessSetup, Processor,
     Readied, RenderMode,

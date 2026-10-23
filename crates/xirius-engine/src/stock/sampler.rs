@@ -617,6 +617,7 @@ mod tests {
             &mut crate::processor::AudioIo {
                 left: &mut l,
                 right: &mut r,
+                key: None,
             },
             &[crate::processor::NoteEvent {
                 offset: 0,
@@ -633,6 +634,7 @@ mod tests {
             &mut crate::processor::AudioIo {
                 left: &mut l,
                 right: &mut r,
+                key: None,
             },
             &[],
         );

@@ -68,6 +68,17 @@ pub enum Command {
         send: usize,
         level: f32,
     },
+    /// Turns a keyed insert's external sidechain on or off (ENG-078). `plugin`
+    /// is the receiving plug-in's id.
+    KeyOn {
+        plugin: u64,
+        on: bool,
+    },
+    /// The level of one key source (its send row's id).
+    KeyLevel {
+        send: u64,
+        level: f32,
+    },
     /// Replaces what a track plays on the timeline. The old one goes back through the garbage
     /// queue.
     SetTimeline {
@@ -405,6 +416,8 @@ impl AudioEngine {
             Command::OutputChannels(pair) => self.output_channels = pair,
             Command::BusMute { bus, mute } => plan.set_bus_mute(bus, mute),
             Command::BusSendLevel { bus, send, level } => plan.set_bus_send_level(bus, send, level),
+            Command::KeyOn { plugin, on } => plan.set_key_on(plugin, on),
+            Command::KeyLevel { send, level } => plan.set_key_level(send, level),
             Command::SetTimeline { track, timeline } => {
                 let old = match plan.set_timeline(track, timeline) {
                     Ok(old) | Err(old) => old,

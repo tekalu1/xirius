@@ -246,6 +246,7 @@ mod tests {
             &mut AudioIo {
                 left: &mut l,
                 right: &mut r,
+                key: None,
             },
             events,
         );
@@ -306,6 +307,7 @@ mod tests {
             &mut AudioIo {
                 left: &mut l,
                 right: &mut r,
+                key: None,
             },
             &[ev(0, 1, 100), ev(5, 1, 80)],
         );

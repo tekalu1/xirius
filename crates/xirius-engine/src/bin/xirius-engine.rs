@@ -144,6 +144,7 @@ fn demo_mix(gain: f32) -> MixSpec {
         buses: vec![echo],
         master_inserts: Vec::new(),
         master_gain: gain,
+        master_keys: Vec::new(),
     }
 }
 
@@ -211,6 +212,7 @@ fn sandbox_mix(a: &Args) -> Result<(MixSpec, Sandbox), BoxError> {
         buses: Vec::new(),
         master_inserts: Vec::new(),
         master_gain: a.gain,
+        master_keys: Vec::new(),
     };
     Ok((mix, Sandbox { servers, links }))
 }
@@ -282,6 +284,7 @@ fn plugin_mix(a: &Args) -> Result<(MixSpec, Vec<Plugin>), BoxError> {
         buses: Vec::new(),
         master_inserts: Vec::new(),
         master_gain: a.gain,
+        master_keys: Vec::new(),
     };
     Ok((mix, plugins))
 }
