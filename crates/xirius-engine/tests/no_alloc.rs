@@ -468,3 +468,90 @@ fn stock_devices_taking_file_sets_do_not_allocate() {
     // The voices actually played the files while the sets were swapped.
     assert!(sounded);
 }
+
+/// The splitter's branches (ENG-074): branches of different latency, one nested, while their
+/// values move, a branch mutes and comes back, and the plan is swapped with the track kept.
+#[test]
+fn split_branches_and_their_values_do_not_allocate() {
+    use xirius_engine::split::{BranchSpec, SplitProc};
+    let setup = ProcessSetup {
+        sample_rate: 48_000.0,
+        max_block: 256,
+        mode: RenderMode::Realtime,
+    };
+    let split_spec = || {
+        let inner = SplitProc::new(
+            10,
+            vec![
+                BranchSpec::new(11, vec![(111, Box::new(Delay::new(300)))]),
+                BranchSpec::new(12, vec![(121, Box::new(Gain::new(0.5)))]),
+            ],
+        );
+        let split = SplitProc::new(
+            1,
+            vec![
+                BranchSpec::new(2, vec![(201, Box::new(Delay::new(777)))]),
+                BranchSpec::new(3, vec![(301, Box::new(Gain::new(0.7)))]),
+                BranchSpec::new(4, vec![(10, Box::new(inner))]),
+            ],
+        );
+        let mut t = TrackSpec::new("split", Box::new(Sine::new(220.0, 0.3)));
+        t.inserts = vec![Box::new(Gain::new(0.9)), Box::new(split)];
+        let mut bus = BusSpec::new("fx");
+        bus.inserts = vec![Box::new(SplitProc::new(
+            5,
+            vec![
+                BranchSpec::new(6, vec![(601, Box::new(Delay::new(64)))]),
+                BranchSpec::new(7, vec![]),
+            ],
+        ))];
+        t.sends = vec![SendSpec {
+            bus: 0,
+            level: 0.5,
+            pre_fader: false,
+        }];
+        // The same on the audio thread itself, without a prefetch worker.
+        let mut home = TrackSpec::new("home", Box::new(Sine::new(330.0, 0.3)));
+        home.inserts = vec![Box::new(SplitProc::new(
+            8,
+            vec![
+                BranchSpec::new(9, vec![(901, Box::new(Delay::new(500)))]),
+                BranchSpec::new(13, vec![]),
+            ],
+        ))];
+        home.prefetch = false;
+        MixSpec {
+            tracks: vec![TrackSlot::New(t), TrackSlot::New(home)],
+            buses: vec![bus],
+            ..MixSpec::default()
+        }
+    };
+    let (mut audio, mut control) = engine::create(
+        Plan::build(split_spec(), setup, None).unwrap(),
+        EngineConfig::default(),
+    );
+    let mut out = vec![0.0f32; 1000 * 2];
+    reset_violation_count();
+    for i in 0..200u32 {
+        for node in [2, 4, 6, 9, 11] {
+            control
+                .send(Command::BranchGain {
+                    node,
+                    gain: (i % 10) as f32 / 10.0,
+                    pan: (i % 5) as f32 / 2.0 - 1.0,
+                    mute: (i + node as u32) % 7 < 3,
+                })
+                .ok()
+                .unwrap();
+        }
+        if i % 50 == 25 {
+            let mut s = split_spec();
+            s.tracks[0] = TrackSlot::Keep(0);
+            control.swap(s).unwrap();
+        }
+        audio.render(&mut out, 2);
+        control.poll(|_| {});
+    }
+    assert_eq!(violation_count(), 0);
+    assert!(out.iter().any(|s| *s != 0.0));
+}

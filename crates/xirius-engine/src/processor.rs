@@ -63,6 +63,17 @@ impl AudioIo<'_> {
     }
 }
 
+impl<'a> AudioIo<'a> {
+    /// A block over `left` and `right`, as a processor that runs others hands them one.
+    pub fn new(left: &'a mut [f32], right: &'a mut [f32]) -> AudioIo<'a> {
+        AudioIo {
+            left,
+            right,
+            key: None,
+        }
+    }
+}
+
 /// Whether a block is rendered for the device or faster/slower than real time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RenderMode {
@@ -126,6 +137,12 @@ pub trait Processor: Send {
     /// instrument) and sounds from the block it is ready in. By default there is nothing to
     /// wait for.
     fn allow_late(&mut self) {}
+
+    /// The splitter itself, for a [`crate::split::SplitProc`] (ENG-074): the plan reaches its
+    /// branches through it. `None` for every other processor.
+    fn split(&self) -> Option<&crate::split::SplitProc> {
+        None
+    }
 }
 
 /// A processor made ready before its plan (ENG-064): `prepare` with the setup it was readied
@@ -181,5 +198,9 @@ impl Processor for Readied {
 
     fn allow_late(&mut self) {
         self.inner.allow_late();
+    }
+
+    fn split(&self) -> Option<&crate::split::SplitProc> {
+        self.inner.split()
     }
 }

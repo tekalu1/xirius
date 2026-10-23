@@ -5094,6 +5094,96 @@ MIDI 学習
 | `program` | 必須 | `{"enum":["A","B","C","D","E","F","G"],"type":"string"}` | プログラム |
 | `save` | — | `{"type":"boolean"}` | 選ぶ代わりに、今のグリッドとクオンタイズの設定を保存する |
 
+## `rack.branch.add`
+
+分岐を追加
+
+スプリッターに空の分岐を足します（5 本まで。channel は 2 本のまま）
+
+事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 1 操作で取り消し可能。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `split` | 必須 | `{"type":"string"}` | スプリッター（rack node の ID） |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
+## `rack.branch.remove`
+
+分岐を削除
+
+分岐を中のプラグインごと削除します（1 本だけ残ったスプリッターは直列に戻ります）
+
+事前条件: AI の権限が編集以上。削除の確認設定に従う。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 1 操作で取り消し可能。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `id` | 必須 | `{"type":"string"}` | 分岐（rack node の ID） |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
+## `rack.branch.set`
+
+分岐の量を設定
+
+分岐の音量・パン・ミュートを設定します
+
+事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 1 操作で取り消し可能。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `gain` | — | `{"maximum":12.0,"minimum":-120.0,"type":"number"}` | 合流の前の音量（dB） |
+| `id` | 必須 | `{"type":"string"}` | 分岐（rack node の ID） |
+| `mute` | — | `{"enum":["on","off"],"type":"string"}` | ミュート |
+| `pan` | — | `{"maximum":1.0,"minimum":-1.0,"type":"number"}` | パン（-1 左〜1 右） |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
+## `rack.flatten`
+
+ラックを直列に戻す
+
+トラックのスプリッターを外して直列に戻します（分岐の中身は上から順に並びます）
+
+事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 1 操作で取り消し可能。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `track` | 必須 | `{"type":"string"}` | トラック（track の ID） |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
+## `rack.node.move`
+
+ラックの中で移動
+
+エフェクトかスプリッターを、同じトラックの FX か分岐の中へ移します（--index は 0 から。省略時は末尾）
+
+事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 1 操作で取り消し可能。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `id` | 必須 | `{"type":"string"}` | 移すエフェクトかスプリッター（plugin\|rack node の ID） |
+| `index` | — | `{"maximum":1000000.0,"minimum":0.0,"type":"integer"}` | 移す先での位置（0 から） |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `to` | 必須 | `{"type":"string"}` | 移す先: 分岐か、そのトラック（track\|rack node の ID） |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
 ## `rack.show`
 
 ラックを表示
@@ -5107,6 +5197,45 @@ MIDI 学習
 | 引数 | 必須 | 型・範囲・既定値 | 内容 |
 |---|---|---|---|
 | `track` | 必須 | `{"type":"string"}` | トラック（track の ID） |
+
+## `rack.split.add`
+
+スプリッターを追加
+
+トラックの FX にスプリッターを追加します（--at は track（FX の末尾）・after:<プラグインかスプリッター>・branch:<分岐>:<位置>。分岐は空で作ります）
+
+事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 1 操作で取り消し可能。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `at` | — | `{"type":"string"}` | 置く所: track・after:<id>・branch:<分岐の id>:<位置>（省略時は track） |
+| `branches` | — | `{"maximum":5.0,"minimum":2.0,"type":"integer"}` | 分岐の数（2〜5。channel は 2） |
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `mode` | — | `{"enum":["normal","channel","frequency"],"type":"string"}` | 分け方（省略時は normal） |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `track` | 必須 | `{"type":"string"}` | トラック（track の ID） |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
+## `rack.split.mode`
+
+スプリッターの分け方
+
+スプリッターの分け方を変えます（frequency の --crossovers は Hz をカンマで区切り、分岐より 1 つ少なく）
+
+事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 1 操作で取り消し可能。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `crossovers` | — | `{"type":"string"}` | frequency の境目（Hz、カンマ区切り。省略時は既定） |
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `id` | 必須 | `{"type":"string"}` | スプリッター（rack node の ID） |
+| `mode` | 必須 | `{"enum":["normal","channel","frequency"],"type":"string"}` | 分け方 |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
 
 ## `range.bounce`
 

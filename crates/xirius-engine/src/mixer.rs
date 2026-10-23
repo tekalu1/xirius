@@ -308,6 +308,8 @@ pub struct PlanShape {
     /// Each track's latency and connections, for compensating kept tracks in the next plan.
     pub routes: Vec<Route>,
     pub automation: crate::automation_time::Timing,
+    /// The inserts inside splitters, for their automation (ENG-074).
+    pub nested: crate::split::Nested,
 }
 
 /// A node's own latency (source and inserts) and where its signal goes.
@@ -586,6 +588,8 @@ pub struct TrackNode {
     chain: Option<Box<Chain>>,
     prefetch: Option<Box<Prefetch<Chain>>>,
     strip: Strip,
+    /// The values of the chain's splitter branches, also while a prefetch worker has the chain.
+    branches: crate::split::Cells,
     sends: Vec<SendNode>,
     output: Output,
     /// The chain's block, which the fader, pan and sends go on from.
@@ -680,6 +684,7 @@ struct BusNode {
     name: String,
     inserts: Vec<Box<dyn Processor>>,
     strip: Strip,
+    branches: crate::split::Cells,
     sends: Vec<SendNode>,
     output: Output,
     buf: Stereo,
@@ -688,6 +693,7 @@ struct BusNode {
 }
 
 struct MasterNode {
+    branches: crate::split::Cells,
     inserts: Vec<Box<dyn Processor>>,
     gain: Smoothed,
     buf: Stereo,
@@ -725,6 +731,7 @@ pub struct Plan {
     bus_delays: Vec<NodeDelays>,
     compensation: (Vec<Compensation>, Vec<Compensation>),
     latency: u32,
+    nested: crate::split::Nested,
     /// The events pushed, for the tests (UI-312).
     #[cfg(test)]
     pub(crate) pushed: Vec<(usize, NoteEvent)>,
@@ -933,6 +940,7 @@ impl Plan {
                         name: t.name,
                         prefetch,
                         strip: Strip::new(t.gain, t.pan, t.mute),
+                        branches: crate::split::Cells::of(&t.inserts),
                         sends: t
                             .sends
                             .iter()
@@ -997,6 +1005,7 @@ impl Plan {
             bus_keys.push(std::mem::take(&mut b.keys));
             buses.push(BusNode {
                 name: b.name,
+                branches: crate::split::Cells::of(&b.inserts),
                 inserts: b.inserts,
                 strip: Strip::new(b.gain, b.pan, b.mute),
                 sends: b
@@ -1230,12 +1239,14 @@ impl Plan {
             compensation: (track_comp, bus_comp),
             latency,
             automation,
+            nested: crate::split::Nested::default(),
             routes,
             setup,
             tracks,
             keep_from,
             buses,
             master: MasterNode {
+                branches: crate::split::Cells::of(&master_inserts),
                 inserts: master_inserts,
                 gain: Smoothed::new(spec.master_gain),
                 buf: Stereo::new(n),
@@ -1245,6 +1256,30 @@ impl Plan {
             pre: Stereo::new(n),
             #[cfg(test)]
             pushed: Vec::new(),
+        };
+        // A kept track's inner inserts are the ones its node had in the previous plan.
+        plan.nested = crate::split::Nested {
+            tracks: plan
+                .tracks
+                .iter()
+                .zip(&plan.keep_from)
+                .map(|(t, from)| match from {
+                    Some(old) => previous
+                        .as_ref()
+                        .and_then(|p| p.nested.tracks.get(*old))
+                        .cloned()
+                        .unwrap_or_default(),
+                    None => t
+                        .as_ref()
+                        .and_then(|t| t.chain.as_ref())
+                        .map_or_else(Vec::new, |c| crate::split::Nested::of(&c.inserts)),
+                })
+                .collect(),
+            buses: plan
+                .buses
+                .iter()
+                .map(|b| crate::split::Nested::of(&b.inserts))
+                .collect(),
         };
         if plan.tracks.len() >= 8 {
             let workers = std::thread::available_parallelism()
@@ -1286,6 +1321,7 @@ impl Plan {
             setup: self.setup,
             routes: self.routes.clone(),
             automation: self.automation.clone(),
+            nested: self.nested.clone(),
         }
     }
 
@@ -1346,6 +1382,19 @@ impl Plan {
     /// through its inserts, buses and the master inserts. Every other path is delayed to match.
     pub fn latency(&self) -> u32 {
         self.latency
+    }
+
+    /// Sets a splitter branch's gain (linear), pan and mute (ENG-074), by the branch's node id,
+    /// in whichever node's chain the splitter is.
+    pub fn set_branch_gain(&mut self, node: u64, gain: f32, pan: f32, mute: bool) {
+        let _ = self
+            .tracks
+            .iter()
+            .flatten()
+            .map(|t| &t.branches)
+            .chain(self.buses.iter().map(|b| &b.branches))
+            .chain([&self.master.branches])
+            .any(|c| c.set(node, gain, pan, mute));
     }
 
     pub fn set_track_gain(&mut self, track: usize, gain: f32) {

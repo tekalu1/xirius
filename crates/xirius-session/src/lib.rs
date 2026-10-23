@@ -56,6 +56,7 @@ pub mod pool;
 pub mod preset;
 pub mod processed;
 pub mod punch;
+pub mod rack_row;
 pub mod recent;
 pub mod record;
 pub mod reveal;

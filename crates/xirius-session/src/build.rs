@@ -9,6 +9,7 @@
 //! placeholder of [`crate::synth`] for a built-in without a processor); such an effect is left
 //! out.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -25,7 +26,9 @@ use xirius_engine::{
     timing::{Timed, Timings},
 };
 
+use xirius_core::rack::{Rack, SplitMode};
 use xirius_engine::disk_stream::DiskAudio;
+use xirius_engine::split::{BranchSpec, SplitProc};
 use xirius_engine::timeline::StreamRegion;
 use xirius_params::Kind;
 use xirius_plugins::Catalog;
@@ -33,6 +36,7 @@ use xirius_plugins::Catalog;
 use crate::clap_plugins::is_hosted;
 use crate::graph::{DISCARD, Graph, Mix, Scope, Select, Structure, db_to_gain, song_end_tick};
 use crate::plugins::{Isolation, OpenTime, PluginLoader};
+use crate::rack_row::{BranchMix, Slot};
 use crate::synth::{Flavor, PlaceholderSynth, Silence};
 use crate::tempo::TempoMap;
 use crate::wav::WavCache;
@@ -271,8 +275,15 @@ impl Builder {
             spec.live = crate::automation::realtime(t);
             let (inserts, keys) =
                 self.inserts_for(&t.name, &shape.inserts, &graph, &scope, &mut warnings);
-            spec.inserts = inserts;
-            spec.keys = keys;
+            (spec.inserts, spec.keys) = self.arrange(
+                &t.name,
+                shape.rack.as_ref(),
+                inserts,
+                keys,
+                &shape.inserts,
+                &mix.branches,
+                &mut warnings,
+            );
             spec.gain = strip.gain;
             spec.pan = strip.pan;
             spec.mute = strip.mute;
@@ -300,8 +311,15 @@ impl Builder {
             let mut spec = BusSpec::new(name.clone());
             let (inserts, keys) =
                 self.inserts_for(&name, &shape.inserts, &graph, &scope, &mut warnings);
-            spec.inserts = inserts;
-            spec.keys = keys;
+            (spec.inserts, spec.keys) = self.arrange(
+                &name,
+                shape.rack.as_ref(),
+                inserts,
+                keys,
+                &shape.inserts,
+                &mix.branches,
+                &mut warnings,
+            );
             spec.gain = strip.gain;
             spec.pan = strip.pan;
             spec.mute = strip.mute;
@@ -315,6 +333,15 @@ impl Builder {
             &structure.master_inserts,
             &graph,
             &scope,
+            &mut warnings,
+        );
+        let (master_inserts, master_keys) = self.arrange(
+            "master",
+            structure.master_rack.as_ref(),
+            master_inserts,
+            master_keys,
+            &structure.master_inserts,
+            &mix.branches,
             &mut warnings,
         );
         self.plugins.end_build();
@@ -659,6 +686,66 @@ impl Builder {
         (out, keys)
     }
 
+    /// An insert row arranged by its channel's rack (ENG-074): the splitters become
+    /// [`SplitProc`]s holding their branches' plug-ins, with the branches' values from `values`.
+    /// Without a rack the row and its keys are returned as they are, so a song with no splitter
+    /// plays exactly as before. The channel and frequency modes split nothing yet (ENG-076):
+    /// every branch gets the whole signal.
+    ///
+    /// A key (ENG-078) follows its plug-in to the plug-in's place in the arranged row. A
+    /// plug-in inside a branch hears no key yet: its key is left out with a warning.
+    #[allow(clippy::too_many_arguments)]
+    fn arrange(
+        &self,
+        owner: &str,
+        rack: Option<&Rack>,
+        row: Vec<Box<dyn Processor>>,
+        keys: Vec<KeySpec>,
+        plugins: &[Plugin],
+        values: &[BranchMix],
+        warnings: &mut Vec<String>,
+    ) -> (Vec<Box<dyn Processor>>, Vec<KeySpec>) {
+        let Some(rack) = rack else {
+            return (row, keys);
+        };
+        // Each insert `inserts_for` built went through `timed`, which noted its plug-in's id, so
+        // the row's ids are the last ones noted.
+        let ids = self.timed[self.timed.len() - row.len()..].to_vec();
+        let slots = crate::rack_row::layout(rack, &ids);
+        let mut built: HashMap<u64, Box<dyn Processor>> = ids.into_iter().zip(row).collect();
+        let values: HashMap<u64, &BranchMix> = values.iter().map(|b| (b.node, b)).collect();
+        let mut whole = false;
+        let (top, out): (Vec<u64>, Vec<Box<dyn Processor>>) = slots
+            .into_iter()
+            .filter_map(|s| fill(s, &mut built, &values, &mut whole))
+            .unzip();
+        if whole {
+            warnings.push(format!(
+                "{owner}: チャンネル・周波数のスプリッターはまだ音を分けないため、どの分岐にも同じ音を送ります"
+            ));
+        }
+        let keys = keys
+            .into_iter()
+            .filter_map(|mut k| match top.iter().position(|id| *id == k.plugin) {
+                Some(i) => {
+                    k.insert = i;
+                    Some(k)
+                }
+                None => {
+                    let name = plugins
+                        .iter()
+                        .find(|x| x.id.0 == k.plugin)
+                        .map_or("?", |x| x.name.as_str());
+                    warnings.push(format!(
+                        "{owner}: {name} は分岐の中にあるため、サイドチェーンのキーはまだ届きません"
+                    ));
+                    None
+                }
+            })
+            .collect();
+        (out, keys)
+    }
+
     fn resolve(&self, file: &str) -> PathBuf {
         let path = Path::new(file);
         match (&self.dir, path.is_absolute()) {
@@ -707,6 +794,43 @@ fn key_source(g: &Graph, scope: &Scope, s: &KeySource) -> Option<KeySourceSpec> 
         pre,
         level,
     })
+}
+
+/// One slot of a rack's row as a processor with the id its automation goes by: a built plug-in
+/// (taken from `built`) or a splitter. `whole` is set by a splitter that does not split yet.
+fn fill(
+    slot: Slot,
+    built: &mut HashMap<u64, Box<dyn Processor>>,
+    values: &HashMap<u64, &BranchMix>,
+    whole: &mut bool,
+) -> Option<(u64, Box<dyn Processor>)> {
+    match slot {
+        Slot::Plugin(id) => built.remove(&id).map(|p| (id, p)),
+        Slot::Split {
+            node,
+            mode,
+            branches,
+        } => {
+            *whole |= mode != SplitMode::Normal;
+            let specs = branches
+                .into_iter()
+                .map(|(b, chain)| {
+                    let inserts = chain
+                        .into_iter()
+                        .filter_map(|s| fill(s, built, values, whole))
+                        .collect();
+                    let mut spec = BranchSpec::new(b, inserts);
+                    if let Some(v) = values.get(&b) {
+                        spec.gain = v.gain;
+                        spec.pan = v.pan;
+                        spec.mute = v.mute;
+                    }
+                    spec
+                })
+                .collect();
+            Some((node, Box::new(SplitProc::new(node, specs))))
+        }
+    }
 }
 
 fn sends_for(shape: &[(usize, bool)], levels: &[f32]) -> Vec<SendSpec> {

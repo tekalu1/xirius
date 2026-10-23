@@ -207,6 +207,13 @@ pub(crate) fn run(
             } else {
                 "として保存しました"
             };
+            // A preset keeps one chain, so a splitter's branches go in one after another (ENG-074).
+            let flattened = t.rack.as_ref().is_some_and(|r| !r.is_serial());
+            let note = match (flattened, dry) {
+                (false, _) => "",
+                (true, true) => "。分岐はプリセットに入らないため、直列にして保存します",
+                (true, false) => "。分岐はプリセットに入らないため、直列にして保存しました",
+            };
             let edits = if dry || t.preset.as_deref() == Some(name.as_str()) {
                 Vec::new()
             } else {
@@ -217,8 +224,13 @@ pub(crate) fn run(
             };
             Ok((
                 Output::with(
-                    format!("{said}{verb}"),
-                    json!({ "name": name, "file": path.to_string_lossy(), "id": id.to_string() }),
+                    format!("{said}{verb}{note}"),
+                    json!({
+                        "name": name,
+                        "file": path.to_string_lossy(),
+                        "id": id.to_string(),
+                        "flattened": flattened,
+                    }),
                 ),
                 edits,
             ))

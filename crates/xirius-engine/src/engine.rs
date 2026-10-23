@@ -130,6 +130,14 @@ pub enum Command {
     /// Plays the test tone once on the device (UI-260); `None` stops one that sounds. The
     /// old one goes back through the garbage queue.
     SetTone(Option<Box<Tone>>),
+    /// A splitter branch's gain (linear), pan and mute at the merge (ENG-074), by the branch's
+    /// node id, wherever its splitter is. A muted branch is not processed.
+    BranchGain {
+        node: u64,
+        gain: f32,
+        pan: f32,
+        mute: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -516,6 +524,12 @@ impl AudioEngine {
                     self.hand_back(Garbage::Tone(old));
                 }
             }
+            Command::BranchGain {
+                node,
+                gain,
+                pan,
+                mute,
+            } => plan.set_branch_gain(node, gain, pan, mute),
         }
     }
 

@@ -7958,6 +7958,8 @@ phase = "v1.1"
 source = "presets/report.md § 3.3 ; presets/report.md § 3.6 ; presets/report.md § 3.7"
 after = ["PRJ-026"]
 done_when = "SplitProc（Processor）で分岐を鳴らし、分岐ごとの遅れを最大の遅れへ揃える。Command::BranchGain{node,gain,pan,mute} で量を変え、mute の分岐は処理しない。分岐が 1 つになったスプリッターは直列へ畳み、直列と同じ重さにする。バッファーは Plan::build でだけ確保し、分岐の中のオートメーションは時刻をずらして当て、分岐を別のスレッドで並べない。rack.split.add --track --at --mode --branches・rack.split.mode・rack.branch.add・rack.branch.remove・rack.branch.set --gain --pan --mute・rack.node.move --id --to --index・rack.flatten を CLI と MCP に置き、どれも 1 段の undo。試験で遅れの違う分岐がサンプルまで揃う"
+status = "done"
+notes = "残したこと: 分岐の中の機器へのサイドチェーンのキーは ENG-079（それまでは警告を出してキーを外す）。マスターのスプリッターの中のオートメーションの時刻は AUT-019（マスターのインサートは元から時刻をずらしていない）"
 
 [[item]]
 id = "ENG-075"
@@ -7996,6 +7998,15 @@ source = "sidechain/report.md § 処理の順序と遅延補正 ; sidechain/repo
 after = ["MIX-047"]
 done_when = "AudioIo（と包むもの）に key: Option<(&[f32],&[f32])> を足し、キーのバッファーを置く。トラックの依存の段にキーの辺を入れて、キーと本線が揃うまで待つ（TrackPool は同じ段の中でだけ並べる）。遅延補正はキーか本線を遅らせて揃え、到着の時刻にキーの道を含める。試験でキーと本線のずれが 0 サンプル"
 notes = "決め事: 聞こえない送り元（利用者のミュート・ソロで隠れたの両方）はキーを止める（Studio Pro と同じ。Solo Safe は後の項目）。トラック・バスで同じ振る舞い。キーのあるトラックは prefetch に貸さない。キーの無い曲は従来どおり全トラック→バス番号順で、出力は 1 ビットも変わらない"
+
+[[item]]
+id = "ENG-079"
+title = "分岐の中の機器にサイドチェーンのキーを届ける"
+area = "ENG"
+phase = "v1.1"
+source = "presets/report.md § 3.3 ; sidechain/report.md § 処理の順序と遅延補正"
+after = ["ENG-074", "ENG-078"]
+done_when = "スプリッターの分岐の中にある、キーを受ける機器にもキーを届け、分岐の中でその機器より前の遅れの分だけキーを遅らせて本線と揃える。分岐の中のキーを外す警告をやめる。試験で、分岐の中のキーと本線のずれが 0 サンプル"
 
 [[item]]
 id = "PRJ-026"
@@ -8113,6 +8124,15 @@ phase = "v1.1"
 source = "presets/report.md § 3.2 ; presets/report.md § 3.4"
 after = ["MIX-039", "ENG-074"]
 done_when = "AutoTarget に control:k1〜k8・b1〜b8・x1・y1・x2・y2 と branch:<id>:gain|pan|mute を足す。マクロのレーンの名前は「マクロコントロール · <名前>」。マクロに割り当てた先のレーンは止めて印を出す。保存と読み込みでレーンが戻る"
+
+[[item]]
+id = "AUT-019"
+title = "マスターのインサートと、その分岐の中の機器のオートメーションの時刻を揃える"
+area = "AUT"
+phase = "v1.1"
+source = "presets/report.md § 3.3 ; presets/report.md § 3.6"
+after = ["ENG-074"]
+done_when = "マスターのインサートのパラメーターのオートメーションを、トラック・バスと同じくそのインサートまでの遅れの分ずらして当てる。マスターのスプリッターの分岐の中の機器も、分岐の中でその機器より前の遅れを足して当てる。試験で、遅れのあるインサートの後ろのマスターの機器のオートメーションが、書き出しでずれない"
 
 [[item]]
 id = "BRW-017"

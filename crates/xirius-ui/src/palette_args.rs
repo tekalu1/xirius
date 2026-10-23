@@ -172,13 +172,48 @@ fn text(value: &Value) -> String {
         .unwrap_or_else(|| value.to_string())
 }
 
+/// A rack's layers, splitters and branches, named by where they are.
+fn rack_choices(track: &str, rack: &xirius_core::rack::Rack, out: &mut Vec<(String, String)>) {
+    use xirius_core::rack::{RackNode, Source};
+    fn walk(at: &str, nodes: &[RackNode], out: &mut Vec<(String, String)>) {
+        for (n, split) in nodes
+            .iter()
+            .filter_map(|node| match node {
+                RackNode::Split(s) => Some(s),
+                RackNode::Plugin(_) => None,
+            })
+            .enumerate()
+        {
+            let here = format!("{at} / スプリッター {}", n + 1);
+            out.push((split.id.to_string(), here.clone()));
+            for (i, b) in split.branches.iter().enumerate() {
+                let branch = format!("{here} / 分岐 {}", i + 1);
+                out.push((b.id.to_string(), branch.clone()));
+                walk(&branch, &b.fx, out);
+            }
+        }
+    }
+    if let Some(Source::Multi { id, layers }) = &rack.source {
+        out.push((id.to_string(), format!("{track} / マルチ")));
+        for layer in layers {
+            let at = format!("{track} / {}", layer.name);
+            out.push((layer.id.to_string(), at.clone()));
+            walk(&at, &layer.fx, out);
+        }
+    }
+    walk(track, &rack.fx, out);
+}
+
 fn id_choices(
     project: &xirius_core::Project,
     kind: xirius_core::id::IdKind,
 ) -> Vec<(String, String)> {
     use xirius_core::id::IdKind;
     let mut choices = Vec::new();
-    if matches!(kind, IdKind::Track | IdKind::Node | IdKind::Any) {
+    if matches!(
+        kind,
+        IdKind::Track | IdKind::Node | IdKind::TrackOrRackNode | IdKind::Any
+    ) {
         choices.extend(
             project
                 .tracks
@@ -195,7 +230,17 @@ fn id_choices(
         );
     }
     for track in project.tracks.values() {
-        if matches!(kind, IdKind::Plugin | IdKind::Any) {
+        if matches!(
+            kind,
+            IdKind::RackNode | IdKind::RackNodeOrPlugin | IdKind::TrackOrRackNode | IdKind::Any
+        ) && let Some(rack) = &track.rack
+        {
+            rack_choices(track.shown_name(), rack, &mut choices);
+        }
+        if matches!(
+            kind,
+            IdKind::Plugin | IdKind::RackNodeOrPlugin | IdKind::Any
+        ) {
             choices.extend(track.inserts.iter().map(|plugin| {
                 (
                     plugin.id.to_string(),
@@ -577,6 +622,43 @@ mod tests {
         let shown = choices.iter().find(|(id, _)| *id == master);
         assert_eq!(shown.map(|(_, n)| n.as_str()), Some("マスター"));
         assert!(!choices.iter().any(|(_, n)| n == "Master"));
+    }
+
+    #[test]
+    fn a_rack_offers_its_splitters_and_branches_as_choices() {
+        use xirius_core::session::{RunOptions, Session};
+        let mut s = Session::new("rack");
+        let t = s
+            .run_value(
+                "track.add.audio",
+                serde_json::json!({ "name": "T" }),
+                &RunOptions::human(),
+            )
+            .unwrap()
+            .data["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let split = s
+            .run_value(
+                "rack.split.add",
+                serde_json::json!({ "track": t }),
+                &RunOptions::human(),
+            )
+            .unwrap()
+            .data;
+        let names = |kind| id_choices(s.project(), kind);
+        let nodes = names(xirius_core::id::IdKind::RackNode);
+        let branch = split["branches"][1].as_str().unwrap();
+        assert!(
+            nodes
+                .iter()
+                .any(|(id, n)| id == branch && n == "T / スプリッター 1 / 分岐 2"),
+            "{nodes:?}"
+        );
+        let to = names(xirius_core::id::IdKind::TrackOrRackNode);
+        assert!(to.iter().any(|(id, _)| *id == t), "{to:?}");
+        assert!(to.iter().any(|(id, _)| id == branch), "{to:?}");
     }
 
     #[test]

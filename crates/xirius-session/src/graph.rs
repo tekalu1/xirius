@@ -6,7 +6,10 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use xirius_core::id::{PluginId, SendId, TrackId};
 use xirius_core::model::{KeyMode, MidiOut, Output, Plugin, PluginKind, Project, Track, TrackKind};
+use xirius_core::rack::Rack;
 use xirius_engine::Output as EOut;
+
+use crate::rack_row::{self, BranchMix};
 
 /// What a render takes: the whole mix, or one track or bus on its own (a stem).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -295,6 +298,9 @@ pub struct NodeShape {
     pub sends: Vec<(usize, bool)>,
     /// The MIDI port a track plays to instead of an instrument.
     pub midi: Option<MidiOut>,
+    /// The rack its inserts are arranged by, with the branches' values at rest
+    /// ([`rack_row::structure`]); none when the inserts are a line or are not played.
+    pub rack: Option<Rack>,
 }
 
 /// What makes a new plan necessary when it changes (clips and values do not count).
@@ -303,6 +309,7 @@ pub struct Structure {
     pub tracks: Vec<NodeShape>,
     pub buses: Vec<NodeShape>,
     pub master_inserts: Vec<Plugin>,
+    pub master_rack: Option<Rack>,
 }
 
 impl Structure {
@@ -323,6 +330,7 @@ impl Structure {
                 midi: t.midi_out.clone().filter(|_| {
                     t.kind == TrackKind::Instrument && t.frozen.is_none() && scope.includes(*id)
                 }),
+                rack: played_rack(scope, t).map(rack_row::structure),
             }
         };
         let mut buses: Vec<NodeShape> = g.buses.iter().map(shape).collect();
@@ -333,6 +341,7 @@ impl Structure {
                 output: EOut::Master,
                 sends: Vec::new(),
                 midi: None,
+                rack: None,
             });
         }
         Structure {
@@ -346,6 +355,7 @@ impl Structure {
                     .map(|m| m.inserts.clone())
                     .unwrap_or_default()
             },
+            master_rack: master_rack(p, scope).map(rack_row::structure),
         }
     }
 }
@@ -362,6 +372,21 @@ pub struct KeyMix {
     pub sends: Vec<(SendId, f32)>,
 }
 
+/// The rack a channel's inserts play through: none when they are not played (a frozen track, a
+/// channel outside a stem).
+fn played_rack<'a>(scope: &Scope, t: &'a Track) -> Option<&'a Rack> {
+    t.rack
+        .as_ref()
+        .filter(|_| scope.includes(t.id) && t.frozen.is_none())
+}
+
+fn master_rack<'a>(p: &'a Project, scope: &Scope) -> Option<&'a Rack> {
+    if scope.is_stem() {
+        return None;
+    }
+    p.tracks.get(&TrackId::MASTER)?.rack.as_ref()
+}
+
 /// The numbers on one channel strip.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StripMix {
@@ -376,6 +401,8 @@ pub struct StripMix {
 /// The values a running plan can take without being replaced.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Mix {
+    /// Every played splitter's branches (ENG-074): tracks', buses' and the master's.
+    pub branches: Vec<BranchMix>,
     pub tracks: Vec<StripMix>,
     pub buses: Vec<StripMix>,
     pub master_gain: f32,
@@ -450,7 +477,17 @@ impl Mix {
             });
         }
         let master = p.tracks.get(&TrackId::MASTER);
+        let mut branches = Vec::new();
+        for id in g.tracks.iter().chain(&g.buses) {
+            if let Some(r) = played_rack(scope, &p.tracks[id]) {
+                rack_row::values(r, &mut branches);
+            }
+        }
+        if let Some(r) = master_rack(p, scope) {
+            rack_row::values(r, &mut branches);
+        }
         Mix {
+            branches,
             tracks: g.tracks.iter().map(strip).collect(),
             buses,
             master_gain: if scope.is_stem() {

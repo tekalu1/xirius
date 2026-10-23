@@ -1182,6 +1182,25 @@ impl SessionHost {
     /// Queues what differs between the strips the engine has and `mix`. A strip's snapshot
     /// changes only for the values that were queued.
     fn send_mix(&mut self, mix: &Mix, report: &mut SyncReport) {
+        // A branch is matched by its node id: a list that does not line up belongs to a plan
+        // that is being replaced and gets its values when it is built.
+        for (k, new) in mix.branches.iter().enumerate() {
+            match self.mix.branches.get(k) {
+                Some(old) if old.node == new.node && old != new => {}
+                _ => continue,
+            }
+            if self.send(Command::BranchGain {
+                node: new.node,
+                gain: new.gain,
+                pan: new.pan,
+                mute: new.mute,
+            }) {
+                self.mix.branches[k] = *new;
+                report.commands += 1;
+            } else {
+                report.deferred += 1;
+            }
+        }
         for i in 0..mix.tracks.len() {
             let (new, old) = (&mix.tracks[i], self.mix.tracks[i].clone());
             let mut cur = old.clone();

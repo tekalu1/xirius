@@ -147,6 +147,16 @@ impl ParamFollow {
 /// The engine commands that take a running plan from `old` to `new`.
 pub fn changes(old: &Mix, new: &Mix) -> Vec<Command> {
     let mut out = Vec::new();
+    for (o, n) in old.branches.iter().zip(&new.branches) {
+        if o.node == n.node && o != n {
+            out.push(Command::BranchGain {
+                node: n.node,
+                gain: n.gain,
+                pan: n.pan,
+                mute: n.mute,
+            });
+        }
+    }
     for (i, (o, n)) in old.tracks.iter().zip(&new.tracks).enumerate() {
         strip(o, n, &mut out, |c| match c {
             Strip::Gain(gain) => Command::TrackGain { track: i, gain },

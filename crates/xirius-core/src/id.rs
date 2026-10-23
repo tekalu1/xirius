@@ -201,6 +201,8 @@ pub enum IdKind {
     RackNode,
     /// A rack part or a plug-in (a rack node can be either).
     RackNodeOrPlugin,
+    /// A track or a rack part: where `rack.node.move --to` puts a node (ENG-074).
+    TrackOrRackNode,
     Any,
 }
 
@@ -223,6 +225,7 @@ impl IdKind {
             IdKind::TimeSig => "timesig",
             IdKind::RackNode => "rack node",
             IdKind::RackNodeOrPlugin => "plugin|rack node",
+            IdKind::TrackOrRackNode => "track|rack node",
             IdKind::Any => "any",
         }
     }
@@ -252,6 +255,10 @@ impl IdKind {
                 | (
                     IdKind::RackNodeOrPlugin,
                     AnyId::RackNode(_) | AnyId::Plugin(_)
+                )
+                | (
+                    IdKind::TrackOrRackNode,
+                    AnyId::Track(_) | AnyId::RackNode(_)
                 )
         )
     }

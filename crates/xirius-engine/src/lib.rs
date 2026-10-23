@@ -25,6 +25,7 @@ pub mod rt;
 pub mod rt_lock;
 pub mod sandbox;
 pub mod server;
+pub mod split;
 pub mod stats;
 pub mod stock;
 pub mod storage;

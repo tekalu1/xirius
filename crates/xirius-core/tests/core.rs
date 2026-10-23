@@ -535,6 +535,23 @@ fn every_history_command_undoes_and_redoes() {
     })
     .to_string();
     rig.step("preset.put", json!({"track": pt, "preset": xpreset}));
+    let rt = id_of(&rig.step("track.add.audio", json!({"name": "Rack"})));
+    let ra = id_of(&rig.step("plugin.add", json!({"track": rt, "name": "EQ"})));
+    let rb = id_of(&rig.step("plugin.add", json!({"track": rt, "name": "Comp"})));
+    let split = rig.step("rack.split.add", json!({"track": rt, "branches": 2}));
+    let sp = id_of(&split);
+    let b0 = split.data["branches"][0].as_str().unwrap().to_string();
+    rig.step("rack.node.move", json!({"id": ra, "to": b0, "index": 0}));
+    rig.step("rack.split.mode", json!({"id": sp, "mode": "channel"}));
+    rig.step("rack.split.mode", json!({"id": sp, "mode": "normal"}));
+    let b2 = id_of(&rig.step("rack.branch.add", json!({"split": sp})));
+    rig.step(
+        "rack.branch.set",
+        json!({"id": b2, "gain": -6.0, "mute": "on"}),
+    );
+    rig.step("rack.branch.remove", json!({"id": b0}));
+    rig.step("rack.node.move", json!({"id": rb, "to": rt, "index": 1}));
+    rig.step("rack.flatten", json!({"track": rt}));
     rig.step(
         "plugin.preset.apply",
         json!({"id":comp,"values":[{"param":"threshold","value":0.3}]}),

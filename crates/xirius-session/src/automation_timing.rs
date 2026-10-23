@@ -1,4 +1,9 @@
-use crate::{graph::Graph, plugins::PluginLoader, tempo::TempoMap};
+use crate::{
+    graph::Graph,
+    plugins::PluginLoader,
+    rack_row::{Slot, layout},
+    tempo::TempoMap,
+};
 use std::collections::HashMap;
 use xirius_core::{
     auto::AutoTarget,
@@ -21,11 +26,15 @@ impl Timing {
     }
     pub fn new(p: &Project, graph: &Graph, shape: &PlanShape, loader: &PluginLoader) -> Self {
         let mut timing = Self::default();
-        for (ids, chains) in [
-            (&graph.tracks, &shape.automation.tracks),
-            (&graph.buses, &shape.automation.buses),
+        for (ids, chains, nested) in [
+            (
+                &graph.tracks,
+                &shape.automation.tracks,
+                &shape.nested.tracks,
+            ),
+            (&graph.buses, &shape.automation.buses, &shape.nested.buses),
         ] {
-            for (id, chain) in ids.iter().zip(chains) {
+            for (i, (id, chain)) in ids.iter().zip(chains).enumerate() {
                 timing.channels.insert(*id, chain.fader());
                 let Some(t) = p.tracks.get(id) else { continue };
                 for source in t
@@ -42,8 +51,25 @@ impl Timing {
                             || loader.is_stock(p.id)
                             || loader.opened(p.id))
                 });
-                for (index, plugin) in retained.enumerate() {
-                    timing.plugins.insert(plugin.id, chain.insert(index));
+                let Some(rack) = &t.rack else {
+                    for (index, plugin) in retained.enumerate() {
+                        timing.plugins.insert(plugin.id, chain.insert(index));
+                    }
+                    continue;
+                };
+                // A splitter is one insert of the row; the plug-ins in its branches are as late
+                // as the engine says (ENG-074).
+                let built: Vec<u64> = retained.map(|p| p.id.0).collect();
+                for (index, slot) in layout(rack, &built).iter().enumerate() {
+                    if let Slot::Plugin(id) = slot {
+                        timing.plugins.insert(PluginId(*id), chain.insert(index));
+                    }
+                }
+                for inner in nested.get(i).into_iter().flatten() {
+                    timing.plugins.insert(
+                        PluginId(inner.id),
+                        chain.insert(inner.insert) + inner.offset,
+                    );
                 }
             }
         }

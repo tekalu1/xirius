@@ -468,3 +468,33 @@ fn a_dry_run_changes_and_writes_nothing() {
     assert!(!r.dir.join("Never.json").exists());
     assert_eq!(*r.s.project(), before);
 }
+
+#[test]
+fn saving_a_track_with_branches_says_they_were_saved_in_a_line() {
+    let mut r = rig("branches");
+    let v = vocal(&mut r);
+    let fx: Vec<String> = track(&r.s, &v)
+        .inserts
+        .iter()
+        .map(|x| x.id.to_string())
+        .collect();
+    let split = run(&mut r.s, "rack.split.add", json!({ "track": v }));
+    let b1 = split["branches"][1].as_str().unwrap().to_string();
+    run(&mut r.s, "rack.node.move", json!({ "id": fx[1], "to": b1 }));
+    let saved =
+        r.s.run_value(
+            "track.preset.save",
+            json!({ "track": v, "name": "Split chain" }),
+            &RunOptions::human(),
+        )
+        .unwrap();
+    assert!(saved.message.contains("直列"), "{}", saved.message);
+    assert_eq!(saved.data["flattened"], true);
+    let other = vocal(&mut r);
+    let plain = run(
+        &mut r.s,
+        "track.preset.save",
+        json!({ "track": other, "name": "Plain chain" }),
+    );
+    assert_eq!(plain["flattened"], false);
+}

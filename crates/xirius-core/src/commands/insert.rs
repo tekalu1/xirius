@@ -53,6 +53,18 @@ fn transfer(
         .find_map(|(t, x)| x.inserts.iter().position(|x| x.id == id).map(|i| (*t, i)))
         .ok_or_else(|| CmdError::not_found("プラグインが見つかりません"))?;
     let to = a.opt_id::<TrackId>("track")?.unwrap_or(from);
+    // A place in the insert row says nothing about the branch it would land in (ENG-074).
+    if !copy
+        && to == from
+        && p.track(from)?
+            .rack
+            .as_ref()
+            .is_some_and(|r| r.in_branch(id))
+    {
+        return Err(CmdError::conflict(
+            "分岐の中のプラグインは、同じトラックの中では rack.node.move で動かしてください",
+        ));
+    }
     let mut plugin = p.track(from)?.inserts[pos].clone();
     let dest = p.track(to)?;
     // A multi-instrument holds one instrument per layer, so the
@@ -120,23 +132,20 @@ fn transfer(
     let is_instrument = plugin.kind == PluginKind::Instrument;
     dest.inserts.insert(at, plugin);
     // With a rack the chain lives there: a moved or copied effect takes the
-    // asked place in the top chain (the end without --index, right after the
-    // original for a duplicate), an instrument takes a free source seat.
+    // asked place in the top chain (the end without --index), a duplicate
+    // goes right after the original in the chain that holds it, a branch's
+    // too, and an instrument takes a free source seat.
     if let Some(r) = dest.rack.as_mut()
         && !is_instrument
     {
         r.remove_plugin(new);
-        let at = if adjacent {
-            r.fx.iter()
-                .position(|n| matches!(n, crate::rack::RackNode::Plugin(x) if *x == id))
-                .map(|i| i + 1)
-                .unwrap_or(r.fx.len())
-        } else {
-            a.opt_i64("index")
+        if !(adjacent && r.insert_after(id, new)) {
+            let at = a
+                .opt_i64("index")
                 .map(|i| (i as usize).min(r.fx.len()))
-                .unwrap_or(r.fx.len())
-        };
-        r.fx.insert(at, crate::rack::RackNode::Plugin(new));
+                .unwrap_or(r.fx.len());
+            r.fx.insert(at, crate::rack::RackNode::Plugin(new));
+        }
     }
     if copy || from != to {
         dest.automation.extend(lanes.into_iter().map(|mut l| {
@@ -147,6 +156,13 @@ fn transfer(
         }));
     }
     p.fix_track_rack(to);
+    // The rack puts the row in its order, so say where the plug-in ended up.
+    let at = p
+        .track(to)?
+        .inserts
+        .iter()
+        .position(|x| x.id == new)
+        .unwrap_or(at);
     Ok(Output::with(
         if adjacent {
             "インサートを複製しました"

@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::id::{NodeId, PluginId};
-use crate::model::{PluginKind, Track, TrackKind};
+use crate::model::{MAX_DB, MIN_DB, PluginKind, Track, TrackKind};
 use crate::track_preset::{Adjust, AdjustKind};
 
 /// A split holds no more than this many branches.
@@ -293,6 +293,29 @@ impl Rack {
         self.flatten_order().contains(&id)
     }
 
+    /// Whether `id` sits inside a splitter's branch, not in a chain of its own.
+    pub fn in_branch(&self, id: PluginId) -> bool {
+        let layers = match &self.source {
+            Some(Source::Multi { layers, .. }) => &layers[..],
+            _ => &[],
+        };
+        branch_holds(&self.fx, id) || layers.iter().any(|l| branch_holds(&l.fx, id))
+    }
+
+    /// Puts `new` right after `after` in whichever chain holds it, a branch's too. False when
+    /// no chain holds `after`.
+    pub fn insert_after(&mut self, after: PluginId, new: PluginId) -> bool {
+        if insert_after_in(&mut self.fx, after, new) {
+            return true;
+        }
+        match &mut self.source {
+            Some(Source::Multi { layers, .. }) => layers
+                .iter_mut()
+                .any(|l| insert_after_in(&mut l.fx, after, new)),
+            _ => false,
+        }
+    }
+
     /// Removes `id` wherever it appears: an fx node, a source or a layer's
     /// instrument. An emptied layer or multi goes with it.
     pub fn remove_plugin(&mut self, id: PluginId) -> bool {
@@ -452,6 +475,31 @@ fn node_ids_of(nodes: &[RackNode], out: &mut Vec<NodeId>) {
             }
         }
     }
+}
+
+/// Whether a branch of a splitter in `nodes` holds `id`, however deep.
+fn branch_holds(nodes: &[RackNode], id: PluginId) -> bool {
+    nodes.iter().any(|n| match n {
+        RackNode::Plugin(_) => false,
+        RackNode::Split(s) => s
+            .branches
+            .iter()
+            .any(|b| b.fx.contains(&RackNode::Plugin(id)) || branch_holds(&b.fx, id)),
+    })
+}
+
+fn insert_after_in(nodes: &mut Vec<RackNode>, after: PluginId, new: PluginId) -> bool {
+    if let Some(i) = nodes.iter().position(|n| *n == RackNode::Plugin(after)) {
+        nodes.insert(i + 1, RackNode::Plugin(new));
+        return true;
+    }
+    nodes.iter_mut().any(|n| match n {
+        RackNode::Plugin(_) => false,
+        RackNode::Split(s) => s
+            .branches
+            .iter_mut()
+            .any(|b| insert_after_in(&mut b.fx, after, new)),
+    })
 }
 
 fn remove_from_nodes(nodes: &mut Vec<RackNode>, id: PluginId) -> bool {
@@ -620,6 +668,8 @@ impl Track {
                                     ));
                                     l.velocity = full_velocity();
                                 }
+                                let label = format!("レイヤー「{}」", l.name);
+                                fix_level(&mut l.gain_db, &mut l.pan, &label, &mut rows);
                                 l.fx = fix_nodes(
                                     std::mem::take(&mut l.fx),
                                     &self.inserts,
@@ -828,6 +878,7 @@ fn fix_nodes(
                     }
                 }
                 for b in &mut s.branches {
+                    fix_level(&mut b.gain_db, &mut b.pan, &format!("{at} の分岐"), rows);
                     b.fx = fix_nodes(
                         std::mem::take(&mut b.fx),
                         inserts,
@@ -863,6 +914,30 @@ fn fix_nodes(
         }
     }
     out
+}
+
+/// A branch's or layer's level and pan kept inside what the commands take; a value that is not
+/// a number goes back to 0 dB or the centre.
+fn fix_level(gain_db: &mut f64, pan: &mut f64, what: &str, rows: &mut Vec<Adjust>) {
+    let gain = if gain_db.is_nan() {
+        0.0
+    } else {
+        gain_db.clamp(MIN_DB, MAX_DB)
+    };
+    let p = if pan.is_nan() {
+        0.0
+    } else {
+        pan.clamp(-1.0, 1.0)
+    };
+    if gain.to_bits() != gain_db.to_bits() || p.to_bits() != pan.to_bits() {
+        rows.push(Adjust::new(
+            AdjustKind::Rounded,
+            format!("{what} の音量・パン"),
+            "範囲外のため、範囲の中に収めました",
+        ));
+        *gain_db = gain;
+        *pan = p;
+    }
 }
 
 /// A kept split's `crossovers` made to match its mode: Frequency gets
@@ -1115,5 +1190,63 @@ mod tests {
             rows.iter().filter(|r| r.kind == AdjustKind::Filled).count(),
             1
         );
+    }
+
+    #[test]
+    fn levels_and_pans_out_of_range_are_brought_inside() {
+        let mut t = Track::new(crate::id::TrackId(1), TrackKind::Instrument, "t");
+        t.inserts = vec![
+            plugin(1, PluginKind::Instrument),
+            plugin(2, PluginKind::Effect),
+            plugin(3, PluginKind::Effect),
+        ];
+        let branch = |id: u64, fx: u64, gain_db: f64, pan: f64| Branch {
+            id: NodeId(id),
+            fx: vec![RackNode::Plugin(PluginId(fx))],
+            gain_db,
+            pan,
+            mute: false,
+        };
+        t.rack = Some(Rack {
+            source: Some(Source::Multi {
+                id: NodeId(10),
+                layers: vec![Layer {
+                    id: NodeId(11),
+                    name: "a".into(),
+                    instrument: PluginId(1),
+                    fx: Vec::new(),
+                    keys: (0, 127),
+                    velocity: (1, 127),
+                    transpose: 0,
+                    gain_db: 50.0,
+                    pan: -4.0,
+                    mute: false,
+                }],
+            }),
+            fx: vec![RackNode::Split(Split {
+                id: NodeId(12),
+                mode: SplitMode::Normal,
+                crossovers: Vec::new(),
+                branches: vec![branch(13, 2, 200.0, 3.0), branch(14, 3, f64::NAN, -0.5)],
+            })],
+        });
+        let rows = t.fix_rack(&mut fresh_id());
+        assert_eq!(
+            rows.iter()
+                .filter(|r| r.kind == AdjustKind::Rounded)
+                .count(),
+            3,
+            "{rows:?}"
+        );
+        let r = t.rack.as_ref().unwrap();
+        let Some(Source::Multi { layers, .. }) = &r.source else {
+            panic!("a multi")
+        };
+        assert_eq!((layers[0].gain_db, layers[0].pan), (MAX_DB, -1.0));
+        let RackNode::Split(s) = &r.fx[0] else {
+            panic!("a split")
+        };
+        assert_eq!((s.branches[0].gain_db, s.branches[0].pan), (MAX_DB, 1.0));
+        assert_eq!((s.branches[1].gain_db, s.branches[1].pan), (0.0, -0.5));
     }
 }
