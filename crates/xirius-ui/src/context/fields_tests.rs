@@ -504,6 +504,48 @@ fn a_wheel_over_a_menu_field_changes_it_and_does_not_move_the_list() {
 }
 
 #[test]
+fn the_window_delivers_wheel_turns_to_midi_and_audio_transpose_cells() {
+    use crate::tools::Mods;
+
+    for name in ["Keys", "Vocal"] {
+        let (mut s, g) = studio();
+        assert!(press_on(&mut s, &g, name, 0));
+        let at = field_cell(&s, &g, Kind::Semis);
+        let offset = s.popup.as_ref().unwrap().offset;
+        let semis = |s: &Studio| match &s.project().tracks[&track(s, name)].clips[0].body {
+            ClipBody::Midi { transpose, .. } => i32::from(*transpose),
+            ClipBody::Audio { process, .. } => process.semis,
+        };
+        let initial = semis(&s);
+        assert!(s.context_field_at(&g, at.0, at.1).is_some());
+        for _ in 0..3 {
+            assert!(s.window_wheel(&g, at, 0.0, 20.0, Mods::NONE, false));
+        }
+        assert_eq!(semis(&s), initial + 1, "{name}");
+        assert!(s.window_wheel(&g, at, 0.0, -60.0, Mods::NONE, false));
+        assert_eq!(semis(&s), initial);
+        assert!(s.window_wheel(&g, at, 20.0, 0.0, Mods::shift(), false));
+        assert_eq!(semis(&s), initial + 12);
+        // Integer fields keep a one-semitone step with Ctrl, as the inspector does.
+        assert!(s.window_wheel(
+            &g,
+            at,
+            0.0,
+            60.0,
+            Mods {
+                ctrl: true,
+                ..Mods::NONE
+            },
+            true
+        ));
+        assert_eq!(semis(&s), initial + 13);
+        assert_eq!(s.popup.as_ref().unwrap().offset, offset);
+        assert!(s.field_typing().is_some());
+        assert!(s.ctx.as_ref().unwrap().scrolled_at.is_none());
+    }
+}
+
+#[test]
 fn an_audio_menu_opens_on_the_transpose_not_the_tempo() {
     let (mut s, g) = studio();
     open(&mut s, &g, 0);

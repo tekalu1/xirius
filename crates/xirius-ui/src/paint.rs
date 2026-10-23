@@ -11,8 +11,8 @@ use gpui::{
 };
 use xirius_design::{
     Accent, Category, FloatShadow, Ink, LevelMeter, LineState, Overlay, Pair, PianoKey, Radius,
-    Readable, ReadableOn, StructureLine, Surface, SurfaceKind, Theme, Toggle, TrackColor, ink,
-    surface,
+    Readable, ReadableOn, StructureLine, Surface, SurfaceKind, SwitchFace, Theme, Toggle,
+    TrackColor, ink, surface,
 };
 
 use crate::data::{ARRANGEMENT_S, Project, Track};
@@ -96,6 +96,8 @@ pub struct Colors {
     pub solo_on: (Hsla, Hsla),
     pub arm_on: (Hsla, Hsla),
     pub monitor_on: (Hsla, Hsla),
+    /// The off switch's track and knob, at rest and hovered (UI-317).
+    pub switch_off: [(Hsla, Hsla); 2],
     /// The folder range line at rest, hovered and selected (MIX-038).
     pub line: [Hsla; 3],
     /// The time grid's lines, strongest first: a bar's, a beat's and a finer step's (UI-121).
@@ -183,6 +185,10 @@ impl Colors {
             solo_on: toggle_face(Toggle::Solo, theme),
             arm_on: toggle_face(Toggle::Arm, theme),
             monitor_on: toggle_face(Toggle::Monitor, theme),
+            switch_off: [false, true].map(|hovered| {
+                let face = SwitchFace::off(theme, hovered);
+                (paint(face.track), paint(face.knob))
+            }),
             line: LineState::ALL.map(|state| paint(StructureLine::color(state, theme))),
             grid: [
                 paint(Overlay::ScrollThumbHover.color(theme)),

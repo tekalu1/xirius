@@ -142,7 +142,7 @@ fn paint_strip(
     }
     for (r, label, on, lit) in [
         (s.mute, "M", track.mute, c.mute_on),
-        (s.solo, "solo", track.solo, c.solo_on),
+        (s.solo, "S", track.solo, c.solo_on),
         (s.arm, "arm", track.armed, c.arm_on),
     ] {
         let Some(r) = r else {
@@ -163,14 +163,14 @@ fn paint_strip(
             lit.0,
         );
         pen.round(r, face, Radius::Clip);
-        if matches!(label, "arm" | "solo") {
+        if label == "arm" {
             let i = Rect::new(
                 r.x + (r.w - 14.0) / 2.0,
                 r.y + (r.h - 14.0) / 2.0,
                 14.0,
                 14.0,
             );
-            pen.icon(if label == "arm" { "record" } else { label }, i, ink);
+            pen.icon("record", i, ink);
         } else {
             pen.text(
                 label,

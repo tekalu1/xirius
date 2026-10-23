@@ -444,6 +444,10 @@ pub fn build(
     let mut b = B::new(c, screen, pointer);
     let f = frame(size);
     let fc = faces(c);
+    // Hit testing reads the last matching item: controls override the panel, and the panel
+    // catches its empty space before the veil can close the settings.
+    b.item(screen, Do::Close, None);
+    b.item(f, Do::Nothing, None);
     b.fill(screen, c.veil);
     b.shadow(f);
     b.round(f, fc.bg, Radius::M);
@@ -474,10 +478,6 @@ pub fn build(
         toast(&mut b, t, f);
     }
     b.pop_mask();
-    // A press outside the modal closes it.
-    b.item(screen, Do::Close, None);
-    // ...but not one on it.
-    b.scene.items.rotate_right(1);
     b.scene.frame = f;
     b.finish()
 }

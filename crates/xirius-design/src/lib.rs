@@ -52,6 +52,6 @@ pub use pair::{
 pub use palette::token_names;
 pub use structure::{LineState, StructureLine};
 pub use theme::Theme;
-pub use toggle::{Toggle, ToggleFace};
+pub use toggle::{SwitchFace, Toggle, ToggleFace};
 pub use track::{SectionFace, TrackColor};
 pub use wave::WaveColor;

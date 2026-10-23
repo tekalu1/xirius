@@ -7514,6 +7514,53 @@ done_when = "右クリックのメニューを開くとトランスポーズの�
 status = "done"
 
 [[item]]
+id = "UI-314"
+title = "README の先頭にテーマに合うアプリのアイコンとロゴを出す"
+area = "UI"
+phase = "v1"
+source = "ui-fixes-2026-10-23.md § 1"
+done_when = "先頭の見出しが自作のアイコンとロゴになり、picture と prefers-color-scheme で GitHub のライト・ダークを選び、alt に Xirius がある。SVG が外部フォント・script・外部資源に依存しないことを確認する"
+status = "partial"
+remaining = "SVG の自立性と画像参照・テーマ指定を検査済み。GitHub 上での実際のライト・ダーク表示は取り込み後に確認する"
+
+[[item]]
+id = "UI-315"
+title = "ミキサーのソロをトラックの頭と同じ S の文字にする"
+area = "UI"
+phase = "v1"
+source = "ui-fixes-2026-10-23.md § 2"
+done_when = "ミキサーのソロが M と同じ書体・配置の S になり、オン・オフの表示と track.solo の操作を保つ"
+status = "done"
+
+[[item]]
+id = "UI-316"
+title = "設定の内側の余白を押しても閉じないようにする"
+area = "UI"
+phase = "v1"
+source = "ui-fixes-2026-10-23.md § 3"
+done_when = "設定の内側の余白では閉じず、外側の暗い所・Esc・閉じるボタンでは閉じることを窓を開かない試験で確認する"
+status = "done"
+
+[[item]]
+id = "UI-317"
+title = "設定のオフのトグルの溝をライト・ダーク両方で見分けられるようにする"
+area = "UI"
+phase = "v1"
+source = "ui-fixes-2026-10-23.md § 4"
+done_when = "設定の共通トグルのオフの溝と周囲の面がライト・ダークとも 3:1 以上あり、つまみと溝も 3:1 以上で、ホバーの前後とも見分けられる。ベータ版の app.update.beta のオン・オフを保存し、更新のチャンネルに反映する既存の接続を確認する。コントラスト比を報告に書く"
+status = "done"
+
+[[item]]
+id = "UI-318"
+title = "クリップのメニューのトランスポーズをホイールで変える"
+area = "UI"
+phase = "v1"
+source = "ui-fixes-2026-10-23.md § 5"
+done_when = "クリップのメニューの数値セルに届いたホイールがインスペクターと同じ部品で値を変え、Shift・Ctrl・小さい移動の蓄積・取り消し・一覧のスクロールを窓を開かない試験で確認する"
+status = "partial"
+remaining = "既存の UI-313 の経路で MIDI・オーディオのホイール試験は通るが、実機で値が変わらない症状は未再現・原因未特定。別 PC での確認が必要"
+
+[[item]]
 id = "MCP-001"
 title = "画面だけが答えるコマンドを、CLI の MCP の tools/list に出さない（アプリの MCP には出す）。判定はコマンド表の screen_only の印だけで行い、曲を変えるものの readOnlyHint を false にする"
 area = "MCP"

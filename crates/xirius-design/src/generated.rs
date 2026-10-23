@@ -19,6 +19,9 @@ macro_rules! palette_tokens {
             surface_clip_sel: c(0x41434c), c(0xc9cdda);
             surface_thumb: c(0x35373f), c(0xc9cbd2);
             surface_thumb_hover: c(0x4a4c54), c(0xacaeb7);
+            /// 設定のオフのトグルの溝。周囲の中立の面、白いつまみの両方と 3:1 以上（UI-317）。
+            surface_switch_off: c(0x80828e), c(0x707481);
+            surface_switch_off_hover: c(0x8b8d99), c(0x616572);
             surface_veil: ca(0x000000, 140), ca(0x15161c, 82);
             // ---- 塗り（fill）。有彩色の面は主要操作のボタンだけ ----
             fill_primary: c(0x5665cd), c(0x3a499e);

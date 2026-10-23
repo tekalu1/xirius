@@ -142,6 +142,36 @@ fn every_section_draws_and_the_nav_goes_there() {
 }
 
 #[test]
+fn empty_space_inside_settings_stays_open_and_only_the_outside_closes_it() {
+    let mut s = Studio::sample();
+    let g = s.geometry(1440.0, 860.0);
+    for section in Section::ALL {
+        s.open_settings(section);
+        let scene = s.settings_scene(&g);
+        let f = scene.frame;
+        // Padding in the header, body and navigation, including the unused bottom of each.
+        for (x, y) in [
+            (f.x + NAV_W + 2.0, f.y + 2.0),
+            (scene.body.x + 2.0, scene.body.y + 2.0),
+            (scene.body.right() - 2.0, scene.body.bottom() - 2.0),
+            (f.x + 2.0, f.bottom() - 2.0),
+        ] {
+            assert_eq!(scene.item_at(x, y).map(|i| &i.act), Some(&Do::Nothing));
+            assert!(s.settings_press(&g, x, y));
+            assert!(s.settings.is_some(), "{section:?}: {x},{y}");
+        }
+        assert!(s.settings_press(&g, f.x - 2.0, f.y + f.h / 2.0));
+        assert!(s.settings.is_none());
+    }
+    s.open_settings(Section::General);
+    assert!(s.settings_key("escape", none()));
+    assert!(s.settings.is_none());
+    s.open_settings(Section::General);
+    press(&mut s, &g, &Do::Close);
+    assert!(s.settings.is_none());
+}
+
+#[test]
 fn a_switch_is_there_the_next_launch() {
     let dir_tmp = temp("switch");
     let dir = dir_tmp.path().to_path_buf();
@@ -1432,6 +1462,98 @@ fn the_beta_channel_is_off_by_default_and_kept_when_turned_on() {
     assert!(pref_bool(&s, BETA_PREF));
     drop(s);
 
-    let (s, _) = launch(&dir);
+    let (mut s, g) = launch(&dir);
     assert!(pref_bool(&s, BETA_PREF), "kept");
+    s.open_settings(Section::General);
+    press(&mut s, &g, &switch(BETA_PREF, true));
+    assert!(!pref_bool(&s, BETA_PREF));
+    drop(s);
+    let (s, _) = launch(&dir);
+    assert!(!pref_bool(&s, BETA_PREF), "turning it off is kept too");
+}
+
+#[test]
+fn the_beta_switch_is_painted_visible_and_reachable_in_both_themes() {
+    use scene::{Op, Pick};
+    use xirius_design::Theme;
+    use xirius_session::update::BETA_PREF;
+
+    // Read the actual paint list, with its masks: a hit target alone does not prove a switch
+    // is visible. Both the track and its knob must be painted inside the visible body.
+    fn rounded(ops: &[Op], clip: Rect, out: &mut Vec<(Rect, gpui::Hsla)>) {
+        for op in ops {
+            match op {
+                Op::Round(r, color, _) if scene::intersect(*r, clip) == *r => {
+                    out.push((*r, *color));
+                }
+                Op::Mask(r, inner) => rounded(inner, scene::intersect(*r, clip), out),
+                _ => {}
+            }
+        }
+    }
+    let mut s = Studio::sample();
+    s.open_settings(Section::General);
+    for size in [(1440.0, 860.0), (960.0, 640.0)] {
+        let g = s.geometry(size.0, size.1);
+        for theme in [Theme::Light, Theme::Dark] {
+            let c = Colors::new(theme);
+            for on in [false, true] {
+                s.song
+                    .settings()
+                    .lock()
+                    .unwrap()
+                    .prefs
+                    .set(BETA_PREF, &json!(on))
+                    .unwrap();
+                let scene = s.settings_scene_with(&g, &c);
+                let item = scene.find(&switch(BETA_PREF, on)).expect("the beta switch");
+                assert_eq!(item.pick, Some(Pick::Switch(on)));
+                let (x, y) = (item.r.x + item.r.w / 2.0, item.r.y + item.r.h / 2.0);
+                assert_eq!(scene.item_at(x, y), Some(item));
+                let mut shapes = Vec::new();
+                rounded(&scene.ops, Rect::new(0.0, 0.0, size.0, size.1), &mut shapes);
+                assert!(
+                    shapes.iter().any(|(r, _)| *r == item.r),
+                    "the switch track is visible"
+                );
+                assert!(
+                    shapes.iter().any(|(r, color)| {
+                        r.w == 14.0
+                            && r.h == 14.0
+                            && scene::intersect(*r, item.r) == *r
+                            && *color == if on { c.on_fill } else { c.switch_off[0].1 }
+                    }),
+                    "the switch knob is visible: {theme:?}, {on}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn every_settings_switch_uses_the_visible_off_colors_before_and_during_hover() {
+    use scene::Op;
+    use xirius_design::{SwitchFace, Theme};
+
+    let row = Rect::new(0.0, 0.0, 160.0, 40.0);
+    for theme in [Theme::Dark, Theme::Light] {
+        let c = Colors::new(theme);
+        for hovered in [false, true] {
+            let pointer = hovered.then_some((145.0, 20.0));
+            let mut b = B::new(&c, row, pointer);
+            let r = parts::toggle(&mut b, row.right(), row, false, Do::Nothing, None);
+            let scene = b.finish();
+            let expected = SwitchFace::off(theme, hovered);
+            assert!(scene.ops.iter().any(|op| matches!(op,
+                Op::Round(at, color, _) if *at == r && *color == crate::theme::paint(expected.track)
+            )));
+            assert!(scene.ops.iter().any(|op| matches!(op,
+                Op::Round(at, color, _) if at.w == 14.0 && at.h == 14.0 && *color == crate::theme::paint(expected.knob)
+            )));
+            assert_eq!(
+                scene.item_at(145.0, 20.0).unwrap().pick,
+                Some(scene::Pick::Switch(false))
+            );
+        }
+    }
 }

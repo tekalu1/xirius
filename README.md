@@ -1,4 +1,11 @@
-# Xirius
+<h1>
+  <img src="assets/brand/app-icon.svg" alt="Xirius app icon" width="80" height="80">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/brand/logo-light.svg">
+    <img src="assets/brand/logo-light.svg" alt="Xirius" width="243" height="48">
+  </picture>
+</h1>
 
 An open-source digital audio workstation (DAW) written in Rust, with a GPUI-based UI. It is
 made to be easy to move to from **Fender Studio Pro**: the keys, the words of the screens and

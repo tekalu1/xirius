@@ -68,9 +68,7 @@ pub fn toggle(b: &mut B, right: f32, row: Rect, on: bool, act: Do, tip: Option<&
     let (face, knob) = if on {
         (if hot { c.fill_hover } else { c.fill }, c.on_fill)
     } else {
-        let light = c.theme == xirius_design::Theme::Light;
-        let face = if light || hot { c.thumb } else { c.surface_3 };
-        (face, if light { c.key_white } else { c.ink })
+        c.switch_off[usize::from(hot)]
     };
     b.round(r, face, Radius::Pill);
     let kx = if on {
