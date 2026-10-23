@@ -7984,10 +7984,11 @@ done_when = "AudioIo（と包むもの）に key: Option<(&[f32],&[f32])> を足
 [[item]]
 id = "PRJ-026"
 title = "トラックにラック（分岐・マルチの層）の形を持たせて保存する"
+status = "done"
 area = "PRJ"
 phase = "v1.1"
 source = "presets/report.md § 3.2 ; presets/report.md § 3.6 ; presets/report.md § 3.7"
-done_when = "Track.rack: Option<Rack> を足す。Rack は source（Single か Multi{layers}）と fx: Vec<Node>（Node は Plugin か Split）を持ち、Split は mode（Normal・Channel・Frequency）・crossovers・2〜5 の branches（gain_db・pan・mute）、Layer は keys・velocity・transpose・gain・pan・mute を持つ。プラグインは Track.inserts に残し、IdKind::Node を足す。ラックの無い曲は今と同じ形で保存し、全部を直列へ戻すとラックを外す。インストゥルメントを 1 つに限る決まりは Multi のときだけ緩める。rack.show が形を返し、保存と読み込みで形が戻る"
+done_when = "Track.rack: Option<Rack> を足す。Rack は source（Single か Multi{layers}）と fx: Vec<Node>（Node は Plugin か Split）を持ち、Split は mode（Normal・Channel・Frequency）・crossovers・2〜5 の branches（gain_db・pan・mute）、Layer は keys・velocity・transpose・gain・pan・mute を持つ。プラグインは Track.inserts に残し、ラックのノードの ID の型（NodeId・IdKind::RackNode）を足す。ラックの無い曲は今と同じ形で保存し、全部を直列へ戻すとラックを外す。インストゥルメントを 1 つに限る決まりは Multi のときだけ緩める。rack.show が形を返し、保存と読み込みで形が戻る"
 
 [[item]]
 id = "MIX-039"

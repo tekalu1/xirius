@@ -491,6 +491,7 @@ fn remove(p: &mut Project, board: &Clipboard) -> CmdResult<()> {
             for c in v {
                 let tid = track::plugin_owner(p, c.plugin.id)?;
                 p.track_mut(tid)?.inserts.retain(|x| x.id != c.plugin.id);
+                p.fix_track_rack(tid);
             }
         }
         // A channel's settings are copied, never cut.

@@ -258,7 +258,15 @@ fn apply_to(
                 .map(|x| x.id)
                 .collect();
             t.inserts.retain(|x| !is_instrument(x));
+            let new_inst = inst.id;
             t.inserts.insert(0, inst);
+            // The rack's seat passes to the instrument taking its place
+            // (PRJ-026); other layers lose theirs and the fix drops them.
+            if let Some(r) = t.rack.as_mut()
+                && let Some(first) = old.first()
+            {
+                r.replace_plugin(*first, new_inst);
+            }
             t.automation
                 .retain(|l| !matches!(&l.target, AutoTarget::Param(pid, _) if old.contains(pid)));
         }
@@ -269,6 +277,7 @@ fn apply_to(
         )),
         _ => {}
     }
+    p.fix_track_rack(id);
     let t = p.track_mut(id)?;
     t.volume_db = preset.volume_db;
     t.pan = preset.pan;

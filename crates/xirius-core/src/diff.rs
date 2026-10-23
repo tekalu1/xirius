@@ -118,6 +118,8 @@ fn track_fields(a: &Track, b: &Track) -> Vec<&'static str> {
         name,
         color,
         input,
+        inserts,
+        rack,
         volume_db,
         pan,
         mute,

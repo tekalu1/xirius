@@ -377,32 +377,52 @@ impl Store {
     }
 
     pub fn read_project(&self) -> CmdResult<Project> {
+        Ok(self.read_project_report()?.0)
+    }
+
+    /// `project.json`, repaired the way a song is read (PRJ-026), with the
+    /// rows of what the repair changed.
+    pub fn read_project_report(&self) -> CmdResult<(Project, Vec<crate::track_preset::Adjust>)> {
         self.read_project_file("project.json")
     }
 
     /// `project.json` with the SHA-256 of the bytes it was read from, read once, so the two
     /// cannot come from different writes (UI-289).
     pub fn read_project_hashed(&self) -> CmdResult<(Project, String)> {
-        let bytes = self.read_bytes("project.json")?;
-        Ok((
-            Self::parse_project("project.json", &bytes)?,
-            sha256_hex(&bytes),
-        ))
+        let (p, _, hash) = self.read_project_hashed_report()?;
+        Ok((p, hash))
     }
 
-    fn read_project_file(&self, rel: &str) -> CmdResult<Project> {
+    /// [`Store::read_project_hashed`], also giving the repair rows.
+    pub fn read_project_hashed_report(
+        &self,
+    ) -> CmdResult<(Project, Vec<crate::track_preset::Adjust>, String)> {
+        let bytes = self.read_bytes("project.json")?;
+        let (p, rows) = Self::parse_project("project.json", &bytes)?;
+        Ok((p, rows, sha256_hex(&bytes)))
+    }
+
+    fn read_project_file(
+        &self,
+        rel: &str,
+    ) -> CmdResult<(Project, Vec<crate::track_preset::Adjust>)> {
         Self::parse_project(rel, &self.read_bytes(rel)?)
     }
 
-    fn parse_project(rel: &str, bytes: &[u8]) -> CmdResult<Project> {
-        let f: ProjectFile = serde_json::from_slice(bytes).map_err(|e| Self::corrupt(rel, e))?;
+    fn parse_project(
+        rel: &str,
+        bytes: &[u8],
+    ) -> CmdResult<(Project, Vec<crate::track_preset::Adjust>)> {
+        let mut f: ProjectFile =
+            serde_json::from_slice(bytes).map_err(|e| Self::corrupt(rel, e))?;
         if f.format_version > FORMAT_VERSION {
             return Err(Self::corrupt(rel, "新しい形式"));
         }
+        let rows = f.project.fix_racks();
         f.project
             .validate()
             .map_err(|e| Self::corrupt(rel, e.message))?;
-        Ok(f.project)
+        Ok((f.project, rows))
     }
 
     pub fn write_project(&self, p: &Project) -> CmdResult<()> {
@@ -576,6 +596,15 @@ impl Store {
     }
 
     pub fn read_state(&self, abs: u64) -> CmdResult<Project> {
+        Ok(self.read_state_report(abs)?.0)
+    }
+
+    /// A history state, repaired the way a song is read (PRJ-026), with the
+    /// rows of what the repair changed.
+    pub fn read_state_report(
+        &self,
+        abs: u64,
+    ) -> CmdResult<(Project, Vec<crate::track_preset::Adjust>)> {
         let rel = self.state_rel(abs);
         let bytes = self.read_bytes(&rel)?;
         let mut f: RawProjectFile =
@@ -585,9 +614,11 @@ impl Store {
             HISTORY_FORMAT_VERSION => self.resolve_blobs(&mut f.project, &rel)?,
             _ => return Err(Self::corrupt(&rel, "新しい形式")),
         }
-        let p: Project = serde_json::from_value(f.project).map_err(|e| Self::corrupt(&rel, e))?;
+        let mut p: Project =
+            serde_json::from_value(f.project).map_err(|e| Self::corrupt(&rel, e))?;
+        let rows = p.fix_racks();
         p.validate().map_err(|e| Self::corrupt(&rel, e.message))?;
-        Ok(p)
+        Ok((p, rows))
     }
 
     fn resolve_blobs(&self, v: &mut Value, rel: &str) -> CmdResult<()> {
@@ -860,7 +891,7 @@ impl Store {
                 "バージョン {id} が見つかりません"
             )));
         }
-        self.read_project_file(&format!("versions/{id}.json"))
+        Ok(self.read_project_file(&format!("versions/{id}.json"))?.0)
     }
 
     /// Keeps only the newest `keep` automatic versions.

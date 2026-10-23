@@ -416,6 +416,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
                         let before = t.inserts.len();
                         t.inserts.retain(|x| !ids.contains(&x.id));
                         n += before - t.inserts.len();
+                        p.fix_track_rack(tid);
                     }
                 }
                 if n != ids.len() {
@@ -788,6 +789,7 @@ pub(super) fn place_plugin(
         .unwrap_or(t.inserts.len())
         .clamp(floor, t.inserts.len());
     t.inserts.insert(at, x);
+    p.fix_track_rack(tid);
     Ok(())
 }
 
@@ -894,6 +896,16 @@ pub(super) fn clone_track(p: &mut Project, t: &Track, settings_only: bool) -> Tr
     copy.name = format!("{} コピー", t.name);
     for x in &mut copy.inserts {
         x.id = PluginId(p.alloc());
+    }
+    // The rack follows the new plug-in ids and gets fresh node ids (PRJ-026).
+    if let Some(r) = copy.rack.as_mut() {
+        let map: HashMap<PluginId, PluginId> = t
+            .inserts
+            .iter()
+            .zip(&copy.inserts)
+            .map(|(a, b)| (a.id, b.id))
+            .collect();
+        r.remap_ids(&map, &mut || p.alloc());
     }
     let mut sends = HashMap::new();
     for s in &mut copy.sends {
@@ -1402,7 +1414,14 @@ pub(super) fn place_new_plugin(
             "インストゥルメントはインストゥルメントトラックにのみ挿入できます",
         ));
     }
+    // A multi-instrument holds one instrument per layer (PRJ-026).
+    let multi = p
+        .track(tid)?
+        .rack
+        .as_ref()
+        .is_some_and(|r| matches!(r.source, Some(crate::rack::Source::Multi { .. })));
     if kind == PluginKind::Instrument
+        && !multi
         && p.track(tid)?
             .inserts
             .iter()
@@ -1450,6 +1469,7 @@ pub(super) fn place_new_plugin(
         at
     };
     t.inserts.insert(at, x);
+    p.fix_track_rack(tid);
     Ok(id)
 }
 

@@ -45,6 +45,7 @@ fn same_source(before: &Project, old: &Track, after: &Project, new: &Track) -> b
     };
     old.clips == new.clips
         && old.inserts == new.inserts
+        && old.rack == new.rack
         && old.kind == new.kind
         && old.midi_out == new.midi_out
         && params(old) == params(new)

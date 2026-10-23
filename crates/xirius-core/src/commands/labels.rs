@@ -189,6 +189,7 @@ pub const LABELS: &[(&str, &str)] = &[
     ("plugin.preset.apply", "プリセットを適用"),
     ("plugin.preset.save", "プリセットを保存…"),
     ("plugin.preset.open", "プリセットを読み込む…"),
+    ("rack.show", "ラックを表示"),
     (
         "track.add.with-instrument",
         "インストゥルメント付きトラックを追加",

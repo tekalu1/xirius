@@ -58,6 +58,7 @@ mod prefs;
 pub use prefs::{ALT_TOOLS, ROLL_ALT_TOOLS};
 mod draw_shape;
 mod preset;
+mod rack;
 mod range_lane;
 pub use range_lane::{RangeMove, bpm_at, moved_lane, moved_tempo, stretch};
 mod receipts;
@@ -132,6 +133,7 @@ pub fn all() -> Vec<CommandDef> {
     v.extend(roll_view::defs());
     v.extend(channel_settings::defs());
     v.extend(track_preset::defs());
+    v.extend(rack::defs());
     v.extend(jobs::defs());
     v.extend(key_more::defs());
     v

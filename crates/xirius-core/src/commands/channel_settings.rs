@@ -186,6 +186,7 @@ pub(super) fn replace_inserts(p: &mut Project, to: TrackId, copy: &ChannelCopy) 
     t.inserts.extend(fresh);
     t.automation
         .retain(|l| !matches!(&l.target, AutoTarget::Param(id, _) if gone.contains(id)));
+    p.fix_track_rack(to);
     Ok(())
 }
 

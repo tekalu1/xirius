@@ -23,6 +23,7 @@ pub mod nav;
 pub mod packing;
 pub mod protocol;
 pub mod quantize;
+pub mod rack;
 pub mod recovery;
 pub mod retime;
 pub mod running;

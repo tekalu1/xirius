@@ -137,6 +137,7 @@ fn apply(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
                 let mut t = super::track::clone_track(p, &src, false);
                 // The inserts are in the sound; the fader, the pan and the sends still work.
                 t.inserts.clear();
+                t.rack = None;
                 t.automation
                     .retain(|l| !matches!(l.target, AutoTarget::Param(..)));
                 t.kind = TrackKind::Audio;

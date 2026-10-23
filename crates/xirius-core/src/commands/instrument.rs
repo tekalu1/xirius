@@ -135,12 +135,22 @@ fn replace_plugin(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Outpu
         PluginKind::Effect => t.inserts.iter().position(|x| Some(x.id) == old),
     };
     let gone = match at {
-        Some(i) => Some(std::mem::replace(&mut t.inserts[i], x).name),
+        Some(i) => {
+            let old_id = t.inserts[i].id;
+            let name = std::mem::replace(&mut t.inserts[i], x).name;
+            // The rack's seat follows the plug-in put in it (PRJ-026).
+            if let Some(r) = t.rack.as_mut() {
+                r.replace_plugin(old_id, id);
+            }
+            Some(name)
+        }
         None => {
             t.inserts.insert(0, x);
             None
         }
     };
+    let tid = t.id;
+    p.fix_track_rack(tid);
     let msg = match gone {
         Some(before) => format!("「{before}」を「{name}」に差し替えました"),
         None => format!("インストゥルメントに「{name}」を入れました"),

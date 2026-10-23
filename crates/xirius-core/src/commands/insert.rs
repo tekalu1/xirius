@@ -55,12 +55,19 @@ fn transfer(
     let to = a.opt_id::<TrackId>("track")?.unwrap_or(from);
     let mut plugin = p.track(from)?.inserts[pos].clone();
     let dest = p.track(to)?;
+    // A multi-instrument holds one instrument per layer, so the
+    // one-instrument rule does not apply to it (PRJ-026).
+    let multi_dest = dest
+        .rack
+        .as_ref()
+        .is_some_and(|r| matches!(r.source, Some(crate::rack::Source::Multi { .. })));
     if plugin.kind == PluginKind::Instrument
         && (dest.kind != TrackKind::Instrument
-            || dest
-                .inserts
-                .iter()
-                .any(|x| x.kind == PluginKind::Instrument && (copy || x.id != id)))
+            || (!multi_dest
+                && dest
+                    .inserts
+                    .iter()
+                    .any(|x| x.kind == PluginKind::Instrument && (copy || x.id != id))))
     {
         return Err(CmdError::conflict(
             "インストゥルメントは、インストゥルメントトラックの先頭に1つだけ挿入できます",
@@ -81,6 +88,9 @@ fn transfer(
         if from != to {
             src.automation
                 .retain(|l| !matches!(l.target, AutoTarget::Param(x,_) if x==id));
+            // Fixing before the plug-in lands in `to` would drop its rack
+            // seat; the same-track case is fixed after the insert instead.
+            p.fix_track_rack(from);
         }
     }
     let new = plugin.id;
@@ -103,7 +113,27 @@ fn transfer(
             .min(dest.inserts.len())
             .max(min)
     };
+    let is_instrument = plugin.kind == PluginKind::Instrument;
     dest.inserts.insert(at, plugin);
+    // With a rack the chain lives there: a moved or copied effect takes the
+    // asked place in the top chain (the end without --index, right after the
+    // original for a duplicate), an instrument takes a free source seat.
+    if let Some(r) = dest.rack.as_mut()
+        && !is_instrument
+    {
+        r.remove_plugin(new);
+        let at = if adjacent {
+            r.fx.iter()
+                .position(|n| matches!(n, crate::rack::RackNode::Plugin(x) if *x == id))
+                .map(|i| i + 1)
+                .unwrap_or(r.fx.len())
+        } else {
+            a.opt_i64("index")
+                .map(|i| (i as usize).min(r.fx.len()))
+                .unwrap_or(r.fx.len())
+        };
+        r.fx.insert(at, crate::rack::RackNode::Plugin(new));
+    }
     if copy || from != to {
         dest.automation.extend(lanes.into_iter().map(|mut l| {
             if let AutoTarget::Param(x, _) = &mut l.target {
@@ -112,6 +142,7 @@ fn transfer(
             l
         }));
     }
+    p.fix_track_rack(to);
     Ok(Output::with(
         if adjacent {
             "インサートを複製しました"

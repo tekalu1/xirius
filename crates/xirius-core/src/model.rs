@@ -630,6 +630,11 @@ pub struct Track {
     pub input: Option<String>,
     #[serde(default)]
     pub inserts: Vec<Plugin>,
+    /// How the inserts are really wired: splits and a multi-instrument
+    /// (PRJ-026). `None` is the plain serial order and writes nothing, so a
+    /// song without a rack keeps its old shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rack: Option<crate::rack::Rack>,
     pub volume_db: f64,
     /// -1 (left) ..= 1 (right)
     pub pan: f64,
@@ -704,6 +709,7 @@ impl Track {
             color: None,
             input: None,
             inserts: Vec::new(),
+            rack: None,
             volume_db: 0.0,
             pan: 0.0,
             mute: false,
@@ -1397,31 +1403,51 @@ impl Project {
                     t.name
                 )));
             }
-            let instruments = t
+            let instruments: Vec<PluginId> = t
                 .inserts
                 .iter()
                 .filter(|p| p.kind == PluginKind::Instrument)
-                .count();
+                .map(|p| p.id)
+                .collect();
+            let multi = t.rack.as_ref().and_then(|r| match &r.source {
+                Some(crate::rack::Source::Multi { layers, .. }) => Some(layers),
+                _ => None,
+            });
             match t.kind {
                 TrackKind::Instrument => {
-                    let first_ok = t
-                        .inserts
-                        .first()
-                        .is_some_and(|p| p.kind == PluginKind::Instrument);
-                    if instruments > 1 || (instruments == 1 && !first_ok) {
-                        return Err(CmdError::conflict(format!(
-                            "{}: インストゥルメントは先頭に 1 つだけ挿入できます",
-                            t.name
-                        )));
+                    if let Some(layers) = multi {
+                        // A multi-instrument may hold one instrument per
+                        // layer (PRJ-026); they must be exactly the track's.
+                        let seats: Vec<PluginId> = layers.iter().map(|l| l.instrument).collect();
+                        if seats != instruments {
+                            return Err(CmdError::conflict(format!(
+                                "{}: レイヤーのインストゥルメントとインサートが一致しません",
+                                t.name
+                            )));
+                        }
+                    } else {
+                        let first_ok = t
+                            .inserts
+                            .first()
+                            .is_some_and(|p| p.kind == PluginKind::Instrument);
+                        if instruments.len() > 1 || (instruments.len() == 1 && !first_ok) {
+                            return Err(CmdError::conflict(format!(
+                                "{}: インストゥルメントは先頭に 1 つだけ挿入できます",
+                                t.name
+                            )));
+                        }
                     }
                 }
-                _ if instruments > 0 => {
+                _ if !instruments.is_empty() => {
                     return Err(CmdError::conflict(format!(
                         "{} にはインストゥルメントを挿入できません",
                         t.name
                     )));
                 }
                 _ => {}
+            }
+            if let Some(r) = &t.rack {
+                check_rack(t, r)?;
             }
             let mut targets = HashSet::new();
             for l in &t.automation {
@@ -1548,6 +1574,11 @@ impl Project {
             for p in &t.inserts {
                 take(p.id.0, "プラグイン")?;
             }
+            if let Some(r) = &t.rack {
+                for n in r.node_ids() {
+                    take(n.0, "ラック")?;
+                }
+            }
             for s in &t.sends {
                 take(s.id.0, "センド")?;
             }
@@ -1575,7 +1606,151 @@ impl Project {
         }
         Ok(())
     }
+}
 
+/// The rack's invariants (`validate` runs this on every track that has one):
+/// every insert appears exactly once, instruments sit only in the source's
+/// seats, splits hold 2..=5 branches with mode-true crossovers, and splits
+/// nest at most `MAX_SPLIT_DEPTH` deep.
+fn check_rack(t: &Track, r: &crate::rack::Rack) -> CmdResult<()> {
+    use crate::rack::Source;
+    let name = &t.name;
+    if t.kind != TrackKind::Instrument && r.source.is_some() {
+        return Err(CmdError::conflict(format!(
+            "{name}: インストゥルメントトラック以外に音源は設定できません"
+        )));
+    }
+    let mut seen: HashSet<PluginId> = HashSet::new();
+    let plugin = |id: PluginId, what: &str| -> CmdResult<&Plugin> {
+        t.inserts.iter().find(|x| x.id == id).ok_or_else(|| {
+            CmdError::conflict(format!("{name}: {what} {id} はインサートにありません"))
+        })
+    };
+    if let Some(src) = &r.source {
+        match src {
+            Source::Single(id) => {
+                if plugin(*id, "音源")?.kind != PluginKind::Instrument {
+                    return Err(CmdError::conflict(format!(
+                        "{name}: 音源 {id} はインストゥルメントではありません"
+                    )));
+                }
+                seen.insert(*id);
+            }
+            Source::Multi { layers, .. } => {
+                if layers.is_empty() {
+                    return Err(CmdError::conflict(format!(
+                        "{name}: マルチインストゥルメントにレイヤーがありません"
+                    )));
+                }
+                for l in layers {
+                    if plugin(l.instrument, "レイヤーのインストゥルメント")?.kind
+                        != PluginKind::Instrument
+                    {
+                        return Err(CmdError::conflict(format!(
+                            "{name}: レイヤー「{}」のインストゥルメントではありません",
+                            l.name
+                        )));
+                    }
+                    if !seen.insert(l.instrument) {
+                        return Err(CmdError::conflict(format!(
+                            "{name}: インストゥルメントが 2 回使われています"
+                        )));
+                    }
+                    if l.keys.0 > l.keys.1 || l.velocity.0 < 1 || l.velocity.0 > l.velocity.1 {
+                        return Err(CmdError::range(format!(
+                            "{name}: レイヤー「{}」の範囲が範囲外です",
+                            l.name
+                        )));
+                    }
+                    check_nodes(t, &l.fx, &mut seen, name, 0)?;
+                }
+            }
+        }
+    }
+    check_nodes(t, &r.fx, &mut seen, name, 0)?;
+    // Every insert appears exactly once: the rack is the whole ordering.
+    for x in &t.inserts {
+        if !seen.contains(&x.id) {
+            return Err(CmdError::conflict(format!(
+                "{name}: {} がラックに含まれていません",
+                x.name
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn check_nodes(
+    t: &Track,
+    nodes: &[crate::rack::RackNode],
+    seen: &mut HashSet<PluginId>,
+    name: &str,
+    depth: usize,
+) -> CmdResult<()> {
+    use crate::rack::{MAX_BRANCHES, MAX_SPLIT_DEPTH, MIN_BRANCHES, RackNode, SplitMode};
+    for n in nodes {
+        match n {
+            RackNode::Plugin(id) => {
+                let x = t.inserts.iter().find(|x| x.id == *id).ok_or_else(|| {
+                    CmdError::conflict(format!("{name}: プラグイン {id} はインサートにありません"))
+                })?;
+                if x.kind == PluginKind::Instrument {
+                    return Err(CmdError::conflict(format!(
+                        "{name}: インストゥルメント {} は FX に置けません",
+                        x.name
+                    )));
+                }
+                if !seen.insert(*id) {
+                    return Err(CmdError::conflict(format!(
+                        "{name}: プラグイン {} が 2 回使われています",
+                        x.name
+                    )));
+                }
+            }
+            RackNode::Split(s) => {
+                if depth >= MAX_SPLIT_DEPTH {
+                    return Err(CmdError::conflict(format!(
+                        "{name}: スプリッターの入れ子は {MAX_SPLIT_DEPTH} 段までです"
+                    )));
+                }
+                if !(MIN_BRANCHES..=MAX_BRANCHES).contains(&s.branches.len()) {
+                    return Err(CmdError::conflict(format!(
+                        "{name}: スプリッターの分岐は {MIN_BRANCHES}〜{MAX_BRANCHES} 本です"
+                    )));
+                }
+                match s.mode {
+                    SplitMode::Channel if s.branches.len() != 2 => {
+                        return Err(CmdError::conflict(format!(
+                            "{name}: チャンネル分割の分岐は 2 本です"
+                        )));
+                    }
+                    SplitMode::Frequency => {
+                        let ok = s.crossovers.len() == s.branches.len() - 1
+                            && s.crossovers.iter().all(|f| f.is_finite() && *f > 0.0)
+                            && s.crossovers.windows(2).all(|w| w[0] < w[1]);
+                        if !ok {
+                            return Err(CmdError::range(format!(
+                                "{name}: クロスオーバーは分岐より 1 つ少なく、昇順にしてください"
+                            )));
+                        }
+                    }
+                    _ if !s.crossovers.is_empty() => {
+                        return Err(CmdError::conflict(format!(
+                            "{name}: この分割ではクロスオーバーは使えません"
+                        )));
+                    }
+                    _ => {}
+                }
+                for b in &s.branches {
+                    check_nodes(t, &b.fx, seen, name, depth + 1)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+impl Project {
     /// A stable fingerprint of the content (FNV-1a over the JSON form).
     pub fn content_hash(&self) -> String {
         let bytes = serde_json::to_vec(self).unwrap_or_default();

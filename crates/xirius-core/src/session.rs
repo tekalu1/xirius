@@ -568,7 +568,8 @@ impl Session {
         let store = Store::in_lane(dir, k);
         let view = store.read_view()?;
         let manifest = store.read_manifest()?;
-        let saved = Arc::new(store.read_project()?);
+        let (saved_p, mut repairs) = store.read_project_report()?;
+        let saved = Arc::new(saved_p);
         let was_locked = !reopened && lane::marker(dir, k).exists();
         let mut notices = Vec::new();
         let mut prune_due = false;
@@ -600,8 +601,9 @@ impl Session {
                         idx.steps.remove(0);
                     }
                 }
-                match store.read_state(idx.cursor) {
-                    Ok(cur) if ok => {
+                match store.read_state_report(idx.cursor) {
+                    Ok((cur, state_repairs)) if ok => {
+                        repairs.extend(state_repairs);
                         // A crash in the middle of a step, or an older Xirius that wrote its own
                         // history over this one, leaves states the index does not name: the
                         // next save clears them and the blobs only they pointed to.
@@ -645,6 +647,11 @@ impl Session {
                 (History::new(base.clone()), base)
             }
         };
+        // The repair count covers project.json and the history state alike:
+        // the notice goes out only after `repairs` has both.
+        if let Some(n) = Project::rack_notice(&repairs) {
+            notices.push(n);
+        }
         let saved_step = if k == 0 {
             manifest.saved_step
         } else {
@@ -1959,9 +1966,12 @@ impl Session {
     /// or wrote, or it holds the song as it is now (then only the file is remembered).
     pub fn reload_from_disk(&mut self, author: &Author) -> CmdResult<Option<(u64, ChangeSet)>> {
         let store = self.store().cloned().ok_or_else(no_store)?;
-        let (mut p, hash) = store.read_project_hashed()?;
+        let (mut p, repairs, hash) = store.read_project_hashed_report()?;
         if self.disk_hash.as_deref() == Some(hash.as_str()) {
             return Ok(None);
+        }
+        if let Some(n) = Project::rack_notice(&repairs) {
+            self.notices.push(n);
         }
         p.next_id = p.next_id.max(self.hist.id_floor);
         let changes = diff(&self.current, &p);
@@ -2382,5 +2392,9 @@ pub fn exists(p: &Project, id: &AnyId) -> bool {
         AnyId::Marker(x) => p.markers.iter().any(|s| s.id == *x),
         AnyId::Tempo(x) => p.tempo.iter().any(|s| s.id == *x),
         AnyId::TimeSig(x) => p.timesig.iter().any(|s| s.id == *x),
+        AnyId::RackNode(x) => p
+            .tracks
+            .values()
+            .any(|t| t.rack.as_ref().is_some_and(|r| r.node_ids().contains(x))),
     }
 }

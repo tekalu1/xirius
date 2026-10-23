@@ -78,6 +78,13 @@ id_type!(SectionId, "sec");
 id_type!(MarkerId, "mrk");
 id_type!(TempoId, "tmp");
 id_type!(TimeSigId, "tsg");
+id_type!(
+    /// A part of a track's rack: a split, one of its branches, a
+    /// multi-instrument or one of its layers (PRJ-026). Shares the plug-in id
+    /// space, so a rack part can be named wherever a plug-in id can.
+    NodeId,
+    "nod"
+);
 
 impl TrackId {
     /// The master channel. Its id is fixed so scripts can say `master`.
@@ -104,6 +111,8 @@ pub enum AnyId {
     Marker(MarkerId),
     Tempo(TempoId),
     TimeSig(TimeSigId),
+    /// A part of a track's rack (PRJ-026).
+    RackNode(NodeId),
 }
 
 impl fmt::Display for AnyId {
@@ -119,6 +128,7 @@ impl fmt::Display for AnyId {
             AnyId::Marker(i) => fmt::Display::fmt(i, f),
             AnyId::Tempo(i) => fmt::Display::fmt(i, f),
             AnyId::TimeSig(i) => fmt::Display::fmt(i, f),
+            AnyId::RackNode(i) => fmt::Display::fmt(i, f),
         }
     }
 }
@@ -141,6 +151,7 @@ impl FromStr for AnyId {
             MarkerId::PREFIX => AnyId::Marker(s.parse()?),
             TempoId::PREFIX => AnyId::Tempo(s.parse()?),
             TimeSigId::PREFIX => AnyId::TimeSig(s.parse()?),
+            NodeId::PREFIX => AnyId::RackNode(s.parse()?),
             _ => {
                 return Err(format!(
                     "`{s}` は ID の形式ではありません（trk_1・clp_2・master など）"
@@ -182,6 +193,11 @@ pub enum IdKind {
     Marker,
     Tempo,
     TimeSig,
+    /// A part of a track's rack (PRJ-026). `IdKind::Node` is taken by the
+    /// track column, so this one is named after what it points at.
+    RackNode,
+    /// A rack part or a plug-in (a rack node can be either).
+    RackNodeOrPlugin,
     Any,
 }
 
@@ -201,6 +217,8 @@ impl IdKind {
             IdKind::Marker => "marker",
             IdKind::Tempo => "tempo",
             IdKind::TimeSig => "timesig",
+            IdKind::RackNode => "rack node",
+            IdKind::RackNodeOrPlugin => "plugin|rack node",
             IdKind::Any => "any",
         }
     }
@@ -225,6 +243,11 @@ impl IdKind {
                 | (IdKind::Marker, AnyId::Marker(_))
                 | (IdKind::Tempo, AnyId::Tempo(_))
                 | (IdKind::TimeSig, AnyId::TimeSig(_))
+                | (IdKind::RackNode, AnyId::RackNode(_))
+                | (
+                    IdKind::RackNodeOrPlugin,
+                    AnyId::RackNode(_) | AnyId::Plugin(_)
+                )
         )
     }
 }
