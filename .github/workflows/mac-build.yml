@@ -1,0 +1,127 @@
+name: mac-build
+
+# How far the workspace is from building on macOS (LIC-042). Run by hand; it measures, it does
+# not gate: both steps go on after errors, and the job ends green when they were run. It makes
+# no release files. The summary counts the errors per crate; the full logs are an artifact.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  PYTHONUTF8: "1"
+
+jobs:
+  measure:
+    name: macOS build (arm64)
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      # The toolchain is the one in rust-toolchain.toml (rustup reads it).
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo build --workspace --all-targets
+        continue-on-error: true
+        run: |
+          mkdir -p logs
+          set +e
+          cargo build --workspace --all-targets --keep-going --message-format=short 2>&1 | tee logs/build.log
+          echo "${PIPESTATUS[0]}" > logs/build.exit
+
+      # `cargo test` has no --keep-going: the whole workspace once (the exit the summary shows),
+      # then each crate on its own, so one crate's errors do not hide the next one's.
+      - name: cargo test --workspace --no-run
+        continue-on-error: true
+        run: |
+          set +e
+          cargo test --workspace --no-run --message-format=short 2>&1 | tee logs/test-no-run.log
+          echo "${PIPESTATUS[0]}" > logs/test-no-run.exit
+          : > logs/test-no-run.crates
+          for crate in $(cargo metadata --no-deps --format-version 1 |
+              python3 -c "import json, sys; print(*sorted(p['name'] for p in json.load(sys.stdin)['packages']))"); do
+            echo "::group::$crate"
+            cargo test -p "$crate" --no-run --message-format=short > "logs/test-no-run-$crate.log" 2>&1
+            echo "$crate ${PIPESTATUS[0]}" >> logs/test-no-run.crates
+            tail -n 5 "logs/test-no-run-$crate.log"
+            echo "::endgroup::"
+          done
+
+      - name: errors per crate
+        if: always()
+        shell: python
+        run: |
+          import os, re
+          from collections import Counter
+          from pathlib import Path
+
+          # `--message-format=short` puts the place first: `crates/<crate>/src/x.rs:1:2: error[E0433]: …`
+          # (a dependency's place is under `…/registry/src/<index>/<crate>-<version>/`).
+          located = re.compile(r"^(\S+?):\d+:\d+: error(?:\[(E\d+)\])?:")
+          # Errors with no place: a crate that gave up, a build script, the linker.
+          gave_up = re.compile(r"^error: (?:could not compile|failed to run custom build command for) `([^` ]+)")
+
+          def crate_of(path):
+              path = path.replace("\\", "/")
+              if m := re.search(r"(?:^|/)crates/([^/]+)/", path):
+                  return m[1]
+              if m := re.search(r"/registry/src/[^/]+/([^/]+)/", path):
+                  return m[1] + " (dependency)"
+              return path.split("/")[0]
+
+          def count(text):
+              errors, codes, failed = Counter(), Counter(), set()
+              for line in text.splitlines():
+                  if m := located.match(line):
+                      errors[crate_of(m[1])] += 1
+                      codes[m[2] or "-"] += 1
+                  elif m := gave_up.match(line):
+                      failed.add(m[1])
+              return errors, codes, failed
+
+          def read(name):
+              path = Path("logs") / name
+              return path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+
+          out = ["# macOS build (arm64)", ""]
+          for step, name in (("build --workspace --all-targets --keep-going", "build"),
+                             ("test --workspace --no-run", "test-no-run")):
+              code = read(name + ".exit").strip() or "not run"
+              errors, codes, failed = count(read(name + ".log"))
+              out += [f"## cargo {step}: exit {code}", ""]
+              if not errors and not failed:
+                  out += ["No errors.", ""]
+                  continue
+              out += ["| crate | errors |", "|---|---:|"]
+              out += [f"| {c} | {n} |" for c, n in errors.most_common()]
+              out += [f"| {c} | (did not compile; see the log) |" for c in sorted(failed - set(errors))]
+              out += ["", f"{sum(errors.values())} errors in {len(set(errors) | failed)} crates.", ""]
+              out += ["| code | count |", "|---|---:|"]
+              out += [f"| {c} | {n} |" for c, n in codes.most_common(15)]
+              out.append("")
+
+          crates = [line.split() for line in read("test-no-run.crates").splitlines() if line.strip()]
+          if crates:
+              out += ["## cargo test -p <crate> --no-run, one crate at a time", "",
+                      "| crate | exit | errors (all crates in its build) |", "|---|---:|---:|"]
+              for crate, code in crates:
+                  errors, _, _ = count(read(f"test-no-run-{crate}.log"))
+                  out.append(f"| {crate} | {code} | {sum(errors.values())} |")
+              bad = sum(1 for _, code in crates if code != "0")
+              out += ["", f"{bad} of {len(crates)} crates do not build their tests.", ""]
+
+          out.append("The full logs are the `mac-build-logs` artifact.")
+          text = "\n".join(out) + "\n"
+          Path("logs/summary.md").write_text(text, encoding="utf-8")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write(text)
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-build-logs
+          path: logs/
+          if-no-files-found: warn

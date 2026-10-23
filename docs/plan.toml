@@ -6394,6 +6394,15 @@ source = "public-release-readiness.md § 1-1"
 done_when = ".githooks/pre-push（scripts/pre_push.py）が push で増える commit の差分・パス・メッセージ・名乗り・注釈付きタグ・ref の名前を .git/info/sensitive-terms の語で調べ、gitleaks があれば同じ範囲を調べ（無ければ警告して続け）、当たれば push を止め、Windows の Git Bash で動き、commit-msg と一緒に .githooks に置かれ（core.hooksPath .githooks）、rust.yml の gitleaks の job が push と PR で履歴全体を調べ、scripts/test_pre_push.py が通る"
 status = "done"
 
+[[item]]
+id = "LIC-042"
+title = "macOS でどこまでビルドが通るかを測る: 手で起こす mac-build.yml が build と test --no-run を失敗の後も続け、crate ごとのエラーを要約に出す"
+area = "LIC"
+phase = "v1"
+source = "public-release-readiness.md § 4-2 ; § 6 段 3 #21"
+done_when = ".github/workflows/mac-build.yml が workflow_dispatch で macos-latest の上で cargo build --workspace --all-targets --keep-going と crate ごとの cargo test --no-run を失敗の後も続けて流し、crate ごとのエラーの数と番号を job の要約に書き、ログを artifact に上げる"
+status = "done"
+
 [[dropped]]
 id = "DROP-01"
 title = "トラックレイヤー（テイクと別の概念）"
