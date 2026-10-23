@@ -53,6 +53,15 @@ fn plugin_of(p: &Project, t: TrackId, id: PluginId) -> Option<&Plugin> {
         .filter(|x| x.id == id)
 }
 
+/// The built-in device `id` wherever it is, the instrument or an effect
+/// (the one `load_preset` loads into).
+fn device_of(p: &Project, id: PluginId) -> Option<&Plugin> {
+    p.tracks
+        .values()
+        .flat_map(|t| &t.inserts)
+        .find(|x| x.id == id)
+}
+
 /// The parameters of an instrument a lane can follow, as (id, name): the
 /// built-in one's knobs, else what the plugin keeps.
 pub fn params(plugin: &Plugin) -> Vec<(String, String)> {
@@ -101,8 +110,8 @@ pub fn view(p: &Project, menu: Menu) -> (Vec<Choice>, String) {
         label: label.into(),
     };
     match menu {
-        Menu::Preset(t, id) => {
-            let now = plugin_of(p, t, id).map_or(PRESETS[0], preset_of);
+        Menu::Preset(_, id) => {
+            let now = device_of(p, id).map_or(PRESETS[0], preset_of);
             (PRESETS.iter().map(|n| row(n, n)).collect(), now.into())
         }
         Menu::Row(t, id) => {

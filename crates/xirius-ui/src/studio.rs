@@ -1761,7 +1761,9 @@ impl Studio {
     pub(crate) fn after_edit(&mut self) {
         self.roll.scale = self.song.session().state.view.scale;
         self.tree = self.shape_tree();
-        let project = self.auto_heard(&self.project());
+        let raw = self.project();
+        self.instruments.learn(&raw);
+        let project = self.auto_heard(&raw);
         self.transport.sync(&project, self.song.dir());
         self.mixer_follow();
         self.keep_edit(xirius_core::store::now_ms());

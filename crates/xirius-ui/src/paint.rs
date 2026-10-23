@@ -63,6 +63,8 @@ pub struct Colors {
     pub ink_strong: Hsla,
     /// Ruler numbers and ticks: the blue-grey ink, readable on the ruler surface.
     pub ink_blue: Hsla,
+    /// A mark that something moved off its stored state (the preset tag's dot, UI-322).
+    pub ink_mark: Hsla,
     pub ink_on_toggle: Hsla,
     pub alert: Hsla,
     pub stale: Hsla,
@@ -145,6 +147,11 @@ impl Colors {
             ink_blue: paint(
                 Readable::new(Surface::S1, Ink::Blue)
                     .expect("Blue is readable on S1")
+                    .ink_color(theme),
+            ),
+            ink_mark: paint(
+                Readable::new(Surface::S2, Ink::Mark)
+                    .expect("Mark is readable on S2")
                     .ink_color(theme),
             ),
             ink_on_toggle: paint(Toggle::off().ink_color(theme)),

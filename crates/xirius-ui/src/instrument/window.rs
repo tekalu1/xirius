@@ -1,8 +1,8 @@
-//! The window of a built-in plug-in (UI-098, PLG-045): its knobs and its
-//! preset, floating over the screen. The keys button at the head of an
-//! instrument track opens an instrument's, and the plug-in's row in the
-//! mixer opens an instrument's or an effect's. A plug-in of its own (VST3)
-//! opens its own window instead.
+//! The window of a built-in plug-in (UI-098, PLG-045): the shared title bar
+//! (UI-322) over its knobs, floating over the screen. The keys button at the
+//! head of an instrument track opens an instrument's, and the plug-in's row
+//! in the mixer opens an instrument's or an effect's. A plug-in of its own
+//! (VST3) opens its own window instead.
 //!
 //! The knobs are the built-in's parameters as `xirius-params` lists them, in
 //! its order: a parameter added there gets its knob here. A knob turns while
@@ -10,21 +10,21 @@
 //! 0..1, one step); a preset sets every knob at once (`plugin.preset.load`,
 //! one step).
 
+use std::collections::HashMap;
+
 use gpui::{Bounds, Corners, point, px, size};
 use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::{Plugin, PluginKind, Project, Track, TrackKind};
-use xirius_design::{FontSize, Layout, Radius, Space, Weight};
+use xirius_design::{FontSize, Radius, Weight};
 use xirius_params::{BuiltinDef, Curve, ParamSpec};
 
 use super::menu::Menu;
 use crate::draw::{Align, Pen};
 use crate::popup::PopupKind;
 use crate::studio::{Geometry, Rect, Studio};
+use crate::title_bar;
 
-/// The bar with the icon, the title and the close button.
-const HEAD_H: f32 = 30.0;
-const CLOSE: f32 = 22.0;
 const PAD: f32 = 12.0;
 /// A knob, its value and its name.
 const CELL_W: f32 = 92.0;
@@ -32,8 +32,6 @@ const CELL_H: f32 = 60.0;
 const KNOB: f32 = 30.0;
 const COL_GAP: f32 = 8.0;
 const ROW_GAP: f32 = 12.0;
-const PRESET_H: f32 = 26.0;
-const FOOT_H: f32 = PRESET_H + 8.0;
 /// How far the pointer goes for the whole of a knob's sweep.
 const KNOB_TRAVEL: f32 = 150.0;
 /// How much of a window stays on the screen when it is dragged off.
@@ -149,6 +147,9 @@ pub struct Win {
     pub knobs: usize,
     /// Where its corner is, once it was dragged; else it sits where new ones go.
     pub at: Option<(f32, f32)>,
+    /// The pin is down. UI-323 decides what an unpinned window does; the seat
+    /// and the look are the shared bar's already (UI-322).
+    pub pinned: bool,
 }
 
 /// What a press in a window took hold of.
@@ -170,13 +171,24 @@ enum Grab {
     },
 }
 
-/// A part of a window.
+/// A part of a window: the title bar's seats first (UI-322), then the body.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
+    /// The bar's drag handle: the name's band and the empty stretch.
     Head,
+    Power,
+    /// The tag «▾ name ●»: opens the preset list.
+    Preset,
+    /// The ‹ › stepping the presets (gone while the bar is narrow).
+    PrevPreset,
+    NextPreset,
+    /// The side-chain seat: empty until UI-336 fills it.
+    Sidechain,
+    /// The channel editor's button: a seat until MIX-042 opens its window.
+    Channel,
+    Pin,
     Close,
     Knob(usize),
-    Preset,
     Body,
 }
 
@@ -187,6 +199,9 @@ pub struct Windows {
     grab: Option<Grab>,
     /// Where the open instrument menu hangs, for the menu a row opens next.
     pub menu_at: Option<Rect>,
+    /// The preset each plug-in was last set to: the tag keeps its name and
+    /// marks it while the knobs are off it (UI-332 keeps the list itself).
+    base: HashMap<PluginId, &'static str>,
 }
 
 impl Windows {
@@ -210,38 +225,51 @@ impl Windows {
     /// The `i`th window's frame on a screen of `size`.
     pub fn rect(&self, i: usize, size: (f32, f32)) -> Rect {
         let n = self.open[i].knobs;
-        let (w, h) = (width(n), HEAD_H + body_h(n) + FOOT_H);
+        let (w, h) = (width(n), title_bar::BAR_H + body_h(n));
         let (x, y) = self.open[i].at.unwrap_or((
             size.0 / 2.0 - w / 2.0 + i as f32 * 24.0,
             64.0 + i as f32 * 24.0,
         ));
         Rect::new(
             x.clamp(0.0, (size.0 - KEEP_W).max(0.0)),
-            y.clamp(0.0, (size.1 - HEAD_H).max(0.0)),
+            y.clamp(0.0, (size.1 - title_bar::BAR_H).max(0.0)),
             w,
             h,
         )
     }
 
     /// The top window under a point, and the part of it.
-    pub fn at(&self, size: (f32, f32), x: f32, y: f32) -> Option<(usize, Part)> {
+    pub fn at(&self, p: &Project, size: (f32, f32), x: f32, y: f32) -> Option<(usize, Part)> {
         (0..self.open.len()).rev().find_map(|i| {
             let r = self.rect(i, size);
             if !r.contains(x, y) {
                 return None;
             }
-            let n = self.open[i].knobs;
-            let part = if part_rect(r, n, Part::Close).contains(x, y) {
-                Part::Close
-            } else if part_rect(r, n, Part::Head).contains(x, y) {
-                Part::Head
-            } else if part_rect(r, n, Part::Preset).contains(x, y) {
-                Part::Preset
-            } else {
-                (0..n)
-                    .find(|&k| part_rect(r, n, Part::Knob(k)).contains(x, y))
-                    .map_or(Part::Body, Part::Knob)
+            let w = self.open[i];
+            let Some((track, plugin, def)) = live(p, &w) else {
+                return Some((i, Part::Body));
             };
+            if y < r.y + title_bar::BAR_H {
+                let b = bar(r, track, plugin, def);
+                let part = [
+                    (b.power, Part::Power),
+                    (b.prev, Part::PrevPreset),
+                    (Some(b.tag), Part::Preset),
+                    (b.next, Part::NextPreset),
+                    (b.sidechain, Part::Sidechain),
+                    (b.channel, Part::Channel),
+                    (Some(b.pin), Part::Pin),
+                    (Some(b.close), Part::Close),
+                ]
+                .into_iter()
+                .find(|(q, _)| q.is_some_and(|q| q.contains(x, y)))
+                .map_or(Part::Head, |(_, part)| part);
+                return Some((i, part));
+            }
+            let n = w.knobs;
+            let part = (0..n)
+                .find(|&k| part_rect(r, track, plugin, def, Part::Knob(k)).contains(x, y))
+                .map_or(Part::Body, Part::Knob);
             Some((i, part))
         })
     }
@@ -256,41 +284,82 @@ impl Windows {
     /// Forgets the windows whose plugin is gone or is no longer built in.
     fn prune(&mut self, p: &Project) {
         self.open.retain(|w| live(p, w).is_some());
+        self.base.retain(|id, _| {
+            p.tracks
+                .values()
+                .flat_map(|t| t.inserts.iter())
+                .any(|x| x.id == *id)
+        });
+        self.learn(p);
         if let Some(Grab::Move { plugin, .. } | Grab::Knob { plugin, .. }) = self.grab
             && !self.is_open(plugin)
         {
             self.grab = None;
         }
     }
+
+    /// Learns the preset each built-in device's knobs are at as the one its
+    /// tag keeps once they move off it, however they got there: a load from
+    /// the tag, the CLI or the MCP, an undo, a song opened after a restart.
+    pub(crate) fn learn(&mut self, p: &Project) {
+        for x in p.tracks.values().flat_map(|t| &t.inserts) {
+            match preset_of(x) {
+                CUSTOM => {}
+                name => {
+                    self.base.insert(x.id, name);
+                }
+            }
+        }
+    }
+
+    /// The tag's «name ●»: the preset the knobs are at, or the one they were
+    /// last set to plus the mark while they are off it.
+    pub(crate) fn tag_of(&self, plugin: &Plugin) -> (&'static str, bool) {
+        match preset_of(plugin) {
+            CUSTOM => (*self.base.get(&plugin.id).unwrap_or(&PRESETS[0]), true),
+            name => (name, false),
+        }
+    }
 }
 
-/// Where a part sits in a window of `n` knobs whose frame is `r`.
-pub fn part_rect(r: Rect, n: usize, part: Part) -> Rect {
+/// The shared title bar over a window's frame (UI-322): the same part on
+/// every built-in device's window, its seats following the device.
+fn bar(r: Rect, track: &Track, plugin: &Plugin, def: &BuiltinDef) -> title_bar::Bar {
+    let seats = title_bar::Seats {
+        power: true,
+        sidechain: title_bar::takes_sidechain(def),
+        channel: true,
+    };
+    let head = Rect::new(r.x, r.y, r.w, title_bar::BAR_H);
+    title_bar::layout(head, track.shown_name(), &plugin.name, seats)
+}
+
+/// Where a part sits in the window whose frame is `r`.
+pub fn part_rect(r: Rect, track: &Track, plugin: &Plugin, def: &BuiltinDef, part: Part) -> Rect {
+    let b = bar(r, track, plugin, def);
     match part {
-        Part::Head => Rect::new(r.x, r.y, r.w, HEAD_H),
-        Part::Close => Rect::new(
-            r.right() - 4.0 - CLOSE,
-            r.y + (HEAD_H - CLOSE) / 2.0,
-            CLOSE,
-            CLOSE,
-        ),
+        Part::Head => b.space,
+        Part::Power => b.power.unwrap_or_default(),
+        Part::Preset => b.tag,
+        Part::PrevPreset => b.prev.unwrap_or_default(),
+        Part::NextPreset => b.next.unwrap_or_default(),
+        Part::Sidechain => b.sidechain.unwrap_or_default(),
+        Part::Channel => b.channel.unwrap_or_default(),
+        Part::Pin => b.pin,
+        Part::Close => b.close,
         Part::Knob(k) => {
-            let c = columns(n);
+            let c = columns(def.params.len());
             let (col, row) = ((k % c) as f32, (k / c) as f32);
             Rect::new(
                 r.x + PAD + col * (CELL_W + COL_GAP),
-                r.y + HEAD_H + PAD + row * (CELL_H + ROW_GAP),
+                r.y + title_bar::BAR_H + PAD + row * (CELL_H + ROW_GAP),
                 CELL_W,
                 CELL_H,
             )
         }
-        Part::Preset => Rect::new(
-            r.x + Space::X2.px(),
-            r.y + HEAD_H + body_h(n),
-            r.w - Space::X2.px() * 2.0,
-            PRESET_H,
-        ),
-        Part::Body => r,
+        // The empty rest under the knobs' grid (a press in a gap is Body
+        // too; the strip is where a point of it always is).
+        Part::Body => Rect::new(r.x, r.bottom() - PAD, r.w, PAD),
     }
 }
 
@@ -351,6 +420,7 @@ impl Studio {
                         plugin: id,
                         knobs,
                         at: None,
+                        pinned: false,
                     });
                 }
             }
@@ -367,13 +437,14 @@ impl Studio {
 
     /// Is a window under the point?
     pub(crate) fn over_instrument(&self, g: &Geometry, x: f32, y: f32) -> bool {
-        self.instruments.at(g.size, x, y).is_some()
+        self.instruments.at(&self.project(), g.size, x, y).is_some()
     }
 
     /// A press: true when it was on a window (nothing under it gets it).
     pub fn instrument_down(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
         self.instruments.prune(&self.project());
-        let Some((i, part)) = self.instruments.at(g.size, x, y) else {
+        let p = self.project();
+        let Some((i, part)) = self.instruments.at(&p, g.size, x, y) else {
             return false;
         };
         self.error = None;
@@ -391,8 +462,36 @@ impl Studio {
                     pointer: (x, y),
                 });
             }
+            Part::Power => {
+                // The power of a switched-off plug-in turns it on again
+                // (ENG-008), as the mixer's mark does.
+                let off = live(&p, &w).is_some_and(|(_, x, _)| x.deactivated);
+                let command = if off {
+                    "plugin.activate"
+                } else {
+                    "plugin.bypass"
+                };
+                self.run_command(command, json!({ "ids": [w.plugin.to_string()] }));
+            }
+            Part::Preset => {
+                let Some((track, plugin, def)) = live(&p, &w) else {
+                    return true;
+                };
+                let anchor = part_rect(r, track, plugin, def, Part::Preset);
+                self.open_inst_menu(Menu::Preset(w.track, w.plugin), anchor);
+            }
+            // The press raised this window to the top, so the shared step
+            // lands on it.
+            Part::PrevPreset => {
+                self.step_preset(false);
+            }
+            Part::NextPreset => {
+                self.step_preset(true);
+            }
+            Part::Pin => {
+                self.instruments.open[i].pinned = !w.pinned;
+            }
             Part::Knob(k) => {
-                let p = self.project();
                 let held = live(&p, &w)
                     .and_then(|(_, _, d)| d.params.get(k))
                     .is_some_and(|spec| self.param_locked(w.track, w.plugin, spec.id));
@@ -409,11 +508,7 @@ impl Studio {
                     });
                 }
             }
-            Part::Preset => {
-                let anchor = part_rect(r, w.knobs, Part::Preset);
-                self.open_inst_menu(Menu::Preset(w.track, w.plugin), anchor);
-            }
-            Part::Body => {}
+            Part::Body | Part::Sidechain | Part::Channel => {}
         }
         true
     }
@@ -425,13 +520,20 @@ impl Studio {
         x: f32,
         y: f32,
     ) -> Option<(TrackId, PluginId, &'static str, Rect)> {
-        let (i, Part::Knob(k)) = self.instruments.at(g.size, x, y)? else {
+        let p = self.project();
+        let (i, Part::Knob(k)) = self.instruments.at(&p, g.size, x, y)? else {
             return None;
         };
         let w = self.instruments.open[i];
-        let p = self.project();
-        let spec = live(&p, &w)?.2.params.get(k)?;
-        let r = part_rect(self.instruments.rect(i, g.size), w.knobs, Part::Knob(k));
+        let (track, plugin, def) = live(&p, &w)?;
+        let spec = def.params.get(k)?;
+        let r = part_rect(
+            self.instruments.rect(i, g.size),
+            track,
+            plugin,
+            def,
+            Part::Knob(k),
+        );
         Some((w.track, w.plugin, spec.id, r))
     }
 
@@ -445,7 +547,7 @@ impl Studio {
             }) => {
                 let at = (
                     (from.0 + x - pointer.0).clamp(0.0, (g.size.0 - KEEP_W).max(0.0)),
-                    (from.1 + y - pointer.1).clamp(0.0, (g.size.1 - HEAD_H).max(0.0)),
+                    (from.1 + y - pointer.1).clamp(0.0, (g.size.1 - title_bar::BAR_H).max(0.0)),
                 );
                 if let Some(w) = self
                     .instruments
@@ -515,7 +617,8 @@ impl Studio {
         true
     }
 
-    /// Sets every knob of a built-in plugin to a preset (one step).
+    /// Sets every knob of a built-in plugin to a preset (one step). The tag
+    /// keeps the preset's name while the knobs stay on it.
     pub fn load_preset(&mut self, id: PluginId, preset: &str) -> bool {
         let p = self.project();
         let Some(def) = p
@@ -536,6 +639,7 @@ impl Studio {
             .zip(v)
             .map(|(p, v)| json!({ "param": p.id, "value": v }))
             .collect();
+        // The edit's own pass learns the preset as the tag's base.
         self.run_command(
             "plugin.preset.load",
             json!({ "id": id.to_string(), "preset": preset, "values": values }),
@@ -545,11 +649,12 @@ impl Studio {
     /// The centre of a part of the window of `id`, for the tests.
     pub fn instrument_center(&self, g: &Geometry, id: PluginId, part: Part) -> Option<(f32, f32)> {
         let i = self.instruments.open.iter().position(|w| w.plugin == id)?;
-        let n = self.instruments.open[i].knobs;
-        let r = part_rect(self.instruments.rect(i, g.size), n, part);
+        let p = self.project();
+        let (track, plugin, def) = live(&p, &self.instruments.open[i])?;
+        let r = part_rect(self.instruments.rect(i, g.size), track, plugin, def, part);
         let at = (r.x + r.w / 2.0, r.y + r.h / 2.0);
         // Only if nothing covers it.
-        (self.instruments.at(g.size, at.0, at.1) == Some((i, part))).then_some(at)
+        (self.instruments.at(&p, g.size, at.0, at.1) == Some((i, part))).then_some(at)
     }
 }
 
@@ -561,7 +666,7 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
             continue;
         };
         let r = studio.instruments.rect(i, g.size);
-        paint_window(pen, studio, r, track, plugin, def);
+        paint_window(pen, studio, r, *w, track, plugin, def);
     }
 }
 
@@ -569,12 +674,12 @@ fn paint_window(
     pen: &mut Pen,
     studio: &Studio,
     r: Rect,
+    w: Win,
     track: &Track,
     plugin: &Plugin,
     def: &BuiltinDef,
 ) {
     let c = pen.c;
-    let n = def.params.len();
     // A floating panel: the soft shadow all round it (UI-007), then its face.
     let at = Bounds::new(
         point(px(pen.origin.0 + r.x), px(pen.origin.1 + r.y)),
@@ -584,48 +689,35 @@ fn paint_window(
         .paint_drop_shadows(at, Corners::all(px(Radius::M.px())), &c.float);
     pen.round(r, c.paper, Radius::M);
     pen.mask(r, |pen| {
-        // The bar: icon, title, close.
-        let head = part_rect(r, n, Part::Head);
-        pen.fill(head, c.surface_1);
-        let icon = Rect::new(head.x + 10.0, head.y + (HEAD_H - 14.0) / 2.0, 14.0, 14.0);
-        let glyph = match plugin.kind {
-            PluginKind::Instrument => "keys",
-            PluginKind::Effect => "effects",
-        };
-        pen.icon(glyph, icon, c.ink_strong);
-        let close = part_rect(r, n, Part::Close);
-        let title = Rect::new(
-            icon.right() + 6.0,
-            head.y,
-            close.x - icon.right() - 12.0,
-            HEAD_H,
-        );
-        pen.mask(title, |pen| {
-            pen.text(
-                &format!("{} · {}", plugin.name, track.shown_name()),
-                FontSize::Small,
-                Weight::Regular,
-                c.ink_strong,
-                title,
-                Align::Left,
-            );
-        });
-        pen.icon(
-            "close",
-            Rect::new(
-                close.x + (CLOSE - Layout::ICON_SIZE) / 2.0,
-                close.y + (CLOSE - Layout::ICON_SIZE) / 2.0,
-                Layout::ICON_SIZE,
-                Layout::ICON_SIZE,
-            ),
-            c.ink,
+        // The shared title bar (UI-322): the same part on every window.
+        let (preset, modified) = studio.instruments.tag_of(plugin);
+        title_bar::paint(
+            pen,
+            Rect::new(r.x, r.y, r.w, title_bar::BAR_H),
+            &title_bar::View {
+                track: track.shown_name(),
+                device: &plugin.name,
+                icon: match plugin.kind {
+                    PluginKind::Instrument => "piano",
+                    _ => "ins",
+                },
+                powered: plugin.runs(),
+                preset,
+                modified,
+                pinned: w.pinned,
+                seats: title_bar::Seats {
+                    power: true,
+                    sidechain: title_bar::takes_sidechain(def),
+                    channel: true,
+                },
+            },
         );
 
         // The knobs: the knob, its value, its name. A knob of a range across
         // zero (a gain, a tune) lights from its middle.
         let now = values(plugin);
         for (k, spec) in def.params.iter().enumerate() {
-            let cell = part_rect(r, n, Part::Knob(k));
+            let cell = part_rect(r, track, plugin, def, Part::Knob(k));
             let v = studio.instruments.turning(plugin.id, k).unwrap_or(now[k]);
             let from = if spec.min < 0.0 && spec.max > 0.0 {
                 spec.to_norm(0.0) as f32
@@ -661,35 +753,5 @@ fn paint_window(
                 );
             });
         }
-
-        // The preset.
-        let box_ = part_rect(r, n, Part::Preset);
-        pen.round(box_, c.surface_3, Radius::S);
-        let text = Rect::new(
-            box_.x + Space::X2.px(),
-            box_.y,
-            box_.w - Layout::ICON_SIZE - Space::X3.px(),
-            box_.h,
-        );
-        pen.mask(text, |pen| {
-            pen.text(
-                preset_of(plugin),
-                FontSize::Small,
-                Weight::Regular,
-                c.ink_strong,
-                text,
-                Align::Left,
-            );
-        });
-        pen.icon(
-            "chevron-down",
-            Rect::new(
-                box_.right() - Layout::ICON_SIZE - Space::X2.px(),
-                box_.y + (box_.h - Layout::ICON_SIZE) / 2.0,
-                Layout::ICON_SIZE,
-                Layout::ICON_SIZE,
-            ),
-            c.ink,
-        );
     });
 }

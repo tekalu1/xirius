@@ -1,8 +1,8 @@
-use super::window::{CUSTOM, Part, preset_of, preset_values, text, values};
+use super::window::{CUSTOM, Part, part_rect, preset_of, preset_values, text, values};
 use super::*;
 use crate::mixer::MixerHit;
 use crate::popup::{Action, PopupKind};
-use crate::studio::{DrawerTab, Geometry, Hit};
+use crate::studio::{DrawerTab, Geometry, Hit, Rect};
 use xirius_core::id::PluginId;
 
 /// The sample song with Keys playing the built-in sampler.
@@ -284,4 +284,269 @@ fn a_built_in_effect_opens_from_the_mixer_and_its_knob_is_undone() {
     assert!((now - (start - 0.2)).abs() < 1e-6, "{now}");
     assert!(s.undo(&g));
     assert_eq!(values(&fx_of(&s))[k], start);
+}
+
+/// A built-in effect of the track by name: its plugin's id.
+fn added(s: &Studio, t: TrackId, name: &str) -> PluginId {
+    assert!(
+        s.project().tracks[&t]
+            .inserts
+            .iter()
+            .any(|x| x.name == name)
+    );
+    s.project().tracks[&t]
+        .inserts
+        .iter()
+        .find(|x| x.name == name)
+        .unwrap()
+        .id
+}
+
+#[test]
+fn the_bars_parts_are_in_sight_at_1280_and_360() {
+    // UI-322: every seat of the shared bar sits inside the window at both
+    // screen sizes, a press on it landing on its part. The Sampler's window
+    // is narrower than the bar's narrow width: ‹ › hide and the name cuts.
+    let (mut s, _, t, id) = studio();
+    s.show_instrument(t, id);
+    for w in [1280.0, 360.0] {
+        let g = s.geometry(w, 700.0);
+        for part in [
+            Part::Power,
+            Part::Head,
+            Part::Preset,
+            Part::Channel,
+            Part::Pin,
+            Part::Close,
+        ] {
+            assert!(
+                s.instrument_center(&g, id, part).is_some(),
+                "{part:?} at {w}"
+            );
+        }
+        // No ‹ › and no side-chain seat on a window this narrow.
+        assert!(
+            s.instrument_center(&g, id, Part::PrevPreset).is_none(),
+            "at {w}"
+        );
+        assert!(
+            s.instrument_center(&g, id, Part::NextPreset).is_none(),
+            "at {w}"
+        );
+        assert!(
+            s.instrument_center(&g, id, Part::Sidechain).is_none(),
+            "at {w}"
+        );
+    }
+}
+
+#[test]
+fn the_steps_hide_on_a_narrow_bar_and_walk_the_presets_on_a_wide_one() {
+    let (mut s, g, t, _) = studio();
+    assert!(s.run_command(
+        "plugin.add",
+        serde_json::json!({ "track": t.to_string(), "name": "EQ" }),
+    ));
+    let eq = added(&s, t, "EQ");
+    s.show_instrument(t, eq);
+    let fx_of = |s: &Studio| {
+        s.project().tracks[&t]
+            .inserts
+            .iter()
+            .find(|x| x.id == eq)
+            .cloned()
+            .unwrap()
+    };
+    // EQ's window is wider than the bar's narrow width: the ‹ › show.
+    assert_eq!(preset_of(&fx_of(&s)), "初期");
+    let (x, y) = at(&s, &g, eq, Part::NextPreset);
+    assert!(s.instrument_down(&g, x, y));
+    assert_eq!(preset_of(&fx_of(&s)), "やさしく");
+    let (x, y) = at(&s, &g, eq, Part::NextPreset);
+    s.instrument_down(&g, x, y);
+    assert_eq!(preset_of(&fx_of(&s)), "強め");
+    // ‹ steps back and wraps at the ends.
+    for want in ["やさしく", "初期", "声を前に"] {
+        let (x, y) = at(&s, &g, eq, Part::PrevPreset);
+        s.instrument_down(&g, x, y);
+        assert_eq!(preset_of(&fx_of(&s)), want);
+    }
+}
+
+#[test]
+fn the_power_toggles_the_plugins_bypass() {
+    let (mut s, g, t, id) = studio();
+    s.show_instrument(t, id);
+    assert!(plugin(&s, t).runs());
+    for want in [true, false] {
+        let (x, y) = at(&s, &g, id, Part::Power);
+        assert!(s.instrument_down(&g, x, y));
+        assert_eq!(plugin(&s, t).bypass, want);
+    }
+    // The press is one undo step, as the mixer's mark is.
+    assert!(s.undo(&g));
+    assert!(plugin(&s, t).bypass);
+}
+
+#[test]
+fn the_pin_marks_the_window() {
+    let (mut s, g, t, id) = studio();
+    s.show_instrument(t, id);
+    assert!(!s.instruments.open[0].pinned);
+    let (x, y) = at(&s, &g, id, Part::Pin);
+    assert!(s.instrument_down(&g, x, y));
+    assert!(s.instruments.open[0].pinned);
+    let (x, y) = at(&s, &g, id, Part::Pin);
+    assert!(s.instrument_down(&g, x, y));
+    assert!(!s.instruments.open[0].pinned);
+}
+
+#[test]
+fn the_sidechain_seat_is_only_on_the_devices_that_take_a_key() {
+    let (mut s, g, t, id) = studio();
+    assert!(s.run_command(
+        "plugin.add",
+        serde_json::json!({ "track": t.to_string(), "name": "Compressor" }),
+    ));
+    let comp = added(&s, t, "Compressor");
+    s.show_instrument(t, id);
+    s.show_instrument(t, comp);
+    let p = s.project();
+    for (plugin_id, takes) in [(comp, true), (id, false)] {
+        let i = s
+            .instruments
+            .open
+            .iter()
+            .position(|w| w.plugin == plugin_id)
+            .unwrap();
+        let r = s.instruments.rect(i, g.size);
+        let track = &p.tracks[&t];
+        let plugin = track.inserts.iter().find(|x| x.id == plugin_id).unwrap();
+        let seat = part_rect(r, track, plugin, plugin.builtin().unwrap(), Part::Sidechain);
+        if takes {
+            // Width 0 until UI-336 fills it, between the empty stretch and
+            // the channel editor's button.
+            assert_eq!(seat.w, 0.0);
+            assert!(seat.x > r.x && seat.x < r.right(), "{seat:?} in {r:?}");
+        } else {
+            assert_eq!(seat, Rect::default());
+        }
+    }
+}
+
+#[test]
+fn the_tag_marks_the_preset_the_knobs_moved_off() {
+    let (mut s, g, t, id) = studio();
+    s.show_instrument(t, id);
+    // At the defaults the tag names the preset with no mark.
+    assert_eq!(s.instruments.tag_of(&plugin(&s, t)), ("初期", false));
+    // Load another: it names that one; a knob off it marks it.
+    assert!(s.load_preset(id, "強め"));
+    assert_eq!(s.instruments.tag_of(&plugin(&s, t)), ("強め", false));
+    let (cutoff, _) = plugin(&s, t).builtin().unwrap().param("cutoff").unwrap();
+    let (x, y) = at(&s, &g, id, Part::Knob(cutoff));
+    assert!(s.instrument_down(&g, x, y));
+    assert!(s.instrument_moved(&g, x, y + 30.0, false));
+    assert!(s.instrument_up());
+    assert_eq!(s.instruments.tag_of(&plugin(&s, t)), ("強め", true));
+    // Back on a preset's values the mark is gone.
+    assert!(s.load_preset(id, "初期"));
+    assert_eq!(s.instruments.tag_of(&plugin(&s, t)), ("初期", false));
+}
+
+/// Moves the knob `param` of the window of `id` off where it is, as a drag
+/// does.
+fn nudge(s: &mut Studio, g: &Geometry, id: PluginId, param: &str) {
+    let (k, _) = insert(s, id).builtin().unwrap().param(param).unwrap();
+    let (x, y) = at(s, g, id, Part::Knob(k));
+    assert!(s.instrument_down(g, x, y));
+    assert!(s.instrument_moved(g, x, y + 30.0, false));
+    assert!(s.instrument_up());
+}
+
+/// The insert `id` wherever it is.
+fn insert(s: &Studio, id: PluginId) -> Plugin {
+    s.project()
+        .tracks
+        .values()
+        .flat_map(|t| &t.inserts)
+        .find(|x| x.id == id)
+        .cloned()
+        .unwrap()
+}
+
+#[test]
+fn an_effects_preset_list_checks_the_preset_it_is_at() {
+    let (mut s, g, t, _) = studio();
+    assert!(s.run_command(
+        "plugin.add",
+        serde_json::json!({ "track": t.to_string(), "name": "Compressor" }),
+    ));
+    let comp = added(&s, t, "Compressor");
+    s.show_instrument(t, comp);
+    assert!(s.load_preset(comp, "強め"));
+    let (x, y) = at(&s, &g, comp, Part::Preset);
+    assert!(s.instrument_down(&g, x, y));
+    let popup = s.popup.as_ref().expect("the presets");
+    assert_eq!(popup.current(), "強め", "not the instrument's 初期");
+    assert_eq!(s.instruments.tag_of(&insert(&s, comp)), ("強め", false));
+}
+
+#[test]
+fn the_tag_keeps_its_preset_in_a_song_opened_again() {
+    let (mut s, _, t, id) = studio();
+    assert!(s.load_preset(id, "強め"));
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let dir = root.join(format!("target/inst-tag-reopen-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    s.command(|song| song.save_as(&dir));
+    assert!(s.error.is_none(), "{:?}", s.error);
+    // A fresh start opens the song: the tag learns its preset from the knobs.
+    let mut s = Studio::sample();
+    let g = s.geometry(1600.0, 1000.0);
+    s.finish_file_request(crate::studio::FileRequest::Open, &dir);
+    assert!(s.error.is_none(), "{:?}", s.error);
+    let t2 = keys(&s);
+    assert_eq!(t2, t);
+    s.show_instrument(t, id);
+    assert_eq!(s.instruments.tag_of(&plugin(&s, t)), ("強め", false));
+    nudge(&mut s, &g, id, "cutoff");
+    assert_eq!(s.instruments.tag_of(&plugin(&s, t)), ("強め", true));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_tag_keeps_the_preset_an_undo_went_back_to() {
+    let (mut s, g, t, id) = studio();
+    s.show_instrument(t, id);
+    assert!(s.load_preset(id, "強め"));
+    assert!(s.load_preset(id, "やさしく"));
+    assert!(s.undo(&g));
+    assert_eq!(preset_of(&plugin(&s, t)), "強め");
+    nudge(&mut s, &g, id, "cutoff");
+    assert_eq!(s.instruments.tag_of(&plugin(&s, t)), ("強め", true));
+}
+
+#[test]
+fn the_tag_keeps_a_preset_loaded_from_the_cli() {
+    let (mut s, g, t, id) = studio();
+    s.show_instrument(t, id);
+    // The CLI and the MCP send the command itself, not through the tag.
+    let def = plugin(&s, t).builtin().unwrap();
+    let values: Vec<_> = def
+        .params
+        .iter()
+        .zip(preset_values(def, "強め").unwrap())
+        .map(|(p, v)| serde_json::json!({ "param": p.id, "value": v }))
+        .collect();
+    assert!(s.run_command(
+        "plugin.preset.load",
+        serde_json::json!({ "id": id.to_string(), "preset": "強め", "values": values }),
+    ));
+    nudge(&mut s, &g, id, "cutoff");
+    assert_eq!(s.instruments.tag_of(&plugin(&s, t)), ("強め", true));
 }

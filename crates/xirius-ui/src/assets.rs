@@ -143,6 +143,9 @@ const ICONS_HEAD: &[(&str, &[u8])] = icons!(
     "tone",
     "ripple",
     "pool",
+    "pin",
+    "route",
+    "ins",
 );
 
 /// The Windows minimise, maximise, restore and close buttons (UI-005): filled shapes on a 10 px
