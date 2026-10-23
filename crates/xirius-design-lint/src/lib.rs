@@ -11,6 +11,7 @@ pub mod allow;
 mod color_rules;
 pub mod config;
 pub mod css;
+mod list_menu;
 mod ops_coverage;
 pub mod rule;
 mod scan;
@@ -78,6 +79,7 @@ pub fn lint_source(label: &str, source: &str) -> Vec<Violation> {
     hits.extend(color_rules::scan(&file, label));
     if is_screen_file(label) {
         hits.extend(ops_coverage::scan(&file));
+        hits.extend(list_menu::scan(&file, label));
     }
     let mut directives = allow::parse(source);
     let mut out = Vec::new();

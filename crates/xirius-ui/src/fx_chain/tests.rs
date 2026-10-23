@@ -353,10 +353,12 @@ fn ui_297_the_effects_list_shows_the_same_thumb_when_more_rows_than_show() {
     };
     let p = s.popup.as_ref().unwrap();
     let n = crate::pick_list::found(p).count();
-    let h = p.pick.as_ref().unwrap().capacity(g.size) as f32 * xirius_design::Layout::MENU_ROW_H;
+    // The rows' part keeps its height at any scroll (UI-338).
+    let pick = p.pick.as_ref().unwrap();
+    let (h, shown) = (pick.body_h(g.size), pick.capacity(g.size) as f32);
     let at_top = thumb(&s).expect("a thumb").rect;
     assert_eq!(at_top.w, 4.0);
-    assert_eq!(at_top.h, (h * 12.0 / n as f32).max(16.0));
+    assert_eq!(at_top.h, (h * shown / n as f32).max(16.0));
     assert!(
         thumb(&s).unwrap().action.is_none(),
         "it only shows where the list is"

@@ -38,7 +38,8 @@ fn inputs_are_measured_and_arrow_keys_change_the_radio() {
 fn device_dropdown_changes_inputs_and_clears_old_observations() {
     let (mut s, g) = setup();
     press(&mut s, &g, Do::Menu(MenuKind::Pref("audio.device".into())));
-    s.settings_key("up", Mods::default());
+    // The list opens on the device in use; the other is under it.
+    s.settings_key("down", Mods::default());
     s.settings_key("enter", Mods::default());
     s.poll_io();
     let io = s.song.io.lock().unwrap();
@@ -92,8 +93,7 @@ fn shared_mode_leaves_the_buffer_to_windows_and_offers_no_size() {
     // In exclusive mode each size can be pressed.
     let at: Vec<(f32, f32)> = sizes.iter().map(|d| item(&s, &g, d.clone())).collect();
     press(&mut s, &g, Do::Menu(MenuKind::Pref("audio.driver".into())));
-    // The first row is exclusive mode, the next shared.
-    s.settings_key("down", Mods::default());
+    // The list opens on exclusive mode (in use); the next row is shared.
     s.settings_key("down", Mods::default());
     s.settings_key("enter", Mods::default());
     let driver = s.song.settings().lock().unwrap().prefs.text("audio.driver");

@@ -471,6 +471,9 @@ pub struct Cell {
     pub cursor: bool,
     /// Under the list: the query never filters it (UI-320's footer).
     pub foot: bool,
+    /// A list's row that cannot run now: a lock at its right says so, its
+    /// name in the body ink, not fainter (UI-338).
+    pub locked: bool,
     pub enabled: bool,
     pub action: Option<Action>,
     /// Said in a balloon while the pointer is on it (why a dim cell cannot be chosen).
@@ -492,6 +495,7 @@ impl Cell {
             on: false,
             cursor: false,
             foot: false,
+            locked: false,
             enabled: true,
             action: None,
             tip: String::new(),
@@ -517,6 +521,13 @@ impl Cell {
     pub(crate) fn hint(mut self, hint: impl Into<String>) -> Cell {
         self.hint = hint.into();
         self
+    }
+
+    /// Dim and picking nothing, with the lock at its right (a list's row
+    /// that cannot run now, UI-338).
+    pub(crate) fn locked(mut self) -> Cell {
+        self.locked = true;
+        self.off()
     }
 
     pub(crate) fn spoken(mut self, spoken: impl Into<String>) -> Cell {
@@ -701,7 +712,12 @@ impl Popup {
                 )
             }
         };
-        let height = cells.iter().map(|c| c.rect.bottom()).fold(0.0f32, f32::max) + pad;
+        let height = match &self.pick {
+            // A list keeps its height while it scrolls (UI-338): the rows in
+            // view vary with the headings, the window does not.
+            Some(p) if crate::pick_list::is(self.kind) => crate::pick_list::height(p, size),
+            _ => cells.iter().map(|c| c.rect.bottom()).fold(0.0f32, f32::max) + pad,
+        };
         // Right-aligned under the buttons that sit at the right. The CPU is at the left of the
         // bottom bar (UI-300), so its list opens from its left edge.
         let right_aligned = matches!(
@@ -1413,7 +1429,9 @@ fn paint_cell(pen: &mut Pen, cell: &Cell, hot: bool) {
             }
             // The name ends before what the row shows at its right; a longer one is cut there
             // with 「…」 (the pick lists keep their width, UI-297).
-            let end = if cell.icon == Some("chevron-right") || (cell.hint.is_empty() && cell.on) {
+            let end = if cell.icon == Some("chevron-right")
+                || (cell.hint.is_empty() && (cell.on || cell.locked))
+            {
                 r.right() - pad - Layout::ICON_SIZE - pad
             } else if cell.hint.is_empty() {
                 r.right() - pad
@@ -1438,6 +1456,20 @@ fn paint_cell(pen: &mut Pen, cell: &Cell, hot: bool) {
                     icon_at(r, r.right() - pad - Layout::ICON_SIZE),
                     soft,
                 );
+            } else if cell.locked {
+                // The lock says the row cannot run now; a hint sits before it.
+                let lock = r.right() - pad - Layout::ICON_SIZE;
+                pen.icon("lock", icon_at(r, lock), soft);
+                if !cell.hint.is_empty() {
+                    pen.text(
+                        &cell.hint,
+                        FontSize::Caption,
+                        Weight::Regular,
+                        soft,
+                        Rect::new(r.x, r.y, lock - pad - r.x, r.h),
+                        Align::Right,
+                    );
+                }
             } else if !cell.hint.is_empty() {
                 pen.text(
                     &cell.hint,
@@ -1720,7 +1752,7 @@ fn paint_cell(pen: &mut Pen, cell: &Cell, hot: bool) {
                 x += 11.0;
             }
         }
-        Look::Thumb => pen.round(r, c.thumb, Radius::Xs),
+        Look::Thumb => pen.round(r, c.list_thumb, Radius::Xs),
         Look::Status => {
             pen.text(
                 &cell.text,

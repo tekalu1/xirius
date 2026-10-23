@@ -233,6 +233,16 @@ fn audio_with_only_speakers_lists_no_device_to_choose() {
     let l = s.popup.as_ref().unwrap().layout(g.size);
     let r = l.cells[0].rect;
     assert_eq!(s.hit(&g, r.x + r.w / 2.0, r.y + r.h / 2.0), Hit::PopupBody);
+    // The cursor never sits on it, not even after ↓ (UI-338).
+    for key in ["", "down", "up"] {
+        if !key.is_empty() {
+            s.typed(&g, key, None);
+        }
+        let l = s.popup.as_ref().unwrap().layout(g.size);
+        let row = l.cells.iter().find(|c| c.text == rig::NO_DEVICE).unwrap();
+        assert!(!row.cursor && !row.live(), "{key}");
+        assert!(l.cells.iter().all(|c| !c.cursor));
+    }
 }
 
 #[test]

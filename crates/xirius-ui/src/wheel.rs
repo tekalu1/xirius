@@ -67,6 +67,10 @@ impl Studio {
             let Some(p) = self.popup.as_mut() else {
                 return false;
             };
+            // A list that opened on its current row scrolls on from there.
+            if let Some(pick) = p.pick.as_mut() {
+                pick.settle(g.size);
+            }
             let max = p.max_offset(g.size);
             let offset = match p.pick.as_mut() {
                 Some(pick) => &mut pick.offset,

@@ -29,6 +29,8 @@ pub enum Rule {
     ExceptionFamily,
     /// 有彩色の塗りの面の上の文字・アイコンが `ink_on_fill`（その面の対の色）でない（UI-309）。
     FillInk,
+    /// 一覧のメニューを PickList でなくドロップダウンの `Menu` で作る（UI-338）。
+    ListMenu,
     /// 例外の印に理由が無い。
     AllowWithoutReason,
     /// 例外の印の規則名が知らない物。
@@ -41,7 +43,7 @@ pub enum Rule {
 
 impl Rule {
     /// 例外の印（`design-lint: allow(…)`）で外せる規則。
-    pub const CONTENT: [Rule; 14] = [
+    pub const CONTENT: [Rule; 15] = [
         Rule::RawColor,
         Rule::RawRadius,
         Rule::RawFont,
@@ -56,9 +58,10 @@ impl Rule {
         Rule::ColorFamily,
         Rule::ExceptionFamily,
         Rule::FillInk,
+        Rule::ListMenu,
     ];
 
-    pub const ALL: [Rule; 19] = [
+    pub const ALL: [Rule; 20] = [
         Rule::OpsCoverage,
         Rule::RawColor,
         Rule::RawRadius,
@@ -74,6 +77,7 @@ impl Rule {
         Rule::ColorFamily,
         Rule::ExceptionFamily,
         Rule::FillInk,
+        Rule::ListMenu,
         Rule::AllowWithoutReason,
         Rule::UnknownRule,
         Rule::UnusedAllow,
@@ -97,6 +101,7 @@ impl Rule {
             Rule::ColorFamily => "color-family",
             Rule::ExceptionFamily => "exception-family",
             Rule::FillInk => "fill-ink",
+            Rule::ListMenu => "list-menu",
             Rule::AllowWithoutReason => "allow-without-reason",
             Rule::UnknownRule => "unknown-rule",
             Rule::UnusedAllow => "unused-allow",
@@ -123,6 +128,9 @@ impl Rule {
             Rule::ColorFamily => "surface / fill / ink / line の用途を守る",
             Rule::ExceptionFamily => "meter / track / wave / alert の用途を守る",
             Rule::FillInk => "有彩色の塗りの面の上は ink_on_fill（mute・solo の札はその対の色）",
+            Rule::ListMenu => {
+                "一覧は PickList で作る（ドロップダウンの Menu は操作のメニューだけ）"
+            }
             Rule::AllowWithoutReason => "例外の印には理由を書く",
             Rule::UnknownRule => "例外の印の規則名が違う",
             Rule::UnusedAllow => "何も止めていない例外の印は消す",

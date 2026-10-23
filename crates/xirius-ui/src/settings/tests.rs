@@ -370,8 +370,7 @@ fn a_preset_keeps_the_users_rows() {
     s.open_settings(Section::Keys);
     press(&mut s, &g, &Do::Menu(MenuKind::Preset));
     assert!(s.settings.as_ref().unwrap().menu.is_some());
-    // The first row is Studio Pro, the next Cubase.
-    s.settings_key("down", none());
+    // The list opens on Studio Pro (in use); the next row is Cubase.
     s.settings_key("down", none());
     s.settings_key("enter", none());
     let (preset, keys) = s.with_settings(|p| {
@@ -520,7 +519,7 @@ fn a_mouse_cell_is_set_from_its_menu() {
     };
     let before = s.with_settings(|p| p.mousemap.get(&ctx, &modifier));
     press(&mut s, &g, &cell.act);
-    // The last choice differs from the first, whatever is there now.
+    // The list opens on the choice in use; the one over it differs.
     s.settings_key("up", none());
     s.settings_key("enter", none());
     let after = s.with_settings(|p| p.mousemap.get(&ctx, &modifier));
@@ -1556,4 +1555,155 @@ fn every_settings_switch_uses_the_visible_off_colors_before_and_during_hover() {
             );
         }
     }
+}
+
+/// The open settings' list.
+fn open_pick(s: &Studio) -> Option<(crate::pick_list::PickList, Vec<crate::popup::Cell>)> {
+    let m = s.settings.as_ref()?.menu.as_ref()?;
+    Some((m.pick.clone()?, m.menu.layout.cells.clone()))
+}
+
+/// How many of the list part's four jobs the settings' dropdown of `kind`
+/// shows (UI-338, as `pick_list::tests::counted` for the list menus): the
+/// search box, the empty state, Esc's two, and ↑↓ with Enter.
+fn settings_counted(s: &mut Studio, g: &Geometry, kind: &MenuKind) -> usize {
+    use crate::popup::Look;
+    let act = Do::Menu(kind.clone());
+    press(s, g, &act);
+    let Some((pick, cells)) = open_pick(s) else {
+        return 0;
+    };
+    let mut n = 0;
+    // 1: the search box, over the list and lit.
+    if cells
+        .first()
+        .is_some_and(|c| c.look == Look::Input && c.icon == Some("search") && c.on)
+    {
+        n += 1;
+    }
+    // 2: words that match nothing hide the rows; the empty state says so.
+    s.pick_text(None, "ぞぞぞ", false);
+    if let Some((after, cells)) = open_pick(s)
+        && after.visible().is_empty()
+        && !pick.visible().is_empty()
+        && cells
+            .iter()
+            .any(|c| c.look == Look::Status && c.text == crate::pick_list::NO_MATCH)
+    {
+        n += 1;
+    }
+    // 3: Esc clears the words, then shuts the list.
+    s.settings_key("escape", none());
+    let cleared = open_pick(s).is_some_and(|(p, _)| p.query.is_empty());
+    s.settings_key("escape", none());
+    if cleared && s.settings.as_ref().is_some_and(|u| u.menu.is_none()) {
+        n += 1;
+    }
+    // 4: ↓ walks to the next row that runs, Enter picks and shuts.
+    press(s, g, &act);
+    if let Some((pick, _)) = open_pick(s) {
+        let from = pick.selected;
+        let nav = pick.nav();
+        let want = (from + 1..nav.len())
+            .find(|&i| nav[i].enabled)
+            .unwrap_or(from);
+        s.settings_key("down", none());
+        let moved = open_pick(s).is_some_and(|(p, cells)| {
+            p.selected == want
+                && cells
+                    .iter()
+                    .filter(|c| c.cursor)
+                    .all(|c| c.text == nav[want].label)
+        });
+        s.settings_key("enter", none());
+        if moved && s.settings.as_ref().is_some_and(|u| u.menu.is_none()) {
+            n += 1;
+        }
+    }
+    if let Some(u) = s.settings.as_mut() {
+        u.menu = None;
+    }
+    n
+}
+
+/// Every dropdown of the settings that lists choices is the list part
+/// (UI-338): the four jobs are counted on each one on the screen, the
+/// keyboard's and the mouse's tables too. Only 「その他」 is a menu of
+/// operations (no search box).
+#[test]
+fn every_settings_list_is_the_pick_list_four_jobs() {
+    let dir = temp("lists");
+    let (mut s, g) = launch(dir.path());
+    // Two devices to pick between.
+    crate::audioset_shots::fixture(&mut s);
+    let mut seen: Vec<MenuKind> = Vec::new();
+    let mut more = false;
+    for section in Section::ALL {
+        let subs: &[Option<Sub>] = if section == Section::Keys {
+            &[Some(Sub::Keyboard), Some(Sub::Mouse)]
+        } else {
+            &[None]
+        };
+        for sub in subs {
+            s.open_settings(section);
+            if let Some(sub) = sub {
+                press(&mut s, &g, &Do::Sub(*sub));
+            }
+            let kinds: Vec<MenuKind> = s
+                .settings_scene(&g)
+                .items
+                .iter()
+                .filter_map(|i| match &i.act {
+                    Do::Menu(k) => Some(k.clone()),
+                    _ => None,
+                })
+                .collect();
+            for kind in kinds {
+                if seen.contains(&kind) {
+                    continue;
+                }
+                seen.push(kind.clone());
+                if !kind.is_list() {
+                    press(&mut s, &g, &Do::Menu(kind.clone()));
+                    assert!(open_pick(&s).is_none(), "{kind:?} is a menu of operations");
+                    more = true;
+                    if let Some(u) = s.settings.as_mut() {
+                        u.menu = None;
+                    }
+                    continue;
+                }
+                assert_eq!(settings_counted(&mut s, &g, &kind), 4, "{kind:?}");
+            }
+            s.close_settings();
+        }
+    }
+    let has = |f: &dyn Fn(&MenuKind) -> bool| seen.iter().any(f);
+    assert!(more, "「その他」 is on the screen");
+    assert!(has(&|k| matches!(k, MenuKind::Pref(_))));
+    assert!(has(&|k| matches!(k, MenuKind::Preset)));
+    assert!(has(&|k| matches!(k, MenuKind::MouseCell { .. })));
+    assert!(seen.len() > 6, "{seen:?}");
+}
+
+/// With no audio device, the device list says 「オーディオデバイスなし」
+/// with its alert, picks nothing and never puts the cursor on it (UI-338).
+#[test]
+fn the_device_list_with_no_device_says_so() {
+    let dir = temp("no-device");
+    let (mut s, g) = launch(dir.path());
+    s.open_settings(Section::Audio);
+    s.song.io.lock().unwrap().view.devices.clear();
+    press(&mut s, &g, &Do::Menu(MenuKind::Pref("audio.device".into())));
+    let (pick, cells) = open_pick(&s).expect("the device list");
+    assert_eq!(pick.nav().len(), 1);
+    let row = cells
+        .iter()
+        .find(|c| c.text == crate::start::rig::NO_DEVICE)
+        .expect("the row");
+    assert_eq!(row.icon, Some("alert"));
+    assert!(!row.live() && !row.cursor && !row.locked);
+    s.settings_key("down", none());
+    s.settings_key("enter", none());
+    let (_, cells) = open_pick(&s).expect("still open: nothing was picked");
+    assert!(cells.iter().all(|c| !c.cursor));
 }

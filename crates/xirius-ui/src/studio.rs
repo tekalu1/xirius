@@ -2091,10 +2091,14 @@ impl Studio {
         p.quant = quant;
         // The list menu: its rows are built again, but what was typed, the
         // cursor and the scroll stay (UI-320).
-        if let Some(list) = pick {
+        if let Some(mut list) = pick {
             match &mut p.pick {
                 Some(old) => old.refill(list),
-                _ => p.pick = Some(list),
+                _ => {
+                    // A list opens on its current row (UI-338).
+                    list.start_on_current();
+                    p.pick = Some(list);
+                }
             }
         }
         if let PopupKind::Color(t) = p.kind

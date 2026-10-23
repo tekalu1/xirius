@@ -31,6 +31,8 @@ use xirius_prefs::{Chord, Settings};
 use crate::draw::{Align, Pen};
 use crate::dropdown::{Menu, Pick};
 use crate::paint::Colors;
+use crate::pick_list::{PickGroup, PickKey, PickList, PickRow};
+use crate::popup::Action;
 use crate::studio::{Geometry, Rect, Studio};
 use crate::tools::Mods;
 
@@ -205,6 +207,22 @@ pub enum MenuKind {
     HoldAdd(String),
 }
 
+impl MenuKind {
+    /// Does the dropdown open a list (a [`PickList`], UI-338)? Only 「その他」
+    /// is a menu of operations. A new kind is named here.
+    pub fn is_list(&self) -> bool {
+        match self {
+            MenuKind::Pref(_)
+            | MenuKind::Preset
+            | MenuKind::MouseCell { .. }
+            | MenuKind::HoldMod(..)
+            | MenuKind::HoldTo(..)
+            | MenuKind::HoldAdd(_) => true,
+            MenuKind::More => false,
+        }
+    }
+}
+
 /// A file the screen asks the window for (the window has the system's file dialogs).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Ask {
@@ -232,8 +250,49 @@ pub struct Toast {
 #[derive(Clone, Debug, PartialEq)]
 pub struct OpenMenu {
     pub kind: MenuKind,
+    /// What is drawn and pressed (a list's cells, laid out at the box).
     pub menu: Menu,
     pub hover: Option<usize>,
+    /// The list a list's dropdown opens (UI-338): the search box, the
+    /// cursor and the scroll. None for 「その他」.
+    pub pick: Option<PickList>,
+    /// The box the list drops from, the list's width and the window's size.
+    pub anchor: Rect,
+    pub width: f32,
+    pub size: (f32, f32),
+}
+
+impl OpenMenu {
+    /// A list's dropdown under (or over) `anchor`, its cursor on the current
+    /// row.
+    pub fn list(
+        kind: MenuKind,
+        mut pick: PickList,
+        anchor: Rect,
+        width: f32,
+        size: (f32, f32),
+    ) -> OpenMenu {
+        pick.start_on_current();
+        let menu = Menu {
+            layout: crate::pick_list::dropped(&pick, anchor, width, size),
+        };
+        OpenMenu {
+            kind,
+            menu,
+            hover: None,
+            pick: Some(pick),
+            anchor,
+            width,
+            size,
+        }
+    }
+
+    /// The list's cells again after its words, cursor or scroll changed.
+    pub fn relayout(&mut self) {
+        if let Some(pick) = &self.pick {
+            self.menu.layout = crate::pick_list::dropped(pick, self.anchor, self.width, self.size);
+        }
+    }
 }
 
 /// How long the toast stays.
@@ -924,7 +983,19 @@ impl Studio {
         let Some(ui) = &mut self.settings else {
             return false;
         };
-        if ui.menu.is_some() {
+        if let Some(m) = &mut ui.menu {
+            // The wheel scrolls an open list's rows (UI-338).
+            if let Some(pick) = &mut m.pick {
+                pick.settle(m.size);
+                let max = pick.max_offset(m.size);
+                pick.offset = if dy < 0.0 {
+                    (pick.offset + 1).min(max)
+                } else {
+                    pick.offset.saturating_sub(1)
+                };
+                m.relayout();
+                m.hover = m.menu.at(x, y);
+            }
             return true;
         }
         if scene.body.contains(x, y) {
@@ -967,11 +1038,7 @@ impl Studio {
             Do::Menu(kind) => {
                 let menu = self.settings_menu(g, &kind, at);
                 if let Some(ui) = &mut self.settings {
-                    ui.menu = menu.map(|menu| OpenMenu {
-                        kind,
-                        menu,
-                        hover: None,
-                    });
+                    ui.menu = menu;
                 }
             }
             Do::Field(id) => {
@@ -1219,64 +1286,85 @@ impl Studio {
         let _ = std::fs::remove_dir(&dir);
     }
 
-    /// The menu a dropdown opens, under `at`.
-    fn settings_menu(&self, g: &Geometry, kind: &MenuKind, at: Rect) -> Option<Menu> {
+    /// The menu a dropdown opens, under `at`: a list (UI-338), or
+    /// 「その他」's operations.
+    fn settings_menu(&self, g: &Geometry, kind: &MenuKind, at: Rect) -> Option<OpenMenu> {
         let bounds = Rect::new(0.0, 0.0, g.size.0, g.size.1);
-        let plain = |choices: Vec<(String, String)>, current: &str| {
-            let widest = choices
+        // Rows of (value, label), the one at `current` checked.
+        let rows = |choices: Vec<(String, String)>, current: &str| -> Vec<PickRow> {
+            choices
+                .into_iter()
+                .map(|(v, l)| PickRow::new(l).on(v == current).act(Action::Pick(v)))
+                .collect()
+        };
+        // As wide as the box, or as the widest name with its icon, check
+        // and hint.
+        let list = |rows: Vec<PickRow>, heading: &str| {
+            let widest = rows
                 .iter()
-                .map(|(_, l)| scene::width(l, FontSize::Small))
+                .map(|r| {
+                    scene::width(&r.label, FontSize::Small)
+                        + scene::width(&r.hint, FontSize::Caption)
+                })
                 .fold(0.0, f32::max);
-            let rows: Vec<(String, String, bool)> =
-                choices.into_iter().map(|(v, l)| (v, l, true)).collect();
-            Menu::new(at, &rows, current, widest, bounds)
+            let w =
+                at.w.max(widest + Layout::POPUP_PAD * 2.0 + Layout::ICON_SIZE * 2.0 + 32.0)
+                    .max(Layout::MENU_W);
+            let mut pick = PickList::of(Vec::new());
+            pick.groups = vec![PickGroup::new(heading, rows)];
+            Some(OpenMenu::list(kind.clone(), pick, at, w, g.size))
         };
         self.with_settings(|s| match kind {
-            MenuKind::Pref(key) => {
-                let choices = if key == "audio.device" {
-                    self.song
-                        .io
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .view
-                        .devices
-                        .iter()
-                        .map(|d| (d.name.clone(), d.name.clone()))
-                        .collect()
-                } else {
-                    panes::choices(key)
-                };
-                Some(plain(choices, &s.prefs.text(key)))
+            MenuKind::Pref(key) if key == "audio.device" => {
+                let names: Vec<(String, String)> = self
+                    .song
+                    .io
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .view
+                    .devices
+                    .iter()
+                    .map(|d| (d.name.clone(), d.name.clone()))
+                    .collect();
+                if names.is_empty() {
+                    // No device: the list says so, and picks nothing.
+                    let none = PickRow::new(crate::start::rig::NO_DEVICE)
+                        .icon("alert")
+                        .disabled();
+                    return list(vec![none], "");
+                }
+                list(rows(names, &s.prefs.text(key)), "")
             }
+            MenuKind::Pref(key) => list(rows(panes::choices(key), &s.prefs.text(key)), ""),
             MenuKind::MouseCell { ctx, modifier } => {
                 let current = s.mousemap.get(ctx, modifier);
-                Some(plain(mouse::choices(ctx), &current))
+                list(rows(mouse::choices(ctx), &current), "")
             }
             MenuKind::HoldMod(_, modifier) => {
-                let rows: Vec<(String, String)> = xirius_prefs::mousemap::HOLD_MODS
+                let choices: Vec<(String, String)> = xirius_prefs::mousemap::HOLD_MODS
                     .iter()
                     .map(|m| (m.to_string(), mouse::mods_label(m)))
                     .collect();
-                Some(plain(rows, modifier))
+                list(rows(choices, modifier), "")
             }
             MenuKind::HoldAdd(area) => {
-                let rows: Vec<(String, String)> = mouse::addable_tools(s, area)
+                let choices: Vec<(String, String)> = mouse::addable_tools(s, area)
                     .into_iter()
                     .map(|t| (t.name.to_string(), t.label.to_string()))
                     .collect();
-                Some(plain(rows, ""))
+                list(rows(choices, ""), "")
             }
             MenuKind::HoldTo(ctx, modifier) => {
                 let tool = ctx.split('.').nth(1).unwrap_or("");
-                let rows: Vec<(String, String)> = xirius_prefs::mousemap::TOOLS
+                let choices: Vec<(String, String)> = xirius_prefs::mousemap::TOOLS
                     .iter()
                     .filter(|t| t.name != tool)
                     .map(|t| (format!("tool:{}", t.name), t.label.to_string()))
                     .collect();
-                Some(plain(rows, &s.mousemap.get(ctx, modifier)))
+                list(rows(choices, &s.mousemap.get(ctx, modifier)), "")
             }
             MenuKind::Preset => {
-                let mut picks = vec![Pick::heading("プリセット")];
+                let mut presets = Vec::new();
                 for name in catalog::PRESET_NAMES {
                     let label = catalog::preset(name).map(|p| p.label).unwrap_or(name);
                     let n = if *name == s.keymap.preset {
@@ -1284,13 +1372,15 @@ impl Studio {
                     } else {
                         s.keymap.rows_changed_by(name)
                     };
-                    let mut p = Pick::row(name, label).on(*name == s.keymap.preset);
+                    let mut row = PickRow::new(label)
+                        .on(*name == s.keymap.preset)
+                        .act(Action::Pick(name.to_string()));
                     if n > 0 {
-                        p = p.hint(format!("{n} 件を変更"));
+                        row = row.hint(format!("{n} 件を変更"));
                     }
-                    picks.push(p);
+                    presets.push(row);
                 }
-                Some(Menu::rich(at, &picks, 232.0, bounds))
+                list(presets, "プリセット")
             }
             MenuKind::More => {
                 let changed = s.keymap.changed_rows() > 0;
@@ -1311,7 +1401,17 @@ impl Studio {
                         .icon("restore")
                         .enabled(changed),
                 ];
-                Some(Menu::rich(at, &picks, 260.0, bounds))
+                // design-lint: allow(list-menu) operations, not a list to pick from
+                let menu = Menu::rich(at, &picks, 260.0, bounds);
+                Some(OpenMenu {
+                    kind: kind.clone(),
+                    menu,
+                    hover: None,
+                    pick: None,
+                    anchor: at,
+                    width: 260.0,
+                    size: g.size,
+                })
             }
         })
     }
@@ -1544,6 +1644,25 @@ impl Studio {
                 args["from"] = Value::String(f.to_string());
             }
             self.settings_run("keymap.set", args);
+            return true;
+        }
+        if let Some(m) = &mut ui.menu
+            && let Some(pick) = &mut m.pick
+        {
+            // A list: its search box has the keys (UI-338). Letters come
+            // through the IME (`settings_text` gives them to the list).
+            match pick.key(key, None, m.size) {
+                PickKey::Shut => ui.menu = None,
+                PickKey::Run(Action::Pick(v)) => {
+                    let m = ui.menu.take().expect("open");
+                    self.settings_pick(&m.kind, &v);
+                }
+                PickKey::Run(_) | PickKey::Pass => {}
+                PickKey::Done => {
+                    m.hover = None;
+                    m.relayout();
+                }
+            }
             return true;
         }
         if let Some(m) = &mut ui.menu {

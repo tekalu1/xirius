@@ -32,6 +32,13 @@ pub const PITCH_ROWS: usize = (HIGHEST_PITCH - LOWEST_PITCH) as usize + 1;
 /// Points of the level meter's colour kept in [`Colors::meter_ramp`].
 pub const METER_RAMP: usize = 64;
 
+/// The scroll thumb of a list on the floating paper (UI-338): the off
+/// switch's track, the neutral token kept at 3:1 on the surfaces around it
+/// (the surface thumb is the paper itself in the light theme).
+pub fn list_thumb(theme: Theme) -> xirius_design::Color {
+    SwitchFace::off(theme, false).track
+}
+
 /// Design tokens converted once (colour conversion is too slow for inner loops).
 #[derive(Clone)]
 pub struct Colors {
@@ -100,6 +107,9 @@ pub struct Colors {
     pub monitor_on: (Hsla, Hsla),
     /// The off switch's track and knob, at rest and hovered (UI-317).
     pub switch_off: [(Hsla, Hsla); 2],
+    /// A list's scroll thumb: [`list_thumb`], 3:1 on the floating paper in
+    /// both themes (UI-338).
+    pub list_thumb: Hsla,
     /// The folder range line at rest, hovered and selected (MIX-038).
     pub line: [Hsla; 3],
     /// The time grid's lines, strongest first: a bar's, a beat's and a finer step's (UI-121).
@@ -196,6 +206,7 @@ impl Colors {
                 let face = SwitchFace::off(theme, hovered);
                 (paint(face.track), paint(face.knob))
             }),
+            list_thumb: paint(list_thumb(theme)),
             line: LineState::ALL.map(|state| paint(StructureLine::color(state, theme))),
             grid: [
                 paint(Overlay::ScrollThumbHover.color(theme)),

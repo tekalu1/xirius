@@ -61,58 +61,14 @@ pub fn field(pen: &mut Pen, r: Rect, label: &str, face: Face, hot: bool, enabled
     });
 }
 
-/// The menu a box opens: one row per choice, the current one marked.
+/// The menu a box opens: 「その他」's operations (a list to pick from is a
+/// [`crate::pick_list::PickList`], UI-338).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Menu {
     pub layout: PopupLayout,
 }
 
 impl Menu {
-    /// Below the box (above it when there is no room), at least as wide as the box, kept
-    /// inside `bounds`. `choices` are (value, label, enabled); `width` is the widest label.
-    pub fn new(
-        anchor: Rect,
-        choices: &[(String, String, bool)],
-        current: &str,
-        width: f32,
-        bounds: Rect,
-    ) -> Menu {
-        let pad = Layout::POPUP_PAD;
-        let row = Layout::MENU_ROW_H;
-        let w = anchor
-            .w
-            .max(width + pad * 2.0 + Layout::ICON_SIZE * 2.0 + 16.0)
-            .min(bounds.w - 12.0);
-        let h = choices.len() as f32 * row + pad * 2.0;
-        let mut y = anchor.bottom() + 4.0;
-        if y + h > bounds.bottom() - 6.0 && anchor.y - 4.0 - h >= bounds.y + 6.0 {
-            y = anchor.y - 4.0 - h;
-        }
-        let y = y.min(bounds.bottom() - 6.0 - h).max(bounds.y + 6.0);
-        let x = anchor.x.min(bounds.right() - 6.0 - w).max(bounds.x + 6.0);
-        let cells = choices
-            .iter()
-            .enumerate()
-            .map(|(i, (value, label, enabled))| {
-                let r = Rect::new(x + pad, y + pad + i as f32 * row, w - pad * 2.0, row);
-                let cell = Cell::new(r, Look::Row)
-                    .text(label.clone())
-                    .on(value == current);
-                if *enabled {
-                    cell.act(Action::Pick(value.clone()))
-                } else {
-                    cell.off()
-                }
-            })
-            .collect();
-        Menu {
-            layout: PopupLayout {
-                rect: Rect::new(x, y, w, h),
-                cells,
-            },
-        }
-    }
-
     /// A menu with headings, icons and hints (the presets, 「その他」), `width` wide.
     pub fn rich(anchor: Rect, picks: &[Pick], width: f32, bounds: Rect) -> Menu {
         let pad = Layout::POPUP_PAD;
@@ -167,8 +123,11 @@ impl Menu {
         self.layout.item_at(x, y)
     }
 
+    /// What the choice `i` picks: none for a heading or a row that cannot
+    /// run now (a dim row keeps its value to name it, UI-338).
     pub fn value(&self, i: usize) -> Option<&str> {
-        match &self.layout.cells.get(i)?.action {
+        let cell = self.layout.cells.get(i).filter(|c| c.live())?;
+        match &cell.action {
             Some(Action::Pick(v)) => Some(v),
             _ => None,
         }
@@ -256,20 +215,23 @@ pub fn paint_menu(pen: &mut Pen, menu: &Menu, hover: Option<usize>) {
 mod tests {
     use super::*;
 
-    fn choices(n: usize) -> Vec<(String, String, bool)> {
+    fn choices(n: usize) -> Vec<Pick> {
         (0..n)
-            .map(|i| (format!("v{i}"), format!("項目 {i}"), i != 2))
+            .map(|i| {
+                Pick::row(&format!("v{i}"), &format!("項目 {i}"))
+                    .enabled(i != 2)
+                    .on(i == 1)
+            })
             .collect()
     }
 
     #[test]
     fn the_menu_opens_below_and_stays_inside() {
         let bounds = Rect::new(0.0, 0.0, 800.0, 600.0);
-        let m = Menu::new(
+        let m = Menu::rich(
             Rect::new(100.0, 100.0, 240.0, 28.0),
             &choices(3),
-            "v1",
-            60.0,
+            240.0,
             bounds,
         );
         assert_eq!(m.layout.rect.y, 132.0);
@@ -282,11 +244,10 @@ mod tests {
         assert_eq!(m.value(m.at(c.x + 4.0, c.y + 4.0).unwrap()), Some("v0"));
 
         // Near the bottom it opens above the box.
-        let m = Menu::new(
+        let m = Menu::rich(
             Rect::new(700.0, 560.0, 80.0, 28.0),
             &choices(3),
-            "v0",
-            60.0,
+            120.0,
             bounds,
         );
         assert!(m.layout.rect.bottom() <= 556.0);

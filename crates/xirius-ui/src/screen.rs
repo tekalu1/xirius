@@ -495,6 +495,15 @@ impl Screen {
             cx.notify();
             return;
         }
+        // Ctrl+V in a list's search box (the settings' too) pastes (UI-338).
+        let picking = studio.pick_typing().is_some() && studio.ask_field().is_none();
+        if picking && m.ctrl && !m.alt && k.key == "v" {
+            if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
+                studio.pick_paste(&text);
+            }
+            cx.notify();
+            return;
+        }
         // The settings take every key while open, and Ctrl+, opens them
         // (SET-001); their fields' letters come through the IME too.
         let logical = character.filter(|c| {
@@ -526,8 +535,22 @@ impl Screen {
             cx.notify();
             return;
         }
+        // A list's search box (UI-338): its letters come through the IME
+        // (`EntityInputHandler` below), so the key brings none; a letter is
+        // still the list's, never a note or a shortcut.
+        if picking
+            && !m.ctrl
+            && !m.alt
+            && k.key_char
+                .as_deref()
+                .is_some_and(|c| !c.is_empty() && !c.chars().any(char::is_control))
+        {
+            cx.notify();
+            return;
+        }
         let keypad = key != k.key;
-        let typed = !keypad && !m.ctrl && studio.typed(&g, &k.key, k.key_char.as_deref());
+        let ch = if picking { None } else { k.key_char.as_deref() };
+        let typed = !keypad && !m.ctrl && studio.typed(&g, &k.key, ch);
         let played = !keypad
             && !typed
             && !m.ctrl
@@ -1131,6 +1154,15 @@ fn typing_field(studio: &Studio) -> Option<&crate::settings::field::Field> {
     studio.ask_field().or_else(|| settings_field(studio))
 }
 
+/// A list's search box, as a field, when it takes the text (UI-338): over
+/// the settings' field, under a menu's name box and the rename box.
+fn pick_field(studio: &Studio) -> Option<crate::settings::field::Field> {
+    if studio.ask_field().is_some() || studio.input_map.name.is_some() {
+        return None;
+    }
+    studio.pick_typing().map(|p| p.field())
+}
+
 /// Where the keymap is written to first: the home folder.
 fn dirs_home() -> PathBuf {
     std::env::var_os("USERPROFILE")
@@ -1151,6 +1183,11 @@ impl EntityInputHandler for Screen {
         _: &mut Context<Self>,
     ) -> Option<String> {
         let studio = self.studio.borrow();
+        if let Some(f) = pick_field(&studio) {
+            let (text, real) = f.text_for_range(range);
+            *adjusted = Some(real);
+            return Some(text);
+        }
         if let Some(f) = typing_field(&studio) {
             let (text, real) = f.text_for_range(range);
             *adjusted = Some(real);
@@ -1168,6 +1205,12 @@ impl EntityInputHandler for Screen {
         _: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
         let studio = self.studio.borrow();
+        if let Some(f) = pick_field(&studio) {
+            return Some(UTF16Selection {
+                range: f.selected_range(),
+                reversed: false,
+            });
+        }
         if let Some(f) = typing_field(&studio) {
             return Some(UTF16Selection {
                 range: f.selected_range(),
@@ -1182,6 +1225,9 @@ impl EntityInputHandler for Screen {
 
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
         let studio = self.studio.borrow();
+        if let Some(f) = pick_field(&studio) {
+            return f.marked_range();
+        }
         if let Some(f) = typing_field(&studio) {
             return f.marked_range();
         }
@@ -1190,7 +1236,9 @@ impl EntityInputHandler for Screen {
 
     fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let mut studio = self.studio.borrow_mut();
-        if studio.ask_field().is_some() {
+        if pick_field(&studio).is_some() {
+            studio.pick_unmark();
+        } else if studio.ask_field().is_some() {
             studio.ask_unmark();
         } else if let Some(name) = &mut studio.input_map.name {
             name.field.unmark();
@@ -1213,7 +1261,9 @@ impl EntityInputHandler for Screen {
         if studio.saving.is_some() {
             return;
         }
-        if studio.ask_field().is_some() {
+        if pick_field(&studio).is_some() {
+            studio.pick_text(range, text, false);
+        } else if studio.ask_field().is_some() {
             studio.ask_text(range, text, false);
         } else if let Some(name) = &mut studio.input_map.name {
             name.field.replace_text(range, text);
@@ -1237,7 +1287,9 @@ impl EntityInputHandler for Screen {
         if studio.saving.is_some() {
             return;
         }
-        if studio.ask_field().is_some() {
+        if pick_field(&studio).is_some() {
+            studio.pick_text(range, text, true);
+        } else if studio.ask_field().is_some() {
             studio.ask_text(range, text, true);
         } else if let Some(name) = &mut studio.input_map.name {
             name.field.mark_text(range, text);
@@ -1261,6 +1313,40 @@ impl EntityInputHandler for Screen {
             f32::from(element_bounds.size.width),
             f32::from(element_bounds.size.height),
         );
+        if let Some(f) = pick_field(&studio) {
+            // The search box is the list's first cell (UI-338).
+            let at = match studio.popup.as_ref().filter(|p| p.pick.is_some()) {
+                Some(p) => p.layout(g.size).cells.first()?.rect,
+                None => {
+                    studio
+                        .settings
+                        .as_ref()?
+                        .menu
+                        .as_ref()?
+                        .menu
+                        .layout
+                        .cells
+                        .first()?
+                        .rect
+                }
+            };
+            let mut pen = Pen {
+                window,
+                cx,
+                c: &self.colors,
+                origin: (0.0, 0.0),
+            };
+            let r = f.text_bounds(at, range, |t| {
+                pen.measure(t, FontSize::Small, Weight::Regular)
+            });
+            return Some(Bounds::new(
+                point(
+                    element_bounds.origin.x + px(r.x),
+                    element_bounds.origin.y + px(r.y),
+                ),
+                size(px(r.w), px(r.h)),
+            ));
+        }
         if let Some(f) = studio.ask_field() {
             let at = studio.popup.as_ref()?.layout(g.size).cells.first()?.rect;
             let mut pen = Pen {
@@ -1523,6 +1609,7 @@ impl Render for Screen {
                         let typing = studio.settings.as_ref().is_some_and(|s| s.field.is_some());
                         if studio.palette.is_some()
                             || typing
+                            || studio.pick_typing().is_some()
                             || studio.ask_field().is_some()
                             || studio.input_map.name.is_some()
                         {

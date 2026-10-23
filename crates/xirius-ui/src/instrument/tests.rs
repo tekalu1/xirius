@@ -260,6 +260,7 @@ fn ui_297_the_instrument_list_shows_a_thumb_when_more_rows_than_show() {
     };
     let pad = xirius_design::Layout::POPUP_PAD;
     let row_h = xirius_design::Layout::MENU_ROW_H;
+    // The rows' part keeps its height at any scroll (UI-338).
     let h = s
         .popup
         .as_ref()
@@ -267,8 +268,7 @@ fn ui_297_the_instrument_list_shows_a_thumb_when_more_rows_than_show() {
         .pick
         .as_ref()
         .unwrap()
-        .capacity(g.size) as f32
-        * row_h;
+        .body_h(g.size);
     let n = s
         .popup
         .as_ref()
