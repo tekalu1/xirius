@@ -68,14 +68,14 @@ cargo test -p xirius-session update
 
 ## 3. environment `release` と secret（利用者が行う）
 
-署名の job だけが鍵を読みます。鍵は environment に置き、environment に「承認する人」と
-「タグ `v*` だけ」の規則を付けます（作るのは公開のとき）。
+署名の job だけが鍵を読みます。鍵は environment に置き、environment に「タグ `v*` だけ」の
+規則を付けます。**承認する人（Required reviewers）は付けません**: 公開まで自動で進み、
+公開してよいかは main の CI の成功で決めます（`docs/release-ci-gate.md`、LIC-039）。
 
 1. GitHub のリポジトリで **Settings → Environments → New environment**。名前は `release`。
 2. **Deployment branches and tags**: `Selected branches and tags` にして、タグ `v*` だけを許す。
-3. **Required reviewers** に承認する人を入れ、**Prevent self-review** を入れる（勧め）。
-   - 1 人で出すときは、自分で承認することになります。可能なら承認する人を 2 人以上にします。
-   - これで、署名の job は承認するまで始まりません。鍵を持つ job を人が見てから動かせます。
+3. **Required reviewers** と **Wait timer** は入れない（入っていれば外す）。入っていると、
+   署名の job が承認を待って止まります。
 4. **Environment secrets → Add secret**:
    - Name: `XIRIUS_UPDATE_KEY`
    - Secret: 秘密鍵のファイルの中身（64 文字の 16 進数）
@@ -89,9 +89,16 @@ gh secret set XIRIUS_UPDATE_KEY --env release --repo tekalu1/xirius --body (Get-
 リポジトリの Settings → Secrets and variables → Actions にある `XIRIUS_UPDATE_KEY` は消します
 （environment のものだけを使います）。
 
-**タグの規則（勧め）**: Settings → Rules → Rulesets で、タグ `v*` を作れるのを持主だけにし、
-消せないようにします。リポジトリに書ける人が、改変した `release.yml` を含む commit にタグを
-付けて push すると、その workflow が走ります。残る門は environment の承認する人だけです。
+**タグと main の規則**: 承認する人がいないので、次の 3 つが門になります。
+
+- `release.yml` の job は、リポジトリの持主が push したタグでだけ動きます（`github.actor` と
+  `github.triggering_actor`）。タグは main の上の commit でなければ落ちます。
+- **Settings → Rules → Rulesets** で、タグ `v*` の作成・更新・削除を持主だけにします
+  （Bypass list を持主だけにして、Restrict creations / updates / deletions を入れる）。
+- **main を守る**: Rulesets（または Branch protection）で、main への force push と削除を禁じ、
+  PR から入れるときは `rust` の check（`check (windows-latest)`・`cargo-deny`・`gitleaks`）の
+  成功を必須にします。release は同じ commit の main の push の run を見るので、main に直接
+  push した commit でも、CI が赤なら公開しません。
 
 ## 4. 手元で署名する
 
@@ -122,33 +129,38 @@ python scripts/update_sign.py verify `
 `docs/release-notes/TEMPLATE.md` を写してください。本文のファイルが無い版は、`release.yml` が
 作らずに落ちます。
 
-## 6. 出す（下書き → 確かめる → 公開）
+## 6. 出す（タグの push から公開まで自動）
 
 1. `Cargo.toml` の `[workspace.package] version` を上げ、`docs/release-notes/<版>.md` を書き、
-   `UPDATE_KEY` が本物の公開鍵になっていることを確かめて、main に commit します。
-2. タグを push します（Release はタグの push だけで作ります。手で流す道はありません）。
+   `UPDATE_KEY` が本物の公開鍵になっていることを確かめて、main に commit して push します。
+2. その commit（main の push で `rust.yml` が走る commit）にタグを付けて push します。Release は
+   タグの push だけで作ります（手で流す道はありません）。
 
    ```powershell
    git tag v1.0.0
    git push origin v1.0.0
    ```
 
-3. `release.yml` の `build` が setup.exe・マニフェスト・SUMS を作ります（鍵はありません）。
-   `sign` は environment `release` の承認を待ち、secret をファイルに書いて、タグの checkout の
-   `scripts/update_sign.py` でマニフェストに署名し、すぐに鍵のファイルを消し、同じ .py で
-   アプリの `UPDATE_KEY` により `.sig` と setup.exe を確かめます。仮の鍵のままならここで落ちます。
-   `publish` が**下書き**の Release を作って載せます。タグの push でも自動では公開しません。
-4. Release の下書きを開いて確かめます。
-   - 本文が `- ` の箇条で、アプリの知らせに出したい文になっている。
-   - `Xirius-<版>-win-x64-setup.exe`・`Xirius-<版>-win-x64-update.json`・
-     `Xirius-<版>-win-x64-update.json.sig` がある。
-   - `SHA256SUMS.txt` の値が setup.exe と合う。
-5. 確かめたら **Publish release** で公開します。最新の版にするときは
-   「Set as the latest release」を選びます。
-   - 安定版のアプリは `/releases/latest` を読むので、**ベータ版は latest にしない**でください。
-     ベータ版は「Pre-release」の印を付けて公開します（版に `-beta.1` などを付けます）。
-6. 次の版を出す前に、1.0 のアプリが知らせを出し、ダウンロード・署名の確認・終了時の
-   入れ替えまで通ることを、別の利用者（または VM）で確かめます。
+3. `release.yml` が次の順に進みます。人の承認は待ちません。
+   - `build`: タグが版と同じか（違えば落ちる）、本文のファイルがあるかを確かめ、setup.exe・
+     マニフェスト・SUMS を作ります（鍵はありません）。
+   - `ci-gate`（`build` と並んで走る）: 同じ commit の main の `rust.yml` の run が揃って成功するのを
+     待ちます（40 分まで）。赤・見つからない・取り消されたなら、ここで止まり、署名も公開も
+     しません（`docs/release-ci-gate.md`）。
+   - `sign`: secret をファイルに書き、タグの checkout の `scripts/update_sign.py` でマニフェストに
+     署名し、すぐに鍵のファイルを消し、同じ .py でアプリの `UPDATE_KEY` により `.sig` と setup.exe
+     を確かめます。仮の鍵のままならここで落ちます。
+   - `publish`: SUMS を確かめ、下書きに載せてから公開します。
+     - 正式版（`v1.0.1`）は **latest** にします。安定版のアプリは `/releases/latest` を読みます。
+     - プレリリースの版（`v1.0.1-beta.1`。`-` の後ろに何かが付いた版）は **Pre-release** として
+       出し、latest にしません。ベータ版を読むのは、設定「ベータ版も受け取る」を入れたアプリ
+       だけです（`app.update.beta`、既定は切）。
+4. 公開された Release を開いて、本文と配布物（setup.exe・`-update.json`・`.json.sig`・zip・
+   LAME の tarball・`SHA256SUMS.txt`）を見ます。間違いに気付いたら、Release を消すのではなく、
+   版を上げて出し直します（アプリは公開された版を既に読んでいるかもしれません）。
+5. 次の版を出す前に、1.0 のアプリが知らせを出し、ダウンロード・署名の確認・終了時の
+   入れ替えまで通ることを、別の利用者（または VM）で確かめます。本物の窓を開く試験
+   （`scripts/ci_tests.py` の一覧）も、窓の大きさが決まった PC で流します。
 
 ## 7. 気をつけること
 

@@ -6368,6 +6368,15 @@ done_when = ".gitignore が /00-work/ を無視し、scripts/public-export.toml 
 status = "done"
 
 [[item]]
+id = "LIC-039"
+title = "タグの push から公開まで人を待たずに進める: 同じ commit の main の rust の実行が通ったことを書き込みの権限の無い job で確かめてから署名と公開に進め、pre-release のタグは latest にしない"
+area = "LIC"
+phase = "v1"
+source = "public-release-readiness.md § 4-2 ; § 4-6"
+done_when = "release.yml が v* のタグで build・ci-gate・sign・publish を下書きと人の承認無しに進め、ci-gate（actions: read・contents: read だけ）が scripts/release_ci_gate.py でタグの commit の main の push の rust の実行の成功を確かめ（走っていれば 40 分まで待ち、赤や実行が無いときは止まる）、sign が HEAD とビルドと ci-gate の sha が同じことを確かめ、publish が semver の pre-release を prerelease かつ latest でなく、それ以外を latest で出し、リリースノートが無いと出さずタグと Cargo の版が違うと落ち、rust.yml の main の push が互いに取り消さず、docs/release-ci-gate.md に決まりと直し方があり、scripts/test_release_ci_gate.py が通る"
+status = "done"
+
+[[item]]
 id = "LIC-041"
 title = "漏れを push と CI で止める: .githooks/pre-push が出ていく commit を gitleaks と .git/info/sensitive-terms で調べ、rust.yml に版と SHA-256 を固定した gitleaks の job を置く"
 area = "LIC"

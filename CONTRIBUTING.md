@@ -130,10 +130,19 @@ Do not open a public issue for a vulnerability; report it privately as `SECURITY
 The version is `version` of `[workspace.package]` in `Cargo.toml`, and the tag of its release
 is `v` and the version (`v1.0.0`); the update check of the app reads that tag.
 
-1. Change the version in `Cargo.toml` on `main` (with `Cargo.lock`) and merge it.
+1. Change the version in `Cargo.toml` on `main` (with `Cargo.lock`), write
+   `docs/release-notes/<version>.md`, and merge it.
 2. Push the tag `v<version>` on that commit of `main`. The `release` workflow checks the tag
-   against the version, builds the Windows files with `scripts/release.py`, attaches them to a
-   new release and publishes it.
+   against the version, builds the Windows files with `scripts/release.py`, waits until the
+   `rust` workflow of the same commit on `main` has passed (`docs/release-ci-gate.md`), signs
+   the update manifest, attaches the files to a new release and publishes it. Nobody has to
+   approve it; a red, cancelled or missing CI run stops it before signing.
+   - A version with a pre-release part (`1.0.1-beta.1`) is published as a GitHub pre-release
+     and is never the latest release. Only apps with "receive beta versions" turned on see it.
+   - A version without one is published as the latest release.
+
+Before a release, run the tests that open real windows on a PC whose desktop size is known
+(`scripts/ci_tests.py` lists them; CI leaves them out).
 
 To make the same files on your PC (Windows, with Visual Studio's C++ tools and
 [NSIS 3](https://nsis.sourceforge.io/)):

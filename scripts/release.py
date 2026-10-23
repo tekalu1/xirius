@@ -8,9 +8,13 @@
                                                the oldest Xirius that may install it
   python scripts/release.py --tag v1.0.0 --check-tag
                                                only check the tag (exit 1 when it differs)
+  python scripts/release.py --tag v1.0.1-beta.1 --channel
+                                               check the tag and print `beta` or `stable`
 
 The version is the one of [workspace.package] in Cargo.toml; a release's tag is `v<version>`
 (the update check reads the tag of the latest release, crates/xirius-session/src/update.rs).
+A version with a pre-release part (`1.0.1-beta.1`) is the beta channel: the release workflow
+publishes it as a GitHub pre-release and never as the latest release (LIC-040).
 `--sign-key` is the private key `xirius-update-sign keygen` makes (UI-282); the manifest is
 signed by `scripts/update_sign.py` (Python's standard library only), and
 `Xirius-<version>-win-x64-update.json.sig` is written beside it. `--min-version` is the oldest
@@ -297,6 +301,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--tag", help="the tag being released (v1.0.0 or refs/tags/v1.0.0)")
     parser.add_argument("--check-tag", action="store_true", help="only check --tag against the version")
+    parser.add_argument("--channel", action="store_true",
+                        help="only check --tag and print the channel (beta for a pre-release)")
     parser.add_argument("--out", type=Path, default=ROOT / "target" / "dist")
     parser.add_argument("--makensis", help="makensis.exe of NSIS 3")
     parser.add_argument("--sign-key", type=Path,
@@ -314,10 +320,13 @@ def main(argv: list[str] | None = None) -> int:
         if why:
             print(f"release: {why}", file=sys.stderr)
             return 1
-        print(f"release: the tag is v{version}")
-    if args.check_tag:
+        if not args.channel:
+            print(f"release: the tag is v{version}")
+    if args.check_tag or args.channel:
         if not args.tag:
-            parser.error("--check-tag needs --tag")
+            parser.error("--check-tag and --channel need --tag")
+        if args.channel:
+            print(channel(version))
         return 0
     if os.name != "nt":
         raise SystemExit("release: the Windows files are made on Windows")

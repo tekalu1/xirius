@@ -9,9 +9,11 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request cancels the older run. On main every commit keeps its run: the
+# release of a tag waits for the run of its commit (docs/release-ci-gate.md).
 concurrency:
-  group: rust-${{ github.ref }}
-  cancel-in-progress: true
+  group: rust-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || 'latest' }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -42,6 +44,13 @@ jobs:
       # before a release (scripts/ci_tests.py has the list).
       - name: test
         run: python scripts/ci_tests.py
+      # The release's own scripts: the release waits for this job (docs/release-ci-gate.md).
+      - name: release scripts
+        shell: bash
+        run: |
+          for t in test_release test_release_ci_gate test_update_sign test_pre_push; do
+            python "scripts/$t.py"
+          done
 
       # デザインの規則（docs/design-rules.md）。違反があれば落ちる。
       - name: design lint

@@ -1,11 +1,15 @@
 name: release
 
-# Windows の配布物を作って Release の下書きに載せる（LIC-020、UI-282）。作るのは
+# Windows の配布物を作り、署名して、Release として公開する（LIC-020、UI-282、LIC-039）。作るのは
 # scripts/release.py だけで、手元で `python scripts/release.py --tag v<版> --sign-key <鍵>` を
 # 流したときと同じ物ができる。
 #
-# - 版のタグ（v1.0.0）を main の commit に push したときだけ動く。**下書きのまま**止めるので、
-#   中身を確かめてから人が公開する（docs/update-signing.md）。
+# - 版のタグ（v1.0.0）を main の commit に push したときだけ動き、人の手を待たずに公開まで進む。
+# - 公開の前に ci-gate の job が、同じ commit の main への push で走った rust.yml の run の成功を
+#   GitHub の API（GET だけ）で確かめる。走っている途中なら待ち（40 分まで）、赤・見つからない・
+#   取り消されたなら署名も公開もしない（docs/release-ci-gate.md）。
+# - プレリリースの版（v1.0.1-beta.1）は GitHub の pre-release として出し、latest にしない。
+#   正式版は latest にする（LIC-040。安定版のアプリは /releases/latest だけを読む）。
 # - 配布物は setup.exe・マニフェスト（Xirius-<版>-win-x64-update.json）・その .sig・zip・
 #   LAME の tarball・SHA256SUMS.txt。
 # - 鍵は build の job に渡さない。sign の job（environment: release）が、タグの checkout にある
@@ -39,8 +43,11 @@ env:
 jobs:
   # No secret here: the dependencies' build.rs and proc-macros run without the key (UI-282).
   build:
-    if: github.repository == 'tekalu1/xirius' && github.actor == github.repository_owner
+    if: github.repository == 'tekalu1/xirius' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner
     runs-on: windows-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      channel: ${{ steps.source.outputs.channel }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,7 +63,13 @@ jobs:
           python-version: "3.12"
 
       - name: タグが版と同じ
-        run: python scripts/release.py --tag $env:TAG --check-tag
+        id: source
+        shell: bash
+        run: |
+          channel=$(python scripts/release.py --tag "$TAG" --channel)
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "release: v${TAG#v} is the $channel channel"
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -94,19 +107,65 @@ jobs:
             target/dist/SHA256SUMS.txt
             target/dist/RELEASE-NOTES.md
 
-  # The only job with the key. The environment's deployment rules (a required reviewer and
-  # `v*` tags) are set in the repository's settings; see docs/update-signing.md.
+  # Main's CI on the tag's commit (docs/release-ci-gate.md). It runs beside the build, on
+  # Linux, with no secret and no write permission: GET requests only.
+  ci-gate:
+    if: github.repository == 'tekalu1/xirius' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner
+    runs-on: ubuntu-latest
+    # A little longer than the wait (--wait-minutes 40).
+    timeout-minutes: 50
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      sha: ${{ steps.gate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - id: gate
+        name: main の CI が同じ commit を通した
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(git rev-parse "refs/tags/$TAG^{commit}")
+          git merge-base --is-ancestor "$sha" origin/main
+          python scripts/release_ci_gate.py --repo "$GITHUB_REPOSITORY" --sha "$sha" --tag "$TAG" \
+            --wait-minutes 40 --missing-grace-minutes 5 --interval-seconds 30
+
+  # The only job with the key. It starts only after main's CI said yes to the commit. The
+  # environment's rule (only `v*` tags may deploy to it) is set in the repository's settings,
+  # with no required reviewer: see docs/update-signing.md.
   # The actions are pinned by commit: they run in the same job as the key.
   sign:
-    needs: build
+    needs: [build, ci-gate]
     runs-on: windows-latest
     environment: release
+    env:
+      BUILD_SHA: ${{ needs.build.outputs.sha }}
+      CI_SHA: ${{ needs.ci-gate.outputs.sha }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: refs/tags/${{ env.TAG }}
           fetch-depth: 1
           persist-credentials: false
+
+      # The tag could have moved between the jobs: sign only the commit that was built and passed.
+      - name: build と CI と同じ commit
+        shell: pwsh
+        run: |
+          $head = git rev-parse HEAD
+          if (-not $env:CI_SHA -or $head -cne $env:CI_SHA -or $head -cne $env:BUILD_SHA) {
+            throw "タグの commit（$head）が、作った commit（$env:BUILD_SHA）か CI の通した commit（$env:CI_SHA）と違います"
+          }
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -165,24 +224,42 @@ jobs:
           path: dist/*
 
   publish:
-    needs: sign
+    needs: [build, ci-gate, sign]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      CHANNEL: ${{ needs.build.outputs.channel }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: signed
           path: dist
 
-      # Always a draft: a person checks the files (the .sig too) and publishes it by hand.
-      - name: 下書きを作って載せる
+      # Uploaded to a draft first and published after: a published release may be immutable,
+      # and a half-uploaded one must never be the latest. A draft left by an earlier attempt is
+      # removed; a release that is already out is not touched.
+      - name: 載せて公開する
         working-directory: dist
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           sha256sum -c SHA256SUMS.txt
+          ls ./*-update.json.sig > /dev/null
+          case "$CHANNEL" in
+            beta) flags=(--prerelease --latest=false) ;;
+            stable) flags=(--prerelease=false --latest) ;;
+            *) echo "::error::channel is '$CHANNEL', not beta or stable"; exit 1 ;;
+          esac
+          if draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$draft" != "true" ]; then
+              echo "::error::$TAG is already published"
+              exit 1
+            fi
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
+          fi
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
-            --title "Xirius ${TAG#v}" --notes-file RELEASE-NOTES.md
-          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --title "Xirius ${TAG#v}" --notes-file RELEASE-NOTES.md \
             ./*-setup.exe ./*-update.json ./*-update.json.sig ./*.zip ./lame-*.tar.gz SHA256SUMS.txt
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false "${flags[@]}"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,isPrerelease,isDraft

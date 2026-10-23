@@ -50,6 +50,22 @@ class VersionTests(unittest.TestCase):
         self.assertEqual(rel.main(["--tag", f"v{version}", "--check-tag"]), 0)
         self.assertEqual(rel.main(["--tag", f"v{version}.9", "--check-tag"]), 1)
 
+    def test_the_channel_is_printed_for_the_release_workflow(self):
+        """LIC-040: the workflow marks a pre-release by what --channel prints."""
+        import contextlib
+        import io
+
+        version = rel.workspace_version()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(rel.main(["--tag", f"v{version}", "--channel"]), 0)
+        self.assertEqual(out.getvalue().strip(), rel.channel(version))
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(rel.main(["--tag", "v0.0.0-nope", "--channel"]), 1)
+        self.assertEqual(rel.channel("1.0.1"), "stable")
+        self.assertEqual(rel.channel("1.0.1-beta.1"), "beta")
+        self.assertEqual(rel.channel("1.0.1-rc.1"), "beta")
+
     def test_the_lame_checksum_is_the_one_build_lame_checks(self):
         self.assertEqual(rel.lame_sha256(), "ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e")
 
