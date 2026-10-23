@@ -1865,14 +1865,14 @@ used {} {}
         assert_eq!(search.icon, Some("search"));
         assert!(acts(&cells).contains(&Act::License(Item::Rust)));
         let p = s.popup.as_ref().unwrap();
-        assert_eq!(p.max_offset(), all.len() - CRATE_ROWS);
+        assert_eq!(p.max_offset(g.size), all.len() - CRATE_ROWS);
         // The wheel moves the list a row.
         s.popup.as_mut().unwrap().offset = 1;
         assert_eq!(rows(&s)[0].0, all[1].name);
 
         // Typing narrows it, from its top; Backspace takes a letter back.
         for ch in ["S", "e", "r", "d", "e", "_", "j"] {
-            assert!(s.typed(ch, Some(ch)));
+            assert!(s.typed(&g, ch, Some(ch)));
         }
         let found = rows(&s);
         assert_eq!(s.popup.as_ref().unwrap().offset, 0);
@@ -1880,14 +1880,14 @@ used {} {}
             found.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(),
             ["serde_json"]
         );
-        assert_eq!(s.popup.as_ref().unwrap().max_offset(), 0);
+        assert_eq!(s.popup.as_ref().unwrap().max_offset(g.size), 0);
         let input = cells_of(&s, &g)
             .into_iter()
             .find(|c| c.look == Look::Input)
             .unwrap();
         assert_eq!(input.text, "Serde_j");
-        assert!(s.typed("backspace", None));
-        assert!(s.typed("backspace", None));
+        assert!(s.typed(&g, "backspace", None));
+        assert!(s.typed(&g, "backspace", None));
         assert!(rows(&s).iter().all(|r| r.0.contains("serde")));
         // The panel fits the window with the list open.
         let rect = s.popup.as_ref().unwrap().layout(g.size).rect;

@@ -165,7 +165,8 @@ mod tests {
         stage(&mut s, &g, 3);
         let p = s.popup.as_ref().unwrap();
         assert!(matches!(p.kind, PopupKind::Input(_)));
-        let labels: Vec<&str> = p.choices.iter().map(|c| c.label.as_str()).collect();
+        let cs = p.choices();
+        let labels: Vec<&str> = cs.iter().map(|c| c.label.as_str()).collect();
         assert_eq!(labels, ["既定（In 1）", "In 1"]);
         // The next stage starts from two channels again.
         stage(&mut s, &g, 0);

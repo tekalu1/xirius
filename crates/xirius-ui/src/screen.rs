@@ -527,7 +527,7 @@ impl Screen {
             return;
         }
         let keypad = key != k.key;
-        let typed = !keypad && !m.ctrl && studio.typed(&k.key, k.key_char.as_deref());
+        let typed = !keypad && !m.ctrl && studio.typed(&g, &k.key, k.key_char.as_deref());
         let played = !keypad
             && !typed
             && !m.ctrl

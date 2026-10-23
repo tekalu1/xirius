@@ -156,9 +156,10 @@ fn a_preset_sets_every_knob_in_one_step() {
     assert!(s.instrument_down(&g, x, y));
     let popup = s.popup.as_ref().expect("the presets");
     assert!(matches!(popup.kind, PopupKind::InstMenu(_)));
-    let labels: Vec<&str> = popup.choices.iter().map(|c| c.label.as_str()).collect();
+    let cs = popup.choices();
+    let labels: Vec<&str> = cs.iter().map(|c| c.label.as_str()).collect();
     assert_eq!(labels, ["初期", "やさしく", "強め", "声を前に"]);
-    assert_eq!(popup.current, "初期");
+    assert_eq!(popup.current(), "初期");
     let before = s.song().steps();
     s.popup_action(&g, Action::Pick("強め".into()));
     assert!(s.popup.is_none());

@@ -15,6 +15,7 @@ use xirius_design::{FontSize, Layout, Radius, Space, TrackColor, Weight};
 use crate::browser::{View, text_width};
 use crate::draw::{Align, Pen};
 use crate::health::PlugAct;
+use crate::pick_list::PickList;
 use crate::song::{HistoryItem, VersionDetail, VersionItem};
 use crate::studio::Rect;
 use crate::tools::SnapMode;
@@ -27,10 +28,6 @@ pub const HISTORY_ROWS: usize = 9;
 pub const VERSION_ROWS: usize = 6;
 /// The most recent songs the song menu lists.
 pub const RECENT_ROWS: usize = 5;
-/// The most plugins or buses listed at once in a pick list (the wheel moves on).
-pub const PICK_ROWS: usize = 12;
-const PICK_W: f32 = 260.0;
-const ADD_W: f32 = 184.0;
 /// The grid pop-over: its width, and the buttons of its segmented rows.
 const GRID_W: f32 = 300.0;
 pub(crate) const SEGMENT_H: f32 = 24.0;
@@ -42,7 +39,6 @@ const CLI_LINE_H: f32 = 16.0;
 const CLI_PAD: f32 = 6.0;
 pub(crate) const SWATCH: f32 = 24.0;
 /// The list of the devices (UI-260): its width.
-const DEVICE_W: f32 = 280.0;
 /// An icon that keeps its room in a row but draws nothing (the rows without the check).
 pub const BLANK: &str = "blank";
 pub(crate) const SWATCH_GAP: f32 = 4.0;
@@ -204,7 +200,8 @@ pub struct Choice {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Popup {
-    pub fx_query: String,
+    /// The list menu's part and its state (UI-320), when the kind is one.
+    pub pick: Option<PickList>,
     pub kind: PopupKind,
     /// The button it hangs from (body coordinates).
     pub anchor: Rect,
@@ -228,10 +225,6 @@ pub struct Popup {
     pub now_ms: u64,
     /// The palette index of the track's colour (Color popups).
     pub color: Option<usize>,
-    pub choices: Vec<Choice>,
-    /// What each choice shows at its right (the devices' inputs and outputs).
-    pub hints: Vec<String>,
-    pub current: String,
     pub view: View,
     /// The views the browser's tab offers.
     pub views: &'static [View],
@@ -274,7 +267,7 @@ pub struct Popup {
 impl Popup {
     pub fn new(kind: PopupKind, anchor: Rect) -> Popup {
         Popup {
-            fx_query: String::new(),
+            pick: None,
             kind,
             anchor,
             history: Vec::new(),
@@ -291,9 +284,6 @@ impl Popup {
             naming: None,
             now_ms: 0,
             color: None,
-            choices: Vec::new(),
-            hints: Vec::new(),
-            current: String::new(),
             view: View::Kind,
             views: &View::ALL,
             can_export: false,
@@ -317,8 +307,20 @@ impl Popup {
         }
     }
 
-    /// How far the wheel can move the list down.
-    pub fn max_offset(&self) -> usize {
+    /// The list menu's rows as the old flat `choices` (the tests' view:
+    /// every group's rows, then the footer the search never filters).
+    pub fn choices(&self) -> Vec<Choice> {
+        self.pick.as_ref().map(|p| p.choices()).unwrap_or_default()
+    }
+
+    /// The lit row's `to` (the old `current` field).
+    pub fn current(&self) -> String {
+        self.pick.as_ref().map(|p| p.current()).unwrap_or_default()
+    }
+
+    /// How far the wheel can move the list down at the window `size` (a list
+    /// menu's rows shrink to the screen's edge, so it counts with it).
+    pub fn max_offset(&self, size: (f32, f32)) -> usize {
         match self.kind {
             PopupKind::History => {
                 (self.history.len() + self.notes.len()).saturating_sub(HISTORY_ROWS + 1)
@@ -341,12 +343,7 @@ impl Popup {
                 .as_ref()
                 .map_or(0, crate::cleanup_dialog::View::max_offset),
             PopupKind::About => self.about.as_deref().map_or(0, crate::about::max_offset),
-            PopupKind::Insert(_) | PopupKind::Instrument(_) => crate::fx_picker::found(self)
-                .count()
-                .saturating_sub(PICK_ROWS),
-            PopupKind::Send(_) | PopupKind::Input(_) | PopupKind::AutomationTargets(..) => {
-                self.choices.len().saturating_sub(PICK_ROWS)
-            }
+            _ if self.pick.is_some() => self.pick.as_ref().unwrap().max_offset(size),
             _ => 0,
         }
     }
@@ -455,6 +452,8 @@ pub enum Look {
     Clean(crate::cleanup_dialog::CleanLook),
     /// The scroll thumb of a pick list with more rows than show (UI-297).
     Thumb,
+    /// 「一致する…はありません」: a status a screen reader reads (UI-320).
+    Status,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -468,6 +467,10 @@ pub struct Cell {
     pub mark: Option<usize>,
     /// Current, selected or switched on.
     pub on: bool,
+    /// The row the arrow keys are on (UI-320: the list menus' cursor).
+    pub cursor: bool,
+    /// Under the list: the query never filters it (UI-320's footer).
+    pub foot: bool,
     pub enabled: bool,
     pub action: Option<Action>,
     /// Said in a balloon while the pointer is on it (why a dim cell cannot be chosen).
@@ -487,6 +490,8 @@ impl Cell {
             icon: None,
             mark: None,
             on: false,
+            cursor: false,
+            foot: false,
             enabled: true,
             action: None,
             tip: String::new(),
@@ -526,6 +531,18 @@ impl Cell {
 
     pub(crate) fn on(mut self, on: bool) -> Cell {
         self.on = on;
+        self
+    }
+
+    /// The arrow keys' row: the same lit band a hovered row gets.
+    pub(crate) fn cur(mut self, cur: bool) -> Cell {
+        self.cursor = cur;
+        self
+    }
+
+    /// Under the list: the query never filters it (UI-320's footer).
+    pub(crate) fn foot(mut self) -> Cell {
+        self.foot = true;
         self
     }
 
@@ -577,25 +594,6 @@ impl Popup {
                     + (SWATCH_COLUMNS - 1) as f32 * SWATCH_GAP;
                 (w, self.color_cells())
             }
-            PopupKind::Output(_) | PopupKind::Input(_) => {
-                (Layout::MENU_W, self.output_cells(Layout::MENU_W))
-            }
-            PopupKind::Device(_) => (DEVICE_W, self.device_cells(DEVICE_W)),
-            PopupKind::Insert(_) | PopupKind::Send(_) | PopupKind::Instrument(_) => {
-                (PICK_W, self.pick_cells(PICK_W))
-            }
-            PopupKind::AutomationTargets(t, replace) => (
-                Layout::MENU_W,
-                crate::automation_targets::cells(
-                    t,
-                    replace,
-                    &self.choices,
-                    &self.current,
-                    self.offset,
-                ),
-            ),
-            PopupKind::BrowserView => (168.0, self.view_cells(168.0)),
-            PopupKind::AddTrack => (ADD_W, add_cells(ADD_W)),
             PopupKind::Export => match &self.export {
                 Some(v) => (
                     crate::export::W,
@@ -622,18 +620,6 @@ impl Popup {
                     self.naming.as_deref(),
                     Layout::MENU_W,
                 ),
-            ),
-            PopupKind::FolderBus(_) => (
-                Layout::MENU_W,
-                crate::folder_bus::cells(&self.choices, &self.current, Layout::MENU_W),
-            ),
-            PopupKind::RecQuantize => (
-                Layout::MENU_W,
-                crate::rec_panel::cells(&self.choices, &self.current, Layout::MENU_W),
-            ),
-            PopupKind::InstMenu(m) => (
-                Layout::MENU_W,
-                crate::instrument::menu::cells(m, &self.choices, &self.current, Layout::MENU_W),
             ),
             PopupKind::Context => match &self.ask {
                 Some(text) => (
@@ -698,6 +684,22 @@ impl Popup {
                     .map(|v| crate::cleanup_dialog::cells(v, self.offset))
                     .unwrap_or_default(),
             ),
+            // A list menu is always the PickList part (UI-320); every other
+            // kind names its arm above, so the catch-all is theirs.
+            kind => {
+                debug_assert!(
+                    crate::pick_list::is(kind),
+                    "a list menu's cells come only from PickList (UI-320): {kind:?}"
+                );
+                let w = crate::pick_list::width(kind);
+                (
+                    w,
+                    self.pick
+                        .as_ref()
+                        .map(|p| crate::pick_list::cells(p, w, size))
+                        .unwrap_or_default(),
+                )
+            }
         };
         let height = cells.iter().map(|c| c.rect.bottom()).fold(0.0f32, f32::max) + pad;
         // Right-aligned under the buttons that sit at the right. The CPU is at the left of the
@@ -1105,105 +1107,6 @@ impl Popup {
         cells
     }
 
-    /// The rows of the output list, or of the input list (the same look).
-    fn output_cells(&self, w: f32) -> Vec<Cell> {
-        let pad = Layout::POPUP_PAD;
-        let input = matches!(self.kind, PopupKind::Input(_));
-        self.choices
-            .iter()
-            .enumerate()
-            .map(|(i, ch)| {
-                Cell::new(
-                    Rect::new(
-                        pad,
-                        pad + i as f32 * Layout::MENU_ROW_H,
-                        w - pad * 2.0,
-                        Layout::MENU_ROW_H,
-                    ),
-                    Look::Row,
-                )
-                .text(ch.label.clone())
-                .icon(if input { "input" } else { "output" })
-                .on(ch.to == self.current)
-                .act(if input {
-                    Action::Input(ch.to.clone())
-                } else {
-                    Action::Output(ch.to.clone())
-                })
-            })
-            .collect()
-    }
-
-    /// One row per device: a check on the one in use, its inputs and outputs at the right.
-    /// With none, one row that says so.
-    fn device_cells(&self, w: f32) -> Vec<Cell> {
-        let pad = Layout::POPUP_PAD;
-        let row = |i: usize| {
-            Rect::new(
-                pad,
-                pad + i as f32 * Layout::MENU_ROW_H,
-                w - pad * 2.0,
-                Layout::MENU_ROW_H,
-            )
-        };
-        if self.choices.is_empty() {
-            return vec![
-                Cell::new(row(0), Look::Row)
-                    .text(crate::start::rig::NO_DEVICE)
-                    .icon("alert")
-                    .off(),
-            ];
-        }
-        self.choices
-            .iter()
-            .enumerate()
-            .map(|(i, ch)| {
-                let on = ch.to == self.current;
-                Cell::new(row(i), Look::Row)
-                    .text(ch.label.clone())
-                    .icon(if on { "check" } else { BLANK })
-                    .hint(self.hints.get(i).cloned().unwrap_or_default())
-                    .on(on)
-                    .act(Action::Device(ch.to.clone()))
-            })
-            .collect()
-    }
-
-    /// One row per plugin or bus, from `offset` on. A choice with nothing to
-    /// pick (`to` empty) says why the list is empty.
-    fn pick_cells(&self, w: f32) -> Vec<Cell> {
-        if crate::fx_picker::searched(self.kind) {
-            return crate::fx_picker::cells(self, w);
-        }
-        let pad = Layout::POPUP_PAD;
-        let icon = match self.kind {
-            PopupKind::Send(_) => "cable",
-            _ => "effects",
-        };
-        self.choices
-            .iter()
-            .skip(self.offset)
-            .take(PICK_ROWS)
-            .enumerate()
-            .map(|(i, ch)| {
-                let r = Rect::new(
-                    pad,
-                    pad + i as f32 * Layout::MENU_ROW_H,
-                    w - pad * 2.0,
-                    Layout::MENU_ROW_H,
-                );
-                if ch.to.is_empty() {
-                    Cell::new(r, Look::Note).text(ch.label.clone())
-                } else {
-                    Cell::new(r, Look::Row)
-                        .text(ch.label.clone())
-                        .icon(icon)
-                        .act(Action::Pick(ch.to.clone()))
-                }
-            })
-            .collect()
-    }
-
     /// A plugin that stopped: its name, 再起動 and 外す (PLG-053), and a process of its own
     /// when it took the shared one down. Else 開く and 外す. Then where it runs (PLG-022).
     fn plugin_cells(&self, w: f32) -> Vec<Cell> {
@@ -1285,66 +1188,6 @@ impl Popup {
         }
         cells
     }
-
-    fn view_cells(&self, w: f32) -> Vec<Cell> {
-        let pad = Layout::POPUP_PAD;
-        self.views
-            .iter()
-            .enumerate()
-            .map(|(i, v)| {
-                let cell = Cell::new(
-                    Rect::new(
-                        pad,
-                        pad + i as f32 * Layout::MENU_ROW_H,
-                        w - pad * 2.0,
-                        Layout::MENU_ROW_H,
-                    ),
-                    Look::Row,
-                )
-                .text(v.label())
-                .on(*v == self.view)
-                .act(Action::View(*v));
-                match v.icon() {
-                    Some(icon) => cell.icon(icon),
-                    None => cell,
-                }
-            })
-            .collect()
-    }
-}
-
-/// オーディオ / 音源 / フォルダー / バス — ファイルから…
-fn add_cells(w: f32) -> Vec<Cell> {
-    let pad = Layout::POPUP_PAD;
-    let items: [(&str, &'static str, Action); 5] = [
-        ("オーディオ", "wave", Action::AddTrack("audio")),
-        (
-            "インストゥルメント",
-            "instrument",
-            Action::AddTrack("instrument"),
-        ),
-        ("フォルダー", "folder", Action::AddTrack("folder")),
-        ("バス", "bus", Action::AddTrack("bus")),
-        ("ファイルから…", "file", Action::FromFile),
-    ];
-    let mut y = pad;
-    let mut cells = Vec::new();
-    for (i, (text, icon, action)) in items.into_iter().enumerate() {
-        if i == 4 {
-            y += Space::X2.px();
-        }
-        cells.push(
-            Cell::new(
-                Rect::new(pad, y, w - pad * 2.0, Layout::MENU_ROW_H),
-                Look::Row,
-            )
-            .text(text)
-            .icon(icon)
-            .act(action),
-        );
-        y += Layout::MENU_ROW_H;
-    }
-    cells
 }
 
 /// A tray across `r` with a button of equal width for each item.
@@ -1547,7 +1390,7 @@ fn paint_cell(pen: &mut Pen, cell: &Cell, hot: bool) {
             );
         }
         Look::Row => {
-            if cell.on {
+            if cell.on || cell.cursor {
                 pen.round(r, c.sel, Radius::S);
             } else if hot {
                 pen.round(r, c.hover, Radius::S);
@@ -1878,6 +1721,16 @@ fn paint_cell(pen: &mut Pen, cell: &Cell, hot: bool) {
             }
         }
         Look::Thumb => pen.round(r, c.thumb, Radius::Xs),
+        Look::Status => {
+            pen.text(
+                &cell.text,
+                FontSize::Small,
+                Weight::Regular,
+                c.ink,
+                r,
+                Align::Center,
+            );
+        }
         Look::Input => {
             pen.round(r, c.well, Radius::S);
             pen.icon(cell.icon.unwrap_or("saved"), icon_at(r, r.x + pad), c.ink);
@@ -2447,43 +2300,76 @@ mod tests {
             PopupKind::Output(TrackId::MASTER),
             Rect::new(20.0, 100.0, 160.0, 22.0),
         );
-        p.choices = vec![
-            Choice {
-                to: "default".into(),
-                label: "既定".into(),
-            },
-            Choice {
-                to: "master".into(),
-                label: "マスター".into(),
-            },
-            Choice {
-                to: "t9".into(),
-                label: "ドラムバス".into(),
-            },
-        ];
-        p.current = "t9".into();
+        p.pick = Some(crate::pick_list::PickList::of_choices(
+            vec![
+                Choice {
+                    to: "default".into(),
+                    label: "既定".into(),
+                },
+                Choice {
+                    to: "master".into(),
+                    label: "マスター".into(),
+                },
+                Choice {
+                    to: "t9".into(),
+                    label: "ドラムバス".into(),
+                },
+            ],
+            "t9",
+            "output",
+            |to| Action::Output(to.to_string()),
+        ));
         let l = p.layout((1440.0, 860.0));
-        assert_eq!(texts(&l), ["既定", "マスター", "ドラムバス"]);
-        assert_eq!(l.cells.iter().position(|c| c.on), Some(2));
-        assert_eq!(l.cells[1].action, Some(Action::Output("master".into())));
+        // The list menu's rows come after its search box (UI-320).
+        assert_eq!(texts(&l), ["", "既定", "マスター", "ドラムバス"]);
+        assert_eq!(
+            l.cells.iter().position(|c| c.look == Look::Row && c.on),
+            Some(3)
+        );
+        assert_eq!(l.cells[2].action, Some(Action::Output("master".into())));
     }
 
     #[test]
     fn the_browser_view_choice_lists_the_five_views() {
+        let rows = |views: &[View], view: View| {
+            crate::pick_list::PickList::of(
+                views
+                    .iter()
+                    .map(|v| {
+                        let row = crate::pick_list::PickRow::new(v.label())
+                            .on(*v == view)
+                            .act(Action::View(*v));
+                        match v.icon() {
+                            Some(icon) => row.icon(icon),
+                            None => row,
+                        }
+                    })
+                    .collect(),
+            )
+        };
         let mut p = Popup::new(PopupKind::BrowserView, Rect::new(200.0, 20.0, 28.0, 28.0));
         p.view = View::Vendor;
+        p.pick = Some(rows(&View::ALL, p.view));
         let l = p.layout((1440.0, 860.0));
+        // The first cell is the list menu's search box (UI-320).
         assert_eq!(
             texts(&l),
-            ["種類別", "ベンダー別", "形式別", "名前順", "お気に入り"]
+            ["", "種類別", "ベンダー別", "形式別", "名前順", "お気に入り"]
         );
-        assert_eq!(l.cells.iter().position(|c| c.on), Some(1));
+        assert_eq!(
+            l.cells.iter().position(|c| c.look == Look::Row && c.on),
+            Some(2)
+        );
         // The song files order only by kind or by name.
         p.views = View::of(crate::browser::RailTab::SongFiles);
         p.view = View::Name;
+        p.pick = Some(rows(p.views, p.view));
         let l = p.layout((1440.0, 860.0));
-        assert_eq!(texts(&l), ["種類別", "名前順"]);
-        assert_eq!(l.cells.iter().position(|c| c.on), Some(1));
+        assert_eq!(texts(&l), ["", "種類別", "名前順"]);
+        assert_eq!(
+            l.cells.iter().position(|c| c.look == Look::Row && c.on),
+            Some(2)
+        );
     }
 
     #[test]

@@ -61,6 +61,8 @@ fn the_instrument_row_has_its_own_menu_with_keys_and_groups() {
     assert_eq!(
         shown,
         [
+            // The list menu's search box is the first row (UI-320).
+            ("", "", true),
             ("画面を開く", "Shift+F11", true),
             ("プリセット", "", true),
             ("差し替える…", "", true),
@@ -104,7 +106,7 @@ fn open_presets_and_replace_go_where_the_row_says() {
     let popup = s.popup.as_ref().expect("the presets");
     assert_eq!(popup.kind, PopupKind::InstMenu(Menu::Preset(t, id)));
     assert_eq!(popup.anchor, anchor);
-    assert_eq!(popup.current, "初期");
+    assert_eq!(popup.current(), "初期");
     pick(&mut s, &g, "強め");
     assert_eq!(window::preset_of(&plugin(&s, t)), "強め");
     // 差し替える… is the instrument picker.
@@ -131,7 +133,8 @@ fn automation_shows_a_lane_of_the_picked_parameter_in_one_step() {
     pick(&mut s, &g, "auto");
     let popup = s.popup.as_ref().expect("the parameters");
     assert_eq!(popup.kind, PopupKind::InstMenu(Menu::Params(t, id)));
-    let names: Vec<&str> = popup.choices.iter().map(|c| c.label.as_str()).collect();
+    let cs = popup.choices();
+    let names: Vec<&str> = cs.iter().map(|c| c.label.as_str()).collect();
     let def = plugin(&s, t).builtin().unwrap();
     let want: Vec<&str> = def.params.iter().map(|p| p.label).collect();
     assert_eq!(names, want);
@@ -188,9 +191,9 @@ fn another_makers_instrument_has_no_presets_here() {
     // It keeps nothing yet: no parameter to follow.
     pick(&mut s, &g, "auto");
     let cells = rows(&s, &g);
-    assert_eq!(cells.len(), 1);
-    assert_eq!(cells[0].text, "パラメーターがありません");
-    assert!(!cells[0].enabled);
+    assert_eq!(cells.len(), 2);
+    assert_eq!(cells[1].text, "パラメーターがありません");
+    assert!(!cells[1].enabled);
 }
 
 #[test]

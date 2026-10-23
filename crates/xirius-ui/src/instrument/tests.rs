@@ -76,7 +76,8 @@ fn the_pick_row_lists_the_built_in_instruments_then_the_scan() {
     assert!(press(&mut s, &g, MixerHit::AddInstrument(t)));
     let popup = s.popup.as_ref().expect("the instrument list");
     assert_eq!(popup.kind, PopupKind::Instrument(t));
-    let labels: Vec<&str> = popup.choices.iter().map(|c| c.label.as_str()).collect();
+    let cs = popup.choices();
+    let labels: Vec<&str> = cs.iter().map(|c| c.label.as_str()).collect();
     assert_eq!(
         labels,
         [
@@ -87,7 +88,7 @@ fn the_pick_row_lists_the_built_in_instruments_then_the_scan() {
         ]
     );
     assert_eq!(
-        popup.choices.last().map(|c| c.to.as_str()),
+        popup.choices().last().map(|c| c.to.as_str()),
         Some(crate::mixer::scan::RESCAN)
     );
     // Effects are not in it.
@@ -209,9 +210,19 @@ fn ui_297_the_instrument_list_keeps_its_width_and_says_a_cut_name_in_full() {
     let rows: Vec<_> = layout
         .cells
         .iter()
-        .filter(|c| c.look == Look::Row)
+        .filter(|c| c.look == Look::Row && !c.foot)
         .collect();
-    assert_eq!(rows.len(), crate::popup::PICK_ROWS);
+    assert_eq!(
+        rows.len(),
+        s.popup
+            .as_ref()
+            .unwrap()
+            .pick
+            .as_ref()
+            .unwrap()
+            .capacity(g.size)
+    );
+    assert!(rows.iter().all(|c| !c.foot));
     assert!(rows.iter().all(|c| c.icon == Some("keys")));
     assert!(rows.iter().all(|c| c.rect.right() <= layout.rect.right()));
     // A long name is cut in the row (its text stays whole) and said in full in the balloon;
@@ -249,16 +260,44 @@ fn ui_297_the_instrument_list_shows_a_thumb_when_more_rows_than_show() {
     };
     let pad = xirius_design::Layout::POPUP_PAD;
     let row_h = xirius_design::Layout::MENU_ROW_H;
-    let h = crate::popup::PICK_ROWS as f32 * row_h;
-    let n = s.popup.as_ref().unwrap().choices.len();
+    let h = s
+        .popup
+        .as_ref()
+        .unwrap()
+        .pick
+        .as_ref()
+        .unwrap()
+        .capacity(g.size) as f32
+        * row_h;
+    let n = s
+        .popup
+        .as_ref()
+        .unwrap()
+        .pick
+        .as_ref()
+        .unwrap()
+        .visible()
+        .len();
     // At the top: 4 px wide, 1 px from the rows' right edge, as tall as the share that shows.
     let top = thumb(&s).expect("a thumb");
     assert_eq!((top.w, top.right()), (4.0, 260.0 - pad - 1.0));
     assert_eq!(top.y, pad + row_h);
-    assert_eq!(top.h, (h * 12.0 / n as f32).max(16.0));
+    assert_eq!(
+        top.h,
+        (h * s
+            .popup
+            .as_ref()
+            .unwrap()
+            .pick
+            .as_ref()
+            .unwrap()
+            .capacity(g.size) as f32
+            / n as f32)
+            .max(16.0)
+    );
     // Sent to the end, it reaches the bottom of the rows.
-    let end = s.popup.as_ref().unwrap().max_offset();
-    s.popup.as_mut().unwrap().offset = end;
+    let end = s.popup.as_ref().unwrap().max_offset(g.size);
+    s.popup.as_mut().unwrap().pick.as_mut().unwrap().offset = end;
     let bottom = thumb(&s).unwrap();
     assert!((bottom.bottom() - (pad + row_h + h)).abs() < 0.01);
     // Narrowed to few enough to show at once (Synth 391, 392, 394, …): no thumb.
@@ -267,7 +306,13 @@ fn ui_297_the_instrument_list_shows_a_thumb_when_more_rows_than_show() {
         assert!(s.fx_typed(&ch, Some(&ch)));
     }
     let p = s.popup.as_ref().unwrap();
-    assert_eq!((p.offset, crate::fx_picker::found(p).count()), (0, 6));
+    assert_eq!(
+        (
+            p.pick.as_ref().unwrap().offset,
+            crate::pick_list::found(p).count()
+        ),
+        (0, 6)
+    );
     assert_eq!(thumb(&s), None);
 }
 
@@ -282,7 +327,7 @@ fn ui_297_typing_narrows_by_name_and_maker_and_the_keys_pick() {
         assert!(s.fx_typed(ch, Some(ch)));
     }
     let p = s.popup.as_ref().unwrap();
-    let found: Vec<String> = crate::fx_picker::found(p)
+    let found: Vec<String> = crate::pick_list::found(p)
         .map(|c| c.label.clone())
         .collect();
     assert_eq!(found.len(), 10, "{found:?}");
@@ -300,7 +345,7 @@ fn ui_297_typing_narrows_by_name_and_maker_and_the_keys_pick() {
         assert!(s.fx_typed(&ch, Some(&ch)));
     }
     let p = s.popup.as_ref().unwrap();
-    let found: Vec<String> = crate::fx_picker::found(p)
+    let found: Vec<String> = crate::pick_list::found(p)
         .map(|c| c.label.clone())
         .collect();
     assert!(!found.is_empty());
@@ -323,13 +368,20 @@ fn ui_297_enter_on_a_line_with_nothing_to_pick_does_nothing() {
     s.mixer.catalog = Some(Arc::new(a_synth()));
     let t = track(&s, "Keys");
     assert!(press(&mut s, &g, MixerHit::AddInstrument(t)));
-    s.popup.as_mut().unwrap().choices.insert(
-        0,
-        crate::popup::Choice {
-            to: String::new(),
-            label: "スキャン中".into(),
-        },
-    );
+    s.popup
+        .as_mut()
+        .unwrap()
+        .pick
+        .as_mut()
+        .unwrap()
+        .groups
+        .insert(
+            0,
+            crate::pick_list::PickGroup::new(
+                "",
+                vec![crate::pick_list::PickRow::new("スキャン中").note()],
+            ),
+        );
     let notes = s.popup.as_ref().unwrap().layout(g.size).cells;
     assert_eq!(notes[1].look, Look::Note);
     let before = s.song().steps();

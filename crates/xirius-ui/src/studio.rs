@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use xirius_core::id::{ClipId, FolderId, TrackId};
-use xirius_core::model::{Clip, Note, Output, Project, Track};
+use xirius_core::model::{Clip, Note, Project, Track};
 use xirius_core::time::Tick;
 use xirius_design::{Layout, LineState, Motion, Space, TrackColor};
 
@@ -2020,34 +2020,8 @@ impl Studio {
         };
         let quant = (self.popup.as_ref().map(|p| p.kind) == Some(PopupKind::Quantize))
             .then(|| self.quant_view());
-        let choices = match self.popup.as_ref().map(|p| p.kind) {
-            Some(PopupKind::AutomationTargets(t, replace)) => Some(
-                self.auto_target_choices(
-                    t,
-                    self.popup
-                        .as_ref()
-                        .filter(|_| replace)
-                        .map(|p| p.current.as_str()),
-                ),
-            ),
-            Some(kind) => self.mixer_choices(kind),
-            None => None,
-        };
         let ai = (self.popup.as_ref().map(|p| p.kind) == Some(PopupKind::Ai))
             .then(|| Box::new(self.ai_view()));
-        let folder_bus = match self.popup.as_ref().map(|p| p.kind) {
-            Some(PopupKind::FolderBus(f)) => Some(self.folder_bus_view(f)),
-            Some(PopupKind::RecQuantize) => Some(self.rec_quantize_view()),
-            _ => None,
-        };
-        let device = match self.popup.as_ref().map(|p| p.kind) {
-            Some(PopupKind::Device(only_inputs)) => Some(self.device_view(only_inputs)),
-            _ => None,
-        };
-        let inst_menu = match self.popup.as_ref().map(|p| p.kind) {
-            Some(PopupKind::InstMenu(m)) => Some(self.inst_menu_view(m)),
-            _ => None,
-        };
         let perf = (self.popup.as_ref().map(|p| p.kind) == Some(PopupKind::Perf))
             .then(|| self.perf_view());
         let ctx = (self.popup.as_ref().map(|p| p.kind) == Some(PopupKind::Context))
@@ -2063,15 +2037,23 @@ impl Studio {
             None
         };
         let mode = self.grid_mode();
+        // The view and its choices the list menu builds on are set first.
+        if let Some(p) = &mut self.popup {
+            p.view = self.browser.view();
+            p.views = browser::View::of(self.browser.tab);
+        }
+        // The list menu's rows as they are now (UI-320); what was typed, the
+        // cursor and the scroll are kept by `refill`.
+        let pick = match self.popup.as_ref().map(|p| p.kind) {
+            Some(kind) if crate::pick_list::is(kind) => self.pick_view(kind),
+            _ => None,
+        };
         let Some(p) = &mut self.popup else { return };
         if let Some(ctx) = ctx {
             p.ctx = ctx;
             p.ask = ask;
             p.ctx_query = query;
             p.ctx_search = self.ctx.as_ref().is_some_and(|s| s.field.is_none());
-        }
-        if let Some(choices) = choices {
-            p.choices = choices;
         }
         p.history = self.song.history();
         p.notes = self.song.history_notes();
@@ -2081,7 +2063,7 @@ impl Studio {
         p.aq = self.auto_quantize;
         p.has_dir = self.song.dir().is_some();
         p.versions = self.song.versions();
-        p.offset = p.offset.min(p.max_offset());
+        p.offset = p.offset.min(p.max_offset((f32::MAX, f32::MAX)));
         p.now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -2105,16 +2087,15 @@ impl Studio {
         p.ai = ai;
         p.auto = auto;
         p.quant = quant;
-        if let Some((choices, current)) = folder_bus.or(inst_menu) {
-            p.choices = choices;
-            p.current = current;
+        // The list menu: its rows are built again, but what was typed, the
+        // cursor and the scroll stay (UI-320).
+        if let Some(list) = pick {
+            match &mut p.pick {
+                Some(old) => old.refill(list),
+                _ => p.pick = Some(list),
+            }
         }
-        if let Some((choices, hints, current)) = device {
-            p.choices = choices;
-            p.hints = hints;
-            p.current = current;
-        }
-        if let PopupKind::Color(t) | PopupKind::Output(t) = p.kind
+        if let PopupKind::Color(t) = p.kind
             && let Some(t) = project.tracks.get(&t)
         {
             p.color = t
@@ -2122,29 +2103,6 @@ impl Studio {
                 .as_deref()
                 .and_then(crate::song::palette_color)
                 .map(TrackColor::index);
-            p.current = if t.id == xirius_core::id::TrackId::MASTER {
-                let pair = self
-                    .song
-                    .io
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .view
-                    .output;
-                format!("{}:{}", pair[0] + 1, pair[1] + 1)
-            } else if let Some(m) = &t.midi_out {
-                format!("{}{}", crate::midi_out_row::PREFIX, m.port)
-            } else {
-                match t.output {
-                    None => "default".to_string(),
-                    Some(Output::Master) => "master".to_string(),
-                    Some(Output::Bus(id)) => id.to_string(),
-                }
-            };
-        }
-        if let PopupKind::Input(t) = p.kind
-            && let Some(t) = project.tracks.get(&t)
-        {
-            p.current = t.input.clone().unwrap_or_else(|| "none".into());
         }
         p.detail = p
             .selected
@@ -2405,11 +2363,11 @@ impl Studio {
         true
     }
 
-    pub fn typed(&mut self, key: &str, ch: Option<&str>) -> bool {
+    pub fn typed(&mut self, g: &Geometry, key: &str, ch: Option<&str>) -> bool {
         if let Some(done) = self.ask_key(key) {
             return done;
         }
-        if self.fx_typed(key, ch) {
+        if self.pick_typed(g, key, ch) {
             return true;
         }
         if let Some(done) = self.auto_typed(key, ch) {
@@ -2669,6 +2627,7 @@ pub fn roll_top_pitch(notes: &[Note], rows: usize) -> u8 {
 mod tests {
     use super::*;
     use xirius_core::id::NoteId;
+    use xirius_core::model::Output;
 
     fn studio() -> Studio {
         Studio::sample()
@@ -3221,7 +3180,8 @@ mod tests {
         click(&mut s, Hit::Rail(RailTab::Effects));
         assert_eq!(s.browser.view(), browser::View::Kind);
         click(&mut s, Hit::Browser(BrowserHit::Search));
-        assert!(s.typed("r", Some("reverb")));
+        let g = geometry(&s);
+        assert!(s.typed(&g, "r", Some("reverb")));
         assert!(
             s.browser
                 .library()
@@ -3394,8 +3354,8 @@ mod tests {
         assert!(s.song.is_saved());
         click(&mut s, Hit::Bar(BarButton::Saved));
         choose(&mut s, Action::NameVersion);
-        s.typed("a", Some("初稿"));
-        s.typed("enter", None);
+        s.typed(&geometry(&s), "a", Some("初稿"));
+        s.typed(&geometry(&s), "enter", None);
         assert_eq!(s.error, None);
         assert!(s.song.versions().iter().any(|v| v.name == "初稿"));
         s.key(&geometry(&s), "escape", false, false);
@@ -3478,8 +3438,8 @@ mod tests {
         let p = s.popup.as_ref().unwrap();
         assert_eq!(p.kind, PopupKind::Versions);
         assert_eq!(p.naming.as_deref(), Some(""));
-        s.typed("a", Some("二稿"));
-        s.typed("enter", None);
+        s.typed(&g, "a", Some("二稿"));
+        s.typed(&g, "enter", None);
         assert_eq!(s.error, None);
         assert!(s.song.versions().iter().any(|v| v.name == "二稿"));
         drop(s);

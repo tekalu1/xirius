@@ -224,7 +224,7 @@ mod tests {
 
     fn labels(s: &Studio) -> Vec<String> {
         let p = s.popup.as_ref().unwrap();
-        p.choices.iter().map(|c| c.label.clone()).collect()
+        p.choices().iter().map(|c| c.label.clone()).collect()
     }
 
     #[test]
@@ -251,7 +251,7 @@ mod tests {
         assert!(press_input(&mut s, &g, keys));
         let popup = s.popup.as_ref().expect("the port list");
         assert_eq!(popup.kind, PopupKind::Input(keys));
-        assert_eq!(popup.current, "none");
+        assert_eq!(popup.current(), "none");
         assert_eq!(labels(&s), [ALL_PORTS, "KeyStep 37", "loopMIDI Port"]);
         let before = s.song().steps();
         s.popup_action(&g, Action::Input("loopMIDI Port".into()));
@@ -264,7 +264,7 @@ mod tests {
         set_test_ports(Some(vec!["KeyStep 37".into()]));
         assert!(press_input(&mut s, &g, keys));
         assert_eq!(labels(&s), [ALL_PORTS, "KeyStep 37", "loopMIDI Port"]);
-        assert_eq!(s.popup.as_ref().unwrap().current, "loopMIDI Port");
+        assert_eq!(s.popup.as_ref().unwrap().current(), "loopMIDI Port");
         s.popup_action(&g, Action::Input("none".into()));
         assert_eq!(s.project().tracks[&keys].input, None);
         set_test_ports(None);

@@ -67,10 +67,15 @@ impl Studio {
             let Some(p) = self.popup.as_mut() else {
                 return false;
             };
-            p.offset = if notch < 0.0 {
-                (p.offset + 1).min(p.max_offset())
+            let max = p.max_offset(g.size);
+            let offset = match p.pick.as_mut() {
+                Some(pick) => &mut pick.offset,
+                None => &mut p.offset,
+            };
+            *offset = if notch < 0.0 {
+                (*offset + 1).min(max)
             } else {
-                p.offset.saturating_sub(1)
+                offset.saturating_sub(1)
             };
             // The list was sent even when it was already at its end: the next turn is still
             // the list's (P3-8 of review 15).
@@ -239,7 +244,7 @@ mod tests {
         assert!(s.press(&g, Hit::Bar(BarButton::History)));
         let p = s.popup.as_ref().expect("the history");
         assert_eq!(p.kind, PopupKind::History);
-        assert!(p.max_offset() > 1);
+        assert!(p.max_offset(g.size) > 1);
         let r = p.layout(g.size).rect;
         let at = (r.x + r.w / 2.0, r.y + r.h / 2.0);
         // Toward you: down the list.

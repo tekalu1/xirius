@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 use xirius_plugins::{CHILD_ARG, Catalog, ChildProgram, ScanOptions};
 
-use crate::popup::{Choice, PopupKind};
+use crate::popup::{Action, Choice, PopupKind};
 use crate::studio::Studio;
 
 /// How often a running scan is asked how far it got.
@@ -244,6 +244,60 @@ impl Studio {
         }
         self.refresh_insert_list();
         true
+    }
+
+    /// The insert list's menu (UI-320): 最近, エフェクト, プラグイン,
+    /// with the scan's rows under it (never filtered).
+    pub(crate) fn insert_pick(&mut self) -> crate::pick_list::PickList {
+        use crate::pick_list::PickList;
+        let catalog = self.plugin_catalog();
+        let all = super::insert_choices(&catalog);
+        let recent = self.recent_effects();
+        let seen: std::collections::HashSet<String> = recent.iter().map(|c| c.to.clone()).collect();
+        let all: Vec<_> = all.into_iter().filter(|c| !seen.contains(&c.to)).collect();
+        let (builtin, plugins): (Vec<_>, Vec<_>) =
+            all.into_iter().partition(|c| c.to.starts_with("builtin:"));
+        let mut list = PickList::grouped(
+            vec![
+                ("最近", recent),
+                ("エフェクト", builtin),
+                ("プラグイン", plugins),
+            ],
+            "effects",
+            |to| Action::Pick(to.to_string()),
+        )
+        .named("一致するエフェクトはありません");
+        list.footer = self.scan_footer();
+        list
+    }
+
+    /// The list menu's footer: how the scan is doing, or the row that scans
+    /// again (UI-320: the query never filters these).
+    pub(crate) fn scan_footer(&self) -> Vec<crate::pick_list::PickRow> {
+        use crate::pick_list::PickRow;
+        let scan = &self.mixer.scan;
+        if scan.running() {
+            let mut out = vec![PickRow::new(scan.progress_text()).note()];
+            if !scan.stopping {
+                out.push(
+                    PickRow::new("スキャンを中止")
+                        .icon("close")
+                        .act(Action::Pick(STOP.to_string())),
+                );
+            }
+            out
+        } else {
+            let mut out = Vec::new();
+            if let Some(e) = &scan.error {
+                out.push(PickRow::new(format!("スキャンに失敗しました: {e}")).note());
+            }
+            out.push(
+                PickRow::new("プラグインを再スキャン")
+                    .icon("restore")
+                    .act(Action::Pick(RESCAN.to_string())),
+            );
+            out
+        }
     }
 
     /// The insert list: the effects, and how the scan is doing.

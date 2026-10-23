@@ -1146,9 +1146,6 @@ impl Studio {
                 let names = crate::input::channel_names(channels);
                 Some(input_choices(names, current))
             }
-            PopupKind::Send(t) => Some(send_choices(&p, t)),
-            PopupKind::Insert(_) => Some(self.insert_list()),
-            PopupKind::Instrument(_) => Some(self.instrument_list()),
             _ => None,
         }
     }

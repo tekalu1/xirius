@@ -175,13 +175,19 @@ fn filtered_picker_does_not_scroll_past_its_only_result() {
     s.popup
         .as_mut()
         .unwrap()
-        .choices
-        .extend((0..30).map(|i| Choice {
-            to: "builtin:eq".into(),
-            label: format!("Other {i}"),
+        .pick
+        .as_mut()
+        .unwrap()
+        .groups
+        .last_mut()
+        .unwrap()
+        .rows
+        .extend((0..30).map(|i| {
+            crate::pick_list::PickRow::new(format!("Other {i}"))
+                .act(Action::Pick("builtin:eq".into()))
         }));
     s.fx_typed("e", Some("EQ"));
-    assert_eq!(s.popup.as_ref().unwrap().max_offset(), 0);
+    assert_eq!(s.popup.as_ref().unwrap().max_offset(g.size), 0);
     let result = s
         .popup
         .as_ref()
@@ -189,7 +195,7 @@ fn filtered_picker_does_not_scroll_past_its_only_result() {
         .layout(g.size)
         .cells
         .into_iter()
-        .filter(|c| c.action.is_some())
+        .filter(|c| c.action.is_some() && !c.foot)
         .count();
     assert_eq!(result, 1);
     s.fx_typed("enter", None);
@@ -218,6 +224,17 @@ fn hidden_mixer_cannot_accept_a_drop_and_unrelated_input_keeps_enter() {
     s.browser.typing = true;
     assert!(!s.fx_typed("enter", None));
     assert!(s.project().tracks[&a].inserts.is_empty());
+    // Neither a pop-up nor typing: Enter puts the focused effect on the
+    // chosen track.
+    s.browser.typing = false;
+    s.selected_row = Some(crate::tree::RowKind::Track(a));
+    assert!(s.fx_typed("enter", None));
+    assert!(
+        s.project().tracks[&a]
+            .inserts
+            .iter()
+            .any(|p| p.name == "EQ")
+    );
 }
 #[test]
 fn expanded_header_uses_the_chain_and_accepts_a_drop() {
@@ -314,10 +331,16 @@ fn ui_297_the_effects_list_shows_the_same_thumb_when_more_rows_than_show() {
     s.popup
         .as_mut()
         .unwrap()
-        .choices
-        .extend((0..300).map(|i| Choice {
-            to: "builtin:eq".into(),
-            label: format!("Other {i}"),
+        .pick
+        .as_mut()
+        .unwrap()
+        .groups
+        .last_mut()
+        .unwrap()
+        .rows
+        .extend((0..300).map(|i| {
+            crate::pick_list::PickRow::new(format!("Other {i}"))
+                .act(Action::Pick("builtin:eq".into()))
         }));
     let thumb = |s: &Studio| {
         s.popup
@@ -329,8 +352,8 @@ fn ui_297_the_effects_list_shows_the_same_thumb_when_more_rows_than_show() {
             .find(|c| c.look == crate::popup::Look::Thumb)
     };
     let p = s.popup.as_ref().unwrap();
-    let n = crate::fx_picker::found(p).count();
-    let h = crate::popup::PICK_ROWS as f32 * xirius_design::Layout::MENU_ROW_H;
+    let n = crate::pick_list::found(p).count();
+    let h = p.pick.as_ref().unwrap().capacity(g.size) as f32 * xirius_design::Layout::MENU_ROW_H;
     let at_top = thumb(&s).expect("a thumb").rect;
     assert_eq!(at_top.w, 4.0);
     assert_eq!(at_top.h, (h * 12.0 / n as f32).max(16.0));

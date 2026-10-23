@@ -19,6 +19,7 @@
 | 書体は Inter と Noto Sans JP だけ（UI-111・UI-005） | `Font` は 2 値だけ | `api_surface` | `raw-font` |
 | トラックの色と中立の面のコントラスト 3:1（UI-008） | `TrackColor` | 16 色 × 2 テーマ（最小 3.39:1） | — |
 | 有彩色の塗りの面の上は ink_on_fill（mute・solo の札はその対の色）（UI-309） | `Fill`・`FillHover`・`Danger`・`DangerHover` の面に許す文字は `OnFill` だけ。画面の `Colors` は `primary`・`primary_hover` を面と文字の組（`Pair<Fill, OnFill>` から作る）で持ち、`Pen::transition_pair` で面と文字を一緒に切り替える | `draw::tests`: 入ったトグルは 2 テーマとも面が fill・文字が on_fill（4.5:1 以上）。`color_usage`: 今の `xirius-ui` は 0 件・もとのトグルは落ちる | `fill-ink` |
+| 一覧系は検索付きの共通部品（PickList）で作る（UI-320） | 一覧を作る API は PickList だけ（`Popup` は `pick: Option<PickList>` を持ち、`Popup::layout` の一覧系の腕はすべて `pick_list::cells` を通る） | 一覧を開く試験で検索の欄・↑↓ Enter・Esc の 2 段・当たり無しの表示を数える（`pick_list::tests`） | — |
 
 ## lint の使い方
 

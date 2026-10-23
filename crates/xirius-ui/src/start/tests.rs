@@ -157,8 +157,10 @@ fn choose(s: &mut Studio, g: &Geometry, text: &str) {
 /// The rows of the open menu: their text and their hint.
 fn menu_rows(s: &Studio, g: &Geometry) -> Vec<(String, String)> {
     let l = s.popup.as_ref().expect("a menu is open").layout(g.size);
+    // The first cell is the list menu's search box (UI-320).
     l.cells
         .iter()
+        .skip(1)
         .map(|c| (c.text.clone(), c.hint.clone()))
         .collect()
 }
@@ -424,7 +426,7 @@ fn the_device_button_lists_every_device_and_a_choice_is_used() {
     assert!(press_row(&mut s, &g, Part::Device));
     let p = s.popup.as_ref().unwrap();
     assert_eq!(p.kind, crate::popup::PopupKind::Device(false));
-    assert_eq!(p.current, "Interface A");
+    assert_eq!(p.current(), "Interface A");
     assert_eq!(
         menu_rows(&s, &g),
         vec![
@@ -433,9 +435,9 @@ fn the_device_button_lists_every_device_and_a_choice_is_used() {
         ]
     );
     let l = s.popup.as_ref().unwrap().layout(g.size);
-    assert_eq!(l.cells[1].icon, Some("check"), "the one in use");
-    assert_eq!(l.cells[0].icon, Some(crate::popup::BLANK));
-    assert!(l.cells[1].on);
+    assert_eq!(l.cells[2].icon, Some("check"), "the one in use");
+    assert_eq!(l.cells[1].icon, Some(crate::popup::BLANK));
+    assert!(l.cells[2].on);
 
     choose(&mut s, &g, "Speakers");
     assert_eq!(s.error, None);

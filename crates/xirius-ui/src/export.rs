@@ -2969,7 +2969,7 @@ mod tests {
         // A stems name has to tell the files apart.
         act(&mut s, &g, Act::EditName);
         s.popup.as_mut().unwrap().naming = Some("mix".into());
-        assert!(s.typed("enter", None));
+        assert!(s.typed(&g, "enter", None));
         let v = view(&s);
         assert_eq!(v.name, "mix");
         assert!(v.bad_name());

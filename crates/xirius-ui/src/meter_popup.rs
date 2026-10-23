@@ -440,8 +440,8 @@ mod tests {
         let (mut s, g) = studio();
         open(&mut s, &g);
         // The first digit replaces the selected numerator.
-        assert!(s.typed("1", Some("1")));
-        assert!(s.typed("1", Some("1")));
+        assert!(s.typed(&g, "1", Some("1")));
+        assert!(s.typed(&g, "1", Some("1")));
         press_text(&mut s, &g, "+");
         press_text(&mut s, &g, "+");
         let texts: Vec<String> = cells_of(&s, &g)
@@ -460,26 +460,26 @@ mod tests {
     fn enter_sets_the_fields_escape_leaves_and_the_numerator_is_kept_in_range() {
         let (mut s, g) = studio();
         open(&mut s, &g);
-        s.typed("9", Some("9"));
-        s.typed("9", Some("9"));
-        assert!(s.typed("down", None));
-        assert!(s.typed("enter", None));
+        s.typed(&g, "9", Some("9"));
+        s.typed(&g, "9", Some("9"));
+        assert!(s.typed(&g, "down", None));
+        assert!(s.typed(&g, "enter", None));
         assert_eq!(meter(&s), (MAX_NUM, 2), "99 is kept to the longest bar");
 
         // Esc leaves everything as it was.
         open(&mut s, &g);
-        s.typed("5", Some("5"));
-        assert!(s.typed("escape", None));
+        s.typed(&g, "5", Some("5"));
+        assert!(s.typed(&g, "escape", None));
         assert!(s.popup.is_none());
         assert_eq!(meter(&s), (MAX_NUM, 2));
 
         // An empty numerator keeps the numerator it had; letters are not taken.
         open(&mut s, &g);
-        assert!(s.typed("backspace", None));
-        assert!(!s.typed("a", Some("a")));
-        assert!(!s.typed("0", Some("٠")));
-        s.typed("0", Some("0"));
-        assert!(s.typed("enter", None));
+        assert!(s.typed(&g, "backspace", None));
+        assert!(!s.typed(&g, "a", Some("a")));
+        assert!(!s.typed(&g, "0", Some("٠")));
+        s.typed(&g, "0", Some("0"));
+        assert!(s.typed(&g, "enter", None));
         assert_eq!(meter(&s), (MAX_NUM, 2), "0 is not a meter");
     }
 
@@ -488,7 +488,7 @@ mod tests {
         let (mut s, g) = studio();
         open(&mut s, &g);
         for _ in 0..10 {
-            s.typed("down", None);
+            s.typed(&g, "down", None);
         }
         let cells = cells_of(&s, &g);
         let minus = cells.iter().find(|c| c.text == "−").unwrap();
@@ -501,8 +501,8 @@ mod tests {
                 .text,
             "1"
         );
-        s.typed("7", Some("7"));
-        s.typed("8", Some("8"));
+        s.typed(&g, "7", Some("7"));
+        s.typed(&g, "8", Some("8"));
         assert!(!s.popup.as_ref().unwrap().meter.as_ref().unwrap().fresh);
         let cells = cells_of(&s, &g);
         let i = cells

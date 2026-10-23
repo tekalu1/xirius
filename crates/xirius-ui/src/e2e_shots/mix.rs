@@ -118,8 +118,19 @@ pub(super) fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) -> Done {
                 .borrow()
                 .popup
                 .as_ref()
-                .and_then(|p| p.choices.iter().find(|c| c.label.starts_with("Reverb")))
-                .map(|c| c.to.clone())
+                .and_then(|p| {
+                    p.pick.as_ref().and_then(|l| {
+                        l.groups
+                            .iter()
+                            .flat_map(|g| g.rows.iter())
+                            .find(|r| r.label.starts_with("Reverb"))
+                            .and_then(|r| r.act.clone())
+                    })
+                })
+                .and_then(|a| match a {
+                    Action::Pick(to) => Some(to),
+                    _ => None,
+                })
                 .ok_or("no Reverb in the list")?;
             cell_where(
                 s,

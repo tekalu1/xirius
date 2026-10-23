@@ -164,7 +164,7 @@ fn a_vst3_effects_window_opens_on_the_instance_that_plays_and_its_knob_is_one_st
         .popup
         .as_ref()
         .unwrap()
-        .choices
+        .choices()
         .iter()
         .find(|c| c.label.starts_with("kHs Gain"))
         .map(|c| c.to.clone())

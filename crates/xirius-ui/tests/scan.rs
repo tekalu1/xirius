@@ -322,8 +322,10 @@ fn the_insert_list_stops_a_scan_at_once_and_keeps_what_it_opened() {
     // The list shows how far it is, and under it the stop.
     assert!(s.press(&g, Hit::Mixer(MixerHit::AddInsert(t))));
     let popup = s.popup.as_ref().expect("the insert list");
-    assert_eq!(popup.choices[0].label, "スキャン中 1 / 2");
-    assert_eq!(popup.choices[1].label, "スキャンを中止");
+    // The scan's rows are the list's footer (UI-320): never filtered.
+    let foot = &popup.pick.as_ref().unwrap().footer;
+    assert_eq!(foot[0].label, "スキャン中 1 / 2");
+    assert_eq!(foot[1].label, "スキャンを中止");
     let stop = popup
         .layout(g.size)
         .cells
@@ -335,10 +337,13 @@ fn the_insert_list_stops_a_scan_at_once_and_keeps_what_it_opened() {
 
     // The list stays open and says it is stopping, with nothing more to press.
     let popup = s.popup.as_ref().expect("still open");
-    assert_eq!(popup.choices[0].label, "中止しています…");
+    assert_eq!(
+        popup.pick.as_ref().unwrap().footer[0].label,
+        "中止しています…"
+    );
     assert!(
         !popup
-            .choices
+            .choices()
             .iter()
             .any(|c| c.to == xirius_ui::mixer::scan::STOP)
     );
@@ -395,7 +400,7 @@ fn the_instrument_list_shows_and_stops_the_scan_like_the_insert_list() {
     assert!(s.press(&g, Hit::Mixer(MixerHit::AddInstrument(t))));
     let popup = s.popup.as_ref().expect("the instrument list");
     assert_eq!(
-        popup.choices.last().map(|c| c.to.as_str()),
+        popup.choices().last().map(|c| c.to.as_str()),
         Some(xirius_ui::mixer::scan::RESCAN)
     );
     s.popup = None;
@@ -404,9 +409,13 @@ fn the_instrument_list_shows_and_stops_the_scan_like_the_insert_list() {
     frames_until_one_is_left(&mut s);
     assert!(s.press(&g, Hit::Mixer(MixerHit::AddInstrument(t))));
     let popup = s.popup.as_ref().expect("the instrument list");
-    assert_eq!(popup.choices[0].label, "スキャン中 1 / 2");
-    assert!(popup.choices[0].to.is_empty());
-    assert_eq!(popup.choices[1].to, xirius_ui::mixer::scan::STOP);
+    let foot = &popup.pick.as_ref().unwrap().footer;
+    assert_eq!(foot[0].label, "スキャン中 1 / 2");
+    assert!(foot[0].act.is_none());
+    assert_eq!(
+        foot[1].act,
+        Some(Action::Pick(xirius_ui::mixer::scan::STOP.into()))
+    );
     let stop = popup
         .layout(g.size)
         .cells
@@ -417,7 +426,10 @@ fn the_instrument_list_shows_and_stops_the_scan_like_the_insert_list() {
 
     // It stays open, says it is stopping, and ends on a later frame.
     let popup = s.popup.as_ref().expect("still open");
-    assert_eq!(popup.choices[0].label, "中止しています…");
+    assert_eq!(
+        popup.pick.as_ref().unwrap().footer[0].label,
+        "中止しています…"
+    );
     let pressed = Instant::now();
     while s.mixer.scan.running() {
         s.tick();
@@ -427,7 +439,7 @@ fn the_instrument_list_shows_and_stops_the_scan_like_the_insert_list() {
     assert_eq!(s.mixer.scan.error, None);
     let popup = s.popup.as_ref().expect("the list is still there");
     assert_eq!(
-        popup.choices.last().map(|c| c.to.as_str()),
+        popup.choices().last().map(|c| c.to.as_str()),
         Some(xirius_ui::mixer::scan::RESCAN)
     );
     let _ = std::fs::remove_dir_all(&root);

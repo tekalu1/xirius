@@ -91,7 +91,7 @@ mod tests {
 
     fn labels(s: &Studio) -> Vec<String> {
         let p = s.popup.as_ref().unwrap();
-        p.choices.iter().map(|c| c.label.clone()).collect()
+        p.choices().iter().map(|c| c.label.clone()).collect()
     }
 
     #[test]
@@ -118,7 +118,7 @@ mod tests {
         set_test_ports(Some(vec!["Loop A".into()]));
         assert!(press_output(&mut s, &g, keys));
         assert!(labels(&s).contains(&"Loop B".to_string()));
-        assert_eq!(s.popup.as_ref().unwrap().current, "midi:Loop B");
+        assert_eq!(s.popup.as_ref().unwrap().current(), "midi:Loop B");
 
         // The master takes the track back.
         s.popup_action(&g, Action::Output("master".into()));
@@ -142,7 +142,7 @@ mod tests {
             s.popup
                 .as_ref()
                 .unwrap()
-                .choices
+                .choices()
                 .iter()
                 .all(|c| !c.to.starts_with(PREFIX))
         );

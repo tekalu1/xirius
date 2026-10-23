@@ -13,12 +13,10 @@
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
-use xirius_core::model::TrackKind;
-
-use crate::popup::PopupKind;
 use crate::studio::Studio;
 #[cfg(test)]
 use crate::tree::RowKind;
+use xirius_core::model::TrackKind;
 
 /// How often the thread lists the ports.
 pub const EVERY: Duration = Duration::from_secs(1);
@@ -162,7 +160,7 @@ impl Studio {
 
     /// An open port list of an instrument track lists `now`, and still the port its track names.
     fn refresh_port_list(&mut self, now: Vec<String>) {
-        let Some(PopupKind::Input(t)) = self.popup.as_ref().map(|p| p.kind) else {
+        let Some(crate::popup::PopupKind::Input(t)) = self.popup.as_ref().map(|p| p.kind) else {
             return;
         };
         let current = {
@@ -172,8 +170,18 @@ impl Studio {
                 _ => return,
             }
         };
-        if let Some(popup) = &mut self.popup {
-            popup.choices = crate::input_row::port_choices(now, current);
+        // The list is built again from the watcher's `now` (UI-320): what was
+        // typed, the cursor and the scroll stay.
+        let lit = current.clone().unwrap_or_else(|| "none".into());
+        let list = crate::pick_list::PickList::of_choices(
+            crate::input_row::port_choices(now, current),
+            &lit,
+            "input",
+            |to| crate::popup::Action::Input(to.to_string()),
+        )
+        .named("一致する入力はありません");
+        if let Some(pick) = self.popup.as_mut().and_then(|p| p.pick.as_mut()) {
+            pick.refill(list);
         }
     }
 }
@@ -206,7 +214,7 @@ mod tests {
 
     fn labels(s: &Studio) -> Vec<String> {
         let p = s.popup.as_ref().unwrap();
-        p.choices.iter().map(|c| c.label.clone()).collect()
+        p.choices().iter().map(|c| c.label.clone()).collect()
     }
 
     /// Polls as the window's timer does until a change shows.
@@ -323,7 +331,7 @@ mod tests {
         assert!(s.midi_ports_now(ports(&["loopMIDI Port"])));
         assert_eq!(s.notice_text(), Some("「KeyStep 37」 切断"));
         assert_eq!(labels(&s), [ALL_PORTS, "loopMIDI Port", "KeyStep 37"]);
-        assert_eq!(s.popup.as_ref().unwrap().current, "KeyStep 37");
+        assert_eq!(s.popup.as_ref().unwrap().current(), "KeyStep 37");
         assert_eq!(s.song.steps(), steps);
         assert_eq!(*s.project().tracks[&keys], *saved);
         assert_eq!(

@@ -78,7 +78,7 @@ pub fn stage(s: &mut Studio, g: &Geometry, stage: u8) {
             s.context_choose(g, "値を入力…");
             for c in "-6.5".chars() {
                 let c = c.to_string();
-                s.typed(&c, Some(&c));
+                s.typed(g, &c, Some(&c));
             }
         }
         2 => {
@@ -187,12 +187,13 @@ mod tests {
         let g = s.geometry(1440.0, 1000.0);
         stage(&mut s, &g, 5);
         let p = s.popup.as_ref().expect("the port list");
-        let labels: Vec<_> = p.choices.iter().map(|c| c.label.as_str()).collect();
+        let cs = p.choices();
+        let labels: Vec<_> = cs.iter().map(|c| c.label.as_str()).collect();
         assert_eq!(labels, ["すべての入力", "KeyStep 37", "loopMIDI Port"]);
         stage(&mut s, &g, 6);
         let p = s.popup.as_ref().expect("the channel list");
-        assert_eq!(p.choices[0].label, "既定（In 1+2）");
-        assert_eq!(p.current, "none");
+        assert_eq!(p.choices()[0].label, "既定（In 1+2）");
+        assert_eq!(p.current(), "none");
         crate::input_row::set_test_ports(None);
     }
 

@@ -149,10 +149,20 @@ pub fn empty_icon(row: Rect) -> (&'static str, Rect) {
 }
 
 impl Studio {
-    /// The list a track's instrument is picked from.
-    pub(crate) fn instrument_list(&mut self) -> Vec<Choice> {
-        let list = choices(&self.plugin_catalog());
-        self.with_scan_rows(list)
+    /// The list a track's instrument is picked from (UI-320):
+    /// インストゥルメント, プラグイン, with the scan's rows under it.
+    pub(crate) fn instrument_pick(&mut self) -> crate::pick_list::PickList {
+        let all = choices(&self.plugin_catalog());
+        let (builtin, plugins): (Vec<_>, Vec<_>) =
+            all.into_iter().partition(|c| c.to.starts_with(BUILT_IN));
+        let mut list = crate::pick_list::PickList::grouped(
+            vec![("インストゥルメント", builtin), ("プラグイン", plugins)],
+            "keys",
+            |to| crate::popup::Action::Pick(to.to_string()),
+        )
+        .named("一致するインストゥルメントはありません");
+        list.footer = self.scan_footer();
+        list
     }
 
     /// A choice picked in the instrument list of track `t`.

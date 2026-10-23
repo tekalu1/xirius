@@ -174,7 +174,7 @@ fn the_output_list_leaves_out_what_would_feed_back() {
     let g = s.geometry(W, H);
     assert!(press(&mut s, &g, MixerHit::Output(b)));
     let popup = s.popup.as_ref().expect("the output list");
-    assert!(!to(popup.choices.clone()).contains(&a.to_string()));
+    assert!(!to(popup.choices()).contains(&a.to_string()));
 }
 
 #[test]
@@ -185,16 +185,16 @@ fn an_insert_picked_from_the_scan_lands_on_the_strip_and_bypasses() {
     assert!(press(&mut s, &g, MixerHit::AddInsert(t)));
     let popup = s.popup.as_ref().expect("the insert list");
     assert_eq!(popup.kind, PopupKind::Insert(t));
-    assert_eq!(popup.choices.len(), 7);
+    assert_eq!(popup.choices().len(), 7);
     let chosen = popup
-        .choices
+        .choices()
         .iter()
         .find(|c| c.label.starts_with("Comp — Test"))
         .unwrap()
         .to
         .clone();
     // The last row scans again.
-    assert_eq!(popup.choices.last().unwrap().to, scan::RESCAN);
+    assert_eq!(popup.choices().last().unwrap().to, scan::RESCAN);
     let before = s.song().steps();
     s.popup_action(&g, Action::Pick(chosen));
     assert!(s.popup.is_none());
@@ -216,7 +216,7 @@ fn with_no_plugins_scanned_the_insert_list_still_offers_builtins() {
     s.mixer.catalog = Some(Arc::new(Catalog::default()));
     let t = track(&s, "Vocal");
     press(&mut s, &g, MixerHit::AddInsert(t));
-    let choices = s.popup.as_ref().unwrap().choices.clone();
+    let choices = s.popup.as_ref().unwrap().choices();
     assert!(choices[0].to.starts_with("builtin:"));
     // The other row offers the scan.
     assert_eq!(choices.last().unwrap().to, scan::RESCAN);
@@ -233,7 +233,7 @@ fn a_send_is_added_from_its_list_and_turns_pre_fader() {
     let t = track(&s, "Keys");
     let g = s.geometry(W, H);
     assert!(press(&mut s, &g, MixerHit::AddSend(t)));
-    let choices = s.popup.as_ref().unwrap().choices.clone();
+    let choices = s.popup.as_ref().unwrap().choices();
     assert_eq!(choices.len(), 2);
     assert_eq!(choices[0].to, fx.to_string());
     assert_eq!(choices[1].to, NEW_BUS);
@@ -415,16 +415,17 @@ fn the_input_row_of_an_audio_track_picks_its_channels() {
     assert_eq!(popup.kind, PopupKind::Input(vocal));
     // Without a device the list has the test tone's two channels, never a
     // microphone's.
-    let labels: Vec<_> = popup.choices.iter().map(|c| c.label.as_str()).collect();
+    let cs = popup.choices();
+    let labels: Vec<_> = cs.iter().map(|c| c.label.as_str()).collect();
     assert_eq!(labels, ["既定（In 1+2）", "In 1+2", "In 1", "In 2"]);
-    assert_eq!(popup.current, "none");
+    assert_eq!(popup.current(), "none");
     let before = s.song().steps();
     s.popup_action(&g, Action::Input("In 2".into()));
     assert!(s.popup.is_none());
     assert_eq!(s.song().steps(), before + 1);
     assert_eq!(s.project().tracks[&vocal].input.as_deref(), Some("In 2"));
     assert!(press(&mut s, &g, MixerHit::Input(vocal)));
-    assert_eq!(s.popup.as_ref().unwrap().current, "In 2");
+    assert_eq!(s.popup.as_ref().unwrap().current(), "In 2");
     s.popup_action(&g, Action::Input("none".into()));
     assert_eq!(s.project().tracks[&vocal].input, None);
 }

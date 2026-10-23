@@ -239,7 +239,7 @@ fn order_by(t: &mut Song, label: &str) {
     let popup = t.s.popup.as_ref().expect("the list of orders");
     let l = popup.layout(t.g.size);
     let texts: Vec<&str> = l.cells.iter().map(|c| c.text.as_str()).collect();
-    assert_eq!(texts, ["種類別", "名前順"]);
+    assert_eq!(texts, ["", "種類別", "名前順"]);
     let i = l.cells.iter().position(|c| c.text == label).unwrap();
     let (x, y) = t.s.center_of(&t.g, Hit::Item(i)).unwrap();
     let hit = t.s.hit(&t.g, x, y);

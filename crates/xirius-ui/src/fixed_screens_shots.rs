@@ -123,13 +123,20 @@ fn menu_stage(s: &mut Studio, g: &Geometry, n: u8) {
         1 => {
             s.hover = Hit::None;
             if let Some(p) = &mut s.popup {
-                p.offset = p.max_offset();
+                let end = p.max_offset(g.size);
+                match &mut p.pick {
+                    Some(pick) => pick.offset = end,
+                    None => p.offset = end,
+                }
             }
         }
         _ => {
             s.hover = Hit::None;
             if let Some(p) = &mut s.popup {
                 p.offset = 0;
+                if let Some(pick) = &mut p.pick {
+                    pick.offset = 0;
+                }
             }
             for ch in "pad".chars() {
                 let ch = ch.to_string();
@@ -329,9 +336,13 @@ mod tests {
             let layout = p.layout(g.size);
             assert_eq!(layout.cells[0].look, Look::Input);
             assert_eq!(layout.cells[0].icon, Some("search"));
-            let rows = layout.cells.iter().filter(|c| c.look == Look::Row).count();
-            assert_eq!(rows, crate::popup::PICK_ROWS);
-            assert!(rows < p.choices.len(), "more rows than show");
+            let rows = layout
+                .cells
+                .iter()
+                .filter(|c| c.look == Look::Row && !c.foot)
+                .count();
+            assert_eq!(rows, p.pick.as_ref().unwrap().capacity(g.size));
+            assert!(rows < p.choices().len(), "more rows than show");
             assert!(layout.cells.iter().any(|c| c.look == Look::Thumb));
             assert!(
                 layout.cells.iter().any(|c| c.tip.starts_with(LONG)),
@@ -348,16 +359,17 @@ mod tests {
             assert!(cell.tip.starts_with(LONG));
             assert_eq!(cell.tip, cell.text);
 
-            let (s, _) = play_to(INSTRUMENT_MENU, "im03-end", w, h);
+            let (s, g) = play_to(INSTRUMENT_MENU, "im03-end", w, h);
             let p = s.popup.as_ref().unwrap();
-            assert!(p.offset > 0 && p.offset == p.max_offset());
+            let off = p.pick.as_ref().map(|l| l.offset).unwrap_or(p.offset);
+            assert!(off > 0 && off == p.max_offset(g.size));
 
             let (s, _) = play_to(INSTRUMENT_MENU, "im04-typed", w, h);
             let p = s.popup.as_ref().unwrap();
-            let found: Vec<&str> = crate::fx_picker::found(p)
+            let found: Vec<&str> = crate::pick_list::found(p)
                 .map(|c| c.label.as_str())
                 .collect();
-            assert_eq!(p.offset, 0);
+            assert_eq!(p.pick.as_ref().map(|l| l.offset).unwrap_or(p.offset), 0);
             assert!(found.len() >= 2, "{found:?}");
             assert!(found.iter().all(|l| l.to_lowercase().contains("pad")));
         }

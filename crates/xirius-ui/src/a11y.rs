@@ -205,25 +205,40 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 })
                 .collect();
         }
-        if !crate::fx_picker::searched(p.kind) {
+        let Some(pick) = &p.pick else {
             return Vec::new();
-        }
+        };
         let layout = p.layout(g.size);
         return layout
             .cells
             .iter()
-            .filter(|c| c.look == crate::popup::Look::Input && c.icon == Some("search"))
-            .map(|c| {
-                let mut node = accesskit::Node::new(accesskit::Role::TextInput);
-                node.set_label("検索");
-                node.set_value(p.fx_query.clone());
-                node.set_bounds(bounds(c.rect));
-                Mark {
-                    key: "search".into(),
-                    node,
-                    fold: None,
-                    pick: None,
+            .enumerate()
+            .filter_map(|(i, c)| {
+                if c.look == crate::popup::Look::Input && c.icon == Some("search") {
+                    let mut node = accesskit::Node::new(accesskit::Role::TextInput);
+                    node.set_label("検索");
+                    node.set_value(pick.query.clone());
+                    node.set_bounds(bounds(c.rect));
+                    return Some(Mark {
+                        key: "search".into(),
+                        node,
+                        fold: None,
+                        pick: None,
+                    });
                 }
+                // 「一致する…はありません」 as a status (UI-320).
+                if c.look == crate::popup::Look::Status {
+                    let mut node = accesskit::Node::new(accesskit::Role::Status);
+                    node.set_label(c.text.clone());
+                    node.set_bounds(bounds(c.rect));
+                    return Some(Mark {
+                        key: format!("status-{i}"),
+                        node,
+                        fold: None,
+                        pick: None,
+                    });
+                }
+                None
             })
             .collect();
     }

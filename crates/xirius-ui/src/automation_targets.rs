@@ -1,7 +1,7 @@
 //! The lane head's add and target lists (AUT-004).
 use crate::{
     arrange::{LaneParts, lane_name, targets_of},
-    popup::{Action, Cell, Choice, Look, PICK_ROWS, PopupKind},
+    popup::{Choice, PopupKind},
     studio::{Geometry, Rect, Studio},
     tree::RowKind,
 };
@@ -12,7 +12,6 @@ use xirius_core::{
     id::{PluginId, TrackId},
     model::{Project, Track},
 };
-use xirius_design::Layout;
 
 pub(crate) fn lane_label(p: &Project, t: &Track, target: &AutoTarget) -> String {
     if let AutoTarget::Param(id, name) = target
@@ -132,45 +131,6 @@ fn choices(
         .collect()
 }
 
-pub(crate) fn cells(
-    track: TrackId,
-    replace: bool,
-    choices: &[Choice],
-    current: &str,
-    offset: usize,
-) -> Vec<Cell> {
-    let pad = Layout::POPUP_PAD;
-    choices
-        .iter()
-        .skip(offset)
-        .take(PICK_ROWS)
-        .enumerate()
-        .map(|(i, ch)| {
-            let to = ch.to.strip_prefix("off:").unwrap_or(&ch.to);
-            let cell = Cell::new(
-                Rect::new(
-                    pad,
-                    pad + i as f32 * Layout::MENU_ROW_H,
-                    Layout::MENU_W - pad * 2.0,
-                    Layout::MENU_ROW_H,
-                ),
-                Look::Row,
-            )
-            .text(ch.label.clone())
-            .on(replace && to == current);
-            if ch.to.starts_with("off:") {
-                cell.off()
-            } else {
-                cell.act(Action::AutomationTarget(
-                    track,
-                    replace.then(|| current.to_string()),
-                    to.to_string(),
-                ))
-            }
-        })
-        .collect()
-}
-
 impl Studio {
     pub(crate) fn open_auto_targets(
         &mut self,
@@ -204,12 +164,15 @@ impl Studio {
             r.h,
         );
         let current = replace.then(|| target.to_string());
-        let list = self.auto_target_choices(track, current.as_deref());
         self.open_popup(PopupKind::AutomationTargets(track, replace), anchor);
-        if let Some(p) = &mut self.popup {
-            p.choices = list;
-            p.current = current.unwrap_or_default();
+        if let Some(p) = &mut self.popup
+            && let Some(list) = p.pick.as_mut()
+        {
+            // The target being replaced, kept for the list's rebuild: the
+            // rows' lit one and their `from` need it (UI-320).
+            list.current = current.unwrap_or_default();
         }
+        self.refresh_popup();
     }
 
     pub(crate) fn auto_target_choices(&self, track: TrackId, from: Option<&str>) -> Vec<Choice> {
@@ -266,8 +229,46 @@ impl Studio {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::popup::Action;
     use std::sync::Arc;
     use xirius_core::auto::{AutoLane, AutoPoint};
+
+    /// The target being replaced stays the lit row and the rows keep their
+    /// `from` over every rebuild of the list (UI-320): `refresh_popup` runs
+    /// after any command, so the list carries `current` itself.
+    #[test]
+    fn the_target_being_replaced_stays_over_a_rebuild() {
+        let mut s = Studio::sample();
+        let g = s.geometry(1680.0, 1000.0);
+        let track = s
+            .project()
+            .tracks
+            .values()
+            .find(|t| t.name == "Keys")
+            .unwrap()
+            .id;
+        s.toggle_lanes(&g, track);
+        s.lane_button(
+            &g,
+            track,
+            &AutoTarget::Volume,
+            crate::arrange::LaneButton::Param,
+        );
+        s.refresh_popup();
+        let pick = s.popup.as_ref().unwrap().pick.as_ref().unwrap();
+        let want = AutoTarget::Volume.to_string();
+        assert_eq!(pick.current(), want);
+        let lit = pick
+            .groups
+            .iter()
+            .flat_map(|g| &g.rows)
+            .find(|r| r.on)
+            .expect("a lit row");
+        assert_eq!(lit.to(), want);
+        assert!(pick.groups.iter().flat_map(|g| &g.rows).all(
+            |r| matches!(&r.act, Some(Action::AutomationTarget(_, Some(from), _)) if from == &want)
+        ));
+    }
 
     #[test]
     fn external_definitions_and_hidden_lanes_are_offered_without_saving_initial_values() {
@@ -377,7 +378,7 @@ mod tests {
             s.popup
                 .as_ref()
                 .unwrap()
-                .choices
+                .choices()
                 .iter()
                 .any(|c| c.to == target.to_string())
         );

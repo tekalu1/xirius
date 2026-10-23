@@ -6,10 +6,10 @@
 use serde_json::json;
 use xirius_core::id::{FolderId, TrackId};
 use xirius_core::model::{Project, TrackKind};
-use xirius_design::{FontSize, Layout, Radius, Space, Weight};
+use xirius_design::{FontSize, Radius, Space, Weight};
 
 use crate::draw::{Align, Pen};
-use crate::popup::{Action, Cell, Choice, Look, PopupKind};
+use crate::popup::{Action, Choice, PopupKind};
 use crate::studio::{Geometry, Hit, Rect, Studio};
 use crate::tree::Row;
 
@@ -61,32 +61,37 @@ pub fn choices(p: &Project) -> Vec<Choice> {
     out
 }
 
-/// The rows of the menu. `current` is the bus's id, or [`NONE`].
-pub fn cells(choices: &[Choice], current: &str, w: f32) -> Vec<Cell> {
-    let pad = Layout::POPUP_PAD;
-    let row = |y: f32| Rect::new(pad, y, w - pad * 2.0, Layout::MENU_ROW_H);
-    let mut cells = Vec::new();
-    let mut y = pad;
-    for ch in choices {
-        let mut cell = Cell::new(row(y), Look::Row)
-            .text(ch.label.clone())
-            .on(ch.to == current)
-            .act(Action::FolderBus(ch.to.clone()));
-        if ch.to != NONE {
-            cell = cell.icon("bus");
-        }
-        cells.push(cell);
-        y += Layout::MENU_ROW_H;
-    }
-    // No line between the groups (design rules): a gap.
-    y += Space::X2.px();
-    cells.push(
-        Cell::new(row(y), Look::Row)
-            .text("新しいバス")
-            .icon("plus")
-            .act(Action::FolderBus(NEW.into())),
-    );
-    cells
+/// The menu as a list menu (UI-320): つながない and the buses, then
+/// 新しいバス after a gap.
+pub fn pick(choices: Vec<Choice>, current: &str) -> crate::pick_list::PickList {
+    use crate::pick_list::{PickGroup, PickList, PickRow};
+    let mut list = PickList::of(Vec::new());
+    list.groups = vec![
+        PickGroup::new(
+            "",
+            choices
+                .into_iter()
+                .map(|c| {
+                    let mut row = PickRow::new(c.label)
+                        .on(c.to == current)
+                        .act(Action::FolderBus(c.to.clone()));
+                    if c.to != NONE {
+                        row = row.icon("bus");
+                    }
+                    row
+                })
+                .collect(),
+        ),
+        PickGroup::new(
+            "",
+            vec![
+                PickRow::new("新しいバス")
+                    .icon("plus")
+                    .act(Action::FolderBus(NEW.into())),
+            ],
+        ),
+    ];
+    list.named("一致するバスはありません")
 }
 
 /// The button on a folder's row. `top` is the row's top on screen.
@@ -244,11 +249,12 @@ mod tests {
         assert_eq!(p.kind, PopupKind::FolderBus(f));
         let l = p.layout(g.size);
         let texts: Vec<_> = l.cells.iter().map(|c| c.text.as_str()).collect();
-        assert_eq!(texts, ["つながない", "Groove", "新しいバス"]);
+        assert_eq!(texts, ["", "つながない", "Groove", "新しいバス"]);
         // Not connected: つながない is lit, and the bus rows carry the bus icon.
-        assert!(l.cells[0].on && !l.cells[1].on);
-        assert_eq!(l.cells[1].icon, Some("bus"));
-        assert_eq!(l.cells[2].icon, Some("plus"));
+        // The first cell is the search box (UI-320): the rows follow it.
+        assert!(l.cells[1].on && !l.cells[2].on);
+        assert_eq!(l.cells[2].icon, Some("bus"));
+        assert_eq!(l.cells[3].icon, Some("plus"));
         // The menu opens under the button.
         assert!(l.rect.y >= y);
         // A second press shuts it.

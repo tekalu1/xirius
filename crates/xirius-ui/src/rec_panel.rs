@@ -10,11 +10,11 @@
 //! auto-punch is on.
 
 use serde_json::json;
-use xirius_design::{FontSize, Layout, Radius, Weight};
+use xirius_design::{FontSize, Radius, Weight};
 
 use crate::draw::{Align, Pen};
 use crate::dropdown::{self, Face};
-use crate::popup::{Action, Cell, Choice, Look, PopupKind};
+use crate::popup::{Choice, PopupKind};
 use crate::studio::{Geometry, Hit, Rect, Studio};
 
 /// How high the panel is.
@@ -342,29 +342,6 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     }
 }
 
-/// The rows of the input quantize's menu.
-pub fn cells(choices: &[Choice], current: &str, w: f32) -> Vec<Cell> {
-    let pad = Layout::POPUP_PAD;
-    choices
-        .iter()
-        .enumerate()
-        .map(|(i, ch)| {
-            Cell::new(
-                Rect::new(
-                    pad,
-                    pad + i as f32 * Layout::MENU_ROW_H,
-                    w - pad * 2.0,
-                    Layout::MENU_ROW_H,
-                ),
-                Look::Row,
-            )
-            .text(ch.label.clone())
-            .on(ch.to == current)
-            .act(Action::RecQuantize(ch.to.clone()))
-        })
-        .collect()
-}
-
 impl Studio {
     /// The panel's rect and what it shows, when it is on screen.
     fn rec_slots(&self, g: &Geometry) -> Vec<Slot> {
@@ -659,9 +636,10 @@ mod tests {
         let g = open(&mut s, &g);
         press_part(&mut s, &g, RecPart::QuantizeValue);
         let l = s.popup.as_ref().expect("the menu opens").layout(g.size);
-        let texts: Vec<_> = l.cells.iter().map(|c| c.text.clone()).collect();
+        // The first cell is the list menu's search box (UI-320).
+        let texts: Vec<_> = l.cells.iter().skip(1).map(|c| c.text.clone()).collect();
         assert_eq!(texts, QUANTIZE_VALUES);
-        let i = texts.iter().position(|t| t == "1/8T").unwrap();
+        let i = texts.iter().position(|t| t == "1/8T").unwrap() + 1;
         let c = &l.cells[i];
         let hit = s.hit(&g, c.rect.x + c.rect.w / 2.0, c.rect.y + c.rect.h / 2.0);
         assert_eq!(hit, Hit::Item(i));

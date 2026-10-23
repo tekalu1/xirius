@@ -218,6 +218,7 @@ fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) {
                 .layout(g.size)
                 .cells
                 .iter()
+                .filter(|c| !matches!(c.look, Look::Input))
                 .map(|c| c.text.clone())
                 .collect();
             assert_eq!(texts, ["種類別", "名前順"]);

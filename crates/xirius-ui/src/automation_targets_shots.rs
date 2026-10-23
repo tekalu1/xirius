@@ -137,8 +137,26 @@ fn play(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) 
         let s = studio.borrow();
         let p = s.popup.as_ref().unwrap();
         assert_eq!(p.kind, PopupKind::AutomationTargets(track(&s), false));
-        assert!(p.choices.iter().any(|c| c.to.starts_with("param:")));
-        assert!(p.choices.iter().any(|c| c.to.starts_with("send:")));
+        let rows = |p: &crate::popup::Popup| {
+            p.pick
+                .as_ref()
+                .map(|l| {
+                    l.groups
+                        .iter()
+                        .flat_map(|g| g.rows.iter())
+                        .map(|r| r.act.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        assert!(rows(p).iter().any(|a| matches!(
+            a,
+            Some(crate::popup::Action::AutomationTarget(_, _, to)) if to.starts_with("param:")
+        )));
+        assert!(rows(p).iter().any(|a| matches!(
+            a,
+            Some(crate::popup::Action::AutomationTarget(_, _, to)) if to.starts_with("send:")
+        )));
     } else if n == 1 {
         let targets = {
             let s = studio.borrow();
@@ -275,8 +293,17 @@ mod tests {
         let at = head(&s, &g, 1, LaneButton::Param);
         press(&mut s, &g, at);
         let popup = s.popup.as_ref().unwrap();
-        assert_eq!(popup.current, "pan");
-        assert!(popup.choices.iter().any(|c| c.to == "off:volume"));
+        assert_eq!(popup.current(), "pan");
+        assert!(
+            popup
+                .pick
+                .as_ref()
+                .unwrap()
+                .groups
+                .iter()
+                .flat_map(|g| g.rows.iter())
+                .any(|r| !r.enabled && r.to() == "volume")
+        );
         pick(&mut s, &g, &to);
         assert_eq!(s.project().tracks[&t].automation[1].target, to);
         assert!(s.song.undo());
@@ -289,7 +316,7 @@ mod tests {
             s.popup
                 .as_ref()
                 .unwrap()
-                .choices
+                .choices()
                 .iter()
                 .any(|c| c.to == "volume")
         );

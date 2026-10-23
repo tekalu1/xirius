@@ -300,10 +300,10 @@ mod tests {
         assert!(s.press(g, hit));
     }
 
-    fn type_in(s: &mut Studio, typed: &str) {
+    fn type_in(s: &mut Studio, g: &Geometry, typed: &str) {
         for c in typed.chars() {
             let c = c.to_string();
-            assert!(s.typed(&c, Some(&c)));
+            assert!(s.typed(g, &c, Some(&c)));
         }
     }
 
@@ -338,9 +338,9 @@ mod tests {
         // The heading, and the value it has, selected.
         assert_eq!(texts(&s, &g), ["ボリューム（dB）", "0.0"]);
         let before = s.song.history().len();
-        type_in(&mut s, "-6.5");
+        type_in(&mut s, &g, "-6.5");
         assert_eq!(texts(&s, &g), ["ボリューム（dB）", "-6.5"]);
-        assert!(s.typed("enter", None));
+        assert!(s.typed(&g, "enter", None));
         assert!(s.popup.is_none());
         assert_eq!(point(&s, t, &vol, 1), (tick, -6.5, 0.0));
         assert_eq!(s.song.history().len(), before + 1);
@@ -348,17 +348,17 @@ mod tests {
         // Esc closes the box and leaves the point.
         let (x, y) = point_xy(&s, &g, t, 0, 1);
         open_box(&mut s, &g, x, y);
-        type_in(&mut s, "3");
-        assert!(s.typed("escape", None));
+        type_in(&mut s, &g, "3");
+        assert!(s.typed(&g, "escape", None));
         assert!(s.popup.is_none());
         assert_eq!(point(&s, t, &vol, 1).1, -6.5);
 
         // Backspace takes the selected value away; Enter on nothing changes nothing.
         let (x, y) = point_xy(&s, &g, t, 0, 1);
         open_box(&mut s, &g, x, y);
-        assert!(s.typed("backspace", None));
+        assert!(s.typed(&g, "backspace", None));
         assert_eq!(texts(&s, &g), ["ボリューム（dB）"]);
-        assert!(s.typed("enter", None));
+        assert!(s.typed(&g, "enter", None));
         assert!(s.popup.is_none());
         assert_eq!(point(&s, t, &vol, 1).1, -6.5);
         assert_eq!(s.song.history().len(), before + 1);
@@ -372,8 +372,8 @@ mod tests {
         let (x, y) = point_xy(&s, &g, t, 1, 0);
         open_box(&mut s, &g, x, y);
         assert_eq!(texts(&s, &g), ["パン（L−100 … R+100）", "L60"]);
-        type_in(&mut s, "R25");
-        s.typed("enter", None);
+        type_in(&mut s, &g, "R25");
+        s.typed(&g, "enter", None);
         assert_eq!(point(&s, t, &pan, 0).1, 0.25);
     }
 

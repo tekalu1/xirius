@@ -10,11 +10,10 @@ use serde_json::json;
 use xirius_core::auto::AutoTarget;
 use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::{Plugin, Project};
-use xirius_design::{Layout, Space};
 
 use super::current;
 use super::window::{PRESETS, is_built_in, preset_of};
-use crate::popup::{Action, Cell, Choice, Look, PopupKind};
+use crate::popup::{Action, Choice, PopupKind};
 use crate::studio::{Rect, Studio};
 use crate::tools::Mods;
 use crate::tree::RowKind;
@@ -71,34 +70,28 @@ pub fn params(plugin: &Plugin) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The rows of a menu. `current` is the row that is on.
-pub fn cells(menu: Menu, choices: &[Choice], current: &str, w: f32) -> Vec<Cell> {
-    let pad = Layout::POPUP_PAD;
-    let mut cells = Vec::new();
-    let mut y = pad;
+/// The menu as a list menu's rows (UI-320): [`GAP`] opens a new unnamed
+/// group, a row that cannot run is dim.
+pub fn pick(menu: Menu, choices: Vec<Choice>, current: &str) -> crate::pick_list::PickList {
+    use crate::pick_list::{PickGroup, PickList, PickRow};
+    let mut groups: Vec<PickGroup> = vec![PickGroup::new("", Vec::new())];
     for ch in choices {
         if ch.to == GAP {
-            // No line between the groups (design rules): a gap.
-            y += Space::X2.px();
+            groups.push(PickGroup::new("", Vec::new()));
             continue;
         }
-        let r = Rect::new(pad, y, w - pad * 2.0, Layout::MENU_ROW_H);
-        let (icon, key) = look(menu, ch.to.trim_start_matches(OFF));
-        let mut cell = Cell::new(r, Look::Row)
-            .text(ch.label.clone())
-            .hint(key)
-            .on(ch.to == current);
-        if let Some(icon) = icon {
-            cell = cell.icon(icon);
-        }
-        cell = match ch.to.strip_prefix(OFF) {
-            Some(_) => cell.off(),
-            None => cell.act(Action::Pick(ch.to.clone())),
+        let (_, key) = look(menu, ch.to.trim_start_matches(OFF));
+        let row = PickRow::new(ch.label).hint(key).on(ch.to == current);
+        let row = match ch.to.strip_prefix(OFF) {
+            Some(_) => row.disabled(),
+            None => row.act(Action::Pick(ch.to.clone())),
         };
-        cells.push(cell);
-        y += Layout::MENU_ROW_H;
+        groups.last_mut().unwrap().rows.push(row);
     }
-    cells
+    groups.retain(|g| !g.rows.is_empty());
+    let mut list = PickList::of(Vec::new());
+    list.groups = groups;
+    list
 }
 
 /// The rows of a menu as it is now, and the row that is on.
