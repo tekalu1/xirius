@@ -20,7 +20,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The toolchain is the one in rust-toolchain.toml (rustup reads it).
       - uses: Swatinem/rust-cache@v2
 
