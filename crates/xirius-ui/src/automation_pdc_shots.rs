@@ -96,6 +96,7 @@ fn prepare(s: &mut Studio, _: u8) {
             t.automation = vec![lane];
             if t.name == "Vocal" {
                 t.inserts.push(Plugin {
+                    samples: Vec::new(),
                     id,
                     name: "Test Latency".into(),
                     kind: PluginKind::Effect,

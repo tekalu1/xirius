@@ -30,7 +30,7 @@ const KEYS: [&str; 9] = [
     "inserts",
     "sends",
 ];
-const PLUGIN_KEYS: [&str; 9] = [
+const PLUGIN_KEYS: [&str; 10] = [
     "name",
     "kind",
     "format",
@@ -39,6 +39,7 @@ const PLUGIN_KEYS: [&str; 9] = [
     "deactivated",
     "params",
     "state",
+    "samples",
     "isolation",
 ];
 const SEND_KEYS: [&str; 4] = ["to", "to_name", "level_db", "pre"];
@@ -469,7 +470,25 @@ fn parse_plugin(n: usize, v: &Value, rows: &mut Vec<Adjust>) -> Option<Plugin> {
             PluginIsolation::default()
         }),
     };
+    // The files the device reads, as the song names them (ENG-077). The paths travel with
+    // the preset; the files themselves follow the song's collect/relink rules.
+    let samples = match o.get("samples") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(a)) => a
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect(),
+        Some(_) => {
+            rows.push(Adjust::new(
+                AdjustKind::Dropped,
+                format!("{name} のサンプル"),
+                "読み込めないため、外しました",
+            ));
+            Vec::new()
+        }
+    };
     Some(Plugin {
+        samples,
         id: PluginId(0),
         name,
         kind,
@@ -551,4 +570,43 @@ fn parse_send(n: usize, v: &Value, rows: &mut Vec<Adjust>) -> Option<PresetSend>
         level_db,
         pre: o.get("pre").and_then(Value::as_bool).unwrap_or(false),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{PluginIsolation, PluginKind};
+
+    /// The files a device reads travel with the preset (ENG-077).
+    #[test]
+    fn a_plugins_samples_round_trip_through_a_preset() {
+        let x = Plugin {
+            id: PluginId(0),
+            name: "Sampler".into(),
+            kind: PluginKind::Instrument,
+            format: "builtin".into(),
+            uid: "sampler".into(),
+            bypass: false,
+            deactivated: false,
+            params: Default::default(),
+            state: None,
+            sidechain: None,
+            samples: vec![
+                "Media/Imports/Kick.wav".into(),
+                "Media/Imports/Snare.wav".into(),
+            ],
+            isolation: PluginIsolation::default(),
+        };
+        let mut rows = Vec::new();
+        let got = parse_plugin(0, &plugin_value(&x), &mut rows).unwrap();
+        assert_eq!(got.samples, x.samples, "rows: {rows:?}");
+        // A preset that never listed them parses with none.
+        let mut bare = serde_json::Map::new();
+        for k in ["name", "kind", "format", "uid"] {
+            bare.insert(k.into(), plugin_value(&x)[k].clone());
+        }
+        let mut rows = Vec::new();
+        let no = parse_plugin(0, &Value::Object(bare), &mut rows).unwrap();
+        assert!(no.samples.is_empty());
+    }
 }

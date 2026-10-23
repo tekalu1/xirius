@@ -998,6 +998,7 @@ impl SessionHost {
                 if !b.runs() || a.deactivated != b.deactivated || !running || !loader.apply(b) {
                     return false;
                 }
+                report.warnings.extend(loader.take_file_warnings());
                 report.commands += 1;
             }
         }

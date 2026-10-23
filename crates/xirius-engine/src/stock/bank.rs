@@ -9,6 +9,9 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use xirius_params::{BuiltinDef, MAX_PARAMS};
 
+use super::files::{FileOutbox, FileSet};
+use crate::rt_lock::Mutex;
+
 pub struct ParamBank {
     def: &'static BuiltinDef,
     values: [AtomicU32; MAX_PARAMS],
@@ -71,15 +74,20 @@ impl ParamBank {
 }
 
 /// What the session keeps of a built-in it gave the engine: it moves the parameters of the
-/// running processor without a new mix.
+/// running processor without a new mix, and hands it the files it reads (ENG-077).
 #[derive(Clone)]
 pub struct StockHandle {
     bank: Arc<ParamBank>,
+    /// The channel a file-taking built-in got; `None` for one that does not read files.
+    files: Option<Arc<Mutex<FileOutbox>>>,
 }
 
 impl StockHandle {
-    pub(crate) fn new(bank: Arc<ParamBank>) -> StockHandle {
-        StockHandle { bank }
+    pub(crate) fn new(bank: Arc<ParamBank>, files: Option<FileOutbox>) -> StockHandle {
+        StockHandle {
+            bank,
+            files: files.map(|f| Arc::new(Mutex::new(f))),
+        }
     }
 
     pub fn def(&self) -> &'static BuiltinDef {
@@ -130,6 +138,28 @@ impl StockHandle {
     /// The tempo a built-in that follows it plays at (the Delay's note lengths).
     pub fn set_tempo(&self, bpm: f64) {
         self.bank.set_tempo(bpm);
+    }
+
+    /// Whether the built-in reads files (the Sampler and the Drum Kit).
+    pub fn takes_files(&self) -> bool {
+        self.files.is_some()
+    }
+
+    /// Hands the device the newest set of read files, played from its next block. `false`
+    /// when this built-in takes no files or the ring is full.
+    pub fn set_files(&self, set: FileSet) -> bool {
+        let Some(files) = &self.files else {
+            return false;
+        };
+        files.lock().unwrap_or_else(|e| e.into_inner()).set(set)
+    }
+
+    /// Frees the sets the audio thread handed back. Called inside `set_files`; on its own
+    /// when a device is closed so nothing lingers.
+    pub fn reclaim_files(&self) {
+        if let Some(files) = &self.files {
+            files.lock().unwrap_or_else(|e| e.into_inner()).reclaim();
+        }
     }
 }
 
@@ -200,7 +230,7 @@ mod tests {
     #[test]
     fn params_see_a_write_once() {
         let bank = Arc::new(ParamBank::new(&xirius_params::EQ));
-        let handle = StockHandle::new(bank.clone());
+        let handle = StockHandle::new(bank.clone(), None);
         let mut p = Params::new(bank);
         assert!(!p.refresh());
         assert!(handle.set("output", 1.0));
@@ -213,7 +243,7 @@ mod tests {
     #[test]
     fn set_all_fills_in_defaults_and_reports_unknown_keys() {
         let bank = Arc::new(ParamBank::new(&xirius_params::LIMITER));
-        let handle = StockHandle::new(bank.clone());
+        let handle = StockHandle::new(bank.clone(), None);
         handle.set("input", 1.0);
         let mut song = BTreeMap::new();
         song.insert("ceiling".to_string(), 0.0);

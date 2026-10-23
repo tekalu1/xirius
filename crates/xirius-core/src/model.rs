@@ -150,6 +150,11 @@ pub struct Plugin {
     /// The plugin's own saved state, as an opaque string (base64).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<String>,
+    /// The audio files the device reads (ENG-077): a Sampler's zones, a Drum Kit's pads, in
+    /// the order they were given. Named the way clips name files, so `clip.relink` and the
+    /// save's gathering reach them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub samples: Vec<String>,
     /// Which process the plugin runs in (PLG-022).
     #[serde(default, skip_serializing_if = "PluginIsolation::is_default")]
     pub isolation: PluginIsolation,

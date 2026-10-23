@@ -74,6 +74,7 @@ fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek
         });
         if i == 0 {
             track.inserts.push(Plugin {
+                samples: Vec::new(),
                 id: PluginId(200),
                 name: "Test Latency".into(),
                 kind: PluginKind::Effect,

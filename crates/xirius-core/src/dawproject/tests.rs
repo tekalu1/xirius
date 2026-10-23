@@ -53,6 +53,7 @@ fn builtin(p: &mut Project, uid: &str) -> Plugin {
         deactivated: false,
         params: def.defaults().map(|(k, v)| (k.to_string(), v)).collect(),
         state: None,
+        samples: Vec::new(),
         isolation: PluginIsolation::default(),
         sidechain: None,
     }
@@ -680,6 +681,7 @@ fn what_a_dawproject_cannot_carry_is_listed_on_export() {
             deactivated: false,
             params: Default::default(),
             state: None,
+            samples: Vec::new(),
             isolation: PluginIsolation::default(),
             sidechain: None,
         });
@@ -914,6 +916,7 @@ fn plugin(p: &mut Project, format: &str, uid: &str, name: &str, kind: PluginKind
         deactivated: false,
         params: [("3".to_string(), 0.25), ("17".to_string(), 1.0)].into(),
         state: Some(vstpreset::to_text(&state)),
+        samples: Vec::new(),
         isolation: PluginIsolation::default(),
         sidechain: None,
     }

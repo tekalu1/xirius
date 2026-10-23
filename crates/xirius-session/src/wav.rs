@@ -29,6 +29,9 @@ struct Stamp {
 
 impl WavCache {
     pub fn load(&mut self, path: &Path, rate: u32) -> Result<Arc<AudioData>, String> {
+        // Let go of reads nothing else holds any more (the cache is the last keeper then), so
+        // browsing and re-reading files does not grow the map without end (ENG-077).
+        self.map.retain(|_, (_, data)| Arc::strong_count(data) > 1);
         let stamp = std::fs::metadata(path)
             .map(|m| Stamp {
                 len: m.len(),

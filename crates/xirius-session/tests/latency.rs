@@ -112,6 +112,7 @@ fn a_latency_notification_rebuilds_pdc_while_the_transport_keeps_playing() {
             });
             if i == 0 {
                 track.inserts.push(Plugin {
+                    samples: Vec::new(),
                     id: pid,
                     name: "Test Latency".into(),
                     kind: PluginKind::Effect,

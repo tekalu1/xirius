@@ -41,6 +41,7 @@ fn plugins_in_hosts_of_their_own_open_at_once() {
         let id = TrackId(100 + i);
         let mut t = Track::new(id, TrackKind::Audio, format!("T{i}"));
         t.inserts.push(Plugin {
+            samples: Vec::new(),
             id: PluginId(1 + i),
             name: format!("Test {i}"),
             kind: PluginKind::Effect,

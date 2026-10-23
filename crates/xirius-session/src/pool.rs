@@ -63,7 +63,7 @@ fn find<'a>(all: &'a [Entry], file: &str) -> Option<&'a Entry> {
     };
     let want = norm(file);
     all.iter()
-        .find(|e| e.clips + e.frozen > 0 && norm(&e.file) == want)
+        .find(|e| e.clips + e.frozen + e.devices > 0 && norm(&e.file) == want)
 }
 
 fn relink(pairs: Vec<Value>) -> Vec<(String, Map<String, Value>)> {
@@ -91,7 +91,10 @@ fn collect(
     let asked = names(args);
     let mut picked: Vec<&Entry> = Vec::new();
     if asked.is_empty() {
-        picked.extend(all.iter().filter(|e| e.external && e.clips + e.frozen > 0));
+        picked.extend(
+            all.iter()
+                .filter(|e| e.external && e.clips + e.frozen + e.devices > 0),
+        );
     } else {
         for name in &asked {
             let e = find(all, name).ok_or_else(|| {
@@ -216,7 +219,7 @@ fn locate(dir: Option<&Path>, all: &[Entry], args: &Args, dry: bool) -> CmdResul
     };
     let lost: Vec<&Entry> = all
         .iter()
-        .filter(|e| !e.exists && e.clips + e.frozen > 0)
+        .filter(|e| !e.exists && e.clips + e.frozen + e.devices > 0)
         .collect();
     let mut pairs = Vec::new();
     match (to, folder) {

@@ -152,6 +152,9 @@ impl Session {
                 if let Some(frozen) = &track.frozen {
                     names.insert(frozen.file.clone());
                 }
+                for x in &track.inserts {
+                    names.extend(x.samples.iter().cloned());
+                }
             }
             for name in names {
                 let file = Path::new(name.trim());

@@ -484,6 +484,13 @@ pub struct PluginLoader {
     fresh_clap: Vec<PluginId>,
     /// The tempo the built-ins that follow it play at (beats per minute; 0 before it is set).
     tempo: f64,
+    /// The song's folder (relative sample names resolve in it) and the mix's rate (ENG-077).
+    dir: Option<PathBuf>,
+    rate: u32,
+    /// Read files by path and rate (a file read once is not decoded again until it changes).
+    wavs: crate::wav::WavCache,
+    /// Files that could not be read while `apply` moved a running built-in's samples.
+    file_warnings: Vec<String>,
     /// The plugins opened ahead of the next build ([`PluginLoader::preload`]).
     ready: HashMap<PluginId, Ready>,
     /// How long the plugins opened since the last build took here, with their owner and name.
@@ -1140,17 +1147,69 @@ impl PluginLoader {
             || !self.locals.is_empty()
     }
 
+    /// Where the built-ins' files are read from and the rate they are read at (ENG-077). The
+    /// builder sets both when it is made and when the song's folder moves.
+    pub fn set_sample_home(&mut self, dir: Option<PathBuf>, rate: u32) {
+        self.dir = dir;
+        self.rate = rate;
+    }
+
+    /// `name` on the disk: relative names are the song folder's.
+    fn resolve(&self, name: &str) -> PathBuf {
+        let path = std::path::Path::new(name);
+        match (&self.dir, path.is_absolute()) {
+            (Some(dir), false) => dir.join(path),
+            _ => path.to_path_buf(),
+        }
+    }
+
+    /// Reads the files `x` lists into a [`FileSet`] at the mix's rate, off the audio thread.
+    /// A file that cannot be read is an empty slot and is named in `warnings`.
+    fn load_set(
+        &mut self,
+        x: &Plugin,
+        warnings: &mut Vec<String>,
+    ) -> xirius_engine::stock::files::FileSet {
+        use xirius_engine::stock::files::{FileSet, FileSlot};
+        let mut slots = Vec::with_capacity(x.samples.len());
+        for name in &x.samples {
+            let path = self.resolve(name);
+            let leaf = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| name.clone());
+            match self.wavs.load(&path, self.rate) {
+                Ok(data) => slots.push(Some(FileSlot { name: leaf, data })),
+                Err(e) => {
+                    warnings.push(e);
+                    slots.push(None);
+                }
+            }
+        }
+        FileSet { slots }
+    }
+
+    /// Warnings `apply` left while it moved a built-in's files (the missing ones).
+    pub fn take_file_warnings(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.file_warnings)
+    }
+
     /// Makes the processor of a built-in the engine has (PLG-016) with the song's values for
     /// it, and keeps its handle so they can move without a new mix. `None` when the plugin is
-    /// not such a built-in. The warnings name values the built-in has no parameter for.
+    /// not such a built-in. The warnings name values the built-in has no parameter for, and
+    /// files it could not read (ENG-077).
     pub fn stock(&mut self, x: &Plugin) -> Option<(Box<dyn Processor>, Vec<String>)> {
         let def = x.builtin()?;
         let (processor, handle) = stock::create(def.uid)?;
-        let warnings = handle
+        let mut warnings: Vec<String> = handle
             .set_all(&x.params)
             .into_iter()
             .map(|k| format!("{} に「{k}」というパラメーターはありません", x.name))
             .collect();
+        if !x.samples.is_empty() && handle.takes_files() {
+            let set = self.load_set(x, &mut warnings);
+            handle.set_files(set);
+        }
         if self.tempo > 0.0 {
             handle.set_tempo(self.tempo);
         }
@@ -1183,16 +1242,34 @@ impl PluginLoader {
     /// opening it again brings back its default.
     pub fn apply(&mut self, x: &Plugin) -> bool {
         if let Some(s) = self.stock.get_mut(&x.id) {
-            // Only the values move; another built-in or format takes a new processor.
+            // Only the values and the files move; another built-in or format takes a new
+            // processor.
             let mut same = s.applied.clone();
             same.params.clone_from(&x.params);
+            same.samples.clone_from(&x.samples);
             if same != *x {
                 return false;
             }
             if s.applied.params != x.params {
                 s.handle.set_all(&x.params);
             }
-            s.applied = x.clone();
+            if s.applied.samples == x.samples {
+                s.applied = x.clone();
+                return true;
+            }
+            // A new set of files reaches the running device without a new mix (ENG-077).
+            let handle = s.handle.clone();
+            let mut w = Vec::new();
+            let set = self.load_set(x, &mut w);
+            self.file_warnings
+                .extend(w.into_iter().map(|e| format!("{}: {e}", x.name)));
+            // The ring being full (the device is not polling) keeps `applied` as it was, so
+            // the next `apply` sends the set again.
+            if let Some(s) = self.stock.get_mut(&x.id)
+                && handle.set_files(set)
+            {
+                s.applied = x.clone();
+            }
             return true;
         }
         let applied = if let Some(l) = self.locals.get_mut(&x.id) {
@@ -1698,6 +1775,10 @@ impl PluginLoader {
         self.locals.retain(|id, _| fresh_locals.contains(id));
         let fresh_clap = &self.fresh_clap;
         self.clap_names.retain(|id, _| fresh_clap.contains(id));
+        // Free the file sets the audio thread handed back (ENG-077).
+        for s in self.stock.values() {
+            s.handle.reclaim_files();
+        }
         self.ready.clear();
         let fresh_locals = &self.fresh_locals;
         self.took.retain(|id, _| {
@@ -1722,6 +1803,143 @@ mod tests {
         let loader = PluginLoader::new(None);
         let e = loader.restart_of(PluginId(7)).unwrap_err();
         assert!(e.contains("別のプロセス"), "{e}");
+    }
+
+    /// A sampler whose song lists a file reads it off the audio thread and its voices play
+    /// it; a file that cannot be read is a warning and the slot stays silent (ENG-077).
+    #[test]
+    fn a_builtins_files_are_read_off_the_audio_thread_and_play() {
+        use std::f64::consts::TAU;
+        use xirius_engine::{AudioIo, NoteEvent, NoteKind, RenderMode};
+        let tmp = tempfile::Builder::new()
+            .prefix("xirius-plugin-samples-")
+            .tempdir()
+            .unwrap();
+        let path = tmp.path().join("hit.wav");
+        let mut w = hound::WavWriter::create(
+            &path,
+            hound::WavSpec {
+                channels: 2,
+                sample_rate: 48_000,
+                bits_per_sample: 32,
+                sample_format: hound::SampleFormat::Float,
+            },
+        )
+        .unwrap();
+        for i in 0..9_600i32 {
+            let v = ((i as f64 * 440.0 * TAU / 48_000.0).sin() * 0.4) as f32;
+            w.write_sample(v).unwrap();
+            w.write_sample(v).unwrap();
+        }
+        w.finalize().unwrap();
+
+        let mk = |samples: Vec<String>| Plugin {
+            id: PluginId(9),
+            name: "Sampler".into(),
+            kind: PluginKind::Instrument,
+            format: "builtin".into(),
+            uid: "sampler".into(),
+            bypass: false,
+            deactivated: false,
+            params: Default::default(),
+            state: None,
+            sidechain: None,
+            samples,
+            isolation: PluginIsolation::default(),
+        };
+        let mut loader = PluginLoader::new(None);
+        loader.set_sample_home(Some(tmp.path().to_path_buf()), 48_000);
+
+        // A file that is there reaches the voices.
+        let x = mk(vec!["hit.wav".into()]);
+        let (mut p, warnings) = loader.stock(&x).unwrap();
+        assert_eq!(warnings, Vec::<String>::new());
+        p.prepare(&ProcessSetup {
+            sample_rate: 48_000.0,
+            max_block: 512,
+            mode: RenderMode::Realtime,
+        });
+        let mut left = [0.0f32; 512];
+        let mut right = [0.0f32; 512];
+        let mut io = AudioIo {
+            left: &mut left,
+            right: &mut right,
+        };
+        p.process(
+            &mut io,
+            &[NoteEvent {
+                offset: 0,
+                kind: NoteKind::On {
+                    pitch: 60,
+                    velocity: 1.0,
+                },
+            }],
+        );
+        assert!(left.iter().any(|v| *v != 0.0), "no sound");
+
+        // A file that is not there is a warning, and the device still opens.
+        let x = mk(vec!["gone.wav".into()]);
+        let (_, warnings) = loader.stock(&x).unwrap();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("gone.wav"), "{}", warnings[0]);
+    }
+
+    /// A set that cannot go into a full ring is not marked applied, so a later `apply` sends
+    /// it again once the device polls (ENG-077).
+    #[test]
+    fn a_full_ring_leaves_the_new_files_pending_until_the_device_polls() {
+        use xirius_engine::stock::files::FileSet;
+        use xirius_engine::{AudioIo, RenderMode};
+        let tmp = tempfile::Builder::new()
+            .prefix("xirius-plugin-samples-")
+            .tempdir()
+            .unwrap();
+        let mk = |samples: Vec<String>| Plugin {
+            id: PluginId(9),
+            name: "Sampler".into(),
+            kind: PluginKind::Instrument,
+            format: "builtin".into(),
+            uid: "sampler".into(),
+            bypass: false,
+            deactivated: false,
+            params: Default::default(),
+            state: None,
+            sidechain: None,
+            samples,
+            isolation: PluginIsolation::default(),
+        };
+        let mut loader = PluginLoader::new(None);
+        loader.set_sample_home(Some(tmp.path().to_path_buf()), 48_000);
+        let x = mk(vec!["a.wav".into()]);
+        let (mut p, _) = loader.stock(&x).unwrap();
+        // Fill the inbox ring (QUEUE is 8; one set is already in it from `stock`).
+        let h = loader.stock.get(&x.id).unwrap().handle.clone();
+        for _ in 0..8 {
+            if !h.set_files(FileSet::default()) {
+                break;
+            }
+        }
+        // The next set does not fit: the change is not marked applied.
+        let x2 = mk(vec!["b.wav".into()]);
+        assert!(loader.apply(&x2));
+        assert_eq!(loader.stock[&x.id].applied.samples, vec!["a.wav"]);
+        // The device polls once, the ring empties, and the change lands on a retry.
+        p.prepare(&ProcessSetup {
+            sample_rate: 48_000.0,
+            max_block: 512,
+            mode: RenderMode::Realtime,
+        });
+        let mut left = [0.0f32; 16];
+        let mut right = [0.0f32; 16];
+        p.process(
+            &mut AudioIo {
+                left: &mut left,
+                right: &mut right,
+            },
+            &[],
+        );
+        assert!(loader.apply(&x2));
+        assert_eq!(loader.stock[&x.id].applied.samples, vec!["b.wav"]);
     }
 
     fn edit(id: u32, phase: EditPhase, value: Option<f64>) -> ParamEdit {

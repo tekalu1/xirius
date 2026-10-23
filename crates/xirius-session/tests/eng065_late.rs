@@ -15,6 +15,7 @@ const OPEN: Duration = Duration::from_millis(900);
 
 fn plugin(id: u64, uid: &str) -> Plugin {
     Plugin {
+        samples: Vec::new(),
         id: PluginId(id),
         name: format!("Test {id}"),
         kind: PluginKind::Effect,

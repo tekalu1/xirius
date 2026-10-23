@@ -37,6 +37,7 @@ fn catalog() -> (Arc<Catalog>, String) {
 
 fn plugin(id: u64, kind: PluginKind, uid: &str) -> Plugin {
     Plugin {
+        samples: Vec::new(),
         id: PluginId(id),
         name: format!("Test {id}"),
         kind,

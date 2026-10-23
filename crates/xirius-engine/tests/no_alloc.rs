@@ -351,3 +351,80 @@ fn recording_audio_and_midi_does_not_allocate() {
     assert!(r.takes.len() > 1, "the loop made laps");
     assert!(r.takes.iter().any(|t| !t.midi.is_empty()));
 }
+
+/// The files a built-in reads move through the ring without allocating on the audio thread
+/// (ENG-077): polling a new set, playing its slots and handing the old set back.
+#[test]
+fn stock_devices_taking_file_sets_do_not_allocate() {
+    use xirius_engine::stock;
+    use xirius_engine::stock::files::{FileSet, FileSlot};
+    let setup = ProcessSetup {
+        sample_rate: 48_000.0,
+        max_block: 256,
+        mode: RenderMode::Realtime,
+    };
+    let (sampler, h_sampler) = stock::create("sampler").unwrap();
+    let (kit, h_kit) = stock::create("drum-kit").unwrap();
+    let mut s = spec();
+    s.tracks.clear();
+    let mut a = TrackSpec::new("smp", sampler);
+    a.timeline = timeline(0);
+    let mut b = TrackSpec::new("kit", kit);
+    b.timeline = timeline(1_000_000);
+    s.tracks = vec![TrackSlot::New(a), TrackSlot::New(b)];
+    let (mut audio, mut control) = engine::create(
+        Plan::build(s, setup, None).unwrap(),
+        EngineConfig::default(),
+    );
+    // The sets handed over, made before the counted part: both channels filled, one slot
+    // with a file each.
+    let set = |hz: f64| {
+        let n = 4_800;
+        FileSet {
+            slots: vec![Some(FileSlot {
+                name: "tone_C3.wav".into(),
+                data: Arc::new(AudioData {
+                    left: (0..n)
+                        .map(|i| (i as f64 * hz * std::f64::consts::TAU / 48_000.0).sin() as f32)
+                        .collect(),
+                    right: (0..n)
+                        .map(|i| (i as f64 * hz * std::f64::consts::TAU / 48_000.0).sin() as f32)
+                        .collect(),
+                }),
+            })],
+        }
+    };
+    let sets: Vec<FileSet> = (0..600).map(|i| set(220.0 + i as f64)).collect();
+    let mut out = vec![0.0f32; 1000 * 2];
+    let mut sounded = false;
+    control.send(Command::Play).ok().unwrap();
+    reset_violation_count();
+    for (i, set) in sets.iter().enumerate() {
+        if i % 7 == 0 {
+            // Handing a set in is off the audio thread, so its allocation does not count.
+            assert_no_alloc::permit_alloc(|| {
+                h_sampler.set_files(set.clone());
+                h_kit.set_files(set.clone());
+            });
+        }
+        if i % 50 == 0 {
+            // A pad's note for the kit (slot 0 answers 36).
+            control
+                .send(Command::Note {
+                    track: 1,
+                    kind: NoteKind::On {
+                        pitch: 36,
+                        velocity: 0.8,
+                    },
+                })
+                .ok()
+                .unwrap();
+        }
+        audio.render(&mut out, 2);
+        control.poll(|_| {});
+        sounded |= out.iter().any(|s| *s != 0.0);
+    }
+    assert_eq!(violation_count(), 0);
+    // The voices actually played the files while the sets were swapped.
+    assert!(sounded);
+}

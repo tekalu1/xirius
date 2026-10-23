@@ -1485,6 +1485,7 @@ pub(super) fn place_new_plugin(
     }
     let id = PluginId(p.alloc());
     let mut x = Plugin {
+        samples: Vec::new(),
         id,
         name: name.to_string(),
         kind,

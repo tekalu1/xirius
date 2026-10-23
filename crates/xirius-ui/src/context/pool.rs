@@ -102,7 +102,7 @@ impl Studio {
             .browser
             .pool
             .iter()
-            .any(|e| e.external && e.exists && e.clips + e.frozen > 0);
+            .any(|e| e.external && e.exists && e.clips + e.frozen + e.devices > 0);
         let dir = self.song.dir();
         let mut find = act("見つからないファイルを探す…", BrowseAct::LocateFolder).enabled(missing);
         if !missing {

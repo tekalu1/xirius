@@ -7968,6 +7968,7 @@ done_when = "Channel（L/R・M/S。分岐は 2 つ）と Frequency（LR4。ク�
 [[item]]
 id = "ENG-077"
 title = "WAV・AIFF・FLAC のサンプルを読んで Sampler と Drum Kit の声へ渡す"
+status = "done"
 area = "ENG"
 phase = "v1.1"
 source = "devices-v2/report.md § 3"

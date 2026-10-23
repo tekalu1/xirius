@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use super::bank::Params;
 use super::dsp::{Glide, Ramp, STEP, Svf, SvfCoefs, db_to_gain};
+use super::files::{FileInbox, FileSet, root_of};
 use super::samples::{Library, library};
 use crate::control::ControlState;
 use crate::processor::{AudioIo, CTRL_PITCH_BEND, NoteEvent, NoteKind, ProcessSetup, Processor};
@@ -55,12 +56,26 @@ enum Stage {
     Fade,
 }
 
+/// What a voice reads (ENG-077): a zone of the synthesized library, or a file the song gave
+/// the device. A file takes over once the set has one: the nearest of its roots answers, as
+/// a synthesized zone would (zones and their own ranges arrive with PLG-067).
+#[derive(Clone, Copy)]
+enum Src {
+    Synth {
+        sound: usize,
+        zone: usize,
+    },
+    /// The slot in the [`FileSet`].
+    File {
+        slot: usize,
+    },
+}
+
 #[derive(Clone, Copy)]
 struct Voice {
     stage: Stage,
     pitch: u8,
-    sound: usize,
-    zone: usize,
+    src: Src,
     /// Where it reads in the sample, and how far it moves a frame before tuning.
     pos: f64,
     step: f64,
@@ -71,6 +86,8 @@ struct Voice {
     /// Let go while the sustain pedal was down: it releases when the pedal comes up.
     held: bool,
     filter: Svf,
+    /// The right channel's filter of a file voice (the left is `filter`).
+    filter_r: Svf,
 }
 
 impl Voice {
@@ -78,8 +95,7 @@ impl Voice {
         Voice {
             stage: Stage::Idle,
             pitch: 0,
-            sound: 0,
-            zone: 0,
+            src: Src::Synth { sound: 0, zone: 0 },
             pos: 0.0,
             step: 1.0,
             gain: 0.0,
@@ -87,6 +103,7 @@ impl Voice {
             born: 0,
             held: false,
             filter: Svf::default(),
+            filter_r: Svf::default(),
         }
     }
 }
@@ -119,15 +136,20 @@ pub struct Sampler {
     bend: f64,
     /// Where the vibrato is in its cycle (0..1).
     vibrato: f64,
+    /// The channel the files the song gave the device arrive on, and the newest set.
+    files_in: Option<FileInbox>,
+    files: Option<Arc<FileSet>>,
 }
 
 impl Sampler {
-    pub fn new(params: Params) -> Sampler {
+    pub fn new(params: Params, files_in: Option<FileInbox>) -> Sampler {
         Sampler {
             glide: Glide::new(&xirius_params::SAMPLER),
             params,
             rate: 48_000.0,
             lib: None,
+            files_in,
+            files: None,
             voices: [Voice::idle(); VOICES],
             born: 0,
             rates: Rates::default(),
@@ -194,7 +216,37 @@ impl Sampler {
             .then(|| SvfCoefs::lowpass(cutoff, resonance, self.rate));
     }
 
+    /// The slot of the file whose root is nearest `pitch` (the higher one on a tie), when the
+    /// device was given files.
+    fn file_zone(&self, pitch: u8) -> Option<usize> {
+        let set = self.files.as_ref()?;
+        let mut best: Option<(usize, i32)> = None;
+        for (i, s) in set.slots.iter().enumerate() {
+            let Some(s) = s else { continue };
+            let d = (i32::from(root_of(&s.name)) - i32::from(pitch)).abs();
+            if best.is_none_or(|(_, b)| d <= b) {
+                best = Some((i, d));
+            }
+        }
+        best.map(|(i, _)| i)
+    }
+
     fn note_on(&mut self, pitch: u8, velocity: f32) {
+        // Once the song lists files, they are the sound: a pitch none of them takes, or a
+        // slot whose file was not found, stays silent (ENG-077).
+        if self.files.as_ref().is_some_and(|s| !s.slots.is_empty()) {
+            if let Some(slot) = self.file_zone(pitch) {
+                let set = self.files.as_ref().unwrap();
+                let root = root_of(&set.slots[slot].as_ref().unwrap().name);
+                self.start(
+                    pitch,
+                    velocity,
+                    Src::File { slot },
+                    2f64.powf((f64::from(pitch) - f64::from(root)) / 12.0),
+                );
+            }
+            return;
+        }
         let Some(lib) = &self.lib else {
             return;
         };
@@ -202,6 +254,14 @@ impl Sampler {
         let s = &lib.sounds[sound];
         let zone = s.zone_for(pitch);
         let root = s.zones[zone].root;
+        let src = Src::Synth { sound, zone };
+        let step = 2f64.powf((f64::from(pitch) - f64::from(root)) / 12.0) * lib.rate / self.rate;
+        self.start(pitch, velocity, src, step);
+    }
+
+    /// Gives `pitch` a voice for `src` at `step`: an old voice of the same pitch fades, the
+    /// free or oldest slot takes the note.
+    fn start(&mut self, pitch: u8, velocity: f32, src: Src, step: f64) {
         for v in &mut self.voices {
             if v.pitch == pitch && !matches!(v.stage, Stage::Idle | Stage::Fade) {
                 v.stage = Stage::Fade;
@@ -225,15 +285,15 @@ impl Sampler {
         self.voices[k] = Voice {
             stage: Stage::Attack,
             pitch,
-            sound,
-            zone,
+            src,
             pos: 0.0,
-            step: 2f64.powf((f64::from(pitch) - f64::from(root)) / 12.0) * lib.rate / self.rate,
+            step,
             gain: f64::from(velocity.clamp(0.0, 1.0)).powf(2.0 * spread),
             env: 0.0,
             born: self.born,
             held: false,
             filter: Svf::default(),
+            filter_r: Svf::default(),
         };
     }
 
@@ -260,7 +320,6 @@ impl Sampler {
         let target = db_to_gain(self.glide.get(VOLUME));
         let (vol, dvol) = self.volume.toward(target, to - from);
         for v in self.voices.iter_mut().filter(|v| v.stage != Stage::Idle) {
-            let zone = &lib.sounds[v.sound].zones[v.zone];
             let step = v.step * speed;
             let mut vol = vol;
             for i in from..to {
@@ -277,19 +336,51 @@ impl Sampler {
                     Stage::Fade => v.env -= r.fade,
                     Stage::Idle => break,
                 }
-                if (v.env < SILENT && v.stage != Stage::Attack) || zone.done(v.pos) {
+                if v.env < SILENT && v.stage != Stage::Attack {
                     *v = Voice::idle();
                     break;
                 }
-                let mut x = zone.read(v.pos) * v.env * v.gain;
+                // The frame's pair: a synthesized zone is mono, a file keeps its channels.
+                let (mut xl, mut xr);
+                match v.src {
+                    Src::Synth { sound, zone } => {
+                        let z = &lib.sounds[sound].zones[zone];
+                        if z.done(v.pos) {
+                            *v = Voice::idle();
+                            break;
+                        }
+                        let x = z.read(v.pos);
+                        xl = x;
+                        xr = x;
+                        v.pos = z.wrap(v.pos + step);
+                    }
+                    Src::File { slot } => {
+                        let s = self
+                            .files
+                            .as_ref()
+                            .and_then(|s| s.slots.get(slot))
+                            .and_then(|s| s.as_ref());
+                        let Some(s) = s else {
+                            *v = Voice::idle();
+                            break;
+                        };
+                        if s.done(v.pos) {
+                            *v = Voice::idle();
+                            break;
+                        }
+                        (xl, xr) = s.read(v.pos);
+                        v.pos += step;
+                    }
+                }
+                xl *= v.env * v.gain;
+                xr *= v.env * v.gain;
                 if let Some(c) = &self.filter {
-                    x = v.filter.lowpass(c, x);
+                    xl = v.filter.lowpass(c, xl);
+                    xr = v.filter_r.lowpass(c, xr);
                 }
                 vol += dvol;
-                let y = (x * vol) as f32;
-                io.left[i] += y;
-                io.right[i] += y;
-                v.pos = zone.wrap(v.pos + step);
+                io.left[i] += (xl * vol) as f32;
+                io.right[i] += (xr * vol) as f32;
             }
         }
     }
@@ -319,6 +410,19 @@ impl Processor for Sampler {
         let n = io.frames();
         io.left.fill(0.0);
         io.right.fill(0.0);
+        // A newer set fades the voices playing a file, so a held note does not jump into a
+        // different file's middle.
+        if let Some(inbox) = &mut self.files_in
+            && inbox.poll(&mut self.files)
+        {
+            for v in self
+                .voices
+                .iter_mut()
+                .filter(|v| matches!(v.src, Src::File { .. }))
+            {
+                v.stage = Stage::Fade;
+            }
+        }
         let mut at = 0;
         let mut next = 0;
         while at < n {
@@ -443,6 +547,102 @@ mod tests {
         }
     }
 
+    /// A file the song gave the device plays from its next block, pitched from its name's
+    /// root note (ENG-077).
+    #[test]
+    fn a_read_file_plays_pitched_from_its_root() {
+        use crate::stock::files::{FileSet, FileSlot};
+        let (mut p, h) = make("sampler");
+        set_plain(&h, "attack", 1.0);
+        set_plain(&h, "sustain", 100.0);
+        let data = crate::timeline::AudioData {
+            left: sine(261.63, 0.4, 48_000),
+            right: sine(261.63, 0.4, 48_000),
+        };
+        assert!(h.set_files(FileSet {
+            slots: vec![Some(FileSlot {
+                name: "tone_C3.wav".into(),
+                data: std::sync::Arc::new(data),
+            })],
+        }));
+        let x = play(p.as_mut(), 72, 1.0, 40_000, 40_000);
+        // The file holds 19_200 frames; past it the voice is done.
+        let f = pitch_of(&x, 4_800, 18_000);
+        let cents = 1200.0 * (f / 523.26).log2();
+        assert!(cents.abs() < 2.0, "{f} Hz, {cents} cents");
+    }
+
+    /// An empty slot (a file that was not found) stays silent (ENG-077).
+    #[test]
+    fn a_missing_file_opens_silent() {
+        use crate::stock::files::FileSet;
+        let (mut p, h) = make("sampler");
+        assert!(h.set_files(FileSet { slots: vec![None] }));
+        let x = play(p.as_mut(), 60, 1.0, 9_600, 9_600);
+        assert_eq!(peak(&x), 0.0);
+    }
+
+    /// A newer set replaces the one that plays, and the old one is handed back to be freed
+    /// off the audio thread (ENG-077).
+    #[test]
+    fn a_newer_set_replaces_the_sound_while_playing() {
+        use crate::stock::files::{FileSet, FileSlot};
+        let (mut p, h) = make("sampler");
+        set_plain(&h, "attack", 1.0);
+        set_plain(&h, "sustain", 100.0);
+        let mk = |hz: f64| FileSet {
+            slots: vec![Some(FileSlot {
+                name: "tone.wav".into(),
+                data: std::sync::Arc::new(crate::timeline::AudioData {
+                    left: sine(hz, 0.4, 48_000),
+                    right: sine(hz, 0.4, 48_000),
+                }),
+            })],
+        };
+        assert!(h.set_files(mk(220.0)));
+        assert!(h.set_files(mk(440.0)));
+        let x = play(p.as_mut(), 60, 1.0, 40_000, 40_000);
+        let f = pitch_of(&x, 4_800, 18_000);
+        assert!((f - 440.0).abs() < 2.0, "{f}");
+
+        // A set arriving while a note sounds fades the voice rather than jumping into the
+        // other file's middle (ENG-077).
+        let (mut p, h) = make("sampler");
+        set_plain(&h, "attack", 1.0);
+        set_plain(&h, "sustain", 100.0);
+        assert!(h.set_files(mk(440.0)));
+        let mut l = vec![0.0f32; 4_800];
+        let mut r = vec![0.0f32; 4_800];
+        p.as_mut().process(
+            &mut crate::processor::AudioIo {
+                left: &mut l,
+                right: &mut r,
+            },
+            &[crate::processor::NoteEvent {
+                offset: 0,
+                kind: crate::processor::NoteKind::On {
+                    pitch: 60,
+                    velocity: 1.0,
+                },
+            }],
+        );
+        assert!(h.set_files(mk(220.0)));
+        let mut l = vec![0.0f32; 24_000];
+        let mut r = vec![0.0f32; 24_000];
+        p.as_mut().process(
+            &mut crate::processor::AudioIo {
+                left: &mut l,
+                right: &mut r,
+            },
+            &[],
+        );
+        assert_eq!(
+            peak(&l[2_000..]),
+            0.0,
+            "the voice kept playing past the swap"
+        );
+    }
+
     #[test]
     fn the_envelope_follows_the_adsr() {
         let (mut p, h) = make("sampler");
@@ -518,7 +718,7 @@ mod tests {
     #[test]
     fn a_chord_takes_a_voice_a_note_and_more_notes_take_the_oldest() {
         let bank = std::sync::Arc::new(super::super::bank::ParamBank::new(&xirius_params::SAMPLER));
-        let mut p = super::Sampler::new(super::super::bank::Params::new(bank));
+        let mut p = super::Sampler::new(super::super::bank::Params::new(bank), None);
         p.prepare(&setup());
         let silence = vec![0.0; 9_600];
         let notes: Vec<_> = (0..40).map(|k| (k * 10, on(30 + k as u8, 0.8))).collect();

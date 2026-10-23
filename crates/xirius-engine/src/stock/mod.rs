@@ -12,6 +12,7 @@ mod delay;
 mod drum_kit;
 pub mod dsp;
 mod eq;
+pub mod files;
 mod limiter;
 mod reverb;
 mod sampler;
@@ -33,19 +34,34 @@ use crate::processor::Processor;
 pub fn create(key: &str) -> Option<(Box<dyn Processor>, StockHandle)> {
     let def = xirius_params::find(key)?;
     let bank = Arc::new(ParamBank::new(def));
-    let processor = make(def, Params::new(bank.clone()))?;
-    Some((processor, StockHandle::new(bank)))
+    let (processor, files) = make(def, Params::new(bank.clone()))?;
+    Some((processor, StockHandle::new(bank, files)))
 }
 
-fn make(def: &'static BuiltinDef, params: Params) -> Option<Box<dyn Processor>> {
+fn make(
+    def: &'static BuiltinDef,
+    params: Params,
+) -> Option<(Box<dyn Processor>, Option<files::FileOutbox>)> {
     Some(match def.uid {
-        "eq" => Box::new(eq::Eq::new(params)),
-        "compressor" => Box::new(compressor::Compressor::new(params)),
-        "limiter" => Box::new(limiter::Limiter::new(params)),
-        "delay" => Box::new(delay::Delay::new(params)),
-        "reverb" => Box::new(reverb::Reverb::new(params)),
-        "sampler" => Box::new(sampler::Sampler::new(params)),
-        "drum-kit" => Box::new(drum_kit::DrumKit::new(params)),
+        "eq" => (Box::new(eq::Eq::new(params)), None),
+        "compressor" => (Box::new(compressor::Compressor::new(params)), None),
+        "limiter" => (Box::new(limiter::Limiter::new(params)), None),
+        "delay" => (Box::new(delay::Delay::new(params)), None),
+        "reverb" => (Box::new(reverb::Reverb::new(params)), None),
+        "sampler" => {
+            let (out, inbox) = files::channel();
+            (
+                Box::new(sampler::Sampler::new(params, Some(inbox))),
+                Some(out),
+            )
+        }
+        "drum-kit" => {
+            let (out, inbox) = files::channel();
+            (
+                Box::new(drum_kit::DrumKit::new(params, Some(inbox))),
+                Some(out),
+            )
+        }
         _ => return None,
     })
 }

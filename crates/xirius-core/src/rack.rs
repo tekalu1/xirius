@@ -1029,6 +1029,7 @@ mod tests {
             deactivated: false,
             params: Default::default(),
             state: None,
+            samples: Vec::new(),
             isolation: Default::default(),
             sidechain: None,
         }

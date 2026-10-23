@@ -112,6 +112,7 @@ fn replace_plugin(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Outpu
     };
     let id = PluginId(p.alloc());
     let x = Plugin {
+        samples: Vec::new(),
         id,
         name: name.clone(),
         kind,
@@ -235,6 +236,7 @@ pub(super) fn add_with_instrument(p: &mut Project, _: &EditCtx<'_>, a: &Args) ->
     track.color = Some(p.next_track_color());
     let plugin = PluginId(p.alloc());
     track.inserts.push(Plugin {
+        samples: Vec::new(),
         id: plugin,
         name: instrument.clone(),
         kind: PluginKind::Instrument,

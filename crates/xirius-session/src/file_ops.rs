@@ -62,7 +62,7 @@ pub fn run(
     }
 }
 
-/// A file the song uses, as its clips and frozen tracks name it.
+/// A file the song uses, as its clips, frozen tracks and devices name it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Use {
     /// As the song names it (relative to the song folder where possible).
@@ -71,20 +71,25 @@ pub struct Use {
     pub path: PathBuf,
     pub clips: usize,
     pub frozen: usize,
+    /// The devices that read it as a sample (ENG-077).
+    pub devices: usize,
 }
 
 /// The files `p` uses, by the name the song gives them.
 pub fn uses(p: &Project, dir: Option<&Path>) -> Vec<Use> {
     let mut out: BTreeMap<String, Use> = BTreeMap::new();
-    let mut add = |file: &str, frozen: bool| {
+    let mut add = |file: &str, frozen: bool, device: bool| {
         let u = out.entry(file.to_string()).or_insert_with(|| Use {
             file: file.to_string(),
             path: disk_path(file, dir).unwrap_or_else(|_| PathBuf::from(file)),
             clips: 0,
             frozen: 0,
+            devices: 0,
         });
         if frozen {
             u.frozen += 1;
+        } else if device {
+            u.devices += 1;
         } else {
             u.clips += 1;
         }
@@ -92,11 +97,16 @@ pub fn uses(p: &Project, dir: Option<&Path>) -> Vec<Use> {
     for t in p.tracks.values() {
         for c in &t.clips {
             if let ClipBody::Audio { file, .. } = &c.body {
-                add(file, false);
+                add(file, false, false);
             }
         }
         if let Some(z) = &t.frozen {
-            add(&z.file, true);
+            add(&z.file, true, false);
+        }
+        for x in &t.inserts {
+            for s in &x.samples {
+                add(s, false, true);
+            }
         }
     }
     out.into_values().collect()
@@ -116,6 +126,8 @@ pub struct Entry {
     pub external: bool,
     pub clips: usize,
     pub frozen: usize,
+    /// The devices that read it as a sample (ENG-077).
+    pub devices: usize,
 }
 
 /// What made the file: the folder it is in says (`Recordings`, `Bounces`, `Freeze`), and a file
@@ -131,7 +143,7 @@ pub fn kind_of(u: &Use) -> &'static str {
         "record"
     } else if same(&folder, Media::BOUNCES) {
         "bounce"
-    } else if same(&folder, Media::FREEZE) || (u.clips == 0 && u.frozen > 0) {
+    } else if same(&folder, Media::FREEZE) || (u.clips + u.devices == 0 && u.frozen > 0) {
         "freeze"
     } else {
         "import"
@@ -163,6 +175,7 @@ pub fn pool(p: &Project, dir: Option<&Path>) -> Vec<Entry> {
                 path,
                 clips: 0,
                 frozen: 0,
+                devices: 0,
             });
         }
         all.sort_by(|a, b| a.file.cmp(&b.file));
@@ -179,6 +192,7 @@ pub fn pool(p: &Project, dir: Option<&Path>) -> Vec<Entry> {
                 path: u.path,
                 clips: u.clips,
                 frozen: u.frozen,
+                devices: u.devices,
             }
         })
         .collect()
@@ -311,7 +325,7 @@ fn rename(p: &Project, dir: Option<&Path>, args: &Args, dry: bool) -> CmdResult<
     for (u, rest) in uses_under(&all, &from) {
         let moved = rest.iter().fold(to.clone(), |acc, part| acc.join(part));
         let new = song_path(&moved, dir);
-        refs += u.clips + u.frozen;
+        refs += u.clips + u.frozen + u.devices;
         files.push(json!({ "from": u.file, "to": new }));
     }
     if !dry {
@@ -437,6 +451,9 @@ fn list(p: &Project, dir: Option<&Path>) -> Output {
         if u.frozen > 0 {
             count.push(format!("フリーズ {} トラック", u.frozen));
         }
+        if u.devices > 0 {
+            count.push(format!("機器 {} 個", u.devices));
+        }
         if count.is_empty() {
             count.push("使われていない録音".to_string());
         }
@@ -455,9 +472,13 @@ fn list(p: &Project, dir: Option<&Path>) -> Output {
             "bytes": u.bytes,
             "clips": u.clips,
             "frozen": u.frozen,
+            "devices": u.devices,
         }));
     }
-    let unused = all.iter().filter(|u| u.clips + u.frozen == 0).count();
+    let unused = all
+        .iter()
+        .filter(|u| u.clips + u.frozen + u.devices == 0)
+        .count();
     let mut head = format!("曲が使うファイル {} 個", all.len() - unused);
     if missing > 0 {
         head.push_str(&format!("（見つからないもの {missing} 個）"));

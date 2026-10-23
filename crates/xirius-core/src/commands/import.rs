@@ -91,7 +91,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         edit(
             "clip.relink",
-            "オーディオクリップの音声ファイルの参照を付け替えます（保存が、曲のフォルダーに集めたファイルへ向けるのに使います）",
+            "曲が使う音声ファイルの参照を付け替えます（クリップ・フリーズ・機器のサンプル。保存が、曲のフォルダーに集めたファイルへ向けるのに使います）",
             vec![
                 ArgDef::objects("files", "付け替える参照 [{from, to}]").req(),
                 ArgDef::objects(
@@ -257,6 +257,8 @@ fn relink(p: &mut Project, cx: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
         let t = &p.tracks[&id];
         let hits = t.clips.iter().any(|c| {
             matches!(&c.body, ClipBody::Audio { file, .. } if pairs.iter().any(|(f, _)| f == file))
+        }) || t.inserts.iter().any(|x| {
+            x.samples.iter().any(|s| pairs.iter().any(|(f, _)| f == s))
         });
         let frozen = t
             .frozen
@@ -279,15 +281,24 @@ fn relink(p: &mut Project, cx: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
                 changed += 1;
             }
         }
+        // A device's sample references follow the same move (ENG-077).
+        for x in &mut t.inserts {
+            for s in &mut x.samples {
+                if let Some((_, to)) = pairs.iter().find(|(f, _)| f == s) {
+                    *s = to.clone();
+                    changed += 1;
+                }
+            }
+        }
     }
     if changed == 0 {
         return Err(CmdError::new(
             crate::ErrorCode::NothingToDo,
-            "付け替えるクリップがありません",
+            "付け替える参照がありません",
         ));
     }
     Ok(Output::with(
-        format!("{changed} 個のクリップのファイルを付け替えました"),
+        format!("{changed} 個の参照のファイルを付け替えました"),
         json!({ "relinked": changed }),
     ))
 }

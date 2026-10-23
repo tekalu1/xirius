@@ -690,6 +690,7 @@ mod tests {
         let (mut p, t) = song(AutoMode::Touch);
         let pid = PluginId(p.alloc());
         let insert = Plugin {
+            samples: Vec::new(),
             id: pid,
             name: "Gain".into(),
             kind: PluginKind::Effect,

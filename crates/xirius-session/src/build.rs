@@ -159,11 +159,13 @@ pub struct Builder {
 impl Builder {
     /// `dir` is the song folder, which relative audio paths are taken from.
     pub fn new(rate: u32, dir: Option<PathBuf>) -> Builder {
+        let mut plugins = PluginLoader::default();
+        plugins.set_sample_home(dir.clone(), rate);
         Builder {
             rate,
             dir,
             cache: WavCache::default(),
-            plugins: PluginLoader::default(),
+            plugins,
             timings: Arc::new(Timings::new()),
             timed: Vec::new(),
             background: false,
@@ -220,6 +222,7 @@ impl Builder {
     }
 
     pub fn set_dir(&mut self, dir: Option<PathBuf>) {
+        self.plugins.set_sample_home(dir.clone(), self.rate);
         self.dir = dir;
     }
 

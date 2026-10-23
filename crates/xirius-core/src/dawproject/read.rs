@@ -779,6 +779,7 @@ impl Reader<'_> {
         };
         let pid = PluginId(self.p.alloc());
         let mut x = Plugin {
+            samples: Vec::new(),
             id: pid,
             name: dev_name.clone(),
             kind,
@@ -886,6 +887,7 @@ impl Reader<'_> {
         let track = self.name(tid);
         let pid = PluginId(self.p.alloc());
         let mut x = Plugin {
+            samples: Vec::new(),
             id: pid,
             name: def.name.to_string(),
             kind: PluginKind::Effect,

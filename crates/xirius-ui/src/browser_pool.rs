@@ -105,7 +105,7 @@ impl Browser {
             key: key.clone(),
             file: e.file.clone(),
             name: file_name(e),
-            clips: (e.clips > 0 || e.frozen == 0).then_some(e.clips),
+            clips: (e.clips + e.devices > 0 || e.frozen == 0).then_some(e.clips + e.devices),
             missing: !e.exists,
             external: e.external,
             selected,

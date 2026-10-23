@@ -20,6 +20,7 @@ fn song(uid: &str, isolation: PluginIsolation) -> Project {
     let id = TrackId(100);
     let mut track = Track::new(id, TrackKind::Audio, "Vocal");
     track.inserts.push(Plugin {
+        samples: Vec::new(),
         id: PID,
         name: "Pitch".into(),
         kind: PluginKind::Effect,

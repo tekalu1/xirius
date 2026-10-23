@@ -13,8 +13,11 @@
 
 use std::f64::consts::{FRAC_1_SQRT_2, PI, TAU};
 
+use std::sync::Arc;
+
 use super::bank::Params;
 use super::dsp::{Biquad, Coefs, Glide, Noise, Ramp, STEP, db_to_gain};
+use super::files::{FileInbox, FileSet};
 use crate::processor::{AudioIo, NoteEvent, NoteKind, ProcessSetup, Processor};
 
 // The parameters, in the order of `xirius_params::DRUM_KIT`.
@@ -35,6 +38,9 @@ const CYMBALS: usize = 4;
 const PERCUSSION: usize = 5;
 const GROUPS: usize = 6;
 
+/// The note of the first pad: a file in slot `i` answers note `PAD_BASE + i` until the banks
+/// and pads of PLG-068 arrive (ENG-077).
+const PAD_BASE: u8 = 36;
 const VOICES: usize = 24;
 const SILENT: f64 = 1e-4;
 const FADE_MS: f64 = 5.0;
@@ -405,6 +411,14 @@ struct OscState {
     env_k: f64,
 }
 
+/// A pad's file as it plays (ENG-077): where in it, and how far it moves a frame.
+#[derive(Clone, Copy, Debug)]
+struct PadPlay {
+    slot: usize,
+    pos: f64,
+    step: f64,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Voice {
     on: bool,
@@ -416,6 +430,8 @@ struct Voice {
     right: f64,
     fade: f64,
     fading: bool,
+    /// The file the pad plays, when the hit is one (`oscs`/`hiss`/`metal` stay off then).
+    pad: Option<PadPlay>,
     oscs: [OscState; 2],
     noise: Noise,
     hiss_on: bool,
@@ -447,6 +463,7 @@ impl Voice {
             right: 0.0,
             fade: 1.0,
             fading: false,
+            pad: None,
             oscs: [OscState::default(); 2],
             noise: Noise::new(1),
             hiss_on: false,
@@ -467,9 +484,33 @@ impl Voice {
         }
     }
 
-    /// One frame of the hit (before its level and pan); false once it has died away.
+    /// One frame of the hit (before its level and pan); `None` once it has died away.
+    /// A pad's file keeps its two channels; a made hit is the same on both.
     #[inline]
-    fn tick(&mut self, fade_step: f64) -> Option<f64> {
+    fn tick(&mut self, fade_step: f64, files: Option<&FileSet>) -> Option<(f64, f64)> {
+        if let Some(pad) = &mut self.pad {
+            let slot = files
+                .and_then(|f| f.slots.get(pad.slot))
+                .and_then(|s| s.as_ref());
+            let x = if slot.is_some_and(|s| !s.done(pad.pos)) {
+                slot.map(|s| s.read(pad.pos))
+            } else {
+                None
+            };
+            pad.pos += pad.step;
+            let mut out = match x {
+                Some((l, r)) => (l, r),
+                None => (0.0, 0.0),
+            };
+            let mut alive = x.is_some();
+            if self.fading {
+                self.fade -= fade_step;
+                alive &= self.fade > 0.0;
+                out = (out.0 * self.fade.max(0.0), out.1 * self.fade.max(0.0));
+            }
+            self.age = self.age.saturating_add(1);
+            return alive.then_some(out);
+        }
         let mut x = 0.0;
         let mut alive = false;
         for o in self.oscs.iter_mut().filter(|o| o.on) {
@@ -521,7 +562,7 @@ impl Voice {
             x *= self.fade.max(0.0);
         }
         self.age = self.age.saturating_add(1);
-        alive.then_some(x)
+        alive.then_some((x, x))
     }
 }
 
@@ -550,11 +591,16 @@ pub struct DrumKit {
     voices: [Voice; VOICES],
     born: u64,
     levels: [Ramp; GROUPS],
+    /// The level a pad's file plays at (the kit's volume only; the groups do not color it).
+    file_level: Ramp,
+    /// The channel the files the song gave the device arrive on, and the newest set.
+    files_in: Option<FileInbox>,
+    files: Option<Arc<FileSet>>,
     until_step: usize,
 }
 
 impl DrumKit {
-    pub fn new(params: Params) -> DrumKit {
+    pub fn new(params: Params, files_in: Option<FileInbox>) -> DrumKit {
         DrumKit {
             glide: Glide::new(&xirius_params::DRUM_KIT),
             params,
@@ -562,6 +608,9 @@ impl DrumKit {
             voices: [Voice::idle(); VOICES],
             born: 0,
             levels: [Ramp::new(LEVEL); GROUPS],
+            file_level: Ramp::new(LEVEL),
+            files_in,
+            files: None,
             until_step: 0,
         }
     }
@@ -570,7 +619,45 @@ impl DrumKit {
         LEVEL * db_to_gain(self.glide.get(VOLUME) + self.glide.get(GROUP_LEVELS + group))
     }
 
+    /// What a pad's file plays at.
+    fn file_level(&self) -> f64 {
+        LEVEL * db_to_gain(self.glide.get(VOLUME))
+    }
+
+    /// Takes a voice for the file of `slot`: it keeps its channels (the pad's pan does not
+    /// apply), moves at the tune's pitch and sounds out to its end (one shot).
+    fn pad_on(&mut self, note: u8, slot: usize, velocity: f32) {
+        let k = (0..VOICES)
+            .min_by_key(|&k| (self.voices[k].on, self.voices[k].born))
+            .unwrap_or(0);
+        let spread = self.glide.get(VELOCITY) * 0.01;
+        let gain = f64::from(velocity.clamp(0.0, 1.0)).powf(2.0 * spread);
+        self.born += 1;
+        let mut v = Voice::idle();
+        v.on = true;
+        v.note = note;
+        v.born = self.born;
+        v.left = gain;
+        v.right = gain;
+        v.pad = Some(PadPlay {
+            slot,
+            pos: 0.0,
+            step: 2f64.powf(self.glide.get(TUNE) / 12.0),
+        });
+        self.voices[k] = v;
+    }
+
     fn note_on(&mut self, note: u8, velocity: f32) {
+        // Once the song lists files, they are the sound (ENG-077): a pad whose file was not
+        // found, and a note no slot answers, stay silent rather than fall back to a made hit.
+        if self.files.as_ref().is_some_and(|s| !s.slots.is_empty()) {
+            if let Some(i) = note.checked_sub(PAD_BASE).map(usize::from)
+                && let Some(Some(_)) = self.files.as_ref().unwrap().slots.get(i)
+            {
+                self.pad_on(note, i, velocity);
+            }
+            return;
+        }
         let kit = self.glide.index(KIT);
         let Some(hit) = recipe(kit, note) else {
             return;
@@ -670,6 +757,7 @@ impl Processor for DrumKit {
             let level = self.level(g);
             self.levels[g].set(level);
         }
+        self.file_level.set(self.file_level());
         self.until_step = STEP;
     }
 
@@ -677,6 +765,15 @@ impl Processor for DrumKit {
         let n = io.frames();
         io.left.fill(0.0);
         io.right.fill(0.0);
+        // A newer set fades the voices playing a file, so a playing pad does not jump into a
+        // different file's middle.
+        if let Some(inbox) = &mut self.files_in
+            && inbox.poll(&mut self.files)
+        {
+            for v in self.voices.iter_mut().filter(|v| v.on && v.pad.is_some()) {
+                v.fading = true;
+            }
+        }
         let fade_step = 1.0 / (FADE_MS * 0.001 * self.rate);
         let mut at = 0;
         let mut next = 0;
@@ -701,16 +798,24 @@ impl Processor for DrumKit {
                 let level = self.level(g);
                 *r = self.levels[g].toward(level, len);
             }
+            let file_ramp = {
+                let level = self.file_level();
+                self.file_level.toward(level, len)
+            };
             for v in self.voices.iter_mut().filter(|v| v.on) {
-                let (mut level, step) = ramps[v.group];
+                let (mut level, step) = if v.pad.is_some() {
+                    file_ramp
+                } else {
+                    ramps[v.group]
+                };
                 for i in at..end {
-                    let Some(x) = v.tick(fade_step) else {
+                    let Some((xl, xr)) = v.tick(fade_step, self.files.as_deref()) else {
                         v.on = false;
                         break;
                     };
                     level += step;
-                    io.left[i] += (x * level * v.left) as f32;
-                    io.right[i] += (x * level * v.right) as f32;
+                    io.left[i] += (xl * level * v.left) as f32;
+                    io.right[i] += (xr * level * v.right) as f32;
                 }
             }
             self.until_step -= len;
@@ -896,6 +1001,86 @@ mod tests {
         assert!(rms(&r) > rms(&l) * 1.3);
         let (l, r) = hit_once(p.as_mut(), 36, 1.0, 4_800);
         assert_eq!(l, r);
+    }
+
+    /// In file mode a pad whose file was not found, and a note no slot answers, stay silent
+    /// rather than fall back to a made hit (ENG-077).
+    #[test]
+    fn a_missing_or_unlisted_pad_stays_silent() {
+        use crate::stock::files::{FileSet, FileSlot};
+        let (mut p, h) = make("drum-kit");
+        assert!(h.set_files(FileSet { slots: vec![None] }));
+        let (l, r) = hit_once(p.as_mut(), 36, 1.0, 4_800);
+        assert!(peak(&l) == 0.0 && peak(&r) == 0.0, "a missing file played");
+        // Slot 0 has a file, but note 40 (slot 4) has none: it does not play a recipe.
+        let data = crate::timeline::AudioData {
+            left: vec![0.5; 480],
+            right: vec![0.5; 480],
+        };
+        assert!(h.set_files(FileSet {
+            slots: vec![Some(FileSlot {
+                name: "kick.wav".into(),
+                data: std::sync::Arc::new(data),
+            })],
+        }));
+        let (l, _) = hit_once(p.as_mut(), 40, 1.0, 4_800);
+        assert_eq!(peak(&l), 0.0, "an unlisted pad played");
+    }
+
+    /// A set arriving while a pad plays fades the voice rather than jumping into the other
+    /// file's middle (ENG-077).
+    #[test]
+    fn a_newer_set_fades_the_playing_pad() {
+        use crate::stock::files::{FileSet, FileSlot};
+        let (mut p, h) = make("drum-kit");
+        let flat = |v| FileSet {
+            slots: vec![Some(FileSlot {
+                name: "hit.wav".into(),
+                data: std::sync::Arc::new(crate::timeline::AudioData {
+                    left: vec![v; 48_000],
+                    right: vec![v; 48_000],
+                }),
+            })],
+        };
+        assert!(h.set_files(flat(0.5)));
+        let _ = hit_once(p.as_mut(), 36, 1.0, 4_800);
+        assert!(h.set_files(flat(0.9)));
+        // Render on without preparing again (a prepare would drop the playing voice).
+        let mut l = vec![0.0f32; 24_000];
+        let mut r = vec![0.0f32; 24_000];
+        p.as_mut().process(
+            &mut AudioIo {
+                left: &mut l,
+                right: &mut r,
+            },
+            &[],
+        );
+        assert_eq!(peak(&l[3_000..]), 0.0, "the pad kept playing past the swap");
+    }
+
+    /// A file in the first slot plays when the first pad's note hits, once and at its own
+    /// pitch (ENG-077).
+    #[test]
+    fn a_pads_file_plays_one_shot_at_its_own_pitch() {
+        use crate::stock::files::{FileSet, FileSlot};
+        let (mut p, h) = make("drum-kit");
+        let frames = 24_000;
+        let data = crate::timeline::AudioData {
+            left: super::super::testing::sine(440.0, 0.5, frames),
+            right: super::super::testing::sine(880.0, 0.25, frames),
+        };
+        assert!(h.set_files(FileSet {
+            slots: vec![Some(FileSlot {
+                name: "hit.wav".into(),
+                data: std::sync::Arc::new(data),
+            })],
+        }));
+        let (l, r) = hit_once(p.as_mut(), 36, 1.0, 48_000);
+        // The file keeps its channels: the right is an octave up, half as loud.
+        let ratio = pitch_of(&r, 0, 20_000) / pitch_of(&l, 0, 20_000);
+        assert!((ratio - 2.0).abs() < 0.01, "{ratio}");
+        // One shot: past the file's end the pad is quiet even though the note stays held.
+        assert!(peak(&l[24_500..]) == 0.0, "the pad plays on");
     }
 
     #[test]

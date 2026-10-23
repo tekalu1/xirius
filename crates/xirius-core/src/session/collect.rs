@@ -136,6 +136,14 @@ impl Session {
             {
                 names.push(z.file.clone());
             }
+            // The samples a device reads are the song's files too (ENG-077).
+            for x in &t.inserts {
+                for s in &x.samples {
+                    if !names.contains(s) {
+                        names.push(s.clone());
+                    }
+                }
+            }
         }
         let media = self.current.media.clone();
         let imports = media.place(&root, Media::IMPORTS);

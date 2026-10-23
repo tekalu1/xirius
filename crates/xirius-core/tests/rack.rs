@@ -34,6 +34,7 @@ fn plugin(id: u64, kind: PluginKind) -> Plugin {
         deactivated: false,
         params: Default::default(),
         state: None,
+        samples: Vec::new(),
         isolation: Default::default(),
         sidechain: None,
     }
