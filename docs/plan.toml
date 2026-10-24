@@ -8153,3 +8153,12 @@ phase = "later"
 source = "presets/report.md § 5.1"
 after = ["BRW-017"]
 done_when = "VST3 の .vstpreset と CLAP の preset-discovery で見つけたプリセットを、ブラウザーのその機器の下に並べて読み込める"
+
+[[item]]
+id = "CLI-003"
+title = "track.volume.set と track.pan.set に --by（ずらす量）を足す"
+area = "CLI"
+phase = "v1.1"
+source = "multi-select/report.md § 3 ; multi-select/report.md § 5"
+done_when = "track.volume.set --by <dB> と track.pan.set --by <量> は、それぞれのトラックの今の値にずれを足し、範囲の端で止める（ボリュームは -60 dB 以下を -∞ にし、-∞ のトラックは動かさない）。--db / --pan と --by はどちらか 1 つだけを指定する（両方・どちらも無しはエラー）。1 回の実行は undo 1 回で戻る。docs/commands.md に出る（crates/xirius-core の試験で数える）"
+status = "done"

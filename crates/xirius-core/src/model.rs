@@ -28,6 +28,30 @@ use crate::time::{DEFAULT_PPQ, Meter, Tick, TimeMap};
 
 pub const MIN_DB: f64 = -120.0;
 pub const MAX_DB: f64 = 12.0;
+/// The bottom of a fader: a volume at or below it shows -∞.
+pub const FADER_FLOOR_DB: f64 = -60.0;
+
+/// Where a volume at `now` goes when moved by `by` with others (MIX-050): a track at the end of
+/// the range stops there alone, one taken to the fader's floor or below is silent, and one that
+/// is there already stays where it is, since silence has no difference to keep.
+pub fn volume_moved(now: f64, by: f64) -> f64 {
+    if now <= FADER_FLOOR_DB {
+        return now;
+    }
+    let v = round_moved((now + by).clamp(MIN_DB, MAX_DB));
+    if v <= FADER_FLOOR_DB { MIN_DB } else { v }
+}
+
+/// Where a pan at `now` goes when moved by `by` with others: a track at a side stops there alone.
+pub fn pan_moved(now: f64, by: f64) -> f64 {
+    round_moved((now + by).clamp(-1.0, 1.0))
+}
+
+/// A sum of two values kept without the noise of the sum (0.1 + 0.2 is 0.3, not
+/// 0.30000000000000004).
+fn round_moved(v: f64) -> f64 {
+    (v * 1e4).round() / 1e4
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -12,7 +12,7 @@ use crate::command::EditCtx;
 use crate::id::{FolderId, IdKind, PluginId, SendId, TrackId};
 use crate::model::{
     AuxSend, Folder, MAX_DB, MIN_DB, MidiOut, Output as Route, Plugin, PluginIsolation, PluginKind,
-    Track, TrackIcon, TrackKind,
+    Track, TrackIcon, TrackKind, pan_moved, volume_moved,
 };
 
 pub(super) fn defs() -> Vec<CommandDef> {
@@ -164,42 +164,58 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         edit(
             "track.volume.set",
-            "ボリューム（フェーダー）を dB で設定します",
+            "ボリューム（フェーダー）を dB で設定します（--db で同じ値に、--by でそれぞれをずらす。-120〜12 dB に収めます。ids を省くとセッションの選択で、今は画面の選択とは別）",
             vec![
                 ArgDef::ids(IdKind::Track, "トラック"),
-                ArgDef::float("db", "dB（-120〜12）")
-                    .req()
-                    .range(MIN_DB, MAX_DB),
+                ArgDef::float("db", "dB（-120〜12）").range(MIN_DB, MAX_DB),
+                ArgDef::float("by", "--db の代わりに、それぞれを今の値からずらす dB（12 dB に着いたトラックはそこで止まり、-60 dB 以下になったトラックは -∞ に。-∞ のトラックは動きません）")
+                    .range(MIN_DB - MAX_DB, MAX_DB - MIN_DB),
             ],
             |p, _, a| {
-                let db = a.f64("db")?;
+                let to = set_or_by(a, "db")?;
                 let ids = track_ids(p, a, true)?;
                 for id in &ids {
-                    p.track_mut(*id)?.volume_db = db;
+                    let t = p.track_mut(*id)?;
+                    t.volume_db = to.value(t.volume_db, volume_moved);
                 }
-                Ok(Output::msg(format!(
-                    "{} トラックのボリュームを {db} dB に設定しました",
-                    ids.len()
-                )))
+                Ok(Output::msg(match to {
+                    SetOrBy::Set(db) => {
+                        format!(
+                            "{} トラックのボリュームを {db} dB に設定しました",
+                            ids.len()
+                        )
+                    }
+                    SetOrBy::By(by) => {
+                        format!("{} トラックのボリュームを {by} dB ずらしました", ids.len())
+                    }
+                }))
             },
         ),
         edit(
             "track.pan.set",
-            "パンを設定します（-1 が左、1 が右）",
+            "パンを設定します（-1 が左、1 が右。--pan で同じ値に、--by でそれぞれをずらす。-1〜1 に収めます。ids を省くとセッションの選択で、今は画面の選択とは別）",
             vec![
                 ArgDef::ids(IdKind::Track, "トラック"),
-                ArgDef::float("pan", "-1〜1").req().range(-1.0, 1.0),
+                ArgDef::float("pan", "-1〜1").range(-1.0, 1.0),
+                ArgDef::float(
+                    "by",
+                    "--pan の代わりに、それぞれを今の値からずらす量（--pan と同じ単位。端に着いたトラックはそこで止まります）",
+                )
+                .range(-2.0, 2.0),
             ],
             |p, _, a| {
-                let pan = a.f64("pan")?;
+                let to = set_or_by(a, "pan")?;
                 let ids = track_ids(p, a, true)?;
                 for id in &ids {
-                    p.track_mut(*id)?.pan = pan;
+                    let t = p.track_mut(*id)?;
+                    t.pan = to.value(t.pan, pan_moved);
                 }
-                Ok(Output::msg(format!(
-                    "{} トラックのパンを {pan} に設定しました",
-                    ids.len()
-                )))
+                Ok(Output::msg(match to {
+                    SetOrBy::Set(pan) => {
+                        format!("{} トラックのパンを {pan} に設定しました", ids.len())
+                    }
+                    SetOrBy::By(by) => format!("{} トラックのパンを {by} ずらしました", ids.len()),
+                }))
             },
         ),
         edit(
@@ -730,6 +746,33 @@ fn track_ids(p: &Project, a: &Args, allow_master: bool) -> CmdResult<Vec<TrackId
         }
     }
     Ok(ids)
+}
+
+/// `--<name>` gives every track the same value; `--by` moves each from where it is (CLI-003).
+#[derive(Clone, Copy)]
+enum SetOrBy {
+    Set(f64),
+    By(f64),
+}
+
+impl SetOrBy {
+    /// The new value of one track: `moved` takes it from `now` for `--by`.
+    fn value(self, now: f64, moved: fn(f64, f64) -> f64) -> f64 {
+        match self {
+            SetOrBy::Set(v) => v,
+            SetOrBy::By(d) => moved(now, d),
+        }
+    }
+}
+
+fn set_or_by(a: &Args, name: &str) -> CmdResult<SetOrBy> {
+    match (a.opt_f64(name), a.opt_f64("by")) {
+        (Some(v), None) => Ok(SetOrBy::Set(v)),
+        (None, Some(d)) => Ok(SetOrBy::By(d)),
+        _ => Err(CmdError::invalid(format!(
+            "--{name} と --by のどちらか 1 つだけを指定してください"
+        ))),
+    }
 }
 
 /// Gives every named track the same value (`track.transpose`, `track.velocity`; UI-312).
