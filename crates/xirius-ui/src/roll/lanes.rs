@@ -14,7 +14,7 @@ use super::frame::{Frame, LANE_PAD, View};
 use super::notes::diff_set;
 use super::{Balloon, Ctx, Drag, Edit, Menu, Mode, Out, Preview, Roll, Then};
 use crate::studio::Rect;
-use crate::tools::snap_round;
+use crate::tools::round_in_bars;
 use xirius_core::id::NoteId;
 
 /// What a lane shows.
@@ -436,7 +436,8 @@ impl Roll {
         let step = ctx
             .snap(self.beat_px, self.mods.shift)
             .map_or((ctx.ppq() / 16).max(1), |s| s.max(eighth));
-        let t = snap_round(v.tick(x) + ctx.clip.start, step) - ctx.clip.start;
+        let t = round_in_bars(&ctx.project.time_map(), v.tick(x) + ctx.clip.start, step)
+            - ctx.clip.start;
         t.clamp(0, (ctx.clip_len() - 1).max(0))
     }
 

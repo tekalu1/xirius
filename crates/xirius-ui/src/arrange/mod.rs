@@ -22,7 +22,7 @@ use xirius_core::time::Tick;
 use xirius_design::{Layout, Space};
 
 use crate::studio::{Geometry, Hit, Rect, RowParts, Studio};
-use crate::tools::{Area, Meter, Mods, Tool, snap_round};
+use crate::tools::{Area, Meter, Mods, Tool, round_in_bars};
 use crate::tree::{LANE_H, Row, RowKind};
 
 #[cfg(test)]
@@ -594,21 +594,13 @@ impl Studio {
     }
 
     pub fn meter(&self) -> Meter {
-        let p = self.project();
-        Meter {
-            ppq: p.ppq,
-            beats_per_bar: p.timesig.first().map_or(4, |t| t.num),
-            bpm: p.tempo.first().map_or(120.0, |t| t.bpm),
-            beat_px: self.beat_w,
-        }
+        self.meters.of(&self.project(), self.beat_w)
     }
 
-    /// `t` on the grid, unless snapping is off or Shift is down.
+    /// `t` on the grid (counted from the start of its bar), unless snapping is
+    /// off or Shift is down.
     pub fn snap_tick(&self, t: Tick, shift: bool) -> Tick {
-        match self.tools().snap.active(&self.meter(), shift) {
-            Some(step) => snap_round(t, step),
-            None => t,
-        }
+        self.tools().snap.snapped(&self.meter(), shift, t)
     }
 
     fn bar_ticks(&self) -> Tick {
@@ -2088,11 +2080,14 @@ impl Studio {
         let s = p.sections.get(index).filter(|s| s.id == id)?;
         let dx = d.at.0 - d.from.0;
         let dt = self.px_to_ticks(dx);
-        let bar = self.bar_ticks();
         if resize {
+            // The end lands on the grid's lines (UI-339): the bar lines of the
+            // meter there, and with Shift the quarters counted from the bar's start.
+            let tm = p.time_map();
             let beat = i64::from(p.ppq);
-            let step = if d.mods.shift { beat } else { bar };
-            let length = snap_round(s.length + dt, step).max(beat);
+            let step = if d.mods.shift { beat } else { Tick::MAX };
+            let end = round_in_bars(&tm, s.start + s.length + dt, step);
+            let length = (end - s.start).max(beat);
             // The next section is a wall (ARR-007): the picture stops where
             // the command will.
             let room = p
@@ -2106,7 +2101,7 @@ impl Studio {
             if length == s.length {
                 return None;
             }
-            let bars = format!("{:.2} 小節", length as f64 / bar as f64);
+            let bars = format!("{:.2} 小節", bars_between(&tm, s.start, s.start + length));
             return Some(Plan {
                 command: Some((
                     "section.resize",
@@ -2471,4 +2466,14 @@ impl Studio {
             },
         })
     }
+}
+
+/// How many bars from `a` to `b`, each bar counted in its own meter.
+fn bars_between(tm: &xirius_core::time::TimeMap, a: Tick, b: Tick) -> f64 {
+    let at = |t: Tick| {
+        let (bar, _, _) = tm.to_bbt(t);
+        let (s, e) = (tm.bar_start(bar), tm.bar_start(bar + 1));
+        f64::from(bar) + (t - s) as f64 / (e - s).max(1) as f64
+    };
+    at(b) - at(a)
 }

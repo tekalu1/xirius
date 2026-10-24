@@ -647,6 +647,8 @@ pub struct Studio {
     /// name's field and the drawing share the same rectangles (UI-312).
     pub(crate) mark_widths:
         std::cell::RefCell<std::collections::BTreeMap<TrackId, crate::draw::MarkWidths>>,
+    /// The song's meters and tempo, for the grid's lines and the snap (UI-339).
+    pub(crate) meters: crate::tools::Meters,
     pub popup: Option<Popup>,
     pub arrange_visible: bool,
     pub tempo_visible: bool,
@@ -835,6 +837,7 @@ impl Studio {
             browser: Browser::new(),
             inspector: crate::inspector::Inspector::default(),
             mark_widths: Default::default(),
+            meters: Default::default(),
             popup: None,
             arrange_visible: true,
             tempo_visible: true,
@@ -1039,7 +1042,7 @@ impl Studio {
 
     /// [`Studio::ticks_to_px`] before it is rounded to an f32: zoomed in to the samples a song
     /// is millions of pixels wide, past where an f32 holds a pixel.
-    fn ticks_to_px_f64(&self, ticks: Tick) -> f64 {
+    pub(crate) fn ticks_to_px_f64(&self, ticks: Tick) -> f64 {
         ticks as f64 / f64::from(self.project().ppq) * f64::from(self.beat_w)
     }
 
@@ -1065,6 +1068,12 @@ impl Studio {
     /// Window x of a tick in the lanes, the ruler or the section band.
     pub fn tick_x(&self, g: &Geometry, ticks: Tick) -> f32 {
         g.lanes.x + (self.ticks_to_px_f64(ticks) - f64::from(self.scroll.0)) as f32
+    }
+
+    /// [`Studio::tick_x`] of a place between two ticks (a second's line zoomed in).
+    pub fn tick_x_f(&self, g: &Geometry, ticks: f64) -> f32 {
+        let px = ticks / f64::from(self.project().ppq) * f64::from(self.beat_w);
+        g.lanes.x + (px - f64::from(self.scroll.0)) as f32
     }
 
     pub fn max_scroll(&self, g: &Geometry) -> (f32, f32) {
@@ -1876,21 +1885,29 @@ impl Studio {
     /// What the bar's grid value says (UI-302: it also sets the button's width).
     pub(crate) fn grid_text(&self) -> String {
         let p = self.project();
+        // Each view's own width of a beat: the arrangement's auto step is not the roll's.
+        let (tools, beat_px) = if self.song.session().state.view.editor == "roll" {
+            (self.roll_tools(), self.roll.beat_px)
+        } else {
+            (self.tools(), self.beat_w)
+        };
+        // The view's left edge, in song ticks: the meter there decides what the lines show.
+        let left = if self.song.session().state.view.editor == "roll" {
+            let head = self
+                .roll
+                .clip
+                .and_then(|id| p.clip(id).ok())
+                .map_or(0, |(_, c)| c.start);
+            head + (f64::from(self.roll.scroll.0 / beat_px.max(1e-3)) * f64::from(p.ppq)) as Tick
+        } else {
+            self.px_to_ticks(self.scroll.0)
+        };
+        let m = self.meters.of(&p, beat_px);
         crate::topbar::grid_text(
             self.grid_mode(),
             self.song.grid(),
-            (if self.song.session().state.view.editor == "roll" {
-                self.roll_tools()
-            } else {
-                self.tools()
-            })
-            .snap
-            .step(&crate::tools::Meter {
-                ppq: p.ppq,
-                beats_per_bar: p.timesig.first().map_or(4, |t| t.num),
-                bpm: p.tempo.first().map_or(120.0, |t| t.bpm),
-                beat_px: self.roll.beat_px,
-            }),
+            tools.snap.step(&m),
+            crate::grid_lines::visible(&tools.snap, &m, left),
             p.ppq,
         )
     }
@@ -2639,6 +2656,25 @@ mod tests {
 
     fn studio() -> Studio {
         Studio::sample()
+    }
+
+    #[test]
+    fn the_songs_meter_is_built_again_only_when_the_song_changes() {
+        // The views snap with it at every pointer move and draw with it at
+        // every frame (UI-339).
+        let mut s = studio();
+        let same = |a: &crate::tools::Meter, b: &crate::tools::Meter| {
+            Arc::ptr_eq(&a.time, &b.time) && Arc::ptr_eq(&a.tempo, &b.tempo)
+        };
+        let a = s.meter();
+        assert!(same(&a, &s.meter()));
+        s.song
+            .run("timesig.set", serde_json::json!({ "num": 7, "den": 8 }))
+            .unwrap();
+        let b = s.meter();
+        assert!(!same(&a, &b));
+        assert_eq!(b.time.meter_at(1).num, 7);
+        assert!(same(&b, &s.meter()));
     }
 
     fn geometry(s: &Studio) -> Geometry {

@@ -651,20 +651,75 @@ pub fn grid_label(grid: &str) -> String {
     }
 }
 
-/// What the grid button says: the value in the list for クオンタイズ, 小節,
-/// `fr` for frames, and for 自動 the note value it found (`step` ticks).
-pub fn grid_text(mode: SnapMode, grid: &str, step: xirius_core::time::Tick, ppq: u32) -> String {
+/// A length of `ticks` as a note value: `1/16`, `1/8・3連`, `1/4・付点`, or
+/// 小節 when it is none of them.
+pub fn note_label(ticks: f64, ppq: u32) -> String {
+    let whole = f64::from(ppq) * 4.0;
+    let note = |n: f64| {
+        let r = n.round();
+        ((n - r).abs() < 1e-6 && r >= 1.0 && (r as u64).is_power_of_two()).then_some(r as u64)
+    };
+    if ticks <= 0.0 {
+        "小節".to_string()
+    } else if let Some(n) = note(whole / ticks) {
+        format!("1/{n}")
+    } else if let Some(n) = note(whole / (ticks * 1.5)) {
+        format!("1/{n}・3連")
+    } else if let Some(n) = note(whole / (ticks / 1.5)) {
+        format!("1/{n}・付点")
+    } else {
+        "小節".to_string()
+    }
+}
+
+/// What the grid button says (UI-339): the value in the list for クオンタイズ,
+/// or 自動 and the note value it found (`step` ticks), with `表示 1/16` after
+/// it while the lines show only a coarser value (`shown` ticks); 小節; `fr`
+/// for frames. The part after the first space is drawn lighter.
+pub fn grid_text(
+    mode: SnapMode,
+    grid: &str,
+    step: xirius_core::time::Tick,
+    shown: Option<f64>,
+    ppq: u32,
+) -> String {
     match mode {
-        SnapMode::Quantize => grid_label(grid),
+        SnapMode::Quantize => match shown {
+            Some(v) => format!("{} 表示 {}", grid_label(grid), note_label(v, ppq)),
+            None => grid_label(grid),
+        },
         SnapMode::Bar => "小節".to_string(),
         SnapMode::Frames => "fr".to_string(),
-        SnapMode::Auto => format!("1/{}", (i64::from(ppq) * 4 / step.max(1)).max(1)),
+        SnapMode::Auto => {
+            let found = note_label(step as f64, ppq);
+            match shown {
+                Some(v) => format!("自動 {found} 表示 {}", note_label(v, ppq)),
+                None => format!("自動 {found}"),
+            }
+        }
     }
+}
+
+/// The grid button's text as it is drawn: the value, and the lighter part after
+/// the first space.
+fn grid_parts(text: &str) -> (&str, Option<&str>) {
+    match text.split_once(' ') {
+        Some((main, sub)) => (main, Some(sub)),
+        None => (text, None),
+    }
+}
+
+/// The width of the grid button's text: the value, then the lighter part after
+/// a gap.
+fn grid_text_w(text: &str) -> f32 {
+    let (main, sub) = grid_parts(text);
+    text_width(main, FontSize::Small)
+        + sub.map_or(0.0, |s| GRID_TEXT_GAP + text_width(s, FontSize::Small))
 }
 
 /// The grid value's width for what it says: the text, then the ▾.
 fn grid_w(text: &str) -> f32 {
-    (GRID_PAD_L + text_width(text, FontSize::Small) + GRID_TEXT_GAP + CHEVRON + GRID_PAD_R)
+    (GRID_PAD_L + grid_text_w(text) + GRID_TEXT_GAP + CHEVRON + GRID_PAD_R)
         .ceil()
         .max(GRID_W)
 }
@@ -902,15 +957,27 @@ pub fn paint(pen: &mut Pen, layout: &BarLayout, view: &BarView) {
         g.w - GRID_PAD_L - GRID_TEXT_GAP - CHEVRON - GRID_PAD_R,
         g.h,
     );
+    let (main, sub) = grid_parts(&view.grid_text);
     pen.mask(text_r, |pen| {
         pen.digits(
-            &view.grid_text,
+            main,
             FontSize::Small,
             Weight::Semibold,
             pen.c.ink_strong,
             text_r,
             Align::Left,
         );
+        if let Some(sub) = sub {
+            let dx = text_width(main, FontSize::Small) + GRID_TEXT_GAP;
+            pen.digits(
+                sub,
+                FontSize::Small,
+                Weight::Medium,
+                pen.c.ink_blue,
+                Rect::new(text_r.x + dx, text_r.y, (text_r.w - dx).max(0.0), text_r.h),
+                Align::Left,
+            );
+        }
     });
     pen.icon(
         "chevron-down",
@@ -1510,9 +1577,61 @@ mod tests {
 
     #[test]
     fn the_grid_text_follows_the_snap_mode() {
-        assert_eq!(grid_text(SnapMode::Quantize, "1/8t", 320, 960), "1/8・3連");
-        assert_eq!(grid_text(SnapMode::Bar, "1/16", 3840, 960), "小節");
-        assert_eq!(grid_text(SnapMode::Frames, "1/16", 64, 960), "fr");
-        assert_eq!(grid_text(SnapMode::Auto, "1/16", 120, 960), "1/32");
+        assert_eq!(
+            grid_text(SnapMode::Quantize, "1/8t", 320, None, 960),
+            "1/8・3連"
+        );
+        assert_eq!(grid_text(SnapMode::Bar, "1/16", 3840, None, 960), "小節");
+        assert_eq!(grid_text(SnapMode::Frames, "1/16", 64, None, 960), "fr");
+        assert_eq!(
+            grid_text(SnapMode::Auto, "1/16", 120, None, 960),
+            "自動 1/32"
+        );
+        assert_eq!(
+            grid_text(SnapMode::Auto, "1/16", 960, None, 960),
+            "自動 1/4"
+        );
+        // The snap keeps 1/64; the lines show 1/16 (UI-339).
+        assert_eq!(
+            grid_text(SnapMode::Quantize, "1/64", 60, Some(240.0), 960),
+            "1/64 表示 1/16"
+        );
+        assert_eq!(
+            grid_text(SnapMode::Quantize, "1/64t", 40, Some(160.0), 960),
+            "1/64・3連 表示 1/16・3連"
+        );
+        // 自動 found no value 8 px apart and keeps 1/4; the lines show 1/2 (7/8 at 8 px a quarter).
+        assert_eq!(
+            grid_text(SnapMode::Auto, "1/16", 960, Some(1920.0), 960),
+            "自動 1/4 表示 1/2"
+        );
+        assert_eq!(grid_parts("1/64 表示 1/16"), ("1/64", Some("表示 1/16")));
+        assert_eq!(grid_parts("自動 1/16"), ("自動", Some("1/16")));
+        assert_eq!(grid_parts("1/8・3連"), ("1/8・3連", None));
+    }
+
+    #[test]
+    fn a_length_reads_as_a_note_value() {
+        assert_eq!(note_label(240.0, 960), "1/16");
+        assert_eq!(note_label(60.0, 960), "1/64");
+        assert_eq!(note_label(3840.0, 960), "1/1");
+        assert_eq!(note_label(320.0, 960), "1/8・3連");
+        assert_eq!(note_label(160.0, 960), "1/16・3連");
+        assert_eq!(note_label(1440.0, 960), "1/4・付点");
+        assert_eq!(note_label(1000.0, 960), "小節");
+    }
+
+    #[test]
+    fn the_lighter_part_widens_the_grid_button() {
+        let plain = grid_w("1/64");
+        let shown = grid_w("1/64 表示 1/16");
+        assert!(shown > plain);
+        let room = shown - GRID_PAD_L - GRID_TEXT_GAP - CHEVRON - GRID_PAD_R;
+        assert!(
+            room + 0.5
+                >= text_width("1/64", FontSize::Small)
+                    + GRID_TEXT_GAP
+                    + text_width("表示 1/16", FontSize::Small)
+        );
     }
 }

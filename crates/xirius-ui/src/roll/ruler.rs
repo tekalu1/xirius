@@ -149,17 +149,19 @@ pub fn paint_ruler(pen: &mut Pen, studio: &Studio, roll: &Roll, ctx: &Ctx, f: &F
     let scale = roll.ruler_scale(ctx);
     let ruler = f.ruler;
     pen.fill(ruler, pen.c.surface_2);
-    let tm = ctx.project.time_map();
-    let bar_px = (tm.bar_start(2) - tm.bar_start(1)) as f32 / scale.ppq * scale.beat_px;
     let (first, last) = (scale.tick(f.grid.x), scale.tick(f.grid.right()));
-    let depth = shared::Depth::at(scale.beat_px);
-    if depth == shared::Depth::Bars {
-        let bars = shared::bars_in(&tm, first, last);
-        shared::paint_bars(pen, &bars, shared::bar_every(bar_px), ruler, |t| scale.x(t));
-    } else {
-        let marks = shared::marks(&tm, ctx.ppq(), depth, first, last);
-        shared::paint_marks(pen, &tm, &marks, ruler, |t| scale.x(t));
-    }
+    let lines = crate::grid_lines::lines(&ctx.tools.snap, &ctx.meter(scale.beat_px), first, last);
+    crate::grid_lines::paint_ticks(pen, &lines, ruler, |t| scale.x(t));
+    let tm = ctx.project.time_map();
+    let marks = shared::labels(
+        &tm,
+        ctx.project.ppq,
+        scale.beat_px,
+        ctx.tools.snap.triplets(),
+        first,
+        last,
+    );
+    shared::paint_labels(pen, &marks, ruler, |t| scale.x(t));
     let (left, end) = (scale.x(ctx.clip.start), roll.shown_end_x(studio, ctx));
     let (left, end) = (left.max(f.grid.x), end.min(f.grid.right() + 8.0));
     if end > left {

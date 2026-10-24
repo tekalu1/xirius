@@ -596,6 +596,29 @@ fn a_sections_right_edge_changes_its_length_by_bars() {
 }
 
 #[test]
+fn a_sections_right_edge_lands_on_the_bar_lines_of_its_meter() {
+    // UI-339: in 7/8 the edge lands on the 7/8 bar lines, and Shift on the
+    // quarters counted from the start of the bar, as the grid draws them.
+    let (mut s, g) = studio();
+    let verse = s.project().sections[1].clone();
+    let tm = s.project().time_map();
+    let (bar, _, _) = tm.to_bbt(verse.start);
+    assert_eq!(tm.bar_start(bar), verse.start);
+    s.song
+        .run("timesig.set", json!({"bar": bar, "num": 7, "den": 8}))
+        .unwrap();
+    let seven = 7 * 480;
+    let y = g.section_band.y + g.section_band.h / 2.0;
+    let x = s.tick_x(&g, verse.start + verse.length) - 2.0;
+    let left = s.ticks_to_px(verse.length - 7 * seven) + s.ticks_to_px(seven) * 0.1;
+    drag!(s, g, (x, y), (x - left, y), none());
+    assert_eq!(s.project().sections[1].length, 7 * seven);
+    let x = s.tick_x(&g, verse.start + 7 * seven) - 2.0;
+    drag!(s, g, (x, y), (x + s.ticks_to_px(seven) * 0.3, y), shift());
+    assert_eq!(s.project().sections[1].length, 7 * seven + 960);
+}
+
+#[test]
 fn a_section_widened_into_the_next_stops_at_it_in_the_picture_too() {
     let (mut s, g) = studio();
     let verse = s.project().sections[1].clone();

@@ -75,6 +75,26 @@ impl TempoMap {
         }
     }
 
+    /// The fastest bpm from `from` to `to` (a ramp's ends, the points between).
+    /// Only the points between are read: the grid asks at every frame.
+    pub fn max_bpm(&self, from: i64, to: i64) -> f64 {
+        self.fold_bpm(from, to, f64::max)
+    }
+
+    /// The slowest bpm from `from` to `to`, read as [`TempoMap::max_bpm`].
+    pub fn min_bpm(&self, from: i64, to: i64) -> f64 {
+        self.fold_bpm(from, to, f64::min)
+    }
+
+    fn fold_bpm(&self, from: i64, to: i64, f: fn(f64, f64) -> f64) -> f64 {
+        let a = self.pts.partition_point(|p| p.tick <= from);
+        let b = self.pts.partition_point(|p| p.tick <= to).max(a);
+        self.pts[a..b]
+            .iter()
+            .map(|p| p.bpm)
+            .fold(f(self.bpm_at(from), self.bpm_at(to)), f)
+    }
+
     fn index_of_tick(&self, tick: i64) -> usize {
         self.pts
             .partition_point(|p| p.tick <= tick)
@@ -94,8 +114,14 @@ impl TempoMap {
 
     /// The tick at a time; the inverse of [`Self::seconds_at`], rounded to the nearest tick.
     pub fn tick_at(&self, secs: f64) -> i64 {
+        self.tick_at_f(secs).round() as i64
+    }
+
+    /// [`Self::tick_at`] before it is rounded: zoomed in to the samples a tick
+    /// is many pixels wide.
+    pub fn tick_at_f(&self, secs: f64) -> f64 {
         if secs <= 0.0 {
-            return (secs * self.pts[0].bpm * self.ppq / 60.0).round() as i64;
+            return secs * self.pts[0].bpm * self.ppq / 60.0;
         }
         let i = self
             .pts
@@ -112,7 +138,7 @@ impl TempoMap {
             }
             _ => rem * p.bpm * self.ppq / 60.0,
         };
-        p.tick + dt.round() as i64
+        p.tick as f64 + dt
     }
 
     /// The frame a tick falls on at `rate` (never before the start of the song).
@@ -201,6 +227,50 @@ mod tests {
         );
         for tick in [0, 1, 959, 3840, 5000, 7777, 9600, 9601, 20_000] {
             assert_eq!(m.tick_at(m.seconds_at(tick)), tick, "tick {tick}");
+        }
+    }
+
+    #[test]
+    fn the_fastest_bpm_counts_the_points_between() {
+        let m = TempoMap::new(
+            960,
+            &[
+                pt(1, 0, 100.0, false),
+                pt(2, 960, 180.0, false),
+                pt(3, 1920, 90.0, true),
+                pt(4, 3840, 120.0, false),
+            ],
+        );
+        assert_eq!(m.max_bpm(0, 959), 100.0);
+        assert_eq!(m.max_bpm(0, 5000), 180.0);
+        assert_eq!(m.max_bpm(1920, 2880), 105.0);
+        assert_eq!(m.min_bpm(0, 959), 100.0);
+        assert_eq!(m.min_bpm(0, 5000), 90.0);
+        assert_eq!(m.min_bpm(960, 1919), 180.0);
+        assert_eq!(m.min_bpm(2880, 5000), 105.0);
+    }
+
+    #[test]
+    fn the_fastest_bpm_is_the_one_found_by_reading_every_point() {
+        let points: Vec<_> = (0..200_u64)
+            .map(|k| {
+                let tick = (k as i64 * 37 % 101) * 97 + k as i64 / 50;
+                pt(k + 1, tick, 40.0 + (k * 53 % 191) as f64, k % 3 == 0)
+            })
+            .collect();
+        let m = TempoMap::new(960, &points);
+        let every = |from: i64, to: i64, f: fn(f64, f64) -> f64| {
+            m.pts
+                .iter()
+                .filter(|p| p.tick > from && p.tick <= to)
+                .map(|p| p.bpm)
+                .fold(f(m.bpm_at(from), m.bpm_at(to)), f)
+        };
+        for from in (-500..10_500).step_by(331) {
+            for to in (-500..10_500).step_by(257) {
+                assert_eq!(m.max_bpm(from, to), every(from, to, f64::max));
+                assert_eq!(m.min_bpm(from, to), every(from, to, f64::min));
+            }
         }
     }
 

@@ -147,82 +147,82 @@ pub fn bar_every(bar_px: f32) -> u32 {
         .unwrap_or(16)
 }
 
-/// How far a zoomed-in ruler numbers the time: the bars only, then each beat
-/// (`5.2`), then each 16th (`5.2.3`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Depth {
-    Bars,
-    Beats,
-    Sixteenths,
-}
-
 /// The narrowest a numbered step may be, in px.
 pub const STEP_MIN_PX: f32 = 52.0;
 
-impl Depth {
-    /// The depth that keeps every number at least [`STEP_MIN_PX`] from the
-    /// next, for a quarter note `beat_px` wide.
-    pub fn at(beat_px: f32) -> Depth {
-        if beat_px / 4.0 >= STEP_MIN_PX {
-            Depth::Sixteenths
-        } else if beat_px >= STEP_MIN_PX {
-            Depth::Beats
-        } else {
-            Depth::Bars
-        }
-    }
-}
-
-/// One numbered step of the ruler.
+/// One number on the ruler.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Mark {
     pub tick: Tick,
     pub label: String,
-    /// The first step of a bar: its number is the bar's.
+    /// A bar's number (the others are `bar.beat` or `bar.beat.16th`).
     pub bar: bool,
 }
 
-/// The numbered steps of a zoomed-in ruler from `first` to `last`: a bar's
-/// first step is the bar's number, the others `bar.beat` or `bar.beat.16th`.
-pub fn marks(tm: &TimeMap, ppq: Tick, depth: Depth, first: Tick, last: Tick) -> Vec<Mark> {
+/// The numbers along the ruler from `first` to `last` (song ticks), a quarter
+/// note `beat_px` wide (UI-339). Bars are numbered, thinned out by
+/// [`bar_every`] until a beat is [`STEP_MIN_PX`] wide, when every bar is.
+/// Then each beat is numbered (`5.2`; in 6/8 the beats are dotted quarters but
+/// the numbers count eighths, `5.4`), and from a 16th [`STEP_MIN_PX`] wide each
+/// 16th (`5.2.3`), counted from the start of its bar. Under a triplet grid
+/// (`triplets`) a 16th falls between the grid's thirds, so only the beats are
+/// numbered; the ticks at the thirds come from the lines' split.
+pub fn labels(
+    tm: &TimeMap,
+    ppq: u32,
+    beat_px: f32,
+    triplets: bool,
+    first: Tick,
+    last: Tick,
+) -> Vec<Mark> {
+    let px = |ticks: f64| (ticks / f64::from(ppq.max(1))) as f32 * beat_px;
+    let bars = bars_in(tm, first, last);
+    let bar_px = bars
+        .iter()
+        .map(|(bar, tick)| px((tm.bar_start(bar + 1) - tick) as f64))
+        .reduce(f32::min)
+        .unwrap_or_else(|| px(tm.bar_start(2) as f64));
+    let every = bar_every(bar_px);
+    let six = Tick::from(ppq / 4).max(1);
     let mut out = Vec::new();
-    if depth == Depth::Bars {
-        return out;
-    }
-    let sixteenth = (ppq / 4).max(1);
-    let (mut bar, _, _) = tm.to_bbt(first.max(0));
-    loop {
-        let start = tm.bar_start(bar);
-        if start > last {
-            break;
-        }
+    for (bar, s) in bars {
+        let sig = tm.meter_at(bar);
         let end = tm.bar_start(bar + 1);
-        let beat = tm.meter_at(bar).beat_ticks(ppq as u32).max(1);
-        let unit = if depth == Depth::Sixteenths {
-            sixteenth.min(beat)
-        } else {
-            beat
-        };
-        let mut tick = start;
-        while tick < end && tick <= last {
-            if tick >= first {
-                let n = (tick - start) / beat + 1;
-                let label = if tick == start {
-                    bar.to_string()
-                } else if depth == Depth::Beats {
-                    format!("{bar}.{n}")
-                } else {
-                    format!("{bar}.{n}.{}", (tick - start) % beat / sixteenth + 1)
-                };
+        let unit = sig.beat_ticks(ppq).max(1);
+        let beat = crate::grid_lines::beat_of(sig, ppq);
+        let beats = px(beat) >= STEP_MIN_PX;
+        if s >= first && ((bar - 1) % every == 0 || beats) {
+            out.push(Mark {
+                tick: s,
+                label: bar.to_string(),
+                bar: true,
+            });
+        }
+        let mut put = |t: Tick, label: String| {
+            if t >= first && t <= last {
                 out.push(Mark {
-                    tick,
+                    tick: t,
                     label,
-                    bar: tick == start,
+                    bar: false,
                 });
             }
-            tick += unit;
+        };
+        if !triplets && px(six as f64) >= STEP_MIN_PX && unit % six == 0 {
+            for t in (s + six..end).step_by(six as usize) {
+                let n = (t - s) / unit + 1;
+                put(t, format!("{bar}.{n}.{}", (t - s) % unit / six + 1));
+            }
+        } else if beats {
+            let mut k = 1.0;
+            loop {
+                let t = (s as f64 + k * beat).round() as Tick;
+                if t >= end || t > last {
+                    break;
+                }
+                put(t, format!("{bar}.{}", (t - s) / unit + 1));
+                k += 1.0;
+            }
         }
-        bar += 1;
     }
     out
 }
@@ -290,45 +290,11 @@ pub fn paint_band(pen: &mut Pen, band: &Band, ruler: Rect, shade_to: Option<Rect
     }
 }
 
-/// The bar numbers along the ruler, thinned out to `every`. `x_of` puts a
-/// bar's first tick on screen.
-pub fn paint_bars(
-    pen: &mut Pen,
-    bars: &[(u32, Tick)],
-    every: u32,
-    ruler: Rect,
-    x_of: impl Fn(Tick) -> f32,
-) {
-    for (bar, tick) in bars {
-        if (bar - 1) % every != 0 {
-            continue;
-        }
-        let x = x_of(*tick);
-        let r = Rect::new(x + Space::X1.px(), ruler.y, 48.0, ruler.h);
-        pen.digits(
-            &bar.to_string(),
-            FontSize::Caption,
-            Weight::Medium,
-            pen.c.ink_blue,
-            r,
-            Align::Left,
-        );
-    }
-}
-
-/// The steps of a zoomed-in ruler: each one's number, and a short tick under
-/// it in the grid's own tone for its rank.
-pub fn paint_marks(
-    pen: &mut Pen,
-    tm: &TimeMap,
-    marks: &[Mark],
-    ruler: Rect,
-    x_of: impl Fn(Tick) -> f32,
-) {
+/// The ruler's numbers, each just right of its tick: a bar's in blue, the
+/// others in the ink. `x_of` puts a tick on screen.
+pub fn paint_labels(pen: &mut Pen, marks: &[Mark], ruler: Rect, x_of: impl Fn(Tick) -> f32) {
     for m in marks {
         let x = x_of(m.tick).round();
-        let tone = crate::grid_lines::tone(m.tick, tm, pen.c);
-        pen.fill(Rect::new(x, ruler.bottom() - 3.0, 1.0, 3.0), tone);
         let ink = if m.bar { pen.c.ink_blue } else { pen.c.ink };
         pen.digits(
             &m.label,
@@ -336,6 +302,24 @@ pub fn paint_marks(
             Weight::Medium,
             ink,
             Rect::new(x + Space::X1.px(), ruler.y, STEP_MIN_PX, ruler.h),
+            Align::Left,
+        );
+    }
+}
+
+/// The room a time takes on the ruler (`0:09.3765`), in px.
+pub const TIME_W: f32 = 72.0;
+
+/// The ruler's times (UI-339), each just right of its tick at window x, in
+/// the ink.
+pub fn paint_times(pen: &mut Pen, times: &[(f32, &str)], ruler: Rect) {
+    for (x, text) in times {
+        pen.digits(
+            text,
+            FontSize::Caption,
+            Weight::Medium,
+            pen.c.ink,
+            Rect::new(x.round() + Space::X1.px(), ruler.y, TIME_W, ruler.h),
             Align::Left,
         );
     }
@@ -389,56 +373,88 @@ mod tests {
         assert_eq!(s.tick(90.0), -200);
     }
 
-    #[test]
-    fn the_ruler_numbers_the_beats_and_then_the_16ths_as_it_zooms_in() {
-        assert_eq!(Depth::at(48.0), Depth::Bars);
-        assert_eq!(Depth::at(52.0), Depth::Beats);
-        assert_eq!(Depth::at(207.0), Depth::Beats);
-        assert_eq!(Depth::at(208.0), Depth::Sixteenths);
-        let tm = TimeMap::new(960, &[]);
-        let labels = |d, a, b| {
-            marks(&tm, 960, d, a, b)
-                .into_iter()
-                .map(|m| m.label)
-                .collect::<Vec<_>>()
-        };
-        assert!(labels(Depth::Bars, 0, 9999).is_empty());
-        // Bar 5 starts at 16 beats: its first step is "5", then "5.2" ...
-        let bar5 = tm.bar_start(5);
-        assert_eq!(
-            labels(Depth::Beats, bar5, bar5 + 960 * 4 - 1),
-            ["5", "5.2", "5.3", "5.4"]
-        );
-        assert_eq!(
-            labels(Depth::Sixteenths, bar5 + 960, bar5 + 960 + 959),
-            ["5.2.1", "5.2.2", "5.2.3", "5.2.4"]
-        );
-        let m = marks(&tm, 960, Depth::Beats, bar5, bar5);
-        assert!(m[0].bar);
+    fn names(tm: &TimeMap, beat_px: f32, first: Tick, last: Tick) -> Vec<String> {
+        labels(tm, 960, beat_px, false, first, last)
+            .into_iter()
+            .map(|m| m.label)
+            .collect()
     }
 
     #[test]
-    fn the_steps_follow_the_meter_of_each_bar() {
+    fn the_ruler_numbers_the_beats_and_then_the_16ths_as_it_zooms_in() {
+        let tm = TimeMap::new(960, &[]);
+        let bar5 = tm.bar_start(5);
+        let bar = |b: u32| b.to_string();
+        // 48 px a beat: a bar is 192 px, every bar is numbered and nothing else.
+        assert_eq!(names(&tm, 48.0, 0, tm.bar_start(4)), [1, 2, 3, 4].map(bar));
+        // 2 px a beat: 8 px a bar, every 8th bar.
+        assert_eq!(names(&tm, 2.0, 0, tm.bar_start(17)), [1, 9, 17].map(bar));
+        // Bar 5 starts at 16 beats: its first step is "5", then "5.2" ...
+        assert_eq!(
+            names(&tm, 52.0, bar5, bar5 + 960 * 4 - 1),
+            ["5", "5.2", "5.3", "5.4"]
+        );
+        assert_eq!(names(&tm, 207.0, bar5, bar5 + 960 * 2 - 1), ["5", "5.2"]);
+        assert_eq!(
+            names(&tm, 208.0, bar5 + 960, bar5 + 960 + 959),
+            ["5.2.1", "5.2.2", "5.2.3", "5.2.4"]
+        );
+        let m = labels(&tm, 960, 52.0, false, bar5, bar5);
+        assert!(m[0].bar);
+        assert!(!labels(&tm, 960, 52.0, false, bar5 + 1, bar5 + 960)[0].bar);
+    }
+
+    #[test]
+    fn a_triplet_grid_numbers_only_the_beats() {
+        let tm = TimeMap::new(960, &[]);
+        let trip = |beat_px| -> Vec<String> {
+            labels(&tm, 960, beat_px, true, 0, 1919)
+                .into_iter()
+                .map(|m| m.label)
+                .collect()
+        };
+        // Wide enough for the 16ths, but a triplet grid keeps to the beats.
+        assert_eq!(names(&tm, 400.0, 0, 1919).len(), 8);
+        assert_eq!(trip(400.0), ["1", "1.2"]);
+        assert_eq!(trip(4096.0), ["1", "1.2"]);
+        // The split's ticks sit at the beat's thirds (UI-339).
+        let t = crate::tools::Snap {
+            mode: crate::tools::SnapMode::Quantize,
+            grid: 160,
+            triplet: true,
+            ..crate::tools::Snap::default()
+        };
+        let lines = crate::grid_lines::lines(&t, &crate::tools::Meter::plain(960, 400.0), 0, 959);
+        let ticked: Vec<_> = lines
+            .iter()
+            .filter(|l| l.tier.index() < crate::grid_lines::TICK_H.len())
+            .map(|l| l.tick)
+            .collect();
+        assert_eq!(ticked, [0, 320, 640]);
+    }
+
+    #[test]
+    fn the_numbers_follow_the_meter_of_each_bar() {
         use xirius_core::time::Meter;
         let tm = TimeMap::new(
             960,
             &[(1, Meter { num: 4, den: 4 }), (2, Meter { num: 6, den: 8 })],
         );
-        let labels: Vec<_> = marks(&tm, 960, Depth::Beats, tm.bar_start(2), tm.bar_start(3) - 1)
-            .into_iter()
-            .map(|m| m.label)
-            .collect();
-        assert_eq!(labels, ["2", "2.2", "2.3", "2.4", "2.5", "2.6"]);
-        let sixteenths = marks(
-            &tm,
-            960,
-            Depth::Sixteenths,
-            tm.bar_start(2),
-            tm.bar_start(3) - 1,
-        );
-        // An eighth-note beat holds two 16ths.
-        assert_eq!(sixteenths[1].label, "2.1.2");
-        assert_eq!(sixteenths[2].label, "2.2.1");
+        let (s, e) = (tm.bar_start(2), tm.bar_start(3) - 1);
+        // 6/8 beats on the dotted quarter, but the numbers count eighths.
+        assert_eq!(names(&tm, 30.0, s, e), ["2"]);
+        assert_eq!(names(&tm, 104.0, s, e), ["2", "2.4"]);
+        let sixteenths = names(&tm, 208.0, s, e);
+        // An eighth holds two 16ths.
+        assert_eq!(sixteenths[1], "2.1.2");
+        assert_eq!(sixteenths[2], "2.2.1");
+        assert_eq!(sixteenths.len(), 12);
+        // 7/8: eighth beats, numbered from 52 px an eighth.
+        let tm = TimeMap::new(960, &[(1, Meter { num: 7, den: 8 })]);
+        assert_eq!(names(&tm, 104.0, 0, 959), ["1", "1.2"]);
+        // A 32nd beat holds no whole 16th: the beats are numbered instead.
+        let tm = TimeMap::new(960, &[(1, Meter { num: 4, den: 32 })]);
+        assert_eq!(names(&tm, 1664.0, 0, 479), ["1", "1.2", "1.3", "1.4"]);
     }
 
     #[test]

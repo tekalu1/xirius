@@ -460,8 +460,8 @@ impl<'ast> Visit<'ast> for Scanner {
 
 impl Scanner {
     /// 細い線。`bg` を持ち、`w`・`h` の固定値が `THIN_LINE_PX` 以下の面。
-    /// 太さ・長さの引数に `StructureLine` が出る呼び出し（`.w(px(StructureLine::THICKNESS))`）は、
-    /// 数えない。その引数に数が混ざっていても（`StructureLine::END_INSET * 2.0`）通す。
+    /// 太さ・長さの引数に `StructureLine`・`GridLine` が出る呼び出し
+    /// （`.w(px(StructureLine::THICKNESS))`）は、数えない。その引数に数が混ざっていても（`StructureLine::END_INSET * 2.0`）通す。
     /// 端に貼り付いた帯は `one-sided-edge` が先に止めるので、ここでは数えない。
     fn check_line(&mut self, chain: &[&ExprMethodCall], anchor: usize) {
         let has = |n: &str| chain.iter().any(|c| c.method == n);
@@ -469,10 +469,10 @@ impl Scanner {
             return;
         }
         let thin = chain.iter().any(|c| {
-            let through_api = c
-                .args
-                .iter()
-                .any(|a| tokens_have_ident(a.to_token_stream(), "StructureLine"));
+            let through_api = c.args.iter().any(|a| {
+                tokens_have_ident(a.to_token_stream(), "StructureLine")
+                    || tokens_have_ident(a.to_token_stream(), "GridLine")
+            });
             matches!(c.method.to_string().as_str(), "w" | "h" | "w_px" | "h_px")
                 && !through_api
                 && smallest_literal(&c.args).is_some_and(|v| v <= THIN_LINE_PX)
@@ -494,7 +494,7 @@ impl Scanner {
             self.hit(
                 c.method.span(),
                 Rule::Line,
-                "細い線（太さが 3px 以下の固定値の面）。線で区切らない。                     フォルダーの範囲を示す線なら、太さと位置を xirius_design::StructureLine から取る",
+                "細い線（太さが 3px 以下の固定値の面）。線で区切らない。                     フォルダーの範囲を示す線なら、太さと位置を xirius_design::StructureLine から取る。                     時間のグリッドの線なら xirius_design::GridLine から取る",
                 Some(anchor),
             );
         }

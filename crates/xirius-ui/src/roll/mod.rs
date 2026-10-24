@@ -74,6 +74,8 @@ pub struct Ctx {
     pub mousemap: xirius_prefs::Mousemap,
     pub prefs: xirius_prefs::Prefs,
     pub project: Arc<Project>,
+    /// The song's meters and tempo (of any width: [`Ctx::meter`] gives one).
+    pub maps: Meter,
     pub clip: Clip,
     pub tools: Tools,
     /// The shape the pencil draws (the top bar's).
@@ -120,17 +122,8 @@ impl Ctx {
         self.notes().iter().find(|n| n.id == id)
     }
 
-    pub fn beats_per_bar(&self) -> u32 {
-        self.project.timesig.first().map_or(4, |t| t.num)
-    }
-
     pub fn meter(&self, beat_px: f32) -> Meter {
-        Meter {
-            ppq: self.project.ppq,
-            beats_per_bar: self.beats_per_bar(),
-            bpm: self.project.tempo.first().map_or(120.0, |t| t.bpm),
-            beat_px,
-        }
+        self.maps.at(beat_px)
     }
 
     /// The grid step in ticks (also when snapping is off).
@@ -152,20 +145,23 @@ impl Ctx {
             .min(quarter)
     }
 
-    /// `tick` (from the clip's head) rounded to the grid in song time, so a
-    /// clip that does not start on a grid line still snaps to the bar lines.
+    /// `tick` (from the clip's head) rounded to the grid in song time, counted
+    /// from the start of its bar, so a clip that does not start on a grid line
+    /// still snaps to the bar lines.
     pub fn snapped(&self, beat_px: f32, shift: bool, tick: Tick) -> Tick {
-        match self.snap(beat_px, shift) {
-            Some(step) => crate::tools::snap_round(tick + self.clip.start, step) - self.clip.start,
-            None => tick,
-        }
+        let start = self.clip.start;
+        self.tools
+            .snap
+            .snapped(&self.meter(beat_px), shift, tick + start)
+            - start
     }
 
     pub fn floored(&self, beat_px: f32, shift: bool, tick: Tick) -> Tick {
-        match self.snap(beat_px, shift) {
-            Some(step) => crate::tools::snap_floor(tick + self.clip.start, step) - self.clip.start,
-            None => tick,
-        }
+        let start = self.clip.start;
+        self.tools
+            .snap
+            .floored(&self.meter(beat_px), shift, tick + start)
+            - start
     }
 
     pub fn clip_len(&self) -> Tick {

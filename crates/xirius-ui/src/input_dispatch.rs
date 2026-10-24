@@ -480,11 +480,12 @@ impl Studio {
                         let (start, end) = if no_snap {
                             (start, end)
                         } else {
-                            let step = self.tools().snap.active(&self.meter(), false).unwrap_or(1);
-                            (
-                                (start.div_euclid(step)) * step,
-                                ((end + step - 1).div_euclid(step)) * step,
-                            )
+                            let (snap, m) = (self.tools().snap, self.meter());
+                            if snap.on {
+                                (snap.floor(&m, start), snap.ceil(&m, end))
+                            } else {
+                                (start, end)
+                            }
                         };
                         return self.run_command("loop.set", json!({"start":start,"end":end}));
                     }

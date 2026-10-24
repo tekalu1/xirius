@@ -17,7 +17,8 @@ pub enum Rule {
     Gradient,
     /// 角丸の物の 1 辺だけの色。
     OneSidedEdge,
-    /// 細い線（太さが小さい固定値の面）。構造線（`StructureLine`）を通した物だけ通る。
+    /// 細い線（太さが小さい固定値の面）。構造線（`StructureLine`）と、時間のグリッドの線
+    /// （`GridLine`）を通した物だけ通る。
     Line,
     /// 画面・コマンドの文言の硬い言い回し（「要ります」「格子」など）。
     Wording,
@@ -118,7 +119,9 @@ impl Rule {
             Rule::Border => "線で区切らない。面の差と余白で分ける",
             Rule::Gradient => "グラデーションは値を表す物（メーター）だけ",
             Rule::OneSidedEdge => "角丸の物の 1 辺だけに色・光・影を付けない（中立の色でも）",
-            Rule::Line => "細い線を引かない（例外は xirius_design::StructureLine だけ）",
+            Rule::Line => {
+                "細い線を引かない（例外は xirius_design::StructureLine と GridLine だけ）"
+            }
             Rule::Wording => "文言は製品の自然な日本語と、DAW で通じる用語で書く",
             Rule::Guidance => {
                 "画面の文字に、操作を教える文を置かない（アイコン・配置・状態で伝える）"

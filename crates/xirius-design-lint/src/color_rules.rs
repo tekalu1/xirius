@@ -114,6 +114,19 @@ fn line(s: &str) -> bool {
         &["StructureLine", "ring", "ai_line", "line", "line_focus"],
     )
 }
+/// 時間のグリッドの線の色（`line_grid_*`。画面では `grid`）。
+fn grid(s: &str) -> bool {
+    contains(
+        s,
+        &[
+            "line_grid_bar",
+            "line_grid_beat",
+            "line_grid_sub",
+            "line_grid_fine",
+        ],
+    ) || color_field(s, &["grid"])
+        || s.contains("GridLine :: color")
+}
 fn meter(s: &str) -> bool {
     contains(s, &["LevelMeter"])
         || color_field(
@@ -494,12 +507,25 @@ impl<'ast> Visit<'ast> for Sinks<'_> {
                 let receiver = c.receiver.to_token_stream().to_string();
                 if name == "bg"
                     && ((line(&s) && !receiver.contains("StructureLine"))
+                        || (grid(&s) && !grid_width_chain(&c.receiver))
                         || track(&s)
                         || wave(&s)
                         || (contains(&s, &["fill", "Fill", "FillHover", "fill_primary"])
                             && receiver.contains("_full")))
                 {
                     self.hit(c, Rule::ColorFamily, "色の族の用途外の面を作らない");
+                }
+                // The grid's colors are lines only: the width comes from GridLine.
+                if grid(&s)
+                    && name != "bg"
+                    && let Some(r) = args.first()
+                    && !grid_width_rect(&self.resolved(r, 0))
+                {
+                    self.hit(
+                        c,
+                        Rule::Line,
+                        "グリッドの線の色は、幅と位置を xirius_design::GridLine から取った線だけに使う",
+                    );
                 }
                 if ink(&s)
                     && name != "bg"
@@ -882,6 +908,33 @@ fn spaced(s: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+/// Whether a rect (`Rect::new(x, y, w, h)`, written out) takes its width from
+/// `GridLine` (`GridLine::width(tier)`, `GridLine::THICKNESS`).
+fn grid_width_rect(rect: &str) -> bool {
+    let parse = |input: syn::parse::ParseStream| -> syn::Result<Expr> {
+        let expr = input.parse()?;
+        let _: proc_macro2::TokenStream = input.parse()?;
+        Ok(expr)
+    };
+    matches!(parse.parse_str(rect), Ok(Expr::Call(c))
+        if c.args.len() == 4 && through_grid_line(&c.args[2]))
+}
+/// Whether an element's chain sets its width from `GridLine` (`.w(px(GridLine::width(tier)))`).
+fn grid_width_chain(mut e: &Expr) -> bool {
+    while let Expr::MethodCall(c) = e {
+        if c.method == "w" && c.args.first().is_some_and(through_grid_line) {
+            return true;
+        }
+        e = &c.receiver;
+    }
+    false
+}
+fn through_grid_line(e: &Expr) -> bool {
+    let s = e.to_token_stream().to_string();
+    ["width", "THICKNESS", "BAR_THICKNESS"]
+        .iter()
+        .any(|n| s.contains(&format!("GridLine :: {n}")))
 }
 fn small_mark(rect: &str) -> bool {
     if ["DOT", "POINT", "dot", "caret"]

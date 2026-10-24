@@ -395,10 +395,11 @@ fn quantize_clips(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Outpu
     let ids = a.require_ids::<ClipId>("クリップ")?;
     let g = grid(p, a, "grid")?;
     let strength = a.opt_i64("strength").unwrap_or(100) as u32;
+    let tm = p.time_map();
     let mut moves = Vec::new();
     for id in &ids {
         let (t, c) = p.clip(*id)?;
-        let to = crate::time::quantize_tick(c.start, g, strength).max(0);
+        let to = tm.quantize(c.start, g, strength).max(0);
         moves.push((*id, t.id, c.start, c.start + c.length, to - c.start));
     }
     let mut moved = 0;

@@ -13,7 +13,7 @@
 | 薄い色の面の上に文字を置かない（UI-108） | `*_tint` のトークンが無い・`Surface` に文字を置ける組だけ | 同上 | — |
 | 線を引かない（UI-109・UI-050） | 線（border）の API も、上辺の光の API も無い。区切りは面の段の明るさの差と、浮く面の外側の影（`FloatShadow`）だけ | `api_surface`: `border` が無い。`surface_steps`: 隣り合う面の段の差 ΔL* ≥ 1.25（暗い・明るい両方） | `border`: `.border_*` |
 | グラデーションを使わない（UI-105・UI-090） | グラデーションは `meter` モジュールの `LevelMeter` だけ | `api_surface`: `gradient` の語は `meter.rs` だけ | `gradient` |
-| 細い線を引かない。例外はフォルダーの範囲の構造線だけ（MIX-038） | 線の太さの型は `StructureLine` の 1 つだけ（太さ 2px・両端丸・溝の中・hover/選択でアクセント） | `contrast`: 構造線が中立の面の上で 3:1 以上。`structure` の単体テスト | `line`: 太さが 3px 以下の固定値の面 |
+| 細い線を引かない。例外はフォルダーの範囲の構造線（MIX-038）と、時間のグリッドの線（UI-339）だけ | 線の型は `StructureLine`（太さ 2px・両端丸・溝の中・hover/選択でアクセント）と `GridLine`（小節 2px・ほか 1px、段ごとの色としきい値）の 2 つだけ | `contrast`: 構造線が中立の面の上で 3:1 以上。グリッドの 4 段がどの面の上でも 小節 > 拍 > 分割 > 細かい。`structure`・`grid` の単体テスト | `line`: 太さが 3px 以下の固定値の面、グリッドの色を `GridLine` を通さずに塗る `Pen` の面 |
 | 角丸の物の 1 辺だけに色・光・影を付けない（UI-103・UI-007） | 1 辺の色・光・影を作る API が無い | — | `one-sided-edge` |
 | 色・書体・角丸はトークンだけ（UI-110） | 値は `Surface`・`Ink`・`Accent`・`TrackColor`・`Radius`・`Font` から取る | — | `raw-color`・`raw-radius`・`raw-font` |
 | 書体は Inter と Noto Sans JP だけ（UI-111・UI-005） | `Font` は 2 値だけ | `api_surface` | `raw-font` |
@@ -85,8 +85,10 @@ let d = div().border_1(); // design-lint: allow(border) 同じ行にも書ける
 - `raw-font`: 書体名の文字列（Inter・Noto Sans JP・Helvetica・system-ui ほか 26 語）・`.font_family("…")`。
 - `border`: `.border`・`.border_*`。
 - `gradient`: 「gradient」を含む名前（`ValueGradient`・`GradientStop`・`gradient` は `xirius-design` の API なので通す）。
-- `line`: `bg` を持つ面で、`.w(…)`・`.h(…)` の固定値が 3px 以下の物（区切りの線）。太さ・長さの引数に `StructureLine` が出る呼び出しは数えない
+- `line`: `bg` を持つ面で、`.w(…)`・`.h(…)` の固定値が 3px 以下の物（区切りの線）。太さ・長さの引数に `StructureLine`・`GridLine` が出る呼び出しは数えない
   （`.w(px(StructureLine::THICKNESS))` は通る）。端に貼り付いた帯は `one-sided-edge` が止める。再生位置の針のように区切りでない物は、理由を付けて allow する。
+  `Pen` の `fill`・`round`・`shape`・`floating` で、グリッドの色（`line_grid_*`・`GridLine::color`・画面の `c.grid[…]`）を、矩形に `GridLine` の出てこない所へ塗る物も違反。
+  `bg` にグリッドの色を塗る物は、`GridLine` を通さなければ `color-family`。
 - `one-sided-edge`: 角丸の連なりの `.border_t/b/l/r_*`、端に貼り付いた細い色の帯（`absolute` ＋ `left_0` などの 1 辺 ＋ 6px 以下の幅・高さ ＋ `bg`）、
   ぼかしも広がりも無く縦か横の一方にずらした影（`BoxShadow { offset: point(0, 1), blur_radius: 0, … }`）。
   **色が中立（白・黒・面の色）でも違反**。ぼかしのある全周の外側の影（浮く面の影）は通す。
@@ -116,6 +118,23 @@ let d = div().border_1(); // design-lint: allow(border) 同じ行にも書ける
 - 畳んだフォルダーでは描かない（行が無いので範囲も無い）。
 - lint: 細い固定値の面は `line` の違反。`StructureLine` の定数を通した物だけが通る
   （見本は `crates/xirius-design-lint/tests/fixtures/{clean/structure_line.rs,violations/line.rs}`）。
+  ほかの線（区切りの線・枠・下線）は、これまでどおり `border`・`line` で止まる。
+
+## 例外: 時間のグリッドの線（UI-339）
+
+構造線に次ぐ 2 つ目の例外。アレンジとピアノロールの、小節・拍・分割・細かい線。区切りではなく時間の目盛りとして、
+`xirius_design::GridLine` が段（`GridTier`）・太さ・色・出し始めのしきい値を 1 か所に持つ。使う側は変えられない。
+
+- 段は 4 つ。小節（`Bar`）・拍（`Beat`。6/8・9/8・12/8 は付点 4 分）・拍の分割（`Sub`。1/2、複合拍子か 3 連のグリッドでは 1/3）・細かい線（`Fine`。分割より細かいスナップの値とフレーム、秒の線）。
+- 太さは小節だけ 2px（`GridLine::BAR_THICKNESS`）、ほかは 1px（`THICKNESS`）。置く位置は `GridLine::left`（2px の線は時刻の位置を真ん中にする）。
+- 色は文字の色を薄く重ねた `line_grid_bar`・`line_grid_beat`・`line_grid_sub`・`line_grid_fine`。どの面（地・hover・選択・黒鍵の行）の上でも、
+  両方のテーマで 小節 > 拍 > 分割 > 細かい の比になる（`tests/contrast.rs`）。
+- 小節線と拍線（拍が `MIN_BEAT_PX` 以上離れたとき）は間引かない。分割と細かい線は `MIN_FINE_PX` 以上離れたときだけ出し、出始めは `GridLine::fade` で薄く入れる。
+- lint: `div` の細い固定値の面は `line` の違反で、太さ・長さの引数に `GridLine` の字がある物は通る。グリッドの色の面は、幅を `GridLine` から取った物
+  （`Pen` は `Rect::new` の 3 つ目、`div` は `w` が `GridLine::width`・`THICKNESS`・`BAR_THICKNESS`）だけが通り、ほかは `Pen` なら `line`、`div` の `bg` なら `color-family`
+  （見本は `crates/xirius-design-lint/tests/fixtures/{clean,violations}/ui_grid_line.rs`）。
+  `Pen` の面の細い線（グリッドの色でない物）は、まだ lint では止まらない（文字のカーソル・再生位置・メーターの印など 50 か所余りが同じ形で、例外か面かを 1 つずつ決める。plan.toml の UI-342）。
+  ピアノロールのほかのパートの範囲の端は、小節の `GridLine` で引く。
   ほかの線（区切りの線・枠・下線）は、これまでどおり `border`・`line` で止まる。
 
 ## 面の区切り（UI-007）

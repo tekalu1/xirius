@@ -16,6 +16,7 @@ impl Studio {
                 mode: self.snap_mode,
                 grid: xirius_core::time::parse_grid(self.song.grid_for("arrange"), ppq)
                     .unwrap_or(i64::from(ppq) / 4),
+                triplet: triplet(self.song.grid_for("arrange")),
             },
             holds: self.holds(),
         }
@@ -28,6 +29,7 @@ impl Studio {
         tools.snap.grid =
             xirius_core::time::parse_grid(self.song.grid_for("roll"), self.project().ppq)
                 .unwrap_or(240);
+        tools.snap.triplet = triplet(self.song.grid_for("roll"));
         tools
     }
 
@@ -53,6 +55,7 @@ impl Studio {
         Some(Ctx {
             mousemap,
             prefs,
+            maps: self.meters.of(&self.project(), self.roll.beat_px),
             project: self.project(),
             clip: self.roll_target()?.clip,
             tools: self.roll_tools(),
@@ -206,12 +209,10 @@ impl Studio {
             return None;
         }
         let ppq = self.project().ppq;
-        let step = self.roll_tools().snap.step(&crate::tools::Meter {
-            ppq,
-            beats_per_bar: self.project().timesig.first().map_or(4, |t| t.num),
-            bpm: self.project().tempo.first().map_or(120.0, |t| t.bpm),
-            beat_px: self.roll.beat_px,
-        });
+        let step = self
+            .roll_tools()
+            .snap
+            .step(&self.meters.of(&self.project(), self.roll.beat_px));
         Some(super::length_text(
             self.roll.draw_length(true, step),
             i64::from(ppq),
@@ -305,4 +306,9 @@ impl Studio {
     pub fn edit_key(&mut self, g: &Geometry, key: &str, mods: Mods) -> bool {
         self.mapped_key(g, key, None, mods)
     }
+}
+
+/// Whether a grid value of the list is a triplet (`1/8t`).
+fn triplet(grid: &str) -> bool {
+    grid.trim().ends_with('t')
 }

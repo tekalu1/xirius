@@ -10,10 +10,12 @@ use serde_json::json;
 use xirius_core::id::{NoteId, TrackId};
 use xirius_core::model::{Clip, ClipBody, Note};
 use xirius_core::time::Tick;
+use xirius_design::GridTier;
 
 use super::frame::{Frame, View};
 use super::{Ctx, NoteView, Roll};
 use crate::draw::Pen;
+use crate::grid_lines::Line;
 use crate::studio::{Geometry, Rect, Studio};
 
 /// A part edited with the roll's clip.
@@ -127,8 +129,29 @@ impl Studio {
     }
 }
 
-/// The other parts behind the roll's clip: a tint over each one's span between two bar lines,
-/// and its notes in its track's color, faint unless selected.
+/// The lines of the roll's grid with the other parts' edges among them, in the roll's ticks.
+/// An edge is a bar line (UI-339). On a line of the grid it takes that line's place, and parts
+/// meeting at one time share one: the color is translucent, so a time painted twice is darker.
+pub(super) fn edged(mut lines: Vec<Line>, ctx: &Ctx) -> Vec<Line> {
+    for p in &ctx.others {
+        let at = p.offset(ctx);
+        for tick in [at, at + p.clip.length] {
+            let edge = Line {
+                tick,
+                tier: GridTier::Bar,
+                fade: 1.0,
+            };
+            match lines.binary_search_by_key(&tick, |l| l.tick) {
+                Ok(i) => lines[i] = edge,
+                Err(i) => lines.insert(i, edge),
+            }
+        }
+    }
+    lines
+}
+
+/// The other parts behind the roll's clip: a tint over each one's span between its edges (bar
+/// lines among the grid's, [`edged`]), and its notes in its track's color, faint unless selected.
 pub(super) fn paint(pen: &mut Pen, roll: &Roll, ctx: &Ctx, v: &View, f: &Frame) {
     for part in &ctx.others {
         let color = ctx
@@ -148,11 +171,6 @@ pub(super) fn paint(pen: &mut Pen, roll: &Roll, ctx: &Ctx, v: &View, f: &Frame) 
             Rect::new(x0, f.grid.y, x1 - x0, f.grid.h),
             color.opacity(0.08),
         );
-        for x in [v.x(at), v.x(at + part.clip.length)] {
-            if x >= f.grid.x && x < f.grid.right() {
-                pen.fill(Rect::new(x.round(), f.grid.y, 1.0, f.grid.h), pen.c.grid[0]);
-            }
-        }
         for n in part.clip.notes() {
             let view = NoteView {
                 start: n.start + at,

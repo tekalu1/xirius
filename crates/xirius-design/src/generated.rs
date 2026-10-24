@@ -67,6 +67,12 @@ macro_rules! palette_tokens {
             line_structure: c(0x8a91b8), c(0x6b7190);
             line_structure_hover: c(0x728cd7), c(0x5665cd);
             line_structure_selected: c(0x9eabde), c(0x3a499e);
+            // ---- 時間のグリッドの線（小節・拍・分割・細かい）。`GridLine` だけが取り出せる。
+            // 文字の色を薄く重ねる。どの面の上でも 小節 > 拍 > 分割 > 細かい の比（UI-339） ----
+            line_grid_bar: ca(0xdfe3f2, 77), ca(0x1c2247, 102);
+            line_grid_beat: ca(0xdfe3f2, 51), ca(0x1c2247, 66);
+            line_grid_sub: ca(0xdfe3f2, 29), ca(0x1c2247, 37);
+            line_grid_fine: ca(0xdfe3f2, 15), ca(0x1c2247, 19);
             // ---- 浮く面の影 ----
             surface_shadow: ca(0x000000, 128), ca(0x3a499e, 41);
             surface_shadow_near: ca(0x000000, 77), ca(0x3a499e, 26);

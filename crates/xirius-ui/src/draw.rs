@@ -469,8 +469,9 @@ pub fn paint_body(pen: &mut Pen, studio: &Studio, w: f32, h: f32) {
         crate::inspector::paint(pen, studio, hover, &g);
     }
     paint_head(pen, studio, &g);
-    paint_ruler(pen, studio, &g);
-    paint_rows(pen, studio, &g);
+    let grid = Grid::of(studio, &g);
+    paint_ruler(pen, studio, &g, &grid);
+    paint_rows(pen, studio, &g, &grid);
     paint_drawer(pen, studio, &g);
 }
 
@@ -688,7 +689,31 @@ fn paint_head(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     }
 }
 
-fn paint_ruler(pen: &mut Pen, studio: &Studio, g: &Geometry) {
+/// The arrangement's grid, found once a frame for the ruler and the lanes.
+struct Grid {
+    meter: crate::tools::Meter,
+    first: xirius_core::time::Tick,
+    last: xirius_core::time::Tick,
+    lines: Vec<crate::grid_lines::Line>,
+    /// Zoomed in to the samples the seconds show too (UI-339).
+    times: Option<crate::grid_lines::Times>,
+}
+
+impl Grid {
+    fn of(studio: &Studio, g: &Geometry) -> Grid {
+        let (first, last) = arrange_span(studio, g);
+        let meter = studio.meter();
+        Grid {
+            lines: crate::grid_lines::lines(&studio.tools().snap, &meter, first, last),
+            times: crate::grid_lines::times(&meter, first, last),
+            meter,
+            first,
+            last,
+        }
+    }
+}
+
+fn paint_ruler(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
     let c = pen.c;
     let project = studio.project();
     let whole = Rect::new(g.ruler.x, g.ruler.y, g.ruler.w, g.header_h());
@@ -743,38 +768,60 @@ fn paint_ruler(pen: &mut Pen, studio: &Studio, g: &Geometry) {
             crate::arrange::paint::tempo(pen, studio, &project, g);
         }
         crate::arrange::paint::loop_band(pen, studio, &project, g);
-        // Bar numbers, thinned out until they fit.
-        let tm = project.time_map();
-        let bars = studio.visible_bars(g);
-        let bar_w = bars
-            .iter()
-            .map(|(bar, tick)| studio.ticks_to_px(tm.bar_start(bar + 1) - tick))
-            .reduce(f32::min)
-            .unwrap_or_else(|| studio.ticks_to_px(tm.bar_start(2)));
         let scale = studio.ruler_scale(g);
         if studio.song.session().state.view.ruler_seconds {
             crate::context::marker::paint_seconds(pen, studio, g);
         } else {
-            crate::ruler::paint_bars(
-                pen,
-                &bars
+            // The grid's ticks, then the numbers (bars thinned out until they
+            // fit, beats and 16ths as it zooms in), none under a marker's name.
+            crate::grid_lines::paint_ticks(pen, &grid.lines, g.ruler, |t| scale.x(t));
+            if let Some(times) = &grid.times {
+                crate::grid_lines::paint_time_ticks(pen, times, g.ruler, |t| studio.tick_x_f(g, t));
+            }
+            let marks: Vec<_> = crate::ruler::labels(
+                &grid.meter.time,
+                project.ppq,
+                studio.beat_w,
+                studio.tools().snap.triplets(),
+                grid.first,
+                grid.last,
+            )
+            .into_iter()
+            .filter(|mark| {
+                !project.markers.iter().any(|m| {
+                    studio
+                        .marker_rect(g, m.id)
+                        .is_some_and(|r| r.contains(scale.x(mark.tick) + 4.0, r.y + 2.0))
+                })
+            })
+            .collect();
+            crate::ruler::paint_labels(pen, &marks, g.ruler, |t| scale.x(t));
+            // The times, where no number of the grid's is.
+            if let Some(times) = &grid.times {
+                let taken: Vec<f32> = marks.iter().map(|m| scale.x(m.tick)).collect();
+                let free = |x: f32| taken.iter().all(|t| (x - t).abs() >= crate::ruler::TIME_W);
+                let shown: Vec<_> = times
+                    .labels
                     .iter()
-                    .filter(|(_, t)| {
-                        !project.markers.iter().any(|m| {
-                            studio
-                                .marker_rect(g, m.id)
-                                .is_some_and(|r| r.contains(scale.x(*t) + 4.0, r.y + 2.0))
-                        })
-                    })
-                    .copied()
-                    .collect::<Vec<_>>(),
-                crate::ruler::bar_every(bar_w),
-                g.ruler,
-                |t| scale.x(t),
-            );
+                    .map(|(l, text)| (studio.tick_x_f(g, l.at), text.as_str()))
+                    .filter(|(x, _)| free(*x))
+                    .collect();
+                crate::ruler::paint_times(pen, &shown, g.ruler);
+            }
         }
         crate::context::marker::paint(pen, studio, g);
     });
+}
+
+/// The song ticks at the lanes' left and right edges.
+fn arrange_span(
+    studio: &Studio,
+    g: &Geometry,
+) -> (xirius_core::time::Tick, xirius_core::time::Tick) {
+    (
+        studio.px_to_ticks(studio.scroll.0),
+        studio.px_to_ticks(studio.scroll.0 + g.lanes.w),
+    )
 }
 
 fn row_face(studio: &Studio, c: &Colors, row: &Row) -> Hsla {
@@ -788,7 +835,7 @@ fn row_face(studio: &Studio, c: &Colors, row: &Row) -> Hsla {
     }
 }
 
-fn paint_rows(pen: &mut Pen, studio: &Studio, g: &Geometry) {
+fn paint_rows(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
     let c = pen.c;
     let project = studio.project();
     let column_region = region(g, g.column);
@@ -839,6 +886,11 @@ fn paint_rows(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     let speed_map = speed
         .as_ref()
         .map(|_| xirius_core::tempo::TempoMap::from_project(&project));
+    let (lines, times) = (&grid.lines, &grid.times);
+    let note_lines: std::borrow::Cow<[crate::grid_lines::Line]> = match times {
+        Some(_) => crate::grid_lines::under_times(lines).into(),
+        None => lines.into(),
+    };
     pen.mask(lanes_region, |pen| {
         for row in &tree.rows {
             let top = studio.row_y(g, row);
@@ -849,22 +901,11 @@ fn paint_rows(pen: &mut Pen, studio: &Studio, g: &Geometry) {
             let r = Rect::new(g.lanes.x, top, g.lanes.w, row.full_h());
             let round = Round::rows(row.round_top, row.round_bottom);
             pen.shape(r, face, Radius::S, round);
-            let tm = project.time_map();
-            let meter = crate::tools::Meter {
-                ppq: project.ppq,
-                beats_per_bar: project.timesig.first().map_or(4, |t| t.num),
-                bpm: project.tempo.first().map_or(120.0, |t| t.bpm),
-                beat_px: studio.beat_w,
-            };
-            let first = studio.px_to_ticks(studio.scroll.0);
-            let last = studio.px_to_ticks(studio.scroll.0 + g.lanes.w);
-            let step = studio.tools().snap.step(&meter);
-            for tick in crate::grid_lines::ticks(&tm, first, last, step, project.ppq, studio.beat_w)
-            {
-                pen.fill(
-                    Rect::new(studio.tick_x(g, tick).round(), top, 1.0, r.h),
-                    crate::grid_lines::tone(tick, &tm, pen.c),
-                );
+            crate::grid_lines::paint(pen, &note_lines, top, r.h, |t| studio.tick_x(g, t));
+            if let Some(times) = &times {
+                crate::grid_lines::paint_times(pen, &times.lines, lines, top, r.h, |t| {
+                    studio.tick_x_f(g, t)
+                });
             }
             if let RowKind::Folder(f) = row.kind {
                 crate::arrange::folder_band::paint(pen, studio, &project, g, row, f);

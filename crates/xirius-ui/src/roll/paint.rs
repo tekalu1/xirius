@@ -26,6 +26,7 @@ pub fn paint(pen: &mut Pen, studio: &Studio, body: Rect) {
     let ctx = Ctx {
         mousemap,
         prefs,
+        maps: studio.meters.of(&studio.project(), studio.roll.beat_px),
         project: studio.project(),
         clip: target.clip,
         tools: studio.roll_tools(),
@@ -38,6 +39,8 @@ pub fn paint(pen: &mut Pen, studio: &Studio, body: Rect) {
     let roll = &studio.roll;
     let f = roll.frame(body);
     let v = roll.view(&ctx);
+    // The notes' grid and each lane's share the lines.
+    let lines = grid_lines(roll, &ctx);
     super::ruler::paint_ruler(pen, studio, roll, &ctx, &f);
     let all_selected = roll.selected.len() == ctx.notes().len() && ctx.others.is_empty();
     let selected = |id| all_selected || roll.selected.contains(id);
@@ -58,11 +61,8 @@ pub fn paint(pen: &mut Pen, studio: &Studio, body: Rect) {
                 if black { pen.c.surface_0 } else { pen.c.paper },
             );
         }
-        let tm = ctx.project.time_map();
-        for tick in grid_ticks(roll, &ctx) {
-            let color = crate::grid_lines::tone(tick + ctx.clip.start, &tm, pen.c);
-            pen.fill(Rect::new(v.x(tick).round(), f.grid.y, 1.0, f.grid.h), color);
-        }
+        let notes_grid = super::parts::edged(lines.clone(), &ctx);
+        crate::grid_lines::paint(pen, &notes_grid, f.grid.y, f.grid.h, |t| v.x(t));
         super::ruler::paint_veil(pen, studio, roll, &ctx, &f);
         super::ruler::paint_shade(pen, studio, roll, &ctx, &f);
         super::parts::paint(pen, roll, &ctx, &v, &f);
@@ -284,13 +284,7 @@ pub fn paint(pen: &mut Pen, studio: &Studio, body: Rect) {
             continue;
         }
         pen.mask(lb.plot, |pen| {
-            let tm = ctx.project.time_map();
-            for tick in grid_ticks(roll, &ctx) {
-                pen.fill(
-                    Rect::new(v.x(tick).round(), lb.plot.y, 1.0, lb.plot.h),
-                    crate::grid_lines::tone(tick + ctx.clip.start, &tm, pen.c),
-                );
-            }
+            crate::grid_lines::paint(pen, &lines, lb.plot.y, lb.plot.h, |t| v.x(t));
             match kind {
                 LaneKind::Velocity => {
                     let mut painted = std::collections::HashSet::new();
@@ -305,6 +299,7 @@ pub fn paint(pen: &mut Pen, studio: &Studio, body: Rect) {
                             continue;
                         }
                         let col = note_face(selected(&n.id), color, pen.c);
+                        // design-lint: allow(one-sided-edge) ベロシティの棒は、ノートの値を表す線（面の端の帯ではない）
                         pen.fill(Rect::new(x, y, 2.0, lb.plot.bottom() - y - 3.0), col);
                         pen.round(Rect::new(x - 2.0, y - 2.0, 6.0, 4.0), col, Radius::Xs);
                     }
@@ -375,19 +370,22 @@ pub fn paint(pen: &mut Pen, studio: &Studio, body: Rect) {
     }
 }
 
-pub fn grid_ticks(roll: &Roll, ctx: &Ctx) -> Vec<i64> {
+/// The grid's lines across the roll, found in song time (they count from the
+/// start of each bar) and given from the clip's head.
+pub fn grid_lines(roll: &Roll, ctx: &Ctx) -> Vec<crate::grid_lines::Line> {
     let v = roll.view(ctx);
-    let step = ctx.step(roll.beat_px);
-    crate::grid_lines::ticks(
-        &ctx.project.time_map(),
-        v.tick(v.grid.x) + ctx.clip.start,
-        v.tick(v.grid.right()) + ctx.clip.start,
-        step,
-        ctx.project.ppq,
-        roll.beat_px,
+    let start = ctx.clip.start;
+    crate::grid_lines::lines(
+        &ctx.tools.snap,
+        &ctx.meter(roll.beat_px),
+        v.tick(v.grid.x) + start,
+        v.tick(v.grid.right()) + start,
     )
     .into_iter()
-    .map(|t| t - ctx.clip.start)
+    .map(|l| crate::grid_lines::Line {
+        tick: l.tick - start,
+        ..l
+    })
     .collect()
 }
 

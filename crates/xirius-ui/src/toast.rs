@@ -383,7 +383,11 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     for (b, button, part) in buttons {
         if let (Some(b), Some((label, _))) = (b, button) {
             // The scroll thumb's hover tone, as the mock's button.
-            let face = if over(part) { c.grid[0] } else { c.surface_3 };
+            let face = if over(part) {
+                c.scroll_thumb[0]
+            } else {
+                c.surface_3
+            };
             pen.round(b, face, Radius::Xs);
             pen.text(
                 label,

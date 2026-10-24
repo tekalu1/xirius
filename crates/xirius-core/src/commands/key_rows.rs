@@ -103,6 +103,9 @@ fn split_grid(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
         return Err(CmdError::range("グリッドは 1 tick 以上にしてください"));
     }
     let ids = a.require_ids::<ClipId>("クリップ")?;
+    // The lines count from each bar (UI-339): the first one after `t`.
+    let tm = p.time_map();
+    let next = |t: Tick| tm.on_grid(t + 1, step, crate::time::Side::After);
     let mut made = Vec::new();
     for id in ids {
         let (start, end) = {
@@ -110,7 +113,7 @@ fn split_grid(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
             (c.start, c.end())
         };
         let mut piece = id;
-        let mut at = (start.div_euclid(step) + 1) * step;
+        let mut at = next(start);
         while at < end {
             if made.len() >= MAX_PIECES {
                 return Err(CmdError::range(
@@ -124,7 +127,7 @@ fn split_grid(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
                 }
                 None => break,
             }
-            at += step;
+            at = next(at);
         }
     }
     if made.is_empty() {

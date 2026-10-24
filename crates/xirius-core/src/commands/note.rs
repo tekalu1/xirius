@@ -166,22 +166,26 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 if a.flag("freeze") { return Ok(Output::msg("クオンタイズを固定しました")); }
                 let g = grid(p, a, "grid")?;
                 let strength = a.opt_i64("strength").unwrap_or(100) as u32;
+                // The grid counts from each bar of the song (UI-339), so the
+                // notes are quantized in song time.
+                let tm = p.time_map();
+                let starts: HashMap<ClipId, Tick> = p
+                    .tracks
+                    .values()
+                    .flat_map(|t| t.clips.iter().map(|c| (c.id, c.start)))
+                    .collect();
                 if let Some(q) = panel_quantize(p, a, g, strength)? {
-                    let starts: HashMap<ClipId, Tick> = p
-                        .tracks
-                        .values()
-                        .flat_map(|t| t.clips.iter().map(|c| (c.id, c.start)))
-                        .collect();
                     let n = edit_notes(p, &Scope::from_args(a)?, cx.author.is_ai(), |n, cid| {
                         let offset = starts.get(&cid).copied().unwrap_or(0);
-                        (n.start, n.length, n.velocity) = q.note(offset, n.start, n.length, n.velocity);
+                        (n.start, n.length, n.velocity) = q.note(&tm, offset, n.start, n.length, n.velocity);
                         Ok(())
                     })?;
                     return Ok(Output::msg(format!("ノート {n} 個をクオンタイズしました")));
                 }
                 let lengths = a.flag("lengths");
-                let n = edit_notes(p, &Scope::from_args(a)?, cx.author.is_ai(), |n, _| {
-                    n.start = quantize_tick(n.start, g, strength).max(0);
+                let n = edit_notes(p, &Scope::from_args(a)?, cx.author.is_ai(), |n, cid| {
+                    let offset = starts.get(&cid).copied().unwrap_or(0);
+                    n.start = (tm.quantize(offset + n.start, g, strength) - offset).max(0);
                     if lengths {
                         let q = quantize_tick(n.length, g, strength);
                         n.length = q.max(if strength == 100 { g } else { 1 });

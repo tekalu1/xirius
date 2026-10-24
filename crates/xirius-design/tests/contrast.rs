@@ -2,8 +2,9 @@
 //! ダーク・ライトの両方で、公開の API だけを使って確かめる。
 
 use xirius_design::{
-    ALLOWED, Accent, Category, Ink, LevelMeter, LineState, MIN_GRAPHIC_CONTRAST, MIN_TEXT_CONTRAST,
-    PianoKey, StructureLine, Surface, Theme, Toggle, TrackColor, contrast_ratio, token_names,
+    ALLOWED, Accent, Category, GridLine, GridTier, Ink, LevelMeter, LineState,
+    MIN_GRAPHIC_CONTRAST, MIN_TEXT_CONTRAST, PianoKey, StructureLine, Surface, Theme, Toggle,
+    TrackColor, contrast_ratio, token_names,
 };
 
 /// 中立の面（文字・図形が載る面）。塗りは除く。
@@ -319,6 +320,55 @@ fn structure_lines_are_visible_on_every_neutral_surface() {
         }
     }
     println!("構造線 × 中立の面: 最小 {worst:.2}:1");
+}
+
+/// 時間のグリッドの線が載る面: アレンジの行（地・hover・選択）、ロールの黒鍵の行、レーンの溝。
+const GRID_SURFACES: [Surface; 6] = [
+    Surface::Paper,
+    Surface::Hover,
+    Surface::Sel,
+    Surface::S0,
+    Surface::S1,
+    Surface::S2,
+];
+
+#[test]
+fn grid_tiers_keep_their_order_on_every_surface() {
+    // 小節 > 拍 > 分割 > 細かい線 の比が、どの面の上でも両方のテーマで保たれる（UI-339）。
+    // 線は透過の色なので、面に重ねてから比べる。いちばん薄い段も面と見分けられる。
+    let mut rows = Vec::new();
+    for theme in Theme::ALL {
+        for s in GRID_SURFACES {
+            let face = s.color(theme);
+            let ratios =
+                GridTier::ALL.map(|t| contrast_ratio(GridLine::color(t, theme).over(face), face));
+            assert!(
+                ratios.windows(2).all(|p| p[0] > p[1] * 1.1),
+                "{theme:?} {s:?}: {ratios:.2?}"
+            );
+            assert!(ratios[3] >= 1.1, "{theme:?} {s:?}: {ratios:.2?}");
+            assert!(ratios[0] >= 2.2, "{theme:?} {s:?}: {ratios:.2?}");
+            rows.push(format!("{theme:?} {s:?} {ratios:.2?}"));
+        }
+    }
+    println!(
+        "グリッドの線 × 面:
+{}",
+        rows.join(
+            "
+"
+        )
+    );
+}
+
+#[test]
+fn grid_lines_are_translucent_ink() {
+    // 面の色ではなく、文字の色を薄く重ねる。面が変わっても段の差がほぼ同じになる。
+    for theme in Theme::ALL {
+        for t in GridTier::ALL {
+            assert!(!GridLine::color(t, theme).is_opaque(), "{theme:?} {t:?}");
+        }
+    }
 }
 
 #[test]

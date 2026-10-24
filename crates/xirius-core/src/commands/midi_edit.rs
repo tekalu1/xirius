@@ -264,12 +264,15 @@ fn split_on_grid(p: &mut Project, cx: &crate::command::EditCtx<'_>, a: &Args) ->
         .values()
         .flat_map(|t| t.clips.iter().map(|c| (c.id, c.start)))
         .collect();
+    let tm = p.time_map();
     let mut pieces: Vec<(ClipId, Note)> = Vec::new();
     edit_notes(p, &scope, cx.author.is_ai(), |n, c| {
         let offset = offsets[&c];
         let end = n.start + n.length;
-        // The first line after the start, in song time, then clip time.
-        let mut line = (offset + n.start) / step * step + step - offset;
+        // The first line after `t` (clip time), counted from its bar in song
+        // time (UI-339).
+        let next = |t: Tick| tm.on_grid(offset + t + 1, step, crate::time::Side::After) - offset;
+        let mut line = next(n.start);
         let mut from = n.start;
         let mut first = true;
         while line < end {
@@ -287,7 +290,7 @@ fn split_on_grid(p: &mut Project, cx: &crate::command::EditCtx<'_>, a: &Args) ->
                 ));
             }
             from = line;
-            line += step;
+            line = next(line);
         }
         if !first {
             pieces.push((

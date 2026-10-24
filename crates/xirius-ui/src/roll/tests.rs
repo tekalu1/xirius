@@ -380,12 +380,47 @@ fn feel_09_grid_lengths_lines_and_modes() {
             let grid = format!("1/{d}{}", if triplet { "t" } else { "" });
             s.song.set_grid(&grid).unwrap();
             let c = context(&s, &g);
-            let lines = paint::grid_ticks(&s.roll, &c);
+            let lines = paint::grid_lines(&s.roll, &c);
             let ticks = xirius_core::time::parse_grid(&grid, c.project.ppq).unwrap();
-            let visible = crate::grid_lines::fine_spacing(ticks, c.project.ppq, s.roll.beat_px)
-                .unwrap_or(c.ppq());
-            assert_eq!(lines[1] - lines[0], visible, "{grid}");
+            let m = c.meter(s.roll.beat_px);
             let v = s.roll.view(&c);
+            // No two lines closer than their tiers' threshold.
+            for w in lines.windows(2) {
+                let px = m.px((w[1].tick - w[0].tick) as f64);
+                let min = w[0].tier.min_px().max(w[1].tier.min_px());
+                assert!(px + 0.01 >= min, "{grid}: {w:?}");
+            }
+            // Every point the button says the lines show has one, from each bar's
+            // start: the grid's own points, or those of the value it adds.
+            let start = c.clip.start;
+            let (first, last) = (v.tick(v.grid.x) + start, v.tick(v.grid.right()) + start);
+            let every =
+                crate::grid_lines::visible(&c.tools.snap, &m, first).map_or(ticks, |e| e as Tick);
+            let have: Vec<_> = lines.iter().map(|l| l.tick + start).collect();
+            let mut points = 0;
+            for (bar, b0) in crate::ruler::bars_in(&m.time, first, last) {
+                let b1 = m.time.bar_start(bar + 1);
+                for t in (b0..b1)
+                    .step_by(every as usize)
+                    .filter(|t| (first..=last).contains(t))
+                {
+                    assert!(have.contains(&t), "{grid} shows {every}: {t}");
+                    points += 1;
+                }
+            }
+            assert!(points > 4, "{grid}: {points}");
+            // The finest lines are the grid's own points.
+            for l in lines
+                .iter()
+                .filter(|l| l.tier == xirius_design::GridTier::Fine)
+            {
+                let t = l.tick + start;
+                assert_eq!(
+                    (t - m.time.bar_start(m.time.to_bbt(t).0)) % ticks,
+                    0,
+                    "{grid}"
+                );
+            }
             s.tool = Tool::Draw;
             let p = (v.x(9000), v.y(61) + 7.0);
             down(&mut s, &g, p, Mods::NONE);
@@ -947,8 +982,11 @@ fn the_bar_grid_is_the_roll_snap_and_its_lines() {
     let ppq = context(&s, &g).ppq();
     let step = |s: &Studio| {
         let c = context(s, &g);
-        let lines = paint::grid_ticks(&s.roll, &c);
-        assert_eq!(lines[1] - lines[0], c.step(s.roll.beat_px).min(c.ppq()));
+        let lines = paint::grid_lines(&s.roll, &c);
+        assert_eq!(
+            lines[1].tick - lines[0].tick,
+            c.step(s.roll.beat_px).min(c.ppq())
+        );
         c.step(s.roll.beat_px)
     };
     assert!(s.press(&g, Hit::Bar(BarButton::Grid)));
@@ -1734,17 +1772,25 @@ fn feel_05d_the_zoom_command_takes_a_width_and_the_strip_parts_leave_the_tabs_ro
 
 #[test]
 fn feel_05d_the_ruler_numbers_follow_the_width_of_a_beat() {
-    let (mut s, _g) = setup();
+    let (mut s, g) = setup();
+    // The deepest number in the roll's ruler, as a beat widens: "1", "1.2", "1.2.3".
     for (px, want) in [
-        (20.0, crate::ruler::Depth::Bars),
-        (51.9, crate::ruler::Depth::Bars),
-        (52.0, crate::ruler::Depth::Beats),
-        (150.0, crate::ruler::Depth::Beats),
-        (208.0, crate::ruler::Depth::Sixteenths),
-        (4096.0, crate::ruler::Depth::Sixteenths),
+        (20.0, 0),
+        (51.9, 0),
+        (52.0, 1),
+        (150.0, 1),
+        (208.0, 2),
+        (4096.0, 2),
     ] {
         s.roll.beat_px = px;
-        assert_eq!(crate::ruler::Depth::at(s.roll.beat_px), want, "{px}");
+        let c = context(&s, &g);
+        let marks = crate::ruler::labels(&c.project.time_map(), c.project.ppq, px, false, 0, 3840);
+        let depth = marks
+            .iter()
+            .map(|m| m.label.matches('.').count())
+            .max()
+            .unwrap_or(0);
+        assert_eq!(depth, want, "{px}");
     }
 }
 
@@ -2386,4 +2432,74 @@ fn a_note_picked_sounds_only_with_the_audition_setting_and_the_tool_always() {
     assert_eq!(s.roll.sounding(), Some(60));
     up(&mut s, &g, p, Mods::NONE);
     assert_eq!(s.roll.sounding(), None);
+}
+
+#[test]
+fn a_parts_edge_is_one_bar_line_where_the_grid_has_a_line_and_where_two_parts_meet() {
+    use xirius_design::GridTier;
+    let (mut s, g) = setup();
+    s.roll.beat_px = 24.0;
+    s.roll.scroll.0 = 0.0;
+    let c = context(&s, &g);
+    let (start, beat) = (c.clip.start, c.ppq());
+    let tm = c.project.time_map();
+    let at = |bar: u32| tm.bar_start(tm.to_bbt(start).0 + bar);
+    assert_eq!(at(10) - at(0), 40 * beat, "4/4 from the roll's clip");
+    let made = |v: serde_json::Value| v["id"].as_str().unwrap().to_string();
+    let t = made(
+        s.song
+            .run("track.add.instrument", json!({"name": "Parts"}))
+            .unwrap(),
+    );
+    // A over 8 bars, B from where A ends for a bar and a beat: both in the roll with its clip.
+    let a = made(
+        s.song
+            .run(
+                "clip.add.midi",
+                json!({"track": t, "at": at(0), "length": at(8) - at(0)}),
+            )
+            .unwrap(),
+    );
+    let b = made(
+        s.song
+            .run(
+                "clip.add.midi",
+                json!({"track": t, "at": at(8), "length": at(9) - at(8) + beat}),
+            )
+            .unwrap(),
+    );
+    s.rebuild(&g);
+    let t: xirius_core::id::TrackId = t.parse().unwrap();
+    let target = s.selected_clip.unwrap();
+    s.arrange.clips = [target, (t, a.parse().unwrap()), (t, b.parse().unwrap())]
+        .into_iter()
+        .collect();
+    let c = context(&s, &g);
+    assert_eq!(c.others.len(), 2);
+    let grid = paint::grid_lines(&s.roll, &c);
+    let tier = |lines: &[crate::grid_lines::Line], t: Tick| {
+        let on: Vec<_> = lines.iter().filter(|l| l.tick == t - start).collect();
+        assert_eq!(on.len(), 1, "one line at {t}: {on:?}");
+        (on[0].tier, on[0].fade)
+    };
+    // A's start and A's end (B's start) are on bar lines; B's end is on a beat line.
+    assert_eq!(tier(&grid, at(0)).0, GridTier::Bar);
+    assert_eq!(tier(&grid, at(8)).0, GridTier::Bar);
+    assert_eq!(tier(&grid, at(9) + beat).0, GridTier::Beat);
+    let lines = parts::edged(grid.clone(), &c);
+    // No time is painted twice over the translucent color: each edge is the one bar line there.
+    for w in lines.windows(2) {
+        assert!(w[0].tick < w[1].tick, "{w:?}");
+    }
+    for edge in [at(0), at(8), at(9) + beat] {
+        assert_eq!(tier(&lines, edge), (GridTier::Bar, 1.0), "{edge}");
+    }
+    // The other lines are the grid's.
+    let rest = |l: &[crate::grid_lines::Line]| -> Vec<_> {
+        l.iter()
+            .filter(|l| l.tick != at(9) + beat - start)
+            .copied()
+            .collect()
+    };
+    assert_eq!(rest(&lines), rest(&grid));
 }

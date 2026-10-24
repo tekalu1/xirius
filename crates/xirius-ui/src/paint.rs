@@ -10,9 +10,9 @@ use gpui::{
     Window, fill, point, px, size,
 };
 use xirius_design::{
-    Accent, Category, FloatShadow, Ink, LevelMeter, LineState, Overlay, Pair, PianoKey, Radius,
-    Readable, ReadableOn, StructureLine, Surface, SurfaceKind, SwitchFace, Theme, Toggle,
-    TrackColor, ink, surface,
+    Accent, Category, FloatShadow, GridLine, GridTier, Ink, LevelMeter, LineState, Overlay, Pair,
+    PianoKey, Radius, Readable, ReadableOn, StructureLine, Surface, SurfaceKind, SwitchFace, Theme,
+    Toggle, TrackColor, ink, surface,
 };
 
 use crate::data::{ARRANGEMENT_S, Project, Track};
@@ -130,8 +130,12 @@ pub struct Colors {
     pub list_thumb: Hsla,
     /// The folder range line at rest, hovered and selected (MIX-038).
     pub line: [Hsla; 3],
-    /// The time grid's lines, strongest first: a bar's, a beat's and a finer step's (UI-121).
-    pub grid: [Hsla; 3],
+    /// The time grid's lines by [`xirius_design::GridTier`], strongest first: a
+    /// bar's, a beat's, a split's and a finer step's (UI-339). Drawn only through
+    /// [`crate::grid_lines`], with the width and place from `GridLine`.
+    pub grid: [Hsla; 4],
+    /// The scroll thumb's tones, grabbed or hovered and at rest.
+    pub scroll_thumb: [Hsla; 2],
     /// What dims the screen under a dialog (the command palette).
     pub veil: Hsla,
     /// The soft shadow all round a floating panel, far layer first (UI-007).
@@ -225,10 +229,10 @@ impl Colors {
             }),
             list_thumb: paint(list_thumb(theme)),
             line: LineState::ALL.map(|state| paint(StructureLine::color(state, theme))),
-            grid: [
+            grid: GridTier::ALL.map(|tier| paint(GridLine::color(tier, theme))),
+            scroll_thumb: [
                 paint(Overlay::ScrollThumbHover.color(theme)),
                 paint(Overlay::ScrollThumb.color(theme)),
-                paint(Surface::S3.color(theme)),
             ],
             veil: paint(Overlay::Veil.color(theme)),
             float: FloatShadow::layers(theme).map(|l| gpui::BoxShadow {

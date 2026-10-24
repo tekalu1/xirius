@@ -45,11 +45,10 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
         pen.mask(shown, |pen| paint_strip(pen, studio, &p, track, &s, hover));
     }
     if let Some((_, thumb)) = studio.mixer_bar(g) {
-        // The scroll thumb's tones (the grid's two stronger tones are the scroll thumb's).
         let tone = if studio.mixer.bar_grab.is_some() {
-            c.grid[0]
+            c.scroll_thumb[0]
         } else {
-            c.grid[1]
+            c.scroll_thumb[1]
         };
         pen.round(thumb, tone, Radius::Pill);
     }
