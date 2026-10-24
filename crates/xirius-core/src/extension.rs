@@ -32,6 +32,8 @@ pub struct ExtContext<'a> {
     /// The history lane the session holds in its song folder (PRJ-023): with
     /// [`others_open`](crate::session::others_open), whether another process has the song open.
     pub lane: Option<u32>,
+    /// The session's id among those whose files [`crate::in_use`] notes.
+    pub uses: u64,
 }
 
 pub trait Extension: Send {

@@ -55,6 +55,23 @@ pub const FORMAT_VERSION: u32 = 1;
 pub const HISTORY_FORMAT_VERSION: u32 = 2;
 /// Strings at least this long in `history/<n>.json` are stored in `history/blobs/<sha256>`.
 pub const BLOB_MIN_BYTES: usize = 4096;
+/// What [`Store::read_state_unresolved`] leaves in place of a blob's text: no path or name can
+/// be it.
+pub const UNREAD_BLOB: &str = "\0$blob";
+
+thread_local! {
+    static FILES_READ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many files the stores have read on this thread: what a step opens, counted (the tests
+/// of REC-026, where every file opened may take seconds on a slow drive).
+pub fn files_read() -> u64 {
+    FILES_READ.with(|n| n.get())
+}
+
+fn count_read() {
+    FILES_READ.with(|n| n.set(n.get() + 1));
+}
 
 pub fn now_ms() -> u64 {
     SystemTime::now()
@@ -183,6 +200,41 @@ fn collect_blob_refs(v: &Value, used: &mut HashSet<String>) {
         }
         _ => {}
     }
+}
+
+/// A version's ID is `v` and a number, so it can only name a file in `versions/`.
+fn check_version_id(id: &str) -> CmdResult<()> {
+    if !id.starts_with('v') || !id[1..].chars().all(|c| c.is_ascii_digit()) {
+        return Err(CmdError::invalid(format!(
+            "バージョンの ID `{id}` が正しくありません（v1・v2 の形式）"
+        )));
+    }
+    Ok(())
+}
+
+/// Each `{"$blob": "<hash>"}` in `v` as [`UNREAD_BLOB`], for [`Store::read_state_unresolved`].
+fn leave_blobs(v: &mut Value, rel: &str) -> CmdResult<()> {
+    match v {
+        Value::Object(o) => {
+            if let Some(hash) = blob_ref(o) {
+                if !is_valid_blob_hash(hash) {
+                    return Err(Store::corrupt(rel, "不正な blob ハッシュ"));
+                }
+                *v = Value::String(UNREAD_BLOB.into());
+                return Ok(());
+            }
+            for val in o.values_mut() {
+                leave_blobs(val, rel)?;
+            }
+        }
+        Value::Array(a) => {
+            for item in a {
+                leave_blobs(item, rel)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// A blob's name is the SHA-256 of its text in lowercase hex, so it can only name a file in
@@ -327,6 +379,7 @@ impl Store {
     }
 
     fn read_bytes(&self, rel: &str) -> CmdResult<Vec<u8>> {
+        count_read();
         fs::read(self.p(rel))
             .map_err(|e| CmdError::from(e).with_context(format!("{rel} を読み込めません")))
     }
@@ -621,6 +674,27 @@ impl Store {
         Ok((p, rows))
     }
 
+    /// A history state with the blobs it points to left unread: each long text held in
+    /// `history/blobs/` is [`UNREAD_BLOB`] (not read, nor its SHA-256 checked). Enough for what
+    /// names the files of the clips (REC-026), whose paths are shorter than a blob's text; one
+    /// that is `UNREAD_BLOB` was not, and is read with [`Store::read_state`].
+    ///
+    /// Use it only to collect the files the clips name. Nothing else in it holds: it is not
+    /// repaired (the racks) nor checked as a song ([`Project::validate`]), and every long text
+    /// in it is `UNREAD_BLOB`; a song made from it is not one that was.
+    pub fn read_state_unresolved(&self, abs: u64) -> CmdResult<Project> {
+        let rel = self.state_rel(abs);
+        let bytes = self.read_bytes(&rel)?;
+        let mut f: RawProjectFile =
+            serde_json::from_slice(&bytes).map_err(|e| Self::corrupt(&rel, e))?;
+        match f.format_version {
+            FORMAT_VERSION => {}
+            HISTORY_FORMAT_VERSION => leave_blobs(&mut f.project, &rel)?,
+            _ => return Err(Self::corrupt(&rel, "新しい形式")),
+        }
+        serde_json::from_value(f.project).map_err(|e| Self::corrupt(&rel, e))
+    }
+
     fn resolve_blobs(&self, v: &mut Value, rel: &str) -> CmdResult<()> {
         match v {
             Value::Object(o) => {
@@ -629,6 +703,7 @@ impl Store {
                         return Err(Self::corrupt(rel, "不正な blob ハッシュ"));
                     }
                     let blob_rel = format!("history/blobs/{hash}");
+                    count_read();
                     let bytes = fs::read(self.p(&blob_rel)).map_err(|e| {
                         Self::corrupt(rel, format!("{blob_rel} を読み込めません: {e}"))
                     })?;
@@ -881,17 +956,23 @@ impl Store {
     }
 
     pub fn read_version(&self, id: &str) -> CmdResult<Project> {
-        if !id.starts_with('v') || !id[1..].chars().all(|c| c.is_ascii_digit()) {
-            return Err(CmdError::invalid(format!(
-                "バージョンの ID `{id}` が正しくありません（v1・v2 の形式）"
-            )));
-        }
-        if !self.list_versions()?.iter().any(|v| v.id == id) {
+        check_version_id(id)?;
+        let all = self.list_versions()?;
+        let Some(info) = all.iter().find(|v| v.id == id) else {
             return Err(CmdError::not_found(format!(
                 "バージョン {id} が見つかりません"
             )));
-        }
-        Ok(self.read_project_file(&format!("versions/{id}.json"))?.0)
+        };
+        self.read_listed_version(info)
+    }
+
+    /// A version from [`Store::list_versions`], read without reading the list again (REC-026:
+    /// the cleanup reads every version of the list it read once).
+    pub fn read_listed_version(&self, info: &VersionInfo) -> CmdResult<Project> {
+        check_version_id(&info.id)?;
+        Ok(self
+            .read_project_file(&format!("versions/{}.json", info.id))?
+            .0)
     }
 
     /// Keeps only the newest `keep` automatic versions.

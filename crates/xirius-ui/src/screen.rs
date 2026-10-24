@@ -2097,6 +2097,8 @@ pub fn run(opts: Options) {
                 studio
                     .borrow_mut()
                     .start_keeping(crate::keep::Keep::at(crate::keep::root()));
+                // The cleanups the last window stopped when it closed run again (REC-026).
+                studio.borrow_mut().tidy_later(&crate::notice::later_path());
                 // A UIA test opens a page this way (no OS input): XIRIUS_OPEN_SECTION=audio
                 // puts the audio settings up on the fixture's simulated devices. After
                 // `start_keeping`, which can swap the song (and its io) for the one the
@@ -2133,22 +2135,12 @@ pub fn run(opts: Options) {
                     if let Some(studio) = &closing {
                         match studio.try_borrow_mut() {
                             Ok(mut s) => {
-                                match s.close_song() {
-                                    Ok(0) => {}
-                                    Ok(n) => {
-                                        eprintln!(
-                                            "使われていない録音のファイル {n} 個をごみ箱に移動しました"
-                                        );
-                                        // Said again by the next window.
-                                        let left = crate::notice::left_path();
-                                        if let Err(e) = crate::notice::leave(&left, n) {
-                                            eprintln!("could not write {}: {e}", left.display());
-                                        }
-                                    }
-                                    Err(e) => eprintln!("注意: {e}"),
+                                // This song's cleanup joins those of the songs closed
+                                // before (REC-026), and its folder is let go: a close is
+                                // not a crash.
+                                if let Err(e) = s.close_window_song() {
+                                    eprintln!("注意: {e}");
                                 }
-                                // Let go of the song's folder: a close is not a crash.
-                                s.release_song();
                                 // UI-282: the checked installer starts once this window is
                                 // gone; it waits for Xirius to close, then puts the new
                                 // version in and starts Xirius again.
@@ -2156,6 +2148,23 @@ pub fn run(opts: Options) {
                                     let spawn = s.update.spawn.clone();
                                     if let Err(e) = spawn(&install) {
                                         eprintln!("注意: {e}");
+                                    }
+                                }
+                                // The cleanups are waited for a while; those not over then
+                                // run again at the next start.
+                                let n = s.wait_tidy(
+                                    crate::tidy::CLOSE_WAIT,
+                                    &crate::notice::later_path(),
+                                    &mut |e| eprintln!("注意: {e}"),
+                                );
+                                if n > 0 {
+                                    eprintln!(
+                                        "使われていない録音のファイル {n} 個をごみ箱に移動しました"
+                                    );
+                                    // Said again by the next window.
+                                    let left = crate::notice::left_path();
+                                    if let Err(e) = crate::notice::leave(&left, n) {
+                                        eprintln!("could not write {}: {e}", left.display());
                                     }
                                 }
                             }

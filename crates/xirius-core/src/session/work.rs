@@ -522,6 +522,7 @@ impl Session {
         self.hist.steps.truncate(rel);
         self.hist.cursor = n;
         self.current = target;
+        self.note_uses();
         self.persist_index((n + 1..=old_last).collect());
         self.prune_selection();
         Ok(())
@@ -731,6 +732,7 @@ impl Session {
     /// A person's answer to a question. The token is used up first, so it
     /// cannot be used twice; a late answer is refused (AI-015).
     pub fn decide(&mut self, token: &str, yes: bool, now: u64) -> CmdResult<RunResult> {
+        let _using = crate::in_use::using();
         if self
             .ai_work
             .completed_decisions

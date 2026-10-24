@@ -48,11 +48,17 @@ sha2 = "0.10"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Registry",
     "Win32_System_Threading",
     "Win32_UI_Shell",
 ] }
+
+# A rename that never writes over a file (REC-026): `renameat2` and `renamex_np`.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 # A test's folder under the temp folder, removed when dropped even if the test fails (ARC-028).

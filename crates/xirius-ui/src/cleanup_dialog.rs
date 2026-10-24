@@ -215,8 +215,12 @@ impl Studio {
         let Some(dir) = self.song.dir() else {
             return Err(NO_UNUSED.to_string());
         };
-        let found =
-            xirius_session::cleanup::unused(&self.project(), &dir).map_err(|e| e.to_string())?;
+        let own = xirius_session::cleanup::Own {
+            uses: Some(self.song.session().uses_id()),
+            lane: None,
+        };
+        let found = xirius_session::cleanup::unused(&self.project(), &dir, own)
+            .map_err(|e| e.to_string())?;
         if found.files.is_empty() {
             return Err(NO_UNUSED.to_string());
         }

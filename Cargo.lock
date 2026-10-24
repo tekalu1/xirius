@@ -8364,6 +8364,7 @@ dependencies = [
  "ed25519-dalek",
  "flacenc",
  "hound",
+ "libc",
  "libloading 0.8.9",
  "rubato",
  "serde",

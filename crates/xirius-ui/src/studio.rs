@@ -782,6 +782,8 @@ pub struct Studio {
     pub rig_tone: bool,
     /// A `.dawproject` being written or read (EXP-006, EXP-007).
     pub dawproject: Option<crate::dawproject_ui::Job>,
+    /// The cleanups of the songs closed, running on their threads (REC-026).
+    pub tidying: Vec<crate::tidy::Tidy>,
     /// The name of the `.dawproject` dragged over the window: it says it opens.
     pub drop_dawproject: Option<String>,
     /// What a key asks of the window itself (KEY-012): full screen, or to close.
@@ -911,6 +913,7 @@ impl Studio {
             rig_out: [0.0; 2],
             rig_tone: false,
             dawproject: None,
+            tidying: Vec::new(),
             drop_dawproject: None,
             window_ask: None,
             wheel_group: None,
@@ -2455,6 +2458,9 @@ impl Studio {
             self.error = Some("録音中は名前を付けて保存できません".into());
             return;
         }
+        // A cleanup of the song in `path` still running moves nothing more; nor does the
+        // request wait for it.
+        self.stop_tidy(path);
         if replaces_song {
             self.keep_leaving();
         } else {
@@ -2465,10 +2471,10 @@ impl Studio {
             .is_draft()
             .then(|| self.song.record_dir())
             .flatten();
-        let cleaned = if replaces_song {
-            self.close_song()
+        let closing = if replaces_song {
+            self.closing()
         } else {
-            Ok(0)
+            Ok(None)
         };
         self.error = None;
         let result = match request {
@@ -2501,7 +2507,7 @@ impl Studio {
             self.song.mark_draft(self.keep.is_draft_dir(path));
             self.keep
                 .remember(path, &self.project().name, self.song.is_draft(), now);
-            self.song_replaced(cleaned);
+            self.song_replaced(closing);
         } else {
             // The song has a place of its own: the draft that kept it is not needed.
             if let Some(draft) = leaving_draft {
@@ -2515,15 +2521,18 @@ impl Studio {
     /// entrance, where it starts.
     pub fn new_song(&mut self) {
         self.keep_leaving();
-        let cleaned = self.close_song();
+        let closing = self.closing();
         self.song = Song::empty_after(&self.song);
         self.error = None;
-        self.song_replaced(cleaned);
+        self.song_replaced(closing);
     }
 
-    /// The screen's state belonged to the song that was closed: begin again, and say
-    /// what closing it did, and what came back if it was opened after a crash.
-    pub(crate) fn song_replaced(&mut self, cleaned: Result<usize, String>) {
+    /// The screen's state belonged to the song that was closed: begin again, start its
+    /// cleanup (said when it ends), and say what came back if it was opened after a crash.
+    pub(crate) fn song_replaced(
+        &mut self,
+        closing: Result<Option<xirius_session::cleanup::Closed>, String>,
+    ) {
         self.drag_drop();
         self.select_row(None);
         self.selected_clip = None;
@@ -2538,15 +2547,12 @@ impl Studio {
         self.recovery = None;
         self.export.forget_bases();
         self.after_edit();
-        // The song that was closed could not be tidied, or was: said once
-        // the new one is open.
-        match cleaned {
+        // The song that was closed is tidied once the new one is open, off the screen's
+        // thread (REC-026): on a slow drive it took minutes.
+        match closing {
             Err(e) => self.error = Some(e),
-            Ok(n) => {
-                if let Some(text) = crate::notice::cleaned(n) {
-                    self.tell(text);
-                }
-            }
+            Ok(Some(closed)) => self.start_tidy(closed),
+            Ok(None) => {}
         }
         self.show_recovery();
         self.prepare_on_open();
@@ -2562,6 +2568,28 @@ impl Studio {
             return Ok(0);
         }
         self.song.cleanup()
+    }
+
+    /// The song is about to close for another: its cleanup (REC-016), to run once the next one
+    /// is open (REC-026), with the song as it is now. None when it has nothing to tidy (not
+    /// saved, or a take is being made); an error while an AI's work copy may still need its
+    /// files, as `project.cleanup` says.
+    pub(crate) fn closing(&self) -> Result<Option<xirius_session::cleanup::Closed>, String> {
+        let Some(dir) = self.song.dir() else {
+            return Ok(None);
+        };
+        if self.transport.recording {
+            return Ok(None);
+        }
+        if self.song.session().draft_project().is_some() {
+            return Err(
+                xirius_core::CmdError::conflict(xirius_session::cleanup::WORK_COPY).to_string(),
+            );
+        }
+        Ok(Some(
+            xirius_session::cleanup::Closed::new(self.song.project(), dir, self.song.trash())
+                .closed_by(self.song.session().uses_id()),
+        ))
     }
 
     fn is_audio(&self, t: TrackId) -> bool {

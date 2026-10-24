@@ -231,8 +231,11 @@ impl Session {
             let _ = old.write_index(&index);
         }
         std::mem::swap(&mut candidate.extensions, &mut self.extensions);
+        // The history goes along, and what its states named with it.
+        std::mem::swap(&mut candidate.uses, &mut self.uses);
         self.hand_writer_to(&mut candidate);
         std::mem::swap(self, &mut candidate);
+        self.note_uses();
         Ok(())
     }
 }

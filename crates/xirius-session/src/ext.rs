@@ -1435,18 +1435,18 @@ impl SessionExt {
             ));
         }
         if cx.work_copy {
-            return Err(CmdError::conflict(
-                "AI の作業コピーがある間は片付けできません（取り込むか破棄してから実行してください）",
-            ));
+            return Err(CmdError::conflict(cleanup::WORK_COPY));
         }
         // A recording another process has open, or a state of its history not yet on the
         // disk, may name a file no state here does (PRJ-023).
         if !dry && xirius_core::session::others_open(dir, cx.lane) {
-            return Err(CmdError::conflict(
-                "ほかのプロセスがこの曲を開いている間は片付けできません（閉じてから実行してください）",
-            ));
+            return Err(CmdError::conflict(cleanup::OTHERS_OPEN));
         }
-        cleanup::run(cx.project, dir, dry, &self.trash)
+        let own = cleanup::Own {
+            uses: Some(cx.uses),
+            lane: cx.lane,
+        };
+        cleanup::run(cx.project, dir, dry, &self.trash, own)
     }
 
     fn plugins(&mut self, name: &str, args: &Args, dry: bool) -> CmdResult<Output> {

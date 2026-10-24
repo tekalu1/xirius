@@ -55,7 +55,7 @@ pub(crate) mod saving;
 pub use saving::SaveProgress;
 mod lane;
 use lane::Lane;
-pub use lane::{MAX_LANES, others_open};
+pub use lane::{MAX_LANES, lock_files, locks_tried, others_open, others_open_among};
 
 /// What the AI may do (AI-012). Each level includes the ones before it.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default, Serialize, Deserialize)]
@@ -452,6 +452,9 @@ pub struct Session {
     /// The history was started afresh on open, from the saved song, and its first state is
     /// not on the disk yet: `history/<first>.json` may be another history's (PRJ-021).
     base_unwritten: bool,
+    /// The files the states this session got to name, for the cleanup of a song closed
+    /// meanwhile (REC-026).
+    uses: crate::in_use::Uses,
 }
 
 impl Drop for Session {
@@ -493,7 +496,7 @@ impl Session {
 
     pub fn with_registry(p: Project, registry: Arc<Registry>) -> Session {
         let cur = Arc::new(p);
-        Session {
+        let s = Session {
             registry,
             hist: History::new(cur.clone()),
             current: cur,
@@ -522,7 +525,22 @@ impl Session {
             prune_due: false,
             autos_sent: Vec::new(),
             base_unwritten: false,
-        }
+            uses: crate::in_use::Uses::default(),
+        };
+        s.note_uses();
+        s
+    }
+
+    /// What tells the files this session names from those of the others ([`crate::in_use`]).
+    pub fn uses_id(&self) -> u64 {
+        self.uses.id()
+    }
+
+    /// Notes the files the song names now ([`crate::in_use`]), so a cleanup of another song
+    /// leaves them.
+    fn note_uses(&self) {
+        self.uses
+            .note(&self.current, self.store.as_ref().map(|s| s.dir.as_path()));
     }
 
     /// Makes a new song folder holding `p`.
@@ -554,6 +572,9 @@ impl Session {
         registry: Arc<Registry>,
         lane: &mut Option<Lane>,
     ) -> CmdResult<Session> {
+        // A cleanup of this song closed before moves nothing while it opens, and finds it open
+        // once it is.
+        let _using = crate::in_use::using();
         if !Store::is_song(dir) {
             return Err(CmdError::not_found(format!(
                 "{} は曲のフォルダーではありません",
@@ -701,7 +722,12 @@ impl Session {
             prune_due,
             autos_sent: Vec::new(),
             base_unwritten,
+            uses: crate::in_use::Uses::default(),
         };
+        s.note_uses();
+        if let Some(saved) = &s.saved {
+            s.uses.note(saved, Some(dir));
+        }
 
         if was_locked {
             let mut msg =
@@ -961,6 +987,8 @@ impl Session {
         raw: &Map<String, Value>,
         opts: &RunOptions,
     ) -> CmdResult<RunResult> {
+        // A file a command reads and names is noted before a cleanup looks at it again.
+        let _using = crate::in_use::using();
         let before = self.current.clone();
         let mut result = self.run_unnotified(name, raw, opts);
         if let Ok(result) = &mut result
@@ -1044,6 +1072,7 @@ impl Session {
             registry: &self.registry,
             work_copy: self.draft_project().is_some(),
             lane: self.lane.as_ref().map(|l| l.k),
+            uses: self.uses.id(),
         };
         for e in &mut exts {
             e.song_changed(&cx);
@@ -1072,6 +1101,7 @@ impl Session {
             registry: &self.registry,
             work_copy: self.draft_project().is_some(),
             lane: self.lane.as_ref().map(|l| l.k),
+            uses: self.uses.id(),
         };
         let out = exts[i].run(&cx, def, args, dry);
         let edits = if dry || out.is_err() {
@@ -1409,6 +1439,7 @@ impl Session {
             h.evict();
         }
         self.current = new.clone();
+        self.note_uses();
 
         if let Some(store) = self.store.clone() {
             let mut remove: Vec<u64> = (n + 1..=old_last).collect();
@@ -1501,6 +1532,7 @@ impl Session {
         let changes = diff(&self.current, &target);
         self.hist.cursor = abs;
         self.current = target;
+        self.note_uses();
         self.persist_cursor();
         self.prune_selection();
         Ok(changes)
@@ -1534,6 +1566,7 @@ impl Session {
         }
         let new = Arc::new(work);
         self.current = new.clone();
+        self.note_uses();
         let rel = self.hist.rel(self.hist.cursor);
         if let Some(slot) = self.hist.states.get_mut(rel) {
             *slot = Some(new.clone());

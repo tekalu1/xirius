@@ -351,11 +351,14 @@ fn floor_tick(tmap: &TempoMap, frame: u64, rate: f64) -> Tick {
     t
 }
 
-/// `<dir>/<base>-<n>.wav` for the first `n` from 1 that names no file.
+/// `<dir>/<base>-<n>.wav` for the first `n` from 1 that names no file, nor one a cleanup has
+/// aside there ([`crate::cleanup`]): that goes back by its name.
 pub(crate) fn unused(dir: &Path, base: &str) -> PathBuf {
+    let aside = crate::cleanup::aside_names(dir);
     (1u32..)
-        .map(|n| dir.join(format!("{base}-{n}.wav")))
-        .find(|p| !p.exists())
+        .map(|n| format!("{base}-{n}.wav"))
+        .find(|name| !aside.contains(&name.to_lowercase()) && !dir.join(name).exists())
+        .map(|name| dir.join(name))
         .expect("some number is free")
 }
 

@@ -95,13 +95,79 @@ impl Lane {
     }
 }
 
-/// Does a process other than the one holding lane `own` have the song in `dir` open?
+/// Does a process other than the one holding lane `own` have the song in `dir` open? Only the
+/// lock files there are tried ([`lock_files`]): each may take a while on a slow drive.
 pub fn others_open(dir: &Path, own: Option<u32>) -> bool {
-    (0..MAX_LANES).filter(|&k| Some(k) != own).any(|k| {
+    others_open_among(dir, own, &lock_files(dir))
+}
+
+/// The lanes with a lock file in `dir`: a process holds a lane through its file, so those are
+/// all [`others_open_among`] has to try. A lane taken first after this has a file this did not
+/// see (and the folder `history/lanes` is changed).
+pub fn lock_files(dir: &Path) -> Vec<u32> {
+    let mut lanes: Vec<u32> = fs::read_dir(dir.join(LANES))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            name.strip_suffix(".lock")?.parse::<u32>().ok()
+        })
+        .filter(|&k| k < MAX_LANES)
+        .collect();
+    lanes.sort_unstable();
+    lanes
+}
+
+/// [`others_open`], trying the lock files of `lanes` ([`lock_files`] read before).
+pub fn others_open_among(dir: &Path, own: Option<u32>, lanes: &[u32]) -> bool {
+    lanes.iter().filter(|&&k| Some(k) != own).any(|&k| {
+        LOCKS_TRIED.with(|n| n.set(n.get() + 1));
         let path = lock_path(dir, k);
         let Ok(f) = fs::OpenOptions::new().read(true).write(true).open(&path) else {
             return false;
         };
         matches!(f.try_lock(), Err(TryLockError::WouldBlock))
     })
+}
+
+thread_local! {
+    static LOCKS_TRIED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many lock files [`others_open`] has tried on this thread: what looking for another
+/// process opens, counted (the tests of REC-026, as [`crate::store::files_read`]).
+pub fn locks_tried() -> u64 {
+    LOCKS_TRIED.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn another_process_is_looked_for_in_the_lock_files_there_are_only() {
+        let dir = std::env::temp_dir().join(format!("xirius-lane-locks-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        assert!(lock_files(&dir).is_empty());
+        let held = try_hold(&dir, 3).unwrap().unwrap();
+        drop(try_hold(&dir, 0).unwrap().unwrap());
+        fs::write(dir.join(LANES).join("blobs.lock"), b"").unwrap();
+        let lanes = lock_files(&dir);
+        assert_eq!(lanes, [0, 3]);
+        let before = locks_tried();
+        assert!(others_open_among(&dir, None, &lanes));
+        assert!(!others_open_among(&dir, Some(3), &lanes));
+        assert_eq!(
+            locks_tried() - before,
+            2 + 1,
+            "the files there are, but its own"
+        );
+        let before = locks_tried();
+        assert!(others_open(&dir, Some(0)));
+        assert_eq!(locks_tried() - before, 1, "lane 3's");
+        drop(held);
+        assert!(!others_open_among(&dir, None, &lanes));
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

@@ -230,10 +230,10 @@ impl Studio {
     /// The sample song in place of this one (the entrance's list).
     pub fn open_sample(&mut self) {
         self.keep_leaving();
-        let cleaned = self.close_song();
+        let closing = self.closing();
         self.song = Song::sample_after(&self.song);
         self.error = None;
-        self.song_replaced(cleaned);
+        self.song_replaced(closing);
     }
 
     /// What the window has, for the next start.

@@ -78,7 +78,7 @@ fn opened(s: &Studio, ids: &[PluginId]) -> bool {
 fn a_window_without_the_device_prepares_nothing_when_a_song_opens() {
     // --silent, the screenshots and the tests: no card, no player, no device.
     let (mut s, _, _) = with_plugins();
-    s.song_replaced(Ok(0));
+    s.song_replaced(Ok(None));
     assert!(s.preparing.is_none());
     assert!(!s.transport.preparing());
     assert!(s.transport.host().is_none());

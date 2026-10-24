@@ -93,6 +93,42 @@ fn open_command(target: &str) -> Command {
     c
 }
 
+/// The shell's apartment on a thread of its own, as the screen's thread has: [`trash`] runs the
+/// shell's extensions (a cloud drive's), which may need one. Let go when dropped, on that thread.
+#[must_use]
+pub struct Apartment {
+    #[cfg_attr(not(windows), allow(dead_code))]
+    joined: bool,
+    _here: std::marker::PhantomData<*const ()>,
+}
+
+/// Joins this thread to an apartment of its own (nothing where the OS has none).
+pub fn apartment() -> Apartment {
+    #[cfg(windows)]
+    let joined = {
+        use windows_sys::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
+        // SAFETY: no reserved pointer; let go by `Apartment`'s drop on this thread, as the
+        // `PhantomData` keeps it here.
+        unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32) >= 0 }
+    };
+    #[cfg(not(windows))]
+    let joined = false;
+    Apartment {
+        joined,
+        _here: std::marker::PhantomData,
+    }
+}
+
+impl Drop for Apartment {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        if self.joined {
+            // SAFETY: matches the `CoInitializeEx` that succeeded on this thread.
+            unsafe { windows_sys::Win32::System::Com::CoUninitialize() };
+        }
+    }
+}
+
 /// Moves `path` to the recycle bin, so the person can take it back.
 pub fn trash(path: &Path) -> Result<(), String> {
     let path = std::path::absolute(path).map_err(|e| e.to_string())?;
@@ -162,9 +198,97 @@ fn to_trash(path: &Path) -> Result<(), String> {
     }
 }
 
+/// Renames `from` to `to` on the same drive unless there is a file `to`: then an error of
+/// [`std::io::ErrorKind::AlreadyExists`], and nothing moves. A file another program makes
+/// with that name just before is never written over (REC-026).
+pub fn rename_new(from: &Path, to: &Path) -> std::io::Result<()> {
+    rename_no_replace(from, to)
+}
+
+#[cfg(windows)]
+fn rename_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+    let wide = |p: &Path| -> Vec<u16> { p.as_os_str().encode_wide().chain([0]).collect() };
+    let (from, to) = (wide(from), wide(to));
+    // SAFETY: both paths end in a 0 and outlive the call. Without `MOVEFILE_REPLACE_EXISTING`
+    // it fails with `ERROR_ALREADY_EXISTS` when `to` is there.
+    if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), 0) } != 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn rename_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = |p: &Path| {
+        std::ffi::CString::new(p.as_os_str().as_bytes())
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))
+    };
+    let (f, t) = (c(from)?, c(to)?);
+    // SAFETY: both paths end in a 0 and outlive the call.
+    #[cfg(target_os = "linux")]
+    let r = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            f.as_ptr(),
+            libc::AT_FDCWD,
+            t.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    // SAFETY: as above.
+    #[cfg(target_os = "macos")]
+    let r = unsafe { libc::renamex_np(f.as_ptr(), t.as_ptr(), libc::RENAME_EXCL) };
+    if r == 0 {
+        return Ok(());
+    }
+    let e = std::io::Error::last_os_error();
+    match e.raw_os_error() {
+        // A drive (or a kernel) that cannot tell: a link, which is never made over a file.
+        Some(libc::EINVAL | libc::ENOSYS | libc::ENOTSUP) => link_and_remove(from, to),
+        _ => Err(e),
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+fn rename_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
+    link_and_remove(from, to)
+}
+
+#[cfg(not(windows))]
+fn link_and_remove(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::hard_link(from, to)?;
+    std::fs::remove_file(from)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_is_renamed_over_none() {
+        let dir = tempfile::Builder::new()
+            .prefix("xirius-os-rename-")
+            .tempdir()
+            .unwrap();
+        let (a, b, c) = (
+            dir.path().join("a.wav"),
+            dir.path().join("b.wav"),
+            dir.path().join("c.wav"),
+        );
+        std::fs::write(&a, b"a").unwrap();
+        std::fs::write(&b, b"b").unwrap();
+        let e = rename_new(&a, &b).unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::AlreadyExists, "{e}");
+        assert_eq!(std::fs::read(&a).unwrap(), b"a");
+        assert_eq!(std::fs::read(&b).unwrap(), b"b");
+        rename_new(&a, &c).unwrap();
+        assert!(!a.exists());
+        assert_eq!(std::fs::read(&c).unwrap(), b"a");
+    }
 
     #[test]
     fn each_os_is_asked_for_the_file_in_its_own_way_and_nothing_is_launched() {

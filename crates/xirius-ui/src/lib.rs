@@ -240,6 +240,7 @@ pub mod studio;
 pub mod tempo_edit_shots;
 pub mod tempo_follow_shots;
 pub mod theme;
+pub mod tidy;
 pub mod title_bar;
 pub mod toast;
 pub mod toast_hover_shots;

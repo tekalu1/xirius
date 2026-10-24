@@ -17,6 +17,7 @@ pub mod error;
 pub mod extension;
 pub mod freeze;
 pub mod id;
+pub mod in_use;
 pub mod marker;
 pub mod model;
 pub mod nav;

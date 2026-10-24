@@ -1342,7 +1342,8 @@ impl Studio {
         let scan = self.poll_plugin_scan();
         let loading = self.poll_loading();
         let export = self.poll_export();
-        let job = self.poll_job() | self.poll_processed() | self.poll_dawproject();
+        let job =
+            self.poll_job() | self.poll_processed() | self.poll_dawproject() | self.poll_tidy();
         let plugins = self.poll_preparing()
             | self.poll_swap()
             | self.poll_waiting_key()
@@ -2075,21 +2076,51 @@ mod tests {
 
     #[test]
     fn closing_a_song_moves_only_the_recordings_nothing_names_any_more() {
+        // The synchronous cleanup below reads history from disk. Keep background writes
+        // enabled, but wait for their completion before checking the persisted undo/redo.
+        fn history_written(s: &mut Studio) {
+            let session = std::mem::replace(
+                s.song.session_mut(),
+                xirius_core::session::Session::new("waiting for test history"),
+            );
+            let (written, ready) = std::sync::mpsc::sync_channel(1);
+            let worker = std::thread::spawn(move || {
+                session.flush_writes();
+                let _ = written.send(session);
+            });
+            *s.song.session_mut() = ready
+                .recv_timeout(Duration::from_secs(60))
+                .expect("waiting for history writer before checking cleanup's undo/redo");
+            worker.join().unwrap();
+            let errors = s.song.session().take_write_errors();
+            assert!(errors.is_empty(), "history writer: {errors:?}");
+        }
+
         let song = Scratch::new("cleanup");
         let bin = Scratch::new("cleanup-bin");
         let mut s = studio_with_bin(&bin.0);
         s.song.save_as(&song.0).unwrap();
         let vocal = track(&s, "Vocal");
+        // Other recording tests use Vocal too. Changing alias candidates from those songs
+        // deliberately make cleanup keep a file, unrelated to the undo/redo checks here.
+        s.song
+            .run(
+                "track.rename",
+                serde_json::json!({ "id": vocal.to_string(), "name": "Closing-only" }),
+            )
+            .unwrap();
         s.song.toggle_arm(vocal).unwrap();
         let in_bin = || std::fs::read_dir(&bin.0).unwrap().count();
         let recordings = song.0.join("Media/Recordings");
 
         // A take in the song stays.
         record_a_take(&mut s);
+        history_written(&mut s);
         assert_eq!(s.close_song(), Ok(0));
         // Taken out by undo, it can still come back with redo: it stays.
         let g = s.geometry(1440.0, 860.0);
         assert!(s.undo(&g));
+        history_written(&mut s);
         let steps = s.song().steps();
         assert_eq!(s.close_song(), Ok(0));
         assert_eq!(s.song().steps(), steps, "tidying is no step");
@@ -2109,15 +2140,486 @@ mod tests {
         let named = std::fs::read_dir(&recordings).unwrap().count();
         assert_eq!(named, 2);
 
-        // Opening another song closes this one: the dropped take goes.
+        // Opening another song closes this one: the dropped take goes, once the other is
+        // open (REC-026), and it is said.
         let other = Scratch::new("cleanup-other");
         let mut next = crate::song::Song::sample();
         next.save_as(&other.0).unwrap();
         s.finish_file_request(crate::studio::FileRequest::Open, &other.0);
         assert!(s.error.is_none(), "{:?}", s.error);
         assert_eq!(s.song().dir().as_deref(), Some(other.0.as_path()));
+        s.await_tidy_for_test();
+        assert!(s.error.is_none(), "{:?}", s.error);
         assert_eq!(in_bin(), 1);
         assert_eq!(std::fs::read_dir(&recordings).unwrap().count(), 1);
+        assert_eq!(
+            s.notice_text(),
+            crate::notice::cleaned(1).as_deref(),
+            "said as before"
+        );
+        s.transport.reset();
+    }
+
+    /// A recycle bin that holds each file until `open` is set, as a slow drive would: how many
+    /// it was given is `asked`.
+    fn studio_with_slow_bin(
+        bin: &std::path::Path,
+        open: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+        asked: &std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    ) -> Studio {
+        use std::sync::atomic::Ordering;
+        std::fs::create_dir_all(bin).unwrap();
+        let to = bin.to_path_buf();
+        let (open, asked) = (open.clone(), asked.clone());
+        let trash: xirius_session::cleanup::Trash = std::sync::Arc::new(move |p| {
+            asked.fetch_add(1, Ordering::SeqCst);
+            while !open.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            std::fs::rename(p, to.join(p.file_name().unwrap())).map_err(|e| e.to_string())
+        });
+        let mut s = Studio::new(crate::song::Song::sample_with_trash(trash));
+        s.transport.mode = paced();
+        s
+    }
+
+    #[test]
+    fn the_closed_songs_cleanup_runs_while_the_next_opens_and_stops_when_it_is_opened_again() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        let song = Scratch::new("tidy");
+        let bin = Scratch::new("tidy-bin");
+        let open = std::sync::Arc::new(AtomicBool::new(false));
+        let asked = std::sync::Arc::new(AtomicUsize::new(0));
+        let _opens = Opens(open.clone());
+        let mut s = studio_with_slow_bin(&bin.0, &open, &asked);
+        s.song.save_as(&song.0).unwrap();
+        let vocal = track(&s, "Vocal");
+        s.song.toggle_arm(vocal).unwrap();
+        record_a_take(&mut s);
+        let recordings = song.0.join("Media/Recordings");
+        let take = std::fs::read_dir(&recordings)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        // Two recordings nothing names.
+        for name in ["stray-1.wav", "stray-2.wav"] {
+            std::fs::copy(&take, recordings.join(name)).unwrap();
+        }
+        let in_bin = || std::fs::read_dir(&bin.0).unwrap().count();
+        let strays = || {
+            ["stray-1.wav", "stray-2.wav"]
+                .iter()
+                .filter(|n| recordings.join(n).exists())
+                .count()
+        };
+
+        // The next song opens while the cleanup has still to move its first file.
+        let other = Scratch::new("tidy-other");
+        crate::song::Song::sample().save_as(&other.0).unwrap();
+        s.finish_file_request(crate::studio::FileRequest::Open, &other.0);
+        assert!(s.error.is_none(), "{:?}", s.error);
+        assert_eq!(s.song().dir().as_deref(), Some(other.0.as_path()));
+        assert!(s.is_tidying(), "the open did not wait for it");
+        let t = Instant::now();
+        while asked.load(Ordering::SeqCst) == 0 {
+            assert!(t.elapsed() < Duration::from_secs(60));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        s.tick();
+        assert!(s.is_tidying());
+        assert_eq!(in_bin(), 0);
+
+        // The song opened again while its cleanup runs: the cleanup is told to stop, and the
+        // song opens at once. Neither the screen nor the song waits for the file being moved (a
+        // slow drive, here two seconds), and an edit of it does not either.
+        let release = release_after(&open, Duration::from_secs(2));
+        let t = Instant::now();
+        s.finish_file_request(crate::studio::FileRequest::Open, &song.0);
+        assert!(s.error.is_none(), "{:?}", s.error);
+        assert_eq!(s.song().dir().as_deref(), Some(song.0.as_path()));
+        s.song.toggle_arm(track(&s, "Vocal")).unwrap();
+        assert!(t.elapsed() < Duration::from_secs(1), "{:?}", t.elapsed());
+        assert!(
+            !open.load(Ordering::SeqCst),
+            "the file was still being moved"
+        );
+        release.join().unwrap();
+        assert!(s.error.is_none(), "{:?}", s.error);
+        // The song it opened over is tidied in turn: it has nothing.
+        assert!(until(&mut s, |s| !s.is_tidying()));
+        assert_eq!((in_bin(), strays()), (1, 1), "one moved, then it stopped");
+        assert_eq!(asked.load(Ordering::SeqCst), 1);
+        assert!(take.exists(), "the take in the song stays");
+        assert_eq!(s.notice_text(), crate::notice::cleaned(1).as_deref());
+
+        // Closed for another, then the window closes while the cleanup moves a file: it is
+        // waited for, and nothing is left for the next start.
+        open.store(false, Ordering::SeqCst);
+        s.finish_file_request(crate::studio::FileRequest::Open, &other.0);
+        assert!(s.is_tidying());
+        let t = Instant::now();
+        while asked.load(Ordering::SeqCst) == 1 {
+            assert!(t.elapsed() < Duration::from_secs(60));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(s.close_window_song(), Ok(()));
+        let release = release_after(&open, Duration::from_millis(300));
+        let later = Scratch::new("tidy-later");
+        let later = later.0.join("tidy-later.txt");
+        let mut said = Vec::new();
+        let n = s.wait_tidy(crate::tidy::CLOSE_WAIT, &later, &mut |e| said.push(e));
+        release.join().unwrap();
+        assert_eq!(n, 1);
+        assert!(said.is_empty(), "{said:?}");
+        assert!(!s.is_tidying());
+        assert!(!later.exists());
+        assert_eq!((in_bin(), strays()), (2, 0));
+        assert!(take.exists());
+        s.transport.reset();
+    }
+
+    /// A saved song with `n` recordings nothing names, `stray-<i>.wav`: its take folder.
+    fn with_strays(s: &mut Studio, dir: &std::path::Path, n: usize) -> std::path::PathBuf {
+        s.song.save_as(dir).unwrap();
+        let recordings = dir.join("Media/Recordings");
+        std::fs::create_dir_all(&recordings).unwrap();
+        for i in 1..=n {
+            std::fs::write(recordings.join(format!("stray-{i}.wav")), b"RIFF").unwrap();
+        }
+        recordings
+    }
+
+    /// Waits until the slow bin was given `n` files.
+    fn asked_for(asked: &std::sync::atomic::AtomicUsize, n: usize) {
+        let t = Instant::now();
+        while asked.load(std::sync::atomic::Ordering::SeqCst) < n {
+            assert!(t.elapsed() < Duration::from_secs(60));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn the_next_songs_edits_do_not_wait_for_the_closed_songs_cleanup_on_a_slow_drive() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        let song = Scratch::new("tidy-edit");
+        let bin = Scratch::new("tidy-edit-bin");
+        let open = std::sync::Arc::new(AtomicBool::new(false));
+        let asked = std::sync::Arc::new(AtomicUsize::new(0));
+        let _opens = Opens(open.clone());
+        let mut s = studio_with_slow_bin(&bin.0, &open, &asked);
+        let recordings = with_strays(&mut s, &song.0, 2);
+        let other = Scratch::new("tidy-edit-other");
+        crate::song::Song::sample().save_as(&other.0).unwrap();
+        s.finish_file_request(crate::studio::FileRequest::Open, &other.0);
+        asked_for(&asked, 1);
+
+        // The first file takes two seconds to move: the edits of the next song meanwhile, on
+        // the screen's thread, go on.
+        let release = release_after(&open, Duration::from_secs(2));
+        let t = Instant::now();
+        let vocal = track(&s, "Vocal");
+        s.song.toggle_arm(vocal).unwrap();
+        s.song.toggle_arm(vocal).unwrap();
+        let g = s.geometry(1440.0, 860.0);
+        assert!(s.undo(&g));
+        assert!(t.elapsed() < Duration::from_secs(1), "{:?}", t.elapsed());
+        assert!(
+            !open.load(Ordering::SeqCst),
+            "the file was still being moved"
+        );
+        release.join().unwrap();
+        assert!(until(&mut s, |s| !s.is_tidying()));
+        assert!(s.error.is_none(), "{:?}", s.error);
+        assert_eq!(std::fs::read_dir(&bin.0).unwrap().count(), 2);
+        assert!(!recordings.join(".xirius-moving").exists());
+        assert_eq!(s.notice_text(), crate::notice::cleaned(2).as_deref());
+    }
+
+    #[test]
+    fn a_song_opened_after_the_closed_one_was_opened_again_stays_open() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize};
+        let song = Scratch::new("tidy-last");
+        let bin = Scratch::new("tidy-last-bin");
+        let open = std::sync::Arc::new(AtomicBool::new(false));
+        let asked = std::sync::Arc::new(AtomicUsize::new(0));
+        let _opens = Opens(open.clone());
+        let mut s = studio_with_slow_bin(&bin.0, &open, &asked);
+        let recordings = with_strays(&mut s, &song.0, 2);
+        let (b, c) = (Scratch::new("tidy-last-b"), Scratch::new("tidy-last-c"));
+        crate::song::Song::sample().save_as(&b.0).unwrap();
+        crate::song::Song::sample().save_as(&c.0).unwrap();
+        s.finish_file_request(crate::studio::FileRequest::Open, &b.0);
+        asked_for(&asked, 1);
+
+        // The closed song opened again while its cleanup moves a file, then another: the one
+        // chosen last stays open once the cleanup is over.
+        let release = release_after(&open, Duration::from_secs(1));
+        s.finish_file_request(crate::studio::FileRequest::Open, &song.0);
+        s.finish_file_request(crate::studio::FileRequest::Open, &c.0);
+        assert!(s.error.is_none(), "{:?}", s.error);
+        assert_eq!(s.song().dir().as_deref(), Some(c.0.as_path()));
+        assert!(until(&mut s, |s| !s.is_tidying()));
+        release.join().unwrap();
+        assert!(s.error.is_none(), "{:?}", s.error);
+        assert_eq!(s.song().dir().as_deref(), Some(c.0.as_path()));
+        assert!(!recordings.join(".xirius-moving").exists());
+    }
+
+    #[test]
+    fn a_cleanup_left_for_the_next_start_of_a_song_open_elsewhere_is_left_again_unsaid() {
+        let song = Scratch::new("tidy-later-open");
+        let bin = Scratch::new("tidy-later-open-bin");
+        let cache = Scratch::new("tidy-later-open-cache");
+        let later = cache.0.join("tidy-later.txt");
+        let mut s = studio_with_bin(&bin.0);
+        let recordings = with_strays(&mut Studio::sample(), &song.0, 1);
+        crate::notice::leave_later(&later, std::slice::from_ref(&song.0)).unwrap();
+
+        // Another process has it open at the next start: it is tidied once that one closes it,
+        // and said then; nothing is said now, and it is kept for the start after.
+        let elsewhere = xirius_core::session::Session::open(&song.0).unwrap();
+        s.tidy_later(&later);
+        assert!(until(&mut s, |s| !s.is_tidying()));
+        assert!(s.error.is_none(), "{:?}", s.error);
+        assert_eq!(s.notice_text(), None);
+        let kept = std::fs::read_to_string(&later).unwrap();
+        let kept: Vec<_> = kept.lines().map(std::path::PathBuf::from).collect();
+        assert_eq!(kept, std::slice::from_ref(&song.0));
+        assert!(recordings.join("stray-1.wav").exists());
+        drop(elsewhere);
+    }
+
+    #[test]
+    fn a_song_opened_again_before_its_cleanup_moves_a_file_opens_at_once_and_keeps_its_files() {
+        let song = Scratch::new("tidy-at-once");
+        let bin = Scratch::new("tidy-at-once-bin");
+        let mut s = studio_with_bin(&bin.0);
+        s.song.save_as(&song.0).unwrap();
+        let recordings = song.0.join("Media/Recordings");
+        std::fs::create_dir_all(&recordings).unwrap();
+        let stray = recordings.join("stray.wav");
+        std::fs::write(&stray, b"RIFF").unwrap();
+        let other = Scratch::new("tidy-at-once-other");
+        crate::song::Song::sample().save_as(&other.0).unwrap();
+
+        // A command runs (here, held by the test) while the cleanup waits to move the stray.
+        let command = xirius_core::in_use::using();
+        s.finish_file_request(crate::studio::FileRequest::Open, &other.0);
+        assert!(s.is_tidying());
+        let t = Instant::now();
+        while xirius_core::in_use::waiting_alone() == 0 {
+            assert!(t.elapsed() < Duration::from_secs(60));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        s.finish_file_request(crate::studio::FileRequest::Open, &song.0);
+        assert!(s.error.is_none(), "{:?}", s.error);
+        assert_eq!(
+            s.song().dir().as_deref(),
+            Some(song.0.as_path()),
+            "it waited for a cleanup that moved nothing"
+        );
+        drop(command);
+        assert!(until(&mut s, |s| !s.is_tidying()));
+        assert!(s.error.is_none(), "{:?}", s.error);
+        assert!(stray.exists(), "the stopped cleanup moved it");
+        assert_eq!(std::fs::read_dir(&bin.0).unwrap().count(), 0);
+        assert_eq!(s.notice_text(), None);
+    }
+
+    /// Lets the slow bin move its files once dropped: a failing check must not leave a cleanup
+    /// waiting on it, holding the files of every other test.
+    struct Opens(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+    impl Drop for Opens {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Lets the slow bin move its files after `wait`.
+    fn release_after(
+        open: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+        wait: Duration,
+    ) -> std::thread::JoinHandle<()> {
+        let open = open.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(wait);
+            open.store(true, std::sync::atomic::Ordering::SeqCst);
+        })
+    }
+
+    #[test]
+    fn a_cleanup_the_closed_window_cannot_wait_for_is_left_and_runs_at_the_next_start() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        let song = Scratch::new("tidy-late");
+        let bin = Scratch::new("tidy-late-bin");
+        let open = std::sync::Arc::new(AtomicBool::new(false));
+        let _opens = Opens(open.clone());
+        let asked = std::sync::Arc::new(AtomicUsize::new(0));
+        let mut s = studio_with_slow_bin(&bin.0, &open, &asked);
+        s.song.save_as(&song.0).unwrap();
+        let vocal = track(&s, "Vocal");
+        s.song.toggle_arm(vocal).unwrap();
+        record_a_take(&mut s);
+        let recordings = song.0.join("Media/Recordings");
+        let take = std::fs::read_dir(&recordings)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        for name in ["stray-1.wav", "stray-2.wav"] {
+            std::fs::copy(&take, recordings.join(name)).unwrap();
+        }
+        let in_bin = || std::fs::read_dir(&bin.0).unwrap().count();
+        let strays = || {
+            ["stray-1.wav", "stray-2.wav"]
+                .iter()
+                .filter(|n| recordings.join(n).exists())
+                .count()
+        };
+
+        // The window closes while the cleanup of the song closed before waits on the drive.
+        let other = Scratch::new("tidy-late-other");
+        crate::song::Song::sample().save_as(&other.0).unwrap();
+        s.finish_file_request(crate::studio::FileRequest::Open, &other.0);
+        let t = Instant::now();
+        while asked.load(Ordering::SeqCst) == 0 {
+            assert!(t.elapsed() < Duration::from_secs(60));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(s.close_window_song(), Ok(()));
+        let dir = Scratch::new("tidy-late-cache");
+        let later = dir.0.join("tidy-later.txt");
+        let t = Instant::now();
+        let mut said = Vec::new();
+        let n = s.wait_tidy(Duration::from_millis(300), &later, &mut |e| said.push(e));
+        assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
+        assert_eq!(n, 0);
+        assert!(said.is_empty(), "{said:?}");
+        assert!(!s.is_tidying());
+        let kept = std::fs::read_to_string(&later).unwrap();
+        let kept: Vec<_> = kept.lines().map(std::path::PathBuf::from).collect();
+        assert_eq!(kept, std::slice::from_ref(&song.0));
+        // Once the drive answers, the file it was moving goes; the next is left.
+        open.store(true, Ordering::SeqCst);
+        let t = Instant::now();
+        while in_bin() == 0 {
+            assert!(t.elapsed() < Duration::from_secs(60));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!((asked.load(Ordering::SeqCst), strays()), (1, 1));
+        s.transport.reset();
+        drop(s);
+
+        // The next start tidies it as when it closed, and says it.
+        let next_bin = Scratch::new("tidy-late-next-bin");
+        let mut next = studio_with_bin(&next_bin.0);
+        next.tidy_later(&later);
+        assert!(!later.exists(), "said once");
+        assert!(next.is_tidying());
+        assert!(until(&mut next, |s| !s.is_tidying()));
+        assert!(next.error.is_none(), "{:?}", next.error);
+        assert_eq!(strays(), 0);
+        assert!(take.exists(), "the take in the song stays");
+        assert_eq!(next.notice_text(), crate::notice::cleaned(1).as_deref());
+    }
+
+    #[test]
+    fn every_way_to_another_song_tidies_the_closed_one_off_the_screens_thread_and_says_it() {
+        let made = Scratch::new("tidy-ways-dawproject");
+        let out = made.0.join("Other.dawproject");
+        let mut s = studio(paced());
+        assert!(s.dawproject_export(&out));
+        s.dawproject_wait();
+        assert!(out.exists(), "{:?}", s.toast);
+        type Switch = fn(&mut Studio, &std::path::Path);
+        let ways: [(&str, Switch); 3] = [
+            ("new song", |s, _| s.new_song()),
+            ("sample", |s, _| s.open_sample()),
+            ("DAWproject", |s, out| {
+                s.finish_file_request(crate::studio::FileRequest::OpenDawproject, out);
+                s.dawproject_wait();
+            }),
+        ];
+        for (way, switch) in ways {
+            let song = Scratch::new("tidy-ways");
+            let bin = Scratch::new("tidy-ways-bin");
+            let mut s = studio_with_bin(&bin.0);
+            s.song.save_as(&song.0).unwrap();
+            let stray = song.0.join("Media/Recordings/stray.wav");
+            std::fs::create_dir_all(stray.parent().unwrap()).unwrap();
+            std::fs::write(&stray, b"RIFF").unwrap();
+            switch(&mut s, &out);
+            assert!(s.error.is_none(), "{way}: {:?}", s.error);
+            assert!(s.song().dir().as_deref() != Some(song.0.as_path()), "{way}");
+            assert!(s.is_tidying(), "{way}: its cleanup did not start");
+            assert!(until(&mut s, |s| !s.is_tidying()), "{way}");
+            assert!(s.error.is_none(), "{way}: {:?}", s.error);
+            assert!(!stray.exists(), "{way}");
+            assert_eq!(
+                s.notice_text(),
+                crate::notice::cleaned(1).as_deref(),
+                "{way}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_recording_the_closed_song_left_stays_once_the_next_song_uses_it_while_it_is_tidied() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        let song = Scratch::new("tidy-use");
+        let bin = Scratch::new("tidy-use-bin");
+        let open = std::sync::Arc::new(AtomicBool::new(false));
+        let asked = std::sync::Arc::new(AtomicUsize::new(0));
+        let _opens = Opens(open.clone());
+        let mut s = studio_with_slow_bin(&bin.0, &open, &asked);
+        s.song.save_as(&song.0).unwrap();
+        let vocal = track(&s, "Vocal");
+        s.song.toggle_arm(vocal).unwrap();
+        record_a_take(&mut s);
+        let recordings = song.0.join("Media/Recordings");
+        let take = std::fs::read_dir(&recordings)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        for name in ["stray-1.wav", "stray-2.wav"] {
+            std::fs::copy(&take, recordings.join(name)).unwrap();
+        }
+
+        // A new song (not saved, so what it is given is not copied in) while the closed one's
+        // cleanup is moving its first file.
+        s.new_song();
+        assert!(s.is_tidying());
+        let t = Instant::now();
+        while asked.load(Ordering::SeqCst) == 0 {
+            assert!(t.elapsed() < Duration::from_secs(60));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // The other recording the cleanup found unused goes into the new song meanwhile.
+        let release = {
+            let open = open.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(300));
+                open.store(true, Ordering::SeqCst);
+            })
+        };
+        let placed = s.import_audio(&recordings.join("stray-2.wav"), None, 0);
+        release.join().unwrap();
+        assert!(placed.is_ok(), "{:?}", placed.err());
+        assert!(until(&mut s, |s| !s.is_tidying()));
+        assert!(
+            recordings.join("stray-2.wav").exists(),
+            "the file the new song names stays"
+        );
+        assert!(!recordings.join("stray-1.wav").exists());
+        assert!(take.exists());
+        assert_eq!(s.notice_text(), crate::notice::cleaned(1).as_deref());
         s.transport.reset();
     }
 

@@ -48,7 +48,8 @@ impl Studio {
             | self.settings_tick()
             | self.keep_beat(xirius_core::store::now_ms())
             | self.poll_device()
-            | self.poll_dawproject();
+            | self.poll_dawproject()
+            | self.poll_tidy();
         Idle {
             changed: changed | saved,
             went_down: self.take_went_down(),

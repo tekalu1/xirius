@@ -348,10 +348,10 @@ impl Studio {
             (!catalog.entries.is_empty()).then(|| catalog.find(&x.uid).is_some())
         });
         self.keep_leaving();
-        let cleaned = self.close_song();
+        let closing = self.closing();
         self.song = crate::song::Song::imported_after(&self.song, got.project);
         self.error = None;
-        self.song_replaced(cleaned);
+        self.song_replaced(closing);
         if !got.skipped.is_empty() {
             let list = List::of(NOT_READ, &got.skipped);
             self.warn(

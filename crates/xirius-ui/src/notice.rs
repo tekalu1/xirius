@@ -78,6 +78,48 @@ pub fn leave(path: &Path, n: usize) -> std::io::Result<()> {
     std::fs::write(path, (before + n).to_string())
 }
 
+/// Where a closed window keeps the song folders whose cleanup it stopped, for the next one.
+pub fn later_path() -> PathBuf {
+    xirius_plugins::default_cache_path().with_file_name("tidy-later.txt")
+}
+
+/// Keeps `dirs` in `path`, one a line, with those kept before.
+pub fn leave_later(path: &Path, dirs: &[PathBuf]) -> std::io::Result<()> {
+    if dirs.is_empty() {
+        return Ok(());
+    }
+    let mut all = read_later(path);
+    for d in dirs {
+        if !all.contains(d) {
+            all.push(d.clone());
+        }
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let text: String = all.iter().map(|d| format!("{}\n", d.display())).collect();
+    std::fs::write(path, text)
+}
+
+/// The folders kept in `path`, once: the file goes (none when it cannot).
+pub fn take_later(path: &Path) -> Vec<PathBuf> {
+    let all = read_later(path);
+    if path.exists() && std::fs::remove_file(path).is_err() {
+        return Vec::new();
+    }
+    all
+}
+
+fn read_later(path: &Path) -> Vec<PathBuf> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(PathBuf::from)
+        .collect()
+}
+
 fn read(path: &Path) -> usize {
     std::fs::read_to_string(path)
         .ok()
@@ -292,6 +334,16 @@ mod tests {
         s
     }
 
+    /// Waits for the cleanups of the songs closed, off the screen's thread (REC-026).
+    fn tidied(s: &mut Studio) {
+        let t = Instant::now();
+        while s.is_tidying() {
+            assert!(t.elapsed() < Duration::from_secs(60));
+            s.tick();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     #[test]
     fn opening_another_song_says_once_how_many_recordings_moved() {
         let (song, bin, other) = (
@@ -303,6 +355,8 @@ mod tests {
         crate::song::Song::sample().save_as(&other.0).unwrap();
         assert_eq!(s.notice_text(), None);
         s.finish_file_request(FileRequest::Open, &other.0);
+        assert!(s.error.is_none(), "{:?}", s.error);
+        tidied(&mut s);
         assert!(s.error.is_none(), "{:?}", s.error);
         assert_eq!(
             s.notice_text(),
@@ -327,6 +381,7 @@ mod tests {
         s.song.save_as(&song.0).unwrap();
         crate::song::Song::sample().save_as(&other.0).unwrap();
         s.finish_file_request(FileRequest::Open, &other.0);
+        tidied(&mut s);
         assert!(s.error.is_none(), "{:?}", s.error);
         assert_eq!(s.notice_text(), None);
         assert_eq!(cleaned(0), None);
