@@ -39,6 +39,30 @@ pub const SHOTS: &[Shot] = &[
             Act::Stage(Play::Laid(play), 3),
         ],
     },
+    Shot {
+        name: "dl05-long-name",
+        acts: &[
+            Act::Reset,
+            Act::Stage(Play::Laid(play), 0),
+            Act::Stage(Play::Laid(play), 4),
+        ],
+    },
+    Shot {
+        name: "dl06-drum-long-name",
+        acts: &[
+            Act::Reset,
+            Act::Stage(Play::Laid(play), 0),
+            Act::Stage(Play::Laid(play), 3),
+            Act::Stage(Play::Laid(play), 4),
+        ],
+    },
+    Shot {
+        name: "dl07-mixer",
+        acts: &[
+            Act::Reset,
+            Act::Press(crate::shot::Target::Tab(DrawerTab::Mixer)),
+        ],
+    },
 ];
 
 fn play(s: &mut Studio, g: &Geometry, n: u8) {
@@ -69,11 +93,22 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
                 s.roll.next_length = c.notes().iter().map(|n| n.length).max().unwrap_or(0);
             }
         }
-        _ => {
+        3 => {
             s.select_clip_of("Drums");
             let g = &s.geometry(g.size.0, g.size.1);
             s.resized(g);
             s.choose_editor();
+        }
+        _ => {
+            if let Some(target) = s.roll_target() {
+                let track = target.track.id;
+                let clip = target.clip.id;
+                s.song.run("track.rename", serde_json::json!({"id": track.to_string(),
+                    "name": "Lead Synth Double Layer With Octave Doubling, Wide Stereo And Long Name"})).unwrap();
+                s.song.run("clip.rename", serde_json::json!({"id": clip.to_string(),
+                    "name": "Chorus B Phrase 2 (take 3, comp of four passes from the late session)"})).unwrap();
+                s.resized(g);
+            }
         }
     }
 }

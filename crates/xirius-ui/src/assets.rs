@@ -23,6 +23,7 @@ const ICONS: &[(&str, &[u8])] = icons!(
     "folder",
     "instrument",
     "line",
+    "length-last",
     "loop",
     "mixer",
     "pencil",

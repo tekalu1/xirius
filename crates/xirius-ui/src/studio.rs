@@ -385,7 +385,7 @@ impl Geometry {
     /// A head button: 22 px, so that the eight fit [`Layout::TRACK_HEAD_W`] (UI-310).
     pub const HEAD_TOGGLE: f32 = 22.0;
 
-    /// The tab buttons: icon + label, side by side from the drawer's left.
+    /// The tab buttons: icon only, side by side from the drawer's left.
     pub fn tab(&self, tab: DrawerTab) -> Rect {
         let i = DrawerTab::ALL.iter().position(|t| *t == tab).unwrap_or(0);
         let (w, gap) = (Self::TAB_W, Space::X1.px());
@@ -397,23 +397,18 @@ impl Geometry {
         )
     }
 
-    pub const TAB_W: f32 = 116.0;
+    pub const TAB_W: f32 = 28.0;
     pub const TAB_H: f32 = 24.0;
     /// One half of the roll's "鍵盤｜ドラム" switch.
-    pub const SWITCH_W: f32 = 56.0;
+    pub const SWITCH_W: f32 = 28.0;
     /// The button that picks the drum map.
-    pub const MAP_W: f32 = 120.0;
-    /// The "入力の長さ" label and its two halves.
-    pub const LENGTH_LABEL_W: f32 = 64.0;
-    pub const LENGTH_GRID_W: f32 = 116.0;
-    pub const LENGTH_LAST_W: f32 = 92.0;
-
+    pub const MAP_W: f32 = 104.0;
     /// The keys half (`false`) or the drums half (`true`) of the roll's view switch, after the
     /// tabs.
     pub fn roll_switch(&self, drums: bool) -> Rect {
         let last = self.tab(DrawerTab::ALL[DrawerTab::ALL.len() - 1]);
         Rect::new(
-            last.right() + Space::X3.px() + if drums { Self::SWITCH_W } else { 0.0 },
+            last.right() + Space::X3.px() + 2.0 + if drums { Self::SWITCH_W } else { 0.0 },
             last.y,
             Self::SWITCH_W,
             Self::TAB_H,
@@ -424,43 +419,31 @@ impl Geometry {
     pub fn roll_map(&self) -> Rect {
         let drums = self.roll_switch(true);
         Rect::new(
-            drums.right() + Space::X2.px(),
+            drums.right() + Space::X2.px() + 2.0,
             drums.y,
             Self::MAP_W,
             Self::TAB_H,
         )
     }
 
-    /// The label of the roll's "入力の長さ" switch, right of the drum map's place.
-    pub fn roll_length_label(&self) -> Rect {
+    /// The single last-note toggle (EDT-131).
+    pub fn roll_length(&self) -> Rect {
         let drums = self.roll_switch(true);
-        Rect::new(
-            drums.right() + Space::X4.px(),
-            drums.y,
-            Self::LENGTH_LABEL_W,
-            Self::TAB_H,
-        )
+        Rect::new(drums.right() + 18.0, drums.y, 28.0, Self::TAB_H)
     }
 
-    /// One half of that switch: the grid's value (`false`) or the note before (`true`).
-    pub fn roll_length(&self, last: bool) -> Rect {
-        let label = self.roll_length_label();
-        let first = Self::LENGTH_GRID_W;
+    /// The name stays between the controls and the bar's right padding (UI-343).
+    pub fn roll_name(&self, drums: bool) -> Rect {
+        let from = if drums {
+            self.roll_map().right()
+        } else {
+            self.roll_length().right()
+        } + Space::X4.px();
         Rect::new(
-            label.right() + if last { first } else { 0.0 },
-            label.y,
-            if last { Self::LENGTH_LAST_W } else { first },
-            Self::TAB_H,
-        )
-    }
-
-    /// The button that shuts and opens the drawer, at its right end.
-    pub fn drawer_toggle(&self) -> Rect {
-        Rect::new(
-            self.drawer_bar.right() - Space::X2.px() - Layout::ICON_BUTTON,
-            self.drawer_bar.y + (self.drawer_bar.h - Layout::ICON_BUTTON) / 2.0,
-            Layout::ICON_BUTTON,
-            Layout::ICON_BUTTON,
+            from,
+            self.drawer_bar.y,
+            (self.drawer_bar.right() - Space::X3.px() - from).max(0.0),
+            self.drawer_bar.h,
         )
     }
 }
@@ -1216,7 +1199,7 @@ impl Studio {
             Hit::Tab(tab) => Some(mid(g.tab(tab))),
             Hit::RollView(drums) => Some(mid(g.roll_switch(drums))),
             Hit::RollMap => Some(mid(g.roll_map())),
-            Hit::RollLength(last) => Some(mid(g.roll_length(last))),
+            Hit::RollLength(_) => Some(mid(g.roll_length())),
             Hit::Ruler(tick) => Some((self.tick_x(g, tick), g.ruler.y + g.ruler.h - 4.0)),
             Hit::Mixer(m) => self.mixer_center(g, m),
             Hit::Chevron(f) => part(RowKind::Folder(f), |p| p.chevron),
@@ -1327,12 +1310,8 @@ impl Studio {
             if self.roll_drum().is_some() && g.roll_map().contains(x, y) {
                 return Hit::RollMap;
             }
-            if self.roll_drum().is_none() {
-                for last in [false, true] {
-                    if g.roll_length(last).contains(x, y) {
-                        return Hit::RollLength(last);
-                    }
-                }
+            if self.roll_drum().is_none() && g.roll_length().contains(x, y) {
+                return Hit::RollLength(!self.draw_length_last());
             }
         }
         if let Some(m) = self.mixer_hit(g, x, y) {
@@ -3038,15 +3017,21 @@ mod tests {
         s.press(&g, hit);
         assert!(s.drawer_open);
         // The toggle's place at the bar's right end is not a button: the tabs are the only way.
-        let end = g.drawer_toggle();
-        assert_eq!(s.hit(&g, end.x + 2.0, end.y + 2.0), Hit::None);
+        let end = g.drawer_bar;
+        assert_eq!(s.hit(&g, end.right() - 2.0, end.y + 2.0), Hit::None);
     }
 
     #[test]
     fn the_drawer_buttons_do_not_overlap() {
         let g = Geometry::new(1440.0, 860.0, true);
         assert!(g.tab(DrawerTab::Roll).right() <= g.tab(DrawerTab::Mixer).x);
-        assert!(g.tab(DrawerTab::Mixer).right() < g.drawer_toggle().x);
+        assert!(g.tab(DrawerTab::Mixer).right() < g.roll_switch(false).x);
+        assert_eq!(Geometry::TAB_W, 28.0);
+        assert_eq!(Geometry::TAB_H, 24.0);
+        assert_eq!(g.roll_switch(false).x - g.drawer_bar.x, 82.0);
+        assert_eq!(g.roll_length().x - g.drawer_bar.x, 156.0);
+        assert_eq!(g.roll_length().right() - g.drawer_bar.x, 184.0);
+        assert_eq!(g.roll_map().x - g.drawer_bar.x, 148.0);
     }
 
     #[test]

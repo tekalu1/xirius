@@ -157,6 +157,8 @@ pub fn settings_nodes(s: &Studio, g: &Geometry) -> Vec<(usize, accesskit::Node)>
 pub struct Mark {
     /// Stays the same from frame to frame, apart from every other mark's.
     pub key: String,
+    /// Nested controls, such as the radios in the roll view group.
+    pub children: Vec<Mark>,
     pub node: accesskit::Node,
     /// The track whose take rows a press on it opens or folds.
     pub fold: Option<TrackId>,
@@ -201,6 +203,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                     node.set_bounds(bounds(c.rect));
                     Mark {
                         key: format!("field-{i}"),
+                        children: Vec::new(),
                         node,
                         fold: None,
                         pick: None,
@@ -225,6 +228,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                     node.set_bounds(bounds(c.rect));
                     return Some(Mark {
                         key: "search".into(),
+                        children: Vec::new(),
                         node,
                         fold: None,
                         pick: None,
@@ -238,6 +242,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                     node.set_bounds(bounds(c.rect));
                     return Some(Mark {
                         key: format!("status-{i}"),
+                        children: Vec::new(),
                         node,
                         fold: None,
                         pick: None,
@@ -277,6 +282,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             node.set_bounds(bounds(badge));
             out.push(Mark {
                 key: format!("takes-{}", clip.id),
+                children: Vec::new(),
                 node,
                 fold: Some(t),
                 pick: None,
@@ -287,6 +293,113 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     out.extend(inspector_marks(s, g));
     out.extend(instrument_marks(s, g));
     out.extend(audition_mark(s, g));
+    out.extend(drawer_marks(s, g));
+    out
+}
+
+/// The icon-only drawer controls, with stable names and their current state (UI-343).
+pub fn drawer_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
+    use crate::studio::{DrawerTab, Hit};
+    use crate::topbar::BarButton;
+    if s.settings.is_some() || s.popup.is_some() {
+        return Vec::new();
+    }
+    let control = |key: &str, role, label: String, r, press| {
+        let mut node = accesskit::Node::new(role);
+        node.set_label(label);
+        node.set_bounds(bounds(r));
+        Mark {
+            key: key.into(),
+            children: Vec::new(),
+            node,
+            fold: None,
+            pick: None,
+            press,
+        }
+    };
+    let mut out = Vec::new();
+    for tab in DrawerTab::ALL {
+        let mut m = control(
+            &format!("drawer-{tab:?}"),
+            accesskit::Role::Tab,
+            tab.label().into(),
+            g.tab(tab),
+            Some(Hit::Tab(tab)),
+        );
+        m.node.set_selected(s.drawer_open && s.tab == tab);
+        out.push(m);
+    }
+    if !s.roll_switch_shown() {
+        return out;
+    }
+    let drums = s.roll_drum();
+    let keys = g.roll_switch(false);
+    let mut group = control(
+        "roll-view",
+        accesskit::Role::RadioGroup,
+        "見方".into(),
+        Rect::new(keys.x - 2.0, keys.y, 60.0, keys.h),
+        None,
+    );
+    for (on, label) in [(false, "鍵盤"), (true, "ドラム")] {
+        let mut m = control(
+            &format!("roll-view-{on}"),
+            accesskit::Role::RadioButton,
+            label.into(),
+            g.roll_switch(on),
+            Some(Hit::RollView(on)),
+        );
+        m.node.set_toggled(if on == drums.is_some() {
+            accesskit::Toggled::True
+        } else {
+            accesskit::Toggled::False
+        });
+        group.children.push(m);
+    }
+    out.push(group);
+    if let Some(map) = drums {
+        out.push(control(
+            "roll-map",
+            accesskit::Role::Button,
+            format!("ドラムのマップ: {}", xirius_core::drum::map_label(&map)),
+            g.roll_map(),
+            Some(Hit::RollMap),
+        ));
+    } else {
+        let on = s.draw_length_last();
+        let mut m = control(
+            "roll-length",
+            accesskit::Role::Button,
+            "直前のノートの長さで入力".into(),
+            g.roll_length(),
+            Some(Hit::RollLength(!on)),
+        );
+        // AccessKit maps a Button with toggled state to a toggle button.
+        m.node.set_toggled(if on {
+            accesskit::Toggled::True
+        } else {
+            accesskit::Toggled::False
+        });
+        out.push(m);
+        if let Some(text) = s.draw_length_text() {
+            let r = s.bar_layout(g.size.0).length;
+            // The top bar is already in window coordinates, unlike drawer geometry.
+            let mut m = control(
+                "draw-length-chip",
+                accesskit::Role::Button,
+                format!("グリッドの長さで入力: {text}"),
+                r,
+                Some(Hit::Bar(BarButton::DrawLength)),
+            );
+            m.node.set_bounds(accesskit::Rect::new(
+                r.x as f64,
+                r.y as f64,
+                r.right() as f64,
+                r.bottom() as f64,
+            ));
+            out.push(m);
+        }
+    }
     out
 }
 
@@ -324,6 +437,7 @@ fn audition_mark(s: &Studio, g: &Geometry) -> Option<Mark> {
     node.set_bounds(bounds(r));
     Some(Mark {
         key: "audition".into(),
+        children: Vec::new(),
         node,
         fold: None,
         pick: None,
@@ -355,6 +469,7 @@ fn inspector_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             node.set_bounds(bounds(crate::inspector::field_rect(row.rect)));
             Mark {
                 key: format!("inspector-{i}"),
+                children: Vec::new(),
                 node,
                 fold: None,
                 pick: None,
@@ -384,6 +499,7 @@ fn instrument_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             node.set_bounds(bounds(s.mixer_rect(g, hit)?));
             Some(Mark {
                 key: format!("instrument-{}", strip.track),
+                children: Vec::new(),
                 node,
                 fold: None,
                 pick: Some(strip.track),
@@ -721,6 +837,13 @@ mod tests {
     #[test]
     fn ui_298_a_clip_s_count_of_takes_is_a_button_that_opens_its_rows() {
         let (mut s, g) = sample();
+        // The drawer also has accessible controls; this test counts only take badges.
+        let take_marks = |s: &Studio| {
+            marks(s, &g)
+                .into_iter()
+                .filter(|m| m.fold.is_some())
+                .collect::<Vec<_>>()
+        };
         let vocal = track(&s, "Vocal");
         let guitar = track(&s, "Guitar");
         // One take shows no count, so it has no button.
@@ -738,9 +861,9 @@ mod tests {
             g.lanes.contains(r.x + 8.0, r.bottom() - 8.0),
             "the take is on screen"
         );
-        assert!(marks(&s, &g).is_empty());
+        assert!(take_marks(&s).is_empty());
         record(&mut s, vocal, 3);
-        let marks_now = marks(&s, &g);
+        let marks_now = take_marks(&s);
         assert_eq!(marks_now.len(), 1, "the clip that plays carries the count");
         let m = &marks_now[0];
         assert_eq!(m.node.role(), accesskit::Role::Button);
@@ -757,20 +880,20 @@ mod tests {
         // Its press opens the rows, and it says so; pressed again it folds them.
         assert!(fold(&mut s, vocal));
         assert!(s.tree().row_of(RowKind::Track(vocal)).unwrap().rec_h > 0.0);
-        assert_eq!(marks(&s, &g)[0].node.is_expanded(), Some(true));
+        assert_eq!(take_marks(&s)[0].node.is_expanded(), Some(true));
         assert!(fold(&mut s, vocal));
-        assert_eq!(marks(&s, &g)[0].node.is_expanded(), Some(false));
+        assert_eq!(take_marks(&s)[0].node.is_expanded(), Some(false));
         // A pop-over takes the presses: the counts under it are not offered.
         s.open_popup(
             crate::popup::PopupKind::Song,
             Rect::new(200.0, 200.0, 120.0, 24.0),
         );
-        assert!(marks(&s, &g).is_empty());
+        assert!(take_marks(&s).is_empty());
         s.popup = None;
-        assert_eq!(marks(&s, &g).len(), 1);
+        assert_eq!(take_marks(&s).len(), 1);
         // Scrolled away, it is not offered either.
         s.scroll.0 = 0.0;
-        assert!(marks(&s, &g).is_empty());
+        assert!(take_marks(&s).is_empty());
     }
 
     #[test]

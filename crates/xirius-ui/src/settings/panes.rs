@@ -119,7 +119,7 @@ pub fn choices(key: &str) -> Vec<(String, String)> {
             ("wasapi-exclusive", "WASAPI（排他モード）"),
             ("wasapi-shared", "WASAPI（共有モード）"),
         ],
-        "edit.draw.length" => &[("inspector", "クオンタイズの値"), ("last", "前回の長さ")],
+        "edit.draw.length" => &[("inspector", "クオンタイズの値"), ("last", "直前のノート")],
         k if k.starts_with("plugins.process.") => PROCESS,
         _ => &[],
     };

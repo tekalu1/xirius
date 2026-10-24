@@ -2302,10 +2302,10 @@ fn the_drum_view_has_no_length_to_pick_and_shows_none() {
     let (mut s, g) = setup();
     s.choose_editor();
     assert!(s.press(&g, Hit::RollLength(true)));
-    let switch = g.roll_length(true);
+    let switch = g.roll_length();
     assert_eq!(
         s.hit(&g, switch.x + 4.0, switch.y + 4.0),
-        Hit::RollLength(true)
+        Hit::RollLength(false)
     );
     assert!(s.press(&g, Hit::RollView(true)));
     assert_eq!(s.draw_length_text(), None);
@@ -2502,4 +2502,93 @@ fn a_parts_edge_is_one_bar_line_where_the_grid_has_a_line_and_where_two_parts_me
             .collect()
     };
     assert_eq!(rest(&lines), rest(&grid));
+}
+
+#[test]
+fn drawer_toolbar_names_roles_states_and_actions_follow_the_view() {
+    use crate::a11y::drawer_marks;
+    use crate::studio::{DrawerTab, Hit};
+    use gpui::accesskit::{Role, Toggled};
+    let (mut s, g) = setup();
+    s.choose_editor();
+    s.draw_length_choose(false);
+    let marks = drawer_marks(&s, &g);
+    let roll = marks.iter().find(|m| m.key == "drawer-Roll").unwrap();
+    assert_eq!(roll.node.role(), Role::Tab);
+    assert_eq!(roll.node.label(), Some("ピアノロール"));
+    assert_eq!(roll.node.is_selected(), Some(true));
+    let mixer = marks.iter().find(|m| m.key == "drawer-Mixer").unwrap();
+    assert_eq!(mixer.node.role(), Role::Tab);
+    assert_eq!(mixer.node.label(), Some("ミキサー"));
+    assert_eq!(mixer.node.is_selected(), Some(false));
+    let group = marks.iter().find(|m| m.key == "roll-view").unwrap();
+    assert_eq!(group.node.role(), Role::RadioGroup);
+    assert_eq!(group.node.label(), Some("見方"));
+    for (i, label) in ["鍵盤", "ドラム"].into_iter().enumerate() {
+        assert_eq!(group.children[i].node.role(), Role::RadioButton);
+        assert_eq!(group.children[i].node.label(), Some(label));
+        assert_eq!(
+            group.children[i].node.toggled(),
+            Some(if i == 0 {
+                Toggled::True
+            } else {
+                Toggled::False
+            })
+        );
+    }
+    let toggle = marks.iter().find(|m| m.key == "roll-length").unwrap();
+    assert_eq!(toggle.node.role(), Role::Button);
+    assert_eq!(toggle.node.label(), Some("直前のノートの長さで入力"));
+    assert_eq!(toggle.node.toggled(), Some(Toggled::False));
+    let r = g.roll_length();
+    assert_eq!(s.hit(&g, r.x + 4.0, r.y + 4.0), Hit::RollLength(true));
+    assert!(crate::a11y::press(&mut s, &g, toggle.press.unwrap()));
+    let marks = drawer_marks(&s, &g);
+    let toggle = marks.iter().find(|m| m.key == "roll-length").unwrap();
+    assert_eq!(toggle.node.toggled(), Some(Toggled::True));
+    assert_eq!(s.hit(&g, r.x + 4.0, r.y + 4.0), Hit::RollLength(false));
+    assert!(marks.iter().any(|m| {
+        m.node
+            .label()
+            .is_some_and(|t| t.starts_with("グリッドの長さで入力: "))
+            && m.node.role() == Role::Button
+    }));
+    assert!(s.press(&g, Hit::RollView(true)));
+    let marks = drawer_marks(&s, &g);
+    assert!(
+        !marks
+            .iter()
+            .any(|m| m.key == "roll-length" || m.key == "draw-length-chip")
+    );
+    let group = marks.iter().find(|m| m.key == "roll-view").unwrap();
+    assert_eq!(group.children[1].node.toggled(), Some(Toggled::True));
+    let map = marks.iter().find(|m| m.key == "roll-map").unwrap();
+    assert_eq!(map.node.role(), Role::Button);
+    assert_eq!(map.node.label(), Some("ドラムのマップ: GM ドラム"));
+    s.press(&g, Hit::Tab(DrawerTab::Mixer));
+    assert_eq!(drawer_marks(&s, &g).len(), 2);
+    s.press(&g, Hit::Tab(DrawerTab::Mixer));
+    assert!(
+        drawer_marks(&s, &g)
+            .iter()
+            .all(|m| m.node.is_selected() == Some(false))
+    );
+}
+
+#[test]
+fn drawer_toolbar_hints_match_the_approved_names() {
+    use crate::studio::{DrawerTab, Hit};
+    use crate::topbar::BarButton;
+    let (s, _) = setup();
+    for (hit, label) in [
+        (Hit::Tab(DrawerTab::Roll), "エディターを表示  F2"),
+        (Hit::Tab(DrawerTab::Mixer), "ミキサーを表示  F3"),
+        (Hit::RollView(false), "鍵盤の表示"),
+        (Hit::RollView(true), "ドラムの表示"),
+        (Hit::RollMap, "ドラムのマップ"),
+        (Hit::RollLength(true), "直前のノートの長さで入力"),
+        (Hit::Bar(BarButton::DrawLength), "グリッドの長さで入力"),
+    ] {
+        assert_eq!(crate::hover_tip::text(&s, hit).as_deref(), Some(label));
+    }
 }

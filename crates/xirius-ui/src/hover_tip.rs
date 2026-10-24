@@ -132,6 +132,18 @@ pub fn popup(pen: &mut Pen, s: &Studio, g: &Geometry) {
 }
 
 pub fn text(s: &Studio, hit: Hit) -> Option<String> {
+    let label = match hit {
+        Hit::RollView(false) => Some("鍵盤の表示"),
+        Hit::RollView(true) => Some("ドラムの表示"),
+        Hit::RollMap => Some("ドラムのマップ"),
+        Hit::RollLength(_) => Some("直前のノートの長さで入力"),
+        Hit::Bar(BarButton::DrawLength) => Some("グリッドの長さで入力"),
+        _ => None,
+    };
+    if let Some(label) = label {
+        return Some(label.into());
+    }
+
     if let Hit::Rail(tab) = hit {
         return Some(rail_text(s, tab));
     }

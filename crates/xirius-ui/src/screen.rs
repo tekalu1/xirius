@@ -1678,6 +1678,23 @@ fn mark(m: crate::a11y::Mark, studio: Rc<RefCell<Studio>>) -> gpui::Stateful<gpu
     if let Some(open) = n.is_expanded() {
         el = el.aria_expanded(open);
     }
+    if let Some(selected) = n.is_selected() {
+        el = el.aria_selected(selected);
+    }
+    if let Some(toggled) = n.toggled() {
+        el = el.aria_toggled(toggled);
+    }
+    el = el.children(m.children.into_iter().map(|mut child| {
+        if let Some(r) = child.node.bounds() {
+            child.node.set_bounds(gpui::accesskit::Rect::new(
+                r.x0 - b.x0,
+                r.y0 - b.y0,
+                r.x1 - b.x0,
+                r.y1 - b.y0,
+            ));
+        }
+        mark(child, studio.clone())
+    }));
     if let Some(track) = m.fold {
         el = el.on_a11y_action(gpui::accesskit::Action::Click, move |_, window, _| {
             if crate::a11y::fold(&mut studio.borrow_mut(), track) {

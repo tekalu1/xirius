@@ -302,30 +302,7 @@ impl Pen<'_> {
     /// `s`, cut with 「…」 when it is wider than `w`. A name keeps as much as the space leaves
     /// (UI-312).
     pub fn fit(&mut self, s: &str, font_size: FontSize, weight: Weight, w: f32) -> String {
-        if w <= 0.0 || self.measure(s, font_size, weight) <= w {
-            return s.to_string();
-        }
-        let chars: Vec<char> = s.chars().collect();
-        let cut = |n: usize| -> String {
-            let mut text: String = chars[..n].iter().collect();
-            text.push('…');
-            text
-        };
-        // The most characters that fit with the 「…」, found in halving steps rather than one
-        // shaping pass for every character (UI-312).
-        let (mut lo, mut hi) = (0usize, chars.len().saturating_sub(1));
-        if self.measure(&cut(0), font_size, weight) > w {
-            return cut(0);
-        }
-        while lo < hi {
-            let mid = (lo + hi).div_ceil(2);
-            if self.measure(&cut(mid), font_size, weight) <= w {
-                lo = mid;
-            } else {
-                hi = mid - 1;
-            }
-        }
-        cut(lo)
+        fit_text(s, w, |text| self.measure(text, font_size, weight))
     }
 
     /// How wide `s` comes out, without drawing it.
@@ -1991,61 +1968,33 @@ fn paint_drawer(pen: &mut Pen, studio: &Studio, g: &Geometry) {
         );
         pen.round(r, face, Radius::S);
         let ink = if active || hot { c.ink_strong } else { c.ink };
-        pen.icon(
-            tab.icon(),
-            Rect::new(
-                r.x + Space::X2.px(),
-                r.y + (r.h - Layout::ICON_SIZE) / 2.0,
-                Layout::ICON_SIZE,
-                Layout::ICON_SIZE,
-            ),
-            ink,
-        );
-        pen.text(
-            tab.label(),
-            FontSize::Small,
-            Weight::Medium,
-            ink,
-            Rect::new(
-                r.x + Space::X2.px() + Layout::ICON_SIZE + Space::X2.px(),
-                r.y,
-                r.w,
-                r.h,
-            ),
-            Align::Left,
-        );
+        pen.icon(tab.icon(), icon_rect(r), ink);
     }
     // What the roll is showing, beside the toggle.
     if studio.drawer_open
         && studio.tab == DrawerTab::Roll
         && let Some(target) = studio.roll_target()
     {
-        let toggle = g.drawer_toggle();
         let drum = studio.roll_drum();
-        // The label keeps clear of the view switch (and the map button) left of it.
-        let from = if drum.is_some() {
-            g.roll_map().right()
-        } else {
-            g.roll_length(true).right()
-        } + Space::X3.px();
         paint_roll_switch(pen, studio, g, drum.as_deref());
         if drum.is_none() {
             paint_roll_length(pen, studio, g);
         }
-        let s = format!("{} / {}", target.track.name, target.clip.name);
-        pen.text(
-            &s,
-            FontSize::Small,
-            Weight::Regular,
-            c.ink,
-            Rect::new(
-                from,
-                g.drawer_bar.y,
-                (toggle.x - Space::X3.px() - from).max(0.0),
-                g.drawer_bar.h,
-            ),
-            Align::Right,
-        );
+        let r = g.roll_name(drum.is_some());
+        let text = format!("{} / {}", target.track.name, target.clip.name);
+        if r.w > 0.0 {
+            let text = pen.fit(&text, FontSize::Small, Weight::Regular, r.w);
+            pen.mask(r, |pen| {
+                pen.text(
+                    &text,
+                    FontSize::Small,
+                    Weight::Regular,
+                    c.ink,
+                    r,
+                    Align::Right,
+                );
+            });
+        }
     }
     if studio.drawer_open && g.drawer_body.h > 0.0 {
         let body = g.drawer_body;
@@ -2059,26 +2008,16 @@ fn paint_drawer(pen: &mut Pen, studio: &Studio, g: &Geometry) {
 fn paint_roll_switch(pen: &mut Pen, studio: &Studio, g: &Geometry, drum: Option<&str>) {
     let c = pen.c;
     let (keys, drums) = (g.roll_switch(false), g.roll_switch(true));
-    let whole = Rect::new(keys.x, keys.y, drums.right() - keys.x, keys.h);
+    let whole = Rect::new(keys.x - 2.0, keys.y, 60.0, keys.h);
     pen.round(whole, c.surface_0, Radius::S);
-    for (on, r, label) in [
-        (drum.is_none(), keys, "鍵盤"),
-        (drum.is_some(), drums, "ドラム"),
+    for (on, r, icon) in [
+        (drum.is_none(), keys, "piano"),
+        (drum.is_some(), drums, "drum"),
     ] {
         let hot = studio.hover == Hit::RollView(r == drums);
-        if on {
-            pen.round(inset(r, 2.0), c.sel, Radius::S);
-        } else if hot {
-            pen.round(inset(r, 2.0), c.hover, Radius::S);
-        }
-        pen.text(
-            label,
-            FontSize::Small,
-            Weight::Medium,
-            if on || hot { c.ink_strong } else { c.ink },
-            r,
-            Align::Center,
-        );
+        let (face, ink) = roll_control_colors(c, on, hot);
+        pen.round(inset(r, 2.0), face, Radius::S);
+        pen.icon(icon, icon_rect(r), ink);
     }
     if let Some(map) = drum {
         let r = g.roll_map();
@@ -2095,9 +2034,9 @@ fn paint_roll_switch(pen: &mut Pen, studio: &Studio, g: &Geometry, drum: Option<
             Weight::Medium,
             ink,
             Rect::new(
-                r.x + Space::X2.px(),
+                r.x + Space::X3.px(),
                 r.y,
-                r.w - Layout::ICON_SIZE - Space::X2.px(),
+                r.w - Layout::ICON_SIZE - Space::X3.px() - Space::X2.px(),
                 r.h,
             ),
             Align::Left,
@@ -2115,40 +2054,68 @@ fn paint_roll_switch(pen: &mut Pen, studio: &Studio, g: &Geometry, drum: Option<
     }
 }
 
-/// The roll's "入力の長さ" switch (keys view only): the grid's value, or the note before.
-fn paint_roll_length(pen: &mut Pen, studio: &Studio, g: &Geometry) {
-    let c = pen.c;
-    pen.text(
-        "入力の長さ",
-        FontSize::Small,
-        Weight::Regular,
-        c.ink,
-        g.roll_length_label(),
-        Align::Left,
-    );
-    let (grid, last) = (g.roll_length(false), g.roll_length(true));
-    let whole = Rect::new(grid.x, grid.y, last.right() - grid.x, grid.h);
-    pen.round(whole, c.surface_0, Radius::S);
-    let on_last = studio.draw_length_last();
-    for (on, r, label) in [
-        (!on_last, grid, "クオンタイズの値"),
-        (on_last, last, "直前のノート"),
-    ] {
-        let hot = studio.hover == Hit::RollLength(r == last);
-        if on {
-            pen.round(inset(r, 2.0), c.sel, Radius::S);
-        } else if hot {
-            pen.round(inset(r, 2.0), c.hover, Radius::S);
-        }
-        pen.text(
-            label,
-            FontSize::Small,
-            Weight::Medium,
-            if on || hot { c.ink_strong } else { c.ink },
-            r,
-            Align::Center,
-        );
+/// Measure-based truncation, also exercised without a window for narrow drawer names.
+fn fit_text(s: &str, w: f32, mut measure: impl FnMut(&str) -> f32) -> String {
+    if w <= 0.0 {
+        return String::new();
     }
+    if measure(s) <= w {
+        return s.to_string();
+    }
+    if measure("…") > w {
+        return String::new();
+    }
+    let chars: Vec<char> = s.chars().collect();
+    let cut = |n: usize| -> String { chars[..n].iter().chain(std::iter::once(&'…')).collect() };
+    let (mut lo, mut hi) = (0usize, chars.len().saturating_sub(1));
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        if measure(&cut(mid)) <= w {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    cut(lo)
+}
+
+/// Both mode radios and the length toggle use the approved fill/on_fill pair (UI-343).
+fn roll_control_colors(c: &Colors, on: bool, hot: bool) -> (Hsla, Hsla) {
+    if on {
+        c.primary
+    } else if hot {
+        (c.hover, c.ink_strong)
+    } else {
+        (c.surface_0, c.ink)
+    }
+}
+
+/// An idle length toggle keeps the drawer's ground; only the view radios have a tray.
+fn roll_length_colors(c: &Colors, on: bool, hot: bool) -> (Hsla, Hsla) {
+    if !on && !hot {
+        (c.surface_2, c.ink)
+    } else {
+        roll_control_colors(c, on, hot)
+    }
+}
+
+fn icon_rect(r: Rect) -> Rect {
+    Rect::new(
+        r.x + (r.w - Layout::ICON_SIZE) / 2.0,
+        r.y + (r.h - Layout::ICON_SIZE) / 2.0,
+        Layout::ICON_SIZE,
+        Layout::ICON_SIZE,
+    )
+}
+
+/// A single toggle, visible only in the keys view.
+fn paint_roll_length(pen: &mut Pen, studio: &Studio, g: &Geometry) {
+    let r = g.roll_length();
+    let hot = matches!(studio.hover, Hit::RollLength(_));
+    let on = studio.draw_length_last();
+    let (face, ink) = roll_length_colors(pen.c, on, hot);
+    pen.round(r, face, Radius::S);
+    pen.icon("length-last", icon_rect(r), ink);
 }
 
 pub fn paint_roll(pen: &mut Pen, studio: &Studio, body: Rect) {
@@ -2165,6 +2132,75 @@ mod tests {
     use super::*;
     use crate::notes::is_black_key;
     use crate::song::Song;
+
+    #[test]
+    fn drawer_names_fit_without_crossing_the_controls_in_either_view() {
+        for width in [1600.0, 960.0, 320.0, 200.0] {
+            let g = Geometry::new(width, 600.0, true);
+            for drums in [false, true] {
+                let r = g.roll_name(drums);
+                let end = if drums {
+                    g.roll_map().right()
+                } else {
+                    g.roll_length().right()
+                };
+                assert!(r.x >= end + Space::X4.px());
+                if r.w > 0.0 {
+                    assert!(r.right() <= g.drawer_bar.right() - Space::X3.px());
+                }
+                let name = "長いトラック名 Lead Synth Double Layer With Octave Doubling / Chorus B Phrase (take 3)".repeat(8);
+                let measure = |text: &str| {
+                    text.chars()
+                        .map(|c| if c.is_ascii() { 6.0 } else { 12.0 })
+                        .sum::<f32>()
+                };
+                let fitted = fit_text(&name, r.w, measure);
+                assert!(measure(&fitted) <= r.w);
+                if !fitted.is_empty() {
+                    assert!(fitted.ends_with('…'));
+                }
+            }
+        }
+        assert_eq!(
+            fit_text("短い", 24.0, |t| t.chars().count() as f32 * 12.0),
+            "短い"
+        );
+        assert_eq!(fit_text("長い", 1.0, |_| 12.0), "");
+    }
+
+    #[test]
+    fn drawer_modes_and_length_use_fill_on_fill_in_both_themes() {
+        use xirius_design::{Surface, Theme, contrast_ratio};
+        for theme in Theme::ALL {
+            let c = Colors::new(theme);
+            for hot in [false, true] {
+                assert_eq!(roll_control_colors(&c, true, hot), (c.fill, c.on_fill));
+                assert_eq!(roll_length_colors(&c, true, hot), (c.fill, c.on_fill));
+                assert_eq!(
+                    roll_length_colors(&c, false, hot),
+                    if hot {
+                        (c.hover, c.ink_strong)
+                    } else {
+                        (c.surface_2, c.ink)
+                    }
+                );
+                assert_eq!(
+                    roll_control_colors(&c, false, hot),
+                    if hot {
+                        (c.hover, c.ink_strong)
+                    } else {
+                        (c.surface_0, c.ink)
+                    }
+                );
+            }
+            for ground in [Surface::S0, Surface::S2] {
+                assert!(
+                    contrast_ratio(Surface::Fill.color(theme), ground.color(theme)) >= 3.0,
+                    "{theme:?} {ground:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn tracks_come_in_the_columns_order_folders_opened() {
