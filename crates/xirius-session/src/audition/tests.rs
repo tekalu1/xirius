@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::thread::ThreadId;
 
 use super::*;
 
@@ -22,80 +21,6 @@ fn wav(dir: &Path, name: &str, seconds: f64, rate: u32) -> PathBuf {
     path
 }
 
-/// A slow place, like a drive on the network: each look at a file waits `stat`, each open
-/// waits `open`, and each read gives at most `piece` bytes after `per_read`. It counts the opens
-/// of each file and the threads that made them.
-struct Slow {
-    stat: Duration,
-    open: Duration,
-    piece: usize,
-    per_read: Duration,
-    opens: Mutex<HashMap<PathBuf, usize>>,
-    threads: Mutex<Vec<ThreadId>>,
-}
-
-impl Slow {
-    fn new(open: Duration) -> Arc<Slow> {
-        Slow::reading(open, usize::MAX, Duration::ZERO)
-    }
-
-    fn reading(open: Duration, piece: usize, per_read: Duration) -> Arc<Slow> {
-        Arc::new(Slow {
-            stat: Duration::ZERO,
-            open,
-            piece,
-            per_read,
-            opens: Mutex::default(),
-            threads: Mutex::default(),
-        })
-    }
-
-    /// A place where even looking at a file waits `stat`.
-    fn looking(stat: Duration, open: Duration) -> Arc<Slow> {
-        Arc::new(Slow {
-            stat,
-            ..Arc::into_inner(Slow::new(open)).unwrap()
-        })
-    }
-
-    fn opens(&self, path: &Path) -> usize {
-        lock(&self.opens).get(path).copied().unwrap_or(0)
-    }
-}
-
-struct Trickle {
-    file: std::fs::File,
-    piece: usize,
-    per_read: Duration,
-}
-
-impl Read for Trickle {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        std::thread::sleep(self.per_read);
-        let n = buf.len().min(self.piece);
-        self.file.read(&mut buf[..n])
-    }
-}
-
-impl Reader for Slow {
-    fn stat(&self, path: &Path) -> Result<Stamp, String> {
-        std::thread::sleep(self.stat);
-        Disk.stat(path)
-    }
-
-    fn open(&self, path: &Path) -> Result<Box<dyn Read + Send>, String> {
-        *lock(&self.opens).entry(path.to_path_buf()).or_default() += 1;
-        lock(&self.threads).push(std::thread::current().id());
-        std::thread::sleep(self.open);
-        let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-        Ok(Box::new(Trickle {
-            file,
-            piece: self.piece,
-            per_read: self.per_read,
-        }))
-    }
-}
-
 const SILENT: Sink = Sink::Silent { paced: false };
 
 /// Waits until `ok` holds of what the audition says, and gives that.
@@ -111,30 +36,116 @@ fn until(a: &Audition, what: &str, ok: impl Fn(&Now) -> bool) -> Now {
     }
 }
 
+fn kept_names(a: &Audition) -> Vec<String> {
+    a.kept()
+        .0
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+        .collect()
+}
+
 #[test]
 fn a_press_hands_the_file_over_and_it_is_opened_once_elsewhere() {
     let d = dir("once");
     let file = wav(d.path(), "a.wav", 0.5, 44_100);
     let store = d.path().join("peaks");
-    let slow = Slow::new(Duration::from_millis(600));
-    let a = Audition::with(slow.clone());
-    let t = Instant::now();
+    let reader = Arc::new(ReaderGates::default());
+    let gate = hold(&reader.open, &file);
+    let a = Audition::with(reader.clone(), Limits::default());
     a.play(&file, &store, SILENT);
-    // Far less than opening takes, however busy the machine.
+    gate.0.entered(1);
     assert!(
-        t.elapsed() < Duration::from_millis(300),
-        "{:?}",
-        t.elapsed()
+        a.now().loading(&file),
+        "play returned while open remains blocked"
     );
-    assert!(a.now().loading(&file));
+    gate.0.release();
     let n = until(&a, "ending", |n| n.phase == Phase::Ended);
-    assert_eq!(n.path.as_deref(), Some(file.as_path()));
     assert!(n.complete(&file));
+    assert!(!n.kept);
     assert_eq!(n.whole, Some(22_050));
-    assert_eq!(slow.opens(&file), 1);
-    assert!(!lock(&slow.threads).contains(&std::thread::current().id()));
-    // The peaks are kept for the song's lanes, the same as the ones the lanes make.
+    assert_eq!(reader.opens(&file), 1);
     assert!(peaks::load(&file, &store).is_some());
+}
+
+#[test]
+fn the_same_file_again_plays_at_once_without_being_opened() {
+    let d = dir("again");
+    let file = wav(d.path(), "a.wav", 0.5, 48_000);
+    let store = d.path().join("peaks");
+    let reader = Arc::new(ReaderGates::default());
+    let a = Audition::with(reader.clone(), Limits::default());
+    a.play(&file, &store, SILENT);
+    until(&a, "warm cache", |n| n.phase == Phase::Ended);
+    let gate = hold(&reader.stat, &file);
+    a.play(&file, &store, SILENT);
+    gate.0.entered(1);
+    let n = until(&a, "cue independent of stat", |n| {
+        n.kept && n.phase != Phase::Loading
+    });
+    assert!(n.complete(&file));
+    assert_eq!(reader.opens(&file), 1);
+    gate.0.release();
+    drained(&a, &reader);
+    until(&a, "ending", |n| n.phase == Phase::Ended);
+}
+
+#[test]
+fn a_kept_file_asked_for_before_does_not_play_for_the_newer_one() {
+    let d = dir("kept-older");
+    let store = d.path().join("peaks");
+    let old = wav(d.path(), "old.wav", 0.5, 48_000);
+    let file = wav(d.path(), "b.wav", 0.25, 48_000);
+    let reader = Arc::new(ReaderGates::default());
+    let a = Audition::with(reader.clone(), Limits::default());
+    a.play(&old, &store, SILENT);
+    until(&a, "warm cache", |n| n.phase == Phase::Ended);
+    let gate = hold(&reader.stat, &old);
+    a.play(&old, &store, SILENT);
+    gate.0.entered(1);
+    a.play(&file, &store, SILENT);
+    watch_to_end(&a, &file, |n| {
+        !n.kept && n.peaks.as_ref().is_none_or(|p| p.frames <= 12_000)
+    });
+    gate.0.release();
+    drained(&a, &reader);
+    assert_eq!(a.now().path.as_deref(), Some(file.as_path()));
+    assert_eq!(reader.opens(&old), 1);
+}
+
+#[test]
+fn what_is_kept_stays_under_the_limit_and_the_oldest_goes_first() {
+    let d = dir("limit");
+    let store = d.path().join("peaks");
+    let files: Vec<PathBuf> = ["a", "b", "c", "d"]
+        .iter()
+        .map(|n| wav(d.path(), &format!("{n}.wav"), 1.0, 48_000))
+        .collect();
+    let long = wav(d.path(), "long.wav", 2.0, 48_000);
+    // One second is 384,000 bytes of sound and about 1,000 of peaks: two fit, a third does not,
+    // and two seconds are more than one file may keep.
+    let limits = Limits {
+        total: 1_200_000,
+        one: 800_000,
+    };
+    let a = Audition::with(Arc::new(Disk), limits);
+    let play = |p: &Path| {
+        a.play(p, &store, SILENT);
+        until(&a, "ending", |n| n.phase == Phase::Ended);
+    };
+    play(&files[0]);
+    play(&files[1]);
+    assert_eq!(kept_names(&a), ["a.wav", "b.wav"]);
+    play(&files[2]);
+    assert_eq!(kept_names(&a), ["b.wav", "c.wav"]);
+    // Played again, b is the newest; d then pushes out c.
+    play(&files[1]);
+    assert!(a.now().kept);
+    assert_eq!(kept_names(&a), ["c.wav", "b.wav"]);
+    play(&files[3]);
+    assert_eq!(kept_names(&a), ["b.wav", "d.wav"]);
+    assert!(a.kept().1 <= limits.total);
+    play(&long);
+    assert_eq!(kept_names(&a), ["b.wav", "d.wav"]);
 }
 
 #[test]
@@ -143,22 +154,21 @@ fn the_file_asked_for_last_is_the_one_that_plays() {
     let store = d.path().join("peaks");
     let first = wav(d.path(), "first.wav", 0.5, 48_000);
     let second = wav(d.path(), "second.wav", 0.25, 48_000);
-    let slow = Slow::new(Duration::from_millis(300));
-    let a = Audition::with(slow.clone());
+    let reader = Arc::new(ReaderGates::default());
+    let gate = hold(&reader.open, &first);
+    let a = Audition::with(reader.clone(), Limits::default());
     a.play(&first, &store, SILENT);
-    std::thread::sleep(Duration::from_millis(50));
+    gate.0.entered(1);
     a.play(&second, &store, SILENT);
-    let n = until(&a, "playing", |n| n.phase != Phase::Loading);
+    let n = until(&a, "newest finishes while older open is held", |n| {
+        n.phase == Phase::Ended
+    });
     assert_eq!(n.path.as_deref(), Some(second.as_path()));
     assert_eq!(n.whole, Some(12_000));
-    // The first one's reading stops once nothing wants it any more; it is not played after.
-    let n = until(&a, "ending", |n| n.phase == Phase::Ended);
-    assert_eq!(n.path.as_deref(), Some(second.as_path()));
-    std::thread::sleep(Duration::from_millis(400));
-    let n = a.now();
-    assert_eq!(n.path.as_deref(), Some(second.as_path()));
-    assert_eq!(n.phase, Phase::Ended);
-    assert_eq!(slow.opens(&second), 1);
+    gate.0.release();
+    drained(&a, &reader);
+    assert_eq!(a.now().path.as_deref(), Some(second.as_path()));
+    assert_eq!(reader.opens(&second), 1);
 }
 
 /// Watches what the audition says until `file` has played to its end, holding `ok` of each look.
@@ -182,13 +192,16 @@ fn what_comes_of_a_file_asked_for_before_is_not_said_of_the_newer_one() {
     let store = d.path().join("peaks");
     let gone = d.path().join("gone.wav");
     let file = wav(d.path(), "b.wav", 0.25, 48_000);
-    // Looking at a file takes a while, so the one asked for first fails after the second is.
-    let slow = Slow::looking(Duration::from_millis(300), Duration::from_millis(100));
-    let a = Audition::with(slow.clone());
+    let reader = Arc::new(ReaderGates::default());
+    let gate = hold(&reader.stat, &gone);
+    let a = Audition::with(reader.clone(), Limits::default());
     a.play(&gone, &store, SILENT);
-    std::thread::sleep(Duration::from_millis(50));
+    gate.0.entered(1);
     a.play(&file, &store, SILENT);
     watch_to_end(&a, &file, |n| !matches!(n.phase, Phase::Failed(_)));
+    gate.0.release();
+    drained(&a, &reader);
+    assert_eq!(a.now().phase, Phase::Ended);
 }
 
 #[test]
@@ -196,25 +209,21 @@ fn the_peaks_grow_as_the_file_is_read() {
     let d = dir("grow");
     let store = d.path().join("peaks");
     let file = wav(d.path(), "a.wav", 3.0, 48_000);
-    // About 576 KB, 32 KB a read every 25 ms: the reading takes about half a second.
-    let slow = Slow::reading(
-        Duration::from_millis(50),
-        32 << 10,
-        Duration::from_millis(25),
-    );
-    let a = Audition::with(slow.clone());
+    let reader = Arc::new(ReaderGates::default());
+    let gate = hold(&reader.read, &file);
+    let a = Audition::with(reader.clone(), Limits::default());
     a.play(&file, &store, SILENT);
-    let part = until(&a, "some peaks", |n| n.peaks.is_some());
+    gate.0.entered(1);
+    let part = until(&a, "partial peaks with the rest of the read held", |n| {
+        n.peaks.is_some()
+    });
     assert_eq!(part.phase, Phase::Loading);
-    assert!(
-        part.covered > 0 && part.covered < 144_000,
-        "{}",
-        part.covered
-    );
+    assert!(part.covered > 0 && part.covered < 144_000);
     assert_eq!(part.whole, Some(144_000));
-    let n = until(&a, "playing", |n| n.phase != Phase::Loading);
+    gate.0.release();
+    let n = until(&a, "ending", |n| n.phase == Phase::Ended);
     assert!(n.complete(&file));
-    assert_eq!(slow.opens(&file), 1);
+    assert_eq!(reader.opens(&file), 1);
 }
 
 #[test]
@@ -223,12 +232,15 @@ fn peaks_kept_from_before_are_shown_before_the_file_is_read() {
     let store = d.path().join("peaks");
     let file = wav(d.path(), "a.wav", 0.5, 48_000);
     peaks::ensure(&file, &store).unwrap();
-    let slow = Slow::new(Duration::from_millis(400));
-    let a = Audition::with(slow.clone());
+    let reader = Arc::new(ReaderGates::default());
+    let gate = hold(&reader.open, &file);
+    let a = Audition::with(reader, Limits::default());
     a.play(&file, &store, SILENT);
-    let n = until(&a, "peaks", |n| n.peaks.is_some());
+    gate.0.entered(1);
+    let n = a.now();
     assert_eq!(n.phase, Phase::Loading);
     assert!(n.complete(&file));
+    gate.0.release();
     until(&a, "ending", |n| n.phase == Phase::Ended);
 }
 
@@ -246,8 +258,8 @@ fn an_rf64_take_is_opened_once_too() {
         w.write_sample(-v).unwrap();
     }
     w.finalize().unwrap();
-    let slow = Slow::new(Duration::ZERO);
-    let a = Audition::with(slow.clone());
+    let slow = Arc::new(ReaderGates::default());
+    let a = Audition::with(slow.clone(), Limits::default());
     a.play(&file, &store, SILENT);
     let n = until(&a, "ending", |n| n.phase == Phase::Ended);
     assert_eq!(n.whole, Some(12_000));
@@ -258,7 +270,7 @@ fn an_rf64_take_is_opened_once_too() {
 fn a_file_that_cannot_be_read_says_so() {
     let d = dir("fail");
     let store = d.path().join("peaks");
-    let a = Audition::with(Arc::new(Disk));
+    let a = Audition::with(Arc::new(Disk), Limits::default());
     let gone = d.path().join("gone.wav");
     a.play(&gone, &store, SILENT);
     let n = until(&a, "failing", |n| matches!(n.phase, Phase::Failed(_)));
@@ -279,7 +291,7 @@ fn stop_lets_go_of_the_file() {
     let d = dir("stop");
     let store = d.path().join("peaks");
     let file = wav(d.path(), "a.wav", 5.0, 48_000);
-    let a = Audition::with(Arc::new(Disk));
+    let a = Audition::with(Arc::new(Disk), Limits::default());
     a.play(&file, &store, Sink::Silent { paced: true });
     until(&a, "playing", |n| {
         n.phase == Phase::Playing && n.played > 0.0
@@ -287,7 +299,11 @@ fn stop_lets_go_of_the_file() {
     a.stop();
     let n = a.now();
     assert_eq!((n.path, n.phase), (None, Phase::Idle));
-    std::thread::sleep(Duration::from_millis(100));
+    let end = Instant::now() + Duration::from_secs(20);
+    while !a.halted() {
+        assert!(Instant::now() < end);
+        std::thread::yield_now();
+    }
     assert_eq!(a.now().phase, Phase::Idle);
 }
 
@@ -296,25 +312,19 @@ fn release_stops_what_plays_and_does_not_wait_on_a_slow_place() {
     let d = dir("release");
     let store = d.path().join("peaks");
     let file = wav(d.path(), "a.wav", 5.0, 48_000);
-    let a = Audition::with(Arc::new(Disk));
-    a.play(&file, &store, Sink::Silent { paced: true });
-    until(&a, "playing", |n| n.phase == Phase::Playing);
-    a.release();
-    assert_eq!(a.now().phase, Phase::Idle);
-    std::thread::sleep(Duration::from_millis(100));
-    assert_eq!(a.now().phase, Phase::Idle);
-    // A file in a place where even looking at it takes long: letting go is still quick.
-    let slow = Slow::looking(Duration::from_secs(2), Duration::ZERO);
-    let a = Audition::with(slow);
+    let reader = Arc::new(ReaderGates::default());
+    let gate = hold(&reader.stat, &file);
+    let a = Audition::with(reader.clone(), Limits::default());
     a.play(&file, &store, SILENT);
-    std::thread::sleep(Duration::from_millis(20));
-    let t = Instant::now();
-    a.release();
-    assert!(t.elapsed() < Duration::from_secs(1), "{:?}", t.elapsed());
+    gate.0.entered(1);
+    let ack = a.release_async();
+    ack.recv_timeout(Duration::from_secs(20)).unwrap();
+    assert_eq!(a.now().phase, Phase::Idle);
     a.play(&file, &store, SILENT);
-    let t = Instant::now();
     a.stop();
-    assert!(t.elapsed() < Duration::from_secs(1), "{:?}", t.elapsed());
+    assert_eq!(a.now().phase, Phase::Idle);
+    gate.0.release();
+    drained(&a, &reader);
     assert_eq!(a.now().phase, Phase::Idle);
 }
 
@@ -327,33 +337,129 @@ fn mixed_preview_resamples_ends_and_stops_without_moving_the_song() {
         max_block: 256,
         mode: RenderMode::Realtime,
     };
-    let (audio, mut control) = engine::create(cue::plan(setup).unwrap(), EngineConfig::default());
+    let (mut audio, mut control) =
+        engine::create(cue::plan(setup).unwrap(), EngineConfig::default());
+    audio.set_silent(true);
     let stats = control.stats();
-    let _out = crate::output::SilentOutput::start(audio, true);
     let a = Audition::new();
     let sink = Sink::Mix(control.audition());
+    fn drive(a: &Audition, audio: &mut xirius_engine::AudioEngine, done: impl Fn(&Now) -> bool) {
+        let end = Instant::now() + Duration::from_secs(20);
+        let mut buf = [0.0; 512];
+        while !done(&a.now()) {
+            assert!(Instant::now() < end, "{:?}", a.now());
+            audio.render(&mut buf, 2);
+            std::thread::yield_now();
+        }
+    }
     a.play(&file, &d.path().join("peaks"), sink.clone());
-    until(&a, "resampled preview sounds", |n| n.played > 0.1);
+    drive(&a, &mut audio, |n| n.phase == Phase::Ended);
     assert!(stats.take_output_peak().iter().any(|p| *p > 0.1));
-    until(&a, "preview ends", |n| n.phase == Phase::Ended);
     control.poll(|e| {
         if let EngineEvent::Transport {
             playing, position, ..
         } = e
         {
             assert!(!playing);
-            assert_eq!(position, 0, "preview never seeks the song");
+            assert_eq!(position, 0);
         }
     });
     a.play(&file, &d.path().join("peaks"), sink);
-    until(&a, "second preview sounds", |n| n.played > 0.1);
+    drive(&a, &mut audio, |n| n.played > 0.1);
     a.stop();
-    std::thread::sleep(Duration::from_millis(50));
+    let end = Instant::now() + Duration::from_secs(20);
+    while !a.halted() {
+        assert!(Instant::now() < end);
+        std::thread::yield_now();
+    }
     stats.take_output_peak();
-    std::thread::sleep(Duration::from_millis(50));
+    audio.render(&mut [0.0; 512], 2);
     assert_eq!(
         stats.take_output_peak(),
         [0.0; 2],
-        "queued preview is discarded on stop"
+        "the next controlled callback contains no preview"
     );
+}
+
+mod cache;
+mod gates;
+use gates::{ReaderGates, drained, hold};
+
+#[test]
+fn a_stale_cached_cue_is_stopped_before_the_fresh_file_opens() {
+    let d = dir("stale-cache");
+    let file = wav(d.path(), "a.wav", 0.5, 48_000);
+    let store = d.path().join("peaks");
+    let reader = Arc::new(ReaderGates::default());
+    let a = Audition::with(reader.clone(), Limits::default());
+    a.play(&file, &store, SILENT);
+    until(&a, "warm cache", |n| n.phase == Phase::Ended);
+    wav(d.path(), "a.wav", 0.25, 48_000);
+    let setup = ProcessSetup {
+        sample_rate: 48_000.0,
+        max_block: 256,
+        mode: RenderMode::Realtime,
+    };
+    let (mut audio, control) = engine::create(cue::plan(setup).unwrap(), EngineConfig::default());
+    audio.set_silent(true);
+    let stat = hold(&reader.stat, &file);
+    let open = hold(&reader.open, &file);
+    a.play(&file, &store, Sink::Mix(control.audition()));
+    stat.0.entered(1);
+    let end = Instant::now() + Duration::from_secs(20);
+    while control.stats().take_output_peak() == [0.0; 2] {
+        assert!(Instant::now() < end);
+        audio.render(&mut [0.0; 512], 2);
+        std::thread::yield_now();
+    }
+    // Hold the output at the first audible callback. The cached sound cannot end.
+    until(&a, "optimistic cache cue", |n| {
+        n.kept && n.phase == Phase::Playing
+    });
+    stat.0.release();
+    open.0.entered(1);
+    gates::barrier(&a);
+    let n = a.now();
+    assert_eq!(n.phase, Phase::Loading);
+    assert!(!n.kept);
+    assert_eq!(n.played, 0.0);
+    open.0.release();
+    while a.now().phase != Phase::Ended {
+        assert!(Instant::now() < end, "{:?}", a.now());
+        audio.render(&mut [0.0; 512], 2);
+        std::thread::yield_now();
+    }
+    assert_eq!(a.now().whole, Some(12_000));
+    assert_eq!(reader.opens(&file), 2);
+}
+
+#[test]
+fn validation_after_a_short_cached_sound_ends_only_refreshes_the_cache() {
+    let d = dir("ended-cache");
+    let file = wav(d.path(), "a.wav", 0.1, 48_000);
+    let store = d.path().join("peaks");
+    let reader = Arc::new(ReaderGates::default());
+    let a = Audition::with(reader.clone(), Limits::default());
+    a.play(&file, &store, SILENT);
+    until(&a, "warm cache", |n| n.phase == Phase::Ended);
+    wav(d.path(), "a.wav", 0.25, 48_000);
+    let stat = hold(&reader.stat, &file);
+    a.play(&file, &store, SILENT);
+    stat.0.entered(1);
+    until(&a, "cached sound ends before stat", |n| {
+        n.kept && n.phase == Phase::Ended
+    });
+    stat.0.release();
+    drained(&a, &reader);
+    assert_eq!(
+        a.now().phase,
+        Phase::Ended,
+        "validation must not revive the ended preview"
+    );
+    a.play(&file, &store, SILENT);
+    let n = until(&a, "fresh cached sound", |n| {
+        n.kept && n.phase == Phase::Ended
+    });
+    assert_eq!(n.whole, Some(12_000));
+    assert_eq!(reader.opens(&file), 2);
 }
