@@ -81,7 +81,7 @@ ed25519-dalek = "2"
 # glyph_cover.rs reads the literals of the source and the JIS X 0208 table (UI-005).
 encoding_rs = "0.8"
 proc-macro2 = { version = "1", features = ["span-locations"] }
-syn = { version = "2", features = ["full", "visit"] }
+syn = { version = "3", features = ["full", "visit"] }
 xirius-test-vst3 = { path = "../xirius-test-vst3" }
 
 # The tests read the version information back as Explorer does (LIC-022), and walk the
