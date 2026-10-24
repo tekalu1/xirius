@@ -1691,6 +1691,13 @@ fn mark(m: crate::a11y::Mark, studio: Rc<RefCell<Studio>>) -> gpui::Stateful<gpu
                 window.refresh();
             }
         });
+    } else if let Some(hit) = m.press {
+        el = el.on_a11y_action(gpui::accesskit::Action::Click, move |_, window, _| {
+            let g = geometry(&studio.borrow(), window);
+            if crate::a11y::press(&mut studio.borrow_mut(), &g, hit) {
+                window.refresh();
+            }
+        });
     }
     el
 }

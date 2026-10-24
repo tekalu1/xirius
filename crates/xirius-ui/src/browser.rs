@@ -1251,7 +1251,14 @@ const SCAN_STOP: &str = "中止";
 // -------------------------------------------------------------------- painting
 
 /// The rail and the panel, drawn into the rectangles the geometry settled.
-pub fn paint(pen: &mut Pen, browser: &Browser, hover: Option<BrowserHit>, rail: Rect, panel: Rect) {
+pub fn paint(
+    pen: &mut Pen,
+    browser: &Browser,
+    hover: Option<BrowserHit>,
+    rail: Rect,
+    panel: Rect,
+    motion: xirius_design::Motion,
+) {
     let c = pen.c;
     pen.round(rail, c.surface_2, Radius::M);
     for tab in RailTab::ALL {
@@ -1284,7 +1291,7 @@ pub fn paint(pen: &mut Pen, browser: &Browser, hover: Option<BrowserHit>, rail: 
     }
     pen.round(panel, c.surface_2, Radius::M);
     let l = browser.layout(panel);
-    pen.mask(panel, |pen| paint_panel(pen, browser, hover, &l));
+    pen.mask(panel, |pen| paint_panel(pen, browser, hover, &l, motion));
 }
 
 fn icon_box(r: Rect) -> Rect {
@@ -1296,7 +1303,13 @@ fn icon_box(r: Rect) -> Rect {
     )
 }
 
-fn paint_panel(pen: &mut Pen, browser: &Browser, hover: Option<BrowserHit>, l: &BrowserLayout) {
+fn paint_panel(
+    pen: &mut Pen,
+    browser: &Browser,
+    hover: Option<BrowserHit>,
+    l: &BrowserLayout,
+    motion: xirius_design::Motion,
+) {
     let c = pen.c;
     // The search box: a sunken well with the magnifier and the typed text.
     pen.round(l.search, c.well, Radius::S);
@@ -1427,7 +1440,7 @@ fn paint_panel(pen: &mut Pen, browser: &Browser, hover: Option<BrowserHit>, l: &
     pen.mask(l.list, |pen| {
         for (i, p) in l.rows.iter().enumerate().filter(|(_, p)| on_screen(p)) {
             let r = browser.row_rect(l, p);
-            paint_row(pen, browser, hover, i, p, r);
+            paint_row(pen, browser, hover, i, p, r, motion);
         }
     });
 }
@@ -1439,6 +1452,7 @@ fn paint_row(
     i: usize,
     p: &Placed,
     r: Rect,
+    motion: xirius_design::Motion,
 ) {
     let c = pen.c;
     let pad = Space::X2.px();
@@ -1629,12 +1643,14 @@ fn paint_row(
             let (play, wave) = browser.audition_parts(r, *depth);
             let hot = hover == Some(BrowserHit::Audition);
             pen.round(play, if hot { c.fill_hover } else { c.fill }, Radius::Pill);
-            pen.icon(
-                if *playing { "stop" } else { "play" },
+            crate::audition::paint_button(
+                pen,
+                key,
+                *playing,
                 Rect::new(play.x + 4.0, play.y + (play.h - 16.0) / 2.0, 16.0, 16.0),
-                c.on_fill,
+                browser.spin,
             );
-            crate::audition::paint_wave(pen, key, wave, *playing);
+            crate::audition::paint_wave(pen, key, wave, *playing, motion);
         }
         BRow::Note(text) => {
             pen.text(

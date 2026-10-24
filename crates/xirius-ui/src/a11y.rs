@@ -162,6 +162,8 @@ pub struct Mark {
     pub fold: Option<TrackId>,
     /// The track whose instrument a press on it picks (the strip's icon-only row, UI-305).
     pub pick: Option<TrackId>,
+    /// What a press on it presses, as the pointer would (the audition's button, BRW-023).
+    pub press: Option<crate::studio::Hit>,
 }
 
 fn bounds(r: Rect) -> accesskit::Rect {
@@ -202,6 +204,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                         node,
                         fold: None,
                         pick: None,
+                        press: None,
                     }
                 })
                 .collect();
@@ -225,6 +228,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                         node,
                         fold: None,
                         pick: None,
+                        press: None,
                     });
                 }
                 // 「一致する…はありません」 as a status (UI-320).
@@ -237,6 +241,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                         node,
                         fold: None,
                         pick: None,
+                        press: None,
                     });
                 }
                 None
@@ -275,12 +280,62 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 node,
                 fold: Some(t),
                 pick: None,
+                press: None,
             });
         }
     }
     out.extend(inspector_marks(s, g));
     out.extend(instrument_marks(s, g));
+    out.extend(audition_mark(s, g));
     out
+}
+
+/// The browser's audition button draws only a mark, so it is a Button named for what a press
+/// does: 「ファイルを試聴」, 「停止」 while the file plays, and 「読み込んでいます」 while nothing is
+/// heard yet (BRW-023). Its press is the pointer's.
+fn audition_mark(s: &Studio, g: &Geometry) -> Option<Mark> {
+    if !s.browser.open {
+        return None;
+    }
+    let l = s.browser.layout(g.panel);
+    let (r, playing, key) = l.rows.iter().find_map(|p| match &p.row {
+        crate::browser::BRow::Audition {
+            playing,
+            depth,
+            key,
+        } => Some((
+            s.browser
+                .audition_parts(s.browser.row_rect(&l, p), *depth)
+                .0,
+            *playing,
+            key.as_str(),
+        )),
+        _ => None,
+    })?;
+    let label = if !playing {
+        crate::audition::PLAY_LABEL
+    } else if crate::audition::waiting(key) {
+        crate::audition::READING
+    } else {
+        crate::audition::STOP_LABEL
+    };
+    let mut node = accesskit::Node::new(accesskit::Role::Button);
+    node.set_label(label);
+    node.set_bounds(bounds(r));
+    Some(Mark {
+        key: "audition".into(),
+        node,
+        fold: None,
+        pick: None,
+        press: Some(crate::studio::Hit::Browser(
+            crate::browser::BrowserHit::Audition,
+        )),
+    })
+}
+
+/// A screen reader's press on a mark that presses as the pointer does.
+pub fn press(s: &mut Studio, g: &Geometry, hit: crate::studio::Hit) -> bool {
+    s.press(g, hit)
 }
 
 /// The inspector's value fields, each a SpinButton named with its unit (「トランスポーズ +2
@@ -303,6 +358,7 @@ fn inspector_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 node,
                 fold: None,
                 pick: None,
+                press: None,
             }
         })
         .collect()
@@ -331,6 +387,7 @@ fn instrument_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 node,
                 fold: None,
                 pick: Some(strip.track),
+                press: None,
             })
         })
         .collect()

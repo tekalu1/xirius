@@ -1,4 +1,4 @@
-//! The audition of the file browser (BRW-007, BRW-020..BRW-022): the selected audio file plays
+//! The audition of the file browser (BRW-007, BRW-020..BRW-023): the selected audio file plays
 //! by itself, on a player of its own beside the song's, and its row shows the file's waveform
 //! with what has played lit.
 //!
@@ -7,27 +7,58 @@
 //! the file when it has played to the end. The player ([`xirius_session::audition`]) reads the
 //! file on threads of its own: the window's thread never opens it. The sound goes where the
 //! song's goes ([`crate::transport::Transport::mode`]): nowhere in a test.
+//!
+//! While the file is read, the row says so in itself (BRW-023): a row of dots stands for the
+//! waveform, the bars come in from the middle as their part of the file is read, and when
+//! nothing is heard after [`SPIN_AFTER`] a spinner turns round the stop square. With motion
+//! reduced the dots and the spinner stand still and the bars come in whole.
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use xirius_session::audition::{Audition, Now, Phase, Sink};
 use xirius_session::output::OutputMode;
-use xirius_session::peaks;
+use xirius_session::peaks::{self, Peaks};
 
 use crate::browser::{BRow, Browser};
 use crate::draw::Pen;
 use crate::studio::{Rect, Studio};
 
-/// The audio rows read ahead below and above the chosen one (BRW-021).
+/// What the stop button says while the file is read.
+pub const READING: &str = "読み込んでいます";
+/// What a screen reader calls the button when a press plays the file, and when it stops it.
+pub const PLAY_LABEL: &str = "ファイルを試聴";
+pub const STOP_LABEL: &str = "停止";
+/// How long a file asked for may be silent before the spinner says it is being read.
+pub const SPIN_AFTER: Duration = Duration::from_millis(150);
+/// How long a bar takes to grow to its height, and how much later each next one starts.
+const GROW: Duration = Duration::from_millis(180);
+const GROW_STEP: Duration = Duration::from_millis(4);
+/// One breath of the dots, and how much later each next dot breathes.
+const BREATHE_MS: f32 = 1200.0;
+const BREATHE_STEP_MS: f32 = 18.0;
+/// The audio rows read ahead below and above the chosen one (BRW-022).
 const BELOW: usize = 3;
 const ABOVE: usize = 1;
 
-/// What the window keeps of the audition: what it asked for.
+/// What the window keeps of the audition: what it asked for, and the bars of the row drawn.
 #[derive(Default)]
 struct Shown {
     /// The file the player was told to play.
     asked: Option<String>,
+    /// The file the row's bars are of, the press they are of, and their peaks (kept when it
+    /// stops, so the row still shows them).
+    key: Option<String>,
+    ask: u64,
+    peaks: Option<Arc<Peaks>>,
+    covered: u64,
+    whole: Option<u64>,
+    /// When each bar of the row came in, while it grows; by the bars there are room for.
+    appear: Vec<Option<Instant>>,
+    /// The bars drawn so far.
+    drawn: usize,
 }
 
 thread_local! {
@@ -70,6 +101,14 @@ pub(crate) fn polled(key: &str) -> Option<f32> {
 /// A file is being read or plays.
 pub fn is_playing() -> bool {
     current().is_some_and(|n| matches!(n.phase, Phase::Loading | Phase::Playing))
+}
+
+/// The file `key` has been asked for, and after [`SPIN_AFTER`] nothing is heard yet.
+pub fn waiting(key: &str) -> bool {
+    let n = current();
+    of(&n, key).is_some_and(|n| {
+        n.phase == Phase::Loading && n.asked.is_some_and(|t| t.elapsed() >= SPIN_AFTER)
+    })
 }
 
 /// Stops the sound; the player stays open for the next file.
@@ -154,7 +193,6 @@ impl Studio {
             self.transport.stop_preview();
         }
     }
-
     /// Hands the player the file the browser says, stops it, and takes in what it says of the
     /// file: that it ended, or could not be read. True when the browser's row should be drawn
     /// again.
@@ -248,19 +286,21 @@ impl Studio {
         true
     }
 
-    /// Once a frame: follows the audition, and true while the file is read, so frames keep
-    /// coming.
+    /// Once a frame: follows the audition, and true while its row moves (the file is read, or
+    /// its bars grow), so frames keep coming.
     pub(crate) fn audition_frame(&mut self) -> bool {
         let before = self.browser.playing.clone();
         self.follow_audition();
         let n = current();
-        let reading = self
-            .browser
-            .playing
-            .as_deref()
-            .and_then(|k| of(&n, k))
-            .is_some_and(|n| n.phase == Phase::Loading);
-        before != self.browser.playing || reading
+        let key = self.browser.playing.as_deref();
+        let now = key.and_then(|k| of(&n, k));
+        let reading = now.is_some_and(|n| n.phase == Phase::Loading);
+        if reading {
+            self.browser.spin = self.spin();
+        }
+        let at = Instant::now();
+        let growing = SHOWN.with(|s| s.borrow().appear.iter().flatten().any(|t| at < *t + GROW));
+        before != self.browser.playing || reading || growing
     }
 
     /// Has the player read the audio rows next to `key` ahead: [`BELOW`] under it and
@@ -317,39 +357,164 @@ pub fn drawn(key: &str) -> bool {
     of(&n, key).is_some_and(|n| n.complete(Path::new(key)))
 }
 
-/// The waveform of the audition row: bars from the file's peaks once it is read, those played
-/// lit, and a line until then.
-pub fn paint_wave(pen: &mut Pen, key: &str, r: Rect, playing: bool) {
+impl Shown {
+    /// Takes in what the player says of `key`, for a row with room for `bars` bars, and gives
+    /// how many of them have their part of the file read.
+    fn take(&mut self, key: &str, now: Option<&Now>, bars: usize, at: Instant) -> usize {
+        // Another file, or the same one pressed again, starts over: no bars of an earlier
+        // press stay in the row.
+        let ask = now.map_or(self.ask, |n| n.ask);
+        if self.key.as_deref() != Some(key) || ask != self.ask {
+            *self = Shown {
+                asked: self.asked.take(),
+                key: Some(key.to_string()),
+                ask,
+                ..Shown::default()
+            };
+        }
+        if self.appear.len() != bars {
+            self.appear = vec![None; bars];
+            self.drawn = self.count(bars);
+        }
+        if let Some(n) = now
+            && let Some(p) = &n.peaks
+            && !self.peaks.as_ref().is_some_and(|q| Arc::ptr_eq(p, q))
+        {
+            let first = self.peaks.is_none();
+            self.peaks = Some(p.clone());
+            self.covered = n.covered;
+            self.whole = n.whole;
+            let shown = self.count(bars);
+            // Bars from what was kept come in whole, without an appearance animation.
+            let whole = first && n.complete(Path::new(key));
+            for (j, i) in (self.drawn.min(shown)..shown).enumerate() {
+                self.appear[i] = (!whole).then(|| at + GROW_STEP * j as u32);
+            }
+            self.drawn = shown;
+        }
+        self.count(bars)
+    }
+
+    fn count(&self, bars: usize) -> usize {
+        match (self.peaks.as_ref(), self.whole) {
+            (Some(_), Some(w)) if w > 0 => {
+                ((bars as f64 * self.covered as f64 / w as f64).floor() as usize).min(bars)
+            }
+            _ => 0,
+        }
+    }
+}
+
+/// How far a bar that came in at `appear` has grown at `at`: its height and its opacity.
+fn grown(appear: Option<Instant>, at: Instant, motion: xirius_design::Motion) -> (f32, f32) {
+    if motion.reduced {
+        return (1.0, 1.0);
+    }
+    let Some(t) = appear else {
+        return (1.0, 1.0);
+    };
+    let x = if at <= t {
+        0.0
+    } else {
+        ((at - t).as_secs_f32() / GROW.as_secs_f32()).min(1.0)
+    };
+    let e = 1.0 - (1.0 - x) * (1.0 - x);
+    (0.12 + 0.88 * e, 0.35 + 0.65 * e)
+}
+
+/// The opacity of dot `i` at `ms`: a slow wave of light running left to right.
+fn breath(i: usize, ms: u64, motion: xirius_design::Motion) -> f32 {
+    let ms = if motion.reduced {
+        0.0
+    } else {
+        (ms % BREATHE_MS as u64) as f32
+    };
+    let x = ((ms - i as f32 * BREATHE_STEP_MS).rem_euclid(BREATHE_MS)) / BREATHE_MS;
+    let ease = |t: f32| t * t * (3.0 - 2.0 * t);
+    let up = if x < 0.4 {
+        ease(x / 0.4)
+    } else {
+        1.0 - ease((x - 0.4) / 0.6)
+    };
+    xirius_design::WaveColor::DOT_MIN
+        + (xirius_design::WaveColor::DOT_MAX - xirius_design::WaveColor::DOT_MIN) * up
+}
+
+/// The play button's mark: play, stop, or, while nothing is heard yet, a smaller stop square
+/// with the spinner turning round it (pressing it still stops).
+pub fn paint_button(pen: &mut Pen, key: &str, playing: bool, r: Rect, turn: f32) {
+    let ink = pen.c.on_fill;
+    if playing && waiting(key) {
+        // On the 24 grid of the icons the stop square is 12 wide; inside the spinner's arc it
+        // is 7, so the stop mark is drawn at 7/12 of the box, round the same middle.
+        let w = r.w * 7.0 / 12.0;
+        pen.icon(
+            "stop",
+            Rect::new(r.x + (r.w - w) / 2.0, r.y + (r.h - w) / 2.0, w, w),
+            ink,
+        );
+        pen.icon_turned("spinner", r, ink, turn);
+        return;
+    }
+    pen.icon(if playing { "stop" } else { "play" }, r, ink);
+}
+
+/// The waveform of the audition row: bars from the file's peaks, those played lit, and dots
+/// where the file is not read yet, breathing while it is read.
+pub fn paint_wave(pen: &mut Pen, key: &str, r: Rect, playing: bool, motion: xirius_design::Motion) {
+    let bars = (r.w / 3.0).floor() as usize;
+    if bars == 0 {
+        return;
+    }
+    let at = Instant::now();
+    let now = current();
+    let now = of(&now, key);
+    let reading = playing && now.is_some_and(|n| n.phase == Phase::Loading);
+    let (shown, peaks, whole, appear) = SHOWN.with(|s| {
+        let mut s = s.borrow_mut();
+        let shown = s.take(key, now, bars, at);
+        (shown, s.peaks.clone(), s.whole, s.appear.clone())
+    });
+    let lit = if playing {
+        now.filter(|n| n.phase != Phase::Loading)
+            .map_or(0.0, |n| n.played)
+    } else {
+        0.0
+    };
     let ink = pen.c.wave_preview;
     let rest = pen.c.wave_rest;
     let mid = r.y + r.h / 2.0;
-    let now = current();
-    let Some((peaks, played)) = of(&now, key)
-        .filter(|n| n.complete(Path::new(key)))
-        .and_then(|n| Some((n.peaks.clone()?, n.played)))
-    else {
-        pen.fill(Rect::new(r.x, mid, r.w, 1.0), rest);
-        return;
-    };
-    let n = (r.w / 3.0).floor() as usize;
-    if n == 0 {
-        return;
-    }
-    let lit = if playing { played } else { 0.0 };
-    let per = peaks.frames as f64 / n as f64;
-    let level = peaks.level_for(per);
     let half = r.h / 2.0;
-    for i in 0..n {
-        let p = peaks
-            .reduce(level, i as f64 * per, (i + 1) as f64 * per)
-            .unwrap_or_default();
-        let top = mid - f32::from(p.max) / 127.0 * half;
-        let bottom = mid - f32::from(p.min) / 127.0 * half;
-        let h = (bottom - top).max(2.0);
-        let on = (i as f32 + 0.5) / n as f32 <= lit;
+    let ms = xirius_core::store::now_ms();
+    let per = whole.unwrap_or(0) as f64 / bars as f64;
+    let level = peaks.as_ref().map_or(0, |p| p.level_for(per));
+    for (i, appear) in appear.iter().enumerate().take(bars) {
+        let x = r.x + i as f32 * 3.0;
+        if let Some(p) = peaks.as_ref().filter(|_| i < shown) {
+            let p = p
+                .reduce(level, i as f64 * per, (i + 1) as f64 * per)
+                .unwrap_or_default();
+            let top = mid - f32::from(p.max) / 127.0 * half;
+            let bottom = mid - f32::from(p.min) / 127.0 * half;
+            let (scale, alpha) = grown(*appear, at, motion);
+            let h = (bottom - top).max(2.0) * scale;
+            let on = (i as f32 + 0.5) / bars as f32 <= lit;
+            let color = if on { ink } else { rest };
+            pen.round(
+                Rect::new(x, (top + bottom - h) / 2.0, 2.0, h),
+                color.opacity(color.a * alpha),
+                xirius_design::Radius::Xs,
+            );
+            continue;
+        }
+        let alpha = if reading {
+            breath(i, ms, motion)
+        } else {
+            xirius_design::WaveColor::DOT_REST
+        };
         pen.round(
-            Rect::new(r.x + i as f32 * 3.0, (top + bottom - h) / 2.0, 2.0, h),
-            if on { ink } else { rest },
+            Rect::new(x, mid - 1.0, 2.0, 2.0),
+            rest.opacity(rest.a * alpha),
             xirius_design::Radius::Xs,
         );
     }

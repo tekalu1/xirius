@@ -41,6 +41,8 @@ macro_rules! palette_tokens {
             // ---- 文字（ink）。`ink-weak` に当たるものは作らない ----
             ink_strong: c(0xf4f6ff), c(0x0f1330);
             ink_body: c(0xdfe3f2), c(0x1c2247);
+            /// 試聴の未再生の棒と点。点の最小不透明度 60% でも選択の面と 3:1 以上。
+            wave_rest: c(0xdfe3f2), c(0x101637);
             ink_blue: c(0x9eabde), c(0x3a499e);
             ink_mark: c(0xe07ab8), c(0xaa2678);
             ink_alert: c(0xff7a70), c(0xa92a22);

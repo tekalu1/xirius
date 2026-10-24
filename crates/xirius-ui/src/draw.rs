@@ -459,7 +459,14 @@ pub fn paint_body(pen: &mut Pen, studio: &Studio, w: f32, h: f32) {
     } else {
         None
     };
-    crate::browser::paint(pen, &studio.browser, hover, g.rail, g.panel);
+    crate::browser::paint(
+        pen,
+        &studio.browser,
+        hover,
+        g.rail,
+        g.panel,
+        studio.ai.motion,
+    );
     if studio.inspector_open() {
         let hover = if let Hit::Inspector(h) = studio.hover {
             Some(h)
