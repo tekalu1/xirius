@@ -8221,12 +8221,53 @@ done_when = "project.cleanup は、録音のフォルダー（Recordings）が�
 status = "done"
 
 [[item]]
+id = "PRJ-028"
+title = "キャンセル可能な曲の読み込みと Session の受け渡し"
+area = "PRJ"
+phase = "v1.1"
+source = "hang-open-song.md § 5 B ; hang-open-song.md § 5 C ; hang-open-song.md § 5 D"
+after = ["REC-026"]
+done_when = "通常曲・同一曲・版の読込と Session 作成・writer 待ち・候補と旧 Session の破棄が worker で行われ、読込数と現在名を通知し、中止・失敗時に元の履歴と lane を保って返せることを I/O ゲートとスレッド計測で確かめる"
+note = "全入口の非同期化と中止 UI は PRJ-029。画面はこの段では変えない。"
+
+[[item]]
+id = "PRJ-029"
+title = "全入口の非同期読み込みと中止 UI を揃える"
+area = "PRJ"
+phase = "v1.1"
+source = "hang-open-song.md § 5 B ; hang-open-song.md § 5 C ; hang-open-song.md § 5 D"
+after = ["PRJ-028"]
+done_when = "ファイル・最近・新規・サンプル・DAWproject・起動・画面コマンドと接続 MCP が同じ要求窓口を使い、200 ms 後の Block の件数/現在名・Esc/中止・閉じる確認・古い結果の無効化が働き、独立 CLI の同期完了と UI 台本の非同期待ちを回帰試験で確かめる"
+note = "既存 wait カードに件数と現在名の詳細行を追加する。モック承認後に実装する。中止後は旧 Session 返却まで「中止しています」とする。"
+
+[[item]]
+id = "PRJ-030"
+title = "全トラックの音を裏で準備し編集と両立させる"
+area = "PRJ"
+phase = "v1.1"
+source = "hang-open-song.md § 5 B ; hang-open-song.md § 5 C ; hang-open-song.md § 5 D"
+after = ["PRJ-029"]
+done_when = "プラグインの無い音声曲も含め units 単位で素材 decode/変換/prime/プラグイン/graph を worker で準備し、Line と進行トースト/詳細カードで示し、編集・保存・次曲へ移れて、未準備の再生/REC/書出しは開始せず通知し、revision 違いの結果と RT 上の I/O/確保/ロック/破棄を採用しないことを試験で確かめる"
+note = "2026-10-24 決定: 普段は Line と進行トースト、詳細だけ既存カード。「後で読む」は詳細を閉じるだけで裏の準備は続く。docs/ui-approved.md の ENG-064（全部開いてから編集・必要時にその場で開く・裏読みを採らない）と食い違うため、同文書は PRJ-030 の実装時にモック承認と合わせて更新する。型のスレッド制約と出力所有者を先に点検する。"
+
+[[item]]
+id = "PRJ-031"
+title = "遅い置き場の全経路の応答と回数を保証する"
+area = "PRJ"
+phase = "v1.1"
+source = "hang-open-song.md § 5 B ; hang-open-song.md § 5 C ; hang-open-song.md § 5 D"
+after = ["PRJ-029", "PRJ-030", "BRW-019"]
+done_when = "読込/準備/描画/最小化/中止/終了/同一曲再読/外部変更取り込みを操作別ゲートで止めても UI Ack が返り、UI の対象 I/O が 0 回・固定 fixture の読込予算を満たし、REC-026 の片付けと CLI/撮影台本/録音が退行しないことを時間依存しない試験で確かめる"
+note = "統合試験だけでなく付随 I/O の残りも直す。外部変更は UI-289 の再生継続を保つ非同期読み込みとする。各段の試験をこの段まで先送りしない。"
+
+[[item]]
 id = "PRJ-027"
 title = "曲を開く重い処理を UI のスレッドから外し、開いている間は進み具合と取り消しを見せる"
 area = "PRJ"
 phase = "v1.1"
 source = "hang-open-song.md § 5 B ; hang-open-song.md § 5 C ; hang-open-song.md § 5 D"
-after = ["REC-026"]
+after = ["REC-026", "PRJ-031"]
+note = "PRJ-028〜PRJ-031 の総括。読み込み開始時に旧曲を停止し、失敗・中止後も停止したまま保持する。中止は即受理し、旧 Session 返却まで中止中とする。読み込み中の別曲要求は拒否、準備中は受理。DAWproject も Block・中止・旧曲保持に統一。未準備の再生・REC・書き出しは通知して開始せず、完了後に再操作する。ブラウザーと波形は BRW-019、画面全体の応答保証は PRJ-031。"
 done_when = "曲を開くとき、project.open のファイルの読み込み（index・状態・project.json・blob を読み、確かめ、lock を取る）と Session の作成を裏のスレッドでし、出来たら UI のスレッドで差し替える（DAWproject の読み込み dawproject_ui.rs の形: 裏で読み、mpsc で返し、Arc<AtomicU64> で進み具合を渡し、フレームごとに受け取る）。読んでいる間は wait::Kind::Block の幕（200 ms 後。読んだファイルの数と今読んでいるファイル名）を出し、Esc か「中止」で裏の Session を捨てて元の曲に戻る。窓を動かす・大きさを変える・最小化はでき、元の曲の編集・再生・ほかの曲を開く・保存はできない。窓を閉じるときは「中止して閉じますか」と聞く。開いた後の再生の準備（wav の読み込みと変換）は、プラグインの無い曲でも prepare_card.rs のカード（Progress::units・「後で読む」）の単位でトラックごとに裏で進め、その間は wait::Kind::Line と進み具合のトーストを出す。準備の間も新しい曲を見る・編集する・保存する・ほかの曲を開く（準備を止める）はでき、再生・録音・書き出しは「音を準備しています」と出して待つ。1 ファイルに数秒かかる置き場を試験で作り、開く・準備の間も窓が「応答なし」にならないことを確かめる"
 
 [[item]]
