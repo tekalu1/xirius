@@ -1,6 +1,7 @@
 //! Xirius audio engine: a mixer graph run on a real-time thread, device output and plugin hosting.
 
 pub mod anticipation;
+pub mod audition;
 pub mod automation_time;
 pub mod builtin;
 pub mod clap_plugin;

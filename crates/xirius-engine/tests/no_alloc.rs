@@ -579,3 +579,75 @@ fn split_branches_and_their_values_do_not_allocate() {
     assert_eq!(violation_count(), 0);
     assert!(out.iter().any(|s| *s != 0.0));
 }
+
+/// The browser's audition (BRW-020): one file after another on the kept plan, each played to
+/// the end it stops at by itself, cut short by the next, or stopped.
+#[test]
+fn the_audition_cueing_files_and_ending_them_does_not_allocate() {
+    use xirius_engine::audition;
+    let setup = ProcessSetup {
+        sample_rate: f64::from(audition::RATE),
+        max_block: audition::MAX_BLOCK,
+        mode: RenderMode::Realtime,
+    };
+    let (mut audio, mut control) =
+        engine::create(audition::plan(setup).unwrap(), EngineConfig::default());
+    let file = |n: usize, v: f32| {
+        Arc::new(AudioData {
+            left: vec![v; n],
+            right: vec![-v; n],
+        })
+    };
+    let mut out = vec![0.0f32; 1000 * 2];
+    let mut ended = 0;
+    reset_violation_count();
+    for i in 0..300u32 {
+        match i % 30 {
+            0 => assert!(audition::cue(&mut control, file(2_500, 0.3), u64::from(i))),
+            12 => assert!(audition::cue(&mut control, file(40_000, 0.2), u64::from(i))),
+            20 => assert!(audition::halt(&mut control)),
+            _ => {}
+        }
+        audio.render(&mut out, 2);
+        control.poll(|ev| {
+            if let xirius_engine::EngineEvent::Transport { playing: false, .. } = ev {
+                ended += 1;
+            }
+        });
+    }
+    assert_eq!(violation_count(), 0);
+    assert_eq!(audio.leaked_plans(), 0);
+    assert!(ended > 0, "the short file stopped by itself");
+    assert!(!audio.is_playing());
+}
+
+#[test]
+fn preview_bus_switch_stop_and_underrun_do_not_allocate() {
+    let setup = ProcessSetup {
+        sample_rate: 48_000.0,
+        max_block: 256,
+        mode: RenderMode::Realtime,
+    };
+    let (mut audio, control) = engine::create(
+        xirius_engine::audition::plan(setup).unwrap(),
+        EngineConfig::default(),
+    );
+    let port = control.audition();
+    let mut out = [0.0; 512];
+    let samples = [0.25; 8192];
+    reset_violation_count();
+    for serial in 1..20 {
+        port.start(serial);
+        port.feed(serial, &samples, &samples);
+        audio.render(&mut out, 2);
+        assert!(
+            out.iter().any(|x| *x > 0.0),
+            "stopped transport still previews"
+        );
+        port.stop();
+        audio.render(&mut out, 2);
+        assert!(out.iter().all(|x| *x == 0.0), "queued old sound is stopped");
+        audio.render(&mut out, 2);
+    }
+    assert_eq!(violation_count(), 0);
+}

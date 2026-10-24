@@ -1596,6 +1596,8 @@ impl Studio {
                     }
                     BrowserEffect::None => {}
                 }
+                // A file chosen to play is handed to the audition now, not at the next look.
+                self.follow_audition();
                 let l = self.browser.layout(g.panel);
                 self.browser.clamp_scroll(&l);
                 true

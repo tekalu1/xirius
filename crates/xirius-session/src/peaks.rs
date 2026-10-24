@@ -31,6 +31,19 @@ pub struct Peak {
 }
 
 impl Peak {
+    /// The peak of one run of samples of both channels: a run of level 0 is [`BASE`] frames.
+    pub fn of(left: &[f32], right: &[f32]) -> Peak {
+        let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+        for v in left.iter().chain(right) {
+            lo = lo.min(*v);
+            hi = hi.max(*v);
+        }
+        Peak {
+            min: quantise(lo),
+            max: quantise(hi),
+        }
+    }
+
     fn merge(self, o: Peak) -> Peak {
         Peak {
             min: self.min.min(o.min),
@@ -60,18 +73,14 @@ impl Peaks {
         let base: Vec<Peak> = left
             .chunks(BASE as usize)
             .zip(right.chunks(BASE as usize))
-            .map(|(l, r)| {
-                let (mut lo, mut hi) = (f32::MAX, f32::MIN);
-                for v in l.iter().chain(r) {
-                    lo = lo.min(*v);
-                    hi = hi.max(*v);
-                }
-                Peak {
-                    min: quantise(lo),
-                    max: quantise(hi),
-                }
-            })
+            .map(|(l, r)| Peak::of(l, r))
             .collect();
+        Peaks::from_base(rate, left.len() as u64, base)
+    }
+
+    /// The peaks of `frames` frames whose level 0 is `base`: the levels after it are merged
+    /// from it. A file read bit by bit adds to `base` and makes the rest again.
+    pub fn from_base(rate: u32, frames: u64, base: Vec<Peak>) -> Peaks {
         let mut levels = vec![base];
         while levels.last().is_some_and(|l| l.len() > 1) {
             let next = levels
@@ -84,7 +93,7 @@ impl Peaks {
         }
         Peaks {
             rate,
-            frames: left.len() as u64,
+            frames,
             levels,
         }
     }
@@ -196,14 +205,42 @@ fn hash(bytes: &[u8]) -> u64 {
     })
 }
 
+/// The size of a file and when it was last written, in ns from 1970: what tells one version
+/// of a file from the next.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Stamp {
+    pub size: u64,
+    pub time: u128,
+}
+
+impl Stamp {
+    /// The stamp of `source` now; zero for a file that is not there.
+    pub fn of(source: &Path) -> Stamp {
+        std::fs::metadata(source)
+            .map(|m| Stamp::from_meta(&m))
+            .unwrap_or_default()
+    }
+
+    pub fn from_meta(meta: &std::fs::Metadata) -> Stamp {
+        Stamp {
+            size: meta.len(),
+            time: meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos()),
+        }
+    }
+}
+
 /// The peak file of `source` in `store`: its name, then a hash of its path, size and time.
 pub fn file_for(source: &Path, store: &Path) -> PathBuf {
-    let meta = std::fs::metadata(source).ok();
-    let size = meta.as_ref().map_or(0, std::fs::Metadata::len);
-    let time = meta
-        .and_then(|m| m.modified().ok())
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_nanos());
+    file_stamped(source, store, Stamp::of(source))
+}
+
+/// [`file_for`] with the stamp the caller has read, so the file is not looked at again.
+pub fn file_stamped(source: &Path, store: &Path, stamp: Stamp) -> PathBuf {
+    let Stamp { size, time } = stamp;
     let key = format!(
         "{}|{size}|{time}",
         source.to_string_lossy().replace('\\', "/").to_lowercase()
@@ -227,7 +264,12 @@ pub fn file_for(source: &Path, store: &Path) -> PathBuf {
 
 /// The peaks kept for `source` in `store`, if they are there and readable.
 pub fn load(source: &Path, store: &Path) -> Option<Peaks> {
-    Peaks::from_bytes(&std::fs::read(file_for(source, store)).ok()?)
+    load_stamped(source, store, Stamp::of(source))
+}
+
+/// [`load`] for the version of `source` that `stamp` says.
+pub fn load_stamped(source: &Path, store: &Path, stamp: Stamp) -> Option<Peaks> {
+    Peaks::from_bytes(&std::fs::read(file_stamped(source, store, stamp)).ok()?)
 }
 
 /// Reads `source` and makes its peaks.
@@ -242,7 +284,13 @@ pub fn ensure(source: &Path, store: &Path) -> Result<Peaks, String> {
         return Ok(p);
     }
     let peaks = build(source)?;
-    let path = file_for(source, store);
+    keep(source, store, Stamp::of(source), &peaks)?;
+    Ok(peaks)
+}
+
+/// Keeps `peaks`, made from the version of `source` that `stamp` says, in `store`.
+pub fn keep(source: &Path, store: &Path, stamp: Stamp, peaks: &Peaks) -> Result<(), String> {
+    let path = file_stamped(source, store, stamp);
     std::fs::create_dir_all(store).map_err(|e| format!("{} を作れません: {e}", store.display()))?;
     // Written beside it and renamed, so a half-written file is never read.
     let tmp = path.with_extension("xpk.part");
@@ -252,8 +300,7 @@ pub fn ensure(source: &Path, store: &Path) -> Result<Peaks, String> {
         .and_then(|()| f.sync_all())
         .map_err(|e| format!("{} に書けません: {e}", tmp.display()))?;
     drop(f);
-    std::fs::rename(&tmp, &path).map_err(|e| format!("{} に書けません: {e}", path.display()))?;
-    Ok(peaks)
+    std::fs::rename(&tmp, &path).map_err(|e| format!("{} に書けません: {e}", path.display()))
 }
 
 // ---- in the background -------------------------------------------------------------------

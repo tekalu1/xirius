@@ -2269,5 +2269,5 @@ pub fn run(opts: Options) {
         });
     // A file still auditioned is let go while its threads run: left to the end of the process,
     // its output would wait for a thread the OS has already ended, and the exit would abort.
-    crate::audition::stop();
+    crate::audition::close();
 }

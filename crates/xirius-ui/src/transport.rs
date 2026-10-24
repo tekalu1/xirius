@@ -106,7 +106,11 @@ pub struct Take {
     pub keep: Option<(Tick, Option<Tick>)>,
 }
 
+const PREVIEW_CLOSING: &str = "試聴の出力を閉じています";
+
 pub struct Transport {
+    pending_output: Option<(bool, Tick)>,
+    pending_record: bool,
     pub(crate) auditioning_export: bool,
     pub loss: crate::record_loss::Loss,
     /// Where the sound goes. [`OutputMode::None`] refuses to play.
@@ -170,6 +174,8 @@ pub struct Transport {
 impl Transport {
     pub fn new(mode: OutputMode) -> Transport {
         Transport {
+            pending_output: None,
+            pending_record: false,
             auditioning_export: false,
             loss: Default::default(),
             mode,
@@ -201,6 +207,53 @@ impl Transport {
             starting: None,
             not_ready: Vec::new(),
             input_down: None,
+        }
+    }
+
+    pub(crate) fn stop_preview(&mut self) {
+        if let Some(p) = &mut self.player {
+            p.host.controller().audition().stop();
+        }
+        if crate::audition::is_playing() {
+            crate::audition::invalidate();
+        }
+    }
+
+    fn forget_player(&mut self) {
+        self.stop_preview();
+        self.player = None;
+    }
+
+    fn cancel_pending_start(&mut self) {
+        self.pending_record = false;
+        if let Some((play, _)) = &mut self.pending_output {
+            *play = false;
+        }
+    }
+
+    fn finish_pending_output(
+        &mut self,
+        p: &Project,
+        dir: Option<PathBuf>,
+    ) -> Option<Result<bool, String>> {
+        let (play, at) = self.pending_output.take()?;
+        if !crate::audition::halt_ready() || (play && !crate::audition::release_output_ready()) {
+            self.pending_output = Some((play, at));
+            return Some(Ok(false));
+        }
+        match self.ensure(p, dir.clone()).map(|_| ()) {
+            Err(e) if e == PREVIEW_CLOSING => {
+                self.pending_output = Some((play, at));
+                Some(Ok(false))
+            }
+            Err(e) => Some(Err(e)),
+            Ok(()) => {
+                if play {
+                    Some(self.play(p, dir, at).map(|_| true))
+                } else {
+                    Some(Ok(true))
+                }
+            }
         }
     }
 
@@ -246,6 +299,13 @@ impl Transport {
             return None;
         }
         if !s.step() {
+            return Some(StartStep::Going(s.progress()));
+        }
+        if self.mode == OutputMode::Device
+            && self.io_prefs.text("audio.driver") == "wasapi-exclusive"
+            && !crate::audition::release_output_ready()
+        {
+            self.pending_output.get_or_insert((false, self.parked));
             return Some(StartStep::Going(s.progress()));
         }
         let began = Instant::now() - s.elapsed();
@@ -323,6 +383,10 @@ impl Transport {
         self.output_pair = pair;
     }
 
+    pub(crate) fn audition_port(&mut self) -> Option<xirius_engine::audition::bus::Port> {
+        self.player.as_mut().map(|p| p.host.controller().audition())
+    }
+
     pub fn is_live(&self) -> bool {
         self.player.is_some()
     }
@@ -344,6 +408,7 @@ impl Transport {
         }
         self.io_prefs = prefs;
         if changed {
+            self.stop_preview();
             self.watch_tried = None;
             self.io_levels.clear();
             for d in [&mut self.down, &mut self.input_down].into_iter().flatten() {
@@ -355,11 +420,17 @@ impl Transport {
         }
         let at = self.tick_now().unwrap_or(self.from);
         let playing = self.playing;
-        self.player = None;
+        self.forget_player();
         self.playing = false;
         self.watch_tried = None;
         self.io_levels.clear();
-        self.ensure(p, dir.clone())?;
+        if let Err(e) = self.ensure(p, dir.clone()) {
+            if e == PREVIEW_CLOSING {
+                self.pending_output = Some((playing, at));
+                return Ok(());
+            }
+            return Err(e);
+        }
         if playing {
             self.play(p, dir, at)?;
         }
@@ -389,9 +460,16 @@ impl Transport {
             return Err("書き出した音を試聴中です".into());
         }
         if self.player.as_ref().is_some_and(|pl| pl.dir != dir) {
-            self.player = None;
+            self.forget_player();
         }
         if self.player.is_none() {
+            if self.mode == OutputMode::Device
+                && self.io_prefs.text("audio.driver") == "wasapi-exclusive"
+                && !crate::audition::release_output_ready()
+            {
+                self.pending_output.get_or_insert((false, self.parked));
+                return Err(PREVIEW_CLOSING.into());
+            }
             let at = self.parked;
             if self.mode == OutputMode::None {
                 return Err("オーディオ出力がありません".into());
@@ -452,13 +530,31 @@ impl Transport {
     /// Whether the player's device stopped by itself; then the player goes (the position
     /// stays where it was) and what the screen says is given. A recording keeps its player
     /// until its takes are in: the caller finishes it first.
+    #[cfg(test)]
+    pub(crate) fn review_lose_output(&mut self) {
+        if let Some(Player {
+            out: Output::Silent(out),
+            ..
+        }) = &self.player
+        {
+            out.lost().set("test output lost".into());
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn review_reopen_now(&mut self) {
+        if let Some(d) = &mut self.down {
+            d.due = Instant::now();
+        }
+    }
+
     pub fn take_lost(&mut self) -> Option<String> {
         if self.take.is_some() {
             return None;
         }
         let why = self.player.as_ref()?.out.lost()?;
         let said = unavailable(&why);
-        self.player = None;
+        self.forget_player();
         self.playing = false;
         self.recording = false;
         self.expect = None;
@@ -534,6 +630,9 @@ impl Transport {
             return None;
         }
         let opened = self.ensure(p, dir).map(|_| ());
+        if opened.as_ref().is_err_and(|e| e == PREVIEW_CLOSING) {
+            return None;
+        }
         if opened.is_ok() {
             self.watch_tried = None;
         }
@@ -550,7 +649,25 @@ impl Transport {
 
     /// Plays from `at`.
     pub fn play(&mut self, p: &Project, dir: Option<PathBuf>, at: Tick) -> Result<(), String> {
-        let player = self.ensure(p, dir)?;
+        if crate::audition::is_playing() {
+            self.stop_preview();
+        }
+        if let Some(p) = &mut self.player {
+            p.host.controller().audition().stop();
+        }
+        if !crate::audition::halt_ready() || !crate::audition::release_output_ready() {
+            self.pending_output = Some((true, at));
+            return Ok(());
+        }
+        match self.ensure(p, dir).map(|_| ()) {
+            Err(e) if e == PREVIEW_CLOSING => {
+                self.pending_output = Some((true, at));
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+            Ok(()) => {}
+        }
+        let player = self.player.as_mut().expect("ensured above");
         let host = &mut player.host;
         let frame = host.tempo_map().frame_at(at, f64::from(host.rate()));
         if !(host.seek_frame(frame) && host.play()) {
@@ -588,13 +705,15 @@ impl Transport {
 
     pub(crate) fn suspend_for_export(&mut self) {
         self.pause();
-        self.player = None;
+        self.pending_output = None;
+        self.forget_player();
         self.watch_tried = None;
         self.auditioning_export = true;
     }
 
     /// Stops where it is.
     pub fn pause(&mut self) {
+        self.cancel_pending_start();
         self.playing = false;
         self.recording = false;
         self.pre_count = None;
@@ -643,6 +762,12 @@ impl Transport {
         midi: bool,
         count_in_bars: u32,
     ) -> Result<Vec<String>, String> {
+        if crate::audition::is_playing() {
+            self.stop_preview();
+        }
+        if !crate::audition::halt_ready() || !crate::audition::release_output_ready() {
+            return Err(PREVIEW_CLOSING.into());
+        }
         let mode = self.mode;
         let prefs = self.io_prefs.clone();
         let midimap = self.midimap.clone();
@@ -725,6 +850,16 @@ impl Transport {
             self.input_down = None;
         }
         Ok(warnings)
+    }
+
+    /// How the sound device is opened, for another player that opens it too (the audition's).
+    pub fn drivers(&self) -> &Drivers {
+        &self.drivers
+    }
+
+    /// The pair of the device's outputs the song plays on, for the audition to play on too.
+    pub fn output_pair(&self) -> [usize; 2] {
+        self.output_pair
     }
 
     /// The player's session, while one runs.
@@ -832,8 +967,10 @@ impl Transport {
 
     /// Lets the player go (another song was opened).
     pub fn reset(&mut self) {
+        self.pending_output = None;
+        self.pending_record = false;
         self.auditioning_export = false;
-        self.player = None;
+        self.forget_player();
         self.starting = None;
         self.loss = Default::default();
         self.playing = false;
@@ -1032,6 +1169,7 @@ impl Studio {
             self.transport.pause();
             return true;
         }
+        self.stop_browser_audition();
         let p = self.project();
         let at = self.playhead;
         if let Err(e) = self.transport.play(&p, self.song.dir(), at) {
@@ -1043,6 +1181,7 @@ impl Studio {
     /// Playing: stops and goes back to where play started. Stopped: goes to
     /// the start of the song.
     pub fn stop_transport(&mut self) -> bool {
+        self.transport.cancel_pending_start();
         if self.transport.take.is_some() {
             self.finish_take();
             let from = self.transport.from;
@@ -1098,6 +1237,14 @@ impl Studio {
             self.error = Some("オーディオを録音するには曲の保存が必要です".into());
             return true;
         }
+        if self.browser.playing.is_some() || crate::audition::is_playing() {
+            self.stop_browser_audition();
+        }
+        if !crate::audition::halt_ready() || !crate::audition::release_output_ready() {
+            self.transport.pending_record = true;
+            return true;
+        }
+        self.transport.pending_record = false;
         let at = self.playhead;
         let midi = !midi.is_empty();
         let plan = self.record_plan(&p, at);
@@ -1341,6 +1488,7 @@ impl Studio {
         let inputs = self.watch_inputs();
         let scan = self.poll_plugin_scan();
         let loading = self.poll_loading();
+        let audition = self.audition_frame();
         let export = self.poll_export();
         let job =
             self.poll_job() | self.poll_processed() | self.poll_dawproject() | self.poll_tidy();
@@ -1373,6 +1521,7 @@ impl Studio {
             || inputs
             || scan
             || loading
+            || audition
             || export
             || job
             || toast
@@ -1392,10 +1541,26 @@ impl Studio {
     /// it is opened again every [`REOPEN`], and the screen says when it opened. Playing does
     /// not start again by itself. Gives true when something on screen changed.
     pub fn poll_device(&mut self) -> bool {
-        self.poll_output_device() | self.poll_input_device()
+        let mut changed = false;
+        if self.transport.pending_record && crate::audition::halt_ready() {
+            changed = self.toggle_record();
+        }
+        self.poll_output_device() | self.poll_input_device() | changed
     }
 
     fn poll_output_device(&mut self) -> bool {
+        let p = self.project();
+        let before_pending = self.transport.down.as_ref().map(|d| d.said.clone());
+        if let Some(result) = self.transport.finish_pending_output(&p, self.song.dir()) {
+            match result {
+                Ok(true) if before_pending.is_some() => {
+                    self.say_reopened(Ok(()), before_pending, REOPENED);
+                }
+                Err(e) => self.error = Some(e),
+                _ => {}
+            }
+            return true;
+        }
         let mut changed = false;
         if self.transport.take.is_some() && self.transport.is_lost() {
             self.finish_take();
@@ -1412,7 +1577,7 @@ impl Studio {
         let before = self.transport.down.as_ref().map(|d| d.said.clone());
         let p = self.project();
         let Some(tried) = self.transport.reopen(&p, self.song.dir()) else {
-            return changed;
+            return changed || self.transport.pending_output.is_some();
         };
         self.say_reopened(tried, before, REOPENED) | changed
     }

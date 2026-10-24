@@ -292,8 +292,7 @@ pub fn stage(s: &mut Studio, g: &Geometry, stage: u8) {
             let Some(key) = s.browser.playing.clone() else {
                 return;
             };
-            let store = crate::audition::store_for(&s.browser, Path::new(&key));
-            wait(s, 10.0, |_| drawn(Path::new(&key), &store));
+            wait(s, 10.0, |_| crate::audition::drawn(&key));
             wait(s, 1.2, |s| {
                 s.browser
                     .playing

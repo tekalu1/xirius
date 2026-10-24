@@ -1,141 +1,164 @@
-//! The audition of the file browser (BRW-007): the selected audio file plays by itself, on a
-//! player of its own beside the song's, and its row shows the file's waveform with what has
-//! played lit.
+//! The audition of the file browser (BRW-007, BRW-020): the selected audio file plays
+//! by itself, on a player of its own beside the song's, and its row shows the file's waveform
+//! with what has played lit.
 //!
 //! The browser only says which file plays ([`crate::browser::Browser::playing`]);
-//! [`Studio::follow_audition`] starts and stops the player to match, from the screen's idle
-//! poll, and lets go of the file when it has played to the end. The sound goes where the
+//! [`Studio::follow_audition`] hands it to the player at once, from the press, and lets go of
+//! the file when it has played to the end. The player ([`xirius_session::audition`]) reads the
+//! file on threads of its own: the window's thread never opens it. The sound goes where the
 //! song's goes ([`crate::transport::Transport::mode`]): nowhere in a test.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 
-use xirius_core::id::{ClipId, Node, TrackId};
-use xirius_core::model::{Clip, ClipBody, Project, Track, TrackKind};
-use xirius_session::host::{HostConfig, SessionHost};
-use xirius_session::output::{Output, OutputMode};
+use xirius_session::audition::{Audition, Now, Phase, Sink};
+use xirius_session::output::OutputMode;
 use xirius_session::peaks;
 
 use crate::browser::Browser;
 use crate::draw::Pen;
 use crate::studio::{Rect, Studio};
-use crate::wave::{self, Look};
 
-/// How long a player that has never said it plays is waited for before it counts as ended (an
-/// engine that did not start). Long: on a busy machine the engine can take seconds to start, and
-/// a player that has started ends by what the engine says, not by this.
-const START_WAIT: Duration = Duration::from_secs(10);
-
-struct Player {
-    key: String,
-    host: SessionHost,
-    _out: Output,
-    /// Frames of the file, at the engine's rate.
-    end: u64,
-    started: Instant,
-    /// The engine has said it plays.
-    heard: bool,
+/// What the window keeps of the audition: what it asked for.
+#[derive(Default)]
+struct Shown {
+    /// The file the player was told to play.
+    asked: Option<String>,
 }
 
 thread_local! {
-    static PLAYER: RefCell<Option<Player>> = const { RefCell::new(None) };
+    static RELEASING: RefCell<Option<(u64, std::sync::mpsc::Receiver<()>)>> = const { RefCell::new(None) };
+    static RELEASED: Cell<bool> = const { Cell::new(true) };
+    static OUTPUT_EPOCH: Cell<u64> = const { Cell::new(0) };
+    static PLAYER: RefCell<Option<Audition>> = const { RefCell::new(None) };
+    static SHOWN: RefCell<Shown> = RefCell::new(Shown::default());
 }
 
-/// A song of one audio track that holds the whole file from its start.
-fn song_of(path: &Path, seconds: f64) -> Project {
-    let mut p = Project::new("試聴");
-    let track = TrackId(p.alloc());
-    let clip = ClipId(p.alloc());
-    let mut t = Track::new(track, TrackKind::Audio, "試聴");
-    // At 120 BPM a second is two beats.
-    let length = (seconds * 2.0 * f64::from(p.ppq)).ceil().max(1.0) as i64;
-    t.clips.push(Clip {
-        id: clip,
-        name: "試聴".into(),
-        color: None,
-        start: 0,
-        length,
-        muted: false,
-        take: None,
-        controllers: Vec::new(),
-        body: ClipBody::Audio {
-            file: path.to_string_lossy().into_owned(),
-            offset: 0,
-            gain_db: 0.0,
-            process: Default::default(),
-        },
-    });
-    p.tracks.insert(track, Arc::new(t));
-    p.root.push(Node::Track(track));
-    p
+/// The player, made the first time it is wanted.
+fn player<R>(f: impl FnOnce(&Audition) -> R) -> R {
+    PLAYER.with(|p| f(p.borrow_mut().get_or_insert_with(Audition::new)))
 }
 
-fn start(path: &Path, key: &str, mode: OutputMode) -> Result<Player, String> {
-    if mode == OutputMode::None {
-        return Err("オーディオ出力がありません".into());
-    }
-    let info = xirius_session::decode::probe(path)?;
-    let song = song_of(path, info.seconds());
-    let (mut host, audio, _warnings) = SessionHost::start(&song, HostConfig::default())
-        .map_err(|e| format!("試聴を開始できませんでした: {e}"))?;
-    let out = Output::start(mode, audio)?.ok_or("オーディオ出力がありません")?;
-    if !(host.seek_frame(0) && host.play()) {
-        return Err("試聴の指示を送れませんでした".into());
-    }
-    let end = (info.seconds() * f64::from(host.rate())).round() as u64;
-    Ok(Player {
-        key: key.to_string(),
-        host,
-        _out: out,
-        end,
-        started: Instant::now(),
-        heard: false,
-    })
+/// What the player is doing, if there is one.
+fn current() -> Option<Now> {
+    PLAYER.with(|p| p.borrow().as_ref().map(Audition::now))
 }
 
-/// How far the file `key` has played (0 to 1), while it plays.
+fn of<'a>(n: &'a Option<Now>, key: &str) -> Option<&'a Now> {
+    n.as_ref()
+        .filter(|n| n.path.as_deref() == Some(Path::new(key)))
+}
+
+/// How far the file `key` has played (0 to 1), from when it was asked for until it ended.
 pub fn progress(key: &str) -> Option<f32> {
-    PLAYER.with(|p| {
-        let p = p.borrow();
-        let p = p.as_ref().filter(|p| p.key == key)?;
-        let frame = p.host.status().frame;
-        Some((frame as f64 / p.end.max(1) as f64).clamp(0.0, 1.0) as f32)
-    })
+    let n = current();
+    let n = of(&n, key)?;
+    matches!(n.phase, Phase::Loading | Phase::Playing | Phase::Ended).then_some(n.played)
 }
 
-/// How far the file `key` has played as the engine says now (0 to 1), while it plays: polls
-/// the player without deciding whether it has ended, so a test can watch a short file play
-/// without the player letting go between two looks.
+/// How far the file `key` has played, as [`progress`]: the player says it from its own
+/// thread, so a test can watch a short file play without it letting go between two looks.
 #[cfg(test)]
 pub(crate) fn polled(key: &str) -> Option<f32> {
-    PLAYER.with(|p| {
-        if let Some(p) = p.borrow_mut().as_mut() {
-            p.host.poll();
-        }
-    });
     progress(key)
 }
 
-/// A player runs.
+/// A file is being read or plays.
 pub fn is_playing() -> bool {
-    PLAYER.with(|p| p.borrow().is_some())
+    current().is_some_and(|n| matches!(n.phase, Phase::Loading | Phase::Playing))
 }
 
-/// Stops the player.
+/// Stops the sound; the player stays open for the next file.
 pub fn stop() {
+    PLAYER.with(|p| {
+        if let Some(a) = p.borrow().as_ref() {
+            a.stop();
+        }
+    });
+    // Keep the last asked key: follow_audition consumes the Idle result instead
+    // of accidentally submitting the old browser selection again.
+}
+
+/// Closes the player and its device: before the process ends, where an output left open would
+/// wait for a thread the OS has already ended, and the exit would abort.
+pub fn close() {
     PLAYER.with(|p| p.borrow_mut().take());
+    RELEASING.with(|r| r.borrow_mut().take());
+    RELEASED.with(|r| r.set(true));
+    SHOWN.with(|s| s.borrow_mut().asked = None);
+}
+
+/// Stops the sound and lets go of the device, so the song's player can open it alone.
+pub fn release() {
+    PLAYER.with(|p| {
+        if let Some(a) = p.borrow().as_ref() {
+            a.release();
+        }
+    });
+}
+
+/// Stops and invalidates the request before a song/output transition.
+pub(crate) fn invalidate() {
+    stop();
+}
+
+pub(crate) fn halt_ready() -> bool {
+    PLAYER.with(|p| {
+        let p = p.borrow();
+        let Some(a) = p.as_ref() else {
+            return true;
+        };
+        if matches!(a.now().phase, Phase::Loading | Phase::Playing) {
+            a.stop();
+        }
+        a.halted()
+    })
+}
+
+/// The shared audition stream is closed and acknowledged on its own thread.
+pub(crate) fn release_output_ready() -> bool {
+    RELEASING.with(|r| {
+        let mut pending = r.borrow_mut();
+        if let Some((epoch, rx)) = pending.as_ref() {
+            if matches!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)) {
+                return false;
+            }
+            // A later selection must get its own close acknowledgement. An old
+            // acknowledgement cannot permit a newer device stream to open later.
+            if *epoch == OUTPUT_EPOCH.with(Cell::get) {
+                RELEASED.with(|r| r.set(true));
+            }
+            *pending = None;
+        }
+        if RELEASED.with(Cell::get) {
+            return true;
+        }
+        let epoch = OUTPUT_EPOCH.with(Cell::get);
+        *pending = PLAYER.with(|p| p.borrow().as_ref().map(|a| (epoch, a.release_async())));
+        if pending.is_none() {
+            RELEASED.with(|r| r.set(true));
+            return true;
+        }
+        false
+    })
 }
 
 impl Studio {
-    /// Starts, stops and polls the audition so it plays what the browser says. True when the
-    /// browser's row should be drawn again.
+    pub(crate) fn stop_browser_audition(&mut self) {
+        let active = self.browser.playing.take().is_some() || is_playing();
+        if active {
+            self.transport.stop_preview();
+        }
+    }
+
+    /// Hands the player the file the browser says, stops it, and takes in what it says of the
+    /// file: that it ended, or could not be read. True when the browser's row should be drawn
+    /// again.
     pub fn follow_audition(&mut self) -> bool {
         let want = self.browser.playing.clone();
         let mode = self.transport.mode;
-        let have = PLAYER.with(|p| p.borrow().as_ref().map(|p| p.key.clone()));
-        if want != have {
+        let asked = SHOWN.with(|s| s.borrow().asked.clone());
+        if want != asked {
             if want.is_some()
                 && let Some(job) = self.export.preview.take()
             {
@@ -145,35 +168,94 @@ impl Studio {
                 self.transport.auditioning_export = false;
                 self.refresh_popup();
             }
-            stop();
-            let Some(key) = want else {
-                return true;
-            };
-            match start(Path::new(&key), &key, mode) {
-                Ok(player) => PLAYER.with(|p| *p.borrow_mut() = Some(player)),
-                // A screen without sound shows the file as playing and never ends it.
-                Err(_) if mode == OutputMode::None => return false,
-                Err(e) => {
+            // Exclusive settings use the song's prepared engine, never a second device.
+            // If preparation was deferred, resume the existing preparation path first.
+            let mixed = want.is_some()
+                && mode == OutputMode::Device
+                && self.transport.io_prefs.text("audio.driver") == "wasapi-exclusive";
+            if mixed && !self.transport.is_live() {
+                if self.transport.down.is_some() {
+                    self.error = self.transport.down.as_ref().map(|d| d.said.clone());
                     self.browser.playing = None;
-                    self.error = Some(e);
+                    return true;
+                }
+                if !self.transport.preparing() {
+                    self.prepare_song();
+                }
+                if !self.transport.is_live() {
+                    return true;
+                }
+            }
+            SHOWN.with(|s| s.borrow_mut().asked = want.clone());
+            let sink = match mode {
+                // A screen without sound shows the file as playing and never ends it.
+                OutputMode::None => None,
+                OutputMode::Silent { paced } => Some(Sink::Silent { paced }),
+                OutputMode::Device if mixed => self.transport.audition_port().map(Sink::Mix),
+                OutputMode::Device => Some(Sink::Device {
+                    prefs: self.transport.io_prefs.clone(),
+                    drivers: self.transport.drivers().clone(),
+                    pair: self.transport.output_pair(),
+                }),
+            };
+            match (&want, sink) {
+                (Some(key), Some(sink)) => {
+                    let path = Path::new(key);
+                    OUTPUT_EPOCH.with(|e| e.set(e.get() + 1));
+                    RELEASED.with(|r| r.set(!matches!(sink, Sink::Device { .. })));
+                    player(|a| a.play(path, &store_for(&self.browser, path), sink));
+                }
+                _ => {
+                    PLAYER.with(|p| {
+                        if let Some(a) = p.borrow().as_ref() {
+                            a.stop();
+                        }
+                    });
                 }
             }
             return true;
         }
-        let ended = PLAYER.with(|p| {
-            let mut p = p.borrow_mut();
-            let Some(pl) = p.as_mut() else {
-                return false;
-            };
-            let s = pl.host.poll();
-            pl.heard |= s.playing;
-            s.frame >= pl.end || (!s.playing && (pl.heard || pl.started.elapsed() > START_WAIT))
-        });
-        if ended {
-            stop();
-            self.browser.playing = None;
+        let Some(key) = asked else {
+            return false;
+        };
+        if mode == OutputMode::None {
+            return false;
         }
-        have.is_some()
+        let n = current();
+        let Some(n) = of(&n, &key) else {
+            // The player let go of it (the song's player took the device alone).
+            self.browser.playing = None;
+            SHOWN.with(|s| s.borrow_mut().asked = None);
+            return true;
+        };
+        match &n.phase {
+            Phase::Ended | Phase::Idle => {
+                self.browser.playing = None;
+                SHOWN.with(|s| s.borrow_mut().asked = None);
+            }
+            Phase::Failed(e) => {
+                self.browser.playing = None;
+                self.error = Some(e.clone());
+                SHOWN.with(|s| s.borrow_mut().asked = None);
+            }
+            Phase::Loading | Phase::Playing => {}
+        }
+        true
+    }
+
+    /// Once a frame: follows the audition, and true while the file is read, so frames keep
+    /// coming.
+    pub(crate) fn audition_frame(&mut self) -> bool {
+        let before = self.browser.playing.clone();
+        self.follow_audition();
+        let n = current();
+        let reading = self
+            .browser
+            .playing
+            .as_deref()
+            .and_then(|k| of(&n, k))
+            .is_some_and(|n| n.phase == Phase::Loading);
+        before != self.browser.playing || reading
     }
 }
 
@@ -189,29 +271,31 @@ pub fn store_for(browser: &Browser, path: &Path) -> PathBuf {
     }
 }
 
-/// The waveform of the audition row: bars from the file's peaks, those played lit; a flat line
-/// until the peaks are made.
-pub fn paint_wave(pen: &mut Pen, browser: &Browser, key: &str, r: Rect, playing: bool) {
-    let path = Path::new(key);
+/// Whether the peaks of `key` are whole in the row, for a test or a picture to wait on.
+pub fn drawn(key: &str) -> bool {
+    let n = current();
+    of(&n, key).is_some_and(|n| n.complete(Path::new(key)))
+}
+
+/// The waveform of the audition row: bars from the file's peaks once it is read, those played
+/// lit, and a line until then.
+pub fn paint_wave(pen: &mut Pen, key: &str, r: Rect, playing: bool) {
     let ink = pen.c.wave_preview;
     let rest = pen.c.wave_rest;
     let mid = r.y + r.h / 2.0;
-    let peaks = match wave::look(path, &store_for(browser, path)) {
-        Look::Ready(p) => p,
-        Look::Making | Look::Missing => {
-            pen.fill(Rect::new(r.x, mid, r.w, 1.0), rest);
-            return;
-        }
+    let now = current();
+    let Some((peaks, played)) = of(&now, key)
+        .filter(|n| n.complete(Path::new(key)))
+        .and_then(|n| Some((n.peaks.clone()?, n.played)))
+    else {
+        pen.fill(Rect::new(r.x, mid, r.w, 1.0), rest);
+        return;
     };
     let n = (r.w / 3.0).floor() as usize;
     if n == 0 {
         return;
     }
-    let lit = if playing {
-        progress(key).unwrap_or(0.0)
-    } else {
-        0.0
-    };
+    let lit = if playing { played } else { 0.0 };
     let per = peaks.frames as f64 / n as f64;
     let level = peaks.level_for(per);
     let half = r.h / 2.0;

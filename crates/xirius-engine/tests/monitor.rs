@@ -16,6 +16,136 @@ use xirius_engine::{
 const RATE: u32 = 48_000;
 const BLOCK: usize = 256;
 
+#[test]
+fn preview_is_device_only_and_song_play_stops_queued_preview() {
+    use xirius_engine::builtin::Gain;
+    use xirius_engine::engine::EngineEvent;
+    use xirius_engine::mixer::NodeId;
+    let tmp = tempfile::tempdir().unwrap();
+    let setup = ProcessSetup {
+        sample_rate: f64::from(RATE),
+        max_block: BLOCK,
+        mode: RenderMode::Realtime,
+    };
+    let plan = |mode| {
+        Plan::build(
+            MixSpec {
+                tracks: vec![TrackSlot::New(TrackSpec::new("quiet", Box::new(Silence)))],
+                master_gain: 0.0,
+                master_inserts: vec![Box::new(Gain::new(0.0))],
+                ..MixSpec::default()
+            },
+            ProcessSetup { mode, ..setup },
+            None,
+        )
+        .unwrap()
+    };
+    let (mut audio, mut control) =
+        engine::create(plan(RenderMode::Realtime), EngineConfig::default());
+    let port = control.audition();
+    let (tap, mut tapped) = rtrb::RingBuffer::new(32768);
+    audio.set_tap(tap);
+    let dir = tmp.path().to_path_buf();
+    let (rec, capture) = Recorder::start(RecordSpec {
+        sample_rate: RATE,
+        lanes: vec![AudioLane {
+            channels: vec![0, 1],
+            path: Box::new(move |n| dir.join(format!("take-{n}.wav"))),
+        }],
+        midi: false,
+        latency: 0,
+        midi_latency: 0,
+        align: Box::new(|f| f),
+        ring_seconds: 2.0,
+        thru: vec![],
+    })
+    .unwrap();
+    control
+        .send(Command::SetInput(Some(Box::new(MockInput::loopback(
+            0, BLOCK,
+        )))))
+        .ok()
+        .unwrap();
+    control.send(Command::Record(Some(capture))).ok().unwrap();
+    control.send(Command::Play).ok().unwrap();
+    audio.render(&mut [0.0; BLOCK * 2], 2);
+    port.start(11);
+    assert_eq!(port.feed(11, &[0.25; 8192], &[0.5; 8192]), 8192);
+    for gain in [0.0, 1.0] {
+        control.send(Command::MasterGain(gain)).ok().unwrap();
+        let mut out = [0.0; BLOCK * 2];
+        for _ in 0..4 {
+            audio.render(&mut out, 2);
+            assert!(
+                out.as_chunks::<2>().0.iter().all(|p| *p == [0.25, 0.5]),
+                "master gain/insert changed preview"
+            );
+        }
+    }
+    control.send(Command::OutputChannels([2, 3])).ok().unwrap();
+    let mut routed = [0.0; BLOCK * 4];
+    audio.render(&mut routed, 4);
+    assert!(
+        routed
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|p| *p == [0.0, 0.0, 0.25, 0.5])
+    );
+    let mut master_reports = 0;
+    control.poll(|event| {
+        if let EngineEvent::Meter {
+            node: NodeId::Master,
+            reading,
+        } = event
+        {
+            master_reports += 1;
+            assert_eq!(reading.peak, [0.0; 2]);
+        }
+    });
+    assert!(master_reports > 0);
+    let mut tap_samples = 0;
+    while let Ok(sample) = tapped.pop() {
+        tap_samples += 1;
+        assert_eq!(sample, 0.0, "preview entered tap/export audio");
+    }
+    assert!(tap_samples > 0);
+    // A new/offline engine has no preview, even while the first one's port is fed.
+    let (mut offline, _) = engine::create(plan(RenderMode::Offline), EngineConfig::default());
+    let mut out = [1.0; BLOCK * 2];
+    offline.render(&mut out, 2);
+    assert!(out.iter().all(|v| *v == 0.0));
+    control.send(Command::Play).ok().unwrap();
+    audio.render(&mut routed, 4);
+    assert!(
+        routed.iter().all(|v| *v == 0.0),
+        "song play retained queued preview"
+    );
+    control.send(Command::Stop).ok().unwrap();
+    control.send(Command::Record(None)).ok().unwrap();
+    for _ in 0..100 {
+        audio.render(&mut routed, 4);
+        control.poll(|_| {});
+        if rec.detached() {
+            break;
+        }
+    }
+    let recorded = rec.finish(Duration::from_secs(5));
+    assert!(recorded.errors.is_empty());
+    assert!(!recorded.takes.is_empty());
+    for take in recorded.takes {
+        for part in take.audio {
+            let mut wav = hound::WavReader::open(part.path).unwrap();
+            let samples: Vec<f32> = wav.samples::<f32>().map(Result::unwrap).collect();
+            assert!(!samples.is_empty());
+            assert!(
+                samples.iter().all(|v| *v == 0.0),
+                "preview entered recorded input"
+            );
+        }
+    }
+}
+
 struct Silence;
 
 impl Processor for Silence {

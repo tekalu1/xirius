@@ -1620,7 +1620,7 @@ fn paint_row(
                 Rect::new(play.x + 4.0, play.y + (play.h - 16.0) / 2.0, 16.0, 16.0),
                 c.on_fill,
             );
-            crate::audition::paint_wave(pen, browser, key, wave, *playing);
+            crate::audition::paint_wave(pen, key, wave, *playing);
         }
         BRow::Note(text) => {
             pen.text(

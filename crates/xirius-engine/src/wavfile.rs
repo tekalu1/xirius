@@ -273,7 +273,7 @@ struct Layout {
 }
 
 /// Walks the chunks up to the audio. `None` for anything but a float WAV.
-fn layout(file: &mut File) -> io::Result<Option<Layout>> {
+fn layout(file: &mut (impl Read + Seek)) -> io::Result<Option<Layout>> {
     file.seek(SeekFrom::Start(0))?;
     let mut head = [0u8; 12];
     if file.read_exact(&mut head).is_err() {
@@ -334,8 +334,13 @@ pub struct Rf64 {
 
 /// The format of a file of ours past 4 GiB. `None` unless it is RF64 holding float samples.
 pub fn read_rf64(path: &Path) -> io::Result<Option<Rf64>> {
-    let mut file = File::open(path)?;
+    let file = File::open(path)?;
     let len = file.metadata()?.len();
+    read_rf64_from(file, len)
+}
+
+/// [`read_rf64`] of what `file` reads: a file `len` bytes long, opened already.
+pub fn read_rf64_from(mut file: impl Read + Seek, len: u64) -> io::Result<Option<Rf64>> {
     let Some(l) = layout(&mut file)? else {
         return Ok(None);
     };

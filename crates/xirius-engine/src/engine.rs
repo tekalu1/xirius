@@ -237,6 +237,7 @@ impl Default for EngineConfig {
 pub type TapProducer = Producer<f32>;
 
 pub struct AudioEngine {
+    audition: crate::audition::bus::Bus,
     plan: Box<Plan>,
     commands: Consumer<Command>,
     events: Producer<EngineEvent>,
@@ -274,6 +275,7 @@ pub struct AudioEngine {
 }
 
 pub struct Controller {
+    audition: crate::audition::bus::Port,
     input_state: Arc<InputState>,
     commands: Producer<Command>,
     events: Consumer<EngineEvent>,
@@ -293,7 +295,9 @@ pub fn create(plan: Plan, config: EngineConfig) -> (AudioEngine, Controller) {
     let input_state = Arc::new(InputState::default());
     let meter_every =
         ((config.meter_interval.as_secs_f64() * setup.sample_rate).round() as u64).max(1);
+    let (audition, port) = crate::audition::bus::create(setup.sample_rate as u32);
     let audio = AudioEngine {
+        audition,
         plan: Box::new(plan),
         commands: cmd_rx,
         events: ev_tx,
@@ -325,6 +329,7 @@ pub fn create(plan: Plan, config: EngineConfig) -> (AudioEngine, Controller) {
         mon_r: vec![0.0; setup.max_block],
     };
     let control = Controller {
+        audition: port,
         input_state,
         commands: cmd_tx,
         events: ev_rx,
@@ -433,6 +438,7 @@ impl AudioEngine {
                 self.hand_back(Garbage::Timeline(old));
             }
             Command::Play => {
+                self.audition.stop();
                 self.transport.playing = true;
                 self.transport.changed = true;
             }
@@ -670,16 +676,19 @@ impl AudioEngine {
             let mut peak = [0f32; 2];
             for (i, frame) in chunk.chunks_exact_mut(channels).enumerate() {
                 let tone = self.tone.as_mut().map_or([0.0; 2], |t| t.next_frame());
+                let preview = self.audition.next_frame();
                 let pair = [
-                    l[i] + mon_l[i] + click[i] + tone[0],
-                    r[i] + mon_r[i] + click[i] + tone[1],
+                    preview[0] + l[i] + mon_l[i] + click[i] + tone[0],
+                    preview[1] + r[i] + mon_r[i] + click[i] + tone[1],
                 ];
                 peak = [peak[0].max(pair[0].abs()), peak[1].max(pair[1].abs())];
                 if silent {
                     frame.fill(0.0);
                 } else if channels == 1 {
-                    frame[0] =
-                        0.5 * (l[i] + r[i] + mon_l[i] + mon_r[i]) + click[i] + tone[0] + tone[1];
+                    frame[0] = 0.5 * (l[i] + r[i] + mon_l[i] + mon_r[i] + preview[0] + preview[1])
+                        + click[i]
+                        + tone[0]
+                        + tone[1];
                 } else {
                     frame.fill(0.0);
                     for (channel, sample) in self.output_channels.into_iter().zip(pair) {
@@ -736,6 +745,11 @@ impl AudioEngine {
 }
 
 impl Controller {
+    /// A device-only audition, independent of the song transport and recording.
+    pub fn audition(&self) -> crate::audition::bus::Port {
+        self.audition.clone()
+    }
+
     pub fn stats(&self) -> Arc<Stats> {
         self.stats.clone()
     }

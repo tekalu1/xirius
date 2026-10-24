@@ -14,6 +14,7 @@
 
 pub mod app;
 pub mod audio_settings;
+pub mod audition;
 pub mod automation;
 pub mod automation_timing;
 pub mod autowrite;

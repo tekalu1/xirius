@@ -5,6 +5,33 @@ use xirius_engine::{
     rt_lock::Mutex,
 };
 
+#[test]
+fn preview_feeding_is_rejected_in_an_audio_callback() {
+    let setup = ProcessSetup {
+        sample_rate: 48000.0,
+        max_block: 64,
+        mode: RenderMode::Realtime,
+    };
+    let (mut audio, control) = engine::create(
+        xirius_engine::audition::plan(setup).unwrap(),
+        EngineConfig::default(),
+    );
+    let port = control.audition();
+    port.start(1);
+    port.feed(1, &[0.25; 64], &[0.5; 64]);
+    let mut out = [0.0; 128];
+    audio.render(&mut out, 2);
+    assert_eq!(out[0..2], [0.25, 0.5]);
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _audio = xirius_engine::rt_lock::AudioScope::enter();
+        port.feed(1, &[0.0], &[0.0]);
+    }));
+    assert!(
+        rejected.is_err(),
+        "the preview producer lock must be checked too"
+    );
+}
+
 struct LockingProcessor(Arc<Mutex<()>>);
 impl Processor for LockingProcessor {
     fn name(&self) -> &str {

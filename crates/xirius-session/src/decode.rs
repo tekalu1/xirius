@@ -74,16 +74,25 @@ pub(crate) type Opened = (
 
 /// Opens `path` with symphonia.
 pub(crate) fn open(path: &Path) -> Result<Opened, String> {
-    use symphonia::core::formats::TrackType;
-    use symphonia::core::formats::probe::Hint;
-    use symphonia::core::io::MediaSourceStream;
-
     if !is_audio(path) {
         return Err(unsupported(path));
     }
     let file =
         std::fs::File::open(path).map_err(|e| format!("{} を開けません: {e}", path.display()))?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    open_source(path, Box::new(file))
+}
+
+/// Opens the bytes of `path` that `source` reads with symphonia; `path` gives the format's
+/// hint and the name in a message.
+fn open_source(
+    path: &Path,
+    source: Box<dyn symphonia::core::io::MediaSource>,
+) -> Result<Opened, String> {
+    use symphonia::core::formats::TrackType;
+    use symphonia::core::formats::probe::Hint;
+    use symphonia::core::io::MediaSourceStream;
+
+    let mss = MediaSourceStream::new(source, Default::default());
     let mut hint = Hint::new();
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         hint.with_extension(&ext.to_ascii_lowercase());
@@ -115,8 +124,25 @@ fn rf64(path: &Path) -> Result<Option<Decoded>, String> {
     if !is {
         return Ok(None);
     }
-    let read = xirius_engine::wavfile::read_rf64(path)
-        .map_err(|e| format!("{} を読めません: {e}", path.display()))?;
+    let read = xirius_engine::wavfile::read_rf64(path);
+    from_rf64(path, read)
+}
+
+/// An RF64 take as [`decode`] gives it, from what `source` reads of it (`len` bytes, opened
+/// once by the caller). `None` when it is not one.
+pub fn decode_rf64_source(
+    path: &Path,
+    source: impl std::io::Read + std::io::Seek,
+    len: u64,
+) -> Result<Option<Decoded>, String> {
+    from_rf64(path, xirius_engine::wavfile::read_rf64_from(source, len))
+}
+
+fn from_rf64(
+    path: &Path,
+    read: std::io::Result<Option<xirius_engine::wavfile::Rf64>>,
+) -> Result<Option<Decoded>, String> {
+    let read = read.map_err(|e| format!("{} を読めません: {e}", path.display()))?;
     Ok(read.map(|w| {
         let mono = w.channels.len() == 1;
         let mut c = w.channels.into_iter();
@@ -133,13 +159,36 @@ fn rf64(path: &Path) -> Result<Option<Decoded>, String> {
 
 /// Decodes `path` at its own rate.
 pub fn decode(path: &Path) -> Result<Decoded, String> {
-    use symphonia::core::codecs::audio::AudioDecoderOptions;
-    use symphonia::core::errors::Error;
-
     if let Some(d) = rf64(path)? {
         return Ok(d);
     }
-    let (mut format, id, params, _) = open(path)?;
+    decode_opened(path, open(path)?, &mut |_, _| true)
+}
+
+/// Decodes what `source` reads of `path` (opened once by the caller) at its own rate. `seen`
+/// is called after each packet with what has been decoded so far and the length in frames the
+/// container says, if it does; when it returns false the decoding stops there. An RF64 take is
+/// not read this way: [`decode`] and [`decode_rf64_source`] read those.
+pub fn decode_source(
+    path: &Path,
+    source: Box<dyn symphonia::core::io::MediaSource>,
+    seen: &mut dyn FnMut(&Decoded, Option<u64>) -> bool,
+) -> Result<Decoded, String> {
+    if !is_audio(path) {
+        return Err(unsupported(path));
+    }
+    decode_opened(path, open_source(path, source)?, seen)
+}
+
+fn decode_opened(
+    path: &Path,
+    opened: Opened,
+    seen: &mut dyn FnMut(&Decoded, Option<u64>) -> bool,
+) -> Result<Decoded, String> {
+    use symphonia::core::codecs::audio::AudioDecoderOptions;
+    use symphonia::core::errors::Error;
+
+    let (mut format, id, params, frames) = opened;
     let mut decoder = symphonia::default::get_codecs()
         .make_audio_decoder(&params, &AudioDecoderOptions::default().gapless(true))
         .map_err(|_| unsupported(path))?;
@@ -181,6 +230,9 @@ pub fn decode(path: &Path) -> Result<Decoded, String> {
             }
             Err(Error::DecodeError(_)) => continue,
             Err(e) => return Err(format!("{} をデコードできません: {e}", path.display())),
+        }
+        if !seen(&out, frames) {
+            break;
         }
     }
     if out.rate == 0 {
