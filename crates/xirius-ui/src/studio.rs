@@ -2443,6 +2443,7 @@ impl Studio {
         // request wait for it.
         self.stop_tidy(path);
         if replaces_song {
+            self.transport.pause();
             self.keep_leaving();
         } else {
             self.pull_plugins();

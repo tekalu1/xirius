@@ -102,6 +102,7 @@ impl Session {
     /// Dropping it cannot remove the real session's marker.
     pub fn save_preview(&self) -> Session {
         let mut preview = Session::from_project((*self.current).clone());
+        preview.unavailable = self.unavailable;
         preview.registry = self.registry.clone();
         preview.hist = self.hist.clone();
         preview.current = self.current.clone();
@@ -125,6 +126,7 @@ impl Session {
         dir: &Path,
         progress: Arc<SaveProgress>,
     ) -> CmdResult<()> {
+        self.check_available()?;
         while self.writer.pending() {
             progress.check()?;
             std::thread::sleep(Duration::from_millis(5));

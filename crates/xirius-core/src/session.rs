@@ -7,8 +7,8 @@
 //! is right for every command by construction. A step records the command, its
 //! arguments, who ran it (human or AI) and when (ARC-003, ARC-007).
 
+use opening::io as fs;
 use std::collections::HashSet;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -54,6 +54,7 @@ use writer::{Job, Writer};
 pub(crate) mod saving;
 pub use saving::SaveProgress;
 mod lane;
+pub mod opening;
 use lane::Lane;
 pub use lane::{MAX_LANES, lock_files, locks_tried, others_open, others_open_among};
 
@@ -397,6 +398,8 @@ impl History {
 }
 
 pub struct Session {
+    /// A presentation left after an unrecoverable handoff cannot be edited.
+    unavailable: bool,
     registry: Arc<Registry>,
     hist: History,
     current: Arc<Project>,
@@ -459,6 +462,7 @@ pub struct Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
+        let _retiring = opening::Retiring::enter();
         // The lock goes only once the history is on the disk.
         self.writer.flush();
         if let (Some(lane), Some(s)) = (&self.lane, &self.store) {
@@ -472,6 +476,22 @@ impl Drop for Session {
 }
 
 impl Session {
+    /// Last-resort protection if no owner can return a real session. Keep its
+    /// picture, detach its store, and reject commands and all save entry points.
+    pub fn fail_closed(&mut self) {
+        self.unavailable = true;
+        self.store = None;
+    }
+
+    fn check_available(&self) -> CmdResult<()> {
+        if self.unavailable {
+            Err(CmdError::conflict(
+                "曲の読み込みに失敗したため操作できません",
+            ))
+        } else {
+            Ok(())
+        }
+    }
     /// Goes down as a process that crashes would (for the tests): the writes handed over are
     /// made and the lane is let go, but nothing is closed, so its marker stays.
     #[doc(hidden)]
@@ -497,6 +517,7 @@ impl Session {
     pub fn with_registry(p: Project, registry: Arc<Registry>) -> Session {
         let cur = Arc::new(p);
         let s = Session {
+            unavailable: false,
             registry,
             hist: History::new(cur.clone()),
             current: cur,
@@ -589,9 +610,9 @@ impl Session {
         let store = Store::in_lane(dir, k);
         let view = store.read_view()?;
         let manifest = store.read_manifest()?;
-        let (saved_p, mut repairs) = store.read_project_report()?;
+        let (saved_p, mut repairs, project_hash) = store.read_project_hashed_report()?;
         let saved = Arc::new(saved_p);
-        let was_locked = !reopened && lane::marker(dir, k).exists();
+        let was_locked = !reopened && opening::io::exists(&lane::marker(dir, k));
         let mut notices = Vec::new();
         let mut prune_due = false;
         let mut base_unwritten = false;
@@ -691,6 +712,7 @@ impl Session {
         }
 
         let mut s = Session {
+            unavailable: false,
             registry,
             hist,
             current,
@@ -782,7 +804,8 @@ impl Session {
             s.saved_step = s.hist.cursor;
             s.saved = Some(s.current.clone());
         }
-        s.set_disk_hash(Store::new(dir).project_hash()?);
+        s.set_disk_hash(Some(project_hash));
+        opening::check()?;
         let mark = lane::marker(dir, k);
         if let Some(parent) = mark.parent() {
             let _ = fs::create_dir_all(parent);
@@ -989,6 +1012,7 @@ impl Session {
     ) -> CmdResult<RunResult> {
         // A file a command reads and names is noted before a cleanup looks at it again.
         let _using = crate::in_use::using();
+        self.check_available()?;
         let before = self.current.clone();
         let mut result = self.run_unnotified(name, raw, opts);
         if let Ok(result) = &mut result
@@ -1527,6 +1551,7 @@ impl Session {
     /// Goes to history state `abs`. A step on the way that renamed a file on the disk renames
     /// it back or again ([`renames`]); when the disk cannot follow, nothing moves.
     pub fn jump(&mut self, abs: u64) -> CmdResult<ChangeSet> {
+        self.check_available()?;
         let target = self.state_at(abs)?;
         self.move_disk(abs)?;
         let changes = diff(&self.current, &target);
@@ -1539,11 +1564,13 @@ impl Session {
     }
 
     pub fn undo(&mut self, count: u64) -> CmdResult<ChangeSet> {
+        self.check_available()?;
         let to = self.undo_target(count)?;
         self.jump(to)
     }
 
     pub fn redo(&mut self, count: u64) -> CmdResult<ChangeSet> {
+        self.check_available()?;
         let to = self.redo_target(count)?;
         self.jump(to)
     }
@@ -1555,6 +1582,7 @@ impl Session {
     /// across it as though it had always been there. Returns the change it made
     /// (empty when the song was already so).
     pub fn amend(&mut self, f: impl FnOnce(&mut Project)) -> CmdResult<ChangeSet> {
+        self.check_available()?;
         let before = self.current.clone();
         let mut work = (*before).clone();
         f(&mut work);
@@ -1682,6 +1710,7 @@ impl Session {
     /// state of the history and the song stays unsaved, so a crash can bring
     /// back every step and "discard" has somewhere to go back to.
     fn attach_new_store(&mut self, dir: &Path, draft: bool) -> CmdResult<()> {
+        self.check_available()?;
         if let Some(old) = &self.store
             && same_path(&old.dir, dir)
         {
@@ -1689,7 +1718,8 @@ impl Session {
                 "現在と同じ場所には名前を付けて保存できません",
             ));
         }
-        if dir.exists() && (!dir.is_dir() || dir.read_dir()?.next().is_some()) {
+        if fs::exists(dir) && (!fs::metadata(dir)?.is_dir() || fs::read_dir(dir)?.next().is_some())
+        {
             return Err(CmdError::conflict(format!(
                 "{} は空のフォルダーではありません。空のフォルダーか、まだ無いフォルダーを指定してください",
                 dir.display()
@@ -1751,6 +1781,7 @@ impl Session {
     }
 
     pub fn save(&mut self) -> CmdResult<()> {
+        self.check_available()?;
         let store = self.store.clone().ok_or_else(no_store)?;
         self.writer.flush();
         store.write_project(&self.current)?;
@@ -1800,6 +1831,7 @@ impl Session {
     }
 
     pub fn save_as(&mut self, dir: impl AsRef<Path>) -> CmdResult<()> {
+        self.check_available()?;
         self.attach_new_store(dir.as_ref(), false)
     }
 
@@ -1822,6 +1854,7 @@ impl Session {
 
     /// Goes back to the state last saved (the steps after it stay as redo).
     pub fn discard_unsaved(&mut self) -> CmdResult<()> {
+        self.check_available()?;
         self.jump(self.saved_step)?;
         self.recovery = None;
         Ok(())
@@ -1870,6 +1903,7 @@ impl Session {
 
     /// A named version of the song as it is now.
     pub fn save_version(&mut self, name: &str) -> CmdResult<VersionInfo> {
+        self.check_available()?;
         let name = name.trim();
         if name.is_empty() {
             return Err(CmdError::invalid("バージョン名を入力してください"));
@@ -1908,6 +1942,7 @@ impl Session {
     /// Makes an automatic save point when the song changed since the last one
     /// and the interval has passed. The UI calls this on a timer.
     pub fn autosave_if_due(&mut self, now: u64) -> CmdResult<Option<VersionInfo>> {
+        self.check_available()?;
         if self.store.is_none() || now < self.last_auto_ms + self.auto_interval_ms {
             return Ok(None);
         }

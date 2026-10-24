@@ -15,7 +15,7 @@
 //! kept as a version ([`VersionKind::OtherProcess`](crate::store::VersionKind)) when it differs
 //! from the song as it opens, and the lane goes.
 
-use std::fs::{self, File, TryLockError};
+use super::opening::io::{self as fs, File, TryLockError};
 use std::path::{Path, PathBuf};
 
 use crate::error::{CmdError, CmdResult};
@@ -50,6 +50,7 @@ pub(crate) fn marker(dir: &Path, k: u32) -> PathBuf {
 /// Lane `k`'s lock, when no process holds it.
 pub(crate) fn try_hold(dir: &Path, k: u32) -> std::io::Result<Option<File>> {
     let f = open_lock(&lock_path(dir, k))?;
+    super::opening::before("try_lock", &lock_path(dir, k))?;
     match f.try_lock() {
         Ok(()) => Ok(Some(f)),
         Err(TryLockError::WouldBlock) => Ok(None),

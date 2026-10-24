@@ -35,8 +35,8 @@
 //! has to still be the one the session knows by its SHA-256, a copy goes to `backups/` and is
 //! read back first, and the new file is read back after.
 
+use crate::session::opening::io::{self as fs, File};
 use std::collections::HashSet;
-use std::fs::{self, File};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -81,6 +81,7 @@ pub fn now_ms() -> u64 {
 
 /// Writes `bytes` to `path` so that `path` is never left half-written.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> CmdResult<()> {
+    crate::session::opening::before("write", path)?;
     crate::session::saving::check()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -89,6 +90,7 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> CmdResult<()> {
     tmp.push(format!(".tmp{}", std::process::id()));
     let tmp = PathBuf::from(tmp);
     let result = (|| -> std::io::Result<()> {
+        crate::session::opening::before("create", &tmp)?;
         let mut f = File::create(&tmp)?;
         f.write_all(bytes)?;
         f.sync_all()?;
@@ -315,9 +317,11 @@ fn lane_rel(lane: u32) -> String {
 /// Opens (making it when missing) a file used only for its OS lock. Lock files are never
 /// removed: removing one another process has open would let a third lock a new file.
 pub(crate) fn open_lock(path: &Path) -> std::io::Result<File> {
+    crate::session::opening::before("lock", path)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
+    crate::session::opening::before("lock_open", path)?;
     fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -347,7 +351,7 @@ struct LaneFile {
 
 impl Store {
     pub fn read_view(&self) -> CmdResult<crate::session::View> {
-        if !self.p("view.json").is_file() {
+        if !fs::is_file(&self.p("view.json")) {
             return Ok(crate::session::View::default());
         }
         serde_json::from_slice(&self.read_bytes("view.json")?)
@@ -371,7 +375,7 @@ impl Store {
     }
 
     pub fn is_song(dir: &Path) -> bool {
-        dir.join("manifest.toml").is_file()
+        fs::is_file(&dir.join("manifest.toml"))
     }
 
     fn p(&self, rel: &str) -> PathBuf {
@@ -578,7 +582,7 @@ impl Store {
         let mut ms = now_ms();
         loop {
             let rel = format!("backups/project-{ms:013}.json");
-            if !self.p(&rel).exists() {
+            if !fs::exists(&self.p(&rel)) {
                 return rel;
             }
             ms += 1;
@@ -816,6 +820,7 @@ impl Store {
     fn lock(&self, name: &str, alone: bool) -> CmdResult<File> {
         let path = self.p(&format!("{LANES}/{name}"));
         let f = open_lock(&path)?;
+        crate::session::opening::before("lock_acquire", &path)?;
         if alone { f.lock() } else { f.lock_shared() }.map_err(CmdError::from)?;
         Ok(f)
     }
@@ -875,11 +880,11 @@ impl Store {
 
     /// Does this lane have a history index?
     pub fn has_index(&self) -> bool {
-        self.p(&self.index_rel()).is_file()
+        fs::is_file(&self.p(&self.index_rel()))
     }
 
     pub fn has_state(&self, abs: u64) -> bool {
-        self.p(&self.state_rel(abs)).is_file()
+        fs::is_file(&self.p(&self.state_rel(abs)))
     }
 
     pub fn remove_state(&self, abs: u64) {
@@ -893,7 +898,7 @@ impl Store {
 
     pub fn read_index(&self) -> CmdResult<Option<HistoryIndex>> {
         let rel = self.index_rel();
-        if !self.p(&rel).is_file() {
+        if !fs::is_file(&self.p(&rel)) {
             return Ok(None);
         }
         let bytes = self.read_bytes(&rel)?;
@@ -906,7 +911,7 @@ impl Store {
 
     pub fn list_versions(&self) -> CmdResult<Vec<VersionInfo>> {
         let path = self.p("versions/index.json");
-        if !path.is_file() {
+        if !fs::is_file(&path) {
             return Ok(Vec::new());
         }
         let bytes = self.read_bytes("versions/index.json")?;
@@ -951,6 +956,7 @@ impl Store {
     fn lock_versions(&self) -> CmdResult<File> {
         let path = self.p("versions/index.lock");
         let f = open_lock(&path)?;
+        crate::session::opening::before("lock_acquire", &path)?;
         f.lock()?;
         Ok(f)
     }

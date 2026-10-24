@@ -11,6 +11,10 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Deterministic I/O observation and fault injection in dependent crates' tests.
+test-io = []
+
 [dependencies]
 # DAWproject files (EXP-006, EXP-007): the ZIP, its XML and the plugin states in base64.
 base64 = "0.22"
@@ -32,5 +36,9 @@ tempfile = "3"
 [target.'cfg(windows)'.dev-dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
 
-[target.'cfg(unix)'.dev-dependencies]
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# Exclusive directory publication (PRJ-028), without replace/copy flags.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }

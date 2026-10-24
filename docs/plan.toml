@@ -8222,13 +8222,14 @@ status = "done"
 
 [[item]]
 id = "PRJ-028"
+status = "done"
 title = "キャンセル可能な曲の読み込みと Session の受け渡し"
 area = "PRJ"
 phase = "v1.1"
 source = "hang-open-song.md § 5 B ; hang-open-song.md § 5 C ; hang-open-song.md § 5 D"
 after = ["REC-026"]
 done_when = "通常曲・同一曲・版の読込と Session 作成・writer 待ち・候補と旧 Session の破棄が worker で行われ、読込数と現在名を通知し、中止・失敗時に元の履歴と lane を保って返せることを I/O ゲートとスレッド計測で確かめる"
-note = "全入口の非同期化と中止 UI は PRJ-029。画面はこの段では変えない。"
+note = "全入口の非同期化と中止 UI は PRJ-029。画面はこの段では変えない。既存のファイル・最近・起動・版を別曲として開く入口は Song::open_on_worker の完了を同期で待つ橋渡しを使う。独立 CLI/MCP と core の project.open は同期を維持する。新規・サンプル・DAWproject・画面コマンド/接続 MCP の統一は PRJ-029、旧 player/出力の退役と音の準備は PRJ-030、付随 I/O と画面全体の応答の保証は PRJ-031 に残す。返却 guard は worker 側の切断でも Session と lane を返し、回収不能な表示用 Session は保存先を外して直接の履歴移動も含む編集・保存・autosave を拒否する。進行通知から独立した I/O 計測で Song/Studio の入口を検査し、実書き込みを止めた pending writer の完了前に候補 I/O が無いこと、実際の tidy の I/O と開き直しの重なりをチャンネル同期で検証する。版は保存先の親の非公開で一意な作業フォルダーに完成させ、採用時に上書き禁止の rename 1 回で公開する。既存の保存先は空でも拒否する。同一ボリュームでの rename ができない場合や未対応の置き場は失敗とし、コピーで代替しない。中止・失敗時に worker が削除するのは非公開の作業フォルダーだけで、公開済みの保存先・他者のファイル・共有ロックは削除しない。Windows の開いたファイルによる rename 拒否を避けて候補を閉じてから公開し、公開後は lane を取り直して再読する。この再読が失敗しても公開済みの曲は残し、旧 Session を返す。"
 
 [[item]]
 id = "PRJ-029"
@@ -8262,6 +8263,8 @@ note = "統合試験だけでなく付随 I/O の残りも直す。外部変更�
 
 [[item]]
 id = "PRJ-027"
+status = "partial"
+remaining = "PRJ-029 の全入口の非同期化と中止 UI、PRJ-030 の音の準備と player/出力の退役、BRW-019 を前提とする PRJ-031 の付随 I/O と画面全体の応答保証が残る"
 title = "曲を開く重い処理を UI のスレッドから外し、開いている間は進み具合と取り消しを見せる"
 area = "PRJ"
 phase = "v1.1"

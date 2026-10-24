@@ -37,6 +37,10 @@ pub const AI_ROW: &str = "AI · ";
 const BAR: Tick = 4 * 960;
 const BEAT: Tick = 960;
 
+#[cfg(test)]
+#[path = "song_loading_tests.rs"]
+mod loading_tests;
+
 /// `#rrggbb` of a palette colour, the way core stores a track colour.
 pub fn hex(color: TrackColor) -> String {
     format!("#{:06x}", color.content(THEME).to_rgb_u32())
@@ -609,7 +613,14 @@ impl Song {
 
     /// `project.open`: this song is replaced by the one in `dir`.
     pub fn open(&mut self, dir: &Path) -> Result<(), String> {
-        self.run_human("project.open", json!({ "path": path_text(dir) }))?;
+        // DAWproject's import UI is migrated with the other entrances in PRJ-029.
+        if xirius_core::dawproject::is_dawproject(dir) {
+            self.run_human("project.open", json!({ "path": path_text(dir) }))?;
+        } else {
+            self.open_on_worker(xirius_core::session::opening::OpenRequest::Song(
+                dir.to_path_buf(),
+            ))?;
+        }
         self.draft = false;
         self.sample = false;
         Ok(())
@@ -695,8 +706,53 @@ impl Song {
     /// `version.open` into `dir`, then open that folder: the version becomes
     /// its own song and this one is left as it was on disk.
     pub fn open_version_as_song(&mut self, id: &str, dir: &Path) -> Result<(), String> {
-        self.run_human("version.open", json!({ "id": id, "path": path_text(dir) }))?;
-        self.open(dir)
+        self.open_on_worker(xirius_core::session::opening::OpenRequest::Version {
+            id: id.to_string(),
+            destination: dir.to_path_buf(),
+        })?;
+        self.draft = false;
+        self.sample = false;
+        Ok(())
+    }
+
+    /// PRJ-028 compatibility bridge. The real session and all disk work move to
+    /// the worker; PRJ-029 replaces the calling thread's wait with tick/idle polling.
+    fn open_on_worker(
+        &mut self,
+        request: xirius_core::session::opening::OpenRequest,
+    ) -> Result<(), String> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use xirius_core::session::opening::{OpenId, OpenJob};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        let session = self.take_session_for_save();
+        let job = match OpenJob::start(
+            session,
+            request,
+            OpenId {
+                job: id,
+                generation: id,
+            },
+        ) {
+            Ok(job) => job,
+            Err(e) => {
+                self.session = *e.session;
+                return Err(e.error.to_string());
+            }
+        };
+        self.finish_open(job.finish_blocking())
+    }
+
+    fn finish_open(
+        &mut self,
+        result: Result<xirius_core::session::opening::OpenOutcome, std::sync::mpsc::RecvError>,
+    ) -> Result<(), String> {
+        let outcome = result.map_err(|_| {
+            self.session.fail_closed();
+            "曲の読み込みとの接続が切れました".to_string()
+        })?;
+        self.session = outcome.session;
+        outcome.result.map_err(|e| e.to_string())
     }
 
     // ------------------------------------------------------------- tracks

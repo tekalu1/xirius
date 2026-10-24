@@ -18,6 +18,8 @@ pub mod extension;
 pub mod freeze;
 pub mod id;
 pub mod in_use;
+#[cfg(any(test, feature = "test-io"))]
+pub mod io_test;
 pub mod marker;
 pub mod model;
 pub mod nav;

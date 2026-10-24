@@ -181,6 +181,8 @@ impl Shared {
         let mut n = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
         *n = n.saturating_sub(1);
         if *n == 0 {
+            #[cfg(any(test, feature = "test-io"))]
+            let _ = crate::io_test::before("writer_complete", std::path::Path::new(""));
             self.done.notify_all();
         }
     }
@@ -276,6 +278,15 @@ impl Writer {
             > 0
     }
 
+    pub(super) fn has_errors(&self) -> bool {
+        let errors = self
+            .shared
+            .errors
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        !errors.kept.is_empty() || errors.more > 0
+    }
+
     /// Waits until every job handed over is done.
     pub(super) fn flush(&self) {
         let n = self
@@ -283,6 +294,10 @@ impl Writer {
             .pending
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        #[cfg(any(test, feature = "test-io"))]
+        if *n > 0 {
+            let _ = crate::io_test::before("writer_pending", std::path::Path::new(""));
+        }
         let _n = self
             .shared
             .done
