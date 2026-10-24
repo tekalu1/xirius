@@ -404,6 +404,7 @@ pub enum Look {
     Segment,
     Button,
     Primary,
+    Danger,
     Swatch(Option<usize>),
     /// A history row.
     Step {
@@ -1540,10 +1541,12 @@ pub(crate) fn paint_cell(pen: &mut Pen, cell: &Cell, hot: bool) {
                 Align::Center,
             );
         }
-        Look::Button | Look::Primary => {
+        Look::Button | Look::Primary | Look::Danger => {
             let primary = cell.look == Look::Primary;
             let (face, ink) = if !cell.enabled {
                 (c.surface_3, c.ink_on_toggle)
+            } else if cell.look == Look::Danger {
+                (c.danger, c.on_fill)
             } else if primary {
                 (if hot { c.fill_hover } else { c.fill }, c.on_fill)
             } else if hot {

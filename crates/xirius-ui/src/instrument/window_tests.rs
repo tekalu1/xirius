@@ -508,7 +508,7 @@ fn the_tag_keeps_its_preset_in_a_song_opened_again() {
     // A fresh start opens the song: the tag learns its preset from the knobs.
     let mut s = Studio::sample();
     let g = s.geometry(1600.0, 1000.0);
-    s.finish_file_request(crate::studio::FileRequest::Open, &dir);
+    s.finish_file_request_sync(crate::studio::FileRequest::Open, &dir);
     assert!(s.error.is_none(), "{:?}", s.error);
     let t2 = keys(&s);
     assert_eq!(t2, t);
@@ -638,7 +638,7 @@ fn an_old_songs_compressor_opens_at_its_preset() {
         std::fs::remove_dir_all(dir.join(d)).unwrap();
     }
     let mut s = Studio::sample();
-    s.finish_file_request(crate::studio::FileRequest::Open, &dir);
+    s.finish_file_request_sync(crate::studio::FileRequest::Open, &dir);
     assert!(s.error.is_none(), "{:?}", s.error);
     let _ = std::fs::remove_dir_all(&dir);
     s.show_instrument(t, comp);

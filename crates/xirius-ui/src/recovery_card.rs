@@ -292,7 +292,7 @@ mod tests {
 
     fn studio_opening(dir: &std::path::Path) -> Studio {
         let mut s = Studio::new(Song::empty());
-        s.finish_file_request(crate::studio::FileRequest::Open, dir);
+        s.finish_file_request_sync(crate::studio::FileRequest::Open, dir);
         assert!(s.error.is_none(), "{:?}", s.error);
         s
     }
@@ -413,6 +413,7 @@ mod tests {
         keep.remember(&dir, "落ちた曲", false, 1);
         let mut s = Studio::new(Song::empty());
         s.start_keeping(keep);
+        s.wait_for_open_for_test();
         assert_eq!(s.recovery.as_ref().map(|c| c.steps), Some(2));
         assert_eq!(s.song.dir().as_deref(), Some(dir.as_path()));
     }

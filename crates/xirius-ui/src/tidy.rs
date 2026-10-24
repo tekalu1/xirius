@@ -207,6 +207,9 @@ impl Studio {
     /// and the song is let go (its folder is free at once, for the next window). An error when
     /// it cannot be tidied (an AI's work copy may still need its files).
     pub fn close_window_song(&mut self) -> Result<(), String> {
+        if self.open_closing.is_some() {
+            return Ok(());
+        }
         let closing = self.closing();
         self.release_song();
         if let Some(closed) = closing? {

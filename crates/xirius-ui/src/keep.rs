@@ -41,6 +41,10 @@ pub enum SaveMark {
 
 #[derive(Debug, Default)]
 pub struct Keep {
+    /// Until a startup song is adopted, closing must retain the previous target.
+    preserve_startup_open: bool,
+    refresh: Option<std::sync::mpsc::Receiver<(Vec<RecentSong>, Option<String>)>>,
+    recent_error: std::cell::RefCell<Option<String>>,
     root: Option<PathBuf>,
     /// The song as the last look saw it, to tell an edit.
     seen: Option<Arc<Project>>,
@@ -90,10 +94,44 @@ impl Keep {
 
     /// The song was opened or made new: what it is now is not an edit.
     pub fn sync(&mut self, project: &Arc<Project>) {
+        self.preserve_startup_open = false;
         self.seen = Some(project.clone());
         self.flash_until = 0;
         self.failed = None;
         self.listed = self.recent();
+    }
+
+    pub(crate) fn sync_open(&mut self, project: &Arc<Project>, dir: Option<PathBuf>, draft: bool) {
+        self.preserve_startup_open = false;
+        self.seen = Some(project.clone());
+        self.flash_until = 0;
+        self.failed = None;
+        if let Some(root) = self.root.clone() {
+            let name = project.name.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let keep = Keep::at(root);
+                if let Some(dir) = dir {
+                    keep.remember(&dir, &name, draft, xirius_core::store::now_ms());
+                }
+                let error = keep.recent_error.take();
+                let _ = tx.send((keep.recent(), error));
+            });
+            self.refresh = Some(rx);
+        }
+    }
+
+    pub(crate) fn poll_recent(&mut self) -> bool {
+        let got = self.refresh.as_ref().and_then(|rx| rx.try_recv().ok());
+        if let Some((songs, error)) = got {
+            self.listed = songs;
+            if let Some(error) = error {
+                self.recent_error.replace(Some(error));
+            }
+            self.refresh = None;
+            return true;
+        }
+        false
     }
 
     /// The recent songs as the last [`Keep::sync`] read them.
@@ -147,27 +185,43 @@ impl Keep {
     /// Puts the song in `dir` first in the list.
     pub fn remember(&self, dir: &Path, name: &str, draft: bool, now: u64) {
         if let Some(l) = self.list() {
-            l.remember(dir, name, draft, now);
+            self.recent_result(l.remember(dir, name, draft, now));
         }
     }
 
     /// Takes the song in `dir` out of the list.
     pub fn forget(&self, dir: &Path) {
         if let Some(l) = self.list() {
-            l.forget(dir);
+            self.recent_result(l.forget(dir));
         }
     }
 
     /// The window closed on `open`: the next start opens it.
     pub fn closed_with(&self, open: &LastOpen) {
+        if self.preserve_startup_open {
+            return;
+        }
         if let Some(l) = self.list() {
-            l.closed_with(open);
+            self.recent_result(l.closed_with(open));
+        }
+    }
+
+    fn recent_result(&self, result: xirius_core::CmdResult<()>) {
+        if let Err(error) = result {
+            // Shutdown workers may outlive the window: retain a diagnostic there
+            // too, while a live window consumes this error as a visible notice.
+            eprintln!("recent list update failed: {error}");
+            self.recent_error.replace(Some(error.to_string()));
         }
     }
 
     /// What the start opens: with no root (a test), the song the studio was made with.
     pub fn last_open(&self) -> Option<LastOpen> {
         self.list().map(|l| l.last_open())
+    }
+
+    pub(crate) fn preserves_startup_open(&self) -> bool {
+        self.preserve_startup_open
     }
 
     /// The newest remembered song whose folder was left locked by a process that is
@@ -189,9 +243,21 @@ impl Keep {
 }
 
 impl Studio {
+    pub(crate) fn poll_recent_keep(&mut self) -> bool {
+        let changed = self.keep.poll_recent();
+        let error = self.keep.recent_error.take();
+        if let Some(error) = error {
+            self.warn(
+                format!("最近の曲と復旧の一覧を記録できません（{error}）"),
+                None,
+            );
+            return true;
+        }
+        changed
+    }
     /// The mark the top bar shows.
     pub fn save_mark(&self) -> SaveMark {
-        if self.saving.is_some() {
+        if self.input_blocked() {
             return SaveMark::Saving;
         }
         self.keep.mark(&self.song, xirius_core::store::now_ms())
@@ -203,32 +269,22 @@ impl Studio {
     /// names its own folder.
     pub fn start_keeping(&mut self, keep: Keep) {
         self.keep = keep;
-        self.keep.sync(&self.song.project());
-        if let Some(r) = self.keep.crashed() {
-            self.finish_file_request(crate::studio::FileRequest::Open, &r.dir);
-            return;
-        }
-        match self.keep.last_open() {
-            None => {}
-            Some(LastOpen::Sample) => {
-                if !self.song.is_sample() {
-                    self.open_sample();
-                }
-            }
-            Some(LastOpen::Empty) => self.new_song(),
-            Some(LastOpen::Song(dir)) => {
-                self.finish_file_request(crate::studio::FileRequest::Open, &dir);
-                if let Some(e) = self.error.take() {
-                    // It could not be opened: an empty song, saying why.
-                    self.new_song();
-                    self.error = Some(e);
-                }
-            }
+        self.keep.sync_open(&self.song.project(), None, false);
+        // Startup discovery, including existence and crash-marker checks, is worker I/O.
+        let root = self.keep.root().map(Path::to_path_buf);
+        if let Some(root) = root {
+            self.keep.preserve_startup_open = true;
+            self.request_open(crate::opening::Request::Startup(root));
         }
     }
 
     /// The sample song in place of this one (the entrance's list).
     pub fn open_sample(&mut self) {
+        self.request_open(crate::opening::Request::Sample);
+    }
+
+    #[cfg(test)]
+    pub fn open_sample_sync(&mut self) {
         self.keep_leaving();
         let closing = self.closing();
         self.song = Song::sample_after(&self.song);
@@ -247,6 +303,9 @@ impl Studio {
 
     /// The song was edited: a never-saved song gets its draft folder, and the mark flashes.
     pub(crate) fn keep_edit(&mut self, now: u64) {
+        if self.song.steps() > 0 {
+            self.keep.preserve_startup_open = false;
+        }
         if self.song.record_dir().is_none()
             && self.song.steps() > 0
             && let Some(dir) = self.keep.new_draft_dir(now)
@@ -267,7 +326,7 @@ impl Studio {
     /// What the idle poll does for the record: notices an edit, makes the automatic
     /// save point when it is due, and lets the flash end. True when the mark changed.
     pub fn keep_beat(&mut self, now: u64) -> bool {
-        if self.saving.is_some() {
+        if self.input_blocked() {
             return false;
         }
         let before = self.keep.mark(&self.song, now);
@@ -360,6 +419,42 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_draft_registration_is_reported_without_losing_the_draft_files() {
+        let (mut s, root, _tmp) = kept("recent-failure");
+        let recent = root.join("recent.json");
+        let watch = recent.clone();
+        let observation = xirius_core::io_test::observe(Arc::new(move |op, path| {
+            if op == "write" && path == watch {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "test recent failure",
+                ));
+            }
+            Ok(())
+        }));
+        add(&mut s, "recoverable");
+        let draft = s.song.record_dir().unwrap();
+        assert!(draft.join("project.json").exists());
+        assert!(!recent.exists());
+        assert!(s.poll_recent_keep());
+        let toast = s.toast.as_ref().unwrap();
+        assert!(toast.alert);
+        assert!(toast.text.contains("復旧の一覧を記録できません"));
+        assert!(toast.text.contains("test recent failure"));
+        assert!(!s.poll_recent_keep());
+        drop(observation);
+        // A later successful registration remains possible; never delete the
+        // recoverable song to compensate for a recent-list failure.
+        s.keep.remember(&draft, "recoverable", true, 1);
+        assert!(
+            s.keep
+                .recent()
+                .iter()
+                .any(|entry| entry.dir == draft && entry.draft)
+        );
+    }
+
+    #[test]
     fn a_song_with_nothing_done_has_nothing_to_lose() {
         let (s, _, _tmp) = kept("nothing");
         assert_eq!(s.keep.mark(&s.song, 1000), SaveMark::Saved);
@@ -405,7 +500,7 @@ mod tests {
         assert_eq!(s.keep.recent().len(), 1);
         assert!(s.keep.recent()[0].draft);
         let place = root.join("my-song");
-        s.finish_file_request(crate::studio::FileRequest::SaveAs, &place);
+        s.finish_file_request_sync(crate::studio::FileRequest::SaveAs, &place);
         assert!(s.error.is_none(), "{:?}", s.error);
         assert!(!s.song.is_draft());
         assert_eq!(s.song.dir().as_deref(), Some(place.as_path()));
@@ -606,7 +701,7 @@ mod tests {
         add(&mut s, "a");
         let left = s.song.record_dir().unwrap();
         assert!(!s.start_shown());
-        s.new_song();
+        s.new_song_sync();
         assert!(s.start_shown(), "the entrance screen is back");
         assert_eq!(s.project().tracks.len(), 1, "only the master");
         assert!(
@@ -618,7 +713,7 @@ mod tests {
         let listed = s.keep.recent();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].dir, left);
-        s.finish_file_request(crate::studio::FileRequest::Open, &left);
+        s.finish_file_request_sync(crate::studio::FileRequest::Open, &left);
         assert!(s.error.is_none(), "{:?}", s.error);
         assert!(!s.start_shown());
         assert!(s.project().tracks.values().any(|t| t.name == "a"));
@@ -630,6 +725,8 @@ mod tests {
         add(&mut s, "a");
         let g = s.geometry(1440.0, 860.0);
         assert!(s.key(&g, "n", true, false));
+        assert!(s.opening.is_some());
+        s.wait_for_open_for_test();
         assert!(s.start_shown());
         add(&mut s, "b");
         s.open_popup(
@@ -639,6 +736,7 @@ mod tests {
         let l = s.popup.as_ref().unwrap().layout(g.size);
         let new = l.cells.iter().find(|c| c.text == "新規").unwrap();
         assert!(s.popup_action(&g, new.action.clone().unwrap()));
+        s.wait_for_open_for_test();
         assert!(s.popup.is_none() && s.start_shown());
     }
 
@@ -646,6 +744,7 @@ mod tests {
     fn launch(root: &Path) -> Studio {
         let mut s = Studio::sample();
         s.start_keeping(Keep::at(root.to_path_buf()));
+        s.wait_for_open_for_test();
         s
     }
 
@@ -659,7 +758,7 @@ mod tests {
         assert!(s.start_shown() && !s.song.is_sample());
         add(&mut s, "mine");
         let place = root.join("mine");
-        s.finish_file_request(crate::studio::FileRequest::SaveAs, &place);
+        s.finish_file_request_sync(crate::studio::FileRequest::SaveAs, &place);
         assert_eq!(s.error, None);
         s.release_song();
         drop(s);
@@ -670,7 +769,7 @@ mod tests {
         assert_eq!(s.song.record_dir(), Some(place.clone()));
         assert!(s.project().tracks.values().any(|t| t.name == "mine"));
         // Closed on the sample, the sample comes back.
-        s.open_sample();
+        s.open_sample_sync();
         assert!(s.song.is_sample());
         s.release_song();
         drop(s);
@@ -678,7 +777,7 @@ mod tests {
         assert!(s.song.is_sample());
         assert_eq!(s.keep.last_open(), Some(LastOpen::Sample));
         // Closed on a new song, a new song.
-        s.new_song();
+        s.new_song_sync();
         s.release_song();
         drop(s);
         let s = launch(&root);
@@ -687,7 +786,9 @@ mod tests {
 
         // A song whose folder is gone: an empty song, and nothing said.
         let gone = root.join("gone");
-        RecentList::in_dir(&root).closed_with(&LastOpen::Song(gone));
+        RecentList::in_dir(&root)
+            .closed_with(&LastOpen::Song(gone))
+            .unwrap();
         let s = launch(&root);
         assert_eq!(s.error, None);
         assert!(s.start_shown());
@@ -698,7 +799,7 @@ mod tests {
         let tmp = scratch("sample-edit");
         let root = tmp.path().to_path_buf();
         let mut s = launch(&root);
-        s.open_sample();
+        s.open_sample_sync();
         add(&mut s, "added");
         let draft = s.song.record_dir().expect("kept as a draft");
         s.release_song();
@@ -714,7 +815,7 @@ mod tests {
         // Two songs, each left behind as the other is started.
         add(&mut s, "first");
         let first = s.song.record_dir().unwrap();
-        s.new_song();
+        s.new_song_sync();
         add(&mut s, "second");
         let g = s.geometry(1440.0, 860.0);
         s.open_popup(
@@ -737,6 +838,7 @@ mod tests {
         );
         s.popup_action(&g, row.action.clone().unwrap());
         assert!(s.error.is_none(), "{:?}", s.error);
+        s.wait_for_open_for_test();
         assert!(s.project().tracks.values().any(|t| t.name == "first"));
         assert!(!s.project().tracks.values().any(|t| t.name == "second"));
         // And the one it left is now the recent one.

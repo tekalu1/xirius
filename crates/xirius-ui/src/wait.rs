@@ -167,7 +167,7 @@ pub(crate) fn script_time(now: Option<Instant>) {
     SCRIPT_TIME.set(now);
 }
 
-fn now() -> Instant {
+pub(crate) fn now() -> Instant {
     SCRIPT_TIME.get().unwrap_or_else(Instant::now)
 }
 
@@ -220,6 +220,9 @@ pub fn hatch(pen: &mut Pen, r: Rect, color: gpui::Hsla) {
 
 /// The thin line, the veil and 「反映中…」 over the body.
 pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
+    if crate::opening_view::paint(pen, studio, g) {
+        return;
+    }
     let mut v = view();
     let saving = studio.saving.as_ref();
     if let Some(save) = saving {

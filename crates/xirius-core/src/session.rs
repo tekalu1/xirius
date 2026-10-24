@@ -1015,19 +1015,8 @@ impl Session {
         self.check_available()?;
         let before = self.current.clone();
         let mut result = self.run_unnotified(name, raw, opts);
-        if let Ok(result) = &mut result
-            && self
-                .registry
-                .get(name)
-                .is_some_and(|def| def.risk != Risk::Read)
-        {
-            if !result.data.is_object() {
-                result.data = json!({"value": result.data});
-            }
-            if self.hash_people || opts.author.is_ai() {
-                result.data["state_hash"] =
-                    json!({"before": before.content_hash(), "after": self.current.content_hash()});
-            }
+        if let Ok(result) = &mut result {
+            self.stamp_run_result(name, &before, opts, false, result);
         }
         if !Arc::ptr_eq(&before, &self.current) {
             drop(before);
@@ -1037,6 +1026,33 @@ impl Session {
             result.events = self.take_events();
         }
         result
+    }
+
+    /// The same response envelope for synchronous runs, preflight replies and
+    /// worker completion. The latter calls this on its owner worker.
+    fn stamp_run_result(
+        &self,
+        name: &str,
+        before: &Project,
+        opts: &RunOptions,
+        force: bool,
+        result: &mut RunResult,
+    ) {
+        if !force
+            && !self
+                .registry
+                .get(name)
+                .is_some_and(|def| def.risk != Risk::Read)
+        {
+            return;
+        }
+        if !result.data.is_object() {
+            result.data = json!({"value":result.data});
+        }
+        if force || self.hash_people || opts.author.is_ai() {
+            result.data["state_hash"] =
+                json!({"before":before.content_hash(),"after":self.current.content_hash()});
+        }
     }
 
     /// What the extensions have to tell, oldest first, taken from them. [`Session::run`]
@@ -1172,15 +1188,119 @@ impl Session {
         raw: &Map<String, Value>,
         opts: &RunOptions,
     ) -> CmdResult<RunResult> {
-        if let Some(r) = self.run_in_work_copy(name, raw, opts) {
-            return r;
-        }
-        if opts.author.is_ai() {
-            self.check_operator(&opts.author)?;
+        if let Some(result) = self.preflight_run(name, raw, opts)? {
+            return Ok(result);
         }
         let result = self.run_inner(name, raw, opts, false)?;
         self.after_run(name, raw, opts, &result);
         Ok(result)
+    }
+
+    /// Shared by ordinary runs and requests whose I/O is handed to an owner worker.
+    fn preflight_run(
+        &mut self,
+        name: &str,
+        raw: &Map<String, Value>,
+        opts: &RunOptions,
+    ) -> CmdResult<Option<RunResult>> {
+        self.check_available()?;
+        if let Some(result) = self.run_in_work_copy(name, raw, opts) {
+            return result.map(Some);
+        }
+        if opts.author.is_ai() {
+            self.check_operator(&opts.author)?;
+        }
+        Ok(None)
+    }
+
+    /// UI preflight for a deferred replacement. Uses the same permission, confirmation,
+    /// spelling and argument rules as run_inner; performs no file access.
+    pub fn prepare_open(
+        &mut self,
+        name: &str,
+        raw: &Map<String, Value>,
+        opts: &RunOptions,
+    ) -> CmdResult<Result<opening::PreparedOpen, RunResult>> {
+        let before = self.current.clone();
+        if let Some(mut result) = self.preflight_run(name, raw, opts)? {
+            self.stamp_run_result(name, &before, opts, false, &mut result);
+            result.events = self.take_events();
+            return Ok(Err(result));
+        }
+        let mut prepared = if name == "ai.decide" {
+            self.prepare_open_decision(raw, opts)
+        } else {
+            self.prepare_open_inner(name, raw, opts, false)
+        };
+        if let Ok(Err(reply)) = &mut prepared {
+            self.stamp_run_result(name, &before, opts, false, reply);
+            reply.events = self.take_events();
+        }
+        prepared
+    }
+
+    fn prepare_open_inner(
+        &mut self,
+        name: &str,
+        raw: &Map<String, Value>,
+        opts: &RunOptions,
+        confirmed: bool,
+    ) -> CmdResult<Result<opening::PreparedOpen, RunResult>> {
+        if let Some(result) = self.preflight_run(name, raw, opts)? {
+            return Ok(Err(result));
+        }
+        let registry = self.registry.clone();
+        let def = registry
+            .get(name)
+            .ok_or_else(|| CmdError::io("コマンドが見つかりません"))?;
+        if def.screen_only && !self.has_screen() {
+            return Err(CmdError::new(
+                ErrorCode::Denied,
+                format!(
+                    "{} は画面でだけ使えます（画面のない CLI からは実行できません）",
+                    def.name
+                ),
+            ));
+        }
+        let gate = self.gate(def, &opts.author)?;
+        let asked_dry = opts.dry_run
+            || raw
+                .get("dry_run")
+                .is_some_and(|v| v == &Value::Bool(true) || v == "true");
+        if gate == Gate::Confirm && !confirmed && !asked_dry {
+            return self.hold(def, raw, opts).map(Err);
+        }
+        let mut raw = Registry::spelled(def, raw)?;
+        raw.remove("dry_run");
+        let args = registry.normalize(def, &raw)?;
+        if asked_dry || gate == Gate::DryOnly {
+            let mut reply = self.run_session(def, &args, opts, true)?;
+            reply.dry_run = true;
+            reply.forced_dry_run = gate == Gate::DryOnly;
+            return Ok(Err(reply));
+        }
+        let request = if name == "project.new" {
+            opening::OpenRequest::Build(|| Project::new("新しい曲"))
+        } else {
+            let path = PathBuf::from(args.str("path")?);
+            if name == "version.open" {
+                opening::OpenRequest::CopyVersion {
+                    id: args.str("id")?.into(),
+                    destination: path,
+                }
+            } else if crate::dawproject::is_dawproject(&path) {
+                let media = args
+                    .opt_str("media")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| media_dir_for(&path));
+                opening::OpenRequest::Dawproject { path, media }
+            } else {
+                opening::OpenRequest::Song(path)
+            }
+        };
+        Ok(Ok(opening::PreparedOpen::new(
+            self, request, name, args.0, opts,
+        )))
     }
 
     fn run_inner(
@@ -2254,23 +2374,9 @@ impl Session {
                         .map(PathBuf::from)
                         .unwrap_or_else(|| media_dir_for(Path::new(&path)));
                     let got = self.open_dawproject(Path::new(&path), &media)?;
-                    let n = got.skipped.len();
-                    let more = if n > 0 {
-                        format!("（読み込めなかったもの {n}）")
-                    } else {
-                        String::new()
-                    };
                     return Ok(RunResult::new(
                         name,
-                        Output::with(
-                            format!("{path} を新しい曲として開きました{more}"),
-                            json!({
-                                "path": path,
-                                "name": self.current.name,
-                                "media": media.display().to_string(),
-                                "skipped": got.skipped.to_json(),
-                            }),
-                        ),
+                        opening::daw_output(&path, &media, &self.current.name, &got.skipped),
                         ChangeSet::default(),
                     ));
                 }
@@ -2355,10 +2461,7 @@ impl Session {
                 drop(s);
                 Ok(RunResult::new(
                     name,
-                    Output::with(
-                        format!("バージョン {id} を別の曲として {path} に作成しました"),
-                        json!({ "path": path }),
-                    ),
+                    opening::version_output(&id, &path),
                     ChangeSet::default(),
                 ))
             }
@@ -2400,7 +2503,7 @@ impl Session {
 }
 
 impl RunResult {
-    fn new(command: &str, out: Output, changes: ChangeSet) -> RunResult {
+    pub fn new(command: &str, out: Output, changes: ChangeSet) -> RunResult {
         RunResult {
             command: command.to_string(),
             message: out.message,

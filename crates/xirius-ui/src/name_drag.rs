@@ -468,8 +468,8 @@ mod tests {
         let dir = tmp.path().join("order");
         s.command(|song| song.save_as(&dir));
         assert!(s.error.is_none(), "{:?}", s.error);
-        s.new_song();
-        s.finish_file_request(crate::studio::FileRequest::Open, &dir);
+        s.new_song_sync();
+        s.finish_file_request_sync(crate::studio::FileRequest::Open, &dir);
         assert!(s.error.is_none(), "{:?}", s.error);
         assert_eq!(order(&s), moved);
     }

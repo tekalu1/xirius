@@ -61,8 +61,9 @@ fn song_recent_lists_the_songs_and_what_the_next_start_opens() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("project.json"), "{}").unwrap();
     let list = RecentList::in_dir(tmp.path());
-    list.remember(&dir, "夜の散歩 2", false, 1_700_000_000_000);
-    list.closed_with(&LastOpen::Song(dir.clone()));
+    list.remember(&dir, "夜の散歩 2", false, 1_700_000_000_000)
+        .unwrap();
+    list.closed_with(&LastOpen::Song(dir.clone())).unwrap();
     let next = run(&mut s);
     assert_eq!(next.data["songs"][0]["name"], "夜の散歩 2");
     assert_eq!(next.data["songs"][0]["at_ms"], 1_700_000_000_000u64);

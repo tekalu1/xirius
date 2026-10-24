@@ -889,3 +889,61 @@ fn cancelling_ready_version_leaves_no_destination_and_retry_saves_in_published_l
     other.save().unwrap();
     assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 2);
 }
+#[test]
+fn deferred_open_obeys_the_same_operator_and_availability_checks_as_run() {
+    use crate::command::Author;
+    use crate::session::{AiPermission, RunOptions, work::RequestMode};
+    use serde_json::json;
+    let mut s = Session::new("retained");
+    s.set_ai_permission(AiPermission::Save).unwrap();
+    let a = Author::Ai("A".into());
+    s.begin_request(&a, "direct", RequestMode::Direct).unwrap();
+    let before = s.current.clone();
+    let history = s.history().len();
+    for name in ["project.new", "version.open"] {
+        let raw = json!({"id":"version", "path":"unused-copy"});
+        let raw = if name == "project.new" {
+            serde_json::Map::new()
+        } else {
+            raw.as_object().unwrap().clone()
+        };
+        let opts = RunOptions::ai("B");
+        assert_eq!(
+            s.run(name, &raw, &opts).unwrap_err().code,
+            crate::ErrorCode::Conflict
+        );
+        let error = match s.prepare_open(name, &raw, &opts) {
+            Err(e) => e,
+            _ => panic!("preflight bypassed the operator"),
+        };
+        assert_eq!(error.code, crate::ErrorCode::Conflict);
+        assert!(Arc::ptr_eq(&before, &s.current));
+        assert_eq!(s.history().len(), history);
+        assert_eq!(s.request_info().unwrap().author, a);
+    }
+    s.end_request().unwrap();
+    s.begin_request(&a, "draft", RequestMode::Draft).unwrap();
+    for name in ["project.new", "version.open"] {
+        let raw = if name == "project.new" {
+            json!({})
+        } else {
+            json!({"id":"version","path":"unused-copy"})
+        };
+        let raw = raw.as_object().unwrap();
+        assert_eq!(
+            s.run(name, raw, &RunOptions::ai("A")).unwrap_err().code,
+            crate::ErrorCode::Denied
+        );
+        let error = match s.prepare_open(name, raw, &RunOptions::ai("A")) {
+            Err(error) => error,
+            _ => panic!("preflight bypassed the work copy"),
+        };
+        assert_eq!(error.code, crate::ErrorCode::Denied);
+        assert_eq!(s.request_info().unwrap().title, "draft");
+    }
+    s.fail_closed();
+    assert!(
+        s.prepare_open("project.new", &serde_json::Map::new(), &RunOptions::human())
+            .is_err()
+    );
+}

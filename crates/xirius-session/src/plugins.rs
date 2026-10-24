@@ -166,6 +166,18 @@ struct Following {
 /// answers lets go of the old instance within a frame or two of the new mix playing.
 const HAND_OVER: Duration = Duration::from_secs(2);
 
+/// An asynchronous state request. Polling never waits for another process.
+pub struct StatePull {
+    asked: Vec<(Arc<PluginLink>, u64)>,
+    not_before: Instant,
+}
+impl StatePull {
+    pub fn ready(&self) -> bool {
+        Instant::now() >= self.not_before
+            && self.asked.iter().all(|(l, seen)| l.states_seen() > *seen)
+    }
+}
+
 /// How a plugin is, for `plugin.status`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PluginReport {
@@ -1368,7 +1380,7 @@ impl PluginLoader {
     /// its patch in its own window, as Keyscape does, sends no edit, and the song would be
     /// saved with the state from when it was opened. The ones in host processes are asked
     /// and waited for, up to `wait` (the ones whose host went down or never opened are not).
-    pub fn pull_states(&mut self, wait: Duration) {
+    pub fn begin_pull_states(&mut self) -> StatePull {
         for l in self.locals.values_mut() {
             l.capture = Some(Instant::now());
         }
@@ -1391,8 +1403,21 @@ impl PluginLoader {
                 (r.link.clone(), seen)
             })
             .collect();
+        let local = !self.locals.is_empty()
+            || self
+                .leaving
+                .values()
+                .any(|l| matches!(l, Leaving::Local(_, _)));
+        StatePull {
+            asked,
+            not_before: Instant::now() + if local { CAPTURE_WAIT } else { Duration::ZERO },
+        }
+    }
+
+    pub fn pull_states(&mut self, wait: Duration) {
+        let asked = self.begin_pull_states();
         let end = Instant::now() + wait;
-        while Instant::now() < end && asked.iter().any(|(l, seen)| l.states_seen() <= *seen) {
+        while Instant::now() < end && !asked.ready() {
             std::thread::sleep(Duration::from_millis(2));
         }
     }

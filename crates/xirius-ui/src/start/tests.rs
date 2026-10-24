@@ -279,6 +279,7 @@ fn the_list_under_the_entries_ends_with_the_sample_which_a_press_opens() {
     assert_eq!(l.row(Part::Song(0)), None);
 
     assert!(press_row(&mut s, &g, Part::Sample));
+    s.wait_for_open_for_test();
     assert_eq!(s.error, None);
     assert!(s.song.is_sample());
     assert_eq!(s.project().name, crate::song::SAMPLE_NAME);
@@ -305,9 +306,9 @@ fn the_list_shows_the_last_five_songs_newest_first_and_a_press_opens_one() {
     let names = ["a", "b", "c", "d", "e", "f"];
     for name in names {
         assert!(s.run_command("track.add.audio", json!({ "name": name })));
-        s.finish_file_request(crate::studio::FileRequest::SaveAs, &root.join(name));
+        s.finish_file_request_sync(crate::studio::FileRequest::SaveAs, &root.join(name));
         assert_eq!(s.error, None);
-        s.new_song();
+        s.new_song_sync();
     }
     assert!(s.start_shown());
     let listed: Vec<_> = s.start_recent().into_iter().map(|r| r.dir).collect();
@@ -325,6 +326,7 @@ fn the_list_shows_the_last_five_songs_newest_first_and_a_press_opens_one() {
     }
 
     assert!(press_row(&mut s, &g, Part::Song(1)));
+    s.wait_for_open_for_test();
     assert_eq!(s.error, None);
     assert_eq!(s.song.record_dir(), Some(root.join("e")));
     assert!(s.project().tracks.values().any(|t| t.name == "e"));

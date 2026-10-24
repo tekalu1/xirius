@@ -1387,7 +1387,15 @@ impl Studio {
     /// Runs one core command for the screen; false (and the error shown)
     /// when it failed.
     pub(crate) fn run_command(&mut self, command: &str, args: serde_json::Value) -> bool {
-        if self.saving.is_some() {
+        if matches!(command, "project.open" | "version.open" | "project.new")
+            || (command == "ai.decide"
+                && args
+                    .as_object()
+                    .is_some_and(|raw| self.song.session().is_open_decision(raw)))
+        {
+            return self.open_command(command, args);
+        }
+        if self.input_blocked() {
             return false;
         }
         // A wheel's undo step ends before any other command (P3-7 of review 15).
@@ -1459,6 +1467,10 @@ impl Studio {
     /// while something moves (the playhead or a meter), so the screen asks
     /// for the next frame.
     pub fn tick(&mut self) -> bool {
+        let opened = self.poll_opening();
+        if self.opening.is_some() {
+            return true;
+        }
         let saved = self.poll_saving();
         if self.saving.is_some() {
             if let Some(at) = self.transport.poll() {
@@ -1514,6 +1526,7 @@ impl Studio {
         let rig = self.rig_tick();
         let update = self.poll_update();
         saved
+            || opened
             || self.save_mark() == crate::keep::SaveMark::Saving
             || self.transport.playing
             || midi
@@ -2310,7 +2323,7 @@ mod tests {
         let other = Scratch::new("cleanup-other");
         let mut next = crate::song::Song::sample();
         next.save_as(&other.0).unwrap();
-        s.finish_file_request(crate::studio::FileRequest::Open, &other.0);
+        s.finish_file_request_sync(crate::studio::FileRequest::Open, &other.0);
         assert!(s.error.is_none(), "{:?}", s.error);
         assert_eq!(s.song().dir().as_deref(), Some(other.0.as_path()));
         s.await_tidy_for_test();
@@ -2383,7 +2396,7 @@ mod tests {
         // The next song opens while the cleanup has still to move its first file.
         let other = Scratch::new("tidy-other");
         crate::song::Song::sample().save_as(&other.0).unwrap();
-        s.finish_file_request(crate::studio::FileRequest::Open, &other.0);
+        s.finish_file_request_sync(crate::studio::FileRequest::Open, &other.0);
         assert!(s.error.is_none(), "{:?}", s.error);
         assert_eq!(s.song().dir().as_deref(), Some(other.0.as_path()));
         assert!(s.is_tidying(), "the open did not wait for it");
@@ -2401,7 +2414,7 @@ mod tests {
         // slow drive, here two seconds), and an edit of it does not either.
         let release = release_after(&open, Duration::from_secs(2));
         let t = Instant::now();
-        s.finish_file_request(crate::studio::FileRequest::Open, &song.0);
+        s.finish_file_request_sync(crate::studio::FileRequest::Open, &song.0);
         assert!(s.error.is_none(), "{:?}", s.error);
         assert_eq!(s.song().dir().as_deref(), Some(song.0.as_path()));
         s.song.toggle_arm(track(&s, "Vocal")).unwrap();
@@ -2422,7 +2435,7 @@ mod tests {
         // Closed for another, then the window closes while the cleanup moves a file: it is
         // waited for, and nothing is left for the next start.
         open.store(false, Ordering::SeqCst);
-        s.finish_file_request(crate::studio::FileRequest::Open, &other.0);
+        s.finish_file_request_sync(crate::studio::FileRequest::Open, &other.0);
         assert!(s.is_tidying());
         let t = Instant::now();
         while asked.load(Ordering::SeqCst) == 1 {
@@ -2477,7 +2490,7 @@ mod tests {
         let recordings = with_strays(&mut s, &song.0, 2);
         let other = Scratch::new("tidy-edit-other");
         crate::song::Song::sample().save_as(&other.0).unwrap();
-        s.finish_file_request(crate::studio::FileRequest::Open, &other.0);
+        s.finish_file_request_sync(crate::studio::FileRequest::Open, &other.0);
         asked_for(&asked, 1);
 
         // The first file takes two seconds to move: the edits of the next song meanwhile, on
@@ -2515,14 +2528,14 @@ mod tests {
         let (b, c) = (Scratch::new("tidy-last-b"), Scratch::new("tidy-last-c"));
         crate::song::Song::sample().save_as(&b.0).unwrap();
         crate::song::Song::sample().save_as(&c.0).unwrap();
-        s.finish_file_request(crate::studio::FileRequest::Open, &b.0);
+        s.finish_file_request_sync(crate::studio::FileRequest::Open, &b.0);
         asked_for(&asked, 1);
 
         // The closed song opened again while its cleanup moves a file, then another: the one
         // chosen last stays open once the cleanup is over.
         let release = release_after(&open, Duration::from_secs(1));
-        s.finish_file_request(crate::studio::FileRequest::Open, &song.0);
-        s.finish_file_request(crate::studio::FileRequest::Open, &c.0);
+        s.finish_file_request_sync(crate::studio::FileRequest::Open, &song.0);
+        s.finish_file_request_sync(crate::studio::FileRequest::Open, &c.0);
         assert!(s.error.is_none(), "{:?}", s.error);
         assert_eq!(s.song().dir().as_deref(), Some(c.0.as_path()));
         assert!(until(&mut s, |s| !s.is_tidying()));
@@ -2571,14 +2584,14 @@ mod tests {
 
         // A command runs (here, held by the test) while the cleanup waits to move the stray.
         let command = xirius_core::in_use::using();
-        s.finish_file_request(crate::studio::FileRequest::Open, &other.0);
+        s.finish_file_request_sync(crate::studio::FileRequest::Open, &other.0);
         assert!(s.is_tidying());
         let t = Instant::now();
         while xirius_core::in_use::waiting_alone() == 0 {
             assert!(t.elapsed() < Duration::from_secs(60));
             std::thread::sleep(Duration::from_millis(5));
         }
-        s.finish_file_request(crate::studio::FileRequest::Open, &song.0);
+        s.finish_file_request_sync(crate::studio::FileRequest::Open, &song.0);
         assert!(s.error.is_none(), "{:?}", s.error);
         assert_eq!(
             s.song().dir().as_deref(),
@@ -2649,7 +2662,7 @@ mod tests {
         // The window closes while the cleanup of the song closed before waits on the drive.
         let other = Scratch::new("tidy-late-other");
         crate::song::Song::sample().save_as(&other.0).unwrap();
-        s.finish_file_request(crate::studio::FileRequest::Open, &other.0);
+        s.finish_file_request_sync(crate::studio::FileRequest::Open, &other.0);
         let t = Instant::now();
         while asked.load(Ordering::SeqCst) == 0 {
             assert!(t.elapsed() < Duration::from_secs(60));
@@ -2703,10 +2716,10 @@ mod tests {
         assert!(out.exists(), "{:?}", s.toast);
         type Switch = fn(&mut Studio, &std::path::Path);
         let ways: [(&str, Switch); 3] = [
-            ("new song", |s, _| s.new_song()),
-            ("sample", |s, _| s.open_sample()),
+            ("new song", |s, _| s.new_song_sync()),
+            ("sample", |s, _| s.open_sample_sync()),
             ("DAWproject", |s, out| {
-                s.finish_file_request(crate::studio::FileRequest::OpenDawproject, out);
+                s.finish_file_request_sync(crate::studio::FileRequest::OpenDawproject, out);
                 s.dawproject_wait();
             }),
         ];
@@ -2759,7 +2772,7 @@ mod tests {
 
         // A new song (not saved, so what it is given is not copied in) while the closed one's
         // cleanup is moving its first file.
-        s.new_song();
+        s.new_song_sync();
         assert!(s.is_tidying());
         let t = Instant::now();
         while asked.load(Ordering::SeqCst) == 0 {

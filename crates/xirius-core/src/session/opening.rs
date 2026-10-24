@@ -10,6 +10,10 @@ use std::sync::{Arc, Mutex, mpsc};
 use super::{Session, same_path};
 use crate::{CmdError, CmdResult};
 
+mod command;
+pub use command::PreparedOpen;
+pub(super) use command::{daw_output, version_output};
+
 /// Identity supplied by the owner; both fields must still match at adoption.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OpenId {
@@ -20,7 +24,25 @@ pub struct OpenId {
 #[derive(Clone, Debug)]
 pub enum OpenRequest {
     Song(PathBuf),
-    Version { id: String, destination: PathBuf },
+    Resolve {
+        path: PathBuf,
+        resolve: fn(&Path) -> CmdResult<OpenRequest>,
+    },
+    /// Construct an unsaved song on the owner worker.
+    Build(fn() -> crate::model::Project),
+    Dawproject {
+        path: PathBuf,
+        media: PathBuf,
+    },
+    Version {
+        id: String,
+        destination: PathBuf,
+    },
+    /// Command contract: publish a separate song while retaining the current one.
+    CopyVersion {
+        id: String,
+        destination: PathBuf,
+    },
 }
 
 /// Latest progress, independent of the ready and completion channels.
@@ -256,11 +278,11 @@ pub(crate) fn check() -> CmdResult<()> {
 /// I/O observation is scoped to this worker. Synchronous CLI readers use the
 /// same functions without installing progress, cancellation or a test gate.
 pub(crate) fn before(op: &'static str, path: &Path) -> std::io::Result<()> {
-    #[cfg(any(test, feature = "test-io"))]
-    crate::io_test::before(op, path)?;
     PROGRESS.with(|p| {
         if let Some(p) = p.borrow().as_ref() {
             p.stage(op, path);
+            #[cfg(any(test, feature = "test-io"))]
+            crate::io_test::before(op, path)?;
             #[cfg(test)]
             let hook = p.hook.lock().unwrap().clone();
             #[cfg(test)]
@@ -270,9 +292,20 @@ pub(crate) fn before(op: &'static str, path: &Path) -> std::io::Result<()> {
             if p.cancelled() && !p.retiring.load(Ordering::Relaxed) {
                 return Err(std::io::ErrorKind::Interrupted.into());
             }
+        } else {
+            #[cfg(any(test, feature = "test-io"))]
+            crate::io_test::before(op, path)?;
         }
         Ok(())
     })
+}
+
+pub(crate) fn read_done() {
+    PROGRESS.with(|p| {
+        if let Some(p) = p.borrow().as_ref() {
+            p.reads.fetch_add(1, Ordering::Relaxed);
+        }
+    });
 }
 
 /// The lightweight message sent before either session can leave the worker.
@@ -285,9 +318,11 @@ pub struct OpenReady {
 /// A successful adoption, or the original session with its exact in-memory
 /// history, selection, AI work, writer and lane on failure/cancellation.
 pub struct OpenOutcome {
+    pub command_result: Option<CmdResult<super::RunResult>>,
     pub id: OpenId,
     pub session: Session,
     pub result: CmdResult<()>,
+    pub skipped: Option<crate::dawproject::Skips>,
 }
 
 /// A failed spawn returns the original session without dropping it.
@@ -296,7 +331,15 @@ pub struct OpenStartError {
     pub error: std::io::Error,
 }
 
+struct WorkerDone(Arc<AtomicBool>);
+impl Drop for WorkerDone {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
 pub struct OpenJob {
+    pub finished: Arc<AtomicBool>,
     pub id: OpenId,
     pub progress: Arc<OpenProgress>,
     ready: mpsc::Receiver<OpenReady>,
@@ -314,6 +357,8 @@ fn write_failed() -> CmdError {
 /// Owns every transferable resource until the rendezvous completes. Closing
 /// Ready before sending a failure also wakes a caller still waiting for Ready.
 struct Delivery {
+    command: Option<PreparedOpen>,
+    events: Vec<serde_json::Value>,
     session: Option<Session>,
     candidate: Option<Session>,
     loan: Option<super::lane::Lane>,
@@ -323,6 +368,8 @@ struct Delivery {
     id: OpenId,
     progress: Arc<OpenProgress>,
     created: Option<CreatedSong>,
+    media: Option<PathBuf>,
+    skipped: Option<crate::dawproject::Skips>,
     adopted: bool,
 }
 
@@ -340,6 +387,11 @@ impl Delivery {
     fn send(&mut self, mut result: CmdResult<()>) {
         let _scope = Scope::enter(self.progress.clone());
         let _retiring = Retiring::enter();
+        // Lower-level context may wrap an interrupted write as a descriptive
+        // I/O error. An accepted pre-commit cancellation has one stable outcome.
+        if !self.adopted && self.progress.cancelled() {
+            result = Err(std::io::Error::from(std::io::ErrorKind::Interrupted).into());
+        }
         if self.same {
             let lane = self
                 .candidate
@@ -357,16 +409,36 @@ impl Delivery {
         {
             result = Err(error);
         }
+        if let Some(media) = self.media.take() {
+            // Only the exclusively created extraction directory belongs to us.
+            if let Err(error) = io::remove_dir_all(media) {
+                result = Err(error.into());
+            }
+        }
         drop(self.ready.take());
         self.progress
             .blobs
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
-        if let Some(session) = self.session.take() {
+        if let Some(mut session) = self.session.take() {
+            let command_result = self.command.take().map(|command| {
+                command.finish(
+                    &mut session,
+                    &result,
+                    self.skipped.as_ref(),
+                    std::mem::take(&mut self.events),
+                )
+            });
             let _ = self.out.send(OpenOutcome {
+                command_result,
                 id: self.id,
                 session,
+                skipped: if result.is_ok() {
+                    self.skipped.take()
+                } else {
+                    None
+                },
                 result,
             });
         }
@@ -404,6 +476,30 @@ impl OpenJob {
         id: OpenId,
         progress: Arc<OpenProgress>,
     ) -> Result<Self, OpenStartError> {
+        Self::start_inner(old, request, id, progress, None)
+    }
+
+    pub fn start_prepared(
+        old: Session,
+        command: PreparedOpen,
+        id: OpenId,
+    ) -> Result<Self, OpenStartError> {
+        Self::start_inner(
+            old,
+            command.request.clone(),
+            id,
+            Arc::new(OpenProgress::default()),
+            Some(command),
+        )
+    }
+
+    fn start_inner(
+        old: Session,
+        request: OpenRequest,
+        id: OpenId,
+        progress: Arc<OpenProgress>,
+        command: Option<PreparedOpen>,
+    ) -> Result<Self, OpenStartError> {
         let (ready_tx, ready) = mpsc::channel();
         let (decision, decide) = mpsc::channel();
         let (out, outcome) = mpsc::sync_channel(0);
@@ -411,13 +507,18 @@ impl OpenJob {
         let escrow = Arc::new(Mutex::new(Some(old)));
         let owned = escrow.clone();
         let report = progress.clone();
+        let finished = Arc::new(AtomicBool::new(false));
+        let done = finished.clone();
         let spawned = std::thread::Builder::new()
             .name("xirius-open".into())
             .spawn(move || {
+                let _done = WorkerDone(done);
                 #[cfg(test)]
                 let _ended = EndReport(report.clone());
                 let original = owned.lock().unwrap().take().unwrap();
                 let mut delivery = Delivery {
+                    command,
+                    events: Vec::new(),
                     session: Some(original),
                     candidate: None,
                     loan: None,
@@ -427,24 +528,84 @@ impl OpenJob {
                     id,
                     progress: report.clone(),
                     created: None,
+                    media: None,
+                    skipped: None,
                     adopted: false,
                 };
                 let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let _scope = Scope::enter(report.clone());
+                    let request = match request {
+                        OpenRequest::Resolve { ref path, resolve } => resolve(path)?,
+                        ref request => request.clone(),
+                    };
                     let path = match &request {
                         OpenRequest::Song(path) => path,
-                        OpenRequest::Version { destination, .. } => destination,
+                        OpenRequest::Version { destination, .. }
+                        | OpenRequest::CopyVersion { destination, .. } => destination,
+                        OpenRequest::Dawproject { path, .. } => path,
+                        OpenRequest::Build(_) => Path::new(""),
+                        OpenRequest::Resolve { path, .. } => path,
                     };
-                    before("writer", path)?;
+                    let origin = delivery
+                        .session
+                        .as_ref()
+                        .unwrap()
+                        .store
+                        .as_ref()
+                        .map(|s| s.dir.clone())
+                        .unwrap_or_default();
+                    let writer_path = if path.as_os_str().is_empty() {
+                        origin.as_path()
+                    } else {
+                        path
+                    };
+                    before("writer", writer_path)?;
                     let old = delivery.session.as_mut().unwrap();
                     old.writer.flush();
                     check()?;
                     if old.writer.has_errors() {
                         return Err(write_failed());
                     }
+                    match &request {
+                        OpenRequest::Build(build) => {
+                            return Ok(Session::with_registry(build(), old.registry.clone()));
+                        }
+                        OpenRequest::Dawproject { path, media } => {
+                            // A unique child, never the caller's directory, is our cleanup boundary.
+                            io::create_dir_all(media)?;
+                            let root = loop {
+                                let token = {
+                                    use std::hash::{BuildHasher, Hasher};
+                                    std::collections::hash_map::RandomState::new()
+                                        .build_hasher()
+                                        .finish()
+                                };
+                                let root = media.join(format!("import-{token}"));
+                                before("mkdir", &root)?;
+                                match std::fs::create_dir(&root) {
+                                    Ok(()) => break root,
+                                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                                        continue;
+                                    }
+                                    Err(e) => return Err(e.into()),
+                                }
+                            };
+                            delivery.media = Some(root.clone());
+                            let got = crate::dawproject::import_with(path, &root, &mut |_| {})
+                                .map_err(CmdError::io)?;
+                            check()?;
+                            delivery.skipped = Some(got.skipped);
+                            return Ok(Session::with_registry(got.project, old.registry.clone()));
+                        }
+                        _ => {}
+                    }
                     let path = match &request {
                         OpenRequest::Song(path) => path,
-                        OpenRequest::Version { id, destination } => {
+                        OpenRequest::Build(_)
+                        | OpenRequest::Dawproject { .. }
+                        | OpenRequest::Resolve { .. } => unreachable!(),
+                        OpenRequest::Version { id, destination }
+                        | OpenRequest::CopyVersion { id, destination } => {
                             delivery.created = Some(CreatedSong::prepare(destination)?);
                             let stage = &delivery.created.as_ref().unwrap().root;
                             drop(old.open_version_as_song(id, stage)?);
@@ -467,7 +628,11 @@ impl OpenJob {
                 let _retirement = Scope::enter(report.clone());
                 let handoff_path = match &request {
                     OpenRequest::Song(path) => path,
-                    OpenRequest::Version { destination, .. } => destination,
+                    OpenRequest::Version { destination, .. }
+                    | OpenRequest::CopyVersion { destination, .. } => destination,
+                    OpenRequest::Dawproject { path, .. } => path,
+                    OpenRequest::Build(_) => Path::new(""),
+                    OpenRequest::Resolve { path, .. } => path,
                 };
                 // Deliberately outside the construction catch: Delivery also
                 // protects the channel/retirement phase and its unwind paths.
@@ -498,6 +663,12 @@ impl OpenJob {
                         }
                     }
                 }
+                if committed && matches!(request, OpenRequest::CopyVersion { .. }) {
+                    // Publication owns only the new copy. No old extensions, writer,
+                    // history, request or lane is moved into that copy.
+                    delivery.send(Ok(()));
+                    return;
+                }
                 let notified = !committed
                     || std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let candidate = delivery.candidate.as_ref().unwrap();
@@ -515,7 +686,10 @@ impl OpenJob {
                             extension.song_changed(&cx);
                         }
                         for extension in &mut old.extensions {
-                            let _ = extension.take_events();
+                            let events = extension.take_events();
+                            if delivery.command.is_some() {
+                                delivery.events.extend(events);
+                            }
                         }
                     }))
                     .is_ok();
@@ -528,6 +702,7 @@ impl OpenJob {
                     // unwind during retirement. Nothing writable is left on UI.
                     let retired = delivery.session.replace(candidate);
                     delivery.adopted = true;
+                    delivery.media = None;
                     delivery.same = false;
                     drop(retired);
                     Ok(())
@@ -540,6 +715,7 @@ impl OpenJob {
             });
         match spawned {
             Ok(_) => Ok(Self {
+                finished,
                 id,
                 progress,
                 ready,
@@ -577,8 +753,8 @@ impl OpenJob {
         self.outcome.try_recv()
     }
 
-    /// Compatibility bridge for existing synchronous screen entry points.
-    /// PRJ-029 replaces this wait with tick/idle polling. CLI remains synchronous.
+    /// Synchronous completion for non-window callers and setup fixtures.
+    /// Window callbacks use try_ready/try_finish; the independent CLI stays synchronous.
     pub fn finish_blocking(self) -> Result<OpenOutcome, mpsc::RecvError> {
         // Failure can bypass Ready; closing its sender wakes this receiver.
         if let Ok(ready) = self.ready.recv() {

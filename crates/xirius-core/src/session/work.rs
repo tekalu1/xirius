@@ -16,6 +16,10 @@
 
 use super::*;
 
+#[cfg(test)]
+#[path = "work/opening_tests.rs"]
+mod opening_tests;
+
 /// How long a one-time answer token lives (AI-015).
 pub const DECISION_TTL_MS: u64 = 120_000;
 /// How long the AI's edit counts as "now" for the glow when no request is open.
@@ -741,14 +745,10 @@ impl Session {
         {
             return self.decide_inner(token, yes, now);
         }
-        let before = self.current.content_hash();
+        let before = self.current.clone();
         let mut result = self.decide_inner(token, yes, now);
         if let Ok(result) = &mut result {
-            if !result.data.is_object() {
-                result.data = json!({"value": result.data});
-            }
-            result.data["state_hash"] =
-                json!({"before": before, "after": self.current.content_hash()});
+            self.stamp_run_result("ai.decide", &before, &RunOptions::human(), true, result);
         }
         if self.ai_work.completed_decisions.len() >= MAX_PENDING {
             let _ = self.ai_work.completed_decisions.remove(0);
@@ -799,6 +799,124 @@ impl Session {
     }
 
     // ---- the commands --------------------------------------------------------------
+
+    /// Only a pending open approval is intercepted. Answered tokens retain the
+    /// ordinary one-use refusal; ai.decision.get retrieves their final result.
+    pub fn is_open_decision(&self, raw: &Map<String, Value>) -> bool {
+        let Some(def) = self.registry.get("ai.decide") else {
+            return false;
+        };
+        let Ok(raw) = Registry::spelled(def, raw) else {
+            return false;
+        };
+        let Some(token) = raw.get("token").and_then(Value::as_str) else {
+            return false;
+        };
+        let is_open =
+            |command: &str| matches!(command, "project.open" | "version.open" | "project.new");
+        self.ai_work
+            .pending
+            .iter()
+            .any(|d| d.token == token && is_open(&d.command))
+    }
+
+    pub(super) fn record_open_decision(&mut self, token: String, result: CmdResult<RunResult>) {
+        if self.ai_work.completed_decisions.len() >= MAX_PENDING {
+            let _ = self.ai_work.completed_decisions.remove(0);
+        }
+        self.ai_work.completed_decisions.push((token, result));
+    }
+
+    pub(super) fn prepare_open_decision(
+        &mut self,
+        raw: &Map<String, Value>,
+        opts: &RunOptions,
+    ) -> CmdResult<Result<opening::PreparedOpen, RunResult>> {
+        self.prepare_open_decision_at(raw, opts, now_ms())
+    }
+
+    fn prepare_open_decision_at(
+        &mut self,
+        raw: &Map<String, Value>,
+        opts: &RunOptions,
+        now: u64,
+    ) -> CmdResult<Result<opening::PreparedOpen, RunResult>> {
+        let registry = self.registry.clone();
+        let def = registry.get("ai.decide").expect("decision command");
+        self.gate(def, &opts.author)?;
+        let mut spelled = Registry::spelled(def, raw)?;
+        spelled.remove("dry_run");
+        let args = registry.normalize(def, &spelled)?;
+        let token = args.str("token")?.to_string();
+        if opts.dry_run
+            || raw
+                .get("dry_run")
+                .is_some_and(|v| v == &Value::Bool(true) || v == "true")
+        {
+            return self.run_inner("ai.decide", raw, opts, false).map(Err);
+        }
+        if self
+            .ai_work
+            .completed_decisions
+            .iter()
+            .any(|(key, _)| key == &token)
+        {
+            return Err(CmdError::not_found(
+                "その確認は見つかりません（回答済みか、期限切れです）",
+            ));
+        }
+        if args.opt_str("answer") != Some("yes") {
+            return self.decide(&token, false, now).map(Err);
+        }
+        let i = self
+            .ai_work
+            .pending
+            .iter()
+            .position(|d| d.token == token)
+            .ok_or_else(|| {
+                CmdError::not_found("その確認は見つかりません（回答済みか、期限切れです）")
+            })?;
+        let decision = self.ai_work.pending.remove(i);
+        let prepared = (|| {
+            if now > decision.expires_ms {
+                return Err(CmdError::new(
+                    ErrorCode::Expired,
+                    format!(
+                        "{} の確認は期限切れです。AI からもう一度依頼してください",
+                        decision.command
+                    ),
+                ));
+            }
+            let Value::Object(raw) = decision.args else {
+                return Err(CmdError::new(
+                    ErrorCode::Corrupt,
+                    "確認の引数を読み取れません",
+                ));
+            };
+            let author = RunOptions {
+                author: decision.author,
+                dry_run: false,
+            };
+            self.prepare_open_inner(&decision.command, &raw, &author, true)
+        })();
+        match prepared {
+            Ok(Ok(mut prepared)) => {
+                prepared.decision = Some(token);
+                Ok(Ok(prepared))
+            }
+            Ok(Err(mut reply)) => {
+                let before = self.current.clone();
+                let command = reply.command.clone();
+                self.stamp_run_result(&command, &before, opts, true, &mut reply);
+                self.record_open_decision(token, Ok(reply.clone()));
+                Ok(Err(reply))
+            }
+            Err(error) => {
+                self.record_open_decision(token, Err(error.clone()));
+                Err(error)
+            }
+        }
+    }
 
     pub(super) fn run_ai_command(
         &mut self,

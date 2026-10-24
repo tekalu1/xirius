@@ -10,6 +10,33 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
+// One transaction boundary for every RecentList, including independently created
+// handles in open/close workers. The stable OS lock extends this boundary across
+// processes; recent.json itself is replaced and must never be the lock inode.
+static UPDATES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn update_guard() -> std::sync::MutexGuard<'static, ()> {
+    match UPDATES.try_lock() {
+        Ok(guard) => guard,
+        Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
+        Err(std::sync::TryLockError::WouldBlock) => {
+            #[cfg(test)]
+            ON_WAIT.with(|h| {
+                if let Some(h) = h.borrow_mut().take() {
+                    h();
+                }
+            });
+            UPDATES.lock().unwrap_or_else(|error| error.into_inner())
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static AFTER_READ: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+    static ON_WAIT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
 /// Songs the list remembers.
 pub const RECENT_MAX: usize = 12;
 
@@ -48,6 +75,35 @@ pub struct RecentList {
 }
 
 impl RecentList {
+    fn update_guard(
+        &self,
+    ) -> xirius_core::CmdResult<(std::sync::MutexGuard<'static, ()>, std::fs::File)> {
+        use std::fs::{OpenOptions, TryLockError};
+        let process = update_guard();
+        let root = self.path.parent().expect("recent list parent");
+        std::fs::create_dir_all(root)?;
+        // Never truncate, replace or remove this file, even after releasing it.
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(root.join("recent.lock"))?;
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => {
+                #[cfg(test)]
+                ON_WAIT.with(|h| {
+                    if let Some(h) = h.borrow_mut().take() {
+                        h();
+                    }
+                });
+                file.lock()?;
+            }
+            Err(TryLockError::Error(error)) => return Err(error.into()),
+        }
+        Ok((process, file))
+    }
     pub fn in_dir(root: &Path) -> RecentList {
         RecentList {
             path: root.join("recent.json"),
@@ -59,17 +115,29 @@ impl RecentList {
     }
 
     fn read(&self) -> Option<Value> {
-        let text = std::fs::read_to_string(&self.path).ok()?;
-        serde_json::from_str::<Value>(&text)
-            .ok()
-            .filter(Value::is_object)
+        self.read_checked().ok().flatten()
     }
 
-    fn write(&self, v: &Value) {
-        if let Some(dir) = self.path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(&self.path, v.to_string());
+    fn read_checked(&self) -> xirius_core::CmdResult<Option<Value>> {
+        let text = match std::fs::read_to_string(&self.path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let value = serde_json::from_str::<Value>(&text)
+            .ok()
+            .filter(Value::is_object);
+        #[cfg(test)]
+        AFTER_READ.with(|h| {
+            if let Some(h) = h.borrow_mut().take() {
+                h();
+            }
+        });
+        Ok(value)
+    }
+
+    fn write(&self, v: &Value) -> xirius_core::CmdResult<()> {
+        xirius_core::store::atomic_write(&self.path, v.to_string().as_bytes())
     }
 
     /// The songs remembered, newest first. A folder that is gone is left out.
@@ -77,6 +145,10 @@ impl RecentList {
         let Some(v) = self.read() else {
             return Vec::new();
         };
+        Self::songs_in(&v)
+    }
+
+    fn songs_in(v: &Value) -> Vec<RecentSong> {
         v["songs"]
             .as_array()
             .into_iter()
@@ -94,8 +166,7 @@ impl RecentList {
     }
 
     /// Writes `songs`, keeping what else the file holds.
-    fn write_songs(&self, songs: &[RecentSong]) {
-        let mut v = self.read().unwrap_or_else(|| json!({}));
+    fn write_songs(&self, mut v: Value, songs: &[RecentSong]) -> xirius_core::CmdResult<()> {
         v["songs"] = json!(
             songs
                 .iter()
@@ -107,12 +178,20 @@ impl RecentList {
                 }))
                 .collect::<Vec<_>>()
         );
-        self.write(&v);
+        self.write(&v)
     }
 
     /// Puts the song in `dir` first in the list.
-    pub fn remember(&self, dir: &Path, name: &str, draft: bool, now: u64) {
-        let mut all = self.songs();
+    pub fn remember(
+        &self,
+        dir: &Path,
+        name: &str,
+        draft: bool,
+        now: u64,
+    ) -> xirius_core::CmdResult<()> {
+        let _transaction = self.update_guard()?;
+        let v = self.read_checked()?.unwrap_or_else(|| json!({}));
+        let mut all = Self::songs_in(&v);
         all.retain(|s| s.dir != dir);
         all.insert(
             0,
@@ -124,28 +203,34 @@ impl RecentList {
             },
         );
         all.truncate(RECENT_MAX);
-        self.write_songs(&all);
+        self.write_songs(v, &all)
     }
 
     /// Takes the song in `dir` out of the list.
-    pub fn forget(&self, dir: &Path) {
-        let mut all = self.songs();
+    pub fn forget(&self, dir: &Path) -> xirius_core::CmdResult<()> {
+        let _transaction = self.update_guard()?;
+        let v = self.read_checked()?.unwrap_or_else(|| json!({}));
+        let mut all = Self::songs_in(&v);
         let before = all.len();
         all.retain(|s| s.dir != dir);
         if all.len() != before {
-            self.write_songs(&all);
+            self.write_songs(v, &all)?;
         }
+        Ok(())
     }
 
     /// The window closed with `open`: the next start opens it.
-    pub fn closed_with(&self, open: &LastOpen) {
-        let mut v = self.read().unwrap_or_else(|| json!({ "songs": [] }));
+    pub fn closed_with(&self, open: &LastOpen) -> xirius_core::CmdResult<()> {
+        let _transaction = self.update_guard()?;
+        let mut v = self
+            .read_checked()?
+            .unwrap_or_else(|| json!({ "songs": [] }));
         v["open"] = match open {
             LastOpen::Empty => Value::Null,
             LastOpen::Sample => json!("sample"),
             LastOpen::Song(dir) => json!(dir.to_string_lossy()),
         };
-        self.write(&v);
+        self.write(&v)
     }
 
     /// What the app opens with: nothing written yet is the first start (an empty song);
@@ -179,6 +264,190 @@ impl RecentList {
 mod tests {
     use super::*;
 
+    #[test]
+    fn recent_process_child() {
+        use std::io::{BufRead, Write};
+        let Some(root) = std::env::var_os("XIRIUS_RECENT_TEST_ROOT") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        let list = RecentList::in_dir(&root);
+        let signal = |text: &str| {
+            println!("RECENT_SYNC:{text}");
+            std::io::stdout().flush().unwrap();
+        };
+        match std::env::var("XIRIUS_RECENT_TEST_ROLE").unwrap().as_str() {
+            "remember" | "close" => {
+                AFTER_READ.with(|h| {
+                    *h.borrow_mut() = Some(Box::new(move || {
+                        signal("read");
+                        let mut line = String::new();
+                        std::io::stdin().lock().read_line(&mut line).unwrap();
+                        assert_eq!(line.trim(), "release");
+                    }))
+                });
+                if std::env::var("XIRIUS_RECENT_TEST_ROLE").unwrap() == "close" {
+                    list.closed_with(&LastOpen::Sample).unwrap();
+                } else {
+                    list.remember(&root.join("a"), "a", false, 2).unwrap();
+                }
+            }
+            "newer" => {
+                ON_WAIT.with(|h| *h.borrow_mut() = Some(Box::new(move || signal("waiting"))));
+                list.remember(&root.join("draft"), "draft", true, 3)
+                    .unwrap();
+                list.forget(&root.join("a")).unwrap();
+                list.closed_with(&LastOpen::Song(root.join("draft")))
+                    .unwrap();
+            }
+            _ => panic!("unexpected test role"),
+        }
+        signal("done");
+    }
+
+    #[test]
+    fn another_process_cannot_erase_a_draft_or_the_close_record() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::process::{Child, Command, Stdio};
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+        struct Process(Child, mpsc::Receiver<String>);
+        impl Process {
+            fn start(root: &Path, role: &str) -> Self {
+                let mut child = Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "recent::tests::recent_process_child",
+                        "--nocapture",
+                    ])
+                    .env("XIRIUS_RECENT_TEST_ROOT", root)
+                    .env("XIRIUS_RECENT_TEST_ROLE", role)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::inherit())
+                    .spawn()
+                    .unwrap();
+                let output = child.stdout.take().unwrap();
+                let (tx, rx) = mpsc::channel();
+                std::thread::spawn(move || {
+                    for line in BufReader::new(output).lines() {
+                        let line = line.unwrap();
+                        if let Some((_, marker)) = line.split_once("RECENT_SYNC:") {
+                            let _ = tx.send(marker.to_owned());
+                        }
+                    }
+                });
+                Self(child, rx)
+            }
+            fn next(&self) -> String {
+                self.1.recv_timeout(Duration::from_secs(15)).unwrap()
+            }
+            fn finish(&mut self) {
+                let until = Instant::now() + Duration::from_secs(15);
+                loop {
+                    if let Some(status) = self.0.try_wait().unwrap() {
+                        assert!(status.success());
+                        break;
+                    }
+                    assert!(Instant::now() < until, "child did not exit");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+        }
+        impl Drop for Process {
+            fn drop(&mut self) {
+                if self.0.try_wait().ok().flatten().is_none() {
+                    let _ = self.0.kill();
+                    let _ = self.0.wait();
+                }
+            }
+        }
+        for role in ["remember", "close"] {
+            let tmp = scratch("processes");
+            let a = song_dir(tmp.path(), "a");
+            let b = song_dir(tmp.path(), "draft");
+            let list = RecentList::in_dir(tmp.path());
+            list.remember(&a, "a", false, 1).unwrap();
+            let mut p = Process::start(tmp.path(), role);
+            assert_eq!(p.next(), "read");
+            let mut q = Process::start(tmp.path(), "newer");
+            // The old implementation completes Q while P holds stale JSON.
+            // With OS exclusion, Q signals contention before blocking instead.
+            assert!(matches!(q.next().as_str(), "waiting" | "done"));
+            writeln!(p.0.stdin.as_mut().unwrap(), "release").unwrap();
+            p.finish();
+            q.finish();
+            assert!(list.songs().iter().any(|s| s.dir == b && s.draft));
+            assert_eq!(list.last_open(), LastOpen::Song(b));
+        }
+    }
+
+    #[test]
+    fn an_old_update_cannot_erase_a_draft_or_the_close_record() {
+        use std::sync::{Arc, Condvar, Mutex, mpsc};
+        for close in [false, true] {
+            let tmp = scratch("serialized");
+            let a = song_dir(tmp.path(), "a");
+            let b = song_dir(tmp.path(), "draft");
+            let list = RecentList::in_dir(tmp.path());
+            list.remember(&a, "a", false, 1).unwrap();
+            let gate = Arc::new((Mutex::new(false), Condvar::new()));
+            let (tx, read) = mpsc::channel();
+            let old = list.clone();
+            let held = gate.clone();
+            let old_a = a.clone();
+            let stale = std::thread::spawn(move || {
+                AFTER_READ.with(|h| {
+                    *h.borrow_mut() = Some(Box::new(move || {
+                        tx.send(()).unwrap();
+                        let lock = held.0.lock().unwrap();
+                        drop(held.1.wait_while(lock, |released| !*released).unwrap());
+                    }))
+                });
+                if close {
+                    old.closed_with(&LastOpen::Sample).unwrap();
+                } else {
+                    old.remember(&old_a, "a", false, 2).unwrap();
+                }
+            });
+            read.recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap();
+            let (tx, attempted) = mpsc::channel();
+            let new = list.clone();
+            let draft = b.clone();
+            let newer = std::thread::spawn(move || {
+                let waiting = tx.clone();
+                ON_WAIT.with(|h| {
+                    *h.borrow_mut() = Some(Box::new(move || {
+                        let _ = waiting.send(());
+                    }))
+                });
+                new.remember(&draft, "draft", true, 3).unwrap();
+                new.forget(&old_a_path(&new, &draft)).unwrap();
+                new.closed_with(&LastOpen::Song(draft)).unwrap();
+                let _ = tx.send(());
+            });
+            attempted
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap();
+            *gate.0.lock().unwrap() = true;
+            gate.1.notify_all();
+            stale.join().unwrap();
+            newer.join().unwrap();
+            assert!(list.songs().iter().any(|s| s.dir == b && s.draft));
+            assert_eq!(list.last_open(), LastOpen::Song(b));
+        }
+    }
+
+    fn old_a_path(list: &RecentList, draft: &Path) -> PathBuf {
+        // Exercise forget in the same sequence without removing the recovery row.
+        list.songs()
+            .into_iter()
+            .find(|s| s.dir != draft)
+            .unwrap()
+            .dir
+    }
+
     fn scratch(tag: &str) -> tempfile::TempDir {
         tempfile::Builder::new()
             .prefix(&format!("xirius-recent-{tag}-"))
@@ -199,19 +468,19 @@ mod tests {
         let list = RecentList::in_dir(tmp.path());
         assert_eq!(list.last_open(), LastOpen::Empty, "nothing written yet");
         let a = song_dir(tmp.path(), "a");
-        list.remember(&a, "a", false, 100);
-        list.closed_with(&LastOpen::Song(a.clone()));
+        list.remember(&a, "a", false, 100).unwrap();
+        list.closed_with(&LastOpen::Song(a.clone())).unwrap();
         assert_eq!(list.last_open(), LastOpen::Song(a.clone()));
         // Remembering another keeps what the window closed with.
         let b = song_dir(tmp.path(), "b");
-        list.remember(&b, "b", false, 200);
+        list.remember(&b, "b", false, 200).unwrap();
         assert_eq!(list.last_open(), LastOpen::Song(a.clone()));
-        list.closed_with(&LastOpen::Sample);
+        list.closed_with(&LastOpen::Sample).unwrap();
         assert_eq!(list.last_open(), LastOpen::Sample);
-        list.closed_with(&LastOpen::Empty);
+        list.closed_with(&LastOpen::Empty).unwrap();
         assert_eq!(list.last_open(), LastOpen::Empty);
         // A song whose folder is gone opens as an empty one.
-        list.closed_with(&LastOpen::Song(a.clone()));
+        list.closed_with(&LastOpen::Song(a.clone())).unwrap();
         std::fs::remove_dir_all(&a).unwrap();
         assert_eq!(list.last_open(), LastOpen::Empty);
         let names: Vec<String> = list.songs().into_iter().map(|s| s.name).collect();
@@ -234,7 +503,7 @@ mod tests {
         assert_eq!(songs.len(), 2);
         assert!(songs[1].draft);
         // Written again, the songs stay and `open` is added.
-        list.closed_with(&LastOpen::Song(a.clone()));
+        list.closed_with(&LastOpen::Song(a.clone())).unwrap();
         let again = RecentList::in_dir(tmp.path());
         assert_eq!(again.songs(), songs);
         assert_eq!(again.last_open(), LastOpen::Song(a));

@@ -470,8 +470,20 @@ impl Studio {
     /// the session checks the permission and says why it refuses; the
     /// screen keeps what came of it and starts the motion.
     pub fn ai_job(&mut self, job: xirius_mcp::Job) {
-        if self.saving.is_some() {
-            job.answer(Err(CmdError::conflict("保存中です")));
+        if self.input_blocked() {
+            job.answer(Err(CmdError::conflict(if self.opening.is_some() {
+                crate::opening::BUSY
+            } else {
+                "保存中です"
+            })));
+            return;
+        }
+        if matches!(
+            job.command.as_str(),
+            "project.open" | "version.open" | "project.new"
+        ) || (job.command == "ai.decide" && self.song.session().is_open_decision(&job.raw))
+        {
+            self.open_mcp(job);
             return;
         }
         let r = self.ai_run(&job.command, &job.raw, &job.opts, job.save);

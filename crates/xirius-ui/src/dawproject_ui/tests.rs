@@ -114,7 +114,7 @@ fn writing_says_how_far_then_names_the_file_with_what_it_left_out_and_its_folder
     let (mut s, g) = studio_in(dir.path());
     let expected = xirius_session::dawproject::skipped(&s.project(), None, true);
     // The dialog's answer without the ending: it is added.
-    s.finish_file_request(FileRequest::ExportDawproject, &dir.path().join("夜の散歩"));
+    s.finish_file_request_sync(FileRequest::ExportDawproject, &dir.path().join("夜の散歩"));
     let busy = s.toast.clone().expect("the toast while it writes");
     assert!(
         busy.busy && busy.text.starts_with(EXPORTING),
@@ -200,9 +200,12 @@ fn a_written_song_opens_again_as_a_new_unsaved_song_with_its_tracks() {
     s.dawproject_wait();
 
     let mut s = Studio::new(Song::empty());
-    s.finish_file_request(FileRequest::OpenDawproject, &out);
-    let busy = s.toast.clone().expect("the toast while it reads");
-    assert!(busy.busy && busy.text.starts_with(READING), "{}", busy.text);
+    s.finish_file_request_sync(FileRequest::OpenDawproject, &out);
+    assert!(s.opening.is_some());
+    assert!(
+        s.dawproject.is_none(),
+        "imports use the common Block boundary"
+    );
     s.dawproject_wait();
     assert_eq!(s.error, None);
     assert_eq!(names(&s.project()), before);
@@ -259,11 +262,7 @@ fn a_file_that_cannot_be_read_leaves_the_song_and_says_so() {
     assert_eq!(s.project().name, name);
     let t = s.toast.clone().unwrap();
     assert!(t.alert);
-    assert!(
-        t.text.starts_with("bad.dawproject を開けません（"),
-        "{}",
-        t.text
-    );
+    assert!(t.text.starts_with("曲を開けません（"), "{}", t.text);
 }
 
 #[test]
@@ -299,7 +298,7 @@ fn a_dragged_dawproject_names_itself_and_opens_where_it_is_dropped() {
     assert!(s.drop_files(&g, x, y, std::slice::from_ref(&path)));
     assert!(!s.drop_over);
     assert_eq!(s.drop_dawproject, None);
-    assert!(s.dawproject.is_some());
+    assert!(s.opening.is_some());
     s.dawproject_wait();
     assert_eq!(s.project().name, "Demo Song");
     // Other files are not named.
@@ -394,7 +393,7 @@ fn a_plugin_this_pc_does_not_have_is_listed_and_kept_with_its_state() {
     assert!(s.press(&g, Hit::Bar(BarButton::SongName)));
     assert!(press_cell(&mut s, &g, Action::OpenDawproject));
     let request = s.file_request.take().unwrap();
-    s.finish_file_request(request, &path);
+    s.finish_file_request_sync(request, &path);
     s.dawproject_wait();
     assert_eq!(s.project().name, "Readme");
     let t = s.toast.clone().expect("the toast");

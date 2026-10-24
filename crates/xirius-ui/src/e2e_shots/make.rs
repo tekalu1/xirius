@@ -3,7 +3,7 @@
 
 use super::{
     Done, Studio1, cell, cell_where, check, click, click_n, drag, drag_m, keys, made, memo, mid,
-    press, read, row_of, song_dir, song_json, spot, track_of, tracks,
+    press, read, row_of, song_dir, spot, track_of, tracks,
 };
 use crate::{
     browser::{BrowserHit, RailTab},
@@ -236,11 +236,12 @@ fn new_song(s: &Studio1, w: &mut Window, cx: &mut App) -> Done {
     std::fs::create_dir_all(song_dir()).map_err(|e| e.to_string())?;
     press(s, Hit::Bar(BarButton::SongName), w, cx)?;
     cell(s, "新規", w, cx)?;
-    let st = s.borrow();
-    check(st.start_shown(), "the start screen is not shown")?;
-    check(!st.song.can_undo(), "a new song has steps to undo")?;
-    drop(st);
-    memo(|m| m.empty = Some(song_json(s)));
+    s.borrow_mut().after_open(move |st| {
+        assert!(st.start_shown());
+        assert!(!st.song.can_undo());
+        let project = serde_json::to_value(&*st.project()).unwrap();
+        super::memo(|m| m.empty = Some(project));
+    });
     Ok("start screen".into())
 }
 

@@ -144,7 +144,7 @@ impl Screen {
     fn right_pressed(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
         let mut s = self.studio.borrow_mut();
-        if s.saving.is_some() {
+        if s.input_blocked() {
             return;
         }
         let g = geometry(&s, window);
@@ -174,6 +174,19 @@ impl Screen {
         if ev.pressed_button.is_none() {
             // A release outside the window that did not come here.
             studio.pointer_held = false;
+        }
+        if studio.opening.is_some() {
+            let g = geometry(&studio, window);
+            let (x, y) = in_body(ev.position);
+            let open = studio.opening.as_mut().unwrap();
+            let full = crate::opening_view::name_rect(&g).contains(x, y);
+            let cancel = crate::opening_view::cancel_rect(&g).contains(x, y);
+            if open.full_name != full || open.cancel_hover != cancel {
+                open.full_name = full;
+                open.cancel_hover = cancel;
+                cx.notify();
+            }
+            return;
         }
         if studio.saving.is_some() {
             return;
@@ -280,7 +293,7 @@ impl Screen {
         let mut studio = self.studio.borrow_mut();
         let g = geometry(&studio, window);
         let (x, y) = in_body(ev.position);
-        if studio.saving_press(&g, x, y) {
+        if studio.opening_press(&g, x, y) || studio.saving_press(&g, x, y) {
             cx.notify();
             return;
         }
@@ -396,7 +409,7 @@ impl Screen {
         window.focus(&self.focus, cx);
         let mut studio = self.studio.borrow_mut();
         studio.pointer_held = true;
-        if studio.saving.is_some() {
+        if studio.input_blocked() {
             return;
         }
         let g = geometry(&studio, window);
@@ -409,7 +422,7 @@ impl Screen {
     fn middle_released(&mut self, _: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         let mut studio = self.studio.borrow_mut();
         studio.pointer_held = false;
-        if studio.saving.is_some() {
+        if studio.input_blocked() {
             return;
         }
         let g = geometry(&studio, window);
@@ -458,7 +471,11 @@ impl Screen {
         {
             return;
         }
-        if self.studio.borrow_mut().saving_key(&k.key) {
+        let blocked_key = {
+            let mut s = self.studio.borrow_mut();
+            s.opening_key(&k.key) || s.saving_key(&k.key)
+        };
+        if blocked_key {
             cx.notify();
             return;
         }
@@ -595,7 +612,7 @@ impl Screen {
             return;
         }
         let mut studio = self.studio.borrow_mut();
-        if studio.saving.is_some() {
+        if studio.input_blocked() {
             return;
         }
         if studio.bar_up() || studio.edge_up() | studio.side_up() {
@@ -660,7 +677,7 @@ impl Screen {
         let caps_pressed = self.last_caps.is_some_and(|was| was != caps);
         self.last_caps = Some(caps);
         let mut studio = self.studio.borrow_mut();
-        if studio.saving.is_some() {
+        if studio.input_blocked() {
             return;
         }
         if studio.recovery.is_some() || studio.preparing.is_some() {
@@ -700,7 +717,7 @@ impl Screen {
     ) {
         self.files_dragged = true;
         let mut studio = self.studio.borrow_mut();
-        if studio.saving.is_some() {
+        if studio.input_blocked() {
             return;
         }
         let named = studio.drag_names(ev.drag(cx).paths());
@@ -718,7 +735,7 @@ impl Screen {
     ) {
         self.files_dragged = false;
         let mut studio = self.studio.borrow_mut();
-        if studio.saving.is_some() {
+        if studio.input_blocked() {
             return;
         }
         let g = geometry(&studio, window);
@@ -745,7 +762,7 @@ impl Screen {
         ) {
             let file = self.studio.borrow_mut().mixer.preset_file.take();
             if let Some(file) = file {
-                self.studio.borrow_mut().finish_file_request(request, &file);
+                self.studio.borrow_mut().start_file_request(request, &file);
                 cx.notify();
                 return;
             }
@@ -1107,7 +1124,11 @@ fn top_bar(studio: Rc<RefCell<Studio>>, window: &Window, c: Rc<Colors>) -> gpui:
 
 /// Whether a veil covers the bars: the palette's, the settings', the recovery card's.
 fn bars_veiled(studio: &Studio) -> bool {
-    studio.palette.is_some()
+    studio
+        .opening
+        .as_ref()
+        .is_some_and(|open| open.visible(crate::wait::now()))
+        || studio.palette.is_some()
         || studio.settings.is_some()
         || studio.recovery.is_some()
         || studio.preparing.is_some()
@@ -1268,7 +1289,7 @@ impl EntityInputHandler for Screen {
         cx: &mut Context<Self>,
     ) {
         let mut studio = self.studio.borrow_mut();
-        if studio.saving.is_some() {
+        if studio.input_blocked() {
             return;
         }
         if pick_field(&studio).is_some() {
@@ -1294,7 +1315,7 @@ impl EntityInputHandler for Screen {
         cx: &mut Context<Self>,
     ) {
         let mut studio = self.studio.borrow_mut();
-        if studio.saving.is_some() {
+        if studio.input_blocked() {
             return;
         }
         if pick_field(&studio).is_some() {
@@ -1476,11 +1497,11 @@ impl Render for Screen {
             }
             let g = geometry(&studio, window);
             studio.resized(&g);
-            if studio.saving.is_none() {
+            if !studio.input_blocked() {
                 studio.run_midi_commands(&g);
             }
             // Screen commands asked for from the command line or the AI (KEY-012).
-            if studio.saving.is_none() {
+            if !studio.input_blocked() {
                 studio.run_asked(&g);
             }
             match studio.window_ask.take() {
@@ -1662,6 +1683,7 @@ impl Render for Screen {
             .child(bar)
             .child(body)
             .child(bottom)
+            .child(crate::opening_view::accessible(self.studio.clone(), &g))
             .children(marks.into_iter().map(|m| mark(m, self.studio.clone())))
     }
 }
@@ -1965,7 +1987,12 @@ fn step(run: &Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
     }
     quit |= finished;
     let studio = run.borrow().studio.clone();
-    let capture_ready = crate::saving_shots::ready(&studio, window, cx)
+    #[cfg(feature = "loading-probe")]
+    let opening_ready = crate::opening_shots::ready(&studio);
+    #[cfg(not(feature = "loading-probe"))]
+    let opening_ready = studio.borrow().opening.is_none();
+    let capture_ready = opening_ready
+        && crate::saving_shots::ready(&studio, window, cx)
         && crate::otherproc_shots::ready(&studio, window, cx);
     // Handlers borrow the studio, so nothing here is held while dispatching.
     let acts: Option<&'static shot::Shot> = {
@@ -2051,9 +2078,14 @@ pub fn run(opts: Options) {
                 // Parked: opened centred, then moved away by `step` (see park.rs).
                 Place::Centered | Place::Parked => Bounds::centered(None, size(px(w), px(h)), cx),
             };
-            let studio = Rc::new(RefCell::new(Studio::sample()));
-            // A script or a measurement never sounds on the speakers.
             let measured = opts.roll_bench.is_some() || opts.mixer_bench.is_some();
+            let initial = if opts.shots.is_some() || measured {
+                Studio::sample()
+            } else {
+                Studio::new(crate::song::Song::empty())
+            };
+            let studio = Rc::new(RefCell::new(initial));
+            // A script or a measurement never sounds on the speakers.
             studio.borrow_mut().transport.mode = if opts.shots.is_some() || measured {
                 OutputMode::Silent { paced: true }
             } else {
@@ -2186,11 +2218,14 @@ pub fn run(opts: Options) {
                                 }
                                 // The cleanups are waited for a while; those not over then
                                 // run again at the next start.
-                                let n = s.wait_tidy(
-                                    crate::tidy::CLOSE_WAIT,
-                                    &crate::notice::later_path(),
-                                    &mut |e| eprintln!("注意: {e}"),
-                                );
+                                let until = std::time::Instant::now() + crate::tidy::CLOSE_WAIT;
+                                let open_cleaned = s.wait_open_close(crate::tidy::CLOSE_WAIT);
+                                let n = open_cleaned
+                                    + s.wait_tidy(
+                                        until.saturating_duration_since(std::time::Instant::now()),
+                                        &crate::notice::later_path(),
+                                        &mut |e| eprintln!("注意: {e}"),
+                                    );
                                 if n > 0 {
                                     eprintln!(
                                         "使われていない録音のファイル {n} 個をごみ箱に移動しました"
