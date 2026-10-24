@@ -589,7 +589,11 @@ fn the_keys_go_from_row_to_row_fold_open_rename_and_open_the_menu() {
     );
     assert!(key(&mut t, "down", Mods::NONE));
     assert_eq!(t.s.browser.selected_file, Some(t.path(VOCAL_1)));
-    assert_eq!(t.s.browser.playing, None, "the keys do not play it");
+    assert_eq!(
+        t.s.browser.playing,
+        Some(t.path(VOCAL_1)),
+        "the keys play it"
+    );
     // ← on a file goes up to its heading; ← again folds it; → opens it.
     assert!(key(&mut t, "left", Mods::NONE));
     assert_eq!(

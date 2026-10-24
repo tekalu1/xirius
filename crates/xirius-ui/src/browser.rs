@@ -12,7 +12,7 @@
 //! the built-in list ([`LIB`]). The files are the disk's ([`crate::browser_files`]).
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
@@ -639,6 +639,9 @@ impl Browser {
 
     /// A press on a rail button: a second press on the open tab shuts the panel.
     pub fn press_rail(&mut self, tab: RailTab) {
+        if self.tab != tab {
+            self.pool_heading = None;
+        }
         if self.open && self.tab == tab {
             self.open = false;
             self.typing = false;
@@ -1407,12 +1410,23 @@ fn paint_panel(pen: &mut Pen, browser: &Browser, hover: Option<BrowserHit>, l: &
         }
     }
 
+    let on_screen = |p: &&Placed| {
+        let r = browser.row_rect(l, p);
+        r.bottom() >= l.list.y && r.y <= l.list.bottom()
+    };
+    // The lengths of the file rows on screen are read even in a slow place (BRW-022).
+    crate::browser_files::seen(
+        l.rows
+            .iter()
+            .filter(on_screen)
+            .filter_map(|p| match &p.row {
+                BRow::File { key, .. } => Some(Path::new(key.as_str())),
+                _ => None,
+            }),
+    );
     pen.mask(l.list, |pen| {
-        for (i, p) in l.rows.iter().enumerate() {
+        for (i, p) in l.rows.iter().enumerate().filter(|(_, p)| on_screen(p)) {
             let r = browser.row_rect(l, p);
-            if r.bottom() < l.list.y || r.y > l.list.bottom() {
-                continue;
-            }
             paint_row(pen, browser, hover, i, p, r);
         }
     });

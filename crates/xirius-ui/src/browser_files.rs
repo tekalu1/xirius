@@ -11,8 +11,8 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use xirius_session::places::{self, Place, Prefs, SONG};
@@ -152,43 +152,155 @@ fn search(
 
 // --------------------------------------------------------------------- lengths
 
+/// A file whose length took longer than this to read makes its folder a slow one: the rest of
+/// its files are guessed from their size until their rows are on screen (BRW-022). One read
+/// quicker than this makes it a quick one again.
+pub const SLOW: Duration = Duration::from_millis(300);
+/// Bytes a second of an uncompressed file of a kind nothing was measured of in its folder yet:
+/// 44.1 kHz, 16 bit, stereo. A compressed kind is not guessed without a measure.
+const GUESS_RATE: f64 = 176_400.0;
+/// The kinds of file whose bytes a second follow from the sound alone.
+const UNCOMPRESSED: [&str; 5] = ["wav", "wave", "aif", "aiff", "aifc"];
+
+/// The kind of `path`, as its extension in lower case.
+fn kind(path: &Path) -> String {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default()
+}
+
+/// What the length thread says of a file.
+enum Told {
+    /// Read from the file.
+    Exact(String),
+    /// Guessed from its size, in a slow folder; read when its row is on screen.
+    Guess(String),
+}
+
+/// How the length thread reads a file: its length as the row shows it and in seconds, and
+/// its size. The system's in the app; a test puts in a slow one.
+pub struct Measure {
+    pub length: LengthOf,
+    pub size: SizeOf,
+}
+
+/// A file's length as the row shows it, and in seconds when it is audio.
+pub type LengthOf = Box<dyn Fn(&Path) -> (String, Option<f64>) + Send>;
+/// A file's size in bytes.
+pub type SizeOf = Box<dyn Fn(&Path) -> Option<u64> + Send>;
+
+impl Measure {
+    fn system() -> Measure {
+        Measure {
+            length: Box::new(|p| {
+                if is_midi(p) {
+                    return (length_text(p), None);
+                }
+                match xirius_session::decode::probe(p) {
+                    Ok(i) => (clock(i.seconds()), Some(i.seconds())),
+                    Err(_) => (String::new(), None),
+                }
+            }),
+            size: Box::new(|p| std::fs::metadata(p).map(|m| m.len()).ok()),
+        }
+    }
+}
+
 /// The lengths of files, read by a thread of their own.
 struct Lengths {
     known: HashMap<PathBuf, String>,
+    /// Those of `known` that are guesses.
+    guessed: HashSet<PathBuf>,
+    /// Those of `guessed` asked for again (their rows came on screen), until the answer is back.
+    again: HashSet<PathBuf>,
     asked: HashSet<PathBuf>,
+    /// The file rows on screen, which the thread reads even in a slow folder.
+    seen: Arc<Mutex<HashSet<PathBuf>>>,
     ask: Sender<PathBuf>,
-    told: Receiver<(PathBuf, String)>,
+    told: Receiver<(PathBuf, Told)>,
+}
+
+impl Lengths {
+    fn new(m: Measure) -> Lengths {
+        let (ask, asks) = channel::<PathBuf>();
+        let (tell, told) = channel();
+        let seen = Arc::new(Mutex::new(HashSet::new()));
+        let on_screen = seen.clone();
+        std::thread::Builder::new()
+            .name("browser-lengths".into())
+            .spawn(move || {
+                // Bytes a second of the files of each kind measured in a folder, and the slow
+                // folders.
+                let mut rates: HashMap<(PathBuf, String), f64> = HashMap::new();
+                let mut slow: HashSet<PathBuf> = HashSet::new();
+                for path in asks {
+                    let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+                    let shown = on_screen
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .contains(&path);
+                    let key = (dir, kind(&path));
+                    let told = if slow.contains(&key.0) && !shown {
+                        let rate = rates.get(&key).copied().or_else(|| {
+                            UNCOMPRESSED.contains(&key.1.as_str()).then_some(GUESS_RATE)
+                        });
+                        Told::Guess(guess(&path, (m.size)(&path), rate))
+                    } else {
+                        let start = Instant::now();
+                        let (text, secs) = (m.length)(&path);
+                        if start.elapsed() > SLOW {
+                            slow.insert(key.0.clone());
+                        } else {
+                            slow.remove(&key.0);
+                        }
+                        if let (Some(s), Some(b)) = (secs.filter(|s| *s > 0.0), (m.size)(&path)) {
+                            rates.insert(key, b as f64 / s);
+                        }
+                        Told::Exact(text)
+                    };
+                    if tell.send((path, told)).is_err() {
+                        break;
+                    }
+                }
+            })
+            .expect("start the thread that reads file lengths");
+        Lengths {
+            known: HashMap::new(),
+            guessed: HashSet::new(),
+            again: HashSet::new(),
+            asked: HashSet::new(),
+            seen,
+            ask,
+            told,
+        }
+    }
+}
+
+/// `約 1:23` for a file of `size` bytes at `rate` bytes a second; nothing for a MIDI file, one
+/// whose size cannot be had or one with no rate to go by.
+fn guess(path: &Path, size: Option<u64>, rate: Option<f64>) -> String {
+    match (size, rate) {
+        (Some(b), Some(r)) if !is_midi(path) && r > 0.0 => format!("約 {}", clock(b as f64 / r)),
+        _ => String::new(),
+    }
 }
 
 fn lengths<R>(f: impl FnOnce(&mut Lengths) -> R) -> R {
     LENGTHS.with(|l| {
         let mut l = l.borrow_mut();
-        let l = l.get_or_insert_with(|| {
-            let (ask, asks) = channel::<PathBuf>();
-            let (tell, told) = channel();
-            std::thread::Builder::new()
-                .name("browser-lengths".into())
-                .spawn(move || {
-                    for path in asks {
-                        let text = length_text(&path);
-                        if tell.send((path, text)).is_err() {
-                            break;
-                        }
-                    }
-                })
-                .expect("start the thread that reads file lengths");
-            Lengths {
-                known: HashMap::new(),
-                asked: HashSet::new(),
-                ask,
-                told,
-            }
-        });
-        f(l)
+        f(l.get_or_insert_with(|| Lengths::new(Measure::system())))
     })
 }
 
-/// How long `path` is, as the row shows it; empty until it is known.
+/// Reads the lengths of this thread's rows with `m` from now on (a test's slow place).
+#[cfg(test)]
+pub(crate) fn measure_with(m: Measure) {
+    LENGTHS.with(|l| *l.borrow_mut() = Some(Lengths::new(m)));
+}
+
+/// How long `path` is, as the row shows it; empty until it is known, a guess in a slow folder
+/// until its row is on screen.
 pub fn length(path: &Path) -> String {
     lengths(|l| {
         if let Some(t) = l.known.get(path) {
@@ -201,11 +313,49 @@ pub fn length(path: &Path) -> String {
     })
 }
 
+/// The file rows on screen now: those only guessed are read.
+pub fn seen<'a>(paths: impl Iterator<Item = &'a Path>) {
+    lengths(|l| {
+        let now: HashSet<PathBuf> = paths.map(Path::to_path_buf).collect();
+        // The thread is told what is on screen before it is asked, or it guesses again.
+        {
+            let mut seen = l.seen.lock().unwrap_or_else(|e| e.into_inner());
+            if *seen != now {
+                seen.clone_from(&now);
+            }
+        }
+        for p in &now {
+            // Asked again once, until the answer is back.
+            if l.guessed.contains(p) && l.again.insert(p.clone()) {
+                let _ = l.ask.send(p.clone());
+            }
+        }
+    })
+}
+
 /// Takes the lengths read since the last call; true when a row should be drawn again.
 pub fn poll() -> bool {
     lengths(|l| {
         let mut got = false;
-        while let Ok((path, text)) = l.told.try_recv() {
+        while let Ok((path, told)) = l.told.try_recv() {
+            let text = match told {
+                Told::Exact(t) => {
+                    l.guessed.remove(&path);
+                    l.again.remove(&path);
+                    t
+                }
+                Told::Guess(t) => {
+                    // A reading is not undone by a guess.
+                    if l.known.contains_key(&path) && !l.guessed.contains(&path) {
+                        continue;
+                    }
+                    // Guessed again (the row went off screen first): asked again when it is
+                    // back on screen.
+                    l.again.remove(&path);
+                    l.guessed.insert(path.clone());
+                    t
+                }
+            };
             l.known.insert(path, text);
             got = true;
         }
@@ -213,7 +363,7 @@ pub fn poll() -> bool {
     })
 }
 
-/// Waits (up to `limit`) until every length asked for is known.
+/// Waits (up to `limit`) until every length asked for is known, read or guessed.
 pub fn settle(limit: Duration) {
     let start = Instant::now();
     loop {
@@ -436,6 +586,7 @@ impl Browser {
     }
 
     pub fn set_location(&mut self, i: usize) {
+        self.pool_heading = None;
         if i <= self.places.len() {
             self.loc = i;
             self.path.clear();
@@ -447,6 +598,7 @@ impl Browser {
 
     /// Back to the first `n` parts of the breadcrumb (0 is the location itself).
     pub fn go_up_to(&mut self, n: usize) {
+        self.pool_heading = None;
         self.path.truncate(n);
         self.scroll = 0.0;
     }
@@ -460,6 +612,7 @@ impl Browser {
     /// Selecting an audio file starts its audition (BRW-007); another file stops the one
     /// that played.
     pub fn select_file(&mut self, key: &str) {
+        self.pool_heading = None;
         self.selected_file = Some(key.to_string());
         self.playing = crate::drop_audio::is_audio(Path::new(key)).then(|| key.to_string());
     }
@@ -477,6 +630,7 @@ impl Browser {
 
     /// The folder `key` (a folder row's) becomes the one the list shows.
     pub fn enter_dir(&mut self, key: &str) {
+        self.pool_heading = None;
         let Some(here) = self.here_dir() else {
             return;
         };

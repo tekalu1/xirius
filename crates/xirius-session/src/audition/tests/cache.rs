@@ -43,6 +43,9 @@ fn lead(limits: Limits) -> Lead {
         kept: VecDeque::new(),
         bytes: 0,
         reading: vec![],
+        ahead: vec![],
+        tried: vec![],
+        last: None,
         want: None,
         readers: 0,
     }
@@ -65,7 +68,7 @@ fn cache_limits_count_owned_capacity_including_peaks() {
         total: 2048,
         one: 1024,
     });
-    lead.keep(Path::new("a.wav"), &loaded);
+    lead.keep(Path::new("a.wav"), &loaded, false);
     assert!(
         lead.kept.is_empty(),
         "spare capacity belongs to the cache budget"

@@ -391,7 +391,7 @@ impl crate::studio::Studio {
         key: &str,
         mods: crate::tools::Mods,
     ) -> bool {
-        if !self.pool_shown()
+        if !(self.pool_shown() || (self.browser.open && self.browser.tab == RailTab::Files))
             || !self.input_map.browser_focus
             || self.browser.typing
             || self.popup.is_some()
@@ -402,7 +402,7 @@ impl crate::studio::Studio {
         }
         // Shift+F10 and the menu key: the browser has no keys of its own in the table, so the
         // tab opens its row's menu here.
-        if (key == "f10" && mods.shift) || (key == "menu" && !mods.shift) {
+        if self.pool_shown() && ((key == "f10" && mods.shift) || (key == "menu" && !mods.shift)) {
             return self.pool_key_menu(g);
         }
         if mods.shift {
@@ -413,14 +413,21 @@ impl crate::studio::Studio {
             .rows
             .iter()
             .enumerate()
-            .filter(|(_, p)| matches!(p.row, BRow::Group { .. } | BRow::Pool { .. }))
+            .filter(|(_, p)| {
+                matches!(
+                    p.row,
+                    BRow::Group { .. } | BRow::Pool { .. } | BRow::File { .. } | BRow::Dir { .. }
+                )
+            })
             .map(|(i, _)| i)
             .collect();
         let heading = self.browser.pool_heading.clone();
         let file = self.browser.selected_file.clone();
         let at = stops.iter().position(|&i| match &l.rows[i].row {
-            BRow::Group { key, .. } => heading.as_deref() == Some(key),
-            BRow::Pool { key, .. } => heading.is_none() && file.as_deref() == Some(key),
+            BRow::Group { key, .. } | BRow::Dir { key, .. } => heading.as_deref() == Some(key),
+            BRow::Pool { key, .. } | BRow::File { key, .. } => {
+                heading.is_none() && file.as_deref() == Some(key)
+            }
             _ => false,
         });
         match key {
@@ -442,6 +449,11 @@ impl crate::studio::Studio {
                     return false;
                 };
                 match &l.rows[i].row {
+                    BRow::Dir { key: k, open, .. } => {
+                        if *open == (key == "left") {
+                            self.browser.toggle_dir(k);
+                        }
+                    }
                     BRow::Group { key: k, open, .. } => {
                         if *open == (key == "left") {
                             let k = k.clone();
@@ -511,21 +523,26 @@ impl crate::studio::Studio {
                 self.browser.selected_file = None;
                 self.browser.playing = None;
             }
-            BRow::Pool { key, .. } => {
-                // The keys only pick it: the audition starts from its band or a press.
-                self.browser.pool_heading = None;
-                self.browser.selected_file = Some(key.clone());
+            BRow::Dir { key, .. } => {
+                self.browser.pool_heading = Some(key.clone());
+                self.browser.selected_file = None;
                 self.browser.playing = None;
+            }
+            BRow::Pool { key, missing, .. } => self.browser.select_pool(key, *missing),
+            BRow::File { key, .. } => {
+                self.browser.pool_heading = None;
+                self.browser.select_file(key);
             }
             _ => return,
         }
+        self.follow_audition();
         let l = self.browser.layout(g.panel);
         let Some(p) = l
             .rows
             .iter()
             .find(|p| match (&p.row, &self.browser.pool_heading) {
-                (BRow::Group { key, .. }, Some(h)) => key == h,
-                (BRow::Pool { key, .. }, None) => {
+                (BRow::Group { key, .. } | BRow::Dir { key, .. }, Some(h)) => key == h,
+                (BRow::Pool { key, .. } | BRow::File { key, .. }, None) => {
                     self.browser.selected_file.as_deref() == Some(key)
                 }
                 _ => false,

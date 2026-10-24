@@ -159,6 +159,202 @@ fn rows_show_how_long_each_file_is_once_read() {
 }
 
 #[test]
+fn a_slow_place_guesses_the_lengths_off_screen_and_reads_those_on_it() {
+    let tmp = folder("slow");
+    let top = tmp.path().join("遅い");
+    std::fs::create_dir_all(&top).unwrap();
+    for (i, n) in ["a", "b", "c", "d", "e"].iter().enumerate() {
+        std::fs::write(top.join(format!("{n}.wav")), vec![0u8; 1_000_000 * (i + 1)]).unwrap();
+    }
+    // Each file takes longer to read than a slow place's; it is 10 s a megabyte.
+    let read = Arc::new(Mutex::new(Vec::<PathBuf>::new()));
+    let r = read.clone();
+    measure_with(Measure {
+        length: Box::new(move |p| {
+            std::thread::sleep(SLOW + Duration::from_millis(50));
+            r.lock().unwrap().push(p.to_path_buf());
+            let secs = std::fs::metadata(p).unwrap().len() as f64 / 100_000.0;
+            (clock(secs), Some(secs))
+        }),
+        size: Box::new(|p| std::fs::metadata(p).map(|m| m.len()).ok()),
+    });
+    let b = on(&top);
+    let lens = |b: &Browser| -> Vec<String> {
+        b.rows()
+            .into_iter()
+            .filter_map(|r| match r {
+                BRow::File { len, .. } => Some(len),
+                _ => None,
+            })
+            .collect()
+    };
+    let _ = lens(&b);
+    settle(Duration::from_secs(10));
+    // The first is read, and was slow: the rest are guessed at its bytes a second.
+    assert_eq!(
+        lens(&b),
+        ["0:10", "約 0:20", "約 0:30", "約 0:40", "約 0:50"]
+    );
+    assert_eq!(read.lock().unwrap().len(), 1);
+    // The row of d comes on screen, and is read.
+    let d = top.join("d.wav");
+    let started = Instant::now();
+    while lens(&b)[3] != "0:40" {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            lens(&b)
+        );
+        seen([d.as_path()].into_iter());
+        poll();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(lens(&b), ["0:10", "約 0:20", "約 0:30", "0:40", "約 0:50"]);
+    assert_eq!(*read.lock().unwrap(), [top.join("a.wav"), d]);
+}
+
+#[test]
+fn a_slow_place_guesses_each_kind_by_its_own_and_is_measured_again_once_quick() {
+    let tmp = folder("slow-kinds");
+    let top = tmp.path().join("遅い");
+    std::fs::create_dir_all(&top).unwrap();
+    for n in ["a.wav", "b.wav", "c.mp3", "d.flac"] {
+        std::fs::write(top.join(n), vec![0u8; 2_000_000]).unwrap();
+    }
+    // Slow until told otherwise; a WAV is 10 s a megabyte, an MP3 and a FLAC have no measure.
+    let slow = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let s = slow.clone();
+    measure_with(Measure {
+        length: Box::new(move |p| {
+            if s.load(std::sync::atomic::Ordering::Relaxed) {
+                std::thread::sleep(SLOW + Duration::from_millis(50));
+            }
+            let secs = std::fs::metadata(p).unwrap().len() as f64 / 100_000.0;
+            (clock(secs), Some(secs))
+        }),
+        size: Box::new(|p| std::fs::metadata(p).map(|m| m.len()).ok()),
+    });
+    let b = on(&top);
+    let lens = |b: &Browser| -> Vec<String> {
+        b.rows()
+            .into_iter()
+            .filter_map(|r| match r {
+                BRow::File { len, .. } => Some(len),
+                _ => None,
+            })
+            .collect()
+    };
+    let _ = lens(&b);
+    settle(Duration::from_secs(10));
+    // The WAV's bytes a second say nothing of the compressed kinds: they wait for their rows.
+    assert_eq!(lens(&b), ["0:20", "約 0:20", "", ""]);
+    // The place has become quick (the files are cached): a row read now is quick, and the
+    // files asked for after are read, not guessed.
+    slow.store(false, std::sync::atomic::Ordering::Relaxed);
+    let c = top.join("c.mp3");
+    let started = Instant::now();
+    while lens(&b)[2] != "0:20" {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            lens(&b)
+        );
+        seen([c.as_path()].into_iter());
+        poll();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let e = top.join("e.wav");
+    std::fs::write(&e, vec![0u8; 3_000_000]).unwrap();
+    let _ = length(&e);
+    settle(Duration::from_secs(10));
+    assert_eq!(length(&e), "0:30");
+}
+
+#[test]
+fn a_row_off_screen_again_before_it_is_read_is_read_when_it_comes_back() {
+    let tmp = folder("slow-back");
+    let top = tmp.path().join("遅い");
+    std::fs::create_dir_all(&top).unwrap();
+    for n in ["a.wav", "b.wav", "c.wav"] {
+        std::fs::write(top.join(n), vec![0u8; 2_000_000]).unwrap();
+    }
+    let (began, started_read) = std::sync::mpsc::channel();
+    let (go, proceed) = std::sync::mpsc::channel();
+    struct Release(Option<std::sync::mpsc::Sender<()>>);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            if let Some(go) = self.0.take() {
+                let _ = go.send(());
+            }
+        }
+    }
+    let mut release = Release(Some(go));
+    measure_with(Measure {
+        length: Box::new(move |p| {
+            let b = p.file_name().is_some_and(|n| n == "b.wav");
+            if b {
+                began.send(()).unwrap();
+                proceed.recv_timeout(Duration::from_secs(20)).unwrap();
+            }
+            // This delay supplies the slow-device classification itself. Gate
+            // notifications, rather than this duration, order b/c visibility.
+            std::thread::sleep(SLOW + Duration::from_millis(50));
+            let secs = std::fs::metadata(p).unwrap().len() as f64 / 100_000.0;
+            (clock(secs), Some(secs))
+        }),
+        size: Box::new(|p| std::fs::metadata(p).map(|m| m.len()).ok()),
+    });
+    let b = on(&top);
+    let lens = |b: &Browser| -> Vec<String> {
+        b.rows()
+            .into_iter()
+            .filter_map(|r| match r {
+                BRow::File { len, .. } => Some(len),
+                _ => None,
+            })
+            .collect()
+    };
+    let _ = lens(&b);
+    settle(Duration::from_secs(10));
+    assert_eq!(lens(&b), ["0:20", "約 0:20", "約 0:20"]);
+    let (rb, rc) = (top.join("b.wav"), top.join("c.wav"));
+    // b comes on screen and is read; c comes on screen and goes off again while it waits.
+    seen([rb.as_path()].into_iter());
+    started_read.recv_timeout(Duration::from_secs(20)).unwrap();
+    seen([rc.as_path()].into_iter());
+    seen(std::iter::empty());
+    release.0.take().unwrap().send(()).unwrap();
+    let started = Instant::now();
+    while lens(&b)[1] != "0:20" {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            lens(&b)
+        );
+        poll();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    settle(Duration::from_secs(10));
+    while lengths(|l| l.again.contains(&rc)) {
+        assert!(started.elapsed() < Duration::from_secs(20));
+        poll();
+        std::thread::yield_now();
+    }
+    assert!(lens(&b)[2].starts_with("約 "));
+    // c came back as a guess; on screen again, it is read.
+    while lens(&b)[2] != "0:20" {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            lens(&b)
+        );
+        seen([rc.as_path()].into_iter());
+        poll();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
 fn the_song_tab_waits_for_a_folder_and_hides_what_the_song_keeps() {
     let mut b = Browser::new();
     b.press_rail(RailTab::Files);

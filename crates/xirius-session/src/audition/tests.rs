@@ -205,6 +205,112 @@ fn what_comes_of_a_file_asked_for_before_is_not_said_of_the_newer_one() {
 }
 
 #[test]
+fn the_rows_read_ahead_play_at_once_when_asked_for() {
+    let d = dir("ahead");
+    let store = d.path().join("peaks");
+    let files: Vec<_> = ["a", "b", "c", "d"]
+        .iter()
+        .map(|n| wav(d.path(), &format!("{n}.wav"), 0.5, 48_000))
+        .collect();
+    let reader = Arc::new(ReaderGates::default());
+    let a = Audition::with(reader.clone(), Limits::default());
+    a.prefetch(files.iter().map(|f| (f.clone(), store.clone())).collect());
+    let end = Instant::now() + Duration::from_secs(20);
+    while a.kept().0.len() < files.len() {
+        assert!(Instant::now() < end);
+        std::thread::yield_now();
+    }
+    let gate = hold(&reader.stat, &files[2]);
+    a.play(&files[2], &store, SILENT);
+    gate.0.entered(1);
+    until(&a, "prefetched sound is cued without stat", |n| {
+        n.kept && n.phase != Phase::Loading
+    });
+    gate.0.release();
+    drained(&a, &reader);
+    for f in &files {
+        assert_eq!(reader.opens(f), 1);
+    }
+}
+
+#[test]
+fn a_file_read_ahead_and_not_kept_is_not_read_again() {
+    let d = dir("ahead-once");
+    let store = d.path().join("peaks");
+    let long = wav(d.path(), "long.wav", 1.0, 48_000);
+    let broken = d.path().join("broken.wav");
+    std::fs::write(&broken, b"not a wav").unwrap();
+    let reader = Arc::new(ReaderGates::default());
+    let a = Audition::with(
+        reader.clone(),
+        Limits {
+            one: 100_000,
+            ..Limits::default()
+        },
+    );
+    a.prefetch(vec![
+        (long.clone(), store.clone()),
+        (broken.clone(), store.clone()),
+    ]);
+    drained(&a, &reader);
+    assert_eq!(reader.opens(&long), 1);
+    assert_eq!(reader.opens(&broken), 1);
+    assert!(a.kept().0.is_empty());
+    a.prefetch(vec![(broken.clone(), store.clone()), (long.clone(), store)]);
+    drained(&a, &reader);
+    assert_eq!(reader.opens(&long), 1);
+    assert_eq!(reader.opens(&broken), 1);
+}
+
+#[test]
+fn files_read_ahead_go_before_the_one_asked_for() {
+    let d = dir("ahead-order");
+    let store = d.path().join("peaks");
+    let files: Vec<PathBuf> = ["a", "b", "c"]
+        .iter()
+        .map(|n| wav(d.path(), &format!("{n}.wav"), 1.0, 48_000))
+        .collect();
+    // Two files of one second fit, a third does not.
+    let limits = Limits {
+        total: 1_200_000,
+        one: 800_000,
+    };
+    let a = Audition::with(Arc::new(Disk), limits);
+    a.play(&files[0], &store, SILENT);
+    until(&a, "ending", |n| n.phase == Phase::Ended);
+    let ahead = |f: &PathBuf| {
+        a.prefetch(vec![(f.clone(), store.clone())]);
+        let end = Instant::now() + Duration::from_secs(20);
+        while !a.kept().0.contains(f) {
+            assert!(Instant::now() < end, "{:?}", kept_names(&a));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    ahead(&files[1]);
+    assert_eq!(kept_names(&a), ["b.wav", "a.wav"]);
+    // c pushes out b, read ahead, not a, the one chosen.
+    ahead(&files[2]);
+    assert_eq!(kept_names(&a), ["c.wav", "a.wav"]);
+}
+
+#[test]
+fn a_file_being_read_ahead_is_not_opened_again_when_asked_for() {
+    let d = dir("adopt");
+    let store = d.path().join("peaks");
+    let file = wav(d.path(), "a.wav", 0.5, 48_000);
+    let reader = Arc::new(ReaderGates::default());
+    let gate = hold(&reader.open, &file);
+    let a = Audition::with(reader.clone(), Limits::default());
+    a.prefetch(vec![(file.clone(), store.clone())]);
+    gate.0.entered(1);
+    a.play(&file, &store, SILENT);
+    gates::barrier(&a);
+    gate.0.release();
+    until(&a, "ending", |n| n.phase == Phase::Ended);
+    assert_eq!(reader.opens(&file), 1);
+}
+
+#[test]
 fn the_peaks_grow_as_the_file_is_read() {
     let d = dir("grow");
     let store = d.path().join("peaks");
@@ -381,7 +487,8 @@ fn mixed_preview_resamples_ends_and_stops_without_moving_the_song() {
     );
 }
 
-mod cache;
+mod review;
+
 mod gates;
 use gates::{ReaderGates, drained, hold};
 
@@ -463,3 +570,5 @@ fn validation_after_a_short_cached_sound_ends_only_refreshes_the_cache() {
     assert_eq!(n.whole, Some(12_000));
     assert_eq!(reader.opens(&file), 2);
 }
+
+mod cache;

@@ -1,4 +1,4 @@
-//! The audition of the file browser (BRW-007, BRW-020): the selected audio file plays
+//! The audition of the file browser (BRW-007, BRW-020..BRW-022): the selected audio file plays
 //! by itself, on a player of its own beside the song's, and its row shows the file's waveform
 //! with what has played lit.
 //!
@@ -15,9 +15,13 @@ use xirius_session::audition::{Audition, Now, Phase, Sink};
 use xirius_session::output::OutputMode;
 use xirius_session::peaks;
 
-use crate::browser::Browser;
+use crate::browser::{BRow, Browser};
 use crate::draw::Pen;
 use crate::studio::{Rect, Studio};
+
+/// The audio rows read ahead below and above the chosen one (BRW-021).
+const BELOW: usize = 3;
+const ABOVE: usize = 1;
 
 /// What the window keeps of the audition: what it asked for.
 #[derive(Default)]
@@ -204,6 +208,7 @@ impl Studio {
                     OUTPUT_EPOCH.with(|e| e.set(e.get() + 1));
                     RELEASED.with(|r| r.set(!matches!(sink, Sink::Device { .. })));
                     player(|a| a.play(path, &store_for(&self.browser, path), sink));
+                    self.read_ahead(key);
                 }
                 _ => {
                     PLAYER.with(|p| {
@@ -256,6 +261,41 @@ impl Studio {
             .and_then(|k| of(&n, k))
             .is_some_and(|n| n.phase == Phase::Loading);
         before != self.browser.playing || reading
+    }
+
+    /// Has the player read the audio rows next to `key` ahead: [`BELOW`] under it and
+    /// [`ABOVE`] over it, the nearest first.
+    fn read_ahead(&self, key: &str) {
+        let rows = if self.pool_shown() {
+            self.browser.pool_rows()
+        } else {
+            self.browser.file_rows()
+        };
+        let files: Vec<&str> = rows
+            .iter()
+            .filter_map(|r| match r {
+                BRow::File { key, .. }
+                | BRow::Pool {
+                    key,
+                    missing: false,
+                    ..
+                } if crate::drop_audio::is_audio(Path::new(key)) => Some(key.as_str()),
+                _ => None,
+            })
+            .collect();
+        let Some(i) = files.iter().position(|k| *k == key) else {
+            return;
+        };
+        let below = files[i + 1..].iter().take(BELOW);
+        let above = files[..i].iter().rev().take(ABOVE);
+        let list: Vec<(PathBuf, PathBuf)> = below
+            .chain(above)
+            .map(|k| {
+                let p = Path::new(k);
+                (p.to_path_buf(), store_for(&self.browser, p))
+            })
+            .collect();
+        player(|a| a.prefetch(list));
     }
 }
 

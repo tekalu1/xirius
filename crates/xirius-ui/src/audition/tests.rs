@@ -1,5 +1,5 @@
 //! The audition plays the chosen file on a player of its own, silently in a test (BRW-007,
-//! BRW-020). The player reads the file on its own threads, so a test turns the
+//! BRW-020..BRW-022). The player reads the file on its own threads, so a test turns the
 //! screen's look until what it waits for has come.
 
 use std::time::{Duration, Instant};
@@ -42,6 +42,10 @@ fn until(s: &mut Studio, what: &str, done: impl Fn(&Studio) -> bool) {
         s.follow_audition();
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+fn kept() -> Vec<PathBuf> {
+    PLAYER.with(|p| p.borrow().as_ref().map(|a| a.kept().0).unwrap_or_default())
 }
 
 #[test]
@@ -160,6 +164,35 @@ fn pressing_the_row_hands_the_file_over_without_waiting_for_the_look() {
 }
 
 #[test]
+fn the_rows_next_to_the_chosen_one_are_read_ahead() {
+    let dir = tempfile::Builder::new()
+        .prefix("xirius-ui-audition-ahead-")
+        .tempdir()
+        .unwrap();
+    let top = dir.path().join("並び");
+    let tone: Vec<f32> = (0..4800).map(|i| (i as f32 * 0.05).sin() * 0.5).collect();
+    let names = ["a", "b", "c", "d", "e", "f", "g"];
+    for n in names {
+        xirius_session::export::write_wav(&top.join(format!("{n}.wav")), &tone, &tone, 48_000, 16)
+            .unwrap();
+    }
+    let mut s = studio(OutputMode::Silent { paced: true }, &top);
+    s.browser.add_place(&top).unwrap();
+    let key = |n: &str| top.join(format!("{n}.wav"));
+    s.browser.select_file(&key("c").to_string_lossy());
+    s.follow_audition();
+    // Three below and one above, besides the chosen one.
+    let want = ["b", "c", "d", "e", "f"].map(key);
+    until(&mut s, "the rows next to it are kept", |_| {
+        let k = kept();
+        want.iter().all(|p| k.contains(p))
+    });
+    let k = kept();
+    assert!(!k.contains(&key("a")), "{k:?}");
+    assert!(!k.contains(&key("g")), "{k:?}");
+}
+
+#[test]
 fn peaks_go_in_the_songs_folder_for_its_files_and_elsewhere_otherwise() {
     let mut b = Browser::new();
     let song = std::env::temp_dir().join("xirius-ui-audition-song");
@@ -209,6 +242,64 @@ fn exclusive_preview_uses_the_prepared_song_output() {
     eprintln!("prepared song play with mixed preview: {:?}", at.elapsed());
     assert_eq!(opens.load(SeqCst), 1, "play reuses the same output");
     s.transport.pause();
+    close();
+}
+
+#[test]
+fn file_arrow_keys_select_and_hand_the_audio_to_the_player() {
+    let (_tmp, top) = place("arrow");
+    std::fs::copy(top.join("pad_44k.wav"), top.join("z.wav")).unwrap();
+    let mut s = studio(OutputMode::Silent { paced: true }, &top);
+    s.browser.add_place(&top).unwrap();
+    s.input_map.browser_focus = true;
+    let pad = top.join("pad_44k.wav").to_string_lossy().into_owned();
+    s.browser.select_file(&pad);
+    let g = s.geometry(1440.0, 860.0);
+    assert!(s.mapped_key(&g, "down", None, crate::tools::Mods::NONE));
+    let key = s.browser.selected_file.clone().unwrap();
+    assert_ne!(key, pad);
+    assert_eq!(s.browser.playing.as_deref(), Some(key.as_str()));
+    assert_eq!(current().unwrap().path.as_deref(), Some(Path::new(&key)));
+    assert!(s.mapped_key(&g, "up", None, crate::tools::Mods::NONE));
+    assert_eq!(s.browser.selected_file.as_deref(), Some(pad.as_str()));
+    assert_eq!(current().unwrap().path.as_deref(), Some(Path::new(&pad)));
+}
+
+#[test]
+fn pool_arrow_keys_sound_the_selected_file_and_read_ahead() {
+    let (_tmp, top) = place("pool-arrow");
+    let mut s = studio(OutputMode::Silent { paced: true }, &top);
+    s.browser.tab = RailTab::SongFiles;
+    s.input_map.browser_focus = true;
+    s.browser.pool = ["kick_01.wav", "kick_02.wav"]
+        .iter()
+        .map(|name| xirius_session::file_ops::Entry {
+            file: name.to_string(),
+            path: top.join("Drums").join(name),
+            kind: "import",
+            bytes: 0,
+            exists: true,
+            external: false,
+            clips: 1,
+            frozen: 0,
+            devices: 0,
+        })
+        .collect();
+    let g = s.geometry(1440.0, 860.0);
+    assert!(s.mapped_key(&g, "down", None, crate::tools::Mods::NONE));
+    assert!(s.mapped_key(&g, "down", None, crate::tools::Mods::NONE));
+    let first = s.browser.pool[0].path.clone();
+    let second = s.browser.pool[1].path.clone();
+    until(
+        &mut s,
+        "key selection sounds and the next file is kept",
+        |_| progress(&first.to_string_lossy()).is_some_and(|p| p > 0.0) && kept().contains(&second),
+    );
+    assert!(s.mapped_key(&g, "down", None, crate::tools::Mods::NONE));
+    assert_eq!(current().unwrap().path.as_deref(), Some(second.as_path()));
+    until(&mut s, "the next file plays from the cache", |_| {
+        current().is_some_and(|n| n.kept && n.phase == Phase::Playing)
+    });
     close();
 }
 
@@ -513,4 +604,23 @@ fn review_shared_preview_releases_before_exclusive_output_opens() {
         close();
         s.transport.reset();
     }
+}
+
+#[test]
+fn review_mouse_selection_clears_the_old_folder_key_position() {
+    let (_tmp, top) = place("heading");
+    let mut s = studio(OutputMode::None, &top);
+    s.browser.add_place(&top).unwrap();
+    s.input_map.browser_focus = true;
+    let g = s.geometry(1440.0, 860.0);
+    assert!(s.mapped_key(&g, "down", None, crate::tools::Mods::NONE));
+    assert!(s.browser.pool_heading.is_some());
+    s.browser
+        .select_file(&top.join("pad_44k.wav").to_string_lossy());
+    assert!(s.browser.pool_heading.is_none());
+    assert!(s.mapped_key(&g, "up", None, crate::tools::Mods::NONE));
+    assert_eq!(
+        s.browser.selected_file.as_deref(),
+        Some(top.join("idea.mid").to_str().unwrap())
+    );
 }

@@ -1,18 +1,19 @@
-//! The player of the file browser's audition (BRW-020, BRW-021): a small player of its
-//! own, kept open, that reads a file on a thread of its own and plays it on the kept plan.
+//! The player of the file browser's audition (BRW-020, BRW-021, BRW-022): a small player of
+//! its own, kept open, that reads a file on a thread of its own and plays it on the kept plan.
 //!
 //! [`Audition::play`] hands a file over and returns at once; the window's thread never opens a
 //! file. A thread reads the file once, start to end, while another decodes what has come in,
 //! so the length, the sound and the peaks all come from that one read, and the peaks grow as
 //! the file is read ([`Now::peaks`]). The newest file asked for is the one that plays: the
-//! reading of one asked for before it stops.
+//! reading of one asked for before it stops, unless it is one of those read ahead.
 //!
 //! Each press and stop is an ask with a number of its own ([`Now::ask`]); what comes of an
 //! older ask is not said of a newer one. Only the readers wait on a file: the lead takes the
 //! asks and hands the files round, and the voice holds the engine and the device, so a stop or
 //! a press is taken at once, however slow the place.
 //!
-//! What was decoded is kept ([`Limits`]), so the same file again plays without being opened.
+//! What was decoded is kept ([`Limits`]), so the same file again plays without being opened,
+//! and [`Audition::prefetch`] reads the rows next to the chosen one before they are asked for.
 //! The engine runs on the device the song plays on, in shared mode, so the two sound together.
 //! It is closed when nothing has played for a while, and when the song's player wants the
 //! device alone ([`Audition::release`]). Exclusive settings instead feed a bounded PCM queue
@@ -148,7 +149,7 @@ pub enum Phase {
 /// What the audition is doing, for the window to draw.
 #[derive(Clone, Debug, Default)]
 pub struct Now {
-    /// The number of the last press or stop: it moves with each, also for the same file.
+    /// The generation of a press, stop, or retry after a stale cache entry.
     pub ask: u64,
     /// The file asked for last; `None` once stopped.
     pub path: Option<PathBuf>,
@@ -187,6 +188,8 @@ impl Now {
 const GROW_EVERY: Duration = Duration::from_millis(80);
 /// Bytes per read of the file.
 const CHUNK: usize = 256 << 10;
+/// Files read ahead of being asked for at once.
+const AHEAD: usize = 2;
 /// How long a cued file that has never said it plays is waited for before it counts as ended.
 const START_WAIT: Duration = Duration::from_secs(10);
 /// How long the device stays open with nothing playing.
@@ -198,9 +201,6 @@ const RELEASE_WAIT: Duration = Duration::from_millis(300);
 enum Msg {
     #[cfg(test)]
     Barrier(Sender<()>),
-    Stale {
-        id: u64,
-    },
     Play {
         ask: u64,
         path: PathBuf,
@@ -208,6 +208,10 @@ enum Msg {
         sink: Sink,
     },
     Stop,
+    Prefetch(Vec<(PathBuf, PathBuf)>),
+    Stale {
+        id: u64,
+    },
     Loaded {
         id: u64,
         got: Result<Got, String>,
@@ -319,6 +323,9 @@ impl Audition {
             kept: VecDeque::new(),
             bytes: 0,
             reading: Vec::new(),
+            ahead: Vec::new(),
+            tried: Vec::new(),
+            last: None,
             want: None,
             readers: 0,
         };
@@ -384,6 +391,12 @@ impl Audition {
         let _ = self.tx.send(Msg::Stop);
     }
 
+    /// Reads these files (and the stores of their peaks) ahead, in this order, so they play at
+    /// once when they are asked for. A list replaces the one before.
+    pub fn prefetch(&self, files: Vec<(PathBuf, PathBuf)>) {
+        let _ = self.tx.send(Msg::Prefetch(files));
+    }
+
     /// Stops what plays and closes the device, so the song's player can have it alone (in
     /// exclusive mode). Waits a little for it to close: the voice never waits on a file, so it
     /// is quick. The next file opens it again.
@@ -391,6 +404,8 @@ impl Audition {
         let _ = self.release_async().recv_timeout(RELEASE_WAIT);
     }
 
+    /// Requests a close on the voice thread. Opening a conflicting device must wait
+    /// for this acknowledgement, without blocking the window thread.
     pub fn release_async(&self) -> Receiver<()> {
         self.stop();
         let (tx, rx) = mpsc::channel();
@@ -425,6 +440,11 @@ impl Drop for Audition {
     fn drop(&mut self) {
         let _ = self.tx.send(Msg::Close);
         let _ = self.voice.send(Call::Close);
+        // The lead owns at most three readers. It reaps them after uncancellable OS
+        // calls return; closing a window never waits for those calls.
+        if !self.threads.is_empty() {
+            drop(self.threads.remove(0));
+        }
         for t in self.threads.drain(..) {
             let _ = t.join();
         }
@@ -448,6 +468,7 @@ struct Reading {
     store: PathBuf,
     cancel: Arc<AtomicBool>,
     ask: Arc<AtomicU64>,
+    thread: JoinHandle<()>,
 }
 
 /// The file asked for last, until it is cued.
@@ -457,6 +478,7 @@ struct Want {
     sink: Sink,
     /// The reading it waits for.
     reading: Option<u64>,
+    store: PathBuf,
     cued: bool,
 }
 
@@ -472,12 +494,67 @@ struct Lead {
     kept: VecDeque<Item>,
     bytes: usize,
     reading: Vec<Reading>,
+    /// Files to read ahead.
+    ahead: Vec<(PathBuf, PathBuf)>,
+    /// Files of those ahead the readers came back for, kept or not (too long, unreadable), so
+    /// they are not read again while they stay in the list.
+    tried: Vec<PathBuf>,
+    /// The file asked for last.
+    last: Option<PathBuf>,
     want: Option<Want>,
     /// The number of the last reading started.
     readers: u64,
 }
 
 impl Lead {
+    fn run(&mut self) {
+        let mut closing = false;
+        while let Ok(m) = self.rx.recv() {
+            match m {
+                #[cfg(test)]
+                Msg::Barrier(done) => {
+                    let _ = done.send(());
+                }
+                Msg::Close => {
+                    closing = true;
+                    self.want = None;
+                    self.ahead.clear();
+                    self.drop_unwanted();
+                }
+                Msg::Loaded { id, got } => {
+                    if closing {
+                        if let Some(at) = self.reading.iter().position(|r| r.id == id) {
+                            let _ = self.reading.remove(at).thread.join();
+                        }
+                    } else {
+                        self.loaded(id, got);
+                    }
+                }
+                Msg::Play {
+                    ask,
+                    path,
+                    store,
+                    sink,
+                } if !closing => self.play(ask, path, store, sink),
+                Msg::Stop if !closing => {
+                    self.want = None;
+                    self.drop_unwanted();
+                }
+                Msg::Prefetch(files) if !closing => {
+                    self.tried.retain(|t| files.iter().any(|(p, _)| p == t));
+                    self.ahead = files;
+                    self.drop_unwanted();
+                    self.schedule();
+                }
+                Msg::Stale { id } if !closing => self.stale(id),
+                _ => {}
+            }
+            if closing && self.reading.is_empty() {
+                break;
+            }
+        }
+    }
+
     fn stale(&mut self, id: u64) {
         if let Some(w) = &mut self.want
             && w.reading == Some(id)
@@ -523,33 +600,6 @@ impl Lead {
         }
     }
 
-    fn run(&mut self) {
-        while let Ok(m) = self.rx.recv() {
-            match m {
-                #[cfg(test)]
-                Msg::Barrier(done) => {
-                    let _ = done.send(());
-                }
-                Msg::Stale { id } => self.stale(id),
-                Msg::Play {
-                    ask,
-                    path,
-                    store,
-                    sink,
-                } => self.play(ask, path, store, sink),
-                Msg::Stop => {
-                    self.want = None;
-                    self.drop_unwanted();
-                }
-                Msg::Loaded { id, got } => self.loaded(id, got),
-                Msg::Close => break,
-            }
-        }
-        for r in &self.reading {
-            r.cancel.store(true, Ordering::Relaxed);
-        }
-    }
-
     fn fail(&mut self, ask: u64, why: String) {
         self.want = None;
         let mut n = lock(&self.shared.now);
@@ -563,11 +613,13 @@ impl Lead {
     }
 
     fn play(&mut self, ask: u64, path: PathBuf, store: PathBuf, sink: Sink) {
+        self.last = Some(path.clone());
         self.want = Some(Want {
             ask,
             path: path.clone(),
             sink,
             reading: None,
+            store,
             cued: false,
         });
         self.drop_unwanted();
@@ -577,18 +629,35 @@ impl Lead {
         {
             self.play_loaded(ask, audio, peaks, true);
         }
+        self.schedule();
+    }
 
-        let id = match self.reading.iter().find(|r| r.path == path) {
-            Some(r) => {
+    fn schedule(&mut self) {
+        if let Some(w) = &self.want
+            && w.reading.is_none()
+        {
+            let (ask, path, store) = (w.ask, w.path.clone(), w.store.clone());
+            let id = if let Some(r) = self
+                .reading
+                .iter()
+                .find(|r| r.path == path && !r.cancel.load(Ordering::Relaxed))
+            {
                 r.ask.store(ask, Ordering::Relaxed);
                 Some(r.id)
+            } else if self.reading.len() < AHEAD + 1 {
+                let id = self.read(path, store, ask, true);
+                if id.is_none() {
+                    self.fail(ask, "試聴を開始できませんでした".into());
+                }
+                id
+            } else {
+                None
+            };
+            if let Some(w) = &mut self.want {
+                w.reading = id;
             }
-            None => self.read(path, store, ask, true),
-        };
-        match (id, &mut self.want) {
-            (Some(id), Some(w)) => w.reading = Some(id),
-            _ => self.fail(ask, "試聴を開始できませんでした".into()),
         }
+        self.read_ahead();
     }
 
     /// Hands the file asked for to the voice.
@@ -602,16 +671,32 @@ impl Lead {
         }
     }
 
-    /// Lets go of the readers of files no longer asked for.
+    /// Lets go of the readers of files no longer asked for nor read ahead.
     fn drop_unwanted(&mut self) {
         let want = self.want.as_ref().map(|w| w.path.clone());
-        self.reading.retain(|r| {
-            let keep = want.as_ref() == Some(&r.path);
+        let ahead = &self.ahead;
+        for r in &self.reading {
+            let keep = want.as_ref() == Some(&r.path) || ahead.iter().any(|(p, _)| *p == r.path);
             if !keep {
                 r.cancel.store(true, Ordering::Relaxed);
             }
-            keep
-        });
+        }
+    }
+
+    /// Starts reading the files ahead, a few at a time. A file kept is only looked at, by the
+    /// reader, so one changed since it was kept is read again.
+    fn read_ahead(&mut self) {
+        let mut i = 0;
+        while i < self.ahead.len() && self.reading.len() < AHEAD {
+            let (path, store) = self.ahead[i].clone();
+            i += 1;
+            if self.reading.iter().any(|r| r.path == path) || self.tried.contains(&path) {
+                continue;
+            }
+            if self.read(path.clone(), store, 0, true).is_none() {
+                self.tried.push(path);
+            }
+        }
     }
 
     /// Starts reading `path` on a thread of its own for the ask `ask`, and gives the reading's
@@ -623,7 +708,7 @@ impl Lead {
         let ask = Arc::new(AtomicU64::new(ask));
         let (tx, shared, reader) = (self.tx.clone(), self.shared.clone(), self.reader.clone());
         let (p, c, k, at) = (path.clone(), cancel.clone(), ask.clone(), store.clone());
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name("xirius-audition-read".into())
             .spawn(move || {
                 let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -641,6 +726,7 @@ impl Lead {
             store,
             cancel,
             ask,
+            thread,
         });
         Some(id)
     }
@@ -650,19 +736,27 @@ impl Lead {
             return;
         };
         let r = self.reading.remove(at);
-        if let Ok(Got::Read(l)) = &got {
-            self.keep(&r.path, l);
+        let _ = r.thread.join();
+        if self.ahead.iter().any(|(p, _)| *p == r.path) && !self.tried.contains(&r.path) {
+            self.tried.push(r.path.clone());
         }
-        let Some(ask) = self
+        let wanted = self
             .want
             .as_ref()
             .filter(|w| w.reading == Some(id))
-            .map(|w| w.ask)
-        else {
+            .map(|w| w.ask);
+        if !r.cancel.load(Ordering::Relaxed)
+            && let Ok(Got::Read(l)) = &got
+        {
+            self.keep(&r.path, l, wanted.is_none());
+        }
+        let Some(ask) = wanted else {
+            self.schedule();
             return;
         };
         if matches!(got, Ok(Got::Kept(_))) && self.want.as_ref().is_some_and(|w| w.cued) {
             self.want = None;
+            self.schedule();
             return;
         }
         match got {
@@ -684,6 +778,7 @@ impl Lead {
         if self.want.as_ref().is_some_and(|w| w.cued) {
             self.want = None;
         }
+        self.schedule();
     }
 
     fn play_loaded(&mut self, ask: u64, audio: Arc<AudioData>, peaks: Arc<Peaks>, kept: bool) {
@@ -712,7 +807,9 @@ impl Lead {
         Some(got)
     }
 
-    fn keep(&mut self, path: &Path, l: &Loaded) {
+    /// Keeps what was read of `path`, as the one played last, or if it was read `ahead`, just
+    /// before the file asked for last, so it goes before that one.
+    fn keep(&mut self, path: &Path, l: &Loaded, ahead: bool) {
         let bytes = (l.audio.left.capacity() + l.audio.right.capacity())
             * std::mem::size_of::<f32>()
             + l.peaks.levels.capacity() * std::mem::size_of::<Vec<peaks::Peak>>()
@@ -735,13 +832,22 @@ impl Lead {
             self.bytes -= old.bytes;
         }
         self.bytes += bytes;
-        self.kept.push_back(Item {
+        let item = Item {
             path: path.to_path_buf(),
             stamp: l.stamp,
             audio: l.audio.clone(),
             peaks: l.peaks.clone(),
             bytes,
-        });
+        };
+        let last = self.last.as_ref();
+        match self
+            .kept
+            .iter()
+            .position(|i| ahead && Some(&i.path) == last)
+        {
+            Some(at) => self.kept.insert(at, item),
+            None => self.kept.push_back(item),
+        }
         self.show_kept();
     }
 
