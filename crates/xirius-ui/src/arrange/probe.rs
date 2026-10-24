@@ -47,10 +47,21 @@ pub(crate) fn row_at(s: &Studio, g: &Geometry, kind: RowKind, f: f32) -> f32 {
     s.row_y(g, &row) + row.h * f
 }
 
+/// Presses at `at` as the window does: the arrangement first, then a head's own press, which
+/// chooses the row (UI-340).
+pub(crate) fn down(s: &mut Studio, g: &Geometry, at: (f32, f32), mods: Mods) {
+    if !s.arrange_down(g, at.0, at.1, mods) {
+        let hit = s.hit(g, at.0, at.1);
+        if matches!(hit, Hit::Row(_) | Hit::TrackMark(_)) {
+            s.press(g, hit);
+        }
+    }
+}
+
 /// Presses at `from` and moves to `to` without letting go.
 pub(crate) fn hold(s: &mut Studio, g: &Geometry, from: (f32, f32), to: (f32, f32), mods: Mods) {
     s.arrange.drag = None;
-    s.arrange_down(g, from.0, from.1, mods);
+    down(s, g, from, mods);
     // Two steps, so the drag starts before it reaches the end.
     let mid = ((from.0 + to.0) / 2.0, (from.1 + to.1) / 2.0);
     s.arrange_move(g, mid.0, mid.1, mods);

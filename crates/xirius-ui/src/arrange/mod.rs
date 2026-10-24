@@ -66,8 +66,14 @@ pub struct Arrange {
     pub clips: BTreeSet<(TrackId, ClipId)>,
     /// The section selected on the band (a press on it; Alt+D, Delete, Ctrl+C act on it).
     pub section: Option<SectionId>,
-    /// The rows that move together when one of them is dragged.
+    /// The selected rows (UI-340): the ones that move together when one of them is dragged, and the
+    /// tracks a control of one of them changes. The focus (`Studio::selected_row`) is one of them.
     pub tracks: Vec<RowKind>,
+    /// Where a Shift press or Shift+arrow measures its range from: the row last chosen alone or
+    /// with Ctrl.
+    pub anchor: Option<RowKind>,
+    /// The last press was on the track heads, so the arrows and Ctrl+A choose rows there.
+    pub heads: bool,
     /// The height of every track row (Ctrl + wheel).
     pub track_h: f32,
     /// The tracks that show their automation lanes.
@@ -114,6 +120,8 @@ impl Default for Arrange {
             clips: BTreeSet::new(),
             section: None,
             tracks: Vec::new(),
+            anchor: None,
+            heads: false,
             track_h: Layout::TRACK_ROW_H,
             open: HashSet::new(),
             focus: false,
@@ -873,6 +881,7 @@ impl Studio {
             .any(|r| r.contains(x, y));
         if in_arrange {
             self.arrange.focus = true;
+            self.arrange.heads = g.column.contains(x, y);
             self.choose_editor();
         }
     }
@@ -999,16 +1008,8 @@ impl Studio {
             Spot::Section { .. } | Spot::Band => true,
             Spot::Loop(_) | Spot::Tempo(_) | Spot::TempoGap | Spot::Line { .. } => true,
             Spot::Space(_) => matches!(tool, Tool::Range | Tool::Draw),
-            Spot::Row(kind) => {
-                if mods.shift {
-                    if let Some(i) = self.arrange.tracks.iter().position(|k| *k == kind) {
-                        self.arrange.tracks.remove(i);
-                    } else {
-                        self.arrange.tracks.push(kind);
-                    }
-                } else if !self.arrange.tracks.contains(&kind) {
-                    self.arrange.tracks = vec![kind];
-                }
+            // The row is chosen by [`Studio::press`] (`press_row`), with the modifiers of this press.
+            Spot::Row(_) => {
                 self.arrange.touched();
                 false
             }
@@ -1426,8 +1427,9 @@ impl Studio {
             // The press selected the section (or let go of it); the playhead stays.
             Spot::Section { .. } | Spot::Band => true,
             Spot::Rec { track, part } => self.rec_down(*track, part.clone()),
-            Spot::Row(kind) if !d.mods.shift => {
-                self.arrange.tracks = vec![*kind];
+            // A plain click on one of several selected rows (no drag) chooses it alone.
+            Spot::Row(kind) if !d.mods.shift && !d.mods.ctrl => {
+                self.pick_row(*kind, Mods::NONE);
                 true
             }
             Spot::Line {

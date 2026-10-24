@@ -637,24 +637,36 @@ impl Studio {
     /// What is selected, as ids of this kind.
     pub(crate) fn targets(&self, g: &Geometry, kind: IdKind) -> Vec<String> {
         let p = self.project();
-        let row = self.selected_row.filter(|r| match r {
-            RowKind::Track(t) => p.tracks.contains_key(t),
-            RowKind::Folder(f) => p.folders.contains_key(f),
-        });
+        // Every selected row, the focus first: a command that takes one row takes the focus
+        // (UI-340).
+        let rows = self.picked_rows();
+        let of = |want: fn(&RowKind) -> Option<String>| rows.iter().filter_map(want).collect();
         match kind {
-            IdKind::Track => match row {
-                Some(RowKind::Track(t)) => vec![t.to_string()],
-                _ => Vec::new(),
-            },
-            IdKind::Folder => match row {
-                Some(RowKind::Folder(f)) => vec![f.to_string()],
-                _ => Vec::new(),
-            },
-            IdKind::Node => match row {
-                Some(RowKind::Track(t)) => vec![t.to_string()],
-                Some(RowKind::Folder(f)) => vec![f.to_string()],
-                None => Vec::new(),
-            },
+            // A folder's row stands for the tracks in it, as on the mixer (UI-340).
+            IdKind::Track => {
+                let mut ids: Vec<String> = Vec::new();
+                for r in &rows {
+                    let tracks = match r {
+                        RowKind::Track(t) => vec![*t],
+                        RowKind::Folder(f) => p.tracks_in(*f),
+                    };
+                    for t in tracks {
+                        let id = t.to_string();
+                        if p.tracks.contains_key(&t) && !ids.contains(&id) {
+                            ids.push(id);
+                        }
+                    }
+                }
+                ids
+            }
+            IdKind::Folder => of(|r| match r {
+                RowKind::Folder(f) => Some(f.to_string()),
+                RowKind::Track(_) => None,
+            }),
+            IdKind::Node => of(|r| match r {
+                RowKind::Track(t) => Some(t.to_string()),
+                RowKind::Folder(f) => Some(f.to_string()),
+            }),
             IdKind::Clip => {
                 let live = |t: &xirius_core::id::TrackId, c: &xirius_core::id::ClipId| {
                     p.tracks

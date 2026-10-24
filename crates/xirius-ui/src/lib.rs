@@ -248,6 +248,7 @@ pub mod tools;
 pub mod topbar;
 pub mod track_group;
 pub mod track_name;
+pub mod track_select;
 pub mod trackmenu_shots;
 pub mod transport;
 pub mod tree;

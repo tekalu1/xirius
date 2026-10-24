@@ -69,11 +69,12 @@ fn paint_strip(
 ) {
     let c = pen.c;
     let t = track.id;
-    let selected = !t.is_master() && studio.selected_row == Some(RowKind::Track(t));
-    pen.fill(s.rect, if selected { c.sel } else { c.surface_1 });
+    // The strips of the selected tracks share the heads' face (UI-340).
+    let selected = !t.is_master() && studio.is_picked(RowKind::Track(t));
+    pen.fill(s.rect, if selected { c.track_sel } else { c.surface_1 });
     let lit = studio.mixer.flash_level(t, xirius_core::store::now_ms());
     if lit > 0.0 {
-        pen.fill(s.rect, c.clip_sel.opacity(lit));
+        pen.fill(s.rect, c.strip_flash.opacity(lit));
     }
 
     // The name, with the track's icon in its colour.

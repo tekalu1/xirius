@@ -294,6 +294,9 @@ impl Studio {
         if let Some(used) = self.key_more(g, &name, &args) {
             return used;
         }
+        if let Some(used) = self.heads_key(g, &name, &args) {
+            return used;
+        }
         if let Some(used) = self.key_row(g, &name, &args) {
             return used;
         }

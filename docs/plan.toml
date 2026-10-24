@@ -8155,6 +8155,16 @@ after = ["BRW-017"]
 done_when = "VST3 の .vstpreset と CLAP の preset-discovery で見つけたプリセットを、ブラウザーのその機器の下に並べて読み込める"
 
 [[item]]
+id = "UI-340"
+title = "トラックの選択を頭とミキサーで 1 つにし、Ctrl で足し引き・Shift で範囲・Shift+↑↓・Ctrl+A で選ぶ"
+area = "UI"
+phase = "v1.1"
+source = "multi-select/report.md § 3 ; multi-select/report.md § 5"
+after = ["MIX-034", "CTX-007"]
+done_when = "selected_row と arrange.tracks を、起点（anchor）と focus を持つ 1 つの選択にする。頭でもストリップの名前と地でも、Ctrl クリックで足し引き、Shift クリックで起点からの範囲、Ctrl+Shift クリックで範囲を足す。頭にフォーカスがあるとき、Shift+↑↓ で広げ・縮め、Ctrl+A でトラックのすべてを選ぶ（窓を開かない単体テストで数える）。選んだ頭とストリップは新しいトークン surface_track_sel（最初の値は surface_clip_sel）で塗り、フェーダーのつまみの面と違う色にする（面の段差とコントラストの試験、design-lint が通る）。トラックの木は multiselectable で、選んだ TreeItem の全部が selected になる"
+status = "done"
+
+[[item]]
 id = "CLI-003"
 title = "track.volume.set と track.pan.set に --by（ずらす量）を足す"
 area = "CLI"
@@ -8162,3 +8172,12 @@ phase = "v1.1"
 source = "multi-select/report.md § 3 ; multi-select/report.md § 5"
 done_when = "track.volume.set --by <dB> と track.pan.set --by <量> は、それぞれのトラックの今の値にずれを足し、範囲の端で止める（ボリュームは -60 dB 以下を -∞ にし、-∞ のトラックは動かさない）。--db / --pan と --by はどちらか 1 つだけを指定する（両方・どちらも無しはエラー）。1 回の実行は undo 1 回で戻る。docs/commands.md に出る（crates/xirius-core の試験で数える）"
 status = "done"
+
+[[item]]
+id = "UI-341"
+title = "画面のトラックの選択をセッションの選択に写し、ids を省いたトラックのコマンドが画面の選択に効く"
+area = "UI"
+phase = "v1.1"
+source = "multi-select/report.md § 4 ; multi-select/report.md § 5"
+after = ["UI-340", "CLI-003"]
+done_when = "select.set --ids・select.get でトラックを扱え、画面の頭とストリップで選んだトラックが select.get に出て、select.set で選んだトラックが画面でも選ばれる。ids を省いたトラックのコマンド（track.volume.set --by ほか）は画面の選択に効き、docs/commands.md の「今は画面の選択とは別」の一言を消す（窓を開かない単体テストで数える）"

@@ -166,6 +166,60 @@ fn the_selected_clip_face_keeps_its_content_and_name_visible() {
 }
 
 #[test]
+fn the_selected_track_face_keeps_the_head_visible_and_differs_from_the_fader_cap() {
+    // 選んだトラックの頭とストリップ（UI-340）: 名前（Strong）と本文（Body）、トラックの色、
+    // フォーカスの輪と AI の線、フォルダーの線、オートメーションの印（Blue の図形）が載る。
+    // 古さの点（StaleDot）は書き出しの札にだけ出るので、ここには載らない。
+    let mut worst = f64::MAX;
+    for theme in Theme::ALL {
+        let face = Surface::TrackSel.color(theme);
+        let mut graphics: Vec<_> = TrackColor::all().map(|t| t.content(theme)).collect();
+        graphics.extend([Accent::FocusRing, Accent::AiLine].map(|a| a.color(theme)));
+        graphics.extend(
+            LineState::ALL
+                .iter()
+                .map(|s| StructureLine::color(*s, theme)),
+        );
+        graphics.push(Ink::Blue.on(Surface::Sel).unwrap().ink_color(theme));
+        for g in graphics {
+            let ratio = contrast_ratio(g, face);
+            worst = worst.min(ratio);
+            assert!(
+                ratio >= MIN_GRAPHIC_CONTRAST,
+                "{theme:?} {g:?} on TrackSel: {ratio:.2} < 3"
+            );
+        }
+        // フェーダーのつまみはダークで surface_thumb、ライトで紙の面（xirius-ui の paint.rs）。
+        let cap = match theme {
+            Theme::Dark => xirius_design::Overlay::ScrollThumb.color(theme),
+            Theme::Light => Surface::Paper.color(theme),
+        };
+        assert_ne!(face, cap, "{theme:?}");
+        assert_ne!(
+            face,
+            xirius_design::Overlay::ScrollThumb.color(theme),
+            "{theme:?}"
+        );
+        let gap = (lightness(face) - lightness(cap)).abs();
+        assert!(gap >= 1.25, "{theme:?}: つまみとの L* の差 {gap:.2}");
+    }
+    for i in [Ink::Strong, Ink::Body] {
+        assert!(i.on(Surface::TrackSel).is_some(), "{i:?} on TrackSel");
+    }
+    println!("頭に載る図形 × 選んだトラックの面: 最小 {worst:.2}:1");
+}
+
+/// CIE L*（0〜100）。面の段の検査（surface_steps.rs）と同じ物差し。
+fn lightness(c: xirius_design::Color) -> f64 {
+    let y = c.relative_luminance();
+    if y > 216.0 / 24389.0 {
+        116.0 * y.cbrt() - 16.0
+    } else {
+        24389.0 / 27.0 * y
+    }
+}
+
+#[test]
 fn accents_are_visible_on_every_neutral_surface() {
     for theme in Theme::ALL {
         for a in Accent::ALL {

@@ -1658,7 +1658,7 @@ impl Studio {
             }
             Hit::TrackIcon(_) => false,
             Hit::TrackMark(t) => {
-                self.select_row(Some(RowKind::Track(t)));
+                self.press_row(RowKind::Track(t));
                 true
             }
             Hit::TrackColor(t) | Hit::Output(t) => {
@@ -1709,7 +1709,7 @@ impl Studio {
                 if matches!(kind, RowKind::Track(_)) {
                     self.arrange.clips.clear();
                 }
-                self.select_row(Some(kind));
+                self.press_row(kind);
                 true
             }
             Hit::Clip(t, c) => {

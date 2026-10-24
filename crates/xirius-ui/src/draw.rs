@@ -778,10 +778,9 @@ fn paint_ruler(pen: &mut Pen, studio: &Studio, g: &Geometry) {
 }
 
 fn row_face(studio: &Studio, c: &Colors, row: &Row) -> Hsla {
-    // Several rows picked at once (shift + press) are all lit.
-    let picked = studio.arrange.tracks.len() > 1 && studio.arrange.tracks.contains(&row.kind);
-    if studio.selected_row == Some(row.kind) || picked {
-        c.sel
+    // Every selected row is lit the same, one or several, with no outline (UI-340).
+    if studio.is_picked(row.kind) {
+        c.track_sel
     } else if studio.hover_row() == Some(row.kind) {
         c.hover
     } else {

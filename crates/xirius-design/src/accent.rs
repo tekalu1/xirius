@@ -39,13 +39,16 @@ pub enum Overlay {
     ScrollThumbHover,
     /// ダイアログの下を覆う幕。
     Veil,
+    /// ミキサーのストリップを光らせる面。
+    StripFlash,
 }
 
 impl Overlay {
-    pub const ALL: [Overlay; 3] = [
+    pub const ALL: [Overlay; 4] = [
         Overlay::ScrollThumb,
         Overlay::ScrollThumbHover,
         Overlay::Veil,
+        Overlay::StripFlash,
     ];
 
     pub fn color(self, theme: Theme) -> Color {
@@ -54,6 +57,7 @@ impl Overlay {
             Overlay::ScrollThumb => p.surface_thumb,
             Overlay::ScrollThumbHover => p.surface_thumb_hover,
             Overlay::Veil => p.surface_veil,
+            Overlay::StripFlash => p.surface_strip_flash,
         }
     }
 }

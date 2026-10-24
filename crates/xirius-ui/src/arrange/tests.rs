@@ -1,7 +1,7 @@
 //! Gestures fed into the studio as they come from the window, with no window:
 //! press, moves, release, keys and the wheel.
 
-use super::probe::{clip_mid, folder, hold, point_xy, row_at, row_mid, track, two_lanes};
+use super::probe::{clip_mid, down, folder, hold, point_xy, row_at, row_mid, track, two_lanes};
 use super::*;
 use crate::roll::Cursor;
 use crate::tools::SnapMode;
@@ -57,7 +57,7 @@ fn drag(s: &mut Studio, g: &Geometry, from: (f32, f32), to: (f32, f32), mods: Mo
 }
 
 fn click(s: &mut Studio, g: &Geometry, at: (f32, f32), mods: Mods) {
-    s.arrange_down(g, at.0, at.1, mods);
+    down(s, g, at, mods);
     s.arrange_up(g, at.0, at.1, mods);
 }
 
@@ -280,7 +280,8 @@ fn mark_mid(s: &Studio, g: &Geometry, t: xirius_core::id::TrackId) -> (f32, f32)
 }
 
 /// The mark on a track's head takes the same head operations as the rest of the row: the
-/// right press opens the row's menu, and a shift press adds the row to the selection (UI-312).
+/// right press opens the row's menu, and a shift press chooses the range to the row (UI-312,
+/// UI-340).
 #[test]
 fn the_mark_opens_the_rows_menu_and_joins_a_shift_selection() {
     let (mut s, g) = studio();
@@ -315,7 +316,7 @@ fn the_mark_opens_the_rows_menu_and_joins_a_shift_selection() {
     s.ctx = None;
     s.popup = None;
 
-    // Shift presses on two marks make a selection of both rows.
+    // Shift presses on two marks choose both rows and the ones between them.
     s.arrange.tracks.clear();
     let a = mark_mid(&s, &g, keys);
     click(&mut s, &g, a, shift());
@@ -987,12 +988,8 @@ fn several_tracks_move_together_and_alt_copies_them() {
     let rhythm = folder(&s, "Rhythm");
     // Vocal, then Shift + Guitar.
     click!(s, g, row_mid(&s, &g, RowKind::Track(vocal)), none());
-    s.arrange_down(
-        &g,
-        row_mid(&s, &g, RowKind::Track(guitar)).0,
-        row_mid(&s, &g, RowKind::Track(guitar)).1,
-        shift(),
-    );
+    let at = row_mid(&s, &g, RowKind::Track(guitar));
+    down(&mut s, &g, at, shift());
     s.arrange_up(&g, 0.0, 0.0, shift());
     assert_eq!(s.arrange.tracks.len(), 2);
     let n = s.project().tracks.len();

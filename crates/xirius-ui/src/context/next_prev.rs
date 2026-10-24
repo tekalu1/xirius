@@ -36,9 +36,7 @@ impl Studio {
         }
         // A channel in a folded folder has no row to scroll to; it is selected all the same.
         if !self.reveal_row(g, t) {
-            self.select_row(Some(RowKind::Track(t)));
-            self.arrange.tracks = vec![RowKind::Track(t)];
-            self.arrange.touched();
+            self.pick_row(RowKind::Track(t), crate::tools::Mods::NONE);
         }
         true
     }

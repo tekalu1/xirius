@@ -42,6 +42,12 @@ impl Studio {
     pub fn select_row(&mut self, row: Option<RowKind>) {
         // Another track's values are not where the half-typed one belongs (UI-312).
         self.field_blur();
+        // A row outside the selection is chosen alone; one inside it moves the focus only (UI-340).
+        if row.is_none_or(|r| !self.arrange.tracks.contains(&r)) {
+            self.arrange.tracks = row.into_iter().collect();
+            self.arrange.anchor = row;
+            self.arrange.touched();
+        }
         self.selected_row = row;
         self.follow_selection();
     }

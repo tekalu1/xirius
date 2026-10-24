@@ -32,7 +32,8 @@ pub fn track_rows(s: &Studio, g: &Geometry) -> Vec<(usize, accesskit::Node)> {
             let mut node = accesskit::Node::new(accesskit::Role::TreeItem);
             node.set_label(name);
             node.set_level(row.depth + 1);
-            node.set_selected(s.selected_row == Some(row.kind));
+            // Every selected row says so, not just the focus (UI-340).
+            node.set_selected(s.is_picked(row.kind));
             if let RowKind::Folder(f) = row.kind {
                 node.set_expanded(!s.is_collapsed(f));
             }

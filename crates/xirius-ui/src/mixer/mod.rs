@@ -1023,7 +1023,12 @@ impl Studio {
         let t = hit.track();
         self.mixer.master_picked = t.is_master();
         if !t.is_master() {
-            self.select_row(Some(RowKind::Track(t)));
+            // The name and the ground choose as a head does (UI-340).
+            if matches!(hit, MixerHit::Strip(_)) {
+                self.pick_row(RowKind::Track(t), self.arrange.mods);
+            } else {
+                self.select_row(Some(RowKind::Track(t)));
+            }
         }
         if self.refuse_frozen(hit) {
             return true;

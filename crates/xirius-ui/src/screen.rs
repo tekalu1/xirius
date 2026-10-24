@@ -1576,6 +1576,8 @@ impl Render for Screen {
                     body.role(gpui::Role::Tree)
                         .aria_label("トラック")
                         .a11y_synthetic_children(move |tree| {
+                            // Several rows can be selected at once (UI-340).
+                            tree.parent_node().set_multiselectable();
                             for (i, node) in track_rows {
                                 tree.push_child(tree.synthetic_node_id(("track-row", i)), node);
                             }

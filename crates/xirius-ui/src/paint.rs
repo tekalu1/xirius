@@ -39,6 +39,20 @@ pub fn list_thumb(theme: Theme) -> xirius_design::Color {
     SwitchFace::off(theme, false).track
 }
 
+/// A fader's cap: the surface thumb, and the paper itself in the light theme.
+pub fn fader_cap(theme: Theme) -> xirius_design::Color {
+    match theme {
+        Theme::Dark => Overlay::ScrollThumb.color(theme),
+        Theme::Light => Surface::Paper.color(theme),
+    }
+}
+
+/// The face a mixer strip flashes with when a head's empty part is double-clicked: the strip is
+/// selected by then, so it steps away from the selected face (UI-340).
+pub fn strip_flash(theme: Theme) -> xirius_design::Color {
+    Overlay::StripFlash.color(theme)
+}
+
 /// Design tokens converted once (colour conversion is too slow for inner loops).
 #[derive(Clone)]
 pub struct Colors {
@@ -53,6 +67,10 @@ pub struct Colors {
     pub clip: Hsla,
     /// A selected clip's face: brighter (darker in the light theme), no ring.
     pub clip_sel: Hsla,
+    /// The face of a selected track's head and mixer strip, one or several (UI-340).
+    pub track_sel: Hsla,
+    /// [`strip_flash`].
+    pub strip_flash: Hsla,
     /// A primary button and its hover face.
     pub fill: Hsla,
     pub fill_hover: Hsla,
@@ -141,6 +159,8 @@ impl Colors {
             sel: paint(Surface::Sel.color(theme)),
             clip: paint(Surface::Clip.color(theme)),
             clip_sel: paint(Surface::ClipSel.color(theme)),
+            track_sel: paint(Surface::TrackSel.color(theme)),
+            strip_flash: paint(strip_flash(theme)),
             fill: paint(Surface::Fill.color(theme)),
             fill_hover: paint(Surface::FillHover.color(theme)),
             primary: resolved(Pair::<surface::Fill, ink::OnFill>::new(), theme),
@@ -176,10 +196,7 @@ impl Colors {
             meter_ramp: std::array::from_fn(|i| {
                 paint(meter.color_at(i as f32 / (METER_RAMP - 1) as f32))
             }),
-            thumb: match theme {
-                Theme::Dark => paint(Overlay::ScrollThumb.color(theme)),
-                Theme::Light => paint(Surface::Paper.color(theme)),
-            },
+            thumb: paint(fader_cap(theme)),
             key_white: paint(PianoKey::White.color(theme)),
             key_black: paint(PianoKey::Black.color(theme)),
             key_label: paint(PianoKey::label_on(theme, false)),
@@ -791,6 +808,37 @@ mod tests {
         let c = Colors::new(crate::theme::THEME);
         assert_eq!(c.tracks.len(), TrackColor::COUNT);
         assert_ne!(c.tracks[0], c.tracks[1]);
+    }
+
+    /// CIE L* (0-100), the measure of the surface steps (xirius-design's `surface_steps.rs`).
+    fn lightness(c: xirius_design::Color) -> f64 {
+        let y = c.relative_luminance();
+        if y > 216.0 / 24389.0 {
+            116.0 * y.cbrt() - 16.0
+        } else {
+            24389.0 / 27.0 * y
+        }
+    }
+
+    #[test]
+    fn a_flashing_strip_stands_out_from_the_selected_face_and_the_cap_from_the_selection() {
+        for theme in Theme::ALL {
+            let selected = Surface::TrackSel.color(theme);
+            // The flash fades out in a second: at its height it is four times the step that
+            // tells two still surfaces apart (1.25). The master strip is never selected.
+            for face in [selected, Surface::S1.color(theme)] {
+                let gap = (lightness(strip_flash(theme)) - lightness(face)).abs();
+                assert!(
+                    gap >= 5.0,
+                    "{theme:?}: 光りと面 {face:?} の L* の差 {gap:.2}"
+                );
+            }
+            let gap = (lightness(selected) - lightness(fader_cap(theme))).abs();
+            assert!(
+                gap >= 1.25,
+                "{theme:?}: つまみと選んだ面の L* の差 {gap:.2}"
+            );
+        }
     }
 
     #[test]

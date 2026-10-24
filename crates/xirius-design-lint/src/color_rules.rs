@@ -745,6 +745,7 @@ impl Sinks<'_> {
                     "sel",
                     "clip",
                     "clip_sel",
+                    "track_sel",
                     "key_white",
                     "key_black",
                 ],
