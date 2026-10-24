@@ -18,7 +18,7 @@ rmcp = { version = "=3.5.1", default-features = false, features = ["server", "tr
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-std", "io-util", "signal"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
-getrandom = "0.3"
+getrandom = "0.4"
 
 [dev-dependencies]
 # A test's folder under the temp folder, removed when dropped even if the test fails (ARC-028).
