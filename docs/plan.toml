@@ -8236,3 +8236,51 @@ area = "BRW"
 phase = "v1.1"
 source = "hang-open-song.md § 2 ; hang-open-song.md § 5 E"
 done_when = "ブラウザーの一覧（browser_files.rs の read_dir と項目ごとの種類の判定）を裏のスレッドで読み、種類は DirEntry::file_type から取る。1 秒（FRESH）ごとの読み直しも描画のたびに UI のスレッドでしない。波形の look（wave.rs）の元の wav の is_file と peaks::load も、Peaks を作る裏のスレッド（peaks::request と同じ道）に寄せる。1 ファイルに数秒かかる置き場のフォルダーを開いたまま・その上の素材のクリップを描いても、描画が止まらないことを試験で確かめる"
+
+[[item]]
+id = "BRW-020"
+title = "ブラウザーの試聴の読み込みと再生の準備を UI のスレッドから外し、押したらすぐに始める"
+area = "BRW"
+phase = "v1.1"
+source = "browse-preview/report.md § 4 A ; browse-preview/report.md § 4 C"
+after = ["BRW-007"]
+done_when = "ファイルの行を押すと、250 ms の見回りを待たずに試聴のスレッドへ渡り、UI のスレッドはファイルを開かない。ファイルは 1 回だけ開いて長さ・音・Peaks を作る。試聴の再生器は押すたびに作り直さない。1 個の読み込みに数秒かかる置き場でも窓が止まらず、待っている間に別のファイルを押すと新しい方が先に鳴る"
+notes = "決め事: 試聴は開いたままの小さな再生器を持つ。BRW-019 と重なる試聴の行の波形（wave::look の is_file・peaks::load）はここで試聴のスレッドへ移し、ブラウザーの一覧の read_dir と、試聴の外の wave::look は BRW-019 に残す"
+
+[[item]]
+id = "BRW-021"
+title = "試聴で解いた音を、大きさの上限つきで覚え、同じファイルの 2 回目をすぐに鳴らす"
+area = "BRW"
+phase = "v1.1"
+source = "browse-preview/report.md § 4 B"
+after = ["BRW-020"]
+done_when = "一度試聴したファイルは、パス・大きさ・時刻が同じなら、ファイルを開かずに 50 ms 以内に鳴る。覚える量は合計の上限（既定 256 MB）を超えず、古い物から落ちる。上限の 1/4 を超える 1 個は覚えない"
+notes = "決め事: 上限は合計 256 MB・1 個 64 MB で、設定には出さない"
+
+[[item]]
+id = "BRW-022"
+title = "試聴で選んだファイルの前後を先に読み、一覧の長さのために全部の wav を開かない"
+area = "BRW"
+phase = "v1.1"
+source = "browse-preview/report.md § 4 D"
+after = ["BRW-020", "BRW-021"]
+done_when = "ファイルを選ぶと、上下の数個を裏で読んで試聴のキャッシュに入れ、↓ で次に送ったときに開く時間を待たない。一覧の長さは見えている行の近くだけを読み、遅い置き場ではファイルの大きさから見積もって後で直す"
+notes = "決め事: 先に読むのは選んだ行の下の 3 行と上の 1 行。開くのに 300 ms を超えた置き場では、長さをファイルの大きさから見積もり、見えている行だけを正しく測る"
+
+[[item]]
+id = "BRW-023"
+title = "試聴の帯に、読み込み中の印と、読めた所から出る波形を出す"
+area = "BRW"
+phase = "v1.1"
+source = "browse-preview/report.md § 6"
+after = ["BRW-020"]
+done_when = "押してから 150 ms 鳴らなければ、再生ボタンの停止の四角の周りにスピナーが回り（900 ms で 1 回転）、波形の帯は 2 px の点の列が左から右へ明るさの波で動く。読めた所から棒が中央から伸びて出る。鳴り始めたらスピナーは消える。窓の上端の線と「反映中…」は出さない。動きを減らす設定では、スピナーも点も止まり、棒は伸びずに出る"
+
+[[item]]
+id = "BRW-024"
+title = "手元とネットワークのドライブでは、試聴を先頭から解いて鳴らし始める"
+area = "BRW"
+phase = "later"
+source = "browse-preview/report.md § 4 D"
+after = ["BRW-020", "BRW-021"]
+done_when = "大きい wav・flac を試聴すると、先頭の数百 ms を解いた時点で鳴り始め、残りは鳴らしながら解く。開く操作に中身の全部を読む置き場（Google Drive for desktop）では、今までと同じに全部読んでから鳴る"
