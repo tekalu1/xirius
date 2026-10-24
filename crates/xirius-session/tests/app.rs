@@ -36,13 +36,8 @@ fn counting(body: Result<String, String>) -> (Fetch, Arc<AtomicUsize>) {
 
 /// A version after this program's.
 fn later() -> String {
-    let mut parts: Vec<u64> = CURRENT.split('.').map(|p| p.parse().unwrap()).collect();
-    parts[0] += 1;
-    parts
-        .iter()
-        .map(u64::to_string)
-        .collect::<Vec<_>>()
-        .join(".")
+    let major = env!("CARGO_PKG_VERSION_MAJOR").parse::<u64>().unwrap() + 1;
+    format!("{major}.0.0")
 }
 
 #[test]

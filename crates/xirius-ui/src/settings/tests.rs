@@ -1390,15 +1390,14 @@ fn a_first_launch_scans_in_the_background_and_the_plugin_page_follows_it() {
 /// off the next launch too.
 #[test]
 fn turning_the_update_check_off_asks_nothing_and_hides_the_dot() {
-    use crate::about::tests::{ask, stub};
+    use crate::about::tests::{ask, newer_answer, stub};
     use xirius_session::app::UPDATE_PREF;
-    const NEWER: &str = r#"{"tag_name":"v99.0.0","html_url":"https://github.com/tekalu1/xirius/releases/tag/v99.0.0","body":"- a"}"#;
 
     let dir_tmp = temp("update");
     let dir = dir_tmp.path().to_path_buf();
     let (mut s, g) = launch(&dir);
     assert!(pref_bool(&s, UPDATE_PREF), "on by default");
-    let (fetch, _) = stub(Ok(NEWER));
+    let (fetch, _) = stub(Ok(&newer_answer()));
     ask(&mut s, &dir.join("app"), fetch);
     assert!(s.bar_view().update);
 
@@ -1413,7 +1412,7 @@ fn turning_the_update_check_off_asks_nothing_and_hides_the_dot() {
 
     let (mut s, _) = launch(&dir);
     assert!(!pref_bool(&s, UPDATE_PREF), "kept");
-    let (fetch, asked) = stub(Ok(NEWER));
+    let (fetch, asked) = stub(Ok(&newer_answer()));
     ask(&mut s, &dir.join("app2"), fetch);
     assert_eq!(
         asked.load(std::sync::atomic::Ordering::SeqCst),

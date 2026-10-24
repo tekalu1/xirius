@@ -2021,24 +2021,42 @@ used {} {}
         }
     }
 
-    const NEWER: &str = r#"{
-        "tag_name": "v99.0.0",
-        "html_url": "https://github.com/tekalu1/xirius/releases/tag/v99.0.0",
-        "body": "- 録音の入力が、既定の入力でなく Loopback になる不具合を直しました。録音の画面で選んだ入力が、次に開いたときもそのまま使われます\r\n- 新しい曲に替えても、テーマなどの設定が既定に戻らない"
-    }"#;
+    fn newer_version() -> &'static str {
+        static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        VERSION.get_or_init(|| {
+            let major = env!("CARGO_PKG_VERSION_MAJOR").parse::<u64>().unwrap() + 1;
+            format!("{major}.0.0")
+        })
+    }
+
+    fn newer_url() -> String {
+        format!(
+            "https://github.com/tekalu1/xirius/releases/tag/v{}",
+            newer_version()
+        )
+    }
+
+    pub(crate) fn newer_answer() -> String {
+        serde_json::json!({
+            "tag_name": format!("v{}", newer_version()),
+            "html_url": newer_url(),
+            "body": "- 録音の入力が、既定の入力でなく Loopback になる不具合を直しました。録音の画面で選んだ入力が、次に開いたときもそのまま使われます\r\n- 新しい曲に替えても、テーマなどの設定が既定に戻らない",
+        }).to_string()
+    }
 
     /// A fetch that answers `body` and counts the asks, never reaching the network.
     pub(crate) fn stub(
-        body: Result<&'static str, &'static str>,
+        body: Result<&str, &str>,
     ) -> (
         update::Fetch,
         std::sync::Arc<std::sync::atomic::AtomicUsize>,
     ) {
         let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let a = asked.clone();
+        let body = body.map(str::to_string).map_err(str::to_string);
         let fetch: update::Fetch = std::sync::Arc::new(move |_: &str| {
             a.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            body.map(str::to_string).map_err(str::to_string)
+            body.clone()
         });
         (fetch, asked)
     }
@@ -2143,7 +2161,7 @@ used {} {}
         s.song.load_settings(tmp.path());
         let g = s.geometry(1600.0, 900.0);
         assert!(!s.bar_view().update);
-        let (fetch, asked) = stub(Ok(NEWER));
+        let (fetch, asked) = stub(Ok(&newer_answer()));
         ask(&mut s, tmp.path(), fetch);
         assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert!(s.bar_view().update);
@@ -2177,7 +2195,7 @@ used {} {}
             .expect("the newer number");
         assert_eq!(
             (release.text.as_str(), release.icon),
-            ("99.0.0", Some("download"))
+            (newer_version(), Some("download"))
         );
         let at = cells
             .iter()
@@ -2186,10 +2204,7 @@ used {} {}
         let download = &cells[at];
         assert_eq!(download.text, "ダウンロード");
         assert_eq!(download.look, Look::Primary);
-        assert_eq!(
-            download.tip,
-            "https://github.com/tekalu1/xirius/releases/tag/v99.0.0"
-        );
+        assert_eq!(download.tip, newer_url());
         // One row, left to right, inside the panel.
         assert_eq!(version.rect.y, release.rect.y);
         assert_eq!(release.rect.y, download.rect.y);
@@ -2219,7 +2234,7 @@ used {} {}
                 bullet: false
             })
         );
-        assert_eq!(notes[0].text, "99.0.0");
+        assert_eq!(notes[0].text, newer_version());
         let bullets: Vec<&str> = notes
             .iter()
             .filter(|c| {
@@ -2253,10 +2268,7 @@ used {} {}
         assert!(repo.rect.right() <= block.rect.right());
 
         assert!(s.press(&g, Hit::Item(at)));
-        assert_eq!(
-            s.opened,
-            ["https://github.com/tekalu1/xirius/releases/tag/v99.0.0"]
-        );
+        assert_eq!(s.opened, [newer_url()]);
         assert!(s.popup.is_some());
         assert_eq!(s.error, None);
     }
@@ -2300,8 +2312,8 @@ used {} {}
         let g = s.geometry(1600.0, 900.0);
 
         let body: &'static [u8] = b"the installer";
-        let name = update::setup_name("99.0.0");
-        let (release, fetch, public) = signed_release("99.0.0", body);
+        let name = update::setup_name(newer_version());
+        let (release, fetch, public) = signed_release(newer_version(), body);
         s.update.fetch = fetch;
         s.update.download = download_of(body);
         s.update.key = public;
@@ -2352,7 +2364,7 @@ used {} {}
             pending.program,
             tmp.path()
                 .join(update::DOWNLOAD_DIR)
-                .join("99.0.0")
+                .join(newer_version())
                 .join(&name)
         );
         assert_eq!(
@@ -2386,7 +2398,7 @@ used {} {}
         s.song.load_settings(tmp.path());
         let g = s.geometry(1600.0, 900.0);
         let body: &'static [u8] = b"the installer";
-        let (release, good_fetch, public) = signed_release("99.0.0", body);
+        let (release, good_fetch, public) = signed_release(newer_version(), body);
         let fetch: update::Fetch = std::sync::Arc::new(move |url: &str| {
             if url.ends_with(".sig") {
                 return Ok("00".repeat(64));
@@ -2421,9 +2433,9 @@ used {} {}
             update::Phase::Failed(update::BAD_SIGNATURE.into())
         );
         // Nothing is kept.
-        let dir = tmp.path().join(update::DOWNLOAD_DIR).join("99.0.0");
+        let dir = tmp.path().join(update::DOWNLOAD_DIR).join(newer_version());
         assert!(
-            !dir.join(update::setup_name("99.0.0")).exists(),
+            !dir.join(update::setup_name(newer_version())).exists(),
             "no installer is kept"
         );
         let cells = cells_of(&s, &g);
@@ -2440,7 +2452,7 @@ used {} {}
         assert!(s.press(&g, Hit::Item(page)));
         assert_eq!(
             s.opened.last().map(String::as_str),
-            Some("https://github.com/tekalu1/xirius/releases/tag/v99.0.0")
+            Some(newer_url().as_str())
         );
     }
 
@@ -2459,8 +2471,8 @@ used {} {}
         assert!(acts(&shown).contains(&Act::Page));
 
         v.newer = Some(update::Release {
-            version: "99.0.0".into(),
-            url: "https://github.com/tekalu1/xirius/releases/tag/v99.0.0".into(),
+            version: newer_version().into(),
+            url: newer_url(),
             notes: Vec::new(),
             prerelease: false,
             assets: Vec::new(),
@@ -2494,7 +2506,7 @@ used {} {}
         let mut s = Studio::sample();
         s.song.load_settings(tmp.path());
         let body: &'static [u8] = b"the installer";
-        let version = "99.0.0";
+        let version = newer_version();
         let name = update::setup_name(version);
         let manifest = format!(
             "{{\"version\":\"{version}\",\"file\":\"{name}\",\"sha256\":\"{}\",\"channel\":\"stable\",\"min_version\":\"1.0.0\"}}\n",
@@ -2558,8 +2570,8 @@ used {} {}
         s.song.load_settings(tmp.path());
         let g = s.geometry(1600.0, 900.0);
         s.update.newer = Some(update::Release {
-            version: "99.0.0".into(),
-            url: "https://github.com/tekalu1/xirius/releases/tag/v99.0.0".into(),
+            version: newer_version().into(),
+            url: newer_url(),
             notes: Vec::new(),
             prerelease: false,
             assets: Vec::new(),
@@ -2579,7 +2591,7 @@ used {} {}
         assert!(!s.update.downloading(), "nothing is downloaded");
         assert_eq!(
             s.opened.last().map(String::as_str),
-            Some("https://github.com/tekalu1/xirius/releases/tag/v99.0.0")
+            Some(newer_url().as_str())
         );
         // A key, but a folder the installer does not put Xirius in.
         s.update.key = "ab".repeat(32);

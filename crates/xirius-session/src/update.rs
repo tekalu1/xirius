@@ -1549,6 +1549,24 @@ mod tests {
         assert!(!is_newer("1.0.0-beta.1", "1.0.0"));
         // A build's `+…` does not count.
         assert!(!is_newer("1.0.0+build.2", "1.0.0"));
+
+        let ordered = [
+            "1.1.0-alpha",
+            "1.1.0-alpha.1",
+            "1.1.0-alpha.beta",
+            "1.1.0-beta",
+            "1.1.0-beta.1",
+            "1.1.0-beta.2",
+            "1.1.0-beta.10",
+            "1.1.0-rc.1",
+            "1.1.0",
+        ];
+        for pair in ordered.windows(2) {
+            assert!(is_newer(pair[1], pair[0]), "{pair:?}");
+            assert!(!is_newer(pair[0], pair[1]), "{pair:?}");
+        }
+        assert!(is_newer("1.1.0-beta.1", "1.0.9"));
+        assert!(!is_newer("1.1.0-beta.1+build.2", "1.1.0-beta.1"));
     }
 
     #[test]
@@ -1868,35 +1886,40 @@ mod tests {
         (download, urls)
     }
 
+    /// Stable versions newer than this build, including when this build is a beta.
+    fn next_version(patch: u64) -> String {
+        let major = env!("CARGO_PKG_VERSION_MAJOR").parse::<u64>().unwrap() + 1;
+        format!("{major}.0.{patch}")
+    }
+
     fn release_with_assets() -> Release {
-        parse(ANSWER).unwrap()
+        parse(&ANSWER.replace("1.0.1", &next_version(0))).unwrap()
     }
 
     /// A fetch for the three small files of [`release_with_assets`].
     fn small_files(manifest: Vec<u8>, signature: String, sums: String) -> Fetch {
+        let version = next_version(0);
         Arc::new(move |url: &str| {
-            Ok(match url {
-                "https://github.com/tekalu1/xirius/releases/download/v1.0.1/Xirius-1.0.1-win-x64-update.json" => {
-                    String::from_utf8(manifest.clone()).unwrap()
-                }
-                "https://github.com/tekalu1/xirius/releases/download/v1.0.1/Xirius-1.0.1-win-x64-update.json.sig" => {
-                    signature.clone()
-                }
-                "https://github.com/tekalu1/xirius/releases/download/v1.0.1/SHA256SUMS.txt" => {
-                    sums.clone()
-                }
-                other => return Err(format!("no {other}")),
-            })
+            if url == release_url(&version, &manifest_name(&version)) {
+                Ok(String::from_utf8(manifest.clone()).unwrap())
+            } else if url == release_url(&version, &manifest_signature_name(&version)) {
+                Ok(signature.clone())
+            } else if url == release_url(&version, SUMS) {
+                Ok(sums.clone())
+            } else {
+                Err(format!("no {url}"))
+            }
         })
     }
 
     #[test]
     fn a_checked_download_is_kept_under_the_apps_folder() {
+        let version = next_version(0);
         let (key, public) = keypair();
         let body = b"the installer bytes";
-        let manifest = manifest("1.0.1", body, STABLE);
+        let manifest = manifest(&version, body, STABLE);
         let signature = signed(&key, &manifest);
-        let sums = sums_for(&setup_name("1.0.1"), body);
+        let sums = sums_for(&setup_name(&version), body);
         let text_fetch = small_files(manifest.clone(), signature.clone(), sums);
         let (download, urls) = download_writing(body, false);
         let tmp = scratch("prepare");
@@ -1911,24 +1934,24 @@ mod tests {
             &mut |p| seen.push(p),
         )
         .unwrap();
-        let dir = tmp.path().join(DOWNLOAD_DIR).join("1.0.1");
-        assert_eq!(installer.version, "1.0.1");
-        assert_eq!(installer.path, dir.join(setup_name("1.0.1")));
+        let dir = tmp.path().join(DOWNLOAD_DIR).join(&version);
+        assert_eq!(installer.version, version);
+        assert_eq!(installer.path, dir.join(setup_name(&version)));
         assert_eq!(std::fs::read(&installer.path).unwrap(), body);
         assert_eq!(
-            std::fs::read(dir.join(manifest_name("1.0.1"))).unwrap(),
+            std::fs::read(dir.join(manifest_name(&version))).unwrap(),
             manifest
         );
-        assert!(dir.join(manifest_signature_name("1.0.1")).is_file());
+        assert!(dir.join(manifest_signature_name(&version)).is_file());
         assert!(dir.join(SUMS).is_file());
         assert_eq!(
             urls.lock().unwrap()[0],
-            "https://github.com/tekalu1/xirius/releases/download/v1.0.1/Xirius-1.0.1-win-x64-setup.exe"
+            release_url(&version, &setup_name(&version))
         );
         assert!(
             !dir.join(format!(
                 "{}.part.{}",
-                setup_name("1.0.1"),
+                setup_name(&version),
                 std::process::id()
             ))
             .exists()
@@ -1950,7 +1973,7 @@ mod tests {
         assert_eq!(std::fs::read(again.path).unwrap(), body);
         // And it is found at the next start, and verified again.
         let found = ready_installer(tmp.path(), CURRENT, false, &public).unwrap();
-        assert_eq!(found.version, "1.0.1");
+        assert_eq!(found.version, version);
         assert_eq!(found.verify_with(&public), Ok(()));
         // UI-282: a file replaced after it was checked is not run.
         std::fs::write(&found.path, b"tampered").unwrap();
@@ -1959,11 +1982,12 @@ mod tests {
 
     #[test]
     fn a_download_that_stops_halfway_leaves_nothing() {
+        let version = next_version(0);
         let (key, public) = keypair();
         let body = b"the installer bytes";
-        let manifest = manifest("1.0.1", body, STABLE);
+        let manifest = manifest(&version, body, STABLE);
         let signature = signed(&key, &manifest);
-        let sums = sums_for(&setup_name("1.0.1"), body);
+        let sums = sums_for(&setup_name(&version), body);
         let text_fetch = small_files(manifest, signature, sums);
         let (download, _) = download_writing(body, true);
         let tmp = scratch("cut");
@@ -1978,8 +2002,8 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("connection closed"), "{err}");
-        let dir = tmp.path().join(DOWNLOAD_DIR).join("1.0.1");
-        assert!(!dir.join(setup_name("1.0.1")).exists());
+        let dir = tmp.path().join(DOWNLOAD_DIR).join(&version);
+        assert!(!dir.join(setup_name(&version)).exists());
         assert!(
             std::fs::read_dir(&dir)
                 .unwrap()
@@ -1991,11 +2015,12 @@ mod tests {
 
     #[test]
     fn a_download_with_the_wrong_signature_is_thrown_away() {
+        let version = next_version(0);
         let (key, public) = keypair();
         let body = b"the installer bytes";
-        let manifest = manifest("1.0.1", body, STABLE);
+        let manifest = manifest(&version, body, STABLE);
         let signature = signed(&key, b"another manifest");
-        let sums = sums_for(&setup_name("1.0.1"), body);
+        let sums = sums_for(&setup_name(&version), body);
         let text_fetch = small_files(manifest, signature, sums);
         let (download, _) = download_writing(body, false);
         let tmp = scratch("badsig");
@@ -2011,8 +2036,8 @@ mod tests {
             ),
             Err(BAD_SIGNATURE.into())
         );
-        let dir = tmp.path().join(DOWNLOAD_DIR).join("1.0.1");
-        assert!(!dir.join(setup_name("1.0.1")).exists());
+        let dir = tmp.path().join(DOWNLOAD_DIR).join(&version);
+        assert!(!dir.join(setup_name(&version)).exists());
     }
 
     #[test]
@@ -2032,11 +2057,15 @@ mod tests {
 
     #[test]
     fn an_old_download_is_cleaned_up_and_the_newest_kept() {
+        let next = next_version(0);
+        let newest = next_version(1);
+        assert!(is_newer(&next, CURRENT));
+        assert!(is_newer(&newest, &next));
         let (key, public) = keypair();
         let tmp = scratch("clean");
         let base = tmp.path().join(DOWNLOAD_DIR);
         let body = b"new installer";
-        for version in ["0.9.0", "1.0.0", "1.0.1", "1.0.2"] {
+        for version in ["0.0.0-0", CURRENT, next.as_str(), newest.as_str()] {
             let dir = base.join(version);
             std::fs::create_dir_all(&dir).unwrap();
             let m = manifest(version, body, STABLE);
@@ -2047,18 +2076,15 @@ mod tests {
             // A part left by a window that was killed.
             std::fs::write(dir.join(format!("{}.part.9", setup_name(version))), b"half").unwrap();
         }
-        for version in ["0.9.0", "1.0.0"] {
-            assert!(!is_newer(version, CURRENT), "{version}");
-        }
         let found = ready_installer(tmp.path(), CURRENT, false, &public).unwrap();
         // Both newer versions are sound; the newest is offered and the other is removed.
-        assert_eq!(found.version, "1.0.2");
-        assert!(base.join("1.0.2").is_dir());
-        for gone in ["0.9.0", "1.0.0", "1.0.1"] {
+        assert_eq!(found.version, newest);
+        assert!(base.join(&newest).is_dir());
+        for gone in ["0.0.0-0", CURRENT, next.as_str()] {
             assert!(!base.join(gone).exists(), "{gone} is cleaned");
         }
         assert!(
-            std::fs::read_dir(base.join("1.0.2"))
+            std::fs::read_dir(base.join(&newest))
                 .unwrap()
                 .flatten()
                 .all(|e| !e.file_name().to_string_lossy().contains(".part.")),
