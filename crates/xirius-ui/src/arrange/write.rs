@@ -36,11 +36,7 @@ pub(crate) fn target_of(hit: MixerHit) -> Option<AutoTarget> {
 impl Studio {
     /// Tracks whose control changes the base value during this pass.
     pub(crate) fn auto_direct_targets(&self, hit: MixerHit) -> Vec<xirius_core::id::TrackId> {
-        let mut ids = if matches!(hit, MixerHit::Fader(_) | MixerHit::Pan(_)) {
-            self.track_targets(hit.track())
-        } else {
-            vec![hit.track()]
-        };
+        let mut ids = self.drag_tracks(hit);
         // The channels whose lane holds the control stay as they are (UI-063).
         if matches!(hit, MixerHit::Fader(_) | MixerHit::Pan(_)) {
             ids.retain(|t| {
@@ -68,17 +64,22 @@ impl Studio {
         };
         let at = self.transport.tick_now().unwrap_or(self.playhead);
         self.auto_advance(at);
-        let ids = if matches!(hit, MixerHit::Fader(_) | MixerHit::Pan(_)) {
-            self.track_targets(hit.track())
-        } else {
-            vec![hit.track()]
-        };
+        let ids = self.drag_tracks(hit);
+        // Each selected track writes its own value, moved as far as the dragged one (MIX-050).
+        let values: Vec<Option<f64>> = ids
+            .iter()
+            .map(|t| {
+                let h = crate::mixer::group::same_on(hit, *t);
+                value.map(|v| self.dragged_to(h, self.mixer_rest(h), v))
+            })
+            .collect();
         let Some(w) = self.arrange.writing.as_mut() else {
             return false;
         };
         let count = ids
             .iter()
-            .filter(|t| w.pass.touch(**t, target.clone(), phase, at, value))
+            .zip(values)
+            .filter(|(t, v)| w.pass.touch(**t, target.clone(), phase, at, *v))
             .count();
         if count == 0 {
             return false;
@@ -515,7 +516,10 @@ mod tests {
             let value = s.mixer.drag.unwrap().value;
             assert!(s.drag_end());
             assert_eq!(s.project().tracks[&ids[0]].volume_db, base);
-            assert_eq!(s.project().tracks[&ids[1]].volume_db, value);
+            // Both move as far as the drag, each where one --by takes it (MIX-050).
+            let landed = xirius_core::model::volume_moved(base, value - base);
+            let moved = xirius_core::model::volume_moved(read_base, value - base);
+            assert_eq!(s.project().tracks[&ids[1]].volume_db, moved);
             assert_eq!(s.song.steps(), steps + 1);
             s.playhead = 1920;
             s.transport.playing = false;
@@ -527,7 +531,7 @@ mod tests {
                     .unwrap()
                     .points
                     .iter()
-                    .any(|p| p.value == value)
+                    .any(|p| p.value == landed)
             );
             assert!(s.undo(&g));
             assert!(s.undo(&g));

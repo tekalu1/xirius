@@ -10,6 +10,7 @@
 
 pub mod bench;
 pub(crate) mod editors;
+pub(crate) mod group;
 pub mod knob;
 pub mod meters;
 pub(crate) mod paint;
@@ -404,6 +405,8 @@ pub struct Drag {
     start: f64,
     /// The value shown and heard now.
     pub value: f64,
+    /// Alt was held at the press: the dragged track moves alone (MIX-050).
+    pub alone: bool,
 }
 
 /// The mixer's own state; the levels and the routing are the song's.
@@ -992,17 +995,30 @@ impl Studio {
 
     /// The value of a fader or a knob as shown: the dragged one, else the song's.
     pub fn mixer_value(&self, hit: MixerHit) -> Option<f64> {
-        if let Some(d) = self.mixer.drag
-            && (d.hit == hit
-                || (self.track_targets(d.hit.track()).contains(&hit.track())
-                    && matches!(
-                        (d.hit, hit),
-                        (MixerHit::Fader(_), MixerHit::Fader(_))
-                            | (MixerHit::Pan(_), MixerHit::Pan(_))
-                    )))
-        {
-            return Some(d.value);
+        if let Some(d) = self.mixer.drag {
+            // Every selected track moves from where it was (MIX-050), but one its lane holds
+            // (UI-063), which the release leaves too.
+            if self.drag_relative()
+                && group::same_on(d.hit, hit.track()) == hit
+                && self.drag_tracks(d.hit).contains(&hit.track())
+                && (hit == d.hit || !self.mixer_locked(hit))
+            {
+                let now = if hit == d.hit {
+                    Some(d.start)
+                } else {
+                    self.mixer_rest(hit)
+                };
+                return now.map(|now| group::moved(hit, now, d.by()));
+            }
+            if d.hit == hit {
+                return Some(d.value);
+            }
         }
+        self.mixer_rest(hit)
+    }
+
+    /// The value of a fader or a knob when nothing drags it.
+    pub(crate) fn mixer_rest(&self, hit: MixerHit) -> Option<f64> {
         // A channel whose lanes play shows the lanes' value at the playhead.
         let p = self.project();
         let p = xirius_session::automation::song_at(&p, self.playhead as f64);
@@ -1015,7 +1031,7 @@ impl Studio {
         }
     }
 
-    /// A press in the mixer. Faders and knobs only select here; their drag is
+    /// A press in the mixer. Faders and knobs do nothing more than choose here; their drag is
     /// [`Studio::drag_begin`].
     pub fn mixer_press(&mut self, g: &Geometry, hit: MixerHit) -> bool {
         self.input_map.context_delete = None;
@@ -1023,10 +1039,12 @@ impl Studio {
         let t = hit.track();
         self.mixer.master_picked = t.is_master();
         if !t.is_master() {
-            // The name and the ground choose as a head does (UI-340).
+            // The name and the ground choose as a head does (UI-340); any other part of a track
+            // outside the selection acts on that track and leaves the selection as it is
+            // (MIX-050).
             if matches!(hit, MixerHit::Strip(_)) {
                 self.pick_row(RowKind::Track(t), self.arrange.mods);
-            } else {
+            } else if self.is_picked(RowKind::Track(t)) {
                 self.select_row(Some(RowKind::Track(t)));
             }
         }
@@ -1264,6 +1282,7 @@ impl Studio {
                     travel,
                     start,
                     value: start,
+                    alone: self.arrange.mods.alt,
                 });
                 self.auto_touch(h, Phase::Begin, Some(start));
                 true
@@ -1314,12 +1333,9 @@ impl Studio {
         if self.transport.is_live() {
             let mut p = (*self.project()).clone();
             for t in self.auto_direct_targets(d.hit) {
-                let hit = match d.hit {
-                    MixerHit::Fader(_) => MixerHit::Fader(t),
-                    MixerHit::Pan(_) => MixerHit::Pan(t),
-                    _ => d.hit,
-                };
-                apply(&mut p, hit, value);
+                let hit = group::same_on(d.hit, t);
+                let to = self.dragged_to(hit, group::level_of(&p, hit), value);
+                apply(&mut p, hit, to);
             }
             let heard = self.auto_heard(&p);
             self.transport.sync(&heard, self.song().dir());
@@ -1327,28 +1343,50 @@ impl Studio {
         true
     }
 
+    /// Lets go of a drag without a step: the song it began from has been taken back or replaced,
+    /// so its values are not the song's any more.
+    pub(crate) fn drag_drop(&mut self) {
+        let Some(d) = self.mixer.drag else {
+            return;
+        };
+        self.auto_touch(d.hit, Phase::End, None);
+        self.mixer.drag = None;
+        self.mixer.knob_at = None;
+    }
+
     /// Ends a drag: one command when the value changed.
     pub fn drag_end(&mut self) -> bool {
-        let Some(d) = self.mixer.drag.take() else {
+        let Some(d) = self.mixer.drag else {
             return false;
         };
-        if self.auto_touch(d.hit, Phase::End, Some(d.value)) {
-            return true;
-        }
-        if d.value == d.start {
-            // The player may have heard other values on the way.
-            let p = self.project();
-            self.transport.sync(&p, self.song().dir());
-            return true;
-        }
+        // The tracks are the drag's (Alt, the selection), so it goes once they are known.
+        let written = self.auto_touch(d.hit, Phase::End, Some(d.value));
+        let relative = self.drag_relative();
         let ids: Vec<_> = self
             .auto_direct_targets(d.hit)
             .iter()
             .map(ToString::to_string)
             .collect();
+        self.mixer.drag = None;
+        if written {
+            return true;
+        }
+        if d.value == d.start || (relative && d.by() == 0.0) {
+            // The player may have heard other values on the way.
+            let p = self.project();
+            self.transport.sync(&p, self.song().dir());
+            return true;
+        }
+        // Several tracks move by as much as the dragged one, each from its own value (MIX-050).
         match d.hit {
+            MixerHit::Fader(_) if relative => {
+                self.run_command("track.volume.set", json!({ "ids": ids, "by": d.by() }))
+            }
             MixerHit::Fader(_) => {
                 self.run_command("track.volume.set", json!({ "ids": ids, "db": d.value }))
+            }
+            MixerHit::Pan(_) if relative => {
+                self.run_command("track.pan.set", json!({ "ids": ids, "by": d.by() }))
             }
             MixerHit::Pan(_) => {
                 self.run_command("track.pan.set", json!({ "ids": ids, "pan": d.value }))

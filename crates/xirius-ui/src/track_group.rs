@@ -34,7 +34,12 @@ impl Studio {
     }
 
     pub(crate) fn track_toggle(&mut self, command: &str, clicked: TrackId) -> bool {
-        let ids = self.track_ids(clicked);
+        // Alt changes the pressed track alone (MIX-050).
+        let ids = if self.arrange.mods.alt {
+            json!([clicked.to_string()])
+        } else {
+            self.track_ids(clicked)
+        };
         self.command(|song| song.run(command, json!({"ids": ids})).map(|_| ()))
     }
 }

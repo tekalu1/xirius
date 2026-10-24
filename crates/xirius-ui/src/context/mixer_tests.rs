@@ -230,6 +230,54 @@ fn the_fader_shows_its_lane() {
     );
 }
 
+/// UI-340: on a selected track the reset and the typed value go to every selected track, as one
+/// step; on a track outside the selection they go to that track and the selection stays.
+#[test]
+fn the_menu_of_a_selected_fader_sets_every_selected_track() {
+    let (mut s, g) = mix();
+    let (keys, vocal, guitar) = (track(&s, "Keys"), track(&s, "Vocal"), track(&s, "Guitar"));
+    let shift = crate::tools::Mods {
+        shift: true,
+        ..crate::tools::Mods::NONE
+    };
+    for (t, db) in [(keys, -12.0), (vocal, -6.0), (guitar, 6.0)] {
+        assert!(s.run_command(
+            "track.volume.set",
+            json!({ "ids": [t.to_string()], "db": db })
+        ));
+    }
+    let volumes = |s: &Studio| [keys, vocal, guitar].map(|t| s.project().tracks[&t].volume_db);
+    s.pick_row(RowKind::Track(keys), crate::tools::Mods::NONE);
+    s.pick_row(RowKind::Track(vocal), shift);
+    let n = steps(&s);
+    assert!(press(&mut s, &g, MixerHit::Fader(keys)));
+    assert!(choose(&mut s, &g, "0 dB に戻す"));
+    assert_eq!(volumes(&s), [0.0, 0.0, 6.0]);
+    assert_eq!(steps(&s), n + 1);
+    assert!(s.song.undo());
+
+    assert!(press(&mut s, &g, MixerHit::Fader(vocal)));
+    assert!(choose(&mut s, &g, "値を入力…"));
+    for _ in 0..12 {
+        s.ask_key("backspace");
+    }
+    s.ask_text(None, "-3", false);
+    assert_eq!(s.ask_key("enter"), Some(true));
+    assert_eq!(volumes(&s), [-3.0, -3.0, 6.0]);
+
+    // Guitar is outside the selection: its pan alone is reset, and Keys and Vocal stay selected.
+    assert!(s.run_command(
+        "track.pan.set",
+        json!({ "ids": [keys.to_string(), guitar.to_string()], "pan": 0.5 })
+    ));
+    let picked = s.picked_rows();
+    assert!(press(&mut s, &g, MixerHit::Pan(guitar)));
+    assert!(choose(&mut s, &g, "既定に戻す"));
+    assert_eq!(s.project().tracks[&guitar].pan, 0.0);
+    assert_eq!(s.project().tracks[&keys].pan, 0.5);
+    assert_eq!(s.picked_rows(), picked);
+}
+
 #[test]
 fn the_knob_resets_to_the_centre() {
     let (mut s, g) = mix();

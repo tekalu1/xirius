@@ -889,6 +889,9 @@ impl Studio {
     /// A press. True when it was used here; otherwise it goes on to
     /// [`Studio::press`] (which selects the row or moves the playhead).
     pub fn arrange_down(&mut self, g: &Geometry, x: f32, y: f32, mods: Mods) -> bool {
+        // The ruler's click and the mixer (which come through [`Studio::press`]) read the
+        // modifiers of this press, also the one that closes a menu.
+        self.arrange.mods = mods;
         if self.popup.is_some() {
             return false;
         }
@@ -897,8 +900,6 @@ impl Studio {
         self.arrange.stroke.clear();
         self.comp_sel = None;
         self.arrange.swept.clear();
-        // The ruler's click (which comes through [`Studio::press`]) reads the modifiers of this press.
-        self.arrange.mods = mods;
         let mut spot = self.arrange_spot(g, x, y);
         match spot {
             Spot::Section { id, .. } => self.select_section(id),
@@ -1486,6 +1487,9 @@ impl Studio {
         // (UI-313).
         if !self.wheel_running {
             self.close_wheel_group();
+        }
+        if command.starts_with("history.") {
+            self.drag_drop();
         }
         let said = args.clone();
         if crate::audio_job::NAMES.contains(&command) {

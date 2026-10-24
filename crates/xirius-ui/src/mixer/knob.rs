@@ -58,6 +58,7 @@ impl Studio {
                 travel: 1.0,
                 start,
                 value: start,
+                alone: false,
             });
             self.auto_touch(hit, xirius_session::autowrite::Phase::Begin, Some(start));
         }

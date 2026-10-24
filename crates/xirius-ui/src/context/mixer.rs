@@ -49,8 +49,13 @@ impl Studio {
             return false;
         };
         self.focus_arrange(false);
+        // The name chooses as a press does; any other part of a track outside the selection acts
+        // on that track and leaves the selection as it is (MIX-050).
+        let head = matches!(spot, Spot::Head(_))
+            && matches!(self.mixer_hit(g, x, y), Some(MixerHit::Strip(_)));
         if let Some(t) = spot_track(&spot)
             && !t.is_master()
+            && (head || self.is_picked(RowKind::Track(t)))
         {
             self.select_row(Some(RowKind::Track(t)));
         }
@@ -293,11 +298,13 @@ impl Studio {
         let Some(track) = p.tracks.get(&t) else {
             return Vec::new();
         };
-        let ids = json!({ "ids": [t.to_string()] });
+        // Every selected track takes the value (UI-340).
+        let targets = self.track_ids(t);
+        let ids = json!({ "ids": targets });
         let reset = self.ctx_as(
             "0 dB に戻す",
             "track.volume.set",
-            json!({ "ids": [t.to_string()], "db": 0.0 }),
+            json!({ "ids": targets, "db": 0.0 }),
         );
         let now = format!("{:.1}", track.volume_db);
         let clear = self.lane_clear_item(t, AutoTarget::Volume);
@@ -348,11 +355,13 @@ impl Studio {
         let Some(track) = p.tracks.get(&t) else {
             return Vec::new();
         };
-        let ids = json!({ "ids": [t.to_string()] });
+        // Every selected track takes the value (UI-340).
+        let targets = self.track_ids(t);
+        let ids = json!({ "ids": targets });
         let reset = self.ctx_as(
             "既定に戻す",
             "track.pan.set",
-            json!({ "ids": [t.to_string()], "pan": 0.0 }),
+            json!({ "ids": targets, "pan": 0.0 }),
         );
         let now = format!("{:.2}", track.pan);
         let clear = self.lane_clear_item(t, AutoTarget::Pan);
@@ -674,9 +683,7 @@ impl Studio {
             self.scroll.1 = bottom - g.column.h;
         }
         self.clamp_scroll(g);
-        self.arrange.tracks = vec![RowKind::Track(t)];
-        self.select_row(Some(RowKind::Track(t)));
-        self.arrange.touched();
+        self.pick_row(RowKind::Track(t), crate::tools::Mods::NONE);
         true
     }
 
@@ -723,9 +730,7 @@ impl Studio {
         let g = self.settled_geometry(g.size.0, g.size.1);
         self.show_strip(&g, t);
         if !t.is_master() {
-            self.select_row(Some(RowKind::Track(t)));
-            self.arrange.tracks = vec![RowKind::Track(t)];
-            self.arrange.touched();
+            self.pick_row(RowKind::Track(t), crate::tools::Mods::NONE);
         }
         self.mixer.flash_strip(t, xirius_core::store::now_ms());
         true

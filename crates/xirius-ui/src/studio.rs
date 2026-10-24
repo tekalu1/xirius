@@ -2141,6 +2141,7 @@ impl Studio {
                 self.redo(g);
             }
             Action::Jump(n) => {
+                self.drag_drop();
                 self.command(|s| s.jump(n));
                 self.follow_selection();
                 self.rebuild(g);
@@ -2506,6 +2507,7 @@ impl Studio {
     /// The screen's state belonged to the song that was closed: begin again, and say
     /// what closing it did, and what came back if it was opened after a crash.
     pub(crate) fn song_replaced(&mut self, cleaned: Result<usize, String>) {
+        self.drag_drop();
         self.select_row(None);
         self.selected_clip = None;
         self.collapsed.clear();

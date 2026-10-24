@@ -14,7 +14,7 @@ use xirius_engine::mixer::MeterReading;
 use xirius_session::host::Strip;
 
 /// The bottom of the fader and the meter scale, in dB.
-pub const FLOOR_DB: f32 = -60.0;
+pub const FLOOR_DB: f32 = xirius_core::model::FADER_FLOOR_DB as f32;
 /// The top of the fader scale, in dB.
 pub const CEIL_DB: f32 = 6.0;
 

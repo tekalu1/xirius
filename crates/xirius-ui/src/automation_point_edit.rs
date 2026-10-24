@@ -49,6 +49,7 @@ impl Studio {
     }
 
     pub(crate) fn automation_history(&mut self, redo: bool) -> bool {
+        self.drag_drop();
         // A bounce or freeze not yet in the song is taken back first (ENG-033).
         if !redo && self.job_undo() {
             self.error = None;
