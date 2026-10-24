@@ -3265,7 +3265,7 @@ mod tests {
             "the card was compared with the song"
         );
 
-        s.new_song();
+        s.new_song_sync();
         let now = s.project();
         assert!(
             s.export
@@ -3302,11 +3302,11 @@ mod tests {
         assert!(until(&mut s, 30, |s| view(s).cards[0].state != State::Running));
 
         // Another song, whose panel starts whole, and back to this one.
-        s.new_song();
+        s.new_song_sync();
         s.popup = None;
         s.open_export(Rect::new(1500.0, -40.0, 28.0, 28.0));
         assert_eq!(view(&s).range, Range::Song);
-        s.finish_file_request(crate::studio::FileRequest::Open, &dir);
+        s.finish_file_request_sync(crate::studio::FileRequest::Open, &dir);
         assert!(s.error.is_none(), "{:?}", s.error);
         s.popup = None;
         s.open_export(Rect::new(1500.0, -40.0, 28.0, 28.0));
@@ -3329,10 +3329,10 @@ mod tests {
         act(&mut s, &g, Act::Go);
         assert!(s.error.is_none(), "{:?}", s.error);
         assert!(until(&mut s, 30, |s| view(s).cards[0].state != State::Running));
-        s.new_song();
+        s.new_song_sync();
         s.popup = None;
         s.open_export(Rect::new(1500.0, -40.0, 28.0, 28.0));
-        s.finish_file_request(crate::studio::FileRequest::Open, &dir);
+        s.finish_file_request_sync(crate::studio::FileRequest::Open, &dir);
         assert!(s.error.is_none(), "{:?}", s.error);
         s.popup = None;
         // The song remembers the loop; a row that exports a span asks for that span.

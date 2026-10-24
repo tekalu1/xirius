@@ -715,8 +715,8 @@ impl Song {
         Ok(())
     }
 
-    /// PRJ-028 compatibility bridge. The real session and all disk work move to
-    /// the worker; PRJ-029 replaces the calling thread's wait with tick/idle polling.
+    /// Synchronous setup API for non-window callers. Window callbacks use
+    /// Studio's request/poll boundary; this helper must not run on the UI thread.
     fn open_on_worker(
         &mut self,
         request: xirius_core::session::opening::OpenRequest,
@@ -850,6 +850,19 @@ impl Song {
         self.trash
             .clone()
             .unwrap_or_else(|| Arc::new(xirius_session::os::trash))
+    }
+
+    pub(crate) fn sample_project() -> Project {
+        let mut b = Builder {
+            session: Session::new(SAMPLE_NAME),
+        };
+        b.build();
+        b.session.project().clone()
+    }
+
+    pub(crate) fn opened(&mut self, sample: bool, draft: bool) {
+        self.sample = sample;
+        self.draft = draft;
     }
 
     /// The sample song, whose `project.cleanup` moves files with `trash`.

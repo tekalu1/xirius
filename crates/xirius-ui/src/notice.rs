@@ -354,7 +354,7 @@ mod tests {
         let mut s = song_with_a_stray(&song.0, &bin.0);
         crate::song::Song::sample().save_as(&other.0).unwrap();
         assert_eq!(s.notice_text(), None);
-        s.finish_file_request(FileRequest::Open, &other.0);
+        s.finish_file_request_sync(FileRequest::Open, &other.0);
         assert!(s.error.is_none(), "{:?}", s.error);
         tidied(&mut s);
         assert!(s.error.is_none(), "{:?}", s.error);
@@ -380,7 +380,7 @@ mod tests {
         let mut s = Studio::sample();
         s.song.save_as(&song.0).unwrap();
         crate::song::Song::sample().save_as(&other.0).unwrap();
-        s.finish_file_request(FileRequest::Open, &other.0);
+        s.finish_file_request_sync(FileRequest::Open, &other.0);
         tidied(&mut s);
         assert!(s.error.is_none(), "{:?}", s.error);
         assert_eq!(s.notice_text(), None);

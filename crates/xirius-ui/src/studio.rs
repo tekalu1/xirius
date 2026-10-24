@@ -722,6 +722,9 @@ pub struct Studio {
     pub notice: Option<crate::notice::Notice>,
     /// What the audio processing has to say, with ⚠ or a button ([`crate::toast`]).
     pub toast: Option<crate::toast::Toast>,
+    pub(crate) opening: Option<crate::opening::Opening>,
+    pub(crate) open_generation: u64,
+    pub(crate) open_closing: Option<crate::opening::CloseJob>,
     pub(crate) saving: Option<crate::saving::Saving>,
     /// The watch on the song's file for another app's save ([`crate::other_change`], UI-289).
     pub(crate) other: crate::other_change::OtherChange,
@@ -872,6 +875,9 @@ impl Studio {
             notice: None,
             toast: None,
             saving: None,
+            opening: None,
+            open_generation: 0,
+            open_closing: None,
             other: Default::default(),
             pointer_held: false,
             leaving_ready: false,
@@ -1426,7 +1432,7 @@ impl Studio {
 
     /// Applies a press. Returns true when the picture has to be redrawn.
     pub fn press(&mut self, g: &Geometry, hit: Hit) -> bool {
-        if self.saving.is_some() {
+        if self.input_blocked() {
             return false;
         }
         // A press outside the inspector's face gives up what was half typed there (UI-312).
@@ -1811,7 +1817,7 @@ impl Studio {
 
     /// Keyboard shortcuts. `key` is GPUI's key name ("z", "y").
     pub fn key(&mut self, g: &Geometry, key: &str, ctrl: bool, shift: bool) -> bool {
-        if self.saving_key(key) {
+        if self.opening_key(key) || self.saving_key(key) {
             return true;
         }
         if key == "escape" && self.popup.take().is_some() {
@@ -2412,7 +2418,20 @@ impl Studio {
         self.browser.typed(key, ch)
     }
 
+    /// Nonblocking file-dialog and script entry. Synchronous fixtures have an
+    /// explicitly named helper below and never run from a window callback.
     pub fn finish_file_request(&mut self, request: FileRequest, path: &std::path::Path) {
+        if matches!(
+            request,
+            FileRequest::Open | FileRequest::OpenVersion(_) | FileRequest::OpenDawproject
+        ) {
+            self.request_open_file(request, path);
+        } else {
+            self.finish_file_request_sync(request, path);
+        }
+    }
+
+    pub fn finish_file_request_sync(&mut self, request: FileRequest, path: &std::path::Path) {
         if self.finish_preset_file(request.clone(), path) {
             return;
         }
@@ -2502,6 +2521,11 @@ impl Studio {
     /// A new, empty song in place of this one (UI-078): the screen is back at the
     /// entrance, where it starts.
     pub fn new_song(&mut self) {
+        self.request_open(crate::opening::Request::New);
+    }
+
+    #[cfg(test)]
+    pub fn new_song_sync(&mut self) {
         self.keep_leaving();
         let closing = self.closing();
         self.song = Song::empty_after(&self.song);
@@ -2515,6 +2539,14 @@ impl Studio {
         &mut self,
         closing: Result<Option<xirius_session::cleanup::Closed>, String>,
     ) {
+        self.song_replaced_with(closing, false);
+    }
+
+    pub(crate) fn song_replaced_with(
+        &mut self,
+        closing: Result<Option<xirius_session::cleanup::Closed>, String>,
+        deferred: bool,
+    ) {
         self.drag_drop();
         self.select_row(None);
         self.selected_clip = None;
@@ -2525,7 +2557,15 @@ impl Studio {
         self.playhead = 0;
         self.transport.reset();
         self.mixer.meters.clear();
-        self.keep.sync(&self.song.project());
+        if deferred {
+            self.keep.sync_open(
+                &self.song.project(),
+                self.song.record_dir(),
+                self.song.is_draft(),
+            );
+        } else {
+            self.keep.sync(&self.song.project());
+        }
         self.recovery = None;
         self.export.forget_bases();
         self.after_edit();
@@ -3409,7 +3449,7 @@ mod tests {
         click(&mut s, Hit::Bar(BarButton::SongName));
         choose(&mut s, Action::Save);
         assert_eq!(s.file_request.take(), Some(FileRequest::SaveAs));
-        s.finish_file_request(FileRequest::SaveAs, &saved);
+        s.finish_file_request_sync(FileRequest::SaveAs, &saved);
         assert_eq!(s.error, None);
         assert!(s.song.is_saved());
         click(&mut s, Hit::Bar(BarButton::Saved));
@@ -3451,10 +3491,10 @@ mod tests {
         choose(&mut s, Action::SelectVersion(i));
         choose(&mut s, Action::OpenAsSong);
         let request = s.file_request.take().unwrap();
-        s.finish_file_request(request, &copy);
+        s.finish_file_request_sync(request, &copy);
         assert_eq!(s.error, None);
         assert!(!s.project().tracks[&id].mute);
-        s.finish_file_request(FileRequest::Open, &saved);
+        s.finish_file_request_sync(FileRequest::Open, &saved);
         assert_eq!(s.error, None);
         assert!(s.project().tracks[&id].mute);
         drop(s);
@@ -3491,7 +3531,7 @@ mod tests {
         // A song not saved yet has no versions.
         assert!(!s.mapped_key(&g, "s", None, all));
         assert!(s.popup.is_none());
-        s.finish_file_request(FileRequest::SaveAs, &root.join("song"));
+        s.finish_file_request_sync(FileRequest::SaveAs, &root.join("song"));
         assert_eq!(s.error, None);
         let g = geometry(&s);
         assert!(s.mapped_key(&g, "s", None, all));

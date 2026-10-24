@@ -8428,6 +8428,7 @@ dependencies = [
  "skrifa 0.44.0",
  "syn 2.0.119",
  "tempfile",
+ "unicode-segmentation",
  "windows 0.61.3",
  "windows-sys 0.61.2",
  "xirius-core",

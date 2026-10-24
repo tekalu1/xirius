@@ -105,7 +105,9 @@ pub fn stage(s: &mut Studio, stage: u8) {
         3 => {
             s.keep = Keep::default();
             s.new_song();
-            s.run_command("track.add.audio", json!({ "name": "Vocal" }));
+            s.after_open(|s| {
+                s.run_command("track.add.audio", json!({ "name": "Vocal" }));
+            });
         }
         4 => {
             let keep = Keep::at(dir.join("keep"));

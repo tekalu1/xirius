@@ -137,9 +137,12 @@ fn song_and_studio_entrances_have_no_caller_store_io() {
                 let mut studio = Studio::sample();
                 studio.song = song;
                 if entrance == "studio-version" {
-                    studio.finish_file_request(FileRequest::OpenVersion(version.id), &version_dir);
+                    studio.finish_file_request_sync(
+                        FileRequest::OpenVersion(version.id),
+                        &version_dir,
+                    );
                 } else {
-                    studio.finish_file_request(FileRequest::Open, &target);
+                    studio.finish_file_request_sync(FileRequest::Open, &target);
                 }
                 assert!(studio.error.is_none(), "{:?}", studio.error);
                 // Finish the observation before ordinary teardown of the adopted song.
@@ -298,7 +301,7 @@ fn studio_reopens_while_actual_tidy_io_is_held_and_keeps_recordings() {
             Arc::new(|_| Err("unexpected trash".into())),
         ));
         go.recv_timeout(LIMIT).unwrap();
-        studio.finish_file_request(FileRequest::Open, &ui_dir);
+        studio.finish_file_request_sync(FileRequest::Open, &ui_dir);
         assert!(studio.error.is_none(), "{:?}", studio.error);
         assert_eq!(studio.song.dir().as_deref(), Some(ui_dir.as_path()));
         assert!(studio.is_tidying());

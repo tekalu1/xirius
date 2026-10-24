@@ -164,6 +164,10 @@ pub mod notes;
 pub mod notice;
 #[cfg(test)]
 mod open_later_tests;
+pub mod opening;
+#[cfg(feature = "loading-probe")]
+pub mod opening_shots;
+pub mod opening_view;
 pub mod operations;
 pub mod opline;
 pub mod opline_shots;
@@ -398,6 +402,8 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("rollruler", rollruler_shots::ROLL_RULER),
     ("ruler-drag", ruler_drag_shots::SHOTS),
     ("saving", saving_shots::SHOTS),
+    #[cfg(feature = "loading-probe")]
+    ("opening", opening_shots::SHOTS),
     ("screencmd", screencmd_shots::SHOTS),
     ("settings", settings::shots::SHOTS),
     ("side", side_shots::SIDE),

@@ -96,6 +96,9 @@ pub fn look(path: &Path, store: &Path) -> Look {
     if let Some(l) = SLOTS.with(|s| s.borrow().get(path).cloned()) {
         return l;
     }
+    if crate::opening::cached_paint() {
+        return Look::Making;
+    }
     let l = if !path.is_file() {
         Look::Missing
     } else if let Some(p) = peaks::load(path, store) {
@@ -192,6 +195,9 @@ fn chunks(path: &Path, a: f64, b: f64) -> Option<Vec<Arc<Samples>>> {
                 }
                 Some((Chunk::Failed, _)) => return None,
                 None => {
+                    if crate::opening::cached_paint() {
+                        return None;
+                    }
                     samples::request(path, i);
                     ASKED.with(|a| a.borrow_mut().insert((path.to_path_buf(), i)));
                     missing = true;

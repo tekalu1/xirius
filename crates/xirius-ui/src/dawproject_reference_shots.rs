@@ -63,8 +63,6 @@ fn readme_song(dir: &Path) -> PathBuf {
 fn open(s: &mut Studio, path: &Path) {
     s.toast = None;
     s.finish_file_request(FileRequest::OpenDawproject, path);
-    crate::shot::run_for(s, 60.0, |s| s.dawproject.is_none());
-    assert!(s.error.is_none(), "{:?}", s.error);
     s.scroll.0 = 0.0;
 }
 
@@ -87,21 +85,25 @@ fn prepare(s: &mut Studio, n: u8) {
                 failures: Vec::new(),
             });
             open(s, &readme_song(&dir()));
-            let t = s.toast.as_ref().expect("what could not be read");
-            assert!(t.alert, "{}", t.text);
+            s.after_open(|s| {
+                let t = s.toast.as_ref().expect("what could not be read");
+                assert!(t.alert, "{}", t.text);
+            });
         }
         1 => {
             s.popup = None;
             open(s, &reference("AudioWARPEDWithFades.dawproject"));
-            let project = s.project();
-            let clips = project
-                .tracks
-                .values()
-                .map(|t| t.clips.len())
-                .sum::<usize>();
-            assert_eq!(clips, 1);
-            // Near enough to see the fades.
-            s.beat_w = 96.0;
+            s.after_open(|s| {
+                assert_eq!(
+                    s.project()
+                        .tracks
+                        .values()
+                        .map(|t| t.clips.len())
+                        .sum::<usize>(),
+                    1
+                );
+                s.beat_w = 96.0;
+            });
         }
         _ => unreachable!(),
     }

@@ -639,14 +639,14 @@ fn a_new_song_keeps_the_theme_and_what_is_chosen_after_it_is_there_the_next_laun
     press(&mut s, &g, &Do::Pref("ui.theme".into(), "light".into()));
     s.close_settings();
     // The entrance of a new song is drawn in the theme that was chosen, not in the first one.
-    s.new_song();
+    s.new_song_sync();
     assert_eq!(s.wanted_theme(dark), xirius_design::Theme::Light);
     // What is chosen in the second song is written to the same folder: "auto" follows the
     // system, and "light" chosen again after another new song stays.
     s.open_settings(Section::General);
     press(&mut s, &g, &Do::Pref("ui.theme".into(), "auto".into()));
     s.close_settings();
-    s.new_song();
+    s.new_song_sync();
     assert_eq!(s.wanted_theme(dark), dark);
     assert_eq!(
         s.wanted_theme(xirius_design::Theme::Light),

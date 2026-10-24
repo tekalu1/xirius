@@ -305,8 +305,8 @@ fn an_out_of_date_export_stays_out_of_date_when_the_song_is_opened_again() {
     assert!(s.error.is_none(), "{:?}", s.error);
 
     // Another song, and back to this one.
-    s.new_song();
-    s.finish_file_request(crate::studio::FileRequest::Open, &dir);
+    s.new_song_sync();
+    s.finish_file_request_sync(crate::studio::FileRequest::Open, &dir);
     assert!(s.error.is_none(), "{:?}", s.error);
     s.popup = None;
     s.open_export(ANCHOR);
@@ -329,7 +329,7 @@ fn an_export_from_before_records_kept_the_song_can_still_be_written_again() {
     let (mut s, g, dir, _tmp) = exported("old");
     let job = cards(&s)[0].job.clone();
     s.popup = None;
-    s.new_song();
+    s.new_song_sync();
     // As an export of an earlier version left it, newer than the one made: no fingerprints.
     let store = xirius_session::jobs::Store::of_song(&dir);
     let mut v = store.read(&job).unwrap();
@@ -339,7 +339,7 @@ fn an_export_from_before_records_kept_the_song_can_still_be_written_again() {
     let started = m["started_ms"].as_u64().unwrap();
     m.insert("started_ms".into(), serde_json::json!(started + 1));
     store.write(&v).unwrap();
-    s.finish_file_request(crate::studio::FileRequest::Open, &dir);
+    s.finish_file_request_sync(crate::studio::FileRequest::Open, &dir);
     assert!(s.error.is_none(), "{:?}", s.error);
     s.popup = None;
     s.open_export(ANCHOR);

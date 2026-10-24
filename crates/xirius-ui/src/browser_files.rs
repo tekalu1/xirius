@@ -98,11 +98,14 @@ pub fn list(dir: &Path) -> Arc<Vec<Entry>> {
     let kept = LISTS.with(|l| {
         l.borrow()
             .get(dir)
-            .filter(|(at, _)| at.elapsed() < FRESH)
+            .filter(|(at, _)| crate::opening::cached_paint() || at.elapsed() < FRESH)
             .map(|(_, v)| v.clone())
     });
     if let Some(v) = kept {
         return v;
+    }
+    if crate::opening::cached_paint() {
+        return Arc::new(Vec::new());
     }
     let v = Arc::new(read(dir));
     LISTS.with(|l| {

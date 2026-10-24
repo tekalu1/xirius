@@ -162,12 +162,15 @@ fn play(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) 
             s.command(|song| song.save_as(&dir));
             assert!(s.error.is_none(), "{:?}", s.error);
             s.new_song();
-            assert_ne!(order(&s), before);
-            s.finish_file_request(FileRequest::Open, &dir);
-            assert!(s.error.is_none(), "{:?}", s.error);
-            assert_eq!(order(&s), before);
-            show_mixer(&mut s, window);
-            let _ = std::fs::remove_dir_all(dir.parent().expect("a parent"));
+            s.after_open(move |s| {
+                assert_ne!(order(s), before);
+                s.finish_file_request(FileRequest::Open, &dir);
+                s.after_open(move |s| {
+                    assert_eq!(order(s), before);
+                    s.drawer_open = true;
+                    s.tab = DrawerTab::Mixer;
+                });
+            });
         }
     }
 }

@@ -159,7 +159,7 @@ impl Studio {
         mods: Mods,
         code: Option<&str>,
     ) -> bool {
-        if self.saving_key(key) {
+        if self.opening_key(key) || self.saving_key(key) {
             return true;
         }
         if self.name_key(key, mods) {
@@ -282,6 +282,17 @@ impl Studio {
         name: String,
         args: Map<String, Value>,
     ) -> bool {
+        if self.opening.is_some() {
+            if name == "app.quit" {
+                self.request_close();
+            } else if matches!(
+                name.as_str(),
+                "project.open" | "project.new" | "version.open"
+            ) {
+                self.warn(crate::opening::BUSY.into(), None);
+            }
+            return true;
+        }
         if name == "macro.run"
             && let Some(m) = args.get("name").and_then(Value::as_str)
         {
@@ -356,6 +367,9 @@ impl Studio {
             "project.new" => {
                 self.start_leaving(crate::saving::Leave::New);
                 return true;
+            }
+            "project.open" if args.contains_key("path") => {
+                return self.open_command(&name, Value::Object(args.clone()));
             }
             "project.open" => {
                 self.file_request = Some(FileRequest::Open);

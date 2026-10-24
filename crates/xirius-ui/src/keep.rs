@@ -41,6 +41,7 @@ pub enum SaveMark {
 
 #[derive(Debug, Default)]
 pub struct Keep {
+    refresh: Option<std::sync::mpsc::Receiver<Vec<RecentSong>>>,
     root: Option<PathBuf>,
     /// The song as the last look saw it, to tell an edit.
     seen: Option<Arc<Project>>,
@@ -94,6 +95,34 @@ impl Keep {
         self.flash_until = 0;
         self.failed = None;
         self.listed = self.recent();
+    }
+
+    pub(crate) fn sync_open(&mut self, project: &Arc<Project>, dir: Option<PathBuf>, draft: bool) {
+        self.seen = Some(project.clone());
+        self.flash_until = 0;
+        self.failed = None;
+        if let Some(root) = self.root.clone() {
+            let name = project.name.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let keep = Keep::at(root);
+                if let Some(dir) = dir {
+                    keep.remember(&dir, &name, draft, xirius_core::store::now_ms());
+                }
+                let _ = tx.send(keep.recent());
+            });
+            self.refresh = Some(rx);
+        }
+    }
+
+    pub(crate) fn poll_recent(&mut self) -> bool {
+        let got = self.refresh.as_ref().and_then(|rx| rx.try_recv().ok());
+        if let Some(got) = got {
+            self.listed = got;
+            self.refresh = None;
+            return true;
+        }
+        false
     }
 
     /// The recent songs as the last [`Keep::sync`] read them.
@@ -191,7 +220,7 @@ impl Keep {
 impl Studio {
     /// The mark the top bar shows.
     pub fn save_mark(&self) -> SaveMark {
-        if self.saving.is_some() {
+        if self.input_blocked() {
             return SaveMark::Saving;
         }
         self.keep.mark(&self.song, xirius_core::store::now_ms())
@@ -203,32 +232,21 @@ impl Studio {
     /// names its own folder.
     pub fn start_keeping(&mut self, keep: Keep) {
         self.keep = keep;
-        self.keep.sync(&self.song.project());
-        if let Some(r) = self.keep.crashed() {
-            self.finish_file_request(crate::studio::FileRequest::Open, &r.dir);
-            return;
-        }
-        match self.keep.last_open() {
-            None => {}
-            Some(LastOpen::Sample) => {
-                if !self.song.is_sample() {
-                    self.open_sample();
-                }
-            }
-            Some(LastOpen::Empty) => self.new_song(),
-            Some(LastOpen::Song(dir)) => {
-                self.finish_file_request(crate::studio::FileRequest::Open, &dir);
-                if let Some(e) = self.error.take() {
-                    // It could not be opened: an empty song, saying why.
-                    self.new_song();
-                    self.error = Some(e);
-                }
-            }
+        self.keep.sync_open(&self.song.project(), None, false);
+        // Startup discovery, including existence and crash-marker checks, is worker I/O.
+        let root = self.keep.root().map(Path::to_path_buf);
+        if let Some(root) = root {
+            self.request_open(crate::opening::Request::Startup(root));
         }
     }
 
     /// The sample song in place of this one (the entrance's list).
     pub fn open_sample(&mut self) {
+        self.request_open(crate::opening::Request::Sample);
+    }
+
+    #[cfg(test)]
+    pub fn open_sample_sync(&mut self) {
         self.keep_leaving();
         let closing = self.closing();
         self.song = Song::sample_after(&self.song);
@@ -267,7 +285,7 @@ impl Studio {
     /// What the idle poll does for the record: notices an edit, makes the automatic
     /// save point when it is due, and lets the flash end. True when the mark changed.
     pub fn keep_beat(&mut self, now: u64) -> bool {
-        if self.saving.is_some() {
+        if self.input_blocked() {
             return false;
         }
         let before = self.keep.mark(&self.song, now);
@@ -405,7 +423,7 @@ mod tests {
         assert_eq!(s.keep.recent().len(), 1);
         assert!(s.keep.recent()[0].draft);
         let place = root.join("my-song");
-        s.finish_file_request(crate::studio::FileRequest::SaveAs, &place);
+        s.finish_file_request_sync(crate::studio::FileRequest::SaveAs, &place);
         assert!(s.error.is_none(), "{:?}", s.error);
         assert!(!s.song.is_draft());
         assert_eq!(s.song.dir().as_deref(), Some(place.as_path()));
@@ -606,7 +624,7 @@ mod tests {
         add(&mut s, "a");
         let left = s.song.record_dir().unwrap();
         assert!(!s.start_shown());
-        s.new_song();
+        s.new_song_sync();
         assert!(s.start_shown(), "the entrance screen is back");
         assert_eq!(s.project().tracks.len(), 1, "only the master");
         assert!(
@@ -618,7 +636,7 @@ mod tests {
         let listed = s.keep.recent();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].dir, left);
-        s.finish_file_request(crate::studio::FileRequest::Open, &left);
+        s.finish_file_request_sync(crate::studio::FileRequest::Open, &left);
         assert!(s.error.is_none(), "{:?}", s.error);
         assert!(!s.start_shown());
         assert!(s.project().tracks.values().any(|t| t.name == "a"));
@@ -630,6 +648,8 @@ mod tests {
         add(&mut s, "a");
         let g = s.geometry(1440.0, 860.0);
         assert!(s.key(&g, "n", true, false));
+        assert!(s.opening.is_some());
+        s.wait_for_open_for_test();
         assert!(s.start_shown());
         add(&mut s, "b");
         s.open_popup(
@@ -639,6 +659,7 @@ mod tests {
         let l = s.popup.as_ref().unwrap().layout(g.size);
         let new = l.cells.iter().find(|c| c.text == "新規").unwrap();
         assert!(s.popup_action(&g, new.action.clone().unwrap()));
+        s.wait_for_open_for_test();
         assert!(s.popup.is_none() && s.start_shown());
     }
 
@@ -646,6 +667,7 @@ mod tests {
     fn launch(root: &Path) -> Studio {
         let mut s = Studio::sample();
         s.start_keeping(Keep::at(root.to_path_buf()));
+        s.wait_for_open_for_test();
         s
     }
 
@@ -659,7 +681,7 @@ mod tests {
         assert!(s.start_shown() && !s.song.is_sample());
         add(&mut s, "mine");
         let place = root.join("mine");
-        s.finish_file_request(crate::studio::FileRequest::SaveAs, &place);
+        s.finish_file_request_sync(crate::studio::FileRequest::SaveAs, &place);
         assert_eq!(s.error, None);
         s.release_song();
         drop(s);
@@ -670,7 +692,7 @@ mod tests {
         assert_eq!(s.song.record_dir(), Some(place.clone()));
         assert!(s.project().tracks.values().any(|t| t.name == "mine"));
         // Closed on the sample, the sample comes back.
-        s.open_sample();
+        s.open_sample_sync();
         assert!(s.song.is_sample());
         s.release_song();
         drop(s);
@@ -678,7 +700,7 @@ mod tests {
         assert!(s.song.is_sample());
         assert_eq!(s.keep.last_open(), Some(LastOpen::Sample));
         // Closed on a new song, a new song.
-        s.new_song();
+        s.new_song_sync();
         s.release_song();
         drop(s);
         let s = launch(&root);
@@ -698,7 +720,7 @@ mod tests {
         let tmp = scratch("sample-edit");
         let root = tmp.path().to_path_buf();
         let mut s = launch(&root);
-        s.open_sample();
+        s.open_sample_sync();
         add(&mut s, "added");
         let draft = s.song.record_dir().expect("kept as a draft");
         s.release_song();
@@ -714,7 +736,7 @@ mod tests {
         // Two songs, each left behind as the other is started.
         add(&mut s, "first");
         let first = s.song.record_dir().unwrap();
-        s.new_song();
+        s.new_song_sync();
         add(&mut s, "second");
         let g = s.geometry(1440.0, 860.0);
         s.open_popup(
@@ -737,6 +759,7 @@ mod tests {
         );
         s.popup_action(&g, row.action.clone().unwrap());
         assert!(s.error.is_none(), "{:?}", s.error);
+        s.wait_for_open_for_test();
         assert!(s.project().tracks.values().any(|t| t.name == "first"));
         assert!(!s.project().tracks.values().any(|t| t.name == "second"));
         // And the one it left is now the recent one.

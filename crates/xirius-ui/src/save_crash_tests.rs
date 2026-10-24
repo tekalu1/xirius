@@ -54,7 +54,7 @@ fn save_as_child() {
         s.seek(0);
         s.toggle_record();
         assert!(s.transport.recording, "{:?}", s.error);
-        s.finish_file_request(FileRequest::SaveAs, &saved);
+        s.finish_file_request_sync(FileRequest::SaveAs, &saved);
         assert!(
             !saved.exists(),
             "an unfinished take must stay in its original folder"
@@ -102,7 +102,7 @@ fn save_as_child() {
         );
         assert_ne!(arm(&mut counter), 0);
     }
-    s.finish_file_request(FileRequest::SaveAs, &saved);
+    s.finish_file_request_sync(FileRequest::SaveAs, &saved);
     assert_eq!(s.error, None);
     assert!(saved.join("manifest.toml").is_file());
     for file in take_files {

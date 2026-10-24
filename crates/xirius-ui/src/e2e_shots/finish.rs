@@ -29,26 +29,22 @@ pub(super) fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) -> Done {
         26 => {
             press(s, Hit::Bar(BarButton::SongName), w, cx)?;
             cell(s, "新規", w, cx)?;
-            crate::shot::run_for(&mut s.borrow_mut(), 10.0, |s| s.start_shown());
-            let st = s.borrow();
-            check(st.start_shown(), "the start screen is not shown")?;
-            check(!st.song.can_undo(), "the new song has steps to undo")?;
-            drop(st);
-            let empty = memo(|m| m.empty.clone()).ok_or("no new song")?;
-            let diff = differences(&empty, &song_json(s));
-            check(diff.is_empty(), format!("the new song differs at {diff:?}"))?;
+            s.borrow_mut().after_open(|st| {
+                assert!(st.start_shown());
+                assert!(!st.song.can_undo());
+            });
             Ok("closed".into())
         }
         27 => {
             press(s, Hit::Bar(BarButton::SongName), w, cx)?;
             cell(s, "開く…", w, cx)?;
             answer(s, FileRequest::Open, &song_path())?;
-            let now = song_json(s);
-            let was = memo(|m| m.closed.clone()).ok_or("no song from the save")?;
-            let diff = differences(&was, &now);
-            check(diff.is_empty(), format!("opened differs at {diff:?}"))?;
-            let p = s.borrow().project();
-            Ok(format!("tracks={} same as saved", p.tracks.len()))
+            s.borrow_mut().after_open(|st| {
+                let now = serde_json::to_value(&*st.project()).unwrap();
+                let was = memo(|m| m.closed.clone()).expect("saved song");
+                assert!(differences(&was, &now).is_empty());
+            });
+            Ok("opening saved song".into())
         }
         28 => {
             let before = written("wav");

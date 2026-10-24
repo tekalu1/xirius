@@ -107,7 +107,7 @@ impl Studio {
     }
 
     pub fn start_save(&mut self) -> bool {
-        if self.saving.is_some() {
+        if self.input_blocked() {
             return false;
         }
         if self.song.dir().is_none() {
@@ -122,7 +122,16 @@ impl Studio {
 
     /// The folder dialog's answer. Immediate setup helpers use finish_file_request.
     pub fn start_file_request(&mut self, request: FileRequest, path: &std::path::Path) {
-        if self.saving.is_some() {
+        if self.opening.is_some()
+            && matches!(
+                request,
+                FileRequest::Open | FileRequest::OpenVersion(_) | FileRequest::OpenDawproject
+            )
+        {
+            self.request_open_file(request, path);
+            return;
+        }
+        if self.input_blocked() {
             return;
         }
         if request == FileRequest::SaveAs {
@@ -143,7 +152,22 @@ impl Studio {
     }
 
     pub(crate) fn start_leaving(&mut self, leave: Leave) {
-        if self.saving.is_some() {
+        match &leave {
+            Leave::File(request, path) => {
+                self.request_open_file(request.clone(), path);
+                return;
+            }
+            Leave::New => {
+                self.request_open(crate::opening::Request::New);
+                return;
+            }
+            Leave::Sample => {
+                self.request_open(crate::opening::Request::Sample);
+                return;
+            }
+            Leave::Close => {}
+        }
+        if self.input_blocked() {
             return;
         }
         self.keep_leaving();
@@ -319,6 +343,10 @@ impl Studio {
     }
 
     pub(crate) fn request_close(&mut self) -> bool {
+        if let Some(open) = &mut self.opening {
+            open.confirm_close = true;
+            return false;
+        }
         if self.leaving_ready {
             return true;
         }

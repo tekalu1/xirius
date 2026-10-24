@@ -11,7 +11,7 @@ use xirius_design::Layout;
 
 /// The rows of the track column as accessible nodes (window coordinates).
 pub fn track_rows(s: &Studio, g: &Geometry) -> Vec<(usize, accesskit::Node)> {
-    if s.settings.is_some() {
+    if s.settings.is_some() || s.opening.is_some() {
         return Vec::new();
     }
     let p = s.project();
@@ -182,7 +182,7 @@ fn bounds(r: Rect) -> accesskit::Rect {
 /// takes on screen is a Button named 「テイク N」 that opens the take rows, expanded while they
 /// are open. A pop-over takes the presses, so the counts under it are not offered.
 pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
-    if s.settings.is_some() {
+    if s.settings.is_some() || s.opening.is_some() {
         return Vec::new();
     }
     if let Some(p) = &s.popup {

@@ -250,6 +250,17 @@ impl<R: Read + Seek> ZipReader<R> {
 
     /// The bytes of an entry; `None` when there is no such entry.
     pub fn read(&mut self, name: &str) -> Result<Option<Vec<u8>>, String> {
+        crate::session::opening::before("read", std::path::Path::new(name))
+            .map_err(|e| e.to_string())?;
+        let got = self.read_entry(name)?;
+        if got.is_some() {
+            crate::session::opening::read_done();
+        }
+        crate::session::opening::check().map_err(|e| e.to_string())?;
+        Ok(got)
+    }
+
+    fn read_entry(&mut self, name: &str) -> Result<Option<Vec<u8>>, String> {
         let Some(e) = self.entries.get(name) else {
             return Ok(None);
         };

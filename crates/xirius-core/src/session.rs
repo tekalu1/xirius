@@ -1183,6 +1183,55 @@ impl Session {
         Ok(result)
     }
 
+    /// UI preflight for a deferred replacement. Uses the same permission, confirmation,
+    /// spelling and argument rules as run_inner; performs no file access.
+    pub fn prepare_open(
+        &mut self,
+        name: &str,
+        raw: &Map<String, Value>,
+        opts: &RunOptions,
+    ) -> CmdResult<Result<opening::OpenRequest, RunResult>> {
+        let registry = self.registry.clone();
+        let def = registry
+            .get(name)
+            .ok_or_else(|| CmdError::io("コマンドが見つかりません"))?;
+        let gate = self.gate(def, &opts.author)?;
+        let asked_dry = opts.dry_run
+            || raw
+                .get("dry_run")
+                .is_some_and(|v| v == &Value::Bool(true) || v == "true");
+        if gate == Gate::Confirm && !asked_dry {
+            return self.hold(def, raw, opts).map(Err);
+        }
+        let mut raw = Registry::spelled(def, raw)?;
+        raw.remove("dry_run");
+        let args = registry.normalize(def, &raw)?;
+        if asked_dry || gate == Gate::DryOnly {
+            let mut reply = self.run_session(def, &args, opts, true)?;
+            reply.dry_run = true;
+            reply.forced_dry_run = gate == Gate::DryOnly;
+            return Ok(Err(reply));
+        }
+        if name == "project.new" {
+            return Ok(Ok(opening::OpenRequest::Build(|| Project::new("新しい曲"))));
+        }
+        let path = PathBuf::from(args.str("path")?);
+        Ok(Ok(if name == "version.open" {
+            opening::OpenRequest::Version {
+                id: args.str("id")?.into(),
+                destination: path,
+            }
+        } else if crate::dawproject::is_dawproject(&path) {
+            let media = args
+                .opt_str("media")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| media_dir_for(&path));
+            opening::OpenRequest::Dawproject { path, media }
+        } else {
+            opening::OpenRequest::Song(path)
+        }))
+    }
+
     fn run_inner(
         &mut self,
         name: &str,
@@ -2400,7 +2449,7 @@ impl Session {
 }
 
 impl RunResult {
-    fn new(command: &str, out: Output, changes: ChangeSet) -> RunResult {
+    pub fn new(command: &str, out: Output, changes: ChangeSet) -> RunResult {
         RunResult {
             command: command.to_string(),
             message: out.message,

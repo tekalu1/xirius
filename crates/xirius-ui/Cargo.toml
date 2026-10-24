@@ -11,6 +11,9 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+loading-probe = ["xirius-core/test-io"]
+
 [dependencies]
 # Pinned to the gpui-pre snapshot (zed@279fe07), the same one gpui-kit 0.7.x
 # uses (`=0.3.8`). Not the crates.io `gpui` 0.2.2. See crates/xirius-ui/GPUI.md.
@@ -34,6 +37,7 @@ xirius-mcp = { path = "../xirius-mcp" }
 # The settings (SET-001): the screen changes them through the same commands as the CLI.
 xirius-prefs = { path = "../xirius-prefs" }
 serde_json = "1"
+unicode-segmentation = "1"
 # The tools' cursors (pointer_os.rs) are bitmaps made for the system and handed to the window.
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",

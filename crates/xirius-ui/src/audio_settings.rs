@@ -157,7 +157,7 @@ mod tests {
         };
         assert_eq!(names(&s), ["Interface A", "Interface B"]);
 
-        s.new_song();
+        s.new_song_sync();
         s.poll_io();
         assert_eq!(
             names(&s),

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError};
 
-use xirius_core::dawproject::{self, Imported, Skips};
+use xirius_core::dawproject::{self, Skips};
 use xirius_design::{FontSize, Layout, Radius, Space, Weight};
 
 use crate::draw::{Align, Pen};
@@ -121,11 +121,6 @@ enum Work {
         out: PathBuf,
         rx: Receiver<Result<Skips, String>>,
     },
-    Open {
-        path: PathBuf,
-        media: PathBuf,
-        rx: Receiver<Result<Imported, String>>,
-    },
 }
 
 impl Job {
@@ -138,7 +133,6 @@ impl Job {
     pub fn text(&self) -> String {
         let what = match self.work {
             Work::Export { .. } => EXPORTING,
-            Work::Open { .. } => READING,
         };
         format!("{what} {}%", (self.fraction() * 100.0).floor() as u32)
     }
@@ -166,7 +160,7 @@ pub fn with_extension(path: &Path) -> PathBuf {
 /// Where the audio of an opened `.dawproject` goes. The song names those files where they are
 /// until it is saved, so the real window keeps them next to the app's own files; a test or a
 /// script leaves them in the temporary folder.
-fn media_dir(real: bool, path: &Path) -> PathBuf {
+pub(crate) fn media_dir(real: bool, path: &Path) -> PathBuf {
     if !real {
         return xirius_core::session::media_dir_for(path);
     }
@@ -212,28 +206,12 @@ impl Studio {
     /// Opens `path` as a new song in place of this one, once it is read. False when it did
     /// not start.
     pub fn dawproject_open(&mut self, path: &Path) -> bool {
-        if self.busy_dawproject() {
-            return false;
-        }
-        let media = media_dir(self.os_files, path);
-        let done = Arc::new(AtomicU64::new(0f64.to_bits()));
-        let (tx, rx) = std::sync::mpsc::channel();
-        let step = done.clone();
-        let (file, into) = (path.to_path_buf(), media.clone());
-        std::thread::spawn(move || {
-            let got = dawproject::import_with(&file, &into, &mut |f| {
-                step.store(f.to_bits(), Ordering::Relaxed);
-            });
-            let _ = tx.send(got);
-        });
-        let path = path.to_path_buf();
-        self.start_dawproject(Work::Open { path, media, rx }, done);
-        true
+        self.request_open_file(crate::studio::FileRequest::OpenDawproject, path)
     }
 
     /// One at a time: a second is refused with a toast.
     fn busy_dawproject(&mut self) -> bool {
-        if self.dawproject.is_none() {
+        if self.dawproject.is_none() && self.opening.is_none() {
             return false;
         }
         self.warn(
@@ -246,7 +224,6 @@ impl Studio {
     fn start_dawproject(&mut self, work: Work, done: Arc<AtomicU64>) {
         let label = match work {
             Work::Export { .. } => EXPORTING,
-            Work::Open { .. } => READING,
         };
         let job = Job {
             work,
@@ -272,12 +249,6 @@ impl Studio {
                 Err(TryRecvError::Empty) => None,
                 got => Some(Ended::Export(got.unwrap_or_else(|_| Err(STOPPED.into())))),
             },
-            Work::Open { rx, .. } => match rx.try_recv() {
-                Err(TryRecvError::Empty) => None,
-                got => Some(Ended::Open(Box::new(
-                    got.unwrap_or_else(|_| Err(STOPPED.into())),
-                ))),
-            },
         };
         let Some(ended) = ended else {
             let text = job.text();
@@ -298,10 +269,6 @@ impl Studio {
         }
         match (job.work, ended) {
             (Work::Export { out, .. }, Ended::Export(got)) => self.dawproject_written(&out, got),
-            (Work::Open { path, media, .. }, Ended::Open(got)) => {
-                self.dawproject_read(&path, &media, *got);
-            }
-            _ => unreachable!("the work and its end are of a kind"),
         }
         true
     }
@@ -332,30 +299,15 @@ impl Studio {
         });
     }
 
-    fn dawproject_read(&mut self, path: &Path, media: &Path, got: Result<Imported, String>) {
-        let mut got = match got {
-            Ok(got) => got,
-            Err(e) => {
-                // The folder was made for this file alone.
-                let _ = std::fs::remove_dir_all(media);
-                self.warn(format!("{} を開けません（{e}）", name_of(path)), None);
-                return;
-            }
-        };
-        // The plugins of the song this PC has no copy of are kept, and listed.
+    pub(crate) fn dawproject_skipped(&mut self, mut skipped: Skips) {
         let catalog = self.plugin_catalog();
-        dawproject::not_here(&got.project, &mut got.skipped, &mut |x| {
+        dawproject::not_here(&self.project(), &mut skipped, &mut |x| {
             (!catalog.entries.is_empty()).then(|| catalog.find(&x.uid).is_some())
         });
-        self.keep_leaving();
-        let closing = self.closing();
-        self.song = crate::song::Song::imported_after(&self.song, got.project);
-        self.error = None;
-        self.song_replaced(closing);
-        if !got.skipped.is_empty() {
-            let list = List::of(NOT_READ, &got.skipped);
+        if !skipped.is_empty() {
+            let list = List::of(NOT_READ, &skipped);
             self.warn(
-                format!("{NOT_READ} {}", got.skipped.len()),
+                format!("{NOT_READ} {}", skipped.len()),
                 Some((SEE.to_string(), Answer::Skipped(list))),
             );
         }
@@ -364,8 +316,11 @@ impl Studio {
     /// Waits for the work to end (tests and scripts).
     pub fn dawproject_wait(&mut self) {
         let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
-        while self.dawproject.is_some() && std::time::Instant::now() < until {
+        while (self.dawproject.is_some() || self.opening.is_some())
+            && std::time::Instant::now() < until
+        {
             self.poll_dawproject();
+            self.poll_opening();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
     }
@@ -414,7 +369,6 @@ const STOPPED: &str = "処理が止まりました";
 
 enum Ended {
     Export(Result<Skips, String>),
-    Open(Box<Result<Imported, String>>),
 }
 
 /// Over the lanes while a `.dawproject` is dragged over the window: 「〜 を開く」.

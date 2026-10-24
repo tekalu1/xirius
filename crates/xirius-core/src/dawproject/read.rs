@@ -1,7 +1,7 @@
 //! A `.dawproject` as a new song (EXP-006).
 
+use crate::session::opening::io as fs;
 use std::collections::{BTreeMap, HashMap};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -45,6 +45,7 @@ pub fn import_with(
     media_dir: &Path,
     step: &mut dyn FnMut(f64),
 ) -> Result<Imported, String> {
+    crate::session::opening::before("read", path).map_err(|e| e.to_string())?;
     let f = fs::File::open(path).map_err(|e| format!("{} を開けません: {e}", path.display()))?;
     let mut zip = ZipReader::new(std::io::BufReader::new(f))?;
     let xml = zip
@@ -83,6 +84,7 @@ pub fn import_with(
         media_dir,
         path.parent(),
     )?;
+    crate::session::opening::check().map_err(|e| e.to_string())?;
     step(1.0);
     Ok(got)
 }

@@ -161,15 +161,16 @@ fn prepare(s: &mut Studio, n: u8) {
             s.toast = None;
             let path = demo_song(&dir());
             s.finish_file_request(FileRequest::OpenDawproject, &path);
-            crate::shot::run_for(s, 60.0, |s| s.dawproject.is_none());
-            let t = s.toast.as_ref().expect("what could not be read");
-            assert!(t.alert, "{}", t.text);
-            let project = s.project();
-            let names: Vec<_> = project.tracks.values().map(|t| t.name.as_str()).collect();
-            assert!(
-                names.contains(&"Pad") && names.contains(&"Bass"),
-                "{names:?}"
-            );
+            s.after_open(|s| {
+                let t = s.toast.as_ref().expect("what could not be read");
+                assert!(t.alert, "{}", t.text);
+                let project = s.project();
+                let names: Vec<_> = project.tracks.values().map(|t| t.name.as_str()).collect();
+                assert!(
+                    names.contains(&"Pad") && names.contains(&"Bass"),
+                    "{names:?}"
+                );
+            });
         }
         _ => unreachable!(),
     }

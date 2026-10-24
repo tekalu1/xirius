@@ -142,7 +142,7 @@ mod tests {
         s.export.jobs[0]["args"]["to"] = json!("invalid");
         assert!(!s.export_like(&job));
         let dir = s.song.dir().unwrap();
-        s.new_song();
+        s.new_song_sync();
         s.command(|song| song.save_as(&dir.join("other")));
         s.popup = None;
         s.press(&g, Hit::Bar(BarButton::Export));
