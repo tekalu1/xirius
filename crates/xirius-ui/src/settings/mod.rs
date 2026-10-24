@@ -106,6 +106,7 @@ pub enum FieldId {
 /// What a press on a part of the screen does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Do {
+    Update(crate::about::Act),
     Nav(Section),
     Close,
     Sub(Sub),
@@ -303,6 +304,7 @@ pub const DETECT: Duration = Duration::from_millis(1600);
 /// The open settings screen.
 #[derive(Clone, Debug)]
 pub struct SettingsUi {
+    pub update: crate::about::View,
     pub section: Section,
     pub sub: Sub,
     /// How far the body is scrolled down, in px.
@@ -354,6 +356,7 @@ impl SettingsUi {
     pub fn new(section: Section) -> SettingsUi {
         let now = Instant::now();
         SettingsUi {
+            update: crate::about::View::now(),
             section,
             sub: Sub::Keyboard,
             scroll: 0.0,
@@ -521,7 +524,7 @@ pub fn build(
     let w = body.w - PAD_X * 2.0;
     let top = body.y - ui.scroll;
     let end = match ui.section {
-        Section::General => panes::general(&mut b, s, x, top, w),
+        Section::General => panes::general(&mut b, s, &ui.update, x, top, w),
         Section::Audio => audio::audio(&mut b, ui, s, x, top, w),
         Section::Midi => audio::midi(&mut b, ui, s, x, top, w),
         Section::Plugins => panes::plugins(&mut b, ui, s, x, top, w),
@@ -855,12 +858,14 @@ impl Studio {
 
     /// The screen as a list, in the colours `c`.
     pub fn settings_scene_with(&self, g: &Geometry, c: &Colors) -> Scene {
+        let update = self.update_view();
         let Some(ui) = &self.settings else {
             return Scene::default();
         };
         let shared = self.song.settings().clone();
         let s = shared.lock().unwrap_or_else(|e| e.into_inner());
         let mut ui = ui.clone();
+        ui.update = update;
         ui.io = self
             .song
             .io
@@ -1010,6 +1015,9 @@ impl Studio {
             return;
         };
         match act {
+            Do::Update(act) => {
+                self.about_action(act);
+            }
             Do::Nav(s) => ui.go(s),
             Do::Close => {
                 self.settings = None;

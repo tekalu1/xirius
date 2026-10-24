@@ -135,6 +135,7 @@ pub mod lane_shots;
 pub mod loading;
 pub mod local_time;
 mod macro_run;
+mod manual_update_shots;
 pub mod menu_key_shots;
 pub mod meter_popup;
 pub mod meters;
@@ -407,6 +408,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("toast-hover", toast_hover_shots::SHOTS),
     ("trackmenu", trackmenu_shots::TRACKMENU),
     ("update", update_shots::SHOTS),
+    ("update-check", manual_update_shots::SHOTS),
     ("wait", wait_shots::WAIT),
     ("wave-mod", wave_mod_shots::SHOTS),
     ("wave-zoom", wave_zoom_shots::SHOTS),

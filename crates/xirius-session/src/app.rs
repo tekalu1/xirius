@@ -13,7 +13,7 @@ use crate::update::{CURRENT, Fetch, UpdateCheck};
 
 pub const NAMES: &[&str] = &["song.recent", "app.update.check"];
 
-/// The pref that turns the asking at launch and by `app.update.check` on and off.
+/// The pref that turns asking at launch on and off; manual checks are always available.
 pub const UPDATE_PREF: &str = "app.update.check";
 
 pub fn definitions() -> Vec<CommandDef> {
@@ -89,20 +89,11 @@ impl AppExt {
     }
 
     fn update(&self, dry: bool) -> CmdResult<Output> {
-        let (enabled, beta) = {
+        let beta = {
             let mut s = self.settings.lock().unwrap_or_else(|e| e.into_inner());
             s.reload_if_changed();
-            (
-                s.prefs.bool(UPDATE_PREF),
-                s.prefs.bool(crate::update::BETA_PREF),
-            )
+            s.prefs.bool(crate::update::BETA_PREF)
         };
-        if !enabled {
-            return Ok(Output::with(
-                "更新の確認はオフです",
-                json!({ "enabled": false, "current": CURRENT, "beta": beta }),
-            ));
-        }
         if dry {
             return Ok(Output::msg(
                 "app.update.check をドライランで実行しました（確認していません）",

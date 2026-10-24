@@ -150,7 +150,12 @@ mod tests {
                 shown.iter().any(|c| c.text == text),
                 "{stage_no}: {text} is not shown"
             );
-            let primary = shown.iter().find(|c| c.look == Look::Primary).unwrap();
+            let primary = shown
+                .iter()
+                .find(|c| {
+                    c.look == Look::Primary || matches!(c.look, Look::About(AboutLook::Busy(_)))
+                })
+                .unwrap();
             match act {
                 Some(act) => assert!(acts(&shown).contains(&act), "{stage_no}: {act:?}"),
                 None => assert_eq!(primary.action, None, "nothing to press while it goes"),

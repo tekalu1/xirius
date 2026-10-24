@@ -529,7 +529,7 @@ impl Studio {
             .get(command)
             .is_some_and(|def| def.risk == xirius_core::Risk::Read)
         {
-            return self.palette_query(command, args);
+            return self.palette_query(g, command, args);
         }
         let ran = self.run_command(command, args);
         if ran {
@@ -546,7 +546,18 @@ impl Studio {
         true
     }
 
-    pub(crate) fn palette_query(&mut self, command: &'static str, args: Value) -> bool {
+    pub(crate) fn palette_query(
+        &mut self,
+        g: &Geometry,
+        command: &'static str,
+        args: Value,
+    ) -> bool {
+        if command == "app.update.check" {
+            self.palette = None;
+            self.open_about(self.about_anchor(g));
+            self.manual_update_check();
+            return true;
+        }
         match self.song.run(command, args) {
             Ok(value) => {
                 let def = self.song.registry().get(command).unwrap();

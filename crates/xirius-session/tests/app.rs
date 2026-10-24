@@ -102,7 +102,7 @@ fn app_update_check_asks_now_and_says_when_a_newer_version_is_out() {
         .unwrap();
     assert_eq!(asked.load(Ordering::SeqCst), 2);
 
-    // Turned off in the settings, it asks nothing.
+    // UI-344: only the launch is off. The CLI keeps its sentence and asks manually.
     settings
         .lock()
         .unwrap()
@@ -112,8 +112,9 @@ fn app_update_check_asks_now_and_says_when_a_newer_version_is_out() {
     let off = s
         .run_value("app.update.check", json!({}), &RunOptions::human())
         .unwrap();
-    assert_eq!(off.data["enabled"], false);
-    assert_eq!(asked.load(Ordering::SeqCst), 2);
+    assert_eq!(off.data["enabled"], true);
+    assert_eq!(off.message, format!("新しいバージョン {v} があります"));
+    assert_eq!(asked.load(Ordering::SeqCst), 3);
 }
 
 #[test]

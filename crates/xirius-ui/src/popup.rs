@@ -1347,7 +1347,7 @@ pub fn step_badge(r: Rect) -> Rect {
     Rect::new(r.x + Space::X2.px(), r.y + (r.h - 20.0) / 2.0, 20.0, 20.0)
 }
 
-fn paint_cell(pen: &mut Pen, cell: &Cell, hot: bool) {
+pub(crate) fn paint_cell(pen: &mut Pen, cell: &Cell, hot: bool) {
     let c = pen.c;
     let r = cell.rect;
     let pad = Space::X2.px();

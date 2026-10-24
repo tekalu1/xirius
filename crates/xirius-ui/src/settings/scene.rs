@@ -15,6 +15,7 @@ use crate::studio::Rect;
 /// One thing to paint.
 #[derive(Clone)]
 pub enum Op {
+    UpdateCell(crate::popup::Cell, bool),
     Fill(Rect, Hsla),
     Round(Rect, Hsla, Radius),
     Text(Text),
@@ -107,6 +108,7 @@ impl Scene {
         fn each<'a>(ops: &'a [Op], out: &mut Vec<(&'a str, Rect)>) {
             for op in ops {
                 match op {
+                    Op::UpdateCell(c, _) => out.push((&c.text, c.rect)),
                     Op::Text(t) => out.push((&t.s, t.r)),
                     Op::Field { r, label, .. } => out.push((label, *r)),
                     Op::Mask(_, inner) => each(inner, out),
@@ -341,6 +343,7 @@ pub fn intersect(a: Rect, b: Rect) -> Rect {
 pub fn paint(pen: &mut Pen, ops: &[Op]) {
     for op in ops {
         match op {
+            Op::UpdateCell(c, hot) => crate::popup::paint_cell(pen, c, *hot),
             Op::Fill(r, c) => pen.fill(*r, *c),
             Op::Round(r, c, radius) => pen.round(*r, *c, *radius),
             Op::Text(t) => {

@@ -131,8 +131,14 @@ pub fn choices(key: &str) -> Vec<(String, String)> {
 
 // ------------------------------------------------------------------ 一般
 
-pub fn general(b: &mut B, s: &Settings, x: f32, top: f32, w: f32) -> f32 {
-    let c = b.c;
+pub fn general(
+    b: &mut B,
+    s: &Settings,
+    update: &crate::about::View,
+    x: f32,
+    top: f32,
+    w: f32,
+) -> f32 {
     let mut y = parts::gh(b, "外観", x, top);
     y = seg_row(
         b,
@@ -165,29 +171,19 @@ pub fn general(b: &mut B, s: &Settings, x: f32, top: f32, w: f32) -> f32 {
     // the network too; it listens on this computer only (SET-008).
     // Whether a newer version is out, asked at launch (UI-262).
     y = parts::gh(b, "更新", x, y);
-    let key = xirius_session::app::UPDATE_PREF;
-    let r = row(x, y, w);
-    parts::label(b, r, Some("sync"), "更新を確認", None);
-    let on = s.prefs.bool(key);
-    let switch = parts::toggle(
+    y = switch_row(
         b,
-        r.right(),
-        r,
-        on,
-        Do::Pref(key.into(), flip(on)),
-        Some("1 日 1 回、GitHub のリリースを確認します"),
+        s,
+        x,
+        y,
+        w,
+        "sync",
+        "起動時に更新を確認",
+        xirius_session::app::UPDATE_PREF,
+        None,
     );
-    b.text(
-        "起動時",
-        FontSize::Caption,
-        Weight::Regular,
-        c.ink,
-        Rect::new(r.x, r.y, switch.x - 8.0 - r.x, r.h),
-        Align::Right,
-    );
-    let y = r.bottom();
     // UI-282: the beta channel, off unless the user wants the versions still being made.
-    switch_row(
+    y = switch_row(
         b,
         s,
         x,
@@ -197,7 +193,24 @@ pub fn general(b: &mut B, s: &Settings, x: f32, top: f32, w: f32) -> f32 {
         "ベータ版も受け取る",
         xirius_session::update::BETA_PREF,
         Some("開発中のバージョンを先に受け取ります"),
-    )
+    );
+    let top = y + 8.0;
+    for mut cell in crate::about::update_cells(update, w) {
+        cell.rect.x += x;
+        cell.rect.y += top;
+        y = y.max(cell.rect.bottom());
+        b.scene.texts.push(cell.text.clone());
+        if let Some(crate::popup::Action::About(act)) = cell.action {
+            b.item(
+                cell.rect,
+                Do::Update(act),
+                (!cell.tip.is_empty()).then(|| cell.tip.clone()),
+            );
+        }
+        let hot = b.hot(cell.rect);
+        b.ops.push(scene::Op::UpdateCell(cell, hot));
+    }
+    y
 }
 
 // ---------------------------------------------------------------- プラグイン

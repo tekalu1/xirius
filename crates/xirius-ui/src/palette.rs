@@ -1117,7 +1117,7 @@ impl Studio {
                     .get(row.name)
                     .is_some_and(|def| def.risk == Risk::Read)
                 {
-                    return self.palette_query(row.name, args.clone());
+                    return self.palette_query(g, row.name, args.clone());
                 }
                 let ran = self.run_command(row.name, args.clone());
                 self.rebuild(g);

@@ -181,9 +181,25 @@ fn write_license(dir: &std::path::Path, item: Item) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// The shared manual check, independent of whether asking at launch is enabled.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum CheckState {
+    #[default]
+    Idle,
+    Checking,
+    Latest,
+    NoRelease,
+    Failed(String),
+}
+
 /// The asking for a newer version at launch (UI-262), and getting it into place (UI-282).
 pub struct Update {
-    asking: Option<std::thread::JoinHandle<Option<update::Release>>>,
+    asking: Option<std::thread::JoinHandle<Result<Option<update::Release>, String>>>,
+    pub check: CheckState,
+    channel: Option<bool>,
+    manual: bool,
+    manual_pending: bool,
+    download_channel: Option<bool>,
     /// The newer version it found.
     pub newer: Option<update::Release>,
     /// The app's folder, where the installer is put (from the last asking).
@@ -214,6 +230,11 @@ impl Default for Update {
     fn default() -> Update {
         Update {
             asking: None,
+            check: CheckState::Idle,
+            channel: None,
+            manual: false,
+            manual_pending: false,
+            download_channel: None,
             newer: None,
             root: None,
             job: None,
@@ -256,6 +277,7 @@ impl Update {
 /// A press in the panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Act {
+    Check,
     Crashes,
     Crash(crate::crash_reports::Act),
     Close,
@@ -282,6 +304,8 @@ pub enum Act {
 /// What the panel shows.
 #[derive(Clone, Debug, PartialEq)]
 pub struct View {
+    pub spin: f32,
+    pub check: CheckState,
     pub crashes: Option<Box<crate::crash_reports::View>>,
     pub version: String,
     /// The encoder's file: the one loaded, or where it was looked for.
@@ -307,6 +331,8 @@ impl View {
             Err(_) => (mp3::locate(), Some(mp3::CANNOT_LOAD.to_string())),
         };
         View {
+            spin: 0.0,
+            check: CheckState::Idle,
             crashes: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
             lame_path,
@@ -322,6 +348,9 @@ impl View {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AboutLook {
+    Spinner(f32),
+    Busy(f32),
+    Disabled,
     Title,
     Sub,
     /// The face behind an open row and what it holds.
@@ -400,142 +429,232 @@ pub fn cells(v: &View, offset: usize) -> Vec<Cell> {
         .icon("close")
         .act(Action::About(Act::Close)),
     );
-    let version = format!("バージョン {} · MIT OR Apache-2.0", v.version);
-    let Some(newer) = v.newer.as_ref().filter(|_| v.crashes.is_none()) else {
-        if let Some(v) = &v.crashes {
-            cells.push(
-                about(Rect::new(PAD, 48.0, W - PAD * 2.0, 20.0), AboutLook::Sub).text(version),
-            );
-            cells.extend(crate::crash_reports::cells(v));
-            return cells;
-        }
-        // Under the heading (14 + 32), the row as tall as the mark.
-        let row_y = 46.0;
-        let w = text_width(&version, FontSize::Small);
-        cells.push(about(Rect::new(PAD, row_y, w, BUTTON_H), AboutLook::Sub).text(version));
-        github(&mut cells, PAD + w + Space::X1.px(), row_y);
-        let mut y = row_y + BUTTON_H + INSET;
-        // UI-282: the installer's note from the last start, with the page to go on by hand.
-        if let Some(note) = &v.notice {
-            y = notice_lines(&mut cells, v, PAD, y, note, true);
-        }
-        rest(&mut cells, v, y, offset);
+    if let Some(crashes) = &v.crashes {
+        cells.extend(crate::crash_reports::cells(crashes));
         return cells;
-    };
-    // The version row: this one, the newer one and the button that gets it (UI-262, UI-282).
-    let row_y = 44.0;
-    let mut x = PAD;
-    let version = format!("バージョン {}", v.version);
-    let w = text_width(&version, FontSize::Small);
-    cells.push(about(Rect::new(x, row_y, w, BUTTON_H), AboutLook::Sub).text(&version));
-    x += w + Space::X2.px();
-    let w = release_w(&newer.version);
-    cells.push(
-        about(Rect::new(x, row_y, w, BUTTON_H), AboutLook::Release)
-            .text(&newer.version)
-            .icon("download"),
-    );
-    x += w + Space::X2.px();
-    // UI-282: the one button of the row says what the update is doing and moves it on.
-    let (label, icon, act) = match &v.progress.phase {
-        update::Phase::Ready => (
-            "更新して再起動".to_string(),
-            "restore",
-            Some(Act::UpdateNow),
-        ),
-        update::Phase::Downloading => (download_label(&v.progress), "download", None),
-        update::Phase::Verifying => ("確かめています".to_string(), "download", None),
-        _ => ("ダウンロード".to_string(), "download", Some(Act::Download)),
-    };
-    let w = Space::X2.px() * 2.0
-        + Layout::ICON_SIZE
-        + Space::X2.px()
-        + text_width(&label, FontSize::Small);
-    let mut primary = Cell::new(Rect::new(x, row_y, w, BUTTON_H), Look::Primary)
-        .text(label)
-        .icon(icon);
-    if let Some(act) = act {
-        primary = primary.act(Action::About(act));
     }
-    if matches!(
-        &v.progress.phase,
-        update::Phase::Idle | update::Phase::Failed(_)
-    ) {
-        primary.tip = newer.url.clone();
+    let section = update_cells(v, W - PAD * 2.0);
+    let end = section
+        .iter()
+        .map(|c| c.rect.bottom())
+        .fold(0.0_f32, f32::max);
+    for mut cell in section {
+        cell.rect.x += PAD;
+        cell.rect.y += 46.0;
+        cells.push(cell);
     }
-    cells.push(primary);
-    github(&mut cells, x + w + Space::X1.px(), row_y);
-    // What changed, under it.
-    let mut y = row_y + BUTTON_H + Space::X2.px();
-    let inner = W - PAD * 2.0;
-    let block = cells.len();
-    cells.push(about(Rect::new(PAD, y, inner, 0.0), AboutLook::Block));
-    let top = y;
-    y += INSET - 2.0;
-    let x = PAD + INSET;
     cells.push(
         about(
-            Rect::new(x, y, inner - INSET * 2.0, NOTE_H),
-            AboutLook::Note {
-                head: true,
-                bullet: false,
-            },
+            Rect::new(PAD, 46.0 + end + Space::X2.px(), W - PAD * 2.0, NOTE_H),
+            AboutLook::Sub,
         )
-        .text(&newer.version),
+        .text("MIT OR Apache-2.0"),
     );
-    y += NOTE_H;
-    let room = inner - INSET * 2.0 - BULLET_W;
-    for note in &newer.notes {
-        let lines = crate::opline::wrap(note, room, &|t| text_width(t, FontSize::Small));
-        for (i, line) in lines.into_iter().enumerate() {
-            cells.push(
-                about(
-                    Rect::new(x, y, inner - INSET * 2.0, NOTE_H),
-                    AboutLook::Note {
-                        head: false,
-                        bullet: i == 0,
-                    },
-                )
-                .text(line),
-            );
-            y += NOTE_H;
-        }
-    }
-    // UI-282: the reason it could not go on, or the installer's note. The download's progress is
-    // in the button itself, so it is not said twice.
-    if let Some(note) = &v.notice
-        && !matches!(&v.progress.phase, update::Phase::Failed(_))
-    {
-        y = notice_lines(&mut cells, v, x, y, note, false);
-    }
-    if let update::Phase::Failed(reason) = &v.progress.phase {
-        let lines = crate::opline::wrap(reason, inner - INSET * 2.0, &|t| {
-            text_width(t, FontSize::Small)
-        });
-        for line in lines {
-            cells.push(
-                about(
-                    Rect::new(x, y, inner - INSET * 2.0, NOTE_H),
-                    AboutLook::Alert,
-                )
-                .text(line),
-            );
-            y += NOTE_H;
-        }
-        button(
-            &mut cells,
-            x,
-            y,
-            "Release のページを開く",
-            "open",
-            Act::Page,
+    rest(&mut cells, v, 46.0 + end + NOTE_H + INSET * 2.0, offset);
+    cells
+}
+
+/// The same state and actions in settings and About. The palette opens About.
+pub(crate) fn update_cells(v: &View, width: f32) -> Vec<Cell> {
+    let mut cells = Vec::new();
+    let version = format!("バージョン {}", v.version);
+    let vw = text_width(&version, FontSize::Small);
+    cells.push(about(Rect::new(0.0, 0.0, vw, BUTTON_H), AboutLook::Sub).text(version));
+    github(&mut cells, width - 28.0, 0.0);
+    let mut y = BUTTON_H + Space::X2.px();
+    if let Some(newer) = &v.newer {
+        let title = format!(
+            "{}{}",
+            newer.version,
+            if newer.prerelease {
+                " · ベータ版"
+            } else {
+                ""
+            }
         );
-        cells.last_mut().expect("the button").tip = page_url(v);
-        y += BUTTON_H + Space::X1.px();
+        let rw = release_w(&title);
+        let (x, ry) = if vw + Space::X2.px() + rw + 36.0 <= width {
+            (vw + Space::X2.px(), 0.0)
+        } else {
+            let ry = y;
+            y += BUTTON_H + Space::X2.px();
+            (0.0, ry)
+        };
+        cells.push(
+            about(Rect::new(x, ry, rw, BUTTON_H), AboutLook::Release)
+                .text(title)
+                .icon("download"),
+        );
     }
-    y += INSET - 2.0;
-    cells[block].rect.h = y - top;
-    rest(&mut cells, v, y + INSET, offset);
+    let checking = v.check == CheckState::Checking;
+    let status = if checking {
+        Some("更新を確認しています")
+    } else if v.check == CheckState::NoRelease {
+        Some(update::NO_RELEASE)
+    } else if v.newer.is_some() {
+        Some("新しいバージョンがあります")
+    } else if v.check == CheckState::Latest {
+        Some("最新のバージョンです")
+    } else {
+        None
+    };
+    let check_label = if checking {
+        "確認中"
+    } else if matches!(v.check, CheckState::Failed(_)) {
+        "再試行"
+    } else {
+        "更新を確認"
+    };
+    let check_width =
+        Space::X2.px() * 3.0 + Layout::ICON_SIZE + text_width(check_label, FontSize::Small);
+    let status_top = y;
+    if let Some(status) = status {
+        // A narrow section stacks the next action under the status.
+        let room = if width >= 400.0 && v.newer.is_some() {
+            width - 184.0
+        } else if width >= 400.0 {
+            width - check_width - Space::X2.px()
+        } else {
+            width
+        };
+        let sx = if checking {
+            Layout::ICON_SIZE + Space::X2.px()
+        } else {
+            0.0
+        };
+        if checking {
+            cells.push(about(
+                Rect::new(0.0, y, Layout::ICON_SIZE, NOTE_H),
+                AboutLook::Spinner(v.spin),
+            ));
+        }
+        let lines = crate::opline::wrap(status, room - sx, &|t| text_width(t, FontSize::Small));
+        for line in lines {
+            cells.push(about(Rect::new(sx, y, room - sx, NOTE_H), AboutLook::Sub).text(line));
+            y += NOTE_H;
+        }
+        y = y.max(status_top + BUTTON_H);
+    }
+    if let Some(newer) = &v.newer {
+        let (label, icon, act) = match &v.progress.phase {
+            update::Phase::Ready => (
+                "更新して再起動".to_string(),
+                "restore",
+                Some(Act::UpdateNow),
+            ),
+            update::Phase::Downloading => (download_label(&v.progress), "download", None),
+            update::Phase::Verifying => ("確かめています".to_string(), "sync", None),
+            _ => ("ダウンロード".to_string(), "download", Some(Act::Download)),
+        };
+        let bw = Space::X2.px() * 3.0 + Layout::ICON_SIZE + text_width(&label, FontSize::Small);
+        let (bx, by) = if width >= 400.0 {
+            (width - bw, status_top)
+        } else {
+            (0.0, y + Space::X2.px())
+        };
+        let mut primary = Cell::new(Rect::new(bx, by, bw.min(width), BUTTON_H), Look::Primary)
+            .text(label)
+            .icon(icon);
+        if matches!(
+            v.progress.phase,
+            update::Phase::Downloading | update::Phase::Verifying
+        ) {
+            primary.look = Look::About(AboutLook::Busy(v.spin));
+        }
+        primary.action = act.filter(|_| !checking).map(Action::About);
+        if checking {
+            primary.look = Look::About(AboutLook::Disabled);
+        }
+        primary.tip = newer.url.clone();
+        cells.push(primary);
+        y = y.max(by + BUTTON_H) + Space::X2.px();
+    }
+    let (check_x, check_y) = if v.newer.is_none() && width >= 400.0 {
+        (width - check_width, status_top)
+    } else {
+        (0.0, y)
+    };
+    button(
+        &mut cells,
+        check_x,
+        check_y,
+        check_label,
+        "sync",
+        Act::Check,
+    );
+    if checking
+        || matches!(
+            v.progress.phase,
+            update::Phase::Downloading | update::Phase::Verifying
+        )
+    {
+        cells.last_mut().unwrap().action = None;
+    }
+    y = y.max(check_y + BUTTON_H) + Space::X2.px();
+    if let CheckState::Failed(reason) = &v.check {
+        for line in crate::opline::wrap(reason, width, &|t| text_width(t, FontSize::Small)) {
+            cells.push(about(Rect::new(0.0, y, width, NOTE_H), AboutLook::Alert).text(line));
+            y += NOTE_H;
+        }
+        if v.newer.is_some() {
+            button(
+                &mut cells,
+                0.0,
+                y,
+                "Release のページを開く",
+                "open",
+                Act::Page,
+            );
+            cells.last_mut().unwrap().tip = page_url(v);
+            y += BUTTON_H + Space::X2.px();
+        }
+    }
+    if let Some(newer) = &v.newer {
+        let block = cells.len();
+        cells.push(about(Rect::new(0.0, y, width, 0.0), AboutLook::Block));
+        let top = y;
+        y += INSET;
+        cells.push(
+            about(
+                Rect::new(INSET, y, width - INSET * 2.0, NOTE_H),
+                AboutLook::Note {
+                    head: true,
+                    bullet: false,
+                },
+            )
+            .text(&newer.version),
+        );
+        y += NOTE_H;
+        for note in &newer.notes {
+            for (i, line) in crate::opline::wrap(note, width - INSET * 2.0 - BULLET_W, &|t| {
+                text_width(t, FontSize::Small)
+            })
+            .into_iter()
+            .enumerate()
+            {
+                cells.push(
+                    about(
+                        Rect::new(INSET, y, width - INSET * 2.0, NOTE_H),
+                        AboutLook::Note {
+                            head: false,
+                            bullet: i == 0,
+                        },
+                    )
+                    .text(line),
+                );
+                y += NOTE_H;
+            }
+        }
+        if let update::Phase::Failed(reason) = &v.progress.phase {
+            y = notice_lines(&mut cells, v, INSET, y, width - INSET * 2.0, reason, true);
+        } else if let Some(reason) = &v.notice {
+            y = notice_lines(&mut cells, v, INSET, y, width - INSET * 2.0, reason, true);
+        }
+        y += INSET;
+        cells[block].rect.h = y - top;
+    } else if let Some(reason) = &v.notice {
+        notice_lines(&mut cells, v, 0.0, y, width, reason, true);
+    }
     cells
 }
 
@@ -573,10 +692,10 @@ fn notice_lines(
     v: &View,
     x: f32,
     mut y: f32,
+    room: f32,
     text: &str,
     page: bool,
 ) -> f32 {
-    let room = W - x - PAD;
     let lines = crate::opline::wrap(text, room, &|t| text_width(t, FontSize::Small));
     for line in lines {
         cells.push(about(Rect::new(x, y, room, NOTE_H), AboutLook::Alert).text(line));
@@ -815,6 +934,38 @@ pub fn paint_cell(pen: &mut Pen, cell: &Cell, look: &AboutLook, hot: bool) {
         )
     };
     match look {
+        AboutLook::Spinner(turn) => pen.icon_turned("sync", icon_at(r.x), c.ink, *turn),
+        AboutLook::Busy(_) | AboutLook::Disabled => {
+            let (face, ink) = if matches!(look, AboutLook::Disabled) {
+                (c.surface_2, c.ink)
+            } else {
+                c.primary
+            };
+            pen.round(r, face, Radius::S);
+            if let AboutLook::Busy(turn) = look {
+                pen.icon_turned("sync", icon_at(r.x + Space::X2.px()), ink, *turn);
+            } else {
+                pen.icon(
+                    cell.icon.unwrap_or("download"),
+                    icon_at(r.x + Space::X2.px()),
+                    ink,
+                );
+            }
+            pen.text(
+                &cell.text,
+                FontSize::Small,
+                Weight::Medium,
+                ink,
+                Rect::new(
+                    r.x + Space::X2.px() * 2.0 + Layout::ICON_SIZE,
+                    r.y,
+                    r.w - Space::X2.px() * 3.0 - Layout::ICON_SIZE,
+                    r.h,
+                ),
+                Align::Left,
+            );
+        }
+
         AboutLook::Title => paint_title(r, c, |path, rect, color| pen.svg(path, rect, color)),
         AboutLook::Sub => {
             pen.text(
@@ -977,6 +1128,16 @@ pub fn paint_cell(pen: &mut Pen, cell: &Cell, look: &AboutLook, hot: bool) {
     }
 }
 
+fn installer_matches(release: &update::Release, installer: &update::Installer) -> bool {
+    release.version == installer.version
+        && installer.manifest.channel
+            == if release.prerelease {
+                update::BETA
+            } else {
+                update::STABLE
+            }
+}
+
 impl Studio {
     /// Opens the panel under the logo, or closes it when it is open.
     pub(crate) fn open_about(&mut self, anchor: Rect) {
@@ -984,10 +1145,13 @@ impl Studio {
         let newer = self.newer_release().cloned();
         let progress = self.update.progress();
         let notice = self.update.notice.clone();
+        let spin = self.spin();
         if let Some(p) = &mut self.popup
             && p.kind == PopupKind::About
         {
             p.about = Some(Box::new(View {
+                spin,
+                check: self.update.check.clone(),
                 newer,
                 progress,
                 notice,
@@ -1000,7 +1164,7 @@ impl Studio {
     /// is off (UI-262). [`Studio::poll_update`] takes the answer. A checked installer kept from
     /// the last run is taken up now, so it can be put in without asking again (UI-282).
     pub(crate) fn check_for_update(&mut self, check: update::UpdateCheck, now_ms: u64) {
-        if !self.update_on() {
+        if self.update.asking() || self.update.downloading() {
             return;
         }
         let root = check.root().to_path_buf();
@@ -1020,9 +1184,76 @@ impl Studio {
                 total,
             });
         }
+        self.update.channel = Some(beta);
+        if !self.update_on() {
+            self.update.newer = check
+                .stored()
+                .filter(|c| c.beta == beta)
+                .and_then(|c| c.newer_than(update::CURRENT).cloned());
+            self.poll_update();
+            return;
+        }
+        self.update.manual = false;
         self.update.asking = Some(std::thread::spawn(move || {
-            check.at_launch(true, beta, now_ms, update::CURRENT)
+            Ok(check.at_launch(true, beta, now_ms, update::CURRENT))
         }));
+    }
+
+    /// Every GUI entry uses this worker; a manual check bypasses the daily cache.
+    pub(crate) fn manual_update_check(&mut self) {
+        if self.update.asking() {
+            if !self.update.manual {
+                self.update.manual_pending = true;
+                self.update.check = CheckState::Checking;
+            }
+            return;
+        }
+        if self.update.downloading() {
+            return;
+        }
+        let beta = self.update_beta();
+        let root = self
+            .update
+            .root
+            .clone()
+            .unwrap_or_else(xirius_session::recent::root);
+        self.update.root = Some(root.clone());
+        let check = update::UpdateCheck::in_dir(&root, self.update.fetch.clone());
+        self.update.channel = Some(beta);
+        self.update.manual = true;
+        self.update.check = CheckState::Checking;
+        self.update.asking = Some(std::thread::spawn(move || {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as u64);
+            check
+                .ask_ui(now, beta)
+                .map(|c| c.newer_than(update::CURRENT).cloned())
+                .map_err(|e| {
+                    if e == update::NO_RELEASE {
+                        e
+                    } else {
+                        format!("更新を確認できません: {e}")
+                    }
+                })
+        }));
+        self.poll_update();
+    }
+
+    pub(crate) fn update_view(&self) -> View {
+        View {
+            spin: self.spin(),
+            newer: self.newer_release().cloned(),
+            check: self.update.check.clone(),
+            progress: self.update.progress(),
+            notice: self.update.notice.clone(),
+            crashes: None,
+            version: update::CURRENT.into(),
+            lame_path: mp3::locate(),
+            lame_error: None,
+            open: None,
+            query: String::new(),
+        }
     }
 
     fn update_on(&self) -> bool {
@@ -1041,13 +1272,53 @@ impl Studio {
     /// Once a frame. True while the asking or the download runs and on the frame it ends.
     pub(crate) fn poll_update(&mut self) -> bool {
         let mut changed = false;
+        let beta = self.update_beta();
+        if self.update.channel.is_some_and(|c| c != beta) {
+            self.update.newer = None;
+            self.update.ready = None;
+            if !self.update.downloading() {
+                self.update.set_progress(update::Progress::default());
+            }
+            self.update.check = CheckState::Idle;
+            if self.update.asking.is_none() {
+                self.update.channel = Some(beta);
+            }
+            changed = true;
+        }
         if self.update.asking.as_ref().is_some_and(|a| a.is_finished())
             && let Some(asking) = self.update.asking.take()
         {
-            self.update.newer = asking.join().ok().flatten();
+            if self.update.channel == Some(self.update_beta()) {
+                match asking
+                    .join()
+                    .unwrap_or_else(|_| Err("更新を確認できません: 確認処理が終了しました".into()))
+                {
+                    Ok(newer) => {
+                        if self.update.ready.as_ref().is_some_and(|i| {
+                            newer.as_ref().is_none_or(|r| !installer_matches(r, i))
+                        }) {
+                            self.update.ready = None;
+                            self.update.set_progress(update::Progress::default());
+                        }
+                        self.update.newer = newer;
+                        if self.update.manual {
+                            self.update.check = CheckState::Latest;
+                        }
+                    }
+                    Err(reason) => {
+                        if self.update.manual {
+                            self.update.check = if reason == update::NO_RELEASE {
+                                CheckState::NoRelease
+                            } else {
+                                CheckState::Failed(reason)
+                            };
+                        }
+                    }
+                }
+            }
             // The kept installer is only for the version just found.
             if let (Some(release), Some(installer)) = (&self.update.newer, &self.update.ready)
-                && release.version != installer.version
+                && !installer_matches(release, installer)
             {
                 self.update.ready = None;
                 self.update.set_progress(update::Progress::default());
@@ -1058,7 +1329,19 @@ impl Studio {
             && let Some(job) = self.update.job.take()
         {
             let before = self.update.progress();
+            let obsolete = self.update.download_channel.is_some_and(|b| b != beta);
             let phase = match job.join() {
+                Ok(Ok(_)) if obsolete => update::Phase::Idle,
+                Ok(Err(_)) if obsolete => update::Phase::Idle,
+                Ok(Ok(installer))
+                    if self
+                        .update
+                        .newer
+                        .as_ref()
+                        .is_none_or(|r| !installer_matches(r, &installer)) =>
+                {
+                    update::Phase::Idle
+                }
                 Ok(Ok(installer)) => {
                     self.update.ready = Some(installer);
                     update::Phase::Ready
@@ -1077,14 +1360,21 @@ impl Studio {
             self.update.newer = Some(release_of(installer));
             changed = true;
         }
+        if self.update.manual_pending && !self.update.asking() && !self.update.downloading() {
+            self.update.manual_pending = false;
+            self.manual_update_check();
+        }
         // The worker cannot reach the panel's copy: it is brought up to date here.
         let newer = self.newer_release().cloned();
         let progress = self.update.progress();
         let notice = self.update.notice.clone();
+        let spin = self.spin();
         if let Some(p) = &mut self.popup
             && p.kind == PopupKind::About
             && let Some(v) = &mut p.about
         {
+            v.spin = spin;
+            v.check = self.update.check.clone();
             v.newer = newer;
             v.progress = progress;
             v.notice = notice;
@@ -1092,9 +1382,9 @@ impl Studio {
         self.update.asking.is_some() || self.update.job.is_some() || changed
     }
 
-    /// The newer version to show: none while the setting is off.
+    /// The discovered update remains visible when asking at launch is off.
     pub fn newer_release(&self) -> Option<&update::Release> {
-        self.update.newer.as_ref().filter(|_| self.update_on())
+        self.update.newer.as_ref()
     }
 
     /// May this build and this folder put an update in (UI-282)? The build without a key, and
@@ -1110,6 +1400,9 @@ impl Studio {
 
     /// Starts the download off the window's thread; [`Studio::poll_update`] takes it.
     fn start_update_download(&mut self) -> Result<(), String> {
+        if self.update.asking() || self.update.check == CheckState::Checking {
+            return Err("更新を確認中です".into());
+        }
         if self.update.job.is_some() {
             return Ok(());
         }
@@ -1136,6 +1429,7 @@ impl Studio {
         let download = self.update.download.clone();
         let key = self.update.key.clone();
         let beta = self.update_beta();
+        self.update.download_channel = Some(self.update_beta());
         self.update.job = Some(std::thread::spawn(move || {
             let mut report = |p: update::Progress| {
                 *progress.lock().unwrap_or_else(|e| e.into_inner()) = p;
@@ -1149,6 +1443,26 @@ impl Studio {
     /// more, and no other Xirius program may still be running (the silent installer would wait
     /// for it and give up).
     fn arm_install(&mut self) -> Result<(), String> {
+        if self.update.asking() || self.update.check == CheckState::Checking {
+            return Err("更新を確認中です".into());
+        }
+        if self.update.ready.as_ref().is_some_and(|i| {
+            self.update
+                .newer
+                .as_ref()
+                .is_none_or(|r| !installer_matches(r, i))
+        }) {
+            return Err("更新の対象が変わりました。再ダウンロードが必要です".into());
+        }
+        if self
+            .update
+            .ready
+            .as_ref()
+            .is_some_and(|i| i.manifest.channel == update::BETA)
+            && !self.update_beta()
+        {
+            return Err("ベータ版は受け取らない設定です".into());
+        }
         let installer = self
             .update
             .ready
@@ -1230,27 +1544,24 @@ impl Studio {
     }
 
     pub(crate) fn about_action(&mut self, act: Act) -> bool {
-        if self.popup.as_ref().and_then(|p| p.about.as_ref()).is_none() {
+        if self.settings.is_none() && self.popup.as_ref().and_then(|p| p.about.as_ref()).is_none() {
             return false;
         }
         let done = match act {
+            Act::Check => {
+                self.manual_update_check();
+                Ok(())
+            }
             Act::Source => self.open_web(mp3::LAME_SOURCE_URL),
             Act::SourceRelease => self.open_web(mp3::LAME_RELEASE_URL),
             Act::Repository => self.open_web(update::REPOSITORY),
             // UI-282: with a key and the per-user folder, the button downloads and checks;
             // otherwise it opens the release's page, as it did before.
-            Act::Download if self.can_download_update() => self.start_update_download(),
-            Act::Download | Act::Page => {
-                let url = self
-                    .popup
-                    .as_ref()
-                    .and_then(|p| p.about.as_deref())
-                    .map(page_url);
-                match url {
-                    Some(url) => self.open_web(&url),
-                    None => return false,
-                }
+            Act::Download if self.update.asking() || self.update.check == CheckState::Checking => {
+                Ok(())
             }
+            Act::Download if self.can_download_update() => self.start_update_download(),
+            Act::Download | Act::Page => self.open_web(&page_url(&self.update_view())),
             // UI-282: one button. It saves, closes, and Xirius comes back in the new version.
             Act::UpdateNow => {
                 if let Err(why) = self.arm_install() {
@@ -1344,7 +1655,8 @@ impl Studio {
             | Act::Repository
             | Act::Download
             | Act::Page
-            | Act::UpdateNow => Ok(()),
+            | Act::UpdateNow
+            | Act::Check => Ok(()),
             Act::License(item) => {
                 license_file(item).and_then(|p| xirius_session::os::open(&p.display().to_string()))
             }
@@ -1562,11 +1874,7 @@ pub(crate) mod tests {
         let cells = cells_of(&s, &g);
         let texts: Vec<&str> = cells.iter().map(|c| c.text.as_str()).collect();
         assert!(texts.contains(&"Xirius"));
-        assert!(
-            texts
-                .iter()
-                .any(|t| t.starts_with("バージョン ") && t.ends_with(" · MIT OR Apache-2.0"))
-        );
+        assert!(texts.iter().any(|t| t.starts_with("バージョン ")));
         assert!(texts.contains(&"使っているソフトウェア"));
         for (name, what, license) in [
             ("LAME 3.100", "MP3 の書き出し", "LGPL-2.0-or-later"),
@@ -2207,7 +2515,7 @@ used {} {}
         assert_eq!(download.tip, newer_url());
         // One row, left to right, inside the panel.
         assert_eq!(version.rect.y, release.rect.y);
-        assert_eq!(release.rect.y, download.rect.y);
+        assert!(release.rect.bottom() <= download.rect.y);
         assert!(version.rect.right() <= release.rect.x);
         assert!(release.rect.right() <= download.rect.x);
         assert_eq!(version.text, format!("バージョン {}", update::CURRENT));
@@ -2263,8 +2571,8 @@ used {} {}
             .iter()
             .find(|c| c.action == Some(Action::About(Act::Repository)))
             .unwrap();
-        assert_eq!(repo.rect.y, download.rect.y);
-        assert!(download.rect.right() < repo.rect.x);
+        assert_eq!(repo.rect.y, version.rect.y);
+        assert!(version.rect.right() <= repo.rect.x);
         assert!(repo.rect.right() <= block.rect.right());
 
         assert!(s.press(&g, Hit::Item(at)));
@@ -2293,11 +2601,7 @@ used {} {}
                 .iter()
                 .any(|c| c.text == "ダウンロード" || c.look == Look::About(AboutLook::Release))
         );
-        assert!(
-            cells
-                .iter()
-                .any(|c| c.text.ends_with(" · MIT OR Apache-2.0"))
-        );
+        assert!(cells.iter().any(|c| c.text == "MIT OR Apache-2.0"));
     }
 
     /// UI-282: 「ダウンロード」 takes the manifest, its signature, the sums and the installer
@@ -2603,5 +2907,346 @@ used {} {}
         assert!(s.press(&g, Hit::Item(at)));
         assert!(!s.update.downloading());
         assert!(s.update.ready.is_none());
+    }
+    fn finish_manual(s: &mut Studio) {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while s.update.asking() {
+            assert!(std::time::Instant::now() < until);
+            s.poll_update();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        s.poll_update();
+    }
+
+    #[test]
+    fn manual_three_entries_share_state_even_when_launch_is_off() {
+        use crate::settings::{Do, Section};
+        for entry in 0..3 {
+            let tmp = scratch("manual-entries");
+            let mut s = Studio::sample();
+            s.song.load_settings(tmp.path());
+            let g = s.geometry(1440.0, 820.0);
+            assert!(s.run_command(
+                "prefs.set",
+                serde_json::json!({"key":UPDATE_PREF,"value":"false"})
+            ));
+            s.update.root = Some(tmp.path().join("updates"));
+            let (send, receive) = std::sync::mpsc::channel();
+            let receive = std::sync::Mutex::new(receive);
+            let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let count = calls.clone();
+            s.update.fetch = std::sync::Arc::new(move |_| {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                receive
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                Ok(newer_answer())
+            });
+            match entry {
+                0 => {
+                    s.open_settings(Section::General);
+                    assert!(s.settings_scene(&g).find(&Do::Update(Act::Check)).is_some());
+                    s.settings_do(&g, Do::Update(Act::Check), Rect::new(0.0, 0.0, 1.0, 1.0));
+                }
+                1 => {
+                    s.open_about(s.about_anchor(&g));
+                    assert!(acts(&cells_of(&s, &g)).contains(&Act::Check));
+                    s.about_action(Act::Check);
+                }
+                _ => {
+                    s.open_palette(&g);
+                    let row = s
+                        .palette_rows(&g)
+                        .into_iter()
+                        .find(|r| r.name == "app.update.check")
+                        .unwrap();
+                    assert!(s.run_row(&g, &row));
+                    assert!(s.palette.is_none());
+                    assert!(s.popup.as_ref().unwrap().about.is_some());
+                }
+            }
+            assert_eq!(s.update.check, CheckState::Checking);
+            assert!(!acts(&update_cells(&s.update_view(), 440.0)).contains(&Act::Check));
+            s.manual_update_check(); // no duplicate worker
+            send.send(()).unwrap();
+            finish_manual(&mut s);
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert_eq!(s.update.check, CheckState::Latest);
+            assert!(s.bar_view().update);
+            assert_eq!(s.newer_release().unwrap().version, newer_version());
+            s.open_settings(Section::General);
+            let scene = s.settings_scene(&g);
+            assert!(scene.has_text(newer_version()));
+            s.settings_do(
+                &g,
+                Do::Pref(UPDATE_PREF.into(), "true".into()),
+                Rect::new(0.0, 0.0, 1.0, 1.0),
+            );
+            s.settings_do(
+                &g,
+                Do::Pref(UPDATE_PREF.into(), "false".into()),
+                Rect::new(0.0, 0.0, 1.0, 1.0),
+            );
+            assert!(s.bar_view().update);
+            s.settings = None;
+            s.popup = None;
+            s.open_about(s.about_anchor(&g));
+            assert_eq!(
+                s.popup.as_ref().unwrap().about.as_ref().unwrap().newer,
+                s.update.newer
+            );
+        }
+    }
+
+    #[test]
+    fn manual_failure_keeps_discovery_and_ready_and_exposes_reason_with_retry() {
+        let tmp = scratch("manual-fail");
+        let mut s = Studio::sample();
+        s.song.load_settings(tmp.path());
+        s.update.root = Some(tmp.path().into());
+        crate::update_shots::stage(&mut s, 2);
+        let ready = s.update.ready.clone();
+        s.update.fetch = std::sync::Arc::new(|_| Err("GitHub の利用上限です (HTTP 403)".into()));
+        s.manual_update_check();
+        finish_manual(&mut s);
+        assert!(matches!(&s.update.check,CheckState::Failed(e) if e.contains("HTTP 403")));
+        assert!(s.bar_view().update);
+        let cells = update_cells(&s.update_view(), 300.0);
+        assert!(acts(&cells).contains(&Act::Check));
+        assert!(cells.iter().any(|c| c.text == "再試行"));
+        assert!(
+            cells
+                .iter()
+                .map(|c| c.text.replace(' ', ""))
+                .collect::<String>()
+                .contains("HTTP403")
+        );
+        assert!(s.error.is_none());
+        assert_eq!(s.update.ready, ready);
+    }
+
+    #[test]
+    fn manual_beta_uses_channel_and_ignores_an_old_channel_answer() {
+        let tmp = scratch("manual-beta");
+        let mut s = Studio::sample();
+        s.song.load_settings(tmp.path());
+        s.update.root = Some(tmp.path().into());
+        let urls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = urls.clone();
+        s.update.fetch = std::sync::Arc::new(move |url| {
+            seen.lock().unwrap().push(url.to_string());
+            let r = serde_json::json!({"tag_name":"v99.0.0-beta.1","html_url":"https://github.com/tekalu1/xirius/releases/tag/v99.0.0-beta.1","prerelease":true,"body":"beta"});
+            Ok(if url == update::RELEASES {
+                serde_json::json!([r]).to_string()
+            } else {
+                newer_answer()
+            })
+        });
+        s.manual_update_check();
+        finish_manual(&mut s);
+        assert!(!s.newer_release().unwrap().prerelease);
+        s.run_command(
+            "prefs.set",
+            serde_json::json!({"key":update::BETA_PREF,"value":"true"}),
+        );
+        s.poll_update();
+        assert!(s.newer_release().is_none());
+        s.manual_update_check();
+        finish_manual(&mut s);
+        assert!(s.newer_release().unwrap().prerelease);
+        assert!(
+            update_cells(&s.update_view(), 440.0)
+                .iter()
+                .any(|c| c.text.contains("ベータ版"))
+        );
+        assert_eq!(*urls.lock().unwrap(), [update::LATEST, update::RELEASES]);
+        s.update.asking = Some(std::thread::spawn(|| {
+            Ok(Some(crate::update_shots::newer()))
+        }));
+        s.update.check = CheckState::Checking;
+        s.run_command(
+            "prefs.set",
+            serde_json::json!({"key":update::BETA_PREF,"value":"false"}),
+        );
+        finish_manual(&mut s);
+        assert!(s.newer_release().is_none());
+        assert_eq!(s.update.check, CheckState::Idle);
+    }
+
+    #[test]
+    fn shared_update_section_wraps_and_ready_survives_a_same_release_check() {
+        let tmp = scratch("manual-ready");
+        let mut s = Studio::sample();
+        s.song.load_settings(tmp.path());
+        crate::update_shots::stage(&mut s, 2);
+        let before = s.update.ready.clone();
+        s.update.root = Some(tmp.path().into());
+        s.update.fetch = std::sync::Arc::new(|_| {
+            Ok(serde_json::json!({"tag_name":"v1.1.0","html_url":"https://github.com/tekalu1/xirius/releases/tag/v1.1.0","body":"changes"}).to_string())
+        });
+        s.manual_update_check();
+        finish_manual(&mut s);
+        assert_eq!(s.update.ready, before);
+        assert_eq!(s.update.progress().phase, update::Phase::Ready);
+        for width in [280.0, 440.0, 620.0] {
+            for cell in update_cells(&s.update_view(), width) {
+                assert!(
+                    cell.rect.x >= 0.0 && cell.rect.right() <= width + 0.01,
+                    "{width}: {cell:?}"
+                );
+            }
+        }
+    }
+    #[test]
+    fn a_manual_request_during_launch_runs_fresh_after_the_launch_worker() {
+        let tmp = scratch("manual-during-launch");
+        let mut s = Studio::sample();
+        s.song.load_settings(tmp.path());
+        let (send, receive) = std::sync::mpsc::channel();
+        let receive = std::sync::Mutex::new(receive);
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = calls.clone();
+        let fetch: update::Fetch = std::sync::Arc::new(move |_| {
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            receive
+                .lock()
+                .unwrap()
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            Ok(newer_answer())
+        });
+        s.update.fetch = fetch.clone();
+        s.check_for_update(update::UpdateCheck::in_dir(tmp.path(), fetch), 1);
+        s.manual_update_check();
+        assert_eq!(s.update.check, CheckState::Checking);
+        send.send(()).unwrap();
+        send.send(()).unwrap();
+        finish_manual(&mut s);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert!(s.bar_view().update);
+    }
+    #[test]
+    fn recheck_blocks_primary_and_start_paths() {
+        for ready in [false, true] {
+            let mut s = Studio::sample();
+            crate::update_shots::stage(&mut s, if ready { 2 } else { 0 });
+            s.update.check = CheckState::Checking;
+            let actions = acts(&update_cells(&s.update_view(), 440.0));
+            assert!(!actions.contains(&Act::Download) && !actions.contains(&Act::UpdateNow));
+            assert!(s.start_update_download().is_err());
+            assert!(s.update.job.is_none());
+            assert!(s.arm_install().unwrap_err().contains("確認中"));
+        }
+    }
+
+    #[test]
+    fn recheck_download_completion_orders_never_accept_another_candidate() {
+        for download_first in [false, true] {
+            for channel_changed in [false, true] {
+                let mut s = Studio::sample();
+                crate::update_shots::stage(&mut s, 2);
+                let installer = s.update.ready.take().unwrap();
+                let mut next = crate::update_shots::newer();
+                if channel_changed {
+                    next.prerelease = true;
+                } else {
+                    next.version = "99.0.0".into();
+                }
+                s.update.channel = Some(false);
+                s.update.download_channel = Some(false);
+                s.update.manual = true;
+                s.update.check = CheckState::Checking;
+                let (ask_send, ask_recv) = std::sync::mpsc::channel();
+                let (job_send, job_recv) = std::sync::mpsc::channel();
+                s.update.asking = Some(std::thread::spawn(move || {
+                    ask_recv
+                        .recv_timeout(std::time::Duration::from_secs(5))
+                        .unwrap();
+                    Ok(Some(next))
+                }));
+                s.update.job = Some(std::thread::spawn(move || {
+                    job_recv
+                        .recv_timeout(std::time::Duration::from_secs(5))
+                        .unwrap();
+                    Ok(installer)
+                }));
+                if download_first {
+                    job_send.send(()).unwrap();
+                    while !s.update.job.as_ref().unwrap().is_finished() {
+                        std::thread::yield_now();
+                    }
+                    s.poll_update();
+                    ask_send.send(()).unwrap();
+                    finish_manual(&mut s);
+                } else {
+                    ask_send.send(()).unwrap();
+                    finish_manual(&mut s);
+                    job_send.send(()).unwrap();
+                    while !s.update.job.as_ref().unwrap().is_finished() {
+                        std::thread::yield_now();
+                    }
+                    s.poll_update();
+                }
+                assert!(
+                    s.update.ready.is_none(),
+                    "order={download_first}, channel={channel_changed}"
+                );
+                assert_ne!(s.update.progress().phase, update::Phase::Ready);
+            }
+        }
+    }
+    #[test]
+    fn manual_distinguishes_missing_release_transport_limit_and_response_errors() {
+        for (beta, reply, expected) in [
+            (
+                false,
+                Err("curl: (22) The requested URL returned error: 404"),
+                update::NO_RELEASE,
+            ),
+            (true, Ok("[]"), update::NO_RELEASE),
+            (
+                false,
+                Err("curl: (6) Could not resolve host: api.github.com"),
+                "ネットワーク接続",
+            ),
+            (
+                false,
+                Err("curl: (22) The requested URL returned error: 403"),
+                "GitHub の利用制限",
+            ),
+            (
+                false,
+                Err("curl: (22) The requested URL returned error: 429"),
+                "GitHub の利用制限",
+            ),
+            (false, Ok("not json"), "リリースの情報を読み取れません"),
+        ] {
+            let tmp = scratch("manual-reasons");
+            let mut s = Studio::sample();
+            s.song.load_settings(tmp.path());
+            s.run_command(
+                "prefs.set",
+                serde_json::json!({"key":update::BETA_PREF,"value":beta.to_string()}),
+            );
+            s.update.fetch =
+                std::sync::Arc::new(move |_| reply.map(str::to_string).map_err(str::to_string));
+            s.update.root = Some(tmp.path().into());
+            s.manual_update_check();
+            finish_manual(&mut s);
+            assert!(
+                update_cells(&s.update_view(), 440.0)
+                    .iter()
+                    .map(|cell| cell.text.replace(' ', ""))
+                    .collect::<String>()
+                    .contains(&expected.replace(' ', "")),
+                "{:?}",
+                s.update.check
+            );
+            if expected == update::NO_RELEASE {
+                assert_eq!(s.update.check, CheckState::NoRelease);
+            }
+        }
     }
 }

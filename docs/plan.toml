@@ -6266,7 +6266,7 @@ phase = "v1"
 source = "mockups/start.md § 06 更新の確かめ"
 done_when = "新しい版があると、ダウンロードして ed25519 の署名と SHA を確かめ、合わなければ入れない。終了したときに入れ替え、次の起動で新しい版になる。安定版とベータ版を設定で選べる"
 status = "partial"
-remaining = "実装と試験は済み（署名する manifest・アプリ側の版/SHA/チャンネル/最低版の確認・起動前の再確認・裏のスレッドでのダウンロード・/XRUN での入れ替えと起動し直し・利用者が別に起こした Xirius のプログラムだけを見る確認・失敗の引き継ぎ・ベータ版・release.yml の Python 署名と environment・鍵の道具の verify・--script update）。2026-10-23 の 2 回のレビューの直しも入れた。残り: 本物の鍵を作って UPDATE_KEY を差し替え、environment release の secret XIRIUS_UPDATE_KEY を登録し、Release を 1 度出して、別の利用者（または VM）でアプリの中の更新を通す。docs/ui-approved.md のこの節は、MSI で撮った画面で利用者の承認を取るまで承認待ち"
+remaining = "実装と試験は済み（署名する manifest・アプリ側の版/SHA/チャンネル/最低版の確認・起動前の再確認・裏のスレッドでのダウンロード・/XRUN での入れ替えと起動し直し・利用者が別に起こした Xirius のプログラムだけを見る確認・失敗の引き継ぎ・ベータ版・release.yml の Python 署名と environment・鍵の道具の verify・--script update）。2026-10-23 の 2 回のレビューの直しも入れた。残り: 本物の鍵を作って UPDATE_KEY を差し替え、environment release の secret XIRIUS_UPDATE_KEY を登録し、Release を 1 度出して、別の利用者（または VM）でアプリの中の更新を通す。画面と操作のうち UI-344 に揃えた部分は 2026-10-24 の利用者の決定 3 で承認済み。MSI での実際の入れ替えと別環境での検証は引き続き残す"
 
 [[item]]
 id = "EDT-137"
@@ -6814,6 +6814,8 @@ phase = "v1"
 source = "mockups/start.md § 06 更新の確かめ ; mockups/start-decisions.md"
 done_when = "新しい版があるとロゴに点が付き、「Xirius について」に版の番号・ダウンロード・変更点が出る。取れないときは何もしない。設定で切ると問い合わせをしない"
 status = "done"
+
+note = "2026-10-24 の UI-344 で設定を起動時の問い合わせだけに限定し、手動確認と発見済みの点はオフでも有効にした"
 
 [[item]]
 id = "UI-263"
@@ -8343,4 +8345,15 @@ phase = "v1"
 source = "piano-roll-toolbar/report.md § 案（モックの各節） ; piano-roll-toolbar/mockup.html § 7 ヒントと読み上げ ; docs/ui-approved.md § ドラムの見方（2026-10-24 承認）"
 after = ["EDT-131", "EDT-006", "UI-047", "UI-309"]
 done_when = "タブは 28×24 px のアイコンだけで選択は sel、見方は piano・drum の 60×24 px の組、鍵盤だけ length-last の 28 px トグルが出る。見方とトグルのオンは fill・on_fill。モックの §7 のヒント・読み上げの名前と role・選択状態を持ち、上の帯のチップはグリッドの長さに戻す。設定の語も直前のノートにそろえる。右端の空きを外し、名前を部品の右から末尾の…で省略する。窓を開かない試験で状態・読み上げ・非表示・幅・両テーマの面のコントラストを確かめ、広い幅と狭い幅・両テーマの撮影で承認モックの ToBe-A と見比べる。キーは足さない"
+status = "done"
+
+[[item]]
+id = "UI-344"
+title = "手動の更新確認を設定・About・パレットで共有する"
+area = "UI"
+phase = "v1.1"
+after = ["UI-262", "UI-282"]
+source = "2026-10-24 の利用者の決定 1〜3 ; docs/ui-approved.md § 手動の更新確認"
+done_when = "3 つの入口が同じ非同期の更新状態と次の操作を使い、起動時確認がオフでも手動確認でき、発見済みの点・失敗理由・ベータ設定を保つ。ダークとライトで承認モックと比較する"
+note = "UI-262 の設定は起動時だけに限定する。UI-282 の単一進行ボタン・ベータ・失敗理由・Release ページへの経路は今回の承認に揃える。実配布と入れ替えの検証は UI-282 に残す"
 status = "done"

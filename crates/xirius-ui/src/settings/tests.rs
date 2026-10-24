@@ -1389,7 +1389,7 @@ fn a_first_launch_scans_in_the_background_and_the_plugin_page_follows_it() {
 /// UI-262: 「更新を確認」 on 一般 turns the asking at launch off, and the dot with it; it is
 /// off the next launch too.
 #[test]
-fn turning_the_update_check_off_asks_nothing_and_hides_the_dot() {
+fn turning_launch_update_check_off_asks_nothing_and_keeps_the_dot() {
     use crate::about::tests::{ask, newer_answer, stub};
     use xirius_session::app::UPDATE_PREF;
 
@@ -1407,7 +1407,7 @@ fn turning_the_update_check_off_asks_nothing_and_hides_the_dot() {
     assert!(scene.has_text("起動時"));
     press(&mut s, &g, &switch(UPDATE_PREF, true));
     assert!(!pref_bool(&s, UPDATE_PREF));
-    assert!(!s.bar_view().update, "off, the dot goes");
+    assert!(s.bar_view().update, "off, the discovery stays");
     drop(s);
 
     let (mut s, _) = launch(&dir);

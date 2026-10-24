@@ -199,6 +199,25 @@ pub struct Manifest {
     pub min_version: String,
 }
 
+/// GUI-only state, kept separate from the CLI's existing text/error contract.
+pub const NO_RELEASE: &str = "対象のリリースがありません";
+fn check_failure(reason: String) -> String {
+    // curl -f emits the HTTP status in stderr, and its transport error number in parentheses.
+    let detail = if reason.contains("403") || reason.contains("429") {
+        "GitHub の利用制限により確認できません。時間をおいて再試行してください"
+    } else if reason.contains("404") {
+        return NO_RELEASE.into();
+    } else if ["(5)", "(6)", "(7)", "(28)", "(35)", "(60)"]
+        .iter()
+        .any(|code| reason.contains(code))
+    {
+        "GitHub に接続できません。ネットワーク接続を確認してください"
+    } else {
+        "更新の問い合わせに失敗しました"
+    };
+    format!("{detail} ({reason})")
+}
+
 /// The system's `curl`, without a window.
 pub fn curl() -> Fetch {
     Arc::new(|url: &str| {
@@ -555,12 +574,37 @@ impl UpdateCheck {
 
     /// Asks now and keeps the answer.
     pub fn ask(&self, now_ms: u64, beta: bool) -> Result<Checked, String> {
-        let body = (self.fetch)(if beta { RELEASES } else { LATEST })?;
+        self.ask_inner(now_ms, beta, false)
+    }
+
+    /// Manual GUI check with distinct missing-release and localized failure reasons.
+    /// CLI callers retain `ask` and its original result/error strings.
+    pub fn ask_ui(&self, now_ms: u64, beta: bool) -> Result<Checked, String> {
+        self.ask_inner(now_ms, beta, true)
+    }
+
+    fn ask_inner(&self, now_ms: u64, beta: bool, ui: bool) -> Result<Checked, String> {
+        let body = (self.fetch)(if beta { RELEASES } else { LATEST })
+            .map_err(|e| if ui { check_failure(e) } else { e })?;
         let latest = if beta {
             let list = parse_releases(&body).ok_or("リリースの一覧を読み取れません")?;
+            if ui && list.is_empty() {
+                let raw: Value =
+                    serde_json::from_str(&body).map_err(|_| "リリースの一覧を読み取れません")?;
+                if raw
+                    .as_array()
+                    .is_some_and(|values| values.iter().all(|r| r["draft"] == true))
+                {
+                    return Err(NO_RELEASE.into());
+                }
+            }
             pick(&list, true).ok_or("リリースの情報を読み取れません")?
         } else {
-            parse(&body).ok_or("リリースの情報を読み取れません")?
+            let release = parse(&body).ok_or("リリースの情報を読み取れません")?;
+            if ui && release.prerelease {
+                return Err(NO_RELEASE.into());
+            }
+            release
         };
         let checked = Checked {
             checked_ms: now_ms,
