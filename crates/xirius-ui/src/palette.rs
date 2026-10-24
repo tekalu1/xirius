@@ -163,6 +163,9 @@ pub struct Row {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Palette {
     pub form: Option<crate::palette_args::Form>,
+    result_layout: std::cell::RefCell<Option<std::rc::Rc<crate::palette_args::ResultLayout>>>,
+    pub result_all: bool,
+    pub result_selected: bool,
     /// What is typed: the list is filtered by it.
     pub query: String,
     /// What the IME is still composing after the query: shown in the field,
@@ -208,6 +211,9 @@ impl Palette {
     pub fn new(rows: Vec<Row>) -> Palette {
         Palette {
             form: None,
+            result_layout: Default::default(),
+            result_all: false,
+            result_selected: false,
             query: String::new(),
             marked: String::new(),
             selected: 0,
@@ -272,16 +278,86 @@ impl Palette {
         Self::content_h(self.hits().len(), self.on()).min(Self::LIST_MAX_H - Self::LIST_PAD * 2.0)
     }
 
+    pub(crate) fn replace_result_fields(&mut self, fields: Vec<crate::palette_args::Field>) {
+        if let Some(form) = self.form.as_mut().filter(|f| f.output) {
+            form.fields = fields;
+            self.rows = form.rows();
+            *self.result_layout.get_mut() = None;
+        }
+    }
+
+    fn result_rows(&self, width: f32) -> Option<std::rc::Rc<crate::palette_args::ResultLayout>> {
+        let form = self.form.as_ref().filter(|f| f.output)?;
+        let mut cache = self.result_layout.borrow_mut();
+        if cache.as_ref().is_none_or(|layout| layout.width != width) {
+            *cache = Some(std::rc::Rc::new(crate::palette_args::ResultLayout::new(
+                &form.fields,
+                width,
+            )));
+        }
+        cache.clone()
+    }
+
+    fn reveal_result(&mut self, size: (f32, f32)) {
+        let l = self.layout(size);
+        if let Some(rows) = self.result_rows(l.list.w - Self::LIST_PAD * 2.0) {
+            let top = rows.tops[self.selected.min(rows.lines.len())];
+            let bottom = rows.tops.get(self.selected + 1).copied().unwrap_or(top);
+            let visible = l.list.h - Self::LIST_PAD * 2.0;
+            if top < self.offset {
+                self.offset = top;
+            } else if bottom > self.offset + visible {
+                self.offset = (bottom - visible).min(top);
+            }
+        }
+    }
+
+    pub fn selected_result_text(&self) -> Option<String> {
+        let form = self.form.as_ref().filter(|f| f.output)?;
+        if self.result_all {
+            Some(
+                form.fields
+                    .iter()
+                    .map(|f| {
+                        if f.name == "group" {
+                            f.label.clone()
+                        } else {
+                            format!("{}: {}", f.label, f.value)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+        } else if self.result_selected {
+            form.fields.get(self.selected).map(|f| f.value.clone())
+        } else {
+            None
+        }
+    }
+
     pub fn layout(&self, size: (f32, f32)) -> PaletteLayout {
         let (w, h) = size;
-        let (n, on) = (self.hits().len(), self.on());
+        let output = self.form.as_ref().is_some_and(|f| f.output);
+        let (n, on) = if output {
+            (self.rows.len(), self.rows.len())
+        } else {
+            (self.hits().len(), self.on())
+        };
         let pw = Self::W.min(w * 0.92);
         let x = ((w - pw) / 2.0).round();
         // 12% of the window from its top, as the mock's veil puts it.
         let y = ((h + Layout::TOP_BAR_H + Layout::BOTTOM_BAR_H) * 0.12 - Layout::TOP_BAR_H)
             .max(Space::X2.px())
             .round();
-        let inner = self.inner_h();
+        let result_heights = self.result_rows(pw - Self::LIST_PAD * 2.0);
+        let inner = result_heights.as_ref().map_or_else(
+            || self.inner_h(),
+            |rows| {
+                rows.total()
+                    .min(Self::LIST_MAX_H - Self::LIST_PAD * 2.0)
+                    .min((h - y - 50.0).max(40.0))
+            },
+        );
         let list_h = inner + Self::LIST_PAD * 2.0;
         let title_h = if self.form.is_some() { 28.0 } else { 0.0 };
         let search_h = if self
@@ -303,13 +379,21 @@ impl Palette {
         let list = Rect::new(x, y + title_h + search_h, pw, list_h);
         let top = list.y + Self::LIST_PAD;
         let seen = |r: &Rect| r.bottom() > top && r.y < top + inner;
-        let rows = (0..n)
+        let visible = result_heights
+            .as_ref()
+            .map_or(0..n, |rows| rows.visible(self.offset, inner));
+        let rows = visible
             .map(|i| {
                 let r = Rect::new(
                     x + Self::LIST_PAD,
-                    top + Self::row_top(i, on) - self.offset,
+                    top + result_heights
+                        .as_ref()
+                        .map_or_else(|| Self::row_top(i, on), |rows| rows.tops[i])
+                        - self.offset,
                     pw - Self::LIST_PAD * 2.0,
-                    Self::ROW_H,
+                    result_heights
+                        .as_ref()
+                        .map_or(Self::ROW_H, |rows| rows.tops[i + 1] - rows.tops[i]),
                 );
                 (i, r)
             })
@@ -352,12 +436,21 @@ impl Palette {
         if self.form.is_some() {
             self.choose_field(i);
         }
-        let on = self.on();
+        let on = if self.form.as_ref().is_some_and(|f| f.output) {
+            self.rows.len()
+        } else {
+            self.on()
+        };
         if on == 0 {
             self.selected = 0;
             return;
         }
         self.selected = i.min(on - 1);
+        self.result_all = false;
+        self.result_selected = self.form.as_ref().is_some_and(|f| f.output);
+        if self.result_selected {
+            return;
+        }
         let top = Self::row_top(self.selected, on);
         let inner = self.inner_h();
         if top < self.offset {
@@ -369,8 +462,16 @@ impl Palette {
 
     /// Scrolls the list by `dy` px, inside what there is.
     pub fn scroll(&mut self, dy: f32) {
-        let content = Self::content_h(self.hits().len(), self.on());
-        let max = (content - self.inner_h()).max(0.0);
+        let width = self
+            .result_layout
+            .borrow()
+            .as_ref()
+            .map_or(Self::W - Self::LIST_PAD * 2.0, |r| r.width);
+        let max = if let Some(rows) = self.result_rows(width) {
+            (rows.total() - rows.total().min(Self::LIST_MAX_H - Self::LIST_PAD * 2.0)).max(0.0)
+        } else {
+            (Self::content_h(self.hits().len(), self.on()) - self.inner_h()).max(0.0)
+        };
         self.offset = (self.offset + dy).clamp(0.0, max);
     }
 
@@ -1028,6 +1129,10 @@ impl Studio {
             "k" if mods.ctrl => {
                 self.palette = None;
             }
+            "a" if mods.ctrl && p.form.as_ref().is_some_and(|f| f.output) => {
+                p.result_all = true;
+                p.result_selected = true;
+            }
             "up" => p.select(p.selected.saturating_sub(1)),
             "down" => p.select(p.selected + 1),
             "tab" if p.form.is_some() => p.select(if mods.shift {
@@ -1054,6 +1159,9 @@ impl Studio {
                 p.set_query(q);
             }
             _ => {}
+        }
+        if let Some(p) = &mut self.palette {
+            p.reveal_result(g.size);
         }
         true
     }
@@ -1211,7 +1319,14 @@ impl Studio {
             return false;
         };
         if p.layout(g.size).list.contains(x, y) {
-            p.scroll(-dy);
+            if let Some(heights) = p.result_rows(p.layout(g.size).list.w - Palette::LIST_PAD * 2.0)
+            {
+                let layout = p.layout(g.size);
+                let max = (heights.total() - layout.list.h + Palette::LIST_PAD * 2.0).max(0.0);
+                p.offset = (p.offset - dy).clamp(0.0, max);
+            } else {
+                p.scroll(-dy);
+            }
         }
         true
     }
@@ -1266,14 +1381,20 @@ pub fn paint(pen: &mut Pen, palette: &Palette, g: &Geometry) {
         });
     }
     paint_search(pen, palette, l.search);
-    let hits = palette.hits();
+    let output = palette.form.as_ref().is_some_and(|f| f.output);
+    let results = palette.result_rows(l.list.w - Palette::LIST_PAD * 2.0);
+    let hits = if output { Vec::new() } else { palette.hits() };
     let inner = Rect::new(
         l.list.x,
         l.list.y + Palette::LIST_PAD,
         l.list.w,
         l.list.h - Palette::LIST_PAD * 2.0,
     );
-    if hits.is_empty() {
+    if if output {
+        palette.rows.is_empty()
+    } else {
+        hits.is_empty()
+    } {
         pen.text(
             "見つかりません",
             FontSize::Body,
@@ -1300,9 +1421,19 @@ pub fn paint(pen: &mut Pen, palette: &Palette, g: &Geometry) {
             );
         }
         for (i, r) in &l.rows {
-            let row = &palette.rows[hits[*i]];
+            let row = &palette.rows[if output { *i } else { hits[*i] }];
             if let Some(field) = palette.form.as_ref().and_then(|form| form.fields.get(*i)) {
                 let folder_hot = palette.folder_hover && palette.hover == Some(*i);
+                if palette.form.as_ref().is_some_and(|f| f.output) {
+                    crate::palette_args::paint_result(
+                        pen,
+                        field,
+                        *r,
+                        palette.result_all || (palette.result_selected && *i == palette.selected),
+                        &results.as_ref().unwrap().lines[*i],
+                    );
+                    continue;
+                }
                 crate::palette_args::paint_field(
                     pen,
                     field,
@@ -2590,5 +2721,34 @@ mod tests {
                 other => panic!("{other}"),
             }
         }
+    }
+    #[test]
+    fn large_result_cache_reuses_wraps_until_width_or_result_changes_and_copies_all() {
+        let mut s = Studio::sample();
+        let g = s.geometry(1440.0, 820.0);
+        s.palette_query(&g, "project.get", json!({}));
+        let p = s.palette.as_mut().unwrap();
+        let fields = (0..10000)
+            .map(|i| crate::palette_args::Field {
+                name: "value",
+                label: format!("結果{i}"),
+                value: "WMi日本語".into(),
+                choices: vec![],
+            })
+            .collect();
+        p.replace_result_fields(fields);
+        let first = p.result_rows(592.0).unwrap();
+        for i in 0..50 {
+            p.offset = i as f32 * 100.0;
+            assert!(p.layout(g.size).rows.len() <= 10);
+            assert!(std::rc::Rc::ptr_eq(&first, &p.result_rows(592.0).unwrap()));
+        }
+        p.result_all = true;
+        let copied = p.selected_result_text().unwrap();
+        assert_eq!(copied.lines().count(), 10000);
+        assert!(copied.ends_with("結果9999: WMi日本語"));
+        assert!(!std::rc::Rc::ptr_eq(&first, &p.result_rows(300.0).unwrap()));
+        p.replace_result_fields(Vec::new());
+        assert_eq!(p.result_rows(592.0).unwrap().total(), 0.0);
     }
 }

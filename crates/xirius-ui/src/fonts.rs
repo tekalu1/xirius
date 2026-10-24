@@ -50,7 +50,60 @@ pub fn load(cx: &App) -> Result<(), String> {
                 .map(|(_, bytes)| Cow::Borrowed(*bytes))
                 .collect(),
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    METRICS.with(|slot| {
+        *slot.borrow_mut() = Some(gpui::WindowTextSystem::new(cx.text_system().clone()))
+    });
+    Ok(())
+}
+
+thread_local! {
+    static METRICS: std::cell::RefCell<Option<gpui::WindowTextSystem>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The same native shaping, bundled faces, size and runs as Pen::text.
+/// Tests initialize a native text system without opening a window; the application uses its registered text system.
+pub(crate) fn measure(
+    text: &str,
+    size: xirius_design::FontSize,
+    weight: xirius_design::Weight,
+) -> f32 {
+    METRICS.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let system = slot.get_or_insert_with(|| {
+            let system = std::sync::Arc::new(gpui::TextSystem::new(
+                gpui_platform::current_platform(false).text_system(),
+            ));
+            system
+                .add_fonts(
+                    EMBEDDED
+                        .iter()
+                        .map(|(_, bytes)| Cow::Borrowed(*bytes))
+                        .collect(),
+                )
+                .expect("bundled fonts");
+            gpui::WindowTextSystem::new(system)
+        });
+        f32::from(
+            system
+                .shape_line(
+                    text.to_owned().into(),
+                    gpui::px(size.px()),
+                    &crate::theme::text_runs(
+                        text,
+                        weight,
+                        false,
+                        crate::theme::paint(
+                            xirius_design::Surface::Paper
+                                .text()
+                                .ink_color(crate::theme::THEME),
+                        ),
+                    ),
+                    None,
+                )
+                .width,
+        )
+    })
 }
 
 #[cfg(test)]

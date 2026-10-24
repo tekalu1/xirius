@@ -397,7 +397,11 @@ impl Palette {
     }
 
     pub fn cycle_field(&mut self) {
-        if let Some(field) = self.form.as_ref().and_then(|f| f.fields.get(self.selected))
+        if let Some(field) = self
+            .form
+            .as_ref()
+            .filter(|f| !f.output)
+            .and_then(|f| f.fields.get(self.selected))
             && !field.choices.is_empty()
         {
             let next = field
@@ -563,19 +567,19 @@ impl Studio {
                 let def = self.song.registry().get(command).unwrap();
                 let mut form = Form::new(def, json!({}), &self.project());
                 form.output = true;
-                form.fields.clear();
-                result_fields(&value, "", &mut form.fields);
-                let mut palette = Palette::new(form.rows());
+                let mut fields = Vec::new();
+                result_fields(&value, "", &mut fields);
+                let mut palette = Palette::new(Vec::new());
                 palette.form = Some(form);
+                palette.replace_result_fields(fields);
                 self.palette = Some(palette);
                 self.error = None;
                 true
             }
             Err(error) => {
-                let _ = error;
                 self.error = None;
                 if let Some(form) = self.palette.as_mut().and_then(|p| p.form.as_mut()) {
-                    form.error = Some("取得できません".into());
+                    form.error = Some(format!("取得できません: {error}"));
                 }
                 false
             }
@@ -583,27 +587,31 @@ impl Studio {
     }
 }
 
-fn result_fields(value: &Value, label: &str, fields: &mut Vec<Field>) {
-    if fields.len() >= 256 {
-        return;
-    }
+pub(crate) fn result_fields(value: &Value, label: &str, fields: &mut Vec<Field>) {
     match value {
-        Value::Object(values) => {
+        Value::Object(values) if !values.is_empty() => {
             for (key, value) in values {
-                if !matches!(
-                    key.as_str(),
-                    "state_hash" | "id" | "uid" | "summary" | "description"
-                ) {
-                    result_fields(value, xirius_core::commands::labels::argument(key), fields);
-                }
+                let name = xirius_core::commands::labels::argument(key);
+                let path = if label.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{label} / {name}")
+                };
+                result_fields(value, &path, fields);
             }
         }
-        Value::Array(values) => {
-            for value in values {
-                result_fields(value, label, fields);
+        Value::Array(values) if !values.is_empty() => {
+            for (i, value) in values.iter().enumerate() {
+                let group = format!("{label} [{}]", i + 1);
+                fields.push(Field {
+                    name: "group",
+                    label: group.clone(),
+                    value: String::new(),
+                    choices: Vec::new(),
+                });
+                result_fields(value, &group, fields);
             }
         }
-        Value::Null => {}
         value => fields.push(Field {
             name: "value",
             label: label.into(),
@@ -617,6 +625,173 @@ fn result_fields(value: &Value, label: &str, fields: &mut Vec<Field>) {
                 Vec::new()
             },
         }),
+    }
+}
+
+/// Separate from editable fields: both columns wrap and every byte stays available to copy.
+pub(crate) fn result_lines(field: &Field, width: f32) -> (Vec<String>, Vec<String>) {
+    if field.name == "group" {
+        return (
+            wrap_result(&field.label, (width - 24.0).max(1.0), &|t| {
+                crate::fonts::measure(
+                    t,
+                    xirius_design::FontSize::Body,
+                    xirius_design::Weight::Medium,
+                )
+            }),
+            Vec::new(),
+        );
+    }
+    let (_, lw, _, vw) = result_columns(width);
+    let wrap = |text: &str, room| {
+        wrap_result(text, room, &|t| {
+            crate::fonts::measure(
+                t,
+                xirius_design::FontSize::Body,
+                xirius_design::Weight::Regular,
+            )
+        })
+    };
+    (
+        wrap(&field.label, lw),
+        wrap(&field.display(&field.value), vw),
+    )
+}
+fn wrap_result(text: &str, width: f32, measure: &impl Fn(&str) -> f32) -> Vec<String> {
+    text.split('\n')
+        .flat_map(|line| {
+            let lines = crate::opline::wrap(line, width, measure);
+            if lines.is_empty() {
+                vec![String::new()]
+            } else {
+                lines
+            }
+        })
+        .collect()
+}
+
+/// Immutable output layout. Prefix positions are built in one pass and searched in O(log n).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ResultLayout {
+    pub width: f32,
+    pub lines: Vec<(Vec<String>, Vec<String>)>,
+    pub tops: Vec<f32>,
+}
+impl ResultLayout {
+    pub fn new(fields: &[Field], width: f32) -> Self {
+        Self::build(fields, width, result_lines)
+    }
+    fn build(
+        fields: &[Field],
+        width: f32,
+        mut wrap: impl FnMut(&Field, f32) -> (Vec<String>, Vec<String>),
+    ) -> Self {
+        let mut tops = Vec::with_capacity(fields.len() + 1);
+        let mut lines = Vec::with_capacity(fields.len());
+        tops.push(0.0);
+        for field in fields {
+            let row = wrap(field, width);
+            tops.push(tops.last().unwrap() + result_line_height(&row));
+            lines.push(row);
+        }
+        Self { width, lines, tops }
+    }
+    pub fn total(&self) -> f32 {
+        *self.tops.last().unwrap()
+    }
+    pub fn visible(&self, offset: f32, height: f32) -> std::ops::Range<usize> {
+        self.visible_probed(offset, height, || {})
+    }
+    fn visible_probed(
+        &self,
+        offset: f32,
+        height: f32,
+        mut probe: impl FnMut(),
+    ) -> std::ops::Range<usize> {
+        let start = self
+            .tops
+            .partition_point(|y| {
+                probe();
+                *y <= offset
+            })
+            .saturating_sub(1)
+            .min(self.lines.len());
+        let end = self
+            .tops
+            .partition_point(|y| {
+                probe();
+                *y < offset + height
+            })
+            .min(self.lines.len());
+        start..end
+    }
+}
+fn result_line_height(lines: &(Vec<String>, Vec<String>)) -> f32 {
+    16.0 + lines.0.len().max(lines.1.len()).max(1) as f32 * 22.0
+}
+fn result_columns(width: f32) -> (f32, f32, f32, f32) {
+    let label = (width * 0.34).min(180.0);
+    (
+        12.0,
+        (label - 24.0).max(1.0),
+        label,
+        (width - label - 12.0).max(1.0),
+    )
+}
+#[cfg(test)]
+pub(crate) fn result_height(field: &Field, width: f32) -> f32 {
+    let (labels, values) = result_lines(field, width);
+    result_line_height(&(labels, values))
+}
+pub(crate) fn paint_result(
+    pen: &mut crate::draw::Pen,
+    field: &Field,
+    row: crate::studio::Rect,
+    selected: bool,
+    lines: &(Vec<String>, Vec<String>),
+) {
+    use crate::{draw::Align, studio::Rect};
+    use xirius_design::{FontSize, Radius, Weight};
+    if field.name == "group" {
+        pen.round(
+            row,
+            if selected { pen.c.sel } else { pen.c.surface_2 },
+            Radius::S,
+        );
+        let (lines, _) = lines;
+        for (i, line) in lines.iter().enumerate() {
+            pen.text(
+                line,
+                FontSize::Body,
+                Weight::Medium,
+                pen.c.ink_strong,
+                Rect::new(
+                    row.x + 12.0,
+                    row.y + 8.0 + i as f32 * 22.0,
+                    row.w - 24.0,
+                    22.0,
+                ),
+                Align::Left,
+            );
+        }
+        return;
+    }
+    if selected {
+        pen.round(row, pen.c.sel, Radius::S);
+    }
+    let (lx, lw, vx, vw) = result_columns(row.w);
+    let (labels, values) = lines;
+    for (lines, x, w) in [(labels, lx, lw), (values, vx, vw)] {
+        for (i, line) in lines.iter().enumerate() {
+            pen.text(
+                line,
+                FontSize::Body,
+                Weight::Regular,
+                pen.c.ink,
+                Rect::new(row.x + x, row.y + 8.0 + i as f32 * 22.0, w, 22.0),
+                Align::Left,
+            );
+        }
     }
 }
 
@@ -777,5 +952,229 @@ mod tests {
                 .any(|field| field.value == crate::song::SAMPLE_NAME)
         );
         assert_eq!(studio.song.steps(), steps);
+    }
+    #[test]
+    fn result_names_unknown_keys_arrays_and_wrapping_preserve_full_values() {
+        let long = "https://example.invalid/".to_string() + &"長い結果/".repeat(80);
+        let mut fields = Vec::new();
+        result_fields(
+            &json!({"name":"曲", "unregistered_key":long,"songs":[{"name":"一"},{"name":"二"}]}),
+            "",
+            &mut fields,
+        );
+        assert!(fields.iter().any(|f| f.label == "名前"));
+        assert_eq!(fields.iter().filter(|f| f.name == "group").count(), 2);
+        let unknown = fields
+            .iter()
+            .find(|f| f.label == "unregistered_key")
+            .unwrap();
+        assert_eq!(unknown.value, long);
+        assert!(
+            fields
+                .iter()
+                .any(|f| f.label.contains("[1]") && f.value == "一")
+        );
+        assert!(
+            fields
+                .iter()
+                .any(|f| f.label.contains("[2]") && f.value == "二")
+        );
+        for width in [240.0, 440.0, 592.0] {
+            let (labels, values) = result_lines(unknown, width);
+            assert_eq!(values.concat(), long);
+            let (_, lw, _, vw) = result_columns(width);
+            for (lines, room) in [(labels, lw), (values, vw)] {
+                for line in lines {
+                    assert!(
+                        crate::fonts::measure(
+                            &line,
+                            xirius_design::FontSize::Body,
+                            xirius_design::Weight::Regular
+                        ) <= room + 0.01
+                    );
+                }
+            }
+        }
+        assert!(result_height(unknown, 240.0) > result_height(unknown, 592.0));
+    }
+
+    #[test]
+    fn results_select_and_copy_full_text_and_do_not_change_input_fields() {
+        let mut s = Studio::sample();
+        let g = s.geometry(400.0, 600.0);
+        s.palette_query(&g, "project.get", json!({}));
+        let p = s.palette.as_mut().unwrap();
+        p.replace_result_fields(vec![Field {
+            name: "value",
+            label: "結果".into(),
+            value: "長い値".repeat(500),
+            choices: vec![],
+        }]);
+        p.rows = p.form.as_ref().unwrap().rows();
+        p.select(0);
+        assert_eq!(p.selected_result_text().unwrap(), "長い値".repeat(500));
+        s.palette_key(
+            &g,
+            "a",
+            crate::tools::Mods {
+                ctrl: true,
+                ..Default::default()
+            },
+        );
+        let p = s.palette.as_ref().unwrap();
+        assert!(p.result_all);
+        assert_eq!(
+            p.selected_result_text().unwrap(),
+            format!("結果: {}", "長い値".repeat(500))
+        );
+        let height = p.layout(g.size).rows[0].1.h;
+        assert!(height > Palette::ROW_H);
+        let l = p.layout(g.size);
+        s.palette_wheel(&g, l.list.x + 20.0, l.list.y + 20.0, -100000.0);
+        assert!(s.palette.as_ref().unwrap().offset > 0.0);
+        s.open_palette_form("tempo.set", json!({"at":0}));
+        let input = s.palette.as_ref().unwrap();
+        assert!(!input.form.as_ref().unwrap().output);
+        assert!(
+            input
+                .layout(g.size)
+                .rows
+                .iter()
+                .all(|(_, r)| r.h == Palette::ROW_H)
+        );
+    }
+    #[test]
+    fn result_boolean_display_is_localized_but_strings_and_copy_stay_literal() {
+        let mut fields = Vec::new();
+        result_fields(
+            &json!({"enabled":true,"disabled":false,"literal":"false"}),
+            "",
+            &mut fields,
+        );
+        assert_eq!(
+            fields
+                .iter()
+                .find(|f| f.value == "true")
+                .unwrap()
+                .display("true"),
+            "オン"
+        );
+        assert_eq!(
+            fields
+                .iter()
+                .find(|f| f.label == "disabled")
+                .unwrap()
+                .display("false"),
+            "オフ"
+        );
+        assert_eq!(
+            fields
+                .iter()
+                .find(|f| f.label == "literal")
+                .unwrap()
+                .display("false"),
+            "false"
+        );
+        let mut s = Studio::sample();
+        let g = s.geometry(1440.0, 820.0);
+        s.palette_query(&g, "project.get", json!({}));
+        let p = s.palette.as_mut().unwrap();
+        p.replace_result_fields(fields);
+        p.result_all = true;
+        let copied = p.selected_result_text().unwrap();
+        assert!(copied.contains("disabled: false") && copied.contains("literal: false"));
+    }
+
+    #[test]
+    fn result_wrap_matches_native_paint_font_for_wide_narrow_and_japanese_text() {
+        use xirius_design::{FontSize, Weight};
+        let native = std::sync::Arc::new(gpui::TextSystem::new(
+            gpui_platform::current_platform(false).text_system(),
+        ));
+        native
+            .add_fonts(
+                crate::fonts::EMBEDDED
+                    .iter()
+                    .map(|(_, bytes)| std::borrow::Cow::Borrowed(*bytes))
+                    .collect(),
+            )
+            .unwrap();
+        let native = gpui::WindowTextSystem::new(native);
+        let measured = |text: &str, weight| {
+            f32::from(
+                native
+                    .shape_line(
+                        text.to_owned().into(),
+                        gpui::px(FontSize::Body.px()),
+                        &crate::theme::text_runs(text, weight, false, gpui::black()),
+                        None,
+                    )
+                    .width,
+            )
+        };
+        for group in [false, true] {
+            let content = "WWWWMMMMiiiillll日本語".repeat(12);
+            let field = Field {
+                name: if group { "group" } else { "value" },
+                label: content.clone(),
+                value: content.clone(),
+                choices: vec![],
+            };
+            let weight = if group {
+                Weight::Medium
+            } else {
+                Weight::Regular
+            };
+            assert!(
+                (crate::fonts::measure(&content, FontSize::Body, weight)
+                    - measured(&content, weight))
+                .abs()
+                    < 0.001
+            );
+            for width in [240.0, 440.0, 592.0] {
+                let (labels, values) = result_lines(&field, width);
+                let (_, lw, _, vw) = result_columns(width);
+                for (lines, room) in [
+                    (&labels, if group { width - 24.0 } else { lw }),
+                    (&values, vw),
+                ] {
+                    for line in lines {
+                        assert!(measured(line, weight) <= room + 0.001, "{line}");
+                    }
+                }
+                assert_eq!(labels.concat(), content);
+                if !group {
+                    assert_eq!(values.concat(), content);
+                }
+                assert_eq!(
+                    result_height(&field, width),
+                    16.0 + labels.len().max(values.len()).max(1) as f32 * 22.0
+                );
+            }
+        }
+        assert!(measured("WWWW", Weight::Regular) > measured("iiii", Weight::Regular) * 3.0);
+    }
+
+    #[test]
+    fn large_result_build_visits_each_row_once_and_visible_search_is_logarithmic() {
+        for n in [1024, 65536] {
+            let value = Value::Array(vec![json!({"name": "WMi日本語"}); n]);
+            let mut fields = Vec::new();
+            result_fields(&value, "結果", &mut fields);
+            let count = fields.len();
+            assert_eq!(count, n * 2, "each array item has a group and its value");
+            let mut wraps = 0;
+            let rows = ResultLayout::build(&fields, 592.0, |field, _| {
+                wraps += 1;
+                (vec![field.label.clone()], vec![field.value.clone()])
+            });
+            assert_eq!(wraps, count);
+            assert_eq!(rows.tops.len(), count + 1);
+            let mut probes = 0;
+            let range = rows.visible_probed((count / 2) as f32 * 38.0, 300.0, || probes += 1);
+            assert_eq!(range.start, count / 2);
+            assert!(range.len() <= 9);
+            assert!(probes <= 2 * (count.ilog2() as usize + 2), "{probes}");
+        }
     }
 }

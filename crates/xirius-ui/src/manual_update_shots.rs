@@ -56,6 +56,10 @@ pub const SHOTS: &[Shot] = &[
         name: "manual-09-checking-download",
         acts: &[stage(8)],
     },
+    Shot {
+        name: "manual-10-result-wrap",
+        acts: &[stage(9)],
+    },
 ];
 fn key(text: &str, w: &mut Window, cx: &mut App) {
     w.dispatch_keystroke(Keystroke::parse(text).unwrap(), cx);
@@ -233,6 +237,21 @@ fn play(n: u8, studio: &Rc<RefCell<Studio>>, w: &mut Window, cx: &mut App) {
                     about::Act::Download | about::Act::UpdateNow
                 ))
             )));
+        }
+        9 => {
+            key("escape", w, cx);
+            let mut s = studio.borrow_mut();
+            s.palette_query(&g, "project.get", serde_json::json!({}));
+            let mut fields = Vec::new();
+            crate::palette_args::result_fields(
+                &serde_json::json!({
+                    "enabled": true, "disabled": false, "literal": "false",
+                    "name": "W".repeat(80) + "MMiiiillll日本語",
+                }),
+                "",
+                &mut fields,
+            );
+            s.palette.as_mut().unwrap().replace_result_fields(fields);
         }
         _ => unreachable!(),
     }

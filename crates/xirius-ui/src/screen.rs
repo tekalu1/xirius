@@ -525,6 +525,16 @@ impl Screen {
         }
         // The palette's letters do not come with the key: the IME hands
         // them on (`EntityInputHandler` below).
+        if m.ctrl
+            && k.key == "c"
+            && let Some(text) = studio
+                .palette
+                .as_ref()
+                .and_then(|p| p.selected_result_text())
+        {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+            return;
+        }
         if studio.palette.is_some() && studio.palette_key(&g, &k.key, m) {
             cx.notify();
             drop(studio);
