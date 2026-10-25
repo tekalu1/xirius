@@ -447,8 +447,17 @@ fn mixed_preview_resamples_ends_and_stops_without_moving_the_song() {
         engine::create(cue::plan(setup).unwrap(), EngineConfig::default());
     audio.set_silent(true);
     let stats = control.stats();
-    let a = Audition::new();
+    let reader = Arc::new(ReaderGates::default());
+    let a = Audition::with(reader.clone(), Limits::default());
     let sink = Sink::Mix(control.audition());
+    fn ready(a: &Audition, reader: &Arc<ReaderGates>) {
+        drained(a, reader);
+        // Offline rendering starts after the voice has cued and fed the bus;
+        // it must not race loading by running empty callbacks as fast as possible.
+        let (tx, rx) = std::sync::mpsc::channel();
+        a.voice.send(super::Call::Barrier(tx)).unwrap();
+        rx.recv_timeout(Duration::from_secs(20)).unwrap();
+    }
     fn drive(a: &Audition, audio: &mut xirius_engine::AudioEngine, done: impl Fn(&Now) -> bool) {
         let end = Instant::now() + Duration::from_secs(20);
         let mut buf = [0.0; 512];
@@ -459,6 +468,7 @@ fn mixed_preview_resamples_ends_and_stops_without_moving_the_song() {
         }
     }
     a.play(&file, &d.path().join("peaks"), sink.clone());
+    ready(&a, &reader);
     drive(&a, &mut audio, |n| n.phase == Phase::Ended);
     assert!(stats.take_output_peak().iter().any(|p| *p > 0.1));
     control.poll(|e| {
@@ -471,6 +481,7 @@ fn mixed_preview_resamples_ends_and_stops_without_moving_the_song() {
         }
     });
     a.play(&file, &d.path().join("peaks"), sink);
+    ready(&a, &reader);
     drive(&a, &mut audio, |n| n.played > 0.1);
     a.stop();
     let end = Instant::now() + Duration::from_secs(20);

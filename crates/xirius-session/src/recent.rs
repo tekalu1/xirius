@@ -92,6 +92,8 @@ impl RecentList {
         match file.try_lock() {
             Ok(()) => {}
             Err(TryLockError::WouldBlock) => {
+                #[cfg(feature = "test-io")]
+                xirius_core::io_test::before("recent_lock_wait", &root.join("recent.lock"))?;
                 #[cfg(test)]
                 ON_WAIT.with(|h| {
                     if let Some(h) = h.borrow_mut().take() {

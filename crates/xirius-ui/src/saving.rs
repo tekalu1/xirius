@@ -359,19 +359,22 @@ impl Studio {
                 Some(Ok(())) => {}
             }
         }
+        if self.open_closing.is_some() {
+            return self.request_recent_close();
+        }
         if let Some(open) = &mut self.opening {
             open.confirm_close = true;
             return false;
         }
         if self.leaving_ready {
-            return true;
+            return self.request_recent_close();
         }
         if self.saving.is_none() {
             self.start_leaving(Leave::Close);
         } else if let Some(save) = &mut self.saving {
             save.close_when_done = true;
         }
-        self.leaving_ready
+        self.leaving_ready && self.request_recent_close()
     }
 }
 

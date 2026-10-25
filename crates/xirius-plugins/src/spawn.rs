@@ -420,6 +420,10 @@ mod windows {
             // and on a full machine that waits on other processes kept waiting themselves.
             let had_room = free.is_some_and(|f| f >= slice / 4);
             let own = had_room || (self.started() && !wants_cpu(self.job));
+            self.charge(slice, ran, own)
+        }
+
+        fn charge(&mut self, slice: Duration, ran: Duration, own: bool) -> Duration {
             self.used += if own { slice } else { ran.min(slice) };
             self.used
         }
@@ -686,8 +690,8 @@ mod windows {
         };
 
         use super::{
-            Desktop, Exit, NOT_STARTED, Threads, WAIT_OBJECT_0, WAITING, any_wants_cpu, held, look,
-            quote, run, start_signal, started,
+            Desktop, Exit, NOT_STARTED, OwnTime, Threads, WAIT_OBJECT_0, WAITING, any_wants_cpu,
+            held, look, quote, run, start_signal, started,
         };
 
         /// The argument that makes this test program a scan process for the tests below:
@@ -842,20 +846,20 @@ mod windows {
 
         #[test]
         fn a_scan_process_kept_waiting_for_a_processor_is_not_timed_out() {
-            // Counted in wall time it would have been stopped: it shares its processor with 24
-            // other threads, so its work takes longer than the limit. Windows now and then gives
-            // it more than its share and it ends within the limit, which does not try the case;
-            // then it is run again (ARC-042, once in 152 runs on a full machine).
-            let mut tries = Vec::new();
+            // Controlled scheduler samples exercise wall time beyond the deadline
+            // with less than a deadline's CPU time. Windows may let the real child
+            // finish early even with 24 competitors; that is a success, not failure
+            // to arrange the test. Other tests check the OS wait classification.
+            let mut used = OwnTime::new(std::ptr::null_mut(), std::ptr::null_mut(), None);
+            let mut wall = Duration::ZERO;
             for _ in 0..6 {
-                let (exit, took, _) = scan_process("work", last_cpu(), 24);
-                assert!(matches!(exit, Exit::Code(0)), "took {took:?}");
-                tries.push(took);
-                if took > LIMIT {
-                    return;
-                }
+                wall += LIMIT / 2;
+                assert!(used.charge(LIMIT / 2, WORK / 6, false) < LIMIT);
             }
-            panic!("it never waited past the limit: {tries:?}");
+            assert!(wall > LIMIT);
+            assert_eq!(used.so_far(), WORK);
+            let (exit, took, _) = scan_process("work", last_cpu(), 24);
+            assert!(matches!(exit, Exit::Code(0)), "took {took:?}");
         }
 
         #[test]

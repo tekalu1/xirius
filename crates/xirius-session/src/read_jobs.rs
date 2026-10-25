@@ -292,8 +292,16 @@ mod tests {
     #[test]
     fn a_panicking_read_finishes_as_an_error_and_the_pool_stays_usable() {
         let jobs = ReadJobs::<u8, bool>::default();
-        let id = jobs.request(0, || panic!("failed reader")).unwrap();
         let until = Instant::now() + Duration::from_secs(15);
+        // The parallel queue-capacity test shares the process-wide pool. None
+        // is back pressure, not a failed reader: retry admission as clients do.
+        let id = loop {
+            if let Some(id) = jobs.request(0, || panic!("failed reader")) {
+                break id;
+            }
+            assert!(Instant::now() < until);
+            std::thread::yield_now();
+        };
         let result = loop {
             if let Some(result) = jobs.take(&0, id) {
                 break result;
@@ -302,7 +310,13 @@ mod tests {
             std::thread::yield_now();
         };
         assert_eq!(result, Err(()));
-        let id = jobs.request(1, || true).unwrap();
+        let id = loop {
+            if let Some(id) = jobs.request(1, || true) {
+                break id;
+            }
+            assert!(Instant::now() < until);
+            std::thread::yield_now();
+        };
         loop {
             if let Some(result) = jobs.take(&1, id) {
                 assert_eq!(result, Ok(true));

@@ -311,6 +311,8 @@ fn the_list_shows_the_last_five_songs_newest_first_and_a_press_opens_one() {
         s.new_song_sync();
     }
     assert!(s.start_shown());
+    s.keep.settle_recent();
+    s.keep.poll_recent();
     let listed: Vec<_> = s.start_recent().into_iter().map(|r| r.dir).collect();
     let newest: Vec<_> = ["f", "e", "d", "c", "b"]
         .iter()

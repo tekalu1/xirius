@@ -221,6 +221,8 @@ enum Msg {
 
 /// What the voice, the thread that holds the engine and the device, is told.
 enum Call {
+    #[cfg(test)]
+    Barrier(Sender<()>),
     Cue {
         ask: u64,
         audio: Arc<AudioData>,
@@ -910,6 +912,10 @@ impl Voice {
                 (None, None) => self.rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
             };
             match call {
+                #[cfg(test)]
+                Ok(Call::Barrier(done)) => {
+                    let _ = done.send(());
+                }
                 Ok(Call::Cue { ask, audio, sink }) => self.cue(ask, audio, &sink),
                 Ok(Call::Halt { ask }) => {
                     self.halt();

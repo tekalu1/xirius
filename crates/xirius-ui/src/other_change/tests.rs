@@ -217,25 +217,24 @@ fn ui_289_a_run_of_writes_comes_in_once() {
     let root = tempfile::tempdir().unwrap();
     let (mut s, _g, dir) = studio(root.path());
     let steps = s.song.history().len();
-    // Five saves from another thread, closer together than the wait.
-    let writer = std::thread::spawn(move || {
-        for n in ["A", "B", "C", "D", "E"] {
-            other_app(&dir, &[n]);
-            std::thread::sleep(Duration::from_millis(60));
-        }
-    });
-    let mut seen = 0;
-    let t = Instant::now();
-    while !writer.is_finished() {
-        assert!(t.elapsed() < Duration::from_secs(30));
-        s.poll_other_change(|s| s.geometry(1440.0, 820.0));
-        seen = seen.max(s.song.history().len() - steps);
-        std::thread::sleep(Duration::from_millis(20));
+    // Supply notice times and the polling clock: disk speed under the default
+    // parallel runner must not turn a simulated burst into separate writes.
+    s.other.watch.as_mut().unwrap()._os.take();
+    let start = Instant::now();
+    let mut now = start;
+    for n in ["A", "B", "C", "D", "E"] {
+        other_app(&dir, &[n]);
+        *s.other.watch.as_ref().unwrap().heard.lock().unwrap() = Some(now);
+        s.poll_other_change_at(now, |s| s.geometry(1440.0, 820.0));
+        assert_eq!(
+            s.song.history().len(),
+            steps,
+            "nothing taken during the burst"
+        );
+        now += Duration::from_millis(60);
     }
-    writer.join().unwrap();
-    until(&mut s, "the last write comes in", |s| names(s).len() == 5);
-    quiet(&mut s, SETTLE * 2);
-    assert_eq!(seen, 0, "nothing is taken while the writes go on");
+    s.poll_other_change_at(now + SETTLE, |s| s.geometry(1440.0, 820.0));
+    s.poll_other_change_at(now + SETTLE * 2, |s| s.geometry(1440.0, 820.0));
     assert_eq!(s.song.history().len(), steps + 1, "one step for the run");
     assert_eq!(names(&s), ["A", "B", "C", "D", "E"]);
 }

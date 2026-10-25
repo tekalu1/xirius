@@ -196,6 +196,8 @@ impl Studio {
             self.poll_opening();
             std::thread::yield_now();
         }
+        self.keep.settle_recent();
+        self.keep.poll_recent();
     }
 
     pub(crate) fn input_blocked(&self) -> bool {
@@ -357,6 +359,9 @@ impl Studio {
                     None if self.song.is_sample() => crate::keep::LastOpen::Sample,
                     None => crate::keep::LastOpen::Empty,
                 });
+            if let Some(last) = last {
+                self.keep.closed_with(&last);
+            }
             let root = self.keep.root().map(Path::to_path_buf);
             let later = self.os_files.then(crate::notice::later_path);
             let done = if let Some(job) = &open.job {
@@ -382,13 +387,10 @@ impl Studio {
             // No Studio/Window is captured. A close keeps the previous last-open
             // record and records deferred cleanup before waiting for owner retirement.
             std::thread::spawn(move || {
-                if let Some(root) = root {
-                    if let Some(last) = last {
-                        crate::keep::Keep::at(root).closed_with(&last);
-                    }
-                    if let (Some(later), Ok(Some(closed))) = (&later, &closing) {
-                        let _ = crate::notice::leave_later(later, &[closed.dir().to_path_buf()]);
-                    }
+                if root.is_some()
+                    && let (Some(later), Ok(Some(closed))) = (&later, &closing)
+                {
+                    let _ = crate::notice::leave_later(later, &[closed.dir().to_path_buf()]);
                 }
                 while !done.load(Ordering::Acquire) && !halted.load(Ordering::Acquire) {
                     std::thread::sleep(Duration::from_millis(2));

@@ -243,6 +243,8 @@ mod tests {
         );
         stage(&mut s, &g, 0);
         assert!(s.start_shown());
+        s.keep.settle_recent();
+        s.keep.poll_recent();
         assert_eq!(s.start_recent().len(), 3);
         assert_eq!(s.rig().device.as_deref(), Some("Scarlett 2i2 (4th Gen)"));
         stage(&mut s, &g, 1);

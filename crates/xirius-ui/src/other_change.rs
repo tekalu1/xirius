@@ -114,7 +114,10 @@ pub struct OtherChange {
 impl Studio {
     /// Looks for another app's save. True when the screen changed.
     pub(crate) fn poll_other_change(&mut self, g: impl FnOnce(&Studio) -> Geometry) -> bool {
-        let now = Instant::now();
+        self.poll_other_change_at(Instant::now(), g)
+    }
+
+    fn poll_other_change_at(&mut self, now: Instant, g: impl FnOnce(&Studio) -> Geometry) -> bool {
         let dir = self.song.dir();
         if self.other.watch.as_ref().map(|w| &w.dir) != dir.as_ref() {
             // Another song, or the same in a new place: its file is the session's own.

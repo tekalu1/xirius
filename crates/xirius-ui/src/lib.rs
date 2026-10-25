@@ -219,6 +219,7 @@ pub mod range_trim_shots;
 pub mod rec_area;
 pub mod rec_panel;
 pub mod rec_shots;
+mod recent_worker;
 pub mod record_loss;
 pub mod record_loss_shots;
 pub mod recovery_card;

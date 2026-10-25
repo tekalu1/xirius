@@ -2242,7 +2242,9 @@ pub fn run(opts: Options) {
                     // The foreground executor continues pumping; no UI thread joins I/O.
                     cx.spawn(async move |cx| {
                         loop {
-                            if let Some(failures) = crate::browser_prefs_save::finish() {
+                            if crate::recent_worker::finish()
+                                && let Some(failures) = crate::browser_prefs_save::finish()
+                            {
                                 for error in failures {
                                     eprintln!("注意: {error}");
                                 }

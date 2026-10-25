@@ -412,6 +412,7 @@ mod tests {
         let keep = Keep::at(root);
         keep.remember(&dir, "落ちた曲", false, 1);
         let mut s = Studio::new(Song::empty());
+        keep.settle_recent();
         s.start_keeping(keep);
         s.wait_for_open_for_test();
         assert_eq!(s.recovery.as_ref().map(|c| c.steps), Some(2));

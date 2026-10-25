@@ -155,5 +155,17 @@ fn a_value_put_into_the_playing_plugin_while_a_new_mix_opens_stays_and_goes_on_t
     assert_eq!(delay, 128, "with the value put into the old one");
     audio.render(&mut [0.0; 512], 2);
     host.controller().poll(|_| {});
-    assert_eq!(playing(&server, &link), (now, 128));
+    // State notifications and explicit capture replies share states_seen. A
+    // notification already in flight can satisfy playing() before the capture
+    // requested after the render arrives. Observe the expected state without
+    // sending another edit: a value actually lost by the swap must still fail.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let state = playing(&server, &link);
+        if state == (now, 128) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "state after render: {state:?}");
+        std::thread::yield_now();
+    }
 }

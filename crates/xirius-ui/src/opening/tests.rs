@@ -26,6 +26,8 @@ fn finish(s: &mut Studio) {
         s.poll_opening();
         std::thread::yield_now();
     }
+    s.keep.settle_recent();
+    s.keep.poll_recent();
 }
 #[test]
 fn every_entry_returns_before_worker_io_and_blocks_input_before_the_veil() {
@@ -456,6 +458,7 @@ fn closing_an_unadopted_startup_preserves_the_previous_last_open() {
         Ok(())
     }));
     let mut s = Studio::new(Song::empty());
+    keep.settle_recent();
     s.start_keeping(crate::keep::Keep::at(root));
     s.poll_opening();
     entered.recv_timeout(Duration::from_secs(10)).unwrap();
@@ -463,7 +466,10 @@ fn closing_an_unadopted_startup_preserves_the_previous_last_open() {
     s.accept_open_close();
     release.release();
     s.wait_open_close(Duration::from_secs(10));
-    assert_eq!(keep.last_open(), Some(crate::keep::LastOpen::Song(path)));
+    assert_eq!(
+        keep.settled_last_open(),
+        Some(crate::keep::LastOpen::Song(path))
+    );
     drop(observe);
 }
 
@@ -534,7 +540,10 @@ fn close_and_quit_during_publication_or_retirement_do_not_promise_cancellation()
             release.release();
             s.wait_open_close(Duration::from_secs(15));
             assert!(destination.join("project.json").exists());
-            assert_eq!(Keep::at(root).last_open(), Some(LastOpen::Song(old)));
+            assert_eq!(
+                Keep::at(root).settled_last_open(),
+                Some(LastOpen::Song(old))
+            );
             drop(observation);
         }
     }
@@ -571,17 +580,21 @@ fn a_cancelled_startup_preserves_its_target_until_a_song_is_adopted() {
     let keep = crate::keep::Keep::at(root.clone());
     keep.closed_with(&crate::keep::LastOpen::Song(path.clone()));
     let mut s = Studio::new(Song::empty());
+    keep.settle_recent();
     s.start_keeping(crate::keep::Keep::at(root));
     let g = s.geometry(1200.0, 800.0);
     s.key(&g, "escape", false, false);
     finish(&mut s);
     s.keep.closed_with(&crate::keep::LastOpen::Empty);
-    assert_eq!(keep.last_open(), Some(crate::keep::LastOpen::Song(path)));
+    assert_eq!(
+        keep.settled_last_open(),
+        Some(crate::keep::LastOpen::Song(path))
+    );
     s.request_open(Request::New);
     finish(&mut s);
     assert!(!s.keep.preserves_startup_open());
     s.keep.closed_with(&crate::keep::LastOpen::Empty);
-    assert_eq!(keep.last_open(), Some(crate::keep::LastOpen::Empty));
+    assert_eq!(keep.settled_last_open(), Some(crate::keep::LastOpen::Empty));
 }
 
 fn start_mcp(
