@@ -2196,9 +2196,11 @@ pub fn run(opts: Options) {
             let closing = (!scripted).then(|| studio.clone());
             cx.on_window_closed(move |cx, _| {
                 if cx.windows().is_empty() {
+                    let mut recent_since = std::time::Instant::now();
                     if let Some(studio) = &closing {
                         match studio.try_borrow_mut() {
                             Ok(mut s) => {
+                                recent_since = s.keep.recent_close_since().unwrap_or(recent_since);
                                 // This song's cleanup joins those of the songs closed
                                 // before (REC-026), and its folder is let go: a close is
                                 // not a crash.
@@ -2241,8 +2243,17 @@ pub fn run(opts: Options) {
                     // Keep the process alive while accepted browser snapshots are saved.
                     // The foreground executor continues pumping; no UI thread joins I/O.
                     cx.spawn(async move |cx| {
+                        let mut recent_done = false;
                         loop {
-                            if crate::recent_worker::finish()
+                            if !recent_done
+                                && let Some(errors) = crate::recent_worker::finish(recent_since)
+                            {
+                                for error in errors {
+                                    eprintln!("recent list close: {error}");
+                                }
+                                recent_done = true;
+                            }
+                            if recent_done
                                 && let Some(failures) = crate::browser_prefs_save::finish()
                             {
                                 for error in failures {

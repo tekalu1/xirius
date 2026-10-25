@@ -1,12 +1,12 @@
-//! PRJ-031: one FIFO owner per recent-list root. No disk/OS lock is held by submit/poll.
+//! PRJ-031: a FIFO supervisor per root; submit/poll never wait on filesystem locks.
+use crate::keep::{LastOpen, RecentList, RecentSong};
 use std::{
     collections::{HashMap, VecDeque},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock, Weak, mpsc},
+    sync::{Arc, Condvar, Mutex, OnceLock, Weak, mpsc},
+    time::{Duration, Instant},
 };
-
-use crate::keep::{LastOpen, RecentList, RecentSong};
-
+pub(crate) const CLOSE_WAIT: Duration = Duration::from_secs(2);
 #[derive(Clone, Debug)]
 pub(crate) enum Update {
     Remember(PathBuf, String, bool, u64),
@@ -14,17 +14,27 @@ pub(crate) enum Update {
     Closed(LastOpen),
     Refresh,
 }
+#[derive(Debug)]
+pub(crate) struct Completion {
+    pub revision: u64,
+    pub result: Result<Vec<RecentSong>, String>,
+}
+#[derive(Clone, Debug)]
+struct Request {
+    revision: u64,
+    update: Update,
+    reply: mpsc::Sender<Completion>,
+}
 #[derive(Debug, Default)]
 struct State {
-    pending: usize,
+    queue: VecDeque<Request>,
     revision: u64,
     failure: Option<(u64, String)>,
 }
-type Completion = (Vec<RecentSong>, Option<String>);
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct Owner {
-    tx: mpsc::Sender<(u64, Update, mpsc::Sender<Completion>)>,
-    state: Arc<Mutex<State>>,
+    state: Mutex<State>,
+    wake: Condvar,
 }
 fn owners() -> &'static Mutex<HashMap<PathBuf, Weak<Owner>>> {
     static OWNERS: OnceLock<Mutex<HashMap<PathBuf, Weak<Owner>>>> = OnceLock::new();
@@ -32,118 +42,169 @@ fn owners() -> &'static Mutex<HashMap<PathBuf, Weak<Owner>>> {
 }
 impl Owner {
     pub fn at(root: &Path) -> Arc<Self> {
-        let mut registry = owners().lock().unwrap();
+        let mut registry = owners().lock().unwrap_or_else(|e| e.into_inner());
         registry.retain(|_, owner| owner.strong_count() > 0);
         if let Some(owner) = registry.get(root).and_then(Weak::upgrade) {
             return owner;
         }
-        let (tx, rx) = mpsc::channel::<(u64, Update, mpsc::Sender<Completion>)>();
-        let state = Arc::new(Mutex::new(State::default()));
-        let owner = Arc::new(Self {
-            tx,
-            state: state.clone(),
-        });
+        let owner = Arc::new(Self::default());
         let alive = owner.clone();
         let key = root.to_path_buf();
-        let list = RecentList::in_dir(root);
         std::thread::Builder::new()
             .name("recent-list".into())
-            .spawn(move || {
-                let mut queue = VecDeque::new();
-                // A failure retains the exact prefix. A later submission retries it
-                // before newer edits; a failed remember can never follow its forget.
-                loop {
-                    let message = match rx.recv_timeout(std::time::Duration::from_secs(1)) {
-                        Ok(message) => message,
-                        Err(mpsc::RecvTimeoutError::Timeout) => {
-                            let mut owners = owners().lock().unwrap();
-                            if Arc::strong_count(&alive) == 1 && state.lock().unwrap().pending == 0
-                            {
-                                owners.remove(&key);
-                                break;
-                            }
-                            continue;
-                        }
-                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                    };
-                    let (revision, update, reply) = message;
-                    queue.push_back((update, reply));
-                    while let Some((update, reply)) = queue.front() {
-                        let result = match update {
-                            Update::Remember(dir, name, draft, now) => {
-                                list.remember(dir, name, *draft, *now)
-                            }
-                            Update::Forget(dir) => list.forget(dir),
-                            Update::Closed(open) => list.closed_with(open),
-                            Update::Refresh => Ok(()),
-                        };
-                        match result {
-                            Ok(()) => {
-                                let songs = list.songs();
-                                let _ = reply.send((songs, None));
-                                queue.pop_front();
-                                let mut state = state.lock().unwrap();
-                                state.pending -= 1;
-                                state.failure = None;
-                            }
-                            Err(error) => {
-                                let error = error.to_string();
-                                let _ = reply.send((Vec::new(), Some(error.clone())));
-                                state.lock().unwrap().failure = Some((revision, error));
-                                break;
-                            }
-                        }
-                    }
-                }
-            })
+            .spawn(move || alive.run(key))
             .expect("start recent-list owner");
         registry.insert(root.to_path_buf(), Arc::downgrade(&owner));
         owner
     }
+    fn run(self: Arc<Self>, root: PathBuf) {
+        let list = RecentList::in_dir(&root);
+        loop {
+            let next = {
+                let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+                if state.queue.is_empty()
+                    || state
+                        .failure
+                        .as_ref()
+                        .is_some_and(|(r, _)| *r == state.revision)
+                {
+                    let (state, _) = self
+                        .wake
+                        .wait_timeout(state, Duration::from_secs(1))
+                        .unwrap_or_else(|e| e.into_inner());
+                    drop(state);
+                    let mut registry = owners().lock().unwrap_or_else(|e| e.into_inner());
+                    let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+                    if Arc::strong_count(&self) == 1 && state.queue.is_empty() {
+                        registry.remove(&root);
+                        return;
+                    }
+                    None
+                } else {
+                    Some((
+                        state.queue.front().expect("nonempty queue").clone(),
+                        state.revision,
+                    ))
+                }
+            };
+            let Some((request, attempt)) = next else {
+                continue;
+            };
+            // The supervisor retains the command until update AND readback succeed.
+            // A panic cannot disconnect submit or discard accepted FIFO entries.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                match &request.update {
+                    Update::Remember(dir, name, draft, now) => {
+                        list.remember(dir, name, *draft, *now)
+                    }
+                    Update::Forget(dir) => list.forget(dir),
+                    Update::Closed(open) => list.closed_with(open),
+                    Update::Refresh => Ok(()),
+                }
+                .map_err(|e| e.to_string())?;
+                #[cfg(test)]
+                let _ = xirius_core::io_test::before("recent_readback", list.path());
+                Ok(list.songs())
+            }))
+            .unwrap_or_else(|_| Err("recent-list worker panicked; update retained".into()));
+            if let Err(error) = &result {
+                eprintln!("recent list update failed: {error}");
+            }
+            let _ = request.reply.send(Completion {
+                revision: request.revision,
+                result: result.clone(),
+            });
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            match result {
+                Ok(_) => {
+                    state.queue.pop_front();
+                    state.failure = None;
+                }
+                Err(error) => state.failure = Some((attempt, error)),
+            }
+        }
+    }
     pub fn submit(&self, update: Update) -> mpsc::Receiver<Completion> {
-        let (tx, rx) = mpsc::channel();
-        // Serialize enqueue and accounting, never the transaction itself.
-        let mut state = self.state.lock().unwrap();
-        state.pending += 1;
+        let (reply, rx) = mpsc::channel();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.revision += 1;
-        state.failure = None;
-        self.tx
-            .send((state.revision, update, tx))
-            .expect("recent-list owner alive");
+        let revision = state.revision;
+        state.queue.push_back(Request {
+            revision,
+            update,
+            reply,
+        });
+        self.wake.notify_one();
         rx
     }
     pub fn status(&self) -> Option<Result<(), String>> {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((revision, error)) = &state.failure
             && *revision == state.revision
         {
             Some(Err(error.clone()))
-        } else if state.pending == 0 {
+        } else if state.queue.is_empty() {
             Some(Ok(()))
         } else {
             None
         }
     }
     #[cfg(test)]
+    pub fn pending(&self) -> usize {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .queue
+            .len()
+    }
+    #[cfg(test)]
     pub fn settle(&self) {
-        let end = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let end = Instant::now() + Duration::from_secs(15);
         while self.status().is_none() {
-            assert!(
-                std::time::Instant::now() < end,
-                "recent-list owner did not finish"
-            );
+            assert!(Instant::now() < end, "recent-list owner did not finish");
             std::thread::yield_now();
         }
     }
 }
-
-/// Last-window fallback: keep pumping until every accepted update has completed.
-/// Normal closes check status while their window is still available to show errors.
-pub(crate) fn finish() -> bool {
-    owners()
+/// Terminal errors/timeouts are logged once by the caller; no invisible wait forever.
+pub(crate) fn finish(since: Instant) -> Option<Vec<String>> {
+    let statuses: Vec<_> = owners()
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .values()
         .filter_map(Weak::upgrade)
-        .all(|owner| matches!(owner.status(), Some(Ok(()))))
+        .map(|o| o.status())
+        .collect();
+    finish_statuses(since.elapsed(), statuses)
+}
+fn finish_statuses(
+    elapsed: Duration,
+    statuses: Vec<Option<Result<(), String>>>,
+) -> Option<Vec<String>> {
+    if elapsed < CLOSE_WAIT && statuses.iter().any(Option::is_none) {
+        return None;
+    }
+    Some(
+        statuses
+            .into_iter()
+            .filter_map(|s| match s {
+                Some(Ok(())) => None,
+                Some(Err(e)) => Some(e),
+                None => Some("recent list update unfinished at shutdown deadline".into()),
+            })
+            .collect(),
+    )
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn shutdown_is_terminal_on_failure_or_deadline() {
+        assert!(finish_statuses(Duration::ZERO, vec![None]).is_none());
+        assert_eq!(finish_statuses(CLOSE_WAIT, vec![None]).unwrap().len(), 1);
+        assert_eq!(
+            finish_statuses(Duration::ZERO, vec![Some(Err("denied".into()))]),
+            Some(vec!["denied".into()])
+        );
+    }
 }

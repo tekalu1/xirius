@@ -32,7 +32,7 @@ use crate::studio::Studio;
 /// How long 保存中 stays after an edit, long enough to be seen (mock § 06).
 pub const FLASH_MS: u64 = 450;
 type RecentReplies =
-    std::cell::RefCell<Vec<std::sync::mpsc::Receiver<(Vec<RecentSong>, Option<String>)>>>;
+    std::cell::RefCell<Vec<std::sync::mpsc::Receiver<crate::recent_worker::Completion>>>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SaveMark {
     Saved,
@@ -47,6 +47,9 @@ pub struct Keep {
     preserve_startup_open: bool,
     owner: Option<Arc<crate::recent_worker::Owner>>,
     refresh: RecentReplies,
+    applied_revision: u64,
+    save_generation: u64,
+    recent_close_save_generation: u64,
     closing_recent: Option<std::time::Instant>,
     recent_close_ready: bool,
     recent_close_project: Option<Arc<Project>>,
@@ -123,18 +126,37 @@ impl Keep {
 
     pub(crate) fn poll_recent(&mut self) -> bool {
         let mut changed = false;
+        #[cfg(test)]
+        let root = self.root.clone();
         self.refresh.get_mut().retain(|rx| {
             loop {
                 match rx.try_recv() {
-                    Ok((songs, error)) => {
+                    Ok(completion) => {
+                        if completion.revision < self.applied_revision {
+                            continue;
+                        }
+                        self.applied_revision = completion.revision;
                         changed = true;
-                        if let Some(error) = error {
-                            self.recent_error.replace(Some(error));
-                        } else {
-                            self.listed = songs;
+                        match completion.result {
+                            Ok(songs) => {
+                                self.listed = songs;
+                                self.recent_error.take();
+                            }
+                            Err(error) => {
+                                self.recent_error.replace(Some(error));
+                            }
                         }
                     }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => return true,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        #[cfg(test)]
+                        if let Some(root) = &root {
+                            let _ = xirius_core::io_test::before(
+                                "recent_poll_empty",
+                                &root.join("recent.json"),
+                            );
+                        }
+                        return true;
+                    }
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => return false,
                 }
             }
@@ -165,6 +187,19 @@ impl Keep {
     pub(crate) fn settled_last_open(&self) -> Option<LastOpen> {
         self.settle_recent();
         self.last_open()
+    }
+
+    pub(crate) fn save_started(&mut self) -> bool {
+        self.save_generation += 1;
+        let closing = self.closing_recent.take().is_some();
+        self.recent_close_ready = false;
+        self.recent_close_project = None;
+        self.recent_close_open = None;
+        closing
+    }
+
+    pub(crate) fn recent_close_since(&self) -> Option<std::time::Instant> {
+        self.closing_recent
     }
 
     /// The recent songs as the last [`Keep::sync`] read them.
@@ -265,22 +300,27 @@ impl Keep {
 }
 
 impl Studio {
-    /// Wait asynchronously for at most two seconds. On timeout/failure retain the
-    /// window and the FIFO, allowing a later close to retry the same prefix.
+    /// Auxiliary metadata gets at most two seconds; failure never vetoes a close.
     pub(crate) fn request_recent_close(&mut self) -> bool {
-        if self.keep.owner.is_none()
-            || (self.keep.recent_close_ready
-                && self.keep.recent_close_open.as_ref() == Some(&self.open_now())
-                && self
-                    .keep
-                    .recent_close_project
-                    .as_ref()
-                    .is_some_and(|project| Arc::ptr_eq(project, &self.project())))
-        {
+        if self.saving.is_some() {
+            return false;
+        }
+        let same = self.keep.recent_close_save_generation == self.keep.save_generation
+            && self.keep.recent_close_open.as_ref() == Some(&self.open_now())
+            && self
+                .keep
+                .recent_close_project
+                .as_ref()
+                .is_some_and(|p| Arc::ptr_eq(p, &self.project()));
+        if self.keep.owner.is_none() || (self.keep.recent_close_ready && same) {
             return true;
         }
-        if self.keep.closing_recent.is_none() {
+        if !same {
+            self.keep.closing_recent = None;
             self.keep.recent_close_ready = false;
+        }
+        if self.keep.closing_recent.is_none() {
+            self.keep.recent_close_save_generation = self.keep.save_generation;
             self.keep.recent_close_project = Some(self.project());
             self.keep.recent_close_open = Some(self.open_now());
             self.window_ask = None;
@@ -296,29 +336,28 @@ impl Studio {
     }
 
     pub(crate) fn poll_recent_close(&mut self) -> bool {
+        if self.saving.is_some() || self.keep.recent_close_ready {
+            return false;
+        }
         let Some(since) = self.keep.closing_recent else {
             return false;
         };
-        let status = self.keep.owner.as_ref().and_then(|owner| owner.status());
-        let result = match status {
+        if self.keep.recent_close_save_generation != self.keep.save_generation {
+            return false;
+        }
+        let result = match self.keep.owner.as_ref().and_then(|o| o.status()) {
             Some(result) => result,
-            None if since.elapsed() >= std::time::Duration::from_secs(2) => {
-                Err("最近の曲を記録中のため終了できません".into())
+            None if since.elapsed() >= crate::recent_worker::CLOSE_WAIT => {
+                Err("recent list update unfinished at shutdown deadline".into())
             }
             None => return false,
         };
-        self.keep.closing_recent = None;
-        match result {
-            Ok(()) => {
-                self.keep.recent_close_ready = true;
-                self.window_ask = Some(crate::context::key_more::WindowAsk::Quit);
-            }
-            Err(error) => {
-                self.leaving_ready = false;
-                self.window_ask = None;
-                self.error = Some(error);
-            }
+        if let Err(error) = result {
+            eprintln!("recent list close: {error}");
         }
+        // Keep the original deadline for last-window fallback; do not start another wait.
+        self.keep.recent_close_ready = true;
+        self.window_ask = Some(crate::context::key_more::WindowAsk::Quit);
         true
     }
 
@@ -326,6 +365,10 @@ impl Studio {
         let changed = self.keep.poll_recent();
         let error = self.keep.recent_error.take();
         if let Some(error) = error {
+            if self.keep.closing_recent.is_some() {
+                eprintln!("recent list close: {error}");
+                return true;
+            }
             self.warn(
                 format!("最近の曲と復旧の一覧を記録できません（{error}）"),
                 None,
@@ -570,10 +613,10 @@ mod tests {
         s.keep.closing_recent = Some(Instant::now() - Duration::from_secs(3));
         s.window_ask = None;
         assert!(s.poll_recent_close());
-        assert!(s.error.is_some());
-        assert!(
-            s.window_ask.is_none(),
-            "timeout retains the window and queued updates"
+        assert!(s.error.is_none());
+        assert_eq!(
+            s.window_ask,
+            Some(crate::context::key_more::WindowAsk::Quit)
         );
         gate.release();
         s.keep.settle_recent();
@@ -593,39 +636,183 @@ mod tests {
     }
 
     #[test]
-    fn close_failure_keeps_the_window_and_retries_the_failed_prefix_before_newer_edits() {
-        let (mut s, root, _tmp) = kept("close-failure");
-        add(&mut s, "draft");
+    fn recent_failure_never_vetoes_the_first_close() {
+        for kind in [
+            std::io::ErrorKind::ReadOnlyFilesystem,
+            std::io::ErrorKind::StorageFull,
+            std::io::ErrorKind::Other,
+        ] {
+            let (mut s, root, _tmp) = kept("close-error");
+            add(&mut s, "draft");
+            s.keep.settle_recent();
+            s.keep.poll_recent();
+            let watch = root.join("recent.json");
+            let observation = xirius_core::io_test::observe(Arc::new(move |op, path| {
+                if op == "write" && path == watch {
+                    return Err(std::io::Error::from(kind));
+                }
+                Ok(())
+            }));
+            assert!(!s.request_close());
+            s.keep.settle_recent();
+            assert!(s.poll_recent_close());
+            s.poll_recent_keep();
+            assert!(s.error.is_none());
+            assert!(s.toast.is_none());
+            assert_eq!(
+                s.window_ask.take(),
+                Some(crate::context::key_more::WindowAsk::Quit)
+            );
+            assert!(
+                s.request_close(),
+                "the single close request finishes without lifting the failure"
+            );
+            s.release_song();
+            drop(observation);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_readonly_recent_file_does_not_prevent_the_first_close() {
+        let (mut s, root, _tmp) = kept("readonly-close");
+        add(&mut s, "saved");
         s.keep.settle_recent();
-        let watch = root.join("recent.json");
+        s.keep.poll_recent();
+        let path = root.join("recent.json");
+        struct Restore(PathBuf, std::fs::Permissions);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                std::fs::set_permissions(&self.0, self.1.clone()).unwrap();
+            }
+        }
+        let restore = Restore(
+            path.clone(),
+            std::fs::metadata(&path).unwrap().permissions(),
+        );
+        let mut readonly = restore.1.clone();
+        readonly.set_readonly(true);
+        std::fs::set_permissions(&path, readonly).unwrap();
+        assert!(!s.request_close());
+        s.keep.settle_recent();
+        assert!(s.keep.owner.as_ref().unwrap().status().unwrap().is_err());
+        assert!(s.poll_recent_close());
+        s.poll_recent_keep();
+        assert!(s.error.is_none() && s.toast.is_none());
+        assert_eq!(
+            s.window_ask.take(),
+            Some(crate::context::key_more::WindowAsk::Quit)
+        );
+        assert!(s.request_close());
+        s.release_song();
+        drop(restore);
+    }
+
+    #[test]
+    fn recent_lock_child() {
+        use std::io::{BufRead, Write};
+        let Some(root) = std::env::var_os("XIRIUS_RECENT_CLOSE_LOCK_TEST") else {
+            return;
+        };
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(PathBuf::from(root).join("recent.lock"))
+            .unwrap();
+        file.lock().unwrap();
+        println!("RECENT_LOCK_HELD");
+        std::io::stdout().flush().unwrap();
+        let mut release = String::new();
+        std::io::stdin().lock().read_line(&mut release).unwrap();
+        assert_eq!(release.trim(), "release");
+    }
+
+    #[test]
+    fn a_lock_held_by_another_process_cannot_veto_close_or_restart_the_deadline() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::process::{Child, Command, Stdio};
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+        let (mut s, root, _tmp) = kept("process-lock-close");
+        s.keep.settle_recent();
+        s.keep.poll_recent();
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", "keep::tests::recent_lock_child", "--nocapture"])
+            .env("XIRIUS_RECENT_CLOSE_LOCK_TEST", &root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+        }
+        struct Locker(Child);
+        impl Drop for Locker {
+            fn drop(&mut self) {
+                if self.0.try_wait().ok().flatten().is_none() {
+                    let _ = self.0.kill();
+                    let _ = self.0.wait();
+                }
+            }
+        }
+        let mut locker = Locker(command.spawn().unwrap());
+        let output = locker.0.stdout.take().unwrap();
+        let (held_tx, held) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(output).lines() {
+                if line.unwrap().contains("RECENT_LOCK_HELD") {
+                    let _ = held_tx.send(());
+                }
+            }
+        });
+        held.recv_timeout(Duration::from_secs(15)).unwrap();
+        let watch = root.join("recent.lock");
+        let (tx, entered) = mpsc::channel();
         let observation = xirius_core::io_test::observe(Arc::new(move |op, path| {
-            if op == "write" && path == watch {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "recent denied",
-                ));
+            if op == "recent_lock_wait" && path == watch {
+                let _ = tx.send(());
             }
             Ok(())
         }));
-        s.window_ask = None;
+        add(&mut s, "draft");
+        entered.recv_timeout(Duration::from_secs(15)).unwrap();
         assert!(!s.request_close());
-        s.keep.settle_recent();
+        assert!(!s.poll_recent_close());
+        let since = Instant::now() - crate::recent_worker::CLOSE_WAIT;
+        s.keep.closing_recent = Some(since);
         assert!(s.poll_recent_close());
-        assert!(s.error.as_ref().unwrap().contains("recent denied"));
-        assert!(s.window_ask.is_none());
-        drop(observation);
-        let dir = s.song.record_dir().unwrap();
-        s.keep.forget(&dir);
-        s.keep.closed_with(&LastOpen::Sample);
-        s.keep.settle_recent();
-        let list = RecentList::in_dir(&root);
-        assert!(list.songs().is_empty(), "retry must precede forget");
-        assert_eq!(list.last_open(), LastOpen::Sample);
-        assert!(!s.request_close());
-        s.keep.settle_recent();
-        assert!(s.poll_recent_close());
+        assert!(s.error.is_none() && s.toast.is_none());
+        assert_eq!(
+            s.window_ask.take(),
+            Some(crate::context::key_more::WindowAsk::Quit)
+        );
         assert!(s.request_close());
-        assert_eq!(list.last_open(), LastOpen::Song(dir));
+        assert_eq!(s.keep.recent_close_since(), Some(since));
+        assert!(
+            crate::recent_worker::finish(since).is_some(),
+            "last-window fallback shares the expired deadline"
+        );
+        assert!(
+            locker.0.try_wait().unwrap().is_none(),
+            "the other process still holds the lock"
+        );
+        s.release_song();
+        writeln!(locker.0.stdin.as_mut().unwrap(), "release").unwrap();
+        let end = Instant::now() + Duration::from_secs(15);
+        loop {
+            if let Some(status) = locker.0.try_wait().unwrap() {
+                assert!(status.success());
+                break;
+            }
+            assert!(Instant::now() < end);
+            std::thread::yield_now();
+        }
+        s.keep.settle_recent();
+        drop(observation);
     }
 
     #[test]
@@ -669,6 +856,195 @@ mod tests {
         assert!(RecentList::in_dir(&root).songs().is_empty());
         assert_eq!(RecentList::in_dir(&root).last_open(), LastOpen::Sample);
         drop(observation);
+    }
+
+    #[test]
+    fn save_as_during_recent_close_waits_for_the_actual_save_job() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        };
+        use std::time::Duration;
+        for fail in [false, true] {
+            let (mut s, root, _tmp) = kept("close-save-as");
+            add(&mut s, "saved");
+            let original = root.join("original");
+            s.finish_file_request_sync(crate::studio::FileRequest::SaveAs, &original);
+            s.keep.settle_recent();
+            s.keep.poll_recent();
+            let project = s.project();
+            let recent_gate = Gate::new();
+            let save_gate = Gate::new();
+            let recent_held = recent_gate.0.clone();
+            let save_held = save_gate.0.clone();
+            let watch_recent = root.join("recent.json");
+            let destination = root.join("copy");
+            let watch_save = destination.clone();
+            let once_recent = AtomicBool::new(false);
+            let once_save = AtomicBool::new(false);
+            let (recent_tx, recent_entered) = mpsc::channel();
+            let (save_tx, save_entered) = mpsc::channel();
+            let observation = xirius_core::io_test::observe(Arc::new(move |op, path| {
+                if op == "write"
+                    && path == watch_recent
+                    && !once_recent.swap(true, Ordering::SeqCst)
+                {
+                    recent_tx.send(()).unwrap();
+                    let lock = recent_held.0.lock().unwrap();
+                    drop(
+                        recent_held
+                            .1
+                            .wait_while(lock, |released| !*released)
+                            .unwrap(),
+                    );
+                }
+                if op == "write"
+                    && path.starts_with(&watch_save)
+                    && !once_save.swap(true, Ordering::SeqCst)
+                {
+                    save_tx.send(()).unwrap();
+                    let lock = save_held.0.lock().unwrap();
+                    drop(save_held.1.wait_while(lock, |released| !*released).unwrap());
+                    if fail {
+                        return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+                    }
+                }
+                Ok(())
+            }));
+            assert!(!s.request_close());
+            recent_entered
+                .recv_timeout(Duration::from_secs(15))
+                .unwrap();
+            s.start_file_request(crate::studio::FileRequest::SaveAs, &destination);
+            save_entered.recv_timeout(Duration::from_secs(15)).unwrap();
+            assert!(
+                Arc::ptr_eq(&project, &s.project()),
+                "the placeholder retains the old Arc"
+            );
+            assert_eq!(s.song.dir(), Some(original.clone()));
+            recent_gate.release();
+            s.keep.settle_recent();
+            assert!(!s.poll_recent_close());
+            assert!(
+                !s.request_close(),
+                "a completed recent barrier cannot bypass Save As"
+            );
+            assert!(s.saving.is_some());
+            assert!(s.window_ask.is_none());
+            save_gate.release();
+            s.wait_for_save();
+            if fail {
+                assert_eq!(s.song.dir(), Some(original));
+                assert!(s.toast.as_ref().is_some_and(|t| t.alert));
+                assert!(
+                    s.window_ask.is_none(),
+                    "save failure keeps its existing confirmation flow"
+                );
+                assert!(!s.keep.recent_close_ready);
+            } else {
+                assert_eq!(s.song.dir(), Some(destination.clone()));
+                assert_eq!(
+                    s.window_ask.take(),
+                    Some(crate::context::key_more::WindowAsk::Quit)
+                );
+                assert!(!s.request_close());
+                s.keep.settle_recent();
+                assert!(s.poll_recent_close());
+                assert!(s.request_close());
+                s.release_song();
+                assert_eq!(
+                    RecentList::in_dir(&root).last_open(),
+                    LastOpen::Song(destination)
+                );
+            }
+            drop(observation);
+        }
+    }
+
+    #[test]
+    fn a_completion_between_empty_and_the_next_receiver_never_rolls_back_the_cache() {
+        use crate::recent_worker::Completion;
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        };
+        for old_failure in [false, true] {
+            let tmp = scratch("completion-order");
+            let mut keep = Keep::at(tmp.path().to_path_buf());
+            let (a_tx, a_rx) = mpsc::channel();
+            let (b_tx, b_rx) = mpsc::channel();
+            keep.refresh.get_mut().extend([a_rx, b_rx]);
+            let newer = RecentSong {
+                dir: tmp.path().join("new"),
+                name: "new".into(),
+                draft: false,
+                at_ms: 2,
+            };
+            let expected = newer.clone();
+            let watch = tmp.path().join("recent.json");
+            let once = AtomicBool::new(false);
+            let observation = xirius_core::io_test::observe(Arc::new(move |op, path| {
+                if op == "recent_poll_empty" && path == watch && !once.swap(true, Ordering::SeqCst)
+                {
+                    a_tx.send(Completion {
+                        revision: 1,
+                        result: if old_failure {
+                            Err("old failure".into())
+                        } else {
+                            Ok(Vec::new())
+                        },
+                    })
+                    .unwrap();
+                    b_tx.send(Completion {
+                        revision: 2,
+                        result: Ok(vec![newer.clone()]),
+                    })
+                    .unwrap();
+                }
+                Ok(())
+            }));
+            assert!(keep.poll_recent());
+            assert_eq!(keep.listed(), std::slice::from_ref(&expected));
+            assert!(!keep.poll_recent());
+            assert_eq!(keep.listed(), &[expected]);
+            assert!(keep.recent_error.take().is_none());
+            drop(observation);
+        }
+    }
+
+    #[test]
+    fn worker_panics_retain_the_fifo_and_allow_poll_submit_and_close() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        for operation in ["write", "recent_readback"] {
+            let (mut s, root, _tmp) = kept("worker-panic");
+            s.keep.settle_recent();
+            s.keep.poll_recent();
+            let watch = root.join("recent.json");
+            let once = AtomicBool::new(false);
+            let observation = xirius_core::io_test::observe(Arc::new(move |op, path| {
+                if op == operation && path == watch && !once.swap(true, Ordering::SeqCst) {
+                    panic!("injected recent worker panic");
+                }
+                Ok(())
+            }));
+            add(&mut s, "recoverable");
+            s.keep.settle_recent();
+            assert!(s.keep.owner.as_ref().unwrap().pending() > 0);
+            assert!(s.poll_recent_keep());
+            assert!(s.toast.as_ref().unwrap().text.contains("panicked"));
+            let draft = s.song.record_dir().unwrap();
+            s.keep.queue_recent(crate::recent_worker::Update::Refresh);
+            s.keep.settle_recent();
+            assert!(s.keep.recent().iter().any(|r| r.dir == draft && r.draft));
+            s.poll_recent_keep();
+            assert_eq!(s.keep.owner.as_ref().unwrap().pending(), 0);
+            assert!(!s.request_close());
+            s.keep.settle_recent();
+            assert!(s.poll_recent_close());
+            assert!(s.request_close());
+            s.release_song();
+            drop(observation);
+        }
     }
 
     #[test]

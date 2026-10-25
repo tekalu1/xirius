@@ -195,6 +195,11 @@ impl Studio {
     }
 
     fn launch_save(&mut self, target: Option<PathBuf>, leaving: Option<Leave>) {
+        let close_when_done = self.keep.save_started();
+        self.leaving_ready = false;
+        if close_when_done {
+            self.window_ask = None;
+        }
         self.popup = None;
         self.palette = None;
         self.error = None;
@@ -243,7 +248,7 @@ impl Studio {
             target,
             leaving,
             draft,
-            close_when_done: false,
+            close_when_done,
             stop_take: false,
         });
     }
@@ -343,6 +348,12 @@ impl Studio {
     }
 
     pub(crate) fn request_close(&mut self) -> bool {
+        // A placeholder Session can retain the old Arc and path during Save As.
+        // Always wait for the actual job before consulting any cached close state.
+        if let Some(save) = &mut self.saving {
+            save.close_when_done = true;
+            return false;
+        }
         if self.prefs_closing {
             return false;
         }
