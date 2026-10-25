@@ -1034,6 +1034,7 @@ mod tests {
             let mut studio = sample();
             for shot in SCRIPT {
                 for act in shot.acts {
+                    crate::browser_files::settle_rows(&studio.browser);
                     let g = studio.geometry(
                         width,
                         860.0

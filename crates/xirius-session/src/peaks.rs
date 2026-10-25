@@ -264,6 +264,8 @@ pub fn file_stamped(source: &Path, store: &Path, stamp: Stamp) -> PathBuf {
 
 /// The peaks kept for `source` in `store`, if they are there and readable.
 pub fn load(source: &Path, store: &Path) -> Option<Peaks> {
+    #[cfg(feature = "test-io")]
+    xirius_core::io_test::before("peaks_load", source).ok()?;
     load_stamped(source, store, Stamp::of(source))
 }
 
@@ -346,9 +348,16 @@ pub fn request(source: &Path, store: &Path) {
         .name("xirius-peaks".into())
         .spawn(move || {
             // A build that panics ends as one that failed, so [`wait`] does not wait for it.
-            let built = std::panic::catch_unwind(|| ensure(&path, &store))
-                .unwrap_or_else(|_| Err(format!("ピークを作れません: {}", path.display())))
-                .map(Arc::new);
+            let built = std::panic::catch_unwind(|| {
+                #[cfg(feature = "test-io")]
+                xirius_core::io_test::before("peaks_source", &path).map_err(|e| e.to_string())?;
+                if !path.is_file() {
+                    return Err("波形の元のファイルが見つかりません".into());
+                }
+                ensure(&path, &store)
+            })
+            .unwrap_or_else(|_| Err(format!("ピークを作れません: {}", path.display())))
+            .map(Arc::new);
             let mut j = jobs().lock().unwrap_or_else(|e| e.into_inner());
             j.running.remove(&path);
             j.done.insert(path, built);
@@ -364,6 +373,7 @@ pub fn request(source: &Path, store: &Path) {
                 source.to_path_buf(),
                 Err(format!("ピークを作れません: {e}")),
             );
+            FINISHED.fetch_add(1, Ordering::AcqRel);
         }
     }
 }

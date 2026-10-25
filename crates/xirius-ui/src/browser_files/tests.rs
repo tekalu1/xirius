@@ -30,14 +30,17 @@ fn on(top: &Path) -> Browser {
     let mut b = Browser::new();
     b.press_rail(RailTab::Files);
     b.add_place(top).unwrap();
+    settle_rows(&b);
     b
 }
 
 fn layout(b: &Browser) -> BrowserLayout {
+    settle_rows(b);
     b.layout(Rect::new(52.0, 6.0, Layout::BROWSER_W, 470.0))
 }
 
 fn names(b: &Browser) -> Vec<String> {
+    settle_rows(b);
     b.rows()
         .iter()
         .map(|r| match r {
@@ -51,6 +54,7 @@ fn names(b: &Browser) -> Vec<String> {
 }
 
 fn key(b: &Browser, name: &str) -> String {
+    settle_rows(b);
     b.rows()
         .into_iter()
         .find_map(|r| match r {
@@ -60,6 +64,154 @@ fn key(b: &Browser, name: &str) -> String {
             _ => None,
         })
         .unwrap_or_else(|| panic!("no row {name}"))
+}
+
+struct Release(Arc<(Mutex<bool>, std::sync::Condvar)>);
+impl Release {
+    fn new() -> Self {
+        Self(Arc::new((Mutex::new(false), std::sync::Condvar::new())))
+    }
+    fn release(&self) {
+        *self.0.0.lock().unwrap() = true;
+        self.0.1.notify_all();
+    }
+}
+impl Drop for Release {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+#[test]
+fn listing_and_clip_drawing_inputs_return_while_place_io_is_held() {
+    use crate::wave::{self, Look};
+    use xirius_session::peaks;
+
+    // These gates stay closed until the UI has prepared repeated frames. There is
+    // no elapsed-time assertion: even indefinitely stalled I/O must not block it.
+    for held in [
+        "browser_read_dir",
+        "browser_file_type",
+        "peaks_source",
+        "peaks_load",
+    ] {
+        let tmp = folder("io-gate");
+        let root = tmp.path().to_path_buf();
+        let wav = root.join("clip.wav");
+        let store = root.join("cache");
+        xirius_session::export::write_wav(&wav, &[0.5; 256], &[0.5; 256], 48_000, 16).unwrap();
+        // Also exercise the already-built peak file, which used to be loaded in look.
+        peaks::ensure(&wav, &store).unwrap();
+        let b = on(&root);
+        forget();
+        wave::forget();
+        let ui = std::thread::current().id();
+        let release = Release::new();
+        let gate = release.0.clone();
+        let (tx, entered) = channel();
+        let (trace_tx, trace) = channel();
+        let observe = xirius_core::io_test::observe(Arc::new(move |op, path| {
+            if path.starts_with(&root) && (op.starts_with("browser_") || op.starts_with("peaks_")) {
+                let thread = std::thread::current().id();
+                assert_ne!(thread, ui, "{op} must not run on the UI thread");
+                let _ = trace_tx.send((op.to_string(), thread));
+                if op == held {
+                    let _ = tx.send(());
+                    let guard = gate.0.lock().unwrap();
+                    drop(gate.1.wait_while(guard, |done| !*done).unwrap());
+                }
+            }
+            Ok(())
+        }));
+        b.rows();
+        assert!(matches!(wave::look(&wav, &store), Look::Making));
+        entered.recv_timeout(Duration::from_secs(10)).expect(held);
+        for _ in 0..8 {
+            poll();
+            wave::poll();
+            // The same list/layout and peak lookup used by the renderer, without
+            // opening a window or touching the desktop or audio output.
+            b.layout(Rect::new(52.0, 6.0, Layout::BROWSER_W, 470.0));
+            let look = wave::look(&wav, &store);
+            if held.starts_with("peaks_") {
+                assert!(matches!(look, Look::Making));
+            }
+        }
+        release.release();
+        settle_rows(&b);
+        peaks::wait();
+        wave::poll();
+        assert!(matches!(wave::look(&wav, &store), Look::Ready(_)));
+        let ops: Vec<_> = trace
+            .try_iter()
+            .map(|(op, thread)| {
+                assert_ne!(thread, ui);
+                op
+            })
+            .collect();
+        assert!(ops.iter().any(|op| op == held));
+        assert!(names(&b).iter().any(|n| n == "clip.wav"));
+        drop(observe);
+        wave::forget();
+        forget();
+    }
+}
+
+#[test]
+fn refresh_keeps_the_old_rows_and_navigation_discards_the_old_receiver() {
+    let tmp = folder("refresh");
+    let old = tmp.path().join("old");
+    let new = tmp.path().join("new");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::create_dir_all(&new).unwrap();
+    std::fs::write(old.join("old.wav"), b"").unwrap();
+    std::fs::write(new.join("new.mid"), b"").unwrap();
+    let mut b = on(&old);
+    b.add_place(&new).unwrap();
+    b.set_location(1);
+    settle_rows(&b);
+    let release = Release::new();
+    let gate = release.0.clone();
+    let path = old.clone();
+    let ui = std::thread::current().id();
+    let (tx, entered) = channel();
+    let (done, returned) = channel();
+    let observe = xirius_core::io_test::observe(Arc::new(move |op, p| {
+        if op == "browser_read_dir" && p == path {
+            assert_ne!(std::thread::current().id(), ui);
+            let _ = tx.send(());
+            let guard = gate.0.lock().unwrap();
+            drop(gate.1.wait_while(guard, |done| !*done).unwrap());
+        }
+        if op == "browser_list_discarded" && p == path {
+            let _ = done.send(());
+        }
+        Ok(())
+    }));
+    LISTS.with(|l| l.borrow_mut().dirs.get_mut(&old).unwrap().at = Instant::now() - FRESH);
+    assert!(
+        b.rows()
+            .iter()
+            .any(|r| matches!(r, BRow::File { name, .. } if name == "old.wav"))
+    );
+    entered.recv_timeout(Duration::from_secs(10)).unwrap();
+    // Repeated paints do not queue additional refreshes.
+    for _ in 0..8 {
+        b.rows();
+    }
+    assert!(entered.try_recv().is_err());
+    b.set_location(2);
+    settle_rows(&b);
+    assert_eq!(names(&b), ["new.mid"]);
+    assert!(LISTS.with(|l| !l.borrow().dirs.contains_key(&old)));
+    release.release();
+    returned.recv_timeout(Duration::from_secs(10)).unwrap();
+    drop(observe);
+    // A result arriving after navigation has no receiver and cannot repopulate
+    // even the cache for the old directory.
+    poll();
+    assert_eq!(names(&b), ["new.mid"]);
+    forget();
 }
 
 #[test]

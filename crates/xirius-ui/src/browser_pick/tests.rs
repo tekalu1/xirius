@@ -25,6 +25,7 @@ fn studio(name: &str) -> (Studio, PathBuf, tempfile::TempDir) {
     s.browser.press_rail(RailTab::Files);
     s.browser.add_place(&top).unwrap();
     s.browser.toggle_dir(&top.join("Loops").to_string_lossy());
+    crate::browser_files::settle_rows(&s.browser);
     (s, top, top_tmp)
 }
 

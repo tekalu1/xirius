@@ -2,7 +2,7 @@
 //! samples (UI-310).
 //!
 //! The first time a clip's file is drawn its peaks are read from the peak file kept beside the
-//! song ([`xirius_session::peaks`]), or made off this thread when there is none; meanwhile the
+//! song ([`xirius_session::peaks`]), or made when there is none, all off this thread; meanwhile the
 //! clip shows a flat line, and [`poll`] (asked by [`crate::studio::Studio::idle`]) draws again
 //! once they are there. A pixel column reads the coarsest level that still has a peak in it, so
 //! a zoomed-out song reads few peaks and a zoomed-in one sees the single cycles. A file that
@@ -99,16 +99,10 @@ pub fn look(path: &Path, store: &Path) -> Look {
     if crate::opening::cached_paint() {
         return Look::Making;
     }
-    let l = if !path.is_file() {
-        Look::Missing
-    } else if let Some(p) = peaks::load(path, store) {
-        Look::Ready(Arc::new(p))
-    } else {
-        peaks::request(path, store);
-        let id = crate::wait::begin(crate::wait::Kind::Reflect, "波形");
-        WAITING.with(|w| w.borrow_mut().insert(path.to_path_buf(), id));
-        Look::Making
-    };
+    peaks::request(path, store);
+    let id = crate::wait::begin(crate::wait::Kind::Reflect, "波形");
+    WAITING.with(|w| w.borrow_mut().insert(path.to_path_buf(), id));
+    let l = Look::Making;
     SLOTS.with(|s| s.borrow_mut().insert(path.to_path_buf(), l.clone()));
     l
 }

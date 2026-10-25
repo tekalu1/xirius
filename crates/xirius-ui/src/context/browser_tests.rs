@@ -391,17 +391,20 @@ fn files(name: &str) -> (Studio, Geometry, PathBuf, tempfile::TempDir) {
     s.browser
         .open_dirs
         .insert(top.join("Loops").to_string_lossy().into_owned());
+    crate::browser_files::settle_rows(&s.browser);
     let g = s.geometry(1440.0, 860.0);
     (s, g, top, top_tmp)
 }
 
 fn press_file(s: &mut Studio, g: &Geometry, name: &str) {
+    crate::browser_files::settle_rows(&s.browser);
     let i = file_row(s, g, name).unwrap_or_else(|| panic!("no row {name}"));
     let (x, y) = centre(s, g, BrowserHit::File(i));
     assert!(s.lib_context(g, x, y));
 }
 
 fn press_dir(s: &mut Studio, g: &Geometry, name: &str) {
+    crate::browser_files::settle_rows(&s.browser);
     let l = s.browser.layout(g.panel);
     let i = l
         .rows
@@ -855,6 +858,7 @@ fn a_new_folder_takes_a_name_the_folder_does_not_have() {
     s.browser
         .open_dirs
         .insert(top.join("Drums").to_string_lossy().into_owned());
+    crate::browser_files::settle_rows(&s.browser);
     let l = s.browser.layout(g.panel);
     assert!(
         l.rows

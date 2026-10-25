@@ -8281,11 +8281,13 @@ done_when = "曲を開くとき、project.open のファイルの読み込み（
 
 [[item]]
 id = "BRW-019"
+status = "done"
 title = "ブラウザーの一覧と波形の元の確かめを、UI のスレッドでファイルを開かずにする"
 area = "BRW"
 phase = "v1.1"
 source = "hang-open-song.md § 2 ; hang-open-song.md § 5 E"
 done_when = "ブラウザーの一覧（browser_files.rs の read_dir と項目ごとの種類の判定）を裏のスレッドで読み、種類は DirEntry::file_type から取る。1 秒（FRESH）ごとの読み直しも描画のたびに UI のスレッドでしない。波形の look（wave.rs）の元の wav の is_file と peaks::load も、Peaks を作る裏のスレッド（peaks::request と同じ道）に寄せる。1 ファイルに数秒かかる置き場のフォルダーを開いたまま・その上の素材のクリップを描いても、描画が止まらないことを試験で確かめる"
+note = "一覧の列挙・種類判定・更新と、波形の元ファイル確認・保存済みピーク読込を worker に統一。更新中は直前の一覧を保ち、フォルダー移動時に受信口を捨てて旧結果を破棄する。PRJ の I/O 観測を再利用し、列挙・種類判定・元確認・ピーク読込をゲートで止めたまま一覧レイアウトとクリップ描画用の参照が戻ること、UI と異なるスレッドであること、FRESH 更新の重複抑止と移動後の旧結果破棄を時間に依存せず検証する。"
 
 [[item]]
 id = "BRW-020"

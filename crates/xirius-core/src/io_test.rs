@@ -19,7 +19,7 @@ impl Drop for Observation {
         HOOKS.lock().unwrap().retain(|(id, _)| *id != self.0);
     }
 }
-pub(crate) fn before(op: &str, path: &Path) -> std::io::Result<()> {
+pub fn before(op: &str, path: &Path) -> std::io::Result<()> {
     let hooks: Vec<_> = HOOKS
         .lock()
         .unwrap()

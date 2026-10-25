@@ -72,6 +72,7 @@ core-foundation-sys = "0.8"
 embed-resource = "3"
 
 [dev-dependencies]
+xirius-session = { path = "../xirius-session", features = ["test-io"] }
 xirius-core = { path = "../xirius-core", features = ["test-io"] }
 # A test's folder under the temp folder, removed when dropped even if the test fails (ARC-028).
 tempfile = "3"

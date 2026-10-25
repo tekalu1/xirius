@@ -5,7 +5,7 @@
 //! [`xirius_session::places`], so the commands `location.*` and `browser.*` change the same
 //! tabs. A folder lists its folders, then the audio and MIDI files the song takes, each by
 //! name; dot files and the song's own folders (history, peaks) are left out. A listing is read
-//! at most once a second; the length of each file is read off this thread and shown when it
+//! off this thread at most once a second; the length of each file is also read there and shown when it
 //! is known. A search looks through the folder shown and the folders in it.
 
 use std::cell::RefCell;
@@ -65,10 +65,10 @@ pub fn takes(path: &Path) -> bool {
     crate::drop_audio::is_audio(path) || is_midi(path)
 }
 
-fn read(dir: &Path) -> Vec<Entry> {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
+fn read(dir: &Path) -> Option<Vec<Entry>> {
+    #[cfg(test)]
+    xirius_core::io_test::before("browser_read_dir", dir).ok()?;
+    let rd = std::fs::read_dir(dir).ok()?;
     let mut out: Vec<Entry> = rd
         .filter_map(Result::ok)
         .filter_map(|e| {
@@ -77,47 +77,122 @@ fn read(dir: &Path) -> Vec<Entry> {
                 return None;
             }
             let path = e.path();
-            let dir = path.is_dir();
+            #[cfg(test)]
+            xirius_core::io_test::before("browser_file_type", &path).ok()?;
+            let kind = e.file_type().ok()?;
+            let dir = kind.is_dir();
             (dir || takes(&path)).then_some(Entry { name, path, dir })
         })
         .collect();
     out.sort_by_cached_key(|e| (!e.dir, e.name.to_lowercase(), e.name.clone()));
-    out
+    Some(out)
 }
 
-/// A folder's entries, with when they were read.
-type Listed = (Instant, Arc<Vec<Entry>>);
+struct Listed {
+    at: Instant,
+    entries: Arc<Vec<Entry>>,
+    gone: bool,
+    pending: Option<Receiver<Option<Vec<Entry>>>>,
+}
+
+#[derive(Default)]
+struct Listings {
+    root: Option<PathBuf>,
+    dirs: HashMap<PathBuf, Listed>,
+}
+
+impl Listings {
+    fn poll(&mut self) -> bool {
+        let mut changed = false;
+        for listed in self.dirs.values_mut() {
+            if let Some(rx) = &listed.pending {
+                match rx.try_recv() {
+                    Ok(entries) => {
+                        listed.gone = entries.is_none();
+                        listed.entries = Arc::new(entries.unwrap_or_default());
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => continue,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
+                }
+                listed.pending = None;
+                listed.at = Instant::now();
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    fn list(&mut self, dir: &Path) -> Arc<Vec<Entry>> {
+        let listed = self
+            .dirs
+            .entry(dir.to_path_buf())
+            .or_insert_with(|| Listed {
+                at: Instant::now() - FRESH,
+                entries: Arc::new(Vec::new()),
+                gone: false,
+                pending: None,
+            });
+        if !crate::opening::cached_paint()
+            && listed.pending.is_none()
+            && listed.at.elapsed() >= FRESH
+        {
+            let (tx, rx) = channel();
+            let path = dir.to_path_buf();
+            // A stalled place must not hold up a newly selected place. Dropping its
+            // receiver on navigation also discards every obsolete result.
+            if std::thread::Builder::new()
+                .name("browser-list".into())
+                .spawn(move || {
+                    let _sent = tx.send(read(&path));
+                    #[cfg(test)]
+                    let _ = xirius_core::io_test::before(
+                        if _sent.is_err() {
+                            "browser_list_discarded"
+                        } else {
+                            "browser_list_done"
+                        },
+                        &path,
+                    );
+                })
+                .is_ok()
+            {
+                listed.pending = Some(rx);
+            }
+            listed.at = Instant::now();
+        }
+        listed.entries.clone()
+    }
+}
 
 thread_local! {
-    static LISTS: RefCell<HashMap<PathBuf, Listed>> = RefCell::new(HashMap::new());
+    static LISTS: RefCell<Listings> = RefCell::new(Listings::default());
     static LENGTHS: RefCell<Option<Lengths>> = const { RefCell::new(None) };
 }
 
-/// What `dir` holds (read again when the last read is a second old).
+/// What `dir` holds, or an empty listing until the worker returns. A stale listing
+/// stays visible while it is refreshed; this function never waits for disk I/O.
 pub fn list(dir: &Path) -> Arc<Vec<Entry>> {
-    let kept = LISTS.with(|l| {
-        l.borrow()
-            .get(dir)
-            .filter(|(at, _)| crate::opening::cached_paint() || at.elapsed() < FRESH)
-            .map(|(_, v)| v.clone())
-    });
-    if let Some(v) = kept {
-        return v;
-    }
-    if crate::opening::cached_paint() {
-        return Arc::new(Vec::new());
-    }
-    let v = Arc::new(read(dir));
-    LISTS.with(|l| {
-        l.borrow_mut()
-            .insert(dir.to_path_buf(), (Instant::now(), v.clone()))
-    });
-    v
+    LISTS.with(|l| l.borrow_mut().list(dir))
 }
 
 /// The listings are read again on the next look.
 pub fn forget() {
-    LISTS.with(|l| l.borrow_mut().clear());
+    LISTS.with(|l| *l.borrow_mut() = Listings::default());
+}
+
+/// Waits for all listings the test browser currently needs, including search descendants.
+#[cfg(test)]
+pub(crate) fn settle_rows(browser: &Browser) {
+    let until = Instant::now() + Duration::from_secs(15);
+    loop {
+        poll();
+        browser.rows();
+        if LISTS.with(|l| l.borrow().dirs.values().all(|l| l.pending.is_none())) {
+            return;
+        }
+        assert!(Instant::now() < until, "browser listing never returned");
+        std::thread::yield_now();
+    }
 }
 
 /// `dir`'s listing as the tab shows it: at the top of the song folder, without its own.
@@ -338,6 +413,7 @@ pub fn seen<'a>(paths: impl Iterator<Item = &'a Path>) {
 
 /// Takes the lengths read since the last call; true when a row should be drawn again.
 pub fn poll() -> bool {
+    let listed = LISTS.with(|l| l.borrow_mut().poll());
     lengths(|l| {
         let mut got = false;
         while let Ok((path, told)) = l.told.try_recv() {
@@ -362,7 +438,7 @@ pub fn poll() -> bool {
             l.known.insert(path, text);
             got = true;
         }
-        got
+        got || listed
     })
 }
 
@@ -591,6 +667,7 @@ impl Browser {
     pub fn set_location(&mut self, i: usize) {
         self.pool_heading = None;
         if i <= self.places.len() {
+            forget();
             self.loc = i;
             self.path.clear();
             self.selected_file = None;
@@ -602,6 +679,7 @@ impl Browser {
     /// Back to the first `n` parts of the breadcrumb (0 is the location itself).
     pub fn go_up_to(&mut self, n: usize) {
         self.pool_heading = None;
+        forget();
         self.path.truncate(n);
         self.scroll = 0.0;
     }
@@ -638,6 +716,7 @@ impl Browser {
             return;
         };
         if let Ok(rest) = Path::new(key).strip_prefix(&here) {
+            forget();
             self.path.extend(
                 rest.components()
                     .map(|c| c.as_os_str().to_string_lossy().into_owned()),
@@ -651,12 +730,17 @@ impl Browser {
     pub(crate) fn file_rows(&self) -> Vec<BRow> {
         let loc = self.location();
         let Some(top) = loc.path.clone() else {
+            forget();
             return vec![BRow::Note(NO_FOLDER)];
         };
-        if !top.is_dir() {
-            return vec![BRow::Note(GONE)];
-        }
         let here = self.here_dir().unwrap_or(top);
+        LISTS.with(|l| {
+            let mut l = l.borrow_mut();
+            if l.root.as_deref() != Some(&here) {
+                l.dirs.clear();
+                l.root = Some(here.clone());
+            }
+        });
         let song_top = loc.song && self.path.is_empty();
         let q = self.search.trim().to_lowercase();
         let mut rows = Vec::new();
@@ -674,6 +758,9 @@ impl Browser {
             if rows.is_empty() {
                 rows.push(BRow::Note("見つかりません"));
             }
+        }
+        if LISTS.with(|l| l.borrow().dirs.get(&here).is_some_and(|l| l.gone)) {
+            return vec![BRow::Note(GONE)];
         }
         rows
     }

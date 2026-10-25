@@ -166,12 +166,19 @@ fn peaks_are_made_in_the_background_once_and_read_from_the_peak_file_after() {
     assert_eq!(p.frames, 96_000);
     assert!(store.read_dir().unwrap().count() >= 1);
 
-    // Opened again: read from the peak file at once.
+    // Opened again: reading the peak file also happens off this thread.
     forget();
+    assert!(matches!(look(&file, &store), Look::Making));
+    peaks::wait();
+    poll();
     assert!(matches!(look(&file, &store), Look::Ready(_)));
 
     // A file that is not there is drawn with the stand-in; a relative one needs the folder.
-    assert!(matches!(look(&dir.join("gone.wav"), &store), Look::Missing));
+    let gone = dir.join("gone.wav");
+    assert!(matches!(look(&gone, &store), Look::Making));
+    peaks::wait();
+    poll();
+    assert!(matches!(look(&gone, &store), Look::Missing));
     assert_eq!(source(None, "Audio/x.wav"), None);
     assert_eq!(
         source(Some(&dir), "Audio/x.wav"),

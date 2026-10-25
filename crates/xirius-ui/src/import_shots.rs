@@ -229,6 +229,8 @@ fn drawn(path: &Path, store: &Path) -> bool {
 
 /// Where the browser shows the file row `name`, as a hit.
 pub fn file_row(s: &Studio, g: &Geometry, name: &str) -> Option<usize> {
+    #[cfg(test)]
+    crate::browser_files::settle_rows(&s.browser);
     let l = s.browser.layout(g.panel);
     l.rows
         .iter()

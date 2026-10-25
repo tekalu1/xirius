@@ -28,6 +28,7 @@ fn wait_until_heard(s: &mut Studio) {
 }
 
 fn play(s: &mut Studio, act: Act) {
+    crate::browser_files::settle_rows(&s.browser);
     let g = s.geometry(1440.0, 860.0 - xirius_design::Layout::TOP_BAR_H);
     match act {
         Act::Import(n) => stage(s, &g, n),
