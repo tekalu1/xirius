@@ -10,6 +10,7 @@ struct Import {
     track: Option<TrackId>,
     at: i64,
     midi: bool,
+    reservation: Arc<xirius_core::in_use::Uses>,
 }
 struct Pending {
     id: u64,
@@ -19,6 +20,7 @@ struct Pending {
     midi: bool,
     stem: String,
     name: String,
+    _reservation: Arc<xirius_core::in_use::Uses>,
 }
 #[derive(Default)]
 pub(crate) struct ImportIo {
@@ -57,11 +59,14 @@ impl Studio {
         if self.browser_import_io.queue.len() >= 64 {
             return Err("ファイルの読み込みを待っています".into());
         }
+        let reservation = Arc::new(xirius_core::in_use::Uses::default());
+        reservation.reserve(self.song.dir().as_deref(), &path);
         self.browser_import_io.queue.push_back(Import {
             path,
             track,
             at,
             midi,
+            reservation,
         });
         Ok(())
     }
@@ -162,7 +167,9 @@ impl Studio {
             self.browser_import_io.next += 1;
             let key = self.browser_import_io.next;
             let path = import.path.clone();
+            let reservation = import.reservation.clone();
             let id = self.browser_import_io.jobs.request(key, move || {
+                let _reservation = reservation;
                 #[cfg(test)]
                 xirius_core::io_test::before(
                     if midi {
@@ -203,6 +210,10 @@ impl Studio {
                     xirius_session::import::run(&cx, &args, false)
                 }
                 .map_err(|e| e.to_string())
+                .inspect(|_| {
+                    #[cfg(test)]
+                    let _ = xirius_core::io_test::before("browser_import_prepared", &path);
+                })
             });
             if let Some(id) = id {
                 self.browser_import_io.pending = Some(Pending {
@@ -213,6 +224,7 @@ impl Studio {
                     midi,
                     stem,
                     name,
+                    _reservation: import.reservation.clone(),
                 });
             } else {
                 self.browser_import_io.queue.push_front(import);

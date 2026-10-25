@@ -349,6 +349,8 @@ fn run_until(
             kept += 1;
             continue;
         }
+        #[cfg(feature = "test-io")]
+        let _ = xirius_core::io_test::before("cleanup_before_aside", &path);
         let aside = match Aside::put(&path) {
             Ok(aside) => aside,
             Err(e) => {
@@ -380,6 +382,8 @@ fn run_until(
             open = true;
             break;
         }
+        #[cfg(feature = "test-io")]
+        let _ = xirius_core::io_test::before("cleanup_second_check", &home);
         // In memory again: a command that named it before it was put aside is over now.
         match look(dir, &k, &home, own, stop) {
             Look::Free(now) if now == alike => {}

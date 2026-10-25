@@ -741,6 +741,7 @@ pub struct Studio {
     pub job: Option<crate::audio_job::Job>,
     /// The bounces and freezes waiting for it (ENG-033).
     pub job_queue: crate::audio_job::Queue,
+    pub(crate) prefs_closing: bool,
     pub(crate) browser_menu_io: crate::browser_menu_io::MenuIo,
     pub(crate) browser_import_io: crate::browser_import_io::ImportIo,
     /// The clips whose failed stretch the toast has said ([`crate::clip_marks`]).
@@ -890,6 +891,7 @@ impl Studio {
             gain_tip: None,
             job: None,
             job_queue: Default::default(),
+            prefs_closing: false,
             browser_menu_io: Default::default(),
             browser_import_io: Default::default(),
             stretch_told: HashSet::new(),

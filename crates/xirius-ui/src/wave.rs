@@ -72,7 +72,6 @@ type Chunks = HashMap<(PathBuf, u64), (Chunk, Instant)>;
 
 thread_local! {
     static REQUESTS: RefCell<HashMap<PathBuf, peaks::Request>> = RefCell::new(HashMap::new());
-    static RETRY: RefCell<HashMap<PathBuf, PathBuf>> = RefCell::new(HashMap::new());
     static SLOTS: RefCell<HashMap<PathBuf, Look>> = RefCell::new(HashMap::new());
     /// The waiting job of each file whose peaks are being made.
     static WAITING: RefCell<HashMap<PathBuf, crate::wait::Id>> = RefCell::new(HashMap::new());
@@ -101,20 +100,7 @@ pub fn look(path: &Path, store: &Path) -> Look {
         return Look::Making;
     }
     let request = peaks::request_fresh(path, store);
-    if !request.accepted() {
-        if !RETRY.with(|r| {
-            let mut r = r.borrow_mut();
-            if r.len() >= xirius_session::read_jobs::QUEUED {
-                return false;
-            }
-            r.insert(path.to_path_buf(), store.to_path_buf());
-            true
-        }) {
-            return Look::Making;
-        }
-    } else {
-        REQUESTS.with(|r| r.borrow_mut().insert(path.to_path_buf(), request));
-    }
+    REQUESTS.with(|r| r.borrow_mut().insert(path.to_path_buf(), request));
     let id = crate::wait::begin(crate::wait::Kind::Reflect, "波形");
     WAITING.with(|w| w.borrow_mut().insert(path.to_path_buf(), id));
     let l = Look::Making;
@@ -125,16 +111,6 @@ pub fn look(path: &Path, store: &Path) -> Look {
 /// Takes the peaks and samples read since the last call; true when a clip should be drawn again.
 pub fn poll() -> bool {
     let samples = poll_samples();
-    RETRY.with(|r| {
-        r.borrow_mut().retain(|path, store| {
-            let request = peaks::request_fresh(path, store);
-            if !request.accepted() {
-                return true;
-            }
-            REQUESTS.with(|r| r.borrow_mut().insert(path.clone(), request));
-            false
-        })
-    });
     SLOTS.with(|s| {
         let mut changed = samples;
         for (path, l) in s.borrow_mut().iter_mut() {
@@ -152,6 +128,11 @@ pub fn poll() -> bool {
         }
         changed
     })
+}
+
+#[cfg(test)]
+pub(crate) fn pending_peaks() -> usize {
+    REQUESTS.with(|r| r.borrow().len())
 }
 
 /// Keeps the chunks of samples read since the last call; true when one this window waits for is
@@ -228,7 +209,6 @@ fn chunks(path: &Path, a: f64, b: f64) -> Option<Vec<Arc<Samples>>> {
 /// Forgets the peaks and samples read so far, so a changed file is read again (a song opened
 /// anew).
 pub fn forget() {
-    RETRY.with(|r| r.borrow_mut().clear());
     SLOTS.with(|s| s.borrow_mut().clear());
     REQUESTS.with(|r| {
         for request in r.borrow().values() {

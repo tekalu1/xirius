@@ -17,6 +17,46 @@ pub const CRASH_EXIT_CODE: i32 = 86;
 /// The keys its one program names (`IUnitInfo` program pitch names), and what it calls them.
 pub const NOTE_NAMES: [(u8, &str); 2] = [(36, "Fixture Kick"), (38, "Fixture Snare")];
 const PROGRAM_LIST: i32 = 7;
+/// A copied fixture can be held independently by a gate beside its own DLL.
+/// Unlike process environment settings this never affects another test's plugin.
+#[cfg(windows)]
+fn opening_gate() {
+    use windows_sys::Win32::System::LibraryLoader::{
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        GetModuleFileNameW, GetModuleHandleExW,
+    };
+    let mut module = std::ptr::null_mut();
+    let mut name = vec![0u16; 32768];
+    // SAFETY: FROM_ADDRESS identifies the module containing this function, and
+    // the output buffers remain valid for the calls. The reference count is unchanged.
+    let path = unsafe {
+        if GetModuleHandleExW(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            opening_gate as *const () as *const u16,
+            &mut module,
+        ) == 0
+        {
+            return;
+        }
+        let n = GetModuleFileNameW(module, name.as_mut_ptr(), name.len() as u32);
+        if n == 0 {
+            return;
+        }
+        std::path::PathBuf::from(String::from_utf16_lossy(&name[..n as usize]))
+    };
+    let gate = path.with_extension("gate");
+    if !gate.exists() {
+        return;
+    }
+    let _ = std::fs::write(path.with_extension("entered"), b"opening");
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while gate.exists() && std::time::Instant::now() < end {
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    if gate.exists() {
+        let _ = std::fs::write(path.with_extension("timed-out"), b"gate timed out");
+    }
+}
 struct Factory;
 impl Class for Factory {
     type Interfaces = (IPluginFactory,);
@@ -66,6 +106,8 @@ impl IPluginFactoryTrait for Factory {
         if unsafe { std::slice::from_raw_parts(cid, 16) } != CID {
             return kResultFalse;
         }
+        #[cfg(windows)]
+        opening_gate();
         // A slow plugin, for the opening of a song's plugins together (ENG-064).
         if let Some(ms) = std::env::var("XIRIUS_TEST_VST3_OPEN_MS")
             .ok()
@@ -525,6 +567,8 @@ impl IUnitInfoTrait for Latency {
 /// Called by a VST3 host; transfers one owned factory reference.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn GetPluginFactory() -> *mut IPluginFactory {
+    #[cfg(windows)]
+    opening_gate();
     ComWrapper::new(Factory)
         .to_com_ptr::<IPluginFactory>()
         .unwrap()

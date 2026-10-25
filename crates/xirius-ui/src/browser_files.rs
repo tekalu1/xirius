@@ -533,6 +533,7 @@ impl Browser {
     }
 
     pub(crate) fn apply(&mut self, p: Prefs) {
+        self.prefs_io.base = Some(p.clone());
         let here = self.location().name;
         self.favourites = p.favourites;
         self.hidden = p.hidden;

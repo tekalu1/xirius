@@ -13,12 +13,12 @@ use std::{
 };
 use xirius_session::peaks;
 pub(crate) static IO_GATES: Mutex<()> = Mutex::new(());
-struct Release(Arc<(Mutex<bool>, Condvar)>);
+pub(crate) struct Release(pub(crate) Arc<(Mutex<bool>, Condvar)>);
 impl Release {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(Arc::new((Mutex::new(false), Condvar::new())))
     }
-    fn release(&self) {
+    pub(crate) fn release(&self) {
         *self.0.0.lock().unwrap() = true;
         self.0.1.notify_all();
     }
@@ -192,8 +192,8 @@ fn uncollected_old_peak_success_is_not_the_new_request_result() {
     for path in [&wav, &other] {
         xirius_session::export::write_wav(path, &[0.3; 256], &[0.3; 256], 48_000, 16).unwrap();
     }
-    peaks::request(&wav, &store);
-    peaks::wait(); // Intentionally leave its successful result uncollected.
+    let _old = peaks::request(&wav, &store);
+    peaks::wait(); // Keep the old subscriber and its successful data alive.
     std::fs::remove_file(&wav).unwrap();
     wave::forget();
     let release = Release::new();
@@ -389,6 +389,7 @@ fn preference_loading_preserves_edits_made_while_the_read_is_held() {
     let tmp = tempfile::tempdir().unwrap();
     let file = tmp.path().join("prefs.json");
     let mut prefs = xirius_session::places::Prefs::first_run(None);
+    prefs.favourites.insert("stored favourite".into());
     prefs.places.push(xirius_session::places::Place {
         name: "stored".into(),
         path: tmp.path().join("place"),
@@ -398,8 +399,14 @@ fn preference_loading_preserves_edits_made_while_the_read_is_held() {
     let gate = release.0.clone();
     let path = file.clone();
     let (tx, entered) = mpsc::channel();
+    let (done, written) = mpsc::channel();
+    let first = std::sync::atomic::AtomicBool::new(true);
     let observation = xirius_core::io_test::observe(Arc::new(move |op, p| {
-        if op == "prefs_read" && p == path {
+        if op == "prefs_written" && p == path {
+            let _ = done.send(());
+        }
+        if op == "prefs_read" && p == path && first.swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
             let _ = tx.send(());
             let guard = gate.0.lock().unwrap();
             drop(gate.1.wait_while(guard, |ready| !*ready).unwrap());
@@ -411,10 +418,12 @@ fn preference_loading_preserves_edits_made_while_the_read_is_held() {
     b.reload_prefs();
     entered.recv_timeout(Duration::from_secs(15)).unwrap();
     b.toggle_favourite("local edit");
+    written.recv_timeout(Duration::from_secs(15)).unwrap();
     release.release();
     b.settle_prefs_io();
     assert_eq!(b.places, prefs.places);
     assert!(b.favourites.contains("local edit"));
+    assert!(b.favourites.contains("stored favourite"));
     drop(observation);
     let saved = xirius_session::places::load(&file).unwrap();
     assert_eq!(saved.places, prefs.places);

@@ -2238,7 +2238,25 @@ pub fn run(opts: Options) {
                             Err(_) => eprintln!("注意: 更新の予約を読めませんでした"),
                         }
                     }
-                    cx.quit();
+                    // Keep the process alive while accepted browser snapshots are saved.
+                    // The foreground executor continues pumping; no UI thread joins I/O.
+                    cx.spawn(async move |cx| {
+                        loop {
+                            if let Some(failures) = crate::browser_prefs_save::finish() {
+                                for error in failures {
+                                    eprintln!("注意: {error}");
+                                }
+                                cx.update(|cx| {
+                                    if cx.windows().is_empty() {
+                                        cx.quit();
+                                    }
+                                });
+                                break;
+                            }
+                            cx.background_executor().timer(crate::health::POLL).await;
+                        }
+                    })
+                    .detach();
                 }
             })
             .detach();

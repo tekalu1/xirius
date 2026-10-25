@@ -7,56 +7,38 @@ use xirius_session::{
 #[derive(Clone)]
 enum Action {
     Load,
-    Save,
     Add(PathBuf),
 }
 type Reply = Result<Prefs, String>;
-type Save = (PathBuf, Prefs, u64);
-static SAVE_VERSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-fn write_snapshot(file: &std::path::Path, prefs: &Prefs, version: u64) -> Reply {
-    use std::sync::{Arc, Mutex, OnceLock};
-    type Writers = std::collections::HashMap<PathBuf, Arc<Mutex<u64>>>;
-    static WRITERS: OnceLock<Mutex<Writers>> = OnceLock::new();
-    let lock = WRITERS
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .entry(file.to_path_buf())
-        .or_default()
-        .clone();
-    let mut written = lock.lock().unwrap_or_else(|e| e.into_inner());
-    if version > *written {
-        places::save(file, prefs)?;
-        *written = version;
-        #[cfg(test)]
-        let _ = xirius_core::io_test::before("prefs_written", file);
-    }
-    Ok(prefs.clone())
-}
 #[derive(Default)]
 pub(crate) struct PrefsIo {
     jobs: ReadJobs<u64, Reply>,
     pending: Option<(u64, u64, Action, Prefs, Option<PathBuf>)>,
     adds: VecDeque<PathBuf>,
-    dirty: bool,
     next: u64,
     pub(crate) at: Option<Instant>,
-    latest_save: Option<Save>,
+    save: Option<crate::browser_prefs_save::Ticket>,
+    pub(crate) base: Option<Prefs>,
+    failed_save: bool,
 }
 impl crate::browser::Browser {
     pub(crate) fn start_prefs(&mut self, file: PathBuf) {
+        self.prefs_io.base = Some(self.prefs());
         self.prefs_file = Some(file);
         self.prefs_io.at = None;
     }
     pub(crate) fn save_prefs_later(&mut self) {
-        self.prefs_io.dirty = self.prefs_file.is_some();
-        self.prefs_io.latest_save = self.prefs_file.clone().map(|file| {
-            (
-                file,
-                self.prefs(),
-                SAVE_VERSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-            )
-        });
+        let prefs = self.prefs();
+        let base = self
+            .prefs_io
+            .base
+            .replace(prefs.clone())
+            .unwrap_or_else(|| Prefs::first_run(None));
+        self.prefs_io.failed_save = false;
+        self.prefs_io.save = self
+            .prefs_file
+            .as_deref()
+            .map(|file| crate::browser_prefs_save::submit(file, base, prefs));
     }
     pub(crate) fn add_place_later(&mut self, path: PathBuf) -> bool {
         if self.prefs_io.adds.len() >= 64 {
@@ -68,6 +50,20 @@ impl crate::browser::Browser {
     }
     pub(crate) fn poll_prefs_io(&mut self) -> bool {
         let mut changed = false;
+        if let Some(result) = self.prefs_io.save.as_ref().and_then(|save| save.result()) {
+            self.prefs_io.save = None;
+            match result {
+                Ok(()) => {
+                    self.prefs_io.base = Some(self.prefs());
+                    self.prefs_io.failed_save = false;
+                }
+                Err(e) => {
+                    self.prefs_io.failed_save = true;
+                    self.prefs_error = Some(e);
+                    changed = true;
+                }
+            }
+        }
         if let Some((key, id, action, snapshot, file)) = self.prefs_io.pending.clone()
             && let Some(reply) = self
                 .prefs_io
@@ -83,21 +79,11 @@ impl crate::browser::Browser {
                         Action::Load => {
                             let current = self.prefs();
                             let local = current != snapshot;
-                            let mut p = p;
-                            if current.favourites != snapshot.favourites {
-                                p.favourites = current.favourites.clone();
-                            }
-                            if current.hidden != snapshot.hidden {
-                                p.hidden = current.hidden.clone();
-                            }
-                            if current.show_hidden != snapshot.show_hidden {
-                                p.show_hidden = current.show_hidden;
-                            }
-                            if current.places != snapshot.places {
-                                p.places = current.places.clone();
-                            }
+                            let disk = p.clone();
+                            let p = crate::browser_prefs_save::merge(&snapshot, &current, p);
                             changed = p != current;
                             self.apply(p);
+                            self.prefs_io.base = Some(disk);
                             if local {
                                 self.save_prefs_later();
                             }
@@ -116,7 +102,6 @@ impl crate::browser::Browser {
                                 self.prefs_io.adds.push_front(path);
                             }
                         }
-                        _ => {}
                     },
                     Err(e) => {
                         self.prefs_error = Some(e);
@@ -130,10 +115,9 @@ impl crate::browser::Browser {
         }
         let action = if let Some(path) = self.prefs_io.adds.pop_front() {
             Action::Add(path)
-        } else if self.prefs_io.dirty {
-            self.prefs_io.dirty = false;
-            Action::Save
-        } else if self.prefs_file.is_some()
+        } else if !self.prefs_io.failed_save
+            && self.prefs_io.save.is_none()
+            && self.prefs_file.is_some()
             && self
                 .prefs_io
                 .at
@@ -148,7 +132,6 @@ impl crate::browser::Browser {
         let file = self.prefs_file.clone();
         let path = file.clone();
         let work = action.clone();
-        let save = self.prefs_io.latest_save.clone();
         self.prefs_io.next += 1;
         let key = self.prefs_io.next;
         let read = move || {
@@ -156,7 +139,6 @@ impl crate::browser::Browser {
             xirius_core::io_test::before(
                 match work {
                     Action::Load => "prefs_load",
-                    Action::Save => "prefs_save",
                     Action::Add(_) => "place_add",
                 },
                 match &work {
@@ -167,13 +149,6 @@ impl crate::browser::Browser {
             .map_err(|e| e.to_string())?;
             match work {
                 Action::Load => places::load(path.as_deref().expect("preference path")),
-                Action::Save => {
-                    if let Some((file, prefs, version)) = save {
-                        write_snapshot(&file, &prefs, version)
-                    } else {
-                        Ok(prefs)
-                    }
-                }
                 Action::Add(path) => {
                     let mut prefs = prefs;
                     prefs.add_place(&path, None)?;
@@ -181,18 +156,12 @@ impl crate::browser::Browser {
                 }
             }
         };
-        let id = if matches!(action, Action::Save) {
-            self.prefs_io.jobs.request_persistent(key, read)
-        } else {
-            self.prefs_io.jobs.request(key, read)
-        };
+        let id = self.prefs_io.jobs.request(key, read);
         if let Some(id) = id {
             self.prefs_io.pending = Some((key, id, action, snapshot, file));
         } else {
-            match action {
-                Action::Add(p) => self.prefs_io.adds.push_front(p),
-                Action::Save => self.prefs_io.dirty = true,
-                _ => {}
+            if let Action::Add(p) = action {
+                self.prefs_io.adds.push_front(p);
             }
         }
         changed
@@ -204,25 +173,12 @@ impl crate::browser::Browser {
             self.poll_prefs_io();
             if self.prefs_io.pending.is_none()
                 && self.prefs_io.adds.is_empty()
-                && !self.prefs_io.dirty
+                && self.prefs_io.save.is_none()
             {
                 return;
             }
             assert!(Instant::now() < end);
             std::thread::yield_now();
-        }
-    }
-}
-impl Drop for PrefsIo {
-    fn drop(&mut self) {
-        if let Some((file, prefs, version)) = self.latest_save.take() {
-            // Already accepted preference writes outlive the window. A version
-            // guard prevents an old delayed write replacing a newer one.
-            let _ = self
-                .jobs
-                .request_persistent(self.next.wrapping_add(1), move || {
-                    write_snapshot(&file, &prefs, version)
-                });
         }
     }
 }

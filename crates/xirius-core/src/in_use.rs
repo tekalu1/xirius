@@ -226,6 +226,26 @@ impl Uses {
         self.id
     }
 
+    /// Reserve a source from asynchronous acceptance until application or cancellation.
+    /// This only touches the notes in memory; it never holds the command gate across I/O.
+    pub fn reserve(&self, dir: Option<&Path>, file: &Path) {
+        let full = match dir {
+            Some(dir) if !file.is_absolute() => dir.join(file),
+            _ => file.to_path_buf(),
+        };
+        let mut all = notes();
+        let n = all.entry(self.id).or_default();
+        n.keys.insert(key(None, &full));
+        n.paths
+            .entry(if file_name(&full).contains(SHORT) {
+                SHORT.into()
+            } else {
+                file_name(&full)
+            })
+            .or_default()
+            .insert(full);
+    }
+
     /// The files `p`'s clips name; relative ones are in `dir`.
     pub fn note(&self, p: &Project, dir: Option<&Path>) {
         let mut all = notes();

@@ -47,6 +47,9 @@ mod browser_menu_io;
 pub mod browser_pick;
 pub mod browser_pool;
 mod browser_prefs_io;
+mod browser_prefs_save;
+#[cfg(test)]
+mod browser_review_tests;
 pub mod bugs2_shots;
 pub mod caption;
 pub mod caption_shots;

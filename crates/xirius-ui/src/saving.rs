@@ -343,6 +343,22 @@ impl Studio {
     }
 
     pub(crate) fn request_close(&mut self) -> bool {
+        if self.prefs_closing {
+            return false;
+        }
+        if let Some(file) = self.browser.prefs_file.as_deref() {
+            match crate::browser_prefs_save::status(file) {
+                None => {
+                    self.prefs_closing = true;
+                    return false;
+                }
+                Some(Err(e)) => {
+                    self.error = Some(e);
+                    return false;
+                }
+                Some(Ok(())) => {}
+            }
+        }
         if let Some(open) = &mut self.opening {
             open.confirm_close = true;
             return false;

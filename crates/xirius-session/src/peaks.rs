@@ -315,39 +315,76 @@ struct Tagged {
     generation: u64,
     built: Built,
 }
-#[derive(Clone)]
-pub struct Request {
-    key: Key,
-    id: Arc<AtomicU64>,
-    generation: u64,
-    wanted: Arc<AtomicU64>,
+#[derive(Default)]
+struct Work {
+    wanted: u64,
+    id: Option<u64>,
+    result: Option<Tagged>,
 }
+struct Shared {
+    key: Key,
+    work: Mutex<Work>,
+}
+struct Lease {
+    shared: Arc<Shared>,
+    generation: u64,
+    cancelled: std::sync::atomic::AtomicBool,
+}
+/// A subscription owns its completed data. The process registries hold only weak references.
+#[derive(Clone)]
+pub struct Request(Arc<Lease>);
 impl Request {
+    /// Logical acceptance is independent of the bounded physical queue. Poll/wait retries it.
     pub fn accepted(&self) -> bool {
-        self.id.load(Ordering::Acquire) != 0
+        !self.0.cancelled.load(Ordering::Acquire)
     }
 }
 fn jobs() -> &'static crate::read_jobs::ReadJobs<Key, Tagged> {
     static JOBS: OnceLock<crate::read_jobs::ReadJobs<Key, Tagged>> = OnceLock::new();
     JOBS.get_or_init(Default::default)
 }
-fn generations() -> &'static Mutex<HashMap<Key, Arc<AtomicU64>>> {
-    static WANTED: OnceLock<Mutex<HashMap<Key, Arc<AtomicU64>>>> = OnceLock::new();
-    WANTED.get_or_init(Default::default)
+fn shared() -> &'static Mutex<HashMap<Key, std::sync::Weak<Shared>>> {
+    static SHARED: OnceLock<Mutex<HashMap<Key, std::sync::Weak<Shared>>>> = OnceLock::new();
+    SHARED.get_or_init(Default::default)
 }
-fn latest() -> &'static Mutex<HashMap<PathBuf, Request>> {
-    static LATEST: OnceLock<Mutex<HashMap<PathBuf, Request>>> = OnceLock::new();
+fn subscriptions() -> &'static Mutex<HashMap<u64, std::sync::Weak<Lease>>> {
+    static SUBS: OnceLock<Mutex<HashMap<u64, std::sync::Weak<Lease>>>> = OnceLock::new();
+    SUBS.get_or_init(Default::default)
+}
+fn latest() -> &'static Mutex<HashMap<Key, Request>> {
+    static LATEST: OnceLock<Mutex<HashMap<Key, Request>>> = OnceLock::new();
     LATEST.get_or_init(Default::default)
+}
+impl Drop for Lease {
+    fn drop(&mut self) {
+        subscriptions()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.generation);
+    }
+}
+impl Drop for Shared {
+    fn drop(&mut self) {
+        if let Some(id) = self.work.get_mut().unwrap_or_else(|e| e.into_inner()).id {
+            jobs().discard(&self.key, id);
+        }
+        let mut registry = shared().lock().unwrap_or_else(|e| e.into_inner());
+        if registry
+            .get(&self.key)
+            .is_some_and(|p| std::ptr::eq(p.as_ptr(), self))
+        {
+            registry.remove(&self.key);
+        }
+    }
 }
 static FINISHED: AtomicU64 = AtomicU64::new(0);
 static GENERATION: AtomicU64 = AtomicU64::new(1);
 pub fn finished() -> u64 {
     FINISHED.load(Ordering::Acquire)
 }
-fn launch(key: &Key, wanted: Arc<AtomicU64>) -> Option<u64> {
+fn launch(key: &Key, generation: u64) -> Option<u64> {
     let (path, store) = key.clone();
     jobs().request(key.clone(), move || {
-        let generation = wanted.load(Ordering::Acquire);
         let built = std::panic::catch_unwind(|| {
             #[cfg(feature = "test-io")]
             xirius_core::io_test::before("peaks_source", &path).map_err(|e| e.to_string())?;
@@ -362,104 +399,200 @@ fn launch(key: &Key, wanted: Arc<AtomicU64>) -> Option<u64> {
         })
         .unwrap_or_else(|_| Err("ピークを作れません".into()))
         .map(Arc::new);
+        #[cfg(feature = "test-io")]
+        let _ = xirius_core::io_test::before("peaks_result", &path);
         FINISHED.fetch_add(1, Ordering::AcqRel);
         Tagged { generation, built }
     })
 }
 fn ask(source: &Path, store: &Path) -> Request {
     let key = (source.to_path_buf(), store.to_path_buf());
+    let state = {
+        let mut registry = shared().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = registry.get(&key).and_then(std::sync::Weak::upgrade) {
+            state
+        } else {
+            let state = Arc::new(Shared {
+                key: key.clone(),
+                work: Mutex::new(Work::default()),
+            });
+            registry.insert(key, Arc::downgrade(&state));
+            state
+        }
+    };
     let generation = GENERATION.fetch_add(1, Ordering::Relaxed);
-    let wanted = generations()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .entry(key.clone())
-        .or_default()
-        .clone();
-    wanted.fetch_max(generation, Ordering::AcqRel);
-    let id = launch(&key, wanted.clone()).unwrap_or(0);
-    Request {
-        key,
-        id: Arc::new(AtomicU64::new(id)),
+    let request = Request(Arc::new(Lease {
+        shared: state,
         generation,
-        wanted,
-    }
-}
-/// Outstanding reads of the same source/store share one physical job. A later
-/// request never consumes a completed result validated before that request.
-pub fn request(source: &Path, store: &Path) -> Request {
-    let request = ask(source, store);
-    let old = latest()
+        cancelled: false.into(),
+    }));
+    subscriptions()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(source.to_path_buf(), request.clone());
-    if let Some(old) = old
-        && old.key != request.key
+        .insert(generation, Arc::downgrade(&request.0));
     {
-        discard(&old);
+        let mut work = request
+            .0
+            .shared
+            .work
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        work.wanted = work.wanted.max(generation);
     }
+    take_request(&request);
+    request
+}
+/// Schedule retained fire-and-forget demand, releasing it after completion when no caller owns it.
+fn follow_legacy() {
+    static STARTED: OnceLock<()> = OnceLock::new();
+    STARTED.get_or_init(|| {
+        // Scheduling only: physical disk reads remain on the four bounded workers.
+        std::thread::Builder::new()
+            .name("peaks-pending".into())
+            .spawn(|| {
+                loop {
+                    let requests: Vec<_> = latest()
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .values()
+                        .cloned()
+                        .collect();
+                    for request in requests {
+                        if take_request(&request).is_some() && Arc::strong_count(&request.0) == 2 {
+                            let mut legacy = latest().lock().unwrap_or_else(|e| e.into_inner());
+                            if legacy
+                                .get(&request.0.shared.key)
+                                .is_some_and(|r| Arc::ptr_eq(&r.0, &request.0))
+                                && Arc::strong_count(&request.0) == 2
+                            {
+                                legacy.remove(&request.0.shared.key);
+                            }
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            })
+            .expect("start peak request coordinator");
+    });
+}
+/// Keep the returned subscription to read its result later. Unowned requests
+/// still finish their disk work, then release their data and registry keys.
+pub fn request(source: &Path, store: &Path) -> Request {
+    follow_legacy();
+    let request = ask(source, store);
+    latest()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(request.0.shared.key.clone(), request.clone());
     request
 }
 pub fn request_fresh(source: &Path, store: &Path) -> Request {
     ask(source, store)
 }
 pub fn discard(request: &Request) {
-    let id = request.id.load(Ordering::Acquire);
-    if id != 0 {
-        jobs().discard(&request.key, id);
+    request.0.cancelled.store(true, Ordering::Release);
+    let mut legacy = latest().lock().unwrap_or_else(|e| e.into_inner());
+    if legacy
+        .get(&request.0.shared.key)
+        .is_some_and(|r| Arc::ptr_eq(&r.0, &request.0))
+    {
+        legacy.remove(&request.0.shared.key);
     }
 }
 pub fn take_request(request: &Request) -> Option<Built> {
-    let current = jobs().current_id(&request.key).unwrap_or(0);
-    request.id.store(current, Ordering::Release);
-    if current != 0 {
-        match jobs().peek(&request.key, current) {
-            Some(Ok(tag)) if tag.generation >= request.generation => return Some(tag.built),
-            Some(Err(())) => return Some(Err("ピークの読み込みが止まりました".into())),
-            None => return None,
-            _ => {}
-        }
+    if !request.accepted() {
+        return None;
     }
-    // The prior physical read finished with an older generation, or was
-    // cancelled by a departed view. Revalidate on a worker, coalescing retries.
-    let id = launch(&request.key, request.wanted.clone()).unwrap_or(0);
-    request.id.store(id, Ordering::Release);
+    let state = &request.0.shared;
+    let mut work = state.work.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(id) = work.id {
+        if let Some(result) = jobs().take(&state.key, id) {
+            work.result = Some(result.unwrap_or_else(|_| Tagged {
+                generation: work.wanted,
+                built: Err("ピークの読み込みが止まりました".into()),
+            }));
+            work.id = None;
+        }
+        if jobs().current_id(&state.key) != Some(id) {
+            work.id = None;
+        }
+        #[cfg(feature = "test-io")]
+        let _ = xirius_core::io_test::before("request_after_peek", &state.key.0);
+    }
+    if let Some(tag) = &work.result
+        && tag.generation >= request.0.generation
+    {
+        return Some(tag.built.clone());
+    }
+    if work.id.is_none() {
+        work.id = launch(&state.key, work.wanted);
+    }
     None
 }
 pub fn take(source: &Path) -> Option<Built> {
     let request = latest()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .get(source)
+        .values()
+        .filter(|r| r.0.shared.key.0 == source)
+        .max_by_key(|r| r.0.generation)
         .cloned()?;
     let result = take_request(&request)?;
-    latest()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(source);
+    let mut latest = latest().lock().unwrap_or_else(|e| e.into_inner());
+    if latest
+        .get(&request.0.shared.key)
+        .is_some_and(|r| Arc::ptr_eq(&r.0, &request.0))
+    {
+        latest.remove(&request.0.shared.key);
+    }
     Some(result)
 }
-/// CLI/tests only; windows poll request handles and never join disk I/O.
+/// CLI/tests only. Each subscription live at entry must finish its required generation.
+/// Missing physical jobs (including queue overflow) are retried. Completed legacy
+/// requests are released here; retain a Request to inspect its result after wait.
 pub fn wait() {
+    // Waiting must not become a subscriber itself: another concurrent wait must
+    // not prolong the lifetime of a window's completed waveforms.
+    let requests: Vec<_> = subscriptions()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .cloned()
+        .collect();
     loop {
-        let wanted: Vec<_> = generations()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        for (key, generation) in wanted {
-            if let Some(id) = jobs().current_id(&key)
-                && let Some(Ok(tag)) = jobs().peek(&key, id)
-                && tag.generation < generation.load(Ordering::Acquire)
-            {
-                launch(&key, generation);
+        let mut complete = true;
+        for weak in &requests {
+            if let Some(lease) = weak.upgrade() {
+                let request = Request(lease);
+                if request.accepted() && take_request(&request).is_none() {
+                    complete = false;
+                }
             }
         }
-        if !jobs().pending() {
+        if complete {
+            latest()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .retain(|_, r| {
+                    Arc::strong_count(&r.0) > 1
+                        || !requests
+                            .iter()
+                            .any(|done| std::ptr::eq(done.as_ptr(), Arc::as_ptr(&r.0)))
+                });
             return;
         }
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
+}
+
+#[cfg(feature = "test-io")]
+pub fn retained_keys_under(root: &Path) -> usize {
+    shared()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .keys()
+        .filter(|(p, _)| p.starts_with(root))
+        .count()
 }
 
 #[cfg(test)]
@@ -472,6 +605,114 @@ mod tests {
             .prefix(&format!("xirius-peaks-{tag}-"))
             .tempdir()
             .unwrap()
+    }
+
+    #[cfg(feature = "test-io")]
+    #[test]
+    fn wait_revalidates_when_an_old_job_finishes_after_its_empty_peek() {
+        use std::sync::{Condvar, atomic::AtomicBool, mpsc};
+        struct Release(Arc<(Mutex<bool>, Condvar)>);
+        impl Release {
+            fn new() -> Self {
+                Self(Arc::new((Mutex::new(false), Condvar::new())))
+            }
+            fn open(&self) {
+                *self.0.0.lock().unwrap() = true;
+                self.0.1.notify_all();
+            }
+        }
+        impl Drop for Release {
+            fn drop(&mut self) {
+                self.open();
+            }
+        }
+        let tmp = dir("wait-race");
+        let file = tmp.path().join("clip.wav");
+        let store = tmp.path().join("peaks");
+        crate::export::write_wav(&file, &[0.2; 256], &[0.2; 256], 48000, 16).unwrap();
+        let worker = Release::new();
+        let peek = Release::new();
+        let gw = worker.0.clone();
+        let gp = peek.0.clone();
+        let armed = Arc::new(AtomicBool::new(false));
+        let arm = armed.clone();
+        let path = file.clone();
+        let (at_worker, entered_worker) = mpsc::channel();
+        let (at_peek, entered_peek) = mpsc::channel();
+        let once = AtomicBool::new(true);
+        let observation = xirius_core::io_test::observe(Arc::new(move |op, p| {
+            if p == path {
+                if op == "peaks_result" {
+                    let _ = at_worker.send(());
+                    let g = gw.0.lock().unwrap();
+                    drop(gw.1.wait_while(g, |r| !*r).unwrap());
+                }
+                if op == "request_after_peek"
+                    && arm.load(Ordering::SeqCst)
+                    && once.swap(false, Ordering::SeqCst)
+                {
+                    let _ = at_peek.send(());
+                    let g = gp.0.lock().unwrap();
+                    drop(gp.1.wait_while(g, |r| !*r).unwrap());
+                }
+            }
+            Ok(())
+        }));
+        let old = request_fresh(&file, &store);
+        entered_worker
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .unwrap();
+        let new = request_fresh(&file, &store);
+        armed.store(true, Ordering::SeqCst);
+        let waiter = std::thread::spawn(wait);
+        entered_peek
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .unwrap();
+        worker.open();
+        let key = (file.clone(), store.clone());
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            if let Some(id) = jobs().current_id(&key)
+                && jobs().peek(&key, id).is_some()
+            {
+                break;
+            }
+            assert!(std::time::Instant::now() < end);
+            std::thread::yield_now();
+        }
+        peek.open();
+        waiter.join().unwrap();
+        assert!(take_request(&new).unwrap().is_ok());
+        assert!(
+            new.0
+                .shared
+                .work
+                .lock()
+                .unwrap()
+                .result
+                .as_ref()
+                .unwrap()
+                .generation
+                >= new.0.generation
+        );
+        drop(old);
+        drop(new);
+        drop(observation);
+        assert_eq!(retained_keys_under(tmp.path()), 0);
+    }
+
+    #[test]
+    fn requests_for_two_stores_are_both_kept_until_they_finish() {
+        let tmp = dir("stores");
+        let wav = tmp.path().join("clip.wav");
+        crate::export::write_wav(&wav, &[0.2; 256], &[0.2; 256], 48000, 16).unwrap();
+        let a = tmp.path().join("a");
+        let b = tmp.path().join("b");
+        request(&wav, &a);
+        request(&wav, &b);
+        wait();
+        assert!(load(&wav, &a).is_some());
+        assert!(load(&wav, &b).is_some());
     }
 
     #[test]
@@ -549,8 +790,8 @@ mod tests {
         crate::export::write_wav(&wav, &x, &x, 48_000, 16).unwrap();
         let store = d.join("cache");
         let before = finished();
-        request(&wav, &store);
-        request(&wav, &store);
+        let _first = request(&wav, &store);
+        let _second = request(&wav, &store);
         let start = std::time::Instant::now();
         let got = loop {
             if let Some(b) = take(&wav) {
@@ -565,8 +806,8 @@ mod tests {
         // A file that is not audio says why.
         let txt = d.join("x.txt");
         std::fs::write(&txt, "x").unwrap();
-        request(&txt, &store);
+        let request = request(&txt, &store);
         wait();
-        assert!(take(&txt).unwrap().unwrap_err().contains("WAV"));
+        assert!(take_request(&request).unwrap().unwrap_err().contains("WAV"));
     }
 }

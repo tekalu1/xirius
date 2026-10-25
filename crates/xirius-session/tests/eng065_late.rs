@@ -10,8 +10,13 @@ use xirius_engine::server::find_host;
 use xirius_plugins::{Catalog, probe};
 use xirius_session::{host::HostConfig, plugins::Isolation, starting::Starting};
 
-/// How long the test plugin takes to be made (in each host).
-const OPEN: Duration = Duration::from_millis(900);
+/// A private factory gate keeps even the bad class unanswered until the caller returns.
+struct Held(std::path::PathBuf);
+impl Drop for Held {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
 
 fn plugin(id: u64, uid: &str) -> Plugin {
     Plugin {
@@ -37,22 +42,21 @@ fn the_player_does_not_wait_for_the_hosts_and_what_they_say_comes_later() {
         eprintln!("opening in hosts needs the plugin host binary");
         return;
     };
-    // SAFETY: the only test of this binary; the hosts it starts read it.
-    unsafe {
-        std::env::set_var("XIRIUS_TEST_VST3_OPEN_MS", OPEN.as_millis().to_string());
-    }
     xirius_test_vst3::fixture_marker();
     let deps = std::env::current_exe()
         .unwrap()
         .parent()
         .unwrap()
         .to_path_buf();
-    let entries = probe(&deps.join("xirius_test_vst3.dll")).unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let dll = tmp.path().join("late.dll");
+    std::fs::copy(deps.join("xirius_test_vst3.dll"), &dll).unwrap();
+    let entries = probe(&dll).unwrap();
     let uid = entries[0].uid.clone();
-    // A plugin the catalog knows whose file is gone: only its host finds that out.
+    // The catalog names a class the factory does not have; only its host finds out.
     let mut gone = entries[0].clone();
     gone.uid = "0123456789abcdef0123456789abcdef".into();
-    gone.path = deps.join("not-there.vst3");
+    gone.path = dll.clone();
     let gone_uid = gone.uid.clone();
     let mut entries = entries;
     entries.push(gone);
@@ -79,20 +83,32 @@ fn the_player_does_not_wait_for_the_hosts_and_what_they_say_comes_later() {
             ..Default::default()
         },
     );
+    let held = Held(dll.with_extension("gate"));
+    std::fs::write(&held.0, b"hold").unwrap();
     assert!(!s.step(), "the first step only asks");
-    let began = Instant::now();
     let (mut host, _audio, warnings) = s.finish_late(&p).unwrap();
-    let built = began.elapsed();
-    eprintln!("finish_late took {built:?}");
+    // Do not release the factories until finish_late has returned. A synchronous
+    // wait cannot pass merely because the scheduler happened to be quick.
+    assert!(held.0.is_file());
     assert!(
-        built < OPEN / 2,
-        "the player does not wait for the hosts: {built:?}"
+        !dll.with_extension("timed-out").exists(),
+        "factory gate timed out"
     );
     assert!(
         warnings.is_empty(),
         "nothing is said before they answer: {warnings:?}"
     );
     assert!(host.plugins().late_pending(), "they are still opening");
+    let entered = Instant::now() + Duration::from_secs(60);
+    while !dll.with_extension("entered").exists() {
+        assert!(
+            Instant::now() < entered,
+            "host did not enter the factory gate"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(host.plugins().late_pending());
+    drop(held);
 
     let deadline = Instant::now() + Duration::from_secs(60);
     let mut said = Vec::new();
