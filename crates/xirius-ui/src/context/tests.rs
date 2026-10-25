@@ -68,7 +68,13 @@ pub(super) fn choose(s: &mut Studio, g: &Geometry, label: &str) -> bool {
         matches!(hit, Hit::Item(_)) || !cell.live(),
         "{label}: {hit:?}"
     );
-    s.press(g, hit)
+    let changed = s.press(g, hit);
+    s.settle_browser_import();
+    s.browser.settle_prefs_io();
+    if let Some(notice) = s.browser.prefs_notice.take() {
+        s.tell(notice);
+    }
+    changed
 }
 
 /// The middle of the empty lane of `name` at bar `bar`.

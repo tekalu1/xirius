@@ -44,7 +44,12 @@ impl Studio {
             | self.poll_midi_ports()
             | self.poll_live_midi()
             | crate::wave::poll()
-            | crate::browser_files::poll()
+            | {
+                let listed = crate::browser_files::poll();
+                listed && self.browser.open && self.browser.tab == crate::browser::RailTab::Files
+            }
+            | self.poll_browser_menu()
+            | self.poll_browser_import()
             | self.follow_browser()
             | self.follow_audition()
             | self.poll_export()

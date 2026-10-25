@@ -19,6 +19,9 @@ pub fn run(cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Plan> {
     let p = cx.project.as_ref();
     let file = args.str("file")?;
     let path = disk_path(file, cx.dir)?;
+    #[cfg(feature = "test-io")]
+    xirius_core::io_test::before("midi_import_read", &path)
+        .map_err(|e| CmdError::io(e.to_string()))?;
     if !path.is_file() {
         return Err(CmdError::not_found(format!(
             "MIDI ファイルが見つかりません: {}",

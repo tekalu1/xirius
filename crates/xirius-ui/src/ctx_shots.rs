@@ -1107,7 +1107,7 @@ fn browse(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut
             crate::import_shots::make_place(&top);
             let mut s = studio.borrow_mut();
             s.browser.press_rail(RailTab::Files);
-            if let Err(e) = s.browser.add_place(&top) {
+            if let Err(e) = s.browser.add_place_fixture(&top) {
                 s.error = Some(e);
             }
             s.browser.toggle_dir(&top.join("Loops").to_string_lossy());

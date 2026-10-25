@@ -23,7 +23,7 @@ fn studio(name: &str) -> (Studio, PathBuf, tempfile::TempDir) {
     make_place(&top);
     let mut s = Studio::sample();
     s.browser.press_rail(RailTab::Files);
-    s.browser.add_place(&top).unwrap();
+    s.browser.add_place_fixture(&top).unwrap();
     s.browser.toggle_dir(&top.join("Loops").to_string_lossy());
     crate::browser_files::settle_rows(&s.browser);
     (s, top, top_tmp)
@@ -82,6 +82,9 @@ fn a_file_dragged_onto_an_audio_track_is_a_clip_there_and_one_undo_takes_it_away
     assert_eq!(drop_label(&s, &g, &d), Some(format!("{name} に置く")));
 
     assert!(s.lib_up(&g, x, y));
+    s.settle_browser_import();
+    s.browser.settle_prefs_io();
+    s.follow_browser();
     assert_eq!(s.error, None);
     assert!(s.browser.file_drag.is_none());
     assert_eq!(s.project().tracks.len(), tracks);
@@ -110,6 +113,9 @@ fn a_midi_file_dragged_onto_the_lanes_is_a_track_of_its_own() {
         Some("新しいトラックに置く")
     );
     s.lib_up(&g, x, y);
+    s.settle_browser_import();
+    s.browser.settle_prefs_io();
+    s.follow_browser();
     assert_eq!(s.error, None);
     let p = s.project();
     assert_eq!(p.tracks.len(), tracks + 1);
@@ -127,12 +133,18 @@ fn a_press_that_does_not_move_or_lets_go_off_the_arrangement_puts_nothing() {
     let steps = s.song.steps();
     let at = grab(&mut s, &g, "loop_96bpm.wav");
     assert!(s.lib_up(&g, at.0, at.1));
+    s.settle_browser_import();
+    s.browser.settle_prefs_io();
+    s.follow_browser();
     // Dragged, then let go over the browser itself.
     let at = grab(&mut s, &g, "loop_96bpm.wav");
     s.lib_move(at.0 + 40.0, at.1 + 40.0);
     let d = s.browser.file_drag.clone().unwrap();
     assert_eq!(drop_label(&s, &g, &d), None);
     assert!(s.lib_up(&g, at.0 + 40.0, at.1 + 40.0));
+    s.settle_browser_import();
+    s.browser.settle_prefs_io();
+    s.follow_browser();
     assert_eq!(s.song.steps(), steps);
     assert_eq!(s.error, None);
 }
@@ -166,6 +178,9 @@ fn from_file_puts_each_file_at_the_playhead_and_says_what_it_could_not() {
     s.playhead = bar;
     let pad = top.join("pad_44k.wav");
     s.finish_picked(FileRequest::Audio, &[pad.clone(), top.join("idea.mid")]);
+    s.settle_browser_import();
+    s.browser.settle_prefs_io();
+    s.follow_browser();
     assert_eq!(s.error, None);
     assert_eq!(s.project().tracks.len(), tracks + 2);
     assert_eq!(s.song.steps(), steps + 2);
@@ -182,6 +197,9 @@ fn from_file_puts_each_file_at_the_playhead_and_says_what_it_could_not() {
     assert_eq!(idea.clips[0].start, bar);
 
     s.finish_picked(FileRequest::Audio, &[top.join("notes.txt")]);
+    s.settle_browser_import();
+    s.browser.settle_prefs_io();
+    s.follow_browser();
     assert!(s.error.as_deref().unwrap().contains("notes.txt"));
     assert_eq!(s.project().tracks.len(), tracks + 2);
 }
@@ -190,10 +208,16 @@ fn from_file_puts_each_file_at_the_playhead_and_says_what_it_could_not() {
 fn the_folder_window_gives_the_browser_a_tab() {
     let (mut s, top, _tmp) = studio("place");
     s.finish_picked(FileRequest::Place, &[top.join("Drums")]);
+    s.settle_browser_import();
+    s.browser.settle_prefs_io();
+    s.follow_browser();
     assert_eq!(s.error, None);
     assert_eq!(s.browser.location().name, "Drums");
     assert_eq!(s.notice_text(), Some("場所のタブ「Drums」を足しました"));
     s.finish_picked(FileRequest::Place, &[top.join("nowhere")]);
+    s.settle_browser_import();
+    s.browser.settle_prefs_io();
+    s.follow_browser();
     assert!(s.error.is_some());
 }
 
@@ -221,6 +245,9 @@ fn an_empty_song_can_start_from_a_file() {
     );
     let pad = top.join("pad_44k.wav");
     s.finish_picked(FileRequest::Audio, std::slice::from_ref(&pad));
+    s.settle_browser_import();
+    s.browser.settle_prefs_io();
+    s.follow_browser();
     assert_eq!(s.error, None);
     assert_eq!(s.project().tracks.len(), tracks + 1);
     assert_eq!(clips_of(&s, &pad).len(), 1);

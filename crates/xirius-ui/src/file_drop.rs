@@ -6,12 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::json;
 use xirius_core::time::Tick;
 
-use crate::instrument::DEFAULT;
 use crate::studio::{Geometry, Studio};
-use crate::tree::RowKind;
 
 /// A file the screen takes when dropped.
 pub fn is_midi(path: &Path) -> bool {
@@ -80,7 +77,7 @@ impl Studio {
             }
         }
         if !read.is_empty() && !placed {
-            self.tell(format!("{} をインポートしました", read.join("、")));
+            self.browser_import_io.many = Some(format!("{} をインポートしました", read.join("、")));
         }
         true
     }
@@ -88,26 +85,7 @@ impl Studio {
     /// A MIDI file as new tracks of the built-in instrument at `at`; the first
     /// is selected.
     pub(crate) fn drop_midi(&mut self, path: &Path, at: Tick) -> Result<(), String> {
-        let had: Vec<_> = self.project().tracks.keys().copied().collect();
-        self.song.run(
-            "midi.import",
-            json!({ "file": path.display().to_string(), "at": at, "instrument": DEFAULT }),
-        )?;
-        self.error = None;
-        self.after_edit();
-        let first = self
-            .project()
-            .tracks
-            .values()
-            .find(|t| !had.contains(&t.id))
-            .map(|t| (t.id, t.clips.first().map(|c| c.id)));
-        if let Some((track, clip)) = first {
-            match clip {
-                Some(c) => self.select_clip_here(track, c),
-                None => self.select_row(Some(RowKind::Track(track))),
-            }
-        }
-        Ok(())
+        self.queue_browser_import(path.to_path_buf(), None, at, true)
     }
 }
 

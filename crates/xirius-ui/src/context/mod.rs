@@ -533,6 +533,7 @@ impl Studio {
     /// Opens a menu of `items` at a point of the body. The gap at the end of a group is
     /// dropped when nothing follows it.
     pub(crate) fn open_context(&mut self, items: Vec<Item>, x: f32, y: f32) {
+        self.cancel_browser_menu();
         let mut items = items;
         for item in &mut items {
             if let Run::Sub(rows) = &mut item.run {
@@ -701,6 +702,7 @@ impl Studio {
     /// The right press at a point of the body: opens the menu of what is there. False when
     /// no scene claims the point.
     pub(crate) fn scene_context(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
+        self.cancel_browser_menu();
         self.browser.typing = false;
         self.input_map.browser_focus = self.browser.open && g.panel.contains(x, y);
         self.input_map.context_delete = None;

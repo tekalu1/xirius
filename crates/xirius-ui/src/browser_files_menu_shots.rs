@@ -170,7 +170,7 @@ fn play(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) 
             let mut s = studio.borrow_mut();
             s.drawer_open = false;
             s.browser.press_rail(RailTab::Files);
-            s.browser.add_place(&top).unwrap();
+            s.browser.add_place_fixture(&top).unwrap();
             for dir in ["Drums", "Loops"] {
                 s.browser
                     .open_dirs

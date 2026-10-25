@@ -79,21 +79,6 @@ fn dim(label: &str) -> Item {
     Item::act(label, "", Act::Open).enabled(false)
 }
 
-/// The first of 「新しいフォルダー」, 「新しいフォルダー (2)」, ... that `dir` does not have.
-fn new_folder_name(dir: &Path) -> String {
-    let base = "新しいフォルダー";
-    (1..)
-        .map(|n| {
-            if n == 1 {
-                base.to_string()
-            } else {
-                format!("{base} ({n})")
-            }
-        })
-        .find(|name| std::fs::symlink_metadata(dir.join(name)).is_err())
-        .unwrap_or_else(|| base.to_string())
-}
-
 impl Studio {
     /// The selected track, when it is of `kind`.
     pub(super) fn selected_track_of(&self, kind: TrackKind) -> Option<TrackId> {
@@ -124,6 +109,45 @@ impl Studio {
         }
         let l = self.browser.layout(g.panel);
         let hit = self.browser.hit(&l, x, y);
+        if let Some(
+            BrowserHit::File(i)
+            | BrowserHit::Dir(i)
+            | BrowserHit::Pool(i)
+            | BrowserHit::PoolCount(i),
+        ) = hit
+        {
+            let path = match l.rows.get(i).map(|p| &p.row) {
+                Some(
+                    BRow::File { key, .. }
+                    | BRow::Dir { key, .. }
+                    | BRow::Pool {
+                        key,
+                        missing: false,
+                        ..
+                    },
+                ) => Some(PathBuf::from(key)),
+                _ => None,
+            };
+            if let Some(path) = path
+                && !self.menu_io_ready(&path, g, x, y)
+            {
+                if matches!(
+                    l.rows.get(i).map(|p| &p.row),
+                    Some(BRow::File { .. } | BRow::Pool { .. })
+                ) {
+                    self.browser.selected_file = Some(path.to_string_lossy().into_owned());
+                }
+                if matches!(l.rows.get(i).map(|p| &p.row), Some(BRow::Pool { .. })) {
+                    self.browser.pool_heading = None;
+                    if self.browser.playing.as_deref() != self.browser.selected_file.as_deref() {
+                        self.browser.playing = None;
+                    }
+                }
+                self.ctx = None;
+                self.popup = None;
+                return true;
+            }
+        }
         let files = self.browser.tab == RailTab::Files;
         let pool = self.browser.tab == RailTab::SongFiles;
         let rows = match hit {
@@ -164,7 +188,10 @@ impl Studio {
             Some(BrowserHit::Loc(i) | BrowserHit::LocRemove(i)) => self.place_items(i),
             Some(BrowserHit::Group(_)) if !files && !pool => self.list_items(),
             None if !files && !pool && l.list.contains(x, y) => self.list_items(),
-            _ => return false,
+            _ => {
+                self.cancel_browser_menu();
+                return false;
+            }
         };
         self.open_context(rows, x, y);
         true
@@ -288,7 +315,9 @@ impl Studio {
                 "file.add.folder",
                 json!({ "path": path.display().to_string() }),
                 "name",
-                &new_folder_name(path),
+                &self
+                    .file_menu_info(path)
+                    .map_or_else(|| "新しいフォルダー".into(), |i| i.name.clone()),
             ),
             self.rename_row(path),
             Item::gap(),
@@ -299,7 +328,7 @@ impl Studio {
     /// The row that names a file or a folder anew (`file.rename`). A file's box has its name
     /// without the extension, which the command keeps.
     pub(super) fn rename_row(&mut self, path: &Path) -> Item {
-        let shown = if path.is_dir() {
+        let shown = if self.file_menu_info(path).is_some_and(|i| i.dir) {
             path.file_name()
         } else {
             path.file_stem()
@@ -314,18 +343,11 @@ impl Studio {
             "name",
             &shown,
         );
-        // The name it has: the command says there is nothing to do, unless the path itself cannot
-        // be renamed (the song's own data, the song folder).
-        let same = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let args = json!({ "path": path.display().to_string(), "name": same });
-        if let Err(e) = self.song.check("file.rename", args)
-            && e.code != xirius_core::ErrorCode::NothingToDo
-        {
-            row.enabled = false;
-            row.reason = e.to_string();
+        row.enabled = self
+            .file_menu_info(path)
+            .is_some_and(|i| i.rename.is_none());
+        if let Some(error) = self.file_menu_info(path).and_then(|i| i.rename.as_ref()) {
+            row.reason = error.to_string();
         }
         row
     }
@@ -334,7 +356,10 @@ impl Studio {
     /// has it, stay in place dimmed, with the reason.
     pub(super) fn trash_row(&mut self, path: &Path, confirm: &str) -> Item {
         let args = json!({ "path": path.display().to_string() });
-        let checked = self.song.check("file.trash", args.clone());
+        let checked = self.file_menu_info(path).map_or_else(
+            || Err(xirius_core::CmdError::conflict("読み込み中です")),
+            |i| i.trash.clone().map_or(Ok(()), Err),
+        );
         let confirm = Item::new(confirm, Run::Cmd("file.trash", args)).enabled(checked.is_ok());
         let mut row = Item::sub("ごみ箱へ", vec![confirm]);
         if let Err(e) = checked {
@@ -361,7 +386,7 @@ impl Studio {
             "file.rename" | "file.trash" | "file.locate" | "file.collect" | "project.cleanup"
         ) {
             // The pool reads the disk again at once.
-            self.browser.pool_read = None;
+            self.browser.invalidate_pool();
         }
         if !matches!(command, "file.rename" | "file.trash" | "file.add.folder") {
             return;
@@ -495,16 +520,7 @@ impl Studio {
                     }
                 }
             }
-            BrowseAct::AddPlace(path) => match self.browser.add_place(&path) {
-                Ok(name) => {
-                    self.tell(format!("場所のタブ「{name}」を足しました"));
-                    true
-                }
-                Err(e) => {
-                    self.error = Some(e);
-                    false
-                }
-            },
+            BrowseAct::AddPlace(path) => self.browser.add_place_later(path),
             BrowseAct::RemovePlace(key) => match self.place_index(&key).map_or_else(
                 || Err(format!("場所のタブ「{key}」はありません")),
                 |i| self.browser.remove_place(i),

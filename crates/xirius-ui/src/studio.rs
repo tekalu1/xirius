@@ -741,6 +741,8 @@ pub struct Studio {
     pub job: Option<crate::audio_job::Job>,
     /// The bounces and freezes waiting for it (ENG-033).
     pub job_queue: crate::audio_job::Queue,
+    pub(crate) browser_menu_io: crate::browser_menu_io::MenuIo,
+    pub(crate) browser_import_io: crate::browser_import_io::ImportIo,
     /// The clips whose failed stretch the toast has said ([`crate::clip_marks`]).
     pub stretch_told: HashSet<xirius_core::id::ClipId>,
     /// The device's channels, while a thread reads them ([`crate::input_row`]).
@@ -888,6 +890,8 @@ impl Studio {
             gain_tip: None,
             job: None,
             job_queue: Default::default(),
+            browser_menu_io: Default::default(),
+            browser_import_io: Default::default(),
             stretch_told: HashSet::new(),
             input_channels: None,
             midi_ports: crate::midi_watch::Ports::default(),
@@ -1432,6 +1436,7 @@ impl Studio {
 
     /// Applies a press. Returns true when the picture has to be redrawn.
     pub fn press(&mut self, g: &Geometry, hit: Hit) -> bool {
+        self.cancel_browser_menu();
         if self.input_blocked() {
             return false;
         }

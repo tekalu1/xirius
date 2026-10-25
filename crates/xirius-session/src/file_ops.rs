@@ -157,8 +157,12 @@ pub fn pool(p: &Project, dir: Option<&Path>) -> Vec<Entry> {
     if let Some(dir) = dir {
         let mut takes = Vec::new();
         for root in crate::record::take_folders(&p.media, dir) {
+            #[cfg(feature = "test-io")]
+            let _ = xirius_core::io_test::before("pool_read_dir", &root);
             if let Ok(list) = std::fs::read_dir(&root) {
                 takes.extend(list.filter_map(Result::ok).map(|e| e.path()).filter(|p| {
+                    #[cfg(feature = "test-io")]
+                    let _ = xirius_core::io_test::before("pool_file_type", p);
                     p.is_file() && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav"))
                 }));
             }
@@ -182,6 +186,8 @@ pub fn pool(p: &Project, dir: Option<&Path>) -> Vec<Entry> {
     }
     all.into_iter()
         .map(|u| {
+            #[cfg(feature = "test-io")]
+            let _ = xirius_core::io_test::before("pool_metadata", &u.path);
             let meta = std::fs::metadata(&u.path).ok().filter(|m| m.is_file());
             Entry {
                 kind: kind_of(&u),

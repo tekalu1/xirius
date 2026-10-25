@@ -863,7 +863,7 @@ fn play(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) 
                     .join("target/ctx2-browser-fixture");
                 crate::import_shots::make_place(&top);
                 s.browser.press_rail(crate::browser::RailTab::Files);
-                s.browser.add_place(&top).unwrap();
+                s.browser.add_place_fixture(&top).unwrap();
                 s.browser
                     .open_dirs
                     .insert(top.join("Loops").to_string_lossy().into_owned());

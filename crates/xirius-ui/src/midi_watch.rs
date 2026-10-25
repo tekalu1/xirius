@@ -199,6 +199,7 @@ mod tests {
         let mut s = Studio::sample();
         s.drawer_open = true;
         s.tab = DrawerTab::Mixer;
+        s.settle_pool();
         let g = s.geometry(1600.0, 1000.0);
         (s, g)
     }

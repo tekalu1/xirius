@@ -102,12 +102,17 @@ pub fn run(cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Plan> {
     let p = cx.project.as_ref();
     let file = args.str("file")?;
     let path = disk_path(file, cx.dir)?;
+    #[cfg(feature = "test-io")]
+    xirius_core::io_test::before("import_source", &path)
+        .map_err(|e| CmdError::io(e.to_string()))?;
     if !path.is_file() {
         return Err(CmdError::not_found(format!(
             "音声ファイルが見つかりません: {}",
             path.display()
         )));
     }
+    #[cfg(feature = "test-io")]
+    xirius_core::io_test::before("import_probe", &path).map_err(|e| CmdError::io(e.to_string()))?;
     let info = decode::probe(&path).map_err(CmdError::invalid)?;
     let at = match args.0.get("at") {
         None | Some(Value::Null) => 0,
@@ -141,6 +146,9 @@ pub fn run(cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Plan> {
         && p.media.copy_imports
         && is_external(&p.media, dir, &path.to_string_lossy())
     {
+        #[cfg(feature = "test-io")]
+        xirius_core::io_test::before("import_copy", &path)
+            .map_err(|e| CmdError::io(e.to_string()))?;
         let dest = copy_into(&p.media.place(dir, Media::IMPORTS), &path, &[])?;
         copied = Some(song_name(&dest, dir));
         path = dest;

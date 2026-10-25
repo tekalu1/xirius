@@ -2788,6 +2788,7 @@ mod tests {
             })
         };
         let placed = s.import_audio(&recordings.join("stray-2.wav"), None, 0);
+        s.settle_browser_import();
         release.join().unwrap();
         assert!(placed.is_ok(), "{:?}", placed.err());
         assert!(until(&mut s, |s| !s.is_tidying()));

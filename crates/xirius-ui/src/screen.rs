@@ -2105,9 +2105,7 @@ pub fn run(opts: Options) {
                 s.use_installed_plugins();
                 s.os_files = true;
                 // The places, favourites and hidden things kept from the last run (BRW-005).
-                if let Err(e) = s.browser.use_prefs(xirius_session::places::path()) {
-                    s.error = Some(e);
-                }
+                s.browser.start_prefs(xirius_session::places::path());
                 // Off the window's thread: the device's channels (its format only) and,
                 // from then on, the MIDI ports plugged in and out (ENG-001).
                 s.read_input_channels();

@@ -638,7 +638,7 @@ fn play(n: u8, s: &Rc<RefCell<Studio>>, w: &mut Window, cx: &mut App) {
                 let mut s = s.borrow_mut();
                 s.browser.press_rail(crate::browser::RailTab::Files);
                 s.browser.open = true;
-                s.browser.add_place(&top).unwrap();
+                s.browser.add_place_fixture(&top).unwrap();
             }
             let (from, p, clip) = read(s, w, |s, g| {
                 let i = crate::import_shots::file_row(s, g, "replacement.wav").unwrap();

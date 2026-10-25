@@ -71,8 +71,9 @@ enum Chunk {
 type Chunks = HashMap<(PathBuf, u64), (Chunk, Instant)>;
 
 thread_local! {
+    static REQUESTS: RefCell<HashMap<PathBuf, peaks::Request>> = RefCell::new(HashMap::new());
+    static RETRY: RefCell<HashMap<PathBuf, PathBuf>> = RefCell::new(HashMap::new());
     static SLOTS: RefCell<HashMap<PathBuf, Look>> = RefCell::new(HashMap::new());
-    static SEEN: Cell<u64> = const { Cell::new(0) };
     /// The waiting job of each file whose peaks are being made.
     static WAITING: RefCell<HashMap<PathBuf, crate::wait::Id>> = RefCell::new(HashMap::new());
     static CHUNKS: RefCell<Chunks> = RefCell::new(HashMap::new());
@@ -99,7 +100,21 @@ pub fn look(path: &Path, store: &Path) -> Look {
     if crate::opening::cached_paint() {
         return Look::Making;
     }
-    peaks::request(path, store);
+    let request = peaks::request_fresh(path, store);
+    if !request.accepted() {
+        if !RETRY.with(|r| {
+            let mut r = r.borrow_mut();
+            if r.len() >= xirius_session::read_jobs::QUEUED {
+                return false;
+            }
+            r.insert(path.to_path_buf(), store.to_path_buf());
+            true
+        }) {
+            return Look::Making;
+        }
+    } else {
+        REQUESTS.with(|r| r.borrow_mut().insert(path.to_path_buf(), request));
+    }
     let id = crate::wait::begin(crate::wait::Kind::Reflect, "波形");
     WAITING.with(|w| w.borrow_mut().insert(path.to_path_buf(), id));
     let l = Look::Making;
@@ -110,16 +125,24 @@ pub fn look(path: &Path, store: &Path) -> Look {
 /// Takes the peaks and samples read since the last call; true when a clip should be drawn again.
 pub fn poll() -> bool {
     let samples = poll_samples();
-    let now = peaks::finished();
-    if SEEN.with(|s| s.replace(now)) == now {
-        return samples;
-    }
+    RETRY.with(|r| {
+        r.borrow_mut().retain(|path, store| {
+            let request = peaks::request_fresh(path, store);
+            if !request.accepted() {
+                return true;
+            }
+            REQUESTS.with(|r| r.borrow_mut().insert(path.clone(), request));
+            false
+        })
+    });
     SLOTS.with(|s| {
         let mut changed = samples;
         for (path, l) in s.borrow_mut().iter_mut() {
             if matches!(l, Look::Making)
-                && let Some(built) = peaks::take(path)
+                && let Some(built) =
+                    REQUESTS.with(|r| r.borrow().get(path).and_then(peaks::take_request))
             {
+                REQUESTS.with(|r| r.borrow_mut().remove(path));
                 *l = built.map_or(Look::Missing, Look::Ready);
                 if let Some(id) = WAITING.with(|w| w.borrow_mut().remove(path)) {
                     crate::wait::end(id);
@@ -205,7 +228,14 @@ fn chunks(path: &Path, a: f64, b: f64) -> Option<Vec<Arc<Samples>>> {
 /// Forgets the peaks and samples read so far, so a changed file is read again (a song opened
 /// anew).
 pub fn forget() {
+    RETRY.with(|r| r.borrow_mut().clear());
     SLOTS.with(|s| s.borrow_mut().clear());
+    REQUESTS.with(|r| {
+        for request in r.borrow().values() {
+            peaks::discard(request);
+        }
+        r.borrow_mut().clear();
+    });
     CHUNKS.with(|c| c.borrow_mut().clear());
     ASKED.with(|a| a.borrow_mut().clear());
     for (_, id) in WAITING.with(|w| w.take()) {

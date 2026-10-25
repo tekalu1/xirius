@@ -100,6 +100,8 @@ fn names(v: &Value) -> BTreeSet<String> {
 
 /// The file at `path`; what a first run starts with when there is none.
 pub fn load(path: &Path) -> Result<Prefs, String> {
+    #[cfg(feature = "test-io")]
+    xirius_core::io_test::before("prefs_read", path).map_err(|e| e.to_string())?;
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Prefs::default()),
@@ -131,6 +133,8 @@ pub fn load(path: &Path) -> Result<Prefs, String> {
 
 /// Writes `prefs` to `path` (through a file beside it, so a crash leaves the old one).
 pub fn save(path: &Path, prefs: &Prefs) -> Result<(), String> {
+    #[cfg(feature = "test-io")]
+    xirius_core::io_test::before("prefs_write", path).map_err(|e| e.to_string())?;
     let v = json!({
         "favourites": prefs.favourites,
         "hidden": prefs.hidden,
@@ -152,6 +156,8 @@ pub fn save(path: &Path, prefs: &Prefs) -> Result<(), String> {
 }
 
 fn same_dir(a: &Path, b: &Path) -> bool {
+    #[cfg(feature = "test-io")]
+    let _ = xirius_core::io_test::before("place_canonicalize", a);
     match (a.canonicalize(), b.canonicalize()) {
         (Ok(a), Ok(b)) => a == b,
         _ => a == b,
@@ -186,6 +192,8 @@ impl Prefs {
     /// Adds a tab for the folder `dir` at the end; returns its name. A folder that has a tab
     /// already keeps it.
     pub fn add_place(&mut self, dir: &Path, name: Option<&str>) -> Result<String, String> {
+        #[cfg(feature = "test-io")]
+        xirius_core::io_test::before("place_validate", dir).map_err(|e| e.to_string())?;
         if !dir.is_dir() {
             return Err(format!("フォルダーが見つかりません: {}", dir.display()));
         }

@@ -58,6 +58,7 @@ pub mod preset;
 pub mod processed;
 pub mod punch;
 pub mod rack_row;
+pub mod read_jobs;
 pub mod recent;
 pub mod record;
 pub mod reveal;

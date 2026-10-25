@@ -29,7 +29,7 @@ fn fresh(root: &Path) -> PathBuf {
 fn on(top: &Path) -> Browser {
     let mut b = Browser::new();
     b.press_rail(RailTab::Files);
-    b.add_place(top).unwrap();
+    b.add_place_fixture(top).unwrap();
     settle_rows(&b);
     b
 }
@@ -66,6 +66,225 @@ fn key(b: &Browser, name: &str) -> String {
         .unwrap_or_else(|| panic!("no row {name}"))
 }
 
+#[test]
+fn blocked_navigation_and_wide_search_are_bounded_and_revisits_coalesce() {
+    let _serial = crate::browser_io_tests::IO_GATES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = folder("bounded");
+    let a = tmp.path().join("a");
+    let bpath = tmp.path().join("b");
+    let wide = tmp.path().join("wide");
+    for p in [&a, &bpath, &wide] {
+        std::fs::create_dir(p).unwrap();
+    }
+    for i in 0..600 {
+        std::fs::create_dir(wide.join(format!("child{i}"))).unwrap();
+    }
+    let mut b = on(&wide);
+    b.add_place_fixture(&a).unwrap();
+    b.add_place_fixture(&bpath).unwrap();
+    b.set_location(1);
+    settle_rows(&b);
+    let release = Release::new();
+    let gate = release.0.clone();
+    let root = tmp.path().to_path_buf();
+    let (tx, entered) = channel();
+    let observe = xirius_core::io_test::observe(Arc::new(move |op, path| {
+        if op == "browser_read_dir" && path.starts_with(&root) && path != root.join("wide") {
+            let _ = tx.send(path.to_path_buf());
+            let guard = gate.0.lock().unwrap();
+            drop(gate.1.wait_while(guard, |done| !*done).unwrap());
+        }
+        Ok(())
+    }));
+    b.set_location(2);
+    b.rows();
+    entered.recv_timeout(Duration::from_secs(15)).unwrap();
+    let first = LISTS.with(|l| l.borrow().dirs[&a].pending.unwrap());
+    for _ in 0..40 {
+        b.set_location(3);
+        b.rows();
+        b.set_location(2);
+        b.rows();
+        assert_eq!(LISTS.with(|l| l.borrow().dirs[&a].pending), Some(first));
+        let (running, queued) = LISTS.with(|l| l.borrow().jobs.counts());
+        assert!(running <= xirius_session::read_jobs::THREADS);
+        assert!(queued <= xirius_session::read_jobs::QUEUED);
+    }
+    b.set_location(1);
+    b.rows(); // Only two readers are stopped: the wide root can still arrive.
+    let until = Instant::now() + Duration::from_secs(15);
+    loop {
+        poll();
+        b.rows();
+        if LISTS.with(|l| !l.borrow().dirs[&wide].entries.is_empty()) {
+            break;
+        }
+        assert!(Instant::now() < until);
+        std::thread::yield_now();
+    }
+    b.search = "hit".into();
+    b.rows();
+    let (running, queued) = LISTS.with(|l| l.borrow().jobs.counts());
+    assert!(running <= 4);
+    assert!(queued <= 128);
+    // An explicit queued bound is observable before threads get scheduled, unlike
+    // checking a channel immediately after submitting work.
+    assert!(running + queued <= 4 + 128);
+    b.search.clear();
+    b.rows();
+    let (_, queued) = LISTS.with(|l| l.borrow().jobs.counts());
+    assert_eq!(queued, 0);
+    release.release();
+    forget();
+    while LISTS.with(|l| l.borrow().jobs.pending()) {
+        assert!(Instant::now() < until);
+        std::thread::yield_now();
+    }
+    drop(observe);
+}
+
+#[test]
+fn missing_and_unlistable_folders_keep_the_main_branch_messages() {
+    for (operation, error, expected) in [
+        ("browser_top", std::io::ErrorKind::NotFound, GONE),
+        (
+            "browser_read_dir",
+            std::io::ErrorKind::PermissionDenied,
+            EMPTY,
+        ),
+    ] {
+        let tmp = folder("errors");
+        let path = tmp.path().to_path_buf();
+        let mut b = Browser::new();
+        b.press_rail(RailTab::Files);
+        b.add_place_fixture(&path).unwrap();
+        let target = path.clone();
+        let observe = xirius_core::io_test::observe(Arc::new(move |op, p| {
+            if op == operation && p == target {
+                Err(error.into())
+            } else {
+                Ok(())
+            }
+        }));
+        assert_eq!(names(&b), [expected]);
+        drop(observe);
+        forget();
+    }
+}
+
+#[test]
+fn a_failed_type_hint_falls_back_on_the_worker_like_the_main_branch() {
+    let tmp = folder("type-error");
+    let root = tmp.path().to_path_buf();
+    std::fs::create_dir(root.join("folder")).unwrap();
+    std::fs::write(root.join("audio.wav"), b"").unwrap();
+    let mut b = Browser::new();
+    b.press_rail(RailTab::Files);
+    b.add_place_fixture(&root).unwrap();
+    let path = root.clone();
+    let ui = std::thread::current().id();
+    let (tx, trace) = channel();
+    let observation = xirius_core::io_test::observe(Arc::new(move |op, p| {
+        if p.starts_with(&path) && op == "browser_file_type" {
+            return Err(std::io::ErrorKind::PermissionDenied.into());
+        }
+        if p.starts_with(&path) && op == "browser_type_fallback" {
+            assert_ne!(std::thread::current().id(), ui);
+            let _ = tx.send(());
+        }
+        Ok(())
+    }));
+    assert_eq!(names(&b), ["folder/", "audio.wav"]);
+    assert_eq!(trace.try_iter().count(), 2);
+    drop(observation);
+    forget();
+}
+
+#[test]
+fn directory_and_file_links_match_the_main_branch_listing() {
+    let tmp = folder("links");
+    let root = tmp.path();
+    let target = root.join("target");
+    std::fs::create_dir(&target).unwrap();
+    std::fs::write(target.join("hit.wav"), b"").unwrap();
+    std::fs::write(root.join("file.wav"), b"").unwrap();
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // Junctions require no elevation and exercise the Windows mount-point tag.
+        let result = std::process::Command::new("cmd")
+            .creation_flags(0x08000000)
+            .args(["/c", "mklink", "/J"])
+            .arg(root.join("junction.wav"))
+            .arg(&target)
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        let missing = root.join("removed-target");
+        std::fs::create_dir(&missing).unwrap();
+        let result = std::process::Command::new("cmd")
+            .creation_flags(0x08000000)
+            .args(["/c", "mklink", "/J"])
+            .arg(root.join("broken-junction.wav"))
+            .arg(&missing)
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        std::fs::remove_dir(&missing).unwrap();
+        for (path, to, dir) in [
+            ("directory.wav", target.clone(), true),
+            ("linked.wav", root.join("file.wav"), false),
+            ("broken.wav", root.join("absent.wav"), false),
+            ("broken-dir", root.join("absent"), true),
+        ] {
+            let result = if dir {
+                std::os::windows::fs::symlink_dir(&to, root.join(path))
+            } else {
+                std::os::windows::fs::symlink_file(&to, root.join(path))
+            };
+            if let Err(e) = result {
+                assert!(
+                    e.kind() == std::io::ErrorKind::PermissionDenied
+                        || e.raw_os_error() == Some(1314),
+                    "{e}"
+                );
+                eprintln!("symbolic-link fixture unavailable: {e}");
+            }
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        symlink(&target, root.join("directory.wav")).unwrap();
+        symlink(root.join("file.wav"), root.join("linked.wav")).unwrap();
+        symlink(root.join("absent.wav"), root.join("broken.wav")).unwrap();
+        symlink(root.join("absent"), root.join("broken-dir")).unwrap();
+    }
+    let mut old: Vec<_> = std::fs::read_dir(root)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter_map(|e| {
+            let path = e.path();
+            let dir = path.is_dir();
+            (dir || takes(&path)).then_some((e.file_name().to_string_lossy().into_owned(), dir))
+        })
+        .collect();
+    old.sort();
+    let b = on(root);
+    let mut now: Vec<_> = list(root).iter().map(|e| (e.name.clone(), e.dir)).collect();
+    now.sort();
+    assert_eq!(now, old);
+    let mut b = b;
+    b.search = "hit".into();
+    assert_eq!(
+        names(&b).iter().filter(|n| n.as_str() == "hit.wav").count(),
+        old.iter().filter(|(_, dir)| *dir).count()
+    );
+    forget();
+}
+
 struct Release(Arc<(Mutex<bool>, std::sync::Condvar)>);
 impl Release {
     fn new() -> Self {
@@ -84,6 +303,9 @@ impl Drop for Release {
 
 #[test]
 fn listing_and_clip_drawing_inputs_return_while_place_io_is_held() {
+    let _serial = crate::browser_io_tests::IO_GATES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     use crate::wave::{self, Look};
     use xirius_session::peaks;
 
@@ -159,6 +381,9 @@ fn listing_and_clip_drawing_inputs_return_while_place_io_is_held() {
 
 #[test]
 fn refresh_keeps_the_old_rows_and_navigation_discards_the_old_receiver() {
+    let _serial = crate::browser_io_tests::IO_GATES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let tmp = folder("refresh");
     let old = tmp.path().join("old");
     let new = tmp.path().join("new");
@@ -167,7 +392,7 @@ fn refresh_keeps_the_old_rows_and_navigation_discards_the_old_receiver() {
     std::fs::write(old.join("old.wav"), b"").unwrap();
     std::fs::write(new.join("new.mid"), b"").unwrap();
     let mut b = on(&old);
-    b.add_place(&new).unwrap();
+    b.add_place_fixture(&new).unwrap();
     b.set_location(1);
     settle_rows(&b);
     let release = Release::new();
@@ -175,16 +400,12 @@ fn refresh_keeps_the_old_rows_and_navigation_discards_the_old_receiver() {
     let path = old.clone();
     let ui = std::thread::current().id();
     let (tx, entered) = channel();
-    let (done, returned) = channel();
     let observe = xirius_core::io_test::observe(Arc::new(move |op, p| {
         if op == "browser_read_dir" && p == path {
             assert_ne!(std::thread::current().id(), ui);
             let _ = tx.send(());
             let guard = gate.0.lock().unwrap();
             drop(gate.1.wait_while(guard, |done| !*done).unwrap());
-        }
-        if op == "browser_list_discarded" && p == path {
-            let _ = done.send(());
         }
         Ok(())
     }));
@@ -205,7 +426,11 @@ fn refresh_keeps_the_old_rows_and_navigation_discards_the_old_receiver() {
     assert_eq!(names(&b), ["new.mid"]);
     assert!(LISTS.with(|l| !l.borrow().dirs.contains_key(&old)));
     release.release();
-    returned.recv_timeout(Duration::from_secs(10)).unwrap();
+    let until = Instant::now() + Duration::from_secs(10);
+    while LISTS.with(|l| l.borrow().jobs.pending()) {
+        assert!(Instant::now() < until);
+        std::thread::yield_now();
+    }
     drop(observe);
     // A result arriving after navigation has no receiver and cannot repopulate
     // even the cache for the old directory.
@@ -543,15 +768,16 @@ fn a_place_is_added_shown_kept_and_taken_away_but_never_the_song() {
     std::fs::create_dir_all(&c).unwrap();
     let mut b = Browser::new();
     b.press_rail(RailTab::Files);
-    b.use_prefs(file.clone()).unwrap();
-    assert_eq!(b.add_place(&a), Ok("Samples".into()));
-    assert_eq!(b.add_place(&c), Ok("Loops".into()));
+    b.use_prefs_fixture(file.clone()).unwrap();
+    assert_eq!(b.add_place_fixture(&a), Ok("Samples".into()));
+    assert_eq!(b.add_place_fixture(&c), Ok("Loops".into()));
     assert_eq!(b.location().name, "Loops");
-    assert!(b.add_place(&a).is_err(), "the same folder twice");
+    assert!(b.add_place_fixture(&a).is_err(), "the same folder twice");
 
+    b.settle_prefs_io();
     // Another browser (after a restart) has the tabs.
     let mut again = Browser::new();
-    again.use_prefs(file.clone()).unwrap();
+    again.use_prefs_fixture(file.clone()).unwrap();
     let tabs: Vec<String> = again.locations().into_iter().map(|l| l.name).collect();
     assert_eq!(tabs, [places::SONG, "Samples", "Loops"]);
 
@@ -567,8 +793,9 @@ fn a_place_is_added_shown_kept_and_taken_away_but_never_the_song() {
     assert_eq!(layout(&b).remove, None);
     assert!(b.remove_place(0).is_err());
 
+    b.settle_prefs_io();
     let mut again = Browser::new();
-    again.use_prefs(file).unwrap();
+    again.use_prefs_fixture(file).unwrap();
     assert_eq!(again.locations().len(), 2);
 }
 
@@ -594,7 +821,7 @@ fn many_tabs_share_the_width_and_stay_inside_the_panel() {
     for i in 0..6 {
         let d = root.join(format!("とても長い名前のフォルダー {i}"));
         std::fs::create_dir_all(&d).unwrap();
-        b.add_place(&d).unwrap();
+        b.add_place_fixture(&d).unwrap();
     }
     let l = layout(&b);
     assert_eq!(l.tabs.len(), 7);
@@ -612,9 +839,10 @@ fn favourites_and_hidden_are_kept_and_another_programs_change_is_read() {
     let root = root_tmp.path().to_path_buf();
     let file = fresh(&root);
     let mut b = Browser::new();
-    b.use_prefs(file.clone()).unwrap();
+    b.use_prefs_fixture(file.clone()).unwrap();
     b.toggle_favourite("Dexed");
     b.set_hidden("Surge XT", true);
+    b.settle_prefs_io();
     let p = places::load(&file).unwrap();
     assert!(p.favourites.contains("Dexed"));
     assert!(p.hidden.contains("Surge XT"));
@@ -625,7 +853,8 @@ fn favourites_and_hidden_are_kept_and_another_programs_change_is_read() {
     p.show_hidden = true;
     p.favourites.remove("Dexed");
     places::save(&file, &p).unwrap();
-    assert!(b.reload_prefs());
+    b.prefs_io.at = None;
+    b.settle_prefs_io();
     assert!(b.show_hidden);
     assert!(!b.favourites.contains("Dexed"));
     assert!(!b.reload_prefs(), "nothing new");
@@ -638,7 +867,7 @@ fn a_file_that_cannot_be_read_says_so() {
     let file = root.join("browser.json");
     std::fs::write(&file, "{ not json").unwrap();
     let mut b = Browser::new();
-    assert!(b.use_prefs(file).is_err());
+    assert!(b.use_prefs_fixture(file).is_err());
 }
 
 #[test]

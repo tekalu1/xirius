@@ -80,7 +80,7 @@ fn play(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) 
                 let mut s = studio.borrow_mut();
                 s.drawer_open = false;
                 s.browser.press_rail(RailTab::Files);
-                s.browser.add_place(&top).unwrap();
+                s.browser.add_place_fixture(&top).unwrap();
                 s.browser
                     .open_dirs
                     .insert(top.join("Drums").to_string_lossy().into_owned());

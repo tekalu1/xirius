@@ -7,12 +7,11 @@
 //! Level 0 has one peak per [`BASE`] frames of the file's own rate; each level after it merges
 //! [`STEP`] peaks of the one before.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::thread::JoinHandle;
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Frames per peak of level 0.
 pub const BASE: u32 = 128;
@@ -310,93 +309,156 @@ pub fn keep(source: &Path, store: &Path, stamp: Stamp, peaks: &Peaks) -> Result<
 /// What a background build left.
 pub type Built = Result<Arc<Peaks>, String>;
 
-#[derive(Default)]
-struct Jobs {
-    running: HashSet<PathBuf>,
-    done: HashMap<PathBuf, Built>,
-    threads: Vec<JoinHandle<()>>,
+type Key = (PathBuf, PathBuf);
+#[derive(Clone)]
+struct Tagged {
+    generation: u64,
+    built: Built,
 }
-
-fn jobs() -> &'static Mutex<Jobs> {
-    static JOBS: OnceLock<Mutex<Jobs>> = OnceLock::new();
+#[derive(Clone)]
+pub struct Request {
+    key: Key,
+    id: Arc<AtomicU64>,
+    generation: u64,
+    wanted: Arc<AtomicU64>,
+}
+impl Request {
+    pub fn accepted(&self) -> bool {
+        self.id.load(Ordering::Acquire) != 0
+    }
+}
+fn jobs() -> &'static crate::read_jobs::ReadJobs<Key, Tagged> {
+    static JOBS: OnceLock<crate::read_jobs::ReadJobs<Key, Tagged>> = OnceLock::new();
     JOBS.get_or_init(Default::default)
 }
-
-/// Told when a background build ends.
-fn ended() -> &'static Condvar {
-    static ENDED: Condvar = Condvar::new();
-    &ENDED
+fn generations() -> &'static Mutex<HashMap<Key, Arc<AtomicU64>>> {
+    static WANTED: OnceLock<Mutex<HashMap<Key, Arc<AtomicU64>>>> = OnceLock::new();
+    WANTED.get_or_init(Default::default)
 }
-
+fn latest() -> &'static Mutex<HashMap<PathBuf, Request>> {
+    static LATEST: OnceLock<Mutex<HashMap<PathBuf, Request>>> = OnceLock::new();
+    LATEST.get_or_init(Default::default)
+}
 static FINISHED: AtomicU64 = AtomicU64::new(0);
-
-/// Counts the background builds that have ended; a window redraws when it moves.
+static GENERATION: AtomicU64 = AtomicU64::new(1);
 pub fn finished() -> u64 {
     FINISHED.load(Ordering::Acquire)
 }
-
-/// Makes the peaks of `source` (kept in `store`) on a thread of its own, unless that is already
-/// running. [`take`] hands them over when it ends.
-pub fn request(source: &Path, store: &Path) {
-    let mut j = jobs().lock().unwrap_or_else(|e| e.into_inner());
-    if !j.running.insert(source.to_path_buf()) {
-        return;
-    }
-    j.threads.retain(|t| !t.is_finished());
-    let (path, store) = (source.to_path_buf(), store.to_path_buf());
-    let thread = std::thread::Builder::new()
-        .name("xirius-peaks".into())
-        .spawn(move || {
-            // A build that panics ends as one that failed, so [`wait`] does not wait for it.
-            let built = std::panic::catch_unwind(|| {
-                #[cfg(feature = "test-io")]
-                xirius_core::io_test::before("peaks_source", &path).map_err(|e| e.to_string())?;
-                if !path.is_file() {
-                    return Err("波形の元のファイルが見つかりません".into());
-                }
-                ensure(&path, &store)
-            })
-            .unwrap_or_else(|_| Err(format!("ピークを作れません: {}", path.display())))
-            .map(Arc::new);
-            let mut j = jobs().lock().unwrap_or_else(|e| e.into_inner());
-            j.running.remove(&path);
-            j.done.insert(path, built);
-            FINISHED.fetch_add(1, Ordering::AcqRel);
-            drop(j);
-            ended().notify_all();
-        });
-    match thread {
-        Ok(t) => j.threads.push(t),
-        Err(e) => {
-            j.running.remove(source);
-            j.done.insert(
-                source.to_path_buf(),
-                Err(format!("ピークを作れません: {e}")),
-            );
-            FINISHED.fetch_add(1, Ordering::AcqRel);
-        }
-    }
+fn launch(key: &Key, wanted: Arc<AtomicU64>) -> Option<u64> {
+    let (path, store) = key.clone();
+    jobs().request(key.clone(), move || {
+        let generation = wanted.load(Ordering::Acquire);
+        let built = std::panic::catch_unwind(|| {
+            #[cfg(feature = "test-io")]
+            xirius_core::io_test::before("peaks_source", &path).map_err(|e| e.to_string())?;
+            if !path.is_file() {
+                return Err("波形の元のファイルが見つかりません".into());
+            }
+            let peaks = ensure(&path, &store)?;
+            if !path.is_file() {
+                return Err("波形の元のファイルが見つかりません".into());
+            }
+            Ok(peaks)
+        })
+        .unwrap_or_else(|_| Err("ピークを作れません".into()))
+        .map(Arc::new);
+        FINISHED.fetch_add(1, Ordering::AcqRel);
+        Tagged { generation, built }
+    })
 }
-
-/// The peaks a background build of `source` made, once.
-pub fn take(source: &Path) -> Option<Built> {
-    jobs()
+fn ask(source: &Path, store: &Path) -> Request {
+    let key = (source.to_path_buf(), store.to_path_buf());
+    let generation = GENERATION.fetch_add(1, Ordering::Relaxed);
+    let wanted = generations()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .done
-        .remove(source)
-}
-
-/// Waits for the background builds (a command line ends after them; a test waits before it
-/// removes the song folder they write in). A build another caller is joining is waited for too.
-pub fn wait() {
-    let threads = std::mem::take(&mut jobs().lock().unwrap_or_else(|e| e.into_inner()).threads);
-    for t in threads {
-        let _ = t.join();
+        .entry(key.clone())
+        .or_default()
+        .clone();
+    wanted.fetch_max(generation, Ordering::AcqRel);
+    let id = launch(&key, wanted.clone()).unwrap_or(0);
+    Request {
+        key,
+        id: Arc::new(AtomicU64::new(id)),
+        generation,
+        wanted,
     }
-    let mut j = jobs().lock().unwrap_or_else(|e| e.into_inner());
-    while !j.running.is_empty() {
-        j = ended().wait(j).unwrap_or_else(|e| e.into_inner());
+}
+/// Outstanding reads of the same source/store share one physical job. A later
+/// request never consumes a completed result validated before that request.
+pub fn request(source: &Path, store: &Path) -> Request {
+    let request = ask(source, store);
+    let old = latest()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(source.to_path_buf(), request.clone());
+    if let Some(old) = old
+        && old.key != request.key
+    {
+        discard(&old);
+    }
+    request
+}
+pub fn request_fresh(source: &Path, store: &Path) -> Request {
+    ask(source, store)
+}
+pub fn discard(request: &Request) {
+    let id = request.id.load(Ordering::Acquire);
+    if id != 0 {
+        jobs().discard(&request.key, id);
+    }
+}
+pub fn take_request(request: &Request) -> Option<Built> {
+    let current = jobs().current_id(&request.key).unwrap_or(0);
+    request.id.store(current, Ordering::Release);
+    if current != 0 {
+        match jobs().peek(&request.key, current) {
+            Some(Ok(tag)) if tag.generation >= request.generation => return Some(tag.built),
+            Some(Err(())) => return Some(Err("ピークの読み込みが止まりました".into())),
+            None => return None,
+            _ => {}
+        }
+    }
+    // The prior physical read finished with an older generation, or was
+    // cancelled by a departed view. Revalidate on a worker, coalescing retries.
+    let id = launch(&request.key, request.wanted.clone()).unwrap_or(0);
+    request.id.store(id, Ordering::Release);
+    None
+}
+pub fn take(source: &Path) -> Option<Built> {
+    let request = latest()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(source)
+        .cloned()?;
+    let result = take_request(&request)?;
+    latest()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(source);
+    Some(result)
+}
+/// CLI/tests only; windows poll request handles and never join disk I/O.
+pub fn wait() {
+    loop {
+        let wanted: Vec<_> = generations()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        for (key, generation) in wanted {
+            if let Some(id) = jobs().current_id(&key)
+                && let Some(Ok(tag)) = jobs().peek(&key, id)
+                && tag.generation < generation.load(Ordering::Acquire)
+            {
+                launch(&key, generation);
+            }
+        }
+        if !jobs().pending() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
     }
 }
 

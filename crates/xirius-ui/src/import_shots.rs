@@ -280,7 +280,7 @@ pub fn stage(s: &mut Studio, g: &Geometry, stage: u8) {
             let top = place();
             make_place(&top);
             s.browser.peak_store = Some(dir().join("Peaks"));
-            if let Err(e) = s.browser.add_place(&top) {
+            if let Err(e) = s.browser.add_place_fixture(&top) {
                 s.error = Some(e);
             }
         }

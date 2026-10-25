@@ -13,9 +13,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
-use xirius_session::places::{self, Place, Prefs, SONG};
+#[cfg(test)]
+use xirius_session::places;
+use xirius_session::places::{Place, Prefs, SONG};
 
 use crate::browser::{BRow, Browser};
 
@@ -67,8 +69,18 @@ pub fn takes(path: &Path) -> bool {
 
 fn read(dir: &Path) -> Option<Vec<Entry>> {
     #[cfg(test)]
-    xirius_core::io_test::before("browser_read_dir", dir).ok()?;
-    let rd = std::fs::read_dir(dir).ok()?;
+    xirius_core::io_test::before("browser_top", dir).ok()?;
+    if !dir.is_dir() {
+        return None;
+    }
+    #[cfg(test)]
+    let listing =
+        xirius_core::io_test::before("browser_read_dir", dir).and_then(|()| std::fs::read_dir(dir));
+    #[cfg(not(test))]
+    let listing = std::fs::read_dir(dir);
+    let Ok(rd) = listing else {
+        return Some(Vec::new());
+    };
     let mut out: Vec<Entry> = rd
         .filter_map(Result::ok)
         .filter_map(|e| {
@@ -78,9 +90,29 @@ fn read(dir: &Path) -> Option<Vec<Entry>> {
             }
             let path = e.path();
             #[cfg(test)]
-            xirius_core::io_test::before("browser_file_type", &path).ok()?;
-            let kind = e.file_type().ok()?;
-            let dir = kind.is_dir();
+            let kind = xirius_core::io_test::before("browser_file_type", &path)
+                .and_then(|()| e.file_type());
+            #[cfg(not(test))]
+            let kind = e.file_type();
+            let dir = match kind {
+                Ok(kind) if !kind.is_symlink() => kind.is_dir(),
+                Ok(_) => {
+                    #[cfg(test)]
+                    if xirius_core::io_test::before("browser_link", &path).is_err() {
+                        return takes(&path).then_some(Entry {
+                            name,
+                            path,
+                            dir: false,
+                        });
+                    }
+                    path.is_dir()
+                }
+                Err(_) => {
+                    #[cfg(test)]
+                    let _ = xirius_core::io_test::before("browser_type_fallback", &path);
+                    path.is_dir()
+                }
+            };
             (dir || takes(&path)).then_some(Entry { name, path, dir })
         })
         .collect();
@@ -92,37 +124,41 @@ struct Listed {
     at: Instant,
     entries: Arc<Vec<Entry>>,
     gone: bool,
-    pending: Option<Receiver<Option<Vec<Entry>>>>,
+    pending: Option<u64>,
 }
 
 #[derive(Default)]
 struct Listings {
     root: Option<PathBuf>,
     dirs: HashMap<PathBuf, Listed>,
+    jobs: xirius_session::read_jobs::ReadJobs<PathBuf, Option<Vec<Entry>>>,
+    seen: HashSet<PathBuf>,
 }
 
 impl Listings {
     fn poll(&mut self) -> bool {
         let mut changed = false;
-        for listed in self.dirs.values_mut() {
-            if let Some(rx) = &listed.pending {
-                match rx.try_recv() {
-                    Ok(entries) => {
-                        listed.gone = entries.is_none();
-                        listed.entries = Arc::new(entries.unwrap_or_default());
-                    }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => continue,
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
-                }
+        for (path, listed) in &mut self.dirs {
+            if let Some(id) = listed.pending
+                && let Some(entries) = self.jobs.take(path, id).map(|r| r.unwrap_or(None))
+            {
+                listed.gone = entries.is_none();
+                listed.entries = Arc::new(entries.unwrap_or_default());
                 listed.pending = None;
                 listed.at = Instant::now();
                 changed = true;
             }
         }
+        self.jobs.retain(|p| self.dirs.contains_key(p));
         changed
+            || self
+                .dirs
+                .values()
+                .any(|l| l.pending.is_none() && l.at.elapsed() >= FRESH)
     }
 
     fn list(&mut self, dir: &Path) -> Arc<Vec<Entry>> {
+        self.seen.insert(dir.to_path_buf());
         let listed = self
             .dirs
             .entry(dir.to_path_buf())
@@ -136,29 +172,11 @@ impl Listings {
             && listed.pending.is_none()
             && listed.at.elapsed() >= FRESH
         {
-            let (tx, rx) = channel();
             let path = dir.to_path_buf();
-            // A stalled place must not hold up a newly selected place. Dropping its
-            // receiver on navigation also discards every obsolete result.
-            if std::thread::Builder::new()
-                .name("browser-list".into())
-                .spawn(move || {
-                    let _sent = tx.send(read(&path));
-                    #[cfg(test)]
-                    let _ = xirius_core::io_test::before(
-                        if _sent.is_err() {
-                            "browser_list_discarded"
-                        } else {
-                            "browser_list_done"
-                        },
-                        &path,
-                    );
-                })
-                .is_ok()
-            {
-                listed.pending = Some(rx);
+            listed.pending = self.jobs.request(path.clone(), move || read(&path));
+            if listed.pending.is_some() {
+                listed.at = Instant::now();
             }
-            listed.at = Instant::now();
         }
         listed.entries.clone()
     }
@@ -177,17 +195,30 @@ pub fn list(dir: &Path) -> Arc<Vec<Entry>> {
 
 /// The listings are read again on the next look.
 pub fn forget() {
-    LISTS.with(|l| *l.borrow_mut() = Listings::default());
+    LISTS.with(|l| {
+        let mut l = l.borrow_mut();
+        l.root = None;
+        l.dirs.clear();
+        l.jobs.retain(|_| false);
+    });
 }
 
 /// Waits for all listings the test browser currently needs, including search descendants.
 #[cfg(test)]
 pub(crate) fn settle_rows(browser: &Browser) {
+    if browser.tab != crate::browser::RailTab::Files {
+        return;
+    }
     let until = Instant::now() + Duration::from_secs(15);
     loop {
         poll();
         browser.rows();
-        if LISTS.with(|l| l.borrow().dirs.values().all(|l| l.pending.is_none())) {
+        if LISTS.with(|l| {
+            l.borrow()
+                .dirs
+                .values()
+                .all(|l| l.pending.is_none() && l.at.elapsed() < FRESH)
+        }) {
             return;
         }
         assert!(Instant::now() < until, "browser listing never returned");
@@ -490,10 +521,6 @@ pub fn length_text(path: &Path) -> String {
 
 // ------------------------------------------------------------------- the state
 
-fn stamp(path: &Path) -> Option<SystemTime> {
-    std::fs::metadata(path).and_then(|m| m.modified()).ok()
-}
-
 impl Browser {
     /// What the browser keeps, as it is now.
     pub fn prefs(&self) -> Prefs {
@@ -505,7 +532,7 @@ impl Browser {
         }
     }
 
-    fn apply(&mut self, p: Prefs) {
+    pub(crate) fn apply(&mut self, p: Prefs) {
         let here = self.location().name;
         self.favourites = p.favourites;
         self.hidden = p.hidden;
@@ -519,9 +546,9 @@ impl Browser {
     }
 
     /// The browser keeps what it keeps in `file` from now on, starting with what is there.
-    pub fn use_prefs(&mut self, file: PathBuf) -> Result<(), String> {
+    #[cfg(test)]
+    pub(crate) fn use_prefs_fixture(&mut self, file: PathBuf) -> Result<(), String> {
         let p = places::load(&file);
-        self.prefs_stamp = stamp(&file);
         self.prefs_file = Some(file);
         self.apply(p?);
         Ok(())
@@ -529,36 +556,12 @@ impl Browser {
 
     /// Reads the file again when another program (the CLI, MCP, a command) changed it.
     pub fn reload_prefs(&mut self) -> bool {
-        let Some(file) = self.prefs_file.clone() else {
-            return false;
-        };
-        let now = stamp(&file);
-        if now == self.prefs_stamp {
-            return false;
-        }
-        self.prefs_stamp = now;
-        match places::load(&file) {
-            Ok(p) => {
-                let changed = p != self.prefs();
-                self.apply(p);
-                changed
-            }
-            Err(e) => {
-                self.prefs_error = Some(e);
-                true
-            }
-        }
+        self.poll_prefs_io()
     }
 
-    /// Writes what the browser keeps (when it has a file).
+    /// Coalesces writes and serializes them with preference reads and place validation.
     fn save_prefs(&mut self) {
-        let Some(file) = self.prefs_file.clone() else {
-            return;
-        };
-        match places::save(&file, &self.prefs()) {
-            Ok(()) => self.prefs_stamp = stamp(&file),
-            Err(e) => self.prefs_error = Some(e),
-        }
+        self.save_prefs_later();
     }
 
     pub fn toggle_favourite(&mut self, name: &str) {
@@ -631,8 +634,9 @@ impl Browser {
         all.swap_remove(self.loc.min(all.len() - 1))
     }
 
-    /// A tab for the folder `dir`, shown at once.
-    pub fn add_place(&mut self, dir: &Path) -> Result<String, String> {
+    /// Script/test fixture setup only. Interactive places use the bounded
+    /// asynchronous validation in `add_place_later`.
+    pub(crate) fn add_place_fixture(&mut self, dir: &Path) -> Result<String, String> {
         let mut p = self.prefs();
         let name = p.add_place(dir, None)?;
         self.places = p.places;
@@ -733,14 +737,21 @@ impl Browser {
             forget();
             return vec![BRow::Note(NO_FOLDER)];
         };
-        let here = self.here_dir().unwrap_or(top);
+        let here = self.here_dir().unwrap_or_else(|| top.clone());
         LISTS.with(|l| {
             let mut l = l.borrow_mut();
+            l.seen.clear();
             if l.root.as_deref() != Some(&here) {
                 l.dirs.clear();
+                l.jobs.retain(|_| false);
                 l.root = Some(here.clone());
             }
         });
+        // main checked the location's top, not the current child folder. A
+        // missing/unreadable child is empty while a missing top says GONE.
+        if here != top {
+            list(&top);
+        }
         let song_top = loc.song && self.path.is_empty();
         let q = self.search.trim().to_lowercase();
         let mut rows = Vec::new();
@@ -759,9 +770,16 @@ impl Browser {
                 rows.push(BRow::Note("見つかりません"));
             }
         }
-        if LISTS.with(|l| l.borrow().dirs.get(&here).is_some_and(|l| l.gone)) {
+        if LISTS.with(|l| l.borrow().dirs.get(&top).is_some_and(|l| l.gone)) {
             return vec![BRow::Note(GONE)];
         }
+        LISTS.with(|l| {
+            let mut l = l.borrow_mut();
+            let seen = std::mem::take(&mut l.seen);
+            l.dirs.retain(|p, _| seen.contains(p));
+            l.jobs.retain(|p| seen.contains(p));
+            l.seen = seen;
+        });
         rows
     }
 
@@ -815,6 +833,9 @@ impl crate::studio::Studio {
         let reloaded = self.browser.reload_prefs();
         if let Some(e) = self.browser.prefs_error.take() {
             self.error = Some(e);
+        }
+        if let Some(notice) = self.browser.prefs_notice.take() {
+            self.tell(notice);
         }
         let pool = self.follow_pool();
         let clip = self.follow_pool_clip();

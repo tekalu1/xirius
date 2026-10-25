@@ -427,7 +427,7 @@ fn edt_045_browser_press_drag_replaces_and_middle_drag_moves_only_the_view() {
     crate::import_shots::make_place(&dir);
     s.browser.press_rail(RailTab::Files);
     s.browser.open = true;
-    s.browser.add_place(&dir).unwrap();
+    s.browser.add_place_fixture(&dir).unwrap();
     s.browser.toggle_dir(&dir.join("Loops").to_string_lossy());
     let g = s.geometry(1440.0, 820.0);
     s.rebuild(&g);

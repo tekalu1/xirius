@@ -58,6 +58,9 @@ fn play(s: &mut Studio, act: Act) {
         }
         other => panic!("{other:?} is not in the script"),
     }
+    s.settle_browser_import();
+    s.browser.settle_prefs_io();
+    s.settle_browser_menu();
 }
 
 #[test]

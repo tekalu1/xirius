@@ -127,10 +127,7 @@ impl Studio {
         match request {
             FileRequest::Place => {
                 for dir in paths {
-                    match self.browser.add_place(dir) {
-                        Ok(name) => self.tell(format!("場所のタブ「{name}」を足しました")),
-                        Err(e) => self.error = Some(e),
-                    }
+                    self.browser.add_place_later(dir.clone());
                 }
             }
             FileRequest::Audio => self.put_files(paths),

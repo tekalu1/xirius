@@ -82,6 +82,7 @@ fn the_dialog_lists_the_unused_takes_with_their_sizes_and_puts_them_in_the_bin()
         Some("使われていない録音 1 個をごみ箱に移動しました")
     );
     t.s.follow_browser();
+    t.s.settle_pool();
     assert!(!rows(&t.s, &t.g).iter().any(|r| r.starts_with("Vocal_02")));
     more(&mut t);
     let row = row_of(&t.s, "使われていない録音を整理…");

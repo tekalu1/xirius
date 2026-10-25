@@ -69,6 +69,7 @@ fn song(tag: &str) -> Song {
     s.browser.open = false;
     s.browser.press_rail(RailTab::SongFiles);
     s.follow_browser();
+    s.settle_pool();
     let g = s.geometry(1440.0, 860.0);
     Song { s, g, root }
 }
@@ -126,6 +127,7 @@ fn row_of(s: &Studio, label: &str) -> crate::context::Row {
 fn menu_of(t: &mut Song, name: &str) {
     let (x, y) = pool_mid(&t.s, &t.g, name);
     assert!(t.s.lib_context(&t.g, x, y));
+    t.s.settle_browser_menu();
     assert!(t.s.context_open());
 }
 
@@ -159,7 +161,9 @@ fn using(s: &Studio, file: &str) -> usize {
 }
 
 fn key(t: &mut Song, k: &str, mods: Mods) -> bool {
-    t.s.mapped_key(&t.g, k, None, mods)
+    let changed = t.s.mapped_key(&t.g, k, None, mods);
+    t.s.settle_browser_menu();
+    changed
 }
 
 /// The OS's file window gives `paths` for what the studio asked.
@@ -168,6 +172,7 @@ fn answer(t: &mut Song, want: FileRequest, paths: &[PathBuf]) {
     assert_eq!(asked, Some(want.clone()));
     t.s.finish_picked(want, paths);
     t.s.follow_browser();
+    t.s.settle_pool();
 }
 
 #[test]
@@ -437,6 +442,7 @@ fn an_unused_take_has_no_select_row_and_goes_to_the_bin() {
     assert!(!t.dir().join(VOCAL_2).exists());
     assert!(t.bin().join("Vocal_02.wav").is_file());
     t.s.follow_browser();
+    t.s.settle_pool();
     assert!(pool_row(&t.s, &t.g, "Vocal_02.wav").is_none());
 }
 
@@ -456,6 +462,7 @@ fn an_outside_file_is_copied_in_from_its_row_and_the_window_says_so() {
     assert_eq!(using(&t.s, &t.outside()), 0);
     assert!(t.dir().join("Media/Imports/Pad.wav").is_file());
     t.s.follow_browser();
+    t.s.settle_pool();
     assert!(rows(&t.s, &t.g).contains(&"Pad.wav 1".to_string()));
     // A file inside the song has no copy row.
     menu_of(&mut t, "Kick.wav");
@@ -510,6 +517,7 @@ fn pointing_a_missing_file_points_the_others_of_its_folder_in_one_undo() {
     assert_eq!(using(&t.s, &found("Gtr.wav")), 1);
     assert!(t.s.undo(&t.g));
     t.s.follow_browser();
+    t.s.settle_pool();
     assert_eq!(t.s.browser.pool_missing(), 2);
 }
 
@@ -548,6 +556,7 @@ fn the_dots_menu_looks_for_the_missing_in_a_folder_and_dims_what_has_nothing_to_
     assert!(t.s.context_choose(&t.g, "外部のファイルを曲のフォルダーにコピー"));
     assert_eq!(t.s.error, None);
     t.s.follow_browser();
+    t.s.settle_pool();
     more(&mut t);
     let find = row_of(&t.s, "見つからないファイルを探す…");
     assert!(!find.enabled);
@@ -567,6 +576,7 @@ fn pressing_a_clip_selects_the_row_of_its_file_without_playing_it() {
     t.s.arrange_down(&t.g, x, y, Mods::NONE);
     t.s.arrange_up(&t.g, x, y, Mods::NONE);
     t.s.follow_browser();
+    t.s.settle_pool();
     assert_eq!(t.s.browser.selected_file, Some(t.path(MIX)));
     assert_eq!(t.s.browser.playing, None);
     // On another tab the press leaves the files tab's selection alone.
@@ -575,6 +585,7 @@ fn pressing_a_clip_selects_the_row_of_its_file_without_playing_it() {
     t.s.arrange_down(&t.g, x, y, Mods::NONE);
     t.s.arrange_up(&t.g, x, y, Mods::NONE);
     t.s.follow_browser();
+    t.s.settle_pool();
     assert_eq!(t.s.browser.selected_file, Some(t.path(MIX)));
 }
 
@@ -664,6 +675,7 @@ fn a_row_drags_onto_the_lanes_and_a_missing_one_does_not() {
     let to = (t.g.lanes.x + t.g.lanes.w * 0.6, t.g.lanes.bottom() - 30.0);
     assert!(t.s.lib_move(to.0, to.1));
     assert!(t.s.lib_up(&t.g, to.0, to.1));
+    t.s.settle_browser_import();
     assert_eq!(t.s.error, None);
     assert_eq!(t.s.project().tracks.len(), tracks + 1);
     assert_eq!(using(&t.s, KICK), 2);

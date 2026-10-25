@@ -432,6 +432,7 @@ mod tests {
         arrange.choose_editor();
         states.push(arrange);
         for s in &mut states {
+            s.settle_pool();
             let g = s.geometry(w, h);
             scan(s, &g, &mut seen);
         }

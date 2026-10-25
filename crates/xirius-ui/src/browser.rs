@@ -14,7 +14,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::SystemTime;
 
 use xirius_core::model::PluginKind;
 use xirius_plugins::{Catalog, FailureKind};
@@ -368,14 +367,16 @@ pub struct Browser {
     pub spin: f32,
     /// Where what the browser keeps is written; `None` keeps it only here.
     pub(crate) prefs_file: Option<PathBuf>,
-    pub(crate) prefs_stamp: Option<SystemTime>,
+    pub(crate) prefs_io: crate::ui_io::UiIo<crate::browser_prefs_io::PrefsIo>,
     /// The file could not be read or written.
     pub prefs_error: Option<String>,
+    pub(crate) prefs_notice: Option<String>,
     /// The files of the song's pool, as the pool tab (「プール」) lists them (BRW-004).
     pub pool: Vec<xirius_session::file_ops::Entry>,
     /// The song the pool was read for and when, so it is read again only when the song
     /// changed or a second went by.
     pub(crate) pool_read: Option<(usize, std::time::Instant)>,
+    pub(crate) pool_worker: crate::ui_io::UiIo<crate::browser_pool::PoolRead>,
     /// The heading of the pool the keys stand on, instead of a file row.
     pub pool_heading: Option<String>,
     /// The clip the pool last followed, so pressing another selects its file's row.
@@ -599,10 +600,12 @@ impl Browser {
             loading: None,
             spin: 0.0,
             prefs_file: None,
-            prefs_stamp: None,
+            prefs_io: Default::default(),
             prefs_error: None,
+            prefs_notice: None,
             pool: Vec::new(),
             pool_read: None,
+            pool_worker: Default::default(),
             pool_heading: None,
             pool_clip: None,
         }

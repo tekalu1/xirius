@@ -10,6 +10,7 @@ use xirius_session::output::OutputMode;
 use super::*;
 use crate::instrument::current;
 use crate::song::Song;
+use crate::{instrument::DEFAULT, tree::RowKind};
 
 /// A folder of its own for one test's files.
 fn folder(name: &str) -> tempfile::TempDir {
@@ -46,6 +47,7 @@ fn a_dropped_mid_becomes_an_instrument_track_with_its_notes() {
     let (x, y) = middle(&g);
     assert!(s.drop_hover(true));
     assert!(s.drop_files(&g, x, y, &[three(&dir)]));
+    s.settle_browser_import();
     assert_eq!(s.error, None);
     assert!(!s.drop_over);
     let p = s.project();
@@ -90,6 +92,7 @@ fn on_the_lanes_the_clip_starts_at_the_bar_under_the_drop() {
     assert_eq!(s.drop_tick(&g, x, y), bar3);
     let before = s.project().tracks.len();
     assert!(s.drop_files(&g, x, y, &[three(&dir)]));
+    s.settle_browser_import();
     assert_eq!(s.error, None);
     let p = s.project();
     assert_eq!(p.tracks.len(), before + 1);
@@ -114,6 +117,7 @@ fn other_files_and_broken_ones_are_refused_with_their_name() {
     let wav = dir.join("take.wav");
     std::fs::write(&wav, b"RIFF").unwrap();
     assert!(s.drop_files(&g, x, y, std::slice::from_ref(&wav)));
+    s.settle_browser_import();
     assert!(
         s.error
             .as_deref()
@@ -122,6 +126,7 @@ fn other_files_and_broken_ones_are_refused_with_their_name() {
     let broken = dir.join("broken.mid");
     std::fs::write(&broken, b"MThd\0\0").unwrap();
     assert!(s.drop_files(&g, x, y, &[broken]));
+    s.settle_browser_import();
     assert_eq!(
         s.error.as_deref(),
         Some("「broken.mid」: MIDI ファイルが途中で終わっています")
@@ -129,6 +134,7 @@ fn other_files_and_broken_ones_are_refused_with_their_name() {
     assert!(s.start_shown(), "no track was made");
     // A good file among them is still read.
     assert!(s.drop_files(&g, x, y, &[wav, three(&dir)]));
+    s.settle_browser_import();
     assert_eq!(s.project().root.len(), 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -141,6 +147,7 @@ fn playing_after_the_drop_sounds_the_instrument() {
     s.transport.mode = OutputMode::Silent { paced: true };
     let (x, y) = middle(&g);
     assert!(s.drop_files(&g, x, y, &[three(&dir)]));
+    s.settle_browser_import();
     let (track, _) = s.selected_clip.unwrap();
     assert_eq!(s.playhead, 0);
     assert!(s.toggle_play());
@@ -190,6 +197,7 @@ fn tracks_from_the_entry_and_drops_take_the_colours_in_turn_without_a_limit() {
         let path = dir.join(format!("take{i}.mid"));
         std::fs::copy(three(&dir), &path).unwrap();
         assert!(s.drop_files(&g, x, y, &[path]));
+        s.settle_browser_import();
         assert_eq!(s.error, None);
     }
     let made = columns(&s);
@@ -213,6 +221,7 @@ fn tracks_from_the_entry_and_drops_take_the_colours_in_turn_without_a_limit() {
     let path = dir.join("again.mid");
     std::fs::copy(three(&dir), &path).unwrap();
     assert!(s.drop_files(&g, x, y, &[path]));
+    s.settle_browser_import();
     let last = columns(&s).last().cloned().unwrap();
     assert_eq!(
         crate::draw::track_color(&last),
@@ -252,6 +261,7 @@ fn each_track_of_a_dropped_file_is_a_track_and_an_empty_song_takes_its_tempo() {
     let (x, y) = middle(&g);
     let steps = s.song.steps();
     assert!(s.drop_files(&g, x, y, &[band(&dir)]));
+    s.settle_browser_import();
     assert_eq!(s.error, None);
     let p = s.project();
     let tracks: Vec<_> = p
@@ -293,6 +303,7 @@ fn each_track_of_a_dropped_file_is_a_track_and_an_empty_song_takes_its_tempo() {
     assert_eq!(s.song.steps(), steps + 1, "one step");
     // A song that has clips keeps its tempo.
     assert!(s.drop_files(&g, x, y, &[three(&dir)]));
+    s.settle_browser_import();
     assert_eq!(
         s.project().tempo.iter().map(|t| t.bpm).collect::<Vec<_>>(),
         [100.0]

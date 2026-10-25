@@ -172,11 +172,12 @@ mod tests {
     fn reading_the_song_files_again_does_not_change_what_the_overview_shows() {
         let mut s = Studio::sample();
         let g = s.geometry(1440.0, 860.0);
-        s.follow_pool();
+        s.settle_pool();
         let before = Key::of(&s, g);
         let read = s.browser.pool_read.expect("read");
         s.browser.pool_read = Some((read.0, read.1 - std::time::Duration::from_secs(2)));
         assert!(!s.follow_pool(), "the files did not change");
+        s.settle_pool();
         assert!(
             s.browser.pool_read.is_some_and(|r| r.1 > read.1),
             "read again"

@@ -328,6 +328,8 @@ fn a_place_is_added_and_removed_by_its_folder() {
             dir.display().to_string().replace('\\', "/")
         )
     ));
+    a.browser.settle_prefs_io();
+    b.browser.settle_prefs_io();
     assert_eq!(a.browser.locations().len(), n + 1);
     assert_eq!(state_of(&a), state_of(&b));
     let key = a

@@ -78,6 +78,7 @@ fn press_item(s: &mut Studio, g: &Geometry, name: &str) {
         .unwrap_or_else(|| panic!("{name} is in the list"));
     let (x, y) = centre(s, g, BrowserHit::Item(i));
     assert!(s.lib_context(g, x, y));
+    s.settle_browser_menu();
 }
 
 fn names(s: &Studio) -> Vec<&'static str> {
@@ -317,6 +318,7 @@ fn the_blank_of_a_list_opens_folds_and_shows_the_hidden() {
         .expect("grouped by kind");
     let (x, y) = centre(&s, &g, BrowserHit::Group(i));
     assert!(s.lib_context(&g, x, y));
+    s.settle_browser_menu();
     assert_eq!(
         labels(&s),
         [
@@ -338,17 +340,20 @@ fn the_blank_of_a_list_opens_folds_and_shows_the_hidden() {
     assert!(choose(&mut s, &g, "すべて畳む"));
     assert_eq!(items(&s), 0);
     assert!(s.lib_context(&g, x, y));
+    s.settle_browser_menu();
     assert!(choose(&mut s, &g, "すべて開く"));
     assert_eq!(items(&s), all);
     // The items left out.
     s.browser.set_hidden("Dexed", true);
     assert!(!names(&s).contains(&"Dexed"));
     assert!(s.lib_context(&g, x, y));
+    s.settle_browser_menu();
     assert!(!on(&s, "隠したものを表示"));
     assert!(choose(&mut s, &g, "隠したものを表示"));
     assert!(s.browser.show_hidden);
     assert!(names(&s).contains(&"Dexed"));
     assert!(s.lib_context(&g, x, y));
+    s.settle_browser_menu();
     assert!(on(&s, "隠したものを表示"));
 }
 
@@ -387,7 +392,7 @@ fn files(name: &str) -> (Studio, Geometry, PathBuf, tempfile::TempDir) {
     make_place(&top);
     let mut s = Studio::sample();
     s.browser.press_rail(RailTab::Files);
-    s.browser.add_place(&top).unwrap();
+    s.browser.add_place_fixture(&top).unwrap();
     s.browser
         .open_dirs
         .insert(top.join("Loops").to_string_lossy().into_owned());
@@ -401,6 +406,7 @@ fn press_file(s: &mut Studio, g: &Geometry, name: &str) {
     let i = file_row(s, g, name).unwrap_or_else(|| panic!("no row {name}"));
     let (x, y) = centre(s, g, BrowserHit::File(i));
     assert!(s.lib_context(g, x, y));
+    s.settle_browser_menu();
 }
 
 fn press_dir(s: &mut Studio, g: &Geometry, name: &str) {
@@ -413,11 +419,13 @@ fn press_dir(s: &mut Studio, g: &Geometry, name: &str) {
         .unwrap_or_else(|| panic!("no folder {name}"));
     let (x, y) = centre(s, g, BrowserHit::Dir(i));
     assert!(s.lib_context(g, x, y));
+    s.settle_browser_menu();
 }
 
 fn press_tab(s: &mut Studio, g: &Geometry, i: usize) {
     let (x, y) = centre(s, g, BrowserHit::Loc(i));
     assert!(s.lib_context(g, x, y));
+    s.settle_browser_menu();
 }
 
 fn audio_clips(s: &Studio, file: &Path) -> Vec<(TrackId, i64)> {
@@ -528,8 +536,8 @@ fn the_explorer_row_names_the_path_and_opens_nothing_outside_the_real_window() {
 fn file_and_folder_favourites_are_kept_in_the_existing_preferences() {
     let (mut s, g, top, _tmp) = files("favorites");
     let pref = top.join("browser.json");
-    s.browser.use_prefs(pref.clone()).unwrap();
-    s.browser.add_place(&top).unwrap();
+    s.browser.use_prefs_fixture(pref.clone()).unwrap();
+    s.browser.add_place_fixture(&top).unwrap();
     s.browser
         .open_dirs
         .insert(top.join("Loops").to_string_lossy().into_owned());
@@ -543,7 +551,7 @@ fn file_and_folder_favourites_are_kept_in_the_existing_preferences() {
         2
     );
     let mut browser = crate::browser::Browser::new();
-    browser.use_prefs(pref).unwrap();
+    browser.use_prefs_fixture(pref).unwrap();
     assert_eq!(browser.favourites, got);
     assert_eq!(steps(&s), 0);
 }
@@ -623,7 +631,7 @@ fn a_name_a_tab_already_has_is_refused_and_the_old_name_stays() {
     let other_tmp = folder("same2");
     let other = other_tmp.path().join("音");
     std::fs::create_dir_all(&other).unwrap();
-    s.browser.add_place(&other).unwrap();
+    s.browser.add_place_fixture(&other).unwrap();
     let first = s.browser.places[0].name.clone();
     let g = s.geometry(g.size.0, g.size.1);
     press_tab(&mut s, &g, 2);
@@ -684,7 +692,7 @@ fn binned(name: &str) -> (Studio, Geometry, PathBuf, tempfile::TempDir) {
     make_place(&top);
     let mut s = Studio::new(crate::song::Song::sample_with_trash(bin_in(tmp.path())));
     s.browser.press_rail(RailTab::Files);
-    s.browser.add_place(&top).unwrap();
+    s.browser.add_place_fixture(&top).unwrap();
     s.browser
         .open_dirs
         .insert(top.join("Loops").to_string_lossy().into_owned());

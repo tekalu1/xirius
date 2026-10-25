@@ -13,7 +13,7 @@ use xirius_session::peaks::Stamp;
 fn review_mouse_selection_clears_the_old_folder_key_position() {
     let (_tmp, top) = place("heading");
     let mut s = studio(OutputMode::None, &top);
-    s.browser.add_place(&top).unwrap();
+    s.browser.add_place_fixture(&top).unwrap();
     crate::browser_files::settle_rows(&s.browser);
     s.input_map.browser_focus = true;
     let g = s.geometry(1440.0, 860.0);
@@ -424,7 +424,7 @@ fn a_chosen_file_plays_to_its_end_and_lets_go() {
     let (_tmp, top) = place("ends");
     let mut s = studio(OutputMode::Silent { paced: true }, &top);
     let kick = top.join("Drums/kick_01.wav").to_string_lossy().into_owned();
-    s.browser.add_place(&top).unwrap();
+    s.browser.add_place_fixture(&top).unwrap();
     crate::browser_files::settle_rows(&s.browser);
     s.browser.select_file(&kick);
     assert!(s.follow_audition());
@@ -549,7 +549,7 @@ fn the_rows_next_to_the_chosen_one_are_read_ahead() {
             .unwrap();
     }
     let mut s = studio(OutputMode::Silent { paced: true }, &top);
-    s.browser.add_place(&top).unwrap();
+    s.browser.add_place_fixture(&top).unwrap();
     crate::browser_files::settle_rows(&s.browser);
     let key = |n: &str| top.join(format!("{n}.wav"));
     s.browser.select_file(&key("c").to_string_lossy());
@@ -589,7 +589,7 @@ fn the_stop_button_says_the_file_is_read_while_nothing_is_heard() {
     let gate = LetGo(Gate::player());
     let mut s = studio(OutputMode::Silent { paced: true }, &top);
     let pad = top.join("pad_44k.wav").to_string_lossy().into_owned();
-    s.browser.add_place(&top).unwrap();
+    s.browser.add_place_fixture(&top).unwrap();
     crate::browser_files::settle_rows(&s.browser);
     s.browser.select_file(&pad);
     s.follow_audition();
@@ -618,7 +618,7 @@ fn a_screen_reader_has_the_audition_button_and_its_press_plays_and_stops() {
     let (_tmp, top) = place("a11y");
     let mut s = studio(OutputMode::Silent { paced: true }, &top);
     let pad = top.join("pad_44k.wav").to_string_lossy().into_owned();
-    s.browser.add_place(&top).unwrap();
+    s.browser.add_place_fixture(&top).unwrap();
     crate::browser_files::settle_rows(&s.browser);
     assert!(mark(&s).is_none(), "no button before a file is chosen");
     s.browser.select_file(&pad);
@@ -822,7 +822,7 @@ fn file_arrow_keys_select_and_hand_the_audio_to_the_player() {
     let (_tmp, top) = place("arrow");
     std::fs::copy(top.join("pad_44k.wav"), top.join("z.wav")).unwrap();
     let mut s = studio(OutputMode::Silent { paced: true }, &top);
-    s.browser.add_place(&top).unwrap();
+    s.browser.add_place_fixture(&top).unwrap();
     crate::browser_files::settle_rows(&s.browser);
     s.input_map.browser_focus = true;
     let pad = top.join("pad_44k.wav").to_string_lossy().into_owned();

@@ -159,6 +159,7 @@ impl Studio {
         mods: Mods,
         code: Option<&str>,
     ) -> bool {
+        self.cancel_browser_menu();
         if self.opening_key(key) || self.saving_key(key) {
             return true;
         }

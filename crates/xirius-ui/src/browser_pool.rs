@@ -24,6 +24,16 @@ pub const KINDS: [(&str, &str, &str); 4] = [
 /// How often the list looks at the disk again when the song did not change.
 const REREAD: Duration = Duration::from_secs(1);
 
+type PoolKey = (usize, Option<std::path::PathBuf>, u64);
+#[derive(Default)]
+pub(crate) struct PoolRead {
+    jobs: xirius_session::read_jobs::ReadJobs<PoolKey, Vec<Entry>>,
+    pending: Option<(PoolKey, u64)>,
+    project: Option<std::sync::Arc<xirius_core::model::Project>>,
+    generation: u64,
+    last: Option<PoolKey>,
+}
+
 /// What a missing file says at the end of its row.
 pub const MISSING: &str = "見つかりません";
 /// The chip of a file outside the song's folders.
@@ -35,6 +45,12 @@ pub fn heading_key(kind: &str) -> String {
 }
 
 impl Browser {
+    pub(crate) fn invalidate_pool(&mut self) {
+        self.pool_read = None;
+        self.pool_worker.generation = self.pool_worker.generation.wrapping_add(1);
+        self.pool_worker.pending = None;
+        self.pool_worker.jobs.retain(|_| false);
+    }
     /// The rows of the song-files tab: a heading for every kind that has a file, and the files
     /// under the open ones; in the name order, only the files, each with its kind's icon. A
     /// search keeps the files whose name or path has it and opens every heading with a hit.
@@ -282,26 +298,54 @@ impl crate::studio::Studio {
     pub fn follow_pool(&mut self) -> bool {
         let project = self.project();
         let at = std::sync::Arc::as_ptr(&project) as usize;
+        let dir = self.song().dir();
+        let key = (at, dir.clone(), self.browser.pool_worker.generation);
+        let worker = &mut self.browser.pool_worker;
+        let mut changed = false;
+        if let Some((pending, id)) = &worker.pending {
+            if pending != &key {
+                worker.pending = None;
+                worker.jobs.retain(|k| k == &key);
+            } else if let Some(pool) = worker
+                .jobs
+                .take(pending, *id)
+                .map(Result::unwrap_or_default)
+            {
+                worker.pending = None;
+                self.browser.pool_read = Some((at, Instant::now()));
+                changed = pool != self.browser.pool;
+                self.browser.pool = pool;
+                worker.last = Some(key.clone());
+                if changed {
+                    self.browser.pool_clip = None;
+                }
+            }
+        }
         let fresh = self
             .browser
             .pool_read
-            .is_some_and(|(p, t)| p == at && t.elapsed() < REREAD);
+            .is_some_and(|(p, t)| p == at && t.elapsed() < REREAD)
+            && worker.last.as_ref() == Some(&key);
         if fresh {
-            return false;
+            return changed;
         }
-        let dir = self.song().dir();
-        let mut pool = xirius_session::file_ops::pool(&project, dir.as_deref());
-        // The song's folder and the file's place in it may part with different separators; the
-        // tip shows the path the OS would write.
-        for e in &mut pool {
-            e.path = e.path.components().collect();
+        if worker.pending.is_none() {
+            worker.project = Some(project.clone());
+            let id = worker.jobs.request(key.clone(), move || {
+                let mut pool = xirius_session::file_ops::pool(&project, dir.as_deref());
+                for e in &mut pool {
+                    e.path = e.path.components().collect();
+                }
+                #[cfg(test)]
+                let _ = xirius_core::io_test::before(
+                    "pool_result",
+                    dir.as_deref().unwrap_or(std::path::Path::new("")),
+                );
+                pool
+            });
+            worker.pending = id.map(|id| (key, id));
         }
-        self.browser.pool_read = Some((at, Instant::now()));
-        if pool == self.browser.pool {
-            return false;
-        }
-        self.browser.pool = pool;
-        true
+        changed
     }
 
     /// The pool's file a clip plays, as its row's key.
@@ -481,12 +525,16 @@ impl crate::studio::Studio {
                 let BRow::Pool { missing: false, .. } = l.rows[i].row else {
                     return false;
                 };
-                let Some(rows) = self.pool_row_items(g, i) else {
+                let r = self.browser.row_rect(&l, &l.rows[i]);
+                let BRow::Pool { key, .. } = &l.rows[i].row else {
                     return false;
                 };
-                let r = self.browser.row_rect(&l, &l.rows[i]);
-                self.open_context(rows, r.x + r.w / 2.0, r.y + r.h / 2.0);
-                self.context_choose(g, "名前を変更")
+                self.browser_rename_later(
+                    std::path::Path::new(key),
+                    g,
+                    r.x + r.w / 2.0,
+                    r.y + r.h / 2.0,
+                )
             }
             _ => false,
         }
@@ -502,13 +550,9 @@ impl crate::studio::Studio {
         }) else {
             return false;
         };
-        let Some(rows) = self.pool_row_items(g, i) else {
-            return false;
-        };
         let r = self.browser.row_rect(&l, &l.rows[i]);
         self.popup = None;
-        self.open_context(rows, r.x + r.w / 2.0, r.y + r.h / 2.0);
-        true
+        self.lib_context(g, r.x + r.w / 2.0, r.y + r.h / 2.0)
     }
 
     /// Puts the keys' place on row `i` (a heading or a file) and scrolls it into the list.
@@ -566,3 +610,21 @@ impl crate::studio::Studio {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+impl crate::studio::Studio {
+    pub(crate) fn pool_workers_pending(&self) -> bool {
+        self.browser.pool_worker.jobs.pending()
+    }
+    pub(crate) fn settle_pool(&mut self) {
+        let until = Instant::now() + Duration::from_secs(30);
+        loop {
+            self.follow_pool();
+            if self.browser.pool_worker.pending.is_none() && self.browser.pool_read.is_some() {
+                return;
+            }
+            assert!(Instant::now() < until, "pool did not return");
+            std::thread::yield_now();
+        }
+    }
+}

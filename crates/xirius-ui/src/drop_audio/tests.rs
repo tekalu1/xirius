@@ -58,6 +58,7 @@ fn a_loop_dropped_on_the_empty_song_is_a_track_with_its_tempo_and_one_undo() {
     let z = crate::start::zone(&g);
     let (x, y) = (z.x + z.w / 2.0, z.y + z.h / 2.0);
     assert!(s.drop_files(&g, x, y, std::slice::from_ref(&drums)));
+    s.settle_browser_import();
     assert_eq!(s.error, None);
     assert_eq!(
         s.notice_text(),
@@ -111,6 +112,7 @@ fn on_an_audio_track_the_clip_goes_onto_it_at_the_bar_and_elsewhere_onto_a_new_t
     let vox = tone(&dir, "Vox.wav", 0.5);
     let tracks = p.tracks.len();
     assert!(s.drop_files(&g, x, y, std::slice::from_ref(&vox)));
+    s.settle_browser_import();
     assert_eq!(s.error, None);
     assert_eq!(s.project().tracks.len(), tracks);
     assert_eq!(
@@ -126,6 +128,7 @@ fn on_an_audio_track_the_clip_goes_onto_it_at_the_bar_and_elsewhere_onto_a_new_t
     assert_eq!(s.audio_track_at(&g, x, y), None);
     let hat = tone(&dir, "Hat 140bpm.wav", 0.25);
     assert!(s.drop_files(&g, x, y, &[hat.clone(), vox.clone()]));
+    s.settle_browser_import();
     assert_eq!(s.project().tracks.len(), tracks + 2);
     // The hat has a tempo of its own: the line offers to make it follow the song's.
     let toast = s.toast_shown().expect("the line stays with the offer");
@@ -139,6 +142,7 @@ fn on_an_audio_track_the_clip_goes_onto_it_at_the_bar_and_elsewhere_onto_a_new_t
     // until it is made to follow the song's (EDT-007).
     let g = s.geometry(1600.0, 1000.0);
     assert!(s.import_audio_at(&g, x, g.lanes.bottom() - 2.0, &[hat.as_path()]));
+    s.settle_browser_import();
     let toast = s.toast_shown().expect("the line stays with the offer");
     assert_eq!(
         toast.text,
@@ -178,7 +182,8 @@ fn a_file_that_cannot_be_read_says_why_and_changes_nothing() {
     let bad = dir.join("broken.flac");
     std::fs::write(&bad, b"fLaC-not-really").unwrap();
     let before = s.project();
-    assert!(!s.import_audio_at(&g, g.lanes.x + 10.0, g.lanes.y + 10.0, &[bad.as_path()]));
+    assert!(s.import_audio_at(&g, g.lanes.x + 10.0, g.lanes.y + 10.0, &[bad.as_path()]));
+    s.settle_browser_import();
     assert!(
         s.error
             .as_deref()
