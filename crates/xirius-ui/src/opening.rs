@@ -471,6 +471,14 @@ impl Studio {
                 {
                     return true;
                 }
+                self.open_preflight_failed(CmdError::io(
+                    "プラグインの状態を取得できません。未保存の変更が残っています",
+                ));
+                return true;
+            }
+            if let Some(error) = open.pull.as_ref().and_then(|pull| pull.error()) {
+                self.open_preflight_failed(CmdError::io(error));
+                return true;
             }
             if open.replace
                 && let Some(host) = self.transport.host_mut()

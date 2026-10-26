@@ -168,6 +168,7 @@ pub struct Edits {
     pub note_names: Vec<(u8, String)>,
     pub editor_visible: bool,
     pub play_requests: u32,
+    pub latency: u32,
 }
 
 struct Instance {
@@ -209,6 +210,14 @@ impl Drop for ReturnGuard {
 }
 
 impl Controller {
+    /// Runs host-side state codecs and SDK calls on this instance's owner. The
+    /// closure and its result are Send; the borrowed Plugin never leaves here.
+    pub fn on_owner<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&mut Plugin) -> Result<T, String> + Send + 'static,
+    ) -> Result<Ticket<T>, String> {
+        self.ask(move |instance| work(&mut instance.plugin))
+    }
     /// Starts the owner and returns immediately. Thread creation is the only
     /// synchronous fallible work; DLL loading and initial getState happen there.
     pub fn open(open: Open) -> Result<Ticket<Opened>, String> {
@@ -366,6 +375,7 @@ impl Controller {
                 note_names: i.plugin.note_names(),
                 editor_visible: i.editor.as_ref().is_some_and(Editor::is_visible),
                 play_requests: i.editor.as_ref().map_or(0, Editor::take_play_requests),
+                latency: i.plugin.latency(),
             })
         })
     }

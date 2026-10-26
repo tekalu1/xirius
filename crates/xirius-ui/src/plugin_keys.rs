@@ -25,7 +25,11 @@ impl Studio {
                     .sum()
             })
             .unwrap_or(0);
-        let requests = local.saturating_add(remote);
+        let owned = self
+            .transport
+            .host()
+            .map_or(0, |h| h.plugins().take_local_play_requests());
+        let requests = local.saturating_add(remote).saturating_add(owned);
         let mut changed = false;
         for _ in 0..requests {
             changed |= self.toggle_play();

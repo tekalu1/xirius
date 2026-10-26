@@ -50,6 +50,7 @@ pub mod midi_settings;
 pub mod mp3;
 pub mod os;
 pub mod output;
+mod owned_local;
 pub mod peaks;
 pub mod perf;
 pub mod places;

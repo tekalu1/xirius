@@ -169,12 +169,18 @@ const HAND_OVER: Duration = Duration::from_secs(2);
 /// An asynchronous state request. Polling never waits for another process.
 pub struct StatePull {
     asked: Vec<(Arc<PluginLink>, u64)>,
+    owned: Vec<crate::owned_local::Capture>,
     not_before: Instant,
 }
 impl StatePull {
     pub fn ready(&self) -> bool {
         Instant::now() >= self.not_before
             && self.asked.iter().all(|(l, seen)| l.states_seen() > *seen)
+            && self.owned.iter().all(|capture| capture.ready())
+    }
+
+    pub fn error(&self) -> Option<String> {
+        self.owned.iter().find_map(|capture| capture.error())
     }
 }
 
@@ -212,7 +218,7 @@ const PARAM_VALUES_CHANGED: i32 = 4;
 const LATENCY_CHANGED: i32 = 8;
 /// How long after an edit settles the plugin's state is read: by then the processor has had
 /// the edit (as the host process waits).
-const CAPTURE_WAIT: Duration = Duration::from_millis(300);
+pub(crate) const CAPTURE_WAIT: Duration = Duration::from_millis(300);
 /// Parameter moves kept until [`PluginLoader::take_edits`] collects them.
 const MAX_LOCAL_EDITS: usize = 65_536;
 
@@ -253,7 +259,8 @@ impl<T> Drop for OnThread<T> {
 /// instance that plays and what the editor moves is heard and reaches the song.
 struct Local {
     restart_pending: i32,
-    plugin: OnThread<xirius_vst3::Plugin>,
+    plugin: Option<OnThread<xirius_vst3::Plugin>>,
+    owned: Option<Box<crate::owned_local::OwnedLocal>>,
     applied: Plugin,
     /// Which instance this is ([`PluginLoader::local`]): an editor of an older one belongs to
     /// a mix that is gone.
@@ -267,10 +274,18 @@ struct Local {
 }
 
 impl Local {
+    fn direct(&self) -> Option<&xirius_vst3::Plugin> {
+        self.plugin.as_ref()?.get()
+    }
     /// The parameter moves in the editor since the last call, and the state once the last
     /// edit has settled (or now, with `now`, when there were edits not read yet).
     fn take(&mut self, id: PluginId, now: bool) -> Option<RemoteEdit> {
-        let plugin = self.plugin.get()?;
+        if let Some(owned) = &self.owned {
+            let edits = owned.take(id);
+            self.note_names = owned.names();
+            return edits;
+        }
+        let plugin = self.plugin.as_ref()?.get()?;
         // What the processor changed on its own shows in the editor (not an edit of the user's).
         plugin.follow_processor();
         let handler = plugin.handler();
@@ -349,7 +364,14 @@ impl Local {
         {
             return false;
         }
-        let Some(plugin) = self.plugin.get() else {
+        if let Some(owned) = &self.owned {
+            if !owned.apply(x) {
+                return false;
+            }
+            self.applied = x.clone();
+            return true;
+        }
+        let Some(plugin) = self.plugin.as_ref().and_then(OnThread::get) else {
             return false;
         };
         let state_changed = self.applied.state != x.state;
@@ -466,6 +488,8 @@ pub struct OpenTime {
 /// does not load the DLL again; a plugin in a host process keeps its link across builds.
 #[derive(Default)]
 pub struct PluginLoader {
+    threaded_local: bool,
+    process_setup: Option<ProcessSetup>,
     catalog: Option<Arc<Catalog>>,
     modules: HashMap<PathBuf, Arc<Module>>,
     isolation: Isolation,
@@ -542,6 +566,12 @@ fn names(key: &str, p: &ParamEdit) -> bool {
 }
 
 impl PluginLoader {
+    pub(crate) fn set_threaded_local(&mut self, on: bool) {
+        self.threaded_local = on;
+    }
+    pub(crate) fn set_setup(&mut self, setup: ProcessSetup) {
+        self.process_setup = Some(setup);
+    }
     pub fn new(catalog: Option<Arc<Catalog>>) -> PluginLoader {
         PluginLoader {
             catalog,
@@ -885,8 +915,7 @@ impl PluginLoader {
             // Latency-only notifications need not include gestures or a parameter edit.
             if preserve {
                 values.state = old
-                    .plugin
-                    .get()
+                    .direct()
                     .and_then(|p| p.get_state().ok())
                     .or(values.state);
             }
@@ -963,6 +992,61 @@ impl PluginLoader {
             self.fresh_clap.push(x.id);
             return Ok((p, warnings));
         }
+        if self.threaded_local {
+            let setup = self.process_setup.unwrap_or_else(|| {
+                crate::build::setup(self.rate, xirius_engine::RenderMode::Realtime)
+            });
+            let ticket = xirius_vst3::owner::Controller::open(xirius_vst3::owner::Open {
+                bundle: entry.path.clone(),
+                class: parse_uid(&x.uid)
+                    .ok_or_else(|| "プラグインの ID が正しくありません".to_string())?,
+                state: values.state,
+                params: values.params,
+                requires_process_main: false,
+                sample_rate: setup.sample_rate,
+                max_block: setup.max_block,
+                offline: setup.mode == xirius_engine::RenderMode::Offline,
+            })?;
+            // This synchronous builder entry is for non-UI callers. UI preloading
+            // and the preparation coordinator use the asynchronous entry below.
+            let opened = loop {
+                if let Some(result) = ticket.poll() {
+                    break result?;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            };
+            let latency = opened
+                .audio
+                .prepared(
+                    setup.sample_rate,
+                    setup.max_block,
+                    setup.mode == xirius_engine::RenderMode::Offline,
+                )
+                .map_err(|e| e.to_string())?;
+            let titles: Vec<_> = opened.params.into_iter().map(|p| (p.id, p.title)).collect();
+            self.senders.insert(x.id, opened.sender);
+            self.generation += 1;
+            self.locals.insert(
+                x.id,
+                Local {
+                    plugin: None,
+                    owned: Some(Box::new(crate::owned_local::OwnedLocal::new(
+                        opened.controller,
+                        titles.clone(),
+                        opened.note_names.clone(),
+                        latency,
+                    ))),
+                    restart_pending: 0,
+                    applied: x.clone(),
+                    generation: self.generation,
+                    titles,
+                    note_names: opened.note_names,
+                    capture: None,
+                },
+            );
+            self.fresh_locals.push(x.id);
+            return Ok((Box::new(Vst3Processor::owned(opened.audio)), warnings));
+        }
         let module = match self.modules.get(&entry.path) {
             Some(m) => m.clone(),
             None => {
@@ -1017,7 +1101,8 @@ impl PluginLoader {
             x.id,
             Local {
                 restart_pending: 0,
-                plugin: OnThread::new(plugin),
+                plugin: Some(OnThread::new(plugin)),
+                owned: None,
                 applied: x.clone(),
                 generation: self.generation,
                 titles,
@@ -1037,7 +1122,7 @@ impl PluginLoader {
     /// one (ENG-071).
     pub fn local(&self, id: PluginId) -> Option<(&xirius_vst3::Plugin, u64)> {
         let l = self.playing_local(id)?;
-        Some((l.plugin.get()?, l.generation))
+        Some((l.direct()?, l.generation))
     }
 
     /// Whether the build in progress, else the last, opened `id` as a VST3 plugin, here or in
@@ -1381,14 +1466,25 @@ impl PluginLoader {
     /// saved with the state from when it was opened. The ones in host processes are asked
     /// and waited for, up to `wait` (the ones whose host went down or never opened are not).
     pub fn begin_pull_states(&mut self) -> StatePull {
+        let mut owned = Vec::new();
         for l in self.locals.values_mut() {
-            l.capture = Some(Instant::now());
+            if let Some(local) = &l.owned {
+                owned.push(local.capture(CAPTURE_WAIT));
+            } else {
+                l.capture = Some(Instant::now());
+            }
         }
         let mut remotes: Vec<&Remote> = self.remotes.values().collect();
         for l in self.leaving.values_mut() {
             match l {
                 Leaving::Remote(r) => remotes.push(r),
-                Leaving::Local(l, _) => l.capture = Some(Instant::now()),
+                Leaving::Local(l, _) => {
+                    if let Some(local) = &l.owned {
+                        owned.push(local.capture(CAPTURE_WAIT));
+                    } else {
+                        l.capture = Some(Instant::now());
+                    }
+                }
             }
         }
         let asked: Vec<_> = remotes
@@ -1410,16 +1506,24 @@ impl PluginLoader {
                 .any(|l| matches!(l, Leaving::Local(_, _)));
         StatePull {
             asked,
+            owned,
             not_before: Instant::now() + if local { CAPTURE_WAIT } else { Duration::ZERO },
         }
     }
 
-    pub fn pull_states(&mut self, wait: Duration) {
+    pub fn pull_states(&mut self, wait: Duration) -> Result<(), String> {
         let asked = self.begin_pull_states();
         let end = Instant::now() + wait;
         while Instant::now() < end && !asked.ready() {
             std::thread::sleep(Duration::from_millis(2));
         }
+        if !asked.ready() {
+            return Err("プラグインの状態を取得できません。未保存の変更が残っています".into());
+        }
+        if let Some(error) = asked.error() {
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Edits made in the plugins' editors since the last call.
@@ -1455,7 +1559,10 @@ impl PluginLoader {
     pub fn take_latency_changes(&mut self) -> bool {
         let mut changed = false;
         for local in self.locals.values_mut() {
-            if let Some(plugin) = local.plugin.get() {
+            if let Some(owned) = &local.owned {
+                changed |= owned.take_latency();
+            }
+            if let Some(plugin) = local.plugin.as_ref().and_then(OnThread::get) {
                 local.restart_pending |= plugin.handler().take_restart_flags();
                 if local.restart_pending & LATENCY_CHANGED != 0 {
                     local.restart_pending &= !LATENCY_CHANGED;
@@ -1470,7 +1577,10 @@ impl PluginLoader {
             match l {
                 Leaving::Remote(r) => changed |= r.link.take_latency_change().is_some(),
                 Leaving::Local(local, _) => {
-                    if let Some(plugin) = local.plugin.get() {
+                    if let Some(owned) = &local.owned {
+                        changed |= owned.take_latency();
+                    }
+                    if let Some(plugin) = local.plugin.as_ref().and_then(OnThread::get) {
                         local.restart_pending |= plugin.handler().take_restart_flags();
                         if local.restart_pending & LATENCY_CHANGED != 0 {
                             local.restart_pending &= !LATENCY_CHANGED;
@@ -1534,6 +1644,32 @@ impl PluginLoader {
                 status: r.server.status(&r.link),
             })
             .collect();
+        let mut locals: Vec<_> = self
+            .locals
+            .keys()
+            .chain(self.leaving.keys())
+            .copied()
+            .collect();
+        locals.sort();
+        locals.dedup();
+        for id in locals {
+            if let Some(local) = self.playing_local(id)
+                && let Some(owned) = &local.owned
+            {
+                out.push(PluginReport {
+                    id,
+                    name: local.applied.name.clone(),
+                    placement: PluginIsolation::InProcess,
+                    requested: local.applied.isolation,
+                    status: PluginStatus {
+                        error: owned.error(),
+                        editor_open: owned.visible(),
+                        latency: owned.latency.get(),
+                        ..Default::default()
+                    },
+                });
+            }
+        }
         out.sort_by_key(|r| r.id);
         out
     }
@@ -1629,6 +1765,17 @@ impl PluginLoader {
         open: bool,
         caption: Option<xirius_vst3::Caption>,
     ) -> Result<(), String> {
+        if let Some(local) = self.playing_local(id)
+            && let Some(owned) = &local.owned
+        {
+            return if owned.editor(local.applied.name.clone(), caption, open) {
+                Ok(())
+            } else {
+                Err(owned
+                    .error()
+                    .unwrap_or_else(|| "プラグインが応答しません".into()))
+            };
+        }
         // While a new mix that moves it is on its way, the window is the playing instance's,
         // and the new one's opens when it plays (ENG-071).
         let moving = self.leaving.contains_key(&id);
@@ -1654,6 +1801,11 @@ impl PluginLoader {
 
     /// Gives the open window of `id` new caption colours.
     pub fn set_caption(&self, id: PluginId, caption: xirius_vst3::Caption) {
+        if let Some(local) = self.playing_local(id)
+            && let Some(owned) = &local.owned
+        {
+            owned.caption(caption);
+        }
         if let Some(r) = self.playing_remote(id) {
             r.server.set_caption(&r.link, caption);
         }
@@ -1665,6 +1817,20 @@ impl PluginLoader {
             new.server
                 .open_editor_later(&new.link, &title, Some(caption));
         }
+    }
+
+    /// Space forwarded from editors owned by local controller threads.
+    pub fn take_local_play_requests(&self) -> u32 {
+        self.locals
+            .keys()
+            .chain(self.leaving.keys())
+            .copied()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .filter_map(|id| self.playing_local(id)?.owned.as_ref())
+            .fold(0u32, |count, local| {
+                count.saturating_add(local.take_play_requests())
+            })
     }
 
     /// The host the plugins share, for tests that make it fail.

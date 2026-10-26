@@ -211,6 +211,26 @@ impl Builder {
     /// ([`crate::processed`]). Off by default, as an export waits for them.
     pub fn set_background(&mut self, on: bool) {
         self.background = on;
+        self.plugins.set_setup(setup(
+            self.rate,
+            if on {
+                RenderMode::Realtime
+            } else {
+                RenderMode::Offline
+            },
+        ));
+    }
+
+    pub fn set_threaded_local(&mut self, on: bool) {
+        self.plugins.set_threaded_local(on);
+        self.plugins.set_setup(setup(
+            self.rate,
+            if self.background {
+                RenderMode::Realtime
+            } else {
+                RenderMode::Offline
+            },
+        ));
     }
 
     /// Who this builder's renders belong to ([`crate::processed::sweep`]).

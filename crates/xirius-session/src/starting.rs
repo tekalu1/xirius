@@ -62,6 +62,7 @@ impl Starting {
         let processed_seen = crate::processed::generation();
         let mut builder = Builder::new(rate, config.dir);
         builder.set_background(true);
+        builder.set_threaded_local(config.threaded_local);
         builder.set_catalog(config.catalog);
         if let Some(i) = config.isolation {
             builder.set_isolation(i);

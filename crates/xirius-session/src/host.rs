@@ -42,6 +42,8 @@ use crate::tempo::TempoMap;
 
 #[derive(Default)]
 pub struct HostConfig {
+    /// Uses a dedicated controller owner for each local VST3 instance (PRJ-030).
+    pub threaded_local: bool,
     /// The engine's sample rate. `None` takes the song's setting.
     pub rate: Option<u32>,
     /// The folder audio paths in the song are relative to.
@@ -1482,7 +1484,10 @@ pub fn pull_plugin_states(
     opts: &RunOptions,
     wait: Duration,
 ) -> CmdResult<Collected> {
-    host.builder.plugins_mut().pull_states(wait);
+    host.builder
+        .plugins_mut()
+        .pull_states(wait)
+        .map_err(xirius_core::error::CmdError::io)?;
     collect_plugin_states(session, host, opts)
 }
 
