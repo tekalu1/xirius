@@ -14,7 +14,13 @@ struct Cleanup {
 }
 impl Drop for Cleanup {
     fn drop(&mut self) {
-        while self.owners.iter().any(|o| !o.finished())
+        // SDK objects stay on their owning thread, even if it never returns.
+        // Once audio is returned and the output stopped, that thread is safely
+        // isolated; it must not prevent cancellation or another song's output.
+        while self
+            .owners
+            .iter()
+            .any(|o| !o.finished() && !o.audio_returned())
             || self.previous.iter().any(|o| !o.load(Ordering::Acquire))
         {
             std::thread::sleep(Duration::from_millis(2));

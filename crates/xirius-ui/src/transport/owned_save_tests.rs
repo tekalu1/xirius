@@ -208,6 +208,25 @@ fn saving_does_not_write_or_wait_for_held_state_and_only_a_complete_retry_clears
     s.wait_for_open_for_test();
     assert!(s.song.dir().is_none());
     assert!(s.unsaved.is_none());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while s.preparing.is_some() {
+        s.poll_preparing();
+        assert!(
+            Instant::now() < deadline,
+            "new song waited on the blocked SDK owner"
+        );
+        std::thread::yield_now();
+    }
+    assert!(
+        s.transport.host().is_some(),
+        "the next output is ready before getState returns"
+    );
+    assert!(retired.iter().all(|owner| owner.audio_returned()));
+    assert!(
+        retired.iter().any(|owner| !owner.finished()),
+        "the SDK gate is still closed"
+    );
+    assert!(!s.transport.playing);
     gate.release();
     let deadline = Instant::now() + Duration::from_secs(10);
     while retired.iter().any(|owner| !owner.finished()) {

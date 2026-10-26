@@ -148,6 +148,7 @@ fn state_requests_cancel_without_waiting_and_the_audio_returns_before_terminatio
     drop(opened.controller);
     drop(opened.sender);
     assert!(!retirement.finished(), "audio lease still holds the owner");
+    assert!(!retirement.audio_returned());
     assert_eq!(unsafe { terminations() }, before);
     let counts = std::thread::spawn(move || {
         RT.with(|counts| counts.set((true, 0, 0)));
@@ -164,6 +165,7 @@ fn state_requests_cancel_without_waiting_and_the_audio_returns_before_terminatio
         (0, 0),
         "returning the audio lease allocates/frees nothing"
     );
+    assert!(retirement.audio_returned());
     let deadline = Instant::now() + Duration::from_secs(10);
     while !retirement.finished() {
         assert!(Instant::now() < deadline, "retirement watchdog");

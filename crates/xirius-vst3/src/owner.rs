@@ -40,11 +40,24 @@ pub struct Opened {
 }
 
 #[derive(Clone)]
-pub struct Retirement(Arc<AtomicBool>);
+pub struct Retirement(Arc<RetireState>);
+
+#[derive(Default)]
+struct RetireState {
+    finished: AtomicBool,
+    audio_returned: AtomicBool,
+}
 
 impl Retirement {
     pub fn finished(&self) -> bool {
-        self.0.load(Ordering::Acquire)
+        self.0.finished.load(Ordering::Acquire)
+    }
+
+    /// The audio lease has left RT and was queued back to its original owner.
+    /// A blocked SDK call may still retain that owner and all its SDK resources;
+    /// it cannot keep another song's output waiting after the old output stops.
+    pub fn audio_returned(&self) -> bool {
+        self.0.audio_returned.load(Ordering::Acquire)
     }
 }
 
@@ -52,7 +65,7 @@ struct Finished(Retirement);
 
 impl Drop for Finished {
     fn drop(&mut self) {
-        self.0.0.store(true, Ordering::Release);
+        self.0.0.finished.store(true, Ordering::Release);
     }
 }
 
@@ -109,6 +122,9 @@ pub struct Controller {
 pub struct AudioLease {
     part: Option<AudioPart>,
     returned: rtrb::Producer<AudioPart>,
+    // This reference drops before _lifetime. The owner therefore still holds
+    // RetireState when RT drops this reference (no last-Arc deallocation on RT).
+    retirement: Retirement,
     // Fields drop in declaration order: the producer must be gone before this
     // token. The owner retains the consumer until it is the token's sole owner,
     // so neither the ring nor this Arc can be finally freed by an RT lease drop.
@@ -152,12 +168,19 @@ impl AudioLease {
 
 impl Drop for AudioLease {
     fn drop(&mut self) {
-        if let Some(part) = self.part.take()
-            && let Err(rtrb::PushError::Full(part)) = self.returned.push(part)
-        {
-            // One part and one reserved slot: unreachable in normal operation.
-            // Never fall back to releasing SDK objects on the calling thread.
-            std::mem::forget(part);
+        if let Some(part) = self.part.take() {
+            match self.returned.push(part) {
+                Ok(()) => self
+                    .retirement
+                    .0
+                    .audio_returned
+                    .store(true, Ordering::Release),
+                Err(rtrb::PushError::Full(part)) => {
+                    // One part and one reserved slot: unreachable in normal operation.
+                    // Never release SDK objects or acknowledge retirement on RT here.
+                    std::mem::forget(part);
+                }
+            }
         }
     }
 }
@@ -226,7 +249,7 @@ impl Controller {
         std::thread::Builder::new()
             .name("vst3-owner".into())
             .spawn(move || {
-                let finished = Finished(Retirement(Arc::new(AtomicBool::new(false))));
+                let finished = Finished(Retirement(Arc::new(RetireState::default())));
                 let apartment = match Apartment::new() {
                     Ok(a) => a,
                     Err(e) => {
@@ -288,6 +311,7 @@ impl Controller {
                     audio: AudioLease {
                         part: Some(part),
                         returned,
+                        retirement: finished.0.clone(),
                         _lifetime: returning.lifetime.clone(),
                         prepared: (rate, block, offline, latency),
                     },
