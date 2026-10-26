@@ -225,4 +225,44 @@ fn local_state_collection_and_changes_return_while_sdk_is_held_and_stale_state_i
         128u32.to_le_bytes(),
         "unchanged state and parameters must not be resent"
     );
+    drop(gate);
+    let gate = Gate::new(&dll);
+    host.set_nonblocking(true);
+    let mut expanded = song.project().clone();
+    let added = xirius_core::id::TrackId(9_000_000);
+    expanded.root.push(xirius_core::id::Node::Track(added));
+    expanded.tracks.insert(
+        added,
+        Arc::new(xirius_core::model::Track::new(
+            added,
+            xirius_core::model::TrackKind::Audio,
+            "new track",
+        )),
+    );
+    assert!(!host.sync_later(&expanded).swapped);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !gate.entered() {
+        assert!(host.step_swap().is_none());
+        assert!(Instant::now() < deadline, "preload snapshot gate watchdog");
+        std::thread::yield_now();
+    }
+    // Every frame returns even while the previous instance's SDK is held.
+    for _ in 0..8 {
+        assert!(host.step_swap().is_none());
+        assert!(host.swap_pending());
+    }
+    assert_eq!(host.plugins().owner_retirements().len(), 1);
+    gate.release();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let report = loop {
+        if let Some(report) = host.step_swap() {
+            break report;
+        }
+        audio.render(&mut buffer, 2);
+        host.poll();
+        assert!(Instant::now() < deadline, "preload completion watchdog");
+        std::thread::yield_now();
+    };
+    assert!(report.swapped);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
 }

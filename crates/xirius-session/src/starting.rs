@@ -81,6 +81,7 @@ impl Starting {
     /// Opens a little more: the first step asks for every plugin that runs in a host
     /// process, each later one opens one plugin here. Whether everything is open.
     pub fn step(&mut self) -> bool {
+        self.builder.plugins_mut().poll_preloads();
         if !self.asked {
             self.asked = true;
             self.ask_apart();

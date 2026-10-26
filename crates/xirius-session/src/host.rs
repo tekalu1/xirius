@@ -1133,6 +1133,7 @@ impl SessionHost {
     /// process (a VST3 plugin is made on the thread that uses it). Swaps the mix in once
     /// everything is open and gives what that did.
     pub fn step_swap(&mut self) -> Option<SyncReport> {
+        self.builder.plugins_mut().poll_preloads();
         let setup = setup(self.builder.rate(), RenderMode::Realtime);
         let pd = self.pending.as_mut()?;
         let loader = self.builder.plugins_mut();

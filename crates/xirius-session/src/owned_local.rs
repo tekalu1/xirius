@@ -105,6 +105,7 @@ impl Capture {
 
 pub(crate) struct OwnedLocal {
     controller: Controller,
+    retirement: xirius_vst3::owner::Retirement,
     params: Vec<(u32, String)>,
     requests: RefCell<Vec<Ticket<()>>>,
     edits: RefCell<Option<Ticket<Edits>>>,
@@ -119,15 +120,39 @@ pub(crate) struct OwnedLocal {
     due: Cell<Option<Instant>>,
 }
 
+pub(crate) struct Snapshot {
+    pub state: String,
+    pub params: Vec<(u32, String, f64)>,
+}
 impl OwnedLocal {
+    pub fn snapshot(&self) -> Result<Ticket<Snapshot>, String> {
+        self.controller.on_owner(|plugin| {
+            let state = plugin.get_state().map_err(|e| e.to_string())?;
+            let params = plugin
+                .params()
+                .iter()
+                .filter_map(|p| {
+                    plugin
+                        .param(p.id)
+                        .map(|value| (p.id, p.title.clone(), value))
+                })
+                .collect();
+            Ok(Snapshot {
+                state: xirius_plugins::encode_state(&state),
+                params,
+            })
+        })
+    }
     pub fn new(
         controller: Controller,
+        retirement: xirius_vst3::owner::Retirement,
         params: Vec<(u32, String)>,
         names: Vec<(u8, String)>,
         latency: u32,
     ) -> Self {
         Self {
             controller,
+            retirement,
             params,
             requests: Default::default(),
             edits: Default::default(),
@@ -141,6 +166,10 @@ impl OwnedLocal {
             latency: Cell::new(latency),
             due: Cell::new(None),
         }
+    }
+
+    pub fn retirement(&self) -> xirius_vst3::owner::Retirement {
+        self.retirement.clone()
     }
 
     fn keep(&self, task: Result<Ticket<()>, String>) -> bool {

@@ -502,6 +502,7 @@ pub struct OpenTime {
 /// does not load the DLL again; a plugin in a host process keeps its link across builds.
 #[derive(Default)]
 pub struct PluginLoader {
+    pending_owned: HashMap<PluginId, PendingOwned>,
     threaded_local: bool,
     process_setup: Option<ProcessSetup>,
     catalog: Option<Arc<Catalog>>,
@@ -562,6 +563,19 @@ pub struct PluginLoader {
     unsettled: HashMap<PluginId, Vec<ParamEdit>>,
 }
 
+struct OwnedPreload {
+    local: Option<Local>,
+    sender: Option<xirius_vst3::ParamSender>,
+    ready: Ready,
+    carried: Option<RemoteEdit>,
+    took: Duration,
+}
+struct PendingOwned {
+    job: crate::background::Job<OwnedPreload>,
+    applied: Plugin,
+    owner: String,
+}
+
 /// The class id a song keeps as 32 hex digits.
 fn parse_uid(uid: &str) -> Option<[u8; 16]> {
     if uid.len() != 32 || !uid.is_ascii() {
@@ -580,6 +594,18 @@ fn names(key: &str, p: &ParamEdit) -> bool {
 }
 
 impl PluginLoader {
+    /// Keep these across retirement: worker completion alone does not prove the
+    /// SDK owner has returned from a call and destroyed its instance.
+    pub fn owner_retirements(&self) -> Vec<xirius_vst3::owner::Retirement> {
+        self.locals
+            .values()
+            .chain(self.leaving.values().filter_map(|l| match l {
+                Leaving::Local(local, _) => Some(local),
+                _ => None,
+            }))
+            .filter_map(|local| local.owned.as_ref().map(|owned| owned.retirement()))
+            .collect()
+    }
     pub(crate) fn set_threaded_local(&mut self, on: bool) {
         self.threaded_local = on;
     }
@@ -756,6 +782,10 @@ impl PluginLoader {
     /// [`PluginLoader::preparing`] is true until the answer comes. The build takes it from
     /// [`PluginLoader::instantiate`], with the same warnings and errors.
     pub fn preload(&mut self, owner: &str, x: &Plugin, setup: &ProcessSetup) {
+        if self.threaded_local && is_vst3(x) && !self.runs_apart(x) {
+            self.preload_owned(owner, x, setup);
+            return;
+        }
         let at = Instant::now();
         let before = (
             self.fresh.len(),
@@ -788,9 +818,167 @@ impl PluginLoader {
         );
     }
 
+    fn preload_owned(&mut self, owner: &str, x: &Plugin, setup: &ProcessSetup) {
+        let pending_owner = owner.to_owned();
+        let original = x.clone();
+        let owner = owner.to_owned();
+        self.catalog();
+        let catalog = self.catalog.clone();
+        let dir = self.dir.clone();
+        let rate = self.rate;
+        let setup = *setup;
+        let old = self.locals.get(&x.id).filter(|old| {
+            old.applied.uid == x.uid
+                && old.applied.format == x.format
+                && old.applied.state == x.state
+        });
+        let preserve_params = old.is_some_and(|old| old.applied.params == x.params);
+        let snapshot = old
+            .and_then(|old| old.owned.as_ref())
+            .map(|old| old.snapshot());
+        let job = crate::background::Job::spawn("local-preload", move || {
+            let at = Instant::now();
+            let mut value = original.clone();
+            let mut carried = None;
+            if let Some(snapshot) = snapshot {
+                let task = snapshot?;
+                let deadline = Instant::now() + crate::host::PULL_WAIT;
+                let snapshot = loop {
+                    if let Some(result) = task.poll() {
+                        break result?;
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(
+                            "プラグインの状態を引き継げません。未保存の変更が残っています".into(),
+                        );
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                };
+                value.state = Some(snapshot.state.clone());
+                if preserve_params {
+                    for (key, v) in &mut value.params {
+                        if let Some((_, _, now)) = snapshot.params.iter().find(|(id, title, _)| {
+                            key.parse::<u32>().ok() == Some(*id) || title.eq_ignore_ascii_case(key)
+                        }) {
+                            *v = *now;
+                        }
+                    }
+                }
+                carried = Some(RemoteEdit {
+                    plugin: value.id,
+                    state: Some(snapshot.state),
+                    params: Vec::new(),
+                });
+            }
+            let mut loader = PluginLoader::new(catalog);
+            loader.set_threaded_local(true);
+            loader.set_sample_home(dir, rate);
+            loader.set_setup(setup);
+            loader.set_isolation(Isolation::InProcess);
+            let result = loader
+                .open(&owner, &value)
+                .map(|(p, w)| (Box::new(Readied::new(p, &setup)) as Box<dyn Processor>, w));
+            let mut local = loader.locals.remove(&value.id);
+            if let Some(local) = &mut local {
+                local.applied = original.clone();
+            }
+            Ok(OwnedPreload {
+                local,
+                sender: loader.senders.remove(&value.id),
+                ready: Ready {
+                    applied: original,
+                    owner,
+                    result,
+                    list: Fresh::Local,
+                },
+                carried,
+                took: at.elapsed(),
+            })
+        });
+        match job {
+            Ok(job) => {
+                self.pending_owned.insert(
+                    x.id,
+                    PendingOwned {
+                        job,
+                        applied: x.clone(),
+                        owner: pending_owner,
+                    },
+                );
+            }
+            Err(error) => {
+                self.ready.insert(
+                    x.id,
+                    Ready {
+                        applied: x.clone(),
+                        owner: pending_owner,
+                        result: Err(error),
+                        list: Fresh::None,
+                    },
+                );
+            }
+        }
+    }
+
+    /// Claim only value/lease results. Neither opening nor state capture runs here.
+    pub fn poll_preloads(&mut self) {
+        let done: Vec<_> = self
+            .pending_owned
+            .iter()
+            .filter_map(|(id, pending)| pending.job.poll().map(|result| (*id, result)))
+            .collect();
+        for (id, result) in done {
+            let pending = self.pending_owned.remove(&id).expect("pending result");
+            match result {
+                Ok(mut opened) => {
+                    if let Some(old) = self.locals.remove(&id) {
+                        let sender = self.senders.remove(&id);
+                        self.leaving
+                            .entry(id)
+                            .or_insert(Leaving::Local(old, sender));
+                    }
+                    if let Some(mut local) = opened.local.take() {
+                        self.generation += 1;
+                        local.generation = self.generation;
+                        self.locals.insert(id, local);
+                    }
+                    if let Some(sender) = opened.sender {
+                        self.senders.insert(id, sender);
+                    }
+                    if let Some(edit) = opened.carried {
+                        self.carried.push(edit);
+                    }
+                    self.took.insert(
+                        id,
+                        (
+                            opened.ready.owner.clone(),
+                            opened.ready.applied.name.clone(),
+                            opened.took,
+                        ),
+                    );
+                    self.ready.insert(id, opened.ready);
+                }
+                Err(error) => {
+                    // Keep an explicit failed receipt so the caller can finish the
+                    // remaining tracks rather than starting this request again.
+                    self.ready.insert(
+                        id,
+                        Ready {
+                            applied: pending.applied,
+                            owner: pending.owner,
+                            result: Err(error),
+                            list: Fresh::None,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
     /// Lets go of the plugins [`PluginLoader::preload`] opened and no build took (ENG-065).
     /// The ones they were to take over from are the plugins' again (ENG-071).
     pub fn drop_ready(&mut self) {
+        self.pending_owned.clear();
         self.ready.clear();
         // The new mix was let go: a window that was to follow it has nothing to follow.
         self.following.clear();
@@ -823,12 +1011,15 @@ impl PluginLoader {
 
     /// Whether [`PluginLoader::preload`] has opened `id`.
     pub fn preloaded(&self, id: PluginId) -> bool {
-        self.ready.contains_key(&id)
+        self.ready.contains_key(&id) || self.pending_owned.contains_key(&id)
     }
 
     /// Whether the opening [`PluginLoader::preload`] began for `id` in a host process is still
     /// going on.
     pub fn preparing(&self, id: PluginId) -> bool {
+        if self.pending_owned.contains_key(&id) {
+            return true;
+        }
         self.ready
             .get(&id)
             .and_then(|r| r.result.as_ref().ok())
@@ -1046,6 +1237,7 @@ impl PluginLoader {
                     plugin: None,
                     owned: Some(Box::new(crate::owned_local::OwnedLocal::new(
                         opened.controller,
+                        opened.retirement,
                         titles.clone(),
                         opened.note_names.clone(),
                         latency,
