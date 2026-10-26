@@ -6,7 +6,9 @@
 //! waiting (a dot), and one button. The song cannot be edited while it is up. 後で読む (and
 //! Esc) closes it: what is left opens when it is first needed, as before (UI-285).
 
+use gpui::{accesskit, div, prelude::*, px};
 use std::time::{Duration, Instant};
+use std::{cell::RefCell, rc::Rc};
 
 use xirius_design::{FontSize, Radius, Space, Weight};
 use xirius_session::output::OutputMode;
@@ -42,6 +44,9 @@ pub struct Card {
     pub(crate) background: bool,
     pub(crate) cancelling: bool,
     pub(crate) failure: Option<String>,
+    pub(crate) failures: Vec<xirius_session::build::PreparationFailure>,
+    failure_scroll: usize,
+    detail: Option<usize>,
     pub progress: Progress,
     /// The pointer is over 後で読む.
     pub hover: bool,
@@ -60,6 +65,8 @@ pub struct CardLayout {
     /// Each track listed, with its index in [`Progress::units`].
     pub rows: Vec<(usize, Rect)>,
     pub button: Rect,
+    pub retry: Option<Rect>,
+    pub proceed: Option<Rect>,
 }
 
 impl Card {
@@ -69,6 +76,9 @@ impl Card {
             background: false,
             cancelling: false,
             failure: None,
+            failures: Vec::new(),
+            failure_scroll: 0,
+            detail: None,
             progress,
             hover: false,
             from: to,
@@ -121,7 +131,7 @@ impl Card {
 
     pub fn layout(&self, size: (f32, f32)) -> CardLayout {
         if self.background {
-            return background_layout(size);
+            return self.background_layout(size);
         }
         let w = W.min(size.0 - EDGE * 2.0).max(0.0);
         let listed = self.listed();
@@ -159,6 +169,8 @@ impl Card {
             bar,
             rows,
             button,
+            retry: None,
+            proceed: None,
         }
     }
 }
@@ -254,12 +266,19 @@ impl Studio {
                     card.set(progress, Instant::now());
                 }
             }
+            Some(StartStep::Failed(failures)) => {
+                if let Some(card) = &mut self.preparing {
+                    card.progress = self.transport.start_progress().unwrap_or_default();
+                    card.failures = failures;
+                }
+            }
             Some(StartStep::Done(started)) => {
                 if let Err(error) = &started
                     && let Some(card) = &mut self.preparing
                     && card.background
                 {
                     card.failure = Some(error.clone());
+                    card.failure_scroll = 0;
                     return;
                 }
                 self.preparing = None;
@@ -313,18 +332,72 @@ impl Studio {
         let Some(card) = &self.preparing else {
             return false;
         };
-        if card.layout(g.size).button.contains(x, y) {
+        let layout = card.layout(g.size);
+        if layout.retry.is_some_and(|r| r.contains(x, y)) {
+            self.prepare_retry();
+        } else if layout.proceed.is_some_and(|r| r.contains(x, y)) {
+            self.prepare_continue();
+        } else if layout.button.contains(x, y) {
             self.prepare_later();
         }
         true
+    }
+
+    pub(crate) fn prepare_retry(&mut self) {
+        if !self
+            .preparing
+            .as_ref()
+            .is_some_and(|c| !c.cancelling && (c.failure.is_some() || !c.failures.is_empty()))
+        {
+            return;
+        }
+        let project = self.project();
+        if self.transport.retry_preparation(&project, self.song.dir()) {
+            let mut card = Card::new(self.transport.start_progress().unwrap_or_default());
+            card.background = true;
+            self.preparing = Some(card);
+        }
+    }
+
+    pub(crate) fn prepare_continue(&mut self) {
+        if self
+            .preparing
+            .as_ref()
+            .is_some_and(|c| !c.cancelling && c.failure.is_none() && !c.failures.is_empty())
+            && self.transport.continue_preparation()
+            && let Some(card) = &mut self.preparing
+        {
+            card.failures.clear();
+        }
+    }
+
+    pub(crate) fn prepare_scroll(&mut self, amount: f32) -> bool {
+        let Some(card) = &mut self.preparing else {
+            return false;
+        };
+        let before = card.failure_scroll;
+        if amount > 0.0 {
+            card.failure_scroll = card.failure_scroll.saturating_sub(1);
+        } else if amount < 0.0 {
+            card.failure_scroll =
+                (card.failure_scroll + 1).min(card.failures.len().saturating_sub(1));
+        }
+        before != card.failure_scroll
     }
 
     pub fn prepare_hover(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
         let Some(card) = &mut self.preparing else {
             return false;
         };
-        let hover = card.layout(g.size).button.contains(x, y);
-        let changed = hover != card.hover;
+        let layout = card.layout(g.size);
+        let detail = layout
+            .rows
+            .iter()
+            .find(|(_, r)| r.contains(x, y))
+            .map(|(i, _)| *i);
+        let hover = layout.button.contains(x, y);
+        let changed = hover != card.hover || detail != card.detail;
+        card.detail = detail;
         card.hover = hover;
         changed
     }
@@ -336,6 +409,10 @@ impl Studio {
         }
         if key == "escape" {
             self.prepare_later();
+        } else if key == "down" || key == "pagedown" {
+            self.prepare_scroll(-1.0);
+        } else if key == "up" || key == "pageup" {
+            self.prepare_scroll(1.0);
         }
         true
     }
@@ -428,25 +505,66 @@ pub fn paint(pen: &mut Pen, card: &Card, g: &Geometry, turn: f32) {
     );
 }
 
-fn background_layout(size: (f32, f32)) -> CardLayout {
-    let w = W.min((size.0 - EDGE * 2.0).max(0.0));
-    let r = Rect::new(
-        ((size.0 - w) / 2.0).max(0.0),
-        ((size.1 - 148.0) / 2.0).max(0.0),
-        w,
-        148.0,
-    );
-    CardLayout {
-        rect: r,
-        head: Rect::new(r.x + PAD, r.y + PAD, w - PAD * 2.0, 20.0),
-        bar: Rect::new(r.x + PAD, r.y + 96.0, w - PAD * 2.0, BAR_H),
-        rows: Vec::new(),
-        button: Rect::new(
-            r.right() - PAD - 60.0,
-            r.bottom() - PAD - BUTTON_H,
-            60.0,
-            BUTTON_H,
-        ),
+impl Card {
+    fn background_layout(&self, size: (f32, f32)) -> CardLayout {
+        let failed = !self.cancelling && (self.failure.is_some() || !self.failures.is_empty());
+        let count = if self.failure.is_some() {
+            1
+        } else {
+            self.failures.len()
+        };
+        let shown = count.min(((size.1 - 160.0) / 64.0).clamp(1.0, 5.0) as usize);
+        let h = if failed {
+            124.0 + shown as f32 * 64.0
+        } else {
+            148.0
+        };
+        let w = W.min((size.0 - EDGE * 2.0).max(0.0));
+        let r = Rect::new(
+            ((size.0 - w) / 2.0).max(0.0),
+            ((size.1 - h) / 2.0).max(0.0),
+            w,
+            h,
+        );
+        CardLayout {
+            rect: r,
+            head: Rect::new(r.x + PAD, r.y + PAD, w - PAD * 2.0, 20.0),
+            bar: Rect::new(r.x + PAD, r.y + 96.0, w - PAD * 2.0, BAR_H),
+            rows: if failed {
+                (self.failure_scroll..(self.failure_scroll + shown).min(count))
+                    .enumerate()
+                    .map(|(row, index)| {
+                        (
+                            index,
+                            Rect::new(
+                                r.x + PAD,
+                                r.y + 64.0 + row as f32 * 64.0,
+                                w - PAD * 2.0,
+                                60.0,
+                            ),
+                        )
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            retry: failed
+                .then(|| Rect::new(r.x + PAD, r.bottom() - PAD - BUTTON_H, 64.0, BUTTON_H)),
+            proceed: (failed && self.failure.is_none() && !self.failures.is_empty()).then(|| {
+                Rect::new(
+                    r.x + PAD + 68.0,
+                    r.bottom() - PAD - BUTTON_H,
+                    108.0,
+                    BUTTON_H,
+                )
+            }),
+            button: Rect::new(
+                r.right() - PAD - 60.0,
+                r.bottom() - PAD - BUTTON_H,
+                60.0,
+                BUTTON_H,
+            ),
+        }
     }
 }
 fn paint_background(pen: &mut Pen, card: &Card, g: &Geometry, turn: f32) {
@@ -454,6 +572,10 @@ fn paint_background(pen: &mut Pen, card: &Card, g: &Geometry, turn: f32) {
     let c = pen.c;
     pen.fill(Rect::new(0.0, 0.0, g.size.0, g.size.1), c.veil);
     pen.floating(l.rect, c.surface_1, Radius::M);
+    if !card.cancelling && (card.failure.is_some() || !card.failures.is_empty()) {
+        paint_failures(pen, card, &l);
+        return;
+    }
     pen.icon_turned(
         "spinner",
         Rect::new(l.head.x, l.head.y + 4.0, ICON, ICON),
@@ -544,6 +666,180 @@ fn paint_background(pen: &mut Pen, card: &Card, g: &Geometry, turn: f32) {
             Align::Center,
         );
     }
+}
+
+fn paint_failures(pen: &mut Pen, card: &Card, l: &CardLayout) {
+    let c = pen.c;
+    pen.text(
+        "準備できませんでした",
+        FontSize::Body,
+        Weight::Medium,
+        c.ink_strong,
+        l.head,
+        Align::Left,
+    );
+    let count = format!(
+        "{} トラック中 {} トラック準備済み",
+        card.progress.units.len(),
+        card.progress.done
+    );
+    pen.text(
+        &count,
+        FontSize::Small,
+        Weight::Regular,
+        c.ink,
+        Rect::new(l.head.x, l.head.bottom() + 4.0, l.head.w, 20.0),
+        Align::Left,
+    );
+    for (index, row) in &l.rows {
+        let (name, reason) = if let Some(reason) = &card.failure {
+            ("全体の準備", reason.as_str())
+        } else {
+            let failure = &card.failures[*index];
+            (failure.name.as_str(), failure.reason.as_str())
+        };
+        for (text, offset, weight) in [(name, 0.0, Weight::Medium), (reason, 20.0, Weight::Regular)]
+        {
+            let text = crate::opening_view::shorten(text, row.w, |s| {
+                pen.measure(s, FontSize::Small, weight)
+            });
+            pen.text(
+                &text,
+                FontSize::Small,
+                weight,
+                c.ink,
+                Rect::new(row.x, row.y + offset, row.w, 20.0),
+                Align::Left,
+            );
+        }
+    }
+    for (rect, label) in [
+        (Some(l.button), "中止"),
+        (l.retry, "再試行"),
+        (l.proceed, "このまま開く"),
+    ] {
+        if let Some(rect) = rect {
+            pen.round(rect, c.surface_3, Radius::S);
+            pen.text(
+                label,
+                FontSize::Small,
+                Weight::Medium,
+                c.ink_strong,
+                rect,
+                Align::Center,
+            );
+        }
+    }
+    if let Some(index) = card.detail {
+        let full = if let Some(reason) = &card.failure {
+            reason.clone()
+        } else if let Some(failure) = card.failures.get(index) {
+            format!("{}\n{}", failure.reason, failure.name)
+        } else {
+            return;
+        };
+        let width = (f32::from(pen.window.viewport_size().width) - 24.0).clamp(0.0, 600.0);
+        let lines = crate::opening_view::wrap(&full, width, |s| {
+            pen.measure(s, FontSize::Small, Weight::Regular)
+        });
+        let h = (lines.len() as f32 * 20.0 + 16.0).min(l.rect.h);
+        let tip = Rect::new(
+            (l.rect.x + (l.rect.w - width) / 2.0).max(0.0),
+            l.rect.y,
+            width,
+            h,
+        );
+        pen.floating(tip, c.surface_3, Radius::S);
+        pen.mask(tip, |pen| {
+            for (i, line) in lines.iter().enumerate() {
+                pen.text(
+                    line,
+                    FontSize::Small,
+                    Weight::Regular,
+                    c.ink,
+                    Rect::new(
+                        tip.x + 8.0,
+                        tip.y + 8.0 + i as f32 * 20.0,
+                        tip.w - 16.0,
+                        20.0,
+                    ),
+                    Align::Left,
+                );
+            }
+        });
+    }
+}
+
+pub(crate) fn accessible(s: Rc<RefCell<Studio>>, g: &Geometry) -> impl IntoElement {
+    let mut root = div().id("preparing-accessible").absolute();
+    let borrowed = s.borrow();
+    let Some(card) = &borrowed.preparing else {
+        return root;
+    };
+    let layout = card.layout(g.size);
+    let r = layout.rect;
+    let mut announce = format!(
+        "音を準備しています。{} トラック中 {} トラック準備済み",
+        card.progress.units.len(),
+        card.progress.done
+    );
+    if card.cancelling {
+        announce = "中止しています。片付け中".into();
+    }
+    if let Some(error) = &card.failure {
+        announce.push_str(&format!("。{error}"));
+    }
+    for failure in &card.failures {
+        announce.push_str(&format!("。{}: {}", failure.name, failure.reason));
+    }
+    root = root
+        .left(px(r.x))
+        .top(px(r.y + xirius_design::Layout::TOP_BAR_H))
+        .w(px(r.w))
+        .h(px(r.h))
+        .role(gpui::Role::Dialog)
+        .aria_label("音の準備")
+        .a11y_synthetic_children(move |tree| {
+            let mut status = accesskit::Node::new(accesskit::Role::Status);
+            status.set_label(announce.clone());
+            status.set_live(accesskit::Live::Polite);
+            tree.push_child(tree.synthetic_node_id("prepare-status"), status);
+        });
+    let buttons = if card.cancelling {
+        Vec::new()
+    } else {
+        vec![
+            (Some(layout.button), "中止", 0),
+            (layout.retry, "再試行", 1),
+            (layout.proceed, "このまま開く", 2),
+        ]
+    };
+    drop(borrowed);
+    for (button, label, action) in buttons {
+        let Some(button) = button else { continue };
+        let studio = s.clone();
+        root = root.child(
+            div()
+                .id(label)
+                .absolute()
+                .left(px(button.x - r.x))
+                .top(px(button.y - r.y))
+                .w(px(button.w))
+                .h(px(button.h))
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .on_a11y_action(accesskit::Action::Click, move |_, window, _| {
+                    let mut studio = studio.borrow_mut();
+                    match action {
+                        1 => studio.prepare_retry(),
+                        2 => studio.prepare_continue(),
+                        _ => studio.prepare_later(),
+                    }
+                    window.refresh();
+                }),
+        );
+    }
+    root
 }
 
 #[cfg(test)]

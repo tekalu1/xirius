@@ -80,13 +80,20 @@ pub(super) struct Start {
     progress: Arc<Mutex<Progress>>,
     dir: Option<PathBuf>,
     latest: std::cell::RefCell<Progress>,
+    failures: Arc<Mutex<Option<Vec<xirius_session::build::PreparationFailure>>>>,
+    proceed: Arc<AtomicBool>,
 }
 impl Start {
     pub fn new(t: &Transport, p: &Project, dir: Option<PathBuf>) -> Result<Self, String> {
         let tracks: Vec<_> = p
             .tracks
             .values()
-            .filter(|t| t.kind != TrackKind::Master)
+            .filter(|t| {
+                matches!(
+                    t.kind,
+                    TrackKind::Audio | TrackKind::Instrument | TrackKind::Bus
+                )
+            })
             .map(|t| (t.id, t.name.clone()))
             .collect();
         let progress = Arc::new(Mutex::new(Progress {
@@ -99,6 +106,10 @@ impl Start {
         let stop = Arc::new(AtomicBool::new(false));
         let latest = std::cell::RefCell::new(progress.lock().unwrap().clone());
         let stopped = stop.clone();
+        let failures = Arc::new(Mutex::new(None));
+        let failed = failures.clone();
+        let proceed = Arc::new(AtomicBool::new(false));
+        let continuing = proceed.clone();
         let status = progress.clone();
         let mut config = t.host_config(dir.clone());
         config.threaded_local = true;
@@ -118,6 +129,10 @@ impl Start {
             };
             let mut starting = Starting::new(&p, config);
             while !starting.step() {
+                if stopped.load(Ordering::Acquire) {
+                    cleanup.owners = starting.owner_retirements();
+                    return Err("中止しました".into());
+                }
                 if !stopped.load(Ordering::Acquire)
                     && let Some((name, _)) = starting
                         .progress()
@@ -136,7 +151,7 @@ impl Start {
             if stopped.load(Ordering::Acquire) {
                 return Err("中止しました".into());
             }
-            let (mut host, audio, warnings) = starting
+            let (mut host, audio, track_failures) = starting
                 .finish_prepared(&p, |id, done| {
                     if let Some(index) = tracks.iter().position(|(track, _)| *track == id) {
                         let mut progress = status.lock().unwrap_or_else(|e| e.into_inner());
@@ -158,8 +173,18 @@ impl Start {
                     }
                 })
                 .map_err(|e| e.to_string())?;
-            if !warnings.is_empty() {
-                return Err(warnings.join("。"));
+            if !track_failures.is_empty() {
+                {
+                    let mut progress = status.lock().unwrap_or_else(|e| e.into_inner());
+                    progress.done = progress.units.len().saturating_sub(track_failures.len());
+                }
+                *failed.lock().unwrap_or_else(|e| e.into_inner()) = Some(track_failures);
+                while !continuing.load(Ordering::Acquire) {
+                    if stopped.load(Ordering::Acquire) {
+                        return Err("中止しました".into());
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                }
             }
             if stopped.load(Ordering::Acquire) {
                 return Err("中止しました".into());
@@ -204,6 +229,8 @@ impl Start {
             progress,
             dir,
             latest,
+            failures,
+            proceed,
         })
     }
     pub fn progress(&self) -> Progress {
@@ -234,6 +261,28 @@ impl Transport {
             false
         }
     }
+    pub(crate) fn continue_preparation(&self) -> bool {
+        let Some(start) = &self.prepared_start else {
+            return false;
+        };
+        let Ok(failures) = start.failures.try_lock() else {
+            return false;
+        };
+        if failures.as_ref().is_none_or(Vec::is_empty) || start.stop.load(Ordering::Acquire) {
+            return false;
+        }
+        start.proceed.store(true, Ordering::Release);
+        true
+    }
+
+    pub(crate) fn retry_preparation(&mut self, p: &Project, dir: Option<PathBuf>) -> bool {
+        // The old job owns its candidate until its worker retires it. Its channel
+        // is never polled by this attempt, including any already queued reply.
+        if let Some(start) = self.prepared_start.take() {
+            start.cancel();
+        }
+        self.begin_start(p, dir)
+    }
     pub(super) fn step_prepared(&mut self, dir: Option<PathBuf>) -> Option<StartStep> {
         let start = self.prepared_start.as_ref()?;
         if start.dir != dir {
@@ -245,6 +294,12 @@ impl Transport {
             }
             self.prepared_start = None;
             return Some(StartStep::Cancelled);
+        }
+        if !start.proceed.load(Ordering::Acquire)
+            && let Ok(failures) = start.failures.try_lock()
+            && let Some(failures) = failures.as_ref()
+        {
+            return Some(StartStep::Failed(failures.clone()));
         }
         if let Some(result) = start.job.poll() {
             let result = result.map(|mut ready| {

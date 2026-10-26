@@ -9,7 +9,7 @@
 //! placeholder of [`crate::synth`] for a built-in without a processor); such an effect is left
 //! out.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -142,11 +142,39 @@ pub struct Built {
     pub structure: Structure,
     pub mix: Mix,
     pub warnings: Vec<String>,
+    /// Failures attributed to identities, never to possibly duplicate names.
+    pub failures: Vec<PreparationFailure>,
     /// Frame where the last clip ends.
     pub end_frame: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreparationFailure {
+    /// `None` means the master or another shared preparation unit.
+    pub track: Option<xirius_core::id::TrackId>,
+    pub name: String,
+    pub reason: String,
+}
+
+fn preparation_reason(name: &str, warnings: &[String]) -> String {
+    warnings
+        .iter()
+        .map(|warning| {
+            warning
+                .strip_prefix(name)
+                .unwrap_or(warning)
+                .trim_start_matches([' ', ':', '/'])
+                .replace("。代わりのインストゥルメントで再生します", "")
+                .replace("。スキップします", "")
+                .replace("（バイパスして再生します）", "")
+        })
+        .collect::<Vec<_>>()
+        .join("。\n")
+}
+
 pub struct Builder {
+    strict_preparation: bool,
+    unavailable: BTreeMap<xirius_core::id::TrackId, String>,
     rate: u32,
     dir: Option<PathBuf>,
     cache: WavCache,
@@ -167,6 +195,8 @@ impl Builder {
         let mut plugins = PluginLoader::default();
         plugins.set_sample_home(dir.clone(), rate);
         Builder {
+            strict_preparation: false,
+            unavailable: BTreeMap::new(),
             rate,
             dir,
             cache: WavCache::default(),
@@ -176,6 +206,14 @@ impl Builder {
             background: false,
             owner: crate::processed::owner(),
         }
+    }
+
+    pub(crate) fn prepare_strictly(&mut self) {
+        self.strict_preparation = true;
+    }
+
+    pub fn unavailable(&self) -> &BTreeMap<xirius_core::id::TrackId, String> {
+        &self.unavailable
     }
 
     /// The meters of the plugins the last build made: read by anyone, written by the audio thread.
@@ -286,6 +324,7 @@ impl Builder {
         let mix = Mix::of(p, &graph, &scope);
         let tmap = TempoMap::from_project(p);
         let mut warnings = Vec::new();
+        let mut failures = Vec::new();
         self.plugins.begin_build();
         self.timed.clear();
         self.plugins.set_tempo(tmap.bpm_at(0));
@@ -293,28 +332,32 @@ impl Builder {
         let mut tracks = Vec::with_capacity(graph.tracks.len());
         for (i, id) in graph.tracks.iter().enumerate() {
             let t = &p.tracks[id];
+            let warning_start = warnings.len();
+            let unavailable = self.unavailable.contains_key(id);
             track(t.id, false);
             let (shape, strip) = (&structure.tracks[i], &mix.tracks[i]);
             let included = scope.includes(*id);
             // A track that plays to a MIDI port makes no sound of its own.
-            let source: Box<dyn Processor> = if included && shape.midi.is_none() {
+            let source: Box<dyn Processor> = if !unavailable && included && shape.midi.is_none() {
                 self.source_for(t, &mut warnings)
             } else {
                 Box::new(Silence)
             };
             let mut spec = TrackSpec::new(t.name.clone(), source);
             spec.live = crate::automation::realtime(t);
-            let (inserts, keys) =
-                self.inserts_for(&t.name, &shape.inserts, &graph, &scope, &mut warnings);
-            (spec.inserts, spec.keys) = self.arrange(
-                &t.name,
-                shape.rack.as_ref(),
-                inserts,
-                keys,
-                &shape.inserts,
-                &mix.branches,
-                &mut warnings,
-            );
+            if !unavailable {
+                let (inserts, keys) =
+                    self.inserts_for(&t.name, &shape.inserts, &graph, &scope, &mut warnings);
+                (spec.inserts, spec.keys) = self.arrange(
+                    &t.name,
+                    shape.rack.as_ref(),
+                    inserts,
+                    keys,
+                    &shape.inserts,
+                    &mix.branches,
+                    &mut warnings,
+                );
+            }
             spec.gain = strip.gain;
             spec.pan = strip.pan;
             spec.mute = strip.mute;
@@ -326,8 +369,32 @@ impl Builder {
                     channel: m.channel.clamp(1, 16) - 1,
                 })
             });
-            if included {
+            if included && !unavailable {
                 spec.timeline = self.timeline(p, t, &tmap, &mut warnings);
+            }
+            if self.strict_preparation && !unavailable {
+                warnings
+                    .extend(self.plugins.opening_warnings_for(
+                        t.inserts.iter().chain(&shape.inserts).map(|x| x.id),
+                    ));
+                if warnings.len() > warning_start {
+                    let reason = preparation_reason(&t.name, &warnings[warning_start..]);
+                    self.unavailable.insert(*id, reason.clone());
+                    failures.push(PreparationFailure {
+                        track: Some(*id),
+                        name: t.name.clone(),
+                        reason,
+                    });
+                }
+            }
+            if self.unavailable.contains_key(id) {
+                spec.unavailable = true;
+                spec.source = Box::new(Silence);
+                spec.inserts.clear();
+                spec.keys.clear();
+                spec.timeline = Timeline::default();
+                spec.midi = None;
+                spec.prefetch = false;
             }
             tracks.push(TrackSlot::New(spec));
             track(t.id, true);
@@ -335,6 +402,8 @@ impl Builder {
 
         let mut buses = Vec::with_capacity(structure.buses.len());
         for (shape, strip) in structure.buses.iter().zip(&mix.buses) {
+            let warning_start = warnings.len();
+            let unavailable = self.unavailable.contains_key(&shape.id);
             track(shape.id, false);
             let name = if shape.id == DISCARD {
                 "discard".to_string()
@@ -342,26 +411,49 @@ impl Builder {
                 p.tracks[&shape.id].name.clone()
             };
             let mut spec = BusSpec::new(name.clone());
-            let (inserts, keys) =
-                self.inserts_for(&name, &shape.inserts, &graph, &scope, &mut warnings);
-            (spec.inserts, spec.keys) = self.arrange(
-                &name,
-                shape.rack.as_ref(),
-                inserts,
-                keys,
-                &shape.inserts,
-                &mix.branches,
-                &mut warnings,
-            );
+            if !unavailable {
+                let (inserts, keys) =
+                    self.inserts_for(&name, &shape.inserts, &graph, &scope, &mut warnings);
+                (spec.inserts, spec.keys) = self.arrange(
+                    &name,
+                    shape.rack.as_ref(),
+                    inserts,
+                    keys,
+                    &shape.inserts,
+                    &mix.branches,
+                    &mut warnings,
+                );
+            }
             spec.gain = strip.gain;
             spec.pan = strip.pan;
             spec.mute = strip.mute;
             spec.output = shape.output;
             spec.sends = sends_for(&shape.sends, &strip.sends);
+            if self.strict_preparation && !unavailable {
+                warnings.extend(
+                    self.plugins
+                        .opening_warnings_for(shape.inserts.iter().map(|x| x.id)),
+                );
+                if warnings.len() > warning_start {
+                    let reason = preparation_reason(&name, &warnings[warning_start..]);
+                    self.unavailable.insert(shape.id, reason.clone());
+                    failures.push(PreparationFailure {
+                        track: Some(shape.id),
+                        name: name.clone(),
+                        reason,
+                    });
+                }
+            }
+            if self.unavailable.contains_key(&shape.id) {
+                spec.unavailable = true;
+                spec.inserts.clear();
+                spec.keys.clear();
+            }
             buses.push(spec);
             track(shape.id, true);
         }
 
+        let warning_start = warnings.len();
         let (master_inserts, master_keys) = self.inserts_for(
             "master",
             &structure.master_inserts,
@@ -378,6 +470,19 @@ impl Builder {
             &mix.branches,
             &mut warnings,
         );
+        if self.strict_preparation {
+            warnings.extend(
+                self.plugins
+                    .opening_warnings_for(structure.master_inserts.iter().map(|x| x.id)),
+            );
+            if warnings.len() > warning_start {
+                failures.push(PreparationFailure {
+                    track: None,
+                    name: "マスター".into(),
+                    reason: preparation_reason("master", &warnings[warning_start..]),
+                });
+            }
+        }
         self.plugins.end_build();
         // A whole-song build keeps the meters of the plugins it used; a partial one (a track
         // rendered alone) leaves the song's meters as they are.
@@ -398,6 +503,7 @@ impl Builder {
             structure,
             mix,
             warnings,
+            failures,
         }
     }
 
@@ -414,6 +520,9 @@ impl Builder {
         tmap: &TempoMap,
         warnings: &mut Vec<String>,
     ) -> Timeline {
+        if self.unavailable.contains_key(&t.id) {
+            return Timeline::default();
+        }
         let rate = f64::from(self.rate);
         if let Some(f) = &t.frozen {
             return self.frozen(t, f, tmap, warnings);

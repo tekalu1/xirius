@@ -39,6 +39,8 @@ pub enum NodeId {
 }
 
 pub struct TrackSpec {
+    /// A failed preparation stays silent, independently of later mute/monitor commands.
+    pub unavailable: bool,
     /// Recording or monitoring; always rendered synchronously.
     pub live: bool,
     pub name: String,
@@ -114,6 +116,7 @@ impl MidiRoute {
 impl TrackSpec {
     pub fn new(name: impl Into<String>, source: Box<dyn Processor>) -> Self {
         Self {
+            unavailable: false,
             live: false,
             name: name.into(),
             source,
@@ -175,6 +178,8 @@ pub struct KeySpec {
 }
 
 pub struct BusSpec {
+    /// A failed bus never passes incoming audio through to another route.
+    pub unavailable: bool,
     pub name: String,
     pub inserts: Vec<Box<dyn Processor>>,
     pub gain: f32,
@@ -191,6 +196,7 @@ pub struct BusSpec {
 impl BusSpec {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
+            unavailable: false,
             name: name.into(),
             inserts: Vec::new(),
             gain: 1.0,
@@ -582,6 +588,7 @@ struct SendNode {
 }
 
 pub struct TrackNode {
+    unavailable: bool,
     live: bool,
     name: String,
     /// What makes the track's signal: home with the node, or away with a prefetch worker.
@@ -681,6 +688,7 @@ impl TrackNode {
 }
 
 struct BusNode {
+    unavailable: bool,
     name: String,
     inserts: Vec<Box<dyn Processor>>,
     strip: Strip,
@@ -936,6 +944,7 @@ impl Plan {
                         .flatten()
                         .map(Box::new);
                     tracks.push(Some(Box::new(TrackNode {
+                        unavailable: t.unavailable,
                         live: t.live,
                         name: t.name,
                         prefetch,
@@ -1004,6 +1013,7 @@ impl Plan {
             bus_lats.push(b.inserts.iter().map(|p| p.latency()).collect::<Vec<u32>>());
             bus_keys.push(std::mem::take(&mut b.keys));
             buses.push(BusNode {
+                unavailable: b.unavailable,
                 name: b.name,
                 branches: crate::split::Cells::of(&b.inserts),
                 inserts: b.inserts,
@@ -1712,6 +1722,10 @@ impl Plan {
                 // Everything a bus feeds comes after it, so the rest of the list can be borrowed.
                 let (head, later) = self.buses.split_at_mut(j + 1);
                 let b = &mut head[j];
+                if b.unavailable {
+                    b.buf.clear(n);
+                    continue;
+                }
                 let mut key = 0;
                 for (i, p) in b.inserts.iter_mut().enumerate() {
                     let mut io = b.buf.io(n);
@@ -1782,6 +1796,13 @@ impl Plan {
     /// worker's ring while the transport runs and nothing is live; otherwise the audio thread
     /// renders the chain itself and, when the transport runs, lends it out for the next blocks.
     pub(crate) fn render_track(t: &mut TrackNode, n: usize, pos: Option<u64>) {
+        if t.unavailable {
+            t.buf.clear(n);
+            if let Some(chain) = &mut t.chain {
+                chain.events.clear();
+            }
+            return;
+        }
         let TrackNode {
             live,
             chain,

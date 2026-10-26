@@ -105,8 +105,13 @@ fn paint_strip(
         );
     }
     pen.mask(name_r, |pen| {
+        let label = if studio.sound_unavailable(t) {
+            format!("音なし · {}", track.shown_name())
+        } else {
+            track.shown_name().to_string()
+        };
         pen.text(
-            track.shown_name(),
+            &label,
             FontSize::Small,
             Weight::Medium,
             ink,

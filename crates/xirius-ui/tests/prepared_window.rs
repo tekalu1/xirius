@@ -43,18 +43,21 @@ fn material_gate_keeps_the_preparation_card_and_escape_responsive_on_the_real_wi
         };
         let log = fs::read_to_string(log).unwrap();
         assert!(status.success(), "{log}");
-        for stage in ["reading", "cancel", "closed"] {
+        for stage in ["reading", "cancel", "closed", "failed", "retried", "silent"] {
             assert!(
                 log.contains(&format!("prepared-check stage={stage} ok=true")),
                 "{log}"
             );
         }
-        assert!(log.contains("4 saved, 0 failed"), "{log}");
+        assert!(log.contains("7 saved, 0 failed"), "{log}");
         for name in [
             "prepared-00-before",
             "prepared-01-reading",
             "prepared-02-cancelling",
             "prepared-03-closed",
+            "prepared-04-failed",
+            "prepared-05-retried",
+            "prepared-06-silent",
         ] {
             let bmp = fs::read(root.path().join(format!("{name}.bmp"))).unwrap();
             assert!(bmp.len() > 1024 && &bmp[..2] == b"BM", "{name}");

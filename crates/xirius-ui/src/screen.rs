@@ -1691,6 +1691,7 @@ impl Render for Screen {
             .child(body)
             .child(bottom)
             .child(crate::opening_view::accessible(self.studio.clone(), &g))
+            .child(crate::prepare_card::accessible(self.studio.clone(), &g))
             .child(crate::unsaved::accessible(self.studio.clone(), &g))
             .children(marks.into_iter().map(|m| mark(m, self.studio.clone())))
     }

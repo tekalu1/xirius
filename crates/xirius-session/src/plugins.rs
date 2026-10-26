@@ -1214,9 +1214,16 @@ impl PluginLoader {
             })?;
             // This synchronous builder entry is for non-UI callers. UI preloading
             // and the preparation coordinator use the asynchronous entry below.
+            let deadline = Instant::now() + crate::host::PULL_WAIT;
             let opened = loop {
                 if let Some(result) = ticket.poll() {
                     break result?;
+                }
+                if Instant::now() >= deadline {
+                    ticket.cancel();
+                    return Err(
+                        "プラグインが応答しません。別プロセスで開くことを検討してください".into(),
+                    );
                 }
                 std::thread::sleep(Duration::from_millis(2));
             };
@@ -1370,6 +1377,18 @@ impl PluginLoader {
             out.extend(Self::remote_warnings(r));
         }
         out
+    }
+
+    pub(crate) fn opening_warnings_for(
+        &self,
+        ids: impl IntoIterator<Item = PluginId>,
+    ) -> Vec<String> {
+        let mut seen = HashSet::new();
+        ids.into_iter()
+            .filter(|id| seen.insert(*id))
+            .filter_map(|id| self.remotes.get(&id))
+            .flat_map(Self::remote_warnings)
+            .collect()
     }
 
     /// What the last opening of a remote plugin said: the instance a new mix opened, before it

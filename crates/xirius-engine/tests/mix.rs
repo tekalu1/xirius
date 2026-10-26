@@ -75,6 +75,40 @@ fn assert_all(buf: &[f32], want: f32) {
 }
 
 #[test]
+fn unavailable_tracks_and_buses_stay_silent_after_unmute_live_and_send_changes() {
+    let mut failed = dc_track(20.0);
+    failed.unavailable = true;
+    failed.sends.push(SendSpec {
+        bus: 1,
+        level: 1.0,
+        pre_fader: true,
+    });
+    let mut routed = dc_track(10.0);
+    routed.output = Output::Bus(0);
+    let mut failed_bus = BusSpec::new("failed bus");
+    failed_bus.unavailable = true;
+    // An effect which would generate sound must not run on a failed bus.
+    failed_bus.inserts.push(Box::new(Dc(30.0)));
+    failed_bus.sends.push(SendSpec {
+        bus: 1,
+        level: 1.0,
+        pre_fader: true,
+    });
+    let mut p = plan(
+        vec![dc_track(0.25), failed, routed],
+        vec![failed_bus, BusSpec::new("send")],
+    );
+    p.set_track_mute(1, false);
+    p.set_track_live(1, true);
+    p.set_send_level(1, 0, 1.0);
+    p.set_bus_mute(0, false);
+    p.set_bus_send_level(0, 0, 1.0);
+    let (l, r) = render_offline(p, 500);
+    assert_all(&l, 0.25);
+    assert_all(&r, 0.25);
+}
+
+#[test]
 fn track_gain_scales_the_signal() {
     let mut t = dc_track(1.0);
     t.gain = 0.5;

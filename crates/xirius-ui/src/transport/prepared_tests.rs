@@ -108,6 +108,234 @@ fn quiet_drivers() -> Drivers {
     }
 }
 
+fn missing_plugin(s: &mut Studio, track: serde_json::Value) {
+    s.song.run("plugin.add", serde_json::json!({
+        "track":track, "name":"Missing", "format":"vst3", "uid":"00000000000000000000000000000000"
+    })).unwrap();
+}
+
+fn wait_failed(s: &mut Studio, count: usize) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        s.poll_preparing();
+        let card = s.preparing.as_ref().expect("failure keeps the veil");
+        assert!(card.failure.is_none(), "{:?}", card.failure);
+        if card.failures.len() == count {
+            return;
+        }
+        assert!(Instant::now() < deadline, "failure watchdog");
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn retry_discards_a_material_failure_that_returns_after_the_new_player_is_ready() {
+    let root = tempfile::tempdir().unwrap();
+    let wav = root.path().join("source.wav");
+    xirius_session::export::write_wav(&wav, &[0.0; 2048], &[0.0; 2048], 48_000, 16).unwrap();
+    let mut s = Studio::new(Song::empty());
+    s.song.save_as(&root.path().join("song")).unwrap();
+    s.song
+        .run("clip.import", serde_json::json!({"file":wav}))
+        .unwrap();
+    let release = Release::new();
+    let gate = release.0.clone();
+    let (tx, entered) = mpsc::channel();
+    let (done, retired) = mpsc::channel();
+    let once = AtomicBool::new(false);
+    let prefix = root.path().to_path_buf();
+    let _observe = xirius_core::io_test::observe(Arc::new(move |op, path| {
+        if op == "prepare_decode" && path.starts_with(&prefix) && !once.swap(true, Ordering::SeqCst)
+        {
+            tx.send(()).unwrap();
+            let held = gate.0.lock().unwrap();
+            drop(gate.1.wait_while(held, |done| !*done).unwrap());
+            done.send(()).unwrap();
+            return Err(std::io::Error::other("old material failure"));
+        }
+        Ok(())
+    }));
+    s.transport.mode = OutputMode::Device;
+    s.transport.set_drivers(quiet_drivers());
+    s.prepare_song();
+    entered.recv_timeout(Duration::from_secs(20)).unwrap();
+    // Exercise the transport boundary directly while an obsolete worker is held.
+    assert!(s.transport.retry_preparation(&s.project(), s.song.dir()));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while s.preparing.is_some() {
+        s.poll_preparing();
+        assert!(
+            Instant::now() < deadline,
+            "replacement preparation watchdog"
+        );
+        std::thread::yield_now();
+    }
+    assert!(s.transport.host().unwrap().unavailable_tracks().is_empty());
+    release.release();
+    retired.recv_timeout(Duration::from_secs(20)).unwrap();
+    assert!(!s.poll_preparing());
+    assert!(s.error.is_none());
+    assert!(s.transport.host().unwrap().unavailable_tracks().is_empty());
+}
+
+#[test]
+fn partial_and_all_failures_continue_only_with_failed_track_identities_silent() {
+    for all in [false, true] {
+        let mut s = Studio::new(Song::empty());
+        let mut failed = Vec::new();
+        // Duplicate long names cannot be used to attribute failures.
+        let name = "同じ名前・長いトラック名🎹".repeat(30);
+        for i in 0..3 {
+            let id = s
+                .song
+                .run("track.add.audio", serde_json::json!({"name":name}))
+                .unwrap()["id"]
+                .clone();
+            if all || i != 1 {
+                failed.push(id.as_str().unwrap().parse::<TrackId>().unwrap());
+                missing_plugin(&mut s, id);
+            }
+        }
+        let project = s.project();
+        s.transport.mode = OutputMode::Device;
+        s.transport.set_catalog(Arc::new(Catalog::default()));
+        s.transport.set_drivers(quiet_drivers());
+        s.prepare_song();
+        wait_failed(&mut s, failed.len());
+        let card = s.preparing.as_ref().unwrap();
+        assert_eq!(card.progress.done, 3 - failed.len());
+        assert!(
+            card.failures
+                .iter()
+                .all(|f| !f.reason.is_empty() && failed.contains(&f.track.unwrap()))
+        );
+        let layout = card.layout((960.0, 600.0));
+        assert!(layout.proceed.is_some());
+        assert!(layout.retry.is_some());
+        assert!(
+            s.transport.host().is_none(),
+            "candidate is held before output adoption"
+        );
+        s.prepare_continue();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while s.preparing.is_some() {
+            s.poll_preparing();
+            assert!(Instant::now() < deadline, "continue watchdog");
+            std::thread::yield_now();
+        }
+        assert!(
+            Arc::ptr_eq(&project, &s.project()),
+            "continuing never edits the song"
+        );
+        let unavailable = s.transport.host().unwrap().unavailable_tracks();
+        assert_eq!(unavailable.len(), failed.len());
+        for id in failed {
+            assert!(s.sound_unavailable(id));
+        }
+        assert!(!s.transport.playing);
+    }
+}
+
+#[test]
+fn master_failure_never_offers_continue_and_retry_uses_a_new_result() {
+    let mut s = Studio::new(Song::empty());
+    let master = s
+        .project()
+        .tracks
+        .keys()
+        .find(|id| id.is_master())
+        .unwrap()
+        .to_string();
+    missing_plugin(&mut s, serde_json::json!(master));
+    s.transport.mode = OutputMode::Device;
+    s.transport.set_catalog(Arc::new(Catalog::default()));
+    s.transport.set_drivers(quiet_drivers());
+    s.prepare_song();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        s.poll_preparing();
+        if s.preparing.as_ref().unwrap().failure.is_some() {
+            break;
+        }
+        assert!(Instant::now() < deadline, "master failure watchdog");
+        std::thread::yield_now();
+    }
+    assert!(
+        s.preparing
+            .as_ref()
+            .unwrap()
+            .layout((960.0, 600.0))
+            .proceed
+            .is_none()
+    );
+    s.prepare_continue();
+    assert!(s.transport.host().is_none());
+    // Changing the test's source directly models a newly available dependency;
+    // user mutations remain blocked behind the failure card.
+    let id = s
+        .project()
+        .tracks
+        .values()
+        .find(|t| t.id.is_master())
+        .unwrap()
+        .inserts[0]
+        .id;
+    s.song
+        .run("plugin.remove", serde_json::json!({"ids":[id.to_string()]}))
+        .unwrap();
+    s.prepare_retry();
+    while s.preparing.is_some() {
+        s.poll_preparing();
+        assert!(Instant::now() < deadline, "master retry watchdog");
+        std::thread::yield_now();
+    }
+    assert!(s.transport.host().is_some());
+    assert!(s.transport.host().unwrap().unavailable_tracks().is_empty());
+}
+
+#[test]
+fn output_and_global_graph_failures_do_not_offer_silent_continuation() {
+    for graph in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let prefix = root.path().to_path_buf();
+        let _observe = xirius_core::io_test::observe(Arc::new(move |op, path| {
+            if graph && op == "prepare_graph" && path.starts_with(&prefix) {
+                return Err(std::io::Error::other("graph failed"));
+            }
+            Ok(())
+        }));
+        let mut s = Studio::new(Song::empty());
+        s.song.save_as(&root.path().join("song")).unwrap();
+        s.transport.mode = OutputMode::Device;
+        let mut drivers = quiet_drivers();
+        drivers.shared_out = Arc::new(|_, _, _| Err("output failed".into()));
+        s.transport.set_drivers(drivers);
+        s.prepare_song();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            s.poll_preparing();
+            let card = s.preparing.as_ref().unwrap();
+            if let Some(reason) = &card.failure {
+                assert!(
+                    reason.contains(if graph {
+                        "graph failed"
+                    } else {
+                        "output failed"
+                    }),
+                    "{reason}"
+                );
+                assert!(card.layout((960.0, 600.0)).proceed.is_none());
+                break;
+            }
+            assert!(Instant::now() < deadline, "global failure watchdog");
+            std::thread::yield_now();
+        }
+        s.prepare_continue();
+        assert!(s.transport.host().is_none());
+        assert!(s.preparing.is_some());
+    }
+}
+
 #[test]
 fn dropping_the_window_transport_returns_before_a_held_output_stop() {
     let mut s = Studio::new(Song::empty());

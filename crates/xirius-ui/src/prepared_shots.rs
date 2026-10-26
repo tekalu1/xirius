@@ -28,6 +28,18 @@ pub const SHOTS: &[Shot] = &[
         name: "prepared-03-closed",
         acts: &[Act::Stage(Play::Studio(stage), 2)],
     },
+    Shot {
+        name: "prepared-04-failed",
+        acts: &[Act::Stage(Play::Studio(stage), 3)],
+    },
+    Shot {
+        name: "prepared-05-retried",
+        acts: &[Act::Stage(Play::Window(choice), 4)],
+    },
+    Shot {
+        name: "prepared-06-silent",
+        acts: &[Act::Stage(Play::Window(choice), 5)],
+    },
 ];
 
 struct Gate {
@@ -99,6 +111,15 @@ fn stage(s: &mut Studio, n: u8) {
                     .unwrap();
                 song.session_mut().flush_writes();
                 drop(song);
+                let mut failed = crate::song::Song::empty();
+                for index in 0..3 {
+                    let id = failed.run("track.add.audio", serde_json::json!({"name": "長い同名トラック🎹・ストリングスとピアノを重ねた最後のテイク"})).unwrap()["id"].clone();
+                    if index != 1 {
+                        failed.run("plugin.add", serde_json::json!({"track":id,"name":"Missing","format":"vst3","uid":"00000000000000000000000000000000"})).unwrap();
+                    }
+                }
+                failed.save_as(&root.join("failed-song")).unwrap();
+                failed.session_mut().flush_writes();
                 dir
             });
             PROBE.with(|p| {
@@ -124,8 +145,49 @@ fn stage(s: &mut Studio, n: u8) {
             p.gate.take();
             p.phase = 3;
         }),
+        3 => {
+            let root = PathBuf::from(std::env::var_os("XIRIUS_PREPARED_SHOTS_DIR").unwrap());
+            s.start_file_request(FileRequest::Open, &root.join("failed-song"));
+            PROBE.with(|p| p.borrow_mut().as_mut().unwrap().phase = 5);
+        }
         _ => unreachable!(),
     }
+}
+fn choice(n: u8, s: &Rc<RefCell<Studio>>, window: &mut gpui::Window, cx: &mut gpui::App) {
+    let button = {
+        let s = s.borrow();
+        let g = crate::screen::geometry(&s, window);
+        let layout = s.preparing.as_ref().unwrap().layout(g.size);
+        if n == 4 {
+            layout.retry.unwrap()
+        } else {
+            layout.proceed.unwrap()
+        }
+    };
+    let position = gpui::point(
+        gpui::px(button.x + button.w / 2.0),
+        gpui::px(button.y + button.h / 2.0 + xirius_design::Layout::TOP_BAR_H),
+    );
+    window.dispatch_event(
+        gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+            button: gpui::MouseButton::Left,
+            position,
+            modifiers: Default::default(),
+            click_count: 1,
+            first_mouse: false,
+        }),
+        cx,
+    );
+    window.dispatch_event(
+        gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+            button: gpui::MouseButton::Left,
+            position,
+            modifiers: Default::default(),
+            click_count: 1,
+        }),
+        cx,
+    );
+    PROBE.with(|p| p.borrow_mut().as_mut().unwrap().phase = if n == 4 { 7 } else { 9 });
 }
 fn cancel(n: u8, s: &Rc<RefCell<Studio>>, window: &mut gpui::Window, cx: &mut gpui::App) {
     stage(&mut s.borrow_mut(), n);
@@ -185,6 +247,33 @@ pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
             assert!(!s.transport.playing);
             eprintln!("prepared-check stage=closed ok=true");
             p.phase = 4;
+        }
+        if p.phase == 5 || p.phase == 7 {
+            let s = s.borrow();
+            let Some(card) = &s.preparing else {
+                return false;
+            };
+            if card.failures.len() != 2 {
+                return false;
+            }
+            assert!(card.failure.is_none());
+            assert_eq!(card.progress.done, 1);
+            assert!(s.transport.host().is_none());
+            eprintln!(
+                "prepared-check stage={} ok=true",
+                if p.phase == 5 { "failed" } else { "retried" }
+            );
+            p.phase = if p.phase == 5 { 6 } else { 8 };
+        }
+        if p.phase == 9 {
+            let s = s.borrow();
+            if s.preparing.is_some() {
+                return false;
+            }
+            assert_eq!(s.transport.host().unwrap().unavailable_tracks().len(), 2);
+            assert!(!s.transport.playing);
+            eprintln!("prepared-check stage=silent ok=true");
+            p.phase = 10;
         }
         true
     })

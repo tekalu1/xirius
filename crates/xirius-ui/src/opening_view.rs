@@ -188,9 +188,13 @@ pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry) -> bool {
     }
     true
 }
-fn wrap(full: &str, w: f32, mut measure: impl FnMut(&str) -> f32) -> Vec<String> {
+pub(crate) fn wrap(full: &str, w: f32, mut measure: impl FnMut(&str) -> f32) -> Vec<String> {
     let mut lines = vec![String::new()];
     for g in full.graphemes(true) {
+        if g == "\n" || g == "\r\n" {
+            lines.push(String::new());
+            continue;
+        }
         let last = lines.last_mut().unwrap();
         if !last.is_empty() && measure(&format!("{last}{g}")) > (w - 16.0).max(0.0) {
             lines.push(g.into());
@@ -206,6 +210,9 @@ fn wrap(full: &str, w: f32, mut measure: impl FnMut(&str) -> f32) -> Vec<String>
 pub(crate) fn accessible(s: Rc<RefCell<Studio>>, g: &Geometry) -> impl IntoElement {
     let mut root = div().id("opening-accessible").absolute();
     let borrowed = s.borrow();
+    if borrowed.preparing.is_some() {
+        return root;
+    }
     let Some(open) = &borrowed.opening else {
         return root;
     };

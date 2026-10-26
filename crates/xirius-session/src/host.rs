@@ -366,6 +366,11 @@ impl SessionHost {
         self.builder.rate()
     }
 
+    /// Preparation failures kept silent for this player, without changing the song.
+    pub fn unavailable_tracks(&self) -> &BTreeMap<TrackId, String> {
+        self.builder.unavailable()
+    }
+
     /// The line said when the input device was opened in another mode than asked for (the
     /// exclusive mode that would not open), once.
     pub fn take_driver_notice(&mut self) -> Option<String> {

@@ -56,6 +56,8 @@ pub(crate) enum StartStep {
     Cancelled,
     /// Plugins are still opening.
     Going(Progress),
+    /// Individual tracks failed; the worker retains the silent candidate until a choice.
+    Failed(Vec<xirius_session::build::PreparationFailure>),
     /// Everything is open and the player started, or why it did not.
     Done(Result<(), String>),
 }
@@ -1195,6 +1197,11 @@ impl Drop for Transport {
 }
 
 impl Studio {
+    pub(crate) fn sound_unavailable(&self, track: TrackId) -> bool {
+        self.transport
+            .host()
+            .is_some_and(|h| h.unavailable_tracks().contains_key(&track))
+    }
     // ---------------------------------------------------------- the buttons
 
     /// A press on a transport button of the top bar.

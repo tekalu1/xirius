@@ -168,7 +168,15 @@ impl Starting {
         mut self,
         p: &Project,
         track: impl FnMut(xirius_core::id::TrackId, bool),
-    ) -> Result<(SessionHost, AudioEngine, Vec<String>), String> {
+    ) -> Result<
+        (
+            SessionHost,
+            AudioEngine,
+            Vec<crate::build::PreparationFailure>,
+        ),
+        String,
+    > {
+        self.builder.prepare_strictly();
         self.builder.set_background(false);
         self.builder.plugins_mut().set_setup(self.setup);
         if !self.asked {
@@ -176,6 +184,10 @@ impl Starting {
             self.ask_apart();
         }
         let built = self.builder.build_observed(p, Select::All, track);
+        let failures = built.failures.clone();
+        if let Some(failure) = failures.iter().find(|f| f.track.is_none()) {
+            return Err(format!("{}: {}", failure.name, failure.reason));
+        }
         self.builder.set_background(true);
         #[cfg(feature = "test-io")]
         xirius_core::io_test::before(
@@ -193,6 +205,7 @@ impl Starting {
             self.engine,
             self.processed_seen,
         )
+        .map(|(host, audio, _)| (host, audio, failures))
         .map_err(|e| e.to_string())
     }
 

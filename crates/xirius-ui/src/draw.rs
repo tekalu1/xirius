@@ -1057,7 +1057,12 @@ fn paint_row_parts(
             let mark = studio.row_mark(row, track);
             let area = track_name_rect(row, &mark);
             let name_r = Rect::new(g.column.x + area.x, top + area.y, area.w, area.h);
-            let fitted = pen.fit(&track.name, FontSize::Body, Weight::Medium, name_r.w);
+            let label = if studio.sound_unavailable(t) {
+                format!("音なし · {}", track.name)
+            } else {
+                track.name.clone()
+            };
+            let fitted = pen.fit(&label, FontSize::Body, Weight::Medium, name_r.w);
             pen.mask(name_r, |pen| {
                 pen.text(
                     &fitted,
