@@ -14,6 +14,29 @@ use crate::studio::Hit;
 use crate::toast::ToastPart;
 use xirius_session::output::OutputMode;
 
+#[test]
+fn preparation_never_registers_or_stats_a_watch_even_after_look_interval() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut s, _, dir) = studio(root.path());
+    let path = dir.clone();
+    let _observe = xirius_core::io_test::observe(std::sync::Arc::new(move |op, p| {
+        assert!(
+            !(p == path && matches!(op, "watch_register" | "watch_metadata")),
+            "a blocked frame must not enter watcher I/O"
+        );
+        Ok(())
+    }));
+    let mut card = crate::prepare_card::Card::new(Default::default());
+    card.background = true;
+    s.preparing = Some(card);
+    let now = Instant::now() + LOOK * 4;
+    assert!(!s.poll_other_change_at(now, |_| panic!("no geometry work")));
+    s.other = OtherChange::default();
+    assert!(!s.poll_other_change_at(now, |_| panic!("no registration")));
+    assert!(s.other.watch.is_none());
+    assert!(s.prepare_key("escape"));
+}
+
 fn studio(root: &Path) -> (Studio, Geometry, PathBuf) {
     let dir = root.join("song");
     let mut s = Studio::new(Song::empty());

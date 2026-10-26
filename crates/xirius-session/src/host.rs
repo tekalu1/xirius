@@ -552,6 +552,13 @@ impl SessionHost {
     /// heard (it was left silent while rendering).
     fn refresh_processed(&mut self) {
         let now = crate::processed::generation();
+        // Window plans are published only after strict material preparation.
+        // Their timeline updates use that same worker path. Notifications from
+        // another render must not re-enter Builder::timeline on the event loop.
+        if self.windowed {
+            self.processed_seen = now;
+            return;
+        }
         if now == self.processed_seen {
             return;
         }
@@ -1108,6 +1115,9 @@ impl SessionHost {
         let loader = self.builder.plugins_mut();
         for (a, b) in old.iter().zip(&new) {
             if !same_values(a, b) {
+                if self.windowed && a.samples != b.samples {
+                    return false;
+                }
                 let running = is_hosted(b) || loader.is_stock(b.id);
                 if !b.runs() || a.deactivated != b.deactivated || !running || !loader.apply(b) {
                     return false;

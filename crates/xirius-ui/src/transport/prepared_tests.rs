@@ -53,6 +53,10 @@ fn a_window_timeline_update_uses_background_preparation_and_idle_remains_respons
         std::thread::current().id()
     );
     assert!(s.idle().changed);
+    assert!(
+        s.tick(),
+        "frames only poll preparation while material I/O is held"
+    );
     let before = s.preparing.as_ref().unwrap().progress.clone();
     assert!(s.prepare_key("escape"));
     assert_eq!(s.preparing.as_ref().unwrap().progress, before);

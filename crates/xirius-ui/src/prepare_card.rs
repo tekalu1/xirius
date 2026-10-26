@@ -429,8 +429,16 @@ impl Studio {
         if amount > 0.0 {
             card.failure_scroll = card.failure_scroll.saturating_sub(1);
         } else if amount < 0.0 {
-            card.failure_scroll =
-                (card.failure_scroll + 1).min(card.failures.len().saturating_sub(1));
+            card.failure_scroll = (card.failure_scroll + 1).min(
+                if card.failure.is_some() {
+                    1
+                } else if !card.failures.is_empty() {
+                    card.failures.len()
+                } else {
+                    card.progress.units.len()
+                }
+                .saturating_sub(1),
+            );
         }
         before != card.failure_scroll
     }
@@ -445,7 +453,8 @@ impl Studio {
             .rows
             .iter()
             .find(|(_, r)| r.contains(x, y))
-            .map(|(i, _)| *i);
+            .map(|(i, _)| *i)
+            .filter(|_| card.failure.is_some() || !card.failures.is_empty());
         let hover = layout.button.contains(x, y);
         let changed = hover != card.hover || detail != card.detail;
         if detail != card.detail {
@@ -570,10 +579,12 @@ impl Card {
             self.failures.len()
         };
         let shown = count.min(((size.1 - 160.0) / 64.0).clamp(1.0, 5.0) as usize);
+        let units = self.progress.units.len();
+        let visible = units.min(((size.1 - 200.0) / 24.0).clamp(1.0, 8.0) as usize);
         let h = if failed {
             124.0 + shown as f32 * 64.0
         } else {
-            148.0
+            160.0 + visible as f32 * 24.0
         };
         let w = W.min((size.0 - EDGE * 2.0).max(0.0));
         let r = Rect::new(
@@ -585,7 +596,7 @@ impl Card {
         CardLayout {
             rect: r,
             head: Rect::new(r.x + PAD, r.y + PAD, w - PAD * 2.0, 20.0),
-            bar: Rect::new(r.x + PAD, r.y + 96.0, w - PAD * 2.0, BAR_H),
+            bar: Rect::new(r.x + PAD, r.y + 72.0, w - PAD * 2.0, BAR_H),
             rows: if failed {
                 (self.failure_scroll..(self.failure_scroll + shown).min(count))
                     .enumerate()
@@ -602,7 +613,20 @@ impl Card {
                     })
                     .collect()
             } else {
-                Vec::new()
+                (self.failure_scroll..(self.failure_scroll + visible).min(units))
+                    .enumerate()
+                    .map(|(row, index)| {
+                        (
+                            index,
+                            Rect::new(
+                                r.x + PAD,
+                                r.y + 112.0 + row as f32 * 24.0,
+                                w - PAD * 2.0,
+                                24.0,
+                            ),
+                        )
+                    })
+                    .collect()
             },
             retry: failed
                 .then(|| Rect::new(r.x + PAD, r.bottom() - PAD - BUTTON_H, 64.0, BUTTON_H)),
@@ -653,15 +677,11 @@ fn paint_background(pen: &mut Pen, card: &Card, g: &Geometry, turn: f32) {
         Rect::new(l.head.x + 20.0, l.head.y, l.head.w - 20.0, 20.0),
         Align::Left,
     );
-    let count = if card.cancelling {
-        "片付け中".into()
-    } else {
-        format!(
-            "{} トラック中 {} トラック準備済み",
-            card.progress.units.len(),
-            card.progress.done
-        )
-    };
+    let count = format!(
+        "{} トラック中 {} トラック準備済み",
+        card.progress.units.len(),
+        card.progress.done
+    );
     pen.text(
         &count,
         FontSize::Small,
@@ -670,9 +690,7 @@ fn paint_background(pen: &mut Pen, card: &Card, g: &Geometry, turn: f32) {
         Rect::new(l.head.x, l.head.bottom() + 8.0, l.head.w, 20.0),
         Align::Left,
     );
-    let current = if card.cancelling {
-        String::new()
-    } else if let Some(error) = &card.failure {
+    let current = if let Some(error) = &card.failure {
         error.clone()
     } else if let Some((name, _)) = card
         .progress
@@ -680,11 +698,18 @@ fn paint_background(pen: &mut Pen, card: &Card, g: &Geometry, turn: f32) {
         .iter()
         .find(|(_, s)| *s == UnitState::Working)
     {
-        format!("準備中：{name}")
+        format!(
+            "{}：{name}",
+            if card.cancelling {
+                "中止時"
+            } else {
+                "準備中"
+            }
+        )
     } else {
         "音の準備を仕上げています".into()
     };
-    let row = Rect::new(l.head.x, l.head.bottom() + 36.0, l.head.w, 20.0);
+    let row = Rect::new(l.head.x, l.head.bottom() + 48.0, l.head.w, 20.0);
     let current = crate::opening_view::shorten(&current, row.w, |s| {
         pen.measure(s, FontSize::Small, Weight::Regular)
     });
@@ -707,7 +732,39 @@ fn paint_background(pen: &mut Pen, card: &Card, g: &Geometry, turn: f32) {
             Radius::Xs,
         );
     }
-    if !card.cancelling {
+    for (index, rect) in &l.rows {
+        let (name, state) = &card.progress.units[*index];
+        let status = Rect::new(rect.x, rect.y + (rect.h - ICON) / 2.0, ICON, ICON);
+        match state {
+            UnitState::Done => pen.icon("check", status, c.ink_strong),
+            UnitState::Working if !card.cancelling => {
+                pen.icon_turned("spinner", status, c.ink, turn)
+            }
+            _ => pen.icon("dot", status, c.ink),
+        }
+        let row = Rect::new(rect.x + ICON + 6.0, rect.y, rect.w - ICON - 6.0, rect.h);
+        let text = crate::opening_view::shorten(name, row.w, |s| {
+            pen.measure(s, FontSize::Small, Weight::Regular)
+        });
+        pen.text(
+            &text,
+            FontSize::Small,
+            Weight::Regular,
+            c.ink,
+            row,
+            Align::Left,
+        );
+    }
+    if card.cancelling {
+        pen.text(
+            "片付け中",
+            FontSize::Small,
+            Weight::Regular,
+            c.ink,
+            Rect::new(l.head.x, l.button.y, l.head.w, l.button.h),
+            Align::Left,
+        );
+    } else {
         pen.round(
             l.button,
             if card.hover { c.thumb } else { c.surface_3 },
@@ -868,7 +925,25 @@ pub(crate) fn accessible(s: Rc<RefCell<Studio>>, g: &Geometry) -> impl IntoEleme
         card.progress.done
     );
     if card.cancelling {
-        announce = "中止しています。片付け中".into();
+        announce = format!(
+            "中止しています。片付け中。{} トラック中 {} トラック準備済み",
+            card.progress.units.len(),
+            card.progress.done
+        );
+    }
+    for (name, state) in card
+        .progress
+        .units
+        .iter()
+        .skip(card.failure_scroll)
+        .take(layout.rows.len())
+    {
+        let status = match state {
+            UnitState::Done => "準備済み",
+            UnitState::Working => "準備中",
+            UnitState::Waiting => "待機中",
+        };
+        announce.push_str(&format!("。{name}、{status}"));
     }
     if let Some(error) = &card.failure {
         announce.push_str(&format!("。{error}"));
@@ -929,6 +1004,24 @@ pub(crate) fn accessible(s: Rc<RefCell<Studio>>, g: &Geometry) -> impl IntoEleme
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn background_list_is_bounded_and_cancellation_keeps_progress_and_layout() {
+        let mut card = Card::new(progress(&[UnitState::Working; 100]));
+        card.background = true;
+        for size in [(880.0, 600.0), (400.0, 300.0)] {
+            let before = card.layout(size);
+            assert!(!before.rows.is_empty());
+            assert!(before.rows.len() <= 8);
+            assert!(before.rows.last().unwrap().1.bottom() <= before.button.y);
+            card.cancelling = true;
+            let after = card.layout(size);
+            assert_eq!(before.rect, after.rect);
+            assert_eq!(before.rows, after.rows);
+            assert_eq!(card.progress.units[0].1, UnitState::Working);
+            card.cancelling = false;
+        }
+    }
 
     fn progress(states: &[UnitState]) -> Progress {
         Progress {

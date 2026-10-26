@@ -45,6 +45,8 @@ struct Watch {
 
 impl Watch {
     fn new(dir: PathBuf) -> Watch {
+        #[cfg(any(test, feature = "loading-probe"))]
+        let _ = xirius_core::io_test::before("watch_register", &dir);
         let heard = Arc::new(Mutex::new(None));
         let os = {
             let heard = heard.clone();
@@ -93,6 +95,8 @@ impl Watch {
 }
 
 fn stamp(dir: &Path) -> Option<(SystemTime, u64)> {
+    #[cfg(any(test, feature = "loading-probe"))]
+    let _ = xirius_core::io_test::before("watch_metadata", dir);
     let m = std::fs::metadata(dir.join(FILE)).ok()?;
     Some((m.modified().ok()?, m.len()))
 }
@@ -118,6 +122,11 @@ impl Studio {
     }
 
     fn poll_other_change_at(&mut self, now: Instant, g: impl FnOnce(&Studio) -> Geometry) -> bool {
+        // Even installing a watch and reading a timestamp can wait on storage.
+        // Leave the watch untouched until the blocking operation has completed.
+        if self.other_busy() {
+            return false;
+        }
         let dir = self.song.dir();
         if self.other.watch.as_ref().map(|w| &w.dir) != dir.as_ref() {
             // Another song, or the same in a new place: its file is the session's own.
@@ -162,6 +171,7 @@ impl Studio {
     /// Something is going on that a new song under it would break: it waits.
     pub(crate) fn other_busy(&self) -> bool {
         self.saving.is_some() || self.unsaved.is_some()
+            || self.opening.is_some() || self.open_closing.is_some()
             || self.pointer_held
             || self.transport.recording
             || self.transport.take.is_some()

@@ -617,7 +617,7 @@ const QUIT: u8 = 1;
 const KILL: u8 = 2;
 
 struct Proc {
-    writer: mpsc::SyncSender<Vec<u8>>,
+    writer: mpsc::SyncSender<ToHost>,
     epoch: u64,
     stop: Arc<AtomicU8>,
     pid: u32,
@@ -1671,7 +1671,7 @@ impl State {
             if p.stop.load(Ordering::Acquire) != KEEP {
                 return false;
             }
-            if p.writer.try_send(msg.encode()).is_ok() {
+            if p.writer.try_send(msg.clone()).is_ok() {
                 return true;
             }
             // Dropping a control message could silently lose a state/parameter.
@@ -1687,16 +1687,16 @@ impl State {
 fn host_writer(
     mut pipe: impl io::Write + Send + 'static,
     stop: Arc<AtomicU8>,
-) -> io::Result<mpsc::SyncSender<Vec<u8>>> {
-    let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(CONTROL_QUEUE);
+) -> io::Result<mpsc::SyncSender<ToHost>> {
+    let (tx, rx) = mpsc::sync_channel::<ToHost>(CONTROL_QUEUE);
     std::thread::Builder::new()
         .name("xirius-plugin-host-write".into())
         .spawn(move || {
-            while let Ok(bytes) = rx.recv() {
+            while let Ok(message) = rx.recv() {
                 if stop.load(Ordering::Acquire) != KEEP {
                     break;
                 }
-                if wire::send(&mut pipe, &bytes).is_err() {
+                if wire::send(&mut pipe, &message.encode()).is_err() {
                     stop.store(KILL, Ordering::Release);
                     break;
                 }

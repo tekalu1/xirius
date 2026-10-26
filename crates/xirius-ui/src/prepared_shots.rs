@@ -90,7 +90,14 @@ impl Gate {
                 && std::thread::current().id() == ui
             {
                 assert!(
-                    !matches!(op, "peaks_load" | "peaks_source" | "browser_read_dir"),
+                    !matches!(
+                        op,
+                        "peaks_load"
+                            | "peaks_source"
+                            | "browser_read_dir"
+                            | "watch_register"
+                            | "watch_metadata"
+                    ),
                     "preparation painting requested material I/O: {op}"
                 );
             }
@@ -337,6 +344,11 @@ fn detail(n: u8, s: &Rc<RefCell<Studio>>, window: &mut gpui::Window, cx: &mut gp
 }
 fn cancel(n: u8, s: &Rc<RefCell<Studio>>, window: &mut gpui::Window, cx: &mut gpui::App) {
     stage(&mut s.borrow_mut(), n);
+    let frozen = s
+        .borrow()
+        .preparing
+        .as_ref()
+        .map(|card| card.progress.clone());
     window.dispatch_event(
         gpui::PlatformInput::KeyDown(gpui::KeyDownEvent {
             keystroke: gpui::Keystroke::parse("escape").unwrap(),
@@ -349,6 +361,11 @@ fn cancel(n: u8, s: &Rc<RefCell<Studio>>, window: &mut gpui::Window, cx: &mut gp
         assert!(s.borrow().saving.as_ref().unwrap().progress.cancelled());
     } else {
         assert!(s.borrow().preparing.as_ref().unwrap().cancelling);
+        assert_eq!(
+            Some(s.borrow().preparing.as_ref().unwrap().progress.clone()),
+            frozen,
+            "cancel keeps the count, current track and list until cleanup"
+        );
     }
     eprintln!("prepared-check stage=cancel ok=true");
 }

@@ -559,7 +559,9 @@ impl Transport {
             };
             let (mut host, audio, _warnings) =
                 started.map_err(|e| format!("再生を開始できませんでした: {e}"))?;
-            host.set_windowed();
+            // Window transports returned through begin_start above. This is
+            // the synchronous compatibility path for headless fixtures only.
+            host.set_nonblocking(true);
             host.drivers = self.drivers.clone();
             host.set_looping(p, self.looping);
             host.controller()
@@ -1615,6 +1617,10 @@ impl Studio {
             if let Some(at) = self.transport.poll() {
                 self.playhead = at;
             }
+            return true;
+        }
+        if self.sound_preparing() {
+            self.poll_preparing();
             return true;
         }
         self.transport.park(self.playhead);

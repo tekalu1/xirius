@@ -1611,6 +1611,9 @@ impl PluginLoader {
     /// opening it again brings back its default.
     pub fn apply(&mut self, x: &Plugin) -> bool {
         if let Some(s) = self.stock.get_mut(&x.id) {
+            if crate::host::on_window_thread() && s.applied.samples != x.samples {
+                return false;
+            }
             // Only the values and the files move; another built-in or format takes a new
             // processor.
             let mut same = s.applied.clone();
