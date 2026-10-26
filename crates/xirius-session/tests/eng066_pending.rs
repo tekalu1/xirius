@@ -71,6 +71,24 @@ fn edit(server: &PluginServer, link: &PluginLink, value: f64) -> (u32, u32) {
     }
 }
 
+/// State notifications already in flight can advance states_seen before the
+/// explicit capture reply. Observe the intended instance/value without sending
+/// another edit; a value actually lost by the swap still fails the watchdog.
+fn expect_state(server: &PluginServer, link: &PluginLink, want: (u32, u32)) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let state = playing(server, link);
+        if state == want {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "state after swap: {state:?}; want {want:?}"
+        );
+        std::thread::yield_now();
+    }
+}
+
 #[test]
 fn a_value_put_into_the_playing_plugin_while_a_new_mix_opens_stays_and_goes_on_to_the_new_one() {
     let Some(exe) = find_host() else {
@@ -150,22 +168,14 @@ fn a_value_put_into_the_playing_plugin_while_a_new_mix_opens_stays_and_goes_on_t
     assert!(report.swapped, "{:?}", report.warnings);
     // From the swap the new instance is the one that plays, though the old mix lets go of the
     // old one only after the audio thread took the new mix. Asked now, the answer is its own.
-    let (now, delay) = playing(&server, &link);
+    let (now, _) = playing(&server, &link);
     assert_ne!(now, old, "the instance the new mix opened plays");
-    assert_eq!(delay, 128, "with the value put into the old one");
+    expect_state(&server, &link, (now, 128));
     audio.render(&mut [0.0; 512], 2);
     host.controller().poll(|_| {});
     // State notifications and explicit capture replies share states_seen. A
     // notification already in flight can satisfy playing() before the capture
     // requested after the render arrives. Observe the expected state without
     // sending another edit: a value actually lost by the swap must still fail.
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        let state = playing(&server, &link);
-        if state == (now, 128) {
-            break;
-        }
-        assert!(Instant::now() < deadline, "state after render: {state:?}");
-        std::thread::yield_now();
-    }
+    expect_state(&server, &link, (now, 128));
 }
