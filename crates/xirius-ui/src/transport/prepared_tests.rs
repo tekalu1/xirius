@@ -94,7 +94,7 @@ fn zero_tracks_and_retiring_output_never_hold_the_ui_or_reopen_before_stop_compl
     );
 }
 
-fn quiet_drivers() -> Drivers {
+pub(crate) fn quiet_drivers() -> Drivers {
     Drivers {
         exclusive_out: None,
         shared_out: Arc::new(|audio, _, _| {
@@ -112,6 +112,54 @@ fn missing_plugin(s: &mut Studio, track: serde_json::Value) {
     s.song.run("plugin.add", serde_json::json!({
         "track":track, "name":"Missing", "format":"vst3", "uid":"00000000000000000000000000000000"
     })).unwrap();
+}
+
+#[test]
+fn declared_main_thread_requirement_is_an_explicit_local_failure_without_changing_the_song() {
+    let mut s = Studio::new(Song::empty());
+    let track = s
+        .song
+        .run(
+            "track.add.audio",
+            serde_json::json!({"name":"Main thread only"}),
+        )
+        .unwrap()["id"]
+        .clone();
+    missing_plugin(&mut s, track);
+    let mut entry: xirius_plugins::Entry = serde_json::from_value(serde_json::json!({
+        "uid":"00000000000000000000000000000000", "name":"Main only", "vendor":"Fixture",
+        "kind":"effect", "format":"vst3", "category":"Fx", "version":"1", "path":"unused.vst3"
+    }))
+    .unwrap();
+    assert!(
+        !entry.requires_process_main,
+        "older catalogues remain readable"
+    );
+    entry.requires_process_main = true;
+    let entry: xirius_plugins::Entry =
+        serde_json::from_str(&serde_json::to_string(&entry).unwrap()).unwrap();
+    assert!(entry.requires_process_main);
+    s.transport.set_catalog(Arc::new(Catalog {
+        entries: vec![entry],
+        failures: Vec::new(),
+    }));
+    s.transport.mode = OutputMode::Device;
+    s.transport.set_drivers(quiet_drivers());
+    let before = s.project();
+    s.prepare_song();
+    wait_failed(&mut s, 1);
+    let reason = &s.preparing.as_ref().unwrap().failures[0].reason;
+    assert!(reason.contains("主スレッド"), "{reason}");
+    assert!(reason.contains("別プロセス"), "{reason}");
+    assert!(Arc::ptr_eq(&before, &s.project()));
+    assert!(
+        before
+            .tracks
+            .values()
+            .flat_map(|t| &t.inserts)
+            .all(|p| !p.isolation.is_separate())
+    );
+    assert!(s.transport.host().is_none());
 }
 
 fn wait_failed(s: &mut Studio, count: usize) {

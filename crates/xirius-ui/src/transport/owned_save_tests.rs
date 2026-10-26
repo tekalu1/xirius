@@ -15,6 +15,9 @@ struct Gate {
 }
 impl Gate {
     fn new(path: &std::path::Path) -> Self {
+        Self::named(path, c"FixtureStateGate")
+    }
+    fn named(path: &std::path::Path, name: &std::ffi::CStr) -> Self {
         let wide: Vec<_> = path.as_os_str().encode_wide().chain([0]).collect();
         // SAFETY: the loader retains this fixture; its exported function has this ABI.
         unsafe {
@@ -22,9 +25,7 @@ impl Gate {
             let arm = std::mem::transmute::<
                 unsafe extern "system" fn() -> isize,
                 unsafe extern "system" fn(usize, usize),
-            >(
-                GetProcAddress(module, c"FixtureStateGate".as_ptr().cast()).unwrap()
-            );
+            >(GetProcAddress(module, name.as_ptr().cast()).unwrap());
             let entered = CreateEventW(std::ptr::null(), 1, 0, std::ptr::null());
             let release = CreateEventW(std::ptr::null(), 1, 0, std::ptr::null());
             assert!(!entered.is_null() && !release.is_null());
@@ -57,6 +58,93 @@ impl Drop for Gate {
                 CloseHandle(self.release);
             }
         }
+    }
+}
+
+#[test]
+fn held_sdk_initialization_can_be_abandoned_before_the_sdk_returns() {
+    xirius_test_vst3::fixture_marker();
+    let source = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("xirius_test_vst3.dll");
+    let root = tempfile::tempdir().unwrap();
+    let dll = root.path().join("held-init.vst3");
+    std::fs::copy(source, &dll).unwrap();
+    let catalog = Arc::new(Catalog {
+        entries: xirius_plugins::probe(&dll).unwrap(),
+        failures: Vec::new(),
+    });
+    let gate = Gate::named(&dll, c"FixtureOpenGate");
+    let wide: Vec<_> = dll.as_os_str().encode_wide().chain([0]).collect();
+    // SAFETY: the private fixture remains loaded; the export returns a counter.
+    let terminated = unsafe {
+        std::mem::transmute::<
+            unsafe extern "system" fn() -> isize,
+            unsafe extern "system" fn() -> u64,
+        >(
+            GetProcAddress(
+                GetModuleHandleW(wide.as_ptr()),
+                c"FixtureTerminations".as_ptr().cast(),
+            )
+            .unwrap(),
+        )
+    };
+    let mut s = Studio::new(Song::empty());
+    let track = s
+        .song
+        .run("track.add.audio", json!({"name":"Held initialization"}))
+        .unwrap()["id"]
+        .clone();
+    s.song
+        .run(
+            "plugin.add",
+            json!({"track":track,"name":"Held","format":"vst3","uid":catalog.entries[0].uid}),
+        )
+        .unwrap();
+    s.transport.mode = OutputMode::Device;
+    s.transport.set_catalog(catalog);
+    s.transport
+        .set_drivers(super::prepared::tests::quiet_drivers());
+    s.prepare_song();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !gate.entered() {
+        s.poll_preparing();
+        assert!(Instant::now() < deadline, "initialization gate watchdog");
+        std::thread::yield_now();
+    }
+    assert!(!s.run_command("track.add.audio", json!({"name":"blocked"})));
+    assert!(s.prepare_key("escape"));
+    assert!(s.preparing.as_ref().unwrap().cancelling);
+    while s.preparing.is_some() || s.opening.is_some() {
+        s.poll_preparing();
+        s.poll_opening();
+        assert!(
+            Instant::now() < deadline,
+            "cancel held initialization watchdog"
+        );
+        std::thread::yield_now();
+    }
+    assert!(s.song.dir().is_none());
+    assert!(s.transport.host().is_none());
+    // The fixture is still stopped. Even starting a new, empty player completes.
+    s.prepare_song();
+    while s.preparing.is_some() {
+        s.poll_preparing();
+        assert!(Instant::now() < deadline, "next preparation watchdog");
+        std::thread::yield_now();
+    }
+    assert!(s.transport.host().is_some());
+    gate.release();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    // SAFETY: query this private fixture after release, before closing its events.
+    while unsafe { terminated() } == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "abandoned initialization cleanup watchdog"
+        );
+        std::thread::yield_now();
     }
 }
 

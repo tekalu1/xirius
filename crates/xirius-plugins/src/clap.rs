@@ -29,6 +29,7 @@ pub(crate) fn probe(bundle: &Path) -> Result<Vec<Entry>, String> {
             path: bundle.to_path_buf(),
             // ARA's CLAP binding is not looked for yet (docs/plugin-hosting.md).
             ara: false,
+            requires_process_main: false,
         })
         .collect();
     // As with VST3: the answer is what matters and the process ends without unloading.

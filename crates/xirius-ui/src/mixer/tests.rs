@@ -52,6 +52,7 @@ fn one_effect() -> Catalog {
             version: "1.0".into(),
             path: PathBuf::from("C:/nowhere/Comp.vst3"),
             ara: false,
+            requires_process_main: false,
         }],
         failures: Vec::new(),
     }

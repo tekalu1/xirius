@@ -93,6 +93,7 @@ fn scan() -> Catalog {
                 version: "1.0".into(),
                 path: std::path::PathBuf::from(format!("C:/nowhere/{i}.vst3")),
                 ara: false,
+                requires_process_main: false,
             })
             .collect(),
         failures: Vec::new(),

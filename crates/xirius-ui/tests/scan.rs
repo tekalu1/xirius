@@ -222,6 +222,7 @@ fn scanning_again_from_the_insert_list_fills_it_when_done() {
             version: "1.0".into(),
             path: comp,
             ara: false,
+            requires_process_main: false,
         }],
         failure: None,
         probe_ms: 1,

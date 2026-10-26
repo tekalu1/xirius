@@ -316,4 +316,4 @@ impl Transport {
 
 #[cfg(test)]
 #[path = "prepared_tests.rs"]
-mod tests;
+pub(super) mod tests;

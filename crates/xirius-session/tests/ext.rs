@@ -254,6 +254,7 @@ fn a_background_scan_is_a_job_and_its_list_is_used_when_it_ends() {
         version: "1.0".into(),
         path: bundle.clone(),
         ara: false,
+        requires_process_main: false,
     };
     let mut config = config(
         dir.path(),

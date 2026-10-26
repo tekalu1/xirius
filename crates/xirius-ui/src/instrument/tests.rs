@@ -48,6 +48,7 @@ fn a_synth() -> Catalog {
             version: "1.0".into(),
             path: PathBuf::from("C:/nowhere/Pad Synth.vst3"),
             ara: false,
+            requires_process_main: false,
         }],
         failures: Vec::new(),
     }
@@ -187,6 +188,7 @@ fn many_synths(n: usize) -> Catalog {
                 version: "1.0".into(),
                 path: PathBuf::from(format!("C:/nowhere/{i}.vst3")),
                 ara: false,
+                requires_process_main: false,
             })
             .collect(),
         failures: Vec::new(),

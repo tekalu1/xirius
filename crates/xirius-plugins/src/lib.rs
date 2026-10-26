@@ -49,6 +49,10 @@ pub struct Entry {
     /// It uses ARA, so it runs in the song's process only (PLG-025).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ara: bool,
+    /// A known compatibility requirement. Unknown plugins are tried on a local
+    /// owner; this declaration never changes the song's requested isolation.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub requires_process_main: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

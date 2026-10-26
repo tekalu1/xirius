@@ -39,6 +39,7 @@ fn plugin_entry(uid: &str) -> Entry {
         version: "1".into(),
         path: PathBuf::from("Installed.vst3"),
         ara: false,
+        requires_process_main: false,
     }
 }
 

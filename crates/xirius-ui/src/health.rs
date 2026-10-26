@@ -485,6 +485,7 @@ mod tests {
                 version: "1.0".into(),
                 path: std::path::PathBuf::from("C:/nowhere/Echo.vst3"),
                 ara: true,
+                requires_process_main: false,
             }],
             failures: Vec::new(),
         });

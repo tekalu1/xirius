@@ -117,6 +117,7 @@ fn a_scan() -> xirius_plugins::Catalog {
         version: "1.0".into(),
         path: PathBuf::from(format!("C:/plugins/{name}.{format}")),
         ara,
+        requires_process_main: false,
     };
     let bad = |name: &str, kind| xirius_plugins::Failure {
         path: PathBuf::from(format!("C:/plugins/{name}.vst3")),

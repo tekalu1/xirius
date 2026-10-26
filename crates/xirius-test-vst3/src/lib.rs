@@ -159,6 +159,7 @@ impl Class for Latency {
 }
 impl IPluginBaseTrait for Latency {
     unsafe fn initialize(&self, _: *mut FUnknown) -> tresult {
+        fixture_open_gate();
         kResultOk
     }
     unsafe fn terminate(&self) -> tresult {
@@ -596,6 +597,29 @@ static TERMINATED_AWAY: AtomicU32 = AtomicU32::new(0);
 static STATE_AWAY: AtomicU32 = AtomicU32::new(0);
 static STATE_ENTERED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static STATE_RELEASE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static OPEN_ENTERED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static OPEN_RELEASE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// # Safety
+/// Retain both events until initialize returns. Use a private DLL copy when
+/// another test can initialize instances concurrently.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn FixtureOpenGate(entered: usize, release: usize) {
+    OPEN_RELEASE.store(release, Ordering::Release);
+    OPEN_ENTERED.store(entered, Ordering::Release);
+}
+
+fn fixture_open_gate() {
+    let entered = OPEN_ENTERED.load(Ordering::Acquire);
+    if entered != 0 {
+        let release = OPEN_RELEASE.load(Ordering::Acquire);
+        // SAFETY: caller owns the handles until its explicit release.
+        unsafe {
+            windows_sys::Win32::System::Threading::SetEvent(entered as _);
+            windows_sys::Win32::System::Threading::WaitForSingleObject(release as _, 30_000);
+        }
+    }
+}
 
 /// # Safety
 /// Handles must remain valid until getState returns. Arm only while no state call

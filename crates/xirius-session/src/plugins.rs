@@ -1197,6 +1197,9 @@ impl PluginLoader {
             self.fresh_clap.push(x.id);
             return Ok((p, warnings));
         }
+        if entry.requires_process_main {
+            return Err("主スレッドが必要なプラグインです。別プロセスで開く設定を選んでください（ローカル実行の指定は変更していません）".into());
+        }
         if self.threaded_local {
             let setup = self.process_setup.unwrap_or_else(|| {
                 crate::build::setup(self.rate, xirius_engine::RenderMode::Realtime)
@@ -1207,7 +1210,7 @@ impl PluginLoader {
                     .ok_or_else(|| "プラグインの ID が正しくありません".to_string())?,
                 state: values.state,
                 params: values.params,
-                requires_process_main: false,
+                requires_process_main: entry.requires_process_main,
                 sample_rate: setup.sample_rate,
                 max_block: setup.max_block,
                 offline: setup.mode == xirius_engine::RenderMode::Offline,
@@ -1217,7 +1220,7 @@ impl PluginLoader {
             let deadline = Instant::now() + crate::host::PULL_WAIT;
             let opened = loop {
                 if let Some(result) = ticket.poll() {
-                    break result?;
+                    break result.map_err(|e| format!("専用所有スレッドで開けませんでした: {e}。主スレッドが必要なプラグインは別プロセスで開く設定を選んでください（ローカル実行の指定は変更していません）"))?;
                 }
                 if Instant::now() >= deadline {
                     ticket.cancel();

@@ -81,6 +81,7 @@ fn prepare(s: &mut Studio, n: u8) {
                     version: "1".into(),
                     path: PathBuf::from("Other.clap"),
                     ara: false,
+                    requires_process_main: false,
                 }],
                 failures: Vec::new(),
             });

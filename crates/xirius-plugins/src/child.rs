@@ -53,6 +53,7 @@ pub fn probe(bundle: &Path) -> Result<Vec<Entry>, String> {
             version: c.version.clone(),
             path: bundle.to_path_buf(),
             ara: crate::ara::uses_ara(&classes, c),
+            requires_process_main: false,
         })
         .collect();
     // Some modules crash when unloaded; the answer is what matters and the process ends.

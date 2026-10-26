@@ -378,6 +378,7 @@ fn scanned_with(uid: &str) -> xirius_plugins::Catalog {
             version: "1".into(),
             path: PathBuf::from("Other.clap"),
             ara: false,
+            requires_process_main: false,
         }],
         failures: Vec::new(),
     }
