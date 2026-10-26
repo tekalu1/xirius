@@ -269,7 +269,7 @@ pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
             p.phase = 4;
         }
         if p.phase == 5 {
-            let s = s.borrow();
+            let mut s = s.borrow_mut();
             if s.transport.host().unwrap().swap_pending() || s.transport.take.is_some() { return false; }
             assert!(s.preparing.is_none());
             assert!(s.editor_shown(fixture_plugin(&s).id));
@@ -280,8 +280,30 @@ pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
             if operation() != "prepare_get_state" {
                 assert_eq!(crate::park::own_handle("Live Fixture"), Some(p.editor), "unaffected SDK/editor survives");
             }
+            if operation() == "prepare_decode" {
+                // Also prove a successful (ungated) replacement hands the open
+                // editor to its new owner without stopping live playback.
+                let track = s.project().tracks.values().find(|t| !t.inserts.is_empty()).unwrap().id;
+                s.song.run("plugin.add", serde_json::json!({"track":track.to_string(),"name":"Gain","kind":"effect","format":"builtin","uid":"gain"})).unwrap();
+                let (project, dir) = (s.project(), s.song.dir());
+                s.transport.sync(&project, dir);
+                p.phase = 6;
+                return false;
+            }
             eprintln!("live-check stage=finished ok=true");
-            p.phase = 6;
+            p.phase = 7;
+        }
+        if p.phase == 6 {
+            let s = s.borrow();
+            if s.transport.host().unwrap().swap_pending() { return false; }
+            let Some(editor) = crate::park::own_handle("Live Fixture").filter(|hwnd| *hwnd != p.editor) else { return false; };
+            assert!(s.editor_shown(fixture_plugin(&s).id));
+            assert!(s.transport.playing);
+            assert!(s.error.is_none(), "{:?}", s.error);
+            assert!(!crate::park::is_foreground(editor));
+            eprintln!("live-check stage=handoff ok=true");
+            eprintln!("live-check stage=finished ok=true");
+            p.phase = 7;
         }
         true
     })

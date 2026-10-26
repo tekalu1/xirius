@@ -57,6 +57,9 @@ fn live_edit_recording_and_editor_survive_held_work_and_native_window_operations
             };
             let log = fs::read_to_string(log).unwrap();
             assert!(status.success(), "{operation} {size}: {log}");
+            if operation == "prepare_decode" {
+                assert!(log.contains("live-check stage=handoff ok=true"), "{log}");
+            }
             for check in [
                 "live-check stage=held ok=true",
                 "live-check stage=finished ok=true",

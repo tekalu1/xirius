@@ -9,6 +9,12 @@ pub(super) struct Update {
     work: Job<Outcome>,
     ready: Option<Candidate>,
 }
+#[cfg(test)]
+impl Update {
+    pub(super) fn work_ready(&self) -> bool {
+        self.work.ready()
+    }
+}
 enum Outcome {
     Ready(Box<Candidate>),
     Failed { error: String, state: bool },
@@ -132,6 +138,9 @@ impl SessionHost {
                     });
                 }
             }
+            // Publication is a later poll, even for an empty/instant plan.
+            // This gives queued latency/model changes a defined handoff point.
+            return None;
         }
         let mut update = self.graph_work.take().unwrap();
         if update.source != self.song {
@@ -227,7 +236,8 @@ impl SessionHost {
             .collect();
         self.swapping = Some(Instant::now());
         self.levels.clear();
-        self.pending = None;
+        let late_latency = self.pending.take().is_some_and(|pending| pending.latency);
+        self.latency_dirty |= late_latency;
         self.graph_failed = None;
         self.params.clear();
         let p = self.song.clone();

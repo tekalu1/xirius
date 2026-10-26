@@ -1752,6 +1752,29 @@ mod tests {
     use xirius_core::id::SendId;
     use xirius_core::model::{KeyMode, KeySource, PluginIsolation, PluginKind, Sidechain};
 
+    #[test]
+    fn latency_reported_during_a_live_build_is_kept_for_the_following_plan() {
+        let p = Project::new("live-latency-race");
+        let (mut host, mut audio, _) = SessionHost::start(&p, HostConfig::default()).unwrap();
+        host.set_windowed();
+        host.begin_swap(p.clone(), SwapKind::Sync, Vec::new());
+        host.step_swap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !host.graph_work.as_ref().unwrap().work_ready() {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        host.begin_swap(p.clone(), SwapKind::Latency, Vec::new());
+        assert!(host.step_swap().unwrap().swapped);
+        assert!(
+            host.latency_dirty,
+            "publication cannot consume a later latency report"
+        );
+        audio.render(&mut [0.0; 512], 2);
+        host.poll();
+        assert!(host.pending.as_ref().unwrap().latency);
+    }
+
     fn keyed(id: u64, sources: Vec<KeySource>) -> Plugin {
         Plugin {
             id: PluginId(id),
