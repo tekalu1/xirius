@@ -98,6 +98,88 @@ fn watch(rig: &mut Rig, amp: f32) {
 }
 
 #[test]
+fn device_enumeration_and_open_gates_never_hold_watch_or_rec_and_cancel_discards_input() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Condvar, Mutex, mpsc};
+    use std::time::Instant;
+    use xirius_session::output::{DeviceInput, Drivers};
+    struct Release(Arc<(Mutex<bool>, Condvar)>);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            *self.0.0.lock().unwrap() = true;
+            self.0.1.notify_all();
+        }
+    }
+    for hold_enumeration in [true, false] {
+        let mut s = session();
+        armed_audio(&mut s, "Vox");
+        let mut rig = Rig::new(&s);
+        rig.host.set_windowed();
+        let gate = Release(Arc::new((Mutex::new(false), Condvar::new())));
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let held = gate.0.clone();
+        let hold = Arc::new(move || {
+            entered_tx.send(std::thread::current().id()).unwrap();
+            drop(
+                held.1
+                    .wait_while(held.0.lock().unwrap(), |done| !*done)
+                    .unwrap(),
+            );
+        });
+        let opened = Arc::new(AtomicUsize::new(0));
+        let count = opened.clone();
+        let enumeration_gate = hold.clone();
+        rig.host.drivers = Drivers {
+            exclusive_out: None,
+            shared_out: Arc::new(|_, _, _| panic!("no output device")),
+            exclusive_in: None,
+            devices: Arc::new(move || {
+                if hold_enumeration {
+                    enumeration_gate();
+                }
+                Vec::new()
+            }),
+            shared_in: Arc::new(move |_, _, _| {
+                if !hold_enumeration {
+                    hold();
+                }
+                count.fetch_add(1, Ordering::SeqCst);
+                Ok(DeviceInput::new(
+                    "stand-in".into(),
+                    false,
+                    Arc::new(std::sync::atomic::AtomicU64::new(1)),
+                    Box::new(MockInput::sine(RATE, 220.0, 0.3)),
+                ))
+            }),
+        };
+        assert_eq!(rig.host.watch_start(Input::Device).unwrap(), 0);
+        assert_ne!(
+            entered_rx.recv_timeout(Duration::from_secs(30)).unwrap(),
+            std::thread::current().id()
+        );
+        for _ in 0..32 {
+            assert!(!rig.host.record_input_ready().unwrap());
+            assert!(!rig.host.is_recording());
+            assert!(!rig.host.is_watching());
+            rig.pull(480);
+        }
+        rig.host.watch_stop();
+        drop(gate);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while opened.load(Ordering::SeqCst) == 0 {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        rig.pull(480);
+        assert!(
+            !rig.host.is_watching(),
+            "late device cannot attach after cancellation"
+        );
+        assert!(!rig.host.is_recording());
+    }
+}
+
+#[test]
 fn the_level_of_an_input_is_measured_with_the_transport_stopped() {
     let mut s = session();
     armed_audio(&mut s, "Vox");

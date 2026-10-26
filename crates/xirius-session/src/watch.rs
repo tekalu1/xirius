@@ -23,8 +23,14 @@ use crate::host::SessionHost;
 use crate::output::{DeviceInput, input_unavailable, open_input};
 use crate::record::{Input, column, input_channels};
 
+pub(crate) struct Opening {
+    prefs: xirius_prefs::Prefs,
+    work: crate::background::Job<(DeviceInput, Option<String>)>,
+}
+
 /// The input the engine holds for watching.
 pub(crate) struct Watch {
+    pub(crate) opened: std::time::Instant,
     pub channels: usize,
     pub name: String,
     /// The device's input latency, once it reports it.
@@ -88,6 +94,9 @@ impl SessionHost {
     /// device will not open that way. A device that will not open is said by
     /// [`input_unavailable`].
     pub(crate) fn open_configured_input(&mut self) -> Result<DeviceInput, String> {
+        if self.windowed {
+            return Err("入力装置は裏で準備する必要があります".into());
+        }
         let (prefs, device) = match &self.io_settings {
             Some(settings) => {
                 let settings = settings.lock().unwrap_or_else(|e| e.into_inner());
@@ -103,6 +112,62 @@ impl SessionHost {
         self.driver_notice = notice;
         Ok(input)
     }
+    fn poll_configured_input(&mut self) -> Result<Option<DeviceInput>, String> {
+        let prefs = self
+            .io_settings
+            .as_ref()
+            .map(|settings| {
+                settings
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .prefs
+                    .clone()
+            })
+            .unwrap_or_default();
+        if self
+            .input_opening
+            .as_ref()
+            .is_some_and(|old| old.prefs != prefs)
+        {
+            // The abandoned worker owns any late device and its destruction.
+            self.input_opening = None;
+        }
+        if self.input_opening.is_none() {
+            let snapshot = prefs.clone();
+            let drivers = self.drivers.clone();
+            let rate = self.rate();
+            let work = crate::background::Job::spawn("input-open", move || {
+                let devices = (drivers.devices)();
+                let device = crate::audio_settings::configured_device(&snapshot, &devices);
+                open_input(rate, &snapshot, device, &drivers).map_err(|e| input_unavailable(&e))
+            })?;
+            self.input_opening = Some(Opening { prefs, work });
+        }
+        let Some(result) = self.input_opening.as_ref().unwrap().work.poll() else {
+            return Ok(None);
+        };
+        self.input_opening = None;
+        let (input, notice) = result?;
+        self.driver_notice = notice;
+        Ok(Some(input))
+    }
+
+    /// Nonblocking preflight for REC. The shared input's device readiness is
+    /// checked on its worker; latency convergence is polled after attachment.
+    pub fn record_input_ready(&mut self) -> Result<bool, String> {
+        if self.watch.as_ref().is_some_and(|watch| !watch.device) {
+            self.watch_stop();
+        }
+        self.watch_start(Input::Device).map_err(|e| e.message)?;
+        let Some(watch) = &self.watch else {
+            return Ok(false);
+        };
+        Ok(watch.probe.as_ref().is_none_or(|probe| {
+            probe.load(std::sync::atomic::Ordering::Relaxed) > 0
+                || watch.opened.elapsed() >= std::time::Duration::from_millis(300)
+        }))
+    }
+
     pub fn input_latency_ns(&self) -> Option<u64> {
         self.watch
             .as_ref()?
@@ -143,7 +208,14 @@ impl SessionHost {
             }
             Input::Given(i) => (i, "指定された入力".to_string(), None, None),
             Input::Device => {
-                let c = self.open_configured_input().map_err(CmdError::conflict)?;
+                let c = if self.windowed {
+                    let Some(c) = self.poll_configured_input().map_err(CmdError::conflict)? else {
+                        return Ok(0);
+                    };
+                    c
+                } else {
+                    self.open_configured_input().map_err(CmdError::conflict)?
+                };
                 let (name, probe, lost) = (c.name.clone(), c.latency_probe(), c.lost());
                 (Box::new(c), name, Some(probe), Some(lost))
             }
@@ -155,6 +227,7 @@ impl SessionHost {
             ));
         }
         self.watch = Some(Watch {
+            opened: std::time::Instant::now(),
             channels,
             name,
             probe,
@@ -166,6 +239,7 @@ impl SessionHost {
 
     /// Lets the input go (a microphone is released). A recording under way keeps its input.
     pub fn watch_stop(&mut self) {
+        self.input_opening = None;
         if self.recording.is_some() {
             return;
         }

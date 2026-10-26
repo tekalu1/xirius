@@ -128,6 +128,91 @@ struct HeldOutput {
 }
 
 #[test]
+fn a_window_rec_waits_for_input_on_a_worker_and_stop_cancels_the_pending_rec() {
+    let root = tempfile::tempdir().unwrap();
+    let mut s = Studio::new(Song::empty());
+    s.song.save_as(&root.path().join("song")).unwrap();
+    let track = s
+        .song
+        .run("track.add.audio", serde_json::json!({"name":"REC"}))
+        .unwrap()["id"]
+        .clone();
+    let id = track.as_str().unwrap().parse().unwrap();
+    s.song.toggle_arm(id).unwrap();
+    let release = Release::new();
+    let gate = release.0.clone();
+    let (tx, entered) = mpsc::channel();
+    let mut drivers = quiet_drivers();
+    drivers.shared_in = Arc::new(move |rate, _, _| {
+        tx.send(std::thread::current().id()).unwrap();
+        let held = gate.0.lock().unwrap();
+        drop(gate.1.wait_while(held, |done| !*done).unwrap());
+        Ok(xirius_session::output::DeviceInput::new(
+            "fixture input".into(),
+            false,
+            Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            Box::new(xirius_engine::record::MockInput::sine(
+                f64::from(rate),
+                220.0,
+                0.1,
+            )),
+        ))
+    });
+    s.transport.mode = OutputMode::Device;
+    s.transport.set_drivers(drivers);
+    s.transport.bind_window();
+    s.prepare_song();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while s.preparing.is_some() {
+        s.poll_preparing();
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    s.toggle_record();
+    assert_ne!(
+        entered.recv_timeout(Duration::from_secs(30)).unwrap(),
+        std::thread::current().id()
+    );
+    assert!(s.transport.pending_record);
+    for _ in 0..16 {
+        s.tick();
+        s.idle();
+        let _geometry = s.geometry(880.0, 600.0);
+        assert!(!s.transport.recording);
+        assert!(!s.transport.host().unwrap().is_recording());
+    }
+    s.stop_transport();
+    release.release();
+    while !s.transport.host().unwrap().is_watching() {
+        s.tick();
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(!s.transport.pending_record);
+    assert!(
+        !s.transport.recording,
+        "a late input cannot start a cancelled REC"
+    );
+    s.toggle_record();
+    assert!(s.transport.recording, "{:?}", s.error);
+    let from = s.transport.host_mut().unwrap().poll().frame;
+    while s.transport.host_mut().unwrap().poll().frame < from + 2048 {
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    s.finish_take();
+    while s.transport.finishing_take {
+        s.poll_finished_take();
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(s.error.is_none(), "{:?}", s.error);
+    assert!(s.transport.take.is_none());
+    assert!(s.preparing.is_none());
+    s.transport.reset();
+}
+
+#[test]
 fn cancellation_wins_over_an_already_completed_unclaimed_player_and_retires_it_off_ui() {
     let root = tempfile::tempdir().unwrap();
     let mut s = Studio::new(Song::empty());

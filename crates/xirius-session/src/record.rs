@@ -467,6 +467,13 @@ impl SessionHost {
                 false => warnings.join("\n"),
             }));
         }
+        if self.windowed
+            && !audio_t.is_empty()
+            && matches!(opts.input, Input::Device)
+            && !self.record_input_ready().map_err(conflict)?
+        {
+            return Err(conflict("input preparation is pending"));
+        }
         let rate = self.rate();
         let r = f64::from(rate);
         let song_dir = match audio_t.is_empty() {
@@ -573,7 +580,8 @@ impl SessionHost {
             (Some(f), _) => f,
             (None, Some(probe)) => {
                 let until = Instant::now() + Duration::from_millis(300);
-                while probe.load(Ordering::Relaxed) == 0 && Instant::now() < until {
+                while !self.windowed && probe.load(Ordering::Relaxed) == 0 && Instant::now() < until
+                {
                     std::thread::sleep(Duration::from_millis(5));
                 }
                 let input_ns = probe.load(Ordering::Relaxed) as f64;
@@ -611,7 +619,11 @@ impl SessionHost {
                     let folder = folder.clone();
                     AudioLane {
                         channels,
-                        path: Box::new(move |_| unused(&folder, &base)),
+                        path: Box::new(move |_| {
+                            // Directory and filename I/O belongs to the writer too.
+                            let _ = std::fs::create_dir_all(&folder);
+                            unused(&folder, &base)
+                        }),
                     }
                 })
                 .collect(),

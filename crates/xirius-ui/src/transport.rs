@@ -1372,6 +1372,7 @@ impl Studio {
         let p = self.project();
         let (audio, midi) = input::armed(&p);
         if audio.is_empty() && midi.is_empty() {
+            self.transport.pending_record = false;
             // No words: the button shakes and the arm button lights up.
             self.record_shake = Some(Instant::now());
             self.arm_cue = self.arm_candidate();
@@ -1388,6 +1389,26 @@ impl Studio {
         if !crate::audition::halt_ready() || !crate::audition::release_output_ready() {
             self.transport.pending_record = true;
             return true;
+        }
+        if self.transport.windowed && self.transport.mode == OutputMode::Device && !audio.is_empty()
+        {
+            let ready = self
+                .transport
+                .ensure(&p, dir.clone())
+                .map_err(|e| e.to_string())
+                .and_then(|pl| pl.host.record_input_ready());
+            match ready {
+                Ok(false) => {
+                    self.transport.pending_record = true;
+                    return true;
+                }
+                Err(error) => {
+                    self.transport.pending_record = false;
+                    self.error = Some(error);
+                    return true;
+                }
+                Ok(true) => {}
+            }
         }
         self.transport.pending_record = false;
         let at = self.playhead;

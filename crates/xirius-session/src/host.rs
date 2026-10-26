@@ -206,7 +206,8 @@ pub struct SessionHost {
     pending: Option<PendingSwap>,
     /// A change of latency builds its mix without waiting for the plugins too.
     nonblocking: bool,
-    windowed: bool,
+    pub(crate) windowed: bool,
+    pub(crate) input_opening: Option<crate::watch::Opening>,
     automation_start: u64,
     seek_serial: u64,
     pending_seek: Option<u64>,
@@ -345,6 +346,7 @@ impl SessionHost {
             pending: None,
             nonblocking: false,
             windowed: false,
+            input_opening: None,
             automation_start: 0,
             seek_serial: 0,
             pending_seek: None,
@@ -828,7 +830,18 @@ impl SessionHost {
     }
 
     pub(crate) fn send(&mut self, cmd: Command) -> bool {
-        self.controller.send(cmd).is_ok()
+        match self.controller.send(cmd) {
+            Ok(()) => true,
+            Err(command) => {
+                if self.windowed {
+                    let _ = crate::background::Job::spawn("rejected-command", move || {
+                        drop(command);
+                        Ok(())
+                    });
+                }
+                false
+            }
+        }
     }
 
     pub fn play(&mut self) -> bool {
