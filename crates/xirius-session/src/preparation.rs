@@ -5,8 +5,28 @@
 //! acknowledge it first. A retry retains successful tracks and invalidates every
 //! response from the preceding attempt.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Generation(u64);
+
+fn next_generation() -> Option<Generation> {
+    let mut value = NEXT_GENERATION.load(Ordering::Relaxed);
+    loop {
+        let next = value.checked_add(1)?;
+        match NEXT_GENERATION.compare_exchange_weak(
+            value,
+            next,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return Some(Generation(value)),
+            Err(current) => value = current,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TrackState {
@@ -54,7 +74,7 @@ pub struct Preparation {
 impl Preparation {
     pub fn new(names: impl IntoIterator<Item = String>) -> Self {
         Self {
-            generation: Generation(1),
+            generation: next_generation().expect("preparation generation exhausted"),
             tracks: names
                 .into_iter()
                 .map(|name| Track {
@@ -198,7 +218,7 @@ impl Preparation {
         if self.phase != Phase::Failed {
             return None;
         }
-        self.generation = Generation(self.generation.0.checked_add(1)?);
+        self.generation = next_generation()?;
         for t in &mut self.tracks {
             if matches!(t.state, TrackState::Failed(_)) {
                 t.state = TrackState::Waiting;
@@ -213,6 +233,15 @@ impl Preparation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_song_never_accepts_the_previous_songs_generation() {
+        let old = Preparation::new(["same track".into()]);
+        let mut new = Preparation::new(["same track".into()]);
+        assert_ne!(old.generation(), new.generation());
+        assert!(!new.accept(old.generation(), Event::Track(0, Ok(()))));
+        assert_eq!(new.done(), 0);
+    }
 
     #[test]
     fn cancellation_wins_over_queued_completion_and_keeps_the_block_until_retired() {

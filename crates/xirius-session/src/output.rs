@@ -14,6 +14,9 @@ use xirius_engine::AudioEngine;
 use xirius_engine::device::{CpalOutput, Lost};
 use xirius_engine::record::{AudioInput, CpalInput};
 
+#[cfg(test)]
+mod background_tests;
+
 /// Frames per pull of the silent output.
 const CHUNK: usize = 480;
 
@@ -314,6 +317,29 @@ pub fn is_input_unavailable(said: &str) -> bool {
 }
 
 impl Output {
+    /// Opens the output without waiting for a driver on the calling thread.
+    /// An abandoned result is stopped and destroyed by the worker, even when
+    /// cancellation races the successful open (PRJ-030).
+    pub fn open_background(
+        mode: OutputMode,
+        audio: AudioEngine,
+        prefs: xirius_prefs::Prefs,
+        drivers: Drivers,
+    ) -> Result<crate::background::Job<Opened>, String> {
+        crate::background::Job::spawn("output-open", move || {
+            Self::open(mode, audio, &prefs, &drivers)
+        })
+    }
+
+    /// The caller keeps the ticket until cleanup acknowledges completion. Dropping
+    /// that ticket abandons the notification, never the cleanup itself.
+    pub fn retire(self) -> Result<crate::background::Job<()>, String> {
+        crate::background::Job::spawn("output-retire", move || {
+            drop(self);
+            Ok(())
+        })
+    }
+
     /// [`Output::open`] with the system's drivers; a fallback to shared mode is said on stderr.
     pub fn configured(
         mode: OutputMode,

@@ -18,6 +18,7 @@ pub mod audition;
 pub mod automation;
 pub mod automation_timing;
 pub mod autowrite;
+pub mod background;
 pub mod beat;
 pub mod bounce;
 pub mod build;
