@@ -371,6 +371,73 @@ impl SessionHost {
         self.builder.unavailable()
     }
 
+    /// Retry an unpublished preparation candidate on its worker. No device has
+    /// taken `audio` yet: applying the swap with an empty buffer moves retained
+    /// nodes without processing sound, then reclaims the old plan on this worker.
+    pub fn retry_prepared(
+        &mut self,
+        audio: &mut AudioEngine,
+        p: &Project,
+        mut track: impl FnMut(TrackId, bool),
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Vec<crate::build::PreparationFailure>, String> {
+        let keep = self.builder.retry_materials(p);
+        let hosted: Vec<_> = crate::starting::hosted(p)
+            .into_iter()
+            .filter(|(_, x)| !keep.contains(&x.id))
+            .collect();
+        let setup = setup(self.rate(), RenderMode::Realtime);
+        for (owner, x) in &hosted {
+            if cancelled() {
+                return Err("中止しました".into());
+            }
+            self.builder.plugins_mut().preload(owner, x, &setup);
+        }
+        loop {
+            if cancelled() {
+                return Err("中止しました".into());
+            }
+            self.builder.plugins_mut().poll_preloads();
+            let loader = self.builder.plugins();
+            if hosted
+                .iter()
+                .all(|(_, x)| loader.preloaded(x.id) && !loader.preparing(x.id))
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        self.builder.set_background(false);
+        let built = self.builder.build_observed(p, Select::All, &mut track);
+        self.builder.set_background(true);
+        if let Some(failure) = built.failures.iter().find(|f| f.track.is_none()) {
+            return Err(format!("{}: {}", failure.name, failure.reason));
+        }
+        #[cfg(feature = "test-io")]
+        xirius_core::io_test::before(
+            "prepare_graph",
+            self.builder
+                .dir()
+                .unwrap_or_else(|| std::path::Path::new("")),
+        )
+        .map_err(|e| e.to_string())?;
+        if cancelled() {
+            return Err("中止しました".into());
+        }
+        self.controller
+            .swap(built.spec)
+            .map_err(|e| e.to_string())?;
+        audio.render(&mut [], 0);
+        self.poll();
+        self.builder.plugins_mut().promote_opened();
+        self.builder.note_open_times();
+        self.graph = built.graph;
+        self.structure = built.structure;
+        self.mix = built.mix;
+        self.end_frame = built.end_frame;
+        Ok(built.failures)
+    }
+
     /// The line said when the input device was opened in another mode than asked for (the
     /// exclusive mode that would not open), once.
     pub fn take_driver_notice(&mut self) -> Option<String> {

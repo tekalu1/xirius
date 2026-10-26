@@ -2,7 +2,7 @@
 use super::*;
 use std::sync::{
     Mutex,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU8, Ordering},
 };
 use xirius_core::model::TrackKind;
 use xirius_session::{background::Job, starting::UnitState};
@@ -86,7 +86,8 @@ pub(super) struct Start {
     dir: Option<PathBuf>,
     latest: std::cell::RefCell<Progress>,
     failures: Arc<Mutex<Option<Vec<xirius_session::build::PreparationFailure>>>>,
-    proceed: Arc<AtomicBool>,
+    choice: Arc<AtomicU8>,
+    track_snapshot: Vec<(TrackId, Arc<xirius_core::model::Track>)>,
 }
 impl Start {
     pub fn new(t: &Transport, p: &Project, dir: Option<PathBuf>) -> Result<Self, String> {
@@ -113,11 +114,12 @@ impl Start {
         let stopped = stop.clone();
         let failures = Arc::new(Mutex::new(None));
         let failed = failures.clone();
-        let proceed = Arc::new(AtomicBool::new(false));
-        let continuing = proceed.clone();
+        let choice = Arc::new(AtomicU8::new(0));
+        let choosing = choice.clone();
         let status = progress.clone();
         let mut config = t.host_config(dir.clone());
         config.threaded_local = true;
+        let track_snapshot = p.tracks.iter().map(|(id, t)| (*id, t.clone())).collect();
         let p = p.clone();
         let prefs = t.io_prefs.clone();
         let mode = t.mode;
@@ -160,40 +162,54 @@ impl Start {
             if stopped.load(Ordering::Acquire) {
                 return Err("中止しました".into());
             }
-            let (mut host, audio, track_failures) = starting
-                .finish_prepared(&p, |id, done| {
-                    if let Some(index) = tracks.iter().position(|(track, _)| *track == id) {
-                        let mut progress = status.lock().unwrap_or_else(|e| e.into_inner());
-                        for (_, s) in &mut progress.units {
-                            if *s == UnitState::Working {
-                                *s = UnitState::Waiting;
-                            }
+            let mut observe = |id, done| {
+                if let Some(index) = tracks.iter().position(|(track, _)| *track == id) {
+                    let mut progress = status.lock().unwrap_or_else(|e| e.into_inner());
+                    for (_, s) in &mut progress.units {
+                        if *s == UnitState::Working {
+                            *s = UnitState::Waiting;
                         }
-                        progress.units[index].1 = if done {
-                            UnitState::Done
-                        } else {
-                            UnitState::Working
-                        };
-                        progress.done = progress
-                            .units
-                            .iter()
-                            .filter(|(_, s)| *s == UnitState::Done)
-                            .count();
                     }
-                })
+                    progress.units[index].1 = if done {
+                        UnitState::Done
+                    } else {
+                        UnitState::Working
+                    };
+                    progress.done = progress
+                        .units
+                        .iter()
+                        .filter(|(_, s)| *s == UnitState::Done)
+                        .count();
+                }
+            };
+            let (mut host, mut audio, mut track_failures) = starting
+                .finish_prepared(&p, &mut observe)
                 .map_err(|e| e.to_string())?;
-            if !track_failures.is_empty() {
+            while !track_failures.is_empty() {
                 {
                     let mut progress = status.lock().unwrap_or_else(|e| e.into_inner());
+                    for (index, (id, _)) in tracks.iter().enumerate() {
+                        if track_failures.iter().any(|f| f.track == Some(*id)) {
+                            progress.units[index].1 = UnitState::Waiting;
+                        }
+                    }
                     progress.done = progress.units.len().saturating_sub(track_failures.len());
                 }
                 *failed.lock().unwrap_or_else(|e| e.into_inner()) = Some(track_failures);
-                while !continuing.load(Ordering::Acquire) {
+                while choosing.load(Ordering::Acquire) == 0 {
                     if stopped.load(Ordering::Acquire) {
                         return Err("中止しました".into());
                     }
                     std::thread::sleep(Duration::from_millis(2));
                 }
+                if choosing.load(Ordering::Acquire) == 1 {
+                    break;
+                }
+                choosing.store(0, Ordering::Release);
+                track_failures = host.retry_prepared(&mut audio, &p, &mut observe, || {
+                    stopped.load(Ordering::Acquire)
+                })?;
+                cleanup.owners = host.plugins().owner_retirements();
             }
             if stopped.load(Ordering::Acquire) {
                 return Err("中止しました".into());
@@ -241,7 +257,8 @@ impl Start {
             dir,
             latest,
             failures,
-            proceed,
+            choice,
+            track_snapshot,
         })
     }
     pub fn progress(&self) -> Progress {
@@ -282,11 +299,29 @@ impl Transport {
         if failures.as_ref().is_none_or(Vec::is_empty) || start.stop.load(Ordering::Acquire) {
             return false;
         }
-        start.proceed.store(true, Ordering::Release);
+        start.choice.store(1, Ordering::Release);
         true
     }
 
     pub(crate) fn retry_preparation(&mut self, p: &Project, dir: Option<PathBuf>) -> bool {
+        // Edits are blocked while this immutable song is preparing. A partial
+        // candidate stays with its worker so healthy audio/plugin instances are
+        // carried into the retried graph. A replaced song gets a separate job.
+        if let Some(start) = &self.prepared_start
+            && start.dir == dir
+            && start.track_snapshot.len() == p.tracks.len()
+            && start
+                .track_snapshot
+                .iter()
+                .all(|(id, t)| p.tracks.get(id).is_some_and(|now| Arc::ptr_eq(t, now)))
+            && !start.stop.load(Ordering::Acquire)
+            && let Ok(mut failed) = start.failures.try_lock()
+            && failed.as_ref().is_some_and(|f| !f.is_empty())
+        {
+            *failed = None;
+            start.choice.store(2, Ordering::Release);
+            return true;
+        }
         // The old job owns its candidate until its worker retires it. Its channel
         // is never polled by this attempt, including any already queued reply.
         if let Some(start) = self.prepared_start.take() {
@@ -306,7 +341,7 @@ impl Transport {
             self.prepared_start = None;
             return Some(StartStep::Cancelled);
         }
-        if !start.proceed.load(Ordering::Acquire)
+        if start.choice.load(Ordering::Acquire) == 0
             && let Ok(failures) = start.failures.try_lock()
             && let Some(failures) = failures.as_ref()
         {

@@ -655,6 +655,12 @@ pub extern "system" fn FixtureTerminations() -> u64 {
         | (u64::from(TERMINATED_AWAY.load(Ordering::Relaxed)) << 32)
 }
 
+/// SDK objects created by this private fixture module, including controllers.
+#[unsafe(no_mangle)]
+pub extern "system" fn FixtureCreations() -> u32 {
+    MADE.load(Ordering::Relaxed)
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn FixtureModuleCalls() -> u64 {
     u64::from(INITIALIZED.load(Ordering::Relaxed))

@@ -674,6 +674,25 @@ impl PluginLoader {
         self.fresh_clap.clear();
     }
 
+    /// The processor is carried by TrackSlot::Keep, so retain its controller and
+    /// meters without opening a replacement or taking another audio lease.
+    pub(crate) fn keep_built(&mut self, ids: impl IntoIterator<Item = PluginId>) {
+        for id in ids {
+            if self.remotes.contains_key(&id) {
+                self.fresh.push(id);
+            }
+            if self.locals.contains_key(&id) {
+                self.fresh_locals.push(id);
+            }
+            if self.stock.contains_key(&id) {
+                self.fresh_stock.push(id);
+            }
+            if self.clap_names.contains_key(&id) {
+                self.fresh_clap.push(id);
+            }
+        }
+    }
+
     /// Where `x` runs, and the host executable when that is not this process. `ara`: the
     /// catalogue says it uses ARA.
     fn placement(

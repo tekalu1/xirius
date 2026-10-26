@@ -9,7 +9,7 @@
 //! placeholder of [`crate::synth`] for a built-in without a processor); such an effect is left
 //! out.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -175,6 +175,7 @@ fn preparation_reason(name: &str, warnings: &[String]) -> String {
 pub struct Builder {
     strict_preparation: bool,
     unavailable: BTreeMap<xirius_core::id::TrackId, String>,
+    retry_keep: BTreeMap<xirius_core::id::TrackId, usize>,
     rate: u32,
     dir: Option<PathBuf>,
     cache: WavCache,
@@ -197,6 +198,7 @@ impl Builder {
         Builder {
             strict_preparation: false,
             unavailable: BTreeMap::new(),
+            retry_keep: BTreeMap::new(),
             rate,
             dir,
             cache: WavCache::default(),
@@ -214,6 +216,32 @@ impl Builder {
 
     pub fn unavailable(&self) -> &BTreeMap<xirius_core::id::TrackId, String> {
         &self.unavailable
+    }
+
+    /// Reuse complete independent tracks in the unpublished candidate. Keyed
+    /// chains and buses/master depend on the graph being rebuilt and are retried.
+    pub(crate) fn retry_materials(&mut self, p: &Project) -> BTreeSet<xirius_core::id::PluginId> {
+        let graph = Graph::of(p);
+        let mut plugins = BTreeSet::new();
+        self.retry_keep = graph
+            .tracks
+            .iter()
+            .enumerate()
+            .filter_map(|(index, id)| {
+                let t = &p.tracks[id];
+                if self.unavailable.contains_key(id)
+                    || t.inserts
+                        .iter()
+                        .any(|x| x.sidechain.as_ref().is_some_and(|s| s.on))
+                {
+                    return None;
+                }
+                plugins.extend(t.inserts.iter().map(|x| x.id));
+                Some((*id, index))
+            })
+            .collect();
+        self.unavailable.clear();
+        plugins
     }
 
     /// The meters of the plugins the last build made: read by anyone, written by the audio thread.
@@ -328,10 +356,18 @@ impl Builder {
         self.plugins.begin_build();
         self.timed.clear();
         self.plugins.set_tempo(tmap.bpm_at(0));
+        let kept = std::mem::take(&mut self.retry_keep);
 
         let mut tracks = Vec::with_capacity(graph.tracks.len());
         for (i, id) in graph.tracks.iter().enumerate() {
             let t = &p.tracks[id];
+            if let Some(index) = kept.get(id) {
+                self.plugins.keep_built(t.inserts.iter().map(|x| x.id));
+                self.timed.extend(t.inserts.iter().map(|x| x.id.0));
+                tracks.push(TrackSlot::Keep(*index));
+                track(t.id, true);
+                continue;
+            }
             let warning_start = warnings.len();
             let unavailable = self.unavailable.contains_key(id);
             track(t.id, false);

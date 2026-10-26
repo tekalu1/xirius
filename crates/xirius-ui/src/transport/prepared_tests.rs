@@ -341,6 +341,161 @@ fn retry_discards_a_material_failure_that_returns_after_the_new_player_is_ready(
 }
 
 #[test]
+fn retry_reuses_healthy_sdk_and_materials_while_only_the_failed_decode_waits() {
+    retained_retry(false);
+}
+
+#[test]
+fn cancelling_a_retained_retry_discards_its_late_decode_and_closes_the_song() {
+    retained_retry(true);
+}
+
+fn retained_retry(cancel: bool) {
+    use std::os::windows::ffi::OsStrExt;
+    use std::sync::atomic::AtomicUsize;
+    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+    let root = tempfile::tempdir().unwrap();
+    let dll = root.path().join("retry.vst3");
+    std::fs::copy(
+        std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("xirius_test_vst3.dll"),
+        &dll,
+    )
+    .unwrap();
+    let catalog = Arc::new(Catalog {
+        entries: xirius_plugins::probe(&dll).unwrap(),
+        failures: vec![],
+    });
+    let wide: Vec<_> = dll.as_os_str().encode_wide().chain([0]).collect();
+    // SAFETY: the fixture module remains loaded, and this export has this ABI.
+    let creations = unsafe {
+        std::mem::transmute::<
+            unsafe extern "system" fn() -> isize,
+            unsafe extern "system" fn() -> u32,
+        >(
+            GetProcAddress(
+                GetModuleHandleW(wide.as_ptr()),
+                c"FixtureCreations".as_ptr().cast(),
+            )
+            .unwrap(),
+        )
+    };
+    let mut s = Studio::new(Song::empty());
+    s.song.save_as(&root.path().join("song")).unwrap();
+    let mut ids = Vec::new();
+    let mut files = Vec::new();
+    for name in ["healthy", "retry"] {
+        let wav = root.path().join(format!("{name}.wav"));
+        xirius_session::export::write_wav(&wav, &[0.25; 4096], &[0.25; 4096], 22_050, 16).unwrap();
+        s.song
+            .run("clip.import", serde_json::json!({"file":wav}))
+            .unwrap();
+        let p = s.project();
+        let t = p
+            .tracks
+            .values()
+            .rfind(|t| t.kind == TrackKind::Audio)
+            .unwrap();
+        ids.push(t.id);
+        let xirius_core::model::ClipBody::Audio { file, .. } = &t.clips[0].body else {
+            panic!()
+        };
+        files.push(s.song.dir().unwrap().join(file));
+    }
+    s.song
+        .run(
+            "plugin.add",
+            serde_json::json!({"track":ids[0].to_string(), "name":"Healthy",
+        "format":"vst3", "uid":catalog.entries[0].uid}),
+        )
+        .unwrap();
+    let allow = Arc::new(AtomicBool::new(false));
+    let allowed = allow.clone();
+    let healthy_reads = Arc::new(AtomicUsize::new(0));
+    let reads = healthy_reads.clone();
+    let release = Release::new();
+    let gate = release.0.clone();
+    let (tx, entered) = mpsc::channel();
+    let _observe = xirius_core::io_test::observe(Arc::new(move |op, path| {
+        if op != "prepare_decode" {
+            return Ok(());
+        }
+        if path == files[0] {
+            reads.fetch_add(1, Ordering::SeqCst);
+        }
+        if path == files[1] {
+            if !allowed.load(Ordering::Acquire) {
+                return Err(std::io::Error::other("temporarily unavailable"));
+            }
+            tx.send(std::thread::current().id()).unwrap();
+            let held = gate.0.lock().unwrap();
+            drop(gate.1.wait_while(held, |done| !*done).unwrap());
+        }
+        Ok(())
+    }));
+    s.transport.mode = OutputMode::Device;
+    s.transport.set_catalog(catalog);
+    s.transport.set_drivers(quiet_drivers());
+    s.prepare_song();
+    wait_failed(&mut s, 1);
+    assert_eq!(
+        s.preparing.as_ref().unwrap().failures[0].track,
+        Some(ids[1])
+    );
+    assert_eq!(healthy_reads.load(Ordering::SeqCst), 1);
+    // SAFETY: this read-only fixture function is valid while its module is kept.
+    let made = unsafe { creations() };
+    assert!(made > 0);
+    s.prepare_retry();
+    wait_failed(&mut s, 1);
+    // SAFETY: the candidate is still retained by its worker.
+    assert_eq!(unsafe { creations() }, made);
+    allow.store(true, Ordering::Release);
+    s.prepare_retry();
+    assert_ne!(
+        entered.recv_timeout(Duration::from_secs(20)).unwrap(),
+        std::thread::current().id()
+    );
+    for size in [(1280.0, 800.0), (960.0, 600.0)] {
+        s.poll_preparing();
+        let card = s.preparing.as_ref().unwrap();
+        assert!(card.failures.is_empty());
+        assert_eq!(card.progress.done, 1);
+        assert_eq!(card.layout(size).rect.w, 300.0);
+        assert!(!s.toggle_play());
+    }
+    // SAFETY: see above. Retrying must not create another healthy component/controller.
+    assert_eq!(unsafe { creations() }, made);
+    if cancel {
+        assert!(s.prepare_key("escape"));
+        s.poll_preparing();
+        assert!(s.preparing.as_ref().unwrap().cancelling);
+        assert!(s.transport.host().is_none());
+    }
+    release.release();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while s.preparing.is_some() || s.opening.is_some() {
+        s.poll_preparing();
+        s.poll_opening();
+        assert!(Instant::now() < deadline, "retained candidate watchdog");
+        std::thread::yield_now();
+    }
+    assert_eq!(healthy_reads.load(Ordering::SeqCst), 1);
+    if cancel {
+        assert!(s.transport.host().is_none());
+        assert!(s.song.dir().is_none());
+        return;
+    }
+    assert!(s.transport.host().unwrap().unavailable_tracks().is_empty());
+    // SAFETY: the adopted host still owns this private fixture.
+    assert_eq!(unsafe { creations() }, made);
+    assert!(!s.transport.playing);
+}
+
+#[test]
 fn partial_and_all_failures_continue_only_with_failed_track_identities_silent() {
     for all in [false, true] {
         let mut s = Studio::new(Song::empty());
