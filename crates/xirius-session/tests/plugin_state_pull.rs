@@ -175,3 +175,63 @@ fn a_silent_patch_change_in_a_plugin_in_the_host_process_reaches_the_song_when_i
     };
     pull_check(Isolation::Separate(exe), PluginIsolation::Shared);
 }
+
+#[test]
+fn a_plugin_that_was_never_created_keeps_its_saved_state_after_silent_continuation() {
+    let Some(exe) = find_host() else {
+        eprintln!("skipped: xirius-plugin-host is not built");
+        return;
+    };
+    let (mut s, catalog) = song(PluginIsolation::Shared);
+    let id = s
+        .project()
+        .tracks
+        .values()
+        .flat_map(|t| &t.inserts)
+        .next()
+        .unwrap()
+        .id;
+    let original = 64u32.to_le_bytes().to_vec();
+    let state = encode_state(&xirius_vst3::PluginState {
+        component: original.clone(),
+        controller: original.clone(),
+    });
+    run(
+        &mut s,
+        "plugin.state.set",
+        json!({"ids":id.to_string(), "state":state}),
+    );
+    let root = tempfile::tempdir().unwrap();
+    let mut entries = catalog.entries.clone();
+    for entry in &mut entries {
+        entry.path = root.path().join("not-installed.vst3");
+    }
+    let mut starting = xirius_session::starting::Starting::new(
+        s.project(),
+        HostConfig {
+            catalog: Some(Arc::new(Catalog {
+                entries,
+                failures: vec![],
+            })),
+            isolation: Some(Isolation::Separate(exe)),
+            threaded_local: true,
+            ..HostConfig::default()
+        },
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while !starting.step() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "missing plugin watchdog"
+        );
+        std::thread::yield_now();
+    }
+    let (mut host, _audio, failures) = starting.finish_prepared(s.project(), |_, _| {}).unwrap();
+    assert_eq!(failures.len(), 1);
+    assert_eq!(host.unavailable_tracks().len(), 1);
+    let before = s.cursor();
+    let pulled = pull_plugin_states(&mut s, &mut host, &RunOptions::human(), PULL_WAIT).unwrap();
+    assert!(pulled.result.is_none());
+    assert_eq!(state_of(&s), Some(original));
+    assert_eq!(s.cursor(), before, "no runtime instance made any edit");
+}

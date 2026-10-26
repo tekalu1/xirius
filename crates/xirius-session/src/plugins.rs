@@ -1766,7 +1766,10 @@ impl PluginLoader {
             .into_iter()
             .filter(|(_, r)| {
                 let s = r.server.status(&r.link);
-                if s.crashed || s.error.is_some() {
+                // A rejected opening never created an editable instance: keep
+                // the song's existing opaque state, including missing plugins.
+                // A running host lost to a crash cannot attest its latest state.
+                if s.crashed {
                     errors.push(format!(
                         "{}: プラグインの状態を取得できません",
                         r.applied.name

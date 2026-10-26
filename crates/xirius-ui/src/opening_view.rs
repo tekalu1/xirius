@@ -70,28 +70,6 @@ pub fn shorten(full: &str, width: f32, mut measure: impl FnMut(&str) -> f32) -> 
     fitted
 }
 
-#[cfg(test)]
-mod shortening_tests {
-    use super::*;
-
-    #[test]
-    fn very_long_unicode_names_fit_with_a_bounded_number_of_font_measurements() {
-        let full = "か\u{3099}👨‍👩‍👧‍👦🇯🇵".repeat(4096);
-        let mut measured = 0;
-        let fitted = shorten(&full, 24.0, |s| {
-            measured += 1;
-            s.graphemes(true).count() as f32
-        });
-        assert!(measured <= 16, "font measurements: {measured}");
-        assert!(fitted.graphemes(true).count() <= 24);
-        let (left, right) = fitted.split_once('…').unwrap();
-        assert!(full.grapheme_indices(true).any(|(i, _)| &full[..i] == left));
-        assert!(
-            full.grapheme_indices(true)
-                .any(|(i, _)| &full[i..] == right)
-        );
-    }
-}
 fn text(pen: &mut Pen, s: &str, r: Rect, title: bool) {
     pen.text(
         s,
@@ -336,3 +314,26 @@ pub(crate) fn accessible(s: Rc<RefCell<Studio>>, g: &Geometry) -> impl IntoEleme
 #[cfg(feature = "loading-probe")]
 #[path = "opening_font_tests.rs"]
 mod font_tests;
+
+#[cfg(test)]
+mod shortening_tests {
+    use super::*;
+
+    #[test]
+    fn very_long_unicode_names_fit_with_a_bounded_number_of_font_measurements() {
+        let full = "か\u{3099}👨‍👩‍👧‍👦🇯🇵".repeat(4096);
+        let mut measured = 0;
+        let fitted = shorten(&full, 24.0, |s| {
+            measured += 1;
+            s.graphemes(true).count() as f32
+        });
+        assert!(measured <= 16, "font measurements: {measured}");
+        assert!(fitted.graphemes(true).count() <= 24);
+        let (left, right) = fitted.split_once('…').unwrap();
+        assert!(full.grapheme_indices(true).any(|(i, _)| &full[..i] == left));
+        assert!(
+            full.grapheme_indices(true)
+                .any(|(i, _)| &full[i..] == right)
+        );
+    }
+}
