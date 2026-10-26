@@ -294,8 +294,21 @@ fn ui_289_the_os_s_notice_comes_before_the_look_at_the_file_s_time() {
         s.other.watch.as_ref().unwrap()._os.is_some(),
         "the OS watches the folder here"
     );
+    let watch = s.other.watch.as_mut().unwrap();
+    let frozen = watch.looked;
+    let initial_stamp = watch.stamp;
     other_app(&dir, &["B"]);
-    let t = Instant::now();
-    until(&mut s, "the file comes in", |s| text(s) == Some(LOADED));
-    assert!(t.elapsed() < LOOK, "{:?}", t.elapsed());
+    // Freeze the fallback clock: even a slow OS callback must be the source
+    // of this answer. A wall-clock race against LOOK also measures scheduling
+    // of unrelated parallel tests and cannot prove which path answered.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while watch.changed(frozen).is_none() {
+        assert!(Instant::now() < deadline, "OS notification watchdog");
+        std::thread::yield_now();
+    }
+    assert_eq!(watch.looked, frozen);
+    assert_eq!(
+        watch.stamp, initial_stamp,
+        "the fallback must not stat the file"
+    );
 }
