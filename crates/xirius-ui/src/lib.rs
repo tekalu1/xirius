@@ -384,6 +384,8 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("mouse-cut", mouse_cut_shots::SHOTS),
     ("mouse2", mouse2_shots::MOUSE2),
     ("mp3", mp3_shots::MP3),
+    #[cfg(feature = "loading-probe")]
+    ("opening", opening_shots::SHOTS),
     ("opline", opline_shots::OPLINE),
     ("otherproc", otherproc_shots::SHOTS),
     ("overlap", overlap_shots::SHOTS),
@@ -402,6 +404,8 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("pool", pool_shots::SHOTS),
     ("pool-tidy", pool_tidy_shots::SHOTS),
     ("prepare", prepare_shots::SHOTS),
+    #[cfg(feature = "loading-probe")]
+    ("prepared", prepared_shots::SHOTS),
     ("quiet", quiet_shots::QUIET),
     ("rail-tips", fixed_screens_shots::RAIL_TIPS),
     ("range-trim", range_trim_shots::SHOTS),
@@ -415,10 +419,6 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("rollruler", rollruler_shots::ROLL_RULER),
     ("ruler-drag", ruler_drag_shots::SHOTS),
     ("saving", saving_shots::SHOTS),
-    #[cfg(feature = "loading-probe")]
-    ("opening", opening_shots::SHOTS),
-    #[cfg(feature = "loading-probe")]
-    ("prepared", prepared_shots::SHOTS),
     ("screencmd", screencmd_shots::SHOTS),
     ("settings", settings::shots::SHOTS),
     ("side", side_shots::SIDE),

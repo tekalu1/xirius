@@ -319,6 +319,39 @@ impl Pen<'_> {
         f32::from(line.width)
     }
 
+    /// Shape once per paragraph and use GPUI's wrap boundaries. Measuring every
+    /// growing prefix is particularly expensive for long fallback-font names.
+    pub fn wrap_text(
+        &mut self,
+        s: &str,
+        width: f32,
+        font_size: FontSize,
+        weight: Weight,
+    ) -> Vec<String> {
+        let Ok(shaped) = self.window.text_system().shape_text(
+            SharedString::from(s.to_string()),
+            px(font_size.px()),
+            &text_runs(s, weight, false, self.c.ink),
+            Some(px(width.max(1.0))),
+            None,
+        ) else {
+            return s.split('\n').map(str::to_string).collect();
+        };
+        let mut lines = Vec::new();
+        for line in shaped {
+            let mut start = 0;
+            for boundary in line.wrap_boundaries() {
+                let end = line.runs()[boundary.run_ix].glyphs[boundary.glyph_ix].index;
+                if end > start && line.text.is_char_boundary(end) {
+                    lines.push(line.text[start..end].to_string());
+                    start = end;
+                }
+            }
+            lines.push(line.text[start..].to_string());
+        }
+        lines
+    }
+
     /// An icon from `assets/icons`, drawn in `color` into `r`.
     pub fn icon(&mut self, name: &str, r: Rect, color: Hsla) {
         self.svg(icon(name), r, color);

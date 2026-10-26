@@ -17,19 +17,19 @@ pub const SHOTS: &[Shot] = &[
         acts: &[Act::Reset],
     },
     Shot {
-        name: "prepared-01-reading",
+        name: "prepared-01a-reading",
         acts: &[Act::Stage(Play::Studio(stage), 0)],
     },
     Shot {
-        name: "prepared-01-moved",
+        name: "prepared-01b-moved",
         acts: &[Act::Stage(Play::Window(window_operation), 10)],
     },
     Shot {
-        name: "prepared-01-resized",
+        name: "prepared-01c-resized",
         acts: &[Act::Stage(Play::Window(window_operation), 11)],
     },
     Shot {
-        name: "prepared-01-restored",
+        name: "prepared-01d-restored",
         acts: &[Act::Stage(Play::Window(window_operation), 12)],
     },
     Shot {
@@ -41,8 +41,16 @@ pub const SHOTS: &[Shot] = &[
         acts: &[Act::Stage(Play::Studio(stage), 2)],
     },
     Shot {
-        name: "prepared-04-failed",
+        name: "prepared-04a-failed",
         acts: &[Act::Stage(Play::Studio(stage), 3)],
+    },
+    Shot {
+        name: "prepared-04b-detail",
+        acts: &[Act::Stage(Play::Window(detail), 6)],
+    },
+    Shot {
+        name: "prepared-04c-detail-end",
+        acts: &[Act::Stage(Play::Window(detail), 7)],
     },
     Shot {
         name: "prepared-05-retried",
@@ -161,7 +169,7 @@ fn stage(s: &mut Studio, n: u8) {
                 drop(song);
                 let mut failed = crate::song::Song::empty();
                 for index in 0..3 {
-                    let id = failed.run("track.add.audio", serde_json::json!({"name": "長い同名トラック🎹・ストリングスとピアノを重ねた最後のテイク"})).unwrap()["id"].clone();
+                    let id = failed.run("track.add.audio", serde_json::json!({"name": "長い同名トラック🎹・ストリングスとピアノを重ねた最後のテイク".repeat(20)})).unwrap()["id"].clone();
                     if index != 1 {
                         failed.run("plugin.add", serde_json::json!({"track":id,"name":"Missing","format":"vst3","uid":"00000000000000000000000000000000"})).unwrap();
                     }
@@ -221,6 +229,14 @@ fn choice(n: u8, s: &Rc<RefCell<Studio>>, window: &mut gpui::Window, cx: &mut gp
         gpui::px(button.y + button.h / 2.0 + xirius_design::Layout::TOP_BAR_H),
     );
     window.dispatch_event(
+        gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+            position,
+            pressed_button: None,
+            modifiers: Default::default(),
+        }),
+        cx,
+    );
+    window.dispatch_event(
         gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
             button: gpui::MouseButton::Left,
             position,
@@ -240,6 +256,75 @@ fn choice(n: u8, s: &Rc<RefCell<Studio>>, window: &mut gpui::Window, cx: &mut gp
         cx,
     );
     PROBE.with(|p| p.borrow_mut().as_mut().unwrap().phase = if n == 4 { 7 } else { 9 });
+}
+
+fn detail(n: u8, s: &Rc<RefCell<Studio>>, window: &mut gpui::Window, cx: &mut gpui::App) {
+    let row = {
+        let s = s.borrow();
+        let g = crate::screen::geometry(&s, window);
+        s.preparing.as_ref().unwrap().layout(g.size).rows[0].1
+    };
+    let position = gpui::point(
+        gpui::px(row.x + 10.0),
+        gpui::px(row.y + 10.0 + xirius_design::Layout::TOP_BAR_H),
+    );
+    if n == 6 {
+        window.dispatch_event(
+            gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                position,
+                pressed_button: None,
+                modifiers: Default::default(),
+            }),
+            cx,
+        );
+        assert!(
+            s.borrow()
+                .preparing
+                .as_ref()
+                .unwrap()
+                .detail_progress()
+                .is_some()
+        );
+    } else {
+        {
+            let s = s.borrow();
+            let card = s.preparing.as_ref().unwrap();
+            assert_eq!(
+                card.detail_content().unwrap(),
+                format!("{}{}", card.failures[0].reason, card.failures[0].name),
+                "wrapping preserves the full Japanese/emoji name and reason"
+            );
+        }
+        let max = s
+            .borrow()
+            .preparing
+            .as_ref()
+            .unwrap()
+            .detail_progress()
+            .unwrap()
+            .1;
+        assert!(max > 0, "the full long name exceeds the visible detail");
+        for _ in 0..=max {
+            window.dispatch_event(
+                gpui::PlatformInput::ScrollWheel(gpui::ScrollWheelEvent {
+                    position,
+                    delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(-40.0))),
+                    modifiers: Default::default(),
+                    touch_phase: gpui::TouchPhase::Moved,
+                }),
+                cx,
+            );
+        }
+        assert_eq!(
+            s.borrow().preparing.as_ref().unwrap().detail_progress(),
+            Some((max, max))
+        );
+    }
+    eprintln!(
+        "prepared-check stage={} ok=true",
+        if n == 6 { "detail" } else { "detail-end" }
+    );
+    window.refresh();
 }
 fn cancel(n: u8, s: &Rc<RefCell<Studio>>, window: &mut gpui::Window, cx: &mut gpui::App) {
     stage(&mut s.borrow_mut(), n);

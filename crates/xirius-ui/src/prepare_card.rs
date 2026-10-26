@@ -5,7 +5,10 @@
 
 use gpui::{accesskit, div, prelude::*, px};
 use std::time::{Duration, Instant};
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use xirius_design::{FontSize, Radius, Space, Weight};
 use xirius_session::output::OutputMode;
@@ -37,6 +40,13 @@ const LISTED: usize = 16;
 const BAR_MOVE: Duration = Duration::from_millis(200);
 
 #[derive(Clone, Debug, PartialEq)]
+struct DetailLines {
+    text: String,
+    width: f32,
+    lines: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Card {
     pub(crate) background: bool,
     pub(crate) cancelling: bool,
@@ -44,6 +54,9 @@ pub struct Card {
     pub(crate) failures: Vec<xirius_session::build::PreparationFailure>,
     failure_scroll: usize,
     detail: Option<usize>,
+    detail_scroll: usize,
+    detail_max: Cell<usize>,
+    detail_lines: RefCell<Option<DetailLines>>,
     pub progress: Progress,
     /// The pointer is over 後で読む.
     pub hover: bool,
@@ -67,6 +80,20 @@ pub struct CardLayout {
 }
 
 impl Card {
+    #[cfg(feature = "loading-probe")]
+    pub(crate) fn detail_progress(&self) -> Option<(usize, usize)> {
+        self.detail
+            .map(|_| (self.detail_scroll, self.detail_max.get()))
+    }
+
+    #[cfg(feature = "loading-probe")]
+    pub(crate) fn detail_content(&self) -> Option<String> {
+        self.detail_lines
+            .borrow()
+            .as_ref()
+            .map(|d| d.lines.concat())
+    }
+
     pub fn new(progress: Progress) -> Card {
         let to = fraction(&progress);
         Card {
@@ -76,6 +103,9 @@ impl Card {
             failures: Vec::new(),
             failure_scroll: 0,
             detail: None,
+            detail_scroll: 0,
+            detail_max: Cell::new(0),
+            detail_lines: RefCell::new(None),
             progress,
             hover: false,
             from: to,
@@ -386,6 +416,15 @@ impl Studio {
         let Some(card) = &mut self.preparing else {
             return false;
         };
+        if card.detail.is_some() && card.detail_max.get() > 0 {
+            let before = card.detail_scroll;
+            if amount > 0.0 {
+                card.detail_scroll = card.detail_scroll.saturating_sub(1);
+            } else if amount < 0.0 {
+                card.detail_scroll = (card.detail_scroll + 1).min(card.detail_max.get());
+            }
+            return before != card.detail_scroll;
+        }
         let before = card.failure_scroll;
         if amount > 0.0 {
             card.failure_scroll = card.failure_scroll.saturating_sub(1);
@@ -409,12 +448,16 @@ impl Studio {
             .map(|(i, _)| *i);
         let hover = layout.button.contains(x, y);
         let changed = hover != card.hover || detail != card.detail;
+        if detail != card.detail {
+            card.detail_scroll = 0;
+            card.detail_max.set(0);
+        }
         card.detail = detail;
         card.hover = hover;
         changed
     }
 
-    /// Esc is 後で読む; every other key waits.
+    /// Esc cancels preparation. Arrow/page keys scroll the failure detail/list.
     pub fn prepare_key(&mut self, key: &str) -> bool {
         self.show_background_preparation();
         if self.preparing.is_none() {
@@ -752,10 +795,28 @@ fn paint_failures(pen: &mut Pen, card: &Card, l: &CardLayout) {
             return;
         };
         let width = (f32::from(pen.window.viewport_size().width) - 24.0).clamp(0.0, 600.0);
-        let lines = crate::opening_view::wrap(&full, width, |s| {
-            pen.measure(s, FontSize::Small, Weight::Regular)
-        });
-        let h = (lines.len() as f32 * 20.0 + 16.0).min(l.rect.h);
+        let mut cached = card.detail_lines.borrow_mut();
+        if cached
+            .as_ref()
+            .is_none_or(|d| d.text != full || d.width != width)
+        {
+            *cached = Some(DetailLines {
+                lines: pen.wrap_text(&full, width - 16.0, FontSize::Small, Weight::Regular),
+                text: full,
+                width,
+            });
+        }
+        let lines = &cached.as_ref().expect("detail layout cached").lines;
+        // Keep the actions visible and make every line reachable, even when a
+        // plugin returns a long reason or several tracks share very long names.
+        let capacity = ((l.button.y - GAP - l.rect.y - 32.0) / 20.0)
+            .floor()
+            .max(1.0) as usize;
+        let visible = lines.len().min(capacity);
+        let max = lines.len().saturating_sub(visible);
+        card.detail_max.set(max);
+        let offset = card.detail_scroll.min(max);
+        let h = visible as f32 * 20.0 + if max > 0 { 32.0 } else { 16.0 };
         let tip = Rect::new(
             (l.rect.x + (l.rect.w - width) / 2.0).max(0.0),
             l.rect.y,
@@ -764,7 +825,7 @@ fn paint_failures(pen: &mut Pen, card: &Card, l: &CardLayout) {
         );
         pen.floating(tip, c.surface_3, Radius::S);
         pen.mask(tip, |pen| {
-            for (i, line) in lines.iter().enumerate() {
+            for (i, line) in lines.iter().skip(offset).take(visible).enumerate() {
                 pen.text(
                     line,
                     FontSize::Small,
@@ -780,6 +841,16 @@ fn paint_failures(pen: &mut Pen, card: &Card, l: &CardLayout) {
                 );
             }
         });
+        if max > 0 {
+            pen.text(
+                &format!("スクロールで全文を確認  {}/{}", offset + 1, max + 1),
+                FontSize::Small,
+                Weight::Regular,
+                c.ink,
+                Rect::new(tip.x + 8.0, tip.bottom() - 16.0, tip.w - 16.0, 16.0),
+                Align::Left,
+            );
+        }
     }
 }
 

@@ -270,9 +270,8 @@ impl Studio {
         self.palette = None;
         self.preparing = None;
         self.error = None;
-        // Remote state requests use the nonblocking mailbox. In-process VST3
-        // getState still runs on its UI owner in collect_plugin_states below:
-        // PRJ-029 remains partial until PRJ-030 redesigns that ownership.
+        // Both remote and local owner requests return identified value receipts;
+        // state collection never enters an SDK on the window thread.
         // Writer flush and candidate construction belong to OpenJob.
         // A version command copies an existing snapshot; it must not turn live
         // plugin state into new edits on the song that remains open.

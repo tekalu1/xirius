@@ -230,9 +230,7 @@ impl Builder {
             .filter_map(|(index, id)| {
                 let t = &p.tracks[id];
                 if self.unavailable.contains_key(id)
-                    || t.inserts
-                        .iter()
-                        .any(|x| x.sidechain.as_ref().is_some_and(|s| s.on))
+                    || t.inserts.iter().any(|x| x.sidechain.is_some())
                 {
                     return None;
                 }
@@ -1132,5 +1130,61 @@ fn shape_of(
                 gain: db_to_gain(g.db),
             })
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+    use xirius_core::id::{PluginId, SendId, TrackId};
+    use xirius_core::model::Sidechain;
+
+    #[test]
+    fn retry_rebuilds_a_currently_disabled_key_so_it_can_be_enabled_after_opening() {
+        let mut p = Project::new("keys");
+        for id in 1..=3 {
+            p.tracks.insert(
+                TrackId(id),
+                Arc::new(Track::new(TrackId(id), TrackKind::Audio, "track")),
+            );
+        }
+        Arc::make_mut(p.tracks.get_mut(&TrackId(1)).unwrap())
+            .inserts
+            .push(Plugin {
+                id: PluginId(10),
+                name: "Compressor".into(),
+                kind: PluginKind::Effect,
+                format: "builtin".into(),
+                uid: "compressor".into(),
+                bypass: false,
+                deactivated: false,
+                params: Default::default(),
+                state: None,
+                samples: vec![],
+                isolation: Default::default(),
+                preset: None,
+                sidechain: Some(Sidechain {
+                    on: false,
+                    sources: vec![KeySource {
+                        id: SendId(11),
+                        track: TrackId(2),
+                        mode: KeyMode::Output,
+                    }],
+                }),
+            });
+        let mut builder = Builder::new(48_000, None);
+        let _original = builder.build(&p, Select::All);
+        builder
+            .unavailable
+            .insert(TrackId(3), "retry this track".into());
+        builder.retry_materials(&p);
+        let retried = builder.build(&p, Select::All);
+        let TrackSlot::New(keyed) = &retried.spec.tracks[0] else {
+            panic!("kept nodes cannot carry their old key accumulator into the new graph");
+        };
+        assert_eq!(keyed.keys.len(), 1);
+        assert!(!keyed.keys[0].on);
+        assert!(matches!(retried.spec.tracks[1], TrackSlot::Keep(1)));
+        assert!(matches!(retried.spec.tracks[2], TrackSlot::New(_)));
     }
 }

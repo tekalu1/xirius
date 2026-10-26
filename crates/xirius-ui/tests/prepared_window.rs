@@ -64,6 +64,8 @@ fn material_gate_keeps_the_preparation_card_and_escape_responsive_on_the_real_wi
                     "closed"
                 },
                 "failed",
+                "detail",
+                "detail-end",
                 "retried",
                 "silent",
             ] {
@@ -72,16 +74,18 @@ fn material_gate_keeps_the_preparation_card_and_escape_responsive_on_the_real_wi
                     "{log}"
                 );
             }
-            assert!(log.contains("10 saved, 0 failed"), "{operation}: {log}");
+            assert!(log.contains("12 saved, 0 failed"), "{operation}: {log}");
             for name in [
                 "prepared-00-before",
-                "prepared-01-reading",
-                "prepared-01-moved",
-                "prepared-01-resized",
-                "prepared-01-restored",
+                "prepared-01a-reading",
+                "prepared-01b-moved",
+                "prepared-01c-resized",
+                "prepared-01d-restored",
                 "prepared-02-cancelling",
                 "prepared-03-closed",
-                "prepared-04-failed",
+                "prepared-04a-failed",
+                "prepared-04b-detail",
+                "prepared-04c-detail-end",
                 "prepared-05-retried",
                 "prepared-06-silent",
             ] {
