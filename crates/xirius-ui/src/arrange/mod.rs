@@ -1475,6 +1475,19 @@ impl Studio {
 
     /// Runs one core command (one history step).
     pub(crate) fn arrange_run(&mut self, command: &str, args: Value) -> Option<Value> {
+        if self.sound_preparing() {
+            return None;
+        }
+        if self.transport.is_windowed()
+            && let Some(raw) = args.as_object()
+            && self.song.session().save_request(command, raw).is_some()
+        {
+            if self.input_blocked() {
+                return None;
+            }
+            self.save_command_on_worker(command, raw.clone());
+            return Some(json!({}));
+        }
         // A wheel that turned a field has ended its step: anything else is a step of its own
         // (UI-313).
         if !self.wheel_running {

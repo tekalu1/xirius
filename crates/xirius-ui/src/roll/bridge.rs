@@ -115,7 +115,8 @@ impl Studio {
         if let Some(track) = &track
             && track.kind == xirius_core::model::TrackKind::Instrument
             && self.transport.host().is_none()
-            && self.preparing.is_none()
+            && !self.transport.is_windowed()
+            && !self.sound_preparing()
             && self.roll.host_for != Some(track.id)
         {
             self.roll.host_for = Some(track.id);

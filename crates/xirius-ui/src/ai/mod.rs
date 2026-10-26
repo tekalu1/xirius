@@ -473,7 +473,7 @@ impl Studio {
         if self.input_blocked() {
             job.answer(Err(CmdError::conflict(if self.opening.is_some() {
                 crate::opening::BUSY
-            } else if self.preparing.is_some() {
+            } else if self.sound_preparing() {
                 crate::prepare_card::TITLE
             } else {
                 "保存中です"
@@ -488,7 +488,38 @@ impl Studio {
             self.open_mcp(job);
             return;
         }
-        let r = self.ai_run(&job.command, &job.raw, &job.opts, job.save);
+        if self.transport.is_windowed()
+            && !job.opts.dry_run
+            && self
+                .song
+                .session()
+                .save_request(&job.command, &job.raw)
+                .is_some()
+        {
+            self.save_for_mcp(job, None);
+            return;
+        }
+        let deferred = self.transport.is_windowed();
+        let r = self.ai_run(&job.command, &job.raw, &job.opts, job.save && !deferred);
+        if deferred
+            && job.save
+            && (!job.opts.author.is_ai()
+                || self.song.session().ai_permission() == xirius_core::AiPermission::Save)
+            && let Ok(result) = &r
+            && !result.dry_run
+            && result.decision.is_none()
+            && self.song.dir().is_some()
+            && self.song.session().is_dirty()
+            && self
+                .song
+                .session()
+                .registry()
+                .get(&job.command)
+                .is_some_and(|d| d.risk != xirius_core::Risk::Read)
+        {
+            self.save_for_mcp(job, Some(result.clone()));
+            return;
+        }
         job.answer(r);
     }
 
@@ -499,7 +530,7 @@ impl Studio {
         opts: &xirius_core::session::RunOptions,
         save: bool,
     ) -> Result<RunResult, CmdError> {
-        if self.preparing.is_some() {
+        if self.sound_preparing() {
             return Err(CmdError::conflict(crate::prepare_card::TITLE));
         }
         let before = self.roll_target().map(|t| {

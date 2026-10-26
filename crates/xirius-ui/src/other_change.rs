@@ -169,7 +169,7 @@ impl Studio {
             || self.input_map.name.is_some()
             || self.browser.typing
             || self.popup.as_ref().is_some_and(|p| p.naming.is_some())
-            || self.preparing.is_some()
+            || self.sound_preparing()
             || self.recovery.is_some()
             // A warning is not replaced by the news.
             || self.toast_shown().is_some_and(|t| t.alert)

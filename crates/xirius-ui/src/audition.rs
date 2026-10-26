@@ -186,6 +186,27 @@ pub(crate) fn release_output_ready() -> bool {
     })
 }
 
+/// A preparation worker can wait for the preview stream without borrowing UI
+/// thread-local state or asking the window to poll a close acknowledgement.
+pub(crate) fn release_for_preparation() -> Result<Arc<std::sync::atomic::AtomicBool>, String> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let done = Arc::new(AtomicBool::new(false));
+    let ack = PLAYER.with(|p| p.borrow().as_ref().map(Audition::release_async));
+    let Some(ack) = ack else {
+        done.store(true, Ordering::Release);
+        return Ok(done);
+    };
+    let finished = done.clone();
+    // The job owns only an acknowledgement. Dropping its receipt does not join
+    // the preview's output thread or move a device back to the window.
+    xirius_session::background::Job::spawn("preview-prepare-release", move || {
+        let _ = ack.recv();
+        finished.store(true, Ordering::Release);
+        Ok(())
+    })?;
+    Ok(done)
+}
+
 impl Studio {
     pub(crate) fn stop_browser_audition(&mut self) {
         let active = self.browser.playing.take().is_some() || is_playing();

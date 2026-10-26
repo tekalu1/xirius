@@ -20,7 +20,7 @@ impl Studio {
         mods: Mods,
         control: bool,
     ) -> bool {
-        if self.preparing.is_some() {
+        if self.sound_preparing() {
             return self.prepare_scroll(dy);
         }
         if self.recovery.is_some() {

@@ -287,6 +287,9 @@ impl Studio {
         name: String,
         args: Map<String, Value>,
     ) -> bool {
+        if self.sound_preparing() {
+            return true;
+        }
         if self.opening.is_some() {
             if name == "app.quit" {
                 self.request_close();

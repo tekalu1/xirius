@@ -1,10 +1,7 @@
-//! 音源を準備中 (ENG-064): what the window shows while a song it just opened gets its
-//! instruments and effects ready, so that a key pressed afterwards sounds at once.
-//!
-//! The mock (rollfeel § 02) is a card on a veil: a spinner, 「音源を準備中」 and how many
-//! tracks are done, a bar, each track with plugins as done (a check), under way (a spinner) or
-//! waiting (a dot), and one button. The song cannot be edited while it is up. 後で読む (and
-//! Esc) closes it: what is left opens when it is first needed, as before (UI-285).
+//! ENG-064, approved 2026-10-26: a blocked background preparation, its failures,
+//! explicit retry/continue, and cancellation through cleanup to the start screen.
+//! The older staged transport/card supports non-window fixtures only; every
+//! transport constructed on the GPUI event-loop thread uses the background path.
 
 use gpui::{accesskit, div, prelude::*, px};
 use std::time::{Duration, Instant};
@@ -184,6 +181,17 @@ fn fraction(p: &Progress) -> f32 {
 }
 
 impl Studio {
+    pub(crate) fn sound_preparing(&self) -> bool {
+        self.preparing.is_some() || self.transport.background_starting()
+    }
+
+    fn show_background_preparation(&mut self) {
+        if self.preparing.is_none() && self.transport.background_starting() {
+            let mut card = Card::new(self.transport.start_progress().unwrap_or_default());
+            card.background = true;
+            self.preparing = Some(card);
+        }
+    }
     /// Gets the instruments and effects of the song just opened ready (ENG-064): the player
     /// starts a little at a time behind the card, and the sound device opens when it is done.
     /// A window without the device (`--silent`, the tests) starts its player when a note or a
@@ -193,7 +201,7 @@ impl Studio {
         if std::mem::take(&mut self.skip_preparation_once) {
             return;
         }
-        if self.transport.mode == OutputMode::Device {
+        if self.transport.mode == OutputMode::Device || self.transport.is_windowed() {
             self.prepare_song();
         }
     }
@@ -222,6 +230,7 @@ impl Studio {
     /// Once a frame: opens a little more while the card is up, and closes it once the player
     /// started. True while the card is up.
     pub(crate) fn poll_preparing(&mut self) -> bool {
+        self.show_background_preparation();
         if self.preparing.is_none() {
             return false;
         }
@@ -294,6 +303,7 @@ impl Studio {
     /// 後で読む: the card closes and the song can be edited; what is left opens when it is
     /// first needed.
     pub fn prepare_later(&mut self) {
+        self.show_background_preparation();
         if let Some(card) = &mut self.preparing
             && card.background
         {
@@ -329,6 +339,7 @@ impl Studio {
 
     /// A press while the card is up. Every press belongs to the card.
     pub fn prepare_press(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
+        self.show_background_preparation();
         let Some(card) = &self.preparing else {
             return false;
         };
@@ -386,6 +397,7 @@ impl Studio {
     }
 
     pub fn prepare_hover(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
+        self.show_background_preparation();
         let Some(card) = &mut self.preparing else {
             return false;
         };
@@ -404,6 +416,7 @@ impl Studio {
 
     /// Esc is 後で読む; every other key waits.
     pub fn prepare_key(&mut self, key: &str) -> bool {
+        self.show_background_preparation();
         if self.preparing.is_none() {
             return false;
         }

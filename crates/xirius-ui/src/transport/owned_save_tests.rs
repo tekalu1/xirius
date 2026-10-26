@@ -174,6 +174,7 @@ fn saving_does_not_write_or_wait_for_held_state_and_only_a_complete_retry_clears
     let dir = temp.path().join("original");
     s.song.save_as(&dir).unwrap();
     s.transport.mode = OutputMode::Device;
+    s.transport.bind_window();
     s.transport.set_catalog(catalog);
     s.transport.set_drivers(Drivers {
         exclusive_out: None,
@@ -227,7 +228,84 @@ fn saving_does_not_write_or_wait_for_held_state_and_only_a_complete_retry_clears
     s.save_succeeded(); // A completed disk checkpoint is insufficient.
     assert_eq!(s.save_mark(), SaveMark::Failed);
     assert!(!target.exists());
+    // A connected MCP save uses this same preflight, and must not report success
+    // or copy a song while its SDK cannot return state.
+    for command in [
+        "project.save",
+        "project.save-as",
+        "version.save",
+        "track.add.audio",
+    ] {
+        use xirius_mcp::Host;
+        let (bridge, mut jobs) = xirius_mcp::bridge(xirius_session::commands::shared_registry());
+        let path = temp
+            .path()
+            .join(format!("mcp-{}", command.replace('.', "-")));
+        let args = match command {
+            "project.save-as" => json!({"path":path}),
+            "version.save" => json!({"name":"mcp-held"}),
+            "track.add.audio" => json!({"name":"mcp-unsaved"}),
+            _ => json!({}),
+        };
+        let call = std::thread::spawn(move || {
+            bridge.run(
+                command,
+                args.as_object().unwrap(),
+                &xirius_core::session::RunOptions::human(),
+                true,
+            )
+        });
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let job = loop {
+            if let Ok(job) = jobs.try_recv() {
+                break job;
+            }
+            assert!(Instant::now() < deadline, "MCP receipt watchdog");
+            std::thread::yield_now();
+        };
+        s.ai_job(job);
+        assert!(s.saving.is_some(), "{command}: save is deferred");
+        assert!(!call.is_finished(), "{command}: no early success reply");
+        s.saving.as_mut().unwrap().since -= xirius_session::host::PULL_WAIT;
+        s.poll_saving();
+        assert!(call.join().unwrap().is_err(), "{command}");
+        assert_eq!(s.save_mark(), SaveMark::Failed);
+        assert!(!path.exists(), "{command}: no file without SDK state");
+        assert!(!s.song.versions().iter().any(|v| v.name == "mcp-held"));
+    }
+    let project = s.project();
     let export = temp.path().join("held.dawproject");
+    let approval_path = temp.path().join("approved-copy");
+    s.song
+        .session_mut()
+        .set_confirm(xirius_core::session::Confirm::OPEN_04);
+    let proposal = s
+        .song
+        .session_mut()
+        .run(
+            "project.save-as",
+            json!({"path":approval_path}).as_object().unwrap(),
+            &xirius_core::session::RunOptions::ai("AI"),
+        )
+        .unwrap();
+    let token = proposal.decision.unwrap().token;
+    assert!(s.run_command("ai.decide", json!({"token":token,"answer":"yes"})));
+    assert!(s.saving.is_some(), "approval also waits for owner state");
+    s.saving.as_mut().unwrap().since -= xirius_session::host::PULL_WAIT;
+    s.poll_saving();
+    assert!(s.saving.is_none());
+    assert!(!approval_path.exists());
+    assert!(
+        s.song
+            .session()
+            .save_request(
+                "ai.decide",
+                json!({"token":token,"answer":"yes"}).as_object().unwrap()
+            )
+            .is_some(),
+        "failed capture does not consume approval"
+    );
+    s.run_command("ai.decide", json!({"token":token,"answer":"no"}));
     assert!(s.dawproject_export(&export));
     s.saving.as_mut().unwrap().since -= xirius_session::host::PULL_WAIT;
     s.poll_saving();

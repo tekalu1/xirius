@@ -1759,7 +1759,7 @@ impl Studio {
     }
 
     pub(crate) fn command(&mut self, run: impl FnOnce(&mut Song) -> Result<(), String>) -> bool {
-        if self.preparing.is_some() || self.unsaved.is_some() {
+        if self.sound_preparing() || self.unsaved.is_some() {
             return false;
         }
         if let Err(e) = run(&mut self.song) {
@@ -2435,7 +2435,11 @@ impl Studio {
     /// Nonblocking file-dialog and script entry. Synchronous fixtures have an
     /// explicitly named helper below and never run from a window callback.
     pub fn finish_file_request(&mut self, request: FileRequest, path: &std::path::Path) {
-        if self.preparing.is_some() {
+        if self.sound_preparing() {
+            return;
+        }
+        if self.transport.is_windowed() && request == FileRequest::SaveAs {
+            self.start_file_request(request, path);
             return;
         }
         if matches!(
@@ -2449,7 +2453,16 @@ impl Studio {
     }
 
     pub fn finish_file_request_sync(&mut self, request: FileRequest, path: &std::path::Path) {
-        if self.preparing.is_some() {
+        if self.sound_preparing() {
+            return;
+        }
+        if self.transport.is_windowed()
+            && matches!(
+                request,
+                FileRequest::SaveAs | FileRequest::Open | FileRequest::OpenVersion(_)
+            )
+        {
+            self.start_file_request(request, path);
             return;
         }
         if self.finish_preset_file(request.clone(), path) {

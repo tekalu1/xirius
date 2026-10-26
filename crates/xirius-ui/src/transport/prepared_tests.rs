@@ -177,6 +177,66 @@ fn wait_failed(s: &mut Studio, count: usize) {
 }
 
 #[test]
+fn a_window_on_demand_silent_start_blocks_before_its_first_frame_without_decoding_on_ui() {
+    let root = tempfile::tempdir().unwrap();
+    let wav = root.path().join("source.wav");
+    xirius_session::export::write_wav(&wav, &[0.0; 2048], &[0.0; 2048], 22_050, 16).unwrap();
+    let mut s = Studio::new(Song::empty());
+    s.song.save_as(&root.path().join("song")).unwrap();
+    s.song
+        .run("clip.import", serde_json::json!({"file":wav}))
+        .unwrap();
+    s.transport.mode = OutputMode::Silent { paced: true };
+    s.transport.bind_window();
+    let release = Release::new();
+    let gate = release.0.clone();
+    let prefix = root.path().to_path_buf();
+    let (tx, entered) = mpsc::channel();
+    let once = AtomicBool::new(false);
+    let _observe = xirius_core::io_test::observe(Arc::new(move |op, path| {
+        if op == "prepare_decode" && path.starts_with(&prefix) && !once.swap(true, Ordering::SeqCst)
+        {
+            tx.send(std::thread::current().id()).unwrap();
+            let held = gate.0.lock().unwrap();
+            drop(gate.1.wait_while(held, |done| !*done).unwrap());
+        }
+        Ok(())
+    }));
+    let project = s.project();
+    assert!(s.transport.start_host(&project, s.song.dir()).is_err());
+    assert!(
+        s.preparing.is_none(),
+        "the first frame has not created the card yet"
+    );
+    assert!(s.input_blocked());
+    assert!(!s.run_command("track.add.audio", serde_json::json!({"name":"blocked"})));
+    assert!(!s.start_save());
+    assert!(!s.toggle_play());
+    assert!(!s.toggle_record());
+    assert!(!s.request_open(crate::opening::Request::New));
+    assert!(Arc::ptr_eq(&project, &s.project()));
+    assert_ne!(
+        entered.recv_timeout(Duration::from_secs(20)).unwrap(),
+        std::thread::current().id()
+    );
+    assert!(
+        s.prepare_key("escape"),
+        "Esc is accepted even before the first painted frame"
+    );
+    assert!(s.preparing.as_ref().unwrap().cancelling);
+    release.release();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while s.preparing.is_some() || s.opening.is_some() {
+        s.poll_preparing();
+        s.poll_opening();
+        assert!(Instant::now() < deadline, "silent start cleanup watchdog");
+        std::thread::yield_now();
+    }
+    assert!(s.song.dir().is_none());
+    assert!(s.transport.host().is_none());
+}
+
+#[test]
 fn retry_discards_a_material_failure_that_returns_after_the_new_player_is_ready() {
     let root = tempfile::tempdir().unwrap();
     let wav = root.path().join("source.wav");

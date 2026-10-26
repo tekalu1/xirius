@@ -1,5 +1,43 @@
 use super::*;
 
+#[test]
+fn save_request_recognizes_accepted_tokens_without_consuming_or_executing_them() {
+    let mut session = Session::new("kept");
+    session.set_confirm(Confirm::OPEN_04);
+    let raw = json!({"path":"unused-save-copy"});
+    assert_eq!(
+        session.save_request("project.save-as", raw.as_object().unwrap()),
+        Some(Some(PathBuf::from("unused-save-copy")))
+    );
+    let held = session
+        .run(
+            "project.save-as",
+            raw.as_object().unwrap(),
+            &RunOptions::ai("AI"),
+        )
+        .unwrap();
+    let token = held.decision.unwrap().token;
+    let yes = json!({"token":token,"answer":"yes"});
+    let no = json!({"token":token,"answer":"no"});
+    assert_eq!(
+        session.save_request("ai.decide", yes.as_object().unwrap()),
+        Some(Some(PathBuf::from("unused-save-copy")))
+    );
+    assert_eq!(
+        session.save_request("ai.decide", no.as_object().unwrap()),
+        None
+    );
+    assert_eq!(session.pending_decisions().len(), 1);
+    session
+        .run("ai.decide", no.as_object().unwrap(), &RunOptions::human())
+        .unwrap();
+    assert_eq!(
+        session.save_request("ai.decide", yes.as_object().unwrap()),
+        None
+    );
+    assert!(session.dir().is_none());
+}
+
 struct Events(Vec<Value>);
 impl crate::Extension for Events {
     fn answers(&self, _: &str) -> bool {

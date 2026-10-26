@@ -204,14 +204,14 @@ impl Studio {
     pub(crate) fn input_blocked(&self) -> bool {
         self.opening.is_some()
             || self.saving.is_some()
-            || self.preparing.is_some()
+            || self.sound_preparing()
             || self.unsaved.is_some()
     }
     pub(crate) fn request_open_file(&mut self, request: FileRequest, path: &Path) -> bool {
         self.request_open(Request::File(request, path.to_path_buf()))
     }
     pub(crate) fn request_open(&mut self, request: Request) -> bool {
-        if self.preparing.is_some() || self.unsaved.is_some() {
+        if self.sound_preparing() || self.unsaved.is_some() {
             return false;
         }
         if self.opening.is_some() {

@@ -95,7 +95,7 @@ pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {
         || studio.palette.is_some()
         || studio.settings.is_some()
         || studio.recovery.is_some()
-        || studio.preparing.is_some()
+        || studio.sound_preparing()
     {
         return Pointer::style(CursorStyle::Arrow);
     }

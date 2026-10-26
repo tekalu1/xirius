@@ -149,7 +149,7 @@ impl Screen {
         }
         let g = geometry(&s, window);
         let (x, y) = in_body(ev.position);
-        if s.preparing.is_some() || s.recovery.is_some() || s.settings.is_some() {
+        if s.sound_preparing() || s.recovery.is_some() || s.settings.is_some() {
             return;
         }
         if s.palette.is_some() {
@@ -193,7 +193,7 @@ impl Screen {
         }
         let g = geometry(&studio, window);
         let (x, y) = in_body(ev.position);
-        if studio.preparing.is_some() {
+        if studio.sound_preparing() {
             if studio.prepare_hover(&g, x, y) {
                 cx.notify();
             }
@@ -629,7 +629,7 @@ impl Screen {
         if studio.palette.is_some()
             || studio.settings.is_some()
             || studio.recovery.is_some()
-            || studio.preparing.is_some()
+            || studio.sound_preparing()
         {
             return;
         }
@@ -687,7 +687,7 @@ impl Screen {
         if studio.input_blocked() {
             return;
         }
-        if studio.recovery.is_some() || studio.preparing.is_some() {
+        if studio.recovery.is_some() || studio.sound_preparing() {
             return;
         }
         if studio.settings.is_some() {
@@ -1138,7 +1138,7 @@ fn bars_veiled(studio: &Studio) -> bool {
         || studio.palette.is_some()
         || studio.settings.is_some()
         || studio.recovery.is_some()
-        || studio.preparing.is_some()
+        || studio.sound_preparing()
 }
 
 /// The bottom bar under the drawer (UI-300): the CPU and the transport.
@@ -1852,6 +1852,7 @@ fn perform(act: &Act, run: &Run, window: &mut Window, cx: &mut App) {
             let mode = s.transport.mode;
             *s = Studio::sample();
             s.transport.mode = mode;
+            s.transport.bind_window();
             if run.roll_bench.is_some() {
                 crate::roll::probe::Bench::prepare(&mut s);
             }
@@ -2087,6 +2088,7 @@ pub fn run(opts: Options) {
     gpui_platform::application()
         .with_assets(Assets)
         .run(move |cx: &mut App| {
+            crate::transport::mark_window_thread();
             if let Err(e) = crate::fonts::load(cx) {
                 eprintln!("could not load the bundled fonts: {e}");
             }
@@ -2104,6 +2106,7 @@ pub fn run(opts: Options) {
                 Studio::new(crate::song::Song::empty())
             };
             let studio = Rc::new(RefCell::new(initial));
+            studio.borrow_mut().transport.bind_window();
             // A script or a measurement never sounds on the speakers.
             studio.borrow_mut().transport.mode = if opts.shots.is_some() || measured {
                 OutputMode::Silent { paced: true }

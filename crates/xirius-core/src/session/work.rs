@@ -820,6 +820,31 @@ impl Session {
             .any(|d| d.token == token && is_open(&d.command))
     }
 
+    /// Identify saves (including an accepted pending approval) without consuming
+    /// a token or performing I/O. The inner path is only present for Save As.
+    /// Execution still uses `run`, with all its permission and one-use checks.
+    pub fn save_request(&self, name: &str, raw: &Map<String, Value>) -> Option<Option<PathBuf>> {
+        let def = self.registry.get(name)?;
+        let mut spelled = Registry::spelled(def, raw).ok()?;
+        spelled.remove("dry_run");
+        let args = self.registry.normalize(def, &spelled).ok()?;
+        let (name, raw) = if def.name == "ai.decide" {
+            if args.opt_str("answer") != Some("yes") {
+                return None;
+            }
+            let token = args.str("token").ok()?;
+            let pending = self.ai_work.pending.iter().find(|d| d.token == token)?;
+            (pending.command.as_str(), pending.args.as_object()?)
+        } else {
+            (def.name, &spelled)
+        };
+        match name {
+            "project.save" | "version.save" => Some(None),
+            "project.save-as" => Some(Some(PathBuf::from(raw.get("path")?.as_str()?))),
+            _ => None,
+        }
+    }
+
     pub(super) fn record_open_decision(&mut self, token: String, result: CmdResult<RunResult>) {
         if self.ai_work.completed_decisions.len() >= MAX_PENDING {
             let _ = self.ai_work.completed_decisions.remove(0);

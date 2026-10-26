@@ -115,12 +115,16 @@ impl Start {
         config.threaded_local = true;
         let p = p.clone();
         let prefs = t.io_prefs.clone();
+        let mode = t.mode;
         let drivers = t.drivers.clone();
         let pair = t.output_pair;
         let looping = t.looping;
         let metronome = t.metronome;
         let parked = t.parked;
-        let previous: Vec<_> = t.retired.iter().map(|r| r.done.clone()).collect();
+        let mut previous: Vec<_> = t.retired.iter().map(|r| r.done.clone()).collect();
+        if mode == OutputMode::Device && prefs.text("audio.driver") == "wasapi-exclusive" {
+            previous.push(crate::audition::release_for_preparation()?);
+        }
         let player_dir = dir.clone();
         let job = Job::spawn("song-prepare", move || {
             let mut cleanup = Cleanup {
@@ -198,14 +202,16 @@ impl Start {
             let mut settings = xirius_prefs::Settings::memory();
             settings.prefs = prefs.clone();
             host.io_settings = Some(settings.shared());
-            host.set_midi_out(Some(xirius_session::midi_out::system_maker()));
+            if mode == OutputMode::Device {
+                host.set_midi_out(Some(xirius_session::midi_out::system_maker()));
+            }
             while cleanup.previous.iter().any(|d| !d.load(Ordering::Acquire)) {
                 std::thread::sleep(Duration::from_millis(2));
             }
             if stopped.load(Ordering::Acquire) {
                 return Err("中止しました".into());
             }
-            let opened = Output::open(OutputMode::Device, audio, &prefs, &drivers)?;
+            let opened = Output::open(mode, audio, &prefs, &drivers)?;
             let out = opened.output.ok_or("オーディオ出力がありません")?;
             if metronome {
                 send_click(&mut host, &p, true);

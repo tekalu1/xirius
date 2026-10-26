@@ -2525,7 +2525,7 @@ impl Studio {
     }
 
     pub(crate) fn export_run(&mut self, command: &str, args: Value) -> Option<Value> {
-        if self.preparing.is_some() {
+        if self.sound_preparing() {
             return None;
         }
         match self.song.run(command, args) {
@@ -2541,7 +2541,7 @@ impl Studio {
     }
 
     pub(crate) fn export_action(&mut self, act: Act) -> bool {
-        if self.preparing.is_some() {
+        if self.sound_preparing() {
             return false;
         }
         if act != Act::EditName {

@@ -6,7 +6,7 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use xirius_core::error::{CmdError, CmdResult};
-use xirius_core::session::{SaveProgress, Session};
+use xirius_core::session::{RunOptions, RunResult, SaveProgress, Session};
 
 use crate::studio::{FileRequest, Geometry, Rect, Studio};
 use crate::toast::{Answer, Toast};
@@ -22,6 +22,8 @@ pub(crate) enum Leave {
 }
 
 pub(crate) struct Saving {
+    mcp: Option<McpSave>,
+    command: Option<SaveCommand>,
     work: Work,
     pub since: Instant,
     pub progress: Arc<SaveProgress>,
@@ -32,9 +34,30 @@ pub(crate) struct Saving {
     stop_take: bool,
 }
 
+struct McpSave {
+    job: xirius_mcp::Job,
+    result: Option<RunResult>,
+}
+type SaveCommand = (
+    String,
+    serde_json::Map<String, serde_json::Value>,
+    RunOptions,
+);
+impl McpSave {
+    fn command(&self) -> Option<SaveCommand> {
+        self.result.is_none().then(|| {
+            (
+                self.job.command.clone(),
+                self.job.raw.clone(),
+                self.job.opts.clone(),
+            )
+        })
+    }
+}
+
 enum Work {
     States(xirius_session::plugins::StatePull),
-    Writing(JoinHandle<(Session, CmdResult<()>)>),
+    Writing(JoinHandle<(Session, CmdResult<Option<RunResult>>)>),
 }
 
 impl Saving {
@@ -45,7 +68,7 @@ impl Saving {
         self.since.elapsed() >= crate::wait::OVERLAY_AFTER
     }
     pub fn cancellable(&self) -> bool {
-        self.target.is_some()
+        self.target.is_some() && self.mcp.is_none() && self.command.is_none()
     }
     pub fn label(&self) -> &'static str {
         if self.cancellable() {
@@ -217,7 +240,35 @@ impl Studio {
     }
 
     fn launch_save(&mut self, target: Option<PathBuf>, leaving: Option<Leave>) {
-        self.launch_save_with_capture(target, leaving, true);
+        self.launch_save_with_capture(target, leaving, true, None, None);
+    }
+
+    pub(crate) fn save_for_mcp(&mut self, job: xirius_mcp::Job, result: Option<RunResult>) {
+        let target = result
+            .is_none()
+            .then(|| {
+                self.song
+                    .session()
+                    .save_request(&job.command, &job.raw)
+                    .flatten()
+            })
+            .flatten();
+        self.launch_save_with_capture(target, None, true, Some(McpSave { job, result }), None);
+    }
+
+    pub(crate) fn save_command_on_worker(
+        &mut self,
+        name: &str,
+        raw: serde_json::Map<String, serde_json::Value>,
+    ) {
+        let target = self.song.session().save_request(name, &raw).flatten();
+        self.launch_save_with_capture(
+            target,
+            None,
+            true,
+            None,
+            Some((name.into(), raw, RunOptions::human())),
+        );
     }
 
     pub(crate) fn export_with_plugin_states(&mut self, path: PathBuf) {
@@ -225,6 +276,16 @@ impl Studio {
     }
 
     pub(crate) fn version_with_plugin_states(&mut self, name: String) {
+        if self.transport.is_windowed() {
+            self.save_command_on_worker(
+                "version.save",
+                serde_json::json!({"name":name})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            );
+            return;
+        }
         if self.transport.host().is_some() {
             self.launch_save(None, Some(Leave::Version(name)));
         } else {
@@ -240,7 +301,7 @@ impl Studio {
     pub(crate) fn close_without_plugin_state(&mut self) {
         self.leaving_ready = true;
         self.keep_leaving();
-        self.launch_save_with_capture(None, Some(Leave::Close), false);
+        self.launch_save_with_capture(None, Some(Leave::Close), false, None, None);
     }
 
     fn launch_save_with_capture(
@@ -248,6 +309,8 @@ impl Studio {
         target: Option<PathBuf>,
         leaving: Option<Leave>,
         capture: bool,
+        mcp: Option<McpSave>,
+        command: Option<SaveCommand>,
     ) {
         let close_when_done = self.keep.save_started();
         self.leaving_ready = false;
@@ -277,9 +340,20 @@ impl Studio {
         let work = if let Some(pull) = pull {
             Work::States(pull)
         } else {
-            Work::Writing(self.save_worker(target.clone(), leaving.is_some(), progress.clone()))
+            Work::Writing(
+                self.save_worker(
+                    target.clone(),
+                    leaving.is_some(),
+                    progress.clone(),
+                    command
+                        .clone()
+                        .or_else(|| mcp.as_ref().and_then(McpSave::command)),
+                ),
+            )
         };
         self.saving = Some(Saving {
+            mcp,
+            command,
             work,
             since: crate::wait::now(),
             progress,
@@ -296,7 +370,8 @@ impl Studio {
         worker_target: Option<PathBuf>,
         only_wait: bool,
         worker_progress: Arc<SaveProgress>,
-    ) -> JoinHandle<(Session, CmdResult<()>)> {
+        command: Option<SaveCommand>,
+    ) -> JoinHandle<(Session, CmdResult<Option<RunResult>>)> {
         let mut session = self.song.take_session_for_save();
         let delay = self.save_test_delay;
         #[cfg(test)]
@@ -310,13 +385,17 @@ impl Studio {
                 }
                 if failing {
                     Err(CmdError::io("保存できません"))
+                } else if let Some((command, args, opts)) = command {
+                    session.run(&command, &args, &opts).map(Some)
                 } else if only_wait {
                     session.flush_writes();
-                    Ok(())
+                    Ok(None)
                 } else if let Some(target) = worker_target {
-                    session.save_as_cancellable(&target, worker_progress)
+                    session
+                        .save_as_cancellable(&target, worker_progress)
+                        .map(|_| None)
                 } else {
-                    session.save_collecting().map(|_| ())
+                    session.save_collecting().map(|_| None)
                 }
             }))
             .unwrap_or_else(|_| Err(CmdError::io("保存できません")));
@@ -331,7 +410,10 @@ impl Studio {
         if let Work::States(pull) = &save.work {
             if save.progress.cancelled() {
                 pull.cancel();
-                self.saving = None;
+                if let Some(mcp) = self.saving.take().unwrap().mcp {
+                    mcp.job
+                        .answer(Err(CmdError::conflict("保存を中止しました")));
+                }
                 self.update.pending = None;
                 return true;
             }
@@ -363,6 +445,9 @@ impl Studio {
                     pull.cancel();
                 }
                 self.keep.plugin_state_failed = true;
+                if let Some(mcp) = save.mcp.take() {
+                    mcp.job.answer(Err(error.clone()));
+                }
                 self.save_failed(&error);
                 self.error = Some(error.to_string());
                 self.update.pending = None;
@@ -372,11 +457,16 @@ impl Studio {
                 return true;
             }
             self.keep.plugin_state_failed = false;
-            save.work = Work::Writing(self.save_worker(
-                save.target.clone(),
-                save.leaving.is_some(),
-                save.progress.clone(),
-            ));
+            save.work = Work::Writing(
+                self.save_worker(
+                    save.target.clone(),
+                    save.leaving.is_some(),
+                    save.progress.clone(),
+                    save.command
+                        .clone()
+                        .or_else(|| save.mcp.as_ref().and_then(McpSave::command)),
+                ),
+            );
             self.saving = Some(save);
             return true;
         }
@@ -386,12 +476,16 @@ impl Studio {
         if !worker.is_finished() {
             return false;
         }
-        let save = self.saving.take().unwrap();
+        let mut save = self.saving.take().unwrap();
         let Work::Writing(worker) = save.work else {
             unreachable!()
         };
         let (session, result) = worker.join().expect("save worker catches panics");
-        let saved_as = save.target.is_some() && result.is_ok();
+        let committed = result.as_ref().is_ok_and(|r| {
+            r.as_ref()
+                .is_none_or(|r| !r.dry_run && r.decision.is_none())
+        });
+        let saved_as = save.target.is_some() && committed;
         self.song.finish_session_save(session, saved_as);
         if save.stop_take && self.transport.take.is_some() {
             self.finish_take();
@@ -400,6 +494,17 @@ impl Studio {
         for failure in &failures {
             self.save_failed(failure);
         }
+        if let Some(mcp) = save.mcp.take() {
+            let reply = match (&result, failures.first()) {
+                (Err(error), _) | (_, Some(error)) => Err(error.clone()),
+                (Ok(result), None) => Ok(result
+                    .clone()
+                    .or(mcp.result)
+                    .expect("MCP save returns its command result")),
+            };
+            mcp.job.answer(reply);
+        }
+        let result = result.map(|_| ());
         match result {
             Err(error) if error.io_kind == Some(std::io::ErrorKind::Interrupted) => {
                 // The save was cancelled: the close is not going on, so the update is not
@@ -422,7 +527,7 @@ impl Studio {
                     if failures.is_empty() {
                         self.save_succeeded();
                     }
-                    if let Some(target) = save.target {
+                    if saved_as && let Some(target) = save.target {
                         self.transport.relocate(self.song.dir());
                         if let Some(draft) = save.draft {
                             self.keep.delete_draft(&draft);
@@ -540,6 +645,67 @@ mod tests {
     use crate::keep::SaveMark;
     use crate::song::Song;
     use std::time::Duration;
+
+    #[test]
+    fn connected_mcp_save_as_waits_for_worker_io_and_returns_the_original_command_result() {
+        use std::sync::mpsc;
+        use xirius_mcp::Host;
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("copy");
+        let mut s = Studio::new(Song::empty());
+        s.song.save_as(&root.path().join("original")).unwrap();
+        s.transport.bind_window();
+        let release = crate::browser_io_tests::Release::new();
+        let gate = release.0.clone();
+        let watch = target.clone();
+        let once = std::sync::atomic::AtomicBool::new(false);
+        let (tx, entered) = mpsc::channel();
+        let _observe = xirius_core::io_test::observe(Arc::new(move |op, path| {
+            if op == "write"
+                && path.starts_with(&watch)
+                && !once.swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                tx.send(std::thread::current().id()).unwrap();
+                let held = gate.0.lock().unwrap();
+                drop(gate.1.wait_while(held, |done| !*done).unwrap());
+            }
+            Ok(())
+        }));
+        let (bridge, mut jobs) = xirius_mcp::bridge(xirius_session::commands::shared_registry());
+        let path = target.clone();
+        let call = std::thread::spawn(move || {
+            bridge.run(
+                "project.save-as",
+                serde_json::json!({"path":path}).as_object().unwrap(),
+                &RunOptions::human(),
+                true,
+            )
+        });
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let job = loop {
+            if let Ok(job) = jobs.try_recv() {
+                break job;
+            }
+            assert!(Instant::now() < deadline, "MCP job watchdog");
+            std::thread::yield_now();
+        };
+        s.ai_job(job);
+        assert_ne!(
+            entered.recv_timeout(Duration::from_secs(20)).unwrap(),
+            std::thread::current().id()
+        );
+        assert!(!call.is_finished());
+        assert!(s.input_blocked());
+        assert!(!s.poll_saving(), "a held disk operation is only polled");
+        release.release();
+        s.wait_for_save();
+        let result = call.join().unwrap().unwrap();
+        assert_eq!(result.command, "project.save-as");
+        assert!(!result.dry_run && result.decision.is_none());
+        assert_eq!(s.song.dir().as_deref(), Some(target.as_path()));
+        assert!(target.join("project.json").exists());
+        assert!(s.transport.host().is_none());
+    }
 
     fn finish(s: &mut Studio) {
         let deadline = Instant::now() + Duration::from_secs(8);

@@ -112,7 +112,19 @@ pub struct Take {
 
 const PREVIEW_CLOSING: &str = "試聴の出力を閉じています";
 
+thread_local! {
+    static WINDOW_THREAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Mark the GPUI event-loop thread before any Studio or script fixture is made.
+/// Replacing a Studio on this thread cannot restore a synchronous transport.
+pub(crate) fn mark_window_thread() {
+    WINDOW_THREAD.with(|marked| marked.set(true));
+}
+
 pub struct Transport {
+    /// A GPUI window may never enter the synchronous non-window transport API.
+    windowed: bool,
     prepared_start: Option<prepared::Start>,
     retired: Vec<prepared::Retiring>,
     pending_output: Option<(bool, Tick)>,
@@ -180,6 +192,7 @@ pub struct Transport {
 impl Transport {
     pub fn new(mode: OutputMode) -> Transport {
         Transport {
+            windowed: WINDOW_THREAD.with(std::cell::Cell::get),
             prepared_start: None,
             retired: Vec::new(),
             pending_output: None,
@@ -216,6 +229,18 @@ impl Transport {
             not_ready: Vec::new(),
             input_down: None,
         }
+    }
+
+    pub(crate) fn bind_window(&mut self) {
+        assert!(
+            self.player.is_none(),
+            "bind before constructing a window's player"
+        );
+        self.windowed = true;
+    }
+
+    pub(crate) fn is_windowed(&self) -> bool {
+        self.windowed
     }
 
     pub(crate) fn stop_preview(&mut self) {
@@ -294,7 +319,7 @@ impl Transport {
         {
             return false;
         }
-        if self.mode == OutputMode::Device {
+        if self.mode == OutputMode::Device || self.windowed {
             match prepared::Start::new(self, p, dir) {
                 Ok(start) => {
                     self.prepared_start = Some(start);
@@ -465,6 +490,9 @@ impl Transport {
         self.watch_tried = None;
         self.io_levels.clear();
         if let Err(e) = self.ensure(p, dir.clone()) {
+            if self.background_starting() {
+                return Ok(());
+            }
             if e == PREVIEW_CLOSING {
                 self.pending_output = Some((playing, at));
                 return Ok(());
@@ -506,6 +534,11 @@ impl Transport {
             self.forget_player();
         }
         if self.player.is_none() {
+            if self.windowed && self.mode != OutputMode::None {
+                self.down = None;
+                self.begin_start(p, dir);
+                return Err("音を準備しています".into());
+            }
             if self.mode == OutputMode::Device
                 && self.io_prefs.text("audio.driver") == "wasapi-exclusive"
                 && !crate::audition::release_output_ready()
@@ -1224,7 +1257,7 @@ impl Studio {
     /// The transport keys: Space plays and pauses, Enter stops, Home goes to
     /// the start, R records and C turns the loop on and off.
     pub fn transport_key(&mut self, key: &str) -> bool {
-        if self.preparing.is_some() || self.unsaved.is_some() {
+        if self.sound_preparing() || self.unsaved.is_some() {
             return true;
         }
         match key {
@@ -1238,7 +1271,7 @@ impl Studio {
     }
 
     pub fn toggle_play(&mut self) -> bool {
-        if self.preparing.is_some() || self.unsaved.is_some() {
+        if self.sound_preparing() || self.unsaved.is_some() {
             return false;
         }
         self.stop_export_preview();
@@ -1300,7 +1333,7 @@ impl Studio {
     /// A track the session leaves out (an input the device does not have, no
     /// MIDI input) is said in the message line; the others record.
     pub fn toggle_record(&mut self) -> bool {
-        if self.preparing.is_some() || self.unsaved.is_some() {
+        if self.sound_preparing() || self.unsaved.is_some() {
             return false;
         }
         self.stop_export_preview();
@@ -1481,6 +1514,13 @@ impl Studio {
         }
         if self.input_blocked() {
             return false;
+        }
+        if self.transport.is_windowed()
+            && let Some(raw) = args.as_object()
+            && self.song.session().save_request(command, raw).is_some()
+        {
+            self.save_command_on_worker(command, raw.clone());
+            return true;
         }
         // A wheel's undo step ends before any other command (P3-7 of review 15).
         if !self.wheel_running {

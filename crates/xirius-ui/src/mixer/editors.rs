@@ -164,10 +164,19 @@ impl Studio {
         let fail = |e: xirius_vst3::Error| format!("{name} の窓を開けません: {e}");
         let project = self.auto_heard(&self.project());
         let dir = self.song.dir();
-        let Ok(host) = self.transport.start_host(&project, dir) else {
-            return open_apart(&catalog, plugin, title, place);
+        let windowed = self.transport.is_windowed();
+        let host = match self.transport.start_host(&project, dir) {
+            Ok(host) => host,
+            Err(error) if windowed => return Err(error),
+            Err(_) => return open_apart(&catalog, plugin, title, place),
         };
         if let Some((instance, generation)) = host.plugins().local(plugin.id) {
+            if windowed {
+                return Err(
+                    "専用所有スレッドのプラグインが準備できていません。音を準備し直してください"
+                        .into(),
+                );
+            }
             let editor = instance.open_editor_at(&title, place).map_err(fail)?;
             return Ok(OpenEditor {
                 id: plugin.id,

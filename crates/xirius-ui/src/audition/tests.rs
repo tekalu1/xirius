@@ -232,7 +232,7 @@ impl xirius_session::output::SharedStream for ReviewStream {
 fn review_shared_preview_releases_before_exclusive_output_opens() {
     use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
     use xirius_session::output::{DeviceOutput, Drivers, Output, Refused, SilentOutput};
-    for ended in [false, true] {
+    for (ended, windowed) in [(false, false), (true, false), (false, true), (true, true)] {
         close();
         let (_tmp, top) = place("shared-release");
         let held = Arc::new(AtomicUsize::new(0));
@@ -242,6 +242,9 @@ fn review_shared_preview_releases_before_exclusive_output_opens() {
         let close_gate = Arc::new(Mutex::new(Some((began, proceed))));
         let mut release_close = ReviewRelease(Some(go));
         let mut s = studio(OutputMode::Device, &top);
+        if windowed {
+            s.transport.bind_window();
+        }
         s.transport
             .io_prefs
             .set("audio.driver", &serde_json::json!("wasapi-shared"))
@@ -308,6 +311,7 @@ fn review_shared_preview_releases_before_exclusive_output_opens() {
             "the new engine must wait for output close acknowledgement"
         );
         for _ in 0..20 {
+            s.poll_preparing();
             s.poll_device();
             assert_eq!(accepted.load(SeqCst), 0);
         }
@@ -315,6 +319,7 @@ fn review_shared_preview_releases_before_exclusive_output_opens() {
         let end = Instant::now() + GUARD;
         while !s.transport.is_live() {
             assert!(Instant::now() < end);
+            s.poll_preparing();
             s.poll_device();
             std::thread::yield_now();
         }

@@ -210,7 +210,7 @@ pub(crate) fn wrap(full: &str, w: f32, mut measure: impl FnMut(&str) -> f32) -> 
 pub(crate) fn accessible(s: Rc<RefCell<Studio>>, g: &Geometry) -> impl IntoElement {
     let mut root = div().id("opening-accessible").absolute();
     let borrowed = s.borrow();
-    if borrowed.preparing.is_some() {
+    if borrowed.sound_preparing() {
         return root;
     }
     let Some(open) = &borrowed.opening else {

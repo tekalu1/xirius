@@ -223,7 +223,7 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     if crate::unsaved::paint(pen, studio, g) {
         return;
     }
-    if studio.preparing.is_none() && crate::opening_view::paint(pen, studio, g) {
+    if !studio.sound_preparing() && crate::opening_view::paint(pen, studio, g) {
         return;
     }
     let mut v = view();
