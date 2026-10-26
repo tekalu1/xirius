@@ -119,7 +119,11 @@ fn state_requests_cancel_without_waiting_and_the_audio_returns_before_terminatio
     let capture = opened.controller.capture().unwrap();
     entered.wait();
     assert!(capture.poll().is_none());
-    capture.cancel();
+    capture.quarantine();
+    assert!(
+        Controller::open(open()).err().unwrap().contains("隔離"),
+        "a stopped SDK is not recreated by local retry"
+    );
     assert!(capture.poll().unwrap().is_err());
     assert!(
         capture.poll().is_none(),

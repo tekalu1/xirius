@@ -7,15 +7,49 @@
 
 use std::cell::Cell;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use crate::{AudioPart, Caption, Editor, Gesture, Module, ParamInfo, ParamSender, Placement};
 use crate::{Plugin, PluginState};
 
 const QUEUED: usize = 64;
+const MAX_OWNERS: usize = 256;
+
+#[derive(Default)]
+struct Owners(Vec<(PathBuf, [u8; 16], Weak<RetireState>)>);
+static OWNERS: Mutex<Owners> = Mutex::new(Owners(Vec::new()));
+
+impl Owners {
+    fn reserve(&mut self, open: &Open) -> Result<Retirement, String> {
+        self.0.retain(|(_, _, state)| {
+            state
+                .upgrade()
+                .is_some_and(|s| !s.finished.load(Ordering::Acquire))
+        });
+        if self.0.iter().any(|(path, class, state)| {
+            path == &open.bundle
+                && class == &open.class
+                && state
+                    .upgrade()
+                    .is_some_and(|s| s.unresponsive.load(Ordering::Acquire))
+        }) {
+            return Err("応答しない所有者を隔離しています。同じプラグインをローカルで作り直せません。別プロセスで開くか、アプリを再起動してください".into());
+        }
+        if self.0.len() >= MAX_OWNERS {
+            return Err("ローカルのプラグイン所有者が上限に達しました。片付けを待つか、別プロセスで開いてください".into());
+        }
+        let retirement = Retirement(Arc::new(RetireState::default()));
+        self.0.push((
+            open.bundle.clone(),
+            open.class,
+            Arc::downgrade(&retirement.0),
+        ));
+        Ok(retirement)
+    }
+}
 
 /// No SDK objects, module handles or thread-affine guards may be put here.
 pub struct Open {
@@ -46,6 +80,7 @@ pub struct Retirement(Arc<RetireState>);
 struct RetireState {
     finished: AtomicBool,
     audio_returned: AtomicBool,
+    unresponsive: AtomicBool,
 }
 
 impl Retirement {
@@ -72,6 +107,7 @@ impl Drop for Finished {
 /// Each request has its own reply channel. A late reply cannot satisfy a newer
 /// capture or a request to another instance with the same song plugin id.
 pub struct Ticket<T> {
+    owner: Option<Retirement>,
     reply: Receiver<Result<T, String>>,
     abandoned: Arc<AtomicBool>,
     consumed: Cell<bool>,
@@ -101,6 +137,15 @@ impl<T> Ticket<T> {
     pub fn cancel(&self) {
         self.abandoned.store(true, Ordering::Release);
     }
+
+    /// A deadline expired, rather than an ordinary user cancellation. Retain the
+    /// blocked instance on its owner and refuse another local instance of it.
+    pub fn quarantine(&self) {
+        if let Some(owner) = &self.owner {
+            owner.0.unresponsive.store(true, Ordering::Release);
+        }
+        self.cancel();
+    }
 }
 
 impl<T> Drop for Ticket<T> {
@@ -113,6 +158,7 @@ type Job = Box<dyn FnOnce(&mut Instance) + Send>;
 
 #[derive(Clone)]
 pub struct Controller {
+    retirement: Retirement,
     commands: SyncSender<Job>,
 }
 
@@ -244,12 +290,17 @@ impl Controller {
     /// Starts the owner and returns immediately. Thread creation is the only
     /// synchronous fallible work; DLL loading and initial getState happen there.
     pub fn open(open: Open) -> Result<Ticket<Opened>, String> {
-        let (reply, ticket) = reply();
+        let retirement = OWNERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .reserve(&open)?;
+        let (reply, mut ticket) = reply();
+        ticket.owner = Some(retirement.clone());
         let cancelled = ticket.abandoned.clone();
         std::thread::Builder::new()
             .name("vst3-owner".into())
             .spawn(move || {
-                let finished = Finished(Retirement(Arc::new(RetireState::default())));
+                let finished = Finished(retirement);
                 let apartment = match Apartment::new() {
                     Ok(a) => a,
                     Err(e) => {
@@ -303,7 +354,10 @@ impl Controller {
                     lifetime: Arc::new(()),
                 };
                 let opened = Opened {
-                    controller: Controller { commands },
+                    controller: Controller {
+                        commands,
+                        retirement: finished.0.clone(),
+                    },
                     params: instance.plugin.params(),
                     note_names: instance.plugin.note_names(),
                     sender: instance.plugin.param_sender(),
@@ -318,6 +372,7 @@ impl Controller {
                 };
                 // Even a ticket abandoned during load returns its audio through
                 // the same queue; final release never happens in the receiver.
+                finished.0.0.unresponsive.store(false, Ordering::Release);
                 let _ = reply.send(Ok(opened));
                 drop(reply);
                 let mut disconnected = false;
@@ -353,12 +408,17 @@ impl Controller {
         &self,
         f: impl FnOnce(&mut Instance) -> Result<T, String> + Send + 'static,
     ) -> Result<Ticket<T>, String> {
-        let (reply, ticket) = reply();
+        let (reply, mut ticket) = reply();
+        ticket.owner = Some(self.retirement.clone());
         let abandoned = ticket.abandoned.clone();
+        let owner = self.retirement.clone();
         self.commands
             .try_send(Box::new(move |instance| {
                 if !abandoned.load(Ordering::Acquire) {
                     let result = f(instance);
+                    // Liveness recovered; the abandoned value is still discarded.
+                    // A permanently stopped call never reaches this boundary.
+                    owner.0.unresponsive.store(false, Ordering::Release);
                     if !abandoned.load(Ordering::Acquire) {
                         let _ = reply.send(result);
                     }
@@ -366,6 +426,13 @@ impl Controller {
             }))
             .map_err(|_| "プラグインが応答しないか要求が満杯です".to_string())?;
         Ok(ticket)
+    }
+
+    pub fn quarantine(&self) {
+        self.retirement
+            .0
+            .unresponsive
+            .store(true, Ordering::Release);
     }
 
     pub fn capture(&self) -> Result<Ticket<PluginState>, String> {
@@ -444,6 +511,7 @@ fn reply<T>() -> (SyncSender<Result<T, String>>, Ticket<T>) {
     (
         sender,
         Ticket {
+            owner: None,
             reply,
             abandoned: Arc::new(AtomicBool::new(false)),
             consumed: Cell::new(false),
@@ -531,6 +599,46 @@ fn pump() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owner_reservations_bound_active_and_retiring_resources_and_reject_quarantined_classes() {
+        let open = |class| Open {
+            bundle: PathBuf::from("fixture.vst3"),
+            class: [class; 16],
+            state: None,
+            params: Vec::new(),
+            requires_process_main: false,
+            sample_rate: 48_000.0,
+            max_block: 512,
+            offline: false,
+        };
+        let mut registry = Owners::default();
+        let mut held = Vec::new();
+        for _ in 0..MAX_OWNERS {
+            held.push(registry.reserve(&open(1)).unwrap());
+        }
+        assert!(registry.reserve(&open(2)).err().unwrap().contains("上限"));
+        held[0].0.finished.store(true, Ordering::Release);
+        let other = registry.reserve(&open(2)).unwrap();
+        other.0.unresponsive.store(true, Ordering::Release);
+        held[1].0.finished.store(true, Ordering::Release);
+        assert!(
+            registry
+                .reserve(&open(2))
+                .err()
+                .unwrap()
+                .contains("別プロセス")
+        );
+        assert!(
+            registry.reserve(&open(3)).is_ok(),
+            "a different class still uses the freed slot"
+        );
+        other.0.finished.store(true, Ordering::Release);
+        assert!(
+            registry.reserve(&open(2)).is_ok(),
+            "fully retired SDK resources no longer prevent opening"
+        );
+    }
 
     #[test]
     fn receipt_of_audio_alone_does_not_allow_the_owner_to_destroy_the_return_ring() {

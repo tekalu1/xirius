@@ -174,6 +174,12 @@ pub struct StatePull {
     not_before: Instant,
 }
 impl StatePull {
+    pub fn quarantine(&self) {
+        for capture in &self.owned {
+            capture.quarantine();
+        }
+        self.cancel();
+    }
     pub fn ready(&self) -> bool {
         self.cancelled.get()
             || (Instant::now() >= self.not_before
@@ -848,6 +854,7 @@ impl PluginLoader {
                         break result?;
                     }
                     if Instant::now() >= deadline {
+                        task.quarantine();
                         return Err(
                             "プラグインの状態を引き継げません。未保存の変更が残っています".into(),
                         );
@@ -1223,7 +1230,7 @@ impl PluginLoader {
                     break result.map_err(|e| format!("専用所有スレッドで開けませんでした: {e}。主スレッドが必要なプラグインは別プロセスで開く設定を選んでください（ローカル実行の指定は変更していません）"))?;
                 }
                 if Instant::now() >= deadline {
-                    ticket.cancel();
+                    ticket.quarantine();
                     return Err(
                         "プラグインが応答しません。別プロセスで開くことを検討してください".into(),
                     );
@@ -1747,7 +1754,7 @@ impl PluginLoader {
             std::thread::sleep(Duration::from_millis(2));
         }
         if !asked.ready() {
-            asked.cancel();
+            asked.quarantine();
             return Err("プラグインの状態を取得できません。未保存の変更が残っています".into());
         }
         if let Some(error) = asked.error() {

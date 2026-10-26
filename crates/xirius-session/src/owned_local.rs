@@ -107,6 +107,18 @@ impl Capture {
             c.value = None;
         }
     }
+
+    pub(crate) fn quarantine(&self) {
+        if let Ok(c) = self.0.try_lock() {
+            if let Some(task) = &c.task {
+                task.quarantine();
+            }
+            if let Some(controller) = &c.controller {
+                controller.quarantine();
+            }
+        }
+        self.cancel();
+    }
 }
 
 pub(crate) struct OwnedLocal {

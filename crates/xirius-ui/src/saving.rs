@@ -423,6 +423,7 @@ impl Studio {
                 {
                     return true;
                 }
+                pull.quarantine();
                 Some("プラグインの状態を取得できません。未保存の変更が残っています".into())
             } else {
                 pull.error()

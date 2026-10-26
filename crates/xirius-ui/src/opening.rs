@@ -486,6 +486,9 @@ impl Studio {
                 {
                     return true;
                 }
+                if let Some(pull) = &open.pull {
+                    pull.quarantine();
+                }
                 self.ask_state_open();
                 return true;
             }
