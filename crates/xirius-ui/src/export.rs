@@ -2525,6 +2525,9 @@ impl Studio {
     }
 
     pub(crate) fn export_run(&mut self, command: &str, args: Value) -> Option<Value> {
+        if self.preparing.is_some() {
+            return None;
+        }
         match self.song.run(command, args) {
             Ok(v) => {
                 self.error = None;
@@ -2538,6 +2541,9 @@ impl Studio {
     }
 
     pub(crate) fn export_action(&mut self, act: Act) -> bool {
+        if self.preparing.is_some() {
+            return false;
+        }
         if act != Act::EditName {
             self.commit_export_name();
         }

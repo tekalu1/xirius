@@ -160,7 +160,7 @@ impl Studio {
         code: Option<&str>,
     ) -> bool {
         self.cancel_browser_menu();
-        if self.opening_key(key) || self.saving_key(key) {
+        if self.prepare_key(key) || self.opening_key(key) || self.saving_key(key) {
             return true;
         }
         if self.name_key(key, mods) {

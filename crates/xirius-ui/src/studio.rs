@@ -1755,6 +1755,9 @@ impl Studio {
     }
 
     pub(crate) fn command(&mut self, run: impl FnOnce(&mut Song) -> Result<(), String>) -> bool {
+        if self.preparing.is_some() {
+            return false;
+        }
         if let Err(e) = run(&mut self.song) {
             self.error = Some(e);
             return true;
@@ -1824,7 +1827,7 @@ impl Studio {
 
     /// Keyboard shortcuts. `key` is GPUI's key name ("z", "y").
     pub fn key(&mut self, g: &Geometry, key: &str, ctrl: bool, shift: bool) -> bool {
-        if self.opening_key(key) || self.saving_key(key) {
+        if self.prepare_key(key) || self.opening_key(key) || self.saving_key(key) {
             return true;
         }
         if key == "escape" && self.popup.take().is_some() {
@@ -2428,6 +2431,9 @@ impl Studio {
     /// Nonblocking file-dialog and script entry. Synchronous fixtures have an
     /// explicitly named helper below and never run from a window callback.
     pub fn finish_file_request(&mut self, request: FileRequest, path: &std::path::Path) {
+        if self.preparing.is_some() {
+            return;
+        }
         if matches!(
             request,
             FileRequest::Open | FileRequest::OpenVersion(_) | FileRequest::OpenDawproject
@@ -2439,6 +2445,9 @@ impl Studio {
     }
 
     pub fn finish_file_request_sync(&mut self, request: FileRequest, path: &std::path::Path) {
+        if self.preparing.is_some() {
+            return;
+        }
         if self.finish_preset_file(request.clone(), path) {
             return;
         }

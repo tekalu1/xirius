@@ -473,6 +473,8 @@ impl Studio {
         if self.input_blocked() {
             job.answer(Err(CmdError::conflict(if self.opening.is_some() {
                 crate::opening::BUSY
+            } else if self.preparing.is_some() {
+                crate::prepare_card::TITLE
             } else {
                 "保存中です"
             })));
@@ -497,6 +499,9 @@ impl Studio {
         opts: &xirius_core::session::RunOptions,
         save: bool,
     ) -> Result<RunResult, CmdError> {
+        if self.preparing.is_some() {
+            return Err(CmdError::conflict(crate::prepare_card::TITLE));
+        }
         let before = self.roll_target().map(|t| {
             let from = t.notes.iter().map(|n| (n.id, NoteView::from(n))).collect();
             (t.clip.id, from)

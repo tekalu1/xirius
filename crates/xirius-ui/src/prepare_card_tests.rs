@@ -16,6 +16,81 @@ fn paced() -> OutputMode {
     OutputMode::Silent { paced: true }
 }
 
+#[test]
+fn preparing_blocks_commands_shortcuts_save_transport_export_and_connected_mcp() {
+    use std::sync::Arc;
+    use xirius_core::session::RunOptions;
+    use xirius_mcp::Host;
+    let mut s = Studio::new(crate::song::Song::empty());
+    s.preparing = Some(crate::prepare_card::Card::new(Default::default()));
+    let before = s.project();
+    let g = s.geometry(1200.0, 800.0);
+    for key in ["n", "o", "s", "z", "y"] {
+        assert!(s.key(&g, key, true, false));
+        assert!(s.mapped_key(
+            &g,
+            key,
+            None,
+            crate::tools::Mods {
+                ctrl: true,
+                ..Default::default()
+            }
+        ));
+    }
+    assert!(s.file_request.is_none());
+    assert!(!s.run_command("track.add.audio", json!({"name":"blocked"})));
+    assert!(!s.command(|_| panic!("must not enter song mutation")));
+    assert!(!s.start_save());
+    assert!(!s.toggle_play());
+    assert!(!s.toggle_record());
+    assert!(s.transport_key("space"));
+    assert!(!s.transport.playing);
+    assert!(!s.transport.recording);
+    assert!(s.transport.take.is_none());
+    assert!(!s.request_open(crate::opening::Request::New));
+    let temp = tempfile::tempdir().unwrap();
+    let out = temp.path().join("blocked");
+    s.start_file_request(crate::studio::FileRequest::SaveAs, &out);
+    s.finish_file_request(crate::studio::FileRequest::SaveAs, &out);
+    assert!(!s.dawproject_export(&out));
+    assert!(s.export_run("export.add", json!({})).is_none());
+    assert!(
+        s.ai_run(
+            "track.add.audio",
+            json!({"name":"blocked"}).as_object().unwrap(),
+            &RunOptions::human(),
+            true
+        )
+        .is_err()
+    );
+    for command in ["track.add.audio", "project.new", "project.save"] {
+        let (bridge, mut jobs) = xirius_mcp::bridge(xirius_session::commands::shared_registry());
+        let call = std::thread::spawn(move || {
+            bridge.run(
+                command,
+                json!({"name":"blocked"}).as_object().unwrap(),
+                &RunOptions::human(),
+                true,
+            )
+        });
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let job = loop {
+            if let Ok(job) = jobs.try_recv() {
+                break job;
+            }
+            assert!(Instant::now() < deadline, "MCP watchdog");
+            std::thread::yield_now();
+        };
+        s.ai_job(job);
+        assert!(call.join().unwrap().is_err(), "{command}");
+    }
+    assert!(Arc::ptr_eq(&before, &s.project()));
+    assert!(s.opening.is_none());
+    assert!(s.saving.is_none());
+    assert!(s.preparing.is_some());
+    assert!(!out.exists());
+}
+
 /// The sample song with the test plugin on its first three audio tracks, opened in this
 /// process, and the plugins' ids.
 fn with_plugins() -> (Studio, Vec<PluginId>, Vec<String>) {

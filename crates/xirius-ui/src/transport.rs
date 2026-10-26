@@ -1149,6 +1149,9 @@ impl Studio {
     /// The transport keys: Space plays and pauses, Enter stops, Home goes to
     /// the start, R records and C turns the loop on and off.
     pub fn transport_key(&mut self, key: &str) -> bool {
+        if self.preparing.is_some() {
+            return true;
+        }
         match key {
             "space" => self.toggle_play(),
             "enter" => self.stop_transport(),
@@ -1160,6 +1163,9 @@ impl Studio {
     }
 
     pub fn toggle_play(&mut self) -> bool {
+        if self.preparing.is_some() {
+            return false;
+        }
         self.stop_export_preview();
         if self.transport.take.is_some() {
             self.finish_take();
@@ -1219,6 +1225,9 @@ impl Studio {
     /// A track the session leaves out (an input the device does not have, no
     /// MIDI input) is said in the message line; the others record.
     pub fn toggle_record(&mut self) -> bool {
+        if self.preparing.is_some() {
+            return false;
+        }
         self.stop_export_preview();
         if self.transport.take.is_some() {
             self.finish_take();

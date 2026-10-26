@@ -176,7 +176,7 @@ impl Studio {
     /// Writes the song to `out` (`.dawproject` added when it has no such ending), its audio
     /// inside; a file already there goes to the recycle bin. False when it did not start.
     pub fn dawproject_export(&mut self, out: &Path) -> bool {
-        if self.busy_dawproject() {
+        if self.preparing.is_some() || self.busy_dawproject() {
             return false;
         }
         self.pull_plugins();
