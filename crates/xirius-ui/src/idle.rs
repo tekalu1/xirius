@@ -44,7 +44,8 @@ impl Studio {
                 went_down: false,
             };
         }
-        let changed = self.poll_recent_keep()
+        let changed = self.poll_finished_take()
+            | self.poll_recent_keep()
             | self.poll_plugins()
             | self.poll_perf()
             | self.poll_editors()

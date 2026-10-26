@@ -136,6 +136,45 @@ fn read_wav(p: &Path) -> (Vec<f32>, Vec<f32>) {
 }
 
 #[test]
+fn shutdown_poll_never_waits_for_a_blocked_real_writer() {
+    let dir = Dir::new("shutdown-poll");
+    let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
+    let mut spec = spec(&dir.0, 0, 1);
+    let path = dir.0.join("held.wav");
+    spec.lanes[0].path = Box::new(move |_| {
+        entered_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+        path.clone()
+    });
+    let (mut audio, mut controller) = engine_with(Timeline::default(), RenderMode::Offline);
+    let (mut recorder, capture) = Recorder::start(spec).unwrap();
+    send(&mut controller, Command::Record(Some(capture)));
+    send(&mut controller, Command::Play);
+    run(&mut audio, &mut controller, BLOCK, BLOCK);
+    entered_rx.recv_timeout(Duration::from_secs(30)).unwrap();
+    send(&mut controller, Command::Record(None));
+    run(&mut audio, &mut controller, BLOCK, BLOCK);
+    // The gate stays closed throughout these UI-side polls and audio callbacks.
+    // No elapsed-time assertion can accidentally pass because the writer was fast.
+    for _ in 0..32 {
+        assert!(!recorder.finish_ready(Duration::ZERO));
+        run(&mut audio, &mut controller, BLOCK, BLOCK);
+    }
+    release_tx.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !recorder.finish_ready(Duration::ZERO) {
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    let recording = recorder.finish(Duration::ZERO);
+    assert!(recording.detached);
+    assert!(recording.errors.is_empty(), "{:?}", recording.errors);
+    assert_eq!(recording.takes.len(), 1);
+    assert!(dir.0.join("held.wav").is_file());
+}
+
+#[test]
 fn a_writer_creation_failure_is_visible_while_capture_is_attached() {
     let dir = Dir::new("writer-failure");
     let (mut audio, mut controller) = engine_with(Timeline::default(), RenderMode::Offline);

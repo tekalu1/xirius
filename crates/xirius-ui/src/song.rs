@@ -266,6 +266,21 @@ impl Song {
         .map_err(|e| e.to_string())
     }
 
+    pub(crate) fn place_recording(
+        &mut self,
+        host: &mut SessionHost,
+        finished: &xirius_session::record::Finished,
+    ) -> Result<Value, String> {
+        xirius_session::record::place_recording(
+            &mut self.session,
+            host,
+            &RunOptions::human(),
+            finished,
+        )
+        .map(|r| r.data)
+        .map_err(|e| e.to_string())
+    }
+
     /// Takes what was turned in the plugins' own windows into the song, as one step of the
     /// history (PLG-027). True when the song changed.
     pub fn collect_plugin_edits(&mut self, host: &mut SessionHost) -> Result<bool, String> {

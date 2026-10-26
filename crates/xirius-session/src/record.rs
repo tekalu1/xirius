@@ -715,6 +715,19 @@ impl SessionHost {
         true
     }
 
+    /// Requests stop and polls the real writer; no callback/disk wait on the caller.
+    /// The active recording remains owned by this host until its files are closed.
+    pub fn record_takes_ready(&mut self, wait: Duration) -> CmdResult<Option<Finished>> {
+        if !self.record_stop() {
+            return Err(conflict("recording is not active"));
+        }
+        let active = self.recording.as_mut().expect("checked above");
+        if !active.stopped || !active.recorder.finish_ready(wait) {
+            return Ok(None);
+        }
+        self.record_takes(Duration::ZERO).map(Some)
+    }
+
     /// Waits for the capture to end (stopping it if [`Self::record_stop`] was not called),
     /// closes the files and gives the takes. The engine must go on rendering meanwhile (a device
     /// or a silent output does); it is given up on only once it has rendered nothing for `wait`.
@@ -1073,6 +1086,16 @@ pub fn finish_recording(
     wait: Duration,
 ) -> CmdResult<RunResult> {
     let f = host.record_takes(wait)?;
+    place_recording(session, host, opts, &f)
+}
+
+/// Places closed takes. On failure the caller can keep `f` and retry placement.
+pub fn place_recording(
+    session: &mut Session,
+    host: &mut SessionHost,
+    opts: &RunOptions,
+    f: &Finished,
+) -> CmdResult<RunResult> {
     let summary = f.summary();
     let mut data = f.to_json();
     if f.takes.is_empty() {

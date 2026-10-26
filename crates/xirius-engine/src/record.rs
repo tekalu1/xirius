@@ -1138,6 +1138,7 @@ pub struct Recorder {
     /// Frames the audio side may render after [`Recorder::finish`] begins before it is taken
     /// for one that was not told to stop: the tail and a second.
     overrun: u64,
+    finishing: Option<(u64, u64, Instant)>,
 }
 
 type Wav = crate::wavfile::SafeWav;
@@ -1231,6 +1232,7 @@ impl Recorder {
                 stop,
                 thread: Some(thread),
                 overrun,
+                finishing: None,
             },
             capture,
         ))
@@ -1285,6 +1287,27 @@ impl Recorder {
             .clone()
     }
 
+    /// Polls shutdown without waiting for the callback or the disk writer. Once
+    /// ready, `finish(Duration::ZERO)` only claims an already finished writer.
+    pub fn finish_ready(&mut self, wait: Duration) -> bool {
+        let frames = self.shared.frames.load(Ordering::Relaxed);
+        let (_, seen, since) = self
+            .finishing
+            .get_or_insert((frames, frames, Instant::now()));
+        if *seen != frames {
+            *seen = frames;
+            *since = Instant::now();
+        }
+        if self.detached()
+            || self.finishing.as_ref().is_some_and(|(begun, _, since)| {
+                since.elapsed() >= wait || frames.saturating_sub(*begun) > self.overrun
+            })
+        {
+            self.stop.store(true, Ordering::Release);
+        }
+        self.thread.as_ref().is_none_or(JoinHandle::is_finished)
+    }
+
     /// Waits for the audio side to let go (send `Record(None)` first), writes what is left and
     /// closes the files. A busy machine only makes the wait longer: it is given up on once the
     /// audio side has rendered nothing for `wait` (a device that stopped), or has rendered on
@@ -1328,9 +1351,9 @@ impl Recorder {
 impl Drop for Recorder {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
-        if let Some(t) = self.thread.take() {
-            let _ = t.join();
-        }
+        // The writer owns its buffers, files and Shared until it exits. Abandoning
+        // a recorder must not join disk I/O on the UI or the audio callback.
+        self.thread.take();
     }
 }
 

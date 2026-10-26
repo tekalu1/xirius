@@ -203,6 +203,7 @@ impl Studio {
 
     pub(crate) fn input_blocked(&self) -> bool {
         self.opening.is_some()
+            || self.transport.finishing_take
             || self.saving.is_some()
             || self.sound_preparing()
             || self.unsaved.is_some()

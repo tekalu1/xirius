@@ -201,6 +201,13 @@ impl Studio {
         if self.input_blocked() {
             return;
         }
+        if self.transport.take.is_some() {
+            self.warn(
+                "録音の停止とテイクの配置を終えてから閉じてください".into(),
+                None,
+            );
+            return;
+        }
         if self.keep.plugin_state_failed {
             self.ask_unsaved(crate::unsaved::Pending::Close);
             return;

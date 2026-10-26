@@ -124,6 +124,8 @@ pub(crate) fn mark_window_thread() {
 }
 
 pub struct Transport {
+    pub(crate) finishing_take: bool,
+    finished_take: Option<xirius_session::record::Finished>,
     /// A GPUI window may never enter the synchronous non-window transport API.
     windowed: bool,
     prepared_start: Option<prepared::Start>,
@@ -193,6 +195,8 @@ pub struct Transport {
 impl Transport {
     pub fn new(mode: OutputMode) -> Transport {
         Transport {
+            finishing_take: false,
+            finished_take: None,
             windowed: WINDOW_THREAD.with(std::cell::Cell::get),
             prepared_start: None,
             retired: Vec::new(),
@@ -1070,6 +1074,8 @@ impl Transport {
 
     /// Lets the player go (another song was opened).
     pub fn reset(&mut self) {
+        self.finishing_take = false;
+        self.finished_take = None;
         if let Some(start) = self.prepared_start.take() {
             start.cancel();
         }
@@ -1195,7 +1201,7 @@ impl Transport {
             }
             self.expect = None;
         }
-        if self.take.is_some() {
+        if self.take.is_some() && !self.finishing_take && self.finished_take.is_none() {
             // A recording plays on past the end of the song until stopped.
             self.playing = true;
             self.pre_count = pl.host.pre_count();
@@ -1472,23 +1478,55 @@ impl Studio {
     /// Stops the recording and puts its takes into the song (one undo takes
     /// them out again).
     pub(crate) fn finish_take(&mut self) {
-        let Some(host) = self.transport.host_mut() else {
-            self.transport.end_take();
-            return;
-        };
-        let rate = host.rate();
-        let done = self.song.finish_recording(host);
-        if let Ok(data) = &done {
-            self.transport.loss.receive(data, &self.project(), rate);
+        self.transport.finishing_take = true;
+        self.transport.pause();
+        self.poll_finished_take();
+    }
+
+    pub(crate) fn poll_finished_take(&mut self) -> bool {
+        if !self.transport.finishing_take {
+            return false;
         }
-        self.transport.end_take();
+        // Keep the player and Take until closed files have been placed successfully.
+        let Some(player) = self.transport.player.as_mut() else {
+            self.transport.finishing_take = false;
+            return false;
+        };
+        let host = &mut player.host;
+        let rate = host.rate();
+        if self.transport.finished_take.is_none() {
+            let ready = if self.transport.windowed {
+                host.record_takes_ready(xirius_session::record::STOP_WAIT)
+            } else {
+                host.record_takes(xirius_session::record::STOP_WAIT)
+                    .map(Some)
+            };
+            match ready {
+                Ok(None) => return true,
+                Ok(Some(finished)) => self.transport.finished_take = Some(finished),
+                Err(e) => {
+                    self.error = Some(e.to_string());
+                    self.transport.finishing_take = false;
+                    return true;
+                }
+            }
+        }
+        let done = self.song.place_recording(
+            &mut self.transport.player.as_mut().unwrap().host,
+            self.transport.finished_take.as_ref().unwrap(),
+        );
+        self.transport.finishing_take = false;
         match done {
-            Ok(_) => {
+            Ok(data) => {
+                self.transport.loss.receive(&data, &self.project(), rate);
+                self.transport.finished_take = None;
+                self.transport.end_take();
                 self.error = None;
                 self.after_edit();
             }
             Err(e) => self.error = Some(e),
         }
+        true
     }
 
     /// Turns the metronome on and off (REC-003).
@@ -1628,6 +1666,7 @@ impl Studio {
             self.poll_preparing();
             return true;
         }
+        self.poll_finished_take();
         self.transport.park(self.playhead);
         let midi = self.poll_live_midi() || self.live_midi.input.is_some();
         if let Some(at) = self.transport.poll() {
@@ -2267,6 +2306,50 @@ mod tests {
             s.error.as_deref(),
             Some("オーディオを録音するには曲の保存が必要です")
         );
+    }
+
+    #[test]
+    fn a_window_keeps_closed_takes_when_placement_fails_and_can_retry() {
+        let mut s = studio(paced());
+        let dir = Scratch::new("place-retry");
+        s.song.save_as(&dir.0).unwrap();
+        let vocal = track(&s, "Vocal");
+        s.song.toggle_arm(vocal).unwrap();
+        s.seek(0);
+        s.toggle_record();
+        assert!(s.transport.recording, "{:?}", s.error);
+        assert!(until(&mut s, |s| s.playhead > 100));
+        // Lose the destination before stopping the real recorder. Keep the engine
+        // so this exercises closed-file placement, rather than a fake Take flag.
+        s.song
+            .run("track.delete", json!({"ids": [vocal.to_string()]}))
+            .unwrap();
+        s.transport.windowed = true;
+        s.finish_take();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while s.transport.finishing_take {
+            assert!(Instant::now() < deadline);
+            s.poll_finished_take();
+            std::thread::yield_now();
+        }
+        assert!(s.error.is_some());
+        assert!(s.transport.take.is_some());
+        assert!(s.transport.player.is_some());
+        let files = s.transport.finished_take.as_ref().unwrap().files.clone();
+        assert!(!files.is_empty());
+        assert!(files.iter().all(|p| p.is_file()));
+        assert!(s.song.undo());
+        s.finish_take();
+        assert!(s.error.is_none(), "{:?}", s.error);
+        assert!(s.transport.take.is_none());
+        assert!(s.transport.finished_take.is_none());
+        assert!(
+            s.project().tracks[&vocal]
+                .clips
+                .iter()
+                .any(|c| c.start == 0)
+        );
+        s.transport.reset();
     }
 
     #[test]
