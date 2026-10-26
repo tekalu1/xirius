@@ -168,19 +168,33 @@ const HAND_OVER: Duration = Duration::from_secs(2);
 
 /// An asynchronous state request. Polling never waits for another process.
 pub struct StatePull {
+    cancelled: std::cell::Cell<bool>,
     asked: Vec<(Arc<PluginLink>, u64)>,
     owned: Vec<crate::owned_local::Capture>,
     not_before: Instant,
 }
 impl StatePull {
     pub fn ready(&self) -> bool {
-        Instant::now() >= self.not_before
-            && self.asked.iter().all(|(l, seen)| l.states_seen() > *seen)
-            && self.owned.iter().all(|capture| capture.ready())
+        self.cancelled.get()
+            || (Instant::now() >= self.not_before
+                && self.asked.iter().all(|(l, seen)| l.states_seen() > *seen)
+                && self.owned.iter().all(|capture| capture.ready()))
     }
 
     pub fn error(&self) -> Option<String> {
+        if self.cancelled.get() {
+            return Some("プラグインの状態要求が取り消されました".into());
+        }
         self.owned.iter().find_map(|capture| capture.error())
+    }
+
+    /// Abandon local owner replies even when an SDK call cannot be interrupted.
+    /// This does not claim the plugin has stopped or its owner has retired.
+    pub fn cancel(&self) {
+        self.cancelled.set(true);
+        for capture in &self.owned {
+            capture.cancel();
+        }
     }
 }
 
@@ -1505,6 +1519,7 @@ impl PluginLoader {
                 .values()
                 .any(|l| matches!(l, Leaving::Local(_, _)));
         StatePull {
+            cancelled: std::cell::Cell::new(false),
             asked,
             owned,
             not_before: Instant::now() + if local { CAPTURE_WAIT } else { Duration::ZERO },
@@ -1518,9 +1533,11 @@ impl PluginLoader {
             std::thread::sleep(Duration::from_millis(2));
         }
         if !asked.ready() {
+            asked.cancel();
             return Err("プラグインの状態を取得できません。未保存の変更が残っています".into());
         }
         if let Some(error) = asked.error() {
+            asked.cancel();
             return Err(error);
         }
         Ok(())

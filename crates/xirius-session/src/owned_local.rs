@@ -89,14 +89,16 @@ impl Capture {
         self.0.try_lock().ok()?.value.take()
     }
 
-    fn cancel(&self) {
+    pub(crate) fn cancel(&self) {
         if let Ok(mut c) = self.0.try_lock() {
             c.controller = None;
             c.task = None;
             c.completed = true;
-            let error = "プラグインの状態要求が変更により無効になりました".to_string();
-            c.error = Some(error.clone());
-            c.value = Some(Err(error));
+            let error = "プラグインの状態要求が取り消されました".to_string();
+            c.error = Some(error);
+            // Cancellation belongs to this receipt; it is neither a plugin
+            // edit to collect later nor a fault of the running instance.
+            c.value = None;
         }
     }
 }

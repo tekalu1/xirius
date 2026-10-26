@@ -283,6 +283,7 @@ impl Studio {
         };
         if let Work::States(pull) = &save.work {
             if save.progress.cancelled() {
+                pull.cancel();
                 self.saving = None;
                 self.update.pending = None;
                 return true;
@@ -311,6 +312,9 @@ impl Studio {
             };
             let mut save = self.saving.take().unwrap();
             if let Err(error) = collected {
+                if let Work::States(pull) = &save.work {
+                    pull.cancel();
+                }
                 self.keep.plugin_state_failed = true;
                 self.save_failed(&error);
                 self.error = Some(error.to_string());

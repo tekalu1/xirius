@@ -138,6 +138,10 @@ fn local_state_collection_and_changes_return_while_sdk_is_held_and_stale_state_i
         std::thread::yield_now();
     }
     assert!(!old.ready());
+    let abandoned = host.begin_pull_states();
+    abandoned.cancel();
+    assert!(abandoned.ready());
+    assert!(abandoned.error().is_some());
     assert!(
         collect_plugin_states(&mut song, &mut host, &opts)
             .unwrap()

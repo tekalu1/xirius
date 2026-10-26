@@ -458,6 +458,9 @@ impl Studio {
         if open.pending.is_some() {
             if open.cancelled {
                 let mut open = self.opening.take().unwrap();
+                if let Some(pull) = open.pull.take() {
+                    pull.cancel();
+                }
                 let error: CmdError = std::io::Error::from(std::io::ErrorKind::Interrupted).into();
                 if let Some(command) = open.command.take() {
                     let _ = command.fail(self.song.session_mut(), error.clone());
@@ -642,6 +645,9 @@ impl Studio {
     }
     fn open_preflight_failed(&mut self, error: CmdError) {
         if let Some(mut open) = self.opening.take() {
+            if let Some(pull) = open.pull.take() {
+                pull.cancel();
+            }
             if let Some(command) = open.command.take() {
                 let _ = command.fail(self.song.session_mut(), error.clone());
             }
