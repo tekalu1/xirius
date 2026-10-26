@@ -8,6 +8,38 @@ use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress
 use windows_sys::Win32::System::Threading::{CreateEventW, SetEvent, WaitForSingleObject};
 use xirius_vst3::owner::{Controller, Open, Ticket};
 
+struct Allocator;
+thread_local! {
+    static RT: std::cell::Cell<(bool, usize, usize)> = const { std::cell::Cell::new((false, 0, 0)) };
+}
+#[global_allocator]
+static ALLOCATOR: Allocator = Allocator;
+
+// SAFETY: every operation delegates to System with the original pointer/layout;
+// the thread-local counters observe only the explicit lease-return scope.
+unsafe impl std::alloc::GlobalAlloc for Allocator {
+    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+        RT.with(|counts| {
+            let (on, alloc, free) = counts.get();
+            if on {
+                counts.set((on, alloc + 1, free));
+            }
+        });
+        // SAFETY: forwarding the caller's allocation contract unchanged.
+        unsafe { std::alloc::GlobalAlloc::alloc(&std::alloc::System, layout) }
+    }
+    unsafe fn dealloc(&self, pointer: *mut u8, layout: std::alloc::Layout) {
+        RT.with(|counts| {
+            let (on, alloc, free) = counts.get();
+            if on {
+                counts.set((on, alloc, free + 1));
+            }
+        });
+        // SAFETY: forwarding the matching pointer/layout unchanged.
+        unsafe { std::alloc::GlobalAlloc::dealloc(&std::alloc::System, pointer, layout) }
+    }
+}
+
 struct Event(HANDLE);
 impl Event {
     fn new() -> Self {
@@ -115,9 +147,21 @@ fn state_requests_cancel_without_waiting_and_the_audio_returns_before_terminatio
     drop(opened.sender);
     assert!(!retirement.finished(), "audio lease still holds the owner");
     assert_eq!(unsafe { terminations() }, before);
-    std::thread::spawn(move || drop(opened.audio))
-        .join()
-        .unwrap();
+    let counts = std::thread::spawn(move || {
+        RT.with(|counts| counts.set((true, 0, 0)));
+        drop(opened.audio);
+        RT.with(|counts| {
+            let (_, alloc, free) = counts.replace((false, 0, 0));
+            (alloc, free)
+        })
+    })
+    .join()
+    .unwrap();
+    assert_eq!(
+        counts,
+        (0, 0),
+        "returning the audio lease allocates/frees nothing"
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     while !retirement.finished() {
         assert!(Instant::now() < deadline, "retirement watchdog");

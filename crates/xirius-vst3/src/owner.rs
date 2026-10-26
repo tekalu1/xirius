@@ -109,6 +109,10 @@ pub struct Controller {
 pub struct AudioLease {
     part: Option<AudioPart>,
     returned: rtrb::Producer<AudioPart>,
+    // Fields drop in declaration order: the producer must be gone before this
+    // token. The owner retains the consumer until it is the token's sole owner,
+    // so neither the ring nor this Arc can be finally freed by an RT lease drop.
+    _lifetime: Arc<()>,
     prepared: (f64, usize, bool, u32),
 }
 
@@ -175,9 +179,14 @@ struct Instance {
 struct ReturnGuard {
     returning: rtrb::Consumer<AudioPart>,
     received: bool,
+    lifetime: Arc<()>,
 }
 
 impl ReturnGuard {
+    fn ready(&self) -> bool {
+        self.received && Arc::strong_count(&self.lifetime) == 1
+    }
+
     fn poll(&mut self) {
         if let Ok(part) = self.returning.pop() {
             drop(part);
@@ -190,9 +199,9 @@ impl Drop for ReturnGuard {
     fn drop(&mut self) {
         // Also runs during a Rust unwind in a command. Keep the plugin's owning
         // reference alive until the audio half returns. No other thread joins us.
-        while !self.received {
+        while !self.ready() {
             self.poll();
-            if !self.received {
+            if !self.ready() {
                 std::thread::sleep(Duration::from_millis(2));
             }
         }
@@ -259,6 +268,7 @@ impl Controller {
                 let mut returning = ReturnGuard {
                     returning,
                     received: false,
+                    lifetime: Arc::new(()),
                 };
                 let opened = Opened {
                     controller: Controller { commands },
@@ -269,6 +279,7 @@ impl Controller {
                     audio: AudioLease {
                         part: Some(part),
                         returned,
+                        _lifetime: returning.lifetime.clone(),
                         prepared: (rate, block, offline, latency),
                     },
                 };
@@ -293,7 +304,7 @@ impl Controller {
                         }
                     }
                     pump();
-                    if disconnected && returning.received {
+                    if disconnected && returning.ready() {
                         break;
                     }
                     std::thread::sleep(Duration::from_millis(2));
@@ -480,5 +491,30 @@ fn pump() {
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn receipt_of_audio_alone_does_not_allow_the_owner_to_destroy_the_return_ring() {
+        let (producer, returning) = rtrb::RingBuffer::new(1);
+        // Model receipt before the lease's fields finish dropping.
+        let owner = ReturnGuard {
+            returning,
+            received: true,
+            lifetime: Arc::new(()),
+        };
+        let lease_lifetime = owner.lifetime.clone();
+        assert!(!owner.ready());
+        drop(producer);
+        assert!(
+            !owner.ready(),
+            "the lease has not acknowledged producer destruction"
+        );
+        drop(lease_lifetime);
+        assert!(owner.ready());
     }
 }
