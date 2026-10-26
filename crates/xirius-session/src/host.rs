@@ -1632,15 +1632,20 @@ fn collect_edits(
     let mut commands = Vec::new();
     let mut taken = Vec::new();
     for e in edits {
-        out.params.extend(e.params.iter().map(|p| ParamEvent {
-            plugin: e.plugin,
-            param: p.id,
-            title: p.title.clone(),
-            phase: p.phase,
-            value: p.value,
-            at: p.at,
-            frame: host.frame_at(p.at),
-        }));
+        out.params.extend(
+            e.params
+                .iter()
+                .filter(|p| p.phase != EditPhase::Snapshot)
+                .map(|p| ParamEvent {
+                    plugin: e.plugin,
+                    param: p.id,
+                    title: p.title.clone(),
+                    phase: p.phase,
+                    value: p.value,
+                    at: p.at,
+                    frame: host.frame_at(p.at),
+                }),
+        );
         let Some(moves) = host.builder.plugins_mut().moves_until(&e) else {
             continue;
         };
@@ -1650,13 +1655,13 @@ fn collect_edits(
         let Some(x) = find_plugin(session.project(), e.plugin) else {
             continue;
         };
-        if x.state.as_deref() == Some(state.as_str()) {
-            continue;
+        let before = commands.len();
+        if x.state.as_deref() != Some(state.as_str()) {
+            commands.push(json!({
+                "command": "plugin.state.set",
+                "args": { "id": e.plugin.to_string(), "state": state },
+            }));
         }
-        commands.push(json!({
-            "command": "plugin.state.set",
-            "args": { "id": e.plugin.to_string(), "state": state },
-        }));
         // The song's values for the parameters it names win over the state when the plugin
         // is opened again, so they follow the edit too.
         let titles = host.builder.plugins().param_titles(e.plugin);
@@ -1679,7 +1684,9 @@ fn collect_edits(
                 params.push((key.clone(), v));
             }
         }
-        taken.push((e.plugin, state, params));
+        if commands.len() != before {
+            taken.push((e.plugin, state, params));
+        }
     }
     out.params.sort_by_key(|p| p.at);
     if !commands.is_empty() {

@@ -19,9 +19,9 @@ pub(crate) struct Capture(Arc<Mutex<CaptureInner>>);
 struct CaptureInner {
     controller: Option<Controller>,
     due: Instant,
-    task: Option<Ticket<String>>,
+    task: Option<Ticket<Snapshot>>,
     completed: bool,
-    value: Option<Result<String, String>>,
+    value: Option<Result<Snapshot, String>>,
     error: Option<String>,
     validity: Arc<Mutex<Option<String>>>,
 }
@@ -58,10 +58,16 @@ impl Capture {
                 if let Some(error) = validity.lock().unwrap_or_else(|e| e.into_inner()).clone() {
                     return Err(error);
                 }
-                plugin
-                    .get_state()
-                    .map(|s| xirius_plugins::encode_state(&s))
-                    .map_err(|e| e.to_string())
+                let state = plugin.get_state().map_err(|e| e.to_string())?;
+                let params = plugin
+                    .params()
+                    .iter()
+                    .filter_map(|p| plugin.param(p.id).map(|v| (p.id, p.title.clone(), v)))
+                    .collect();
+                Ok(Snapshot {
+                    state: xirius_plugins::encode_state(&state),
+                    params,
+                })
             }) {
                 Ok(task) => capture.task = Some(task),
                 Err(error) => {
@@ -90,7 +96,7 @@ impl Capture {
         self.0.try_lock().ok().and_then(|c| c.error.clone())
     }
 
-    fn take(&self) -> Option<Result<String, String>> {
+    fn take(&self) -> Option<Result<Snapshot, String>> {
         self.poll();
         self.0.try_lock().ok()?.value.take()
     }
@@ -420,7 +426,16 @@ impl OwnedLocal {
             if let Some(result) = capture.take() {
                 match result {
                     Ok(value) => {
-                        state = Some(value);
+                        state = Some(value.state);
+                        params.extend(value.params.into_iter().map(|(id, title, value)| {
+                            ParamEdit {
+                                id,
+                                title,
+                                value: Some(value),
+                                phase: EditPhase::Snapshot,
+                                at: Instant::now(),
+                            }
+                        }));
                         *self.error.borrow_mut() = None;
                     }
                     Err(error) => *self.error.borrow_mut() = Some(error),

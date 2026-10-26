@@ -12,7 +12,7 @@ use xirius_vst3::{Caption, PluginState};
 
 /// The version of these messages and of the shared memory's layout together. Bump it with
 /// any change to either.
-pub const PROTOCOL: u32 = 7;
+pub const PROTOCOL: u32 = 8;
 /// Starts the encoded [`FromHost::Hello`], so a stray first message is not taken for one.
 const HELLO_MAGIC: u32 = u32::from_le_bytes(*b"XPHH");
 
@@ -125,6 +125,7 @@ pub enum FromHost {
         slot: u32,
         request: u64,
         result: Result<PluginState, String>,
+        values: Vec<(u32, String, f64)>,
     },
     /// The plugin asked for its latency to be read again (`kLatencyChanged`, ENG-011).
     Latency {
@@ -470,6 +471,7 @@ impl FromHost {
                 slot,
                 request,
                 result,
+                values,
             } => {
                 o.u8(9).u32(*slot).u64(*request);
                 match result {
@@ -479,6 +481,10 @@ impl FromHost {
                     Err(error) => {
                         o.u8(0).str(error);
                     }
+                }
+                o.u32(values.len() as u32);
+                for (id, title, value) in values {
+                    o.u32(*id).str(title).f64(*value);
                 }
             }
             FromHost::Latency { slot, latency } => {
@@ -564,6 +570,7 @@ impl FromHost {
                 } else {
                     Ok(i.state()?)
                 },
+                values: i.list(|i| Ok((i.u32()?, i.str()?, i.f64()?)))?,
             },
             _ => return Err(bad("message from the host")),
         })
@@ -703,11 +710,13 @@ mod tests {
                 slot: 1,
                 request: 24,
                 result: Ok(state.clone()),
+                values: vec![(3, "Parameter".into(), 0.75)],
             },
             FromHost::CapturedState {
                 slot: 1,
                 request: 25,
                 result: Err("状態を取得できません".into()),
+                values: Vec::new(),
             },
             FromHost::State { slot: 1, state },
             FromHost::Latency {

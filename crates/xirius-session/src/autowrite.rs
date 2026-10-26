@@ -50,7 +50,7 @@ impl From<EditPhase> for Phase {
     fn from(p: EditPhase) -> Phase {
         match p {
             EditPhase::Begin => Phase::Begin,
-            EditPhase::Change => Phase::Change,
+            EditPhase::Change | EditPhase::Snapshot => Phase::Change,
             EditPhase::End => Phase::End,
         }
     }

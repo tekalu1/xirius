@@ -138,6 +138,19 @@ impl Loaded {
             })
     }
 
+    pub fn param_values(&self) -> Vec<(u32, String, f64)> {
+        self.params()
+            .into_iter()
+            .filter_map(|(id, title)| {
+                let value = match self {
+                    Loaded::Vst3(p) => p.param(id),
+                    Loaded::Clap(p) => p.param(id),
+                }?;
+                Some((id, title, value))
+            })
+            .collect()
+    }
+
     pub fn set_param(&self, id: u32, normalized: f64) {
         match self {
             Loaded::Vst3(p) => {

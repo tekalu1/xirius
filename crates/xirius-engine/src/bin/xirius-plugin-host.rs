@@ -332,6 +332,7 @@ impl Host {
                         slot,
                         request,
                         result: Err("プラグインが開かれていません".into()),
+                        values: Vec::new(),
                     });
                 }
             }
@@ -530,10 +531,16 @@ impl Host {
                 inst.capture = None;
                 let result = inst.plugin.get_state();
                 if let Some(request) = inst.capture_request.take() {
+                    let values = if result.is_ok() {
+                        inst.plugin.param_values()
+                    } else {
+                        Vec::new()
+                    };
                     out.push(FromHost::CapturedState {
                         slot,
                         request,
                         result,
+                        values,
                     });
                 } else {
                     match result {

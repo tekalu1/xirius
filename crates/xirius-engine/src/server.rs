@@ -96,6 +96,8 @@ pub struct ParamEdit {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditPhase {
+    /// State-capture value, never a user automation gesture.
+    Snapshot,
     Begin,
     Change,
     End,
@@ -203,6 +205,7 @@ impl Seat {
 #[derive(Default)]
 struct LinkInner {
     captured: Option<(u64, Result<PluginState, String>)>,
+    captured_values: Vec<ParamEdit>,
     /// The instance that plays, whose window and reports these are.
     heard: Seat,
     /// The instance a new mix opens while another plays (ENG-066), until it plays or is
@@ -245,11 +248,21 @@ impl PluginLink {
             .expect("capture request identifiers exhausted");
         let mut inner = self.lock();
         inner.captured = None;
+        inner.captured_values.clear();
         self.capture_request.store(request, Ordering::Release);
         request
     }
 
     fn complete_capture(&self, request: u64, result: Result<PluginState, String>) -> bool {
+        self.complete_capture_values(request, result, &[])
+    }
+
+    fn complete_capture_values(
+        &self,
+        request: u64,
+        result: Result<PluginState, String>,
+        values: &[(u32, String, f64)],
+    ) -> bool {
         let mut inner = self.lock();
         if self.capture_request.load(Ordering::Acquire) != request {
             return false;
@@ -258,6 +271,16 @@ impl PluginLink {
             inner.state = Some(state.clone());
             self.states_seen.fetch_add(1, Ordering::Release);
         }
+        inner.captured_values = values
+            .iter()
+            .map(|(id, title, value)| ParamEdit {
+                id: *id,
+                title: title.clone(),
+                value: Some(*value),
+                phase: EditPhase::Snapshot,
+                at: Instant::now(),
+            })
+            .collect();
         inner.captured = Some((request, result));
         self.capture_done.store(request, Ordering::Release);
         true
@@ -302,9 +325,11 @@ impl PluginLink {
         if inner.state.as_ref() == Some(&state) {
             inner.state = None;
         }
+        let mut params = std::mem::take(&mut inner.params);
+        params.append(&mut inner.captured_values);
         Ok(PluginEdits {
             state: Some(state),
-            params: std::mem::take(&mut inner.params),
+            params,
         })
     }
     /// Plain Space presses received from the hosted editor frame.
@@ -545,14 +570,19 @@ mod capture_tests {
         link.lock().state = Some(state(1));
         link.states_seen.fetch_add(1, Ordering::Release);
         assert!(!link.capture_finished(current));
-        assert!(!link.complete_capture(old, Ok(state(2))));
+        assert!(!link.complete_capture_values(old, Ok(state(2)), &[(1, "old".into(), 0.1)]));
         assert!(!link.capture_finished(current));
-        assert!(link.complete_capture(current, Ok(state(3))));
+        assert!(link.complete_capture_values(
+            current,
+            Ok(state(3)),
+            &[(1, "current".into(), 0.75)]
+        ));
         link.lock().state = Some(state(4));
-        assert_eq!(
-            link.take_capture_edits(current).unwrap().state,
-            Some(state(3))
-        );
+        let captured = link.take_capture_edits(current).unwrap();
+        assert_eq!(captured.state, Some(state(3)));
+        assert_eq!(captured.params.len(), 1);
+        assert_eq!(captured.params[0].value, Some(0.75));
+        assert_eq!(captured.params[0].phase, EditPhase::Snapshot);
         assert_eq!(link.take_edits().state, Some(state(4)));
     }
 
@@ -1370,6 +1400,7 @@ impl Inner {
                 slot,
                 request,
                 result,
+                values,
             } => {
                 let Some(rec) = st.slots.get(&slot) else {
                     return;
@@ -1378,8 +1409,23 @@ impl Inner {
                 if link.slot.load(Ordering::Acquire) != slot {
                     return;
                 }
-                if !link.complete_capture(request, result.clone()) {
+                if !link.complete_capture_values(request, result.clone(), &values) {
                     return;
+                }
+                if result.is_ok() {
+                    let next = st.next_of(&link, slot);
+                    for slot in std::iter::once(slot).chain(next) {
+                        if let Some(record) = st.slots.get_mut(&slot) {
+                            for (key, value) in &mut record.open.params {
+                                if let Some((_, _, now)) = values.iter().find(|(id, title, _)| {
+                                    key.parse::<u32>().ok() == Some(*id)
+                                        || title.eq_ignore_ascii_case(key)
+                                }) {
+                                    *value = *now;
+                                }
+                            }
+                        }
+                    }
                 }
                 if let Ok(state) = result {
                     st.slots.get_mut(&slot).expect("slot checked").open.state = Some(state.clone());

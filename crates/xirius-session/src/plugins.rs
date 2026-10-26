@@ -372,6 +372,17 @@ impl Local {
         if state.is_none() && params.is_empty() {
             return None;
         }
+        if state.is_some() {
+            params.extend(plugin.params().iter().filter_map(|p| {
+                plugin.param(p.id).map(|value| ParamEdit {
+                    id: p.id,
+                    title: p.title.clone(),
+                    phase: EditPhase::Snapshot,
+                    value: Some(value),
+                    at: Instant::now(),
+                })
+            }));
+        }
         Some(RemoteEdit {
             plugin: id,
             state: state.as_ref().map(xirius_plugins::encode_state),
@@ -1239,6 +1250,16 @@ impl PluginLoader {
                     .direct()
                     .and_then(|p| p.get_state().ok())
                     .or(values.state);
+                if old.applied.params == x.params
+                    && let Some(plugin) = old.direct()
+                {
+                    let titles = plugin.params();
+                    for (key, value) in &mut values.params {
+                        if let Some(now) = param_id(&titles, key).and_then(|id| plugin.param(id)) {
+                            *value = now;
+                        }
+                    }
+                }
             }
             if let Some(edit) = old.take(x.id, true) {
                 if preserve && let Some(text) = &edit.state {

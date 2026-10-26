@@ -94,6 +94,11 @@ fn pull_check(isolation: Isolation, mode: PluginIsolation) {
         .next()
         .unwrap()
         .id;
+    run(
+        &mut s,
+        "plugin.param.set",
+        json!({"id":id.to_string(),"param":"1","value":0.25}),
+    );
     let (mut host, mut audio, warnings) = SessionHost::start(
         s.project(),
         HostConfig {
@@ -139,6 +144,21 @@ fn pull_check(isolation: Isolation, mode: PluginIsolation) {
     let pulled = pull_plugin_states(&mut s, &mut host, &opts, PULL_WAIT).unwrap();
     assert!(pulled.result.is_some(), "the changed state came");
     assert_eq!(state_of(&s), Some(EDITED.to_vec()));
+    assert_eq!(
+        s.project()
+            .tracks
+            .values()
+            .flat_map(|t| &t.inserts)
+            .find(|p| p.id == id)
+            .unwrap()
+            .params["1"],
+        0.5,
+        "captured values must replace stale named overrides for the next open"
+    );
+    assert!(
+        pulled.params.is_empty(),
+        "a capture snapshot never records automation gestures"
+    );
     assert_eq!(s.cursor(), before + 1, "one step");
     let state = encode_state(&xirius_vst3::PluginState {
         component: EDITED.to_vec(),
