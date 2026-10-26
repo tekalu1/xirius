@@ -61,6 +61,8 @@ pub struct Keep {
     pub(crate) flash_until: u64,
     /// What went wrong the last time the record was written.
     pub failed: Option<String>,
+    /// A disk checkpoint cannot stand in for an unavailable plugin snapshot.
+    pub(crate) plugin_state_failed: bool,
     /// Automatic save points made, for the tests.
     pub autosaves: u32,
     auto_pending: bool,
@@ -86,7 +88,7 @@ impl Keep {
     }
 
     pub fn mark(&self, song: &Song, now: u64) -> SaveMark {
-        if self.failed.is_some() {
+        if self.failed.is_some() || self.plugin_state_failed {
             return SaveMark::Failed;
         }
         if song.record_dir().is_some() && self.failed.is_none() {
@@ -105,6 +107,7 @@ impl Keep {
 
     /// The song was opened or made new: what it is now is not an edit.
     pub fn sync(&mut self, project: &Arc<Project>) {
+        self.plugin_state_failed = false;
         self.preserve_startup_open = false;
         self.seen = Some(project.clone());
         self.flash_until = 0;
@@ -113,6 +116,7 @@ impl Keep {
     }
 
     pub(crate) fn sync_open(&mut self, project: &Arc<Project>, dir: Option<PathBuf>, draft: bool) {
+        self.plugin_state_failed = false;
         self.preserve_startup_open = false;
         self.seen = Some(project.clone());
         self.flash_until = 0;

@@ -20,7 +20,7 @@ pub(crate) enum Leave {
 }
 
 pub(crate) struct Saving {
-    worker: JoinHandle<(Session, CmdResult<()>)>,
+    work: Work,
     pub since: Instant,
     pub progress: Arc<SaveProgress>,
     pub target: Option<PathBuf>,
@@ -28,6 +28,11 @@ pub(crate) struct Saving {
     draft: Option<PathBuf>,
     close_when_done: bool,
     stop_take: bool,
+}
+
+enum Work {
+    States(xirius_session::plugins::StatePull),
+    Writing(JoinHandle<(Session, CmdResult<()>)>),
 }
 
 impl Saving {
@@ -96,6 +101,9 @@ impl Studio {
     }
 
     pub(crate) fn save_succeeded(&mut self) {
+        if self.keep.plugin_state_failed {
+            return;
+        }
         self.keep.failed = None;
         if self.toast.as_ref().is_some_and(|t| {
             t.also
@@ -115,7 +123,6 @@ impl Studio {
             return true;
         }
         self.keep.flash_until = xirius_core::store::now_ms() + crate::keep::FLASH_MS;
-        self.pull_plugins();
         self.launch_save(None, None);
         true
     }
@@ -139,7 +146,6 @@ impl Studio {
                 self.error = Some("録音中は名前を付けて保存できません".into());
                 return;
             }
-            self.pull_plugins();
             self.launch_save(Some(path.to_path_buf()), None);
         } else if matches!(
             request,
@@ -206,7 +212,6 @@ impl Studio {
         self.roll.cancel();
         self.pc_keys_release();
         self.sound_roll_audition();
-        let mut session = self.song.take_session_for_save();
         let draft = self
             .song
             .is_draft()
@@ -214,15 +219,44 @@ impl Studio {
             .flatten();
         let progress = Arc::new(SaveProgress::default());
         progress.simulate_slow_disk(self.save_test_delay);
-        let worker_progress = progress.clone();
-        let worker_target = target.clone();
-        let only_wait = leaving.is_some();
+        let pull = leaving
+            .is_none()
+            .then(|| {
+                self.transport
+                    .host_mut()
+                    .map(|host| host.begin_pull_states())
+            })
+            .flatten();
+        let work = if let Some(pull) = pull {
+            Work::States(pull)
+        } else {
+            Work::Writing(self.save_worker(target.clone(), leaving.is_some(), progress.clone()))
+        };
+        self.saving = Some(Saving {
+            work,
+            since: crate::wait::now(),
+            progress,
+            target,
+            leaving,
+            draft,
+            close_when_done,
+            stop_take: false,
+        });
+    }
+
+    fn save_worker(
+        &mut self,
+        worker_target: Option<PathBuf>,
+        only_wait: bool,
+        worker_progress: Arc<SaveProgress>,
+    ) -> JoinHandle<(Session, CmdResult<()>)> {
+        let mut session = self.song.take_session_for_save();
         let delay = self.save_test_delay;
         #[cfg(test)]
         let failing = self.save_test_failure;
         #[cfg(not(test))]
         let failing = false;
-        let worker = std::thread::spawn(move || {
+        std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 if !delay.is_zero() {
                     std::thread::sleep(delay);
@@ -240,25 +274,66 @@ impl Studio {
             }))
             .unwrap_or_else(|_| Err(CmdError::io("保存できません")));
             (session, result)
-        });
-        self.saving = Some(Saving {
-            worker,
-            since: Instant::now(),
-            progress,
-            target,
-            leaving,
-            draft,
-            close_when_done,
-            stop_take: false,
-        });
+        })
     }
 
     pub(crate) fn poll_saving(&mut self) -> bool {
-        if !self.saving.as_ref().is_some_and(|s| s.worker.is_finished()) {
+        let Some(save) = self.saving.as_ref() else {
+            return false;
+        };
+        if let Work::States(pull) = &save.work {
+            if save.progress.cancelled() {
+                self.saving = None;
+                self.update.pending = None;
+                return true;
+            }
+            let error = if !pull.ready() {
+                if crate::wait::now().saturating_duration_since(save.since)
+                    < xirius_session::host::PULL_WAIT
+                {
+                    return true;
+                }
+                Some("プラグインの状態を取得できません。未保存の変更が残っています".into())
+            } else {
+                pull.error()
+            };
+            let collected = if let Some(error) = error {
+                Err(CmdError::io(error))
+            } else if let Some(host) = self.transport.host_mut() {
+                xirius_session::host::collect_plugin_states(
+                    self.song.session_mut(),
+                    host,
+                    &xirius_core::session::RunOptions::human(),
+                )
+                .map(|_| ())
+            } else {
+                Err(CmdError::io("プラグインの状態を取得できません"))
+            };
+            let mut save = self.saving.take().unwrap();
+            if let Err(error) = collected {
+                self.keep.plugin_state_failed = true;
+                self.save_failed(&error);
+                self.error = Some(error.to_string());
+                self.update.pending = None;
+                return true;
+            }
+            self.keep.plugin_state_failed = false;
+            save.work =
+                Work::Writing(self.save_worker(save.target.clone(), false, save.progress.clone()));
+            self.saving = Some(save);
+            return true;
+        }
+        let Work::Writing(worker) = &save.work else {
+            unreachable!()
+        };
+        if !worker.is_finished() {
             return false;
         }
         let save = self.saving.take().unwrap();
-        let (session, result) = save.worker.join().expect("save worker catches panics");
+        let Work::Writing(worker) = save.work else {
+            unreachable!()
+        };
+        let (session, result) = worker.join().expect("save worker catches panics");
         let saved_as = save.target.is_some() && result.is_ok();
         self.song.finish_session_save(session, saved_as);
         if save.stop_take && self.transport.take.is_some() {
