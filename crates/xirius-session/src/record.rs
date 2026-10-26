@@ -551,12 +551,7 @@ impl SessionHost {
             }));
         }
         let rec_dir = match (song_dir, lanes.is_empty()) {
-            (Some(d), false) => {
-                let d = p.media.place(d, FOLDER);
-                std::fs::create_dir_all(&d)
-                    .map_err(|e| conflict(format!("{} を作成できません: {e}", d.display())))?;
-                Some(d)
-            }
+            (Some(d), false) => Some(p.media.place(d, FOLDER)),
             _ => None,
         };
 
@@ -623,6 +618,8 @@ impl SessionHost {
                             #[cfg(feature = "test-io")]
                             let _ = xirius_core::io_test::before("record_writer", &folder);
                             // Directory and filename I/O belongs to the writer too.
+                            #[cfg(feature = "test-io")]
+                            let _ = xirius_core::io_test::before("record_directory", &folder);
                             let _ = std::fs::create_dir_all(&folder);
                             unused(&folder, &base)
                         }),

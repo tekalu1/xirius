@@ -4,6 +4,63 @@ use std::sync::mpsc;
 use xirius_session::output::{DeviceOutput, SharedStream};
 
 #[test]
+fn recording_directory_creation_is_writer_owned_and_stop_keeps_responding() {
+    let root = tempfile::tempdir().unwrap();
+    let mut s = Studio::new(Song::empty());
+    s.song.save_as(&root.path().join("song")).unwrap();
+    let track = s
+        .song
+        .run("track.add.audio", serde_json::json!({"name":"A"}))
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    s.song.toggle_arm(track).unwrap();
+    s.transport.mode = OutputMode::Silent { paced: true };
+    s.transport.bind_window();
+    s.prepare_song();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while s.preparing.is_some() {
+        s.poll_preparing();
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    let release = Release::new();
+    let gate = release.0.clone();
+    let prefix = root.path().to_path_buf();
+    let ui = std::thread::current().id();
+    let (tx, entered) = mpsc::channel();
+    let _observe = xirius_core::io_test::observe(Arc::new(move |op, path| {
+        if op == "record_directory" && path.starts_with(&prefix) {
+            assert_ne!(std::thread::current().id(), ui);
+            tx.send(()).unwrap();
+            let held = gate.0.lock().unwrap();
+            drop(gate.1.wait_while(held, |done| !*done).unwrap());
+        }
+        Ok(())
+    }));
+    s.toggle_record();
+    assert!(s.transport.recording, "{:?}", s.error);
+    entered.recv_timeout(Duration::from_secs(20)).unwrap();
+    s.finish_take();
+    assert!(s.transport.finishing_take);
+    assert!(s.transport.take.is_some());
+    s.geometry(880.0, 600.0);
+    s.idle();
+    s.tick();
+    assert!(s.transport.finishing_take);
+    release.release();
+    while s.transport.finishing_take {
+        s.poll_finished_take();
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(s.error.is_none(), "{:?}", s.error);
+    assert!(s.transport.take.is_none());
+}
+
+#[test]
 fn a_live_material_update_keeps_recording_and_mix_commands_responsive() {
     let root = tempfile::tempdir().unwrap();
     let wav = root.path().join("source.wav");

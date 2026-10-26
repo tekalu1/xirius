@@ -492,8 +492,10 @@ impl Transport {
             .iter()
             .filter(|k| !(shared && **k == "audio.buffer"))
             .any(|k| prefs.get(k) != self.io_prefs.get(k));
-        if changed && self.recording {
-            return Err("録音中はオーディオデバイスを変更できません".into());
+        if changed && (self.recording || self.take.is_some() || self.finishing_take) {
+            return Err(
+                "録音またはテイクの配置が未完了のため、オーディオデバイスを変更できません".into(),
+            );
         }
         self.io_prefs = prefs;
         if changed {
@@ -2481,6 +2483,27 @@ mod tests {
         let files = s.transport.finished_take.as_ref().unwrap().files.clone();
         assert!(!files.is_empty());
         assert!(files.iter().all(|p| p.is_file()));
+        let old = s.transport.io_prefs.clone();
+        let mut changed = old.clone();
+        changed
+            .set("audio.device", &json!("different-test-device"))
+            .unwrap();
+        let result = s
+            .transport
+            .configure_io(&s.project(), s.song.dir(), changed);
+        assert!(result.is_err());
+        assert_eq!(
+            s.transport.io_prefs.get("audio.device"),
+            old.get("audio.device")
+        );
+        assert!(s.transport.player.is_some());
+        assert!(!s.transport.background_starting());
+        assert!(s.preparing.is_none());
+        assert!(
+            !s.prepare_key("escape"),
+            "there is no cancellation veil to get stuck behind"
+        );
+        assert_eq!(s.transport.finished_take.as_ref().unwrap().files, files);
         assert!(s.song.undo());
         s.finish_take();
         assert!(s.error.is_none(), "{:?}", s.error);
