@@ -47,7 +47,17 @@ impl Gate {
         let freed = release.clone();
         let (tx, entered) = mpsc::channel();
         let once = std::sync::atomic::AtomicBool::new(false);
+        let ui = std::thread::current().id();
         let observe = xirius_core::io_test::observe(Arc::new(move |op, path| {
+            if path.starts_with(&root)
+                && once.load(std::sync::atomic::Ordering::SeqCst)
+                && std::thread::current().id() == ui
+            {
+                assert!(
+                    !matches!(op, "peaks_load" | "peaks_source" | "browser_read_dir"),
+                    "preparation painting requested material I/O: {op}"
+                );
+            }
             if op == "prepare_decode"
                 && path.starts_with(&root)
                 && !once.swap(true, std::sync::atomic::Ordering::SeqCst)
