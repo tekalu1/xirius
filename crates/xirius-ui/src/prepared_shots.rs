@@ -571,7 +571,7 @@ fn window_operation(n: u8, s: &Rc<RefCell<Studio>>, window: &mut gpui::Window, _
 }
 
 #[cfg(windows)]
-fn native_window_operation(n: u8, hwnd: isize) {
+pub(crate) fn native_window_operation(n: u8, hwnd: isize) {
     use windows_sys::Win32::Foundation::RECT;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetWindowRect, IsIconic, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,

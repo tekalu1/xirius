@@ -541,6 +541,22 @@ impl Builder {
         }
     }
 
+    pub(crate) fn live_copy(&self) -> Result<impl FnOnce() -> Builder + Send + 'static, String> {
+        let material = self.material_copy();
+        let plugins = self.plugins.live_copy()?;
+        let timings = self.timings.clone();
+        Ok(move || {
+            let mut builder = material();
+            builder.plugins = plugins();
+            builder.timings = timings;
+            builder
+        })
+    }
+
+    pub(crate) fn keep_live_tracks(&mut self, tracks: BTreeMap<xirius_core::id::TrackId, usize>) {
+        self.retry_keep = tracks;
+    }
+
     /// Copy material cache handles, never SDK instances or controller ownership.
     pub(crate) fn material_copy(&self) -> impl FnOnce() -> Builder + Send + 'static {
         let (rate, dir, cache, unavailable, owner) = (

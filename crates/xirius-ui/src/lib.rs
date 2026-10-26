@@ -140,6 +140,8 @@ pub mod keys_rest_shots;
 pub mod keys_view_menu_shots;
 pub mod lane_rect_shots;
 pub mod lane_shots;
+#[cfg(feature = "loading-probe")]
+mod live_edit_shots;
 pub mod loading;
 pub mod local_time;
 mod macro_run;
@@ -406,6 +408,8 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("prepare", prepare_shots::SHOTS),
     #[cfg(feature = "loading-probe")]
     ("prepared", prepared_shots::SHOTS),
+    #[cfg(feature = "loading-probe")]
+    ("live-edit", live_edit_shots::SHOTS),
     ("quiet", quiet_shots::QUIET),
     ("rail-tips", fixed_screens_shots::RAIL_TIPS),
     ("range-trim", range_trim_shots::SHOTS),

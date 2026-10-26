@@ -132,6 +132,8 @@ pub(crate) struct OwnedLocal {
     validity: Arc<Mutex<Option<String>>>,
     flags: Cell<i32>,
     visible: Cell<bool>,
+    editor_intent: Cell<Option<bool>>,
+    editor_job: RefCell<Option<Ticket<()>>>,
     play: Cell<u32>,
     names: RefCell<Vec<(u8, String)>>,
     pub latency: Cell<u32>,
@@ -143,6 +145,21 @@ pub(crate) struct Snapshot {
     pub params: Vec<(u32, String, f64)>,
 }
 impl OwnedLocal {
+    /// Value-only proxy for a background plan builder. The SDK stays on its
+    /// existing owner; no plugin instance or audio part is moved here.
+    pub fn fork(&self) -> Self {
+        let mut copy = Self::new(
+            self.controller.clone(),
+            self.retirement.clone(),
+            self.params.clone(),
+            self.names.borrow().clone(),
+            self.latency.get(),
+        );
+        copy.validity = self.validity.clone();
+        copy.visible.set(self.visible());
+        copy
+    }
+
     pub fn snapshot(&self) -> Result<Ticket<Snapshot>, String> {
         self.controller.on_owner(|plugin| {
             let state = plugin.get_state().map_err(|e| e.to_string())?;
@@ -179,6 +196,8 @@ impl OwnedLocal {
             validity: Default::default(),
             flags: Cell::new(0),
             visible: Cell::new(false),
+            editor_intent: Cell::new(None),
+            editor_job: RefCell::new(None),
             play: Cell::new(0),
             names: RefCell::new(names),
             latency: Cell::new(latency),
@@ -274,15 +293,44 @@ impl OwnedLocal {
     }
 
     pub fn editor(&self, title: String, caption: Option<Caption>, open: bool) -> bool {
-        if open {
-            let place = Placement {
-                caption,
-                ..Placement::shown(None)
-            };
-            self.keep(self.controller.editor(title, place))
+        let job = if open {
+            self.controller.editor(
+                title,
+                Placement {
+                    caption,
+                    ..Placement::shown(None)
+                },
+            )
         } else {
-            self.keep(self.controller.close_editor())
+            self.controller.close_editor()
+        };
+        match job {
+            Ok(job) => {
+                // Reports queued before this command cannot close a newly opened
+                // editor or erase the handoff intention.
+                self.edits.borrow_mut().take();
+                self.editor_intent.set(Some(open));
+                *self.editor_job.borrow_mut() = Some(job);
+                true
+            }
+            Err(error) => {
+                *self.error.borrow_mut() = Some(error);
+                false
+            }
         }
+    }
+
+    fn poll_editor(&self) -> bool {
+        let result = self.editor_job.borrow().as_ref().and_then(Ticket::poll);
+        if let Some(result) = result {
+            self.editor_job.borrow_mut().take();
+            let open = self.editor_intent.take().unwrap_or(false);
+            self.visible.set(open && result.is_ok());
+            if let Err(error) = result {
+                *self.error.borrow_mut() = Some(error);
+            }
+        }
+        self.editor_job.borrow().is_none()
     }
 
     pub fn caption(&self, caption: Caption) {
@@ -294,7 +342,7 @@ impl OwnedLocal {
         self.error.borrow().clone()
     }
     pub fn visible(&self) -> bool {
-        self.visible.get()
+        self.editor_intent.get().unwrap_or(self.visible.get())
     }
     pub fn take_play_requests(&self) -> u32 {
         self.play.replace(0)
@@ -310,6 +358,9 @@ impl OwnedLocal {
 
     pub fn take(&self, id: PluginId) -> Option<RemoteEdit> {
         self.poll_requests();
+        if !self.poll_editor() {
+            return None;
+        }
         let result = self.edits.borrow().as_ref().and_then(Ticket::poll);
         let mut params = Vec::new();
         if let Some(result) = result {

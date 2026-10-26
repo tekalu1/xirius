@@ -174,6 +174,20 @@ impl SessionHost {
         for (id, old) in &self.tracks {
             heard.tracks.entry(*id).or_insert_with(|| old.track.clone());
         }
+        self.automated = automation::has_lanes(&heard).then(|| heard.clone());
+        let timing = crate::automation_timing::Timing::new(
+            &heard,
+            &self.graph,
+            &self.controller.shape(),
+            self.builder.plugins(),
+        )
+        .with_start(self.automation_start);
+        let heard = timing.song_at(
+            &heard,
+            self.status.frame,
+            &self.tmap,
+            f64::from(self.rate()),
+        );
         let mut mix = Mix::of(&heard, &self.graph, &Scope::new(&heard, Select::All));
         for (new, old) in mix
             .tracks

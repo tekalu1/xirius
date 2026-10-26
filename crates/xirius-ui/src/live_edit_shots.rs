@@ -1,0 +1,307 @@
+//! Own parked window, silent output and fixture editor during held live work.
+use crate::{
+    shot::{Act, Play, Shot},
+    studio::{FileRequest, Studio},
+};
+use std::{
+    cell::RefCell,
+    path::PathBuf,
+    rc::Rc,
+    sync::{Arc, Condvar, Mutex, mpsc},
+};
+use xirius_session::output::{DeviceInput, Drivers, Output, OutputMode, SilentOutput};
+
+pub const SHOTS: &[Shot] = &[
+    Shot {
+        name: "live-00-before",
+        acts: &[Act::Stage(Play::Studio(stage), 0)],
+    },
+    Shot {
+        name: "live-01-held",
+        acts: &[],
+    },
+    Shot {
+        name: "live-02-moved",
+        acts: &[Act::Stage(Play::Window(window_op), 10)],
+    },
+    Shot {
+        name: "live-03-resized",
+        acts: &[Act::Stage(Play::Window(window_op), 11)],
+    },
+    Shot {
+        name: "live-04-restored",
+        acts: &[Act::Stage(Play::Window(window_op), 12)],
+    },
+    Shot {
+        name: "live-05-finished",
+        acts: &[Act::Stage(Play::Studio(stage), 1)],
+    },
+];
+
+struct Gate {
+    release: Arc<(Mutex<bool>, Condvar)>,
+    entered: mpsc::Receiver<std::thread::ThreadId>,
+    _observe: xirius_core::io_test::Observation,
+}
+impl Gate {
+    fn new() -> Self {
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let held = release.clone();
+        let (tx, entered) = mpsc::channel();
+        let once = std::sync::atomic::AtomicBool::new(false);
+        let wanted = operation();
+        let ui = std::thread::current().id();
+        let observe = xirius_core::io_test::observe(Arc::new(move |op, _| {
+            if op == wanted && !once.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                assert_ne!(
+                    std::thread::current().id(),
+                    ui,
+                    "live I/O must not run on UI"
+                );
+                tx.send(std::thread::current().id()).unwrap();
+                drop(
+                    held.1
+                        .wait_while(held.0.lock().unwrap(), |done| !*done)
+                        .unwrap(),
+                );
+            }
+            Ok(())
+        }));
+        Self {
+            release,
+            entered,
+            _observe: observe,
+        }
+    }
+}
+impl Drop for Gate {
+    fn drop(&mut self) {
+        *self.release.0.lock().unwrap() = true;
+        self.release.1.notify_all();
+    }
+}
+struct Seed {
+    dir: PathBuf,
+    wav: PathBuf,
+    catalog: Arc<xirius_plugins::Catalog>,
+}
+struct Probe {
+    seed: Option<std::thread::JoinHandle<Seed>>,
+    fixture: Option<Seed>,
+    gate: Option<Gate>,
+    phase: u8,
+    editor: isize,
+    window_task: Option<std::thread::JoinHandle<()>>,
+    viewport: Option<(f32, f32)>,
+}
+thread_local! { static PROBE: RefCell<Option<Probe>> = const { RefCell::new(None) }; }
+fn operation() -> String {
+    std::env::var("XIRIUS_LIVE_GATE").unwrap()
+}
+fn fixture_plugin(s: &Studio) -> xirius_core::model::Plugin {
+    s.project()
+        .tracks
+        .values()
+        .flat_map(|t| &t.inserts)
+        .find(|p| p.format == "vst3")
+        .unwrap()
+        .clone()
+}
+fn stage(s: &mut Studio, n: u8) {
+    if n == 0 {
+        let seed = std::thread::spawn(|| {
+            let root = PathBuf::from(std::env::var_os("XIRIUS_LIVE_SHOTS_DIR").unwrap());
+            let dll = std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("deps/xirius_test_vst3.dll");
+            let catalog = Arc::new(xirius_plugins::Catalog {
+                entries: xirius_plugins::probe(&dll).unwrap(),
+                failures: Vec::new(),
+            });
+            let mut song = crate::song::Song::empty();
+            let dir = root.join("song");
+            song.save_as(&dir).unwrap();
+            let track = song
+                .run("track.add.audio", serde_json::json!({"name":"Live"}))
+                .unwrap()["id"]
+                .clone();
+            let base = root.join("base.wav");
+            let audio = vec![0.1; 960_000];
+            xirius_session::export::write_wav(&base, &audio, &audio, 48_000, 16).unwrap();
+            song.run(
+                "clip.import",
+                serde_json::json!({"file":base,"track":track}),
+            )
+            .unwrap();
+            song.run("plugin.add", serde_json::json!({"track":track,"name":"Live Fixture","format":"vst3","uid":catalog.entries[0].uid})).unwrap();
+            let wav = root.join("new-material.wav");
+            let prime = operation() == "prepare_prime";
+            let audio = vec![0.1; if prime { 4_200_000 } else { 4096 }];
+            xirius_session::export::write_wav(
+                &wav,
+                &audio,
+                &audio,
+                if prime { 48_000 } else { 22_050 },
+                16,
+            )
+            .unwrap();
+            song.session_mut().flush_writes();
+            Seed { dir, wav, catalog }
+        });
+        PROBE.with(|p| {
+            *p.borrow_mut() = Some(Probe {
+                seed: Some(seed),
+                fixture: None,
+                gate: None,
+                phase: 0,
+                editor: 0,
+                window_task: None,
+                viewport: None,
+            })
+        });
+    } else {
+        PROBE.with(|p| {
+            let mut p = p.borrow_mut();
+            let p = p.as_mut().unwrap();
+            p.gate.take();
+            p.phase = 5;
+        });
+        let _ = s;
+    }
+}
+pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
+    PROBE.with(|p| {
+        let mut p = p.borrow_mut();
+        let Some(p) = p.as_mut() else { return true };
+        if let Some(task) = &p.window_task {
+            if !task.is_finished() { return false; }
+            p.window_task.take().unwrap().join().unwrap();
+            assert_eq!(crate::park::own_handle("Live Fixture"), Some(p.editor));
+            assert!(s.borrow().editor_shown(fixture_plugin(&s.borrow()).id));
+        }
+        if let Some(seed) = &p.seed {
+            if !seed.is_finished() { return false; }
+            let seed = p.seed.take().unwrap().join().unwrap();
+            let mut s = s.borrow_mut();
+            s.transport.set_catalog(seed.catalog.clone());
+            s.transport.mode = OutputMode::Device;
+            s.transport.set_drivers(Drivers {
+                exclusive_out: None,
+                shared_out: Arc::new(|audio, _, _| Ok(Output::Silent(SilentOutput::start(audio, true)))),
+                exclusive_in: None,
+                shared_in: Arc::new(|rate, _, _| {
+                    xirius_core::io_test::before("input_open", std::path::Path::new("fixture-input")).map_err(|e| e.to_string())?;
+                    Ok(DeviceInput::new("fixture".into(), false,
+                        Arc::new(std::sync::atomic::AtomicU64::new(1)),
+                        Box::new(xirius_engine::record::MockInput::sine(f64::from(rate), 220.0, 0.1))))
+                }),
+                devices: Arc::new(Vec::new),
+            });
+            s.start_file_request(FileRequest::Open, &seed.dir);
+            eprintln!("live-probe seed loaded");
+            p.fixture = Some(seed); p.phase = 1;
+            return false;
+        }
+        if p.phase == 1 {
+            let mut s = s.borrow_mut();
+            if s.opening.is_some() || s.preparing.is_some() { return false; }
+            s.use_plugins((*p.fixture.as_ref().unwrap().catalog).clone());
+            eprintln!("live-probe song opened");
+            let plugin = fixture_plugin(&s);
+            let editor = s.open_vst3_window(&plugin, "Live Fixture".into(), None).unwrap();
+            s.mixer.editors.push(editor);
+            assert!(s.toggle_play());
+            eprintln!("live-probe editor requested");
+            p.phase = 2;
+            return false;
+        }
+        if p.phase == 2 {
+            let mut s = s.borrow_mut();
+            let plugin = fixture_plugin(&s);
+            assert!(s.mixer.editors.iter().any(|e| e.id == plugin.id), "initial editor intent was lost");
+            for (_, _, status) in s.transport.host().unwrap().plugin_statuses() {
+                assert!(status.error.is_none(), "editor error: {:?}", status.error);
+            }
+
+            if !s.transport.host().unwrap().plugin_statuses().iter().any(|(id, _, status)| *id == plugin.id && status.editor_open) {
+                return false;
+            }
+            let Some(editor) = crate::park::own_handle("Live Fixture") else { return false; };
+            assert!(!crate::park::is_foreground(editor));
+            eprintln!("live-probe editor found");
+            p.editor = editor;
+            p.gate = Some(Gate::new());
+            let track = s.project().tracks.values().find(|t| !t.inserts.is_empty()).unwrap().id;
+            match operation().as_str() {
+                "input_open" | "record_writer" => {
+                    s.song.toggle_arm(track).unwrap();
+                    s.toggle_record();
+                }
+                "prepare_get_state" => {
+                    s.song.run("plugin.add", serde_json::json!({"track":track.to_string(),"name":"Gain","kind":"effect","format":"builtin","uid":"gain"})).unwrap();
+                    let (project, dir) = (s.project(), s.song.dir());
+                    s.transport.sync(&project, dir);
+                }
+                _ => {
+                    s.song.run("clip.add.audio", serde_json::json!({"track":track.to_string(),"file":p.fixture.as_ref().unwrap().wav,"at":1920,"length":1920})).unwrap();
+                    let (project, dir) = (s.project(), s.song.dir());
+                    s.transport.sync(&project, dir);
+                }
+            }
+            eprintln!("live-probe work requested {}", operation());
+            p.phase = 3;
+            return false;
+        }
+        if p.phase == 3 {
+            if p.gate.as_ref().unwrap().entered.try_recv().is_err() { return false; }
+            let mut s = s.borrow_mut();
+            if matches!(operation().as_str(), "input_open" | "record_writer") {
+                s.stop_transport();
+            } else {
+                assert!(s.transport.playing);
+            }
+            assert!(s.preparing.is_none());
+            assert!(s.editor_shown(fixture_plugin(&s).id));
+            assert_eq!(crate::park::own_handle("Live Fixture"), Some(p.editor));
+            eprintln!("live-check stage=held ok=true");
+            p.phase = 4;
+        }
+        if p.phase == 5 {
+            let s = s.borrow();
+            if s.transport.host().unwrap().swap_pending() || s.transport.take.is_some() { return false; }
+            assert!(s.preparing.is_none());
+            assert!(s.editor_shown(fixture_plugin(&s).id));
+            assert!(crate::park::own_handle("Live Fixture").is_some());
+            if !matches!(operation().as_str(), "input_open" | "record_writer") {
+                assert!(s.transport.playing);
+            }
+            if operation() != "prepare_get_state" {
+                assert_eq!(crate::park::own_handle("Live Fixture"), Some(p.editor), "unaffected SDK/editor survives");
+            }
+            eprintln!("live-check stage=finished ok=true");
+            p.phase = 6;
+        }
+        true
+    })
+}
+fn window_op(n: u8, _: &Rc<RefCell<Studio>>, window: &mut gpui::Window, _: &mut gpui::App) {
+    let viewport = window.viewport_size();
+    PROBE.with(|p| {
+        let mut p = p.borrow_mut();
+        let p = p.as_mut().unwrap();
+        if n == 11 {
+            p.viewport = Some((f32::from(viewport.width), f32::from(viewport.height)));
+        }
+        if n == 12 {
+            let (w, h) = p.viewport.unwrap();
+            assert!(f32::from(viewport.width) > w && f32::from(viewport.height) > h);
+        }
+        let hwnd = crate::park::own_handle(crate::screen::WINDOW_TITLE).unwrap();
+        p.window_task = Some(std::thread::spawn(move || {
+            crate::prepared_shots::native_window_operation(n, hwnd)
+        }));
+    });
+    window.refresh();
+}

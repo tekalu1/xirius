@@ -90,12 +90,7 @@ pub(super) struct Start {
     track_snapshot: Vec<(TrackId, Arc<xirius_core::model::Track>)>,
 }
 impl Start {
-    pub fn new(
-        t: &Transport,
-        p: &Project,
-        dir: Option<PathBuf>,
-        previous_player: Option<Player>,
-    ) -> Result<Self, String> {
+    pub fn new(t: &Transport, p: &Project, dir: Option<PathBuf>) -> Result<Self, String> {
         let tracks: Vec<_> = p
             .tracks
             .values()
@@ -143,20 +138,7 @@ impl Start {
                 owners: Vec::new(),
                 previous,
             };
-            let mut starting = if let Some(player) = previous_player {
-                let Player { out, host, dir, .. } = player;
-                cleanup.owners = host.plugins().owner_retirements();
-                #[cfg(any(test, feature = "loading-probe"))]
-                let _ = xirius_core::io_test::before(
-                    "prepare_output_stop",
-                    dir.as_deref().unwrap_or_else(|| std::path::Path::new("")),
-                );
-                drop(out);
-                drop(dir);
-                host.prepare_again(&p, config.engine)?
-            } else {
-                Starting::new(&p, config)
-            };
+            let mut starting = Starting::new(&p, config);
             while !starting.step() {
                 if stopped.load(Ordering::Acquire) {
                     cleanup.owners = starting.owner_retirements();

@@ -615,6 +615,78 @@ fn names(key: &str, p: &ParamEdit) -> bool {
 }
 
 impl PluginLoader {
+    /// Capture only safe controller handles for a live background build. Raw
+    /// compatibility instances never cross their creator thread.
+    pub(crate) fn live_copy(&self) -> Result<impl FnOnce() -> Self + Send + 'static, String> {
+        let mut locals = HashMap::new();
+        for (id, local) in &self.locals {
+            if local.plugin.is_some() {
+                return Err("raw local plugin cannot be moved into a live builder".into());
+            }
+            locals.insert(
+                *id,
+                Local {
+                    plugin: None,
+                    owned: local.owned.as_ref().map(|owned| Box::new(owned.fork())),
+                    restart_pending: local.restart_pending,
+                    applied: local.applied.clone(),
+                    generation: local.generation,
+                    titles: local.titles.clone(),
+                    note_names: local.note_names.clone(),
+                    capture: None,
+                },
+            );
+        }
+        let catalog = self.catalog.clone();
+        let isolation = self.isolation.clone();
+        let shared = self.shared.clone();
+        let dedicated = self.dedicated.clone();
+        let remotes = self.remotes.clone();
+        let senders = self.senders.clone();
+        let stock = self
+            .stock
+            .iter()
+            .map(|(id, value)| {
+                (
+                    *id,
+                    Stock {
+                        handle: value.handle.clone(),
+                        applied: value.applied.clone(),
+                    },
+                )
+            })
+            .collect();
+        let generation = self.generation;
+        let (dir, rate, tempo, process_setup) =
+            (self.dir.clone(), self.rate, self.tempo, self.process_setup);
+        let clap_names = self.clap_names.clone();
+        Ok(move || Self {
+            threaded_local: true,
+            catalog,
+            isolation,
+            shared,
+            dedicated,
+            remotes,
+            locals,
+            senders,
+            stock,
+            generation,
+            dir,
+            rate,
+            tempo,
+            process_setup,
+            clap_names,
+            ..Self::default()
+        })
+    }
+
+    pub(crate) fn capture_for_live_build(&mut self) -> Result<(), String> {
+        let receipt = self.pull_states(crate::host::PULL_WAIT)?;
+        let edits = self.take_pulled_edits(&receipt)?;
+        self.carried.extend(edits);
+        Ok(())
+    }
+
     /// Keep these across retirement: worker completion alone does not prove the
     /// SDK owner has returned from a call and destroyed its instance.
     pub fn owner_retirements(&self) -> Vec<xirius_vst3::owner::Retirement> {

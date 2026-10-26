@@ -744,6 +744,11 @@ impl AudioEngine {
     }
 }
 
+/// Opaque ownership of an engine-retired resource, safe to destroy on a worker.
+pub struct Retired {
+    _value: Garbage,
+}
+
 impl Controller {
     /// A device-only audition, independent of the song transport and recording.
     pub fn audition(&self) -> crate::audition::bus::Port {
@@ -790,14 +795,22 @@ impl Controller {
         Ok(())
     }
 
-    /// Delivers pending events to `f` and frees plans the audio thread has handed back.
-    pub fn poll(&mut self, mut f: impl FnMut(EngineEvent)) {
+    /// Delivers events and frees retired values on the calling non-RT thread.
+    pub fn poll(&mut self, f: impl FnMut(EngineEvent)) {
+        drop(self.poll_retiring(f));
+    }
+
+    /// Delivers events without destroying retired plans, inputs or timelines.
+    /// Window callers hand the returned ownership to a retirement worker.
+    pub fn poll_retiring(&mut self, mut f: impl FnMut(EngineEvent)) -> Vec<Retired> {
         while let Ok(ev) = self.events.pop() {
             f(ev);
         }
+        let mut retired = Vec::new();
         while let Ok(old) = self.garbage.pop() {
-            drop(old);
+            retired.push(Retired { _value: old });
         }
+        retired
     }
 }
 

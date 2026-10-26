@@ -247,6 +247,30 @@ fn a_live_timeline_edit_keeps_the_remote_slot_and_its_unreported_patch() {
     assert_eq!(state_of(&s), None, "the patch had no notification");
     pull_plugin_states(&mut s, &mut host, &RunOptions::human(), PULL_WAIT).unwrap();
     assert_eq!(state_of(&s), Some(EDITED.to_vec()));
+
+    // A changed insert row really needs a new plan. Capture the still-running
+    // slot explicitly before making its replacement; keep the output alive.
+    server.set_param(&link, "Latency", 0.75);
+    run(
+        &mut s,
+        "plugin.add",
+        json!({"track":track.to_string(),"name":"Gain",
+        "kind":"effect","format":"builtin","uid":"gain"}),
+    );
+    host.sync(s.project());
+    assert!(host.play());
+    while host.swap_pending() {
+        if let Some(report) = host.step_swap() {
+            assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        }
+        audio.render(&mut buffer, 2);
+        host.poll();
+        assert!(std::time::Instant::now() < deadline, "live graph watchdog");
+        std::thread::yield_now();
+    }
+    assert!(host.poll().playing, "graph publication preserves playback");
+    pull_plugin_states(&mut s, &mut host, &RunOptions::human(), PULL_WAIT).unwrap();
+    assert_eq!(state_of(&s), Some(192u32.to_le_bytes().to_vec()));
 }
 
 #[test]

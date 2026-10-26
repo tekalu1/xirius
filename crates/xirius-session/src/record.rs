@@ -620,6 +620,8 @@ impl SessionHost {
                     AudioLane {
                         channels,
                         path: Box::new(move |_| {
+                            #[cfg(feature = "test-io")]
+                            let _ = xirius_core::io_test::before("record_writer", &folder);
                             // Directory and filename I/O belongs to the writer too.
                             let _ = std::fs::create_dir_all(&folder);
                             unused(&folder, &base)

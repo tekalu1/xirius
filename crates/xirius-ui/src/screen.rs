@@ -2005,7 +2005,7 @@ fn step(run: &Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
         && {
             #[cfg(feature = "loading-probe")]
             {
-                crate::prepared_shots::ready(&studio)
+                crate::prepared_shots::ready(&studio) && crate::live_edit_shots::ready(&studio)
             }
             #[cfg(not(feature = "loading-probe"))]
             {

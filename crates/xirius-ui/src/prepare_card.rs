@@ -273,6 +273,13 @@ impl Studio {
     /// more to do, so the frames keep coming.
     pub(crate) fn poll_swap(&mut self) -> bool {
         let (busy, said) = self.transport.step_swap();
+        if self
+            .transport
+            .host_mut()
+            .is_some_and(|host| host.take_state_transfer_failed())
+        {
+            self.keep.plugin_state_failed = true;
+        }
         if !said.is_empty() {
             self.error = Some(said.join("。"));
         }

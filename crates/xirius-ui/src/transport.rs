@@ -325,7 +325,7 @@ impl Transport {
             return false;
         }
         if self.mode == OutputMode::Device || self.windowed {
-            match prepared::Start::new(self, p, dir, None) {
+            match prepared::Start::new(self, p, dir) {
                 Ok(start) => {
                     self.prepared_start = Some(start);
                     return true;
@@ -1029,32 +1029,15 @@ impl Transport {
     /// host processes said about plugins the player took before they answered. True while there
     /// is more to do, so the frames keep coming.
     pub fn step_swap(&mut self) -> (bool, Vec<String>) {
-        if let Some((project, dir)) = self
-            .player
-            .as_ref()
-            .and_then(|pl| pl.host.preparation_target().map(|p| (p, pl.dir.clone())))
-        {
-            // Keep the recording engine and its pending take until the normal
-            // stop/place path finishes. Preparation must never discard a take.
-            if self.recording || self.take.is_some() {
-                return (true, Vec::new());
-            }
-            self.stop_preview();
-            let previous = self.player.take();
-            self.reset();
-            match prepared::Start::new(self, &project, dir, previous) {
-                Ok(start) => self.prepared_start = Some(start),
-                Err(error) => return (false, vec![error]),
-            }
-            return (true, Vec::new());
-        }
         let Some(pl) = &mut self.player else {
             return (false, Vec::new());
         };
-        let said = pl.host.take_late_warnings();
+        let mut said = pl.host.take_late_warnings();
         // The report's own warnings (the song's files that are missing, and so on) are not said
         // again: a change of the song has never said them, and the open of the song did.
-        let _ = pl.host.step_swap();
+        if let Some(report) = pl.host.step_swap() {
+            said.extend(report.warnings);
+        }
         let busy = pl.host.swap_pending() || pl.host.plugins().late_pending();
         (busy, said)
     }

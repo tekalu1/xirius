@@ -160,6 +160,7 @@ struct Sent {
 
 /// The clip data last queued for one track. Fades, envelopes and loops are stored outside
 /// `Track`, so sharing the track alone does not mean its timeline is unchanged.
+#[derive(Clone)]
 struct TimelineState {
     track: Arc<Track>,
     fx: BTreeMap<ClipId, ClipFx>,
@@ -194,11 +195,15 @@ impl TimelineState {
     }
 }
 
+mod live_graph;
 mod material;
 
 pub struct SessionHost {
     material: Option<material::Update>,
     material_dirty: bool,
+    graph_work: Option<live_graph::Update>,
+    graph_failed: Option<Project>,
+    state_transfer_failed: bool,
     live: BTreeMap<TrackId, bool>,
     song: Project,
     latency_dirty: bool,
@@ -280,6 +285,10 @@ struct CpuWindow {
 const CPU_WINDOW: Duration = Duration::from_millis(500);
 
 impl SessionHost {
+    pub fn take_state_transfer_failed(&mut self) -> bool {
+        std::mem::take(&mut self.state_transfer_failed)
+    }
+
     pub fn begin_pull_states(&mut self) -> crate::plugins::StatePull {
         self.builder.plugins_mut().begin_pull_states()
     }
@@ -336,6 +345,9 @@ impl SessionHost {
         let mut host = SessionHost {
             material: None,
             material_dirty: false,
+            graph_work: None,
+            graph_failed: None,
+            state_transfer_failed: false,
             live: p
                 .tracks
                 .iter()
@@ -502,7 +514,7 @@ impl SessionHost {
         let loop_start = self
             .loop_ticks
             .map(|(start, _)| self.tmap.frame_at(start, f64::from(self.builder.rate())));
-        self.controller.poll(|ev| match ev {
+        let retired = self.controller.poll_retiring(|ev| match ev {
             EngineEvent::Transport {
                 playing,
                 position,
@@ -539,6 +551,14 @@ impl SessionHost {
             EngineEvent::PlanSwapped => *swapping = None,
             EngineEvent::Position(_) | EngineEvent::Meter { .. } => {}
         });
+        if self.windowed && !retired.is_empty() {
+            let _ = crate::background::Job::spawn("engine-retire", move || {
+                drop(retired);
+                Ok(())
+            });
+        } else {
+            drop(retired);
+        }
         self.polled = Some(Instant::now());
         // The windows that moved with the last mix, as the hosts that had them let go.
         self.builder.plugins_mut().settle_following();
@@ -603,6 +623,9 @@ impl SessionHost {
 
     /// Stops the renders the song no longer plays.
     fn sweep_processed(&self) {
+        if self.windowed {
+            return;
+        }
         let keys = crate::processed::keys_of(
             &self.song,
             &self.tmap,
@@ -619,7 +642,11 @@ impl SessionHost {
             match &mut self.pending {
                 Some(pd) => pd.latency = true,
                 None => {
-                    let heard = self.heard_now();
+                    let heard = if self.windowed {
+                        self.song.clone()
+                    } else {
+                        self.heard_now()
+                    };
                     self.begin_swap(heard, SwapKind::Latency, Vec::new());
                 }
             }
@@ -1258,7 +1285,7 @@ impl SessionHost {
 
     /// A new mix is waiting for its plugins to open.
     pub fn swap_pending(&self) -> bool {
-        self.pending.is_some() || self.material.is_some()
+        self.pending.is_some() || self.material.is_some() || self.graph_work.is_some()
     }
 
     /// Whether a change of latency builds its mix as [`SessionHost::sync_later`] does, instead
@@ -1300,6 +1327,9 @@ impl SessionHost {
     /// everything is open and gives what that did.
     pub fn step_swap(&mut self) -> Option<SyncReport> {
         if self.windowed {
+            if self.pending.is_some() || self.graph_work.is_some() {
+                return self.step_live_graph();
+            }
             return self.step_material();
         }
         self.builder.plugins_mut().poll_preloads();
