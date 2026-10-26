@@ -283,7 +283,13 @@ pub fn probe(path: &Path) -> Result<Info, String> {
 
 /// Decodes `path` and converts it to `rate` (the song's). The error is a sentence for the user.
 pub fn read(path: &Path, rate: u32) -> Result<AudioData, String> {
+    #[cfg(feature = "test-io")]
+    xirius_core::io_test::before("prepare_decode", path).map_err(|e| e.to_string())?;
     let d = decode(path)?;
+    #[cfg(feature = "test-io")]
+    if d.rate != rate {
+        xirius_core::io_test::before("prepare_convert", path).map_err(|e| e.to_string())?;
+    }
     let (left, right) = convert(d.left, d.right, d.mono, d.rate, rate)?;
     Ok(AudioData { left, right })
 }

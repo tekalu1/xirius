@@ -17,6 +17,8 @@ pub(crate) enum Leave {
     New,
     Sample,
     Close,
+    Dawproject(PathBuf),
+    Version(String),
 }
 
 pub(crate) struct Saving {
@@ -171,7 +173,7 @@ impl Studio {
                 self.request_open(crate::opening::Request::Sample);
                 return;
             }
-            Leave::Close => {}
+            Leave::Close | Leave::Dawproject(_) | Leave::Version(_) => {}
         }
         if self.input_blocked() {
             return;
@@ -199,6 +201,12 @@ impl Studio {
             Leave::New => self.new_song(),
             Leave::Sample => self.open_sample(),
             Leave::Close => self.window_ask = Some(crate::context::key_more::WindowAsk::Quit),
+            Leave::Dawproject(path) => {
+                self.dawproject_export_ready(&path);
+            }
+            Leave::Version(name) => {
+                self.command(|song| song.save_version(&name));
+            }
         }
         if !matches!(
             self.window_ask,
@@ -210,6 +218,23 @@ impl Studio {
 
     fn launch_save(&mut self, target: Option<PathBuf>, leaving: Option<Leave>) {
         self.launch_save_with_capture(target, leaving, true);
+    }
+
+    pub(crate) fn export_with_plugin_states(&mut self, path: PathBuf) {
+        self.launch_save(None, Some(Leave::Dawproject(path)));
+    }
+
+    pub(crate) fn version_with_plugin_states(&mut self, name: String) {
+        if self.transport.host().is_some() {
+            self.launch_save(None, Some(Leave::Version(name)));
+        } else {
+            self.command(|song| song.save_version(&name));
+            if self.error.is_none()
+                && let Some(popup) = &mut self.popup
+            {
+                popup.naming = None;
+            }
+        }
     }
 
     pub(crate) fn close_without_plugin_state(&mut self) {
@@ -341,7 +366,7 @@ impl Studio {
                 self.save_failed(&error);
                 self.error = Some(error.to_string());
                 self.update.pending = None;
-                if save.leaving.is_some() || save.close_when_done {
+                if matches!(save.leaving, Some(Leave::Close)) || save.close_when_done {
                     self.ask_unsaved(crate::unsaved::Pending::Close);
                 }
                 return true;

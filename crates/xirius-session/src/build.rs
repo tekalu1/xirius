@@ -270,6 +270,16 @@ impl Builder {
     }
 
     pub fn build(&mut self, p: &Project, select: Select) -> Built {
+        self.build_observed(p, select, |_, _| {})
+    }
+
+    /// Preparation workers report before and after each complete material unit.
+    pub fn build_observed(
+        &mut self,
+        p: &Project,
+        select: Select,
+        mut track: impl FnMut(xirius_core::id::TrackId, bool),
+    ) -> Built {
         let graph = Graph::of(p);
         let scope = Scope::new(p, select);
         let structure = Structure::of(p, &graph, &scope);
@@ -283,6 +293,7 @@ impl Builder {
         let mut tracks = Vec::with_capacity(graph.tracks.len());
         for (i, id) in graph.tracks.iter().enumerate() {
             let t = &p.tracks[id];
+            track(t.id, false);
             let (shape, strip) = (&structure.tracks[i], &mix.tracks[i]);
             let included = scope.includes(*id);
             // A track that plays to a MIDI port makes no sound of its own.
@@ -319,10 +330,12 @@ impl Builder {
                 spec.timeline = self.timeline(p, t, &tmap, &mut warnings);
             }
             tracks.push(TrackSlot::New(spec));
+            track(t.id, true);
         }
 
         let mut buses = Vec::with_capacity(structure.buses.len());
         for (shape, strip) in structure.buses.iter().zip(&mix.buses) {
+            track(shape.id, false);
             let name = if shape.id == DISCARD {
                 "discard".to_string()
             } else {
@@ -346,6 +359,7 @@ impl Builder {
             spec.output = shape.output;
             spec.sends = sends_for(&shape.sends, &strip.sends);
             buses.push(spec);
+            track(shape.id, true);
         }
 
         let (master_inserts, master_keys) = self.inserts_for(
@@ -522,6 +536,13 @@ impl Builder {
                                     * rate)
                                     .round()
                                     .max(0.0) as u64;
+                                #[cfg(feature = "test-io")]
+                                if let Err(error) =
+                                    xirius_core::io_test::before("prepare_prime", &path)
+                                {
+                                    warnings.push(format!("{}: {error}", t.name));
+                                    continue;
+                                }
                                 data.prime(offset);
                                 if data.failed() || data.missed_frames() > 0 {
                                     warnings.push(format!(

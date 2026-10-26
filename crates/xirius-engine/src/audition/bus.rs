@@ -60,7 +60,15 @@ impl Port {
         self.state.alive.load(Ordering::Acquire)
     }
     pub fn start(&self, serial: u64) {
-        self.state.wanted.store(serial, Ordering::Release);
+        if self.alive() {
+            self.state.wanted.store(serial, Ordering::Release);
+        }
+    }
+
+    /// Detach immediately; stopping and dropping the old device may finish later.
+    pub fn close(&self) {
+        self.state.alive.store(false, Ordering::Release);
+        self.state.wanted.store(0, Ordering::Release);
     }
 
     pub fn stop(&self) {
@@ -101,7 +109,11 @@ impl Bus {
         self.state.wanted.store(0, Ordering::Release);
     }
     pub fn next_frame(&mut self) -> [f32; 2] {
-        let wanted = self.state.wanted.load(Ordering::Acquire);
+        let wanted = if self.state.alive.load(Ordering::Acquire) {
+            self.state.wanted.load(Ordering::Acquire)
+        } else {
+            0
+        };
         if wanted != self.serial {
             self.serial = wanted;
             self.played = 0;
@@ -116,5 +128,21 @@ impl Bus {
             }
         }
         [0.0; 2]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn detach_silences_a_live_bus_and_rejects_old_feeders_before_device_drop() {
+        let (mut bus, port) = super::create(48_000);
+        port.start(1);
+        assert_eq!(port.feed(1, &[0.5, 0.5], &[0.5, 0.5]), 2);
+        assert_eq!(bus.next_frame(), [0.5; 2]);
+        port.close();
+        port.start(2);
+        assert!(!port.alive());
+        assert_eq!(port.feed(2, &[1.0], &[1.0]), 0);
+        assert_eq!(bus.next_frame(), [0.0; 2]);
     }
 }

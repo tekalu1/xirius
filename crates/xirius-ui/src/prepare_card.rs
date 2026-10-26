@@ -39,6 +39,9 @@ const BAR_MOVE: Duration = Duration::from_millis(200);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Card {
+    pub(crate) background: bool,
+    pub(crate) cancelling: bool,
+    pub(crate) failure: Option<String>,
     pub progress: Progress,
     /// The pointer is over 後で読む.
     pub hover: bool,
@@ -63,6 +66,9 @@ impl Card {
     pub fn new(progress: Progress) -> Card {
         let to = fraction(&progress);
         Card {
+            background: false,
+            cancelling: false,
+            failure: None,
             progress,
             hover: false,
             from: to,
@@ -114,6 +120,9 @@ impl Card {
     }
 
     pub fn layout(&self, size: (f32, f32)) -> CardLayout {
+        if self.background {
+            return background_layout(size);
+        }
         let w = W.min(size.0 - EDGE * 2.0).max(0.0);
         let listed = self.listed();
         let lines = listed.len().div_ceil(2) as f32;
@@ -169,6 +178,9 @@ impl Studio {
     /// play first wants it, as before; a test calls [`Studio::prepare_song`] itself.
     pub(crate) fn prepare_on_open(&mut self) {
         self.preparing = None;
+        if std::mem::take(&mut self.skip_preparation_once) {
+            return;
+        }
         if self.transport.mode == OutputMode::Device {
             self.prepare_song();
         }
@@ -181,8 +193,12 @@ impl Studio {
             return;
         }
         match self.transport.start_progress() {
-            Some(progress) if !progress.units.is_empty() => {
-                self.preparing = Some(Card::new(progress));
+            Some(progress)
+                if !progress.units.is_empty() || self.transport.background_starting() =>
+            {
+                let mut card = Card::new(progress);
+                card.background = self.transport.background_starting();
+                self.preparing = Some(card);
             }
             // Nothing to open: the player and the device start now.
             _ => {
@@ -213,19 +229,45 @@ impl Studio {
     }
 
     fn step_preparing(&mut self) {
+        if self
+            .preparing
+            .as_ref()
+            .is_some_and(|c| c.background && c.failure.is_some() && !c.cancelling)
+        {
+            return;
+        }
+        if self
+            .preparing
+            .as_ref()
+            .is_some_and(|c| c.background && c.cancelling)
+            && !self.transport.preparing()
+        {
+            self.finish_preparation_cancel();
+            return;
+        }
         let p = self.project();
         match self.transport.step_start(&p, self.song.dir()) {
             Some(StartStep::Going(progress)) => {
-                if let Some(card) = &mut self.preparing {
+                if let Some(card) = &mut self.preparing
+                    && !card.cancelling
+                {
                     card.set(progress, Instant::now());
                 }
             }
             Some(StartStep::Done(started)) => {
+                if let Err(error) = &started
+                    && let Some(card) = &mut self.preparing
+                    && card.background
+                {
+                    card.failure = Some(error.clone());
+                    return;
+                }
                 self.preparing = None;
                 if let Err(e) = started {
                     self.error = Some(e);
                 }
             }
+            Some(StartStep::Cancelled) => self.finish_preparation_cancel(),
             None => self.preparing = None,
         }
     }
@@ -233,7 +275,37 @@ impl Studio {
     /// 後で読む: the card closes and the song can be edited; what is left opens when it is
     /// first needed.
     pub fn prepare_later(&mut self) {
+        if let Some(card) = &mut self.preparing
+            && card.background
+        {
+            if !card.cancelling {
+                let now = Instant::now();
+                let value = card.bar(now);
+                card.from = value;
+                card.to = value;
+                card.at = now;
+                card.cancelling = true;
+                card.failure = None;
+                self.transport.cancel_preparation();
+            }
+            return;
+        }
         self.preparing = None;
+    }
+
+    fn finish_preparation_cancel(&mut self) {
+        if self.opening.is_some() {
+            return;
+        }
+        let card = self.preparing.take();
+        self.skip_preparation_once = true;
+        if self.request_open(crate::opening::Request::New) {
+            // Keep the same cleanup veil until the old Session is closed, too.
+            self.preparing = card;
+        } else {
+            self.skip_preparation_once = false;
+            self.preparing = card;
+        }
     }
 
     /// A press while the card is up. Every press belongs to the card.
@@ -271,6 +343,10 @@ impl Studio {
 
 /// The veil over the body and the card on it.
 pub fn paint(pen: &mut Pen, card: &Card, g: &Geometry, turn: f32) {
+    if card.background {
+        paint_background(pen, card, g, turn);
+        return;
+    }
     let c = pen.c;
     pen.fill(Rect::new(0.0, 0.0, g.size.0, g.size.1), c.veil);
     let l = card.layout(g.size);
@@ -350,6 +426,124 @@ pub fn paint(pen: &mut Pen, card: &Card, g: &Geometry, turn: f32) {
         l.button,
         Align::Center,
     );
+}
+
+fn background_layout(size: (f32, f32)) -> CardLayout {
+    let w = W.min((size.0 - EDGE * 2.0).max(0.0));
+    let r = Rect::new(
+        ((size.0 - w) / 2.0).max(0.0),
+        ((size.1 - 148.0) / 2.0).max(0.0),
+        w,
+        148.0,
+    );
+    CardLayout {
+        rect: r,
+        head: Rect::new(r.x + PAD, r.y + PAD, w - PAD * 2.0, 20.0),
+        bar: Rect::new(r.x + PAD, r.y + 96.0, w - PAD * 2.0, BAR_H),
+        rows: Vec::new(),
+        button: Rect::new(
+            r.right() - PAD - 60.0,
+            r.bottom() - PAD - BUTTON_H,
+            60.0,
+            BUTTON_H,
+        ),
+    }
+}
+fn paint_background(pen: &mut Pen, card: &Card, g: &Geometry, turn: f32) {
+    let l = card.layout(g.size);
+    let c = pen.c;
+    pen.fill(Rect::new(0.0, 0.0, g.size.0, g.size.1), c.veil);
+    pen.floating(l.rect, c.surface_1, Radius::M);
+    pen.icon_turned(
+        "spinner",
+        Rect::new(l.head.x, l.head.y + 4.0, ICON, ICON),
+        c.ink_strong,
+        turn,
+    );
+    let title = if card.cancelling {
+        "中止しています"
+    } else if card.failure.is_some() {
+        "準備できません"
+    } else {
+        "音を準備しています"
+    };
+    pen.text(
+        title,
+        FontSize::Body,
+        Weight::Medium,
+        c.ink_strong,
+        Rect::new(l.head.x + 20.0, l.head.y, l.head.w - 20.0, 20.0),
+        Align::Left,
+    );
+    let count = if card.cancelling {
+        "片付け中".into()
+    } else {
+        format!(
+            "{} トラック中 {} トラック準備済み",
+            card.progress.units.len(),
+            card.progress.done
+        )
+    };
+    pen.text(
+        &count,
+        FontSize::Small,
+        Weight::Regular,
+        c.ink,
+        Rect::new(l.head.x, l.head.bottom() + 8.0, l.head.w, 20.0),
+        Align::Left,
+    );
+    let current = if card.cancelling {
+        String::new()
+    } else if let Some(error) = &card.failure {
+        error.clone()
+    } else if let Some((name, _)) = card
+        .progress
+        .units
+        .iter()
+        .find(|(_, s)| *s == UnitState::Working)
+    {
+        format!("準備中：{name}")
+    } else {
+        "音の準備を仕上げています".into()
+    };
+    let row = Rect::new(l.head.x, l.head.bottom() + 36.0, l.head.w, 20.0);
+    let current = crate::opening_view::shorten(&current, row.w, |s| {
+        pen.measure(s, FontSize::Small, Weight::Regular)
+    });
+    pen.mask(row, |pen| {
+        pen.text(
+            &current,
+            FontSize::Small,
+            Weight::Regular,
+            c.ink,
+            row,
+            Align::Left,
+        );
+    });
+    pen.round(l.bar, c.surface_3, Radius::Xs);
+    let filled = l.bar.w * card.bar(Instant::now()).clamp(0.0, 1.0);
+    if filled > 0.0 {
+        pen.round(
+            Rect::new(l.bar.x, l.bar.y, filled, l.bar.h),
+            c.fill,
+            Radius::Xs,
+        );
+    }
+    if !card.cancelling {
+        pen.round(
+            l.button,
+            if card.hover { c.thumb } else { c.surface_3 },
+            Radius::S,
+        );
+        pen.text(
+            "中止",
+            FontSize::Small,
+            Weight::Medium,
+            c.ink_strong,
+            l.button,
+            Align::Center,
+        );
+    }
 }
 
 #[cfg(test)]

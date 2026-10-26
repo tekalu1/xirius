@@ -766,6 +766,7 @@ pub struct Studio {
     pub recovery: Option<crate::recovery_card::Card>,
     /// 音源を準備中: the song's instruments and effects open behind it (ENG-064).
     pub preparing: Option<crate::prepare_card::Card>,
+    pub(crate) skip_preparation_once: bool,
     /// The output's level the device panel shows, left and right, falling (UI-260).
     pub rig_out: [f32; 2],
     /// The test tone sounds.
@@ -907,6 +908,7 @@ impl Studio {
             keep: crate::keep::Keep::default(),
             recovery: None,
             preparing: None,
+            skip_preparation_once: false,
             rig_out: [0.0; 2],
             rig_tone: false,
             dawproject: None,
@@ -2419,11 +2421,7 @@ impl Studio {
                 if key == "enter" {
                     let name = name.trim().to_string();
                     if !name.is_empty() {
-                        self.pull_plugins();
-                        self.command(|s| s.save_version(&name));
-                        if self.error.is_none() {
-                            self.popup.as_mut().unwrap().naming = None;
-                        }
+                        self.version_with_plugin_states(name);
                     }
                     return true;
                 }

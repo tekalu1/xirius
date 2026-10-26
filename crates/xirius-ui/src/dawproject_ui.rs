@@ -176,10 +176,17 @@ impl Studio {
     /// Writes the song to `out` (`.dawproject` added when it has no such ending), its audio
     /// inside; a file already there goes to the recycle bin. False when it did not start.
     pub fn dawproject_export(&mut self, out: &Path) -> bool {
-        if self.preparing.is_some() || self.busy_dawproject() {
+        if self.input_blocked() || self.busy_dawproject() {
             return false;
         }
-        self.pull_plugins();
+        if self.transport.host().is_some() {
+            self.export_with_plugin_states(out.to_path_buf());
+            return true;
+        }
+        self.dawproject_export_ready(out)
+    }
+
+    pub(crate) fn dawproject_export_ready(&mut self, out: &Path) -> bool {
         let out = with_extension(out);
         let project = self.project();
         let dir = self.song.dir();

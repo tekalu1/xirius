@@ -85,25 +85,30 @@ fn saving_does_not_write_or_wait_for_held_state_and_only_a_complete_retry_clears
     let temp = tempfile::tempdir().unwrap();
     let dir = temp.path().join("original");
     s.song.save_as(&dir).unwrap();
-    let (host, audio, warnings) = SessionHost::start(
-        &s.project(),
-        HostConfig {
-            threaded_local: true,
-            catalog: Some(catalog),
-            dir: Some(dir.clone()),
-            isolation: Some(xirius_session::plugins::Isolation::InProcess),
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    assert!(warnings.is_empty(), "{warnings:?}");
-    s.transport.player = Some(Player {
-        host,
-        out: Output::start(OutputMode::Silent { paced: true }, audio)
-            .unwrap()
-            .unwrap(),
-        dir: Some(dir),
+    s.transport.mode = OutputMode::Device;
+    s.transport.set_catalog(catalog);
+    s.transport.set_drivers(Drivers {
+        exclusive_out: None,
+        shared_out: Arc::new(|audio, _, _| {
+            Ok(Output::Silent(xirius_session::output::SilentOutput::start(
+                audio, true,
+            )))
+        }),
+        exclusive_in: None,
+        shared_in: Arc::new(|_, _, _| Err("no test input".into())),
+        devices: Arc::new(Vec::new),
     });
+    s.prepare_song();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while s.preparing.is_some() {
+        s.poll_preparing();
+        assert!(Instant::now() < deadline, "initial preparation watchdog");
+        std::thread::yield_now();
+    }
+    assert!(s.error.is_none(), "{:?}", s.error);
+    let host = s.transport.host().unwrap();
+    assert!(!host.plugins().owner_retirements().is_empty());
+    assert!(!s.transport.playing);
     let gate = Gate::new(&dll);
     let target = temp.path().join("copy");
     s.start_file_request(FileRequest::SaveAs, &target);
@@ -134,6 +139,24 @@ fn saving_does_not_write_or_wait_for_held_state_and_only_a_complete_retry_clears
     s.save_succeeded(); // A completed disk checkpoint is insufficient.
     assert_eq!(s.save_mark(), SaveMark::Failed);
     assert!(!target.exists());
+    let export = temp.path().join("held.dawproject");
+    assert!(s.dawproject_export(&export));
+    s.saving.as_mut().unwrap().since -= xirius_session::host::PULL_WAIT;
+    s.poll_saving();
+    assert!(s.saving.is_none());
+    assert!(s.dawproject.is_none());
+    assert!(!export.exists(), "failed capture never exports old state");
+    assert!(s.unsaved.is_none(), "export failure is not a quit request");
+    s.version_with_plugin_states("held".into());
+    s.saving.as_mut().unwrap().since -= xirius_session::host::PULL_WAIT;
+    s.poll_saving();
+    assert!(
+        !s.song
+            .versions()
+            .iter()
+            .any(|version| version.name == "held")
+    );
+    assert!(s.unsaved.is_none());
     assert!(!s.request_close());
     assert!(s.unsaved.is_some());
     assert!(!s.run_command("track.add.audio", json!({"name":"blocked"})));

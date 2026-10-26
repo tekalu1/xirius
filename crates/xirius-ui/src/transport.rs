@@ -43,6 +43,7 @@ use crate::tree::RowKind;
 
 /// A running player: the song's engine and where its sound goes.
 struct Player {
+    threaded: bool,
     host: SessionHost,
     out: Output,
     /// The folder the song's audio paths are relative to when it started.
@@ -52,6 +53,7 @@ struct Player {
 /// Where a player started a little at a time is (ENG-064).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum StartStep {
+    Cancelled,
     /// Plugins are still opening.
     Going(Progress),
     /// Everything is open and the player started, or why it did not.
@@ -109,6 +111,8 @@ pub struct Take {
 const PREVIEW_CLOSING: &str = "試聴の出力を閉じています";
 
 pub struct Transport {
+    prepared_start: Option<prepared::Start>,
+    retired: Vec<prepared::Retiring>,
     pending_output: Option<(bool, Tick)>,
     pending_record: bool,
     pub(crate) auditioning_export: bool,
@@ -174,6 +178,8 @@ pub struct Transport {
 impl Transport {
     pub fn new(mode: OutputMode) -> Transport {
         Transport {
+            prepared_start: None,
+            retired: Vec::new(),
             pending_output: None,
             pending_record: false,
             auditioning_export: false,
@@ -221,7 +227,17 @@ impl Transport {
 
     fn forget_player(&mut self) {
         self.stop_preview();
-        self.player = None;
+        if let Some(mut player) = self.player.take() {
+            player.host.controller().audition().close();
+            if player.threaded {
+                match prepared::Retiring::new(player) {
+                    Ok(retired) => self.retired.push(retired),
+                    Err(error) => self.driver_notice = Some(error),
+                }
+            } else {
+                drop(player);
+            }
+        }
     }
 
     fn cancel_pending_start(&mut self) {
@@ -275,24 +291,42 @@ impl Transport {
         {
             return false;
         }
+        if self.mode == OutputMode::Device {
+            match prepared::Start::new(self, p, dir) {
+                Ok(start) => {
+                    self.prepared_start = Some(start);
+                    return true;
+                }
+                Err(error) => {
+                    self.driver_notice = Some(error);
+                    return false;
+                }
+            }
+        }
         self.starting = Some((Starting::new(p, self.host_config(dir.clone())), dir));
         true
     }
 
     /// How far the player being started is.
     pub(crate) fn start_progress(&self) -> Option<Progress> {
+        if let Some(start) = &self.prepared_start {
+            return Some(start.progress());
+        }
         self.starting.as_ref().map(|(s, _)| s.progress())
     }
 
     /// A player is being started a little at a time; the next one takes what is open of it.
     pub fn preparing(&self) -> bool {
-        self.starting.is_some()
+        self.starting.is_some() || self.prepared_start.is_some()
     }
 
     /// Opens a little more of the player being started for `p`, and starts it (and opens the
     /// sound device) once everything is open. `None` when none is being started, or it was for
     /// another folder.
     pub(crate) fn step_start(&mut self, p: &Project, dir: Option<PathBuf>) -> Option<StartStep> {
+        if self.prepared_start.is_some() {
+            return self.step_prepared(dir);
+        }
         let (s, d) = self.starting.as_mut()?;
         if *d != dir {
             self.starting = None;
@@ -328,6 +362,9 @@ impl Transport {
         dir: Option<PathBuf>,
         track: TrackId,
     ) -> Result<bool, String> {
+        if self.prepared_start.is_some() {
+            return Ok(false);
+        }
         if self.player.is_none()
             && let Some(d) = &self.down
         {
@@ -456,6 +493,9 @@ impl Transport {
 
     /// Starts the player for `p` if there is none (or the song moved).
     fn ensure(&mut self, p: &Project, dir: Option<PathBuf>) -> Result<&mut Player, String> {
+        if self.prepared_start.is_some() {
+            return Err("音を準備しています".into());
+        }
         if self.auditioning_export {
             return Err("書き出した音を試聴中です".into());
         }
@@ -514,7 +554,12 @@ impl Transport {
             if host.seek_frame(frame) {
                 self.expect(false, Some(frame));
             }
-            self.player = Some(Player { host, out, dir });
+            self.player = Some(Player {
+                host,
+                out,
+                dir,
+                threaded: false,
+            });
         }
         Ok(self.player.as_mut().expect("started above"))
     }
@@ -967,6 +1012,9 @@ impl Transport {
 
     /// Lets the player go (another song was opened).
     pub fn reset(&mut self) {
+        if let Some(start) = self.prepared_start.take() {
+            start.cancel();
+        }
         self.pending_output = None;
         self.pending_record = false;
         self.auditioning_export = false;
@@ -993,6 +1041,9 @@ impl Transport {
         dir: Option<PathBuf>,
         armed: &[TrackId],
     ) -> Option<String> {
+        if self.prepared_start.is_some() {
+            return None;
+        }
         if self.recording || self.take.is_some() {
             return None;
         }
@@ -1061,6 +1112,7 @@ impl Transport {
     /// Takes in what the engine reported. Returns the position to show, or
     /// `None` while the engine has not answered the last command yet.
     pub fn poll(&mut self) -> Option<Tick> {
+        self.retired.retain(|retired| !retired.finished());
         let pl = self.player.as_mut()?;
         let st = pl.host.poll();
         for (strip, r) in pl.host.take_levels() {
@@ -1105,6 +1157,8 @@ impl Transport {
         std::mem::take(&mut self.levels)
     }
 }
+
+mod prepared;
 
 /// Gives the song's metronome to the engine (`on: false` takes it away).
 fn send_click(host: &mut SessionHost, p: &Project, on: bool) {

@@ -294,6 +294,7 @@ impl Screen {
         let g = geometry(&studio, window);
         let (x, y) = in_body(ev.position);
         if studio.unsaved_press(&g, x, y)
+            || studio.prepare_press(&g, x, y)
             || studio.opening_press(&g, x, y)
             || studio.saving_press(&g, x, y)
         {
@@ -476,7 +477,10 @@ impl Screen {
         }
         let blocked_key = {
             let mut s = self.studio.borrow_mut();
-            s.unsaved_key(&k.key) || s.opening_key(&k.key) || s.saving_key(&k.key)
+            s.unsaved_key(&k.key)
+                || s.prepare_key(&k.key)
+                || s.opening_key(&k.key)
+                || s.saving_key(&k.key)
         };
         if blocked_key {
             cx.notify();

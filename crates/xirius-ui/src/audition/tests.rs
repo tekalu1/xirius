@@ -349,7 +349,16 @@ fn place(name: &str) -> (tempfile::TempDir, PathBuf) {
 const GUARD: Duration = Duration::from_secs(60);
 
 fn studio(mode: OutputMode, top: &Path) -> Studio {
-    let mut s = Studio::sample();
+    // Device preparation reports missing sample-song files instead of silently
+    // substituting them. These tests exercise preview ownership with valid audio.
+    let mut s = if mode == OutputMode::Device {
+        let mut song = crate::song::Song::empty();
+        song.run("track.add.audio", serde_json::json!({"name":"Vocal"}))
+            .unwrap();
+        Studio::new(song)
+    } else {
+        Studio::sample()
+    };
     s.transport.mode = mode;
     // The peaks the player makes go beside the test's files, not in the user's store.
     s.browser.peak_store = Some(top.parent().unwrap().join("Peaks"));
@@ -858,7 +867,7 @@ fn exclusive_preview_uses_the_prepared_song_output() {
     while s.transport.preparing() {
         s.poll_preparing();
     }
-    assert!(s.transport.is_live());
+    assert!(s.transport.is_live(), "{:?}", s.preparing);
     let pad = top.join("pad_44k.wav").to_string_lossy().into_owned();
     s.browser.select_file(&pad);
     s.follow_audition();

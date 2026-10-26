@@ -227,11 +227,9 @@ impl Studio {
         let Some(host) = self.transport.host_mut() else {
             return;
         };
-        match self.song.pull_plugin_states(host) {
-            Ok(false) => {}
-            Ok(true) => self.after_edit(),
-            Err(e) => self.error = Some(e),
-        }
+        // A frame will collect the result. Save/open/quit use their explicit
+        // StatePull preflight; this helper must never spin in a window callback.
+        host.begin_pull_states();
     }
 
     /// Brings the open window of `id` above the other windows.

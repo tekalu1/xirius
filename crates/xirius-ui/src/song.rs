@@ -274,20 +274,6 @@ impl Song {
             .map_err(|e| e.to_string())
     }
 
-    /// [`Song::collect_plugin_edits`] after asking every plugin for its state: what a plugin
-    /// changed in its window without saying so is in the song too (PLG-057). Before the song
-    /// is written or left.
-    pub fn pull_plugin_states(&mut self, host: &mut SessionHost) -> Result<bool, String> {
-        xirius_session::host::pull_plugin_states(
-            &mut self.session,
-            host,
-            &RunOptions::human(),
-            xirius_session::host::PULL_WAIT,
-        )
-        .map(|c| c.result.is_some())
-        .map_err(|e| e.to_string())
-    }
-
     /// Steps the person has made (the setup is not counted).
     pub fn steps(&self) -> usize {
         self.session.steps().len()

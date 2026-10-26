@@ -162,6 +162,44 @@ impl Starting {
         self.finish_with(p, false)
     }
 
+    /// The initial worker waits for decode/conversion/prime and builds a complete
+    /// realtime plan. Later edits may render transforms in the background again.
+    pub fn finish_prepared(
+        mut self,
+        p: &Project,
+        track: impl FnMut(xirius_core::id::TrackId, bool),
+    ) -> Result<(SessionHost, AudioEngine, Vec<String>), String> {
+        self.builder.set_background(false);
+        self.builder.plugins_mut().set_setup(self.setup);
+        if !self.asked {
+            self.asked = true;
+            self.ask_apart();
+        }
+        let built = self.builder.build_observed(p, Select::All, track);
+        self.builder.set_background(true);
+        #[cfg(feature = "test-io")]
+        xirius_core::io_test::before(
+            "prepare_graph",
+            self.builder
+                .dir()
+                .unwrap_or_else(|| std::path::Path::new("")),
+        )
+        .map_err(|e| e.to_string())?;
+        SessionHost::assemble(
+            p,
+            self.builder,
+            built,
+            self.setup,
+            self.engine,
+            self.processed_seen,
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    pub fn owner_retirements(&self) -> Vec<xirius_vst3::owner::Retirement> {
+        self.builder.plugins().owner_retirements()
+    }
+
     /// As [`Starting::finish`], without waiting for the plugins that run in a host process and
     /// have not answered yet (ENG-065): the mix is built at once, each of them plays dry until
     /// it is open and sounds from that moment. What a host says about them comes later from
