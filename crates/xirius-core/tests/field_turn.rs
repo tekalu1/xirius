@@ -2,8 +2,6 @@
 //! the history and one state on the disk, and the screen's edits do not write the whole song
 //! out for `state_hash`.
 
-use std::time::{Duration, Instant};
-
 use serde_json::{Value, json};
 use xirius_core::id::ClipId;
 use xirius_core::model::{Clip, Project};
@@ -113,32 +111,6 @@ fn another_command_in_a_turn_is_a_step_of_its_own() {
     assert_eq!(s.steps().len(), steps + 2);
     // An absolute value stays as it was given.
     assert_eq!(s.steps()[steps].args["semis"], 4);
-    s.undo(1).unwrap();
-    assert_eq!(clip(s.project(), &c).transpose(), 0);
-}
-
-#[test]
-fn a_turn_on_a_slow_disk_writes_its_state_once() {
-    const SLOW: Duration = Duration::from_millis(150);
-    let tmp = tempfile::tempdir().unwrap();
-    let dir = tmp.path().join("song");
-    let mut s = Session::create(&dir, Project::new("turn")).unwrap();
-    let c = midi(&mut s);
-    s.write_in_background(true);
-    s.simulate_slow_disk(SLOW);
-
-    let t = Instant::now();
-    turn(&mut s, &c, 12);
-    s.flush_writes();
-    // Each of the 12 written would take 12 times SLOW; the ones written over are skipped.
-    assert!(t.elapsed() < SLOW * 5, "{:?}", t.elapsed());
-    assert!(s.take_write_errors().is_empty());
-    let steps = s.steps().len();
-    drop(s);
-
-    let mut s = Session::open(&dir).unwrap();
-    assert_eq!(s.steps().len(), steps);
-    assert_eq!(clip(s.project(), &c).transpose(), 12);
     s.undo(1).unwrap();
     assert_eq!(clip(s.project(), &c).transpose(), 0);
 }

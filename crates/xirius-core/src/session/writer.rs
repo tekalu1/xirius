@@ -11,6 +11,9 @@
 //! A write that fails is kept until [`Session::take_write_errors`] hands it over; one made
 //! on the spot for an edit comes back in the edit's message instead.
 
+#[cfg(test)]
+mod tests;
+
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
