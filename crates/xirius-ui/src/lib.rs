@@ -268,6 +268,7 @@ pub mod trackmenu_shots;
 pub mod transport;
 pub mod tree;
 mod ui_io;
+mod unsaved;
 pub mod update_shots;
 pub mod view_motion;
 pub mod viewport;

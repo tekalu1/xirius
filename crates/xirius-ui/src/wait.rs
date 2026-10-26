@@ -220,6 +220,9 @@ pub fn hatch(pen: &mut Pen, r: Rect, color: gpui::Hsla) {
 
 /// The thin line, the veil and 「反映中…」 over the body.
 pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
+    if crate::unsaved::paint(pen, studio, g) {
+        return;
+    }
     if crate::opening_view::paint(pen, studio, g) {
         return;
     }

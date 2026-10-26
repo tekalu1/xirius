@@ -161,7 +161,7 @@ impl Studio {
 
     /// Something is going on that a new song under it would break: it waits.
     pub(crate) fn other_busy(&self) -> bool {
-        self.saving.is_some()
+        self.saving.is_some() || self.unsaved.is_some()
             || self.pointer_held
             || self.transport.recording
             || self.transport.take.is_some()

@@ -43,6 +43,7 @@ pub(crate) enum Request {
 type AfterOpen = Box<dyn FnOnce(&mut Studio)>;
 
 pub(crate) struct Opening {
+    discard_states: bool,
     command: Option<PreparedOpen>,
     replace: bool,
     pub job: Option<OpenJob>,
@@ -201,13 +202,16 @@ impl Studio {
     }
 
     pub(crate) fn input_blocked(&self) -> bool {
-        self.opening.is_some() || self.saving.is_some() || self.preparing.is_some()
+        self.opening.is_some()
+            || self.saving.is_some()
+            || self.preparing.is_some()
+            || self.unsaved.is_some()
     }
     pub(crate) fn request_open_file(&mut self, request: FileRequest, path: &Path) -> bool {
         self.request_open(Request::File(request, path.to_path_buf()))
     }
     pub(crate) fn request_open(&mut self, request: Request) -> bool {
-        if self.preparing.is_some() {
+        if self.preparing.is_some() || self.unsaved.is_some() {
             return false;
         }
         if self.opening.is_some() {
@@ -284,6 +288,7 @@ impl Studio {
         };
         let now = crate::wait::now();
         self.opening = Some(Opening {
+            discard_states: false,
             command: None,
             replace,
             job: None,
@@ -470,6 +475,10 @@ impl Studio {
                 }
                 return true;
             }
+            if open.replace && !open.discard_states && self.keep.plugin_state_failed {
+                self.ask_state_open();
+                return true;
+            }
             if open.pull.as_ref().is_some_and(|p| !p.ready()) {
                 // Preserve the existing timeout, but never spend it inside a callback.
                 if crate::wait::now().saturating_duration_since(open.since)
@@ -477,16 +486,16 @@ impl Studio {
                 {
                     return true;
                 }
-                self.open_preflight_failed(CmdError::io(
-                    "プラグインの状態を取得できません。未保存の変更が残っています",
-                ));
+                self.ask_state_open();
                 return true;
             }
             if let Some(error) = open.pull.as_ref().and_then(|pull| pull.error()) {
-                self.open_preflight_failed(CmdError::io(error));
+                self.error = Some(error);
+                self.ask_state_open();
                 return true;
             }
             if open.replace
+                && !open.discard_states
                 && let Some(host) = self.transport.host_mut()
                 && let Err(e) = xirius_session::host::collect_plugin_states(
                     self.song.session_mut(),
@@ -494,7 +503,8 @@ impl Studio {
                     &xirius_core::session::RunOptions::human(),
                 )
             {
-                self.open_preflight_failed(e);
+                self.error = Some(e.to_string());
+                self.ask_state_open();
                 return true;
             }
             let session = self.song.take_session_for_save();
@@ -643,6 +653,31 @@ impl Studio {
             false
         }
     }
+    fn ask_state_open(&mut self) {
+        if let Some(mut open) = self.opening.take() {
+            if let Some(pull) = open.pull.take() {
+                pull.cancel();
+            }
+            self.ask_unsaved(crate::unsaved::Pending::Open(Box::new(open)));
+        }
+    }
+
+    pub(crate) fn resume_without_plugin_state(&mut self, mut open: Opening) {
+        open.discard_states = true;
+        open.pull = None;
+        self.opening = Some(open);
+    }
+
+    pub(crate) fn abandon_state_open(&mut self, mut open: Opening) {
+        let error: CmdError = std::io::Error::from(std::io::ErrorKind::Interrupted).into();
+        if let Some(command) = open.command.take() {
+            let _ = command.fail(self.song.session_mut(), error.clone());
+        }
+        if let Some(job) = open.mcp.take() {
+            job.answer(Err(error));
+        }
+    }
+
     fn open_preflight_failed(&mut self, error: CmdError) {
         if let Some(mut open) = self.opening.take() {
             if let Some(pull) = open.pull.take() {

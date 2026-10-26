@@ -176,6 +176,14 @@ impl Studio {
         if self.input_blocked() {
             return;
         }
+        if self.keep.plugin_state_failed {
+            self.ask_unsaved(crate::unsaved::Pending::Close);
+            return;
+        }
+        if self.transport.host().is_some() {
+            self.launch_save(None, Some(leave));
+            return;
+        }
         self.keep_leaving();
         if !self.song.writes_pending() && self.save_test_delay.is_zero() {
             self.finish_leaving(leave);
@@ -201,6 +209,21 @@ impl Studio {
     }
 
     fn launch_save(&mut self, target: Option<PathBuf>, leaving: Option<Leave>) {
+        self.launch_save_with_capture(target, leaving, true);
+    }
+
+    pub(crate) fn close_without_plugin_state(&mut self) {
+        self.leaving_ready = true;
+        self.keep_leaving();
+        self.launch_save_with_capture(None, Some(Leave::Close), false);
+    }
+
+    fn launch_save_with_capture(
+        &mut self,
+        target: Option<PathBuf>,
+        leaving: Option<Leave>,
+        capture: bool,
+    ) {
         let close_when_done = self.keep.save_started();
         self.leaving_ready = false;
         if close_when_done {
@@ -219,8 +242,7 @@ impl Studio {
             .flatten();
         let progress = Arc::new(SaveProgress::default());
         progress.simulate_slow_disk(self.save_test_delay);
-        let pull = leaving
-            .is_none()
+        let pull = capture
             .then(|| {
                 self.transport
                     .host_mut()
@@ -319,11 +341,17 @@ impl Studio {
                 self.save_failed(&error);
                 self.error = Some(error.to_string());
                 self.update.pending = None;
+                if save.leaving.is_some() || save.close_when_done {
+                    self.ask_unsaved(crate::unsaved::Pending::Close);
+                }
                 return true;
             }
             self.keep.plugin_state_failed = false;
-            save.work =
-                Work::Writing(self.save_worker(save.target.clone(), false, save.progress.clone()));
+            save.work = Work::Writing(self.save_worker(
+                save.target.clone(),
+                save.leaving.is_some(),
+                save.progress.clone(),
+            ));
             self.saving = Some(save);
             return true;
         }
@@ -427,6 +455,9 @@ impl Studio {
     }
 
     pub(crate) fn request_close(&mut self) -> bool {
+        if self.unsaved.is_some() {
+            return false;
+        }
         // A placeholder Session can retain the old Arc and path during Save As.
         // Always wait for the actual job before consulting any cached close state.
         if let Some(save) = &mut self.saving {

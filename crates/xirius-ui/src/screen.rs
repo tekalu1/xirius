@@ -293,7 +293,10 @@ impl Screen {
         let mut studio = self.studio.borrow_mut();
         let g = geometry(&studio, window);
         let (x, y) = in_body(ev.position);
-        if studio.opening_press(&g, x, y) || studio.saving_press(&g, x, y) {
+        if studio.unsaved_press(&g, x, y)
+            || studio.opening_press(&g, x, y)
+            || studio.saving_press(&g, x, y)
+        {
             cx.notify();
             return;
         }
@@ -473,7 +476,7 @@ impl Screen {
         }
         let blocked_key = {
             let mut s = self.studio.borrow_mut();
-            s.opening_key(&k.key) || s.saving_key(&k.key)
+            s.unsaved_key(&k.key) || s.opening_key(&k.key) || s.saving_key(&k.key)
         };
         if blocked_key {
             cx.notify();
@@ -1684,6 +1687,7 @@ impl Render for Screen {
             .child(body)
             .child(bottom)
             .child(crate::opening_view::accessible(self.studio.clone(), &g))
+            .child(crate::unsaved::accessible(self.studio.clone(), &g))
             .children(marks.into_iter().map(|m| mark(m, self.studio.clone())))
     }
 }

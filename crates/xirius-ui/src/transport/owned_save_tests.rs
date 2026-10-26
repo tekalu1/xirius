@@ -134,10 +134,61 @@ fn saving_does_not_write_or_wait_for_held_state_and_only_a_complete_retry_clears
     s.save_succeeded(); // A completed disk checkpoint is insufficient.
     assert_eq!(s.save_mark(), SaveMark::Failed);
     assert!(!target.exists());
+    assert!(!s.request_close());
+    assert!(s.unsaved.is_some());
+    assert!(!s.run_command("track.add.audio", json!({"name":"blocked"})));
+    assert!(s.unsaved_key("escape"));
+    assert!(s.unsaved.is_none());
+    assert!(s.window_ask.is_none());
+    assert!(Arc::ptr_eq(&project, &s.project()));
+    assert!(s.request_open(crate::opening::Request::New));
+    s.poll_opening();
+    assert!(s.unsaved.is_some());
+    assert!(s.unsaved_key("enter"), "default is Back");
+    assert!(s.unsaved.is_none());
+    assert!(s.opening.is_none());
+    assert!(Arc::ptr_eq(&project, &s.project()));
     gate.release();
     assert!(s.start_save());
     s.wait_for_save();
     assert!(!s.keep.plugin_state_failed);
     assert!(s.keep.failed.is_none(), "{:?}", s.keep.failed);
     assert!(s.error.is_none(), "{:?}", s.error);
+    drop(gate);
+    let gate = Gate::new(&dll);
+    assert!(s.start_save());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !gate.entered() {
+        s.poll_saving();
+        assert!(Instant::now() < deadline, "second SDK gate watchdog");
+        std::thread::yield_now();
+    }
+    s.saving.as_mut().unwrap().since -= xirius_session::host::PULL_WAIT;
+    s.poll_saving();
+    let retired = s.transport.host().unwrap().plugins().owner_retirements();
+    assert!(!s.request_close());
+    assert!(s.unsaved.is_some());
+    s.answer_unsaved(true);
+    s.wait_for_save();
+    assert!(s.leaving_ready);
+    assert!(s.keep.plugin_state_failed, "discard is never save success");
+    assert!(matches!(
+        s.window_ask,
+        Some(crate::context::key_more::WindowAsk::Quit)
+    ));
+    s.window_ask = None;
+    s.leaving_ready = false;
+    assert!(s.request_open(crate::opening::Request::New));
+    s.poll_opening();
+    assert!(s.unsaved.is_some());
+    s.answer_unsaved(true);
+    s.wait_for_open_for_test();
+    assert!(s.song.dir().is_none());
+    assert!(s.unsaved.is_none());
+    gate.release();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while retired.iter().any(|owner| !owner.finished()) {
+        assert!(Instant::now() < deadline, "retirement watchdog");
+        std::thread::yield_now();
+    }
 }

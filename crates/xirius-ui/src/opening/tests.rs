@@ -216,6 +216,45 @@ fn connected_mcp_answers_only_after_adoption_and_rejects_edits_while_blocked() {
 }
 
 #[test]
+fn unsaved_plugin_state_requires_the_person_before_a_connected_open_can_complete() {
+    let mut s = Studio::new(Song::empty());
+    s.keep.plugin_state_failed = true;
+    let original = s.project();
+    let call = start_mcp(
+        &mut s,
+        "project.new",
+        json!({}),
+        xirius_core::session::RunOptions::human(),
+    );
+    s.poll_opening();
+    assert!(s.unsaved.is_some());
+    assert!(!call.is_finished());
+    assert!(!s.run_command("track.add.audio", json!({"name":"blocked"})));
+    s.answer_unsaved(false);
+    assert!(call.join().unwrap().is_err());
+    assert!(Arc::ptr_eq(&original, &s.project()));
+    assert!(s.keep.plugin_state_failed);
+    let call = start_mcp(
+        &mut s,
+        "project.new",
+        json!({}),
+        xirius_core::session::RunOptions::human(),
+    );
+    s.poll_opening();
+    assert!(s.unsaved.is_some());
+    assert!(!call.is_finished());
+    s.answer_unsaved(true);
+    assert!(
+        !call.is_finished(),
+        "only the subsequent adoption completes the request"
+    );
+    finish(&mut s);
+    assert!(call.join().unwrap().is_ok());
+    assert!(s.unsaved.is_none());
+    assert!(!s.keep.plugin_state_failed);
+}
+
+#[test]
 fn dawproject_cancel_cleans_only_its_exclusive_directory() {
     let tmp = tempfile::tempdir().unwrap();
     let media = tmp.path().join("media");

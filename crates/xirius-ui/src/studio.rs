@@ -726,6 +726,7 @@ pub struct Studio {
     pub(crate) open_generation: u64,
     pub(crate) open_closing: Option<crate::opening::CloseJob>,
     pub(crate) saving: Option<crate::saving::Saving>,
+    pub(crate) unsaved: Option<crate::unsaved::Question>,
     /// The watch on the song's file for another app's save ([`crate::other_change`], UI-289).
     pub(crate) other: crate::other_change::OtherChange,
     /// A mouse button is down in the window: something may be dragged (UI-289).
@@ -878,6 +879,7 @@ impl Studio {
             notice: None,
             toast: None,
             saving: None,
+            unsaved: None,
             opening: None,
             open_generation: 0,
             open_closing: None,
@@ -1755,7 +1757,7 @@ impl Studio {
     }
 
     pub(crate) fn command(&mut self, run: impl FnOnce(&mut Song) -> Result<(), String>) -> bool {
-        if self.preparing.is_some() {
+        if self.preparing.is_some() || self.unsaved.is_some() {
             return false;
         }
         if let Err(e) = run(&mut self.song) {
@@ -1827,7 +1829,11 @@ impl Studio {
 
     /// Keyboard shortcuts. `key` is GPUI's key name ("z", "y").
     pub fn key(&mut self, g: &Geometry, key: &str, ctrl: bool, shift: bool) -> bool {
-        if self.prepare_key(key) || self.opening_key(key) || self.saving_key(key) {
+        if self.unsaved_key(key)
+            || self.prepare_key(key)
+            || self.opening_key(key)
+            || self.saving_key(key)
+        {
             return true;
         }
         if key == "escape" && self.popup.take().is_some() {
