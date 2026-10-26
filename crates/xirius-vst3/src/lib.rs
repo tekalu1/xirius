@@ -16,6 +16,7 @@ mod editor;
 mod editor_keys;
 mod host;
 mod module;
+pub mod owner;
 mod plugin;
 mod process;
 mod serial;

@@ -187,6 +187,10 @@ impl Latency {
         result
     }
     unsafe fn save(&self, state: *mut IBStream) -> tresult {
+        if std::thread::current().id() != self.home {
+            STATE_AWAY.fetch_add(1, Ordering::Relaxed);
+        }
+        state_gate();
         let Some(stream) = (unsafe { vst3::ComRef::from_raw(state) }) else {
             return kInvalidArgument;
         };
@@ -589,6 +593,35 @@ static INITIALIZED: AtomicU32 = AtomicU32::new(0);
 static EXITED: AtomicU32 = AtomicU32::new(0);
 static TERMINATED: AtomicU32 = AtomicU32::new(0);
 static TERMINATED_AWAY: AtomicU32 = AtomicU32::new(0);
+static STATE_AWAY: AtomicU32 = AtomicU32::new(0);
+static STATE_ENTERED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static STATE_RELEASE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// # Safety
+/// Handles must remain valid until getState returns. Arm only while no state call
+/// is in flight; an instance in another test must use its own copy of this DLL.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn FixtureStateGate(entered: usize, release: usize) {
+    STATE_RELEASE.store(release, Ordering::Release);
+    STATE_ENTERED.store(entered, Ordering::Release);
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn FixtureStateAway() -> u32 {
+    STATE_AWAY.load(Ordering::Relaxed)
+}
+
+fn state_gate() {
+    let entered = STATE_ENTERED.load(Ordering::Acquire);
+    if entered != 0 {
+        let release = STATE_RELEASE.load(Ordering::Acquire);
+        // SAFETY: the fixture caller retains these event handles until release.
+        unsafe {
+            windows_sys::Win32::System::Threading::SetEvent(entered as _);
+            windows_sys::Win32::System::Threading::WaitForSingleObject(release as _, 30_000);
+        }
+    }
+}
 
 /// The instances terminated so far (low half), and of those, the ones terminated on a thread
 /// other than the one that made them (high half).

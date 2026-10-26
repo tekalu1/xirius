@@ -30,6 +30,6 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
-windows-sys = { version = "0.61", features = ["Win32_System_Diagnostics_Debug", "Win32_System_Kernel"] }
+windows-sys = { version = "0.61", features = ["Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_Security"] }
 # The fixture's resizable editor view (built as a cdylib next to the tests).
 xirius-test-vst3 = { path = "../xirius-test-vst3" }

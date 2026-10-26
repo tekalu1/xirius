@@ -12,7 +12,7 @@ const MAX_CONTROLS: usize = 256;
 
 pub struct Vst3Processor {
     name: String,
-    part: AudioPart,
+    part: Part,
     notes: Vec<Note>,
     controls: Vec<Control>,
     latency: u32,
@@ -20,8 +20,57 @@ pub struct Vst3Processor {
     error: Option<String>,
 }
 
+enum Part {
+    Direct(AudioPart),
+    Owned(xirius_vst3::owner::AudioLease),
+}
+
+impl Part {
+    fn prepare(
+        &mut self,
+        rate: f64,
+        block: usize,
+        offline: bool,
+    ) -> Result<u32, xirius_vst3::Error> {
+        match self {
+            Part::Direct(part) => part.prepare(rate, block, offline),
+            Part::Owned(lease) => lease.prepared(rate, block, offline),
+        }
+    }
+}
+
+impl std::ops::Deref for Part {
+    type Target = AudioPart;
+
+    fn deref(&self) -> &AudioPart {
+        match self {
+            Part::Direct(part) => part,
+            Part::Owned(lease) => lease.part(),
+        }
+    }
+}
+
+impl std::ops::DerefMut for Part {
+    fn deref_mut(&mut self) -> &mut AudioPart {
+        match self {
+            Part::Direct(part) => part,
+            Part::Owned(lease) => lease.part_mut(),
+        }
+    }
+}
+
 impl Vst3Processor {
     pub fn new(part: AudioPart) -> Vst3Processor {
+        Self::with_part(Part::Direct(part))
+    }
+
+    /// The local owner keeps the controller alive and reclaims the audio half
+    /// after the plan is retired on a non-RT thread (PRJ-030).
+    pub fn owned(lease: xirius_vst3::owner::AudioLease) -> Vst3Processor {
+        Self::with_part(Part::Owned(lease))
+    }
+
+    fn with_part(part: Part) -> Vst3Processor {
         Vst3Processor {
             name: part.name().to_string(),
             part,

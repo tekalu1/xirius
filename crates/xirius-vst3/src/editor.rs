@@ -35,7 +35,6 @@ use windows_sys::Win32::Graphics::Gdi::{
 };
 use windows_sys::Win32::Storage::Xps::PrintWindow;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::System::Ole::OleInitialize;
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
@@ -499,6 +498,7 @@ pub struct Editor {
     /// runs them).
     pumps: bool,
     _shared: Arc<Shared>,
+    _apartment: crate::owner::Apartment,
 }
 
 impl Plugin {
@@ -527,8 +527,7 @@ impl Plugin {
             .controller
             .as_ref()
             .ok_or_else(|| error("the plugin has no edit controller"))?;
-        // SAFETY: COM/OLE for plugins that use drag and drop; repeated calls are harmless.
-        unsafe { OleInitialize(std::ptr::null()) };
+        let apartment = crate::owner::Apartment::new().map_err(error)?;
         // SAFETY: createView returns a reference we own, or null.
         let view = unsafe { ComPtr::from_raw(controller.createView(ViewType::kEditor)) }
             .ok_or_else(|| error("the plugin has no editor view"))?;
@@ -633,6 +632,7 @@ impl Plugin {
             caption: Cell::new(caption),
             pumps: pump,
             _shared: self.shared().clone(),
+            _apartment: apartment,
         };
         if attached != kResultOk {
             return Err(error("IPlugView::attached failed"));
