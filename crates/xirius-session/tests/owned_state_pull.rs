@@ -1,5 +1,7 @@
 //! The real loader/host path while the local VST3 SDK getState call is held.
 //! No editor, device, window or OS input is used.
+#![cfg(windows)]
+
 use std::os::windows::ffi::OsStrExt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

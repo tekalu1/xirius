@@ -1,5 +1,7 @@
 //! SDK getState is held at an event gate, never by a timing assumption. No editor,
 //! sound device, foreground window or OS input is used.
+#![cfg(windows)]
+
 use std::os::windows::ffi::OsStrExt;
 use std::time::{Duration, Instant};
 
