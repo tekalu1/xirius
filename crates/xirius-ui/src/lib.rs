@@ -212,6 +212,8 @@ pub mod prepare_card;
 #[cfg(test)]
 mod prepare_card_tests;
 pub mod prepare_shots;
+#[cfg(feature = "loading-probe")]
+mod prepared_shots;
 pub mod quantize_import;
 pub mod quantize_panel;
 pub mod quiet_shots;
@@ -415,6 +417,8 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("saving", saving_shots::SHOTS),
     #[cfg(feature = "loading-probe")]
     ("opening", opening_shots::SHOTS),
+    #[cfg(feature = "loading-probe")]
+    ("prepared", prepared_shots::SHOTS),
     ("screencmd", screencmd_shots::SHOTS),
     ("settings", settings::shots::SHOTS),
     ("side", side_shots::SIDE),

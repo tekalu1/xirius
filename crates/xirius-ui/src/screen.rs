@@ -2000,6 +2000,16 @@ fn step(run: &Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
     #[cfg(not(feature = "loading-probe"))]
     let opening_ready = studio.borrow().opening.is_none();
     let capture_ready = opening_ready
+        && {
+            #[cfg(feature = "loading-probe")]
+            {
+                crate::prepared_shots::ready(&studio)
+            }
+            #[cfg(not(feature = "loading-probe"))]
+            {
+                true
+            }
+        }
         && crate::saving_shots::ready(&studio, window, cx)
         && crate::otherproc_shots::ready(&studio, window, cx);
     // Handlers borrow the studio, so nothing here is held while dispatching.

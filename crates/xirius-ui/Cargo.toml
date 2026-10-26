@@ -12,7 +12,7 @@ publish.workspace = true
 workspace = true
 
 [features]
-loading-probe = ["xirius-core/test-io"]
+loading-probe = ["xirius-core/test-io", "xirius-session/test-io"]
 
 [dependencies]
 # Pinned to the gpui-pre snapshot (zed@279fe07), the same one gpui-kit 0.7.x
