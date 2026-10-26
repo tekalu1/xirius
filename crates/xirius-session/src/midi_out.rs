@@ -21,9 +21,17 @@ pub fn system_maker() -> MidiOutMaker {
     })
 }
 
+type Opened = (MidiOutMaker, Result<Box<dyn MidiOutput>, String>);
+struct Opening {
+    want: BTreeSet<String>,
+    work: crate::background::Job<Opened>,
+}
+
 /// What the host keeps of the MIDI output.
 #[derive(Default)]
 pub struct MidiOutState {
+    opening: Option<Opening>,
+    pub(crate) warnings: Vec<String>,
     maker: Option<MidiOutMaker>,
     /// The ports the engine's output was made for.
     open: BTreeSet<String>,
@@ -43,6 +51,7 @@ impl SessionHost {
     /// Where the song's MIDI output ports come from (`None`: tracks that play to a MIDI port
     /// make no sound, and a warning says so). Returns the warnings of opening them.
     pub fn set_midi_out(&mut self, maker: Option<MidiOutMaker>) -> Vec<String> {
+        self.midi_out.opening = None;
         self.midi_out.maker = maker;
         self.midi_out.open.clear();
         self.midi_out.failed = None;
@@ -60,6 +69,28 @@ impl SessionHost {
     /// it has. Ports that cannot be opened are named in the report's warnings.
     pub(crate) fn sync_midi_out(&mut self, report: &mut SyncReport) {
         let want = wanted(&self.structure);
+        let mut prepared = None;
+        if let Some(opening) = &self.midi_out.opening {
+            if let Some(result) = opening.work.poll() {
+                let opening = self.midi_out.opening.take().unwrap();
+                match result {
+                    Ok((maker, result)) => {
+                        self.midi_out.maker = Some(maker);
+                        if opening.want == want {
+                            prepared = Some(result);
+                        } else {
+                            let _ = crate::background::Job::spawn("stale-midi-output", move || {
+                                drop(result);
+                                Ok(())
+                            });
+                        }
+                    }
+                    Err(error) => report.warnings.push(error),
+                }
+            } else if !want.is_empty() {
+                return;
+            }
+        }
         if want == self.midi_out.open {
             return;
         }
@@ -74,9 +105,26 @@ impl SessionHost {
         }
         let names: Vec<String> = want.iter().cloned().collect();
         let rate = f64::from(self.rate());
-        let made = match &mut self.midi_out.maker {
-            Some(maker) => maker(&names, rate),
-            None => Err(format!("MIDI 出力を開けません: {}", names.join("、"))),
+        let made = if let Some(result) = prepared {
+            result
+        } else if self.windowed {
+            if let Some(mut maker) = self.midi_out.maker.take() {
+                let ports = names.clone();
+                match crate::background::Job::spawn("midi-output-open", move || {
+                    let result = maker(&ports, rate);
+                    Ok((maker, result))
+                }) {
+                    Ok(work) => self.midi_out.opening = Some(Opening { want, work }),
+                    Err(error) => report.warnings.push(error),
+                }
+                return;
+            }
+            Err(format!("MIDI 出力を開けません: {}", names.join("、")))
+        } else {
+            match &mut self.midi_out.maker {
+                Some(maker) => maker(&names, rate),
+                None => Err(format!("MIDI 出力を開けません: {}", names.join("、"))),
+            }
         };
         match made {
             Ok(out) => {

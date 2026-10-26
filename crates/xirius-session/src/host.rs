@@ -559,6 +559,11 @@ impl SessionHost {
         } else {
             drop(retired);
         }
+        if self.windowed {
+            let mut report = SyncReport::default();
+            self.sync_midi_out(&mut report);
+            self.midi_out.warnings.extend(report.warnings);
+        }
         self.polled = Some(Instant::now());
         // The windows that moved with the last mix, as the hosts that had them let go.
         self.builder.plugins_mut().settle_following();
@@ -805,7 +810,9 @@ impl SessionHost {
     /// What the host processes said about the plugins the player took before they answered
     /// (a plugin that cannot be opened, parameters it does not have), once they have.
     pub fn take_late_warnings(&mut self) -> Vec<String> {
-        self.builder.plugins_mut().take_late_warnings()
+        let mut warnings = self.builder.plugins_mut().take_late_warnings();
+        warnings.append(&mut self.midi_out.warnings);
+        warnings
     }
 
     /// The track as the engine plays it now: a new mix that waits for its plugins has not

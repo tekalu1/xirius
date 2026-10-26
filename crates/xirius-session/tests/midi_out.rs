@@ -123,6 +123,66 @@ impl Rig {
 const PORTS: &[&str] = &["Loop A", "Loop B"];
 
 #[test]
+fn a_window_never_waits_for_midi_open_and_rejects_the_superseded_port_result() {
+    use std::{
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
+    let mut s = song();
+    let track = voice(&mut s, 64);
+    to_port(&mut s, &track, "midi:Loop A", 1);
+    let mut rig = Rig::new(&s);
+    rig.host.set_windowed();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let mut first = true;
+    assert!(
+        rig.host
+            .set_midi_out(Some(Box::new(move |_, _| {
+                if first {
+                    first = false;
+                    entered_tx.send(std::thread::current().id()).unwrap();
+                    release_rx.recv().unwrap();
+                }
+                Ok(Box::new(MockMidiOut::new(PORTS).0))
+            })))
+            .is_empty()
+    );
+    assert_ne!(
+        entered_rx.recv_timeout(Duration::from_secs(30)).unwrap(),
+        std::thread::current().id()
+    );
+    for _ in 0..32 {
+        rig.host.poll();
+        rig.audio.render(&mut [0.0; 512], 2);
+        assert!(rig.host.midi_out_ports().is_empty());
+    }
+    to_port(&mut s, &track, "midi:Loop B", 1);
+    rig.host.sync_later(s.project());
+    let deadline = Instant::now() + Duration::from_secs(30);
+    // Publish the new routing while the old port's open is still held.
+    while rig.host.swap_pending() {
+        rig.host.step_swap();
+        rig.audio.render(&mut [0.0; 512], 2);
+        rig.host.poll();
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    release_tx.send(()).unwrap();
+    while rig.host.midi_out_ports() != ["Loop B"] {
+        rig.host.poll();
+        rig.audio.render(&mut [0.0; 512], 2);
+        assert_ne!(
+            rig.host.midi_out_ports(),
+            ["Loop A"],
+            "old open result must never attach"
+        );
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+}
+
+#[test]
 fn the_notes_of_a_track_reach_its_port_and_the_track_is_silent() {
     let mut s = song();
     let t = voice(&mut s, 64);

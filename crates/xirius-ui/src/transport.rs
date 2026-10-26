@@ -124,6 +124,9 @@ pub(crate) fn mark_window_thread() {
 }
 
 pub struct Transport {
+    midi_opening:
+        Option<xirius_session::background::Job<Box<dyn xirius_engine::record::MidiInput>>>,
+    midi_open_error: Option<String>,
     pub(crate) finishing_take: bool,
     finished_take: Option<xirius_session::record::Finished>,
     /// A GPUI window may never enter the synchronous non-window transport API.
@@ -195,6 +198,8 @@ pub struct Transport {
 impl Transport {
     pub fn new(mode: OutputMode) -> Transport {
         Transport {
+            midi_opening: None,
+            midi_open_error: None,
             finishing_take: false,
             finished_take: None,
             windowed: WINDOW_THREAD.with(std::cell::Cell::get),
@@ -273,6 +278,16 @@ impl Transport {
     }
 
     fn cancel_pending_start(&mut self) {
+        if self.pending_record
+            && let Some(input) = self.midi_record_input.take()
+        {
+            let _ = xirius_session::background::Job::spawn("cancelled-midi-input", move || {
+                drop(input);
+                Ok(())
+            });
+        }
+        self.midi_opening = None;
+        self.midi_open_error = None;
         self.pending_record = false;
         if let Some((play, _)) = &mut self.pending_output {
             *play = false;
@@ -836,6 +851,32 @@ impl Transport {
         }
     }
 
+    fn prepare_midi_record_input(&mut self, rate: u32) -> bool {
+        if self.midi_record_input.is_some() || self.midi_open_error.is_some() {
+            return true;
+        }
+        if self.midi_opening.is_none() {
+            match xirius_session::background::Job::spawn("midi-input-open", move || {
+                input::midi_input(true, rate)
+            }) {
+                Ok(work) => self.midi_opening = Some(work),
+                Err(error) => {
+                    self.midi_open_error = Some(error);
+                    return true;
+                }
+            }
+        }
+        let Some(result) = self.midi_opening.as_ref().unwrap().poll() else {
+            return false;
+        };
+        self.midi_opening = None;
+        match result {
+            Ok(input) => self.midi_record_input = Some(input),
+            Err(error) => self.midi_open_error = Some(error),
+        }
+        true
+    }
+
     /// Starts recording into the armed tracks as the record panel plans it: from `plan.at` when
     /// stopped (`playhead` when it names none) or from where it plays. With `midi` (an instrument track is armed) the
     /// MIDI input is opened too. A screen without a device records a test
@@ -859,6 +900,14 @@ impl Transport {
         let mode = self.mode;
         let prefs = self.io_prefs.clone();
         let midimap = self.midimap.clone();
+        if self.windowed
+            && mode == OutputMode::Device
+            && midi
+            && !self.prepare_midi_record_input(self.host().map_or(48_000, |h| h.rate()))
+        {
+            return Err("MIDI 入力を準備しています".into());
+        }
+        let midi_error = self.midi_open_error.take();
         let midi_input = self.midi_record_input.take();
         let playing = self.playing;
         let pl = self.ensure(p, dir.clone())?;
@@ -886,7 +935,16 @@ impl Transport {
         let mut warnings = Vec::new();
         let mut midi_control = None;
         if midi {
-            match midi_input.map_or_else(|| input::midi_input(device, rate), Ok) {
+            match midi_input.map_or_else(
+                || {
+                    if let Some(error) = midi_error {
+                        Err(error)
+                    } else {
+                        input::midi_input(device, rate)
+                    }
+                },
+                Ok,
+            ) {
                 Ok(m) => {
                     let input = xirius_session::midi_settings::EnabledInput::new(m, &prefs)
                         .with_assignments(&midimap);
@@ -1059,6 +1117,14 @@ impl Transport {
     pub fn reset(&mut self) {
         self.finishing_take = false;
         self.finished_take = None;
+        self.midi_opening = None;
+        self.midi_open_error = None;
+        if let Some(input) = self.midi_record_input.take() {
+            let _ = xirius_session::background::Job::spawn("unused-midi-input", move || {
+                drop(input);
+                Ok(())
+            });
+        }
         if let Some(start) = self.prepared_start.take() {
             start.cancel();
         }
@@ -1229,6 +1295,12 @@ pub fn clock(seconds: f64) -> String {
 
 impl Drop for Transport {
     fn drop(&mut self) {
+        if let Some(input) = self.midi_record_input.take() {
+            let _ = xirius_session::background::Job::spawn("retired-midi-input", move || {
+                drop(input);
+                Ok(())
+            });
+        }
         if let Some(mut player) = self.player.take() {
             player.host.controller().audition().close();
             if player.threaded {
@@ -1355,7 +1427,7 @@ impl Studio {
         let p = self.project();
         let (audio, midi) = input::armed(&p);
         if audio.is_empty() && midi.is_empty() {
-            self.transport.pending_record = false;
+            self.transport.cancel_pending_start();
             // No words: the button shakes and the arm button lights up.
             self.record_shake = Some(Instant::now());
             self.arm_cue = self.arm_candidate();
@@ -1399,8 +1471,19 @@ impl Studio {
         let plan = self.record_plan(&p, at);
         if midi {
             self.release_midi();
-            self.transport.midi_record_input = self.live_midi.input.take();
-            self.live_midi.resume |= self.transport.midi_record_input.is_some();
+            if self.transport.midi_record_input.is_none() {
+                self.transport.midi_record_input = self.live_midi.input.take();
+                self.live_midi.resume |= self.transport.midi_record_input.is_some();
+            }
+            if self.transport.windowed
+                && self.transport.mode == OutputMode::Device
+                && !self
+                    .transport
+                    .prepare_midi_record_input(self.transport.host().map_or(48_000, |h| h.rate()))
+            {
+                self.transport.pending_record = true;
+                return true;
+            }
         }
         self.poll_io();
         let count_in = self
@@ -1873,6 +1956,53 @@ mod tests {
 
     fn paced() -> OutputMode {
         OutputMode::Silent { paced: true }
+    }
+
+    #[test]
+    fn a_pending_midi_input_does_not_wait_and_cancellation_retires_the_late_input_off_ui() {
+        use std::sync::mpsc;
+        struct Midi(mpsc::Sender<std::thread::ThreadId>);
+        impl xirius_engine::record::MidiInput for Midi {
+            fn read(&mut self, _: usize, _: &mut dyn FnMut(usize, [u8; 3])) {}
+        }
+        impl Drop for Midi {
+            fn drop(&mut self) {
+                self.0.send(std::thread::current().id()).unwrap();
+            }
+        }
+        let release = crate::browser_io_tests::Release::new();
+        let held = release.0.clone();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (dropped_tx, dropped_rx) = mpsc::channel();
+        let mut transport = Transport::new(OutputMode::None);
+        transport.midi_opening = Some(
+            xirius_session::background::Job::spawn("held-midi-open", move || {
+                entered_tx.send(std::thread::current().id()).unwrap();
+                drop(
+                    held.1
+                        .wait_while(held.0.lock().unwrap(), |done| !*done)
+                        .unwrap(),
+                );
+                Ok(Box::new(Midi(dropped_tx)) as Box<dyn xirius_engine::record::MidiInput>)
+            })
+            .unwrap(),
+        );
+        assert_ne!(
+            entered_rx.recv_timeout(Duration::from_secs(30)).unwrap(),
+            std::thread::current().id()
+        );
+        for _ in 0..32 {
+            assert!(!transport.prepare_midi_record_input(48_000));
+        }
+        transport.pending_record = true;
+        transport.cancel_pending_start();
+        release.release();
+        assert_ne!(
+            dropped_rx.recv_timeout(Duration::from_secs(30)).unwrap(),
+            std::thread::current().id()
+        );
+        assert!(transport.midi_record_input.is_none());
+        assert!(transport.midi_opening.is_none());
     }
 
     /// Polls once a frame until `done`, or gives up after a minute: far over what a run needs,

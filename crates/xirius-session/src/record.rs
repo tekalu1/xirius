@@ -472,7 +472,7 @@ impl SessionHost {
             && matches!(opts.input, Input::Device)
             && !self.record_input_ready().map_err(conflict)?
         {
-            return Err(conflict("input preparation is pending"));
+            return Err(conflict("オーディオ入力を準備しています"));
         }
         let rate = self.rate();
         let r = f64::from(rate);
@@ -733,7 +733,7 @@ impl SessionHost {
     /// The active recording remains owned by this host until its files are closed.
     pub fn record_takes_ready(&mut self, wait: Duration) -> CmdResult<Option<Finished>> {
         if !self.record_stop() {
-            return Err(conflict("recording is not active"));
+            return Err(conflict("録音していないため、停止できません"));
         }
         let active = self.recording.as_mut().expect("checked above");
         if !active.stopped || !active.recorder.finish_ready(wait) {

@@ -621,7 +621,7 @@ impl PluginLoader {
         let mut locals = HashMap::new();
         for (id, local) in &self.locals {
             if local.plugin.is_some() {
-                return Err("raw local plugin cannot be moved into a live builder".into());
+                return Err("プラグインの所有スレッドを確認できないため更新できません。曲を開き直してください".into());
             }
             locals.insert(
                 *id,
