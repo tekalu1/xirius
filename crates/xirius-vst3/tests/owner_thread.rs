@@ -87,6 +87,10 @@ fn state_requests_cancel_without_waiting_and_the_audio_returns_before_terminatio
     assert!(capture.poll().is_none());
     capture.cancel();
     assert!(capture.poll().unwrap().is_err());
+    assert!(
+        capture.poll().is_none(),
+        "a cancelled ticket answers only once"
+    );
     // Cancel/drop and a second request return while the first SDK call is held.
     drop(capture);
     let second = opened.controller.capture().unwrap();
@@ -96,6 +100,10 @@ fn state_requests_cancel_without_waiting_and_the_audio_returns_before_terminatio
     drop(third);
     release.set();
     assert!(wait(&second).is_ok());
+    assert!(
+        second.poll().is_none(),
+        "a consumed reply is not an owner failure"
+    );
     // SAFETY: both active state requests have returned; disarm the gate.
     unsafe { gate(0, 0) };
     // A new request has its own reply, unaffected by the abandoned first one.

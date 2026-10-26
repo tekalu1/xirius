@@ -26,6 +26,13 @@ enum Part {
 }
 
 impl Part {
+    fn name(&self) -> &str {
+        match self {
+            Part::Direct(part) => part.name(),
+            Part::Owned(lease) => lease.name(),
+        }
+    }
+
     fn prepare(
         &mut self,
         rate: f64,
@@ -37,24 +44,16 @@ impl Part {
             Part::Owned(lease) => lease.prepared(rate, block, offline),
         }
     }
-}
-
-impl std::ops::Deref for Part {
-    type Target = AudioPart;
-
-    fn deref(&self) -> &AudioPart {
+    fn process_with(
+        &mut self,
+        left: &mut [f32],
+        right: &mut [f32],
+        notes: &[Note],
+        controls: &[Control],
+    ) {
         match self {
-            Part::Direct(part) => part,
-            Part::Owned(lease) => lease.part(),
-        }
-    }
-}
-
-impl std::ops::DerefMut for Part {
-    fn deref_mut(&mut self) -> &mut AudioPart {
-        match self {
-            Part::Direct(part) => part,
-            Part::Owned(lease) => lease.part_mut(),
+            Part::Direct(part) => part.process_with(left, right, notes, controls),
+            Part::Owned(lease) => lease.process_with(left, right, notes, controls),
         }
     }
 }

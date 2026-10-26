@@ -5,6 +5,7 @@
 //! it never joins or attempts to terminate third-party code. The audio lease is
 //! returned through a preallocated single-item queue before the plugin is freed.
 
+use std::cell::Cell;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -60,21 +61,28 @@ impl Drop for Finished {
 pub struct Ticket<T> {
     reply: Receiver<Result<T, String>>,
     abandoned: Arc<AtomicBool>,
+    consumed: Cell<bool>,
 }
 
 impl<T> Ticket<T> {
     /// Nonblocking, including while initialize/getState/editor/terminate hangs.
     pub fn poll(&self) -> Option<Result<T, String>> {
+        if self.consumed.get() {
+            return None;
+        }
         if self.abandoned.load(Ordering::Acquire) {
+            self.consumed.set(true);
             return Some(Err("プラグインへの要求を中止しました".into()));
         }
-        match self.reply.try_recv() {
+        let result = match self.reply.try_recv() {
             Ok(result) => Some(result),
             Err(TryRecvError::Empty) => None,
             Err(TryRecvError::Disconnected) => {
                 Some(Err("プラグインの所有スレッドが停止しました".into()))
             }
-        }
+        };
+        self.consumed.set(result.is_some());
+        result
     }
 
     pub fn cancel(&self) {
@@ -115,16 +123,26 @@ impl AudioLease {
             ))
         }
     }
-    pub fn part(&self) -> &AudioPart {
+    pub fn name(&self) -> &str {
         self.part
             .as_ref()
             .expect("audio lease returned only on drop")
+            .name()
     }
 
-    pub fn part_mut(&mut self) -> &mut AudioPart {
+    /// Only the RT processing API crosses the owner boundary. In particular the
+    /// caller cannot reconfigure, deactivate or extract the underlying AudioPart.
+    pub fn process_with(
+        &mut self,
+        left: &mut [f32],
+        right: &mut [f32],
+        notes: &[crate::Note],
+        controls: &[crate::Control],
+    ) {
         self.part
             .as_mut()
             .expect("audio lease returned only on drop")
+            .process_with(left, right, notes, controls);
     }
 }
 
@@ -383,6 +401,7 @@ fn reply<T>() -> (SyncSender<Result<T, String>>, Ticket<T>) {
         Ticket {
             reply,
             abandoned: Arc::new(AtomicBool::new(false)),
+            consumed: Cell::new(false),
         },
     )
 }
