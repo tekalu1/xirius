@@ -12,7 +12,7 @@ use xirius_vst3::{Caption, PluginState};
 
 /// The version of these messages and of the shared memory's layout together. Bump it with
 /// any change to either.
-pub const PROTOCOL: u32 = 6;
+pub const PROTOCOL: u32 = 7;
 /// Starts the encoded [`FromHost::Hello`], so a stray first message is not taken for one.
 const HELLO_MAGIC: u32 = u32::from_le_bytes(*b"XPHH");
 
@@ -53,6 +53,7 @@ pub enum ToHost {
     /// does not always say so (PLG-057).
     CaptureState {
         slot: u32,
+        request: u64,
     },
     /// Move a parameter the way the editor does (begin, perform each value, end). For tests.
     SimulateEdit {
@@ -117,6 +118,13 @@ pub enum FromHost {
     State {
         slot: u32,
         state: PluginState,
+    },
+    /// A reply to one exact CaptureState request; unrelated edit reports never
+    /// acknowledge a save, and an abandoned request cannot answer a retry.
+    CapturedState {
+        slot: u32,
+        request: u64,
+        result: Result<PluginState, String>,
     },
     /// The plugin asked for its latency to be read again (`kLatencyChanged`, ENG-011).
     Latency {
@@ -336,8 +344,8 @@ impl ToHost {
                 };
                 o.u8(8).u32(*slot).u8(k).u64(*after_blocks);
             }
-            ToHost::CaptureState { slot } => {
-                o.u8(9).u32(*slot);
+            ToHost::CaptureState { slot, request } => {
+                o.u8(9).u32(*slot).u64(*request);
             }
         }
         o.0
@@ -407,7 +415,10 @@ impl ToHost {
                 },
                 after_blocks: i.u64()?,
             },
-            9 => ToHost::CaptureState { slot: i.u32()? },
+            9 => ToHost::CaptureState {
+                slot: i.u32()?,
+                request: i.u64()?,
+            },
             _ => return Err(bad("message to the host")),
         })
     }
@@ -454,6 +465,21 @@ impl FromHost {
             }
             FromHost::State { slot, state } => {
                 o.u8(3).u32(*slot).state(state);
+            }
+            FromHost::CapturedState {
+                slot,
+                request,
+                result,
+            } => {
+                o.u8(9).u32(*slot).u64(*request);
+                match result {
+                    Ok(state) => {
+                        o.u8(1).state(state);
+                    }
+                    Err(error) => {
+                        o.u8(0).str(error);
+                    }
+                }
             }
             FromHost::Latency { slot, latency } => {
                 o.u8(4).u32(*slot).u32(*latency);
@@ -530,6 +556,15 @@ impl FromHost {
                 names: i.list(|i| Ok((i.u8()?, i.str()?)))?,
             },
             8 => FromHost::Closed { slot: i.u32()? },
+            9 => FromHost::CapturedState {
+                slot: i.u32()?,
+                request: i.u64()?,
+                result: if i.u8()? == 0 {
+                    Err(i.str()?)
+                } else {
+                    Ok(i.state()?)
+                },
+            },
             _ => return Err(bad("message from the host")),
         })
     }
@@ -617,7 +652,10 @@ mod tests {
                 caption: caption(),
             },
             ToHost::CloseEditor { slot: 4 },
-            ToHost::CaptureState { slot: 4 },
+            ToHost::CaptureState {
+                slot: 4,
+                request: 23,
+            },
             ToHost::SimulateEdit {
                 slot: 4,
                 id: 1,
@@ -660,6 +698,16 @@ mod tests {
             FromHost::Gesture {
                 slot: 1,
                 gesture: Gesture::End(3),
+            },
+            FromHost::CapturedState {
+                slot: 1,
+                request: 24,
+                result: Ok(state.clone()),
+            },
+            FromHost::CapturedState {
+                slot: 1,
+                request: 25,
+                result: Err("状態を取得できません".into()),
             },
             FromHost::State { slot: 1, state },
             FromHost::Latency {

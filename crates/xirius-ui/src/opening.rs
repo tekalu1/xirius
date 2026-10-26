@@ -500,9 +500,11 @@ impl Studio {
             if open.replace
                 && !open.discard_states
                 && let Some(host) = self.transport.host_mut()
-                && let Err(e) = xirius_session::host::collect_plugin_states(
+                && let Some(pull) = &open.pull
+                && let Err(e) = xirius_session::host::collect_pulled_states(
                     self.song.session_mut(),
                     host,
+                    pull,
                     &xirius_core::session::RunOptions::human(),
                 )
             {

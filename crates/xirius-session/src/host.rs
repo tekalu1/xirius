@@ -1404,6 +1404,29 @@ pub fn collect_plugin_states(
     opts: &RunOptions,
 ) -> CmdResult<Collected> {
     let edits = host.builder.plugins_mut().take_edits();
+    collect_edits(session, host, opts, edits)
+}
+
+pub fn collect_pulled_states(
+    session: &mut Session,
+    host: &mut SessionHost,
+    pull: &crate::plugins::StatePull,
+    opts: &RunOptions,
+) -> CmdResult<Collected> {
+    let edits = host
+        .builder
+        .plugins_mut()
+        .take_pulled_edits(pull)
+        .map_err(xirius_core::CmdError::io)?;
+    collect_edits(session, host, opts, edits)
+}
+
+fn collect_edits(
+    session: &mut Session,
+    host: &mut SessionHost,
+    opts: &RunOptions,
+    edits: Vec<crate::plugins::RemoteEdit>,
+) -> CmdResult<Collected> {
     let mut out = Collected::default();
     let mut commands = Vec::new();
     let mut taken = Vec::new();
@@ -1490,11 +1513,12 @@ pub fn pull_plugin_states(
     opts: &RunOptions,
     wait: Duration,
 ) -> CmdResult<Collected> {
-    host.builder
+    let pull = host
+        .builder
         .plugins_mut()
         .pull_states(wait)
         .map_err(xirius_core::error::CmdError::io)?;
-    collect_plugin_states(session, host, opts)
+    collect_pulled_states(session, host, &pull, opts)
 }
 
 fn find_plugin(p: &Project, id: PluginId) -> Option<&Plugin> {

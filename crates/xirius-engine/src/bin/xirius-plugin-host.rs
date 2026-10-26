@@ -140,6 +140,7 @@ struct Instance {
     epoch: u64,
     /// Read the state once the processor has run to this block, or at this time.
     capture: Option<(u64, Instant)>,
+    capture_request: Option<u64>,
     /// The names of its keys last sent to the engine.
     note_names: Vec<(u8, String)>,
 }
@@ -207,7 +208,7 @@ impl Host {
             | ToHost::OpenEditor { slot, .. }
             | ToHost::CloseEditor { slot }
             | ToHost::SetCaption { slot, .. }
-            | ToHost::CaptureState { slot }
+            | ToHost::CaptureState { slot, .. }
             | ToHost::SimulateEdit { slot, .. }
             | ToHost::Fault { slot, .. } => *slot,
         };
@@ -321,10 +322,17 @@ impl Host {
                     self.send(&FromHost::EditorClosed { slot });
                 }
             }
-            ToHost::CaptureState { slot } => {
+            ToHost::CaptureState { slot, request } => {
                 // Read in the next `poll`, on this thread, where the plugin may be used.
                 if let Some(inst) = self.instances.get_mut(&slot) {
                     inst.capture = Some((0, Instant::now()));
+                    inst.capture_request = Some(request);
+                } else {
+                    self.send(&FromHost::CapturedState {
+                        slot,
+                        request,
+                        result: Err("プラグインが開かれていません".into()),
+                    });
                 }
             }
             ToHost::SimulateEdit { slot, id, values } => {
@@ -485,6 +493,7 @@ impl Host {
             rings,
             epoch: o.epoch,
             capture: None,
+            capture_request: None,
             note_names,
         };
         Ok((inst, opened))
@@ -513,13 +522,24 @@ impl Host {
             }
             let latency_changed = changes.latency;
             let mut names_changed = changes.note_names;
-            if let Some((blocks, at)) = inst.capture
-                && (latency_changed || inst.blocks() >= blocks || Instant::now() >= at)
+            if inst.capture_request.is_some()
+                || inst.capture.is_some_and(|(blocks, at)| {
+                    latency_changed || inst.blocks() >= blocks || Instant::now() >= at
+                })
             {
                 inst.capture = None;
-                match inst.plugin.get_state() {
-                    Ok(state) => out.push(FromHost::State { slot, state }),
-                    Err(e) => eprintln!("xirius-plugin-host: slot {slot}: {e}"),
+                let result = inst.plugin.get_state();
+                if let Some(request) = inst.capture_request.take() {
+                    out.push(FromHost::CapturedState {
+                        slot,
+                        request,
+                        result,
+                    });
+                } else {
+                    match result {
+                        Ok(state) => out.push(FromHost::State { slot, state }),
+                        Err(e) => eprintln!("xirius-plugin-host: slot {slot}: {e}"),
+                    }
                 }
                 // A preset chosen in the plugin may name its keys anew.
                 names_changed = true;

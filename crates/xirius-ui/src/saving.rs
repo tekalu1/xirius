@@ -431,9 +431,10 @@ impl Studio {
             let collected = if let Some(error) = error {
                 Err(CmdError::io(error))
             } else if let Some(host) = self.transport.host_mut() {
-                xirius_session::host::collect_plugin_states(
+                xirius_session::host::collect_pulled_states(
                     self.song.session_mut(),
                     host,
+                    pull,
                     &xirius_core::session::RunOptions::human(),
                 )
                 .map(|_| ())

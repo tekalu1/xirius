@@ -169,7 +169,8 @@ const HAND_OVER: Duration = Duration::from_secs(2);
 /// An asynchronous state request. Polling never waits for another process.
 pub struct StatePull {
     cancelled: std::cell::Cell<bool>,
-    asked: Vec<(Arc<PluginLink>, u64)>,
+    asked: Vec<(PluginId, Arc<PluginLink>, u64)>,
+    errors: Vec<String>,
     owned: Vec<crate::owned_local::Capture>,
     not_before: Instant,
 }
@@ -183,7 +184,10 @@ impl StatePull {
     pub fn ready(&self) -> bool {
         self.cancelled.get()
             || (Instant::now() >= self.not_before
-                && self.asked.iter().all(|(l, seen)| l.states_seen() > *seen)
+                && self
+                    .asked
+                    .iter()
+                    .all(|(_, link, request)| link.capture_finished(*request))
                 && self.owned.iter().all(|capture| capture.ready()))
     }
 
@@ -191,13 +195,24 @@ impl StatePull {
         if self.cancelled.get() {
             return Some("プラグインの状態要求が取り消されました".into());
         }
-        self.owned.iter().find_map(|capture| capture.error())
+        self.errors
+            .first()
+            .cloned()
+            .or_else(|| {
+                self.asked
+                    .iter()
+                    .find_map(|(_, link, request)| link.capture_error(*request))
+            })
+            .or_else(|| self.owned.iter().find_map(|capture| capture.error()))
     }
 
     /// Abandon local owner replies even when an SDK call cannot be interrupted.
     /// This does not claim the plugin has stopped or its owner has retired.
     pub fn cancel(&self) {
         self.cancelled.set(true);
+        for (_, link, request) in &self.asked {
+            link.cancel_capture(*request);
+        }
         for capture in &self.owned {
             capture.cancel();
         }
@@ -1701,6 +1716,7 @@ impl PluginLoader {
     /// saved with the state from when it was opened. The ones in host processes are asked
     /// and waited for, up to `wait` (the ones whose host went down or never opened are not).
     pub fn begin_pull_states(&mut self) -> StatePull {
+        let mut errors = Vec::new();
         let mut owned = Vec::new();
         for l in self.locals.values_mut() {
             if let Some(local) = &l.owned {
@@ -1709,10 +1725,15 @@ impl PluginLoader {
                 l.capture = Some(Instant::now());
             }
         }
-        let mut remotes: Vec<&Remote> = self.remotes.values().collect();
-        for l in self.leaving.values_mut() {
+        let mut remotes: Vec<(PluginId, &Remote)> = self
+            .remotes
+            .iter()
+            .filter(|(id, _)| !self.leaving.contains_key(id))
+            .map(|(id, r)| (*id, r))
+            .collect();
+        for (id, l) in &mut self.leaving {
             match l {
-                Leaving::Remote(r) => remotes.push(r),
+                Leaving::Remote(r) => remotes.push((*id, r)),
                 Leaving::Local(l, _) => {
                     if let Some(local) = &l.owned {
                         owned.push(local.capture(CAPTURE_WAIT));
@@ -1724,14 +1745,19 @@ impl PluginLoader {
         }
         let asked: Vec<_> = remotes
             .into_iter()
-            .filter(|r| {
+            .filter(|(_, r)| {
                 let s = r.server.status(&r.link);
+                if s.crashed || s.error.is_some() {
+                    errors.push(format!(
+                        "{}: プラグインの状態を取得できません",
+                        r.applied.name
+                    ));
+                }
                 !s.crashed && s.error.is_none()
             })
-            .map(|r| {
-                let seen = r.link.states_seen();
-                r.server.request_state(&r.link);
-                (r.link.clone(), seen)
+            .map(|(id, r)| {
+                let request = r.server.request_state(&r.link);
+                (id, r.link.clone(), request)
             })
             .collect();
         let local = !self.locals.is_empty()
@@ -1742,12 +1768,13 @@ impl PluginLoader {
         StatePull {
             cancelled: std::cell::Cell::new(false),
             asked,
+            errors,
             owned,
             not_before: Instant::now() + if local { CAPTURE_WAIT } else { Duration::ZERO },
         }
     }
 
-    pub fn pull_states(&mut self, wait: Duration) -> Result<(), String> {
+    pub fn pull_states(&mut self, wait: Duration) -> Result<StatePull, String> {
         let asked = self.begin_pull_states();
         let end = Instant::now() + wait;
         while Instant::now() < end && !asked.ready() {
@@ -1761,16 +1788,38 @@ impl PluginLoader {
             asked.cancel();
             return Err(error);
         }
-        Ok(())
+        Ok(asked)
     }
 
     /// Edits made in the plugins' editors since the last call.
     pub fn take_edits(&mut self) -> Vec<RemoteEdit> {
+        self.take_edits_with_pull(None)
+            .expect("ordinary edit reports have no capture receipt")
+    }
+
+    pub fn take_pulled_edits(&mut self, pull: &StatePull) -> Result<Vec<RemoteEdit>, String> {
+        if !pull.ready() {
+            return Err("プラグインの状態を取得中です".into());
+        }
+        if let Some(error) = pull.error() {
+            return Err(error);
+        }
+        self.take_edits_with_pull(Some(pull))
+    }
+
+    fn take_edits_with_pull(
+        &mut self,
+        pull: Option<&StatePull>,
+    ) -> Result<Vec<RemoteEdit>, String> {
         let mut out = std::mem::take(&mut self.carried);
         for (id, l) in &mut self.locals {
             out.extend(l.take(*id, false));
         }
-        let mut remotes: Vec<(&PluginId, &Remote)> = self.remotes.iter().collect();
+        let mut remotes: Vec<(&PluginId, &Remote)> = self
+            .remotes
+            .iter()
+            .filter(|(id, _)| !self.leaving.contains_key(id))
+            .collect();
         for (id, l) in &mut self.leaving {
             match l {
                 Leaving::Remote(r) => remotes.push((id, r)),
@@ -1778,7 +1827,15 @@ impl PluginLoader {
             }
         }
         for (id, r) in remotes {
-            let e = r.link.take_edits();
+            let e = if let Some((_, _, request)) = pull.and_then(|p| {
+                p.asked
+                    .iter()
+                    .find(|(asked, link, _)| asked == id && Arc::ptr_eq(link, &r.link))
+            }) {
+                r.link.take_capture_edits(*request)?
+            } else {
+                r.link.take_edits()
+            };
             if e.state.is_none() && e.params.is_empty() {
                 continue;
             }
@@ -1789,7 +1846,7 @@ impl PluginLoader {
             });
         }
         out.sort_by_key(|e| e.params.first().map(|p| p.at));
-        out
+        Ok(out)
     }
 
     /// Polls both VST3 controller threads and host links for latency changes (ENG-011).

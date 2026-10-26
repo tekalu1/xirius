@@ -57,6 +57,7 @@ const OFFLINE_TIMEOUT: Duration = Duration::from_secs(10);
 const FADE: u32 = 256;
 /// Parameter edits kept for the caller before the oldest are dropped.
 const MAX_PARAM_EDITS: usize = 65_536;
+static NEXT_CAPTURE: AtomicU64 = AtomicU64::new(1);
 /// The real-time `L` when none is given: two of the session's blocks.
 pub const DEFAULT_LATENCY: u32 = 1024;
 
@@ -158,6 +159,8 @@ pub struct PluginLink {
     stalled_epoch: AtomicU64,
     /// How many states the host has sent for this plugin.
     states_seen: AtomicU64,
+    capture_request: AtomicU64,
+    capture_done: AtomicU64,
     /// The last block came from the plugin itself, not the dry signal (ENG-064).
     live: AtomicBool,
     /// How many openings the host has answered for this plugin (ENG-065).
@@ -198,6 +201,7 @@ impl Seat {
 
 #[derive(Default)]
 struct LinkInner {
+    captured: Option<(u64, Result<PluginState, String>)>,
     /// The instance that plays, whose window and reports these are.
     heard: Seat,
     /// The instance a new mix opens while another plays (ENG-066), until it plays or is
@@ -234,6 +238,74 @@ impl LinkInner {
 }
 
 impl PluginLink {
+    fn begin_capture(&self) -> u64 {
+        let request = NEXT_CAPTURE
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .expect("capture request identifiers exhausted");
+        let mut inner = self.lock();
+        inner.captured = None;
+        self.capture_request.store(request, Ordering::Release);
+        request
+    }
+
+    fn complete_capture(&self, request: u64, result: Result<PluginState, String>) -> bool {
+        let mut inner = self.lock();
+        if self.capture_request.load(Ordering::Acquire) != request {
+            return false;
+        }
+        if let Ok(state) = &result {
+            inner.state = Some(state.clone());
+            self.states_seen.fetch_add(1, Ordering::Release);
+        }
+        inner.captured = Some((request, result));
+        self.capture_done.store(request, Ordering::Release);
+        true
+    }
+
+    pub fn capture_finished(&self, request: u64) -> bool {
+        self.capture_done.load(Ordering::Acquire) == request
+            || self.capture_request.load(Ordering::Acquire) != request
+    }
+
+    pub fn capture_error(&self, request: u64) -> Option<String> {
+        if self.capture_done.load(Ordering::Acquire) != request {
+            return (self.capture_request.load(Ordering::Acquire) != request)
+                .then(|| "プラグインの状態要求が置き換わりました".into());
+        }
+        self.lock().captured.as_ref().and_then(|(id, result)| {
+            (*id == request)
+                .then(|| result.as_ref().err().cloned())
+                .flatten()
+        })
+    }
+
+    pub fn cancel_capture(&self, request: u64) {
+        let _inner = self.lock();
+        let _ =
+            self.capture_request
+                .compare_exchange(request, 0, Ordering::AcqRel, Ordering::Acquire);
+    }
+
+    pub fn take_capture_edits(&self, request: u64) -> Result<PluginEdits, String> {
+        let mut inner = self.lock();
+        let Some((id, result)) = inner.captured.take() else {
+            return Err("プラグインの状態の返事がありません".into());
+        };
+        if id != request {
+            inner.captured = Some((id, result));
+            return Err("プラグインの状態要求が一致しません".into());
+        }
+        let state = result?;
+        // A later editor state belongs to a later edit, after this save. Keep it
+        // pending rather than replacing this exact snapshot or losing the edit.
+        if inner.state.as_ref() == Some(&state) {
+            inner.state = None;
+        }
+        Ok(PluginEdits {
+            state: Some(state),
+            params: std::mem::take(&mut inner.params),
+        })
+    }
     /// Plain Space presses received from the hosted editor frame.
     pub fn take_play_requests(&self) -> u32 {
         std::mem::take(&mut self.lock().play_requests)
@@ -267,8 +339,8 @@ impl PluginLink {
         }
     }
 
-    /// How many states the host has sent for this plugin so far; a state asked for with
-    /// [`PluginServer::request_state`] has come when this is above what it was before.
+    /// How many accepted states the host has sent. Explicit requests are identified
+    /// by their receipt, independently of unsolicited editor state notifications.
     pub fn states_seen(&self) -> u64 {
         self.states_seen.load(Ordering::Acquire)
     }
@@ -403,6 +475,55 @@ impl PluginLink {
             value,
             at: Instant::now(),
         });
+    }
+}
+
+#[cfg(test)]
+mod capture_tests {
+    use super::*;
+
+    fn state(value: u8) -> PluginState {
+        PluginState {
+            component: vec![value],
+            controller: vec![],
+        }
+    }
+
+    #[test]
+    fn unsolicited_and_abandoned_results_cannot_complete_a_new_capture() {
+        let link = PluginLink::new();
+        let old = link.begin_capture();
+        link.cancel_capture(old);
+        let current = link.begin_capture();
+        link.lock().state = Some(state(1));
+        link.states_seen.fetch_add(1, Ordering::Release);
+        assert!(!link.capture_finished(current));
+        assert!(!link.complete_capture(old, Ok(state(2))));
+        assert!(!link.capture_finished(current));
+        assert!(link.complete_capture(current, Ok(state(3))));
+        link.lock().state = Some(state(4));
+        assert_eq!(
+            link.take_capture_edits(current).unwrap().state,
+            Some(state(3))
+        );
+        assert_eq!(link.take_edits().state, Some(state(4)));
+    }
+
+    #[test]
+    fn failed_and_superseded_captures_are_errors_instead_of_save_success() {
+        let link = PluginLink::new();
+        let old = link.begin_capture();
+        let current = link.begin_capture();
+        assert!(link.capture_finished(old));
+        assert!(link.capture_error(old).is_some());
+        assert!(!link.complete_capture(old, Ok(state(1))));
+        assert!(link.complete_capture(current, Err("SDK error".into())));
+        assert!(link.capture_finished(current));
+        assert_eq!(link.capture_error(current).as_deref(), Some("SDK error"));
+        assert_eq!(
+            link.take_capture_edits(current).err().as_deref(),
+            Some("SDK error")
+        );
     }
 }
 
@@ -778,8 +899,16 @@ impl PluginServer {
     /// Asks the host for the plugin's state now (it answers with the state the way it does
     /// after an edit, so [`PluginLink::take_edits`] has it). A plugin that changes its patch
     /// in its editor does not always say so, and the song would not have it when it is saved.
-    pub fn request_state(&self, link: &PluginLink) {
-        self.with_slot(link, |o| Some(ToHost::CaptureState { slot: o.slot }));
+    pub fn request_state(&self, link: &PluginLink) -> u64 {
+        let request = link.begin_capture();
+        let mut st = self.inner.lock();
+        let slot = link.slot.load(Ordering::Acquire);
+        if st.slots.contains_key(&slot) {
+            st.send(&ToHost::CaptureState { slot, request });
+        } else {
+            link.complete_capture(request, Err("プラグインが開かれていません".into()));
+        }
+        request
     }
 
     /// Sets a parameter by numeric id or title, normalised 0..1.
@@ -1146,26 +1275,31 @@ impl Inner {
                     });
                 }
             }
-            FromHost::State { slot, state } => {
-                let Some(rec) = st.slots.get_mut(&slot) else {
+            FromHost::CapturedState {
+                slot,
+                request,
+                result,
+            } => {
+                let Some(rec) = st.slots.get(&slot) else {
                     return;
                 };
-                rec.open.state = Some(state.clone());
                 let link = rec.link.clone();
-                // Only the state of the instance that plays is the plugin's: the one an old
-                // window leaves when it closes after the new mix came in, or one a new mix
-                // opens, is not taken into the song (ENG-067).
                 if link.slot.load(Ordering::Acquire) != slot {
                     return;
                 }
-                link.lock().state = Some(state.clone());
-                link.states_seen.fetch_add(1, Ordering::Release);
-                if let Some(next) = st.next_of(&link, slot) {
-                    let rec = st.slots.get_mut(&next).expect("next_of checked it");
-                    rec.open.state = Some(state.clone());
-                    st.send(&ToHost::SetState { slot: next, state });
+                if !link.complete_capture(request, result.clone()) {
+                    return;
+                }
+                if let Ok(state) = result {
+                    st.slots.get_mut(&slot).expect("slot checked").open.state = Some(state.clone());
+                    if let Some(next) = st.next_of(&link, slot) {
+                        st.slots.get_mut(&next).expect("next_of checked").open.state =
+                            Some(state.clone());
+                        st.send(&ToHost::SetState { slot: next, state });
+                    }
                 }
             }
+            FromHost::State { slot, state } => st.accept_state(slot, state),
             FromHost::Latency { slot, latency } => {
                 // An instance that neither plays nor is about to has no mix to build again.
                 if let Some(rec) = st.slots.get(&slot)
@@ -1358,6 +1492,24 @@ fn set_param(open: &mut OpenSlot, key: &str, title: &str, value: f64) {
 }
 
 impl State {
+    fn accept_state(&mut self, slot: u32, state: PluginState) {
+        let Some(rec) = self.slots.get_mut(&slot) else {
+            return;
+        };
+        rec.open.state = Some(state.clone());
+        let link = rec.link.clone();
+        // Only the playing instance supplies the song's state.
+        if link.slot.load(Ordering::Acquire) != slot {
+            return;
+        }
+        link.lock().state = Some(state.clone());
+        link.states_seen.fetch_add(1, Ordering::Release);
+        if let Some(next) = self.next_of(&link, slot) {
+            let rec = self.slots.get_mut(&next).expect("next_of checked it");
+            rec.open.state = Some(state.clone());
+            self.send(&ToHost::SetState { slot: next, state });
+        }
+    }
     /// Makes the instance on its way the one that plays (ENG-066). A mix built again while the
     /// window is open (a latency that came late, ENG-065) takes the plugin to a new instance:
     /// the window follows it, and the one of `leaving` is closed.
