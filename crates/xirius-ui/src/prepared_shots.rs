@@ -11,6 +11,9 @@ use std::{
 };
 use xirius_session::output::{Drivers, Output, OutputMode, SilentOutput};
 
+#[path = "prepared_fixture_tests.rs"]
+mod fixtures;
+
 pub const SHOTS: &[Shot] = &[
     Shot {
         name: "prepared-00-before",
@@ -169,7 +172,7 @@ fn stage(s: &mut Studio, n: u8) {
                 drop(song);
                 let mut failed = crate::song::Song::empty();
                 for index in 0..3 {
-                    let id = failed.run("track.add.audio", serde_json::json!({"name": "長い同名トラック🎹・ストリングスとピアノを重ねた最後のテイク".repeat(20)})).unwrap()["id"].clone();
+                    let id = failed.run("track.add.audio", serde_json::json!({"name": fixtures::long_track_name()})).unwrap()["id"].clone();
                     if index != 1 {
                         failed.run("plugin.add", serde_json::json!({"track":id,"name":"Missing","format":"vst3","uid":"00000000000000000000000000000000"})).unwrap();
                     }
