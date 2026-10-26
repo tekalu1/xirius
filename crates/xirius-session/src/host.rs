@@ -40,6 +40,18 @@ use crate::graph::{Graph, Mix, Scope, Select, StripMix, Structure};
 use crate::plugins::{Isolation, PluginLoader};
 use crate::tempo::TempoMap;
 
+thread_local! {
+    static WINDOW_THREAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+/// Registers the event-loop thread so synchronous compatibility APIs cannot
+/// instantiate an SDK there, even if a caller bypasses the window host facade.
+pub fn mark_window_thread() {
+    WINDOW_THREAD.with(|v| v.set(true));
+}
+pub(crate) fn on_window_thread() -> bool {
+    WINDOW_THREAD.with(std::cell::Cell::get)
+}
+
 #[derive(Default)]
 pub struct HostConfig {
     /// Uses a dedicated controller owner for each local VST3 instance (PRJ-030).
@@ -190,6 +202,7 @@ pub struct SessionHost {
     pending: Option<PendingSwap>,
     /// A change of latency builds its mix without waiting for the plugins too.
     nonblocking: bool,
+    windowed: bool,
     automation_start: u64,
     seek_serial: u64,
     pending_seek: Option<u64>,
@@ -325,6 +338,7 @@ impl SessionHost {
             latency_dirty: false,
             pending: None,
             nonblocking: false,
+            windowed: false,
             automation_start: 0,
             seek_serial: 0,
             pending_seek: None,
@@ -885,6 +899,11 @@ impl SessionHost {
     /// screen syncs so when it takes a window's edit into the song, often in the frame that
     /// heard of the latency the edit changed.
     pub fn sync(&mut self, p: &Project) -> SyncReport {
+        // Window hosts must never fall back to synchronous construction, including
+        // when editor/state collection calls this shared entry point.
+        if self.nonblocking {
+            return self.sync_later(p);
+        }
         if !self.pending.as_ref().is_some_and(|pd| pd.latency) {
             self.pending = None;
             self.builder.plugins_mut().drop_ready();
@@ -955,6 +974,23 @@ impl SessionHost {
             && self.apply_plugin_values(&structure, &mut report)
         {
             self.structure = structure.clone();
+        }
+        // A window may send cheap mix commands, but material/plan construction
+        // belongs to the preparation coordinator, including timeline-only edits.
+        if self.windowed
+            && (graph != self.graph
+                || structure != self.structure
+                || self.tempo.0 != p.ppq
+                || self.tempo.1 != p.tempo
+                || graph.tracks.iter().any(|id| {
+                    !self
+                        .tracks
+                        .get(id)
+                        .is_some_and(|old| old.matches(p, &p.tracks[id]))
+                }))
+        {
+            self.retarget_swap(p);
+            return report;
         }
         if graph != self.graph || structure != self.structure {
             if later {
@@ -1197,7 +1233,34 @@ impl SessionHost {
     /// Whether a change of latency builds its mix as [`SessionHost::sync_later`] does, instead
     /// of waiting for the plugins to open in [`SessionHost::poll`].
     pub fn set_nonblocking(&mut self, on: bool) {
-        self.nonblocking = on;
+        self.nonblocking = on || self.windowed;
+    }
+
+    /// A UI-owned host never constructs a plan or reads material. The caller
+    /// consumes its requested project through the background preparation path.
+    pub fn set_windowed(&mut self) {
+        self.windowed = true;
+        self.nonblocking = true;
+    }
+
+    pub fn preparation_target(&self) -> Option<Project> {
+        self.windowed
+            .then(|| self.pending.as_ref().map(|p| p.target.clone()))
+            .flatten()
+    }
+
+    /// After the output has retired on a worker, carry the loaders into the next
+    /// preparation. Their owner snapshots preserve patches not reported by an
+    /// editor, as a normal graph replacement does.
+    pub fn prepare_again(
+        self,
+        p: &Project,
+        engine: EngineConfig,
+    ) -> Result<crate::starting::Starting, String> {
+        if on_window_thread() {
+            return Err("音の準備は裏で行う必要があります".into());
+        }
+        Ok(crate::starting::Starting::reuse(p, self.builder, engine))
     }
 
     /// Does a little more of the new mix [`SessionHost::sync_later`] began: the first call asks
@@ -1205,6 +1268,9 @@ impl SessionHost {
     /// process (a VST3 plugin is made on the thread that uses it). Swaps the mix in once
     /// everything is open and gives what that did.
     pub fn step_swap(&mut self) -> Option<SyncReport> {
+        if self.windowed {
+            return None;
+        }
         self.builder.plugins_mut().poll_preloads();
         let setup = setup(self.builder.rate(), RenderMode::Realtime);
         let pd = self.pending.as_mut()?;

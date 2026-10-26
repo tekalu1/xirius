@@ -35,6 +35,15 @@ impl Studio {
                 went_down: false,
             };
         }
+        if self.sound_preparing() {
+            // Preparation owns the song. Poll its result/cleanup even when the
+            // window is minimized, without entering unrelated monitor/file I/O.
+            self.poll_preparing();
+            return Idle {
+                changed: true,
+                went_down: false,
+            };
+        }
         let changed = self.poll_recent_keep()
             | self.poll_plugins()
             | self.poll_perf()

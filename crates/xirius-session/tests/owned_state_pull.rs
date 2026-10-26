@@ -14,7 +14,9 @@ use xirius_core::model::Project;
 use xirius_core::session::{RunOptions, Session};
 use xirius_plugins::{Catalog, decode_state, probe};
 use xirius_session::commands::{self, shared_registry};
-use xirius_session::host::{HostConfig, SessionHost, collect_plugin_states, pull_plugin_states};
+use xirius_session::host::{
+    HostConfig, SessionHost, collect_plugin_states, collect_pulled_states, pull_plugin_states,
+};
 use xirius_session::plugins::Isolation;
 
 struct Gate {
@@ -24,6 +26,9 @@ struct Gate {
 }
 impl Gate {
     fn new(path: &std::path::Path) -> Self {
+        Self::named(path, c"FixtureStateGate")
+    }
+    fn named(path: &std::path::Path, name: &std::ffi::CStr) -> Self {
         let wide: Vec<_> = path.as_os_str().encode_wide().chain([0]).collect();
         // SAFETY: the loader retains this DLL; the fixture exports this exact ABI.
         unsafe {
@@ -31,9 +36,7 @@ impl Gate {
             let arm = std::mem::transmute::<
                 unsafe extern "system" fn() -> isize,
                 unsafe extern "system" fn(usize, usize),
-            >(
-                GetProcAddress(module, c"FixtureStateGate".as_ptr().cast()).unwrap()
-            );
+            >(GetProcAddress(module, name.as_ptr().cast()).unwrap());
             let entered = CreateEventW(std::ptr::null(), 1, 0, std::ptr::null());
             let release = CreateEventW(std::ptr::null(), 1, 0, std::ptr::null());
             assert!(!entered.is_null() && !release.is_null());
@@ -265,4 +268,92 @@ fn local_state_collection_and_changes_return_while_sdk_is_held_and_stale_state_i
     };
     assert!(report.swapped);
     assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    drop(gate);
+    // Successful getState may be collected while a different plugin's init is
+    // held. It must not cancel the pending graph and enter synchronous build.
+    assert!(host.plugins().set_live_param(id, "1", 0.75));
+    audio.render(&mut buffer, 2);
+    let captured = host.begin_pull_states();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !captured.ready() {
+        assert!(Instant::now() < deadline, "capture watchdog");
+        std::thread::yield_now();
+    }
+    assert_eq!(captured.error(), None);
+    let added = commands::run(
+        &mut song,
+        None,
+        "track.add.audio",
+        json!({"name":"pending"}).as_object().unwrap(),
+        &opts,
+    )
+    .unwrap()
+    .data["id"]
+        .clone();
+    let uid = song.project().tracks[&tid].inserts[0].uid.clone();
+    commands::run(
+        &mut song,
+        None,
+        "plugin.add",
+        json!({"track":added,"name":"Fixture","format":"vst3","uid":uid})
+            .as_object()
+            .unwrap(),
+        &opts,
+    )
+    .unwrap();
+    let gate = Gate::named(&dll, c"FixtureOpenGate");
+    assert!(!host.sync_later(song.project()).swapped);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !gate.entered() {
+        let _ = host.step_swap();
+        assert!(Instant::now() < deadline, "init watchdog");
+        std::thread::yield_now();
+    }
+    assert!(
+        collect_pulled_states(&mut song, &mut host, &captured, &opts)
+            .unwrap()
+            .result
+            .is_some()
+    );
+    assert!(
+        host.swap_pending(),
+        "collection must keep asynchronous reconstruction"
+    );
+    // In the actual window facade even finishing preloads may not construct a
+    // timeline/plan: the preparation worker consumes the requested project.
+    host.set_windowed();
+    assert!(host.preparation_target().is_some());
+    assert!(host.step_swap().is_none());
+    gate.release();
+    assert!(host.plugins().set_live_param(id, "1", 0.625));
+    audio.render(&mut buffer, 2);
+    drop(audio);
+    let mut starting = host
+        .prepare_again(song.project(), Default::default())
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !starting.step() {
+        assert!(Instant::now() < deadline, "retained loader watchdog");
+        std::thread::yield_now();
+    }
+    let (mut host, _audio, failures) = starting.finish_prepared(song.project(), |_, _| {}).unwrap();
+    assert!(failures.is_empty());
+    let captured = host.begin_pull_states();
+    while !captured.ready() {
+        assert!(Instant::now() < deadline, "retained state watchdog");
+        std::thread::yield_now();
+    }
+    collect_pulled_states(&mut song, &mut host, &captured, &opts).unwrap();
+    let state = decode_state(
+        song.project().tracks[&tid].inserts[0]
+            .state
+            .as_deref()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        state.component,
+        160u32.to_le_bytes(),
+        "background reconstruction preserves unreported live patches"
+    );
 }

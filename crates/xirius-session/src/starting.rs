@@ -56,6 +56,19 @@ pub struct Starting {
 }
 
 impl Starting {
+    pub(crate) fn reuse(p: &Project, mut builder: Builder, engine: EngineConfig) -> Starting {
+        builder.plugins_mut().drop_ready();
+        let rate = builder.rate();
+        Starting {
+            builder,
+            engine,
+            setup: setup(rate, RenderMode::Realtime),
+            units: units(p),
+            asked: false,
+            processed_seen: crate::processed::generation(),
+            began: Instant::now(),
+        }
+    }
     /// Gets ready to start `p`'s player; nothing is opened yet.
     pub fn new(p: &Project, config: HostConfig) -> Starting {
         let rate = config.rate.unwrap_or(p.settings.sample_rate);

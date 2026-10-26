@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use std::io;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{ChildStdin, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Condvar, MutexGuard, OnceLock, Weak};
@@ -43,6 +43,7 @@ use crate::sandbox::{
 use crate::wire::{self, Fault, FromHost, Gesture, OpenSlot, Opened, ToHost};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const CONTROL_QUEUE: usize = 256;
 /// How long the host may take to open one plugin.
 const OPEN_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long a starting host may take to say which protocol it speaks (a freshly built
@@ -480,6 +481,52 @@ impl PluginLink {
 
 #[cfg(test)]
 mod capture_tests {
+    #[test]
+    fn blocked_writer_does_not_hold_server_or_wait_for_queue_space() {
+        use super::*;
+        struct Gate(mpsc::SyncSender<()>, mpsc::Receiver<()>);
+        impl io::Write for Gate {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.0.send(()).unwrap();
+                self.1.recv().unwrap();
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let (entered, received) = mpsc::sync_channel(1);
+        let (release, held) = mpsc::channel();
+        let stop = Arc::new(AtomicU8::new(KEEP));
+        let writer = host_writer(Gate(entered, held), stop.clone()).unwrap();
+        let mut state = State {
+            proc: Some(Proc {
+                writer,
+                stop: stop.clone(),
+                epoch: 1,
+                pid: 0,
+            }),
+            ..State::default()
+        };
+        assert!(state.send(&ToHost::Close { slot: 1 }));
+        received.recv_timeout(Duration::from_secs(10)).unwrap();
+        // The writer is still inside Write. All calls below return without a
+        // release, including overflow and a subsequent state request.
+        for _ in 0..CONTROL_QUEUE {
+            assert!(state.send(&ToHost::Close { slot: 1 }));
+        }
+        assert!(!state.send(&ToHost::Close { slot: 1 }));
+        assert_eq!(stop.load(Ordering::Acquire), KILL);
+        assert!(!state.send(&ToHost::CaptureState {
+            slot: 1,
+            request: 2
+        }));
+        drop(state);
+        // Enough releases for the framing writes; no join is required on UI.
+        for _ in 0..3 {
+            let _ = release.send(());
+        }
+    }
     use super::*;
 
     fn state(value: u8) -> PluginState {
@@ -550,6 +597,7 @@ struct Inner {
 struct State {
     proc: Option<Proc>,
     epoch: u64,
+    starting: bool,
     crashed: bool,
     exit_code: Option<u32>,
     crashes: u64,
@@ -569,7 +617,7 @@ const QUIT: u8 = 1;
 const KILL: u8 = 2;
 
 struct Proc {
-    stdin: ChildStdin,
+    writer: mpsc::SyncSender<Vec<u8>>,
     epoch: u64,
     stop: Arc<AtomicU8>,
     pid: u32,
@@ -661,11 +709,11 @@ impl PluginServer {
     /// Starts the host process if it is not running, and checks that it speaks this engine's
     /// protocol. Opening a plugin does this by itself.
     pub fn start(&self) -> Result<(), String> {
-        let mut st = self.inner.lock();
+        let st = self.inner.lock();
         if st.proc.is_some() {
             return Ok(());
         }
-        self.inner.spawn(&mut st)
+        self.inner.spawn(st).map(|_| ())
     }
 
     /// What the plugin would be opened with again: its latest state and parameters, with the
@@ -769,12 +817,16 @@ impl PluginServer {
             link.set_open_result(st.seat_of(link, slot), &r);
             return r;
         }
-        if st.proc.is_none()
-            && let Err(e) = inner.spawn(&mut st)
-        {
-            let r = Err(e);
-            link.set_open_result(st.seat_of(link, slot), &r);
-            return r;
+        if st.proc.is_none() {
+            match inner.spawn(st) {
+                Ok(next) => st = next,
+                Err(e) => {
+                    let st = inner.lock();
+                    let r = Err(e);
+                    link.set_open_result(st.seat_of(link, slot), &r);
+                    return r;
+                }
+            }
         }
         let epoch = st.epoch;
         open.epoch = epoch;
@@ -904,7 +956,9 @@ impl PluginServer {
         let mut st = self.inner.lock();
         let slot = link.slot.load(Ordering::Acquire);
         if st.slots.contains_key(&slot) {
-            st.send(&ToHost::CaptureState { slot, request });
+            if !st.send(&ToHost::CaptureState { slot, request }) {
+                link.complete_capture(request, Err("プラグインへの送信ができません".into()));
+            }
         } else {
             link.complete_capture(request, Err("プラグインが開かれていません".into()));
         }
@@ -1075,8 +1129,22 @@ impl PluginServer {
     /// is back, and a plugin that cannot be opened says so in its link, as it does when it is
     /// opened first.
     pub fn restart_later(&self) -> Result<(), String> {
-        let st = self.inner.lock();
-        self.inner.restart(st, false)
+        let inner = self.inner.clone();
+        std::thread::Builder::new()
+            .name("xirius-plugin-restart".into())
+            .spawn(move || {
+                let st = inner.lock();
+                if let Err(error) = inner.restart(st, false) {
+                    let mut st = inner.lock();
+                    st.crashed = true;
+                    for (&slot, rec) in &st.slots {
+                        rec.link
+                            .set_open_result(st.seat_of(&rec.link, slot), &Err(error.clone()));
+                    }
+                }
+            })
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -1085,15 +1153,40 @@ impl Inner {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn spawn(self: &Arc<Self>, st: &mut State) -> Result<(), String> {
+    fn spawn<'a>(
+        self: &'a Arc<Self>,
+        mut st: MutexGuard<'a, State>,
+    ) -> Result<MutexGuard<'a, State>, String> {
+        while st.starting {
+            st = self.changed.wait(st).unwrap_or_else(|e| e.into_inner());
+        }
+        if st.proc.is_some() {
+            return Ok(st);
+        }
+        st.starting = true;
+        st.epoch += 1;
+        let epoch = st.epoch;
+        st.closing.clear();
+        drop(st);
+        let result = self.spawn_proc(epoch);
+        let mut st = self.lock();
+        st.starting = false;
+        self.changed.notify_all();
+        let proc = result?;
+        if self.down_epoch.load(Ordering::Acquire) >= epoch {
+            return Err("プラグインのプロセスが起動中に終了しました".into());
+        }
+        st.proc = Some(proc);
+        st.crashed = false;
+        st.exit_code = None;
+        Ok(st)
+    }
+
+    fn spawn_proc(self: &Arc<Self>, epoch: u64) -> Result<Proc, String> {
         let host = self
             .host
             .as_ref()
             .ok_or("xirius-plugin-host が見つかりません")?;
-        st.epoch += 1;
-        let epoch = st.epoch;
-        // The host that had these is gone: it says nothing more.
-        st.closing.clear();
         let stderr = if std::env::var_os("XIRIUS_PLUGIN_HOST_LOG").is_some() {
             Stdio::inherit()
         } else {
@@ -1194,15 +1287,13 @@ impl Inner {
             stop.store(QUIT, Ordering::Release);
             return Err(format!("{}: {e}", host.display()));
         }
-        st.proc = Some(Proc {
-            stdin,
+        let writer = host_writer(stdin, stop.clone()).map_err(|e| e.to_string())?;
+        Ok(Proc {
+            writer,
             epoch,
             stop,
             pid,
-        });
-        st.crashed = false;
-        st.exit_code = None;
-        Ok(())
+        })
     }
 
     fn went_down(&self, epoch: u64, code: Option<u32>, asked: bool, hung: bool) {
@@ -1428,7 +1519,7 @@ impl Inner {
             return Ok(());
         }
         slots.sort_unstable();
-        self.spawn(&mut st)?;
+        st = self.spawn(st)?;
         let epoch = st.epoch;
         for &slot in &slots {
             let rec = st.slots.get_mut(&slot).unwrap();
@@ -1575,11 +1666,43 @@ impl State {
     }
 
     /// Sends to the host; a host that has gone is noticed by its watcher.
-    fn send(&mut self, msg: &ToHost) {
-        if let Some(p) = &mut self.proc {
-            let _ = wire::send(&mut p.stdin, &msg.encode());
-        }
+    fn send(&mut self, msg: &ToHost) -> bool {
+        self.proc.as_ref().is_some_and(|p| {
+            if p.stop.load(Ordering::Acquire) != KEEP {
+                return false;
+            }
+            if p.writer.try_send(msg.encode()).is_ok() {
+                return true;
+            }
+            // Dropping a control message could silently lose a state/parameter.
+            // Retire this generation instead; its watcher reports all pending work.
+            p.stop.store(KILL, Ordering::Release);
+            false
+        })
     }
+}
+
+/// The pipe can block forever when the child stops reading. Only this detached
+/// owner writes it; neither the server mutex nor the caller waits for that write.
+fn host_writer(
+    mut pipe: impl io::Write + Send + 'static,
+    stop: Arc<AtomicU8>,
+) -> io::Result<mpsc::SyncSender<Vec<u8>>> {
+    let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(CONTROL_QUEUE);
+    std::thread::Builder::new()
+        .name("xirius-plugin-host-write".into())
+        .spawn(move || {
+            while let Ok(bytes) = rx.recv() {
+                if stop.load(Ordering::Acquire) != KEEP {
+                    break;
+                }
+                if wire::send(&mut pipe, &bytes).is_err() {
+                    stop.store(KILL, Ordering::Release);
+                    break;
+                }
+            }
+        })?;
+    Ok(tx)
 }
 
 // ---------------------------------------------------------------------------------------------

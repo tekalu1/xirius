@@ -120,6 +120,7 @@ thread_local! {
 /// Replacing a Studio on this thread cannot restore a synchronous transport.
 pub(crate) fn mark_window_thread() {
     WINDOW_THREAD.with(|marked| marked.set(true));
+    xirius_session::host::mark_window_thread();
 }
 
 pub struct Transport {
@@ -320,7 +321,7 @@ impl Transport {
             return false;
         }
         if self.mode == OutputMode::Device || self.windowed {
-            match prepared::Start::new(self, p, dir) {
+            match prepared::Start::new(self, p, dir, None) {
                 Ok(start) => {
                     self.prepared_start = Some(start);
                     return true;
@@ -558,7 +559,7 @@ impl Transport {
             };
             let (mut host, audio, _warnings) =
                 started.map_err(|e| format!("再生を開始できませんでした: {e}"))?;
-            host.set_nonblocking(true);
+            host.set_windowed();
             host.drivers = self.drivers.clone();
             host.set_looping(p, self.looping);
             host.controller()
@@ -1022,6 +1023,20 @@ impl Transport {
     /// host processes said about plugins the player took before they answered. True while there
     /// is more to do, so the frames keep coming.
     pub fn step_swap(&mut self) -> (bool, Vec<String>) {
+        if let Some((project, dir)) = self
+            .player
+            .as_ref()
+            .and_then(|pl| pl.host.preparation_target().map(|p| (p, pl.dir.clone())))
+        {
+            self.stop_preview();
+            let previous = self.player.take();
+            self.reset();
+            match prepared::Start::new(self, &project, dir, previous) {
+                Ok(start) => self.prepared_start = Some(start),
+                Err(error) => return (false, vec![error]),
+            }
+            return (true, Vec::new());
+        }
         let Some(pl) = &mut self.player else {
             return (false, Vec::new());
         };

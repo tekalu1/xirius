@@ -3,6 +3,64 @@ use crate::{browser_io_tests::Release, song::Song, studio::Studio};
 use std::sync::mpsc;
 use xirius_session::output::{DeviceOutput, SharedStream};
 
+#[test]
+fn a_window_timeline_update_uses_background_preparation_and_idle_remains_responsive() {
+    let root = tempfile::tempdir().unwrap();
+    let wav = root.path().join("source.wav");
+    xirius_session::export::write_wav(&wav, &[0.0; 2048], &[0.0; 2048], 22_050, 16).unwrap();
+    let mut s = Studio::new(Song::empty());
+    s.song.save_as(&root.path().join("song")).unwrap();
+    let track = s
+        .song
+        .run("track.add.audio", serde_json::json!({"name":"A"}))
+        .unwrap()["id"]
+        .clone();
+    s.transport.mode = OutputMode::Silent { paced: true };
+    s.transport.bind_window();
+    s.prepare_song();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while s.preparing.is_some() {
+        s.poll_preparing();
+        assert!(Instant::now() < deadline, "initial preparation watchdog");
+        std::thread::yield_now();
+    }
+    s.song
+        .run(
+            "clip.import",
+            serde_json::json!({"file":wav, "track":track}),
+        )
+        .unwrap();
+    let release = Release::new();
+    let gate = release.0.clone();
+    let prefix = root.path().to_path_buf();
+    let (tx, entered) = mpsc::channel();
+    let once = AtomicBool::new(false);
+    let _observe = xirius_core::io_test::observe(Arc::new(move |op, path| {
+        if op == "prepare_decode" && path.starts_with(&prefix) && !once.swap(true, Ordering::SeqCst)
+        {
+            tx.send(std::thread::current().id()).unwrap();
+            let held = gate.0.lock().unwrap();
+            drop(gate.1.wait_while(held, |done| !*done).unwrap());
+        }
+        Ok(())
+    }));
+    let project = s.project();
+    s.transport.sync(&project, s.song.dir());
+    assert!(s.transport.host().unwrap().preparation_target().is_some());
+    assert!(s.poll_swap());
+    assert_ne!(
+        entered.recv_timeout(Duration::from_secs(20)).unwrap(),
+        std::thread::current().id()
+    );
+    assert!(s.idle().changed);
+    let before = s.preparing.as_ref().unwrap().progress.clone();
+    assert!(s.prepare_key("escape"));
+    assert_eq!(s.preparing.as_ref().unwrap().progress, before);
+    assert!(s.idle().changed);
+    assert!(s.preparing.as_ref().unwrap().cancelling);
+    release.release();
+}
+
 struct HeldOutput {
     audio: Option<xirius_engine::AudioEngine>,
     entered: mpsc::Sender<std::thread::ThreadId>,

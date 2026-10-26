@@ -1101,6 +1101,9 @@ impl PluginLoader {
         owner: &str,
         x: &Plugin,
     ) -> Result<(Box<dyn Processor>, Vec<String>), String> {
+        if crate::host::on_window_thread() {
+            return Err("音の準備は裏で行う必要があります".into());
+        }
         let _filter = xirius_engine::crash::guard_exception_filter();
         let entry = self.catalog().find(&x.uid).cloned().ok_or_else(|| {
             format!(
