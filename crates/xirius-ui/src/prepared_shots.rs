@@ -21,6 +21,18 @@ pub const SHOTS: &[Shot] = &[
         acts: &[Act::Stage(Play::Studio(stage), 0)],
     },
     Shot {
+        name: "prepared-01-moved",
+        acts: &[Act::Stage(Play::Window(window_operation), 10)],
+    },
+    Shot {
+        name: "prepared-01-resized",
+        acts: &[Act::Stage(Play::Window(window_operation), 11)],
+    },
+    Shot {
+        name: "prepared-01-restored",
+        acts: &[Act::Stage(Play::Window(window_operation), 12)],
+    },
+    Shot {
         name: "prepared-02-cancelling",
         acts: &[Act::Stage(Play::Window(cancel), 1)],
     },
@@ -59,6 +71,7 @@ impl Gate {
         let freed = release.clone();
         let (tx, entered) = mpsc::channel();
         let once = std::sync::atomic::AtomicBool::new(false);
+        let held_operation = operation();
         let ui = std::thread::current().id();
         let observe = xirius_core::io_test::observe(Arc::new(move |op, path| {
             if path.starts_with(&root)
@@ -70,8 +83,8 @@ impl Gate {
                     "preparation painting requested material I/O: {op}"
                 );
             }
-            if op == "prepare_decode"
-                && path.starts_with(&root)
+            if op == held_operation
+                && (held_operation == "prepare_get_state" || path.starts_with(&root))
                 && !once.swap(true, std::sync::atomic::Ordering::SeqCst)
             {
                 tx.send(()).unwrap();
@@ -88,9 +101,14 @@ impl Gate {
     }
 }
 struct Probe {
-    seed: Option<std::thread::JoinHandle<PathBuf>>,
+    seed: Option<std::thread::JoinHandle<Seed>>,
     gate: Option<Gate>,
     phase: u8,
+    restarted: bool,
+}
+struct Seed {
+    dir: PathBuf,
+    catalog: Option<Arc<xirius_plugins::Catalog>>,
 }
 thread_local! { static PROBE: RefCell<Option<Probe>> = const { RefCell::new(None) }; }
 
@@ -105,10 +123,40 @@ fn stage(s: &mut Studio, n: u8) {
                 let dir = root.join("fixture-song");
                 song.save_as(&dir).unwrap();
                 let wav = root.join("長いトラック名・ストリングスとピアノを重ねた最後のテイク.wav");
-                xirius_session::export::write_wav(&wav, &[0.0; 4096], &[0.0; 4096], 22_050, 16)
-                    .unwrap();
+                let large = operation() == "prepare_prime";
+                let audio = vec![0.0; if large { 4_200_000 } else { 4096 }];
+                xirius_session::export::write_wav(
+                    &wav,
+                    &audio,
+                    &audio,
+                    if large { 48_000 } else { 22_050 },
+                    16,
+                )
+                .unwrap();
                 song.run("clip.import", serde_json::json!({"file":wav}))
                     .unwrap();
+                let catalog = if operation() == "prepare_get_state" {
+                    let fixture = std::env::current_exe()
+                        .unwrap()
+                        .parent()
+                        .unwrap()
+                        .join("deps/xirius_test_vst3.dll");
+                    let catalog = Arc::new(xirius_plugins::Catalog {
+                        entries: xirius_plugins::probe(&fixture).unwrap(),
+                        failures: Vec::new(),
+                    });
+                    let track = song
+                        .project()
+                        .tracks
+                        .values()
+                        .find(|t| t.kind == xirius_core::model::TrackKind::Audio)
+                        .unwrap()
+                        .id;
+                    song.run("plugin.add", serde_json::json!({"track":track.to_string(),"name":"Fixture","format":"vst3","uid":catalog.entries[0].uid})).unwrap();
+                    Some(catalog)
+                } else {
+                    None
+                };
                 song.session_mut().flush_writes();
                 drop(song);
                 let mut failed = crate::song::Song::empty();
@@ -120,13 +168,14 @@ fn stage(s: &mut Studio, n: u8) {
                 }
                 failed.save_as(&root.join("failed-song")).unwrap();
                 failed.session_mut().flush_writes();
-                dir
+                Seed { dir, catalog }
             });
             PROBE.with(|p| {
                 *p.borrow_mut() = Some(Probe {
                     seed: Some(seed),
                     gate: None,
                     phase: 0,
+                    restarted: false,
                 })
             });
         }
@@ -134,8 +183,10 @@ fn stage(s: &mut Studio, n: u8) {
             let before = s.project();
             assert!(!s.run_command("track.add.audio", serde_json::json!({"name":"blocked"})));
             assert!(!s.start_save());
-            assert!(!s.toggle_play());
-            assert!(!s.toggle_record());
+            if operation() != "prepare_get_state" {
+                assert!(!s.toggle_play());
+                assert!(!s.toggle_record());
+            }
             assert!(Arc::ptr_eq(&before, &s.project()));
             PROBE.with(|p| p.borrow_mut().as_mut().unwrap().phase = 2);
         }
@@ -143,6 +194,7 @@ fn stage(s: &mut Studio, n: u8) {
             let mut p = p.borrow_mut();
             let p = p.as_mut().unwrap();
             p.gate.take();
+            crate::wait::script_time(None);
             p.phase = 3;
         }),
         3 => {
@@ -199,7 +251,11 @@ fn cancel(n: u8, s: &Rc<RefCell<Studio>>, window: &mut gpui::Window, cx: &mut gp
         }),
         cx,
     );
-    assert!(s.borrow().preparing.as_ref().unwrap().cancelling);
+    if operation() == "prepare_get_state" {
+        assert!(s.borrow().saving.as_ref().unwrap().progress.cancelled());
+    } else {
+        assert!(s.borrow().preparing.as_ref().unwrap().cancelling);
+    }
     eprintln!("prepared-check stage=cancel ok=true");
 }
 pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
@@ -210,10 +266,13 @@ pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
             if !seed.is_finished() {
                 return false;
             }
-            let dir = p.seed.take().unwrap().join().unwrap();
+            let Seed { dir, catalog } = p.seed.take().unwrap().join().unwrap();
             p.gate = Some(Gate::new(dir.parent().unwrap().to_path_buf()));
             let mut s = s.borrow_mut();
             s.transport.mode = OutputMode::Device;
+            if let Some(catalog) = catalog {
+                s.transport.set_catalog(catalog);
+            }
             s.transport.set_drivers(Drivers {
                 exclusive_out: None,
                 shared_out: Arc::new(|audio, _, _| {
@@ -228,24 +287,62 @@ pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
             return false;
         }
         if p.phase == 1 {
+            if operation() == "prepare_output_stop" && !p.restarted {
+                let mut s = s.borrow_mut();
+                if s.preparing.is_some() || s.opening.is_some() || !s.transport.is_live() {
+                    return false;
+                }
+                s.transport.reset();
+                s.prepare_song();
+                p.restarted = true;
+            }
+            if operation() == "prepare_get_state" && !p.restarted {
+                let mut s = s.borrow_mut();
+                if s.preparing.is_some() || s.opening.is_some() || !s.transport.is_live() {
+                    return false;
+                }
+                let root = PathBuf::from(std::env::var_os("XIRIUS_PREPARED_SHOTS_DIR").unwrap());
+                crate::wait::script_time(Some(std::time::Instant::now()));
+                s.start_file_request(FileRequest::SaveAs, &root.join("state-copy"));
+                p.restarted = true;
+            }
             if p.gate.as_ref().unwrap().entered.try_recv().is_err() {
                 return false;
             }
-            let s = s.borrow();
-            assert!(s.preparing.as_ref().unwrap().background);
-            assert!(s.transport.host().is_none());
+            let mut s = s.borrow_mut();
+            if operation() == "prepare_get_state" {
+                s.saving.as_mut().unwrap().since -= crate::wait::OVERLAY_AFTER;
+                assert!(s.transport.host().is_some());
+            } else {
+                assert!(s.preparing.as_ref().unwrap().background);
+                assert!(s.transport.host().is_none());
+            }
             eprintln!("prepared-check stage=reading ok=true");
             p.phase = 2;
         }
         if p.phase == 3 {
             let s = s.borrow();
-            if s.preparing.is_some() || s.opening.is_some() {
+            if s.preparing.is_some() || s.opening.is_some() || s.saving.is_some() {
                 return false;
             }
-            assert!(s.song.dir().is_none());
-            assert!(s.transport.host().is_none());
+            if operation() == "prepare_get_state" {
+                let root = PathBuf::from(std::env::var_os("XIRIUS_PREPARED_SHOTS_DIR").unwrap());
+                assert!(!root.join("state-copy").exists());
+                assert!(s.song.dir().is_some());
+                assert!(s.transport.host().is_some());
+            } else {
+                assert!(s.song.dir().is_none());
+                assert!(s.transport.host().is_none());
+            }
             assert!(!s.transport.playing);
-            eprintln!("prepared-check stage=closed ok=true");
+            eprintln!(
+                "prepared-check stage={} ok=true",
+                if operation() == "prepare_get_state" {
+                    "save-cancelled"
+                } else {
+                    "closed"
+                }
+            );
             p.phase = 4;
         }
         if p.phase == 5 || p.phase == 7 {
@@ -278,3 +375,75 @@ pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
         true
     })
 }
+
+fn operation() -> String {
+    std::env::var("XIRIUS_PREPARED_GATE").unwrap_or_else(|_| "prepare_decode".into())
+}
+
+#[cfg(windows)]
+fn window_operation(n: u8, s: &Rc<RefCell<Studio>>, window: &mut gpui::Window, _: &mut gpui::App) {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowRect, IsIconic, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
+        SWP_NOZORDER, SetWindowPos, ShowWindow,
+    };
+    let hwnd =
+        crate::park::own_handle(crate::screen::WINDOW_TITLE).expect("this process's probe window");
+    assert!(!crate::park::is_foreground(hwnd));
+    let mut rect: RECT = unsafe { std::mem::zeroed() };
+    // SAFETY: own_handle verifies the process; all calls target only this parked
+    // fixture window. No activation, global input, or other app's window is used.
+    unsafe {
+        assert_ne!(GetWindowRect(hwnd as _, &mut rect), 0);
+        match n {
+            10 | 11 => {
+                let width = rect.right - rect.left + if n == 11 { 80 } else { 0 };
+                let height = rect.bottom - rect.top + if n == 11 { 40 } else { 0 };
+                let x = crate::park::PARK_AT + 200;
+                let y = crate::park::PARK_AT + 160;
+                assert_ne!(
+                    SetWindowPos(
+                        hwnd as _,
+                        std::ptr::null_mut(),
+                        x,
+                        y,
+                        width,
+                        height,
+                        SWP_NOACTIVATE | SWP_NOZORDER
+                    ),
+                    0
+                );
+                assert_ne!(GetWindowRect(hwnd as _, &mut rect), 0);
+                assert_eq!((rect.left, rect.top), (x, y));
+                assert_eq!(
+                    (rect.right - rect.left, rect.bottom - rect.top),
+                    (width, height)
+                );
+            }
+            12 => {
+                ShowWindow(hwnd as _, SW_SHOWMINNOACTIVE);
+                assert_ne!(IsIconic(hwnd as _), 0);
+                ShowWindow(hwnd as _, SW_SHOWNOACTIVATE);
+                assert_eq!(IsIconic(hwnd as _), 0);
+            }
+            _ => unreachable!(),
+        }
+    }
+    assert!(!crate::park::is_foreground(hwnd));
+    assert!(
+        s.borrow().input_blocked(),
+        "the material gate is still closed"
+    );
+    eprintln!(
+        "prepared-check stage={} ok=true",
+        match n {
+            10 => "moved",
+            11 => "resized",
+            _ => "restored",
+        }
+    );
+    window.refresh();
+}
+
+#[cfg(not(windows))]
+fn window_operation(_: u8, _: &Rc<RefCell<Studio>>, _: &mut gpui::Window, _: &mut gpui::App) {}

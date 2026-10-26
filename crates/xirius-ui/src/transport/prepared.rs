@@ -44,6 +44,11 @@ fn retire(player: Player) {
         previous: Vec::new(),
     };
     let Player { out, host, dir, .. } = player;
+    #[cfg(any(test, feature = "loading-probe"))]
+    let _ = xirius_core::io_test::before(
+        "prepare_output_stop",
+        dir.as_deref().unwrap_or_else(|| std::path::Path::new("")),
+    );
     drop(out);
     drop(host);
     drop(dir);

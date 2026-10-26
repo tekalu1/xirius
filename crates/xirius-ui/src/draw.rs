@@ -430,8 +430,7 @@ pub(crate) fn color_of(c: &Colors, track: &Track) -> Hsla {
 // ------------------------------------------------------------------- body
 
 pub fn paint_body(pen: &mut Pen, studio: &Studio, w: f32, h: f32) {
-    let _cache =
-        crate::opening::PaintScope::enter(studio.opening.is_some() || studio.sound_preparing());
+    let _cache = crate::opening::PaintScope::enter(studio.input_blocked());
     let g = studio.geometry(w, h);
     let hover = if let Hit::Browser(h) = studio.hover {
         Some(h)
@@ -466,8 +465,7 @@ pub fn paint_body(pen: &mut Pen, studio: &Studio, w: f32, h: f32) {
 /// and the line that says why the last command failed. It is painted after
 /// the roll, so the cached body under it does not have to change when it does.
 pub fn paint_overlay(pen: &mut Pen, studio: &Studio, g: &Geometry) {
-    let _cache =
-        crate::opening::PaintScope::enter(studio.opening.is_some() || studio.sound_preparing());
+    let _cache = crate::opening::PaintScope::enter(studio.input_blocked());
     crate::start::paint(pen, studio, g);
     crate::rec_panel::paint(pen, studio, g);
     paint_takes(pen, studio, g);
@@ -2128,8 +2126,7 @@ fn paint_roll_length(pen: &mut Pen, studio: &Studio, g: &Geometry) {
 }
 
 pub fn paint_roll(pen: &mut Pen, studio: &Studio, body: Rect) {
-    let _cache =
-        crate::opening::PaintScope::enter(studio.opening.is_some() || studio.sound_preparing());
+    let _cache = crate::opening::PaintScope::enter(studio.input_blocked());
     let started = std::time::Instant::now();
     crate::roll::paint::paint(pen, studio, body);
     studio

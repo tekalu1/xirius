@@ -8,6 +8,60 @@ struct HeldOutput {
     entered: mpsc::Sender<std::thread::ThreadId>,
     release: Arc<(Mutex<bool>, std::sync::Condvar)>,
 }
+
+#[test]
+fn cancellation_wins_over_an_already_completed_unclaimed_player_and_retires_it_off_ui() {
+    let root = tempfile::tempdir().unwrap();
+    let mut s = Studio::new(Song::empty());
+    s.song.save_as(&root.path().join("song")).unwrap();
+    s.transport.mode = OutputMode::Device;
+    let release = Release::new();
+    let gate = release.0.clone();
+    let (tx, entered) = mpsc::channel();
+    let mut drivers = quiet_drivers();
+    drivers.shared_out = Arc::new(move |audio, _, _| {
+        let entered = tx.clone();
+        let release = gate.clone();
+        DeviceOutput::open_with(audio, move |audio| {
+            Ok(Box::new(HeldOutput {
+                audio: Some(audio),
+                entered,
+                release,
+            }))
+        })
+        .map(Output::Device)
+    });
+    s.transport.set_drivers(drivers);
+    s.prepare_song();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    // Do not poll/adopt the prepared job. This establishes the exact race,
+    // independently of how fast output construction was.
+    while !s.transport.prepared_start.as_ref().unwrap().job.ready() {
+        assert!(Instant::now() < deadline, "completed candidate watchdog");
+        std::thread::yield_now();
+    }
+    assert!(s.prepare_key("escape"));
+    assert_ne!(
+        entered.recv_timeout(Duration::from_secs(20)).unwrap(),
+        std::thread::current().id()
+    );
+    assert!(s.poll_preparing());
+    assert!(s.preparing.as_ref().unwrap().cancelling);
+    assert!(s.transport.host().is_none());
+    assert!(!s.transport.playing);
+    release.release();
+    while s.preparing.is_some() || s.opening.is_some() {
+        s.poll_preparing();
+        s.poll_opening();
+        assert!(
+            Instant::now() < deadline,
+            "completed candidate retirement watchdog"
+        );
+        std::thread::yield_now();
+    }
+    assert!(s.transport.host().is_none());
+    assert!(s.song.dir().is_none());
+}
 impl SharedStream for HeldOutput {
     fn name(&self) -> String {
         "held test output".into()

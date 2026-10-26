@@ -49,6 +49,12 @@ impl Capture {
         if let Some(controller) = capture.controller.take() {
             let validity = capture.validity.clone();
             match controller.on_owner(move |plugin| {
+                #[cfg(feature = "test-io")]
+                xirius_core::io_test::before(
+                    "prepare_get_state",
+                    std::path::Path::new("local-plugin-state"),
+                )
+                .map_err(|e| e.to_string())?;
                 if let Some(error) = validity.lock().unwrap_or_else(|e| e.into_inner()).clone() {
                     return Err(error);
                 }

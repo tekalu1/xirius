@@ -106,6 +106,10 @@ impl<T: Send + 'static> Job<T> {
 }
 
 impl<T> Job<T> {
+    /// Observe completion without claiming its worker-owned result.
+    pub fn ready(&self) -> bool {
+        self.shared.state.load(Ordering::Acquire) == READY
+    }
     /// Acceptance only; work already inside a DLL or an I/O call is not killed.
     pub fn cancel(&self) {
         let mut state = self.shared.state.load(Ordering::Acquire);
