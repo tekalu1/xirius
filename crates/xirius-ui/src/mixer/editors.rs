@@ -173,6 +173,7 @@ impl Studio {
         if let Some((instance, generation)) = host.plugins().local(plugin.id) {
             if windowed {
                 return Err(
+                    // design-lint: allow(guidance) 読み込み失敗の理由と再準備の案内。同期の代替生成を拒否した時のエラー
                     "専用所有スレッドのプラグインが準備できていません。音を準備し直してください"
                         .into(),
                 );

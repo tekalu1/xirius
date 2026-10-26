@@ -172,7 +172,13 @@ fn stage(s: &mut Studio, n: u8) {
                 drop(song);
                 let mut failed = crate::song::Song::empty();
                 for index in 0..3 {
-                    let id = failed.run("track.add.audio", serde_json::json!({"name": fixtures::long_track_name()})).unwrap()["id"].clone();
+                    let id = failed
+                        .run(
+                            "track.add.audio",
+                            serde_json::json!({"name": fixtures::long_track_name()}),
+                        )
+                        .unwrap()["id"]
+                        .clone();
                     if index != 1 {
                         failed.run("plugin.add", serde_json::json!({"track":id,"name":"Missing","format":"vst3","uid":"00000000000000000000000000000000"})).unwrap();
                     }
