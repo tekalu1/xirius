@@ -54,6 +54,7 @@ pub mod perf;
 pub mod places;
 pub mod plugins;
 pub mod pool;
+pub mod preparation;
 pub mod preset;
 pub mod processed;
 pub mod punch;
