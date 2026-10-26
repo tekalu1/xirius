@@ -175,22 +175,32 @@ impl OwnedLocal {
         capture
     }
 
-    pub fn apply(&self, value: &Plugin) -> bool {
+    pub fn apply(&self, value: &Plugin, previous: &Plugin) -> bool {
+        let state_changed = value.state != previous.state;
+        if state_changed && value.state.as_deref().is_none_or(str::is_empty) {
+            return false;
+        }
         for capture in self.captures.borrow().iter() {
             capture.cancel();
         }
         self.captures.borrow_mut().clear();
         self.due.set(None);
-        let value = value.clone();
+        let state = state_changed.then(|| value.state.clone()).flatten();
+        let changed: Vec<_> = value
+            .params
+            .iter()
+            .filter(|(key, value)| state_changed || previous.params.get(*key) != Some(*value))
+            .map(|(key, value)| (key.clone(), *value))
+            .collect();
         let validity = self.validity.clone();
         self.keep(self.controller.on_owner(move |plugin| {
             let result = (|| {
-                if let Some(text) = value.state.as_deref().filter(|s| !s.is_empty()) {
+                if let Some(text) = state.as_deref() {
                     let state = xirius_plugins::decode_state(text).map_err(|e| e.to_string())?;
                     plugin.set_state(&state).map_err(|e| e.to_string())?;
                 }
                 let params = plugin.params();
-                for (key, v) in &value.params {
+                for (key, v) in &changed {
                     let id = key
                         .parse::<u32>()
                         .ok()

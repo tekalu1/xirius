@@ -187,4 +187,38 @@ fn local_state_collection_and_changes_return_while_sdk_is_held_and_stale_state_i
         "the held old reply must never replace the newer state"
     );
     assert_eq!(state.controller, state.component);
+
+    // A change that has not reached the song must survive a different knob's
+    // edit. Reapplying the old snapshot or every cached parameter loses it.
+    assert!(host.plugins().set_live_param(id, "1", 0.5));
+    audio.render(&mut buffer, 2);
+    let mut another = song.project().clone();
+    Arc::make_mut(another.tracks.get_mut(&tid).unwrap()).inserts[0]
+        .params
+        .insert(xirius_test_vst3::CRASH_PARAMETER.to_string(), 0.0);
+    let report = host.sync(&another);
+    assert!(!report.swapped);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let pull = host.begin_pull_states();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !pull.ready() {
+        audio.render(&mut buffer, 2);
+        host.poll();
+        assert!(Instant::now() < deadline, "delta capture watchdog");
+        std::thread::yield_now();
+    }
+    assert_eq!(pull.error(), None);
+    collect_plugin_states(&mut song, &mut host, &opts).unwrap();
+    let state = decode_state(
+        song.project().tracks[&tid].inserts[0]
+            .state
+            .as_deref()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        state.component,
+        128u32.to_le_bytes(),
+        "unchanged state and parameters must not be resent"
+    );
 }

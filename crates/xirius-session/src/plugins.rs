@@ -365,7 +365,7 @@ impl Local {
             return false;
         }
         if let Some(owned) = &self.owned {
-            if !owned.apply(x) {
+            if !owned.apply(x, &self.applied) {
                 return false;
             }
             self.applied = x.clone();
