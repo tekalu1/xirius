@@ -285,6 +285,7 @@ impl Transport {
     /// none runs. False when nothing began.
     pub(crate) fn begin_start(&mut self, p: &Project, dir: Option<PathBuf>) -> bool {
         if self.mode == OutputMode::None
+            || self.preparing()
             || self.auditioning_export
             || self.player.is_some()
             || self.down.is_some()
@@ -1178,6 +1179,19 @@ fn click_of(host: &SessionHost, p: &Project) -> Click {
 pub fn clock(seconds: f64) -> String {
     let ms = (seconds.max(0.0) * 1000.0).round() as u64;
     format!("{}:{:02}.{:03}", ms / 60_000, ms / 1000 % 60, ms % 1000)
+}
+
+impl Drop for Transport {
+    fn drop(&mut self) {
+        if let Some(mut player) = self.player.take() {
+            player.host.controller().audition().close();
+            if player.threaded {
+                // Closing the last window must not join output/SDK teardown.
+                // Job abandonment still runs its cleanup on the worker.
+                let _ = prepared::Retiring::new(player);
+            }
+        }
+    }
 }
 
 impl Studio {

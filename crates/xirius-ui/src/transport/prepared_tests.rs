@@ -109,6 +109,49 @@ fn quiet_drivers() -> Drivers {
 }
 
 #[test]
+fn dropping_the_window_transport_returns_before_a_held_output_stop() {
+    let mut s = Studio::new(Song::empty());
+    s.transport.mode = OutputMode::Device;
+    let release = Release::new();
+    let gate = release.0.clone();
+    let (tx, entered) = mpsc::channel();
+    let mut drivers = quiet_drivers();
+    drivers.shared_out = Arc::new(move |audio, _, _| {
+        let entered = tx.clone();
+        let release = gate.clone();
+        DeviceOutput::open_with(audio, move |audio| {
+            Ok(Box::new(HeldOutput {
+                audio: Some(audio),
+                entered,
+                release,
+            }))
+        })
+        .map(Output::Device)
+    });
+    s.transport.set_drivers(drivers);
+    s.prepare_song();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while s.preparing.is_some() {
+        s.poll_preparing();
+        assert!(Instant::now() < deadline, "output creation watchdog");
+        std::thread::yield_now();
+    }
+    let (returned, ack) = mpsc::channel();
+    let ui = std::thread::current().id();
+    let cleanup = std::thread::spawn(move || {
+        // Release even on failure; only the failure watchdog depends on time.
+        let release = release;
+        let result = ack.recv_timeout(Duration::from_secs(20));
+        release.release();
+        result.expect("Transport::drop waited on output stop");
+        assert_ne!(entered.recv_timeout(Duration::from_secs(20)).unwrap(), ui);
+    });
+    drop(s);
+    returned.send(()).unwrap();
+    cleanup.join().unwrap();
+}
+
+#[test]
 fn native_material_gates_keep_preparation_input_and_cancel_responsive_until_cleanup() {
     for op in [
         "prepare_decode",
