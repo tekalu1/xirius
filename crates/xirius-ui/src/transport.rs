@@ -253,6 +253,10 @@ impl Transport {
         self.windowed
     }
 
+    fn uses_async_player(&self) -> bool {
+        self.windowed || self.player.as_ref().is_some_and(|player| player.threaded)
+    }
+
     pub(crate) fn stop_preview(&mut self) {
         if let Some(p) = &mut self.player {
             p.host.controller().audition().stop();
@@ -900,7 +904,7 @@ impl Transport {
         let mode = self.mode;
         let prefs = self.io_prefs.clone();
         let midimap = self.midimap.clone();
-        if self.windowed
+        if self.uses_async_player()
             && mode == OutputMode::Device
             && midi
             && !self.prepare_midi_record_input(self.host().map_or(48_000, |h| h.rate()))
@@ -1091,9 +1095,11 @@ impl Transport {
             return (false, Vec::new());
         };
         let mut said = pl.host.take_late_warnings();
-        // The report's own warnings (the song's files that are missing, and so on) are not said
-        // again: a change of the song has never said them, and the open of the song did.
-        if let Some(report) = pl.host.step_swap() {
+        // Legacy construction already reports missing material at open. Live
+        // workers report new preparation failures here without repeating it there.
+        if let Some(report) = pl.host.step_swap()
+            && pl.threaded
+        {
             said.extend(report.warnings);
         }
         let busy = pl.host.swap_pending() || pl.host.plugins().late_pending();
@@ -1445,7 +1451,9 @@ impl Studio {
             self.transport.pending_record = true;
             return true;
         }
-        if self.transport.windowed && self.transport.mode == OutputMode::Device && !audio.is_empty()
+        if self.transport.uses_async_player()
+            && self.transport.mode == OutputMode::Device
+            && !audio.is_empty()
         {
             let ready = self
                 .transport
@@ -1475,7 +1483,7 @@ impl Studio {
                 self.transport.midi_record_input = self.live_midi.input.take();
                 self.live_midi.resume |= self.transport.midi_record_input.is_some();
             }
-            if self.transport.windowed
+            if self.transport.uses_async_player()
                 && self.transport.mode == OutputMode::Device
                 && !self
                     .transport
@@ -1575,6 +1583,7 @@ impl Studio {
             return false;
         }
         // Keep the player and Take until closed files have been placed successfully.
+        let asynchronous = self.transport.uses_async_player();
         let Some(player) = self.transport.player.as_mut() else {
             self.transport.finishing_take = false;
             return false;
@@ -1582,7 +1591,7 @@ impl Studio {
         let host = &mut player.host;
         let rate = host.rate();
         if self.transport.finished_take.is_none() {
-            let ready = if self.transport.windowed {
+            let ready = if asynchronous {
                 host.record_takes_ready(xirius_session::record::STOP_WAIT)
             } else {
                 host.record_takes(xirius_session::record::STOP_WAIT)

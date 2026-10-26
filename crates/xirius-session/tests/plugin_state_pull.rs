@@ -278,6 +278,13 @@ fn a_live_timeline_edit_keeps_the_remote_slot_and_its_unreported_patch() {
         "kind":"effect","format":"builtin","uid":"gain"}),
     );
     host.sync(s.project());
+    // Offline rendering must not reach the short fixture's natural end while
+    // the background SDK capture runs. This tests a continuing transport.
+    assert!(
+        host.controller()
+            .send(xirius_engine::Command::SetEnd(None))
+            .is_ok()
+    );
     assert!(host.play());
     while host.swap_pending() {
         if let Some(report) = host.step_swap() {
