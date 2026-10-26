@@ -47,6 +47,16 @@ fn a_window_timeline_update_uses_background_preparation_and_idle_remains_respons
     let project = s.project();
     s.transport.sync(&project, s.song.dir());
     assert!(s.transport.host().unwrap().preparation_target().is_some());
+    s.transport.recording = true;
+    assert!(s.poll_swap());
+    assert!(s.transport.host().is_some(), "a recording keeps its player");
+    assert!(s.transport.recording);
+    assert!(!s.transport.preparing());
+    assert!(
+        entered.try_recv().is_err(),
+        "no decode before recording stops"
+    );
+    s.transport.recording = false;
     assert!(s.poll_swap());
     assert_ne!(
         entered.recv_timeout(Duration::from_secs(20)).unwrap(),

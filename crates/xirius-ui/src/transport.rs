@@ -1030,6 +1030,11 @@ impl Transport {
             .as_ref()
             .and_then(|pl| pl.host.preparation_target().map(|p| (p, pl.dir.clone())))
         {
+            // Keep the recording engine and its pending take until the normal
+            // stop/place path finishes. Preparation must never discard a take.
+            if self.recording || self.take.is_some() {
+                return (true, Vec::new());
+            }
             self.stop_preview();
             let previous = self.player.take();
             self.reset();
