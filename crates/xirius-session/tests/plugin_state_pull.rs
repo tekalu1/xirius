@@ -177,6 +177,79 @@ fn a_silent_patch_change_in_a_plugin_in_the_host_process_reaches_the_song_when_i
 }
 
 #[test]
+fn a_live_timeline_edit_keeps_the_remote_slot_and_its_unreported_patch() {
+    let exe = find_host().expect("build xirius-plugin-host for the remote regression");
+    let (mut s, catalog) = song(PluginIsolation::Shared);
+    let track = s
+        .project()
+        .tracks
+        .values()
+        .find(|t| !t.inserts.is_empty())
+        .unwrap()
+        .id;
+    let id = s.project().tracks[&track].inserts[0].id;
+    let (mut host, mut audio, warnings) = SessionHost::start(
+        s.project(),
+        HostConfig {
+            catalog: Some(catalog),
+            isolation: Some(Isolation::Separate(exe)),
+            threaded_local: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let mut buffer = [0.0; 512];
+    for _ in 0..8 {
+        audio.render(&mut buffer, 2);
+        host.poll();
+    }
+    let link = host.plugins().link(id).unwrap();
+    let server = host.plugins().server_of(id).unwrap().clone();
+    let slot = server.current(&link).unwrap().slot;
+    server.set_param(&link, "Latency", 0.5);
+    // This fixture reports a latency change, but no state/value change. Consume
+    // that independent PDC request to isolate an unrelated timeline edit here.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while link.take_latency_change() != Some(128) {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    let root = tempfile::tempdir().unwrap();
+    let wav = root.path().join("unrelated.wav");
+    xirius_session::export::write_wav(&wav, &[0.25; 8192], &[0.25; 8192], 48_000, 16).unwrap();
+    run(
+        &mut s,
+        "clip.add.audio",
+        json!({"file":wav,"track":track.to_string(),"at":0,"length":1920}),
+    );
+    host.set_windowed();
+    host.sync(s.project());
+    assert!(host.preparation_target().is_none());
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while host.swap_pending() {
+        host.step_swap();
+        audio.render(&mut buffer, 2);
+        host.poll();
+        assert!(
+            host.preparation_target().is_none(),
+            "material edits do not replace plugins"
+        );
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(Arc::ptr_eq(&link, &host.plugins().link(id).unwrap()));
+    assert_eq!(
+        server.current(&link).unwrap().slot,
+        slot,
+        "no SDK/editor replacement"
+    );
+    assert_eq!(state_of(&s), None, "the patch had no notification");
+    pull_plugin_states(&mut s, &mut host, &RunOptions::human(), PULL_WAIT).unwrap();
+    assert_eq!(state_of(&s), Some(EDITED.to_vec()));
+}
+
+#[test]
 fn a_plugin_that_was_never_created_keeps_its_saved_state_after_silent_continuation() {
     let Some(exe) = find_host() else {
         eprintln!("skipped: xirius-plugin-host is not built");

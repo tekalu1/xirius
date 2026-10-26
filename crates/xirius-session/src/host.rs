@@ -194,7 +194,11 @@ impl TimelineState {
     }
 }
 
+mod material;
+
 pub struct SessionHost {
+    material: Option<material::Update>,
+    material_dirty: bool,
     live: BTreeMap<TrackId, bool>,
     song: Project,
     latency_dirty: bool,
@@ -329,6 +333,8 @@ impl SessionHost {
         let (audio, controller) = create(plan, engine);
         let tmap = TempoMap::from_project(p);
         let mut host = SessionHost {
+            material: None,
+            material_dirty: false,
             live: p
                 .tracks
                 .iter()
@@ -556,7 +562,12 @@ impl SessionHost {
         // Their timeline updates use that same worker path. Notifications from
         // another render must not re-enter Builder::timeline on the event loop.
         if self.windowed {
-            self.processed_seen = now;
+            if self.processed_seen != now {
+                self.processed_seen = now;
+                self.material_dirty = true;
+                let song = self.song.clone();
+                self.begin_material(&song, &mut SyncReport::default());
+            }
             return;
         }
         if now == self.processed_seen {
@@ -982,22 +993,16 @@ impl SessionHost {
         {
             self.structure = structure.clone();
         }
-        // A window may send cheap mix commands, but material/plan construction
-        // belongs to the preparation coordinator, including timeline-only edits.
-        if self.windowed
-            && (graph != self.graph
-                || structure != self.structure
-                || self.tempo.0 != p.ppq
-                || self.tempo.1 != p.tempo
-                || graph.tracks.iter().any(|id| {
-                    !self
-                        .tracks
-                        .get(id)
-                        .is_some_and(|old| old.matches(p, &p.tracks[id]))
-                }))
-        {
+        // Ordinary edits retain the player, output and plugin controllers. Only
+        // changed material is prepared on a worker; cheap mix commands still run.
+        if self.windowed && (graph != self.graph || structure != self.structure) {
+            self.send_pending_mix(p, &mut report);
+            self.sync_thru(p, &mut report);
             self.retarget_swap(p);
             return report;
+        }
+        if self.windowed {
+            self.begin_material(p, &mut report);
         }
         if graph != self.graph || structure != self.structure {
             if later {
@@ -1017,7 +1022,7 @@ impl SessionHost {
         self.settle_pending();
 
         let tempo_changed = self.tempo.0 != p.ppq || self.tempo.1 != p.tempo;
-        if tempo_changed {
+        if tempo_changed && !self.windowed {
             self.tempo = (p.ppq, p.tempo.clone());
             self.tmap = TempoMap::from_project(p);
             let bpm = self.tmap.bpm_at(0);
@@ -1061,6 +1066,9 @@ impl SessionHost {
             }
             let same = self.tracks.get(id).is_some_and(|old| old.matches(p, t));
             if same && !tempo_changed {
+                continue;
+            }
+            if self.windowed {
                 continue;
             }
             let tl = self
@@ -1237,7 +1245,7 @@ impl SessionHost {
 
     /// A new mix is waiting for its plugins to open.
     pub fn swap_pending(&self) -> bool {
-        self.pending.is_some()
+        self.pending.is_some() || self.material.is_some()
     }
 
     /// Whether a change of latency builds its mix as [`SessionHost::sync_later`] does, instead
@@ -1279,7 +1287,7 @@ impl SessionHost {
     /// everything is open and gives what that did.
     pub fn step_swap(&mut self) -> Option<SyncReport> {
         if self.windowed {
-            return None;
+            return self.step_material();
         }
         self.builder.plugins_mut().poll_preloads();
         let setup = setup(self.builder.rate(), RenderMode::Realtime);

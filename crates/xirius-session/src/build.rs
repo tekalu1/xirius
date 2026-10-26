@@ -541,6 +541,24 @@ impl Builder {
         }
     }
 
+    /// Copy material cache handles, never SDK instances or controller ownership.
+    pub(crate) fn material_copy(&self) -> impl FnOnce() -> Builder + Send + 'static {
+        let (rate, dir, cache, unavailable, owner) = (
+            self.rate,
+            self.dir.clone(),
+            self.cache.clone(),
+            self.unavailable.clone(),
+            self.owner,
+        );
+        move || {
+            let mut builder = Builder::new(rate, dir);
+            builder.cache = cache;
+            builder.unavailable = unavailable;
+            builder.owner = owner;
+            builder
+        }
+    }
+
     /// The notes and audio of a track on the frame timeline (ENG-030).
     ///
     /// A note is a pair of events at the frames its start and end fall on in the tempo map, so a

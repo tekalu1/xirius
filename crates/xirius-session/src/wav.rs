@@ -16,7 +16,7 @@ pub fn read_wav(path: &Path, rate: u32) -> Result<AudioData, String> {
     crate::decode::read(path, rate)
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct WavCache {
     map: HashMap<(PathBuf, u32), (Stamp, Arc<AudioData>)>,
 }

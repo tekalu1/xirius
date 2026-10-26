@@ -4,10 +4,19 @@ use std::sync::mpsc;
 use xirius_session::output::{DeviceOutput, SharedStream};
 
 #[test]
-fn a_window_timeline_update_uses_background_preparation_and_idle_remains_responsive() {
+fn a_live_material_update_keeps_recording_and_mix_commands_responsive() {
     let root = tempfile::tempdir().unwrap();
     let wav = root.path().join("source.wav");
+    let base = root.path().join("base.wav");
     xirius_session::export::write_wav(&wav, &[0.0; 2048], &[0.0; 2048], 22_050, 16).unwrap();
+    xirius_session::export::write_wav(
+        &base,
+        &vec![0.25; 480_000],
+        &vec![0.25; 480_000],
+        48_000,
+        16,
+    )
+    .unwrap();
     let mut s = Studio::new(Song::empty());
     s.song.save_as(&root.path().join("song")).unwrap();
     let track = s
@@ -15,13 +24,28 @@ fn a_window_timeline_update_uses_background_preparation_and_idle_remains_respons
         .run("track.add.audio", serde_json::json!({"name":"A"}))
         .unwrap()["id"]
         .clone();
+    s.song
+        .run(
+            "clip.import",
+            serde_json::json!({"file":base, "track":track}),
+        )
+        .unwrap();
+    let id: xirius_core::id::TrackId = track.as_str().unwrap().parse().unwrap();
+    s.song.toggle_arm(id).unwrap();
     s.transport.mode = OutputMode::Silent { paced: true };
     s.transport.bind_window();
     s.prepare_song();
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + Duration::from_secs(30);
     while s.preparing.is_some() {
         s.poll_preparing();
         assert!(Instant::now() < deadline, "initial preparation watchdog");
+        std::thread::yield_now();
+    }
+    s.toggle_record();
+    assert!(s.transport.recording, "{:?}", s.error);
+    assert!(s.transport.host().unwrap().is_recording());
+    while s.transport.take_output_peak()[0] < 0.1 {
+        assert!(Instant::now() < deadline, "real playback watchdog");
         std::thread::yield_now();
     }
     s.song
@@ -46,33 +70,55 @@ fn a_window_timeline_update_uses_background_preparation_and_idle_remains_respons
     }));
     let project = s.project();
     s.transport.sync(&project, s.song.dir());
-    assert!(s.transport.host().unwrap().preparation_target().is_some());
-    s.transport.recording = true;
-    assert!(s.poll_swap());
-    assert!(s.transport.host().is_some(), "a recording keeps its player");
-    assert!(s.transport.recording);
-    assert!(!s.transport.preparing());
-    assert!(
-        entered.try_recv().is_err(),
-        "no decode before recording stops"
-    );
-    s.transport.recording = false;
-    assert!(s.poll_swap());
+    assert!(s.transport.host().unwrap().preparation_target().is_none());
     assert_ne!(
         entered.recv_timeout(Duration::from_secs(20)).unwrap(),
         std::thread::current().id()
     );
-    assert!(s.idle().changed);
-    assert!(
-        s.tick(),
-        "frames only poll preparation while material I/O is held"
-    );
-    let before = s.preparing.as_ref().unwrap().progress.clone();
-    assert!(s.prepare_key("escape"));
-    assert_eq!(s.preparing.as_ref().unwrap().progress, before);
-    assert!(s.idle().changed);
-    assert!(s.preparing.as_ref().unwrap().cancelling);
+    assert!(s.transport.host().unwrap().is_recording());
+    assert!(s.transport.playing && s.transport.recording);
+    assert!(s.preparing.is_none());
+    let _g = s.geometry(880.0, 600.0);
+    s.idle();
+    s.tick();
+    s.song
+        .run("track.mute", serde_json::json!({"ids":[track],"on":true}))
+        .unwrap();
+    s.transport.sync(&s.project(), s.song.dir());
+    // Observe actual output, after callbacks process the cheap mix command,
+    // while decode is still gated and the real recorder remains attached.
+    let start = s.transport.host_mut().unwrap().poll().frame;
+    s.transport.take_output_peak();
+    while s.transport.host_mut().unwrap().poll().frame < start + 2048 {
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    s.transport.take_output_peak();
+    let start = s.transport.host_mut().unwrap().poll().frame;
+    while s.transport.host_mut().unwrap().poll().frame < start + 1024 {
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert_eq!(s.transport.take_output_peak(), [0.0; 2]);
+    assert!(s.transport.host().unwrap().is_recording());
+    assert!(s.transport.take.is_some());
     release.release();
+    while s.transport.host().unwrap().swap_pending() {
+        s.poll_swap();
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(s.transport.playing && s.transport.recording);
+    assert!(!s.transport.preparing());
+    s.finish_take();
+    while s.transport.finishing_take {
+        s.poll_finished_take();
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(s.error.is_none(), "{:?}", s.error);
+    assert!(s.transport.take.is_none());
+    s.transport.reset();
 }
 
 struct HeldOutput {
