@@ -203,7 +203,7 @@ impl Studio {
         }
         if self.transport.take.is_some() {
             self.warn(
-                "録音の停止とテイクの配置を終えてから閉じてください".into(),
+                "録音テイクの配置が終わっていないため、まだ閉じられません".into(),
                 None,
             );
             return;
