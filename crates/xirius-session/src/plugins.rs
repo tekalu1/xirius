@@ -691,9 +691,47 @@ impl PluginLoader {
         })
     }
 
-    pub(crate) fn capture_for_live_build(&mut self) -> Result<(), String> {
-        let receipt = self.pull_states(crate::host::PULL_WAIT)?;
-        let edits = self.take_pulled_edits(&receipt)?;
+    pub(crate) fn capture_for_live_build(
+        &mut self,
+        target: &xirius_core::model::Project,
+    ) -> Result<(), String> {
+        // A new state/class (including an explicitly cleared state) is user
+        // intent, not a request to restore the currently playing instance.
+        let keep: HashMap<_, _> = crate::starting::hosted(target)
+            .into_iter()
+            .filter_map(|(_, next)| {
+                let old = self
+                    .locals
+                    .get(&next.id)
+                    .map(|l| &l.applied)
+                    .or_else(|| self.remotes.get(&next.id).map(|r| &r.applied))?;
+                (old.uid == next.uid
+                    && old.format == next.format
+                    && old.kind == next.kind
+                    && old.state == next.state)
+                    .then(|| {
+                        let changed: Vec<_> = next
+                            .params
+                            .iter()
+                            .filter(|(key, value)| old.params.get(*key) != Some(*value))
+                            .map(|(key, _)| key.clone())
+                            .collect();
+                        (next.id, changed)
+                    })
+            })
+            .collect();
+        let wanted = keep.keys().copied().collect();
+        let receipt = self.begin_pull_states_matching(Some(&wanted));
+        let receipt = Self::wait_for_pull(receipt, crate::host::PULL_WAIT)?;
+        let mut edits = self.take_pulled_edits(&receipt)?;
+        edits.retain_mut(|edit| {
+            let Some(changed) = keep.get(&edit.plugin) else {
+                return false;
+            };
+            edit.params
+                .retain(|param| !changed.iter().any(|key| names(key, param)));
+            true
+        });
         self.carried.extend(edits);
         Ok(())
     }
@@ -1834,9 +1872,19 @@ impl PluginLoader {
     /// saved with the state from when it was opened. The ones in host processes are asked
     /// and waited for, up to `wait` (the ones whose host went down or never opened are not).
     pub fn begin_pull_states(&mut self) -> StatePull {
+        self.begin_pull_states_matching(None)
+    }
+
+    fn begin_pull_states_matching(&mut self, wanted: Option<&HashSet<PluginId>>) -> StatePull {
+        let selected = |id: &PluginId| wanted.is_none_or(|ids| ids.contains(id));
         let mut errors = Vec::new();
         let mut owned = Vec::new();
-        for l in self.locals.values_mut() {
+        let mut local = false;
+        for (id, l) in &mut self.locals {
+            if !selected(id) {
+                continue;
+            }
+            local = true;
             if let Some(local) = &l.owned {
                 owned.push(local.capture(CAPTURE_WAIT));
             } else {
@@ -1846,13 +1894,17 @@ impl PluginLoader {
         let mut remotes: Vec<(PluginId, &Remote)> = self
             .remotes
             .iter()
-            .filter(|(id, _)| !self.leaving.contains_key(id))
+            .filter(|(id, _)| selected(id) && !self.leaving.contains_key(id))
             .map(|(id, r)| (*id, r))
             .collect();
         for (id, l) in &mut self.leaving {
+            if !selected(id) {
+                continue;
+            }
             match l {
                 Leaving::Remote(r) => remotes.push((*id, r)),
                 Leaving::Local(l, _) => {
+                    local = true;
                     if let Some(local) = &l.owned {
                         owned.push(local.capture(CAPTURE_WAIT));
                     } else {
@@ -1881,11 +1933,6 @@ impl PluginLoader {
                 (id, r.link.clone(), request)
             })
             .collect();
-        let local = !self.locals.is_empty()
-            || self
-                .leaving
-                .values()
-                .any(|l| matches!(l, Leaving::Local(_, _)));
         StatePull {
             cancelled: std::cell::Cell::new(false),
             asked,
@@ -1897,6 +1944,10 @@ impl PluginLoader {
 
     pub fn pull_states(&mut self, wait: Duration) -> Result<StatePull, String> {
         let asked = self.begin_pull_states();
+        Self::wait_for_pull(asked, wait)
+    }
+
+    fn wait_for_pull(asked: StatePull, wait: Duration) -> Result<StatePull, String> {
         let end = Instant::now() + wait;
         while Instant::now() < end && !asked.ready() {
             std::thread::sleep(Duration::from_millis(2));

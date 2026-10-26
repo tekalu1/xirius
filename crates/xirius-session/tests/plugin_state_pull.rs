@@ -298,6 +298,25 @@ fn a_live_timeline_edit_keeps_the_remote_slot_and_its_unreported_patch() {
     assert!(host.poll().playing, "graph publication preserves playback");
     pull_plugin_states(&mut s, &mut host, &RunOptions::human(), PULL_WAIT).unwrap();
     assert_eq!(state_of(&s), Some(192u32.to_le_bytes().to_vec()));
+    run(
+        &mut s,
+        "plugin.state.set",
+        json!({"id":id.to_string(),"state":""}),
+    );
+    host.sync(s.project());
+    while host.swap_pending() {
+        host.step_swap();
+        audio.render(&mut buffer, 2);
+        host.poll();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    let passive = collect_plugin_states(&mut s, &mut host, &RunOptions::human()).unwrap();
+    assert!(
+        passive.result.is_none(),
+        "a live transfer must not restore explicitly cleared state"
+    );
+    assert_eq!(state_of(&s), None);
 }
 
 #[test]

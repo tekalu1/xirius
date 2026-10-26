@@ -51,7 +51,7 @@ impl SessionHost {
             let snapshot = target.clone();
             let work = Job::spawn("live-graph", move || {
                 let mut builder = make();
-                if let Err(error) = builder.plugins_mut().capture_for_live_build() {
+                if let Err(error) = builder.plugins_mut().capture_for_live_build(&snapshot) {
                     return Ok(Outcome::Failed { error, state: true });
                 }
                 let graph = Graph::of(&snapshot);
