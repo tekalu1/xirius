@@ -67,6 +67,7 @@ pub const SHOTS: &[Shot] = &[
 
 struct Gate {
     release: Arc<(Mutex<bool>, Condvar)>,
+    watch_blocked: Arc<std::sync::atomic::AtomicBool>,
     entered: mpsc::Receiver<()>,
     _observe: xirius_core::io_test::Observation,
 }
@@ -80,6 +81,8 @@ impl Gate {
     fn new(root: PathBuf) -> Self {
         let release = Arc::new((Mutex::new(false), Condvar::new()));
         let freed = release.clone();
+        let watch_blocked = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let watch_guard = watch_blocked.clone();
         let (tx, entered) = mpsc::channel();
         let once = std::sync::atomic::AtomicBool::new(false);
         let held_operation = operation();
@@ -90,16 +93,15 @@ impl Gate {
                 && std::thread::current().id() == ui
             {
                 assert!(
-                    !matches!(
-                        op,
-                        "peaks_load"
-                            | "peaks_source"
-                            | "browser_read_dir"
-                            | "watch_register"
-                            | "watch_metadata"
-                    ),
+                    !matches!(op, "peaks_load" | "peaks_source" | "browser_read_dir"),
                     "preparation painting requested material I/O: {op}"
                 );
+                if watch_guard.load(std::sync::atomic::Ordering::Acquire) {
+                    assert!(
+                        !matches!(op, "watch_register" | "watch_metadata"),
+                        "blocked window requested watcher I/O: {op}"
+                    );
+                }
             }
             if op == held_operation
                 && (held_operation == "prepare_get_state" || path.starts_with(&root))
@@ -113,6 +115,7 @@ impl Gate {
         }));
         Self {
             release,
+            watch_blocked,
             entered,
             _observe: observe,
         }
@@ -123,6 +126,8 @@ struct Probe {
     gate: Option<Gate>,
     phase: u8,
     restarted: bool,
+    window_task: Option<std::thread::JoinHandle<()>>,
+    viewport_before_resize: Option<(f32, f32)>,
 }
 struct Seed {
     dir: PathBuf,
@@ -140,6 +145,13 @@ fn stage(s: &mut Studio, n: u8) {
                 let mut song = crate::song::Song::empty();
                 let dir = root.join("fixture-song");
                 song.save_as(&dir).unwrap();
+                for index in 0..2 {
+                    song.run(
+                        "track.add.audio",
+                        serde_json::json!({"name":format!("Ready {index}")}),
+                    )
+                    .unwrap();
+                }
                 let wav = root.join("長いトラック名・ストリングスとピアノを重ねた最後のテイク.wav");
                 let large = operation() == "prepare_prime";
                 let audio = vec![0.0; if large { 4_200_000 } else { 4096 }];
@@ -153,6 +165,13 @@ fn stage(s: &mut Studio, n: u8) {
                 .unwrap();
                 song.run("clip.import", serde_json::json!({"file":wav}))
                     .unwrap();
+                for index in 0..9 {
+                    song.run(
+                        "track.add.audio",
+                        serde_json::json!({"name":format!("Waiting {index}")}),
+                    )
+                    .unwrap();
+                }
                 let catalog = if operation() == "prepare_get_state" {
                     let fixture = std::env::current_exe()
                         .unwrap()
@@ -200,6 +219,8 @@ fn stage(s: &mut Studio, n: u8) {
                     gate: None,
                     phase: 0,
                     restarted: false,
+                    window_task: None,
+                    viewport_before_resize: None,
                 })
             });
         }
@@ -359,6 +380,18 @@ fn cancel(n: u8, s: &Rc<RefCell<Studio>>, window: &mut gpui::Window, cx: &mut gp
     );
     if operation() == "prepare_get_state" {
         assert!(s.borrow().saving.as_ref().unwrap().progress.cancelled());
+        // A cancelled save returns to the current song without waiting for the
+        // abandoned SDK call. Unlike preparation cleanup, it removes the veil.
+        PROBE.with(|p| {
+            p.borrow()
+                .as_ref()
+                .unwrap()
+                .gate
+                .as_ref()
+                .unwrap()
+                .watch_blocked
+                .store(false, std::sync::atomic::Ordering::Release)
+        });
     } else {
         assert!(s.borrow().preparing.as_ref().unwrap().cancelling);
         assert_eq!(
@@ -373,6 +406,20 @@ pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
     PROBE.with(|p| {
         let mut p = p.borrow_mut();
         let Some(p) = p.as_mut() else { return true };
+        if let Some(task) = &p.window_task {
+            if !task.is_finished() {
+                return false;
+            }
+            p.window_task
+                .take()
+                .unwrap()
+                .join()
+                .expect("native window operation");
+            assert!(
+                s.borrow().input_blocked(),
+                "the material gate is still closed"
+            );
+        }
         if let Some(seed) = &p.seed {
             if !seed.is_finished() {
                 return false;
@@ -427,6 +474,11 @@ pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
             } else {
                 assert!(s.preparing.as_ref().unwrap().background);
                 assert!(s.transport.host().is_none());
+                let card = s.preparing.as_ref().unwrap();
+                assert_eq!(card.progress.units.len(), 12);
+                let layout = card.layout((880.0, 600.0));
+                assert_eq!(layout.rows.len(), 8);
+                assert!(layout.rows.last().unwrap().1.bottom() <= layout.button.y);
             }
             eprintln!("prepared-check stage=reading ok=true");
             p.phase = 2;
@@ -493,13 +545,38 @@ fn operation() -> String {
 
 #[cfg(windows)]
 fn window_operation(n: u8, s: &Rc<RefCell<Studio>>, window: &mut gpui::Window, _: &mut gpui::App) {
+    let viewport = window.viewport_size();
+    PROBE.with(|p| {
+        let mut p = p.borrow_mut();
+        let probe = p.as_mut().unwrap();
+        if n == 11 {
+            probe.viewport_before_resize =
+                Some((f32::from(viewport.width), f32::from(viewport.height)));
+        } else if n == 12 {
+            let (width, height) = probe.viewport_before_resize.unwrap();
+            assert!(
+                f32::from(viewport.width) > width && f32::from(viewport.height) > height,
+                "GPUI must adopt the new client size before the next shot"
+            );
+        }
+        let hwnd = crate::park::own_handle(crate::screen::WINDOW_TITLE)
+            .expect("this process's probe window");
+        assert!(s.borrow().input_blocked());
+        // Calling SetWindowPos inside App::update re-enters GPUI's callback
+        // while its context is borrowed. A real user's sizing message arrives
+        // outside that callback. Send only to our HWND from a separate thread.
+        probe.window_task = Some(std::thread::spawn(move || native_window_operation(n, hwnd)));
+    });
+    window.refresh();
+}
+
+#[cfg(windows)]
+fn native_window_operation(n: u8, hwnd: isize) {
     use windows_sys::Win32::Foundation::RECT;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetWindowRect, IsIconic, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
         SWP_NOZORDER, SetWindowPos, ShowWindow,
     };
-    let hwnd =
-        crate::park::own_handle(crate::screen::WINDOW_TITLE).expect("this process's probe window");
     assert!(!crate::park::is_foreground(hwnd));
     let mut rect: RECT = unsafe { std::mem::zeroed() };
     // SAFETY: own_handle verifies the process; all calls target only this parked
@@ -541,10 +618,6 @@ fn window_operation(n: u8, s: &Rc<RefCell<Studio>>, window: &mut gpui::Window, _
         }
     }
     assert!(!crate::park::is_foreground(hwnd));
-    assert!(
-        s.borrow().input_blocked(),
-        "the material gate is still closed"
-    );
     eprintln!(
         "prepared-check stage={} ok=true",
         match n {
@@ -553,7 +626,6 @@ fn window_operation(n: u8, s: &Rc<RefCell<Studio>>, window: &mut gpui::Window, _
             _ => "restored",
         }
     );
-    window.refresh();
 }
 
 #[cfg(not(windows))]

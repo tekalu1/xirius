@@ -51,7 +51,7 @@ fn material_gate_keeps_the_preparation_card_and_escape_responsive_on_the_real_wi
                 std::thread::sleep(Duration::from_millis(10));
             };
             let log = fs::read_to_string(log).unwrap();
-            assert!(status.success(), "{log}");
+            assert!(status.success(), "{operation} {size}: {log}");
             for stage in [
                 "reading",
                 "moved",

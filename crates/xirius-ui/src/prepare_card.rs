@@ -307,6 +307,9 @@ impl Studio {
             }
             Some(StartStep::Failed(failures)) => {
                 if let Some(card) = &mut self.preparing {
+                    if card.failures.is_empty() {
+                        card.failure_scroll = 0;
+                    }
                     card.progress = self.transport.start_progress().unwrap_or_default();
                     card.failures = failures;
                 }
@@ -409,6 +412,7 @@ impl Studio {
             && let Some(card) = &mut self.preparing
         {
             card.failures.clear();
+            card.failure_scroll = 0;
         }
     }
 
