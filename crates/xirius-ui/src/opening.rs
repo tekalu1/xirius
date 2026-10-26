@@ -479,6 +479,9 @@ impl Studio {
                 self.ask_state_open();
                 return true;
             }
+            if let Some(pull) = &open.pull {
+                pull.reconcile(&self.song.project());
+            }
             if open.pull.as_ref().is_some_and(|p| !p.ready()) {
                 // Preserve the existing timeout, but never spend it inside a callback.
                 if crate::wait::now().saturating_duration_since(open.since)

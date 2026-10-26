@@ -39,16 +39,16 @@ fn track(i: u64, uid: &str, plugin: bool) -> Arc<Track> {
 
 /// The slot of the instance that plays, from the state it reports when asked.
 fn playing(server: &PluginServer, link: &PluginLink) -> u32 {
-    let seen = link.states_seen();
-    server.request_state(link);
+    let request = server.request_state(link);
     let deadline = Instant::now() + Duration::from_secs(30);
-    while link.states_seen() == seen {
+    while !link.capture_finished(request) {
         assert!(
             Instant::now() < deadline,
             "the instance that plays never reported its state"
         );
         std::thread::sleep(Duration::from_millis(5));
     }
+    link.cancel_capture(request);
     server.current(link).expect("an instance plays").slot
 }
 

@@ -96,7 +96,7 @@ impl Capture {
         self.0.try_lock().ok().and_then(|c| c.error.clone())
     }
 
-    fn take(&self) -> Option<Result<Snapshot, String>> {
+    pub(crate) fn take(&self) -> Option<Result<Snapshot, String>> {
         self.poll();
         self.0.try_lock().ok()?.value.take()
     }
@@ -240,13 +240,17 @@ impl OwnedLocal {
     }
 
     pub fn capture(&self, delay: Duration) -> Capture {
-        let capture = Capture::new(
+        let capture = self.request_capture(delay);
+        self.captures.borrow_mut().push(capture.clone());
+        capture
+    }
+
+    pub fn request_capture(&self, delay: Duration) -> Capture {
+        Capture::new(
             self.controller.clone(),
             Instant::now() + delay,
             self.validity.clone(),
-        );
-        self.captures.borrow_mut().push(capture.clone());
-        capture
+        )
     }
 
     pub fn apply(&self, value: &Plugin, previous: &Plugin) -> bool {

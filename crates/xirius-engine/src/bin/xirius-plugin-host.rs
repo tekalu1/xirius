@@ -140,7 +140,7 @@ struct Instance {
     epoch: u64,
     /// Read the state once the processor has run to this block, or at this time.
     capture: Option<(u64, Instant)>,
-    capture_request: Option<u64>,
+    capture_requests: Vec<u64>,
     /// The names of its keys last sent to the engine.
     note_names: Vec<(u8, String)>,
 }
@@ -326,7 +326,7 @@ impl Host {
                 // Read in the next `poll`, on this thread, where the plugin may be used.
                 if let Some(inst) = self.instances.get_mut(&slot) {
                     inst.capture = Some((0, Instant::now()));
-                    inst.capture_request = Some(request);
+                    inst.capture_requests.push(request);
                 } else {
                     self.send(&FromHost::CapturedState {
                         slot,
@@ -494,7 +494,7 @@ impl Host {
             rings,
             epoch: o.epoch,
             capture: None,
-            capture_request: None,
+            capture_requests: Vec::new(),
             note_names,
         };
         Ok((inst, opened))
@@ -523,25 +523,27 @@ impl Host {
             }
             let latency_changed = changes.latency;
             let mut names_changed = changes.note_names;
-            if inst.capture_request.is_some()
+            if !inst.capture_requests.is_empty()
                 || inst.capture.is_some_and(|(blocks, at)| {
                     latency_changed || inst.blocks() >= blocks || Instant::now() >= at
                 })
             {
                 inst.capture = None;
                 let result = inst.plugin.get_state();
-                if let Some(request) = inst.capture_request.take() {
+                if !inst.capture_requests.is_empty() {
                     let values = if result.is_ok() {
                         inst.plugin.param_values()
                     } else {
                         Vec::new()
                     };
-                    out.push(FromHost::CapturedState {
-                        slot,
-                        request,
-                        result,
-                        values,
-                    });
+                    for request in inst.capture_requests.drain(..) {
+                        out.push(FromHost::CapturedState {
+                            slot,
+                            request,
+                            result: result.clone(),
+                            values: values.clone(),
+                        });
+                    }
                 } else {
                     match result {
                         Ok(state) => out.push(FromHost::State { slot, state }),

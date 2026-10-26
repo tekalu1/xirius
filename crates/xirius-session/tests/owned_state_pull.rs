@@ -163,10 +163,9 @@ fn local_state_collection_and_changes_return_while_sdk_is_held_and_stale_state_i
     let synced = host.sync(&changed);
     assert!(!synced.swapped);
     assert!(synced.warnings.is_empty(), "{:?}", synced.warnings);
-    assert!(old.ready());
     assert!(
-        old.error().is_some(),
-        "the old capture was invalidated by the change"
+        !old.ready(),
+        "independent receipts remain held by the SDK gate"
     );
     let current = host.begin_pull_states();
     assert!(!current.ready());
@@ -180,7 +179,13 @@ fn local_state_collection_and_changes_return_while_sdk_is_held_and_stale_state_i
         std::thread::yield_now();
     }
     assert_eq!(current.error(), None);
-    collect_plugin_states(&mut song, &mut host, &opts).unwrap();
+    collect_pulled_states(&mut song, &mut host, &current, &opts).unwrap();
+    assert!(
+        collect_pulled_states(&mut song, &mut host, &old, &opts)
+            .unwrap()
+            .result
+            .is_none()
+    );
     let state = decode_state(
         song.project().tracks[&tid].inserts[0]
             .state
@@ -215,7 +220,7 @@ fn local_state_collection_and_changes_return_while_sdk_is_held_and_stale_state_i
         std::thread::yield_now();
     }
     assert_eq!(pull.error(), None);
-    collect_plugin_states(&mut song, &mut host, &opts).unwrap();
+    collect_pulled_states(&mut song, &mut host, &pull, &opts).unwrap();
     let state = decode_state(
         song.project().tracks[&tid].inserts[0]
             .state

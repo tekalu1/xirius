@@ -47,6 +47,98 @@ fn state_of(s: &Session) -> Option<Vec<u8>> {
     Some(s.component)
 }
 
+#[cfg(feature = "test-io")]
+#[test]
+fn graph_and_save_captures_complete_independently_when_a_third_request_is_cancelled() {
+    use std::sync::{Condvar, Mutex, mpsc};
+    struct Release(Arc<(Mutex<bool>, Condvar)>);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            *self.0.0.lock().unwrap() = true;
+            self.0.1.notify_all();
+        }
+    }
+    let exe = find_host().expect("fixture host built");
+    let (mut s, catalog) = song(PluginIsolation::Shared);
+    let track = s
+        .project()
+        .tracks
+        .values()
+        .find(|t| !t.inserts.is_empty())
+        .unwrap()
+        .id;
+    let id = s.project().tracks[&track].inserts[0].id;
+    let (mut host, mut audio, warnings) = SessionHost::start(
+        s.project(),
+        HostConfig {
+            catalog: Some(catalog),
+            isolation: Some(Isolation::Separate(exe)),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    pull_plugin_states(&mut s, &mut host, &RunOptions::human(), PULL_WAIT).unwrap();
+    host.set_windowed();
+    let release = Release(Arc::new((Mutex::new(false), Condvar::new())));
+    let gate = release.0.clone();
+    let ui = std::thread::current().id();
+    let key = id.to_string();
+    let (tx, entered) = mpsc::channel();
+    let once = std::sync::atomic::AtomicBool::new(false);
+    let _observe = xirius_core::io_test::observe(Arc::new(move |op, path| {
+        if op == "capture_requested"
+            && path == std::path::Path::new(&key)
+            && std::thread::current().id() != ui
+            && !once.swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            tx.send(()).unwrap();
+            let held = gate.0.lock().unwrap();
+            drop(gate.1.wait_while(held, |done| !*done).unwrap());
+        }
+        Ok(())
+    }));
+    run(
+        &mut s,
+        "plugin.add",
+        json!({"track":track.to_string(),"name":"Gain","kind":"effect","format":"builtin","uid":"gain"}),
+    );
+    host.sync(s.project());
+    host.step_swap();
+    entered.recv_timeout(Duration::from_secs(20)).unwrap();
+    let save = host.begin_pull_states();
+    let abandoned = host.begin_pull_states();
+    abandoned.cancel();
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let mut buffer = [0.0; 1024];
+    while !save.ready() {
+        audio.render(&mut buffer, 2);
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(
+        xirius_session::host::collect_pulled_states(&mut s, &mut host, &save, &RunOptions::human())
+            .unwrap()
+            .result
+            .is_none()
+    );
+    assert!(host.swap_pending(), "graph worker is still gated");
+    drop(release);
+    let mut swapped = false;
+    while host.swap_pending() {
+        if let Some(report) = host.step_swap() {
+            assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+            swapped |= report.swapped;
+        }
+        audio.render(&mut buffer, 2);
+        host.poll();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(swapped);
+    assert!(!host.take_state_transfer_failed());
+}
+
 /// A song with the fixture on a track, the plugin id, and the catalog that has it.
 fn song(isolation: PluginIsolation) -> (Session, Arc<Catalog>) {
     xirius_test_vst3::fixture_marker();
@@ -298,12 +390,35 @@ fn a_live_timeline_edit_keeps_the_remote_slot_and_its_unreported_patch() {
     assert!(host.poll().playing, "graph publication preserves playback");
     pull_plugin_states(&mut s, &mut host, &RunOptions::human(), PULL_WAIT).unwrap();
     assert_eq!(state_of(&s), Some(192u32.to_le_bytes().to_vec()));
+    let before_reset = host.begin_pull_states();
     run(
         &mut s,
         "plugin.state.set",
         json!({"id":id.to_string(),"state":""}),
     );
     host.sync(s.project());
+    let after_reset = host.begin_pull_states();
+    while !before_reset.ready() || !after_reset.ready() {
+        audio.render(&mut buffer, 2);
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    for pull in [&before_reset, &after_reset] {
+        let collected = xirius_session::host::collect_pulled_states(
+            &mut s,
+            &mut host,
+            pull,
+            &RunOptions::human(),
+        )
+        .unwrap();
+        assert!(
+            collected.result.is_none(),
+            "save must not undo the pending reset"
+        );
+        assert_eq!(state_of(&s), None);
+    }
+    drop(before_reset);
+    drop(after_reset);
     while host.swap_pending() {
         host.step_swap();
         audio.render(&mut buffer, 2);

@@ -162,8 +162,6 @@ pub struct PluginLink {
     stalled_epoch: AtomicU64,
     /// How many states the host has sent for this plugin.
     states_seen: AtomicU64,
-    capture_request: AtomicU64,
-    capture_done: AtomicU64,
     /// The last block came from the plugin itself, not the dry signal (ENG-064).
     live: AtomicBool,
     /// How many openings the host has answered for this plugin (ENG-065).
@@ -204,8 +202,7 @@ impl Seat {
 
 #[derive(Default)]
 struct LinkInner {
-    captured: Option<(u64, Result<PluginState, String>)>,
-    captured_values: Vec<ParamEdit>,
+    captures: HashMap<u64, Option<Result<PluginEdits, String>>>,
     /// The instance that plays, whose window and reports these are.
     heard: Seat,
     /// The instance a new mix opens while another plays (ENG-066), until it plays or is
@@ -246,10 +243,7 @@ impl PluginLink {
         let request = NEXT_CAPTURE
             .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .expect("capture request identifiers exhausted");
-        let mut inner = self.lock();
-        inner.captured = None;
-        inner.captured_values.clear();
-        self.capture_request.store(request, Ordering::Release);
+        self.lock().captures.insert(request, None);
         request
     }
 
@@ -264,14 +258,16 @@ impl PluginLink {
         values: &[(u32, String, f64)],
     ) -> bool {
         let mut inner = self.lock();
-        if self.capture_request.load(Ordering::Acquire) != request {
+        let Some(capture) = inner.captures.get_mut(&request) else {
+            return false;
+        };
+        if capture.is_some() {
             return false;
         }
-        if let Ok(state) = &result {
-            inner.state = Some(state.clone());
+        if result.is_ok() {
             self.states_seen.fetch_add(1, Ordering::Release);
         }
-        inner.captured_values = values
+        let params = values
             .iter()
             .map(|(id, title, value)| ParamEdit {
                 id: *id,
@@ -281,56 +277,39 @@ impl PluginLink {
                 at: Instant::now(),
             })
             .collect();
-        inner.captured = Some((request, result));
-        self.capture_done.store(request, Ordering::Release);
+        *capture = Some(result.map(|state| PluginEdits {
+            state: Some(state),
+            params,
+        }));
         true
     }
 
     pub fn capture_finished(&self, request: u64) -> bool {
-        self.capture_done.load(Ordering::Acquire) == request
-            || self.capture_request.load(Ordering::Acquire) != request
+        self.lock()
+            .captures
+            .get(&request)
+            .is_none_or(Option::is_some)
     }
 
     pub fn capture_error(&self, request: u64) -> Option<String> {
-        if self.capture_done.load(Ordering::Acquire) != request {
-            return (self.capture_request.load(Ordering::Acquire) != request)
-                .then(|| "プラグインの状態要求が置き換わりました".into());
+        match self.lock().captures.get(&request) {
+            None => Some("プラグインの状態要求が取り消されました".into()),
+            Some(Some(Err(error))) => Some(error.clone()),
+            _ => None,
         }
-        self.lock().captured.as_ref().and_then(|(id, result)| {
-            (*id == request)
-                .then(|| result.as_ref().err().cloned())
-                .flatten()
-        })
     }
 
     pub fn cancel_capture(&self, request: u64) {
-        let _inner = self.lock();
-        let _ =
-            self.capture_request
-                .compare_exchange(request, 0, Ordering::AcqRel, Ordering::Acquire);
+        self.lock().captures.remove(&request);
     }
 
     pub fn take_capture_edits(&self, request: u64) -> Result<PluginEdits, String> {
-        let mut inner = self.lock();
-        let Some((id, result)) = inner.captured.take() else {
-            return Err("プラグインの状態の返事がありません".into());
-        };
-        if id != request {
-            inner.captured = Some((id, result));
-            return Err("プラグインの状態要求が一致しません".into());
-        }
-        let state = result?;
-        // A later editor state belongs to a later edit, after this save. Keep it
-        // pending rather than replacing this exact snapshot or losing the edit.
-        if inner.state.as_ref() == Some(&state) {
-            inner.state = None;
-        }
-        let mut params = std::mem::take(&mut inner.params);
-        params.append(&mut inner.captured_values);
-        Ok(PluginEdits {
-            state: Some(state),
-            params,
-        })
+        self.lock()
+            .captures
+            .get(&request)
+            .and_then(Option::as_ref)
+            .cloned()
+            .unwrap_or_else(|| Err("プラグインの状態の返事がありません".into()))
     }
     /// Plain Space presses received from the hosted editor frame.
     pub fn take_play_requests(&self) -> u32 {
@@ -587,20 +566,27 @@ mod capture_tests {
     }
 
     #[test]
-    fn failed_and_superseded_captures_are_errors_instead_of_save_success() {
+    fn concurrent_captures_have_independent_results_and_cancellation() {
         let link = PluginLink::new();
         let old = link.begin_capture();
         let current = link.begin_capture();
-        assert!(link.capture_finished(old));
-        assert!(link.capture_error(old).is_some());
-        assert!(!link.complete_capture(old, Ok(state(1))));
+        assert!(!link.capture_finished(old));
+        assert!(link.complete_capture(old, Ok(state(1))));
         assert!(link.complete_capture(current, Err("SDK error".into())));
+        assert_eq!(link.take_capture_edits(old).unwrap().state, Some(state(1)));
+        link.cancel_capture(old);
         assert!(link.capture_finished(current));
         assert_eq!(link.capture_error(current).as_deref(), Some("SDK error"));
         assert_eq!(
             link.take_capture_edits(current).err().as_deref(),
             Some("SDK error")
         );
+        assert!(
+            link.take_edits().state.is_none(),
+            "capture is not a passive edit"
+        );
+        link.cancel_capture(current);
+        assert!(link.lock().captures.is_empty());
     }
 }
 
@@ -978,9 +964,28 @@ impl PluginServer {
         });
     }
 
-    /// Asks the host for the plugin's state now (it answers with the state the way it does
-    /// after an edit, so [`PluginLink::take_edits`] has it). A plugin that changes its patch
-    /// in its editor does not always say so, and the song would not have it when it is saved.
+    /// Remembers an accepted snapshot for a later host restart. This changes no
+    /// running instance and never overwrites a coming slot's explicit intent.
+    pub fn remember_snapshot(
+        &self,
+        link: &PluginLink,
+        state: PluginState,
+        params: &[(String, f64)],
+    ) {
+        self.with_slot(link, |open| {
+            open.state = Some(state);
+            for (key, value) in params {
+                match open.params.iter_mut().find(|(name, _)| name == key) {
+                    Some((_, old)) => *old = *value,
+                    None => open.params.push((key.clone(), *value)),
+                }
+            }
+            None
+        });
+    }
+
+    /// Asks for an independent snapshot receipt. Consume it with
+    /// `take_capture_edits`, then release it with `cancel_capture`.
     pub fn request_state(&self, link: &PluginLink) -> u64 {
         let request = link.begin_capture();
         let mut st = self.inner.lock();
@@ -1402,38 +1407,15 @@ impl Inner {
                 result,
                 values,
             } => {
-                let Some(rec) = st.slots.get(&slot) else {
-                    return;
-                };
-                let link = rec.link.clone();
-                if link.slot.load(Ordering::Acquire) != slot {
-                    return;
-                }
-                if !link.complete_capture_values(request, result.clone(), &values) {
-                    return;
-                }
-                if result.is_ok() {
-                    let next = st.next_of(&link, slot);
-                    for slot in std::iter::once(slot).chain(next) {
-                        if let Some(record) = st.slots.get_mut(&slot) {
-                            for (key, value) in &mut record.open.params {
-                                if let Some((_, _, now)) = values.iter().find(|(id, title, _)| {
-                                    key.parse::<u32>().ok() == Some(*id)
-                                        || title.eq_ignore_ascii_case(key)
-                                }) {
-                                    *value = *now;
-                                }
-                            }
-                        }
-                    }
-                }
-                if let Ok(state) = result {
-                    st.slots.get_mut(&slot).expect("slot checked").open.state = Some(state.clone());
-                    if let Some(next) = st.next_of(&link, slot) {
-                        st.slots.get_mut(&next).expect("next_of checked").open.state =
-                            Some(state.clone());
-                        st.send(&ToHost::SetState { slot: next, state });
-                    }
+                // Captures are observations belonging to a receipt. They never
+                // mutate either slot or feed the passive editor channel.
+                let link = st
+                    .slots
+                    .get(&slot)
+                    .map(|rec| rec.link.clone())
+                    .or_else(|| st.closing.get(&slot).cloned());
+                if let Some(link) = link {
+                    link.complete_capture_values(request, result, &values);
                 }
             }
             FromHost::State { slot, state } => st.accept_state(slot, state),

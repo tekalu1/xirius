@@ -31,17 +31,21 @@ fn run(s: &mut Session, name: &str, args: Value) -> RunResult {
 
 /// The delay of the instance that plays, read from the state it reports when asked.
 fn delay(server: &PluginServer, link: &PluginLink) -> u32 {
-    let seen = link.states_seen();
-    server.request_state(link);
+    let request = server.request_state(link);
     let deadline = Instant::now() + Duration::from_secs(30);
-    while link.states_seen() == seen {
+    while !link.capture_finished(request) {
         assert!(
             Instant::now() < deadline,
             "the instance that plays never reported its state"
         );
         std::thread::sleep(Duration::from_millis(5));
     }
-    let state = server.current(link).and_then(|o| o.state).expect("a state");
+    let state = link
+        .take_capture_edits(request)
+        .unwrap()
+        .state
+        .expect("a state");
+    link.cancel_capture(request);
     u32::from_le_bytes(state.component[..4].try_into().unwrap())
 }
 

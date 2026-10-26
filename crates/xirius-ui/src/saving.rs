@@ -424,6 +424,7 @@ impl Studio {
                 self.update.pending = None;
                 return true;
             }
+            pull.reconcile(&self.song.project());
             let error = if !pull.ready() {
                 if crate::wait::now().saturating_duration_since(save.since)
                     < xirius_session::host::PULL_WAIT

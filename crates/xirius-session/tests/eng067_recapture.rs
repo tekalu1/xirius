@@ -40,10 +40,9 @@ fn track(i: u64, uid: &str, plugin: bool) -> Arc<Track> {
 /// The slot of the instance that plays and the delay it has now, read from the state it
 /// reports when asked.
 fn playing(server: &PluginServer, link: &PluginLink) -> (u32, u32) {
-    let seen = link.states_seen();
-    server.request_state(link);
+    let request = server.request_state(link);
     let deadline = Instant::now() + Duration::from_secs(30);
-    while link.states_seen() == seen {
+    while !link.capture_finished(request) {
         assert!(
             Instant::now() < deadline,
             "the instance that plays never reported its state"
@@ -51,7 +50,12 @@ fn playing(server: &PluginServer, link: &PluginLink) -> (u32, u32) {
         std::thread::sleep(Duration::from_millis(5));
     }
     let open = server.current(link).expect("an instance plays");
-    let state = open.state.expect("it reported a state");
+    let state = link
+        .take_capture_edits(request)
+        .unwrap()
+        .state
+        .expect("it reported a state");
+    link.cancel_capture(request);
     let bytes: [u8; 4] = state.component[..4].try_into().unwrap();
     (open.slot, u32::from_le_bytes(bytes))
 }

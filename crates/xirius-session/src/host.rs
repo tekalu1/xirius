@@ -1604,7 +1604,11 @@ pub fn collect_plugin_states(
     host: &mut SessionHost,
     opts: &RunOptions,
 ) -> CmdResult<Collected> {
-    let edits = host.builder.plugins_mut().take_edits();
+    let edits = host
+        .builder
+        .plugins_mut()
+        .current_edits(session.project(), None)
+        .map_err(xirius_core::CmdError::io)?;
     collect_edits(session, host, opts, edits)
 }
 
@@ -1617,7 +1621,7 @@ pub fn collect_pulled_states(
     let edits = host
         .builder
         .plugins_mut()
-        .take_pulled_edits(pull)
+        .current_edits(session.project(), Some(pull))
         .map_err(xirius_core::CmdError::io)?;
     collect_edits(session, host, opts, edits)
 }

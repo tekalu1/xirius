@@ -123,6 +123,82 @@ pub struct RemoteEdit {
     pub params: Vec<ParamEdit>,
 }
 
+/// The single precedence rule for passive edits, saves and live graph transfers:
+/// current explicit class/state/reset wins over any observation of an older
+/// intent; explicitly changed parameter keys win over snapshot values.
+#[derive(Clone)]
+struct StateIntent(Plugin);
+impl StateIntent {
+    fn values(
+        &self,
+        current: &Plugin,
+        mut runtime: Vec<(String, f64)>,
+        reports: &[ParamEdit],
+        titles: &[(u32, String)],
+    ) -> Vec<(String, f64)> {
+        let param_id = |key: &str| {
+            titles
+                .iter()
+                .find(|(id, title)| {
+                    key.parse::<u32>().ok() == Some(*id) || title.eq_ignore_ascii_case(key)
+                })
+                .map(|(id, _)| *id)
+        };
+        for (key, value) in &mut runtime {
+            if let Some(now) = reports
+                .iter()
+                .rev()
+                .filter(|p| names(key, p))
+                .find_map(|p| p.value)
+            {
+                *value = now;
+            }
+        }
+        let changed: HashSet<_> = self
+            .0
+            .params
+            .keys()
+            .chain(current.params.keys())
+            .filter(|key| self.0.params.get(*key) != current.params.get(*key))
+            .collect();
+        runtime.retain(|(old, _)| {
+            !changed.iter().any(|key| {
+                old.eq_ignore_ascii_case(key)
+                    || param_id(old)
+                        .zip(param_id(key))
+                        .is_some_and(|(a, b)| a == b)
+            })
+        });
+        for (key, value) in &current.params {
+            if !runtime.iter().any(|(name, _)| name == key) {
+                runtime.push((key.clone(), *value));
+            }
+        }
+        runtime
+    }
+    fn accepts(&self, current: &Plugin) -> bool {
+        let old = &self.0;
+        old.uid == current.uid
+            && old.format == current.format
+            && old.kind == current.kind
+            && old.state == current.state
+    }
+    fn reconcile(&self, current: &Plugin, edit: &mut RemoteEdit) -> bool {
+        if !self.accepts(current) {
+            return false;
+        }
+        edit.params.retain(|param| {
+            self.0
+                .params
+                .keys()
+                .chain(current.params.keys())
+                .filter(|key| names(key, param))
+                .all(|key| self.0.params.get(key) == current.params.get(key))
+        });
+        true
+    }
+}
+
 /// A plugin opened in a host process, and the song's values it was last given.
 #[derive(Clone)]
 struct Remote {
@@ -170,13 +246,36 @@ const HAND_OVER: Duration = Duration::from_secs(2);
 pub struct StatePull {
     cancelled: std::cell::Cell<bool>,
     asked: Vec<(PluginId, Arc<PluginLink>, u64)>,
-    errors: Vec<String>,
-    owned: Vec<crate::owned_local::Capture>,
+    errors: Vec<(PluginId, String)>,
+    owned: Vec<(PluginId, crate::owned_local::Capture)>,
+    basis: HashMap<PluginId, StateIntent>,
+    ignored: std::cell::RefCell<HashSet<PluginId>>,
     not_before: Instant,
 }
 impl StatePull {
+    pub fn reconcile(&self, target: &xirius_core::model::Project) {
+        let current: HashMap<_, _> = crate::starting::hosted(target)
+            .into_iter()
+            .map(|(_, p)| (p.id, p))
+            .collect();
+        let mut ignored = self.ignored.borrow_mut();
+        for (id, old) in &self.basis {
+            if current.get(id).is_none_or(|now| !old.accepts(now)) && ignored.insert(*id) {
+                for (_, link, request) in self.asked.iter().filter(|(asked, _, _)| asked == id) {
+                    link.cancel_capture(*request);
+                }
+                for (_, capture) in self.owned.iter().filter(|(asked, _)| asked == id) {
+                    capture.cancel();
+                }
+            }
+        }
+    }
     pub fn quarantine(&self) {
-        for capture in &self.owned {
+        for (_, capture) in self
+            .owned
+            .iter()
+            .filter(|(id, _)| !self.ignored.borrow().contains(id))
+        {
             capture.quarantine();
         }
         self.cancel();
@@ -184,11 +283,13 @@ impl StatePull {
     pub fn ready(&self) -> bool {
         self.cancelled.get()
             || (Instant::now() >= self.not_before
+                && self.asked.iter().all(|(id, link, request)| {
+                    self.ignored.borrow().contains(id) || link.capture_finished(*request)
+                })
                 && self
-                    .asked
+                    .owned
                     .iter()
-                    .all(|(_, link, request)| link.capture_finished(*request))
-                && self.owned.iter().all(|capture| capture.ready()))
+                    .all(|(id, capture)| self.ignored.borrow().contains(id) || capture.ready()))
     }
 
     pub fn error(&self) -> Option<String> {
@@ -196,14 +297,21 @@ impl StatePull {
             return Some("プラグインの状態要求が取り消されました".into());
         }
         self.errors
-            .first()
-            .cloned()
+            .iter()
+            .find(|(id, _)| !self.ignored.borrow().contains(id))
+            .map(|(_, e)| e.clone())
             .or_else(|| {
                 self.asked
                     .iter()
+                    .filter(|(id, _, _)| !self.ignored.borrow().contains(id))
                     .find_map(|(_, link, request)| link.capture_error(*request))
             })
-            .or_else(|| self.owned.iter().find_map(|capture| capture.error()))
+            .or_else(|| {
+                self.owned
+                    .iter()
+                    .filter(|(id, _)| !self.ignored.borrow().contains(id))
+                    .find_map(|(_, capture)| capture.error())
+            })
     }
 
     /// Abandon local owner replies even when an SDK call cannot be interrupted.
@@ -213,9 +321,15 @@ impl StatePull {
         for (_, link, request) in &self.asked {
             link.cancel_capture(*request);
         }
-        for capture in &self.owned {
+        for (_, capture) in &self.owned {
             capture.cancel();
         }
+    }
+}
+
+impl Drop for StatePull {
+    fn drop(&mut self) {
+        self.cancel();
     }
 }
 
@@ -695,43 +809,15 @@ impl PluginLoader {
         &mut self,
         target: &xirius_core::model::Project,
     ) -> Result<(), String> {
-        // A new state/class (including an explicitly cleared state) is user
-        // intent, not a request to restore the currently playing instance.
-        let keep: HashMap<_, _> = crate::starting::hosted(target)
+        let basis = self.state_basis();
+        let wanted = crate::starting::hosted(target)
             .into_iter()
-            .filter_map(|(_, next)| {
-                let old = self
-                    .locals
-                    .get(&next.id)
-                    .map(|l| &l.applied)
-                    .or_else(|| self.remotes.get(&next.id).map(|r| &r.applied))?;
-                (old.uid == next.uid
-                    && old.format == next.format
-                    && old.kind == next.kind
-                    && old.state == next.state)
-                    .then(|| {
-                        let changed: Vec<_> = next
-                            .params
-                            .iter()
-                            .filter(|(key, value)| old.params.get(*key) != Some(*value))
-                            .map(|(key, _)| key.clone())
-                            .collect();
-                        (next.id, changed)
-                    })
-            })
+            .filter(|(_, next)| basis.get(&next.id).is_some_and(|old| old.accepts(next)))
+            .map(|(_, next)| next.id)
             .collect();
-        let wanted = keep.keys().copied().collect();
         let receipt = self.begin_pull_states_matching(Some(&wanted));
         let receipt = Self::wait_for_pull(receipt, crate::host::PULL_WAIT)?;
-        let mut edits = self.take_pulled_edits(&receipt)?;
-        edits.retain_mut(|edit| {
-            let Some(changed) = keep.get(&edit.plugin) else {
-                return false;
-            };
-            edit.params
-                .retain(|param| !changed.iter().any(|key| names(key, param)));
-            true
-        });
+        let edits = self.current_edits(target, Some(&receipt))?;
         self.carried.extend(edits);
         Ok(())
     }
@@ -877,18 +963,23 @@ impl PluginLoader {
             && let Some(now) = r.server.current(&r.link)
         {
             let edits = r.link.take_edits();
-            let mut params = now.params;
-            for (key, v) in &mut params {
-                if let Some(value) = edits
-                    .params
-                    .iter()
-                    .rev()
-                    .filter(|p| names(key, p))
-                    .find_map(|p| p.value)
-                {
-                    *v = value;
-                }
-            }
+            let snapshot = self.carried.iter().rev().find(|e| e.plugin == x.id);
+            let state = edits
+                .state
+                .clone()
+                .or_else(|| {
+                    snapshot
+                        .and_then(|e| e.state.as_deref())
+                        .and_then(|s| decode_state(s).ok())
+                })
+                .or(now.state);
+            let reports: Vec<_> = snapshot
+                .into_iter()
+                .flat_map(|e| e.params.iter().cloned())
+                .chain(edits.params.iter().cloned())
+                .collect();
+            let titles = r.link.opened().map(|o| o.params).unwrap_or_default();
+            let params = StateIntent(r.applied.clone()).values(x, now.params, &reports, &titles);
             if edits.state.is_some() || !edits.params.is_empty() {
                 self.carried.push(RemoteEdit {
                     plugin: x.id,
@@ -896,10 +987,7 @@ impl PluginLoader {
                     params: edits.params,
                 });
             }
-            return Ok(Values {
-                state: now.state,
-                params,
-            });
+            return Ok(Values { state, params });
         }
         let state = match x.state.as_deref().filter(|s| !s.is_empty()) {
             Some(text) => Some(decode_state(text).map_err(|e| format!("{}: {e}", x.name))?),
@@ -988,12 +1076,11 @@ impl PluginLoader {
         let dir = self.dir.clone();
         let rate = self.rate;
         let setup = *setup;
-        let old = self.locals.get(&x.id).filter(|old| {
-            old.applied.uid == x.uid
-                && old.applied.format == x.format
-                && old.applied.state == x.state
-        });
-        let preserve_params = old.is_some_and(|old| old.applied.params == x.params);
+        let old = self
+            .locals
+            .get(&x.id)
+            .filter(|old| StateIntent(old.applied.clone()).accepts(x));
+        let intent = old.map(|old| StateIntent(old.applied.clone()));
         let snapshot = old
             .and_then(|old| old.owned.as_ref())
             .map(|old| old.snapshot());
@@ -1017,20 +1104,44 @@ impl PluginLoader {
                     std::thread::sleep(Duration::from_millis(2));
                 };
                 value.state = Some(snapshot.state.clone());
-                if preserve_params {
-                    for (key, v) in &mut value.params {
-                        if let Some((_, _, now)) = snapshot.params.iter().find(|(id, title, _)| {
-                            key.parse::<u32>().ok() == Some(*id) || title.eq_ignore_ascii_case(key)
-                        }) {
-                            *v = *now;
-                        }
-                    }
+                let reports: Vec<_> = snapshot
+                    .params
+                    .iter()
+                    .map(|(id, title, value)| ParamEdit {
+                        id: *id,
+                        title: title.clone(),
+                        value: Some(*value),
+                        phase: EditPhase::Snapshot,
+                        at: Instant::now(),
+                    })
+                    .collect();
+                let titles: Vec<_> = snapshot
+                    .params
+                    .iter()
+                    .map(|(id, title, _)| (*id, title.clone()))
+                    .collect();
+                if let Some(intent) = &intent {
+                    let params = original
+                        .params
+                        .iter()
+                        .map(|(k, v)| (k.clone(), *v))
+                        .collect();
+                    value.params = intent
+                        .values(&original, params, &reports, &titles)
+                        .into_iter()
+                        .collect();
                 }
-                carried = Some(RemoteEdit {
+                let mut edit = RemoteEdit {
                     plugin: value.id,
                     state: Some(snapshot.state),
-                    params: Vec::new(),
-                });
+                    params: reports,
+                };
+                if intent
+                    .as_ref()
+                    .is_some_and(|intent| intent.reconcile(&original, &mut edit))
+                {
+                    carried = Some(edit);
+                }
             }
             let mut loader = PluginLoader::new(catalog);
             loader.set_threaded_local(true);
@@ -1245,12 +1356,7 @@ impl PluginLoader {
             // into the song. Changed song values still override that state as usual.
             self.remotes
                 .get(&x.id)
-                .filter(|r| {
-                    r.applied.uid == x.uid
-                        && r.applied.format == x.format
-                        && r.applied.kind == x.kind
-                        && r.applied.state == x.state
-                })
+                .filter(|r| StateIntent(r.applied.clone()).accepts(x))
                 .cloned()
         } else {
             self.remotes.remove(&x.id)
@@ -1263,9 +1369,6 @@ impl PluginLoader {
         {
             self.leaving.insert(x.id, Leaving::Remote(r.clone()));
         }
-        let replace_params = moving
-            .as_ref()
-            .is_some_and(|r| r.applied.params != x.params);
         // The window open on the instance in the host it leaves opens on the new one when
         // that one plays.
         let window = moving
@@ -1273,15 +1376,10 @@ impl PluginLoader {
             .filter(|_| !stays)
             .and_then(|r| r.link.editor());
         let mut values = self.values(x, moving)?;
-        if replace_params {
-            values.params = x.params.iter().map(|(k, v)| (k.clone(), *v)).collect();
-        }
         // The instance that played in this process until now: what its editor changed that
         // the song has not taken yet goes to the new one, and to the song later.
         if let Some(mut old) = self.locals.remove(&x.id) {
-            let preserve = old.applied.uid == x.uid
-                && old.applied.format == x.format
-                && old.applied.state == x.state;
+            let preserve = StateIntent(old.applied.clone()).accepts(x);
             // Latency-only notifications need not include gestures or a parameter edit.
             if preserve {
                 values.state = old
@@ -1840,6 +1938,9 @@ impl PluginLoader {
         if let Some(r) = self.remotes.get_mut(&id) {
             if state.is_some() {
                 r.applied.state.clone_from(&state);
+                if let Some(decoded) = state.as_deref().and_then(|s| decode_state(s).ok()) {
+                    r.server.remember_snapshot(&r.link, decoded, params);
+                }
             }
             for (k, v) in params {
                 r.applied.params.insert(k.clone(), *v);
@@ -1877,6 +1978,11 @@ impl PluginLoader {
 
     fn begin_pull_states_matching(&mut self, wanted: Option<&HashSet<PluginId>>) -> StatePull {
         let selected = |id: &PluginId| wanted.is_none_or(|ids| ids.contains(id));
+        let basis = self
+            .state_basis()
+            .into_iter()
+            .filter(|(id, _)| selected(id))
+            .collect();
         let mut errors = Vec::new();
         let mut owned = Vec::new();
         let mut local = false;
@@ -1886,7 +1992,7 @@ impl PluginLoader {
             }
             local = true;
             if let Some(local) = &l.owned {
-                owned.push(local.capture(CAPTURE_WAIT));
+                owned.push((*id, local.request_capture(CAPTURE_WAIT)));
             } else {
                 l.capture = Some(Instant::now());
             }
@@ -1906,7 +2012,7 @@ impl PluginLoader {
                 Leaving::Local(l, _) => {
                     local = true;
                     if let Some(local) = &l.owned {
-                        owned.push(local.capture(CAPTURE_WAIT));
+                        owned.push((*id, local.request_capture(CAPTURE_WAIT)));
                     } else {
                         l.capture = Some(Instant::now());
                     }
@@ -1915,21 +2021,26 @@ impl PluginLoader {
         }
         let asked: Vec<_> = remotes
             .into_iter()
-            .filter(|(_, r)| {
+            .filter(|(id, r)| {
                 let s = r.server.status(&r.link);
                 // A rejected opening never created an editable instance: keep
                 // the song's existing opaque state, including missing plugins.
                 // A running host lost to a crash cannot attest its latest state.
                 if s.crashed {
-                    errors.push(format!(
-                        "{}: プラグインの状態を取得できません",
-                        r.applied.name
+                    errors.push((
+                        *id,
+                        format!("{}: プラグインの状態を取得できません", r.applied.name),
                     ));
                 }
                 !s.crashed && s.error.is_none()
             })
             .map(|(id, r)| {
                 let request = r.server.request_state(&r.link);
+                #[cfg(feature = "test-io")]
+                let _ = xirius_core::io_test::before(
+                    "capture_requested",
+                    std::path::Path::new(&id.to_string()),
+                );
                 (id, r.link.clone(), request)
             })
             .collect();
@@ -1938,6 +2049,8 @@ impl PluginLoader {
             asked,
             errors,
             owned,
+            basis,
+            ignored: Default::default(),
             not_before: Instant::now() + if local { CAPTURE_WAIT } else { Duration::ZERO },
         }
     }
@@ -1979,11 +2092,85 @@ impl PluginLoader {
         self.take_edits_with_pull(Some(pull))
     }
 
+    fn state_basis(&self) -> HashMap<PluginId, StateIntent> {
+        let mut basis: HashMap<_, _> = self
+            .locals
+            .iter()
+            .map(|(id, l)| (*id, StateIntent(l.applied.clone())))
+            .chain(
+                self.remotes
+                    .iter()
+                    .map(|(id, r)| (*id, StateIntent(r.applied.clone()))),
+            )
+            .collect();
+        for (id, leaving) in &self.leaving {
+            let applied = match leaving {
+                Leaving::Local(l, _) => &l.applied,
+                Leaving::Remote(r) => &r.applied,
+            };
+            basis.insert(*id, StateIntent(applied.clone()));
+        }
+        basis
+    }
+
+    pub(crate) fn current_edits(
+        &mut self,
+        target: &xirius_core::model::Project,
+        pull: Option<&StatePull>,
+    ) -> Result<Vec<RemoteEdit>, String> {
+        if let Some(pull) = pull {
+            pull.reconcile(target);
+        }
+        let passive = self.state_basis();
+        let basis = pull.map_or(&passive, |pull| &pull.basis);
+        let mut edits = match pull {
+            Some(pull) => self.take_pulled_edits(pull)?,
+            None => self.take_edits(),
+        };
+        let current: HashMap<_, _> = crate::starting::hosted(target)
+            .into_iter()
+            .map(|(_, p)| (p.id, p))
+            .collect();
+        edits.retain_mut(|edit| {
+            basis
+                .get(&edit.plugin)
+                .zip(current.get(&edit.plugin))
+                .is_some_and(|(old, now)| old.reconcile(now, edit))
+        });
+        Ok(edits)
+    }
+
     fn take_edits_with_pull(
         &mut self,
         pull: Option<&StatePull>,
     ) -> Result<Vec<RemoteEdit>, String> {
         let mut out = std::mem::take(&mut self.carried);
+        if let Some(pull) = pull {
+            for (id, capture) in pull
+                .owned
+                .iter()
+                .filter(|(id, _)| !pull.ignored.borrow().contains(id))
+            {
+                if let Some(snapshot) = capture.take() {
+                    let snapshot = snapshot?;
+                    out.push(RemoteEdit {
+                        plugin: *id,
+                        state: Some(snapshot.state),
+                        params: snapshot
+                            .params
+                            .into_iter()
+                            .map(|(id, title, value)| ParamEdit {
+                                id,
+                                title,
+                                value: Some(value),
+                                phase: EditPhase::Snapshot,
+                                at: Instant::now(),
+                            })
+                            .collect(),
+                    });
+                }
+            }
+        }
         for (id, l) in &mut self.locals {
             out.extend(l.take(*id, false));
         }
@@ -2000,9 +2187,9 @@ impl PluginLoader {
         }
         for (id, r) in remotes {
             let e = if let Some((_, _, request)) = pull.and_then(|p| {
-                p.asked
-                    .iter()
-                    .find(|(asked, link, _)| asked == id && Arc::ptr_eq(link, &r.link))
+                p.asked.iter().find(|(asked, link, _)| {
+                    !p.ignored.borrow().contains(asked) && asked == id && Arc::ptr_eq(link, &r.link)
+                })
             }) {
                 r.link.take_capture_edits(*request)?
             } else {
@@ -2455,6 +2642,59 @@ impl PluginLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_intent_rule_preserves_reset_replacement_and_changed_parameter_aliases() {
+        let old = Plugin {
+            id: PluginId(42),
+            name: "Fixture".into(),
+            kind: PluginKind::Effect,
+            format: "vst3".into(),
+            uid: "fixture".into(),
+            bypass: false,
+            deactivated: false,
+            params: [("1".into(), 0.25)].into_iter().collect(),
+            state: Some("old".into()),
+            sidechain: None,
+            preset: None,
+            samples: Vec::new(),
+            isolation: PluginIsolation::default(),
+        };
+        let intent = StateIntent(old.clone());
+        for change in [0, 1, 2, 3] {
+            let mut current = old.clone();
+            match change {
+                0 => current.state = None,
+                1 => current.state = Some("new".into()),
+                2 => current.uid = "replacement".into(),
+                _ => current.kind = PluginKind::Instrument,
+            }
+            assert!(!intent.accepts(&current));
+        }
+        let mut current = old.clone();
+        current.params.clear();
+        current.params.insert("Latency".into(), 0.75);
+        let mut edit = RemoteEdit {
+            plugin: old.id,
+            state: Some("observed".into()),
+            params: vec![ParamEdit {
+                id: 1,
+                title: "Latency".into(),
+                value: Some(0.5),
+                phase: EditPhase::Snapshot,
+                at: Instant::now(),
+            }],
+        };
+        let values = intent.values(
+            &current,
+            vec![("1".into(), 0.25), ("Latency".into(), 0.5)],
+            &edit.params,
+            &[(1, "Latency".into())],
+        );
+        assert_eq!(values, vec![("Latency".into(), 0.75)]);
+        assert!(intent.reconcile(&current, &mut edit));
+        assert!(edit.params.is_empty());
+    }
 
     #[test]
     fn a_restart_for_a_plugin_that_runs_here_says_it_has_no_process() {
