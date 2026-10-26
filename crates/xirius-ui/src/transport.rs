@@ -134,7 +134,7 @@ pub struct Transport {
     prepared_start: Option<prepared::Start>,
     retired: Vec<prepared::Retiring>,
     pending_output: Option<(bool, Tick)>,
-    pending_record: bool,
+    pub(crate) pending_record: bool,
     pub(crate) auditioning_export: bool,
     pub loss: crate::record_loss::Loss,
     /// Where the sound goes. [`OutputMode::None`] refuses to play.
@@ -1485,14 +1485,18 @@ impl Studio {
                 self.transport.midi_record_input = self.live_midi.input.take();
                 self.live_midi.resume |= self.transport.midi_record_input.is_some();
             }
-            if self.transport.uses_async_player()
-                && self.transport.mode == OutputMode::Device
-                && !self
-                    .transport
-                    .prepare_midi_record_input(self.transport.host().map_or(48_000, |h| h.rate()))
-            {
-                self.transport.pending_record = true;
-                return true;
+            if self.transport.midi_record_input.is_none() && self.can_open_live_midi() {
+                self.live_midi.opening_for_record = true;
+                match self.open_midi_port() {
+                    None => {
+                        self.transport.pending_record = true;
+                        return true;
+                    }
+                    Some(Ok(input)) => self.transport.midi_record_input = Some(input),
+                    Some(Err(error)) => self.transport.midi_open_error = Some(error),
+                }
+                self.live_midi.opening_for_record = false;
+                self.live_midi.resume = true;
             }
         }
         self.poll_io();

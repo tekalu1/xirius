@@ -91,6 +91,7 @@ pub(crate) fn connect(s: &mut Studio, name: &str) {
     s.idle();
     tx.send(vec!["Mock Keyboard".into()]).unwrap();
     s.idle();
+    settle_open(s);
     WATCH.with(|watch| *watch.borrow_mut() = Some(tx));
     assert!(s.live_midi.input.is_some());
     assert_eq!(s.midi_ports.known(), ["Mock Keyboard"]);
@@ -104,6 +105,18 @@ pub(crate) fn connect(s: &mut Studio, name: &str) {
     );
     assert!(!s.transport.playing && !s.transport.recording);
     assert!(s.error.is_none(), "{:?}", s.error);
+}
+
+fn settle_open(s: &mut Studio) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while s.live_midi.opening.is_some() {
+        s.poll_live_midi();
+        assert!(
+            std::time::Instant::now() < deadline,
+            "MIDI opening watchdog"
+        );
+        std::thread::yield_now();
+    }
 }
 fn plug(s: &mut Studio, _: u8) {
     connect(s, "Keys");
@@ -164,15 +177,19 @@ mod tests {
         });
         s.midi_ports_now(Vec::new());
         s.midi_ports_now(vec!["Mock Keyboard".into()]);
+        settle_open(&mut s);
         s.live_midi.retry_at = Some(std::time::Instant::now());
-        assert!(s.idle().changed);
+        s.idle();
+        settle_open(&mut s);
         assert_eq!(s.error.as_deref(), Some("MIDI error 1"));
         s.error = Some("別のエラー".into());
         s.live_midi.retry_at = Some(std::time::Instant::now());
         s.idle();
+        settle_open(&mut s);
         assert_eq!(s.error.as_deref(), Some("別のエラー"));
         s.live_midi.retry_at = Some(std::time::Instant::now());
-        assert!(s.idle().changed);
+        s.idle();
+        settle_open(&mut s);
         assert_eq!(s.error.as_deref(), Some("別のエラー"));
         assert_eq!(count.load(Ordering::Relaxed), 4);
     }
@@ -193,17 +210,28 @@ mod tests {
         });
         s.midi_ports_now(Vec::new());
         s.midi_ports_now(vec!["Mock Keyboard".into()]);
+        settle_open(&mut s);
         let t = track(&s, "Keys");
         assert!(s.run_command("track.arm", json!({"ids":[t],"on":true})));
         assert!(s.toggle_record());
         assert!(s.live_midi.resume);
-        if s.transport.take.is_some() {
-            assert!(s.toggle_record());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !s.transport.recording {
+            s.tick();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "record broker watchdog: {:?}",
+                s.error
+            );
+            std::thread::yield_now();
         }
-        s.live_midi.retry_at = Some(std::time::Instant::now());
-        assert!(s.idle().changed);
-        assert!(s.live_midi.input.is_some());
         assert_eq!(attempts.load(Ordering::Relaxed), 2);
+        assert!(s.toggle_record());
+        s.live_midi.retry_at = Some(std::time::Instant::now());
+        s.idle();
+        settle_open(&mut s);
+        assert!(s.live_midi.input.is_some());
+        assert_eq!(attempts.load(Ordering::Relaxed), 3);
         s.midi_ports_now(Vec::new());
         s.transport.reset();
     }
@@ -224,11 +252,13 @@ mod tests {
         });
         s.midi_ports_now(Vec::new());
         s.midi_ports_now(vec!["Mock Keyboard".into()]);
+        settle_open(&mut s);
         assert!(s.live_midi.input.is_none());
         assert!(s.live_midi.resume);
         assert!(s.error.is_some());
         s.live_midi.retry_at = Some(std::time::Instant::now());
         s.idle();
+        settle_open(&mut s);
         assert!(s.live_midi.input.is_some());
         assert!(s.error.is_none());
         assert_eq!(attempts.load(Ordering::Relaxed), 2);

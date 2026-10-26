@@ -126,13 +126,10 @@ impl Studio {
             .ports = now.clone();
         if self.can_open_live_midi() && self.midi_ports.known() != now {
             self.release_midi();
-            self.live_midi.input = None;
-            self.live_midi.resume = self.transport.recording;
-            if !now.is_empty() && !self.transport.recording {
-                match self.open_midi_port() {
-                    Ok(input) => self.live_midi_input(input),
-                    Err(e) => self.midi_open_failed(e),
-                }
+            self.invalidate_midi_open();
+            self.live_midi.resume = !now.is_empty();
+            if !now.is_empty() && !self.transport.recording && !self.transport.pending_record {
+                self.try_live_midi_open();
             }
         }
         let Some(before) = self.midi_ports.known.replace(now.clone()) else {

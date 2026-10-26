@@ -12,6 +12,9 @@ type HeldNotes = Vec<(TrackId, Option<u8>)>;
 #[derive(Default)]
 pub struct LiveMidi {
     pub opener: Option<crate::midi_open::Opener>,
+    pub opening: Option<crate::midi_open::Opening>,
+    pub generation: u64,
+    pub opening_for_record: bool,
     pub opening_error: Option<String>,
     pub input: Option<Box<dyn MidiInput>>,
     /// The notes held, by port and the key's own pitch: every track the note was sent to and
@@ -68,6 +71,9 @@ impl Studio {
         self.live_midi.resume = false;
         self.live_midi.retry_at = None;
         self.release_midi();
+        if let Some(previous) = self.live_midi.input.take() {
+            crate::midi_open::retire(previous);
+        }
         self.song
             .io
             .lock()
@@ -94,12 +100,23 @@ impl Studio {
     }
 
     pub fn poll_live_midi(&mut self) -> bool {
+        self.poll_stale_midi_open();
         let mut changed = self.knob_quiet();
         if !self.live_midi.assign.pending.is_empty() {
             let map = self.midimap();
             changed |= self.midi_pending(&map);
         }
-        if self.transport.recording && self.live_midi.input.is_none() {
+        if self.live_midi.opening_for_record
+            && !self.transport.pending_record
+            && !self.transport.recording
+        {
+            self.invalidate_midi_open();
+            self.live_midi.opening_for_record = false;
+            self.live_midi.resume = true;
+        }
+        if (self.transport.recording || self.transport.pending_record)
+            && self.live_midi.input.is_none()
+        {
             return changed;
         }
         if self.live_midi.resume
@@ -109,19 +126,7 @@ impl Studio {
                 .is_none_or(|at| std::time::Instant::now() >= at)
         {
             if self.can_open_live_midi() && !self.midi_ports.known().is_empty() {
-                match self.open_midi_port() {
-                    Ok(input) => {
-                        self.live_midi.resume = false;
-                        self.live_midi.retry_at = None;
-                        self.live_midi_input(input);
-                        changed = true;
-                    }
-                    Err(e) => {
-                        let previous = self.error.clone();
-                        self.midi_open_failed(e);
-                        changed |= self.error != previous;
-                    }
-                }
+                changed |= self.try_live_midi_open();
             } else {
                 self.live_midi.resume = false;
             }
@@ -268,6 +273,20 @@ impl Studio {
             }
         }
         changed
+    }
+}
+
+impl Drop for LiveMidi {
+    fn drop(&mut self) {
+        if let Some(input) = self.input.take() {
+            crate::midi_open::retire(input);
+        }
+        if let Some(opener) = self.opener.take() {
+            let _ = xirius_session::background::Job::spawn("midi-opener-retire", move || {
+                drop(opener);
+                Ok(())
+            });
+        }
     }
 }
 
