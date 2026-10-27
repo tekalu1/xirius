@@ -1072,6 +1072,7 @@ impl Studio {
                 } else {
                     "plugin.bypass"
                 };
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command(command, json!({ "ids": [id.to_string()] }));
                 true
             }
@@ -1091,6 +1092,7 @@ impl Studio {
                     .and_then(|x| x.sends.iter().find(|s| s.id == id))
                     .is_some_and(|s| s.pre);
                 let position = if pre { "post" } else { "pre" };
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command(
                     "send.set",
                     json!({ "id": id.to_string(), "position": position }),
@@ -1200,11 +1202,13 @@ impl Studio {
                 // both away (MIX-025).
                 let added = if to == NEW_BUS {
                     let name = format!("バス {}", buses(&self.project()).len() + 1);
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     self.run_command(
                         "send.add.bus",
                         json!({ "ids": [t.to_string()], "name": name, "into": "root" }),
                     )
                 } else {
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     self.run_command("send.add", json!({ "ids": [t.to_string()], "to": to }))
                 };
                 if added {
@@ -1381,18 +1385,23 @@ impl Studio {
         // Several tracks move by as much as the dragged one, each from its own value (MIX-050).
         match d.hit {
             MixerHit::Fader(_) if relative => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command("track.volume.set", json!({ "ids": ids, "by": d.by() }))
             }
             MixerHit::Fader(_) => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command("track.volume.set", json!({ "ids": ids, "db": d.value }))
             }
             MixerHit::Pan(_) if relative => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command("track.pan.set", json!({ "ids": ids, "by": d.by() }))
             }
             MixerHit::Pan(_) => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command("track.pan.set", json!({ "ids": ids, "pan": d.value }))
             }
             MixerHit::SendLevel(_, s) => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command("send.set", json!({ "id": s.to_string(), "level": d.value }))
             }
             _ => false,

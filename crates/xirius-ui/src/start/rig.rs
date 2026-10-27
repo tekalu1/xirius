@@ -519,6 +519,7 @@ impl Studio {
             }
             return true;
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         let set = self.song.set(
             "audio.set",
             serde_json::json!({ "key": "device", "value": name }),

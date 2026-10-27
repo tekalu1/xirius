@@ -536,6 +536,7 @@ impl Studio {
             },
             BrowseAct::SelectUsing(file) => {
                 let ran = self
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     .arrange_run("select.using_file", json!({ "file": file }))
                     .is_some();
                 if ran {
@@ -587,6 +588,7 @@ impl Studio {
                 self.add_effect(TrackId::MASTER, at, &pick)
             }
             FxTarget::NewBus => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 let Some(data) = self.arrange_run(
                     "track.add.bus",
                     json!({ "plugin": pick.name, "format": pick.format, "uid": pick.uid }),

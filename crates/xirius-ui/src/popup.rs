@@ -200,6 +200,7 @@ pub struct Choice {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Popup {
+    pub(crate) intent_id: u64,
     /// The list menu's part and its state (UI-320), when the kind is one.
     pub pick: Option<PickList>,
     pub kind: PopupKind,
@@ -266,7 +267,9 @@ pub struct Popup {
 
 impl Popup {
     pub fn new(kind: PopupKind, anchor: Rect) -> Popup {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Popup {
+            intent_id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             pick: None,
             kind,
             anchor,

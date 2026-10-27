@@ -274,6 +274,7 @@ impl Studio {
     /// 「MIDI を演奏」: an armed track playing the built-in instrument, and
     /// the PC keys play it.
     pub fn start_midi(&mut self) -> bool {
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         let made = self.song.run(
             "track.add.with-instrument",
             json!({ "instrument": DEFAULT, "arm": true }),
@@ -317,14 +318,17 @@ impl Studio {
         };
         let made = self
             .song
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
             .run("track.add.audio", json!({ "name": "Audio" }))
             .and_then(|data| {
                 let id = data["id"].as_str().unwrap_or_default().to_string();
                 if let Some(input) = &input {
                     self.song
+                        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
                         .run("track.input.set", json!({"ids": [id], "input": input}))?;
                 }
                 self.song
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
                     .run("track.arm", json!({ "ids": [id] }))
                     .map(|_| data)
             });

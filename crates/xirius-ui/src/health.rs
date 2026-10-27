@@ -233,9 +233,11 @@ impl Studio {
             }
             PlugAct::Remove => {
                 self.popup = None;
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command("plugin.remove", json!({ "ids": [id.to_string()] }))
             }
             PlugAct::Mode(mode) => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command(
                     "plugin.isolation.set",
                     json!({ "ids": [id.to_string()], "mode": mode.name() }),

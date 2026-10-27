@@ -295,6 +295,7 @@ impl Studio {
                     .get(&track)
                     .is_some_and(|t| t.input_gain_db == db);
                 if !same {
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     self.arrange_run(
                         "track.input.gain",
                         json!({ "ids": [track.to_string()], "db": db }),
@@ -326,6 +327,7 @@ impl Studio {
             .is_some_and(|t| takes::already_plays(t, take, from, to));
         let done = plays
             || self
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 .arrange_run(
                     "take.comp",
                     json!({ "take": take.to_string(), "from": from, "to": to }),

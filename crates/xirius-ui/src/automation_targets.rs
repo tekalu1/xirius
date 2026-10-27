@@ -216,6 +216,7 @@ impl Studio {
             ),
             None => ("auto.lane.add", json!({"track":track,"target":to})),
         };
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         let changed = self.arrange_run(command, args).is_some();
         if changed {
             self.arrange.open.insert(track);

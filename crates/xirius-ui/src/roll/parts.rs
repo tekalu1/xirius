@@ -112,6 +112,7 @@ impl Studio {
         let mut ids = vec![ctx.clip.id.to_string()];
         ids.extend(ctx.others.iter().map(|p| p.clip.id.to_string()));
         if self
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             .arrange_run("select.on-tracks", json!({ "ids": ids }))
             .is_none()
         {

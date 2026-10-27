@@ -61,6 +61,7 @@ impl Studio {
                 && at <= end
                 && !ids.is_empty()
             {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.arrange_run(
                     "clip.split.range",
                     json!({"ids":ids,"start":start,"end":end}),
@@ -68,6 +69,7 @@ impl Studio {
             } else if let Spot::Clip { clip, .. } | Spot::Fx { clip, .. } = spot
                 && p.clip(clip).is_ok()
             {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.arrange_run("clip.split", json!({"ids":[clip.to_string()],"at":at}));
             }
             self.arrange.drag = None;
@@ -118,6 +120,7 @@ impl Studio {
         if end <= start {
             return true;
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         let made = self.arrange_run(
             "clip.add.midi",
             json!({"track": track.to_string(), "at": start, "length": end - start,

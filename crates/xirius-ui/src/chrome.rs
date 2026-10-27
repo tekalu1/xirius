@@ -338,8 +338,10 @@ mod imp {
 
     fn run(title: &'static str, scale: f32, shared: &Shared) -> String {
         let mut out = String::new();
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
         let _ = writeln!(out, "## Window chrome check (no OS input was sent)\n");
         let Some(hwnd) = find(title) else {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
             let _ = writeln!(out, "window {title:?} not found");
             return out;
         };
@@ -348,6 +350,7 @@ mod imp {
 
         let st = style(hwnd);
         let bit = |m: u32| if st & m == m { "yes" } else { "no" };
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
         let _ = writeln!(
             out,
             "Style bits: WS_THICKFRAME {} / WS_MAXIMIZEBOX {} / WS_MINIMIZEBOX {} / WS_SYSMENU {} / WS_CAPTION {}",
@@ -365,6 +368,7 @@ mod imp {
             GetWindowRect(hwnd, &mut rect);
             ClientToScreen(hwnd, &mut origin);
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
         let _ = writeln!(
             out,
             "Client area starts {} px below the top of the window and {} px right of its left edge (0 = no OS title bar).\n",
@@ -372,10 +376,12 @@ mod imp {
             origin.x - rect.left
         );
 
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
         let _ = writeln!(
             out,
             "| point | asked at (logical px) | expected | answer | ok |"
         );
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
         let _ = writeln!(out, "|---|---|---|---|---|");
         let mut all_ok = true;
         for (k, q) in shared.queries.iter().enumerate() {
@@ -388,6 +394,7 @@ mod imp {
             let answer = unsafe { SendMessageW(hwnd, WM_NCHITTEST, 0, lparam) };
             let ok = answer == q.expect;
             all_ok &= ok;
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
             let _ = writeln!(
                 out,
                 "| {} | ({:.1}, {:.1}) | {} | {} | {} |",
@@ -407,6 +414,7 @@ mod imp {
         // SAFETY: as above.
         unsafe { SendMessageW(hwnd, WM_SYSCOMMAND, SC_RESTORE, 0) };
         let restore_ok = becomes_zoomed(hwnd, shared, false);
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
         let _ = writeln!(
             out,
             "\nSC_MAXIMIZE -> maximised: {}. SC_RESTORE -> restored: {}.",
@@ -453,12 +461,14 @@ mod imp {
             }
             None => (false, false),
         };
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
         let _ = writeln!(
             out,
             "Double click on the empty bar -> maximised: {}. Again -> restored: {}.",
             if dbl_max { "yes" } else { "NO" },
             if dbl_restore { "yes" } else { "NO" }
         );
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
         let _ = writeln!(
             out,
             "Hit tests: {}.",

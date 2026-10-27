@@ -9,6 +9,10 @@ bootstrap だけに限る。窓を作った後は完了を poll する。
 
 | 操作 | I/O・待ちを実行する場所 | UI が扱う物 |
 |---|---|---|
+| 接続 MCP の Session コマンド全体 | 実 Session の worker。open/save は専用の所有者プロトコルを先に使う | 受付と完了。名前の分類から漏れた拡張も UI では実行しない |
+| 場所・お気に入り・非表示の Session コマンド | Session worker。先に受付済みの Browser 保存を待ち、同じファイルの read/modify/write を直列化する | Browser の差分保存を維持する。待つのは worker だけ |
+| パレットの問い合わせ | 同じ Session worker | 以前と同じ結果フォーム。メニューの Session dry-run は引数の検査だけでディスクを読まない |
+| UI マクロ | `run_parsed` と `run_command` から同じ継続へ入り、tick/idle が所有者の完了後に次へ進む | 表示用 Session は編集・保存・履歴移動を拒否する。最後と失敗・中止時の group 終端は実 Session に対して行う |
 | UI の異常時ログ | application FIFO の `log`。stderr の file/pipe も worker | メッセージの受付。終了時は受付済み出力の完了を確認する |
 | パネル寸法の読込・保存 | `ancillary_io` の FIFO | snapshot と完了。読込中の drag・reset は古い snapshot より優先する |
 | 版の一覧・詳細 | 同じ FIFO。保存先・lane・モデルごとのキャッシュ | 一覧、現在選んだ版の詳細。保存途中の自動版は Session のメモリーから補う |
@@ -71,3 +75,30 @@ panic 後の継続を確認する。外部変更と writer は採用・保存・
 cleanup・グルーヴ・通知・外部監視・クラッシュ記録・更新確認・ログのゲートを加える。
 私有の fixture、無音の出力、画面外の自分の窓だけを使い、PrintWindow と対象 HWND への
 入力で描画・移動・resize・最小化・復帰、および再生と editor の継続を検査する。
+
+## レビュー後の入口・継続の再監査
+
+直接の標準 API に加え、Session の動的実行、`run_and_persist`、UI コマンドの呼び出し、
+場所・更新・cleanup の既知 I/O helper を lint 対象に広げた。import の別名も展開する。
+`assert!` 等の式引数、`write!` / `writeln!` の出力先、未知のマクロの入れ子と呼び出し形の
+トークンも検査する。worker の名前だけでは closure を除外せず、既知の所有者と import を確認する。
+各呼び出しの根拠はその行の注釈に残す。通常画面全体を除外する許可は加えていない。
+
+`cargo run -p xirius-design-lint -- --audit-ui-io` は、許可済みのものも含む呼び出し位置を出す。
+`--ui-io-inventory` の安定した集計は [ui-io-audit.tsv](ui-io-audit.tsv) に記録する。
+`ui_io_inventory` の CI 試験はこの集計と実ソースを照合するため、許可済みの行に呼び出しを
+足した場合も黙って増えない。行の移動だけでは更新を求めない。更新時は呼び出しの所有者を
+再確認し、この表と注釈を直してから集計を取り直す。Rust 全体の型付き呼び出しグラフを
+証明するものではないため、実入口のゲートと共通ヘルパーの実行拒否も併用する。
+
+| 入口からの経路 | 再監査で確認・修正した境界 | 固定した競合・継続 |
+|---|---|---|
+| `ai_job` → Session / SessionExt → places | 全 MCP コマンドの実行は所有者へ渡す。通常 UI の places 7 コマンドも分類する | read/write を止めた実 MCP 入口。Browser 保存との両順序、同じ項目の変更と別項目の差分統合 |
+| `ai.batch` / `ai.decide` → 内側の command | `execution_targets` は token を消費せず、別名・内側の対象を解決する。権限・単回 token・rollback は Core の実行を通す | yes/no・再使用、失敗バッチのモデル復元、録音中と保持テイク中の装置変更、SDK 回収失敗時の token 保持 |
+| 複合コマンド内の保存・置き換え | 保存の専用プロトコルを一般分類より先に使う。内側の保存も SDK 回収の対象にする。UI バッチ内の曲置き換え・別名保存は実行前に拒否し、個別の要求窓口を使う | 読み取りは保存フラグがあっても SDK 回収を待たない。独立 CLI の同期実行は維持 |
+| マクロ → UI dispatch → Session worker → 継続 | 実 Session が戻るまで後続と group 終端を保留する。別の曲へ替わった場合は明示して停止する。保存の fork も group を引き継ぐ | 読み取り前後の複数編集、一段 Undo、次の編集との分離、失敗時の末尾停止。実窓の `macro_version_list` でも SDK/editor と後続編集を確認する |
+| パレットの Read 問い合わせ・メニューの dry-run | Read や dry-run という属性だけでは I/O なしと扱わない。結果は worker からフォームへ戻す | `file.list` の実列挙を止めたパレット入口。`Song::check` の Session 分岐はメモリー上の引数検査だけ |
+| MIDI 学習の置き換え → unset / set | UI で unset した直後に Session を渡す継続も除去し、2 操作を所有者で行う | 同じ複合実行の権限・完了管理を使う。通常 UI から未監査の Session handler を呼ぶ場合は `Song::ensure_inline` が拒否する |
+| 更新 startup / 手動確認 → ready installer | release の受領を共通化し、不一致の ready と Ready phase を解除する | A の installer と B の回答を同時に受領しても、B の既存 Download ボタンに戻る |
+| cleanup read → キャッシュ受領 → 確認窓 | 一覧の受領と表示予約を分ける。入力・コマンド・別 popup の意図で予約を無効にする | read 保持中の Esc と別 popup。遅着した一覧が後の画面を置き換えない |
+| export.cancel の別プロセス向け分岐 | 自分のジョブの中止通知と、ディスク上の cancel 要求を分ける。窓から後者へ直接入る場合は拒否する | 通常の command は worker、窓の scan 中止は所有中ジョブのメモリー通知だけ |

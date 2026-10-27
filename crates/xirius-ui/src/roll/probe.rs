@@ -42,12 +42,14 @@ impl Bench {
         let c = s.roll_ctx(&g).expect("MIDI clip");
         let ids = super::ids_json(c.notes().iter().map(|n| &n.id));
         s.song
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
             .run("note.delete", json!({"ids":ids}))
             .expect("clear fixture");
         let notes: Vec<_> = (0..10_000)
             .map(|i| json!({"at":(i/48)*60,"pitch":40+i%48,"length":45,"velocity":90}))
             .collect();
         s.song
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
             .run(
                 "note.put",
                 json!({"clip":c.clip.id.to_string(),"notes":notes}),
@@ -203,6 +205,7 @@ pub fn shot(s: &mut Studio, g: &Geometry, stage: u8) {
                 xirius_core::model::CtrlKind::PitchBend,
                 xirius_core::model::CtrlKind::Cc(1),
             ] {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
                 s.song.run("cc.replace",json!({"clip":c.clip.id.to_string(),"lane":kind.key(),"from":0,"to":4000,"points":[{"tick":0,"value":0},{"tick":1000,"value":60},{"tick":3000,"value":100}]})).unwrap();
             }
             s.resized(g);

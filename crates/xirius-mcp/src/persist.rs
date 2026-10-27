@@ -27,6 +27,10 @@ pub fn load_selection(s: &mut Session) {
 
 pub fn store_selection(s: &Session) {
     let Some(dir) = s.dir() else { return };
+    #[cfg(feature = "test-io")]
+    if xirius_core::io_test::before("selection_write", dir).is_err() {
+        return;
+    }
     let file = dir.join(SELECTION_FILE);
     if s.state.selection.is_empty() {
         let _ = std::fs::remove_file(&file);

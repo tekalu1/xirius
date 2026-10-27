@@ -28,6 +28,31 @@ pub const NAMES: [&str; 7] = [
     "location.remove",
 ];
 
+/// One read/modify/write boundary shared by command and browser writer owners.
+/// Call only on a worker: a stopped transaction must never hold a UI callback.
+pub fn transaction<T, E>(file: &Path, operation: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
+    use std::sync::{Arc, Mutex, OnceLock, Weak};
+    type Lanes = std::collections::HashMap<PathBuf, Weak<Mutex<()>>>;
+    static LANES: OnceLock<Mutex<Lanes>> = OnceLock::new();
+    let key = std::path::absolute(file).unwrap_or_else(|_| file.to_owned());
+    let lane = {
+        let mut lanes = LANES
+            .get_or_init(Mutex::default)
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        lanes.retain(|_, lane| lane.strong_count() != 0);
+        if let Some(lane) = lanes.get(&key).and_then(Weak::upgrade) {
+            lane
+        } else {
+            let lane = Arc::new(Mutex::new(()));
+            lanes.insert(key, Arc::downgrade(&lane));
+            lane
+        }
+    };
+    let _guard = lane.lock().unwrap_or_else(|e| e.into_inner());
+    operation()
+}
+
 /// A folder with a tab of its own.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Place {
@@ -267,6 +292,16 @@ fn listed(prefs: &Prefs, song: Option<&Path>) -> Value {
 
 /// Runs one of [`NAMES`] on the file at `file`; `song` is the song's folder.
 pub fn run(
+    file: &Path,
+    song: Option<&Path>,
+    name: &str,
+    args: &Args,
+    dry: bool,
+) -> CmdResult<Output> {
+    transaction(file, || run_locked(file, song, name, args, dry))
+}
+
+fn run_locked(
     file: &Path,
     song: Option<&Path>,
     name: &str,

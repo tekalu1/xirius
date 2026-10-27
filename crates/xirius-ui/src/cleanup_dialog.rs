@@ -260,7 +260,12 @@ impl Studio {
         if self.view_read.cleanup.job.is_some() {
             return false;
         }
-        if self.view_read.cleanup.want_open {
+        let wanted = std::mem::take(&mut self.view_read.cleanup.want_open);
+        if wanted
+            && self.view_read.cleanup.popup == self.popup.as_ref().map(|p| p.intent_id)
+            && self.palette.is_none()
+            && self.settings.is_none()
+        {
             self.view_read.cleanup.want_open = false;
             self.show_cleanup(result);
         } else if self.ctx.is_some() {
@@ -278,6 +283,7 @@ impl Studio {
                 return self.show_cleanup(result);
             }
             self.view_read.cleanup.want_open = true;
+            self.view_read.cleanup.popup = self.popup.as_ref().map(|p| p.intent_id);
             return true;
         }
         let result = self.cleanup_view();
@@ -311,7 +317,8 @@ pub(crate) struct Read {
     pub(crate) job: Option<crate::ancillary_io::Ticket<View>>,
     result: Option<Result<View, String>>,
     at: Option<std::time::Instant>,
-    want_open: bool,
+    pub(crate) want_open: bool,
+    popup: Option<u64>,
 }
 
 fn read_view(
@@ -325,6 +332,7 @@ fn read_view(
         uses: Some(uses),
         lane: None,
     };
+    // design-lint: allow(ui-blocking-io) PRJ-031 review: worker-only browser transaction/read helper or cleanup read_view; UI only submits and polls.
     let found = xirius_session::cleanup::unused(&project, &dir, own).map_err(|e| e.to_string())?;
     if found.files.is_empty() {
         return Err(NO_UNUSED.to_string());
@@ -357,6 +365,7 @@ impl Studio {
             Act::Cancel => true,
             Act::Trash => {
                 let ran = self
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     .arrange_run("project.cleanup", serde_json::json!({}))
                     .is_some();
                 self.rebuild(g);

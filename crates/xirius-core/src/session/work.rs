@@ -820,6 +820,61 @@ impl Session {
             .any(|d| d.token == token && is_open(&d.command))
     }
 
+    /// Read-only preflight for UI device guards and state capture. Never consumes
+    /// approval tokens; execution still passes through run/gate/decide/run_batch.
+    pub fn execution_targets(
+        &self,
+        name: &str,
+        raw: &Map<String, Value>,
+    ) -> Vec<(String, Map<String, Value>)> {
+        let name = self.registry.canonical(name);
+        if name == "ai.decide" {
+            let Some(def) = self.registry.get(name) else {
+                return Vec::new();
+            };
+            let Ok(spelled) = Registry::spelled(def, raw) else {
+                return Vec::new();
+            };
+            if spelled.get("answer").and_then(Value::as_str) != Some("yes") {
+                return Vec::new();
+            }
+            let Some(d) = self.ai_work.pending.iter().find(|d| {
+                Some(d.token.as_str()) == spelled.get("token").and_then(Value::as_str)
+                    && now_ms() <= d.expires_ms
+            }) else {
+                return Vec::new();
+            };
+            return d
+                .args
+                .as_object()
+                .map_or_else(Vec::new, |a| self.execution_targets(&d.command, a));
+        }
+        if name == "ai.batch" {
+            return raw
+                .get("commands")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|step| {
+                    let name = step.get("command").or_else(|| step.get("name"))?.as_str()?;
+                    let name = self.registry.canonical(name);
+                    // Core rejects nested AI operations; never recurse into an invalid batch.
+                    if name.starts_with("ai.") {
+                        return None;
+                    }
+                    Some((
+                        name.to_owned(),
+                        step.get("args")
+                            .and_then(Value::as_object)
+                            .cloned()
+                            .unwrap_or_default(),
+                    ))
+                })
+                .collect();
+        }
+        vec![(name.to_owned(), raw.clone())]
+    }
+
     /// Identify saves (including an accepted pending approval) without consuming
     /// a token or performing I/O. The inner path is only present for Save As.
     /// Execution still uses `run`, with all its permission and one-use checks.

@@ -49,7 +49,10 @@ impl Gate {
         let held = release.clone();
         let (tx, entered) = mpsc::channel();
         let once = std::sync::atomic::AtomicBool::new(false);
-        let wanted = operation();
+        let wanted: String = match operation().as_str() {
+            "macro_version_list" => "store_version_list".into(),
+            other => other.into(),
+        };
         let ui = std::thread::current().id();
         let observe = xirius_core::io_test::observe(Arc::new(move |op, _| {
             if op == wanted && !once.swap(true, std::sync::atomic::Ordering::SeqCst) {
@@ -247,6 +250,11 @@ pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
             p.gate = Some(Gate::new());
             let track = s.project().tracks.values().find(|t| !t.inserts.is_empty()).unwrap().id;
             match operation().as_str() {
+                "macro_version_list" => {
+                    s.song.settings().lock().unwrap().macros.set("Async fixture",vec!["version.list".into(),"track.add.audio --name MacroProbe".into()]);
+                    let g=s.geometry(1200.0,800.0);
+                    s.run_macro(&g,"Async fixture");
+                }
                 "log_write" => { crate::ancillary_io::log!("PRJ-031 log fixture"); }
                 "view_read" => { s.read_view(p.fixture.as_ref().unwrap().dir.join("view.json")); }
                 "version_list" => { s.song.invalidate_file_reads(); s.song.versions(); }
@@ -351,6 +359,10 @@ pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
         if p.phase == 5 {
             let mut s = s.borrow_mut();
             if s.transport.host().unwrap().swap_pending() || s.transport.take.is_some() || s.saving.is_some() { return false; }
+            if operation()=="macro_version_list" {
+                if s.macro_run.is_some() { return false; }
+                assert!(s.project().tracks.values().any(|t|t.name=="MacroProbe"));
+            }
             if operation() == "live_midi_open" && s.live_midi.input.is_none() { return false; }
             if operation() == "live_midi_close" && s.live_midi.retiring.iter().any(|job| !job.finished()) { return false; }
             assert!(s.preparing.is_none());

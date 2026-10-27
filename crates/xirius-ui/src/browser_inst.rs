@@ -55,6 +55,7 @@ impl Studio {
         let Some(pick) = self.lib_resolve(name) else {
             return false;
         };
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         let Some(data) = self.arrange_run(
             "track.add.with-instrument",
             json!({ "instrument": pick.name, "format": pick.format, "uid": pick.uid }),

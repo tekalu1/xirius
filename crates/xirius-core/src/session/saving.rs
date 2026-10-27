@@ -98,6 +98,13 @@ pub(crate) fn copy_file(from: &Path, to: &Path) -> CmdResult<()> {
 }
 
 impl Session {
+    /// Display only: retain names and history, but reject every mutation/save.
+    /// Worker forks use save_preview instead and remain executable.
+    pub fn presentation_snapshot(&self) -> Session {
+        let mut preview = self.save_preview();
+        preview.unavailable = true;
+        preview
+    }
     /// A presentation copy with no writer, locks or extensions. The screen must not edit it.
     /// Dropping it cannot remove the real session's marker.
     pub fn save_preview(&self) -> Session {
@@ -105,6 +112,8 @@ impl Session {
         preview.unavailable = self.unavailable;
         preview.registry = self.registry.clone();
         preview.hist = self.hist.clone();
+        preview.group = self.group;
+        preview.turn = self.turn;
         preview.current = self.current.clone();
         preview.saved = self.saved.clone();
         preview.state = self.state.clone();
@@ -245,6 +254,37 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_save_as_in_an_open_group_keeps_edits_on_both_sides_in_one_undo() {
+        let root = tempfile::tempdir().unwrap();
+        let mut session = Session::new("group");
+        session.save_as(root.path().join("original")).unwrap();
+        let before = session.project_arc();
+        session.begin_group();
+        session
+            .run_value(
+                "track.add.audio",
+                json!({"name":"Before"}),
+                &RunOptions::human(),
+            )
+            .unwrap();
+        session
+            .save_as_cancellable(&root.path().join("copy"), Arc::new(SaveProgress::default()))
+            .unwrap();
+        session
+            .run_value(
+                "track.add.audio",
+                json!({"name":"After"}),
+                &RunOptions::human(),
+            )
+            .unwrap();
+        session.end_group();
+        session.undo(1).unwrap();
+        assert_eq!(session.project_arc().tracks.len(), before.tracks.len());
+        assert!(root.path().join("original/project.json").is_file());
+        assert!(root.path().join("copy/project.json").is_file());
+    }
 
     fn imported(session: &mut Session, file: &Path) {
         session

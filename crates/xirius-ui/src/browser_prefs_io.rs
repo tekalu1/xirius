@@ -33,6 +33,7 @@ impl crate::browser::Browser {
             .prefs_io
             .base
             .replace(prefs.clone())
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: first_run(None) constructs memory defaults without inspecting any home directory.
             .unwrap_or_else(|| Prefs::first_run(None));
         self.prefs_io.failed_save = false;
         self.prefs_io.save = self
@@ -148,6 +149,7 @@ impl crate::browser::Browser {
             )
             .map_err(|e| e.to_string())?;
             match work {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: worker-only browser transaction/read helper or cleanup read_view; UI only submits and polls.
                 Action::Load => places::load(path.as_deref().expect("preference path")),
                 Action::Add(path) => {
                     let mut prefs = prefs;

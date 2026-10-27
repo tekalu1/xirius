@@ -110,6 +110,8 @@ fn path_text(p: &Path) -> String {
 }
 
 pub struct Song {
+    #[cfg(test)]
+    pub(crate) places_file: Option<PathBuf>,
     files: std::cell::RefCell<files::Reads>,
     windowed: bool,
     session: Session,
@@ -225,7 +227,7 @@ impl Song {
     }
 
     pub(crate) fn take_session_for_save(&mut self) -> Session {
-        let preview = self.session.save_preview();
+        let preview = self.session.presentation_snapshot();
         std::mem::replace(&mut self.session, preview)
     }
 
@@ -250,6 +252,7 @@ impl Song {
 
     fn toggle(&mut self, command: &str, id: TrackId) -> Result<(), String> {
         self.session
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: common Song boundary; window Session handlers are refused except reviewed memory/cache operations; worker forks use Session directly.
             .run_value(
                 command,
                 json!({ "ids": [id.to_string()] }),
@@ -261,10 +264,43 @@ impl Song {
 
     /// Runs one core command as a person (one history step) and returns its data.
     pub fn run(&mut self, command: &str, args: Value) -> Result<Value, String> {
+        self.ensure_inline(command, &args)?;
         self.session
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: common Song boundary; window Session handlers are refused except reviewed memory/cache operations; worker forks use Session directly.
             .run_value(command, args, &RunOptions::human())
             .map(|r| r.data)
             .map_err(|e| e.to_string())
+    }
+
+    /// Fail closed at the common helper, including future Session extensions.
+    /// Normal I/O commands execute against Session directly on their owner.
+    fn ensure_inline(&self, command: &str, args: &Value) -> Result<(), String> {
+        let name = self.registry().canonical(command);
+        if self.windowed
+            && self
+                .registry()
+                .get(name)
+                .is_some_and(|d| matches!(d.handler, xirius_core::command::Handler::Session))
+        {
+            let cached = matches!(
+                name,
+                "ai.permission.get"
+                    | "ai.permission.set"
+                    | "export.open"
+                    | "export.status"
+                    | "export.cancel"
+                    | "track.preset.list"
+                    | "view.snap"
+                    | "view.groove.import"
+                    | "tool.draw.shape"
+                    | "tool.alt"
+            ) || crate::io_command::inline_refusal(name, args)
+                || (name == "export.preview" && (args["stop"] == true || args["status"] == true));
+            if !cached {
+                return Err("この操作は曲の所有者の処理が必要です".into());
+            }
+        }
+        Ok(())
     }
 
     /// Stops the recording on `host` and puts its takes into the song as one
@@ -318,6 +354,14 @@ impl Song {
         self.session.registry()
     }
 
+    pub(crate) fn places_path(&self) -> PathBuf {
+        #[cfg(test)]
+        if let Some(file) = &self.places_file {
+            return file.clone();
+        }
+        xirius_session::places::path()
+    }
+
     /// Whether a person could run the command with these arguments now,
     /// without running it (`dry_run`): `Ok(false)` when it would change
     /// nothing. The error's code tells a value that is missing
@@ -327,8 +371,20 @@ impl Song {
         command: &str,
         mut args: Value,
     ) -> Result<bool, xirius_core::error::CmdError> {
+        if self.windowed
+            && let Some(def) = self.registry().get(command)
+            && matches!(def.handler, xirius_core::command::Handler::Session)
+        {
+            // A dry run of a Session extension can still read files. Menus
+            // validate syntax here; the owner validates disk state on execution.
+            let raw = args.as_object().cloned().unwrap_or_default();
+            let spelled = xirius_core::Registry::spelled(def, &raw)?;
+            self.registry().normalize(def, &spelled)?;
+            return Ok(true);
+        }
         args["dry_run"] = json!(true);
         self.session
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: common Song boundary; window Session handlers are refused except reviewed memory/cache operations; worker forks use Session directly.
             .run_value(command, args, &RunOptions::human())
             .map(|r| !r.changes.is_empty())
     }
@@ -375,7 +431,9 @@ impl Song {
 
     /// Runs a core command as the person, whatever it returns.
     fn run_human(&mut self, command: &str, args: Value) -> Result<(), String> {
+        self.ensure_inline(command, &args)?;
         self.session
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: common Song boundary; window Session handlers are refused except reviewed memory/cache operations; worker forks use Session directly.
             .run_value(command, args, &RunOptions::human())
             .map(|_| ())
             .map_err(|e| e.to_string())
@@ -955,7 +1013,9 @@ impl Song {
                 )),
             )
         });
+        let places_file = test_presets_dir().map(|p| p.join("browser.json"));
         let extras = ExtExtras {
+            places_file: places_file.clone(),
             io_settings: Some(settings.clone()),
             midi: None,
             midi_out: None,
@@ -984,6 +1044,8 @@ impl Song {
         // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let windowed = io.lock().unwrap_or_else(|e| e.into_inner()).is_windowed();
         Song {
+            #[cfg(test)]
+            places_file,
             files: Default::default(),
             windowed,
             session,
@@ -1031,7 +1093,9 @@ impl Song {
     /// Runs one settings command as a person. The settings are not steps of
     /// the song's history. Returns the command's message.
     pub fn set(&mut self, command: &str, args: Value) -> Result<String, String> {
+        self.ensure_inline(command, &args)?;
         self.session
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: common Song boundary; window Session handlers are refused except reviewed memory/cache operations; worker forks use Session directly.
             .run_value(command, args, &RunOptions::human())
             .map(|r| r.message)
             .map_err(|e| e.to_string())
@@ -1068,6 +1132,7 @@ struct Builder {
 
 impl Builder {
     fn run(&mut self, command: &str, args: Value) -> Value {
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: sample/bootstrap builder on a private in-memory Session, before live callbacks.
         match self.session.run_value(command, args, &RunOptions::human()) {
             Ok(r) => r.data,
             Err(e) => panic!("sample song: {command} failed: {e}"),

@@ -3,12 +3,19 @@
 //! (including MCP) reports successful persistence before the worker returns.
 use crate::studio::Studio;
 
+/// Refusal only removes an in-memory pending token; no inner command executes.
+pub(crate) fn inline_refusal(name: &str, args: &serde_json::Value) -> bool {
+    name == "ai.decide" && args.get("answer").and_then(serde_json::Value::as_str) == Some("no")
+}
+
 pub(crate) fn handles(name: &str) -> bool {
     name != "macro.run"
         && (matches!(
             name,
             "plugin.rescan" | "plugin.scan.status" | "browser.plugin.list" | "project.cleanup"
-        ) || xirius_session::track_preset::NAMES.contains(&name)
+        ) || xirius_session::places::NAMES.contains(&name)
+            || name.starts_with("ai.")
+            || xirius_session::track_preset::NAMES.contains(&name)
             || xirius_session::preset::NAMES.contains(&name)
             || xirius_session::xpreset::NAMES.contains(&name)
             || xirius_prefs::is_settings_command(name)
@@ -37,6 +44,8 @@ pub(crate) fn captures(name: &str) -> bool {
             | "track.preset.update"
             | "preset.save"
             | "version.save"
+            | "project.save"
+            | "project.save-as"
     )
 }
 
@@ -60,8 +69,28 @@ impl Studio {
         name: &str,
         raw: &serde_json::Map<String, serde_json::Value>,
     ) -> Option<String> {
+        if name == "ai.batch"
+            && self
+                .song
+                .session()
+                .execution_targets(name, raw)
+                .iter()
+                .any(|(name, _)| {
+                    matches!(
+                        name.as_str(),
+                        "project.open" | "project.new" | "version.open" | "project.save-as"
+                    )
+                })
+        {
+            return Some("曲の置き換えと別名保存には個別のコマンドが必要です".into());
+        }
         ((self.transport.recording || self.transport.take.is_some())
-            && xirius_prefs::targets_audio_device(name, raw))
+            && self
+                .song
+                .session()
+                .execution_targets(name, raw)
+                .iter()
+                .any(|(name, raw)| xirius_prefs::targets_audio_device(name, raw)))
         .then(|| "録音またはテイクの配置が未完了のため、オーディオデバイスを変更できません".into())
     }
     pub(crate) fn io_command_finished(
@@ -208,31 +237,39 @@ mod tests {
                 serde_json::json!({"key":"audio."}),
                 serde_json::json!({}),
             ] {
-                s.error = None;
-                s.run_command("prefs.reset", raw.clone());
-                assert!(s.saving.is_none() && s.error.is_some());
-                let (bridge, mut jobs) =
-                    xirius_mcp::bridge(xirius_session::commands::shared_registry());
-                let call = std::thread::spawn(move || {
-                    bridge.run(
-                        "prefs.reset",
-                        raw.as_object().unwrap(),
-                        &xirius_core::session::RunOptions::human(),
-                        false,
-                    )
-                });
-                let end = std::time::Instant::now() + Duration::from_secs(20);
-                let job = loop {
-                    if let Ok(job) = jobs.try_recv() {
-                        break job;
-                    }
-                    assert!(std::time::Instant::now() < end);
-                    std::thread::yield_now();
-                };
-                s.ai_job(job);
-                assert!(call.join().unwrap().is_err());
-                assert_eq!(s.song.settings().lock().unwrap().prefs.values, before);
-                assert_eq!(std::fs::read(&file).unwrap(), bytes);
+                for (command, raw) in [
+                    ("prefs.reset", raw.clone()),
+                    (
+                        "ai.batch",
+                        serde_json::json!({"commands":[{"command":"prefs.reset","args":raw}]}),
+                    ),
+                ] {
+                    s.error = None;
+                    s.run_command(command, raw.clone());
+                    assert!(s.saving.is_none() && s.error.is_some());
+                    let (bridge, mut jobs) =
+                        xirius_mcp::bridge(xirius_session::commands::shared_registry());
+                    let call = std::thread::spawn(move || {
+                        bridge.run(
+                            command,
+                            raw.as_object().unwrap(),
+                            &xirius_core::session::RunOptions::human(),
+                            false,
+                        )
+                    });
+                    let end = std::time::Instant::now() + Duration::from_secs(20);
+                    let job = loop {
+                        if let Ok(job) = jobs.try_recv() {
+                            break job;
+                        }
+                        assert!(std::time::Instant::now() < end);
+                        std::thread::yield_now();
+                    };
+                    s.ai_job(job);
+                    assert!(call.join().unwrap().is_err());
+                    assert_eq!(s.song.settings().lock().unwrap().prefs.values, before);
+                    assert_eq!(std::fs::read(&file).unwrap(), bytes);
+                }
             }
         }
     }

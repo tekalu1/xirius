@@ -18,6 +18,7 @@ impl Studio {
         }
         let file = d.path.to_string_lossy().to_string();
         self.browser.file_drag = None;
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         self.arrange_run("clip.replace", json!({"id":clip.to_string(),"file":file}));
         true
     }

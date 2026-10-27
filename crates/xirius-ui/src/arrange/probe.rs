@@ -82,6 +82,7 @@ pub(crate) fn two_lanes(s: &mut Studio, g: &Geometry, name: &str) -> TrackId {
     let ppq = i64::from(s.project().ppq);
     let bar = ppq * 4;
     for (at, v) in [(4 * bar, -24.0), (6 * bar, 0.0), (8 * bar, -18.0)] {
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         s.arrange_run(
             "auto.point.add",
             json!({ "track": tid, "target": "volume", "at": at, "value": v }),
@@ -93,11 +94,13 @@ pub(crate) fn two_lanes(s: &mut Studio, g: &Geometry, name: &str) -> TrackId {
         crate::popup::Action::AutomationTarget(t, None, "pan".into()),
     );
     for (at, v) in [(4 * bar, -0.6), (8 * bar, 0.5)] {
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         s.arrange_run(
             "auto.point.add",
             json!({ "track": tid, "target": "pan", "at": at, "value": v }),
         );
     }
+    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
     s.arrange_run("auto.mode", json!({ "ids": [tid], "mode": "read" }));
     s.rebuild(g);
     t
@@ -130,6 +133,7 @@ pub fn shot(s: &mut Studio, g: &Geometry, stage: u8) {
         // The loop's end dragged four bars later.
         2 => {
             let bar = i64::from(s.project().ppq) * 4;
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             s.arrange_run("loop.set", json!({ "start": 4 * bar, "end": 8 * bar }));
             let x = s.tick_x(g, 8 * bar);
             let y = g.ruler.y + Arrange::LOOP_H / 2.0;
@@ -179,6 +183,7 @@ pub fn shot(s: &mut Studio, g: &Geometry, stage: u8) {
         // A tempo change at bar 9 dragged up.
         8 => {
             let bar = i64::from(s.project().ppq) * 4;
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             s.arrange_run("tempo.set", json!({ "bpm": 128.0, "at": 8 * bar }));
             let p = s.project();
             let i = p

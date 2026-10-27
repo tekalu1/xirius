@@ -179,6 +179,7 @@ impl Studio {
     }
 
     fn roll_view_run(&mut self, g: &Geometry, args: serde_json::Value) -> bool {
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         if self.arrange_run("roll.view", args).is_none() {
             return false;
         }
@@ -226,6 +227,7 @@ impl Studio {
     /// The switch "入力の長さ" (or the bar's chip, which is its way back) was pressed.
     pub(crate) fn draw_length_choose(&mut self, last: bool) -> bool {
         let value = if last { "last" } else { "inspector" };
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         self.arrange_run(
             "prefs.set",
             serde_json::json!({ "key": "edit.draw.length", "value": value }),
@@ -271,6 +273,7 @@ impl Studio {
                 .as_array()
                 .and_then(|notes| notes.iter().find_map(|n| n["velocity"].as_u64()))
                 .map(|v| v as u8);
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
             match self.song.run(edit.command, args) {
                 Ok(data) => {
                     self.error = None;

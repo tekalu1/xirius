@@ -48,7 +48,15 @@ impl Studio {
                 went_down: false,
             };
         }
-        let changed = self.poll_finished_take()
+        let continued = self.poll_macro();
+        if self.saving.is_some() || self.opening.is_some() {
+            return Idle {
+                changed: true,
+                went_down: false,
+            };
+        }
+        let changed = continued
+            | self.poll_finished_take()
             | self.poll_recent_keep()
             | self.poll_plugins()
             | self.poll_perf()

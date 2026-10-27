@@ -60,6 +60,7 @@ impl Studio {
                 .find(|n| n.id != clip && n.start == end)
         {
             let ids = json!([clip.to_string(), next.id.to_string()]);
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             if let Some(data) = self.arrange_run("clip.join", json!({"ids":ids})) {
                 self.select_made(&data);
             }
@@ -68,6 +69,7 @@ impl Studio {
         let at = self.snap_tick(d.tick, false);
         if at > c.start && at < end {
             if let Some(data) =
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.arrange_run("clip.split", json!({"ids":[clip.to_string()],"at":at}))
             {
                 self.select_made(&data);
@@ -106,6 +108,7 @@ impl Studio {
                 .map(|(_, c)| c.to_string())
                 .collect();
             if !ids.is_empty() {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.arrange_run(
                     if d.tool == Tool::Eraser {
                         "clip.delete"
@@ -122,6 +125,7 @@ impl Studio {
             && matches!(d.spot, Spot::Band)
             && let Some(plan) = self.draw_section_plan(g, d)
             && let Some((command, args)) = plan.command
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             && let Some(data) = self.arrange_run(command, args)
         {
             self.select_section_made(&data);
@@ -130,6 +134,7 @@ impl Studio {
         if d.tool == Tool::Draw && matches!(d.spot, Spot::Space(_)) {
             if let Some(plan) = self.draw_part_plan(g, d)
                 && let Some((command, args)) = plan.command
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 && let Some(data) = self.arrange_run(command, args)
                 && let Some(id) = data["id"].as_str()
             {

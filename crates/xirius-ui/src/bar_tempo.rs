@@ -91,6 +91,7 @@ impl Studio {
         if (bpm - now).abs() < 1e-9 {
             return false;
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         self.run_command("tempo.set", json!({ "bpm": bpm, "at": at }))
     }
 

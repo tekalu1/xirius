@@ -23,6 +23,7 @@ pub(crate) enum Leave {
 
 pub(crate) struct Saving {
     pub(crate) device_entry: Option<Geometry>,
+    pub(crate) palette_query: Option<&'static str>,
     operation: Option<&'static str>,
     mcp: Option<McpSave>,
     command: Option<SaveCommand>,
@@ -40,6 +41,7 @@ pub(crate) struct Saving {
 struct McpSave {
     job: xirius_mcp::Job,
     result: Option<RunResult>,
+    before: crate::ai::Before,
 }
 type SaveCommand = (
     String,
@@ -242,6 +244,7 @@ impl Studio {
                 self.dawproject_export_ready(&path);
             }
             Leave::Version(name) => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
                 self.command(|song| song.save_version(&name));
             }
         }
@@ -267,7 +270,18 @@ impl Studio {
                     .flatten()
             })
             .flatten();
-        self.launch_save_with_capture(target, None, true, Some(McpSave { job, result }), None);
+        let before = self.ai_before();
+        self.launch_save_with_capture(
+            target,
+            None,
+            true,
+            Some(McpSave {
+                job,
+                result,
+                before,
+            }),
+            None,
+        );
     }
 
     pub(crate) fn save_command_on_worker(
@@ -307,6 +321,7 @@ impl Studio {
         // the current popover, or claim the user's song has been saved.
         self.saving = Some(Saving {
             device_entry: None,
+            palette_query: None,
             operation: Some("保存しています"),
             mcp: None,
             command: Some(command),
@@ -335,10 +350,16 @@ impl Studio {
             ui.toast = None;
         }
         let popup = self.popup.take();
+        let capture = self
+            .song
+            .session()
+            .execution_targets(name, &raw)
+            .iter()
+            .any(|(name, _)| crate::io_command::captures(name));
         self.launch_save_with_capture(
             None,
             None,
-            crate::io_command::captures(name),
+            capture,
             None,
             Some((name.into(), raw, RunOptions::human(), false)),
         );
@@ -355,12 +376,31 @@ impl Studio {
             ui.toast = None;
         }
         let name = job.command.clone();
-        let capture = job.save || crate::io_command::captures(&name);
+        let before = self.ai_before();
+        let may_persist = job.save
+            && (!job.opts.author.is_ai()
+                || self.song.session().ai_permission() == xirius_core::AiPermission::Save)
+            && self
+                .song
+                .registry()
+                .get(&name)
+                .is_some_and(|d| d.risk != xirius_core::Risk::Read);
+        let capture = may_persist
+            || self
+                .song
+                .session()
+                .execution_targets(&name, &job.raw)
+                .iter()
+                .any(|(name, _)| crate::io_command::captures(name));
         self.launch_save_with_capture(
             None,
             None,
             capture,
-            Some(McpSave { job, result: None }),
+            Some(McpSave {
+                job,
+                result: None,
+                before,
+            }),
             None,
         );
         self.saving.as_mut().unwrap().operation = Some(crate::io_command::label(&name));
@@ -384,6 +424,7 @@ impl Studio {
         if self.transport.host().is_some() {
             self.launch_save(None, Some(Leave::Version(name)));
         } else {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
             self.command(|song| song.save_version(&name));
             if self.error.is_none()
                 && let Some(popup) = &mut self.popup
@@ -448,6 +489,7 @@ impl Studio {
         };
         self.saving = Some(Saving {
             device_entry: None,
+            palette_query: None,
             operation: None,
             mcp,
             command,
@@ -470,6 +512,16 @@ impl Studio {
         worker_progress: Arc<SaveProgress>,
         command: Option<SaveCommand>,
     ) -> JoinHandle<(Session, CmdResult<Option<RunResult>>)> {
+        let places_barrier = command
+            .as_ref()
+            .filter(|(name, raw, _, _)| {
+                self.song
+                    .session()
+                    .execution_targets(name, raw)
+                    .iter()
+                    .any(|(name, _)| xirius_session::places::NAMES.contains(&name.as_str()))
+            })
+            .map(|_| self.song.places_path());
         let mut session = self.song.take_session_for_save();
         let delay = self.save_test_delay;
         #[cfg(test)]
@@ -478,6 +530,9 @@ impl Studio {
         let failing = false;
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if let Some(file) = &places_barrier {
+                    crate::browser_prefs_save::wait_accepted(file);
+                }
                 if !delay.is_zero() {
                     std::thread::sleep(delay);
                 }
@@ -527,6 +582,7 @@ impl Studio {
         if let Work::States(pull) = &save.work {
             if save.progress.cancelled() {
                 pull.cancel();
+                self.fail_macro("マクロの操作を中止しました".into());
                 if let Some(mcp) = self.saving.take().unwrap().mcp {
                     mcp.job
                         .answer(Err(CmdError::conflict("保存を中止しました")));
@@ -561,6 +617,7 @@ impl Studio {
             };
             let mut save = self.saving.take().unwrap();
             if let Err(error) = collected {
+                self.fail_macro(error.to_string());
                 if let Work::States(pull) = &save.work {
                     pull.cancel();
                 }
@@ -617,6 +674,12 @@ impl Studio {
             self.finish_take();
         }
         let failures = self.song.session().take_write_failures();
+        if let Err(error) = &result {
+            self.fail_macro(error.to_string());
+        }
+        if let Some(error) = failures.first() {
+            self.fail_macro(error.to_string());
+        }
         for failure in &failures {
             self.save_failed(failure);
         }
@@ -628,9 +691,19 @@ impl Studio {
                     .or(mcp.result)
                     .expect("MCP save returns its command result")),
             };
+            self.ai_complete(&mcp.job.command, &reply, mcp.before);
             mcp.job.answer(reply);
         }
         if let Some((name, raw, _, _)) = operation_command {
+            if let Some(command) = save.palette_query {
+                self.finish_palette_query(
+                    command,
+                    result
+                        .map(|r| r.expect("query result").data)
+                        .map_err(|e| e.to_string()),
+                );
+                return true;
+            }
             if name == "@keep-draft" {
                 match result {
                     Ok(_) => {

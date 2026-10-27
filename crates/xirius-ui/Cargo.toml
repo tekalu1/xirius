@@ -12,7 +12,7 @@ publish.workspace = true
 workspace = true
 
 [features]
-loading-probe = ["xirius-core/test-io", "xirius-session/test-io"]
+loading-probe = ["xirius-core/test-io", "xirius-session/test-io", "xirius-mcp/test-io"]
 
 [dependencies]
 # Pinned to the gpui-pre snapshot (zed@279fe07), the same one gpui-kit 0.7.x
@@ -72,6 +72,7 @@ core-foundation-sys = "0.8"
 embed-resource = "3"
 
 [dev-dependencies]
+xirius-mcp = { path = "../xirius-mcp", features = ["test-io"] }
 xirius-session = { path = "../xirius-session", features = ["test-io"] }
 xirius-core = { path = "../xirius-core", features = ["test-io"] }
 # A test's folder under the temp folder, removed when dropped even if the test fails (ARC-028).

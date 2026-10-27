@@ -85,6 +85,7 @@ impl Studio {
             "enter" | "tab" => {
                 let name = self.input_map.name.take().expect("editing");
                 if !name.field.value.trim().is_empty() {
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     self.run_command(
                         "track.rename",
                         json!({"id":name.track.to_string(),"name":name.field.value.trim()}),

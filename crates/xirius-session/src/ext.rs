@@ -92,6 +92,8 @@ pub type MidiMaker = Box<dyn FnMut() -> Box<dyn MidiInput> + Send>;
 /// What a session extension is given besides [`ExtConfig`] ([`SessionExt::with`]).
 #[derive(Default)]
 pub struct ExtExtras {
+    /// Browser preference file for embedded owners; None uses places::path().
+    pub places_file: Option<PathBuf>,
     pub io_settings: Option<xirius_prefs::Shared>,
     /// Where `record.start` takes MIDI from; `None`: armed instrument tracks are not recorded.
     pub midi: Option<MidiMaker>,
@@ -333,6 +335,7 @@ fn watch(job: Arc<Job>) {
 }
 
 pub struct SessionExt {
+    places_file: Option<PathBuf>,
     disk_cache: disk_cache::Cache,
     preset_cache: disk_cache::Presets,
     io_settings: Option<xirius_prefs::Shared>,
@@ -513,6 +516,7 @@ impl SessionExt {
     /// Like [`SessionExt::new`], with a MIDI input to record from.
     pub fn with(config: ExtConfig, extras: ExtExtras) -> SessionExt {
         SessionExt {
+            places_file: extras.places_file,
             disk_cache: Default::default(),
             preset_cache: Default::default(),
             io_settings: extras.io_settings,
@@ -997,6 +1001,11 @@ impl SessionExt {
     fn cancel(&self, cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Output> {
         let id = args.str("job")?;
         let Some(j) = self.job(id) else {
+            if crate::host::on_window_thread() {
+                return Err(CmdError::conflict(
+                    "別のプロセスの停止には所有者の処理が必要です",
+                ));
+            }
             // Another process's export: it looks for the cancel file while it renders.
             let v = self.record(cx, id)?;
             if v["state"] != "running" {
@@ -1915,7 +1924,13 @@ impl Extension for SessionExt {
                 self.pending.extend(plan.edits);
                 Ok(plan.output)
             }
-            n if places::NAMES.contains(&n) => places::run(&places::path(), cx.dir, n, args, dry),
+            n if places::NAMES.contains(&n) => places::run(
+                &self.places_file.clone().unwrap_or_else(places::path),
+                cx.dir,
+                n,
+                args,
+                dry,
+            ),
             n if reveal::NAMES.contains(&n) => reveal::run(cx.dir, args, dry),
             n if crate::file_ops::NAMES.contains(&n) => {
                 let plan = crate::file_ops::run(cx, n, args, dry, &self.trash)?;

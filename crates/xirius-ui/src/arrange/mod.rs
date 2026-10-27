@@ -1043,6 +1043,7 @@ impl Studio {
                 index,
             } => {
                 if deletes {
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     self.arrange_run(
                         "auto.point.delete",
                         json!({ "track": track.to_string(), "target": target.to_string(),
@@ -1095,6 +1096,7 @@ impl Studio {
                         .clamp(0.0, 1.0);
                 let value = lane_value(target, f64::from(n));
                 let at = self.snap_tick(tick, mods.shift);
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 let added = self.arrange_run(
                     "auto.point.add",
                     json!({ "track": track.to_string(), "target": target.to_string(),
@@ -1144,6 +1146,7 @@ impl Studio {
                     && erase
                     && !first
                 {
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     self.arrange_run("tempo.delete", json!({ "id": id.to_string() }));
                     return true;
                 }
@@ -1155,6 +1158,7 @@ impl Studio {
                 } else if self.arrange.clicks >= 2 {
                     let at = self.snap_tick(drag.tick, drag.mods.shift).max(0);
                     let bpm = self.tempo_at_y(g, y);
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     self.arrange_run("tempo.set", json!({ "at": at, "bpm": bpm }));
                     return true;
                 }
@@ -1173,6 +1177,7 @@ impl Studio {
         match d.tool {
             Tool::Cut => {
                 let at = self.snap_tick(d.tick, d.mods.shift);
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.arrange_run("clip.split", json!({ "ids": ids, "at": at }));
                 return false;
             }
@@ -1349,6 +1354,7 @@ impl Studio {
             self.arrange.ranges.push((start, end));
         }
         if let Some((command, args)) = plan.command {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             let data = self.arrange_run(command, args);
             if let Some(data) = data
                 && matches!(command, "clip.duplicate" | "clip.split")
@@ -1441,6 +1447,7 @@ impl Studio {
                     .and_then(|t| t.automation.iter().find(|l| l.target == *target))
                     .and_then(|l| l.curve_at(at as f64));
                 if let Some(value) = value {
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     self.arrange_run(
                         "auto.point.add",
                         json!({ "track": track.to_string(), "target": target.to_string(),
@@ -1478,15 +1485,11 @@ impl Studio {
 
     /// Runs one core command (one history step).
     pub(crate) fn arrange_run(&mut self, command: &str, args: Value) -> Option<Value> {
-        if self.sound_preparing() {
+        if self.macro_run.is_some() && !self.macro_stepping {
             return None;
         }
-        if self.transport.is_windowed() && crate::io_command::handles(command) {
-            if self.input_blocked() {
-                return None;
-            }
-            self.io_command_on_worker(command, args.as_object().cloned().unwrap_or_default());
-            return Some(json!({}));
+        if self.input_blocked() {
+            return None;
         }
         if self.transport.is_windowed()
             && let Some(raw) = args.as_object()
@@ -1498,6 +1501,17 @@ impl Studio {
             self.save_command_on_worker(command, raw.clone());
             return Some(json!({}));
         }
+        if self.transport.is_windowed()
+            && crate::io_command::handles(command)
+            && !crate::io_command::inline_refusal(command, &args)
+        {
+            if self.input_blocked() {
+                return None;
+            }
+            self.io_command_on_worker(command, args.as_object().cloned().unwrap_or_default());
+            return Some(json!({}));
+        }
+
         // A wheel that turned a field has ended its step: anything else is a step of its own
         // (UI-313).
         if !self.wheel_running {
@@ -1510,6 +1524,7 @@ impl Studio {
         if crate::audio_job::NAMES.contains(&command) {
             return self.job_start(command, args).then(|| json!({}));
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         match self.song.run(command, args) {
             Ok(data) => {
                 self.error = None;
@@ -1538,6 +1553,7 @@ impl Studio {
                 .get(&t)
                 .is_some_and(|tr| tr.automation.iter().all(|l| l.hidden));
             if none {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.arrange_run(
                     "auto.lane.add",
                     json!({ "track": t.to_string(), "target": "volume" }),
@@ -1568,10 +1584,12 @@ impl Studio {
                 } else {
                     pick_mode(track.auto_mode, m)
                 };
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.arrange_run("auto.mode", json!({ "ids": [tid], "mode": mode.name() }));
             }
             LaneButton::Add => self.open_auto_targets(g, t, target, false),
             LaneButton::Remove => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.arrange_run(
                     "auto.lane.hide",
                     json!({ "track": tid, "target": target.to_string() }),
@@ -1618,12 +1636,14 @@ impl Studio {
             .collect();
         match key {
             "d" if !ids.is_empty() => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 if let Some(data) = self.arrange_run("clip.duplicate", json!({ "ids": ids })) {
                     self.select_made(&data);
                 }
                 true
             }
             "delete" | "backspace" if !ids.is_empty() => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.arrange_run("clip.delete", json!({ "ids": ids }));
                 self.arrange.clips.clear();
                 if self.selected_clip.is_some_and(|(t, c)| {

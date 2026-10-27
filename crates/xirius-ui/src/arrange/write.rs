@@ -171,6 +171,7 @@ impl Studio {
                 let wrote = !w.pass.is_empty();
                 let writes = w.pass.finish(w.last);
                 if !writes.is_empty() {
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     self.run_command("auto.write", json!({ "writes": writes }));
                 } else if wrote {
                     let p = self.project();

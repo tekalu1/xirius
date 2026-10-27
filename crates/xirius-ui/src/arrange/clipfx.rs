@@ -365,6 +365,7 @@ impl Studio {
         if let FxPart::Point(index) = part
             && (d.mods.alt || d.tool == Tool::Eraser)
         {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             self.arrange_run(
                 "clip.gain.point.delete",
                 json!({ "id": c.to_string(), "index": index }),
@@ -399,6 +400,7 @@ impl Studio {
                 return true;
             };
             let at = (d.tick - clip.start).clamp(0, clip.length);
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             self.arrange_run(
                 "clip.gain.point.add",
                 json!({ "id": c.to_string(), "at": at }),
@@ -435,8 +437,10 @@ impl Studio {
             return false;
         }
         if mods.shift {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             self.arrange_run("clip.fade.set", json!({ "ids": ids, "auto": true }));
         } else {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             self.arrange_run("clip.fade.cross", json!({ "ids": ids }));
         }
         true

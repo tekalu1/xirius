@@ -910,6 +910,8 @@ impl Store {
     // ---- versions --------------------------------------------------------
 
     pub fn list_versions(&self) -> CmdResult<Vec<VersionInfo>> {
+        #[cfg(any(test, feature = "test-io"))]
+        crate::io_test::before("store_version_list", &self.dir)?;
         let path = self.p("versions/index.json");
         if !fs::is_file(&path) {
             return Ok(Vec::new());

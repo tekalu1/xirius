@@ -1217,6 +1217,7 @@ impl Studio {
             Way::Plain(args) => {
                 if crate::palette_args::on_screen(row.name) {
                     let args = args.as_object().cloned().unwrap_or_default();
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     return self.run_parsed(g, row.name.into(), args);
                 }
                 if self
@@ -1227,6 +1228,7 @@ impl Studio {
                 {
                     return self.palette_query(g, row.name, args.clone());
                 }
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 let ran = self.run_command(row.name, args.clone());
                 self.rebuild(g);
                 ran

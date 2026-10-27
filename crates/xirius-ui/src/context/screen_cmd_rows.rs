@@ -95,6 +95,7 @@ impl Studio {
                     _ => return Some(false),
                 };
                 if self
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     .arrange_run(
                         "view.folders",
                         json!({"state": if open { "open" } else { "closed" }}),
@@ -110,6 +111,7 @@ impl Studio {
                     return Some(false);
                 };
                 if self
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     .arrange_run("select.in_folder", json!({"ids": [f.to_string()]}))
                     .is_none()
                 {

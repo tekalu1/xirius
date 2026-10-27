@@ -11,6 +11,9 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+test-io = ["xirius-core/test-io"]
+
 [dependencies]
 xirius-core = { path = "../xirius-core" }
 serde_json = "1"

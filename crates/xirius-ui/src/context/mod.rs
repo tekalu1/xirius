@@ -650,6 +650,7 @@ impl Studio {
             | Run::AskNumber(..)
             | Run::Field(..) => false,
             Run::Cmd(name, args) => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 let Some(data) = self.arrange_run(name, args) else {
                     return false;
                 };
@@ -694,6 +695,7 @@ impl Studio {
             Run::Do(act) => {
                 let (name, args) = screen_cmd::act_command(&act);
                 let args = args.as_object().cloned().unwrap_or_default();
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_parsed(g, name.to_string(), args)
             }
         }

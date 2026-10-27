@@ -18,6 +18,38 @@ const USAGE: &str = "\
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        Some("--ui-io-inventory") => {
+            let root = args
+                .get(1)
+                .map_or_else(|| PathBuf::from("."), PathBuf::from);
+            match xirius_design_lint::ui_io_inventory(&root) {
+                Ok(table) => {
+                    print!("{table}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("UI I/O inventory: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Some("--audit-ui-io") => {
+            let root = args
+                .get(1)
+                .map_or_else(|| PathBuf::from("."), PathBuf::from);
+            match xirius_design_lint::audit_ui_io(&root) {
+                Ok(rows) => {
+                    for row in rows {
+                        println!("{row}");
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("UI I/O audit: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Some("--help" | "-h") => {
             println!("{USAGE}");
             ExitCode::SUCCESS

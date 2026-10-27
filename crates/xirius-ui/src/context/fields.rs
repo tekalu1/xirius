@@ -586,6 +586,7 @@ impl Studio {
             None if kind.signed() => args[kind.arg()] = Value::from(to.clamp(lo, hi) as i64),
             None => args[kind.arg()] = Value::from(to.clamp(lo, hi)),
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         let done = self.arrange_run(kind.command(), args).is_some();
         if done {
             self.rebuild(g);

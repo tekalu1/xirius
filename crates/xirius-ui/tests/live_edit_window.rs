@@ -31,6 +31,7 @@ fn live_edit_recording_and_editor_survive_held_work_and_native_window_operations
         "crash_reports",
         "update_startup",
         "log_write",
+        "macro_version_list",
     ] {
         for size in ["1200,800", "880,600"] {
             let root = tempfile::tempdir().unwrap();
@@ -48,6 +49,7 @@ fn live_edit_recording_and_editor_survive_held_work_and_native_window_operations
                 ])
                 .arg(root.path())
                 .env("XIRIUS_CONFIG_DIR", root.path().join("prefs"))
+                .env("XIRIUS_BROWSER_FILE", root.path().join("browser.json"))
                 .env("XIRIUS_CRASH_DIR", root.path().join("crashes"))
                 .env("XIRIUS_LIVE_SHOTS_DIR", root.path())
                 .env("XIRIUS_LIVE_GATE", operation)

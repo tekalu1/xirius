@@ -40,6 +40,7 @@ impl Studio {
         } else {
             self.track_ids(clicked)
         };
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         self.command(|song| song.run(command, json!({"ids": ids})).map(|_| ()))
     }
 }

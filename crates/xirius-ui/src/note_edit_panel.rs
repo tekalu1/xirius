@@ -61,6 +61,7 @@ impl Studio {
     pub(crate) fn edit_note_value(&mut self, g: &Geometry, kind: Kind, value: &str) -> bool {
         self.popup = None;
         if kind == Kind::Scale {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             self.run_command("view.scale", json!({"scale":value,"root":0}));
             return true;
         }

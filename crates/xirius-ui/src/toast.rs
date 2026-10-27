@@ -240,9 +240,11 @@ impl Studio {
             Answer::Retry(clips) => self.retry_processed(&clips),
             Answer::Unfreeze(tracks) => {
                 let ids: Vec<String> = tracks.iter().map(ToString::to_string).collect();
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.arrange_run("track.unfreeze", serde_json::json!({ "ids": ids }));
             }
             Answer::Follow(clips) => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.arrange_run(
                     "clip.stretch",
                     serde_json::json!({ "ids": ids(&clips), "follow": "on" }),

@@ -192,6 +192,7 @@ impl Studio {
             self.ask_own(own, &args);
             return;
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         if self.arrange_run(ask.name, args.clone()).is_some()
             && ask.name == "note.value.set"
             && args["field"] == "velocity"

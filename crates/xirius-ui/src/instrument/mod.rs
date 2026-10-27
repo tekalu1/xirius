@@ -179,6 +179,7 @@ impl Studio {
 
     /// Puts `pick` in as the instrument of `t`, in place of the one it has (one step).
     pub fn set_instrument(&mut self, t: TrackId, pick: &Pick) -> bool {
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         self.run_command(
             "plugin.replace",
             json!({
@@ -203,6 +204,7 @@ impl Studio {
             return false;
         };
         self.close_editor(id);
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         self.run_command("plugin.remove", json!({ "ids": [id.to_string()] }))
     }
 }

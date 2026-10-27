@@ -21,6 +21,21 @@ fn new_file_process_wait_and_lock_boundaries_require_review() {
         "fn paint() { path.exists(); path.is_file(); path.canonicalize(); }",
         "fn idle() { eprintln!(\"failed\"); }",
         "fn idle() { std::println!(\"status\"); }",
+        "fn tick() { assert!(std::fs::read(\"fixture\").is_ok()); }",
+        "fn tick() { unknown!{ key: std::fs::read(\"fixture\") }; }",
+        "fn tick() { assert_eq!(true, std::fs::read(\"fixture\").is_ok()); }",
+        "fn tick() { let _ = writeln!(std::io::stderr(), \"status\"); }",
+        "fn tick() { use std::io::stderr as out; out(); }",
+        "fn tick() { use std::fs::{self as disk}; disk::read(\"fixture\"); }",
+        "use std as platform; fn tick() { platform::fs::read(\"fixture\"); }",
+        "use xirius_session::places as locations; fn tick() { locations::load(path); }",
+        "use xirius_session::places::load as browser; fn tick() { browser(path); }",
+        "fn tick() { installer.verify_with(key); check.stored(); cleanup::unused(p,dir,own); }",
+        "use fake::Job; fn tick() { Job::spawn(\"reader\", || std::fs::read(\"fixture\")); }",
+        "fn tick() { fake::Job::spawn(\"reader\", || std::fs::read(\"fixture\")); }",
+        "fn tick() { fake::ancillary_io::submit(|| std::fs::read(\"fixture\")); }",
+        "fn tick() { inline.spawn(|| std::fs::read(\"fixture\")); }",
+        "fn tick() { self.song.run(name, args); self.run_macro(g, name); }",
     ] {
         assert!(hits(source) > 0, "{source}");
     }
@@ -31,7 +46,7 @@ fn worker_closures_async_receives_and_test_bodies_are_separate() {
     assert!(hits("fn tick() { unknown::submit(|| std::fs::read(\"song\")); }") > 0);
     for source in [
         "fn tick() { crate::ancillary_io::dispatch(move || { std::fs::read(\"song\"); Ok(()) }); }",
-        "fn tick() { Job::spawn(\"reader\", move || { std::fs::read(\"song\"); Ok(()) }); }",
+        "use xirius_session::background::Job; fn tick() { Job::spawn(\"reader\", move || { std::fs::read(\"song\"); Ok(()) }); }",
         "fn tick() { crate::ancillary_io::dispatch(move || { eprintln!(\"failed\"); Ok(()) }); }",
         "async fn idle() { jobs.recv().await; }",
         "#[cfg(test)] mod tests { fn fixture() { std::fs::read(\"fixture\"); } }",

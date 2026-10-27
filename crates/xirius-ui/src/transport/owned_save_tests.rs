@@ -273,6 +273,17 @@ fn saving_does_not_write_or_wait_for_held_state_and_only_a_complete_retry_clears
         assert!(!path.exists(), "{command}: no file without SDK state");
         assert!(!s.song.versions().iter().any(|v| v.name == "mcp-held"));
     }
+    // A read receipt must not request SDK state, even with the ordinary MCP
+    // persistence flag while this owner's state collection remains held.
+    let read = crate::review_io_tests::request_with_save(
+        &mut s,
+        "project.get",
+        json!({}),
+        xirius_core::session::RunOptions::human(),
+        true,
+    );
+    crate::review_io_tests::finish(&mut s);
+    read.join().unwrap().unwrap();
     let project = s.project();
     let export = temp.path().join("held.dawproject");
     let approval_path = temp.path().join("approved-copy");

@@ -257,6 +257,7 @@ impl Studio {
         let value = self.stroke_value(g, &place, d.from.1);
         match place {
             Place::Lane { track, target, .. } => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 let added = self.arrange_run(
                     "auto.point.add",
                     json!({ "track": track.to_string(), "target": target.to_string(),
@@ -267,6 +268,7 @@ impl Studio {
                 }
             }
             Place::Tempo => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.arrange_run("tempo.set", json!({ "at": at, "bpm": value }));
             }
         }

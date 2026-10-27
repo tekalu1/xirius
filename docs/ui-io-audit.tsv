@@ -1,0 +1,235 @@
+crates/xirius-ui/src/about.rs	join	3
+crates/xirius-ui/src/about.rs	lock	4
+crates/xirius-ui/src/about.rs	metadata	1
+crates/xirius-ui/src/about.rs	std :: fs :: create_dir_all	1
+crates/xirius-ui/src/about.rs	std :: fs :: write	1
+crates/xirius-ui/src/about.rs	stored	1
+crates/xirius-ui/src/about.rs	update :: ready_installer	1
+crates/xirius-ui/src/about.rs	update :: take_failure	1
+crates/xirius-ui/src/about.rs	verify_with	1
+crates/xirius-ui/src/ai/mod.rs	ai_run	1
+crates/xirius-ui/src/ai/mod.rs	run	1
+crates/xirius-ui/src/ai/mod.rs	xirius_mcp :: persist :: run_and_persist	1
+crates/xirius-ui/src/ai/serve.rs	lock	2
+crates/xirius-ui/src/ancillary_io.rs	lock	1
+crates/xirius-ui/src/ancillary_io.rs	std :: io :: stderr	1
+crates/xirius-ui/src/ancillary_io.rs	writeln	1
+crates/xirius-ui/src/app.rs	eprintln	3
+crates/xirius-ui/src/app.rs	println	5
+crates/xirius-ui/src/app.rs	std :: fs :: create_dir_all	1
+crates/xirius-ui/src/app.rs	std :: fs :: write	2
+crates/xirius-ui/src/arrange/clipfx.rs	arrange_run	4
+crates/xirius-ui/src/arrange/editing.rs	arrange_run	5
+crates/xirius-ui/src/arrange/mod.rs	arrange_run	12
+crates/xirius-ui/src/arrange/mod.rs	run	1
+crates/xirius-ui/src/arrange/mod.rs	seek	3
+crates/xirius-ui/src/arrange/open.rs	arrange_run	3
+crates/xirius-ui/src/arrange/paint.rs	lock	1
+crates/xirius-ui/src/arrange/probe.rs	arrange_run	5
+crates/xirius-ui/src/arrange/replace.rs	arrange_run	1
+crates/xirius-ui/src/arrange/section.rs	arrange_run	2
+crates/xirius-ui/src/arrange/stroke.rs	arrange_run	2
+crates/xirius-ui/src/arrange/write.rs	run_command	1
+crates/xirius-ui/src/audio_job.rs	run	1
+crates/xirius-ui/src/audio_job.rs	std :: thread :: sleep	1
+crates/xirius-ui/src/audio_settings.rs	lock	5
+crates/xirius-ui/src/audition.rs	run	1
+crates/xirius-ui/src/automation_point_edit.rs	arrange_run	2
+crates/xirius-ui/src/automation_targets.rs	arrange_run	1
+crates/xirius-ui/src/autovalue.rs	run_command	1
+crates/xirius-ui/src/bar_tempo.rs	run_command	1
+crates/xirius-ui/src/bar_tools.rs	set	1
+crates/xirius-ui/src/bench.rs	write	6
+crates/xirius-ui/src/bench.rs	writeln	8
+crates/xirius-ui/src/browser.rs	lock	1
+crates/xirius-ui/src/browser.rs	xirius_session :: places :: Prefs :: first_run	1
+crates/xirius-ui/src/browser_files.rs	is_dir	4
+crates/xirius-ui/src/browser_files.rs	lock	1
+crates/xirius-ui/src/browser_files.rs	std :: fs :: metadata	1
+crates/xirius-ui/src/browser_files.rs	std :: fs :: read	1
+crates/xirius-ui/src/browser_files.rs	std :: fs :: read_dir	2
+crates/xirius-ui/src/browser_files.rs	std :: thread :: sleep	1
+crates/xirius-ui/src/browser_import_io.rs	run	1
+crates/xirius-ui/src/browser_inst.rs	arrange_run	1
+crates/xirius-ui/src/browser_menu_io.rs	is_dir	1
+crates/xirius-ui/src/browser_menu_io.rs	std :: fs :: symlink_metadata	1
+crates/xirius-ui/src/browser_pick.rs	arrange_run	2
+crates/xirius-ui/src/browser_prefs_io.rs	Prefs :: first_run	1
+crates/xirius-ui/src/browser_prefs_io.rs	places :: load	1
+crates/xirius-ui/src/browser_prefs_save.rs	lock	5
+crates/xirius-ui/src/browser_prefs_save.rs	places :: load	1
+crates/xirius-ui/src/browser_prefs_save.rs	places :: save	1
+crates/xirius-ui/src/browser_prefs_save.rs	wait	1
+crates/xirius-ui/src/chrome.rs	eprintln	1
+crates/xirius-ui/src/chrome.rs	println	1
+crates/xirius-ui/src/chrome.rs	std :: fs :: create_dir_all	1
+crates/xirius-ui/src/chrome.rs	std :: fs :: write	1
+crates/xirius-ui/src/chrome.rs	std :: thread :: sleep	4
+crates/xirius-ui/src/chrome.rs	writeln	10
+crates/xirius-ui/src/cleanup_dialog.rs	arrange_run	1
+crates/xirius-ui/src/cleanup_dialog.rs	std :: fs :: metadata	1
+crates/xirius-ui/src/cleanup_dialog.rs	xirius_session :: cleanup :: unused	1
+crates/xirius-ui/src/clip_marks.rs	exists	1
+crates/xirius-ui/src/clipops.rs	arrange_run	22
+crates/xirius-ui/src/clipops.rs	run	1
+crates/xirius-ui/src/console.rs	std :: fs :: OpenOptions :: new	1
+crates/xirius-ui/src/console.rs	write	1
+crates/xirius-ui/src/context/ask.rs	arrange_run	1
+crates/xirius-ui/src/context/browser.rs	arrange_run	2
+crates/xirius-ui/src/context/export.rs	run_command	1
+crates/xirius-ui/src/context/fields.rs	arrange_run	1
+crates/xirius-ui/src/context/key_more.rs	arrange_run	5
+crates/xirius-ui/src/context/key_more.rs	lock	4
+crates/xirius-ui/src/context/key_more.rs	run_parsed	1
+crates/xirius-ui/src/context/key_more.rs	seek	1
+crates/xirius-ui/src/context/mixed.rs	arrange_run	1
+crates/xirius-ui/src/context/mod.rs	arrange_run	1
+crates/xirius-ui/src/context/mod.rs	run_parsed	1
+crates/xirius-ui/src/context/preset.rs	run	1
+crates/xirius-ui/src/context/ruler.rs	seek	1
+crates/xirius-ui/src/context/screen_cmd_rows.rs	arrange_run	2
+crates/xirius-ui/src/context/track.rs	arrange_run	1
+crates/xirius-ui/src/cpu_list.rs	arrange_run	1
+crates/xirius-ui/src/dawproject_ui.rs	std :: thread :: sleep	1
+crates/xirius-ui/src/drawer_edge.rs	std :: fs :: create_dir_all	1
+crates/xirius-ui/src/drawer_edge.rs	std :: fs :: read_to_string	1
+crates/xirius-ui/src/drawer_edge.rs	std :: fs :: rename	1
+crates/xirius-ui/src/drawer_edge.rs	std :: fs :: write	1
+crates/xirius-ui/src/edit_prefs.rs	lock	1
+crates/xirius-ui/src/editor_settings.rs	set	1
+crates/xirius-ui/src/export.rs	lock	2
+crates/xirius-ui/src/export.rs	run	6
+crates/xirius-ui/src/export.rs	run_command	1
+crates/xirius-ui/src/export_files.rs	exists	1
+crates/xirius-ui/src/folder_bus.rs	run_command	2
+crates/xirius-ui/src/fx_chain.rs	arrange_run	1
+crates/xirius-ui/src/fx_chain.rs	run_command	2
+crates/xirius-ui/src/fx_preset.rs	run_command	1
+crates/xirius-ui/src/health.rs	run_command	2
+crates/xirius-ui/src/input_dispatch.rs	arrange_run	9
+crates/xirius-ui/src/input_dispatch.rs	lock	3
+crates/xirius-ui/src/input_dispatch.rs	run_command	4
+crates/xirius-ui/src/input_dispatch.rs	run_macro	1
+crates/xirius-ui/src/input_dispatch.rs	run_parsed	1
+crates/xirius-ui/src/input_dispatch.rs	seek	3
+crates/xirius-ui/src/input_follow.rs	lock	1
+crates/xirius-ui/src/inspector.rs	arrange_run	1
+crates/xirius-ui/src/instrument/keys.rs	lock	2
+crates/xirius-ui/src/instrument/keys.rs	seek	1
+crates/xirius-ui/src/instrument/menu.rs	arrange_run	1
+crates/xirius-ui/src/instrument/mod.rs	run_command	2
+crates/xirius-ui/src/instrument/window.rs	run_command	3
+crates/xirius-ui/src/keep.rs	std :: fs :: remove_dir_all	1
+crates/xirius-ui/src/key_rows.rs	arrange_run	1
+crates/xirius-ui/src/key_rows.rs	seek	1
+crates/xirius-ui/src/macro_run.rs	lock	1
+crates/xirius-ui/src/macro_run.rs	run_parsed	1
+crates/xirius-ui/src/main.rs	eprintln	4
+crates/xirius-ui/src/main.rs	println	3
+crates/xirius-ui/src/meter_popup.rs	run_command	1
+crates/xirius-ui/src/meters.rs	join	1
+crates/xirius-ui/src/meters.rs	std :: thread :: sleep	1
+crates/xirius-ui/src/midi_assign.rs	lock	1
+crates/xirius-ui/src/midi_assign.rs	run	2
+crates/xirius-ui/src/midi_live.rs	lock	3
+crates/xirius-ui/src/midi_watch.rs	lock	2
+crates/xirius-ui/src/mixer/bench.rs	eprintln	1
+crates/xirius-ui/src/mixer/bench.rs	println	1
+crates/xirius-ui/src/mixer/bench.rs	run	2
+crates/xirius-ui/src/mixer/bench.rs	seek	2
+crates/xirius-ui/src/mixer/bench.rs	std :: fs :: create_dir_all	1
+crates/xirius-ui/src/mixer/bench.rs	std :: fs :: write	1
+crates/xirius-ui/src/mixer/mod.rs	lock	1
+crates/xirius-ui/src/mixer/mod.rs	run_command	9
+crates/xirius-ui/src/mixer/paint.rs	lock	1
+crates/xirius-ui/src/mixer/scan.rs	run	4
+crates/xirius-ui/src/mouse_dispatch.rs	lock	2
+crates/xirius-ui/src/name_drag.rs	arrange_run	2
+crates/xirius-ui/src/note_edit_panel.rs	run_command	1
+crates/xirius-ui/src/notice.rs	arrange_run	1
+crates/xirius-ui/src/notice.rs	exists	2
+crates/xirius-ui/src/notice.rs	std :: fs :: create_dir_all	2
+crates/xirius-ui/src/notice.rs	std :: fs :: read_to_string	2
+crates/xirius-ui/src/notice.rs	std :: fs :: remove_file	3
+crates/xirius-ui/src/notice.rs	std :: fs :: write	3
+crates/xirius-ui/src/opening.rs	recv_timeout	1
+crates/xirius-ui/src/other_change.rs	disk_changed	2
+crates/xirius-ui/src/other_change.rs	eprintln	1
+crates/xirius-ui/src/other_change.rs	lock	2
+crates/xirius-ui/src/other_change.rs	reload_from_disk	1
+crates/xirius-ui/src/other_change.rs	std :: fs :: metadata	1
+crates/xirius-ui/src/palette.rs	run_command	1
+crates/xirius-ui/src/palette.rs	run_parsed	1
+crates/xirius-ui/src/palette_args.rs	run	1
+crates/xirius-ui/src/palette_args.rs	run_command	1
+crates/xirius-ui/src/palette_args.rs	run_parsed	1
+crates/xirius-ui/src/pan.rs	lock	1
+crates/xirius-ui/src/pick_list.rs	lock	1
+crates/xirius-ui/src/pointer_os.rs	lock	1
+crates/xirius-ui/src/quantize_import.rs	run	1
+crates/xirius-ui/src/quantize_import.rs	std :: fs :: read	1
+crates/xirius-ui/src/rec_area.rs	arrange_run	2
+crates/xirius-ui/src/rec_panel.rs	lock	1
+crates/xirius-ui/src/rec_panel.rs	set	1
+crates/xirius-ui/src/recent_worker.rs	eprintln	1
+crates/xirius-ui/src/recent_worker.rs	lock	8
+crates/xirius-ui/src/recent_worker.rs	wait_timeout	1
+crates/xirius-ui/src/roll/bridge.rs	arrange_run	2
+crates/xirius-ui/src/roll/bridge.rs	lock	3
+crates/xirius-ui/src/roll/bridge.rs	run	1
+crates/xirius-ui/src/roll/bridge.rs	seek	1
+crates/xirius-ui/src/roll/paint.rs	lock	1
+crates/xirius-ui/src/roll/parts.rs	arrange_run	1
+crates/xirius-ui/src/roll/probe.rs	println	1
+crates/xirius-ui/src/roll/probe.rs	run	3
+crates/xirius-ui/src/roll/probe.rs	std :: fs :: create_dir_all	1
+crates/xirius-ui/src/roll/probe.rs	std :: fs :: write	1
+crates/xirius-ui/src/ruler_drag.rs	lock	1
+crates/xirius-ui/src/saving.rs	join	1
+crates/xirius-ui/src/saving.rs	save_version	2
+crates/xirius-ui/src/screen.rs	eprintln	10
+crates/xirius-ui/src/screen.rs	println	1
+crates/xirius-ui/src/screen.rs	run	1
+crates/xirius-ui/src/screen.rs	std :: fs :: create_dir_all	1
+crates/xirius-ui/src/settings/audio.rs	lock	1
+crates/xirius-ui/src/settings/mod.rs	lock	6
+crates/xirius-ui/src/settings/mod.rs	run_macro	1
+crates/xirius-ui/src/settings/mod.rs	set	2
+crates/xirius-ui/src/shot.rs	eprintln	1
+crates/xirius-ui/src/shot.rs	run_command	2
+crates/xirius-ui/src/shot.rs	seek	1
+crates/xirius-ui/src/shot.rs	std :: fs :: remove_dir_all	1
+crates/xirius-ui/src/shot.rs	std :: thread :: sleep	1
+crates/xirius-ui/src/shot_more.rs	run	1
+crates/xirius-ui/src/shot_more.rs	run_command	1
+crates/xirius-ui/src/shot_small.rs	std :: thread :: sleep	1
+crates/xirius-ui/src/side_edge.rs	std :: fs :: create_dir_all	1
+crates/xirius-ui/src/side_edge.rs	std :: fs :: read_to_string	1
+crates/xirius-ui/src/side_edge.rs	std :: fs :: rename	1
+crates/xirius-ui/src/side_edge.rs	std :: fs :: write	1
+crates/xirius-ui/src/song.rs	disk_changed	1
+crates/xirius-ui/src/song.rs	flush_writes	1
+crates/xirius-ui/src/song.rs	lock	4
+crates/xirius-ui/src/song.rs	reload_from_disk	1
+crates/xirius-ui/src/song.rs	run_value	6
+crates/xirius-ui/src/song/files.rs	read	2
+crates/xirius-ui/src/start.rs	lock	2
+crates/xirius-ui/src/start.rs	run	4
+crates/xirius-ui/src/start/rig.rs	lock	3
+crates/xirius-ui/src/start/rig.rs	set	1
+crates/xirius-ui/src/studio.rs	arrange_run	3
+crates/xirius-ui/src/studio.rs	lock	3
+crates/xirius-ui/src/studio.rs	run_command	3
+crates/xirius-ui/src/studio.rs	seek	1
+crates/xirius-ui/src/tidy.rs	join	3
+crates/xirius-ui/src/tidy.rs	recv_timeout	1
+crates/xirius-ui/src/toast.rs	arrange_run	2
+crates/xirius-ui/src/track_group.rs	run	1
+crates/xirius-ui/src/track_name.rs	run_command	1
+crates/xirius-ui/src/transport.rs	lock	2
+crates/xirius-ui/src/transport.rs	run	1
+crates/xirius-ui/src/transport.rs	run_command	1
+crates/xirius-ui/src/transport.rs	run_macro	1
+crates/xirius-ui/src/transport.rs	seek	4
+crates/xirius-ui/src/transport/prepared.rs	lock	1
+crates/xirius-ui/src/transport/prepared.rs	std :: thread :: sleep	2

@@ -575,6 +575,7 @@ impl Browser {
             pool_view: View::Kind,
             search: String::new(),
             typing: false,
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: first_run(None) constructs memory defaults without inspecting any home directory.
             favourites: xirius_session::places::Prefs::first_run(None).favourites,
             hidden: BTreeSet::new(),
             show_hidden: false,

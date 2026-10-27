@@ -607,6 +607,7 @@ pub struct RollTarget {
 }
 
 pub struct Studio {
+    pub(crate) viewport_size: std::cell::Cell<(f32, f32)>,
     pub input_map: crate::input_dispatch::InputState,
     pub(crate) song: Song,
     pub roll: crate::roll::Roll,
@@ -730,6 +731,8 @@ pub struct Studio {
     /// The watch on the song's file for another app's save ([`crate::other_change`], UI-289).
     pub(crate) other: crate::other_change::OtherChange,
     pub(crate) view_read: crate::ancillary_io::ViewRead,
+    pub(crate) macro_run: Option<crate::macro_run::Run>,
+    pub(crate) macro_stepping: bool,
     /// A mouse button is down in the window: something may be dragged (UI-289).
     pub(crate) pointer_held: bool,
     pub(crate) leaving_ready: bool,
@@ -887,6 +890,9 @@ impl Studio {
             open_closing: None,
             other: Default::default(),
             view_read: Default::default(),
+            viewport_size: std::cell::Cell::new((1200.0, 800.0)),
+            macro_run: None,
+            macro_stepping: false,
             pointer_held: false,
             leaving_ready: false,
             save_test_delay: std::time::Duration::ZERO,
@@ -1003,6 +1009,7 @@ impl Studio {
     }
 
     pub fn geometry(&self, w: f32, h: f32) -> Geometry {
+        self.viewport_size.set((w, h));
         self.motion.geometry(
             self.settled_geometry(w, h),
             // A panel follows the pointer while its edge is held; it slides only when
@@ -1444,6 +1451,10 @@ impl Studio {
 
     /// Applies a press. Returns true when the picture has to be redrawn.
     pub fn press(&mut self, g: &Geometry, hit: Hit) -> bool {
+        if self.macro_run.is_some() && !self.macro_stepping {
+            return false;
+        }
+        self.view_read.cleanup.want_open = false;
         self.cancel_browser_menu();
         if self.input_blocked() {
             return false;
@@ -1651,6 +1662,7 @@ impl Studio {
                     } else {
                         "track.freeze"
                     };
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     self.arrange_run(name, serde_json::json!({ "ids": [t.to_string()] }));
                     self.rebuild(g);
                 }
@@ -1835,11 +1847,15 @@ impl Studio {
 
     /// Keyboard shortcuts. `key` is GPUI's key name ("z", "y").
     pub fn key(&mut self, g: &Geometry, key: &str, ctrl: bool, shift: bool) -> bool {
+        self.view_read.cleanup.want_open = false;
         if self.unsaved_key(key)
             || self.prepare_key(key)
             || self.opening_key(key)
             || self.saving_key(key)
         {
+            return true;
+        }
+        if self.macro_run.is_some() && !self.macro_stepping {
             return true;
         }
         if key == "escape" && self.popup.take().is_some() {
@@ -2006,6 +2022,7 @@ impl Studio {
     }
 
     pub(crate) fn open_popup(&mut self, kind: PopupKind, anchor: Rect) {
+        self.view_read.cleanup.want_open = false;
         if matches!(kind, PopupKind::Grid | PopupKind::Quantize) {
             self.choose_editor();
         }
@@ -2180,6 +2197,7 @@ impl Studio {
             Action::Jump(n) => {
                 self.drag_drop();
                 if self.transport.is_windowed() {
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     self.arrange_run("history.jump", serde_json::json!({"step":n}));
                 } else {
                     self.command(|s| s.jump(n));
@@ -2249,6 +2267,7 @@ impl Studio {
                 if let PopupKind::Output(t) = p.kind {
                     if t == xirius_core::id::TrackId::MASTER {
                         if let Some((left, right)) = to.split_once(':') {
+                            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                             self.run_command(
                                 "audio.output.set",
                                 serde_json::json!({"left": left, "right": right}),
@@ -2280,6 +2299,7 @@ impl Studio {
             Action::Input(to) => {
                 self.popup = None;
                 if let PopupKind::Input(t) = p.kind {
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     self.run_command(
                         "track.input.set",
                         serde_json::json!({ "ids": self.track_ids(t), "input": to }),
@@ -2356,6 +2376,7 @@ impl Studio {
                 if let Some(v) = p.selected.and_then(|i| p.versions.get(i)) {
                     if action == Action::Restore {
                         if self.transport.is_windowed() {
+                            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                             self.arrange_run("version.restore", serde_json::json!({"id":v.id}));
                         } else {
                             self.command(|s| s.restore_version(&v.id));
@@ -2396,6 +2417,7 @@ impl Studio {
             }
             Action::EditValue(kind, value) => return self.edit_note_value(g, kind, value),
             Action::Link => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command("view.link", serde_json::json!({}));
                 self.popup = None;
                 return true;

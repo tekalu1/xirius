@@ -41,6 +41,7 @@ impl Studio {
         args: &Map<String, Value>,
     ) -> Option<bool> {
         Some(match name {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             "track.solo.clear" | "track.mute.clear" => self.arrange_run(name, json!({})).is_some(),
             "select.off-tracks" if !args.contains_key("ids") => self.clips_off_tracks(),
             "select.span" => {
@@ -160,6 +161,7 @@ impl Studio {
         let clips = self.picked_clips();
         self.give_selection(&[], &clips);
         let done = self
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             .arrange_run("select.off-tracks", json!({ "ids": tracks }))
             .is_some();
         self.take_clips();
@@ -171,6 +173,7 @@ impl Studio {
         let clips = self.picked_clips();
         self.give_selection(&[], &clips);
         let done = self
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             .arrange_run("select.span", json!({ "way": way }))
             .is_some();
         self.take_clips();
@@ -186,6 +189,7 @@ impl Studio {
         else {
             return false;
         };
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         self.arrange_run(name, json!({ "id": id.to_string() }))
             .is_some()
     }
@@ -354,6 +358,7 @@ impl Studio {
                 (at, map.bar_start(bar + 1) - at)
             }
         };
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         let Some(data) = self.arrange_run(
             "clip.add.midi",
             json!({ "track": t.to_string(), "at": at, "length": length }),
@@ -381,6 +386,7 @@ impl Studio {
         // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         asked.lock().unwrap_or_else(|e| e.into_inner()).busy = true;
         for (name, args) in list {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             self.run_parsed(g, name, args);
         }
         // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.

@@ -20,6 +20,7 @@ struct Listed {
 impl Studio {
     /// The presets in the order they were saved in.
     fn listed_presets(&mut self) -> Vec<Listed> {
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         let Ok(data) = self.song.run("track.preset.list", json!({})) else {
             return Vec::new();
         };

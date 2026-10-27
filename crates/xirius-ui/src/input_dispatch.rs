@@ -161,12 +161,16 @@ impl Studio {
         mods: Mods,
         code: Option<&str>,
     ) -> bool {
+        self.view_read.cleanup.want_open = false;
         self.cancel_browser_menu();
         if self.unsaved_key(key)
             || self.prepare_key(key)
             || self.opening_key(key)
             || self.saving_key(key)
         {
+            return true;
+        }
+        if self.macro_run.is_some() && !self.macro_stepping {
             return true;
         }
         if self.name_key(key, mods) {
@@ -279,6 +283,7 @@ impl Studio {
                 .unwrap_or(args);
             (name, args)
         };
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         self.run_parsed(g, name, args)
     }
 
@@ -290,6 +295,13 @@ impl Studio {
         name: String,
         args: Map<String, Value>,
     ) -> bool {
+        if self.macro_run.is_some() && !self.macro_stepping {
+            return true;
+        }
+        self.view_read.cleanup.want_open = false;
+        if self.saving.is_some() {
+            return true;
+        }
         if self.sound_preparing() {
             return true;
         }
@@ -308,6 +320,7 @@ impl Studio {
             && let Some(m) = args.get("name").and_then(Value::as_str)
         {
             let m = m.to_string();
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             return self.run_macro(g, &m);
         }
         if let Some(used) = self.quant_command(g, &name, &args) {
@@ -514,6 +527,7 @@ impl Studio {
                                 (start, end)
                             }
                         };
+                        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                         return self.run_command("loop.set", json!({"start":start,"end":end}));
                     }
                     // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
@@ -541,6 +555,7 @@ impl Studio {
                         mode = "off";
                     }
                     return self
+                        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                         .run_command("auto.mode", json!({"ids":[t.to_string()],"mode":mode}));
                 }
                 return false;
@@ -566,11 +581,13 @@ impl Studio {
                             .position(|lane| lane.target == targets[self.input_map.parameter]);
                         drop(p);
                         if let Some(from) = first.filter(|_| existing.is_none()) {
+                            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                             self.run_command(
                                 "auto.lane.target",
                                 json!({"track":t.to_string(),"target":from,"to":target}),
                             );
                         } else if existing.is_none() {
+                            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                             self.run_command(
                                 "auto.lane.add",
                                 json!({"track":t.to_string(),"target":target}),
@@ -596,6 +613,7 @@ impl Studio {
         if matches!(name.as_str(), "edit.delete" | "clip.delete")
             && let Some((command, args)) = self.input_map.context_delete.take()
         {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             self.arrange_run(command, args);
             self.rebuild(g);
             return true;
@@ -613,11 +631,14 @@ impl Studio {
                 })
             };
             let used = match (picked, channel) {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 (Some(args), _) => self.arrange_run(&name, args).is_some(),
                 (None, Some(t)) if name == "edit.copy" => self
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     .arrange_run("channel.settings.copy", json!({"id": t.to_string()}))
                     .is_some(),
                 (None, Some(t)) => self
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     .arrange_run(&name, json!({"tracks":[t.to_string()]}))
                     .is_some(),
                 (None, None) => false,
@@ -629,12 +650,14 @@ impl Studio {
         }
         if name == "marker.add" && !args.contains_key("at") {
             return self
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 .arrange_run("marker.add", json!({"at": self.playhead}))
                 .is_some();
         }
         if name == "clip.delete" && self.arrange.focus {
             if let Some(id) = self.input_map.tempo_selected {
                 let used = self
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     .arrange_run("tempo.delete", json!({"id": id.to_string()}))
                     .is_some();
                 if used {
@@ -644,6 +667,7 @@ impl Studio {
                 return true;
             }
             if let Some(id) = self.input_map.marker_selected.take() {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.arrange_run("marker.delete", json!({"ids": [id.to_string()]}));
                 self.rebuild(g);
                 return true;
@@ -659,6 +683,7 @@ impl Studio {
             && let Some((command, bounce)) =
                 self.bounce_instead(args.get("new-track") == Some(&Value::Bool(true)))
         {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             self.arrange_run(command, bounce);
             self.rebuild(g);
             return true;
@@ -713,6 +738,7 @@ impl Studio {
         {
             return self.open_command(&name, Value::Object(filled));
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         let ran = if let Some(data) = self.arrange_run(&name, Value::Object(filled)) {
             if name == "clip.duplicate" {
                 self.select_made(&data);

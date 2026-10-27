@@ -178,6 +178,7 @@ pub fn summary_line(r: &ScenarioResult) -> String {
 
 pub fn markdown(meta: &Meta, results: &[ScenarioResult]) -> String {
     let mut out = String::new();
+    // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
     let _ = writeln!(
         out,
         "window {}x{} px at scale {}, display {} Hz, {} tracks / {} clips / {} notes, peaks {:.1} MiB, {} on {}\n",
@@ -192,16 +193,19 @@ pub fn markdown(meta: &Meta, results: &[ScenarioResult]) -> String {
         meta.gpui,
         meta.os,
     );
+    // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
     let _ = writeln!(
         out,
         "| scenario | frames | fps | interval mean | p95 | p99 | max | dropped | cpu mean | cpu p95 | cpu p99 | result |"
     );
+    // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
     let _ = writeln!(
         out,
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|"
     );
     for r in results {
         let s = &r.summary;
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
         let _ = writeln!(
             out,
             "| {} | {} | {:.1} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
@@ -219,18 +223,26 @@ pub fn markdown(meta: &Meta, results: &[ScenarioResult]) -> String {
             verdict(r.pass),
         );
     }
+    // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
     let _ = writeln!(out, "\nPaint time per pane (ms, mean / p99):\n");
+    // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
     let _ = write!(out, "| scenario |");
     for pane in Pane::ALL {
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
         let _ = write!(out, " {} |", pane.name());
     }
+    // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
     let _ = writeln!(out);
+    // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
     let _ = writeln!(out, "|---|{}", "---:|".repeat(Pane::ALL.len()));
     for r in results {
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
         let _ = write!(out, "| {} |", r.scenario.name);
         for d in &r.summary.panes {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
             let _ = write!(out, " {} / {} |", ms(d.mean), ms(d.p99));
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
         let _ = writeln!(out);
     }
     out
@@ -245,6 +257,7 @@ fn json_dist(d: &Distribution) -> String {
 
 pub fn json(meta: &Meta, results: &[ScenarioResult]) -> String {
     let mut out = String::new();
+    // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
     let _ = write!(
         out,
         "{{\"window\":[{},{}],\"scale_factor\":{},\"refresh_hz\":{},\"tracks\":{},\"clips\":{},\"notes\":{},\"peak_mib\":{:.2},\"gpui\":\"{}\",\"os\":\"{}\",\"scenarios\":[",
@@ -274,6 +287,7 @@ pub fn json(meta: &Meta, results: &[ScenarioResult]) -> String {
             Some(false) => "false",
             None => "null",
         };
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: fmt::Write into a local String for a benchmark report, with no file/stream destination.
         let _ = write!(
             out,
             "{{\"name\":\"{}\",\"frames\":{},\"fps\":{:.3},\"dropped\":{},\"pass\":{},\"engine_blocks\":{},\"interval_ms\":{},\"cpu_ms\":{},\"panes_ms\":{{{}}}}}",

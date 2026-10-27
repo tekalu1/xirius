@@ -1659,6 +1659,7 @@ impl Studio {
                 let (bar, _, _) = tm.to_bbt(self.playhead);
                 (tm.bar_start(bar), tm.bar_start(bar + 4))
             });
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             if !self.run_command("loop.set", json!({"start": s, "end": e})) {
                 return true;
             }
@@ -1672,6 +1673,17 @@ impl Studio {
     /// Runs one core command for the screen; false (and the error shown)
     /// when it failed.
     pub(crate) fn run_command(&mut self, command: &str, args: serde_json::Value) -> bool {
+        if self.macro_run.is_some() && !self.macro_stepping {
+            return false;
+        }
+        if command == "macro.run"
+            && let Some(name) = args["name"].as_str()
+        {
+            let (w, h) = self.viewport_size.get();
+            let g = self.geometry(w, h);
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+            return self.run_macro(&g, name);
+        }
         if matches!(command, "project.open" | "version.open" | "project.new")
             || (command == "ai.decide"
                 && args
@@ -1683,10 +1695,6 @@ impl Studio {
         if self.input_blocked() {
             return false;
         }
-        if self.transport.is_windowed() && crate::io_command::handles(command) {
-            self.io_command_on_worker(command, args.as_object().cloned().unwrap_or_default());
-            return true;
-        }
         if self.transport.is_windowed()
             && let Some(raw) = args.as_object()
             && self.song.session().save_request(command, raw).is_some()
@@ -1694,6 +1702,14 @@ impl Studio {
             self.save_command_on_worker(command, raw.clone());
             return true;
         }
+        if self.transport.is_windowed()
+            && crate::io_command::handles(command)
+            && !crate::io_command::inline_refusal(command, &args)
+        {
+            self.io_command_on_worker(command, args.as_object().cloned().unwrap_or_default());
+            return true;
+        }
+
         // A wheel's undo step ends before any other command (P3-7 of review 15).
         if !self.wheel_running {
             self.close_wheel_group();
@@ -1701,6 +1717,7 @@ impl Studio {
         if crate::audio_job::NAMES.contains(&command) {
             return self.job_start(command, args);
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         match self.song.run(command, args) {
             Ok(data) => {
                 self.error = None;
@@ -1777,6 +1794,10 @@ impl Studio {
             self.poll_preparing();
             return true;
         }
+        let continued = self.poll_macro();
+        if self.saving.is_some() || self.opening.is_some() {
+            return true;
+        }
         self.poll_finished_take();
         self.transport.park(self.playhead);
         let midi = self.poll_live_midi() || self.live_midi.input.is_some();
@@ -1825,7 +1846,9 @@ impl Studio {
         let settings = self.settings_tick();
         let rig = self.rig_tick();
         let update = self.poll_update();
-        view || saved
+        continued
+            || view
+            || saved
             || opened
             || self.save_mark() == crate::keep::SaveMark::Saving
             || self.transport.playing

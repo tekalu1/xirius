@@ -525,6 +525,7 @@ impl Studio {
         if on_screen(command) {
             self.palette = None;
             let args = args.as_object().cloned().unwrap_or_default();
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             return self.run_parsed(g, command.into(), args);
         }
         if self
@@ -535,6 +536,7 @@ impl Studio {
         {
             return self.palette_query(g, command, args);
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         let ran = self.run_command(command, args);
         if ran {
             self.palette = None;
@@ -562,7 +564,29 @@ impl Studio {
             self.manual_update_check();
             return true;
         }
-        match self.song.run(command, args) {
+        if self.transport.is_windowed() {
+            if self.input_blocked() {
+                return false;
+            }
+            let palette = self.palette.take();
+            self.io_command_on_worker(command, args.as_object().cloned().unwrap_or_default());
+            self.palette = palette;
+            if let Some(save) = &mut self.saving {
+                save.palette_query = Some(command);
+            }
+            return true;
+        }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
+        let result = self.song.run(command, args);
+        self.finish_palette_query(command, result)
+    }
+
+    pub(crate) fn finish_palette_query(
+        &mut self,
+        command: &'static str,
+        result: Result<Value, String>,
+    ) -> bool {
+        match result {
             Ok(value) => {
                 let def = self.song.registry().get(command).unwrap();
                 let mut form = Form::new(def, json!({}), &self.project());

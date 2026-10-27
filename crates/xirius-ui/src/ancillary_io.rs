@@ -75,6 +75,7 @@ pub(crate) fn submit<T: Send + 'static>(
                 .unwrap_or_else(|_| Err("付随処理が停止しました".into()));
             if let Err(e) = &got {
                 use std::io::Write;
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: worker-only failure report after catch_unwind; no reply mutex is held during stderr I/O.
                 let _ = writeln!(std::io::stderr(), "PRJ-031: {e}");
             }
             // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.

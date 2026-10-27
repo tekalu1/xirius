@@ -118,8 +118,10 @@ pub fn stage(s: &mut Studio, g: &Geometry, stage: u8) {
                 .map(|(id, _)| *id);
             drop(p);
             let Some(f) = rhythm else { return };
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
             let bus = s.song.run("track.add.bus", json!({ "name": "Groove" }));
             if let Ok(bus) = bus {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 s.run_command(
                     "folder.bus.set",
                     json!({ "id": f.to_string(), "bus": bus["id"] }),

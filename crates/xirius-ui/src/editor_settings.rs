@@ -72,6 +72,7 @@ impl Studio {
         };
         if let Err(e) = self
             .song
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
             .set("tool.alt", serde_json::json!({ "area": area }))
         {
             self.error = Some(e);

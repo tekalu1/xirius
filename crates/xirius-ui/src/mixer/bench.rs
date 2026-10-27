@@ -71,10 +71,12 @@ pub fn prepare(s: &mut Studio) -> Result<(), String> {
     let mut i = 0;
     while strip_order(&s.project()).len() < STRIPS {
         let id = &sources[i % sources.len()];
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         s.song.run("track.duplicate", json!({ "ids": [id] }))?;
         i += 1;
     }
     s.song
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         .run("loop.set", json!({ "start": start, "end": end }))?;
     s.toggle_loop();
     // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.

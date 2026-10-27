@@ -1292,10 +1292,12 @@ impl Studio {
             }
             return;
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: synchronous offline adapter; window mode returns through the startup/installer owner before this call.
         if let Some(note) = update::take_failure(&root) {
             self.update.notice = Some(note);
         }
         if let Some(installer) =
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: synchronous offline adapter; window mode returns through the startup/installer owner before this call.
             update::ready_installer(&root, update::CURRENT, beta, &self.update.key)
         {
             // design-lint: allow(ui-blocking-io) PRJ-031: synchronous offline adapter; window mode returns through the startup ticket above.
@@ -1310,6 +1312,7 @@ impl Studio {
         self.update.channel = Some(beta);
         if !self.update_on() {
             self.update.newer = check
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: synchronous offline adapter; window mode returns through the startup/installer owner before this call.
                 .stored()
                 .filter(|c| c.beta == beta)
                 .and_then(|c| c.newer_than(update::CURRENT).cloned());
@@ -1395,6 +1398,20 @@ impl Studio {
     }
 
     /// Once a frame. True while the asking or the download runs and on the frame it ends.
+    fn adopt_update_release(&mut self, newer: Option<update::Release>) {
+        if self
+            .update
+            .ready
+            .as_ref()
+            .is_some_and(|i| newer.as_ref().is_none_or(|r| !installer_matches(r, i)))
+        {
+            self.update.ready = None;
+            self.update.set_progress(update::Progress::default());
+        }
+        self.update.newer = newer;
+    }
+
+    /// Once a frame. True while the asking or the download runs and on the frame it ends.
     pub(crate) fn poll_update(&mut self) -> bool {
         let mut changed = false;
         if let Some(result) = self
@@ -1428,7 +1445,7 @@ impl Studio {
                 Ok(got) if got.beta == beta => {
                     self.update.notice = got.note;
                     self.update.ready = got.installer;
-                    self.update.newer = got.newer;
+                    self.adopt_update_release(got.newer);
                     if self.update.ready.is_some() {
                         self.update.set_progress(update::Progress {
                             phase: update::Phase::Ready,
@@ -1501,13 +1518,7 @@ impl Studio {
                     .unwrap_or_else(|_| Err("更新を確認できません: 確認処理が終了しました".into()))
                 {
                     Ok(newer) => {
-                        if self.update.ready.as_ref().is_some_and(|i| {
-                            newer.as_ref().is_none_or(|r| !installer_matches(r, i))
-                        }) {
-                            self.update.ready = None;
-                            self.update.set_progress(update::Progress::default());
-                        }
-                        self.update.newer = newer;
+                        self.adopt_update_release(newer);
                         if self.update.manual {
                             self.update.check = CheckState::Latest;
                         }
@@ -1522,13 +1533,6 @@ impl Studio {
                         }
                     }
                 }
-            }
-            // The kept installer is only for the version just found.
-            if let (Some(release), Some(installer)) = (&self.update.newer, &self.update.ready)
-                && !installer_matches(release, installer)
-            {
-                self.update.ready = None;
-                self.update.set_progress(update::Progress::default());
             }
             changed = true;
         }
@@ -1707,6 +1711,7 @@ impl Studio {
             self.update.arm = Some((checked, job));
             return Ok(());
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: synchronous offline adapter; window mode returns through the startup/installer owner before this call.
         installer.verify_with(&self.update.key)?;
         let running = update::running_programs(&location.install_dir, std::process::id());
         if !running.is_empty() {
@@ -2588,6 +2593,49 @@ used {} {}
             let major = env!("CARGO_PKG_VERSION_MAJOR").parse::<u64>().unwrap() + 1;
             format!("{major}.0.0")
         })
+    }
+
+    #[test]
+    fn startup_and_manual_answers_discard_an_installer_for_another_release() {
+        for startup in [true, false] {
+            let mut s = Studio::sample();
+            crate::update_shots::stage(&mut s, 2);
+            let installer = s.update.ready.take().unwrap();
+            let mut release = release_of(&installer);
+            release.version = "999.0.0".into();
+            s.update.channel = Some(false);
+            s.bind_window_io();
+            if startup {
+                s.update.startup = Some(
+                    crate::ancillary_io::submit(move || {
+                        Ok(StartupUpdate {
+                            note: None,
+                            installer: Some(installer),
+                            newer: Some(release),
+                            beta: false,
+                            total: 100,
+                        })
+                    })
+                    .unwrap(),
+                );
+            } else {
+                s.update.ready = Some(installer);
+                s.update.asking = Some(std::thread::spawn(move || Ok(Some(release))));
+            }
+            let _ui = xirius_core::io_test::forbid_ui_io();
+            let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while s.update.startup.is_some() || s.update.asking.is_some() {
+                s.poll_update();
+                assert!(std::time::Instant::now() < end);
+                std::thread::yield_now();
+            }
+            assert!(s.update.ready.is_none());
+            assert_eq!(s.update.progress().phase, update::Phase::Idle);
+            assert_eq!(s.update.newer.as_ref().unwrap().version, "999.0.0");
+            let actions = acts(&update_cells(&s.update_view(), 440.0));
+            assert!(actions.contains(&Act::Download));
+            assert!(!actions.contains(&Act::UpdateNow));
+        }
     }
 
     fn newer_url() -> String {

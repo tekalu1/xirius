@@ -227,6 +227,7 @@ impl Studio {
             {
                 let _ = self
                     .song
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
                     .run("export.preview", serde_json::json!({"job":job,"stop":true}));
                 self.transport.auditioning_export = false;
                 self.refresh_popup();

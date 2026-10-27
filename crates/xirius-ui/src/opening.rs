@@ -342,6 +342,7 @@ impl Studio {
             open.cancelled = true;
             open.announcement = CANCELLING.into();
             self.open_generation += 1;
+            self.fail_macro("マクロの操作を中止しました".into());
         }
     }
     pub(crate) fn opening_key(&mut self, key: &str) -> bool {

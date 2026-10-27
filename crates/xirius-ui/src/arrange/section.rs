@@ -85,6 +85,7 @@ impl Studio {
                     return Some(false);
                 };
                 let ran = self
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     .arrange_run(name, json!({ "start": start, "end": end }))
                     .is_some();
                 if ran {
@@ -105,6 +106,7 @@ impl Studio {
                     "edit.delete" | "clip.delete" => "section.delete",
                     _ => return None,
                 };
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 let data = self.arrange_run(command, id);
                 if let Some(data) = &data {
                     self.section_followed(command, data);

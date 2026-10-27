@@ -42,6 +42,7 @@ impl Studio {
     }
 
     fn apply_groove(&mut self, args: serde_json::Value) -> Result<(), String> {
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         self.song.run("view.groove.import", args)?;
         self.quant.groove_on = true;
         self.quant.groove = None;

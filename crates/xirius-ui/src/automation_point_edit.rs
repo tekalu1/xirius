@@ -46,6 +46,7 @@ impl Studio {
             _ => 0.01,
         };
         let tick = point.tick;
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         if self.arrange_run("auto.points.move", json!({"track":track, "target":target.to_string(), "ticks":tick.to_string(), "value-by":f64::from(steps) * increment})).is_some() {
             self.arrange.points.select(track, &target, tick, false);
             self.arrange.focus = true;
@@ -167,6 +168,7 @@ impl Studio {
                 (tm.tick_at(tm.seconds_at(tick) + 0.001) - tick).max(1)
             });
         let by = if right { step } else { -step };
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         if let Some(out) = self.arrange_run("auto.points.move", json!({"track":track,"target":target.to_string(),"ticks":ticks.iter().map(ToString::to_string).collect::<Vec<_>>().join(","),"by":by})) {
             let by = out["by"].as_i64().unwrap_or(0);
             self.arrange.points.clear();

@@ -122,9 +122,13 @@ struct Writer {
 }
 /// This read/modify/write transaction uses the dedicated writer, never a read slot or the UI.
 fn write(file: &Path, save: &Save) -> Result {
-    let mut current = places::load(file)?;
-    save.intent.apply(&mut current);
-    places::save(file, &current)
+    places::transaction(file, || {
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: worker-only browser transaction/read helper or cleanup read_view; UI only submits and polls.
+        let mut current = places::load(file)?;
+        save.intent.apply(&mut current);
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: worker-only browser transaction/read helper or cleanup read_view; UI only submits and polls.
+        places::save(file, &current)
+    })
 }
 fn writer() -> &'static Arc<Writer> {
     static WRITER: OnceLock<Arc<Writer>> = OnceLock::new();
@@ -164,6 +168,7 @@ fn writer() -> &'static Arc<Writer> {
                         }
                     }
                     s.active = None;
+                    work.wake.notify_all();
                 }
             })
             .expect("start preference writer");
@@ -191,8 +196,20 @@ pub(crate) fn submit(file: &Path, base: Prefs, prefs: Prefs) -> Ticket {
     // Superseded subscribers complete when the newest snapshot has been written.
     save.tickets.retain(|t| Arc::strong_count(&t.0) > 1);
     save.tickets.push(ticket.clone());
-    writer().wake.notify_one();
+    writer().wake.notify_all();
     ticket
+}
+
+/// Worker-side ordering barrier: commands observe browser edits already accepted
+/// by the UI. It never drains receipts/failures or runs on the window thread.
+pub(crate) fn wait_accepted(file: &Path) {
+    let work = writer();
+    // design-lint: allow(ui-blocking-io) PRJ-031 review: worker-only ordering barrier; window callbacks only submit/poll and never enter this wait.
+    let mut state = work.state.lock().unwrap_or_else(|e| e.into_inner());
+    while state.active.as_deref() == Some(file) || state.queued.contains_key(file) {
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: worker-only ordering barrier; window callbacks only submit/poll and never enter this wait.
+        state = work.wake.wait(state).unwrap_or_else(|e| e.into_inner());
+    }
 }
 /// Used by the application's asynchronous last-window shutdown, also by its process test.
 /// Pending keeps the application alive. Done includes terminal, explicit save failures.

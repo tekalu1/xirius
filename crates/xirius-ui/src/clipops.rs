@@ -113,6 +113,7 @@ impl Studio {
                 if ids.len() < 2 {
                     return Some(true);
                 }
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 let joined = self.arrange_run("clip.join", json!({"ids":ids}));
                 if let Some(data) = &joined {
                     self.select_made(data);
@@ -232,8 +233,10 @@ impl Studio {
             notes.iter().map(ToString::to_string).collect()
         };
         if ids.is_empty() {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             self.arrange_run("select.clear", json!({}));
         } else {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             self.arrange_run("select.set", json!({ "ids": ids }));
         }
     }
@@ -263,7 +266,9 @@ impl Studio {
             self.arrange.touched();
             return true;
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         self.arrange_run("select.clear", json!({}));
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         if self.arrange_run("select.all", json!({})).is_none() {
             return true;
         }
@@ -287,6 +292,7 @@ impl Studio {
             return true;
         }
         if self
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             .arrange_run("select.on-tracks", json!({ "ids": ids }))
             .is_some()
         {
@@ -304,6 +310,7 @@ impl Studio {
             let notes = self.roll_notes(g);
             self.give_selection(&notes, &[]);
             let args = json!({ "clip": clip.to_string() });
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             if self.arrange_run("select.invert", args).is_some() {
                 self.take_notes();
             }
@@ -312,6 +319,7 @@ impl Studio {
         let clips = self.picked_clips();
         self.give_selection(&[], &clips);
         // With none selected the rule has nothing to flip from: every clip is "not selected".
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         if self.arrange_run("select.invert", json!({})).is_some() {
             self.take_clips();
         }
@@ -320,6 +328,7 @@ impl Studio {
 
     /// Ctrl+D: nothing selected.
     fn select_none(&mut self) -> bool {
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         self.arrange_run("select.clear", json!({}));
         self.arrange.clips.clear();
         self.arrange.points.clear();
@@ -336,6 +345,7 @@ impl Studio {
                 return false;
             };
             if self
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 .arrange_run("select.in-loop", json!({ "clip": clip.to_string() }))
                 .is_some()
             {
@@ -343,6 +353,7 @@ impl Studio {
             }
             return true;
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         if self.arrange_run("select.in-loop", json!({})).is_some() {
             self.take_clips();
         }
@@ -360,6 +371,7 @@ impl Studio {
             let ticks = join(self.arrange.points.ticks());
             let args = json!({ "track": t.to_string(), "target": target.to_string(),
                                "ticks": ticks });
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             if self.arrange_run(command, args).is_some() && cut {
                 self.arrange.points.clear();
             }
@@ -370,6 +382,7 @@ impl Studio {
             return false;
         }
         if self
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             .arrange_run(command, json!({ "ids": Self::ids_of(&clips) }))
             .is_some()
             && cut
@@ -410,6 +423,7 @@ impl Studio {
         };
         match &board {
             Clipboard::Tracks { .. } => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.arrange_run("edit.paste", json!({}));
             }
             // After the selected section, else at the playhead.
@@ -418,6 +432,7 @@ impl Studio {
                     Some(s) if !original => json!(s.start + s.length),
                     _ => at,
                 };
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 if let Some(data) = self.arrange_run("section.paste", json!({ "at": at })) {
                     self.select_section_made(&data);
                 }
@@ -427,12 +442,14 @@ impl Studio {
                 let mut data = None;
                 if !original && let Some(RowKind::Track(t)) = self.selected_row {
                     let args = json!({ "at": at, "track": t.to_string() });
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
                     data = self.song.run("edit.paste", args).ok();
                     if data.is_some() {
                         self.error = None;
                         self.after_edit();
                     }
                 }
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 let data = data.or_else(|| self.arrange_run("edit.paste", json!({ "at": at })));
                 if let Some(data) = data {
                     self.select_made(&data);
@@ -447,6 +464,7 @@ impl Studio {
                     args["target"] = json!(target.to_string());
                     over = Some((t, target));
                 }
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 if self.arrange_run("edit.paste", args).is_some() {
                     let first = board.first_tick();
                     let shift = if original { 0 } else { self.playhead - first };
@@ -466,6 +484,7 @@ impl Studio {
             Clipboard::Plugins(_) => {
                 // On the selected channel; its end of the inserts.
                 if let Some(RowKind::Track(t)) = self.selected_row {
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     self.arrange_run("edit.paste", json!({ "track": t.to_string() }));
                 } else {
                     self.tell(format!("{}は、ミキサーで貼り付けます", board.describe()));
@@ -492,6 +511,7 @@ impl Studio {
                 if ids.is_empty() {
                     self.tell(format!("{}は、ミキサーで貼り付けます", board.describe()));
                 } else {
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     self.arrange_run("channel.settings.paste", json!({ "ids": ids }));
                 }
             }
@@ -522,6 +542,7 @@ impl Studio {
         let board = self.board()?;
         match board {
             Clipboard::Tracks { .. } => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.arrange_run("edit.paste", json!({}))?;
                 self.rebuild(g);
                 Some(true)
@@ -566,10 +587,12 @@ impl Studio {
             };
             let mut args = args;
             args["by"] = json!(by);
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             if self.arrange_run("edit.duplicate", args).is_some() {
                 let moved = ticks.iter().map(|k| k + by).collect();
                 self.arrange.points.set_all(t, &target, moved);
             }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         } else if self.arrange_run("edit.delete", args).is_some() {
             self.arrange.points.clear();
         }

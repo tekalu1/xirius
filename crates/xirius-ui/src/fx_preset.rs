@@ -44,6 +44,7 @@ impl Studio {
             self.error = Some(e);
             return true;
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         self.run_command(
             name,
             json!({"id":id.to_string(),"file":path.to_string_lossy()}),

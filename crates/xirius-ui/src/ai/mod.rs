@@ -37,6 +37,8 @@ use crate::roll::NoteView;
 use crate::song::AI_ROW;
 use crate::studio::{Rect, Studio};
 
+pub(crate) type Before = Option<(ClipId, HashMap<NoteId, NoteView>)>;
+
 pub(crate) use paint::clip_marked;
 pub use paint::{overlay, paint_bar_button, paint_cell, paint_fresh};
 
@@ -449,6 +451,7 @@ impl Studio {
             Act::Level(p) => {
                 if let Err(e) = self
                     .song
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
                     .run("ai.permission.set", json!({"level": p.as_str()}))
                 {
                     self.error = Some(e);
@@ -470,7 +473,7 @@ impl Studio {
     /// the session checks the permission and says why it refuses; the
     /// screen keeps what came of it and starts the motion.
     pub fn ai_job(&mut self, job: xirius_mcp::Job) {
-        if self.input_blocked() {
+        if self.input_blocked() || self.macro_run.is_some() {
             job.answer(Err(CmdError::conflict(if self.opening.is_some() {
                 crate::opening::BUSY
             } else if self.sound_preparing() {
@@ -500,30 +503,14 @@ impl Studio {
             return;
         }
         let deferred = self.transport.is_windowed();
-        if deferred && crate::io_command::handles(&job.command) {
+        // Every connected Session command, including unknown future extensions,
+        // executes on its owner. Open/save protocols above retain their guards.
+        if deferred {
             self.io_command_for_mcp(job);
             return;
         }
-        let r = self.ai_run(&job.command, &job.raw, &job.opts, job.save && !deferred);
-        if deferred
-            && job.save
-            && (!job.opts.author.is_ai()
-                || self.song.session().ai_permission() == xirius_core::AiPermission::Save)
-            && let Ok(result) = &r
-            && !result.dry_run
-            && result.decision.is_none()
-            && self.song.dir().is_some()
-            && self.song.session().is_dirty()
-            && self
-                .song
-                .session()
-                .registry()
-                .get(&job.command)
-                .is_some_and(|d| d.risk != xirius_core::Risk::Read)
-        {
-            self.save_for_mcp(job, Some(result.clone()));
-            return;
-        }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: synchronous offline adapter; ai_run refuses window mode and connected jobs use the Session worker.
+        let r = self.ai_run(&job.command, &job.raw, &job.opts, job.save);
         job.answer(r);
     }
 
@@ -534,17 +521,35 @@ impl Studio {
         opts: &xirius_core::session::RunOptions,
         save: bool,
     ) -> Result<RunResult, CmdError> {
+        if self.transport.is_windowed() {
+            return Err(CmdError::conflict("窓のコマンドは所有者の処理が必要です"));
+        }
         if self.sound_preparing() {
             return Err(CmdError::conflict(crate::prepare_card::TITLE));
         }
-        let before = self.roll_target().map(|t| {
+        let before = self.ai_before();
+        let r =
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: synchronous offline adapter; ai_run refuses window mode and connected jobs use the Session worker.
+            xirius_mcp::persist::run_and_persist(self.song.session_mut(), command, raw, opts, save);
+        self.ai_complete(command, &r, before);
+        r
+    }
+
+    pub(crate) fn ai_before(&self) -> Before {
+        self.roll_target().map(|t| {
             let from = t.notes.iter().map(|n| (n.id, NoteView::from(n))).collect();
             (t.clip.id, from)
-        });
-        let r =
-            xirius_mcp::persist::run_and_persist(self.song.session_mut(), command, raw, opts, save);
+        })
+    }
+
+    pub(crate) fn ai_complete(
+        &mut self,
+        command: &str,
+        r: &Result<RunResult, CmdError>,
+        before: Before,
+    ) {
         let label = format!("{AI_ROW}{}", self.song.friendly(command));
-        match &r {
+        match r {
             Ok(run) if run.step.is_some() => {
                 let now = self.ai.now();
                 self.ai.fresh = run.step.map(|n| (n, now));
@@ -596,7 +601,7 @@ impl Studio {
                     });
                     self.refresh_popup();
                 }
-                if run_changed(&r) {
+                if run_changed(r) {
                     self.after_edit();
                 }
             }
@@ -609,7 +614,6 @@ impl Studio {
                 self.refresh_popup();
             }
         }
-        r
     }
 }
 

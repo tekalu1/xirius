@@ -461,6 +461,7 @@ impl Studio {
                 } else {
                     "plugin.bypass"
                 };
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command(command, json!({ "ids": [w.plugin.to_string()] }));
             }
             Part::Preset => {
@@ -598,6 +599,7 @@ impl Studio {
                 value
             };
             if (before - value).abs() > 1e-9 {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command(
                     "plugin.param.set",
                     json!({ "id": plugin.to_string(), "param": spec.id, "value": value }),
@@ -631,6 +633,7 @@ impl Studio {
             .map(|(p, v)| json!({ "param": p.id, "value": v }))
             .collect();
         // The edit's own pass learns the preset as the tag's base.
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         self.run_command(
             "plugin.preset.load",
             json!({ "id": id.to_string(), "preset": preset, "values": values }),

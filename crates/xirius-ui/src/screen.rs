@@ -142,6 +142,7 @@ impl Screen {
         true
     }
     fn right_pressed(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.studio.borrow_mut().view_read.cleanup.want_open = false;
         window.focus(&self.focus, cx);
         let mut s = self.studio.borrow_mut();
         if s.input_blocked() {
@@ -280,6 +281,7 @@ impl Screen {
     }
 
     fn pressed(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.studio.borrow_mut().view_read.cleanup.want_open = false;
         self.studio.borrow_mut().pointer_held = true;
         if self.queue_save_input(PlatformInput::MouseDown(ev.clone())) {
             let mut s = self.studio.borrow_mut();
@@ -410,6 +412,7 @@ impl Screen {
 
     /// The middle button holds the view under it (EDT-068).
     fn middle_pressed(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.studio.borrow_mut().view_read.cleanup.want_open = false;
         window.focus(&self.focus, cx);
         let mut studio = self.studio.borrow_mut();
         studio.pointer_held = true;
@@ -2239,6 +2242,7 @@ pub fn run(opts: Options) {
                     // An input is chosen so the radios' selection is real (UI-080).
                     let _ = s
                         .song
+                        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
                         .run("audio.input.select", serde_json::json!({ "channel": 1 }));
                 } else if open.as_deref() == Some("midi") {
                     studio

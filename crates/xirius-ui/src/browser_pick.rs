@@ -134,6 +134,7 @@ impl Studio {
             FileRequest::Locate(file) => {
                 if let Some(to) = paths.first() {
                     let to = to.to_string_lossy();
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     self.arrange_run(
                         "file.locate",
                         serde_json::json!({ "path": file, "new_path": to }),
@@ -143,6 +144,7 @@ impl Studio {
             FileRequest::LocateFolder => {
                 if let Some(folder) = paths.first() {
                     let folder = folder.to_string_lossy();
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     self.arrange_run("file.locate", serde_json::json!({ "folder": folder }));
                 }
             }

@@ -2441,6 +2441,7 @@ impl Studio {
     /// picks the range itself reads them first, so what the song remembers does not replace it.
     pub(crate) fn load_export(&mut self) {
         let dir = self.song.dir();
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         if let Ok(v) = self.song.run("export.open", json!({})) {
             let x = &mut self.export;
             // Whether MP3 can be written is read on every opening; the settings only once a song.
@@ -2502,6 +2503,7 @@ impl Studio {
     }
 
     pub(crate) fn reload_exports(&mut self) {
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         if let Ok(v) = self.song.run("export.status", json!({})) {
             let mut jobs: Vec<Value> = v["jobs"]
                 .as_array()
@@ -2541,6 +2543,7 @@ impl Studio {
             self.io_command_on_worker(command, args.as_object().cloned().unwrap_or_default());
             return None;
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         match self.song.run(command, args) {
             Ok(v) => {
                 self.error = None;
@@ -2599,6 +2602,7 @@ impl Studio {
             }
             Act::Import(job) => {
                 // At the head of the range it was written from, where its beat lines up.
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command("export.import", json!({"job":job}));
             }
             Act::Mode(stems) => x.set_stems(stems),
@@ -2822,6 +2826,7 @@ impl Studio {
         if let Some(job) = self.export.preview.take() {
             let _ = self
                 .song
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
                 .run("export.preview", json!({"job":job,"stop":true}));
             self.refresh_popup();
         }
@@ -2854,6 +2859,7 @@ impl Studio {
         if let Some(job) = &preview
             && let Ok(v) = self
                 .song
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
                 .run("export.preview", json!({"job":job,"status":true}))
         {
             self.export.preview_peak = self
@@ -2887,6 +2893,7 @@ impl Studio {
             .collect();
         let mut ended = false;
         for id in running {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
             if let Ok(v) = self.song.run("export.status", json!({ "job": id })) {
                 ended |= v["state"] != "running";
                 if let Some(slot) = self

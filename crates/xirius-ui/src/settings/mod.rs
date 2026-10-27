@@ -918,6 +918,7 @@ impl Studio {
             self.io_command_on_worker(command, args.as_object().cloned().unwrap_or_default());
             return Some(String::new());
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         match self.song.set(command, args) {
             Ok(m) => Some(m),
             Err(e) => {
@@ -1262,6 +1263,7 @@ impl Studio {
                 }
             }
             Do::MacroRun(name) => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_macro(g, &name);
                 let said = match self.error.take() {
                     Some(e) => e,
@@ -1444,6 +1446,7 @@ impl Studio {
                         self.settings_run("mousemap.set", args);
                         None
                     } else {
+                        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
                         self.song.set("mousemap.set", args).err()
                     };
                     if let Some(ui) = &mut self.settings {

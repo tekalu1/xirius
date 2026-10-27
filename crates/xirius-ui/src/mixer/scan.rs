@@ -237,6 +237,7 @@ impl Studio {
         if self.mixer.scan.running() {
             return Ok(());
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         let data = self.song.run("plugin.rescan", args)?;
         self.track_scan(&data)
     }
@@ -277,6 +278,7 @@ impl Studio {
         if self.mixer.scan.stopping {
             return;
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         match self.song.run("export.cancel", json!({ "job": job })) {
             Ok(_) => {
                 self.mixer.scan.stopping = true;
@@ -352,6 +354,7 @@ impl Studio {
         let mut loaded = self.poll_catalog();
         if self.transport.is_windowed()
             && !self.input_blocked()
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
             && let Ok(rows) = self.song.run("track.preset.list", json!({}))
             && rows != self.mixer.scan.preset_rows
         {
@@ -389,6 +392,7 @@ impl Studio {
             return true;
         }
         scan.polled = Some(Instant::now());
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         let status = self.song.run("export.status", json!({ "job": job }));
         let scan = &mut self.mixer.scan;
         let state = match &status {

@@ -334,6 +334,7 @@ impl Studio {
             })
     }
     pub fn add_effect(&mut self, t: TrackId, index: usize, pick: &Pick) -> bool {
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         let Some(data)=self.arrange_run("plugin.add",json!({"track":t.to_string(),"name":pick.name,"format":pick.format,"uid":pick.uid,"index":index})) else{return false;};
         self.mixer
             .recent
@@ -447,6 +448,7 @@ impl Studio {
                     }
                     if remove_part(row).contains(x, y) {
                         self.close_editor(id);
+                        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                         self.run_command("plugin.remove", json!({"ids":[id.to_string()]}));
                         return true;
                     }
@@ -563,6 +565,7 @@ impl Studio {
                 {
                     index -= 1;
                 }
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command(
                     if copy {
                         "plugin.copy_to"

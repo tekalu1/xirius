@@ -92,6 +92,7 @@ impl Studio {
         match self.name_drop(g, d.from, x, y) {
             Some(Drop::Move { anchor, after }) => self.strip_move(g, d.from, anchor, after),
             Some(Drop::Paste(to)) => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.arrange_run(
                     "channel.settings.paste",
                     json!({ "ids": [to.to_string()], "from": d.from.to_string() }),
@@ -176,6 +177,7 @@ impl Studio {
             Parent::Root => "root".to_string(),
             Parent::Folder(f) => f.to_string(),
         };
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         self.arrange_run(
             "track.move",
             json!({ "ids": [from.to_string()], "into": into, "index": index }),

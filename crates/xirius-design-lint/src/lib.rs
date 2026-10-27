@@ -227,3 +227,53 @@ fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
     }
     Ok(())
 }
+
+/// Unsuppressed inventory of UI I/O and dynamic dispatch boundaries. Includes
+/// individually reviewed calls, so the audit can be regenerated after lint passes.
+pub fn audit_ui_io(root: &Path) -> io::Result<Vec<Violation>> {
+    let mut files = Vec::new();
+    collect_rs(&root.join("crates/xirius-ui/src"), &mut files)?;
+    files.sort();
+    let mut out = Vec::new();
+    for path in files {
+        let label = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if !is_screen_file(&label) {
+            continue;
+        }
+        let source = fs::read_to_string(&path)?;
+        let parsed = syn::parse_file(&source).map_err(io::Error::other)?;
+        out.extend(
+            ui_io::scan(&parsed, &label)
+                .into_iter()
+                .map(|hit| Violation {
+                    file: label.clone(),
+                    line: hit.line,
+                    rule: hit.rule,
+                    message: hit.message,
+                }),
+        );
+    }
+    Ok(out)
+}
+
+/// Stable reviewed inventory: line shifts do not matter, adding a call does.
+pub fn ui_io_inventory(root: &Path) -> io::Result<String> {
+    let mut counts = std::collections::BTreeMap::new();
+    for row in audit_ui_io(root)? {
+        let operation = row
+            .message
+            .split('`')
+            .nth(1)
+            .unwrap_or(&row.message)
+            .to_owned();
+        *counts.entry((row.file, operation)).or_insert(0usize) += 1;
+    }
+    Ok(counts
+        .into_iter()
+        .map(|((file, operation), count)| format!("{file}\t{operation}\t{count}\n"))
+        .collect())
+}

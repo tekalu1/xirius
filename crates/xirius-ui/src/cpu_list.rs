@@ -482,6 +482,7 @@ impl Studio {
                 } else {
                     "plugin.deactivate"
                 };
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.arrange_run(command, json!({ "ids": [id.to_string()] }));
                 self.poll_perf_now();
             }

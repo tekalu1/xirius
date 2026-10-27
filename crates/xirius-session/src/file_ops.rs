@@ -335,6 +335,9 @@ fn rename(p: &Project, dir: Option<&Path>, args: &Args, dry: bool) -> CmdResult<
         files.push(json!({ "from": u.file, "to": new }));
     }
     if !dry {
+        #[cfg(feature = "test-io")]
+        xirius_core::io_test::before("file_rename", &from)
+            .map_err(|e| CmdError::io(e.to_string()))?;
         std::fs::rename(&from, &to)
             .map_err(|e| CmdError::io(format!("{old} の名前を変更できません: {e}")))?;
     }

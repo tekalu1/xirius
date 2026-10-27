@@ -108,6 +108,28 @@ impl Studio {
                     free["port"] = json!(p);
                 }
             }
+            if self.transport.is_windowed() {
+                if self.input_blocked() {
+                    return false;
+                }
+                let mut set =
+                    json!({"message":c.message.to_string(),"target":c.target.to_string()});
+                if let Some(port) = &c.port {
+                    set["port"] = json!(port);
+                }
+                self.io_command_on_worker(
+                    "ai.batch",
+                    json!({"commands":[
+                        {"command":"midimap.unset","args":free},
+                        {"command":"midimap.set","args":set}
+                    ]})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                );
+                return true;
+            }
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
             if let Err(e) = self.song.run("midimap.unset", free) {
                 self.error = Some(e);
                 return false;
@@ -150,6 +172,7 @@ impl Studio {
             self.io_command_on_worker("midimap.set", args.as_object().unwrap().clone());
             return true;
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         match self.song.run("midimap.set", args) {
             Ok(_) => {
                 self.tell(format!(

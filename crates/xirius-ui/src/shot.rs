@@ -651,6 +651,7 @@ pub fn wire(s: &mut Studio, stage: u8) {
             let Some(t) = track_named(&s.project(), "Vocal") else {
                 return;
             };
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             s.run_command(
                 "plugin.add",
                 serde_json::json!({ "track": t.to_string(), "name": "Echo", "kind": "effect",
@@ -659,6 +660,7 @@ pub fn wire(s: &mut Studio, stage: u8) {
             let Some(id) = s.project().tracks[&t].inserts.first().map(|x| x.id) else {
                 return;
             };
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             s.run_command(
                 "plugin.isolation.set",
                 serde_json::json!({ "ids": [id.to_string()], "mode": "shared" }),

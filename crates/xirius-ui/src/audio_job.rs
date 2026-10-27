@@ -287,6 +287,7 @@ impl Studio {
             Ok(plan) => {
                 let mut broke = None;
                 for (name, edit) in plan.edits {
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
                     if let Err(e) = self.song.run(&name, Value::Object(edit)) {
                         broke = Some(e);
                         break;

@@ -233,6 +233,8 @@ pub mod recovery_card;
 pub mod recux_shots;
 pub mod rename_undo_shots;
 pub mod repaint_shots;
+#[cfg(test)]
+mod review_io_tests;
 pub mod ripple_shots;
 pub mod roll;
 pub mod rollruler_shots;

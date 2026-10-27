@@ -184,11 +184,13 @@ impl Studio {
                     .count();
                 format!("バス {}", n + 1)
             };
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             self.run_command(
                 "folder.bus.add",
                 json!({ "id": f.to_string(), "name": name, "into": "root" }),
             );
         } else {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             self.run_command("folder.bus.set", json!({ "id": f.to_string(), "bus": to }));
         }
         self.rebuild(g);
