@@ -49,6 +49,8 @@ pub use collect::{Collected, copy_into, is_external, song_name};
 mod renames;
 mod work;
 pub use work::*;
+#[cfg(test)]
+mod external_tests;
 mod writer;
 use writer::{Job, Writer};
 pub(crate) mod saving;
@@ -394,6 +396,31 @@ impl History {
                 *s = None;
             }
         }
+    }
+}
+
+/// A validated external read, retaining the exact session-store boundary that
+/// requested it. Construction performs I/O and belongs on a worker.
+pub struct ExternalProject {
+    source: Store,
+    saved: Option<String>,
+    project: Project,
+    repairs: Vec<crate::track_preset::Adjust>,
+    hash: String,
+}
+impl ExternalProject {
+    pub fn read(source: Store, saved: Option<String>) -> CmdResult<Self> {
+        let (project, repairs, hash) = source.read_project_hashed_report()?;
+        Ok(Self {
+            source,
+            saved,
+            project,
+            repairs,
+            hash,
+        })
+    }
+    pub fn hash(&self) -> &str {
+        &self.hash
     }
 }
 
@@ -2059,6 +2086,16 @@ impl Session {
         Ok(all)
     }
 
+    /// Automatic versions already accepted by this session's writer, for a
+    /// window that reads the durable list asynchronously.
+    pub fn pending_versions(&self) -> Vec<VersionInfo> {
+        if self.writer.pending() {
+            self.autos_sent.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Makes an automatic save point when the song changed since the last one
     /// and the interval has passed. The UI calls this on a timer.
     pub fn autosave_if_due(&mut self, now: u64) -> CmdResult<Option<VersionInfo>> {
@@ -2156,7 +2193,58 @@ impl Session {
     /// or wrote, or it holds the song as it is now (then only the file is remembered).
     pub fn reload_from_disk(&mut self, author: &Author) -> CmdResult<Option<(u64, ChangeSet)>> {
         let store = self.store().cloned().ok_or_else(no_store)?;
-        let (mut p, repairs, hash) = store.read_project_hashed_report()?;
+        let (p, repairs, hash) = store.read_project_hashed_report()?;
+        self.apply_disk_project(p, repairs, hash, author, false)
+    }
+
+    /// A worker may read a project without moving the playing session away.
+    /// Acceptance must compare the source and saved hash used by that request.
+    pub fn disk_hash_is(&self, hash: &str) -> bool {
+        self.disk_hash.as_deref() == Some(hash)
+    }
+
+    /// Memory-only acceptance boundary for an external read in flight.
+    pub fn disk_fingerprint(&self) -> Option<&str> {
+        self.disk_hash.as_deref()
+    }
+
+    /// Applies an already validated disk read, and queues its manifest behind
+    /// the new history step. No file read, writer flush or join occurs here.
+    pub fn adopt_disk_project(
+        &mut self,
+        prepared: ExternalProject,
+        author: &Author,
+    ) -> CmdResult<Option<(u64, ChangeSet)>> {
+        if !self.writer.is_background() {
+            return Err(CmdError::conflict(
+                "外部変更の受け入れには履歴の worker が必要です",
+            ));
+        }
+        if self
+            .store
+            .as_ref()
+            .is_none_or(|s| s.dir != prepared.source.dir || s.lane != prepared.source.lane)
+            || self.disk_hash != prepared.saved
+        {
+            return Err(CmdError::conflict("外部変更の読み込み元が変わりました"));
+        }
+        self.apply_disk_project(
+            prepared.project,
+            prepared.repairs,
+            prepared.hash,
+            author,
+            true,
+        )
+    }
+
+    fn apply_disk_project(
+        &mut self,
+        mut p: Project,
+        repairs: Vec<crate::track_preset::Adjust>,
+        hash: String,
+        author: &Author,
+        queued: bool,
+    ) -> CmdResult<Option<(u64, ChangeSet)>> {
         if self.disk_hash.as_deref() == Some(hash.as_str()) {
             return Ok(None);
         }
@@ -2169,15 +2257,28 @@ impl Session {
         if changes.is_empty() {
             self.saved_step = self.hist.cursor;
             self.saved = Some(self.current.clone());
-            self.write_manifest()?;
+            self.persist_reload_manifest(queued)?;
             return Ok(None);
         }
         let (n, _) = self.push_step(p, "project.reload", json!({}), author, changes.summary());
         self.prune_selection();
         self.saved_step = n;
         self.saved = Some(self.current.clone());
-        self.write_manifest()?;
+        self.persist_reload_manifest(queued)?;
         Ok(Some((n, changes)))
+    }
+
+    fn persist_reload_manifest(&mut self, queued: bool) -> CmdResult<()> {
+        if !queued {
+            return self.write_manifest();
+        }
+        self.writer
+            .submit(Job::Manifest {
+                store: self.store.clone().ok_or_else(no_store)?,
+                manifest: self.manifest(),
+                saved_step: self.saved_step,
+            })
+            .map_err(|e| CmdError::conflict(writer::message(&e)))
     }
 
     /// For a session held open across commands (the MCP server, PRJ-024): with nothing unsaved,

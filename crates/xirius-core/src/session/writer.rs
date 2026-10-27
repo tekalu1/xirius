@@ -29,6 +29,12 @@ use crate::store::{HistoryIndex, Manifest, Store, VersionInfo};
 const ERRORS_KEPT: usize = 20;
 
 pub(super) enum Job {
+    /// Saved cursor after adopting an external project; ordered after its step.
+    Manifest {
+        store: Store,
+        manifest: Manifest,
+        saved_step: u64,
+    },
     /// A step: its state, then the index naming it, then the states it left behind go.
     /// `before` is the index cut back to the cursor, written first when the step replaces
     /// the steps that were ahead (so the old index never names a state written over).
@@ -67,6 +73,16 @@ pub(super) enum Job {
 
 fn run(job: Job) -> CmdResult<()> {
     match job {
+        Job::Manifest {
+            store,
+            manifest,
+            saved_step,
+        } => {
+            store.update_manifest(&manifest)?;
+            if store.lane != 0 {
+                store.write_lane_saved_step(saved_step)?;
+            }
+        }
         Job::Step {
             store,
             before,
@@ -181,11 +197,18 @@ impl Shared {
     }
 
     fn finish_one(&self) {
+        #[cfg(any(test, feature = "test-io"))]
+        {
+            let last = *self.pending.lock().unwrap_or_else(PoisonError::into_inner) == 1;
+            if last {
+                // A held completion receipt must not hold the UI's memory-only
+                // pending-count lock. Keep the count pending until release.
+                let _ = crate::io_test::before("writer_complete", std::path::Path::new(""));
+            }
+        }
         let mut n = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
         *n = n.saturating_sub(1);
         if *n == 0 {
-            #[cfg(any(test, feature = "test-io"))]
-            let _ = crate::io_test::before("writer_complete", std::path::Path::new(""));
             self.done.notify_all();
         }
     }

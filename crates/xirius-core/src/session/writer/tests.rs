@@ -13,6 +13,53 @@ impl Drop for Gate {
     }
 }
 
+#[test]
+fn a_held_completion_receipt_leaves_the_ui_pending_query_available() {
+    let root = tempfile::tempdir().unwrap();
+    let mut session = Session::new("completion");
+    session.save_as(root.path()).unwrap();
+    session.write_in_background(true);
+    let gate = Gate::default();
+    let held = gate.0.clone();
+    let owner = Arc::new(Mutex::new(None));
+    let worker = owner.clone();
+    let dir = root.path().to_owned();
+    let once = std::sync::atomic::AtomicBool::new(false);
+    let (tx, entered) = mpsc::channel();
+    let _observe = crate::io_test::observe(Arc::new(move |op, path| {
+        if op == "write" && path.starts_with(&dir) {
+            *worker.lock().unwrap() = Some(thread::current().id());
+        }
+        let is_owner = *worker.lock().unwrap() == Some(thread::current().id());
+        if op == "writer_complete" && is_owner && !once.swap(true, Ordering::SeqCst) {
+            let _ = tx.send(());
+            drop(
+                held.1
+                    .wait_while(held.0.lock().unwrap(), |go| !*go)
+                    .unwrap(),
+            );
+        }
+        Ok(())
+    }));
+    run(&mut session, "track.add.audio", json!({"name":"Queued"}));
+    entered.recv_timeout(Duration::from_secs(30)).unwrap();
+    let (ack, answer) = mpsc::channel();
+    let query = thread::spawn(move || {
+        let pending = session.writes_pending();
+        let _ = ack.send((session, pending));
+    });
+    let (session, pending) = answer
+        .recv_timeout(Duration::from_secs(30))
+        .expect("UI Ack while completion is still held");
+    assert!(
+        pending,
+        "completion must remain pending until its receipt is released"
+    );
+    query.join().unwrap();
+    drop(gate);
+    session.flush_writes();
+}
+
 fn run(session: &mut Session, name: &str, args: Value) -> Value {
     session
         .run_value(name, args, &RunOptions::human())
