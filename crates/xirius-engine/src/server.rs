@@ -508,6 +508,67 @@ impl PluginLink {
 #[cfg(test)]
 mod capture_tests {
     #[test]
+    fn an_ancestor_edit_reaches_both_accepted_seats_during_another_replacement() {
+        for protected in [Vec::new(), vec!["1".into()]] {
+            let server = PluginServer::new(None);
+            let link = PluginLink::new();
+            link.slot.store(2, Ordering::Release);
+            link.next.store(3, Ordering::Release);
+            {
+                let mut st = server.inner.lock();
+                st.closing.insert(1, link.clone());
+                st.slots.insert(
+                    2,
+                    SlotRec {
+                        intent_bound: true,
+                        follow: vec![Follow {
+                            source: 1,
+                            protected: Vec::new(),
+                        }],
+                        open: open(2, 0.25),
+                        link: link.clone(),
+                        rings: None,
+                        poisoned: false,
+                    },
+                );
+                st.slots.insert(
+                    3,
+                    SlotRec {
+                        intent_bound: true,
+                        follow: vec![
+                            Follow {
+                                source: 1,
+                                protected: protected.clone(),
+                            },
+                            Follow {
+                                source: 2,
+                                protected: protected.clone(),
+                            },
+                        ],
+                        open: open(3, 0.75),
+                        link: link.clone(),
+                        rings: None,
+                        poisoned: false,
+                    },
+                );
+            }
+            server.inner.dispatch(
+                0,
+                FromHost::Gesture {
+                    slot: 1,
+                    gesture: Gesture::Perform(1, 0.5),
+                },
+            );
+            let st = server.inner.lock();
+            assert_eq!(st.slots[&2].open.params[0].1, 0.5);
+            assert_eq!(
+                st.slots[&3].open.params[0].1,
+                if protected.is_empty() { 0.5 } else { 0.75 }
+            );
+        }
+    }
+
+    #[test]
     fn explicit_reset_and_parameter_intent_win_over_the_old_slots_passive_reports() {
         for protected in [None, Some(Vec::new()), Some(vec!["1".into()])] {
             let server = PluginServer::new(None);
@@ -1686,28 +1747,32 @@ impl Inner {
                 };
                 let title = PluginLink::title(&link.lock(), id);
                 let playing = link.slot.load(Ordering::Acquire);
-                let late = (slot != playing)
-                    .then(|| st.slots.get(&playing))
-                    .flatten()
-                    .filter(|rec| {
-                        rec.follow
-                            .iter()
-                            .any(|f| f.source == slot && f.allows(id, &title))
+                // An ancestor editor may report while its successor is itself
+                // preparing another replacement. Keep both accepted seats current.
+                let candidates = if slot == playing {
+                    [st.next_of(&link, slot), None]
+                } else {
+                    [Some(playing), st.next_of(&link, playing)]
+                };
+                let targets = candidates.map(|target| {
+                    target.filter(|target| {
+                        st.slots.get(target).is_some_and(|next| {
+                            (slot == playing && !next.intent_bound)
+                                || next
+                                    .follow
+                                    .iter()
+                                    .any(|f| f.source == slot && f.allows(id, &title))
+                        })
                     })
-                    .map(|_| playing);
-                if slot != playing && late.is_none() {
+                });
+                let accepted = if slot == playing {
+                    candidates[0].is_none() || targets[0].is_some()
+                } else {
+                    targets.iter().any(Option::is_some)
+                };
+                if slot != playing && !accepted {
                     return;
                 }
-                let target = st.next_of(&link, slot).or(late);
-                let accepted = target
-                    .and_then(|next| st.slots.get(&next))
-                    .is_none_or(|next| {
-                        !next.intent_bound
-                            || next
-                                .follow
-                                .iter()
-                                .any(|f| f.source == slot && f.allows(id, &title))
-                    });
                 if accepted {
                     link.gesture(slot, gesture);
                 }
@@ -1721,7 +1786,7 @@ impl Inner {
                 // Preserve the old editor's actual edits even if its notification
                 // crosses promotion/Close. Explicit model changes break/protect
                 // this lineage; getState receipts never enter this channel.
-                if let Some(next) = target.filter(|_| accepted) {
+                for next in targets.into_iter().flatten() {
                     let rec = st.slots.get_mut(&next).expect("target checked above");
                     if let Some(policy) = rec.follow.iter().find(|f| f.source == slot)
                         && !policy.allows(id, &title)
@@ -1731,7 +1796,7 @@ impl Inner {
                     set_param(&mut rec.open, &key, &title, value);
                     st.send(&ToHost::SetParam {
                         slot: next,
-                        key,
+                        key: key.clone(),
                         value,
                     });
                 }
