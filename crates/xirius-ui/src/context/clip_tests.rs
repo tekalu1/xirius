@@ -514,7 +514,10 @@ fn an_audio_clips_reveal_row_resolves_the_file_from_the_song_folder() {
         .unwrap()
         .parent()
         .unwrap();
-    let dir = root.join(format!("target/ctx2-reveal-{}", std::process::id()));
+    let dir = root.join(format!(
+        "target/ctx2-reveal-{}",
+        crate::shot::fixture_run_id()
+    ));
     s.command(|song| song.save_as(&dir));
     assert!(s.error.is_none(), "{:?}", s.error);
     let t = track(&s, "Vocal");

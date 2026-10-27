@@ -64,7 +64,10 @@ fn prepare(s: &mut Studio, _: u8) {
     let next = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target")
-        .join(format!("automation-pdc-ui-{}-{next}", std::process::id()));
+        .join(format!(
+            "automation-pdc-ui-{}-{next}",
+            crate::shot::fixture_run_id()
+        ));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("pdc.wav");
     xirius_session::export::write_wav(&file, &vec![0.125; 192000], &vec![0.125; 192000], 48000, 32)

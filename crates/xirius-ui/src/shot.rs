@@ -148,6 +148,21 @@ pub struct Shot {
     pub acts: &'static [Act],
 }
 
+/// Stable across stages, distinct from an earlier run that reused this PID.
+pub(crate) fn fixture_run_id() -> &'static str {
+    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ID.get_or_init(|| {
+        format!(
+            "{}-{:x}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        )
+    })
+}
+
 /// Stage `n` of the piano roll's part of [`SCRIPT`].
 const fn roll(n: u8) -> Act {
     Act::Stage(Play::Laid(crate::roll::probe::shot), n)
