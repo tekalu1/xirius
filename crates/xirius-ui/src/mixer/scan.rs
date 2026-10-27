@@ -87,6 +87,79 @@ mod menu_io_tests {
             .unwrap();
         }
     }
+
+    #[test]
+    fn a_command_worker_background_scan_refreshes_the_menu_after_its_job_finishes() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = Studio::new(crate::song::Song::sample_with(ScanOptions {
+            dirs: Vec::new(),
+            cache: root.path().join("catalog.json"),
+            ..ScanOptions::default()
+        }));
+        s.bind_window_io();
+        s.io_command_on_worker(
+            "plugin.rescan",
+            json!({"background":true}).as_object().unwrap().clone(),
+        );
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while s.saving.is_some() {
+            s.poll_saving();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert!(
+            s.mixer.scan.job.is_some(),
+            "completion keeps the background continuation"
+        );
+        while s.mixer.scan.job.is_some() || s.mixer.scan.catalog_read.is_some() {
+            s.poll_plugin_scan();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(s.mixer.scan.cache_current, Some(true));
+        assert!(s.mixer.catalog.is_some());
+        assert!(s.error.is_none(), "{:?}", s.error);
+    }
+
+    #[test]
+    fn an_explicit_catalog_reload_discards_a_late_pre_scan_snapshot() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = Studio::new(crate::song::Song::sample_with(ScanOptions {
+            cache: root.path().join("catalog.json"),
+            ..ScanOptions::default()
+        }));
+        s.bind_window_io();
+        let release = crate::browser_io_tests::Release::new();
+        let gate = release.0.clone();
+        let (tx, entered) = mpsc::channel();
+        s.mixer.scan.catalog_read = Some(
+            xirius_session::background::Job::spawn("old-catalog", move || {
+                tx.send(()).unwrap();
+                let held = gate.0.lock().unwrap();
+                drop(gate.1.wait_while(held, |done| !*done).unwrap());
+                Ok((Catalog::default(), true))
+            })
+            .unwrap(),
+        );
+        entered.recv_timeout(Duration::from_secs(20)).unwrap();
+        s.reload_catalog_later();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while s.mixer.scan.catalog_read.is_some() {
+            s.poll_catalog();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            s.mixer.scan.cache_current,
+            Some(false),
+            "new cache is missing"
+        );
+        release.release();
+        for _ in 0..32 {
+            s.poll_catalog();
+        }
+        assert_eq!(s.mixer.scan.cache_current, Some(false));
+    }
 }
 
 /// Where this program looks for plugins: the standard folders and cache, each bundle
@@ -165,8 +238,15 @@ impl Studio {
             return Ok(());
         }
         let data = self.song.run("plugin.rescan", args)?;
+        self.track_scan(&data)
+    }
+
+    pub(crate) fn track_scan(&mut self, data: &serde_json::Value) -> Result<(), String> {
         let job = data["job"].as_str().ok_or("plugin.rescan gave no job")?;
         let scan = &mut self.mixer.scan;
+        if scan.job.as_deref() == Some(job) {
+            return Ok(());
+        }
         scan.job = Some(job.to_string());
         (scan.done, scan.total, scan.error, scan.polled) = (0, 0, None, None);
         scan.stopping = false;
@@ -335,7 +415,7 @@ impl Studio {
             if state == "done" || state == "cancelled" {
                 if self.transport.is_windowed() {
                     self.mixer.scan.announce_catalog = state == "done" && !again;
-                    self.read_catalog_later();
+                    self.reload_catalog_later();
                     self.refresh_insert_list();
                     return true;
                 }
@@ -360,6 +440,10 @@ impl Studio {
         true
     }
 
+    pub(crate) fn reload_catalog_later(&mut self) {
+        self.mixer.scan.catalog_read = None;
+        self.read_catalog_later();
+    }
     pub(crate) fn read_catalog_later(&mut self) {
         if self.mixer.scan.catalog_read.is_some() {
             return;

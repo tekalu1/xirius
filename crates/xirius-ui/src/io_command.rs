@@ -59,7 +59,13 @@ impl Studio {
         self.error = None;
         self.after_edit();
         if name == "plugin.rescan" {
-            self.read_catalog_later();
+            if result.data["state"] == "running" {
+                if let Err(error) = self.track_scan(&result.data) {
+                    self.error = Some(error);
+                }
+            } else {
+                self.reload_catalog_later();
+            }
         }
         if name.starts_with("export.") {
             if name == "export.delete"
