@@ -334,6 +334,7 @@ fn watch(job: Arc<Job>) {
 
 pub struct SessionExt {
     disk_cache: disk_cache::Cache,
+    preset_cache: disk_cache::Presets,
     io_settings: Option<xirius_prefs::Shared>,
     output: OutputMode,
     preview: Option<crate::export_preview::Preview>,
@@ -513,6 +514,7 @@ impl SessionExt {
     pub fn with(config: ExtConfig, extras: ExtExtras) -> SessionExt {
         SessionExt {
             disk_cache: Default::default(),
+            preset_cache: Default::default(),
             io_settings: extras.io_settings,
             output: config.output,
             preview: None,
@@ -1204,6 +1206,15 @@ impl SessionExt {
                 json!({ "job": id, "files": shown }),
             ));
         }
+        if self
+            .preview
+            .as_ref()
+            .is_some_and(|preview| preview.job == id)
+        {
+            // UI dispatches one command to its worker. Close and acknowledge
+            // the preview output there before trashing its open files.
+            self.preview = None;
+        }
         for f in &files {
             (self.trash)(f).map_err(CmdError::conflict)?;
         }
@@ -1211,6 +1222,7 @@ impl SessionExt {
             Store::of_song(d).remove(id);
         }
         self.jobs.retain(|j| j.id != id);
+        self.disk_cache.removed(id);
         Ok(Output::with(
             format!(
                 "{id} の {} 個のファイルをごみ箱に移動し、一覧から削除しました",
@@ -1817,11 +1829,17 @@ impl Extension for SessionExt {
                 Ok(output)
             }
             n if crate::track_preset::NAMES.contains(&n) => {
-                let catalog = self.catalog();
                 let dir = self
                     .track_presets
                     .clone()
                     .unwrap_or_else(crate::track_preset::dir);
+                if n == "track.preset.list" && crate::host::on_window_thread() {
+                    return Ok(Output::with(
+                        "",
+                        self.preset_cache.read(dir, cx.project.clone()),
+                    ));
+                }
+                let catalog = self.catalog();
                 let (output, edits) =
                     crate::track_preset::run(&dir, cx.project, &catalog, n, args, dry)?;
                 self.pending.extend(edits);

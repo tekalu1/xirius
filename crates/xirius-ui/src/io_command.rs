@@ -5,7 +5,11 @@ use crate::studio::Studio;
 
 pub(crate) fn handles(name: &str) -> bool {
     name != "macro.run"
-        && (xirius_prefs::is_settings_command(name)
+        && (matches!(name, "plugin.rescan" | "browser.plugin.list")
+            || xirius_session::track_preset::NAMES.contains(&name)
+            || xirius_session::preset::NAMES.contains(&name)
+            || xirius_session::xpreset::NAMES.contains(&name)
+            || xirius_prefs::is_settings_command(name)
             || [
                 "export.",
                 "audio.",
@@ -18,6 +22,13 @@ pub(crate) fn handles(name: &str) -> bool {
             ]
             .iter()
             .any(|prefix| name.starts_with(prefix)))
+}
+
+pub(crate) fn captures(name: &str) -> bool {
+    matches!(
+        name,
+        "plugin.preset.save" | "track.preset.save" | "track.preset.update" | "preset.save"
+    )
 }
 
 pub(crate) fn label(name: &str) -> &'static str {
@@ -45,7 +56,16 @@ impl Studio {
     ) {
         self.error = None;
         self.after_edit();
+        if name == "plugin.rescan" {
+            self.read_catalog_later();
+        }
         if name.starts_with("export.") {
+            if name == "export.delete"
+                && self.export.preview.as_deref() == raw.get("job").and_then(|v| v.as_str())
+            {
+                self.export.preview = None;
+                self.transport.auditioning_export = false;
+            }
             if name == "export.preview" {
                 self.export.preview = (!raw.get("stop").and_then(|v| v.as_bool()).unwrap_or(false))
                     .then(|| {

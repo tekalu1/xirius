@@ -233,6 +233,108 @@ fn the_cards_trash_button_asks_before_touching_a_written_file() {
 }
 
 #[test]
+fn windowed_export_menu_confirm_and_file_actions_do_not_wait_for_metadata() {
+    use super::export::{ExportAct, Row};
+    use crate::browser_io_tests::Release;
+    use std::sync::{Arc, mpsc};
+    let (mut s, g, _, root) = exported("metadata-gate");
+    let job = s.export.jobs[0]["job"].as_str().unwrap().to_owned();
+    let file = s.export.jobs[0]["result"]["path"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    s.bind_window_io();
+    xirius_session::host::mark_window_thread();
+    let release = Release::new();
+    let gate = release.0.clone();
+    let prefix = root.path().to_owned();
+    let ui = std::thread::current().id();
+    let (tx, entered) = mpsc::channel();
+    let _observe = xirius_core::io_test::observe(Arc::new(move |op, path| {
+        if op == "export_metadata" && path.starts_with(&prefix) {
+            assert_ne!(std::thread::current().id(), ui);
+            let _ = tx.send(());
+            drop(
+                gate.1
+                    .wait_while(gate.0.lock().unwrap(), |done| !*done)
+                    .unwrap(),
+            );
+        }
+        Ok(())
+    }));
+    s.poll_export_files();
+    entered.recv_timeout(Duration::from_secs(20)).unwrap();
+    menu(&mut s, &g);
+    assert!(!enabled(&s, "聴く"));
+    assert!(!enabled(&s, "エクスプローラーで表示"));
+    assert!(s.export_confirm_trash(&job, ANCHOR));
+    for row in [Row::Listen, Row::Reveal] {
+        assert!(!s.export_run_row(ExportAct {
+            job: job.clone(),
+            row,
+            anchor: ANCHOR,
+            file: Some(file.clone())
+        }));
+    }
+    for _ in 0..8 {
+        s.tick();
+        s.idle();
+        s.geometry(880.0, 600.0);
+    }
+    release.release();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !s.export_file_exists(std::path::Path::new(&file)) {
+        s.poll_export_files();
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    s.open_export(ANCHOR);
+    menu(&mut s, &g);
+    assert!(enabled(&s, "聴く"));
+    assert!(enabled(&s, "エクスプローラーで表示"));
+}
+
+#[test]
+fn windowed_delete_closes_preview_and_deletes_once_without_losing_the_request() {
+    let (mut s, _, _, root) = exported("preview-delete");
+    let job = s.export.jobs[0]["job"].as_str().unwrap().to_owned();
+    let file = std::path::PathBuf::from(s.export.jobs[0]["result"]["path"].as_str().unwrap());
+    s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
+    s.bind_window_io();
+    xirius_session::host::mark_window_thread();
+    s.export_action(crate::export::Act::Preview(job.clone()));
+    s.wait_for_save();
+    assert_eq!(
+        s.export.preview.as_deref(),
+        Some(job.as_str()),
+        "{:?}",
+        s.error
+    );
+    assert!(s.export_action(crate::export::Act::DeleteConfirmed(job.clone())));
+    assert!(s.saving.is_some());
+    s.wait_for_save();
+    assert!(s.error.is_none(), "{:?}", s.error);
+    assert!(s.export.preview.is_none());
+    assert!(!s.transport.auditioning_export);
+    assert!(!file.exists());
+    assert!(
+        root.path()
+            .join("bin")
+            .join(file.file_name().unwrap())
+            .is_file()
+    );
+    assert!(s.export_job(&job).is_none());
+    for _ in 0..8 {
+        s.tick();
+        s.idle();
+    }
+    assert!(
+        s.export_job(&job).is_none(),
+        "stale disk record resurrected a deleted card"
+    );
+}
+
+#[test]
 fn off_a_card_the_panel_takes_the_press_without_a_menu() {
     let (mut s, g, dir, _tmp) = exported("blank");
     let r = s.popup.as_ref().unwrap().layout(g.size).rect;

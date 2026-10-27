@@ -73,7 +73,12 @@ fn file_row(card: &Card, kid: &Kid, anchor: Rect, label: &str, row: Row) -> Item
 
 impl Studio {
     pub(crate) fn export_confirm_trash(&mut self, job: &str, anchor: Rect) -> bool {
-        if !self.written_files(job).iter().any(|p| p.exists()) {
+        let files = self.written_files(job);
+        // A cached absence cannot authorize skipping confirmation: a file may
+        // have appeared since that snapshot. The worker checks again after Yes.
+        if files.is_empty()
+            || (!self.transport.is_windowed() && !files.iter().any(|p| self.export_file_exists(p)))
+        {
             return false;
         }
         let act = ExportAct {
@@ -90,7 +95,7 @@ impl Studio {
         true
     }
     /// The files an export wrote.
-    fn written_files(&self, job: &str) -> Vec<PathBuf> {
+    pub(crate) fn written_files(&self, job: &str) -> Vec<PathBuf> {
         let Some(j) = self.export_job(job) else {
             return Vec::new();
         };
@@ -114,13 +119,13 @@ impl Studio {
     fn export_items(&self, card: &Card, anchor: Rect) -> Vec<Item> {
         let act = |label: &str, r: Row| row(card, anchor, label, r);
         let files = self.written_files(&card.job);
-        let there = files.iter().any(|p| p.exists());
+        let there = files.iter().any(|p| self.export_file_exists(p));
         let done = card.state == State::Done;
         let listen = done
             && !card.stems
             && files
                 .first()
-                .is_some_and(|p| p.exists() && crate::drop_audio::is_audio(p));
+                .is_some_and(|p| self.export_file_exists(p) && crate::drop_audio::is_audio(p));
         vec![
             act("聴く", Row::Listen).enabled(listen),
             // An export made before records kept the song may be out of date: it can be written
@@ -139,7 +144,7 @@ impl Studio {
     fn export_file_items(&self, card: &Card, kid: &Kid, anchor: Rect) -> Vec<Item> {
         let act = |label: &str, r: Row| file_row(card, kid, anchor, label, r);
         let path = std::path::Path::new(&kid.path);
-        let there = path.exists();
+        let there = self.export_file_exists(path);
         vec![
             act("聴く", Row::Listen).enabled(there && crate::drop_audio::is_audio(path)),
             act("書き直す", Row::Rewrite).enabled(kid.stale == Some(true)),
@@ -225,11 +230,18 @@ impl Studio {
                 let Some(path) = self.written_files(&job).into_iter().next() else {
                     return false;
                 };
+                if !self.export_file_exists(&path) {
+                    return false;
+                }
                 self.browser.playing = Some(path.display().to_string());
                 true
             }
             Row::Reveal => {
-                let Some(path) = self.written_files(&job).into_iter().find(|p| p.exists()) else {
+                let Some(path) = self
+                    .written_files(&job)
+                    .into_iter()
+                    .find(|p| self.export_file_exists(p))
+                else {
                     return false;
                 };
                 // Only the real window opens the OS's file window.
@@ -261,14 +273,14 @@ impl Studio {
         let path = PathBuf::from(&file);
         match row {
             Row::Listen => {
-                if !path.exists() {
+                if !self.export_file_exists(&path) {
                     return false;
                 }
                 self.browser.playing = Some(path.display().to_string());
                 true
             }
             Row::Reveal => {
-                if !path.exists() {
+                if !self.export_file_exists(&path) {
                     return false;
                 }
                 // Only the real window opens the OS's file window.

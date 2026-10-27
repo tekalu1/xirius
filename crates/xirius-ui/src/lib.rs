@@ -97,6 +97,7 @@ pub mod eng3_shots;
 pub mod export;
 pub mod export_actions_shots;
 pub mod export_defaults_shots;
+mod export_files;
 pub mod export_keys_shots;
 pub mod export_muted_shots;
 pub mod export_selection;

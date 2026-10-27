@@ -87,6 +87,7 @@ struct StaleCache {
 
 /// The panel's settings and the exports it knows of.
 pub struct Export {
+    pub(crate) files: crate::export_files::Presence,
     pub preview: Option<String>,
     pub preview_peak: f64,
     pub stems: bool,
@@ -133,6 +134,7 @@ pub struct Export {
 impl Default for Export {
     fn default() -> Export {
         Export {
+            files: Default::default(),
             preview: None,
             preview_peak: 0.0,
             stems: false,
@@ -169,6 +171,7 @@ impl Export {
     /// the new one.
     pub(crate) fn forget_bases(&mut self) {
         *self.stale.lock().unwrap() = StaleCache::default();
+        self.files = Default::default();
     }
 
     /// How the files of each export listed stand against `p`, by job; `None` for one that has
@@ -2508,6 +2511,7 @@ impl Studio {
             jobs.reverse();
             self.export.jobs = jobs;
         }
+        self.poll_export_files();
     }
 
     /// Keeps the name being typed, when there is one.
@@ -2755,11 +2759,8 @@ impl Studio {
                 return self.export_action(Act::DeleteConfirmed(job));
             }
             Act::DeleteConfirmed(job) => {
-                if self.export.preview.as_deref() == Some(&job) {
-                    self.export_run("export.preview", json!({"job":job,"stop":true}));
-                    self.export.preview = None;
-                    self.transport.auditioning_export = false;
-                }
+                // The command worker closes this preview before deleting. A
+                // second async command here would be lost behind input_blocked.
                 self.export_run("export.delete", json!({ "job": job }));
                 self.reload_exports();
             }
@@ -2829,6 +2830,10 @@ impl Studio {
         if self.transport.is_windowed() && self.input_blocked() {
             return true;
         }
+        let files_changed = self.poll_export_files();
+        if files_changed {
+            self.refresh_popup();
+        }
         if self.transport.is_windowed()
             && self.popup.as_ref().is_some_and(|p| p.export.is_some())
             && self.export.loaded.is_none()
@@ -2860,7 +2865,7 @@ impl Studio {
             }
         }
         if !self.export.running() {
-            return preview.is_some() || selection_changed;
+            return preview.is_some() || selection_changed || files_changed;
         }
         let now = Instant::now();
         if self

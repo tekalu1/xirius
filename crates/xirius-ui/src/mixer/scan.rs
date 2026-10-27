@@ -26,6 +26,69 @@ pub const RESCAN: &str = "plugin-rescan";
 /// The insert list's choice that stops the running scan.
 pub const STOP: &str = "plugin-scan-stop";
 
+#[cfg(test)]
+mod menu_io_tests {
+    use super::*;
+    use std::sync::{Arc, mpsc};
+
+    #[test]
+    fn catalog_and_preset_menu_reads_are_worker_owned_and_keep_events_responding() {
+        for operation in ["plugin_menu_catalog", "preset_menu_list"] {
+            std::thread::spawn(move || {
+                let root = tempfile::tempdir().unwrap();
+                let mut s = Studio::new(crate::song::Song::sample_with(ScanOptions {
+                    cache: root.path().join("catalog.json"),
+                    ..ScanOptions::default()
+                }));
+                let ui = std::thread::current().id();
+                let release = crate::browser_io_tests::Release::new();
+                let gate = release.0.clone();
+                let cache = s.song.plugin_cache().to_owned();
+                // Studio's test Session gives presets a private, per-song directory.
+                let preset_dir = s.song.run("track.preset.list", json!({})).unwrap()["dir"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned();
+                let preset_dir = std::path::PathBuf::from(preset_dir);
+                let (entered_tx, entered) = mpsc::channel();
+                let _observe = xirius_core::io_test::observe(Arc::new(move |op, path| {
+                    if op == operation && (path == cache || path == preset_dir) {
+                        assert_ne!(ui, std::thread::current().id());
+                        let _ = entered_tx.send(());
+                        let held = gate.0.lock().unwrap();
+                        drop(gate.1.wait_while(held, |done| !*done).unwrap());
+                    }
+                    Ok(())
+                }));
+                s.bind_window_io();
+                xirius_session::host::mark_window_thread();
+                if operation == "plugin_menu_catalog" {
+                    s.insert_pick();
+                } else {
+                    s.song.run("track.preset.list", json!({})).unwrap();
+                }
+                entered.recv_timeout(Duration::from_secs(20)).unwrap();
+                for _ in 0..24 {
+                    s.insert_list();
+                    s.song.run("track.preset.list", json!({})).unwrap();
+                    s.idle();
+                    s.tick();
+                    s.geometry(900.0, 600.0);
+                }
+                release.release();
+                let deadline = Instant::now() + Duration::from_secs(20);
+                while s.mixer.scan.catalog_read.is_some() {
+                    s.poll_plugin_scan();
+                    assert!(Instant::now() < deadline);
+                    std::thread::yield_now();
+                }
+            })
+            .join()
+            .unwrap();
+        }
+    }
+}
+
 /// Where this program looks for plugins: the standard folders and cache, each bundle
 /// opened by this program in a child process.
 pub fn options() -> ScanOptions {
@@ -40,6 +103,10 @@ pub fn options() -> ScanOptions {
 
 #[derive(Default)]
 pub struct PluginScan {
+    catalog_read: Option<xirius_session::background::Job<(Catalog, bool)>>,
+    cache_current: Option<bool>,
+    announce_catalog: bool,
+    preset_rows: serde_json::Value,
     /// Scan by itself when there is no list yet (the real window; tests leave it off).
     pub auto: bool,
     checked: bool,
@@ -155,12 +222,18 @@ impl Studio {
     /// The real window: the list the last scan kept, and a scan of its own when there is none.
     pub fn use_installed_plugins(&mut self) {
         self.mixer.scan.auto = true;
+        if self.transport.is_windowed() {
+            self.read_catalog_later();
+            return;
+        }
         let catalog = Catalog::load(self.song.plugin_cache());
         self.use_plugins(catalog);
     }
 
     /// The insert list and the browser show these plugins.
     pub fn use_plugins(&mut self, catalog: Catalog) {
+        self.mixer.scan.catalog_read = None;
+        self.mixer.scan.cache_current = Some(true);
         self.browser.set_plugins(&catalog);
         let catalog = Arc::new(catalog);
         self.transport.set_catalog(catalog.clone());
@@ -170,6 +243,20 @@ impl Studio {
     /// The plugins the insert list offers; read from the cache when first needed. The player
     /// looks its plugins up in the same list.
     pub(crate) fn plugin_catalog(&mut self) -> Arc<Catalog> {
+        if self.transport.is_windowed() {
+            self.poll_catalog();
+            if self.mixer.catalog.is_none() && self.mixer.scan.error.is_none() {
+                self.read_catalog_later();
+            }
+            // A menu may show built-ins while the list is loading. Do not
+            // install this placeholder in Transport: its preparation worker
+            // must load the real catalogue when no snapshot is available.
+            return self
+                .mixer
+                .catalog
+                .clone()
+                .unwrap_or_else(|| Arc::new(Catalog::default()));
+        }
         let cache = self.song.plugin_cache();
         let catalog = self
             .mixer
@@ -182,10 +269,31 @@ impl Studio {
 
     /// Once a frame. True while a scan runs, so frames keep coming to show it.
     pub(crate) fn poll_plugin_scan(&mut self) -> bool {
+        let mut loaded = self.poll_catalog();
+        if self.transport.is_windowed()
+            && !self.input_blocked()
+            && let Ok(rows) = self.song.run("track.preset.list", json!({}))
+            && rows != self.mixer.scan.preset_rows
+        {
+            self.mixer.scan.preset_rows = rows;
+            self.refresh_popup();
+            loaded = true;
+        }
         let scan = &mut self.mixer.scan;
         if scan.auto && !scan.checked {
+            if self.transport.is_windowed() && scan.cache_current.is_none() {
+                if scan.error.is_none() {
+                    self.read_catalog_later();
+                }
+                return self.mixer.scan.catalog_read.is_some();
+            }
             scan.checked = true;
-            if !xirius_plugins::CacheFile::is_current(self.song.plugin_cache()) {
+            let current = if self.transport.is_windowed() {
+                scan.cache_current.unwrap_or(false)
+            } else {
+                xirius_plugins::CacheFile::is_current(self.song.plugin_cache())
+            };
+            if !current {
                 // The frame that starts it only starts it: the next ones read how it goes.
                 match self.start_plugin_scan() {
                     Ok(()) => return true,
@@ -195,7 +303,7 @@ impl Studio {
         }
         let scan = &mut self.mixer.scan;
         let Some(job) = scan.job.clone() else {
-            return false;
+            return loaded || scan.catalog_read.is_some();
         };
         if scan.polled.is_some_and(|t| t.elapsed() < POLL) {
             return true;
@@ -225,6 +333,12 @@ impl Studio {
             self.browser.retrying = None;
             // A stopped scan kept what it opened: the list is read again all the same.
             if state == "done" || state == "cancelled" {
+                if self.transport.is_windowed() {
+                    self.mixer.scan.announce_catalog = state == "done" && !again;
+                    self.read_catalog_later();
+                    self.refresh_insert_list();
+                    return true;
+                }
                 let catalog = Catalog::load(self.song.plugin_cache());
                 let found = catalog.entries.len();
                 self.use_plugins(catalog);
@@ -243,6 +357,50 @@ impl Studio {
             }
         }
         self.refresh_insert_list();
+        true
+    }
+
+    pub(crate) fn read_catalog_later(&mut self) {
+        if self.mixer.scan.catalog_read.is_some() {
+            return;
+        }
+        let cache = self.song.plugin_cache().to_owned();
+        match xirius_session::background::Job::spawn("plugin-menu-catalog", move || {
+            #[cfg(any(test, feature = "loading-probe"))]
+            xirius_core::io_test::before("plugin_menu_catalog", &cache)
+                .map_err(|e| e.to_string())?;
+            let current = xirius_plugins::CacheFile::is_current(&cache);
+            Ok((Catalog::load(&cache), current))
+        }) {
+            Ok(job) => self.mixer.scan.catalog_read = Some(job),
+            Err(error) => self.mixer.scan.error = Some(error),
+        }
+    }
+    fn poll_catalog(&mut self) -> bool {
+        let Some(result) = self
+            .mixer
+            .scan
+            .catalog_read
+            .as_ref()
+            .and_then(xirius_session::background::Job::poll)
+        else {
+            return false;
+        };
+        self.mixer.scan.catalog_read = None;
+        match result {
+            Ok((catalog, current)) => {
+                let found = catalog.entries.len();
+                self.use_plugins(catalog);
+                self.mixer.scan.cache_current = Some(current);
+                if std::mem::take(&mut self.mixer.scan.announce_catalog)
+                    && let Some(ui) = &mut self.settings
+                {
+                    ui.tell(format!("{found} 個のプラグインが見つかりました"), None);
+                }
+                self.refresh_insert_list();
+            }
+            Err(error) => self.mixer.scan.error = Some(error),
+        }
         true
     }
 

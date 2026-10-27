@@ -301,7 +301,7 @@ impl Studio {
         self.launch_save_with_capture(
             None,
             None,
-            false,
+            crate::io_command::captures(name),
             None,
             Some((name.into(), raw, RunOptions::human(), false)),
         );
@@ -318,7 +318,7 @@ impl Studio {
             ui.toast = None;
         }
         let name = job.command.clone();
-        let capture = job.save;
+        let capture = job.save || crate::io_command::captures(&name);
         self.launch_save_with_capture(
             None,
             None,

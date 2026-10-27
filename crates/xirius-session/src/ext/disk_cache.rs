@@ -16,7 +16,52 @@ struct Entry {
 }
 #[derive(Default)]
 pub(super) struct Cache(RefCell<std::collections::HashMap<Option<PathBuf>, Entry>>);
+
+#[derive(Default)]
+pub(super) struct Presets {
+    view: Value,
+    due: Option<Instant>,
+    work: Option<crate::background::Job<Value>>,
+}
+impl Presets {
+    pub(super) fn read(&mut self, dir: PathBuf, project: Arc<Project>) -> Value {
+        if let Some(result) = self.work.as_ref().and_then(crate::background::Job::poll) {
+            self.work = None;
+            if let Ok(view) = result {
+                self.view = view;
+            }
+        }
+        if self.work.is_none() && self.due.is_none_or(|due| Instant::now() >= due) {
+            self.work = crate::background::Job::spawn("preset-menu-list", move || {
+                #[cfg(feature = "test-io")]
+                let _ = xirius_core::io_test::before("preset_menu_list", &dir);
+                let raw = serde_json::Map::new();
+                let args = xirius_core::command::Args(raw);
+                crate::track_preset::run(
+                    &dir,
+                    &project,
+                    &Catalog::default(),
+                    "track.preset.list",
+                    &args,
+                    false,
+                )
+                .map(|(output, _)| output.data)
+                .map_err(|e| e.to_string())
+            })
+            .ok();
+            self.due = Some(Instant::now() + Duration::from_millis(250));
+        }
+        self.view.clone()
+    }
+}
 impl Cache {
+    pub(super) fn removed(&self, id: &str) {
+        for entry in self.0.borrow_mut().values_mut() {
+            entry.work = None;
+            entry.view.records.retain(|record| record["job"] != id);
+            entry.due = Instant::now();
+        }
+    }
     pub(super) fn read(&self, project: &Arc<Project>, dir: Option<&Path>) -> View {
         let mut entries = self.0.borrow_mut();
         let entry = entries
