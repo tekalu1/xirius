@@ -375,9 +375,8 @@ impl Extension for PrefsExt {
         {
             return;
         }
-        let mut guard = lock(&self.shared);
-        guard.reload_if_changed();
-        let prefs = &guard.prefs;
+        let snapshot = Settings::command_snapshot(&self.shared);
+        let prefs = &snapshot.prefs;
         if missing(raw, "overlap") {
             raw.insert("overlap".into(), json!(prefs.text("edit.note.overlap")));
         }
@@ -410,9 +409,11 @@ impl Extension for PrefsExt {
         dry: bool,
     ) -> CmdResult<Output> {
         self.pending.clear();
-        let mut guard = lock(&self.shared);
-        guard.reload_if_changed();
-        let mut s = guard.clone();
+        let mut s = Settings::command_snapshot(&self.shared);
+        // macro.run only plans validated memory-only edit/read handlers.
+        if s.on_ui_thread() && def.name != "macro.run" {
+            return Err(CmdError::conflict("設定の処理は裏で行う必要があります"));
+        }
         let os = s.os;
         let human = matches!(cx.author, Author::Human);
         let mut keys_too = false;
@@ -774,8 +775,15 @@ impl Extension for PrefsExt {
                 return Ok(Output::with(msg, issues_json(&s.keymap, os)));
             }
             "keymap.import" => {
+                if args.opt_str("text").is_some()
+                    && (args.opt_str("path").is_some() || args.str("source")? != "toml")
+                {
+                    return Err(invalid("text は TOML の内容だけ指定できます".into()));
+                }
                 let default_path;
-                let path = if let Some(path) = args.opt_str("path") {
+                let path = if args.opt_str("text").is_some() {
+                    "TOML"
+                } else if let Some(path) = args.opt_str("path") {
                     path
                 } else {
                     if args.str("source")? != "studio-pro" {
@@ -784,8 +792,11 @@ impl Extension for PrefsExt {
                     default_path=import::default_studio_pro_path().ok_or_else(||CmdError::not_found("Studio Pro の user.keyscheme が見つかりません（--path で指定できます）"))?.to_string_lossy().into_owned();
                     &default_path
                 };
-                let text = std::fs::read_to_string(path)
-                    .map_err(|e| CmdError::io(format!("{path} を読めません: {e}")))?;
+                let text = match args.opt_str("text") {
+                    Some(text) => text.to_owned(),
+                    None => std::fs::read_to_string(path)
+                        .map_err(|e| CmdError::io(format!("{path} を読めません: {e}")))?,
+                };
                 let mut unsupported = Vec::new();
                 let mut import_problems = Vec::new();
                 let n = match args.str("source")? {
@@ -1086,7 +1097,7 @@ impl Extension for PrefsExt {
         if keys_too {
             s.save(File::Keymap).map_err(CmdError::io)?;
         }
-        *guard = s;
+        lock(&self.shared).adopt_worker(s);
         Ok(out)
     }
 }

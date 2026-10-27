@@ -391,6 +391,12 @@ impl Studio {
 
     /// Runs a settings command from the panel; a refusal is shown as the screen shows any.
     pub(crate) fn rec_set(&mut self, command: &str, args: serde_json::Value) {
+        if self.transport.is_windowed() && crate::io_command::handles(command) {
+            if !self.input_blocked() {
+                self.io_command_on_worker(command, args.as_object().cloned().unwrap_or_default());
+            }
+            return;
+        }
         if let Err(e) = self.song.set(command, args) {
             self.error = Some(e);
         }

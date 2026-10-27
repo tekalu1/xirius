@@ -29,7 +29,7 @@ pub use macros::Macros;
 pub use midimap::Midimap;
 pub use mousemap::Mousemap;
 pub use prefs::Prefs;
-pub use store::{File, Settings, Shared, config_dir};
+pub use store::{File, Settings, Shared, config_dir, config_path};
 
 /// Adds the settings' commands to a session.
 pub fn attach(session: &mut xirius_core::Session, shared: Shared) {

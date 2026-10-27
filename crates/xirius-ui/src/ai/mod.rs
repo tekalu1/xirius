@@ -500,6 +500,10 @@ impl Studio {
             return;
         }
         let deferred = self.transport.is_windowed();
+        if deferred && crate::io_command::handles(&job.command) {
+            self.io_command_for_mcp(job);
+            return;
+        }
         let r = self.ai_run(&job.command, &job.raw, &job.opts, job.save && !deferred);
         if deferred
             && job.save

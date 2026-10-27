@@ -151,6 +151,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
             vec![
                 ArgDef::choice("source", &["studio-pro", "toml"], "読み込む形式").req(),
                 ArgDef::text("path", "読み込むファイル（Studio Pro は省略時に利用者の user.keyscheme）"),
+                ArgDef::text("text", "読み込む TOML の内容（path と同時には指定できません）"),
             ],
             Risk::Write,
             false,

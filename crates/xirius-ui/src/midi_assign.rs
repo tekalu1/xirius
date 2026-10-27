@@ -142,6 +142,13 @@ impl Studio {
         if let Some(p) = port {
             args["port"] = json!(p);
         }
+        if self.transport.is_windowed() {
+            if self.input_blocked() {
+                return false;
+            }
+            self.io_command_on_worker("midimap.set", args.as_object().unwrap().clone());
+            return true;
+        }
         match self.song.run("midimap.set", args) {
             Ok(_) => {
                 self.tell(format!(

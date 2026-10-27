@@ -3,6 +3,24 @@ use crate::studio::Studio;
 use std::time::Instant;
 
 impl Studio {
+    pub(crate) fn bind_window_io(&mut self) {
+        self.transport.bind_window();
+        self.song.bind_window_resources();
+        self.song
+            .settings()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .defer_window_reads();
+        if let Err(error) = self
+            .song
+            .io
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .set_windowed()
+        {
+            self.error = Some(error);
+        }
+    }
     pub fn poll_io(&mut self) {
         let project = self.project();
         let dir = self.song.dir();

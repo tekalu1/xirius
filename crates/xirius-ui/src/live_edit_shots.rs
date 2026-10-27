@@ -235,9 +235,27 @@ pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
             p.gate = Some(Gate::new());
             let track = s.project().tracks.values().find(|t| !t.inserts.is_empty()).unwrap().id;
             match operation().as_str() {
-                "input_open" | "record_writer" => {
+                "input_open" | "record_writer" | "record_directory" => {
                     s.song.toggle_arm(track).unwrap();
                     s.toggle_record();
+                }
+                "settings_write" => {
+                    // Screenshot scripts intentionally keep settings in memory.
+                    // Exercise a real file in this probe's private fixture.
+                    s.song.settings().lock().unwrap().dir = Some(p.fixture.as_ref().unwrap().dir.join("prefs"));
+                    s.io_command_on_worker("prefs.set", serde_json::json!({"key":"ui.theme", "value":"light"}).as_object().unwrap().clone());
+                }
+                "live_midi_open" => {
+                    struct Midi;
+                    impl xirius_engine::record::MidiInput for Midi {
+                        fn ports(&self) -> Vec<String> { vec!["Fixture".into()] }
+                        fn read(&mut self, _: usize, _: &mut dyn FnMut(usize, [u8; 3])) {}
+                    }
+                    s.midi_opener(|| {
+                        xirius_core::io_test::before("live_midi_open", std::path::Path::new("fixture-midi")).map_err(|e| e.to_string())?;
+                        Ok(Box::new(Midi))
+                    });
+                    s.midi_ports_now(vec!["Fixture".into()]);
                 }
                 "prepare_get_state" => {
                     s.song.run("plugin.add", serde_json::json!({"track":track.to_string(),"name":"Gain","kind":"effect","format":"builtin","uid":"gain"})).unwrap();
@@ -257,7 +275,7 @@ pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
         if p.phase == 3 {
             if p.gate.as_ref().unwrap().entered.try_recv().is_err() { return false; }
             let mut s = s.borrow_mut();
-            if matches!(operation().as_str(), "input_open" | "record_writer") {
+            if matches!(operation().as_str(), "input_open" | "record_writer" | "record_directory") {
                 s.stop_transport();
             } else {
                 assert!(s.transport.playing);
@@ -270,11 +288,12 @@ pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
         }
         if p.phase == 5 {
             let mut s = s.borrow_mut();
-            if s.transport.host().unwrap().swap_pending() || s.transport.take.is_some() { return false; }
+            if s.transport.host().unwrap().swap_pending() || s.transport.take.is_some() || s.saving.is_some() { return false; }
+            if operation() == "live_midi_open" && s.live_midi.input.is_none() { return false; }
             assert!(s.preparing.is_none());
             assert!(s.editor_shown(fixture_plugin(&s).id));
             assert!(crate::park::own_handle("Live Fixture").is_some());
-            if !matches!(operation().as_str(), "input_open" | "record_writer") {
+            if !matches!(operation().as_str(), "input_open" | "record_writer" | "record_directory") {
                 assert!(s.transport.playing);
             }
             if operation() != "prepare_get_state" {

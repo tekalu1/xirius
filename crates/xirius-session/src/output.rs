@@ -363,6 +363,12 @@ impl Output {
         prefs: &xirius_prefs::Prefs,
         drivers: &Drivers,
     ) -> Result<Opened, String> {
+        while !crate::export_preview::retirement_ready()? {
+            if crate::host::on_window_thread() {
+                return Err("試聴の出力を閉じています".into());
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
         if mode != OutputMode::Device {
             return Ok(Opened {
                 output: Self::start(mode, audio)?,

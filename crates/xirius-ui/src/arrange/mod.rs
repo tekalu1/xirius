@@ -1478,6 +1478,13 @@ impl Studio {
         if self.sound_preparing() {
             return None;
         }
+        if self.transport.is_windowed() && crate::io_command::handles(command) {
+            if self.input_blocked() {
+                return None;
+            }
+            self.io_command_on_worker(command, args.as_object().cloned().unwrap_or_default());
+            return Some(json!({}));
+        }
         if self.transport.is_windowed()
             && let Some(raw) = args.as_object()
             && self.song.session().save_request(command, raw).is_some()

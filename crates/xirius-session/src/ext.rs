@@ -52,6 +52,7 @@ use crate::os;
 use crate::output::{Output as Sink, OutputMode};
 use crate::places;
 use crate::reveal;
+mod disk_cache;
 
 /// Finished jobs kept in memory for `export.status`.
 const KEEP_FINISHED: usize = 32;
@@ -112,6 +113,7 @@ struct Player {
     dir: Option<PathBuf>,
 }
 
+#[derive(Clone)]
 enum JobState {
     Running,
     Done(Output),
@@ -122,6 +124,8 @@ enum JobState {
 
 /// An export or a plugin scan of this process.
 struct Job {
+    /// Only file-writing workers take this gate. UI reports never take it.
+    disk_gate: Mutex<()>,
     id: String,
     command: String,
     /// The arguments that make the same export again (`Null` for a scan).
@@ -240,15 +244,19 @@ impl Job {
     /// Writes how far it is, while it runs. Holding the state, so it cannot land after the
     /// record of how it ended.
     fn save(&self) {
+        let _write = self.disk_gate.lock().unwrap();
         let st = self.state.lock().unwrap();
         if let (JobState::Running, Some(d)) = (&*st, &self.disk) {
-            let _ = d.write(&self.json_of(&st));
+            let record = self.json_of(&st);
+            drop(st);
+            let _ = d.write(&record);
         }
     }
 
     /// Ends the job with `r`, writes how it ended and lets go of its lock. Only the first end
     /// counts.
     fn finish(&self, r: &CmdResult<(String, Value)>) {
+        let _write = self.disk_gate.lock().unwrap();
         let mut st = self.state.lock().unwrap();
         if !matches!(*st, JobState::Running) {
             return;
@@ -264,18 +272,23 @@ impl Job {
             }
             Err(e) => JobState::Failed(e.message.clone()),
         };
-        self.end(&st);
+        let ended = st.clone();
+        drop(st);
+        self.end(&ended);
     }
 
     /// Ends a job its process could not wait for.
     fn interrupt(&self) {
+        let _write = self.disk_gate.lock().unwrap();
         let mut st = self.state.lock().unwrap();
         if !matches!(*st, JobState::Running) {
             return;
         }
         *self.ended.lock().unwrap() = Some((self.started.elapsed(), now_ms()));
         *st = JobState::Interrupted(CLOSED.to_string());
-        self.end(&st);
+        let ended = st.clone();
+        drop(st);
+        self.end(&ended);
     }
 
     fn end(&self, st: &JobState) {
@@ -320,6 +333,7 @@ fn watch(job: Arc<Job>) {
 }
 
 pub struct SessionExt {
+    disk_cache: disk_cache::Cache,
     io_settings: Option<xirius_prefs::Shared>,
     output: OutputMode,
     preview: Option<crate::export_preview::Preview>,
@@ -498,6 +512,7 @@ impl SessionExt {
     /// Like [`SessionExt::new`], with a MIDI input to record from.
     pub fn with(config: ExtConfig, extras: ExtExtras) -> SessionExt {
         SessionExt {
+            disk_cache: Default::default(),
             io_settings: extras.io_settings,
             output: config.output,
             preview: None,
@@ -619,6 +634,7 @@ impl SessionExt {
         let disk = cx.dir.map(Store::of_song);
         let lock = disk.as_ref().and_then(|d| d.lock(&id));
         let job = Arc::new(Job {
+            disk_gate: Mutex::new(()),
             id: id.clone(),
             command: name.to_string(),
             args: Value::Object(stored),
@@ -772,6 +788,7 @@ impl SessionExt {
         let disk = cx.dir.map(Store::of_song);
         let lock = disk.as_ref().and_then(|d| d.lock(&id));
         let job = Arc::new(Job {
+            disk_gate: Mutex::new(()),
             id: id.clone(),
             command: "export.midi".to_string(),
             args: Value::Object(plan.stored.clone()),
@@ -897,6 +914,15 @@ impl SessionExt {
         if let Some(j) = self.job(id) {
             return Ok(j.to_json());
         }
+        if crate::host::on_window_thread() {
+            return self
+                .disk_cache
+                .read(cx.project, cx.dir)
+                .records
+                .into_iter()
+                .find(|v| v["job"] == id)
+                .ok_or_else(|| CmdError::conflict("書き出しの記録を読んでいます"));
+        }
         cx.dir
             .and_then(|d| Store::of_song(d).read(id))
             .ok_or_else(|| CmdError::invalid(format!("ジョブ {id} が見つかりません")))
@@ -925,7 +951,12 @@ impl SessionExt {
     fn records(&self, cx: &ExtContext<'_>) -> Vec<Value> {
         let mut all: Vec<Value> = self.jobs.iter().map(|j| j.to_json()).collect();
         if let Some(d) = cx.dir {
-            for v in Store::of_song(d).list() {
+            let records = if crate::host::on_window_thread() {
+                self.disk_cache.read(cx.project, cx.dir).records
+            } else {
+                Store::of_song(d).list()
+            };
+            for v in records {
                 if !self.jobs.iter().any(|j| v["job"] == j.id.as_str()) {
                     all.push(v);
                 }
@@ -1032,6 +1063,17 @@ impl SessionExt {
     /// `export.open`: the settings of an export, or the ones to start from.
     fn open(&self, cx: &ExtContext<'_>, args: &Args) -> CmdResult<Output> {
         let Some(id) = args.opt_str("job") else {
+            if crate::host::on_window_thread() {
+                let view = self.disk_cache.read(cx.project, cx.dir);
+                return Ok(Output::with(
+                    "書き出しの設定",
+                    if view.defaults.is_null() {
+                        json!({"_loading":true})
+                    } else {
+                        view.defaults
+                    },
+                ));
+            }
             let v = commands::default_settings(cx.project, cx.dir, &self.remembered(cx.dir));
             return Ok(Output::with("書き出しの既定の設定", v));
         };
@@ -1540,6 +1582,7 @@ impl SessionExt {
         // is a failure in the list and the scan goes on.
         let id = new_id("scan");
         let job = Arc::new(Job {
+            disk_gate: Mutex::new(()),
             id: id.clone(),
             command: "plugin.rescan".to_string(),
             args: Value::Null,
@@ -1895,6 +1938,9 @@ impl Extension for SessionExt {
 
     /// By the last scan; with none to go by, it cannot tell.
     fn has_plugin(&mut self, plugin: &Plugin) -> Option<bool> {
+        if crate::host::on_window_thread() && self.catalog.is_none() {
+            return None;
+        }
         let catalog = self.catalog();
         (!catalog.entries.is_empty()).then(|| catalog.find(&plugin.uid).is_some())
     }
@@ -1947,4 +1993,67 @@ fn scan_output(r: &ScanReport, opts: &ScanOptions) -> Output {
             "cache": opts.cache,
         }),
     )
+}
+
+#[cfg(all(test, feature = "test-io"))]
+mod io_tests {
+    use super::*;
+    use std::sync::{Condvar, mpsc};
+
+    #[test]
+    fn export_reports_do_not_wait_for_metadata_persistence() {
+        let root = tempfile::tempdir().unwrap();
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        struct Release(Arc<(Mutex<bool>, Condvar)>);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                *self.0.0.lock().unwrap() = true;
+                self.0.1.notify_all();
+            }
+        }
+        let release = Release(gate.clone());
+        let path = root.path().to_owned();
+        let ui = std::thread::current().id();
+        let (tx, entered) = mpsc::channel();
+        let _observe = xirius_core::io_test::observe(Arc::new(move |op, file| {
+            if op == "export_record" && file.starts_with(&path) {
+                assert_ne!(std::thread::current().id(), ui);
+                let _ = tx.send(());
+                drop(
+                    gate.1
+                        .wait_while(gate.0.lock().unwrap(), |done| !*done)
+                        .unwrap(),
+                );
+            }
+            Ok(())
+        }));
+        let job = Arc::new(Job {
+            disk_gate: Mutex::new(()),
+            id: "export-fixture".into(),
+            command: "export.mix".into(),
+            args: Value::Null,
+            path: String::new(),
+            replaces: Vec::new(),
+            writes: Vec::new(),
+            base: Value::Null,
+            touched: Mutex::default(),
+            progress: Arc::new(Progress::default()),
+            started: Instant::now(),
+            started_ms: now_ms(),
+            ended: Mutex::new(None),
+            state: Mutex::new(JobState::Running),
+            closing: AtomicBool::new(false),
+            disk: Some(Store::of_song(root.path())),
+            lock: Mutex::new(None),
+        });
+        let writer = job.clone();
+        let worker = std::thread::spawn(move || writer.finish(&Ok((String::new(), Value::Null))));
+        entered.recv_timeout(Duration::from_secs(20)).unwrap();
+        assert!(job.state.try_lock().is_ok());
+        for _ in 0..32 {
+            assert_eq!(job.to_json()["state"], "done");
+        }
+        drop(release);
+        worker.join().unwrap();
+    }
 }

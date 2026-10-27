@@ -22,6 +22,8 @@ pub(crate) enum Leave {
 }
 
 pub(crate) struct Saving {
+    pub(crate) device_entry: Option<Geometry>,
+    operation: Option<&'static str>,
     mcp: Option<McpSave>,
     command: Option<SaveCommand>,
     work: Work,
@@ -42,6 +44,7 @@ type SaveCommand = (
     String,
     serde_json::Map<String, serde_json::Value>,
     RunOptions,
+    bool,
 );
 impl McpSave {
     fn command(&self) -> Option<SaveCommand> {
@@ -50,6 +53,7 @@ impl McpSave {
                 self.job.command.clone(),
                 self.job.raw.clone(),
                 self.job.opts.clone(),
+                self.job.save,
             )
         })
     }
@@ -71,7 +75,9 @@ impl Saving {
         self.target.is_some() && self.mcp.is_none() && self.command.is_none()
     }
     pub fn label(&self) -> &'static str {
-        if self.cancellable() {
+        if let Some(label) = self.operation {
+            label
+        } else if self.cancellable() {
             "別名で保存しています"
         } else {
             "保存しています"
@@ -274,8 +280,52 @@ impl Studio {
             None,
             true,
             None,
-            Some((name.into(), raw, RunOptions::human())),
+            Some((name.into(), raw, RunOptions::human(), false)),
         );
+    }
+
+    pub(crate) fn io_command_on_worker(
+        &mut self,
+        name: &str,
+        raw: serde_json::Map<String, serde_json::Value>,
+    ) {
+        if let Some(error) = self.io_device_change_error(name, &raw) {
+            self.error = Some(error);
+            return;
+        }
+        if let Some(ui) = &mut self.settings {
+            ui.toast = None;
+        }
+        let popup = self.popup.take();
+        self.launch_save_with_capture(
+            None,
+            None,
+            false,
+            None,
+            Some((name.into(), raw, RunOptions::human(), false)),
+        );
+        self.saving.as_mut().unwrap().operation = Some(crate::io_command::label(name));
+        self.popup = popup;
+    }
+
+    pub(crate) fn io_command_for_mcp(&mut self, job: xirius_mcp::Job) {
+        if let Some(error) = self.io_device_change_error(&job.command, &job.raw) {
+            job.answer(Err(CmdError::conflict(error)));
+            return;
+        }
+        if let Some(ui) = &mut self.settings {
+            ui.toast = None;
+        }
+        let name = job.command.clone();
+        let capture = job.save;
+        self.launch_save_with_capture(
+            None,
+            None,
+            capture,
+            Some(McpSave { job, result: None }),
+            None,
+        );
+        self.saving.as_mut().unwrap().operation = Some(crate::io_command::label(&name));
     }
 
     pub(crate) fn export_with_plugin_states(&mut self, path: PathBuf) {
@@ -359,6 +409,8 @@ impl Studio {
             )
         };
         self.saving = Some(Saving {
+            device_entry: None,
+            operation: None,
             mcp,
             command,
             work,
@@ -392,8 +444,15 @@ impl Studio {
                 }
                 if failing {
                     Err(CmdError::io("保存できません"))
-                } else if let Some((command, args, opts)) = command {
-                    session.run(&command, &args, &opts).map(Some)
+                } else if let Some((command, args, opts, persist)) = command {
+                    xirius_mcp::persist::run_and_persist(
+                        &mut session,
+                        &command,
+                        &args,
+                        &opts,
+                        persist,
+                    )
+                    .map(Some)
                 } else if only_wait {
                     session.flush_writes();
                     Ok(None)
@@ -491,6 +550,11 @@ impl Studio {
             unreachable!()
         };
         let (session, result) = worker.join().expect("save worker catches panics");
+        let operation_command = save.operation.and_then(|_| {
+            save.command
+                .clone()
+                .or_else(|| save.mcp.as_ref().and_then(McpSave::command))
+        });
         let committed = result.as_ref().is_ok_and(|r| {
             r.as_ref()
                 .is_none_or(|r| !r.dry_run && r.decision.is_none())
@@ -513,6 +577,27 @@ impl Studio {
                     .expect("MCP save returns its command result")),
             };
             mcp.job.answer(reply);
+        }
+        if let Some((name, raw, _, _)) = operation_command {
+            match result {
+                Ok(Some(result)) => {
+                    self.io_command_finished(&name, &raw, &result);
+                    if let Some(g) = save.device_entry {
+                        self.start_audio(&g);
+                    }
+                }
+                Err(error) => {
+                    self.error = Some(error.to_string());
+                    if let Some(ui) = &mut self.settings {
+                        ui.tell(error.to_string(), None);
+                    }
+                }
+                Ok(None) => {}
+            }
+            if save.close_when_done {
+                self.request_close();
+            }
+            return true;
         }
         let result = result.map(|_| ());
         match result {
@@ -571,6 +656,9 @@ impl Studio {
             save.progress.cancel();
         }
         if key == "space" {
+            if save.operation.is_some() && self.transport.take.is_none() {
+                return true;
+            }
             if self.transport.take.is_some() {
                 if let Some(host) = self.transport.host_mut() {
                     host.record_stop();

@@ -1677,6 +1677,10 @@ impl Studio {
         if self.input_blocked() {
             return false;
         }
+        if self.transport.is_windowed() && crate::io_command::handles(command) {
+            self.io_command_on_worker(command, args.as_object().cloned().unwrap_or_default());
+            return true;
+        }
         if self.transport.is_windowed()
             && let Some(raw) = args.as_object()
             && self.song.session().save_request(command, raw).is_some()

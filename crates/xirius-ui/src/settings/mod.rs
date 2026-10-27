@@ -892,14 +892,18 @@ impl Studio {
 
     /// Runs one settings command; a refusal is said on the toast.
     fn settings_run(&mut self, command: &str, args: Value) -> Option<String> {
-        if self.transport.recording
+        if (self.transport.recording || self.transport.take.is_some())
             && matches!(
                 args["key"].as_str(),
                 Some("audio.driver" | "audio.device" | "audio.buffer")
             )
         {
             if let Some(ui) = &mut self.settings {
-                ui.tell("録音中はオーディオデバイスを変更できません".into(), None);
+                ui.tell(
+                    "録音またはテイクの配置が未完了のため、オーディオデバイスを変更できません"
+                        .into(),
+                    None,
+                );
             }
             return None;
         }
@@ -912,6 +916,13 @@ impl Studio {
         } else {
             command
         };
+        if self.transport.is_windowed() {
+            if self.input_blocked() {
+                return None;
+            }
+            self.io_command_on_worker(command, args.as_object().cloned().unwrap_or_default());
+            return Some(String::new());
+        }
         match self.song.set(command, args) {
             Ok(m) => Some(m),
             Err(e) => {
@@ -1281,17 +1292,7 @@ impl Studio {
 
     /// Puts a whole keymap back from its text (取り消す after 「すべてプリセットに戻す」).
     fn settings_import_text(&mut self, toml: &str) {
-        let dir = std::env::temp_dir().join(format!("xirius-keymap-{}", std::process::id()));
-        let path = dir.join("keymap.toml");
-        let wrote = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, toml));
-        if wrote.is_ok() {
-            self.settings_run(
-                "keymap.import",
-                json!({"source": "toml", "path": path.to_string_lossy()}),
-            );
-        }
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_dir(&dir);
+        self.settings_run("keymap.import", json!({"source":"toml", "text":toml}));
     }
 
     /// The menu a dropdown opens, under `at`: a list (UI-338), or
@@ -1442,7 +1443,12 @@ impl Studio {
                     let args = json!({"context": ctx, "modifier": v, "action": to,
                         "move-from": modifier});
                     // A modifier the tool already has is refused: the row says why.
-                    let err = self.song.set("mousemap.set", args).err();
+                    let err = if self.transport.is_windowed() {
+                        self.settings_run("mousemap.set", args);
+                        None
+                    } else {
+                        self.song.set("mousemap.set", args).err()
+                    };
                     if let Some(ui) = &mut self.settings {
                         ui.hold_error = err.map(|e| (ctx.clone(), modifier.clone(), e));
                     }

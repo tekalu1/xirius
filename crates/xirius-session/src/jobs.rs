@@ -53,6 +53,9 @@ impl Store {
 
     /// Writes a job's record whole.
     pub fn write(&self, record: &Value) -> CmdResult<()> {
+        #[cfg(feature = "test-io")]
+        xirius_core::io_test::before("export_record", &self.dir)
+            .map_err(|e| xirius_core::CmdError::io(e.to_string()))?;
         let id = record["job"].as_str().unwrap_or("export-unknown");
         let bytes = serde_json::to_vec_pretty(record).unwrap_or_default();
         atomic_write(&self.file(id, "json"), &bytes)

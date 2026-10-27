@@ -1852,7 +1852,7 @@ fn perform(act: &Act, run: &Run, window: &mut Window, cx: &mut App) {
             let mode = s.transport.mode;
             *s = Studio::sample();
             s.transport.mode = mode;
-            s.transport.bind_window();
+            s.bind_window_io();
             if run.roll_bench.is_some() {
                 crate::roll::probe::Bench::prepare(&mut s);
             }
@@ -2106,7 +2106,7 @@ pub fn run(opts: Options) {
                 Studio::new(crate::song::Song::empty())
             };
             let studio = Rc::new(RefCell::new(initial));
-            studio.borrow_mut().transport.bind_window();
+            studio.borrow_mut().bind_window_io();
             // A script or a measurement never sounds on the speakers.
             studio.borrow_mut().transport.mode = if opts.shots.is_some() || measured {
                 OutputMode::Silent { paced: true }
@@ -2177,7 +2177,7 @@ pub fn run(opts: Options) {
                 studio
                     .borrow_mut()
                     .song
-                    .load_settings(&xirius_prefs::config_dir());
+                    .load_settings(&xirius_prefs::config_path());
                 // The song is kept as it is edited, and the one a crash interrupted
                 // comes back (PRJ-001, PRJ-012).
                 studio

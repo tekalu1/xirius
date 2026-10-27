@@ -500,6 +500,22 @@ impl Studio {
             .as_ref()
             .is_some_and(|p| p.kind == crate::popup::PopupKind::Device(true));
         self.popup = None;
+        if self.transport.is_windowed() {
+            if self.input_blocked() {
+                return true;
+            }
+            self.io_command_on_worker(
+                "audio.set",
+                serde_json::json!({"key":"device","value":name})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            );
+            if let Some(save) = &mut self.saving {
+                save.device_entry = from_entry.then_some(*g);
+            }
+            return true;
+        }
         let set = self.song.set(
             "audio.set",
             serde_json::json!({ "key": "device", "value": name }),

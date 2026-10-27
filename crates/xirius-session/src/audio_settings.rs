@@ -5,6 +5,8 @@ use std::time::{Duration, Instant};
 use xirius_core::command::{ArgDef, Args, CommandDef, Handler, Output};
 use xirius_core::{CmdError, CmdResult, ExtContext, Extension, Risk};
 use xirius_engine::devices::{BUFFERS, Backend, Device, Latency, Unopened};
+mod backend;
+mod routes;
 
 pub type Shared = Arc<Mutex<Io>>;
 
@@ -53,6 +55,9 @@ pub struct Snapshot {
 }
 
 pub struct Io {
+    windowed: bool,
+    files: std::cell::RefCell<Option<routes::Files>>,
+    proxy: Option<backend::Proxy>,
     pub view: Snapshot,
     backend: Box<dyn Backend>,
     configured: Option<(String, String, u32)>,
@@ -67,8 +72,14 @@ impl Default for Io {
 }
 
 impl Io {
+    pub fn is_windowed(&self) -> bool {
+        self.windowed
+    }
     pub fn new(backend: Box<dyn Backend>) -> Self {
         Self {
+            windowed: false,
+            files: Default::default(),
+            proxy: None,
             view: Snapshot {
                 output: [0, 1],
                 ..Snapshot::default()
@@ -80,7 +91,17 @@ impl Io {
         }
     }
     pub fn replace(&mut self, backend: Box<dyn Backend>) {
-        self.backend = backend;
+        if self.windowed {
+            match backend::Proxy::new(move || backend) {
+                Ok(proxy) => {
+                    self.backend = Box::new(proxy.clone());
+                    self.proxy = Some(proxy);
+                }
+                Err(_) => return,
+            }
+        } else {
+            self.backend = backend;
+        }
         self.configured = None;
         self.view = Snapshot {
             output: [0, 1],
@@ -90,12 +111,15 @@ impl Io {
         self.activity.clear();
     }
     pub fn sync(&mut self, prefs: &xirius_prefs::Prefs) -> Result<(), String> {
+        if self.windowed && self.proxy.is_none() {
+            return Err("装置の監視を開始できません".into());
+        }
         self.view.devices = self.backend.devices();
         let device = configured_device(prefs, &self.view.devices);
         let driver = prefs.text("audio.driver");
         let buffer = prefs.number("audio.buffer") as u32;
         let config = (driver.clone(), device.clone(), buffer);
-        if self.configured.as_ref() != Some(&config) {
+        if self.configured.as_ref() != Some(&config) || self.proxy.is_some() {
             let changed_device = self.view.device != device;
             let latency = if device.is_empty() {
                 None
@@ -114,6 +138,44 @@ impl Io {
             self.configured = Some(config);
         }
         Ok(())
+    }
+
+    pub fn set_windowed(&mut self) -> Result<(), String> {
+        self.windowed = true;
+        if self.proxy.is_none() {
+            let old = std::mem::replace(&mut self.backend, Box::new(Unopened::default()));
+            let proxy = backend::Proxy::new(move || old)?;
+            self.backend = Box::new(proxy.clone());
+            self.proxy = Some(proxy);
+        }
+        if self.files.borrow().is_none() {
+            *self.files.borrow_mut() = Some(routes::Files::new()?);
+        }
+        Ok(())
+    }
+    pub fn enumerate_later(&mut self) -> Result<(), String> {
+        self.windowed = true;
+        let proxy = backend::Proxy::new(|| Box::new(Unopened::enumerate()))?;
+        self.backend = Box::new(proxy.clone());
+        self.proxy = Some(proxy);
+        self.configured = None;
+        if self.files.borrow().is_none() {
+            *self.files.borrow_mut() = Some(routes::Files::new()?);
+        }
+        Ok(())
+    }
+    fn worker_copy(&self) -> Option<Self> {
+        let proxy = self.proxy.as_ref()?.clone();
+        Some(Self {
+            windowed: false,
+            files: Default::default(),
+            backend: Box::new(proxy),
+            proxy: None,
+            view: self.view.clone(),
+            configured: self.configured.clone(),
+            detect: self.detect.clone(),
+            activity: self.activity.clone(),
+        })
     }
     pub fn poll(&mut self, now: Instant) {
         if self.backend.can_measure() {
@@ -173,8 +235,14 @@ impl Io {
         self.detect.is_some()
     }
     pub fn load_routes(&mut self, dir: Option<&std::path::Path>) -> Result<(), String> {
+        if self.windowed && self.files.borrow().is_none() {
+            return Err("入出力設定を読み込めません".into());
+        }
         if let Some(dir) = dir
-            && let Some(routes) = crate::io_store::read(dir)?
+            && let Some(routes) = match self.files.borrow_mut().as_mut() {
+                Some(files) => files.load(dir)?,
+                None => crate::io_store::read(dir)?,
+            }
             && routes.device == self.view.device
             && let Some(device) = self.view.devices.iter().find(|d| d.name == routes.device)
         {
@@ -186,15 +254,20 @@ impl Io {
         Ok(())
     }
     pub fn save_routes(&self, dir: Option<&std::path::Path>) -> Result<(), String> {
+        if self.windowed && self.files.borrow().is_none() {
+            return Err("入出力設定を保存できません".into());
+        }
         if let Some(dir) = dir {
-            crate::io_store::write(
-                dir,
-                &crate::io_store::Routes {
-                    device: self.view.device.clone(),
-                    input: self.view.selected,
-                    output: self.view.output,
-                },
-            )?;
+            let routes = crate::io_store::Routes {
+                device: self.view.device.clone(),
+                input: self.view.selected,
+                output: self.view.output,
+            };
+            if let Some(files) = self.files.borrow_mut().as_mut() {
+                files.save(dir, routes)?;
+            } else {
+                crate::io_store::write(dir, &routes)?;
+            }
         }
         Ok(())
     }
@@ -295,9 +368,50 @@ impl Extension for IoExt {
         args: &Args,
         dry: bool,
     ) -> CmdResult<Output> {
+        let (local, fence) = {
+            let io = self.io.lock().unwrap_or_else(|e| e.into_inner());
+            if io.windowed && crate::host::on_window_thread() {
+                return Err(CmdError::conflict("装置の設定は裏で行う必要があります"));
+            }
+            if io.windowed && io.proxy.is_none() {
+                return Err(CmdError::conflict("装置の監視を開始できません"));
+            }
+            let fence = io.files.borrow().as_ref().map(routes::Files::fence);
+            (io.worker_copy(), fence)
+        };
+        if let Some(mut io) = local {
+            if let Some(fence) = fence {
+                fence.wait().map_err(CmdError::io)?;
+            }
+            let mut settings = xirius_prefs::Settings::command_snapshot(&self.settings);
+            let result = Self::run_local(def, args, dry, &mut settings, &mut io)?;
+            self.settings
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .adopt_worker(settings);
+            let mut current = self.io.lock().unwrap_or_else(|e| e.into_inner());
+            current.view = io.view;
+            current.configured = io.configured;
+            current.detect = io.detect;
+            if let Some(files) = current.files.borrow_mut().as_mut() {
+                files.invalidate();
+            }
+            return Ok(result);
+        }
         let mut settings = self.settings.lock().unwrap_or_else(|e| e.into_inner());
-        settings.reload_if_changed();
         let mut io = self.io.lock().unwrap_or_else(|e| e.into_inner());
+        settings.reload_if_changed();
+        Self::run_local(def, args, dry, &mut settings, &mut io)
+    }
+}
+impl IoExt {
+    fn run_local(
+        def: &CommandDef,
+        args: &Args,
+        dry: bool,
+        settings: &mut xirius_prefs::Settings,
+        io: &mut Io,
+    ) -> CmdResult<Output> {
         io.sync(&settings.prefs).map_err(CmdError::conflict)?;
         io.load_routes(settings.dir.as_deref())
             .map_err(CmdError::conflict)?;

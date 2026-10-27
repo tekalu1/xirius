@@ -79,11 +79,15 @@ impl Studio {
     /// Starts watching this PC's MIDI ports, with a device only.
     pub fn watch_midi_ports(&mut self) {
         if self.transport.mode == xirius_session::output::OutputMode::Device {
-            self.song
+            if let Err(error) = self
+                .song
                 .io
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .replace(Box::new(xirius_engine::devices::Unopened::enumerate()));
+                .enumerate_later()
+            {
+                self.error = Some(error);
+            }
             let list = || xirius_engine::midi_in::midi_ports().unwrap_or_default();
             self.midi_ports.rx = spawn(list, EVERY);
         }

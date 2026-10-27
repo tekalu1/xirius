@@ -15,23 +15,25 @@ pub fn apply(host: &mut crate::host::SessionHost) -> Result<(), String> {
         return Ok(());
     };
     let settings = settings.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(dir) = &settings.dir else {
-        return Ok(());
-    };
-    let Some(routes) = read(dir)? else {
+    let Some(dir) = settings.dir.clone() else {
         return Ok(());
     };
     let selected = settings.prefs.text("audio.device");
+    drop(settings);
+    let Some(routes) = read(&dir)? else {
+        return Ok(());
+    };
     if !selected.is_empty() && routes.device != selected {
         return Ok(());
     }
-    drop(settings);
     host.controller()
         .send(xirius_engine::Command::OutputChannels(routes.output))
         .map_err(|_| "出力を設定できません".into())
 }
 
 pub fn read(dir: &Path) -> Result<Option<Routes>, String> {
+    #[cfg(feature = "test-io")]
+    xirius_core::io_test::before("io_route_read", dir).map_err(|e| e.to_string())?;
     let path = dir.join("audio-routing.json");
     match std::fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes)
@@ -43,6 +45,8 @@ pub fn read(dir: &Path) -> Result<Option<Routes>, String> {
 }
 
 pub fn write(dir: &Path, routes: &Routes) -> Result<(), String> {
+    #[cfg(feature = "test-io")]
+    xirius_core::io_test::before("io_route_write", dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = dir.join("audio-routing.json");
     let temporary = dir.join(format!("audio-routing-{}.tmp", std::process::id()));

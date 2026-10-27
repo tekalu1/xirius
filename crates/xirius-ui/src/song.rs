@@ -110,6 +110,7 @@ fn path_text(p: &Path) -> String {
 }
 
 pub struct Song {
+    windowed: bool,
     session: Session,
     /// The list `plugin.rescan` keeps.
     plugin_cache: PathBuf,
@@ -177,6 +178,9 @@ impl Extension for ScreenExt {
 }
 
 impl Song {
+    pub(crate) fn bind_window_resources(&mut self) {
+        self.windowed = true;
+    }
     pub fn project(&self) -> Arc<Project> {
         self.session.project_arc()
     }
@@ -939,7 +943,9 @@ impl Song {
             asked: asked.clone(),
             registry,
         }));
+        let windowed = io.lock().unwrap_or_else(|e| e.into_inner()).is_windowed();
         Song {
+            windowed,
             session,
             plugin_cache,
             settings,
@@ -965,6 +971,13 @@ impl Song {
     /// Reads the settings from `dir` (the window does; a test or a script keeps
     /// them in memory). The commands write there from then on.
     pub fn load_settings(&mut self, dir: &Path) {
+        if self.windowed {
+            let mut settings = self.settings.lock().unwrap_or_else(|e| e.into_inner());
+            settings.dir = Some(dir.to_owned());
+            settings.defer_window_reads();
+            settings.reload_if_changed();
+            return;
+        }
         let mut read = xirius_prefs::Settings::open(dir);
         if let Ok(mut s) = self.settings.lock() {
             // The screen repaints on a new revision.
@@ -1189,6 +1202,22 @@ fn app_ext(settings: xirius_prefs::Shared) -> xirius_session::app::AppExt {
         root,
         settings,
         fetch: std::sync::Arc::new(|_: &str| Err("試験はネットワークに出ない".to_string())),
+    }
+}
+
+impl Drop for Song {
+    fn drop(&mut self) {
+        if self.windowed {
+            let session = std::mem::replace(&mut self.session, Session::new(""));
+            let _ = xirius_session::background::Job::spawn("closed-session", move || {
+                #[cfg(any(test, feature = "loading-probe"))]
+                if let Some(dir) = session.dir() {
+                    let _ = xirius_core::io_test::before("session_retire", dir);
+                }
+                drop(session);
+                Ok(())
+            });
+        }
     }
 }
 

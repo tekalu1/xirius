@@ -2442,7 +2442,7 @@ impl Studio {
             let st = &v["mp3"];
             x.mp3_error = (st["available"] == false)
                 .then(|| st["error"].as_str().unwrap_or(mp3::CANNOT_LOAD).to_string());
-            if x.loaded.as_ref() != Some(&dir) {
+            if x.loaded.as_ref() != Some(&dir) && v["_loading"] != true {
                 if x.fixed_song != dir {
                     x.fixed_span = None;
                     x.fixed_song = None;
@@ -2528,6 +2528,13 @@ impl Studio {
         if self.sound_preparing() {
             return None;
         }
+        if self.transport.is_windowed() {
+            if self.input_blocked() {
+                return None;
+            }
+            self.io_command_on_worker(command, args.as_object().cloned().unwrap_or_default());
+            return None;
+        }
         match self.song.run(command, args) {
             Ok(v) => {
                 self.error = None;
@@ -2543,6 +2550,12 @@ impl Studio {
     pub(crate) fn export_action(&mut self, act: Act) -> bool {
         if self.sound_preparing() {
             return false;
+        }
+        if self.transport.is_windowed() && self.input_blocked() {
+            return false;
+        }
+        if self.transport.is_windowed() {
+            self.export.loaded = Some(self.song.dir());
         }
         if act != Act::EditName {
             self.commit_export_name();
@@ -2813,6 +2826,15 @@ impl Studio {
     }
 
     pub(crate) fn poll_export(&mut self) -> bool {
+        if self.transport.is_windowed() && self.input_blocked() {
+            return true;
+        }
+        if self.transport.is_windowed()
+            && self.popup.as_ref().is_some_and(|p| p.export.is_some())
+            && self.export.loaded.is_none()
+        {
+            self.load_export();
+        }
         let selection_changed = self
             .popup
             .as_ref()

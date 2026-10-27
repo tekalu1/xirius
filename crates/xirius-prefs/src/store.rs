@@ -52,6 +52,7 @@ impl File {
 
 #[derive(Clone, Debug)]
 pub struct Settings {
+    reads: Option<Arc<Reads>>,
     /// The folder, `None` for settings kept in memory only.
     pub dir: Option<PathBuf>,
     pub prefs: Prefs,
@@ -67,6 +68,14 @@ pub struct Settings {
     stamps: [Option<Stamp>; File::ALL.len()],
     /// The file did not read as TOML (copied to `.bak` before it is written).
     broken: [bool; File::ALL.len()],
+}
+
+#[derive(Debug)]
+struct Reads {
+    ui: std::thread::ThreadId,
+    busy: std::sync::atomic::AtomicBool,
+    reply: Mutex<Option<(u64, Settings)>>,
+    due: Mutex<std::time::Instant>,
 }
 
 pub type Shared = Arc<Mutex<Settings>>;
@@ -87,6 +96,13 @@ pub fn config_dir() -> PathBuf {
         move_settings(&old, &dir);
     }
     dir
+}
+
+/// Resolve the location without migration/file I/O on a window thread.
+pub fn config_path() -> PathBuf {
+    std::env::var_os("XIRIUS_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(user_dir)
 }
 
 fn user_dir() -> PathBuf {
@@ -198,9 +214,43 @@ fn hash(bytes: &[u8]) -> u64 {
 }
 
 impl Settings {
+    pub fn on_ui_thread(&self) -> bool {
+        self.reads
+            .as_ref()
+            .is_some_and(|reads| reads.ui == std::thread::current().id())
+    }
+    pub fn command_snapshot(shared: &Shared) -> Self {
+        let mut guard = shared.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.on_ui_thread() {
+            guard.reload_if_changed();
+            return guard.clone();
+        }
+        let mut next = guard.worker_copy();
+        drop(guard);
+        next.reload_if_changed();
+        next
+    }
+    pub fn defer_window_reads(&mut self) {
+        self.reads = Some(Arc::new(Reads {
+            ui: std::thread::current().id(),
+            busy: Default::default(),
+            reply: Default::default(),
+            due: Mutex::new(std::time::Instant::now()),
+        }));
+    }
+    pub fn worker_copy(&self) -> Self {
+        let mut copy = self.clone();
+        copy.reads = None;
+        copy
+    }
+    pub fn adopt_worker(&mut self, mut next: Self) {
+        next.reads = self.reads.clone();
+        *self = next;
+    }
     /// Settings in memory only (tests, scripted runs).
     pub fn memory() -> Settings {
         Settings {
+            reads: None,
             dir: None,
             prefs: Prefs::default(),
             keymap: Keymap::default(),
@@ -290,9 +340,55 @@ impl Settings {
 
     /// Reads again the files another program changed. True when something was read.
     pub fn reload_if_changed(&mut self) -> bool {
+        if let Some(reads) = self.reads.clone()
+            && std::thread::current().id() == reads.ui
+        {
+            let mut changed = false;
+            let reply = reads.reply.try_lock().ok().and_then(|mut r| r.take());
+            if let Some((rev, next)) = reply
+                && self.rev == rev
+                && next.rev != rev
+            {
+                self.adopt_worker(next);
+                changed = true;
+            }
+            use std::sync::atomic::Ordering;
+            let due = reads
+                .due
+                .try_lock()
+                .is_ok_and(|due| std::time::Instant::now() >= *due);
+            if self.dir.is_some() && due && !reads.busy.swap(true, Ordering::AcqRel) {
+                let mut next = self.worker_copy();
+                let rev = self.rev;
+                let worker = reads.clone();
+                let spawned = std::thread::Builder::new()
+                    .name("settings-read".into())
+                    .spawn(move || {
+                        if next.dir.as_deref() == Some(config_path().as_path()) {
+                            let _ = config_dir();
+                        }
+                        next.reload_if_changed();
+                        #[cfg(feature = "test-io")]
+                        if let Some(dir) = &next.dir {
+                            let _ = xirius_core::io_test::before("settings_read_ready", dir);
+                        }
+                        *worker.reply.lock().unwrap_or_else(|e| e.into_inner()) = Some((rev, next));
+                        *worker.due.lock().unwrap_or_else(|e| e.into_inner()) =
+                            std::time::Instant::now() + Duration::from_millis(250);
+                        worker.busy.store(false, Ordering::Release);
+                    });
+                if spawned.is_err() {
+                    self.problems.push("設定の読み込みを開始できません".into());
+                    // No synchronous fallback or repeated thread-exhaustion loop.
+                }
+            }
+            return changed;
+        }
         let Some(dir) = self.dir.clone() else {
             return false;
         };
+        #[cfg(feature = "test-io")]
+        let _ = xirius_core::io_test::before("settings_read", &dir);
         let changed = File::ALL.iter().any(|f| {
             let path = dir.join(f.name());
             match &mut self.stamps[f.index()] {
@@ -308,6 +404,13 @@ impl Settings {
 
     /// Writes `f` (a new file, then renamed over the old one).
     pub fn save(&mut self, f: File) -> Result<(), String> {
+        if self
+            .reads
+            .as_ref()
+            .is_some_and(|reads| reads.ui == std::thread::current().id())
+        {
+            return Err("設定の保存は裏で行う必要があります".into());
+        }
         self.rev += 1;
         let Some(path) = self.path(f) else {
             return Ok(());
@@ -320,6 +423,8 @@ impl Settings {
             File::Macros => self.macros.to_toml(),
         };
         let err = |e: std::io::Error| format!("{} を保存できません: {e}", path.display());
+        #[cfg(feature = "test-io")]
+        xirius_core::io_test::before("settings_write", &path).map_err(err)?;
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(err)?;
         }
@@ -341,6 +446,60 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "test-io")]
+    #[test]
+    fn completed_old_read_is_rejected_after_explicit_write() {
+        use std::sync::{Condvar, mpsc};
+        let root = tempfile::tempdir().unwrap();
+        let mut settings = Settings::open(root.path());
+        settings.defer_window_reads();
+        let reads = settings.reads.clone().unwrap();
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        struct Release(Arc<(Mutex<bool>, Condvar)>);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                *self.0.0.lock().unwrap() = true;
+                self.0.1.notify_all();
+            }
+        }
+        let release = Release(gate.clone());
+        let path = root.path().to_owned();
+        let (tx, entered) = mpsc::channel();
+        let _observe = xirius_core::io_test::observe(Arc::new(move |op, file| {
+            if op == "settings_read_ready" && file == path {
+                let _ = tx.send(());
+                drop(
+                    gate.1
+                        .wait_while(gate.0.lock().unwrap(), |done| !*done)
+                        .unwrap(),
+                );
+            }
+            Ok(())
+        }));
+        settings.reload_if_changed();
+        entered.recv_timeout(Duration::from_secs(20)).unwrap();
+        let mut explicit = settings.worker_copy();
+        explicit
+            .prefs
+            .set("ui.theme", &serde_json::json!("light"))
+            .unwrap();
+        std::thread::spawn(move || {
+            explicit.save(File::Prefs).unwrap();
+            explicit
+        })
+        .join()
+        .map(|next| settings.adopt_worker(next))
+        .unwrap();
+        drop(release);
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while reads.busy.load(std::sync::atomic::Ordering::Acquire) {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert!(reads.reply.lock().unwrap().is_some());
+        settings.reload_if_changed();
+        assert_eq!(settings.prefs.text("ui.theme"), "light");
+    }
     use crate::chord::Chord;
     use crate::keymap::Others;
     use serde_json::json;
