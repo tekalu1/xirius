@@ -109,8 +109,11 @@ pub(crate) fn connect(s: &mut Studio, name: &str) {
 
 fn settle_open(s: &mut Studio) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while s.live_midi.opening.is_some() {
+    loop {
         s.poll_live_midi();
+        if s.live_midi.opening.is_none() && s.live_midi.retiring.is_empty() {
+            break;
+        }
         assert!(
             std::time::Instant::now() < deadline,
             "MIDI opening watchdog"

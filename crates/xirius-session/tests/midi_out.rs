@@ -122,6 +122,28 @@ impl Rig {
 
 const PORTS: &[&str] = &["Loop A", "Loop B"];
 
+struct Closing {
+    entered: std::sync::mpsc::Sender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+}
+impl MidiOutput for Closing {
+    fn ports(&self) -> Vec<String> {
+        PORTS.iter().map(|s| s.to_string()).collect()
+    }
+    fn port_index(&self, name: &str) -> Option<usize> {
+        PORTS.iter().position(|p| *p == name)
+    }
+    fn send(&mut self, _: usize, _: usize, _: [u8; 3]) {}
+}
+impl Drop for Closing {
+    fn drop(&mut self) {
+        let _ = self.entered.send(());
+        let _ = self
+            .release
+            .recv_timeout(std::time::Duration::from_secs(30));
+    }
+}
+
 #[test]
 fn a_window_never_waits_for_midi_open_and_rejects_the_superseded_port_result() {
     use std::{
@@ -135,25 +157,6 @@ fn a_window_never_waits_for_midi_open_and_rejects_the_superseded_port_result() {
     rig.host.set_windowed();
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
-    struct Closing {
-        entered: mpsc::Sender<()>,
-        release: mpsc::Receiver<()>,
-    }
-    impl MidiOutput for Closing {
-        fn ports(&self) -> Vec<String> {
-            PORTS.iter().map(|s| s.to_string()).collect()
-        }
-        fn port_index(&self, name: &str) -> Option<usize> {
-            PORTS.iter().position(|p| *p == name)
-        }
-        fn send(&mut self, _: usize, _: usize, _: [u8; 3]) {}
-    }
-    impl Drop for Closing {
-        fn drop(&mut self) {
-            let _ = self.entered.send(());
-            let _ = self.release.recv_timeout(Duration::from_secs(30));
-        }
-    }
     let (closing_tx, closing_rx) = mpsc::channel();
     let (closed_tx, closed_rx) = mpsc::channel();
     let mut close_gate = Some(closed_rx);
@@ -227,6 +230,83 @@ fn a_window_never_waits_for_midi_open_and_rejects_the_superseded_port_result() {
         assert!(Instant::now() < deadline);
         std::thread::yield_now();
     }
+}
+
+#[test]
+fn replacing_a_maker_with_no_routes_still_detaches_and_closes_its_active_connection() {
+    use std::{
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            mpsc,
+        },
+        time::{Duration, Instant},
+    };
+    let mut s = song();
+    let track = voice(&mut s, 64);
+    to_port(&mut s, &track, "midi:Loop A", 1);
+    let mut rig = Rig::new(&s);
+    rig.host.set_windowed();
+    let (closing_tx, closing) = mpsc::channel();
+    let (release, close_gate) = mpsc::channel();
+    let mut close_gate = Some(close_gate);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let called = calls.clone();
+    rig.host.set_midi_out(Some(Box::new(move |_, _| {
+        called.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::new(Closing {
+            entered: closing_tx.clone(),
+            release: close_gate.take().unwrap(),
+        }))
+    })));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while rig.host.midi_out_ports() != ["Loop A"] {
+        rig.host.step_swap();
+        rig.host.poll();
+        rig.audio.render(&mut [0.0; 512], 2);
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    rig.audio.render(&mut [0.0; 512], 2);
+    to_port(&mut s, &track, "master", 1);
+    rig.host.sync(s.project());
+    rig.host.set_midi_out(None);
+    while closing.try_recv().is_err() {
+        rig.host.step_swap();
+        rig.host.poll();
+        rig.audio.render(&mut [0.0; 512], 2);
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    let called = calls.clone();
+    rig.host.set_midi_out(Some(Box::new(move |_, _| {
+        called.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::new(MockMidiOut::new(PORTS).0))
+    })));
+    to_port(&mut s, &track, "midi:Loop B", 1);
+    rig.host.sync(s.project());
+    for _ in 0..32 {
+        rig.host.step_swap();
+        rig.host.poll();
+        rig.audio.render(&mut [0.0; 512], 2);
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    while rig.host.swap_pending() {
+        rig.host.step_swap();
+        rig.host.poll();
+        rig.audio.render(&mut [0.0; 512], 2);
+        assert!(Instant::now() < deadline);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        std::thread::yield_now();
+    }
+    release.send(()).unwrap();
+    while rig.host.midi_out_ports() != ["Loop B"] {
+        rig.host.step_swap();
+        rig.host.poll();
+        rig.audio.render(&mut [0.0; 512], 2);
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
 
 #[test]

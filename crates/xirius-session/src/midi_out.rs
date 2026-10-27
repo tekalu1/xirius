@@ -62,6 +62,7 @@ impl Drop for Tracked {
 #[derive(Default)]
 pub struct MidiOutState {
     generation: u64,
+    connection_generation: u64,
     retiring: Vec<crate::background::Job<()>>,
     connection_end: Option<Arc<AtomicBool>>,
     detaching: bool,
@@ -135,7 +136,9 @@ impl SessionHost {
                 .connection_end
                 .as_ref()
                 .is_some_and(|done| !done.load(Ordering::Acquire))
-                && (want != self.midi_out.open || self.midi_out.detaching)
+                && (want != self.midi_out.open
+                    || self.midi_out.detaching
+                    || self.midi_out.connection_generation != self.midi_out.generation)
             {
                 if !self.midi_out.detaching && self.send(Command::SetMidiOutput(None)) {
                     self.midi_out.detaching = true;
@@ -250,8 +253,9 @@ impl SessionHost {
                 } else {
                     out
                 };
+                self.midi_out.connection_end = self.windowed.then_some(done);
+                self.midi_out.connection_generation = self.midi_out.generation;
                 if self.send(Command::SetMidiOutput(Some(out))) {
-                    self.midi_out.connection_end = self.windowed.then_some(done);
                     self.midi_out.open = want;
                     self.midi_out.failed = None;
                 } else {

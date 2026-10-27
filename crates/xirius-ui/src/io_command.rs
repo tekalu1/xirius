@@ -5,8 +5,10 @@ use crate::studio::Studio;
 
 pub(crate) fn handles(name: &str) -> bool {
     name != "macro.run"
-        && (matches!(name, "plugin.rescan" | "browser.plugin.list")
-            || xirius_session::track_preset::NAMES.contains(&name)
+        && (matches!(
+            name,
+            "plugin.rescan" | "plugin.scan.status" | "browser.plugin.list"
+        ) || xirius_session::track_preset::NAMES.contains(&name)
             || xirius_session::preset::NAMES.contains(&name)
             || xirius_session::xpreset::NAMES.contains(&name)
             || xirius_prefs::is_settings_command(name)
