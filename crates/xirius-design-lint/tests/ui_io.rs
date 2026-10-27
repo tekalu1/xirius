@@ -11,6 +11,16 @@ fn hits(source: &str) -> usize {
 fn new_file_process_wait_and_lock_boundaries_require_review() {
     for source in [
         "fn tick() { std::fs::read(\"song\"); }",
+        "fn tick(path: &std::path::Path) { let read_file = std::fs::read::<&std::path::Path>; read_file(path); }",
+        "fn tick() { handler(std::fs::read::<&std::path::Path>); }",
+        "use std::fs::read as load; fn tick() { let f = load::<&std::path::Path>; handler(f); }",
+        "fn tick(f: &mut std::fs::File, out: &mut Vec<u8>) { std::io::Read::read_to_end(f, out); }",
+        "use std::io::Write as Output; fn tick() { Output::write_all(file, bytes); }",
+        "fn tick() { <std::fs::File as std::io::Write>::write_all(file, bytes); }",
+        "use std::io::Read; fn tick() { <std::fs::File>::read_to_end(file, bytes); }",
+        "use std::io::*; fn tick() { Read::read_to_end(file, bytes); }",
+        "fn tick() { let lock = <std::sync::Mutex<u8>>::lock; handler(lock); }",
+        "fn tick() { std::sync::Mutex::lock(data); std::sync::mpsc::Receiver::recv(rx); std::thread::JoinHandle::join(thread); }",
         "use std::fs as disk; fn tick() { disk::read(\"song\"); }",
         "use std::fs::read as load; fn tick() { load(\"song\"); }",
         "use std::fs::File; fn tick() { File::open(\"song\"); }",

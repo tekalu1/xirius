@@ -87,13 +87,19 @@ impl Studio {
     pub(crate) fn choose_editor(&mut self) {
         self.roll.scale = self.song.session().state.view.scale;
         let roll = !self.arrange.focus && self.drawer_open && self.tab == DrawerTab::Roll;
+        let changed =
+            self.song.session().state.view.editor != if roll { "roll" } else { "arrange" };
         self.song.session_mut().state.view.editor = if roll { "roll" } else { "arrange" }.into();
         let settings = if roll {
             &self.song.session().state.view.roll.quantize
         } else {
             &self.song.session().state.view.quantize
         };
-        self.quant = crate::quantize_panel::QuantSet::from_json(settings);
+        let quant = crate::quantize_panel::QuantSet::from_json(settings);
+        if changed || quant != self.quant {
+            self.invalidate_groove_import();
+        }
+        self.quant = quant;
     }
 
     pub(crate) fn grid_mode(&self) -> SnapMode {

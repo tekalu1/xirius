@@ -103,6 +103,14 @@ impl Scanner {
                 self.alias(prefix, n.ident.to_string(), n.rename.to_string())
             }
             syn::UseTree::Glob(_) => {
+                if prefix == ["std", "io"] {
+                    for name in [
+                        "Read", "Write", "Seek", "BufRead", "stdin", "stdout", "stderr",
+                    ] {
+                        self.aliases
+                            .insert(name.into(), vec!["std".into(), "io".into(), name.into()]);
+                    }
+                }
                 if prefix == ["std", "fs"] {
                     self.modules.insert("fs".into());
                     for name in [
@@ -262,32 +270,82 @@ impl<'ast> Visit<'ast> for Scanner {
                 }
                 return;
             }
-            if parts.starts_with(&["std".into(), "fs".into()])
-                || (parts.iter().any(|p| p == "places")
-                    && matches!(name, "load" | "save" | "run" | "first_run" | "default"))
-                || (parts.iter().any(|p| p == "cleanup")
-                    && matches!(name, "unused" | "run" | "tidy"))
-                || matches!(
-                    name,
-                    "ready_installer" | "take_failure" | "processes_except_self"
-                )
-                || (parts.starts_with(&["std".into(), "io".into()])
-                    && matches!(name, "stdout" | "stderr" | "stdin"))
-                || matches!(
-                    name,
-                    "run_and_persist" | "store_selection" | "load_selection"
-                )
-                || parts.first().is_some_and(|p| self.modules.contains(p))
-                || (parts.len() == 1 && self.functions.contains(name))
-                || (parts.first().is_some_and(|p| self.types.contains(p))
-                    && matches!(name, "new" | "open" | "create" | "create_new"))
-                || (parts.starts_with(&["std".into(), "process".into()]) && name == "new")
-                || (name == "sleep" && parts.iter().any(|p| p == "thread"))
-            {
-                self.hit(item.func.span(), &path.to_token_stream().to_string());
-            }
         }
         visit::visit_expr_call(self, item);
+    }
+    fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+        let mut parts: Vec<_> = path
+            .path
+            .segments
+            .iter()
+            .map(|p| p.ident.to_string())
+            .collect();
+        if parts.len() == 1
+            && let Some(qself) = &path.qself
+            && let syn::Type::Path(owner) = &*qself.ty
+        {
+            parts = owner
+                .path
+                .segments
+                .iter()
+                .map(|p| p.ident.to_string())
+                .chain(parts)
+                .collect();
+        }
+        for _ in 0..8 {
+            let Some(prefix) = parts.first().and_then(|p| self.aliases.get(p)) else {
+                break;
+            };
+            let qualified: Vec<_> = prefix.iter().chain(parts.iter().skip(1)).cloned().collect();
+            if qualified == parts {
+                break;
+            }
+            parts = qualified;
+        }
+        let name = parts.last().map(String::as_str).unwrap_or("");
+        if parts.starts_with(&["std".into(), "fs".into()])
+            || (parts.iter().any(|p| p == "places")
+                && matches!(name, "load" | "save" | "run" | "first_run" | "default"))
+            || (parts.iter().any(|p| p == "cleanup") && matches!(name, "unused" | "run" | "tidy"))
+            || matches!(
+                name,
+                "ready_installer" | "take_failure" | "processes_except_self"
+            )
+            || (parts.starts_with(&["std".into(), "io".into()])
+                && matches!(name, "stdout" | "stderr" | "stdin"))
+            || matches!(
+                name,
+                "run_and_persist" | "store_selection" | "load_selection"
+            )
+            || parts.first().is_some_and(|p| self.modules.contains(p))
+            || (parts.len() == 1 && self.functions.contains(name))
+            || (parts.first().is_some_and(|p| self.types.contains(p))
+                && matches!(name, "new" | "open" | "create" | "create_new"))
+            || (parts.starts_with(&["std".into(), "process".into()]) && name == "new")
+            || (parts.first().is_some_and(|p| p == "std")
+                && matches!(
+                    name,
+                    "read"
+                        | "read_exact"
+                        | "read_to_end"
+                        | "read_to_string"
+                        | "write"
+                        | "write_all"
+                        | "flush"
+                        | "seek"
+                        | "lock"
+                        | "recv"
+                        | "recv_timeout"
+                        | "wait"
+                        | "wait_while"
+                        | "wait_timeout"
+                        | "join"
+                ))
+            || (name == "sleep" && parts.iter().any(|p| p == "thread"))
+        {
+            self.hit(path.span(), &path.to_token_stream().to_string());
+        }
+        visit::visit_expr_path(self, path);
     }
     fn visit_expr_method_call(&mut self, item: &'ast syn::ExprMethodCall) {
         let name = item.method.to_string();

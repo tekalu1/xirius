@@ -181,7 +181,7 @@ impl Studio {
     pub(crate) fn other_busy(&self) -> bool {
         self.saving.is_some() || self.unsaved.is_some()
             || self.opening.is_some() || self.open_closing.is_some()
-            || self.pointer_held
+            || self.human_interaction_active()
             || self.transport.recording
             || self.transport.take.is_some()
             || self.export.running()

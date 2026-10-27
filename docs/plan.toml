@@ -8265,7 +8265,8 @@ note = "2026-10-26 承認: mockup2 の ToBe、幕と幅 300 px 基準の「音�
 
 [[item]]
 id = "PRJ-031"
-status = "done"
+status = "partial"
+remaining = "レビュー2: 外部要求と遅着結果の採用条件を修正し、同じソースの最終検証を完了する。"
 title = "遅い置き場の全経路の応答と回数を保証する"
 area = "PRJ"
 phase = "v1.1"
@@ -8276,7 +8277,8 @@ note = "統合試験だけでなく付随 I/O の残りも直す。外部変更�
 
 [[item]]
 id = "PRJ-027"
-status = "done"
+status = "partial"
+remaining = "PRJ-031 のレビュー2修正と採用条件の再監査を最終検証する。"
 title = "曲を開く重い処理を UI のスレッドから外し、開いている間は進み具合と取り消しを見せる"
 area = "PRJ"
 phase = "v1.1"

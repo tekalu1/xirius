@@ -117,8 +117,11 @@ pub(crate) use log;
 
 #[derive(Default)]
 pub(crate) struct ViewRead {
+    pub(crate) picker: Option<crate::browser_pick::PickerIntent>,
+    pub(crate) picker_generation: u64,
     pub(crate) history_points: Option<crate::automation_point_edit::HistoryPoints>,
-    pub(crate) groove: Option<(u64, Ticket<serde_json::Value>)>,
+    pub(crate) groove: Option<(crate::quantize_import::Intent, Ticket<serde_json::Value>)>,
+    pub(crate) groove_generation: u64,
     pub(crate) cleanup: crate::cleanup_dialog::Read,
     pub(crate) left: Option<Ticket<usize>>,
     pub(crate) later: Option<(std::path::PathBuf, Ticket<Vec<std::path::PathBuf>>)>,

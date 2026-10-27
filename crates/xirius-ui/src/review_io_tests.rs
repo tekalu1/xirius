@@ -31,6 +31,184 @@ fn setup() -> (tempfile::TempDir, Studio) {
     (root, s)
 }
 
+#[test]
+fn external_reads_preserve_note_move_and_resize_until_mouse_up_and_undo() {
+    use crate::tools::Mods;
+    for resize in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = Studio::sample();
+        s.song.save_as(&root.path().join("song")).unwrap();
+        let g = s.geometry(1440.0, 820.0);
+        s.roll.center(&s.roll_ctx(&g).unwrap());
+        let ctx = s.roll_ctx(&g).unwrap();
+        let n = ctx.notes()[0];
+        let original = (n.id, n.start, n.length, n.pitch);
+        let v = s.roll.view(&ctx);
+        let from = (
+            v.x(n.start)
+                + if resize {
+                    v.px(n.length) - 1.0
+                } else {
+                    v.px(n.length) / 2.0
+                },
+            v.y(n.pitch) + v.row_h / 2.0,
+        );
+        let to = (from.0 + v.px(i64::from(ctx.project.ppq)), from.1);
+        s.bind_window_io();
+        let out = s.roll.down(&ctx, from.0, from.1, Mods::NONE, 1);
+        s.apply_roll(&g, out);
+        let out = s.roll.moved(&ctx, to.0, to.1, Mods::NONE);
+        s.apply_roll(&g, out);
+        assert!(s.roll.drag.is_some());
+        let preview = s.roll.preview.changed[&original.0];
+        for name in ["track.list", "project.save", "project.new"] {
+            // Even when the platform flag has not been updated, the actual drag protects it.
+            let call = request(&mut s, name, json!({}), RunOptions::human());
+            assert!(call.join().unwrap().is_err());
+            assert!(s.saving.is_none());
+            assert!(s.roll.drag.is_some());
+            let current = s.roll.preview.changed[&original.0];
+            assert_eq!(
+                (current.start, current.length, current.pitch),
+                (preview.start, preview.length, preview.pitch)
+            );
+        }
+        let ctx = s.roll_ctx(&g).unwrap();
+        let out = s.roll.up(&ctx, to.0, to.1, Mods::NONE);
+        s.apply_roll(&g, out);
+        let ctx = s.roll_ctx(&g).unwrap();
+        let edited = ctx.notes().iter().find(|n| n.id == original.0).unwrap();
+        assert_eq!(
+            (edited.start, edited.length, edited.pitch),
+            (preview.start, preview.length, preview.pitch)
+        );
+        assert_ne!((edited.start, edited.length), (original.1, original.2));
+        s.run_command("history.undo", json!({}));
+        finish(&mut s);
+        let ctx = s.roll_ctx(&g).unwrap();
+        let restored = ctx.notes().iter().find(|n| n.id == original.0).unwrap();
+        assert_eq!(
+            (restored.start, restored.length, restored.pitch),
+            (original.1, original.2, original.3)
+        );
+        let retry = request(&mut s, "track.list", json!({}), RunOptions::human());
+        finish(&mut s);
+        retry.join().unwrap().unwrap();
+    }
+}
+
+#[test]
+fn external_reads_and_automatic_adoption_preserve_held_pc_keys() {
+    let (_root, mut s) = setup();
+    let track = *s.project().tracks.keys().next().unwrap();
+    s.pc_keys.down.push(("a".into(), track, 60, 60));
+    s.bind_window_io();
+    assert!(s.other_busy());
+    let call = request(&mut s, "track.list", json!({}), RunOptions::human());
+    assert!(call.join().unwrap().is_err());
+    assert_eq!(s.pc_keys.down.len(), 1);
+    assert!(s.saving.is_none());
+}
+
+#[test]
+fn picker_answers_keep_their_own_reservation_and_cannot_cross_songs() {
+    let (_root, mut s) = setup();
+    s.bind_window_io();
+    let old = s.begin_picker();
+    let current = s.begin_picker();
+    assert!(!s.accept_picker(old));
+    assert!(s.other_busy());
+    let call = request(&mut s, "track.list", json!({}), RunOptions::human());
+    assert!(call.join().unwrap().is_err());
+    assert!(s.accept_picker(current));
+    assert!(!s.human_interaction_active());
+    let old_song = s.begin_picker();
+    s.song = Song::empty();
+    assert!(!s.accept_picker(old_song));
+    assert!(!s.human_interaction_active());
+}
+
+#[test]
+fn late_groove_results_cannot_replace_later_choices_or_editor_intent() {
+    use crate::quantize_panel::QAct;
+    for choice in 0..7 {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = Studio::sample();
+        s.song.save_as(&root.path().join("song")).unwrap();
+        s.song.load_settings(&root.path().join("settings"));
+        let clip = s.selected_clip.unwrap().1;
+        s.drawer_open = true;
+        s.tab = crate::studio::DrawerTab::Roll;
+        s.focus_arrange(false);
+        let file = root.path().join("groove.mid");
+        let mut midi = b"MThd".to_vec();
+        midi.extend([0, 0, 0, 6, 0, 0, 0, 1, 0, 96]);
+        midi.extend(b"MTrk");
+        midi.extend([
+            0, 0, 0, 12, 0, 0x90, 60, 80, 96, 0x80, 60, 0, 0, 0xff, 0x2f, 0,
+        ]);
+        std::fs::write(
+            &file,
+            if choice == 6 {
+                b"invalid midi".to_vec()
+            } else {
+                midi
+            },
+        )
+        .unwrap();
+        s.quant.groove_on = true;
+        s.bind_window_io();
+        let (release, entered, _observe) = gate("groove_read", root.path());
+        let _ui = xirius_core::io_test::forbid_ui_io();
+        s.import_groove(&file).unwrap();
+        entered.recv_timeout(Duration::from_secs(30)).unwrap();
+        let g = s.geometry(880.0, 600.0);
+        match choice {
+            0 => {
+                s.quant_action(&g, QAct::Groove(false));
+            }
+            1 => {
+                s.quant_action(&g, QAct::Clip(clip));
+            }
+            2 => {
+                s.quant_action(&g, QAct::Preset(0));
+            }
+            3 => {
+                s.quant_action(&g, QAct::External);
+            }
+            4 => {
+                s.quant_action(&g, QAct::Groove(false));
+                s.quant_action(&g, QAct::Groove(true)); // Same value again still has newer intent.
+            }
+            5 => {
+                s.focus_arrange(true);
+                s.focus_arrange(false);
+            }
+            _ => {
+                s.quant_action(&g, QAct::Groove(false));
+            }
+        }
+        let latest = s.quant;
+        let saved = s.song.session().state.view.roll.quantize.clone();
+        let external = s.song.session().state.view.roll.external_groove.clone();
+        let error = s.error.clone();
+        release.release();
+        let end = Instant::now() + Duration::from_secs(30);
+        while s.view_read.groove.is_some() {
+            s.poll_groove_import();
+            assert!(Instant::now() < end);
+            std::thread::yield_now();
+        }
+        assert_eq!(s.quant, latest);
+        assert_eq!(s.song.session().state.view.roll.quantize, saved);
+        assert_eq!(s.song.session().state.view.roll.external_groove, external);
+        assert_eq!(
+            s.error, error,
+            "stale failures do not replace newer feedback"
+        );
+    }
+}
+
 fn gate(
     operation: &'static str,
     source: &Path,

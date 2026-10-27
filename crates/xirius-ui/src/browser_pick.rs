@@ -42,7 +42,35 @@ pub fn drop_label(studio: &Studio, g: &Geometry, d: &FileDrag) -> Option<String>
     Some("新しいトラックに置く".into())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PickerIntent {
+    source: u64,
+    generation: u64,
+}
+
 impl Studio {
+    pub(crate) fn begin_picker(&mut self) -> PickerIntent {
+        self.view_read.picker_generation = self
+            .view_read
+            .picker_generation
+            .checked_add(1)
+            .expect("picker generation exhausted");
+        let intent = PickerIntent {
+            source: self.song.session().uses_id(),
+            generation: self.view_read.picker_generation,
+        };
+        self.view_read.picker = Some(intent);
+        intent
+    }
+
+    /// Only the current picker may release its reservation and apply an answer.
+    pub(crate) fn accept_picker(&mut self, intent: PickerIntent) -> bool {
+        if self.view_read.picker != Some(intent) {
+            return false;
+        }
+        self.view_read.picker = None;
+        intent.source == self.song.session().uses_id()
+    }
     /// After a press on the browser: a file row starts a drag, and a double press on a folder
     /// goes into it.
     pub fn file_grab(&mut self, g: &Geometry, hit: Hit, x: f32, y: f32, clicks: usize) -> bool {

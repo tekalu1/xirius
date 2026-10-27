@@ -473,6 +473,13 @@ impl Studio {
     /// the session checks the permission and says why it refuses; the
     /// screen keeps what came of it and starts the motion.
     pub fn ai_job(&mut self, job: xirius_mcp::Job) {
+        if self.human_interaction_active() {
+            job.answer(Err(CmdError::conflict(
+                // design-lint: allow(guidance) MCP busy response explains retry because an active human gesture must not be cancelled.
+                "操作中です。操作が終わってから再試行してください",
+            )));
+            return;
+        }
         if self.input_blocked() || self.macro_run.is_some() {
             job.answer(Err(CmdError::conflict(if self.opening.is_some() {
                 crate::opening::BUSY

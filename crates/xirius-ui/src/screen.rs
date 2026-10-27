@@ -805,6 +805,7 @@ impl Screen {
         let dawproject_open = request == FileRequest::OpenDawproject;
         let files = preset_open || dawproject_open;
         let open = request == FileRequest::Open || files;
+        let intent = self.studio.borrow_mut().begin_picker();
         let existing = open.then(|| {
             cx.prompt_for_paths(gpui::PathPromptOptions {
                 files,
@@ -848,6 +849,9 @@ impl Screen {
                 new.unwrap().await
             };
             let _ = this.update(cx, |this, cx| {
+                if !this.studio.borrow_mut().accept_picker(intent) {
+                    return;
+                }
                 match result {
                     Ok(Ok(Some(path))) => {
                         this.studio.borrow_mut().start_file_request(request, &path)
@@ -878,6 +882,7 @@ impl Screen {
                 prompt: Some(prompt.to_string().into()),
             })
         };
+        let intent = self.studio.borrow_mut().begin_picker();
         let existing = match &ask {
             Ask::Folder(_) => Some(pick(true, "フォルダーを追加")),
             Ask::ImportStudioPro | Ask::ImportToml => Some(pick(false, "読み込む")),
@@ -902,6 +907,9 @@ impl Screen {
                 new.unwrap().await
             };
             let _ = this.update(cx, |this, cx| {
+                if !this.studio.borrow_mut().accept_picker(intent) {
+                    return;
+                }
                 if let Ok(Ok(Some(path))) = result {
                     this.studio.borrow_mut().settings_answer(ask, &path);
                 }
@@ -921,6 +929,7 @@ impl Screen {
             FileRequest::MediaFolder => "置き場所を選ぶ",
             _ => "場所に追加",
         };
+        let intent = self.studio.borrow_mut().begin_picker();
         let picker = cx.prompt_for_paths(gpui::PathPromptOptions {
             files,
             directories: !files,
@@ -930,6 +939,9 @@ impl Screen {
         cx.spawn(async move |this, cx| {
             let result = picker.await;
             let _ = this.update(cx, |this, cx| {
+                if !this.studio.borrow_mut().accept_picker(intent) {
+                    return;
+                }
                 match result {
                     Ok(Ok(Some(paths))) => this.studio.borrow_mut().finish_picked(request, &paths),
                     Ok(Ok(None)) => {}

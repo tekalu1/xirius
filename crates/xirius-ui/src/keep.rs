@@ -475,9 +475,7 @@ impl Studio {
         if self.transport.is_windowed()
             && self.song.record_dir().is_none()
             && self.song.steps() > 0
-            && !self.pointer_held
-            && self.arrange.drag.is_none()
-            && self.roll.drag.is_none()
+            && !self.human_interaction_active()
             && let Some(dir) = self.keep.new_draft_dir(now)
         {
             self.start_draft_record(dir);

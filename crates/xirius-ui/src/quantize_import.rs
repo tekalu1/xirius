@@ -5,14 +5,49 @@ use crate::{
 use serde_json::json;
 use std::path::Path;
 
+/// UI-owned adoption authority: workers return data, never decide what is selected.
+#[derive(Clone)]
+pub(crate) struct Intent {
+    source: u64,
+    generation: u64,
+    editor: String,
+    quant: crate::quantize_panel::QuantSet,
+    external: Option<xirius_core::editing::Groove>,
+}
+
+impl Intent {
+    fn accepts(&self, s: &Studio) -> bool {
+        self.source == s.song.session().uses_id()
+            && self.generation == s.view_read.groove_generation
+            && self.editor == s.song.session().state.view.editor
+            && self.quant == s.quant
+            && self.external == s.song.session().state.view.roll.external_groove
+    }
+}
+
 impl Studio {
+    pub(crate) fn invalidate_groove_import(&mut self) {
+        self.view_read.groove_generation = self
+            .view_read
+            .groove_generation
+            .checked_add(1)
+            .expect("groove generation exhausted");
+    }
+
     pub fn import_groove(&mut self, path: &Path) -> Result<(), String> {
         if self.transport.is_windowed() {
             let path = path.to_owned();
             let ppq = self.project().ppq;
-            let source = self.song.session().uses_id();
+            self.invalidate_groove_import();
+            let intent = Intent {
+                source: self.song.session().uses_id(),
+                generation: self.view_read.groove_generation,
+                editor: self.song.session().state.view.editor.clone(),
+                quant: self.quant,
+                external: self.song.session().state.view.roll.external_groove.clone(),
+            };
             let job = crate::ancillary_io::submit(move || read_groove(&path, ppq))?;
-            self.view_read.groove = Some((source, job));
+            self.view_read.groove = Some((intent, job));
             return Ok(());
         }
         let args = read_groove(path, self.project().ppq)?;
@@ -27,12 +62,12 @@ impl Studio {
             .view_read
             .groove
             .as_ref()
-            .and_then(|(s, j)| j.poll().map(|r| (*s, r)))
+            .and_then(|(s, j)| j.poll().map(|r| (s.clone(), r)))
         else {
             return false;
         };
         self.view_read.groove = None;
-        if source != self.song.session().uses_id() {
+        if !source.accepts(self) {
             return false;
         }
         if let Err(e) = got.and_then(|args| self.apply_groove(args)) {

@@ -514,6 +514,9 @@ impl Studio {
 
     /// A press in the panel, or its row in the grid pop-over.
     pub(crate) fn quant_action(&mut self, g: &Geometry, act: QAct) -> bool {
+        if !matches!(act, QAct::Open) {
+            self.invalidate_groove_import();
+        }
         match act {
             QAct::Open => {
                 let anchor = self
