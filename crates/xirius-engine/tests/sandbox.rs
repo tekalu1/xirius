@@ -523,7 +523,21 @@ fn a_killed_host_keeps_the_sound_and_a_restart_brings_the_state_back(mode: Rende
     let edits = link.take_edits();
     let edited = settled(&mut audio, &mut out, &server, &link, true, paced);
     assert!(edits.state.is_some(), "the state after the edit");
-    let phases: Vec<EditPhase> = edits.params.iter().map(|e| e.phase).collect();
+    // Opaque editor state carries an actual value snapshot as well as gestures.
+    // Only gestures describe automation; snapshot values must survive restart.
+    assert_ne!(edits.stamp.instance, 0);
+    let snapshot = edits
+        .params
+        .iter()
+        .find(|e| e.phase == EditPhase::Snapshot && e.id == GAIN_PARAM.0)
+        .expect("the actual gain accompanying the state");
+    assert!((snapshot.value.unwrap() - GAIN_PARAM.1).abs() < 1e-6);
+    let gestures: Vec<_> = edits
+        .params
+        .iter()
+        .filter(|e| e.phase != EditPhase::Snapshot)
+        .collect();
+    let phases: Vec<EditPhase> = gestures.iter().map(|e| e.phase).collect();
     assert_eq!(
         phases,
         [
@@ -534,9 +548,9 @@ fn a_killed_host_keeps_the_sound_and_a_restart_brings_the_state_back(mode: Rende
             EditPhase::End
         ]
     );
-    assert!(edits.params.iter().all(|e| e.id == GAIN_PARAM.0));
-    assert_eq!(edits.params[3].value, Some(GAIN_PARAM.1));
-    assert!(!edits.params[0].title.is_empty());
+    assert!(gestures.iter().all(|e| e.id == GAIN_PARAM.0));
+    assert_eq!(gestures[3].value, Some(GAIN_PARAM.1));
+    assert!(!gestures[0].title.is_empty());
 
     // The host dies while playing.
     let killed_at = out.len();
@@ -680,11 +694,19 @@ fn a_state_set_by_the_song_is_not_reported_back() {
     while !link.has_pending_state() && Instant::now() < end {
         render(&mut audio, &mut out, 4800, false, |_| {});
     }
-    let state = link.take_edits().state.expect("the edited state");
+    let edited = link.take_edits();
+    let state = edited.state.expect("the edited state");
     server.set_state(&link, state);
     render(&mut audio, &mut out, 48_000, false, |_| {});
     std::thread::sleep(Duration::from_millis(500));
-    assert_eq!(link.take_edits(), Default::default());
+    let after = link.take_edits();
+    assert!(after.state.is_none());
+    assert!(
+        after.params.is_empty(),
+        "a programmatic state is not an edit"
+    );
+    assert_eq!(after.stamp.instance, edited.stamp.instance);
+    assert!(after.stamp.generation > edited.stamp.generation);
 }
 
 /// An instrument gets its notes on their frame: its first sound comes exactly `L` after the

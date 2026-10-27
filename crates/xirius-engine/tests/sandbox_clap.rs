@@ -155,7 +155,19 @@ fn an_edit_in_a_clap_plugin_comes_back_with_its_state_after_a_restart() {
     let state = edits.state.expect("the state after the edit");
     assert_eq!(&state.component[..4], b"XTCL");
     assert!(state.controller.is_empty());
-    let phases: Vec<EditPhase> = edits.params.iter().map(|e| e.phase).collect();
+    assert_ne!(edits.stamp.instance, 0);
+    let snapshot = edits
+        .params
+        .iter()
+        .find(|e| e.phase == EditPhase::Snapshot && e.id == xirius_test_clap::GAIN)
+        .expect("the actual gain accompanying the state");
+    assert_eq!(snapshot.value, Some(0.25));
+    let gestures: Vec<_> = edits
+        .params
+        .iter()
+        .filter(|e| e.phase != EditPhase::Snapshot)
+        .collect();
+    let phases: Vec<EditPhase> = gestures.iter().map(|e| e.phase).collect();
     assert_eq!(
         phases,
         [
@@ -165,9 +177,9 @@ fn an_edit_in_a_clap_plugin_comes_back_with_its_state_after_a_restart() {
             EditPhase::End
         ]
     );
-    assert!(edits.params.iter().all(|e| e.id == xirius_test_clap::GAIN));
-    assert_eq!(edits.params[0].title, "Gain");
-    assert_eq!(edits.params[2].value, Some(0.25));
+    assert!(gestures.iter().all(|e| e.id == xirius_test_clap::GAIN));
+    assert_eq!(gestures[0].title, "Gain");
+    assert_eq!(gestures[2].value, Some(0.25));
     let edited = wet_level(&mut audio, &mut out, &server, &link);
     assert!((level(edited) - 0.25).abs() < 1e-3, "{}", level(edited));
 
