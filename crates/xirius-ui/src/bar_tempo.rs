@@ -47,6 +47,10 @@ pub struct BarEdit {
 }
 
 impl BarEdit {
+    pub(crate) fn active(&self) -> bool {
+        self.focus || self.drag.is_some() || self.typing.is_some()
+    }
+
     /// Gives the readout the arrow keys.
     pub fn focus_tempo(&mut self) {
         self.focus = true;

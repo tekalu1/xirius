@@ -816,23 +816,6 @@ pub enum FileRequest {
 pub const ROLL_BEAT_W: f32 = 48.0;
 
 impl Studio {
-    /// External Session handoffs and automatic drafts must not cancel a person's gesture.
-    pub(crate) fn human_interaction_active(&self) -> bool {
-        self.pointer_held
-            || self.view_read.picker.is_some()
-            || self.arrange.drag.is_some()
-            || self.roll.drag.is_some()
-            || self.pan.is_some()
-            || self.ruler_grab.is_some()
-            || !self.pc_keys.down.is_empty()
-            || !self.pc_keys.pc_waiting.is_empty()
-            || self.pc_keys.roll.is_some()
-            || self.pc_keys.waiting.is_some()
-            || self.pc_keys.listening.is_some()
-            || self.input_map.name.is_some()
-            || self.browser.typing
-            || self.popup.as_ref().is_some_and(|p| p.naming.is_some())
-    }
     pub fn new(song: Song) -> Studio {
         let project = song.project();
         let collapsed = HashSet::new();

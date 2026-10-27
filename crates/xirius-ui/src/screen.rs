@@ -1222,30 +1222,6 @@ fn bottom_bar(studio: Rc<RefCell<Studio>>, window: &Window, c: Rc<Colors>) -> gp
         )
 }
 
-/// The settings' field that has the keyboard, if one has.
-fn settings_field(studio: &Studio) -> Option<&crate::settings::field::Field> {
-    studio
-        .input_map
-        .name
-        .as_ref()
-        .map(|n| &n.field)
-        .or_else(|| studio.settings.as_ref()?.field.as_ref())
-}
-
-/// The field that takes the text: a menu's name box, or the settings' field.
-fn typing_field(studio: &Studio) -> Option<&crate::settings::field::Field> {
-    studio.ask_field().or_else(|| settings_field(studio))
-}
-
-/// A list's search box, as a field, when it takes the text (UI-338): over
-/// the settings' field, under a menu's name box and the rename box.
-fn pick_field(studio: &Studio) -> Option<crate::settings::field::Field> {
-    if studio.ask_field().is_some() || studio.input_map.name.is_some() {
-        return None;
-    }
-    studio.pick_typing().map(|p| p.field())
-}
-
 /// Where the keymap is written to first: the home folder.
 fn dirs_home() -> PathBuf {
     std::env::var_os("USERPROFILE")
@@ -1266,12 +1242,12 @@ impl EntityInputHandler for Screen {
         _: &mut Context<Self>,
     ) -> Option<String> {
         let studio = self.studio.borrow();
-        if let Some(f) = pick_field(&studio) {
+        if let Some(f) = studio.ime_pick_field() {
             let (text, real) = f.text_for_range(range);
             *adjusted = Some(real);
             return Some(text);
         }
-        if let Some(f) = typing_field(&studio) {
+        if let Some(f) = studio.ime_field() {
             let (text, real) = f.text_for_range(range);
             *adjusted = Some(real);
             return Some(text);
@@ -1288,13 +1264,13 @@ impl EntityInputHandler for Screen {
         _: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
         let studio = self.studio.borrow();
-        if let Some(f) = pick_field(&studio) {
+        if let Some(f) = studio.ime_pick_field() {
             return Some(UTF16Selection {
                 range: f.selected_range(),
                 reversed: false,
             });
         }
-        if let Some(f) = typing_field(&studio) {
+        if let Some(f) = studio.ime_field() {
             return Some(UTF16Selection {
                 range: f.selected_range(),
                 reversed: false,
@@ -1308,10 +1284,10 @@ impl EntityInputHandler for Screen {
 
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
         let studio = self.studio.borrow();
-        if let Some(f) = pick_field(&studio) {
+        if let Some(f) = studio.ime_pick_field() {
             return f.marked_range();
         }
-        if let Some(f) = typing_field(&studio) {
+        if let Some(f) = studio.ime_field() {
             return f.marked_range();
         }
         studio.palette.as_ref()?.marked_range()
@@ -1319,17 +1295,7 @@ impl EntityInputHandler for Screen {
 
     fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let mut studio = self.studio.borrow_mut();
-        if pick_field(&studio).is_some() {
-            studio.pick_unmark();
-        } else if studio.ask_field().is_some() {
-            studio.ask_unmark();
-        } else if let Some(name) = &mut studio.input_map.name {
-            name.field.unmark();
-        } else if settings_field(&studio).is_some() {
-            studio.settings_unmark();
-        } else if let Some(p) = studio.palette.as_mut() {
-            p.unmark();
-        }
+        studio.ime_unmark();
         cx.notify();
     }
 
@@ -1344,17 +1310,7 @@ impl EntityInputHandler for Screen {
         if studio.input_blocked() {
             return;
         }
-        if pick_field(&studio).is_some() {
-            studio.pick_text(range, text, false);
-        } else if studio.ask_field().is_some() {
-            studio.ask_text(range, text, false);
-        } else if let Some(name) = &mut studio.input_map.name {
-            name.field.replace_text(range, text);
-        } else if settings_field(&studio).is_some() {
-            studio.settings_text(range, text, false);
-        } else if let Some(p) = studio.palette.as_mut() {
-            p.replace_text(range, text);
-        }
+        studio.ime_replace(range, text, false);
         cx.notify();
     }
 
@@ -1370,17 +1326,7 @@ impl EntityInputHandler for Screen {
         if studio.input_blocked() {
             return;
         }
-        if pick_field(&studio).is_some() {
-            studio.pick_text(range, text, true);
-        } else if studio.ask_field().is_some() {
-            studio.ask_text(range, text, true);
-        } else if let Some(name) = &mut studio.input_map.name {
-            name.field.mark_text(range, text);
-        } else if settings_field(&studio).is_some() {
-            studio.settings_text(range, text, true);
-        } else if let Some(p) = studio.palette.as_mut() {
-            p.mark_text(range, text);
-        }
+        studio.ime_replace(range, text, true);
         cx.notify();
     }
 
@@ -1396,7 +1342,7 @@ impl EntityInputHandler for Screen {
             f32::from(element_bounds.size.width),
             f32::from(element_bounds.size.height),
         );
-        if let Some(f) = pick_field(&studio) {
+        if let Some(f) = studio.ime_pick_field() {
             // The search box is the list's first cell (UI-338).
             let at = match studio.popup.as_ref().filter(|p| p.pick.is_some()) {
                 Some(p) => p.layout(g.size).cells.first()?.rect,
@@ -1449,7 +1395,12 @@ impl EntityInputHandler for Screen {
                 size(px(r.w), px(r.h)),
             ));
         }
-        if let Some(f) = settings_field(&studio) {
+        if let Some(f) = studio.ime_field().filter(|_| {
+            matches!(
+                studio.ime_target(),
+                Some(crate::interaction::ImeTarget::Name | crate::interaction::ImeTarget::Settings)
+            )
+        }) {
             let at = studio
                 .name_rect(&g)
                 .or_else(|| studio.settings_scene(&g).field)?;
@@ -1691,13 +1642,7 @@ impl Render for Screen {
                         paint_overlay(&mut pen, &studio, &g);
                         // While the palette is open its field takes text,
                         // and the IME is on (it is off for the shortcuts).
-                        let typing = studio.settings.as_ref().is_some_and(|s| s.field.is_some());
-                        if studio.palette.is_some()
-                            || typing
-                            || studio.pick_typing().is_some()
-                            || studio.ask_field().is_some()
-                            || studio.input_map.name.is_some()
-                        {
+                        if studio.ime_target().is_some() {
                             window.handle_input(&focus, ElementInputHandler::new(b, entity), cx);
                         }
                     },

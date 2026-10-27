@@ -177,23 +177,6 @@ impl Studio {
         self.other_check(&g) || changed
     }
 
-    /// Something is going on that a new song under it would break: it waits.
-    pub(crate) fn other_busy(&self) -> bool {
-        self.saving.is_some() || self.unsaved.is_some()
-            || self.opening.is_some() || self.open_closing.is_some()
-            || self.human_interaction_active()
-            || self.transport.recording
-            || self.transport.take.is_some()
-            || self.export.running()
-            || self.input_map.name.is_some()
-            || self.browser.typing
-            || self.popup.as_ref().is_some_and(|p| p.naming.is_some())
-            || self.sound_preparing()
-            || self.recovery.is_some()
-            // A warning is not replaced by the news.
-            || self.toast_shown().is_some_and(|t| t.alert)
-    }
-
     fn toast_is(&self, answer: Answer) -> bool {
         self.toast_shown()
             .is_some_and(|t| t.button.as_ref().is_some_and(|(_, a)| *a == answer))

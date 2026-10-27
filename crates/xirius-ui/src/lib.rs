@@ -134,6 +134,7 @@ pub mod input_row;
 pub mod inspector;
 pub mod inspector_shots;
 pub mod instrument;
+mod interaction;
 mod io_command;
 pub mod keep;
 pub mod keep_shots;

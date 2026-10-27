@@ -32,6 +32,193 @@ fn setup() -> (tempfile::TempDir, Studio) {
 }
 
 #[test]
+fn a_closed_menu_snapshot_does_not_keep_external_reads_busy() {
+    let (_root, mut s) = setup();
+    let g = s.geometry(880.0, 600.0);
+    s.open_context(
+        vec![crate::context::Item::ask(
+            "Rename",
+            "track.rename",
+            json!({}),
+            "name",
+            "",
+        )],
+        10.0,
+        10.0,
+    );
+    assert!(s.human_interaction_active());
+    assert!(s.key(&g, "escape", false, false));
+    assert!(s.ctx.is_some(), "the closed menu keeps only a snapshot");
+    assert!(!s.context_open());
+    assert!(!s.human_interaction_active());
+    s.bind_window_io();
+    let call = request(&mut s, "track.list", json!({}), RunOptions::human());
+    finish(&mut s);
+    call.join().unwrap().unwrap();
+}
+
+#[test]
+fn external_reads_wait_for_each_text_surface_and_pointer_owner() {
+    type Case = (&'static str, fn(&mut Studio));
+    let cases: &[Case] = &[
+        ("browser search", |s| s.browser.typing = true),
+        ("inspector value", |s| {
+            s.inspector.field = Some(Default::default())
+        }),
+        ("tempo focus", |s| s.bar_edit.focus_tempo()),
+        ("record value", |s| {
+            s.rec_panel.focus = Some(crate::rec_panel::RecPart::CountBars)
+        }),
+        ("popup", |s| {
+            s.open_popup(crate::popup::PopupKind::Quantize, Rect::default())
+        }),
+        ("settings", |s| {
+            s.open_settings(crate::settings::Section::Audio)
+        }),
+        ("file request", |s| {
+            s.file_request = Some(crate::studio::FileRequest::Place)
+        }),
+        ("native picker", |s| {
+            s.begin_picker();
+        }),
+        ("pointer", |s| s.pointer_held = true),
+        ("external drag", |s| s.drop_over = true),
+        ("mixer scroll", |s| s.mixer.bar_grab = Some(0.0)),
+        ("pan origin", |s| {
+            s.input_map.middle_origin = Some((0.0, 0.0))
+        }),
+        ("wheel callback", |s| s.wheel_running = true),
+        ("browser file", |s| {
+            s.browser.file_drag = Some(crate::browser_pick::FileDrag {
+                path: "fixture.wav".into(),
+                name: "fixture".into(),
+                from: (0.0, 0.0),
+                at: (1.0, 1.0),
+                moved: true,
+            })
+        }),
+    ];
+    for (name, begin) in cases {
+        let (_root, mut s) = setup();
+        assert!(!s.human_interaction_active(), "idle: {name}");
+        begin(&mut s);
+        s.bind_window_io();
+        assert!(s.human_interaction_active(), "{name}");
+        assert!(s.other_busy(), "{name}");
+        let call = request(&mut s, "track.list", json!({}), RunOptions::human());
+        assert!(call.join().unwrap().is_err(), "{name}");
+        assert!(s.saving.is_none(), "{name}");
+        assert!(s.human_interaction_active(), "preserved: {name}");
+    }
+}
+
+#[test]
+fn external_reads_preserve_settings_pick_search_and_inline_rename_composition() {
+    for target in 0..3 {
+        let (_root, mut s) = setup();
+        match target {
+            0 => {
+                s.open_settings(crate::settings::Section::Keys);
+                s.settings.as_mut().unwrap().field = Some(crate::settings::Field::new(
+                    crate::settings::FieldId::Search,
+                    String::new(),
+                ));
+            }
+            1 => s.open_popup(crate::popup::PopupKind::RecQuantize, Rect::default()),
+            2 => {
+                let track = *s.project().tracks.keys().next().unwrap();
+                s.input_map.name = Some(crate::track_name::Name {
+                    track,
+                    field: crate::settings::Field::new(
+                        crate::settings::FieldId::Search,
+                        String::new(),
+                    ),
+                });
+            }
+            _ => unreachable!(),
+        }
+        s.ime_replace(None, "held", false);
+        s.ime_replace(None, "未確定", true);
+        let snapshot = |s: &Studio| {
+            s.ime_pick_field()
+                .or_else(|| s.ime_field().cloned())
+                .unwrap()
+        };
+        let before = snapshot(&s);
+        assert_eq!(before.marked, "未確定");
+        s.bind_window_io();
+        let call = request(&mut s, "track.list", json!({}), RunOptions::human());
+        assert!(call.join().unwrap().is_err());
+        assert!(s.saving.is_none());
+        assert_eq!(snapshot(&s), before);
+        s.settings = None;
+        s.popup = None;
+        s.input_map.name = None;
+        assert!(!s.human_interaction_active());
+        let retry = request(&mut s, "track.list", json!({}), RunOptions::human());
+        finish(&mut s);
+        retry.join().unwrap().unwrap();
+    }
+}
+
+#[test]
+fn external_reads_preserve_palette_search_forms_and_menu_composition() {
+    use crate::tools::Mods;
+    for target in 0..4 {
+        let (_root, mut s) = setup();
+        let g = s.geometry(880.0, 600.0);
+        match target {
+            0 => {
+                assert!(s.palette_key(&g, "k", Mods::ctrl()));
+            }
+            1 => {
+                assert!(s.open_palette_form("track.rename", json!({})));
+            }
+            2 | 3 => {
+                let row =
+                    crate::context::Item::ask("Rename", "track.rename", json!({}), "name", "");
+                s.open_context(vec![row; if target == 3 { 12 } else { 1 }], 10.0, 10.0);
+                if target == 2 {
+                    assert!(s.context_choose(&g, "Rename"));
+                } else {
+                    s.context_search();
+                }
+            }
+            _ => unreachable!(),
+        }
+        s.ime_replace(None, "held", false);
+        s.ime_replace(None, "未確定", true);
+        let snapshot = |s: &Studio| {
+            if let Some(p) = &s.palette {
+                (p.query.clone(), p.marked.clone())
+            } else {
+                let f = s.ask_field().unwrap();
+                (f.value.clone(), f.marked.clone())
+            }
+        };
+        let before = snapshot(&s);
+        assert_eq!(before.1, "未確定");
+        s.bind_window_io();
+        assert!(s.human_interaction_active());
+        assert!(s.other_busy());
+        let call = request(&mut s, "track.list", json!({}), RunOptions::human());
+        assert!(call.join().unwrap().is_err());
+        assert!(s.saving.is_none());
+        assert_eq!(snapshot(&s), before);
+        s.ime_unmark();
+        if target < 2 {
+            assert!(s.palette_key(&g, "escape", Mods::NONE));
+        } else {
+            assert_eq!(s.ask_key("escape"), Some(true));
+        }
+        assert!(!s.human_interaction_active());
+        let retry = request(&mut s, "track.list", json!({}), RunOptions::human());
+        finish(&mut s);
+        retry.join().unwrap().unwrap();
+    }
+}
+
+#[test]
 fn external_reads_preserve_note_move_and_resize_until_mouse_up_and_undo() {
     use crate::tools::Mods;
     for resize in [false, true] {

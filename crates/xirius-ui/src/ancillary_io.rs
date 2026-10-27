@@ -414,7 +414,13 @@ mod tests {
                     );
                     s.pointer_held = false;
                     s.keep_beat(xirius_core::store::now_ms());
-                    assert!(s.popup.is_some(), "worker handoff preserves the popover");
+                    assert!(s.popup.is_some(), "an open popover retains its interaction");
+                    assert!(
+                        s.saving.is_none(),
+                        "draft handoff waits for the popover too"
+                    );
+                    s.key(&s.geometry(880.0, 600.0), "escape", false, false);
+                    s.keep_beat(xirius_core::store::now_ms());
                 }
             }
             entered.recv_timeout(Duration::from_secs(30)).unwrap();

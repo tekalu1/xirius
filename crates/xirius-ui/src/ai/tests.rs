@@ -58,6 +58,8 @@ fn press_in_popover(s: &mut Studio, g: &Geometry, action: Action) {
 fn set_level(s: &mut Studio, g: &Geometry, p: AiPermission) {
     press_in_popover(s, g, Action::Ai(Act::Level(p)));
     assert_eq!(s.song.session().ai_permission(), p);
+    // The person finishes the permission choice before the next external request.
+    assert!(s.key(g, "escape", false, false));
 }
 
 /// The AI and the window, as the app wires them: the call waits on its own
