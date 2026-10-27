@@ -680,8 +680,20 @@ impl Browser {
     }
 
     pub fn set_location(&mut self, i: usize) {
+        self.set_location_owned(i, true);
+    }
+
+    /// Applying an accepted addition does not impersonate a new user choice.
+    pub(crate) fn select_added_place(&mut self, i: usize) {
+        self.set_location_owned(i, false);
+    }
+
+    fn set_location_owned(&mut self, i: usize, user: bool) {
         self.pool_heading = None;
         if i <= self.places.len() {
+            if user {
+                self.prefs_selection_changed();
+            }
             forget();
             self.loc = i;
             self.path.clear();
@@ -693,6 +705,7 @@ impl Browser {
 
     /// Back to the first `n` parts of the breadcrumb (0 is the location itself).
     pub fn go_up_to(&mut self, n: usize) {
+        self.prefs_selection_changed();
         self.pool_heading = None;
         forget();
         self.path.truncate(n);
@@ -708,6 +721,7 @@ impl Browser {
     /// Selecting an audio file starts its audition (BRW-007); another file stops the one
     /// that played.
     pub fn select_file(&mut self, key: &str) {
+        self.prefs_selection_changed();
         self.pool_heading = None;
         self.selected_file = Some(key.to_string());
         self.playing = crate::drop_audio::is_audio(Path::new(key)).then(|| key.to_string());
@@ -731,6 +745,7 @@ impl Browser {
             return;
         };
         if let Ok(rest) = Path::new(key).strip_prefix(&here) {
+            self.prefs_selection_changed();
             forget();
             self.path.extend(
                 rest.components()

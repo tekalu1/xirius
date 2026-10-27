@@ -644,6 +644,7 @@ impl Browser {
 
     /// A press on a rail button: a second press on the open tab shuts the panel.
     pub fn press_rail(&mut self, tab: RailTab) {
+        self.prefs_selection_changed();
         if self.tab != tab {
             self.pool_heading = None;
         }
