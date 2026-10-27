@@ -116,6 +116,7 @@ fn local_state_collection_and_changes_return_while_sdk_is_held_and_stale_state_i
         .unwrap()
         .0;
     let id = song.project().tracks[&tid].inserts[0].id;
+    consecutive_changes_keep_unexecuted_deltas(song.project(), tid, &catalog, &dll);
     let (mut host, mut audio, warnings) = SessionHost::start(
         song.project(),
         HostConfig {
@@ -361,4 +362,76 @@ fn local_state_collection_and_changes_return_while_sdk_is_held_and_stale_state_i
         160u32.to_le_bytes(),
         "background reconstruction preserves unreported live patches"
     );
+}
+
+fn consecutive_changes_keep_unexecuted_deltas(
+    project: &Project,
+    tid: xirius_core::id::TrackId,
+    catalog: &Arc<Catalog>,
+    dll: &std::path::Path,
+) {
+    for state_first in [false, true] {
+        let (mut host, _audio, warnings) = SessionHost::start(
+            project,
+            HostConfig {
+                threaded_local: true,
+                catalog: Some(catalog.clone()),
+                isolation: Some(Isolation::InProcess),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(warnings.is_empty());
+        let gate = Gate::new(dll);
+        let held = host.begin_pull_states();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !gate.entered() {
+            assert!(!held.ready());
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        let mut desired = project.clone();
+        let plugin = &mut Arc::make_mut(desired.tracks.get_mut(&tid).unwrap()).inserts[0];
+        if state_first {
+            plugin.state = Some(xirius_plugins::encode_state(&xirius_vst3::PluginState {
+                component: 192u32.to_le_bytes().to_vec(),
+                controller: 192u32.to_le_bytes().to_vec(),
+            }));
+        } else {
+            plugin.params.insert("1".into(), 0.25);
+        }
+        let first = host.sync(&desired);
+        assert!(!first.swapped && first.warnings.is_empty());
+        Arc::make_mut(desired.tracks.get_mut(&tid).unwrap()).inserts[0]
+            .params
+            .insert(xirius_test_vst3::CRASH_PARAMETER.to_string(), 0.0);
+        let second = host.sync(&desired);
+        assert!(!second.swapped && second.warnings.is_empty());
+        let current = host.begin_pull_states();
+        assert!(!current.ready());
+        gate.release();
+        while !current.ready() {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(current.error(), None);
+        let mut collected = Session::with_registry(desired, shared_registry());
+        collect_pulled_states(&mut collected, &mut host, &current, &RunOptions::human()).unwrap();
+        let plugin = &collected.project().tracks[&tid].inserts[0];
+        let expected = if state_first { 192u32 } else { 64 };
+        assert_eq!(
+            decode_state(plugin.state.as_deref().unwrap())
+                .unwrap()
+                .component,
+            expected.to_le_bytes(),
+            "the first queued state/value must survive the later different-key change"
+        );
+        if !state_first {
+            assert_eq!(plugin.params["1"], f64::from(expected) / 256.0);
+        }
+        assert_eq!(
+            plugin.params[&xirius_test_vst3::CRASH_PARAMETER.to_string()],
+            0.0
+        );
+    }
 }

@@ -173,6 +173,12 @@ impl Capture {
 }
 
 type PendingEdits = Option<(Stamp, Ticket<Edits>)>;
+#[derive(Clone, Default)]
+struct PendingApply {
+    version: u64,
+    state: Option<String>,
+    params: std::collections::BTreeMap<String, f64>,
+}
 pub(crate) struct OwnedLocal {
     updates: Arc<Mutex<UpdateGate>>,
     controller: Controller,
@@ -180,6 +186,7 @@ pub(crate) struct OwnedLocal {
     params: Vec<(u32, String)>,
     requests: RefCell<Vec<Ticket<()>>>,
     edits: Arc<Mutex<PendingEdits>>,
+    pending_apply: Arc<Mutex<PendingApply>>,
     poll_gui: Cell<bool>,
     captures: RefCell<Vec<Capture>>,
     error: RefCell<Option<String>>,
@@ -213,6 +220,7 @@ impl OwnedLocal {
         copy.validity = self.validity.clone();
         copy.updates = self.updates.clone();
         copy.edits = self.edits.clone();
+        copy.pending_apply = self.pending_apply.clone();
         copy.poll_gui.set(false);
         copy.visible.set(self.visible());
         copy
@@ -275,6 +283,7 @@ impl OwnedLocal {
             params,
             requests: Default::default(),
             edits: Default::default(),
+            pending_apply: Default::default(),
             poll_gui: Cell::new(true),
             captures: Default::default(),
             error: Default::default(),
@@ -361,31 +370,55 @@ impl OwnedLocal {
         }
         self.captures.borrow_mut().clear();
         self.due.set(None);
-        let state = state_changed.then(|| value.state.clone()).flatten();
-        let changed: Vec<_> = value
-            .params
-            .iter()
-            .filter(|(key, value)| state_changed || previous.params.get(*key) != Some(*value))
-            .map(|(key, value)| (key.clone(), *value))
-            .collect();
+        {
+            let mut pending = self.pending_apply.lock().unwrap_or_else(|e| e.into_inner());
+            pending.version = pending
+                .version
+                .checked_add(1)
+                .expect("apply versions exhausted");
+            if state_changed {
+                pending.state.clone_from(&value.state);
+                pending.params.clear();
+            }
+            for (key, v) in &value.params {
+                if state_changed || previous.params.get(key) != Some(v) {
+                    let key = self
+                        .params
+                        .iter()
+                        .find(|(id, title)| {
+                            key.parse::<u32>().ok() == Some(*id) || title.eq_ignore_ascii_case(key)
+                        })
+                        .map_or_else(|| key.clone(), |(id, _)| id.to_string());
+                    pending.params.insert(key, *v);
+                }
+            }
+        }
         let validity = self.validity.clone();
         let updates = self.updates.clone();
+        let pending_apply = self.pending_apply.clone();
         let stamp = self.update_gate().stamp();
         self.keep(self.controller.on_owner(move |plugin| {
             if !updates
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .accepts(stamp, Field::Receipt)
+                .accepts(stamp, Field::Intent)
             {
                 return Ok(());
             }
+            // Older commands may be skipped, so this command owns all remaining
+            // desired deltas, not just the last UI edit. Never hold the mailbox
+            // or gate across SDK calls. Forked graph proxies share this mailbox.
+            let pending = pending_apply
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
             let result = (|| {
-                if let Some(text) = state.as_deref() {
+                if let Some(text) = pending.state.as_deref() {
                     let state = xirius_plugins::decode_state(text).map_err(|e| e.to_string())?;
                     plugin.set_state(&state).map_err(|e| e.to_string())?;
                 }
                 let params = plugin.params();
-                for (key, v) in &changed {
+                for (key, v) in &pending.params {
                     let id = key
                         .parse::<u32>()
                         .ok()
@@ -407,8 +440,15 @@ impl OwnedLocal {
             if updates
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .accepts(stamp, Field::Receipt)
+                .accepts(stamp, Field::Intent)
             {
+                if result.is_ok() {
+                    let mut queued = pending_apply.lock().unwrap_or_else(|e| e.into_inner());
+                    if queued.version == pending.version {
+                        queued.state = None;
+                        queued.params.clear();
+                    }
+                }
                 *validity.lock().unwrap_or_else(|e| e.into_inner()) =
                     result.as_ref().err().cloned();
             } else {

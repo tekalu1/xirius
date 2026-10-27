@@ -35,7 +35,9 @@ pub enum Field<'a> {
         id: u32,
         title: &'a str,
     },
-    /// Receipts and explicit owner commands require the exact intent generation.
+    /// Explicit owner commands require the exact intent, independently of receipts.
+    Intent,
+    /// Receipts also require a current endpoint observation sequence.
     Receipt,
 }
 #[derive(Clone, Debug)]
@@ -165,6 +167,7 @@ impl UpdateGate {
             return false;
         }
         match field {
+            Field::Intent => own && source.generation == self.stamp.generation,
             Field::Receipt => {
                 own && source.generation == self.stamp.generation
                     && source.revision >= self.stamp.revision
@@ -220,7 +223,7 @@ impl UpdateGate {
                     }
                 }
             }
-            Field::Receipt => {}
+            Field::Receipt | Field::Intent => {}
         }
     }
 }
