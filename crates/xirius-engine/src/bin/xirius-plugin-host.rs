@@ -129,6 +129,7 @@ mod relay_tests {
                 epoch: 0,
                 capture: None,
                 capture_requests: Vec::new(),
+                pending_latency: false,
                 note_names: Vec::new(),
             },
         );
@@ -197,6 +198,77 @@ mod relay_tests {
                 .2,
             0.5
         );
+        host.instances[&1]
+            .plugin
+            .edit_like_editor(xirius_test_clap::GAIN, &[0.625]);
+        let inst = host.instances.get_mut(&1).unwrap();
+        let _held_notifications = inst.gestures(1);
+        // Hold DSP completion by its block counter, without waiting on time.
+        inst.capture = Some((2, Instant::now() + Duration::from_secs(3600), 1));
+        inst.pending_latency = true;
+        host.handle(ToHost::CaptureState {
+            slot: 1,
+            request: 7,
+        });
+        use std::io::{Seek, SeekFrom};
+        let before = host.out.stream_position().unwrap();
+        host.poll();
+        let mut output = host.out.try_clone().unwrap();
+        output.seek(SeekFrom::Start(before)).unwrap();
+        while let Some(packet) = wire::recv(&mut output).unwrap() {
+            assert!(
+                !matches!(
+                    FromHost::decode(&packet).unwrap(),
+                    FromHost::CapturedState { request: 7, .. } | FromHost::Latency { .. }
+                ),
+                "a capture must wait for queued editor values to reach DSP"
+            );
+        }
+        let before = host.out.stream_position().unwrap();
+        host.instances[&1]
+            .rings
+            .header()
+            .host_blocks
+            .store(2, Ordering::Release);
+        host.poll();
+        output.seek(SeekFrom::Start(before)).unwrap();
+        let mut captured = false;
+        let mut state_published = false;
+        let mut latency = false;
+        while let Some(packet) = wire::recv(&mut output).unwrap() {
+            let message = FromHost::decode(&packet).unwrap();
+            if matches!(message, FromHost::State { .. }) {
+                state_published = true;
+            }
+            if matches!(message, FromHost::Latency { .. }) {
+                assert!(
+                    captured && state_published,
+                    "publish state before allowing a latency rebuild"
+                );
+                latency = true;
+            }
+            if let FromHost::CapturedState {
+                request: 7,
+                result,
+                values,
+                ..
+            } = message
+            {
+                assert!(result.is_ok());
+                assert_eq!(
+                    values
+                        .iter()
+                        .find(|(id, _, _)| *id == xirius_test_clap::GAIN)
+                        .unwrap()
+                        .2,
+                    0.625
+                );
+                captured = true;
+            }
+        }
+        assert!(captured);
+        assert!(state_published);
+        assert!(latency);
         for (_, instance) in host.instances.drain() {
             instance.close();
         }
@@ -285,6 +357,7 @@ struct Instance {
     /// Read the state once the processor has run to this block, or at this time.
     capture: Option<(u64, Instant, u64)>,
     capture_requests: Vec<u64>,
+    pending_latency: bool,
     /// The names of its keys last sent to the engine.
     note_names: Vec<(u8, String)>,
 }
@@ -518,7 +591,11 @@ impl Host {
                 {
                     // Play presses the window took until now still count.
                     keys = editor.take_play_requests();
-                    inst.capture = Some((0, Instant::now(), inst.updates.stamp().generation));
+                    inst.capture.get_or_insert((
+                        0,
+                        Instant::now(),
+                        inst.updates.stamp().generation,
+                    ));
                     // Shut by the person since the last `poll`, as with `Close`.
                     shut = !editor.is_visible();
                 }
@@ -710,6 +787,7 @@ impl Host {
             epoch: o.epoch,
             capture: None,
             capture_requests: Vec::new(),
+            pending_latency: false,
             note_names,
         };
         Ok((inst, opened))
@@ -729,12 +807,16 @@ impl Host {
                     inst.updates.stamp().generation,
                 ));
             }
-            let latency_changed = changes.latency;
+            inst.pending_latency |= changes.latency;
             let mut names_changed = changes.note_names;
-            let passive = inst.capture.filter(|(blocks, at, _)| {
-                latency_changed || inst.blocks() >= *blocks || Instant::now() >= *at
-            });
-            if !inst.capture_requests.is_empty() || passive.is_some() {
+            let passive = inst
+                .capture
+                .filter(|(blocks, at, _)| inst.blocks() >= *blocks || Instant::now() >= *at);
+            // A gesture is reported before its queued value necessarily reaches
+            // DSP. Neither latency notification nor an explicit capture request
+            // may turn that old processor state into a fresh save/build receipt.
+            let settled = inst.capture.is_none() || passive.is_some();
+            if settled && (!inst.capture_requests.is_empty() || passive.is_some()) {
                 if passive.is_some() {
                     inst.capture = None;
                 }
@@ -776,7 +858,10 @@ impl Host {
             if names_changed && let Some(msg) = inst.reread_note_names(slot) {
                 out.push(msg);
             }
-            if latency_changed {
+            if settled && inst.pending_latency {
+                // Rebuilding may retire the old instance. Its editor state
+                // must be published first, including a DSP-settled snapshot.
+                inst.pending_latency = false;
                 out.push(FromHost::Latency {
                     slot,
                     latency: inst.plugin.latency(),
@@ -790,7 +875,8 @@ impl Host {
             if inst.editor.as_ref().is_some_and(|e| !e.is_visible()) {
                 inst.editor = None;
                 // The patch may have been changed in the window without a word about it.
-                inst.capture = Some((0, Instant::now(), inst.updates.stamp().generation));
+                inst.capture
+                    .get_or_insert((0, Instant::now(), inst.updates.stamp().generation));
                 out.push(FromHost::EditorClosed { slot });
             }
         }
