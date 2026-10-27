@@ -73,6 +73,9 @@ impl Tidy {
         if let Some(got) = self.finished.take() {
             return Some(got);
         }
+        if self.thread.as_ref().is_some_and(|t| !t.is_finished()) {
+            return None;
+        }
         match self.rx.try_recv() {
             Ok(got) => Some(got),
             Err(TryRecvError::Empty) => self.thread.is_none().then_some(Ok(0)),
@@ -87,6 +90,7 @@ impl Tidy {
         }
         match self
             .rx
+            // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
             .recv_timeout(until.saturating_duration_since(Instant::now()))
         {
             Ok(got) => Some(got),
@@ -103,6 +107,7 @@ impl Tidy {
     /// Waits for the thread, which has said what it did or soon will.
     fn join(&mut self) {
         if let Some(t) = self.thread.take() {
+            // design-lint: allow(ui-blocking-io) PRJ-031: normal poll checks is_finished before this join; shutdown waits only on its worker.
             let _ = t.join();
         }
     }
@@ -169,6 +174,7 @@ impl Studio {
             match self.tidying[i].ended() {
                 Some(got) => {
                     let mut t = self.tidying.remove(i);
+                    // design-lint: allow(ui-blocking-io) PRJ-031: normal poll checks is_finished before this join; shutdown waits only on its worker.
                     t.join();
                     ended.push((t.dir, t.later, got));
                 }
@@ -181,6 +187,14 @@ impl Studio {
                 // Left for the next start again, unsaid: the song closes elsewhere later, and
                 // is tidied then.
                 (Some(later), Err(e)) if e.contains(cleanup::OTHERS_OPEN) => {
+                    if self.transport.is_windowed() {
+                        if let Err(e) = crate::ancillary_io::dispatch(move || {
+                            crate::notice::leave_later(&later, &[dir]).map_err(|e| e.to_string())
+                        }) {
+                            self.error = Some(e);
+                        }
+                        continue;
+                    }
                     if let Err(e) = crate::notice::leave_later(&later, &[dir]) {
                         self.error = Some(format!("{} に書けませんでした: {e}", later.display()));
                     }
@@ -229,32 +243,20 @@ impl Studio {
         later: &Path,
         say: &mut dyn FnMut(String),
     ) -> usize {
-        let until = Instant::now() + within;
-        let mut moved = 0;
-        let mut left = Vec::new();
-        for mut t in std::mem::take(&mut self.tidying) {
-            let Some(got) = t.ended_by(until) else {
-                t.stop();
-                left.push(t.dir.clone());
-                continue;
-            };
-            t.join();
-            match got {
-                Ok(n) => moved += n,
-                Err(e) if e.contains(cleanup::STOPPED) => {}
-                Err(e) => say(e),
-            }
-        }
-        if let Err(e) = crate::notice::leave_later(later, &left) {
-            say(format!("{} に書けませんでした: {e}", later.display()));
-        }
-        moved
+        wait_all(std::mem::take(&mut self.tidying), within, later, say)
     }
 
-    /// The cleanups a window stopped when it closed ([`Studio::wait_tidy`]) run again, as once
-    /// their songs closed; but that of the song open now, looked at when it closes.
+    /// The cleanups a window stopped are read away from the window thread.
     pub fn tidy_later(&mut self, later: &Path) {
-        for dir in crate::notice::take_later(later) {
+        if self.transport.is_windowed() {
+            self.read_later_notices(later.to_owned());
+            return;
+        }
+        self.adopt_later(crate::notice::take_later(later), later);
+    }
+
+    pub(crate) fn adopt_later(&mut self, dirs: Vec<PathBuf>, later: &Path) {
+        for dir in dirs {
             let closed = Closed::saved(dir, self.song.trash());
             self.start_tidy_from(closed, Some(later));
         }
@@ -266,8 +268,6 @@ impl Studio {
     }
 
     /// What a cleanup did, said the way closing a song says it (one that was stopped, nothing).
-    /// One left because another process has the song open is said as news, with the song's
-    /// name: it comes while another song is open, and nothing is wrong.
     pub(crate) fn say_cleaned(&mut self, dir: &Path, got: Cleaned) {
         match got {
             Err(e) if e.contains(cleanup::STOPPED) => {}
@@ -280,6 +280,35 @@ impl Studio {
             }
         }
     }
+}
+
+pub(crate) fn wait_all(
+    tidies: Vec<Tidy>,
+    within: Duration,
+    later: &Path,
+    say: &mut dyn FnMut(String),
+) -> usize {
+    let until = Instant::now() + within;
+    let mut moved = 0;
+    let mut left = Vec::new();
+    for mut t in tidies {
+        let Some(got) = t.ended_by(until) else {
+            t.stop();
+            left.push(t.dir.clone());
+            continue;
+        };
+        // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
+        t.join();
+        match got {
+            Ok(n) => moved += n,
+            Err(e) if e.contains(cleanup::STOPPED) => {}
+            Err(e) => say(e),
+        }
+    }
+    if let Err(e) = crate::notice::leave_later(later, &left) {
+        say(format!("{} に書けませんでした: {e}", later.display()));
+    }
+    moved
 }
 
 #[cfg(test)]

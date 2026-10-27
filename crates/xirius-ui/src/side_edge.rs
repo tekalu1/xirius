@@ -193,16 +193,21 @@ impl SideSize {
         let Some(path) = &self.file else {
             return Ok(());
         };
+        #[cfg(any(test, feature = "loading-probe"))]
+        xirius_core::io_test::before("view_write", path)?;
         let mut kept = read(path);
         kept.insert(BROWSER_KEY.into(), json!(self.browser));
         kept.insert(HEAD_KEY.into(), json!(self.head));
         kept.insert(FOLDED_KEY.into(), json!(self.folded));
         if let Some(dir) = path.parent() {
+            // design-lint: allow(ui-blocking-io) PRJ-031: application FIFO owns window reads/writes; synchronous API is retained for offline fixtures.
             std::fs::create_dir_all(dir)?;
         }
         let text = serde_json::to_string_pretty(&Value::Object(kept))?;
         let tmp = path.with_extension("json.tmp");
+        // design-lint: allow(ui-blocking-io) PRJ-031: application FIFO owns window reads/writes; synchronous API is retained for offline fixtures.
         std::fs::write(&tmp, text)?;
+        // design-lint: allow(ui-blocking-io) PRJ-031: application FIFO owns window reads/writes; synchronous API is retained for offline fixtures.
         std::fs::rename(&tmp, path)
     }
 
@@ -215,6 +220,7 @@ impl SideSize {
 }
 
 fn read(path: &Path) -> Map<String, Value> {
+    // design-lint: allow(ui-blocking-io) PRJ-031: application FIFO owns window reads/writes; synchronous API is retained for offline fixtures.
     std::fs::read_to_string(path)
         .ok()
         .and_then(|t| serde_json::from_str::<Value>(&t).ok())
@@ -350,8 +356,18 @@ impl Studio {
     }
 
     fn keep_side_size(&self) {
+        self.view_read.side_changed.set(true);
+        if self.transport.is_windowed() {
+            let size = self.side_size.clone();
+            if let Err(e) =
+                crate::ancillary_io::dispatch(move || size.save().map_err(|e| e.to_string()))
+            {
+                crate::ancillary_io::log!("could not queue the panels' widths: {e}");
+            }
+            return;
+        }
         if let Err(e) = self.side_size.save() {
-            eprintln!("could not keep the panels' widths: {e}");
+            crate::ancillary_io::log!("could not keep the panels' widths: {e}");
         }
     }
 }

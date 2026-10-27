@@ -174,9 +174,11 @@ pub fn license_file(item: Item) -> Result<PathBuf, String> {
 
 /// Writes `item`'s licence text to `dir` and returns its path.
 fn write_license(dir: &std::path::Path, item: Item) -> Result<PathBuf, String> {
+    // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let (name, text) = item.text();
     let path = dir.join(name);
+    // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
     std::fs::write(&path, text).map_err(|e| format!("{} に書けません: {e}", path.display()))?;
     Ok(path)
 }
@@ -194,6 +196,14 @@ pub enum CheckState {
 
 /// The asking for a newer version at launch (UI-262), and getting it into place (UI-282).
 pub struct Update {
+    encoder: Option<crate::ancillary_io::Ticket<View>>,
+    encoder_view: Option<View>,
+    startup: Option<crate::ancillary_io::Ticket<StartupUpdate>>,
+    arm: Option<(
+        update::Installer,
+        crate::ancillary_io::Ticket<update::Install>,
+    )>,
+    crashes: Option<crate::ancillary_io::Ticket<crate::crash_reports::View>>,
     asking: Option<std::thread::JoinHandle<Result<Option<update::Release>, String>>>,
     pub check: CheckState,
     channel: Option<bool>,
@@ -229,6 +239,11 @@ pub struct Update {
 impl Default for Update {
     fn default() -> Update {
         Update {
+            encoder: None,
+            encoder_view: None,
+            startup: None,
+            arm: None,
+            crashes: None,
             asking: None,
             check: CheckState::Idle,
             channel: None,
@@ -240,7 +255,15 @@ impl Default for Update {
             job: None,
             progress: std::sync::Arc::new(std::sync::Mutex::new(update::Progress::default())),
             ready: None,
-            location: update::Location::per_user(),
+            location: startup_cache()
+                .and_then(|s| s.location.clone())
+                .or_else(|| {
+                    if startup_cache().is_some() {
+                        None
+                    } else {
+                        update::Location::per_user()
+                    }
+                }),
             pending: None,
             notice: None,
             spawn: std::sync::Arc::new(update::spawn_detached),
@@ -253,7 +276,7 @@ impl Default for Update {
 
 impl Update {
     pub fn asking(&self) -> bool {
-        self.asking.is_some()
+        self.asking.is_some() || self.startup.is_some()
     }
 
     /// Is the installer being downloaded or checked?
@@ -264,12 +287,14 @@ impl Update {
     /// What the download is doing now.
     pub fn progress(&self) -> update::Progress {
         self.progress
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
     }
 
     pub(crate) fn set_progress(&self, progress: update::Progress) {
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         *self.progress.lock().unwrap_or_else(|e| e.into_inner()) = progress;
     }
 }
@@ -326,6 +351,13 @@ pub struct View {
 
 impl View {
     pub fn now() -> View {
+        if let Some(cached) = startup_cache() {
+            return cached.view.clone();
+        }
+        Self::read_now()
+    }
+
+    fn read_now() -> View {
         let (lame_path, lame_error) = match mp3::load(None) {
             Ok(l) => (l.path.clone(), None),
             Err(_) => (mp3::locate(), Some(mp3::CANNOT_LOAD.to_string())),
@@ -344,6 +376,49 @@ impl View {
             query: String::new(),
         }
     }
+}
+
+struct Startup {
+    reduced: bool,
+    view: View,
+    location: Option<update::Location>,
+    installable: bool,
+}
+static STARTUP: std::sync::OnceLock<Startup> = std::sync::OnceLock::new();
+fn startup_cache() -> Option<&'static Startup> {
+    STARTUP.get()
+}
+
+pub(crate) fn initial_reduced() -> bool {
+    startup_cache().is_some_and(|s| s.reduced)
+}
+
+/// Probe the encoder and installation before GPUI starts accepting callbacks.
+pub(crate) fn prepare_startup() {
+    STARTUP.get_or_init(|| {
+        // This join precedes creation of the GPUI executor and every window.
+        std::thread::spawn(|| {
+            let location = update::Location::per_user();
+            let installable = location.as_ref().is_some_and(|l| l.installable());
+            Startup {
+                reduced: crate::motion_watch::os_reduced(),
+                view: View::read_now(),
+                location,
+                installable,
+            }
+        })
+        // design-lint: allow(ui-blocking-io) PRJ-031: bootstrap join before GPUI/executor/window creation; all probes run on that worker.
+        .join()
+        .expect("startup probe")
+    });
+}
+
+struct StartupUpdate {
+    note: Option<String>,
+    installer: Option<update::Installer>,
+    newer: Option<update::Release>,
+    beta: bool,
+    total: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1141,11 +1216,24 @@ fn installer_matches(release: &update::Release, installer: &update::Installer) -
 impl Studio {
     /// Opens the panel under the logo, or closes it when it is open.
     pub(crate) fn open_about(&mut self, anchor: Rect) {
+        self.update.crashes = None;
         self.open_popup(PopupKind::About, anchor);
         let newer = self.newer_release().cloned();
         let progress = self.update.progress();
         let notice = self.update.notice.clone();
         let spin = self.spin();
+        let view = self.update.encoder_view.clone().unwrap_or_else(View::now);
+        if self.transport.is_windowed() {
+            match crate::ancillary_io::submit(|| {
+                #[cfg(any(test, feature = "loading-probe"))]
+                xirius_core::io_test::before("encoder_probe", std::path::Path::new(mp3::LAME_FILE))
+                    .map_err(|e| e.to_string())?;
+                Ok(View::read_now())
+            }) {
+                Ok(job) => self.update.encoder = Some(job),
+                Err(e) => self.error = Some(e),
+            }
+        }
         if let Some(p) = &mut self.popup
             && p.kind == PopupKind::About
         {
@@ -1155,7 +1243,7 @@ impl Studio {
                 newer,
                 progress,
                 notice,
-                ..View::now()
+                ..view
             }));
         }
     }
@@ -1170,12 +1258,47 @@ impl Studio {
         let root = check.root().to_path_buf();
         self.update.root = Some(root.clone());
         let beta = self.update_beta();
+        if self.transport.is_windowed() {
+            let enabled = self.update_on();
+            let key = self.update.key.clone();
+            self.update.channel = Some(beta);
+            match crate::ancillary_io::submit(move || {
+                #[cfg(any(test, feature = "loading-probe"))]
+                xirius_core::io_test::before("update_startup", &root).map_err(|e| e.to_string())?;
+                let note = update::take_failure(&root);
+                let installer = update::ready_installer(&root, update::CURRENT, beta, &key);
+                let total = installer
+                    .as_ref()
+                    .and_then(|i| i.path.metadata().ok())
+                    .map_or(0, |m| m.len());
+                let newer = if enabled {
+                    check.at_launch(true, beta, now_ms, update::CURRENT)
+                } else {
+                    check
+                        .stored()
+                        .filter(|c| c.beta == beta)
+                        .and_then(|c| c.newer_than(update::CURRENT).cloned())
+                };
+                Ok(StartupUpdate {
+                    note,
+                    installer,
+                    newer,
+                    beta,
+                    total,
+                })
+            }) {
+                Ok(job) => self.update.startup = Some(job),
+                Err(e) => self.update.notice = Some(e),
+            }
+            return;
+        }
         if let Some(note) = update::take_failure(&root) {
             self.update.notice = Some(note);
         }
         if let Some(installer) =
             update::ready_installer(&root, update::CURRENT, beta, &self.update.key)
         {
+            // design-lint: allow(ui-blocking-io) PRJ-031: synchronous offline adapter; window mode returns through the startup ticket above.
             let total = installer.path.metadata().map(|m| m.len()).unwrap_or(0);
             self.update.ready = Some(installer);
             self.update.set_progress(update::Progress {
@@ -1249,7 +1372,7 @@ impl Studio {
             notice: self.update.notice.clone(),
             crashes: None,
             version: update::CURRENT.into(),
-            lame_path: mp3::locate(),
+            lame_path: View::now().lame_path,
             lame_error: None,
             open: None,
             query: String::new(),
@@ -1258,6 +1381,7 @@ impl Studio {
 
     fn update_on(&self) -> bool {
         let shared = self.song.settings().clone();
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let s = shared.lock().unwrap_or_else(|e| e.into_inner());
         s.prefs.bool(UPDATE_PREF)
     }
@@ -1265,6 +1389,7 @@ impl Studio {
     /// Does this window take the beta channel (UI-282)?
     fn update_beta(&self) -> bool {
         let shared = self.song.settings().clone();
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let s = shared.lock().unwrap_or_else(|e| e.into_inner());
         s.prefs.bool(update::BETA_PREF)
     }
@@ -1272,7 +1397,88 @@ impl Studio {
     /// Once a frame. True while the asking or the download runs and on the frame it ends.
     pub(crate) fn poll_update(&mut self) -> bool {
         let mut changed = false;
+        if let Some(result) = self
+            .update
+            .encoder
+            .as_ref()
+            .and_then(crate::ancillary_io::Ticket::poll)
+        {
+            self.update.encoder = None;
+            match result {
+                Ok(view) => {
+                    if let Some(shown) = self.popup.as_mut().and_then(|p| p.about.as_mut()) {
+                        shown.lame_path = view.lame_path.clone();
+                        shown.lame_error = view.lame_error.clone();
+                    }
+                    self.update.encoder_view = Some(view);
+                }
+                Err(e) => self.error = Some(e),
+            }
+            changed = true;
+        }
         let beta = self.update_beta();
+        if let Some(result) = self
+            .update
+            .startup
+            .as_ref()
+            .and_then(crate::ancillary_io::Ticket::poll)
+        {
+            self.update.startup = None;
+            match result {
+                Ok(got) if got.beta == beta => {
+                    self.update.notice = got.note;
+                    self.update.ready = got.installer;
+                    self.update.newer = got.newer;
+                    if self.update.ready.is_some() {
+                        self.update.set_progress(update::Progress {
+                            phase: update::Phase::Ready,
+                            got: got.total,
+                            total: got.total,
+                        });
+                    }
+                }
+                Err(e) => self.update.notice = Some(e),
+                _ => {}
+            }
+            changed = true;
+        }
+        if let Some((installer, result)) = self
+            .update
+            .arm
+            .as_ref()
+            .and_then(|(i, job)| job.poll().map(|r| (i.clone(), r)))
+        {
+            self.update.arm = None;
+            if self.update.ready.as_ref() == Some(&installer)
+                && (installer.manifest.channel != update::BETA || beta)
+            {
+                match result {
+                    Ok(install) => {
+                        self.update.pending = Some(install);
+                        self.window_ask = Some(crate::context::key_more::WindowAsk::Quit);
+                    }
+                    Err(e) => self.update.notice = Some(e),
+                }
+            }
+            changed = true;
+        }
+        if let Some(result) = self
+            .update
+            .crashes
+            .as_ref()
+            .and_then(crate::ancillary_io::Ticket::poll)
+        {
+            self.update.crashes = None;
+            if let Some(v) = self.popup.as_mut().and_then(|p| p.about.as_mut())
+                && v.crashes.is_none()
+            {
+                match result {
+                    Ok(view) => v.crashes = Some(Box::new(view)),
+                    Err(e) => self.error = Some(e),
+                }
+                changed = true;
+            }
+        }
         if self.update.channel.is_some_and(|c| c != beta) {
             self.update.newer = None;
             self.update.ready = None;
@@ -1290,6 +1496,7 @@ impl Studio {
         {
             if self.update.channel == Some(self.update_beta()) {
                 match asking
+                    // design-lint: allow(ui-blocking-io) PRJ-031: is_finished was observed before taking this handle; no running worker is joined.
                     .join()
                     .unwrap_or_else(|_| Err("更新を確認できません: 確認処理が終了しました".into()))
                 {
@@ -1330,6 +1537,7 @@ impl Studio {
         {
             let before = self.update.progress();
             let obsolete = self.update.download_channel.is_some_and(|b| b != beta);
+            // design-lint: allow(ui-blocking-io) PRJ-031: is_finished was observed before taking this handle; no running worker is joined.
             let phase = match job.join() {
                 Ok(Ok(_)) if obsolete => update::Phase::Idle,
                 Ok(Err(_)) if obsolete => update::Phase::Idle,
@@ -1379,7 +1587,11 @@ impl Studio {
             v.progress = progress;
             v.notice = notice;
         }
-        self.update.asking.is_some() || self.update.job.is_some() || changed
+        self.update.asking()
+            || self.update.arm.is_some()
+            || self.update.crashes.is_some()
+            || self.update.job.is_some()
+            || changed
     }
 
     /// The discovered update remains visible when asking at launch is off.
@@ -1391,11 +1603,13 @@ impl Studio {
     /// one unpacked from the zip, only open the release's page in the browser.
     pub(crate) fn can_download_update(&self) -> bool {
         !update::is_placeholder_key(&self.update.key)
-            && self
-                .update
-                .location
-                .as_ref()
-                .is_some_and(|l| l.installable())
+            && self.update.location.as_ref().is_some_and(|l| {
+                if self.transport.is_windowed() {
+                    startup_cache().is_some_and(|c| c.installable)
+                } else {
+                    l.installable()
+                }
+            })
     }
 
     /// Starts the download off the window's thread; [`Studio::poll_update`] takes it.
@@ -1473,6 +1687,26 @@ impl Studio {
             .location
             .clone()
             .ok_or("インストールの場所が分かりません")?;
+        if self.transport.is_windowed() {
+            if self.update.arm.is_some() {
+                return Ok(());
+            }
+            let key = self.update.key.clone();
+            let checked = installer.clone();
+            let job = crate::ancillary_io::submit(move || {
+                #[cfg(any(test, feature = "loading-probe"))]
+                xirius_core::io_test::before("update_verify", &installer.path)
+                    .map_err(|e| e.to_string())?;
+                installer.verify_with(&key)?;
+                let running = update::running_programs(&location.install_dir, std::process::id());
+                if !running.is_empty() {
+                    return Err(format!("{} が動いています", running.join("、")));
+                }
+                location.install_command(&installer.path)
+            })?;
+            self.update.arm = Some((checked, job));
+            return Ok(());
+        }
         installer.verify_with(&self.update.key)?;
         let running = update::running_programs(&location.install_dir, std::process::id());
         if !running.is_empty() {
@@ -1488,6 +1722,7 @@ impl Studio {
     /// The installer to start once the window has closed (UI-282). It is checked once more
     /// here, at the last moment before it is started; a file replaced while the song was being
     /// saved is not run, and the next start says so.
+    #[cfg(test)]
     pub(crate) fn take_pending_install(&mut self) -> Option<update::Install> {
         let install = self.update.pending.take()?;
         let problem = match &self.update.ready {
@@ -1520,7 +1755,8 @@ impl Studio {
     pub(crate) fn open_web(&mut self, url: &str) -> Result<(), String> {
         self.opened.push(url.to_string());
         if self.os_files {
-            xirius_session::os::open(url)
+            let url = url.to_owned();
+            crate::ancillary_io::dispatch(move || xirius_session::os::open(&url))
         } else {
             Ok(())
         }
@@ -1590,7 +1826,22 @@ impl Studio {
         };
         let done = match act {
             Act::Crashes => {
+                self.update.crashes = None;
                 v.crashes = if v.crashes.is_some() {
+                    None
+                } else if self.transport.is_windowed() {
+                    match crate::ancillary_io::submit(|| {
+                        #[cfg(any(test, feature = "loading-probe"))]
+                        xirius_core::io_test::before(
+                            "crash_reports",
+                            &xirius_engine::crash::directory(),
+                        )
+                        .map_err(|e| e.to_string())?;
+                        Ok(crate::crash_reports::View::load())
+                    }) {
+                        Ok(job) => self.update.crashes = Some(job),
+                        Err(e) => self.error = Some(e),
+                    }
                     None
                 } else {
                     Some(Box::new(crate::crash_reports::View::load()))
@@ -1613,19 +1864,20 @@ impl Studio {
                         return true;
                     }
                     _ => match crashes.path(act) {
-                        Some(path) if self.os_files => {
+                        Some(path) if self.os_files => crate::ancillary_io::dispatch(move || {
                             if matches!(act, crate::crash_reports::Act::Folder(_)) {
                                 xirius_session::os::open(&path.display().to_string())
                             } else {
                                 xirius_session::os::reveal(&path)
                             }
-                        }
+                        }),
                         Some(_) => Ok(()),
                         None => Err("クラッシュ記録がありません".into()),
                     },
                 }
             }
             Act::Close => {
+                self.update.crashes = None;
                 self.popup = None;
                 return true;
             }
@@ -1639,15 +1891,16 @@ impl Studio {
             }
             Act::Reveal => {
                 let path = v.lame_path.clone();
-                if path.exists() {
-                    xirius_session::os::reveal(&path)
-                } else {
-                    // Nothing to pick: open the folder it is looked for in.
-                    path.parent()
-                        .map(|d| d.display().to_string())
-                        .ok_or_else(|| "フォルダーがありません".to_string())
-                        .and_then(|d| xirius_session::os::open(&d))
-                }
+                crate::ancillary_io::dispatch(move || {
+                    if path.exists() {
+                        xirius_session::os::reveal(&path)
+                    } else {
+                        path.parent()
+                            .map(|d| d.display().to_string())
+                            .ok_or_else(|| "フォルダーがありません".to_string())
+                            .and_then(|d| xirius_session::os::open(&d))
+                    }
+                })
             }
             // The web pages: [`Studio::about_action`] opens them.
             Act::Source
@@ -1657,9 +1910,9 @@ impl Studio {
             | Act::Page
             | Act::UpdateNow
             | Act::Check => Ok(()),
-            Act::License(item) => {
+            Act::License(item) => crate::ancillary_io::dispatch(move || {
                 license_file(item).and_then(|p| xirius_session::os::open(&p.display().to_string()))
-            }
+            }),
         };
         if let Err(e) = done {
             self.error = Some(e);

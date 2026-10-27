@@ -131,6 +131,7 @@ impl Studio {
     pub(crate) fn pc_keyboard_on(&self) -> bool {
         self.song
             .settings()
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .prefs
@@ -141,6 +142,7 @@ impl Studio {
     pub(crate) fn pc_heard(&mut self, pitch: u8) {
         self.song
             .io
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .heard(PC_KEYBOARD, pitch, std::time::Instant::now());
@@ -421,6 +423,7 @@ impl Studio {
                 self.pc_keys.listening = None;
                 let p = self.project();
                 self.transport.sync(&p, self.song.dir());
+                // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
                 self.transport.seek(back);
             }
             _ => {}

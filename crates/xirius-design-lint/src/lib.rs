@@ -16,6 +16,7 @@ mod ops_coverage;
 pub mod rule;
 mod scan;
 pub mod tokens;
+mod ui_io;
 
 use std::fmt;
 use std::fs;
@@ -78,6 +79,7 @@ pub fn lint_source(label: &str, source: &str) -> Vec<Violation> {
     let mut hits = scan::scan(&file, is_screen_file(label));
     hits.extend(color_rules::scan(&file, label));
     if is_screen_file(label) {
+        hits.extend(ui_io::scan(&file, label));
         hits.extend(ops_coverage::scan(&file));
         hits.extend(list_menu::scan(&file, label));
     }

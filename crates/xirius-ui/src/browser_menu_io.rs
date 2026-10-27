@@ -63,8 +63,10 @@ impl Studio {
         let id = self.browser_menu_io.jobs.request(key.clone(), move || {
             #[cfg(test)]
             let _ = xirius_core::io_test::before("browser_menu", &file);
+            // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
             let is_dir = file.is_dir();
             let base = "新しいフォルダー";
+            // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
             let name = if is_dir { (1..).map(|i| if i == 1 { base.into() } else { format!("{base} ({i})") }).find(|s| std::fs::symlink_metadata(file.join(s)).is_err()).unwrap_or_else(|| base.into()) } else { base.into() };
             let author = xirius_core::command::Author::Human;
             let cx = ExtContext { project: &work, dir: dir.as_deref(), author: &author, registry: &registry, work_copy:false, lane:None, uses:0 };

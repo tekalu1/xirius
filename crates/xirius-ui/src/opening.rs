@@ -74,6 +74,18 @@ pub(crate) struct CloseJob {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
+impl CloseJob {
+    pub(crate) fn wait(self, within: Duration) -> usize {
+        // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
+        let n = match self.rx.recv_timeout(within) {
+            Ok(Ok(n)) => n,
+            _ => 0,
+        };
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        n
+    }
+}
+
 impl Opening {
     pub fn close_title(&self) -> &'static str {
         if self.adopting {
@@ -425,16 +437,12 @@ impl Studio {
         self.window_ask = Some(crate::context::key_more::WindowAsk::Quit);
     }
     /// Only called after the real window has gone, sharing its existing shutdown budget.
+    #[cfg(test)]
     pub(crate) fn wait_open_close(&mut self, within: Duration) -> usize {
         let Some(close) = self.open_closing.take() else {
             return 0;
         };
-        let n = match close.rx.recv_timeout(within) {
-            Ok(Ok(n)) => n,
-            _ => 0,
-        };
-        close.stop.store(true, std::sync::atomic::Ordering::Release);
-        n
+        close.wait(within)
     }
 
     pub(crate) fn opening_press(&mut self, g: &Geometry, x: f32, y: f32) -> bool {

@@ -6,6 +6,19 @@ use std::process::Command;
 
 /// Opens the OS's file window on `path`, with the file picked where the OS can.
 pub fn reveal(path: &Path) -> Result<(), String> {
+    if crate::host::on_window_thread() {
+        let path = path.to_owned();
+        return crate::background::Job::spawn("desktop reveal", move || {
+            let result = reveal(&path);
+            if let Err(e) = &result {
+                eprintln!("desktop reveal: {e}");
+            }
+            result
+        })
+        .map(drop);
+    }
+    #[cfg(any(test, feature = "test-io"))]
+    xirius_core::io_test::before("desktop_reveal", path).map_err(|e| e.to_string())?;
     let path = std::path::absolute(path).map_err(|e| e.to_string())?;
     let mut cmd = reveal_command(&path);
     cmd.spawn()
@@ -66,6 +79,19 @@ fn reveal_command(path: &Path) -> Command {
 
 /// Opens a file, or a web page (`https://…`), with what the OS opens it with.
 pub fn open(target: &str) -> Result<(), String> {
+    if crate::host::on_window_thread() {
+        let target = target.to_owned();
+        return crate::background::Job::spawn("desktop open", move || {
+            let result = open(&target);
+            if let Err(e) = &result {
+                eprintln!("desktop open: {e}");
+            }
+            result
+        })
+        .map(drop);
+    }
+    #[cfg(any(test, feature = "test-io"))]
+    xirius_core::io_test::before("desktop_open", Path::new(target)).map_err(|e| e.to_string())?;
     open_command(target)
         .spawn()
         .map(|_| ())
@@ -323,5 +349,59 @@ mod tests {
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
         assert_eq!(got, args);
+    }
+
+    #[test]
+    fn window_desktop_requests_return_before_launch_without_opening_an_external_app() {
+        use std::sync::{Arc, Condvar, Mutex, mpsc};
+        use std::time::Duration;
+        for operation in ["desktop_open", "desktop_reveal"] {
+            let root = tempfile::tempdir().unwrap();
+            let target = root.path().join("fixture.txt");
+            let path = target.clone();
+            let (tx, entered) = mpsc::channel();
+            let (done, completed) = mpsc::channel();
+            let held = Arc::new((Mutex::new(false), Condvar::new()));
+            struct Release(Arc<(Mutex<bool>, Condvar)>);
+            impl Drop for Release {
+                fn drop(&mut self) {
+                    *self.0.0.lock().unwrap() = true;
+                    self.0.1.notify_all();
+                }
+            }
+            let release = Release(held.clone());
+            let ui = std::thread::current().id();
+            let _observe = xirius_core::io_test::observe(Arc::new(move |op, p| {
+                if op == operation && p == path {
+                    assert_ne!(std::thread::current().id(), ui);
+                    let _ = tx.send(());
+                    drop(
+                        held.1
+                            .wait_while(held.0.lock().unwrap(), |go| !*go)
+                            .unwrap(),
+                    );
+                    let _ = done.send(());
+                    // Stop at the real launch boundary. No Explorer/browser is started.
+                    return Err(std::io::Error::other("fixture stops desktop launch"));
+                }
+                Ok(())
+            }));
+            crate::host::mark_window_thread();
+            {
+                let _scope = xirius_core::io_test::forbid_ui_io();
+                if operation == "desktop_open" {
+                    open(target.to_str().unwrap()).unwrap();
+                } else {
+                    reveal(&target).unwrap();
+                }
+            }
+            entered.recv_timeout(Duration::from_secs(30)).unwrap();
+            assert!(
+                completed.try_recv().is_err(),
+                "launch remains held after UI Ack"
+            );
+            drop(release);
+            completed.recv_timeout(Duration::from_secs(30)).unwrap();
+        }
     }
 }

@@ -20,7 +20,10 @@ impl Studio {
     /// Asks the plugin host how its plugins are, as a frame would, takes in what was turned in
     /// the plugins' own windows, lets go of a notice said long enough, takes the device's channels and this PC's MIDI ports read meanwhile, and opens again a sound device that could not be had.
     pub fn idle(&mut self) -> Idle {
-        let prefs = self.poll_browser_prefs_close() | self.poll_recent_close();
+        let prefs = self.poll_browser_prefs_close()
+            | self.poll_recent_close()
+            | self.poll_view()
+            | self.poll_update();
         let opened = self.poll_opening();
         if self.opening.is_some() {
             return Idle {

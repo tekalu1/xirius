@@ -1127,6 +1127,7 @@ impl Studio {
                     .get(&t)
                     .is_some_and(|t| t.kind == TrackKind::Master) =>
             {
+                // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
                 let io = self.song.io.lock().unwrap_or_else(|e| e.into_inner());
                 let n = io
                     .view

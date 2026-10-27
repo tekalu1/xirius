@@ -7,7 +7,7 @@ pub(crate) fn handles(name: &str) -> bool {
     name != "macro.run"
         && (matches!(
             name,
-            "plugin.rescan" | "plugin.scan.status" | "browser.plugin.list"
+            "plugin.rescan" | "plugin.scan.status" | "browser.plugin.list" | "project.cleanup"
         ) || xirius_session::track_preset::NAMES.contains(&name)
             || xirius_session::preset::NAMES.contains(&name)
             || xirius_session::xpreset::NAMES.contains(&name)
@@ -21,6 +21,9 @@ pub(crate) fn handles(name: &str) -> bool {
                 "mousemap.",
                 "midimap.",
                 "macro.",
+                "file.",
+                "version.",
+                "history.",
             ]
             .iter()
             .any(|prefix| name.starts_with(prefix)))
@@ -29,13 +32,24 @@ pub(crate) fn handles(name: &str) -> bool {
 pub(crate) fn captures(name: &str) -> bool {
     matches!(
         name,
-        "plugin.preset.save" | "track.preset.save" | "track.preset.update" | "preset.save"
+        "plugin.preset.save"
+            | "track.preset.save"
+            | "track.preset.update"
+            | "preset.save"
+            | "version.save"
     )
 }
 
 pub(crate) fn label(name: &str) -> &'static str {
     if name.starts_with("export.") {
         "書き出しを準備しています"
+    } else if name.starts_with("file.")
+        || name.starts_with("history.")
+        || name.starts_with("version.")
+        || name == "project.cleanup"
+        || name == "@keep-draft"
+    {
+        "保存しています"
     } else {
         "設定を更新しています"
     }
@@ -58,6 +72,26 @@ impl Studio {
     ) {
         self.error = None;
         self.after_edit();
+        if name.starts_with("file.")
+            || name.starts_with("history.")
+            || name.starts_with("version.")
+            || name == "project.cleanup"
+        {
+            if name.starts_with("version.") {
+                self.song.invalidate_file_reads();
+            }
+            if name.starts_with("history.") {
+                let points = self.view_read.history_points.take();
+                if !result.changes.is_empty() {
+                    self.restore_history_points(points);
+                }
+            }
+            self.after_file_command(name, &result.data);
+            self.say_command(name, &serde_json::Value::Object(raw.clone()), &result.data);
+            self.follow_selection();
+            self.refresh_popup();
+            return;
+        }
         if name == "plugin.rescan" {
             if result.data["state"] == "running" {
                 if let Err(error) = self.track_scan(&result.data) {

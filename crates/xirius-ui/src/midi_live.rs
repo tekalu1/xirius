@@ -79,6 +79,7 @@ impl Studio {
         }
         self.song
             .io
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .view
@@ -144,6 +145,7 @@ impl Studio {
         let prefs = self
             .song
             .settings()
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .prefs
@@ -222,6 +224,7 @@ impl Studio {
             if let Some(name) = ports.get(port)
                 && prefs.bool(&format!("midi.inputs.{name}"))
             {
+                // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
                 let mut io = self.song.io.lock().unwrap_or_else(|e| e.into_inner());
                 let now = std::time::Instant::now();
                 match note_of(msg) {

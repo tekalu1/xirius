@@ -79,6 +79,7 @@ impl EngineSim {
                         n += 1;
                         let due = start + period * n;
                         if let Some(wait) = due.checked_duration_since(Instant::now()) {
+                            // design-lint: allow(ui-blocking-io) PRJ-031: legacy spike simulator only (app benchmark); live GPUI Studio uses Transport owners.
                             std::thread::sleep(wait);
                         }
                     }
@@ -102,6 +103,7 @@ impl Drop for EngineSim {
     fn drop(&mut self) {
         self.run.store(false, Ordering::Relaxed);
         if let Some(handle) = self.handle.take() {
+            // design-lint: allow(ui-blocking-io) PRJ-031: legacy spike simulator only (app benchmark); live GPUI Studio uses Transport owners.
             let _ = handle.join();
         }
     }

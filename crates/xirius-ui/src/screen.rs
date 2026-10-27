@@ -942,6 +942,36 @@ impl Screen {
     }
 
     /// Hands each run of the AI to the studio, on the window's thread.
+    fn start_server(job: crate::ai::serve::Starting, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                if let Some(result) = job.poll() {
+                    let _ = this.update(cx, |this, cx| {
+                        match result {
+                            Ok((server, jobs)) => {
+                                this.studio.borrow_mut().ai.connection =
+                                    Some(Ok(crate::ai::Connection {
+                                        url: server.mcp_url(),
+                                        token: server.token.clone(),
+                                    }));
+                                this._ai_server = Some(server);
+                                Self::listen(jobs, cx);
+                            }
+                            Err(e) => this.studio.borrow_mut().ai.connection = Some(Err(e)),
+                        }
+                        cx.notify();
+                    });
+                    break;
+                }
+                if this.update(cx, |_, _| {}).is_err() {
+                    break;
+                }
+                cx.background_executor().timer(crate::health::POLL).await;
+            }
+        })
+        .detach();
+    }
+
     fn listen(mut jobs: xirius_mcp::Jobs, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             while let Some(job) = jobs.recv().await {
@@ -1498,7 +1528,7 @@ impl Render for Screen {
             if let Some(reduced) = studio
                 .motion_watch
                 .as_mut()
-                .and_then(|w| w.poll(std::time::Instant::now(), crate::motion_watch::os_reduced))
+                .and_then(|w| w.poll_os(std::time::Instant::now()))
             {
                 studio.ai.motion.reduced = reduced;
             }
@@ -1862,6 +1892,7 @@ fn perform(act: &Act, run: &Run, window: &mut Window, cx: &mut App) {
             Some(at) => {
                 window.dispatch_event(mouse_move(at), cx);
             }
+            // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
             None => eprintln!("cannot aim at {target:?}"),
         },
         Act::Press(target) => match aim(target) {
@@ -1887,6 +1918,7 @@ fn perform(act: &Act, run: &Run, window: &mut Window, cx: &mut App) {
                     cx,
                 );
             }
+            // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
             None => eprintln!("cannot aim at {target:?}"),
         },
         Act::Wheel { at, dx, dy, ctrl } => match aim(at) {
@@ -1902,6 +1934,7 @@ fn perform(act: &Act, run: &Run, window: &mut Window, cx: &mut App) {
                     cx,
                 );
             }
+            // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
             None => eprintln!("cannot aim at {at:?}"),
         },
         Act::Drag { at, dx, dy } => match aim(at) {
@@ -1936,6 +1969,7 @@ fn perform(act: &Act, run: &Run, window: &mut Window, cx: &mut App) {
                     cx,
                 );
             }
+            // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
             None => eprintln!("cannot aim at {at:?}"),
         },
         Act::Key(source) => match Keystroke::parse(source) {
@@ -1962,6 +1996,7 @@ fn perform(act: &Act, run: &Run, window: &mut Window, cx: &mut App) {
                     p.replace_text(None, &letter);
                 }
             }
+            // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
             Err(e) => eprintln!("bad key {source}: {e}"),
         },
     }
@@ -2040,6 +2075,7 @@ fn step(run: &Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
                             }
                             next = d.todo.pop_front();
                             if next.is_none() {
+                                // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
                                 println!(
                                     "screenshots: {} saved, {} failed, in {}",
                                     d.saved,
@@ -2083,13 +2119,16 @@ fn step(run: &Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
 /// Opens the window and runs until it is closed (or the script ends).
 pub fn run(opts: Options) {
     if let Err(e) = crate::crash_reports::install() {
+        // design-lint: allow(ui-blocking-io) PRJ-031: startup failure before a usable window; no interactive callback remains.
         eprintln!("could not initialize crash records: {e}");
     }
+    crate::about::prepare_startup();
     gpui_platform::application()
         .with_assets(Assets)
         .run(move |cx: &mut App| {
             crate::transport::mark_window_thread();
             if let Err(e) = crate::fonts::load(cx) {
+                // design-lint: allow(ui-blocking-io) PRJ-031: startup failure before a usable window; no interactive callback remains.
                 eprintln!("could not load the bundled fonts: {e}");
             }
             crate::app_menu::install(cx);
@@ -2119,6 +2158,7 @@ pub fn run(opts: Options) {
             if opts.mixer_bench.is_some()
                 && let Err(e) = crate::mixer::bench::prepare(&mut studio.borrow_mut())
             {
+                // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
                 eprintln!("could not make the 64 strips: {e}");
             }
             // A script keeps the mock's list, so its pictures do not depend on this PC.
@@ -2145,7 +2185,9 @@ pub fn run(opts: Options) {
                 );
             }
             let driver = opts.shots.as_ref().map(|dir| {
+                // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
                 if let Err(e) = std::fs::create_dir_all(dir) {
+                    // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
                     eprintln!("could not create {}: {e}", dir.display());
                 }
                 Driver {
@@ -2209,8 +2251,7 @@ pub fn run(opts: Options) {
             if !scripted || std::env::var_os("XIRIUS_VIEW_FILE").is_some() {
                 let path = crate::drawer_edge::view_path();
                 let mut studio = studio.borrow_mut();
-                studio.drawer_size = crate::drawer_edge::DrawerSize::load(&path);
-                studio.side_size = crate::side_edge::SideSize::load(&path);
+                studio.read_view(path);
             }
             // Closing the window closes the song: the recordings nothing
             // names any more go to the recycle bin (REC-016). A script or a
@@ -2227,39 +2268,15 @@ pub fn run(opts: Options) {
                                 // before (REC-026), and its folder is let go: a close is
                                 // not a crash.
                                 if let Err(e) = s.close_window_song() {
-                                    eprintln!("注意: {e}");
+                                    crate::ancillary_io::log!("注意: {e}");
                                 }
-                                // UI-282: the checked installer starts once this window is
-                                // gone; it waits for Xirius to close, then puts the new
-                                // version in and starts Xirius again.
-                                if let Some(install) = s.take_pending_install() {
-                                    let spawn = s.update.spawn.clone();
-                                    if let Err(e) = spawn(&install) {
-                                        eprintln!("注意: {e}");
-                                    }
-                                }
-                                // The cleanups are waited for a while; those not over then
-                                // run again at the next start.
-                                let until = std::time::Instant::now() + crate::tidy::CLOSE_WAIT;
-                                let open_cleaned = s.wait_open_close(crate::tidy::CLOSE_WAIT);
-                                let n = open_cleaned
-                                    + s.wait_tidy(
-                                        until.saturating_duration_since(std::time::Instant::now()),
-                                        &crate::notice::later_path(),
-                                        &mut |e| eprintln!("注意: {e}"),
-                                    );
-                                if n > 0 {
-                                    eprintln!(
-                                        "使われていない録音のファイル {n} 個をごみ箱に移動しました"
-                                    );
-                                    // Said again by the next window.
-                                    let left = crate::notice::left_path();
-                                    if let Err(e) = crate::notice::leave(&left, n) {
-                                        eprintln!("could not write {}: {e}", left.display());
-                                    }
+                                if let Err(e) = s.finish_window_io() {
+                                    crate::ancillary_io::log!("注意: {e}");
                                 }
                             }
-                            Err(_) => eprintln!("注意: 更新の予約を読めませんでした"),
+                            Err(_) => {
+                                crate::ancillary_io::log!("注意: 更新の予約を読めませんでした")
+                            }
                         }
                     }
                     // Keep the process alive while accepted browser snapshots are saved.
@@ -2271,15 +2288,20 @@ pub fn run(opts: Options) {
                                 && let Some(errors) = crate::recent_worker::finish(recent_since)
                             {
                                 for error in errors {
-                                    eprintln!("recent list close: {error}");
+                                    crate::ancillary_io::log!("recent list close: {error}");
                                 }
                                 recent_done = true;
                             }
                             if recent_done
+                                && !crate::ancillary_io::pending()
                                 && let Some(failures) = crate::browser_prefs_save::finish()
                             {
                                 for error in failures {
-                                    eprintln!("注意: {error}");
+                                    crate::ancillary_io::log!("注意: {error}");
+                                }
+                                if crate::ancillary_io::pending() {
+                                    cx.background_executor().timer(crate::health::POLL).await;
+                                    continue;
                                 }
                                 cx.update(|cx| {
                                     if cx.windows().is_empty() {
@@ -2302,9 +2324,9 @@ pub fn run(opts: Options) {
                 None
             } else {
                 let mut s = studio.borrow_mut();
-                s.ai.motion.reduced = crate::motion_watch::os_reduced();
+                s.ai.motion.reduced = crate::about::initial_reduced();
                 s.motion_watch = Some(Default::default());
-                crate::ai::serve::start(&mut s)
+                crate::ai::serve::start_window(&mut s)
             };
             let parked = opts.place == Place::Parked;
             let handle = cx.open_window(
@@ -2354,10 +2376,10 @@ pub fn run(opts: Options) {
                         crate::roll::layer::Background::new(studio.clone(), colors.clone())
                     });
                     cx.new(|cx| {
-                        let _ai_server = served.map(|(server, jobs)| {
-                            Screen::listen(jobs, cx);
-                            server
-                        });
+                        if let Some(job) = served {
+                            Screen::start_server(job, cx);
+                        }
+                        let _ai_server = None;
                         watch(window, cx, !scripted);
                         let _activation =
                             Some(cx.observe_window_activation(window, |this, window, _| {
@@ -2383,6 +2405,7 @@ pub fn run(opts: Options) {
                 },
             );
             if let Err(e) = handle {
+                // design-lint: allow(ui-blocking-io) PRJ-031: startup failure before a usable window; no interactive callback remains.
                 eprintln!("could not open the window: {e:#}");
                 cx.quit();
             }

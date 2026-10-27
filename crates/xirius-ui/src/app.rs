@@ -240,6 +240,7 @@ impl Shared {
         });
         let started = Instant::now();
         let project = Rc::new(Project::synth());
+        // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
         println!(
             "synthesised {} tracks / {} clips / {} notes in {:.0} ms",
             project.tracks.len(),
@@ -421,6 +422,7 @@ impl Shared {
                         }));
                     }
                     if let Some(last) = runner.results().last() {
+                        // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
                         println!("{}", bench::summary_line(last));
                     }
                     self.cur = None;
@@ -616,17 +618,24 @@ impl Shared {
             bench::markdown(&meta, runner.results())
         );
         let js = bench::json(&meta, runner.results());
+        // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
         println!("\n{md}");
+        // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
         println!(
             "input events sent {}, reached handlers: wheel {}, mouse-down {}, drag-move {}",
             self.counts.sent, self.counts.wheel, self.counts.down, self.counts.moved
         );
         let dir = &self.opts.out_dir;
+        // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
         let wrote = std::fs::create_dir_all(dir)
+            // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
             .and_then(|()| std::fs::write(dir.join("bench.md"), &md))
+            // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
             .and_then(|()| std::fs::write(dir.join("bench.json"), &js));
         match wrote {
+            // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
             Ok(()) => println!("wrote {}", dir.display()),
+            // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
             Err(e) => eprintln!("could not write {}: {e}", dir.display()),
         }
         self.overlay = runner
@@ -994,6 +1003,7 @@ impl Render for Workspace {
 pub fn run(opts: Options) {
     gpui_platform::application().run(move |cx: &mut App| {
         if let Err(e) = crate::fonts::load(cx) {
+            // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
             eprintln!("could not load the bundled fonts: {e}");
         }
         let (w, h) = opts.window;
@@ -1041,6 +1051,7 @@ pub fn run(opts: Options) {
             },
         );
         if let Err(e) = handle {
+            // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
             eprintln!("could not open the window: {e:#}");
             cx.quit();
         }

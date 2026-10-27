@@ -285,6 +285,43 @@ impl Studio {
         );
     }
 
+    pub(crate) fn start_draft_record(&mut self, path: PathBuf) {
+        let close_when_done = self.keep.save_started();
+        self.leaving_ready = false;
+        if close_when_done {
+            self.window_ask = None;
+        }
+        let command = (
+            "@keep-draft".into(),
+            serde_json::json!({"path":path})
+                .as_object()
+                .unwrap()
+                .clone(),
+            RunOptions::human(),
+            false,
+        );
+        let progress = Arc::new(SaveProgress::default());
+        let work =
+            Work::Writing(self.save_worker(None, false, progress.clone(), Some(command.clone())));
+        // Keeping a draft does not cancel a gesture, release held notes, close
+        // the current popover, or claim the user's song has been saved.
+        self.saving = Some(Saving {
+            device_entry: None,
+            operation: Some("保存しています"),
+            mcp: None,
+            command: Some(command),
+            work,
+            since: crate::wait::now(),
+            progress,
+            target: None,
+            leaving: None,
+            draft: None,
+            close_when_done,
+            stop_take: false,
+            record_error: None,
+        });
+    }
+
     pub(crate) fn io_command_on_worker(
         &mut self,
         name: &str,
@@ -447,6 +484,18 @@ impl Studio {
                 if failing {
                     Err(CmdError::io("保存できません"))
                 } else if let Some((command, args, opts, persist)) = command {
+                    if command == "@keep-draft" {
+                        #[cfg(any(test, feature = "loading-probe"))]
+                        xirius_core::io_test::before(
+                            "draft_create",
+                            std::path::Path::new(args["path"].as_str().unwrap_or_default()),
+                        )?;
+                        return session
+                            .keep_as_draft(std::path::Path::new(
+                                args["path"].as_str().unwrap_or_default(),
+                            ))
+                            .map(|_| None);
+                    }
                     xirius_mcp::persist::run_and_persist(
                         &mut session,
                         &command,
@@ -551,6 +600,7 @@ impl Studio {
         let Work::Writing(worker) = save.work else {
             unreachable!()
         };
+        // design-lint: allow(ui-blocking-io) PRJ-031: worker.is_finished was observed above; this only claims a finished result.
         let (session, result) = worker.join().expect("save worker catches panics");
         let operation_command = save.operation.and_then(|_| {
             save.command
@@ -581,6 +631,27 @@ impl Studio {
             mcp.job.answer(reply);
         }
         if let Some((name, raw, _, _)) = operation_command {
+            if name == "@keep-draft" {
+                match result {
+                    Ok(_) => {
+                        self.song.mark_draft(true);
+                        self.keep.failed = None;
+                        if let Some(dir) = self.song.record_dir() {
+                            self.keep.remember(
+                                &dir,
+                                &self.project().name,
+                                true,
+                                xirius_core::store::now_ms(),
+                            );
+                        }
+                    }
+                    Err(e) => self.save_failed(&e),
+                }
+                if save.close_when_done {
+                    self.request_close();
+                }
+                return true;
+            }
             match result {
                 Ok(Some(result)) => {
                     self.io_command_finished(&name, &raw, &result);
@@ -589,6 +660,9 @@ impl Studio {
                     }
                 }
                 Err(error) => {
+                    if name.starts_with("history.") {
+                        self.view_read.history_points = None;
+                    }
                     self.error = Some(error.to_string());
                     if let Some(ui) = &mut self.settings {
                         ui.tell(error.to_string(), None);
@@ -630,7 +704,7 @@ impl Studio {
                     if saved_as && let Some(target) = save.target {
                         self.transport.relocate(self.song.dir());
                         if let Some(draft) = save.draft {
-                            self.keep.delete_draft(&draft);
+                            self.delete_old_draft(&draft);
                         }
                         self.keep.remember(
                             &target,

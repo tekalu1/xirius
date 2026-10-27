@@ -10,6 +10,7 @@ impl Studio {
     pub(crate) fn run_macro(&mut self, g: &Geometry, name: &str) -> bool {
         let steps = {
             let shared = self.song.settings().clone();
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             let s = shared.lock().unwrap();
             s.macros.get(name).map(|m| m.steps.clone())
         };

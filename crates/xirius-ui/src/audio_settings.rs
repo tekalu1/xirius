@@ -8,12 +8,14 @@ impl Studio {
         self.song.bind_window_resources();
         self.song
             .settings()
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .defer_window_reads();
         if let Err(error) = self
             .song
             .io
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .set_windowed()
@@ -27,8 +29,10 @@ impl Studio {
         let settings = self
             .song
             .settings()
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let mut io = self.song.io.lock().unwrap_or_else(|e| e.into_inner());
         if let Err(e) = io.sync(&settings.prefs) {
             if let Some(ui) = &mut self.settings {
@@ -104,6 +108,7 @@ impl Studio {
     pub fn io_tooltip(&self) -> String {
         self.song
             .io
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .view

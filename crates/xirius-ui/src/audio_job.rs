@@ -316,6 +316,7 @@ impl Studio {
         let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
         while self.job.is_some() && std::time::Instant::now() < until {
             self.poll_job();
+            // design-lint: allow(ui-blocking-io) PRJ-031: synchronous test/script completion adapter; live callbacks poll instead.
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
     }

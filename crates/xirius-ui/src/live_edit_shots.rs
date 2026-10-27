@@ -247,6 +247,23 @@ pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
             p.gate = Some(Gate::new());
             let track = s.project().tracks.values().find(|t| !t.inserts.is_empty()).unwrap().id;
             match operation().as_str() {
+                "log_write" => { crate::ancillary_io::log!("PRJ-031 log fixture"); }
+                "view_read" => { s.read_view(p.fixture.as_ref().unwrap().dir.join("view.json")); }
+                "version_list" => { s.song.invalidate_file_reads(); s.song.versions(); }
+                "cleanup_list" => { s.open_cleanup(); }
+                "groove_read" => { s.import_groove(&p.fixture.as_ref().unwrap().wav).unwrap(); }
+                "notice_read" => { s.take_left(&p.fixture.as_ref().unwrap().dir.join("cleaned.txt")); }
+                "watch_register" | "external_project_read" => { s.other=Default::default(); }
+                "crash_reports" => {
+                    let g=s.geometry(1200.0,800.0);
+                    let anchor=s.about_anchor(&g);
+                    s.open_about(anchor);
+                    s.about_action(crate::about::Act::Crashes);
+                }
+                "update_startup" => {
+                    let check=xirius_session::update::UpdateCheck::in_dir(&p.fixture.as_ref().unwrap().dir,Arc::new(|_|Err("fixture".into())));
+                    s.check_for_update(check,0);
+                }
                 "input_close" => {
                     struct Input;
                     impl xirius_engine::record::AudioInput for Input {

@@ -311,6 +311,7 @@ impl Studio {
     fn panic(&mut self) -> bool {
         self.pc_keys_release();
         let at = self.playhead;
+        // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
         self.seek(at);
         true
     }
@@ -370,16 +371,19 @@ impl Studio {
     pub(crate) fn run_asked(&mut self, g: &Geometry) -> bool {
         let asked = self.song.asked().clone();
         let list = {
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             let mut a = asked.lock().unwrap_or_else(|e| e.into_inner());
             std::mem::take(&mut a.list)
         };
         if list.is_empty() {
             return false;
         }
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         asked.lock().unwrap_or_else(|e| e.into_inner()).busy = true;
         for (name, args) in list {
             self.run_parsed(g, name, args);
         }
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         asked.lock().unwrap_or_else(|e| e.into_inner()).busy = false;
         true
     }
@@ -416,6 +420,7 @@ impl Studio {
 
     /// Whether the session kept a screen command for the window.
     pub(crate) fn has_asked(&self) -> bool {
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let asked = self.song.asked().lock();
         !asked.unwrap_or_else(|e| e.into_inner()).list.is_empty()
     }

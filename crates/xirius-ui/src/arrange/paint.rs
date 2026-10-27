@@ -367,6 +367,7 @@ pub fn loop_shade(pen: &mut Pen, studio: &Studio, project: &Project, g: &Geometr
 
 /// The auto-punch range and its pre-roll and post-roll stretches, while auto-punch is on.
 pub fn punch_bands(studio: &Studio, project: &Project) -> Option<xirius_session::punch::Bands> {
+    // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
     let settings = studio.song.settings().lock().ok()?;
     let panel = xirius_session::punch::Panel::from_prefs(&settings.prefs, project.ppq);
     xirius_session::punch::bands(project, &panel)

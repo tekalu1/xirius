@@ -596,6 +596,7 @@ pub(crate) fn run_for(s: &mut Studio, secs: f32, done: impl Fn(&Studio) -> bool)
     let end = std::time::Instant::now() + std::time::Duration::from_secs_f32(secs);
     while std::time::Instant::now() < end && !done(s) {
         s.tick();
+        // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
         std::thread::sleep(std::time::Duration::from_millis(16));
     }
 }
@@ -607,6 +608,7 @@ pub fn wire(s: &mut Studio, stage: u8) {
     match stage {
         0 => {
             let dir = wire_dir();
+            // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
             let _ = std::fs::remove_dir_all(&dir);
             s.command(|song| song.save_as(&dir));
         }
@@ -617,6 +619,7 @@ pub fn wire(s: &mut Studio, stage: u8) {
                     s.command(|song| song.toggle_arm(t));
                 }
             }
+            // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
             s.seek(p.time_map().bar_start(3));
         }
         2 => run_for(s, 2.0, |_| false),
@@ -638,6 +641,7 @@ pub fn wire(s: &mut Studio, stage: u8) {
                 .iter()
                 .any(|c| c.state == State::Failed);
             if failed {
+                // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
                 eprintln!("an export failed: {:?}", s.export.jobs.first());
             }
         }

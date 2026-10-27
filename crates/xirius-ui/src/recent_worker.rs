@@ -42,6 +42,7 @@ fn owners() -> &'static Mutex<HashMap<PathBuf, Weak<Owner>>> {
 }
 impl Owner {
     pub fn at(root: &Path) -> Arc<Self> {
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let mut registry = owners().lock().unwrap_or_else(|e| e.into_inner());
         registry.retain(|_, owner| owner.strong_count() > 0);
         if let Some(owner) = registry.get(root).and_then(Weak::upgrade) {
@@ -61,6 +62,7 @@ impl Owner {
         let list = RecentList::in_dir(&root);
         loop {
             let next = {
+                // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
                 let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
                 if state.queue.is_empty()
                     || state
@@ -70,10 +72,13 @@ impl Owner {
                 {
                     let (state, _) = self
                         .wake
+                        // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
                         .wait_timeout(state, Duration::from_secs(1))
                         .unwrap_or_else(|e| e.into_inner());
                     drop(state);
+                    // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
                     let mut registry = owners().lock().unwrap_or_else(|e| e.into_inner());
+                    // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
                     let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
                     if Arc::strong_count(&self) == 1 && state.queue.is_empty() {
                         registry.remove(&root);
@@ -108,12 +113,14 @@ impl Owner {
             }))
             .unwrap_or_else(|_| Err("recent-list worker panicked; update retained".into()));
             if let Err(error) = &result {
+                // design-lint: allow(ui-blocking-io) PRJ-031: worker-only error report, outside the request/state mutex.
                 eprintln!("recent list update failed: {error}");
             }
             let _ = request.reply.send(Completion {
                 revision: request.revision,
                 result: result.clone(),
             });
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             match result {
                 Ok(_) => {
@@ -126,6 +133,7 @@ impl Owner {
     }
     pub fn submit(&self, update: Update) -> mpsc::Receiver<Completion> {
         let (reply, rx) = mpsc::channel();
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.revision += 1;
         let revision = state.revision;
@@ -138,6 +146,7 @@ impl Owner {
         rx
     }
     pub fn status(&self) -> Option<Result<(), String>> {
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((revision, error)) = &state.failure
             && *revision == state.revision
@@ -169,6 +178,7 @@ impl Owner {
 /// Terminal errors/timeouts are logged once by the caller; no invisible wait forever.
 pub(crate) fn finish(since: Instant) -> Option<Vec<String>> {
     let statuses: Vec<_> = owners()
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .values()

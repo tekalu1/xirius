@@ -1391,6 +1391,7 @@ impl Studio {
                         .chain(self.arrange.range.iter())
                         .any(|(a, b)| *a <= d.tick && d.tick <= *b)
                 {
+                    // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
                     self.seek(d.tick);
                     return true;
                 }
@@ -1400,6 +1401,7 @@ impl Studio {
                 self.arrange.range = None;
                 self.arrange.ranges.clear();
                 if self.arrange.click_locates {
+                    // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
                     self.seek(d.tick);
                 }
                 self.arrange.touched();
@@ -1413,6 +1415,7 @@ impl Studio {
             Spot::Fx { track, clip, part } => self.fx_click(d, *track, *clip, *part),
             // A click in the range moves the playhead, as the range tool's does.
             Spot::RangeTrim(_) => {
+                // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
                 self.seek(d.tick);
                 true
             }

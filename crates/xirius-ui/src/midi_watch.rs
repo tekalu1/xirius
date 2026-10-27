@@ -82,6 +82,7 @@ impl Studio {
             if let Err(error) = self
                 .song
                 .io
+                // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .enumerate_later()
@@ -124,6 +125,7 @@ impl Studio {
     pub fn midi_ports_now(&mut self, now: Vec<String>) -> bool {
         self.song
             .io
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .view

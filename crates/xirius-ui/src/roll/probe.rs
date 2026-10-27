@@ -136,12 +136,15 @@ impl Bench {
             data["row_h"] = json!(s.roll.row_h);
             data["note_paint_last_us"] = json!(s.roll.note_paint_us.get());
             data["nonoverlapping_note_batch"] = json!(s.roll.disjoint_notes.get());
+            // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
             std::fs::create_dir_all(&self.out).expect("bench output");
+            // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
             std::fs::write(
                 self.out.join("roll-bench.json"),
                 serde_json::to_vec_pretty(&data).unwrap(),
             )
             .expect("bench report");
+            // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
             println!("{data}");
             return (
                 vec![PlatformInput::MouseUp(MouseUpEvent {

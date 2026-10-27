@@ -23,6 +23,7 @@ pub fn attach() {
     if unsafe { AttachConsole(ATTACH_PARENT_PROCESS) } == 0 {
         return;
     }
+    // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
     let Ok(file) = std::fs::OpenOptions::new().write(true).open("CONOUT$") else {
         return;
     };

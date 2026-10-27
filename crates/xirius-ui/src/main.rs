@@ -54,6 +54,7 @@ fn usage_text() -> String {
 }
 
 fn usage() -> ! {
+    // design-lint: allow(ui-blocking-io) PRJ-031: CLI argument report before the application/event loop starts.
     eprintln!("{}", usage_text());
     std::process::exit(2);
 }
@@ -70,10 +71,12 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("--help" | "-h") => {
+            // design-lint: allow(ui-blocking-io) PRJ-031: CLI argument report before the application/event loop starts.
             println!("{}", usage_text());
             return;
         }
         Some("--version" | "-V") => {
+            // design-lint: allow(ui-blocking-io) PRJ-031: CLI argument report before the application/event loop starts.
             println!("xirius-ui {}", env!("CARGO_PKG_VERSION"));
             return;
         }
@@ -114,6 +117,7 @@ fn real(mut args: impl Iterator<Item = String>) {
     while let Some(arg) = args.next() {
         let mut value = |name: &str| -> String {
             args.next().unwrap_or_else(|| {
+                // design-lint: allow(ui-blocking-io) PRJ-031: CLI argument report before the application/event loop starts.
                 eprintln!("{name} needs a value");
                 usage()
             })
@@ -158,6 +162,7 @@ fn bench(mut args: impl Iterator<Item = String>) {
     while let Some(arg) = args.next() {
         let mut value = |name: &str| -> String {
             args.next().unwrap_or_else(|| {
+                // design-lint: allow(ui-blocking-io) PRJ-031: CLI argument report before the application/event loop starts.
                 eprintln!("{name} needs a value");
                 usage()
             })
@@ -168,6 +173,7 @@ fn bench(mut args: impl Iterator<Item = String>) {
                 match find(&name) {
                     Some(s) => chosen.push(s),
                     None => {
+                        // design-lint: allow(ui-blocking-io) PRJ-031: CLI argument report before the application/event loop starts.
                         eprintln!("unknown scenario {name:?}; try --list");
                         std::process::exit(2);
                     }
@@ -185,6 +191,7 @@ fn bench(mut args: impl Iterator<Item = String>) {
             }
             "--list" => {
                 for s in SCENARIOS {
+                    // design-lint: allow(ui-blocking-io) PRJ-031: CLI argument report before the application/event loop starts.
                     println!("{}", s.name);
                 }
                 return;

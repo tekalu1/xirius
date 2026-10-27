@@ -19,6 +19,7 @@ pub fn paint(pen: &mut Pen, studio: &Studio, body: Rect) {
         let settings = studio
             .song
             .settings()
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         (settings.mousemap.clone(), settings.prefs.clone())

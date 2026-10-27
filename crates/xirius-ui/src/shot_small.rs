@@ -60,6 +60,7 @@ fn mono_mixer(s: &mut Studio, g: &Geometry) {
     let begun = std::time::Instant::now();
     while s.input_channels.is_some() && begun.elapsed() < std::time::Duration::from_secs(5) {
         s.idle();
+        // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }

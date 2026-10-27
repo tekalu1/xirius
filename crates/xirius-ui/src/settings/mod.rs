@@ -863,12 +863,14 @@ impl Studio {
             return Scene::default();
         };
         let shared = self.song.settings().clone();
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let s = shared.lock().unwrap_or_else(|e| e.into_inner());
         let mut ui = ui.clone();
         ui.update = update;
         ui.io = self
             .song
             .io
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .view
@@ -929,6 +931,7 @@ impl Studio {
 
     fn with_settings<T>(&self, f: impl FnOnce(&Settings) -> T) -> T {
         let shared = self.song.settings().clone();
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let s = shared.lock().unwrap_or_else(|e| e.into_inner());
         f(&s)
     }
@@ -1321,6 +1324,7 @@ impl Studio {
                 let names: Vec<(String, String)> = self
                     .song
                     .io
+                    // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .view
@@ -1726,6 +1730,7 @@ impl Studio {
             return true;
         }
         if ui.section == Section::Audio && matches!(key, "up" | "down" | "left" | "right") {
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             let io = self.song.io.lock().unwrap_or_else(|e| e.into_inner());
             let n = io
                 .view
@@ -1834,6 +1839,7 @@ impl Studio {
     /// True when the screen shows something new.
     pub fn settings_reload(&mut self) -> bool {
         let shared = self.song.settings().clone();
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let mut s = shared.lock().unwrap_or_else(|e| e.into_inner());
         let changed = s.reload_if_changed();
         drop(s);

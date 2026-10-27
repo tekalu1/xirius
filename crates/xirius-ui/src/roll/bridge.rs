@@ -36,6 +36,7 @@ impl Studio {
     /// The holds changed in the settings (KEY-026).
     pub fn holds(&self) -> Holds {
         let shared = self.song.settings().clone();
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let s = shared.lock().unwrap_or_else(|e| e.into_inner());
         Holds::of(&s.mousemap)
     }
@@ -48,6 +49,7 @@ impl Studio {
             let settings = self
                 .song
                 .settings()
+                // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
             (settings.mousemap.clone(), settings.prefs.clone())
@@ -193,6 +195,7 @@ impl Studio {
         let settings = self
             .song
             .settings()
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         settings.prefs.text("edit.draw.length") == "last"
@@ -252,6 +255,7 @@ impl Studio {
             self.tool = tool;
         }
         if let Some(at) = out.seek {
+            // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
             self.seek(at);
         }
         if out.follow {

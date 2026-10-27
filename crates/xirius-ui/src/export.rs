@@ -170,6 +170,7 @@ impl Export {
     /// The song was replaced: what was worked out for the cards of the old one is of no use to
     /// the new one.
     pub(crate) fn forget_bases(&mut self) {
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         *self.stale.lock().unwrap() = StaleCache::default();
         self.files = Default::default();
     }
@@ -186,6 +187,7 @@ impl Export {
                 )
             })
             .collect();
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let mut cache = self.stale.lock().unwrap();
         if cache.song.as_ref().is_some_and(|s| Arc::ptr_eq(s, p)) && cache.jobs == jobs {
             return cache.out.clone();

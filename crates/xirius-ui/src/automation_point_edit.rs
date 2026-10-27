@@ -5,6 +5,14 @@ use crate::{
 use serde_json::json;
 use xirius_core::auto::AutoTarget;
 
+pub(crate) type HistoryPoints = (
+    xirius_core::id::TrackId,
+    AutoTarget,
+    usize,
+    std::collections::BTreeSet<usize>,
+    std::collections::BTreeSet<xirius_core::time::Tick>,
+);
+
 impl Studio {
     pub(crate) fn automation_point_wheel(
         &mut self,
@@ -83,6 +91,25 @@ impl Studio {
                     self.arrange.points.ticks().clone(),
                 ))
             });
+        if self.transport.is_windowed() {
+            if self.input_blocked() {
+                return false;
+            }
+            let can = if redo {
+                self.song.can_redo()
+            } else {
+                self.song.can_undo()
+            };
+            if !can {
+                return false;
+            }
+            self.view_read.history_points = selection;
+            self.io_command_on_worker(
+                if redo { "history.redo" } else { "history.undo" },
+                serde_json::Map::new(),
+            );
+            return true;
+        }
         // A step the disk cannot follow (a file renamed back, BRW-013) stays, and says why.
         let changed = match self.song.step_history(redo) {
             Ok(Some(data)) => {
@@ -97,7 +124,14 @@ impl Studio {
                 return true;
             }
         };
-        if changed && let Some((track, target, count, indices, ticks)) = selection {
+        if changed {
+            self.restore_history_points(selection);
+        }
+        changed
+    }
+
+    pub(crate) fn restore_history_points(&mut self, selection: Option<HistoryPoints>) {
+        if let Some((track, target, count, indices, ticks)) = selection {
             self.arrange.points.clear();
             let project = self.project();
             if let Some(lane) = project
@@ -116,7 +150,6 @@ impl Studio {
                 }
             }
         }
-        changed
     }
 
     pub(crate) fn automation_point_nudge(&mut self, right: bool) -> bool {

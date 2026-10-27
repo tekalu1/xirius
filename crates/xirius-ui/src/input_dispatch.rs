@@ -82,6 +82,7 @@ impl Studio {
         let mut s = self
             .song
             .settings()
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         s.reload_if_changed();
@@ -114,6 +115,7 @@ impl Studio {
         let mut s = self
             .song
             .settings()
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         s.reload_if_changed();
@@ -217,6 +219,7 @@ impl Studio {
             let mut s = self
                 .song
                 .settings()
+                // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
             s.reload_if_changed();
@@ -399,6 +402,7 @@ impl Studio {
             "transport.play" => return self.toggle_play(),
             "transport.stop" => return self.stop_transport(),
             "transport.seek" => {
+                // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
                 self.seek(self.tick_arg(args.get("at")).unwrap_or(0));
                 return true;
             }
@@ -490,6 +494,7 @@ impl Studio {
                 return true;
             }
             "transport.locate-mouse" => {
+                // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
                 self.seek(self.tick_at(g, self.input_map.pointer.0).max(0));
                 return true;
             }
@@ -511,6 +516,7 @@ impl Studio {
                         };
                         return self.run_command("loop.set", json!({"start":start,"end":end}));
                     }
+                    // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
                     self.seek(start);
                     return true;
                 }

@@ -51,12 +51,45 @@ pub fn os_reduced() -> bool {
 }
 
 /// Asks the OS at most once a second.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct MotionWatch {
     last: Option<Instant>,
+    job: Option<xirius_session::background::Job<bool>>,
+}
+
+impl std::fmt::Debug for MotionWatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MotionWatch")
+            .field("last", &self.last)
+            .field("pending", &self.job.is_some())
+            .finish()
+    }
 }
 
 impl MotionWatch {
+    pub(crate) fn poll_os(&mut self, now: Instant) -> Option<bool> {
+        let result = self.job.as_ref().and_then(|j| j.poll());
+        if result.is_some() {
+            self.job = None;
+        }
+        if self.job.is_none()
+            && self
+                .last
+                .is_none_or(|at| now.saturating_duration_since(at) >= EVERY)
+        {
+            self.last = Some(now);
+            match xirius_session::background::Job::spawn("motion preference", || {
+                #[cfg(any(test, feature = "loading-probe"))]
+                xirius_core::io_test::before("motion_settings", std::path::Path::new(""))
+                    .map_err(|e| e.to_string())?;
+                Ok(os_reduced())
+            }) {
+                Ok(job) => self.job = Some(job),
+                Err(e) => crate::ancillary_io::log!("motion preference: {e}"),
+            }
+        }
+        result.and_then(Result::ok)
+    }
     /// The setting now, when it is time to ask; `None` while the last answer is fresh.
     pub fn poll(&mut self, now: Instant, read: impl FnOnce() -> bool) -> Option<bool> {
         if self.last.is_some_and(|t| now.duration_since(t) < EVERY) {
@@ -72,6 +105,54 @@ mod tests {
     use super::*;
     use crate::view_motion::ViewMotion;
     use xirius_design::{Duration as Length, Motion};
+
+    #[test]
+    fn held_os_preference_does_not_block_a_window_poll_or_duplicate_requests() {
+        use std::sync::{Arc, Condvar, Mutex, mpsc};
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        struct Release(Arc<(Mutex<bool>, Condvar)>);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                *self.0.0.lock().unwrap() = true;
+                self.0.1.notify_all();
+            }
+        }
+        let release = Release(gate.clone());
+        let (tx, entered) = mpsc::channel();
+        let ui = std::thread::current().id();
+        let _observe = xirius_core::io_test::observe(Arc::new(move |op, _| {
+            if op == "motion_settings" {
+                assert_ne!(std::thread::current().id(), ui);
+                let _ = tx.send(());
+                drop(
+                    gate.1
+                        .wait_while(gate.0.lock().unwrap(), |go| !*go)
+                        .unwrap(),
+                );
+            }
+            Ok(())
+        }));
+        let mut watch = MotionWatch::default();
+        let now = Instant::now();
+        assert_eq!(watch.poll_os(now), None);
+        entered.recv_timeout(Duration::from_secs(30)).unwrap();
+        {
+            let _scope = xirius_core::io_test::forbid_ui_io();
+            for _ in 0..8 {
+                assert_eq!(watch.poll_os(now), None);
+            }
+        }
+        assert!(
+            entered.try_recv().is_err(),
+            "only one OS read may be outstanding"
+        );
+        drop(release);
+        let end = Instant::now() + Duration::from_secs(30);
+        while watch.poll_os(now).is_none() {
+            assert!(Instant::now() < end, "motion read watchdog");
+            std::thread::yield_now();
+        }
+    }
 
     #[test]
     fn the_os_is_asked_once_a_second_and_a_change_is_seen() {

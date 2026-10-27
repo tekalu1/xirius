@@ -113,6 +113,7 @@ pub struct RecView {
 
 impl RecView {
     pub fn of(studio: &Studio) -> RecView {
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let Ok(s) = studio.song.settings().lock() else {
             return RecView::default();
         };

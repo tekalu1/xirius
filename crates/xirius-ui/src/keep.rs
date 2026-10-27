@@ -297,6 +297,7 @@ impl Keep {
     /// that is not one of the app's own drafts.
     pub fn delete_draft(&self, dir: &Path) {
         if self.is_draft_dir(dir) {
+            // design-lint: allow(ui-blocking-io) PRJ-031: non-window adapter only; window path uses error/cache/worker without disk access.
             let _ = std::fs::remove_dir_all(dir);
             self.forget(dir);
         }
@@ -357,7 +358,7 @@ impl Studio {
             None => return false,
         };
         if let Err(error) = result {
-            eprintln!("recent list close: {error}");
+            crate::ancillary_io::log!("recent list close: {error}");
         }
         // Keep the original deadline for last-window fallback; do not start another wait.
         self.keep.recent_close_ready = true;
@@ -370,7 +371,7 @@ impl Studio {
         let error = self.keep.recent_error.take();
         if let Some(error) = error {
             if self.keep.closing_recent.is_some() {
-                eprintln!("recent list close: {error}");
+                crate::ancillary_io::log!("recent list close: {error}");
                 return true;
             }
             self.warn(
@@ -443,7 +444,8 @@ impl Studio {
         if self.song.steps() > 0 {
             self.keep.preserve_startup_open = false;
         }
-        if self.song.record_dir().is_none()
+        if !self.transport.is_windowed()
+            && self.song.record_dir().is_none()
             && self.song.steps() > 0
             && let Some(dir) = self.keep.new_draft_dir(now)
         {
@@ -468,6 +470,19 @@ impl Studio {
         }
         let before = self.keep.mark(&self.song, now);
         self.keep_edit(now);
+        // after_edit can be called several times in one input callback. Only
+        // hand off its Session at the next idle boundary, after a drag ended.
+        if self.transport.is_windowed()
+            && self.song.record_dir().is_none()
+            && self.song.steps() > 0
+            && !self.pointer_held
+            && self.arrange.drag.is_none()
+            && self.roll.drag.is_none()
+            && let Some(dir) = self.keep.new_draft_dir(now)
+        {
+            self.start_draft_record(dir);
+            return true;
+        }
         let busy = self.transport.recording || self.export.running();
         if !busy && self.song.record_dir().is_some() {
             match self.song.autosave_checked(now) {
@@ -525,6 +540,26 @@ impl Studio {
             self.keep.closed_with(&self.open_now());
         }
         self.song.release();
+    }
+}
+
+impl Studio {
+    pub(crate) fn delete_old_draft(&mut self, dir: &Path) {
+        if !self.transport.is_windowed() {
+            self.keep.delete_draft(dir);
+            return;
+        }
+        if self.keep.is_draft_dir(dir) {
+            let path = dir.to_owned();
+            if let Err(e) = crate::ancillary_io::dispatch(move || {
+                #[cfg(any(test, feature = "loading-probe"))]
+                xirius_core::io_test::before("draft_remove", &path).map_err(|e| e.to_string())?;
+                std::fs::remove_dir_all(path).map_err(|e| e.to_string())
+            }) {
+                self.error = Some(e);
+            }
+            self.keep.forget(dir);
+        }
     }
 }
 
@@ -1338,7 +1373,7 @@ mod tests {
         s.keep_beat(t0 + 31_000);
         let took = started.elapsed();
         assert_eq!(s.keep.autosaves, 1);
-        eprintln!("autosave of the sample song: {took:?}");
+        crate::ancillary_io::log!("autosave of the sample song: {took:?}");
         // The 250 ms beat must not stall the window: a point is far under one frame budget
         // of a second even in a debug build on a slow disk.
         assert!(took.as_millis() < 1000, "{took:?}");

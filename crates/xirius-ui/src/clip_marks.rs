@@ -402,7 +402,11 @@ impl Studio {
             Some(dir) if !path.is_absolute() => dir.join(path),
             _ => path.to_path_buf(),
         };
-        if !path.exists() {
+        // design-lint: allow(ui-blocking-io) PRJ-031: non-window adapter only; window path uses error/cache/worker without disk access.
+        if (!self.transport.is_windowed() && !path.exists())
+            || why.contains("os error 2")
+            || why.contains("ファイルが見つかりません")
+        {
             "ファイルが見つかりません".into()
         } else if why.contains("を読めません") {
             "ファイルを読めません".into()

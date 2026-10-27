@@ -10,6 +10,7 @@ type Result = std::result::Result<(), String>;
 pub(crate) struct Ticket(Arc<Mutex<Option<Result>>>);
 impl Ticket {
     pub fn result(&self) -> Option<Result> {
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
@@ -172,6 +173,7 @@ fn writer() -> &'static Arc<Writer> {
 /// Latest snapshot per file; accepting a change does not need a read-queue slot.
 pub(crate) fn submit(file: &Path, base: Prefs, prefs: Prefs) -> Ticket {
     let ticket = Ticket(Arc::new(Mutex::new(None)));
+    // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
     let mut s = writer().state.lock().unwrap_or_else(|e| e.into_inner());
     s.next += 1;
     let revision = s.next;
@@ -195,6 +197,7 @@ pub(crate) fn submit(file: &Path, base: Prefs, prefs: Prefs) -> Ticket {
 /// Used by the application's asynchronous last-window shutdown, also by its process test.
 /// Pending keeps the application alive. Done includes terminal, explicit save failures.
 pub(crate) fn finish() -> Option<Vec<String>> {
+    // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
     let mut s = writer().state.lock().unwrap_or_else(|e| e.into_inner());
     if s.active.is_some() || !s.queued.is_empty() {
         None
@@ -205,6 +208,7 @@ pub(crate) fn finish() -> Option<Vec<String>> {
 
 /// A window waits only for its own preference path, and shows a failed save before closing.
 pub(crate) fn status(file: &Path) -> Option<Result> {
+    // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
     let mut s = writer().state.lock().unwrap_or_else(|e| e.into_inner());
     if s.active.as_deref() == Some(file) || s.queued.contains_key(file) {
         None

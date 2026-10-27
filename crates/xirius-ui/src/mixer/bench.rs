@@ -77,6 +77,7 @@ pub fn prepare(s: &mut Studio) -> Result<(), String> {
     s.song
         .run("loop.set", json!({ "start": start, "end": end }))?;
     s.toggle_loop();
+    // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
     s.seek(start);
     Ok(())
 }
@@ -141,6 +142,7 @@ impl Bench {
                     s.toggle_loop();
                     let p = s.project();
                     let end = xirius_session::graph::song_end_tick(&p);
+                    // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
                     s.seek(end - i64::from(p.ppq) * 8);
                     s.toggle_play();
                 }
@@ -156,14 +158,18 @@ impl Bench {
             "criteria": { "min_fps": Criteria::FPS_60.min_fps, "max_p99_ms": Criteria::FPS_60.max_p99_ms },
             "runs": self.results,
         });
+        // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
         if let Err(e) = std::fs::create_dir_all(&self.out).and_then(|()| {
+            // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
             std::fs::write(
                 self.out.join("mixer-bench.json"),
                 serde_json::to_vec_pretty(&data).unwrap_or_default(),
             )
         }) {
+            // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
             eprintln!("could not write {}: {e}", self.out.display());
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
         println!("{data}");
         true
     }

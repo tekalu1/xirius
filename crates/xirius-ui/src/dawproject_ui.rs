@@ -328,6 +328,7 @@ impl Studio {
         {
             self.poll_dawproject();
             self.poll_opening();
+            // design-lint: allow(ui-blocking-io) PRJ-031: synchronous test/script completion adapter; live callbacks poll instead.
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
     }

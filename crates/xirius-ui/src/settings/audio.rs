@@ -26,6 +26,7 @@ pub(crate) fn radios(
     {
         return Vec::new();
     }
+    // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
     let io = s.song.io.lock().unwrap_or_else(|e| e.into_inner());
     let Some(device) = io.view.devices.iter().find(|d| d.name == io.view.device) else {
         return Vec::new();

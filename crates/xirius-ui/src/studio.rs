@@ -729,6 +729,7 @@ pub struct Studio {
     pub(crate) unsaved: Option<crate::unsaved::Question>,
     /// The watch on the song's file for another app's save ([`crate::other_change`], UI-289).
     pub(crate) other: crate::other_change::OtherChange,
+    pub(crate) view_read: crate::ancillary_io::ViewRead,
     /// A mouse button is down in the window: something may be dragged (UI-289).
     pub(crate) pointer_held: bool,
     pub(crate) leaving_ready: bool,
@@ -885,6 +886,7 @@ impl Studio {
             open_generation: 0,
             open_closing: None,
             other: Default::default(),
+            view_read: Default::default(),
             pointer_held: false,
             leaving_ready: false,
             save_test_delay: std::time::Duration::ZERO,
@@ -1732,6 +1734,7 @@ impl Studio {
                     let s = self
                         .song
                         .settings()
+                        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
                         .lock()
                         .unwrap_or_else(|e| e.into_inner());
                     crate::mouse_dispatch::action(
@@ -1741,6 +1744,7 @@ impl Studio {
                     )
                 };
                 if matches!(act.as_deref(), None | Some("transport.locate")) {
+                    // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
                     self.seek(tick);
                 }
                 true
@@ -1994,6 +1998,7 @@ impl Studio {
             ripple: self
                 .song
                 .settings()
+                // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
                 .lock()
                 .is_ok_and(|s| s.prefs.bool("edit.ripple")),
             ai: self.ai_bar(),
@@ -2089,7 +2094,14 @@ impl Studio {
         p.mode = mode;
         p.aq = self.auto_quantize;
         p.has_dir = self.song.dir().is_some();
+        let selected_version = p
+            .selected
+            .and_then(|i| p.versions.get(i))
+            .map(|v| v.id.clone());
         p.versions = self.song.versions();
+        if let Some(id) = selected_version {
+            p.selected = p.versions.iter().position(|v| v.id == id);
+        }
         p.offset = p.offset.min(p.max_offset((f32::MAX, f32::MAX)));
         p.now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2167,7 +2179,11 @@ impl Studio {
             }
             Action::Jump(n) => {
                 self.drag_drop();
-                self.command(|s| s.jump(n));
+                if self.transport.is_windowed() {
+                    self.arrange_run("history.jump", serde_json::json!({"step":n}));
+                } else {
+                    self.command(|s| s.jump(n));
+                }
                 self.follow_selection();
                 self.rebuild(g);
             }
@@ -2240,6 +2256,7 @@ impl Studio {
                             let pair = self
                                 .song
                                 .io
+                                // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
                                 .lock()
                                 .unwrap_or_else(|e| e.into_inner())
                                 .view
@@ -2338,7 +2355,11 @@ impl Studio {
             Action::Restore | Action::OpenAsSong => {
                 if let Some(v) = p.selected.and_then(|i| p.versions.get(i)) {
                     if action == Action::Restore {
-                        self.command(|s| s.restore_version(&v.id));
+                        if self.transport.is_windowed() {
+                            self.arrange_run("version.restore", serde_json::json!({"id":v.id}));
+                        } else {
+                            self.command(|s| s.restore_version(&v.id));
+                        }
                         self.follow_selection();
                         self.rebuild(g);
                     } else {
@@ -2545,7 +2566,7 @@ impl Studio {
         } else {
             // The song has a place of its own: the draft that kept it is not needed.
             if let Some(draft) = leaving_draft {
-                self.keep.delete_draft(&draft);
+                self.delete_old_draft(&draft);
             }
             self.keep.remember(path, &self.project().name, false, now);
         }

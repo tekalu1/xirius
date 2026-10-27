@@ -21,6 +21,16 @@ fn live_edit_recording_and_editor_survive_held_work_and_native_window_operations
         "export_metadata",
         "live_midi_close",
         "input_close",
+        "view_read",
+        "version_list",
+        "cleanup_list",
+        "groove_read",
+        "notice_read",
+        "watch_register",
+        "external_project_read",
+        "crash_reports",
+        "update_startup",
+        "log_write",
     ] {
         for size in ["1200,800", "880,600"] {
             let root = tempfile::tempdir().unwrap();

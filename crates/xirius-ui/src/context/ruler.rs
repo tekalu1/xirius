@@ -118,6 +118,7 @@ impl Studio {
 
     /// Starts playing from `at`.
     pub(super) fn play_from(&mut self, at: xirius_core::time::Tick) -> bool {
+        // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
         self.seek(at);
         if !self.transport.playing {
             self.toggle_play();

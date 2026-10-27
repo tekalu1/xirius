@@ -34,6 +34,7 @@ impl Studio {
                 match xirius_core::nav::destination(&self.project(), self.playhead, to) {
                     Ok(at) => {
                         self.error = None;
+                        // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
                         self.seek(at);
                         Some(true)
                     }

@@ -70,13 +70,16 @@ pub fn takes(path: &Path) -> bool {
 fn read(dir: &Path) -> Option<Vec<Entry>> {
     #[cfg(test)]
     xirius_core::io_test::before("browser_top", dir).ok()?;
+    // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
     if !dir.is_dir() {
         return None;
     }
     #[cfg(test)]
     let listing =
+        // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
         xirius_core::io_test::before("browser_read_dir", dir).and_then(|()| std::fs::read_dir(dir));
     #[cfg(not(test))]
+    // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
     let listing = std::fs::read_dir(dir);
     let Ok(rd) = listing else {
         return Some(Vec::new());
@@ -95,6 +98,7 @@ fn read(dir: &Path) -> Option<Vec<Entry>> {
             #[cfg(not(test))]
             let kind = e.file_type();
             let dir = match kind {
+                // design-lint: allow(ui-blocking-io) PRJ-031: FileType already read by directory worker; this predicate is memory-only.
                 Ok(kind) if !kind.is_symlink() => kind.is_dir(),
                 Ok(_) => {
                     #[cfg(test)]
@@ -105,11 +109,13 @@ fn read(dir: &Path) -> Option<Vec<Entry>> {
                             dir: false,
                         });
                     }
+                    // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
                     path.is_dir()
                 }
                 Err(_) => {
                     #[cfg(test)]
                     let _ = xirius_core::io_test::before("browser_type_fallback", &path);
+                    // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
                     path.is_dir()
                 }
             };
@@ -311,6 +317,7 @@ impl Measure {
                     Err(_) => (String::new(), None),
                 }
             }),
+            // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
             size: Box::new(|p| std::fs::metadata(p).map(|m| m.len()).ok()),
         }
     }
@@ -428,6 +435,7 @@ pub fn seen<'a>(paths: impl Iterator<Item = &'a Path>) {
         let now: HashSet<PathBuf> = paths.map(Path::to_path_buf).collect();
         // The thread is told what is on screen before it is asked, or it guesses again.
         {
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             let mut seen = l.seen.lock().unwrap_or_else(|e| e.into_inner());
             if *seen != now {
                 seen.clone_from(&now);
@@ -481,6 +489,7 @@ pub fn settle(limit: Duration) {
         if lengths(|l| l.asked.iter().all(|p| l.known.contains_key(p))) || start.elapsed() > limit {
             return;
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031: synchronous test/script completion adapter; live callbacks poll instead.
         std::thread::sleep(Duration::from_millis(2));
     }
 }
@@ -504,6 +513,7 @@ pub fn clock(secs: f64) -> String {
 pub fn length_text(path: &Path) -> String {
     if is_midi(path) {
         const PPQ: u32 = 960;
+        // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
         let Ok(notes) = std::fs::read(path)
             .map_err(|e| e.to_string())
             .and_then(|b| crate::smf::read(&b, PPQ))

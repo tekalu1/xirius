@@ -110,6 +110,7 @@ fn path_text(p: &Path) -> String {
 }
 
 pub struct Song {
+    files: std::cell::RefCell<files::Reads>,
     windowed: bool,
     session: Session,
     /// The list `plugin.rescan` keeps.
@@ -130,6 +131,8 @@ pub struct Song {
     /// over MCP. The window runs them on its next frame ([`crate::studio::Studio::run_asked`]).
     asked: Arc<Mutex<Asked>>,
 }
+
+mod files;
 
 /// The screen's commands asked of the session, waiting for the window.
 #[derive(Default)]
@@ -163,6 +166,7 @@ impl Extension for ScreenExt {
         args: &Args,
         dry: bool,
     ) -> CmdResult<Output> {
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let mut asked = self.asked.lock().unwrap_or_else(|e| e.into_inner());
         if asked.busy {
             return Err(CmdError::invalid(format!(
@@ -178,6 +182,12 @@ impl Extension for ScreenExt {
 }
 
 impl Song {
+    pub(crate) fn poll_file_reads(&self) -> bool {
+        self.files.borrow_mut().poll()
+    }
+    pub(crate) fn invalidate_file_reads(&self) {
+        *self.files.borrow_mut() = Default::default();
+    }
     pub(crate) fn bind_window_resources(&mut self) {
         self.windowed = true;
     }
@@ -589,6 +599,7 @@ impl Song {
 
     /// Waits until the edits are written to the song's folder.
     pub fn flush_writes(&self) {
+        // design-lint: allow(ui-blocking-io) PRJ-031: synchronous offline adapter only; window uses command/read/retirement workers.
         self.session.flush_writes();
     }
 
@@ -634,6 +645,24 @@ impl Song {
     /// The versions kept beside the song, newest first. Empty when it has none
     /// (or has not been saved yet).
     pub fn versions(&self) -> Vec<VersionItem> {
+        if self.windowed {
+            let mut all = self
+                .files
+                .borrow_mut()
+                .versions(self.session.store().cloned());
+            for v in self.session.pending_versions() {
+                if !all.iter().any(|kept| kept.id == v.id) {
+                    all.push(VersionItem {
+                        named: v.kind == VersionKind::Named,
+                        id: v.id,
+                        name: v.name,
+                        at_ms: v.created_ms,
+                    });
+                }
+            }
+            all.sort_by_key(|v| std::cmp::Reverse((v.at_ms, v.id.clone())));
+            return all;
+        }
         let Ok(mut all) = self.session.versions() else {
             return Vec::new();
         };
@@ -655,6 +684,13 @@ impl Song {
 
     /// What a version holds, set against the song as it is now.
     pub fn version_detail(&self, id: &str) -> Option<VersionDetail> {
+        if self.windowed {
+            return self.files.borrow_mut().detail(
+                self.session.store().cloned(),
+                self.project(),
+                id,
+            );
+        }
         let p = self.session.store()?.read_version(id).ok()?;
         let now = self.session.project_arc();
         let ordered = |p: &Project| crate::draw::ordered_tracks(p).len();
@@ -691,6 +727,7 @@ impl Song {
         if self.draft {
             return None;
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031: synchronous offline adapter only; window uses command/read/retirement workers.
         self.session.disk_changed().ok().flatten()
     }
 
@@ -698,6 +735,7 @@ impl Song {
     /// none when the file holds the song as it is.
     pub(crate) fn reload_from_disk(&mut self) -> Result<Option<u64>, String> {
         self.session
+            // design-lint: allow(ui-blocking-io) PRJ-031: synchronous offline adapter only; window uses command/read/retirement workers.
             .reload_from_disk(&xirius_core::command::Author::Human)
             .map(|step| step.map(|(n, _)| n))
             .map_err(|e| e.to_string())
@@ -943,8 +981,10 @@ impl Song {
             asked: asked.clone(),
             registry,
         }));
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let windowed = io.lock().unwrap_or_else(|e| e.into_inner()).is_windowed();
         Song {
+            files: Default::default(),
             windowed,
             session,
             plugin_cache,
@@ -972,6 +1012,7 @@ impl Song {
     /// them in memory). The commands write there from then on.
     pub fn load_settings(&mut self, dir: &Path) {
         if self.windowed {
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             let mut settings = self.settings.lock().unwrap_or_else(|e| e.into_inner());
             settings.dir = Some(dir.to_owned());
             settings.defer_window_reads();
@@ -979,6 +1020,7 @@ impl Song {
             return;
         }
         let mut read = xirius_prefs::Settings::open(dir);
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         if let Ok(mut s) = self.settings.lock() {
             // The screen repaints on a new revision.
             read.rev += s.rev;
@@ -1176,7 +1218,7 @@ fn test_presets_dir() -> Option<PathBuf> {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     Some(std::env::temp_dir().join(format!(
         "xirius-ui-track-presets-{}-{}",
-        std::process::id(),
+        crate::shot::fixture_run_id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     )))
 }

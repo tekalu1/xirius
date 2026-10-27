@@ -21,6 +21,7 @@ impl Studio {
         } else {
             // Offline/script adapters have no event loop; window callbacks never
             // use this compatibility path.
+            // design-lint: allow(ui-blocking-io) PRJ-031: non-window adapter only; window path uses error/cache/worker without disk access.
             Some(path.exists())
         }
     }

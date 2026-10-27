@@ -46,6 +46,7 @@ pub fn size_for(hwnd: isize) -> usize {
 
 /// The cursor of `shape` at `size` pixels, made on first use and kept.
 pub fn cursor(shape: Shape, size: usize) -> isize {
+    // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
     let mut all = CURSORS.lock().unwrap_or_else(|e| e.into_inner());
     *all.entry((shape, size))
         .or_insert_with(|| make(shape, size))

@@ -1390,6 +1390,7 @@ impl Studio {
         if self.transport.take.is_some() {
             self.finish_take();
             let from = self.transport.from;
+            // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
             self.seek(from);
             return true;
         }
@@ -1400,11 +1401,13 @@ impl Studio {
             self.transport.recording = false;
             0
         };
+        // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
         self.seek(to);
         true
     }
 
     pub fn to_start(&mut self) -> bool {
+        // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
         self.seek(0);
         true
     }
@@ -1413,6 +1416,7 @@ impl Studio {
     pub fn seek(&mut self, at: Tick) {
         self.auto_seek(at.max(0));
         self.playhead = at.max(0);
+        // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
         self.transport.seek(self.playhead);
         if self.transport.playing {
             self.transport.from = self.playhead;
@@ -1503,6 +1507,7 @@ impl Studio {
         let count_in = self
             .song
             .settings()
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             .lock()
             .map_or(0, |s| s.prefs.number("audio.count-in").max(0.0) as u32);
         let from = (!self.transport.playing).then(|| plan.at.unwrap_or(at));
@@ -1533,6 +1538,7 @@ impl Studio {
     /// What the record panel makes of a recording pressed at `at`: where to play from, which
     /// stretch to keep, where to stop and how to snap the notes (REC-007, REC-009).
     fn record_plan(&self, p: &Project, at: Tick) -> xirius_session::punch::Plan {
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let panel = self.song.settings().lock().map_or(None, |s| {
             Some(xirius_session::punch::Panel::from_prefs(&s.prefs, p.ppq))
         });
@@ -1757,6 +1763,7 @@ impl Studio {
     /// while something moves (the playhead or a meter), so the screen asks
     /// for the next frame.
     pub fn tick(&mut self) -> bool {
+        let view = self.poll_view();
         let opened = self.poll_opening();
         if self.opening.is_some() {
             return true;
@@ -1818,7 +1825,7 @@ impl Studio {
         let settings = self.settings_tick();
         let rig = self.rig_tick();
         let update = self.poll_update();
-        saved
+        view || saved
             || opened
             || self.save_mark() == crate::keep::SaveMark::Saving
             || self.transport.playing

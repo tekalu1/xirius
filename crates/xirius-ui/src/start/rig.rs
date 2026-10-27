@@ -397,6 +397,7 @@ pub fn paint(pen: &mut Pen, studio: &Studio, rig: &Rig, l: &RigLayout) {
 impl Studio {
     /// What the panel shows now.
     pub fn rig(&self) -> Rig {
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let io = self.song.io.lock().unwrap_or_else(|e| e.into_inner());
         let v = &io.view;
         let device = v.devices.iter().find(|d| d.name == v.device);
@@ -461,6 +462,7 @@ impl Studio {
         let changed = tone != self.rig_tone;
         self.rig_tone = tone;
         let heard = {
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             let io = self.song.io.lock().unwrap_or_else(|e| e.into_inner());
             io.view.levels.iter().any(|l| *l > 0.0) || !io.view.received.is_empty()
         };
@@ -474,6 +476,7 @@ impl Studio {
         only_inputs: bool,
     ) -> (Vec<crate::popup::Choice>, Vec<String>, String) {
         self.poll_io();
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let io = self.song.io.lock().unwrap_or_else(|e| e.into_inner());
         let v = &io.view;
         let (choices, hints) = v

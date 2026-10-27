@@ -23,6 +23,7 @@ impl Drop for Cleanup {
             .any(|o| !o.finished() && !o.audio_returned())
             || self.previous.iter().any(|o| !o.load(Ordering::Acquire))
         {
+            // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
             std::thread::sleep(Duration::from_millis(2));
         }
     }
@@ -55,6 +56,7 @@ fn retire(player: Player) {
     // not just destruction of their handles when the old host is dropped.
     let mut inputs = host.retire_inputs();
     while !inputs.finished() {
+        // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
         std::thread::sleep(Duration::from_millis(2));
     }
     drop(dir);
@@ -289,6 +291,7 @@ impl Start {
             done: 0,
         }));
         let stop = Arc::new(AtomicBool::new(false));
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let latest = std::cell::RefCell::new(progress.lock().unwrap().clone());
         let stopped = stop.clone();
         let failures = Arc::new(Mutex::new(None));

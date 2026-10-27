@@ -211,42 +211,81 @@ pub fn paint_ring(pen: &mut Pen, popup: &Popup, g: &Geometry) {
 impl Studio {
     /// The recordings `project.cleanup` would move, with their sizes; why there are none when
     /// there are none.
-    pub(crate) fn cleanup_view(&self) -> Result<View, String> {
+    pub(crate) fn cleanup_view(&mut self) -> Result<View, String> {
         let Some(dir) = self.song.dir() else {
+            self.view_read.cleanup = Read::default();
             return Err(NO_UNUSED.to_string());
         };
-        let own = xirius_session::cleanup::Own {
-            uses: Some(self.song.session().uses_id()),
-            lane: None,
-        };
-        let found = xirius_session::cleanup::unused(&self.project(), &dir, own)
-            .map_err(|e| e.to_string())?;
-        if found.files.is_empty() {
-            return Err(NO_UNUSED.to_string());
+        let project = self.project();
+        let uses = self.song.session().uses_id();
+        if self.transport.is_windowed() {
+            let read = &mut self.view_read.cleanup;
+            if read.source.as_ref().is_none_or(|(id, p, d)| {
+                *id != uses || !std::sync::Arc::ptr_eq(p, &project) || *d != dir
+            }) {
+                *read = Read {
+                    source: Some((uses, project.clone(), dir.clone())),
+                    ..Read::default()
+                };
+            }
+            if let Some(got) = read
+                .job
+                .as_ref()
+                .and_then(crate::ancillary_io::Ticket::poll)
+            {
+                read.job = None;
+                read.result = Some(got);
+                read.at = Some(std::time::Instant::now());
+            }
+            if read.job.is_none()
+                && read
+                    .at
+                    .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1))
+            {
+                match crate::ancillary_io::submit(move || read_view(project, dir, uses)) {
+                    Ok(job) => read.job = Some(job),
+                    Err(e) => read.result = Some(Err(e)),
+                }
+            }
+            return read.result.clone().unwrap_or_else(|| Err(NO_UNUSED.into()));
         }
-        let files = found
-            .files
-            .iter()
-            .map(|f| File {
-                name: Path::new(f)
-                    .file_name()
-                    .map_or_else(|| f.clone(), |n| n.to_string_lossy().into_owned()),
-                size: xirius_session::cleanup::megabytes(
-                    std::fs::metadata(dir.join(f)).map_or(0, |m| m.len()),
-                ),
-            })
-            .collect();
-        Ok(View {
-            files,
-            total: xirius_session::cleanup::megabytes(found.bytes),
-            focus: Act::Trash,
-            keyed: false,
-        })
+        read_view(project, dir, uses)
     }
 
-    /// Opens the dialog in the middle of the window; says why when there is nothing for it.
+    pub(crate) fn poll_cleanup_read(&mut self) -> bool {
+        if self.view_read.cleanup.job.is_none() || self.input_blocked() {
+            return false;
+        }
+        let result = self.cleanup_view();
+        if self.view_read.cleanup.job.is_some() {
+            return false;
+        }
+        if self.view_read.cleanup.want_open {
+            self.view_read.cleanup.want_open = false;
+            self.show_cleanup(result);
+        } else if self.ctx.is_some() {
+            self.refresh_popup();
+        }
+        true
+    }
+
+    /// Opens the existing dialog only after its read is complete.
     pub(crate) fn open_cleanup(&mut self) -> bool {
-        match self.cleanup_view() {
+        if self.transport.is_windowed() {
+            self.view_read.cleanup.at = None;
+            let result = self.cleanup_view();
+            if self.view_read.cleanup.job.is_none() {
+                return self.show_cleanup(result);
+            }
+            self.view_read.cleanup.want_open = true;
+            return true;
+        }
+        let result = self.cleanup_view();
+        self.show_cleanup(result)
+    }
+
+    fn show_cleanup(&mut self, result: Result<View, String>) -> bool {
+        match result {
             Ok(view) => {
                 self.ctx = None;
                 let mut popup = Popup::new(PopupKind::Cleanup, Rect::default());
@@ -260,7 +299,58 @@ impl Studio {
             }
         }
     }
+}
 
+#[derive(Default)]
+pub(crate) struct Read {
+    source: Option<(
+        u64,
+        std::sync::Arc<xirius_core::model::Project>,
+        std::path::PathBuf,
+    )>,
+    pub(crate) job: Option<crate::ancillary_io::Ticket<View>>,
+    result: Option<Result<View, String>>,
+    at: Option<std::time::Instant>,
+    want_open: bool,
+}
+
+fn read_view(
+    project: std::sync::Arc<xirius_core::model::Project>,
+    dir: std::path::PathBuf,
+    uses: u64,
+) -> Result<View, String> {
+    #[cfg(any(test, feature = "loading-probe"))]
+    xirius_core::io_test::before("cleanup_list", &dir).map_err(|e| e.to_string())?;
+    let own = xirius_session::cleanup::Own {
+        uses: Some(uses),
+        lane: None,
+    };
+    let found = xirius_session::cleanup::unused(&project, &dir, own).map_err(|e| e.to_string())?;
+    if found.files.is_empty() {
+        return Err(NO_UNUSED.to_string());
+    }
+    let files = found
+        .files
+        .iter()
+        .map(|f| File {
+            name: Path::new(f)
+                .file_name()
+                .map_or_else(|| f.clone(), |n| n.to_string_lossy().into_owned()),
+            size: xirius_session::cleanup::megabytes(
+                // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
+                std::fs::metadata(dir.join(f)).map_or(0, |m| m.len()),
+            ),
+        })
+        .collect();
+    Ok(View {
+        files,
+        total: xirius_session::cleanup::megabytes(found.bytes),
+        focus: Act::Trash,
+        keyed: false,
+    })
+}
+
+impl Studio {
     pub(crate) fn cleanup_action(&mut self, g: &Geometry, act: Act) -> bool {
         self.popup = None;
         match act {

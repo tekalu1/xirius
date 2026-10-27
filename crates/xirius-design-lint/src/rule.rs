@@ -4,6 +4,7 @@ use std::fmt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Rule {
+    UiBlockingIo,
     OpsCoverage,
     /// 生の色（`rgb(0x…)`・`hsla(`・`rgba(`・`#rrggbb` の文字列）。
     RawColor,
@@ -44,7 +45,8 @@ pub enum Rule {
 
 impl Rule {
     /// 例外の印（`design-lint: allow(…)`）で外せる規則。
-    pub const CONTENT: [Rule; 15] = [
+    pub const CONTENT: [Rule; 16] = [
+        Rule::UiBlockingIo,
         Rule::RawColor,
         Rule::RawRadius,
         Rule::RawFont,
@@ -62,7 +64,8 @@ impl Rule {
         Rule::ListMenu,
     ];
 
-    pub const ALL: [Rule; 20] = [
+    pub const ALL: [Rule; 21] = [
+        Rule::UiBlockingIo,
         Rule::OpsCoverage,
         Rule::RawColor,
         Rule::RawRadius,
@@ -87,6 +90,7 @@ impl Rule {
 
     pub const fn name(self) -> &'static str {
         match self {
+            Rule::UiBlockingIo => "ui-blocking-io",
             Rule::OpsCoverage => "ops-coverage",
             Rule::RawColor => "raw-color",
             Rule::RawRadius => "raw-radius",
@@ -112,6 +116,7 @@ impl Rule {
 
     pub const fn summary(self) -> &'static str {
         match self {
+            Rule::UiBlockingIo => "UI の同期 I/O・待ちは worker 境界を明記する",
             Rule::OpsCoverage => "画面の操作はコマンド表に登録する",
             Rule::RawColor => "生の色は xirius-design のトークンを通す",
             Rule::RawRadius => "角丸は xirius_design::Radius から取る",

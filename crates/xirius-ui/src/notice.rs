@@ -73,8 +73,10 @@ pub fn leave(path: &Path, n: usize) -> std::io::Result<()> {
     }
     let before = read(path);
     if let Some(dir) = path.parent() {
+        // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
         std::fs::create_dir_all(dir)?;
     }
+    // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
     std::fs::write(path, (before + n).to_string())
 }
 
@@ -95,15 +97,18 @@ pub fn leave_later(path: &Path, dirs: &[PathBuf]) -> std::io::Result<()> {
         }
     }
     if let Some(dir) = path.parent() {
+        // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
         std::fs::create_dir_all(dir)?;
     }
     let text: String = all.iter().map(|d| format!("{}\n", d.display())).collect();
+    // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
     std::fs::write(path, text)
 }
 
 /// The folders kept in `path`, once: the file goes (none when it cannot).
 pub fn take_later(path: &Path) -> Vec<PathBuf> {
     let all = read_later(path);
+    // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
     if path.exists() && std::fs::remove_file(path).is_err() {
         return Vec::new();
     }
@@ -111,6 +116,7 @@ pub fn take_later(path: &Path) -> Vec<PathBuf> {
 }
 
 fn read_later(path: &Path) -> Vec<PathBuf> {
+    // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
     std::fs::read_to_string(path)
         .unwrap_or_default()
         .lines()
@@ -120,7 +126,30 @@ fn read_later(path: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+fn acknowledge_later(path: &Path, adopted: &[PathBuf]) -> std::io::Result<()> {
+    let remaining: Vec<_> = read_later(path)
+        .into_iter()
+        .filter(|p| !adopted.contains(p))
+        .collect();
+    if remaining.is_empty() {
+        // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
+        }
+    } else {
+        let text: String = remaining
+            .iter()
+            .map(|p| format!("{}\n", p.display()))
+            .collect();
+        // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
+        std::fs::write(path, text)
+    }
+}
+
 fn read(path: &Path) -> usize {
+    // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
     std::fs::read_to_string(path)
         .ok()
         .and_then(|s| s.trim().parse().ok())
@@ -206,15 +235,86 @@ impl Studio {
 
     /// Says what a closed window left at `path`, once: the file goes.
     pub fn take_left(&mut self, path: &Path) {
-        let n = read(path);
-        if path.exists() && std::fs::remove_file(path).is_err() {
-            // Said once only: when it cannot go, it is not said.
+        if self.transport.is_windowed() {
+            let path = path.to_owned();
+            match crate::ancillary_io::submit(move || {
+                #[cfg(any(test, feature = "loading-probe"))]
+                xirius_core::io_test::before("notice_read", &path).map_err(|e| e.to_string())?;
+                Ok(take_count(&path))
+            }) {
+                Ok(job) => self.view_read.left = Some(job),
+                Err(e) => self.error = Some(e),
+            }
             return;
         }
-        if let Some(text) = cleaned(n) {
+        if let Some(text) = cleaned(take_count(path)) {
             self.tell(text);
         }
     }
+
+    pub(crate) fn read_later_notices(&mut self, path: PathBuf) {
+        let source = path.clone();
+        match crate::ancillary_io::submit(move || {
+            #[cfg(any(test, feature = "loading-probe"))]
+            xirius_core::io_test::before("notice_read", &path).map_err(|e| e.to_string())?;
+            // Leave the durable retry list until the UI actually adopts it.
+            Ok(read_later(&path))
+        }) {
+            Ok(job) => self.view_read.later = Some((source, job)),
+            Err(e) => self.error = Some(e),
+        }
+    }
+
+    pub(crate) fn poll_left_notices(&mut self) -> bool {
+        let mut changed = false;
+        if let Some(result) = self
+            .view_read
+            .left
+            .as_ref()
+            .and_then(crate::ancillary_io::Ticket::poll)
+        {
+            self.view_read.left = None;
+            match result {
+                Ok(n) => {
+                    if let Some(text) = cleaned(n) {
+                        self.tell(text);
+                    }
+                }
+                Err(e) => self.error = Some(e),
+            }
+            changed = true;
+        }
+        if let Some((source, result)) = self
+            .view_read
+            .later
+            .as_ref()
+            .and_then(|(p, j)| j.poll().map(|r| (p.clone(), r)))
+        {
+            self.view_read.later = None;
+            match result {
+                Ok(dirs) => {
+                    self.adopt_later(dirs.clone(), &source);
+                    if let Err(e) = crate::ancillary_io::dispatch(move || {
+                        acknowledge_later(&source, &dirs).map_err(|e| e.to_string())
+                    }) {
+                        self.error = Some(e);
+                    }
+                }
+                Err(e) => self.error = Some(e),
+            }
+            changed = true;
+        }
+        changed
+    }
+}
+
+fn take_count(path: &Path) -> usize {
+    let n = read(path);
+    // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
+    if path.exists() && std::fs::remove_file(path).is_err() {
+        return 0;
+    }
+    n
 }
 
 /// The notice, centred at the foot of the arrangement; above the failed command's line when

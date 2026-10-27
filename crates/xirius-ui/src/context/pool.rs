@@ -139,7 +139,7 @@ impl Studio {
 
     /// 「使われていない録音を整理…」: opens the dialog that lists them and asks. Dimmed with the
     /// reason when there are none.
-    fn cleanup_row(&self) -> Item {
+    fn cleanup_row(&mut self) -> Item {
         const LABEL: &str = "使われていない録音を整理…";
         match self.cleanup_view() {
             Ok(_) => act(LABEL, BrowseAct::Cleanup),

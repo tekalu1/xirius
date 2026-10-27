@@ -227,10 +227,14 @@ mod imp {
                     let done = done.clone();
                     move || {
                         let report = run(title, scale, &shared);
+                        // design-lint: allow(ui-blocking-io) PRJ-031: chrome-probe worker output.
                         println!("\n{report}");
+                        // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
                         let wrote = std::fs::create_dir_all(&out)
+                            // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
                             .and_then(|()| std::fs::write(out.join("chrome.md"), &report));
                         if let Err(e) = wrote {
+                            // design-lint: allow(ui-blocking-io) PRJ-031: chrome-probe worker output.
                             eprintln!("could not write chrome.md: {e}");
                         }
                         done.store(true, Ordering::Release);
@@ -277,6 +281,7 @@ mod imp {
     fn frames_after(shared: &Shared, since: u64, frames: u64) {
         let deadline = Instant::now() + PATIENCE;
         while shared.frames.load(Ordering::Acquire) < since + frames && Instant::now() < deadline {
+            // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
             std::thread::sleep(Duration::from_millis(5));
         }
     }
@@ -287,6 +292,7 @@ mod imp {
         shared.want.store(k, Ordering::Release);
         let deadline = Instant::now() + PATIENCE;
         while shared.positioned.load(Ordering::Acquire) != k && Instant::now() < deadline {
+            // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
             std::thread::sleep(Duration::from_millis(5));
         }
         frames_after(shared, shared.positioned_at.load(Ordering::Acquire), 3);
@@ -297,6 +303,7 @@ mod imp {
     fn becomes_zoomed(hwnd: Hwnd, shared: &Shared, want: bool) -> bool {
         let deadline = Instant::now() + PATIENCE;
         while zoomed(hwnd) != want && Instant::now() < deadline {
+            // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
             std::thread::sleep(Duration::from_millis(5));
         }
         let got = zoomed(hwnd) == want;
@@ -313,6 +320,7 @@ mod imp {
             if !hwnd.is_null() {
                 return Some(hwnd);
             }
+            // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
             std::thread::sleep(Duration::from_millis(100));
         }
         None

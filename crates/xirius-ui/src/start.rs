@@ -289,6 +289,7 @@ impl Studio {
 
     /// Does the device in use have inputs?
     pub fn device_has_inputs(&self) -> bool {
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let io = self.song.io.lock().unwrap_or_else(|e| e.into_inner());
         let v = &io.view;
         v.devices
@@ -308,6 +309,7 @@ impl Studio {
             return true;
         }
         let input = {
+            // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
             let mut io = self.song.io.lock().unwrap_or_else(|e| e.into_inner());
             io.view.selected =
                 xirius_session::audio_settings::loudest(&io.view.levels).or(io.view.selected);

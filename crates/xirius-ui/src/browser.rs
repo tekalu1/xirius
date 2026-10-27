@@ -176,6 +176,7 @@ pub const LIB: [LibItem; 7] = [
 /// is kept once, so scanning again does not grow it.
 pub(crate) fn intern(text: &str) -> &'static str {
     static NAMES: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+    // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
     let mut names = NAMES.get_or_init(Mutex::default).lock().unwrap();
     if let Some(&t) = names.get(text) {
         return t;

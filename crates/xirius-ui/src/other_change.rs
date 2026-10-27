@@ -31,6 +31,8 @@ pub const UNDO: &str = "元に戻す";
 
 const FILE: &str = "project.json";
 
+mod window;
+
 /// The watch on one song folder.
 struct Watch {
     dir: PathBuf,
@@ -60,6 +62,7 @@ impl Watch {
                         .iter()
                         .any(|p| p.file_name() == Some(OsStr::new(FILE)))
                 {
+                    // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
                     *heard.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                 }
             })
@@ -80,9 +83,10 @@ impl Watch {
 
     /// When the file last changed, if it did since the last call.
     fn changed(&mut self, now: Instant) -> Option<Instant> {
+        // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
         let heard = self.heard.lock().unwrap_or_else(|e| e.into_inner()).take();
         let mut looked = None;
-        if now.duration_since(self.looked) >= LOOK {
+        if now.saturating_duration_since(self.looked) >= LOOK {
             self.looked = now;
             let s = stamp(&self.dir);
             if s != self.stamp {
@@ -97,6 +101,7 @@ impl Watch {
 fn stamp(dir: &Path) -> Option<(SystemTime, u64)> {
     #[cfg(any(test, feature = "loading-probe"))]
     let _ = xirius_core::io_test::before("watch_metadata", dir);
+    // design-lint: allow(ui-blocking-io) PRJ-031: watcher worker or offline adapter; window callbacks return through other_change::window.
     let m = std::fs::metadata(dir.join(FILE)).ok()?;
     Some((m.modified().ok()?, m.len()))
 }
@@ -104,6 +109,7 @@ fn stamp(dir: &Path) -> Option<(SystemTime, u64)> {
 /// What the screen knows of the other apps' saves.
 #[derive(Default)]
 pub struct OtherChange {
+    window: Option<window::Monitor>,
     watch: Option<Watch>,
     /// The last write heard; the file is taken [`SETTLE`] after it.
     heard: Option<Instant>,
@@ -122,6 +128,9 @@ impl Studio {
     }
 
     fn poll_other_change_at(&mut self, now: Instant, g: impl FnOnce(&Studio) -> Geometry) -> bool {
+        if self.transport.is_windowed() {
+            return self.poll_window_change(now, g);
+        }
         // Even installing a watch and reading a timestamp can wait on storage.
         // Leave the watch untouched until the blocking operation has completed.
         if self.other_busy() {
@@ -192,6 +201,7 @@ impl Studio {
 
     /// The file settled: takes it, or asks.
     fn other_check(&mut self, g: &Geometry) -> bool {
+        // design-lint: allow(ui-blocking-io) PRJ-031: watcher worker or offline adapter; window callbacks return through other_change::window.
         let Some(hash) = self.song.disk_changed() else {
             // The file is the song's own again (it was saved over): nothing to ask.
             if self.other.asked.take().is_some() && self.toast_is(Answer::Reload) {
@@ -217,13 +227,25 @@ impl Studio {
 
     /// 「読み込む」: takes the file as it is now.
     pub(crate) fn other_load(&mut self, g: Option<&Geometry>) {
+        if self.transport.is_windowed() {
+            self.other.asked = None;
+            let model = self.project();
+            if let Some(monitor) = &mut self.other.window {
+                monitor.accept = true;
+                monitor.accept_after = monitor.next;
+                monitor.accept_model = Some(model);
+            }
+            return;
+        }
         self.other.asked = None;
+        // design-lint: allow(ui-blocking-io) PRJ-031: watcher worker or offline adapter; window callbacks return through other_change::window.
         if let Some(hash) = self.song.disk_changed() {
             self.other_take(g, hash);
         }
     }
 
     fn other_take(&mut self, g: Option<&Geometry>, hash: String) -> bool {
+        // design-lint: allow(ui-blocking-io) PRJ-031: watcher worker or offline adapter; window callbacks return through other_change::window.
         match self.song.reload_from_disk() {
             Ok(Some(n)) => {
                 self.error = None;
@@ -242,6 +264,7 @@ impl Studio {
             // It held the song as it is: it only counts as saved now.
             Ok(None) => {}
             Err(e) => {
+                // design-lint: allow(ui-blocking-io) PRJ-031: synchronous offline adapter; live windows use other_change::window.
                 eprintln!("UI-289: project.json could not be taken: {e}");
                 self.other.refused = Some(hash);
                 self.warn("ほかのアプリの変更を読み込めませんでした".to_string(), None);
