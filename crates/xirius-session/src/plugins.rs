@@ -129,6 +129,18 @@ pub struct RemoteEdit {
 #[derive(Clone)]
 struct StateIntent(Plugin);
 impl StateIntent {
+    fn protected_params(&self, current: &Plugin) -> Vec<String> {
+        self.0
+            .params
+            .keys()
+            .chain(current.params.keys())
+            .filter(|key| self.0.params.get(*key) != current.params.get(*key))
+            .cloned()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
     fn values(
         &self,
         current: &Plugin,
@@ -154,13 +166,7 @@ impl StateIntent {
                 *value = now;
             }
         }
-        let changed: HashSet<_> = self
-            .0
-            .params
-            .keys()
-            .chain(current.params.keys())
-            .filter(|key| self.0.params.get(*key) != current.params.get(*key))
-            .collect();
+        let changed = self.protected_params(current);
         runtime.retain(|(old, _)| {
             !changed.iter().any(|key| {
                 old.eq_ignore_ascii_case(key)
@@ -170,7 +176,12 @@ impl StateIntent {
             })
         });
         for (key, value) in &current.params {
-            if !runtime.iter().any(|(name, _)| name == key) {
+            if !runtime.iter().any(|(name, _)| {
+                name.eq_ignore_ascii_case(key)
+                    || param_id(name)
+                        .zip(param_id(key))
+                        .is_some_and(|(a, b)| a == b)
+            }) {
                 runtime.push((key.clone(), *value));
             }
         }
@@ -959,7 +970,7 @@ impl PluginLoader {
     /// what it has there now (with the edits in its editor that the song has not taken yet;
     /// those are kept for [`PluginLoader::take_edits`]).
     fn values(&mut self, x: &Plugin, moving: Option<Remote>) -> Result<Values, String> {
-        if let Some(r) = moving
+        if let Some(r) = moving.filter(|old| StateIntent(old.applied.clone()).accepts(x))
             && let Some(now) = r.server.current(&r.link)
         {
             let edits = r.link.take_edits();
@@ -1375,6 +1386,15 @@ impl PluginLoader {
             .as_ref()
             .filter(|_| !stays)
             .and_then(|r| r.link.editor());
+        let transfer = moving
+            .as_ref()
+            .filter(|old| StateIntent(old.applied.clone()).accepts(x))
+            .map(|old| {
+                (
+                    old.link.live_revision(),
+                    StateIntent(old.applied.clone()).protected_params(x),
+                )
+            });
         let mut values = self.values(x, moving)?;
         // The instance that played in this process until now: what its editor changed that
         // the song has not taken yet goes to the new one, and to the song later.
@@ -1455,7 +1475,13 @@ impl PluginLoader {
             if let Some((title, caption)) = window {
                 server.open_editor_later(&link, &title, caption);
             }
-            return Ok((Box::new(RemotePlugin::new(server, link, spec)), warnings));
+            let mut processor = RemotePlugin::new(server, link, spec);
+            if let Some((revision, protected)) = transfer {
+                processor.preserve_live_edits_since(revision, protected);
+            } else {
+                processor.discard_previous_editor_changes();
+            }
+            return Ok((Box::new(processor), warnings));
         }
 
         if is_clap(x) {
@@ -2692,6 +2718,19 @@ mod tests {
             &[(1, "Latency".into())],
         );
         assert_eq!(values, vec![("Latency".into(), 0.75)]);
+        let mut alias = old.clone();
+        alias.params = [("Latency".into(), 0.25)].into_iter().collect();
+        let values = StateIntent(alias.clone()).values(
+            &alias,
+            vec![("1".into(), 0.5)],
+            &[],
+            &[(1, "Latency".into())],
+        );
+        assert_eq!(
+            values,
+            vec![("1".into(), 0.5)],
+            "an unchanged title alias cannot restore the old model value"
+        );
         assert!(intent.reconcile(&current, &mut edit));
         assert!(edit.params.is_empty());
     }

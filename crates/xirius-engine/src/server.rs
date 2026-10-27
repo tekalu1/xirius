@@ -203,6 +203,8 @@ impl Seat {
 #[derive(Default)]
 struct LinkInner {
     captures: HashMap<u64, Option<Result<PluginEdits, String>>>,
+    live_revision: u64,
+    live_values: Vec<(u64, u32, u32, String, f64)>,
     /// The instance that plays, whose window and reports these are.
     heard: Seat,
     /// The instance a new mix opens while another plays (ENG-066), until it plays or is
@@ -335,6 +337,12 @@ impl PluginLink {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Editor notifications have their own revision; draining automation edits
+    /// or completing a getState receipt does not erase this handoff boundary.
+    pub fn live_revision(&self) -> u64 {
+        self.lock().live_revision
+    }
+
     /// Edits made in the plugin's editor since the last call.
     pub fn take_edits(&self) -> PluginEdits {
         let mut l = self.lock();
@@ -462,7 +470,7 @@ impl PluginLink {
             .unwrap_or_default()
     }
 
-    fn gesture(&self, g: Gesture) {
+    fn gesture(&self, slot: u32, g: Gesture) {
         let mut l = self.lock();
         let (id, phase, value) = match g {
             Gesture::Begin(id) => (id, EditPhase::Begin, None),
@@ -473,6 +481,20 @@ impl PluginLink {
             l.params.remove(0);
         }
         let title = Self::title(&l, id);
+        if let Some(value) = value {
+            l.live_revision = l
+                .live_revision
+                .checked_add(1)
+                .expect("editor revisions exhausted");
+            let revision = l.live_revision;
+            l.live_values
+                .retain(|(_, source, param, _, _)| *source != slot || *param != id);
+            if l.live_values.len() >= MAX_PARAM_EDITS {
+                l.live_values.remove(0);
+            }
+            l.live_values
+                .push((revision, slot, id, title.clone(), value));
+        }
         l.params.push(ParamEdit {
             id,
             title,
@@ -485,6 +507,230 @@ impl PluginLink {
 
 #[cfg(test)]
 mod capture_tests {
+    #[test]
+    fn explicit_reset_and_parameter_intent_win_over_the_old_slots_passive_reports() {
+        for protected in [None, Some(Vec::new()), Some(vec!["1".into()])] {
+            let server = PluginServer::new(None);
+            let link = PluginLink::new();
+            link.slot.store(1, Ordering::Release);
+            link.next.store(2, Ordering::Release);
+            let (writer, messages) = mpsc::sync_channel(16);
+            {
+                let mut st = server.inner.lock();
+                st.proc = Some(Proc {
+                    writer,
+                    epoch: 0,
+                    stop: Arc::new(AtomicU8::new(KEEP)),
+                    pid: 0,
+                });
+                st.slots.insert(
+                    1,
+                    SlotRec {
+                        intent_bound: true,
+                        follow: Vec::new(),
+                        open: open(1, 0.25),
+                        link: link.clone(),
+                        rings: None,
+                        poisoned: false,
+                    },
+                );
+                st.slots.insert(
+                    2,
+                    SlotRec {
+                        intent_bound: true,
+                        follow: protected
+                            .as_ref()
+                            .map(|keys| {
+                                vec![Follow {
+                                    source: 1,
+                                    protected: keys.clone(),
+                                }]
+                            })
+                            .unwrap_or_default(),
+                        open: open(2, 0.75),
+                        link: link.clone(),
+                        rings: None,
+                        poisoned: false,
+                    },
+                );
+            }
+            server.inner.dispatch(
+                0,
+                FromHost::Gesture {
+                    slot: 1,
+                    gesture: Gesture::Perform(1, 0.5),
+                },
+            );
+            let accepts = protected.as_ref().is_some_and(Vec::is_empty);
+            assert_eq!(
+                server.inner.lock().slots[&2].open.params[0].1,
+                if accepts { 0.5 } else { 0.75 }
+            );
+            server.inner.dispatch(
+                0,
+                FromHost::State {
+                    slot: 1,
+                    state: state(9),
+                },
+            );
+            assert_eq!(
+                server.inner.lock().slots[&2].open.state,
+                protected.as_ref().map(|_| state(9))
+            );
+            let sent: Vec<_> = messages.try_iter().collect();
+            match protected {
+                None => assert!(sent.is_empty(), "reset forbids all old-slot transfers"),
+                Some(keys) if !keys.is_empty() => {
+                    assert!(
+                        matches!(sent.as_slice(), [ToHost::SetState { slot:2, .. }, ToHost::SetParam { slot:2, key, value }] if key == "1" && *value == 0.75)
+                    );
+                }
+                _ => assert!(
+                    matches!(sent.as_slice(), [ToHost::SetParam { slot:2, value, .. }, ToHost::SetState { slot:2, .. }] if *value == 0.5)
+                ),
+            }
+        }
+    }
+
+    fn open(slot: u32, value: f64) -> OpenSlot {
+        OpenSlot {
+            slot,
+            epoch: 0,
+            shm: String::new(),
+            req: String::new(),
+            done: String::new(),
+            bundle: String::new(),
+            class: None,
+            state: None,
+            params: vec![("1".into(), value)],
+        }
+    }
+
+    #[test]
+    fn an_editor_edit_between_snapshot_and_registration_is_not_lost_or_replayed_from_a_capture() {
+        for protected in [Vec::new(), vec!["1".into()]] {
+            let server = PluginServer::new(None);
+            let link = PluginLink::new();
+            link.slot.store(1, Ordering::Release);
+            server.inner.lock().slots.insert(
+                1,
+                SlotRec {
+                    intent_bound: true,
+                    follow: Vec::new(),
+                    open: open(1, 0.25),
+                    link: link.clone(),
+                    rings: None,
+                    poisoned: false,
+                },
+            );
+            let since = link.live_revision();
+            link.gesture(1, Gesture::Perform(1, 0.5));
+            link.take_edits(); // Another collector cannot drain the handoff ledger.
+            let mut processor =
+                RemotePlugin::new(server.clone(), link.clone(), RemoteSpec::default());
+            let (connection, _) = processor
+                .connect(&ProcessSetup {
+                    sample_rate: 48_000.0,
+                    max_block: 512,
+                    mode: RenderMode::Realtime,
+                })
+                .unwrap();
+            server.inner.lock().crashed = true; // Register without launching any process.
+            let _ = server.open_slot(
+                &link,
+                open(0, 0.25),
+                connection.rings,
+                &connection.slot,
+                Some(LiveTransfer {
+                    since,
+                    protected: protected.clone(),
+                }),
+                true,
+            );
+            let st = server.inner.lock();
+            let next = &st.slots[&link.next.load(Ordering::Acquire)];
+            assert_eq!(
+                next.open.params[0].1,
+                if protected.is_empty() { 0.5 } else { 0.25 }
+            );
+        }
+    }
+
+    #[test]
+    fn a_late_editor_notification_follows_promotion_but_explicit_intent_and_captures_do_not() {
+        for protected in [None, Some(Vec::new()), Some(vec!["1".into()])] {
+            let server = PluginServer::new(None);
+            let link = PluginLink::new();
+            link.slot.store(1, Ordering::Release);
+            link.next.store(2, Ordering::Release);
+            {
+                let mut st = server.inner.lock();
+                st.slots.insert(
+                    1,
+                    SlotRec {
+                        intent_bound: true,
+                        follow: Vec::new(),
+                        open: open(1, 0.25),
+                        link: link.clone(),
+                        rings: None,
+                        poisoned: false,
+                    },
+                );
+                st.slots.insert(
+                    2,
+                    SlotRec {
+                        intent_bound: true,
+                        follow: protected
+                            .as_ref()
+                            .map(|keys| {
+                                vec![Follow {
+                                    source: 1,
+                                    protected: keys.clone(),
+                                }]
+                            })
+                            .unwrap_or_default(),
+                        open: open(2, 0.25),
+                        link: link.clone(),
+                        rings: None,
+                        poisoned: false,
+                    },
+                );
+                st.seat_next(&link, Some(1));
+                st.slots.remove(&1);
+                st.closing.insert(1, link.clone());
+            }
+            server.inner.dispatch(
+                0,
+                FromHost::Gesture {
+                    slot: 1,
+                    gesture: Gesture::Perform(1, 0.5),
+                },
+            );
+            let accepted = protected.as_ref().is_some_and(Vec::is_empty);
+            assert_eq!(
+                server.current(&link).unwrap().params[0].1,
+                if accepted { 0.5 } else { 0.25 }
+            );
+            assert_eq!(!link.take_edits().params.is_empty(), accepted);
+            let request = link.begin_capture();
+            server.inner.dispatch(
+                0,
+                FromHost::CapturedState {
+                    slot: 1,
+                    request,
+                    result: Ok(state(9)),
+                    values: vec![(1, "Delay".into(), 0.75)],
+                },
+            );
+            assert!(link.capture_finished(request));
+            assert_eq!(
+                server.current(&link).unwrap().params[0].1,
+                if accepted { 0.5 } else { 0.25 }
+            );
+            assert!(link.take_edits().params.is_empty());
+        }
+    }
+
     #[test]
     fn blocked_writer_does_not_hold_server_or_wait_for_queue_space() {
         use super::*;
@@ -647,7 +893,28 @@ impl Drop for Proc {
     }
 }
 
+#[derive(Clone)]
+struct LiveTransfer {
+    since: u64,
+    protected: Vec<String>,
+}
+#[derive(Clone)]
+struct Follow {
+    source: u32,
+    protected: Vec<String>,
+}
+impl Follow {
+    fn allows(&self, id: u32, title: &str) -> bool {
+        !self.protected.iter().any(|key| {
+            key.parse::<u32>().ok() == Some(id)
+                || (!title.is_empty() && key.eq_ignore_ascii_case(title))
+        })
+    }
+}
+
 struct SlotRec {
+    intent_bound: bool,
+    follow: Vec<Follow>,
     open: OpenSlot,
     link: Arc<PluginLink>,
     /// The instance's shared memory, where the host marks a crash inside the plugin.
@@ -753,9 +1020,11 @@ impl PluginServer {
         open: OpenSlot,
         rings: Arc<SharedRings>,
         mine: &AtomicU32,
+        transfer: Option<LiveTransfer>,
+        intent_bound: bool,
     ) -> Result<Opened, String> {
         let began = Instant::now();
-        let r = self.open_slot(link, open, rings, mine);
+        let r = self.open_slot(link, open, rings, mine, transfer, intent_bound);
         let us = began.elapsed().as_micros().min(u128::from(u64::MAX - 1)) as u64;
         let st = self.inner.lock();
         if let Some(coming) = st.seat_of(link, mine.load(Ordering::Acquire)) {
@@ -797,9 +1066,38 @@ impl PluginServer {
         mut open: OpenSlot,
         rings: Arc<SharedRings>,
         mine: &AtomicU32,
+        transfer: Option<LiveTransfer>,
+        intent_bound: bool,
     ) -> Result<Opened, String> {
         let inner = &self.inner;
         let mut st = inner.lock();
+        let playing = link.slot.load(Ordering::Acquire);
+        let mut follow = Vec::new();
+        if let Some(transfer) = transfer
+            && let Some(old) = st.slots.get(&playing)
+        {
+            follow = old.follow.clone();
+            for source in &mut follow {
+                source.protected.extend(transfer.protected.iter().cloned());
+            }
+            follow.push(Follow {
+                source: playing,
+                protected: transfer.protected,
+            });
+            follow.retain(|source| {
+                st.slots.contains_key(&source.source) || st.closing.contains_key(&source.source)
+            });
+            let inner = link.lock();
+            for (revision, source, id, title, value) in &inner.live_values {
+                if *revision > transfer.since
+                    && follow
+                        .iter()
+                        .any(|f| f.source == *source && f.allows(*id, title))
+                {
+                    set_param(&mut open, &id.to_string(), title, *value);
+                }
+            }
+        }
         let slot = st.next_slot;
         st.next_slot += 1;
         open.slot = slot;
@@ -820,6 +1118,8 @@ impl PluginServer {
         st.slots.insert(
             slot,
             SlotRec {
+                intent_bound,
+                follow,
                 open: open.clone(),
                 link: link.clone(),
                 rings: Some(rings.clone()),
@@ -1373,26 +1673,61 @@ impl Inner {
                 self.changed.notify_all();
             }
             FromHost::Gesture { slot, gesture } => {
-                let Some(rec) = st.slots.get(&slot) else {
+                let Some(link) = st
+                    .slots
+                    .get(&slot)
+                    .map(|rec| rec.link.clone())
+                    .or_else(|| st.closing.get(&slot).cloned())
+                else {
                     return;
                 };
-                let link = rec.link.clone();
-                link.gesture(gesture);
+                let id = match gesture {
+                    Gesture::Begin(id) | Gesture::End(id) | Gesture::Perform(id, _) => id,
+                };
+                let title = PluginLink::title(&link.lock(), id);
+                let playing = link.slot.load(Ordering::Acquire);
+                let late = (slot != playing)
+                    .then(|| st.slots.get(&playing))
+                    .flatten()
+                    .filter(|rec| {
+                        rec.follow
+                            .iter()
+                            .any(|f| f.source == slot && f.allows(id, &title))
+                    })
+                    .map(|_| playing);
+                if slot != playing && late.is_none() {
+                    return;
+                }
+                let target = st.next_of(&link, slot).or(late);
+                let accepted = target
+                    .and_then(|next| st.slots.get(&next))
+                    .is_none_or(|next| {
+                        !next.intent_bound
+                            || next
+                                .follow
+                                .iter()
+                                .any(|f| f.source == slot && f.allows(id, &title))
+                    });
+                if accepted {
+                    link.gesture(slot, gesture);
+                }
                 let Gesture::Perform(id, value) = gesture else {
                     return;
                 };
-                let title = PluginLink::title(&link.lock(), id);
                 let key = id.to_string();
-                // What the instance is opened with again has the move: a new mix that opens it
-                // anew from what it has now must not bring back the value it was opened with
-                // (ENG-069).
                 if let Some(rec) = st.slots.get_mut(&slot) {
                     set_param(&mut rec.open, &key, &title, value);
                 }
-                // A move in the window of the instance that plays goes on to the one a new
-                // mix opens (ENG-066).
-                if let Some(next) = st.next_of(&link, slot) {
-                    let rec = st.slots.get_mut(&next).expect("next_of checked it");
+                // Preserve the old editor's actual edits even if its notification
+                // crosses promotion/Close. Explicit model changes break/protect
+                // this lineage; getState receipts never enter this channel.
+                if let Some(next) = target.filter(|_| accepted) {
+                    let rec = st.slots.get_mut(&next).expect("target checked above");
+                    if let Some(policy) = rec.follow.iter().find(|f| f.source == slot)
+                        && !policy.allows(id, &title)
+                    {
+                        return;
+                    }
                     set_param(&mut rec.open, &key, &title, value);
                     st.send(&ToHost::SetParam {
                         slot: next,
@@ -1625,8 +1960,38 @@ impl State {
         link.states_seen.fetch_add(1, Ordering::Release);
         if let Some(next) = self.next_of(&link, slot) {
             let rec = self.slots.get_mut(&next).expect("next_of checked it");
+            let policy = rec.follow.iter().find(|f| f.source == slot);
+            if rec.intent_bound && policy.is_none() {
+                return;
+            }
+            let titles = link.opened().map(|o| o.params).unwrap_or_default();
+            let replay: Vec<_> = rec
+                .open
+                .params
+                .iter()
+                .filter(|(key, _)| {
+                    policy.is_some_and(|policy| {
+                        policy.protected.iter().any(|p| p.eq_ignore_ascii_case(key))
+                            || titles
+                                .iter()
+                                .find(|(id, title)| {
+                                    key.parse::<u32>().ok() == Some(*id)
+                                        || key.eq_ignore_ascii_case(title)
+                                })
+                                .is_some_and(|(id, title)| !policy.allows(*id, title))
+                    })
+                })
+                .cloned()
+                .collect();
             rec.open.state = Some(state.clone());
             self.send(&ToHost::SetState { slot: next, state });
+            for (key, value) in replay {
+                self.send(&ToHost::SetParam {
+                    slot: next,
+                    key,
+                    value,
+                });
+            }
         }
     }
     /// Makes the instance on its way the one that plays (ENG-066). A mix built again while the
@@ -1772,6 +2137,8 @@ pub struct RemotePlugin {
     feed: u64,
     block_events: Vec<NoteRecord>,
     spec: RemoteSpec,
+    transfer: Option<LiveTransfer>,
+    intent_bound: bool,
     server: PluginServer,
     link: Arc<PluginLink>,
     conn: Option<Conn>,
@@ -1817,12 +2184,25 @@ struct Opening {
 }
 
 impl RemotePlugin {
+    /// The session's StateIntent supplies the protected keys. Only accepted
+    /// same-intent editor changes follow a graph replacement; captures do not.
+    pub fn preserve_live_edits_since(&mut self, since: u64, protected: Vec<String>) {
+        self.intent_bound = true;
+        self.transfer = Some(LiveTransfer { since, protected });
+    }
+    /// Explicit class/state/reset intent rejects observations from the old editor.
+    pub fn discard_previous_editor_changes(&mut self) {
+        self.intent_bound = true;
+        self.transfer = None;
+    }
     pub fn new(server: PluginServer, link: Arc<PluginLink>, spec: RemoteSpec) -> RemotePlugin {
         RemotePlugin {
             automation: None,
             feed: NEXT_FEED.fetch_add(1, Ordering::Relaxed),
             block_events: Vec::with_capacity(NOTE_CAPACITY * 2),
             spec,
+            transfer: None,
+            intent_bound: false,
             server,
             link,
             opening: None,
@@ -2103,9 +2483,14 @@ impl Processor for RemotePlugin {
         self.reset(setup);
         let (conn, answer) = match self.connect(setup) {
             Ok((conn, open)) => {
-                let r = self
-                    .server
-                    .open(&self.link, open, conn.rings.clone(), &conn.slot);
+                let r = self.server.open(
+                    &self.link,
+                    open,
+                    conn.rings.clone(),
+                    &conn.slot,
+                    self.transfer.clone(),
+                    self.intent_bound,
+                );
                 (Some(conn), Some(r))
             }
             Err(e) => {
@@ -2124,17 +2509,32 @@ impl Processor for RemotePlugin {
             Ok((conn, open)) => {
                 let (server, link, rings) =
                     (self.server.clone(), self.link.clone(), conn.rings.clone());
-                let job = (server, link, open.clone(), rings.clone(), conn.slot.clone());
+                let job = (
+                    server,
+                    link,
+                    open.clone(),
+                    rings.clone(),
+                    conn.slot.clone(),
+                    self.transfer.clone(),
+                    self.intent_bound,
+                );
                 let spawned = std::thread::Builder::new()
                     .name("xirius-plugin-open".into())
                     .spawn(move || {
-                        let (server, link, open, rings, slot) = job;
-                        server.open(&link, open, rings, &slot)
+                        let (server, link, open, rings, slot, transfer, intent_bound) = job;
+                        server.open(&link, open, rings, &slot, transfer, intent_bound)
                     });
                 match spawned {
                     Ok(answer) => (Some(conn), Some(answer)),
                     Err(_) => {
-                        let r = self.server.open(&self.link, open, rings, &conn.slot);
+                        let r = self.server.open(
+                            &self.link,
+                            open,
+                            rings,
+                            &conn.slot,
+                            self.transfer.clone(),
+                            self.intent_bound,
+                        );
                         return self.take_opening(setup, Some(conn), Some(r));
                     }
                 }
