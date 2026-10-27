@@ -13,6 +13,8 @@ pub const CID: TUID = [88, 73, 82, 73, 85, 83, 76, 65, 84, 69, 78, 67, 89, 0, 0,
 pub fn fixture_marker() {}
 /// Momentary test trigger: a positive point exits the hosting process during processing.
 pub const CRASH_PARAMETER: u32 = 3;
+/// Independent observable value for consecutive owner-command regression tests.
+pub const MIX_PARAMETER: u32 = 2;
 pub const CRASH_EXIT_CODE: i32 = 86;
 /// The keys its one program names (`IUnitInfo` program pitch names), and what it calls them.
 pub const NOTE_NAMES: [(u8, &str); 2] = [(36, "Fixture Kick"), (38, "Fixture Snare")];
@@ -124,6 +126,7 @@ impl IPluginFactoryTrait for Factory {
         }
         let plugin = ComWrapper::new(Latency {
             delay: Arc::new(AtomicU32::new(0)),
+            mix: AtomicU32::new(0),
             number: MADE.fetch_add(1, Ordering::Relaxed) + 1,
             home: std::thread::current().id(),
             handler: UnsafeCell::new(None),
@@ -144,6 +147,7 @@ static MADE: AtomicU32 = AtomicU32::new(0);
 struct Latency {
     /// Shared with the editor's view, which shows it.
     delay: Arc<AtomicU32>,
+    mix: AtomicU32,
     /// Which instance of this process this is (1 for the first), shown in the editor.
     number: u32,
     /// The thread that made it. Some plugins tie windows to it and break when another thread
@@ -375,19 +379,27 @@ impl IEditControllerTrait for Latency {
         unsafe { self.save(state) }
     }
     unsafe fn getParameterCount(&self) -> int32 {
-        2
+        3
     }
     unsafe fn getParameterInfo(&self, index: int32, info: *mut ParameterInfo) -> tresult {
-        if !(0..2).contains(&index) || info.is_null() {
+        if !(0..3).contains(&index) || info.is_null() {
             return kInvalidArgument;
         }
-        // SAFETY: checked writable SDK output; both parameters use bounded normalized values.
+        // SAFETY: checked writable SDK output; all parameters use bounded normalized values.
         unsafe {
             *info = std::mem::zeroed();
-            (*info).id = if index == 0 { 1 } else { CRASH_PARAMETER };
-            (*info).stepCount = if index == 0 { 256 } else { 1 };
+            (*info).id = match index {
+                0 => 1,
+                1 => CRASH_PARAMETER,
+                _ => MIX_PARAMETER,
+            };
+            (*info).stepCount = if index == 1 { 1 } else { 256 };
             (*info).flags = 1;
-            let title = if index == 0 { "Latency" } else { "Crash" };
+            let title = match index {
+                0 => "Latency",
+                1 => "Crash",
+                _ => "Mix",
+            };
             for (dst, src) in (*info).title.iter_mut().zip(title.encode_utf16()) {
                 *dst = src;
             }
@@ -419,11 +431,20 @@ impl IEditControllerTrait for Latency {
     unsafe fn getParamNormalized(&self, id: ParamID) -> ParamValue {
         if id == 1 {
             f64::from(self.delay.load(Ordering::Relaxed)) / 256.0
+        } else if id == MIX_PARAMETER {
+            f64::from(self.mix.load(Ordering::Relaxed)) / 256.0
         } else {
             0.0
         }
     }
     unsafe fn setParamNormalized(&self, id: ParamID, value: ParamValue) -> tresult {
+        if id == MIX_PARAMETER {
+            self.mix.store(
+                (value.clamp(0.0, 1.0) * 256.0).round() as u32,
+                Ordering::Relaxed,
+            );
+            return kResultOk;
+        }
         // The momentary trigger acts on processor events, and is never part of saved state.
         if id == CRASH_PARAMETER {
             return kResultOk;

@@ -404,7 +404,7 @@ fn consecutive_changes_keep_unexecuted_deltas(
         assert!(!first.swapped && first.warnings.is_empty());
         Arc::make_mut(desired.tracks.get_mut(&tid).unwrap()).inserts[0]
             .params
-            .insert(xirius_test_vst3::CRASH_PARAMETER.to_string(), 0.0);
+            .insert(xirius_test_vst3::MIX_PARAMETER.to_string(), 0.5);
         let second = host.sync(&desired);
         assert!(!second.swapped && second.warnings.is_empty());
         let current = host.begin_pull_states();
@@ -430,8 +430,8 @@ fn consecutive_changes_keep_unexecuted_deltas(
             assert_eq!(plugin.params["1"], f64::from(expected) / 256.0);
         }
         assert_eq!(
-            plugin.params[&xirius_test_vst3::CRASH_PARAMETER.to_string()],
-            0.0
+            plugin.params[&xirius_test_vst3::MIX_PARAMETER.to_string()],
+            0.5
         );
     }
 }
