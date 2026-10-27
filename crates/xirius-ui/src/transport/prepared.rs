@@ -43,9 +43,7 @@ fn retire(player: Player) {
         owners: player.host.plugins().owner_retirements(),
         previous: Vec::new(),
     };
-    let Player {
-        out, mut host, dir, ..
-    } = player;
+    let Player { out, host, dir, .. } = player;
     #[cfg(any(test, feature = "loading-probe"))]
     let _ = xirius_core::io_test::before(
         "prepare_output_stop",
@@ -55,10 +53,10 @@ fn retire(player: Player) {
     // This function is worker-only, as is output/SDK destruction above. The
     // retirement acknowledgement must include late input opening/close Jobs,
     // not just destruction of their handles when the old host is dropped.
-    while !host.retire_inputs() {
+    let mut inputs = host.retire_inputs();
+    while !inputs.finished() {
         std::thread::sleep(Duration::from_millis(2));
     }
-    drop(host);
     drop(dir);
 }
 struct Done(Arc<AtomicBool>);
@@ -97,15 +95,30 @@ mod retirement_tests {
     use xirius_engine::record::AudioInput;
     use xirius_session::output::{DeviceInput, Drivers, SilentOutput};
 
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum HeldAt {
+        Garbage,
+        Command,
+        Opening,
+        Detached,
+    }
     #[test]
     fn the_next_player_waits_for_an_old_hosts_late_input_open_and_actual_close() {
-        for pending_open in [true, false] {
-            retiring_input_case(pending_open);
+        for held in [
+            HeldAt::Garbage,
+            HeldAt::Command,
+            HeldAt::Opening,
+            HeldAt::Detached,
+        ] {
+            for cancel in [false, true] {
+                retiring_input_case(held, cancel);
+            }
         }
     }
-    fn retiring_input_case(pending_open: bool) {
+    fn retiring_input_case(held: HeldAt, cancel: bool) {
+        let pending_open = held == HeldAt::Opening;
         let project = Project::new("Fixture");
-        let (mut host, audio, _) = SessionHost::start(&project, HostConfig::default()).unwrap();
+        let (mut host, mut audio, _) = SessionHost::start(&project, HostConfig::default()).unwrap();
         host.set_windowed();
         let opening = crate::browser_io_tests::Release::new();
         let closing = crate::browser_io_tests::Release::new();
@@ -169,22 +182,35 @@ mod retirement_tests {
                 std::thread::yield_now();
             }
         }
-        let out = Output::Silent(SilentOutput::start(audio, true));
-        if !pending_open {
+        if !pending_open && held != HeldAt::Command {
+            audio.render(&mut [], 0); // attach on the engine, without an output thread
             host.watch_stop();
-            let deadline = Instant::now() + Duration::from_secs(20);
-            loop {
-                host.poll();
-                if is_closing.try_recv().is_ok() {
-                    break;
-                }
-                assert!(Instant::now() < deadline);
-                std::thread::yield_now();
+            audio.render(&mut [], 0); // input now lives in the garbage ring
+            if held == HeldAt::Detached {
+                host.poll(); // only this case hands it to engine-retire
+                is_closing.recv_timeout(Duration::from_secs(20)).unwrap();
             }
-            // The resource has left the engine for a separate retire worker.
-            // The exact retirement predicate must still reject completion.
-            assert!(!host.retire_inputs());
         }
+        // A stand-in output holds the engine without consuming another command.
+        // Thus Command and Garbage are exact ring states, never a scheduling race.
+        struct Parked(xirius_engine::AudioEngine);
+        impl xirius_session::output::SharedStream for Parked {
+            fn name(&self) -> String {
+                "Fixture".into()
+            }
+            fn lost(&self) -> xirius_engine::device::Lost {
+                Default::default()
+            }
+            fn stop(self: Box<Self>) -> Option<xirius_engine::AudioEngine> {
+                Some(self.0)
+            }
+        }
+        let out = Output::Device(
+            xirius_session::output::DeviceOutput::open_with(audio, |audio| {
+                Ok(Box::new(Parked(audio)))
+            })
+            .unwrap(),
+        );
         let mut transport = Transport::new(OutputMode::Device);
         transport.set_drivers(drivers);
         transport.retired.push(
@@ -199,7 +225,14 @@ mod retirement_tests {
         let next = Start::new(&transport, &project, None).unwrap();
         if pending_open {
             opening.release();
-            is_closing.recv_timeout(Duration::from_secs(20)).unwrap();
+        }
+        if held != HeldAt::Detached {
+            is_closing
+                .recv_timeout(Duration::from_secs(20))
+                .expect("retirement must release ring ownership before waiting for input close");
+        }
+        if cancel {
+            next.cancel();
         }
         for _ in 0..32 {
             assert!(!transport.retired[0].finished());
@@ -208,16 +241,20 @@ mod retirement_tests {
         }
         closing.release();
         let deadline = Instant::now() + Duration::from_secs(20);
-        while !next.job.ready() {
-            assert!(Instant::now() < deadline);
-            std::thread::yield_now();
+        if !cancel {
+            while !next.job.ready() {
+                assert!(Instant::now() < deadline, "{held:?}");
+                std::thread::yield_now();
+            }
+            assert_eq!(connected.load(Ordering::SeqCst), 1);
+            next.cancel();
         }
-        assert_eq!(connected.load(Ordering::SeqCst), 1);
-        next.cancel();
         while !next.job.finished() {
-            assert!(Instant::now() < deadline);
+            assert!(Instant::now() < deadline, "{held:?} cleanup");
             std::thread::yield_now();
         }
+        assert!(transport.retired[0].done.load(Ordering::Acquire));
+        assert_eq!(connected.load(Ordering::SeqCst), usize::from(!cancel));
     }
 }
 

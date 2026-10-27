@@ -28,6 +28,27 @@ pub(crate) struct Opening {
     work: crate::background::Job<(DeviceInput, Option<String>)>,
 }
 
+/// Completion retained after a stopped host releases both engine rings.
+pub struct InputRetirement {
+    jobs: Vec<crate::background::Job<(DeviceInput, Option<String>)>>,
+    closed: Option<Arc<AtomicBool>>,
+}
+impl InputRetirement {
+    pub fn finished(&mut self) -> bool {
+        resources_retired(&mut self.jobs, &self.closed)
+    }
+}
+fn resources_retired(
+    jobs: &mut Vec<crate::background::Job<(DeviceInput, Option<String>)>>,
+    closed: &Option<Arc<AtomicBool>>,
+) -> bool {
+    jobs.retain(|job| !job.finished());
+    jobs.is_empty()
+        && closed
+            .as_ref()
+            .is_none_or(|done| done.load(Ordering::Acquire))
+}
+
 struct TrackedInput {
     input: Option<Box<dyn AudioInput>>,
     done: Arc<AtomicBool>,
@@ -125,20 +146,21 @@ impl SessionHost {
             self.input_retiring.push(opening.work);
         }
     }
-    /// Cancel pending opens and observe all actual input releases without waiting.
-    /// Player retirement keeps this host until it returns true, so a new host
-    /// cannot overtake an old driver's late connection.
-    pub fn retire_inputs(&mut self) -> bool {
+    /// Worker-only, after stopping/dropping the output and engine. Release the
+    /// controller's command and garbage rings BEFORE waiting for input tokens:
+    /// either ring can still own the input whose close will signal that token.
+    /// Only cancellation/jobs/tokens survive; ordinary poll must not start work.
+    pub fn retire_inputs(mut self) -> InputRetirement {
         self.cancel_input_open();
-        self.input_resources_retired()
+        let pending = InputRetirement {
+            jobs: std::mem::take(&mut self.input_retiring),
+            closed: self.input_closed.take(),
+        };
+        drop(self);
+        pending
     }
     fn input_resources_retired(&mut self) -> bool {
-        self.input_retiring.retain(|job| !job.finished());
-        self.input_retiring.is_empty()
-            && self
-                .input_closed
-                .as_ref()
-                .is_none_or(|done| done.load(Ordering::Acquire))
+        resources_retired(&mut self.input_retiring, &self.input_closed)
     }
     pub(crate) fn input_retirement_ready(&mut self) -> bool {
         if self.input_close_requested {
