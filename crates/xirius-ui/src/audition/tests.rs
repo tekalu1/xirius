@@ -200,8 +200,13 @@ fn review_replacing_or_losing_an_engine_cancels_its_preview_port() {
 struct ReviewStream {
     out: Option<xirius_session::output::SilentOutput>,
     held: Arc<std::sync::atomic::AtomicUsize>,
-    close: Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>,
+    close: Option<ReviewClose>,
 }
+type ReviewClose = (
+    std::sync::mpsc::Sender<()>,
+    std::sync::mpsc::Receiver<()>,
+    std::sync::mpsc::Sender<()>,
+);
 struct ReviewRelease(Option<std::sync::mpsc::Sender<()>>);
 impl Drop for ReviewRelease {
     fn drop(&mut self) {
@@ -218,12 +223,16 @@ impl xirius_session::output::SharedStream for ReviewStream {
         self.out.as_ref().unwrap().lost()
     }
     fn stop(mut self: Box<Self>) -> Option<xirius_engine::AudioEngine> {
-        if let Some((began, go)) = self.close.take() {
+        let closed = self.close.take().map(|(began, go, closed)| {
             began.send(()).unwrap();
             go.recv_timeout(Duration::from_secs(20)).unwrap();
-        }
+            closed
+        });
         self.out.take();
         self.held.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        if let Some(closed) = closed {
+            let _ = closed.send(());
+        }
         None
     }
 }
@@ -232,15 +241,28 @@ impl xirius_session::output::SharedStream for ReviewStream {
 fn review_shared_preview_releases_before_exclusive_output_opens() {
     use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
     use xirius_session::output::{DeviceOutput, Drivers, Output, Refused, SilentOutput};
-    for (ended, windowed) in [(false, false), (true, false), (false, true), (true, true)] {
+    for (ended, windowed, preview_first) in
+        [(false, false), (true, false), (false, true), (true, true)]
+            .into_iter()
+            .flat_map(|(ended, windowed)| [false, true].map(|first| (ended, windowed, first)))
+    {
         close();
         let (_tmp, top) = place("shared-release");
         let held = Arc::new(AtomicUsize::new(0));
         let accepted = Arc::new(AtomicUsize::new(0));
         let (began, closing) = std::sync::mpsc::channel();
         let (go, proceed) = std::sync::mpsc::channel();
-        let close_gate = Arc::new(Mutex::new(Some((began, proceed))));
+        let (closed, preview_closed) = std::sync::mpsc::channel();
+        let (song_began, song_closing) = std::sync::mpsc::channel();
+        let (song_go, song_proceed) = std::sync::mpsc::channel();
+        let (song_closed_tx, song_closed) = std::sync::mpsc::channel();
+        let close_gate = Arc::new(Mutex::new(std::collections::VecDeque::from([
+            (song_began, song_proceed, song_closed_tx),
+            (began, proceed, closed),
+        ])));
         let mut release_close = ReviewRelease(Some(go));
+        let mut release_song = ReviewRelease(Some(song_go));
+        let attempted = Arc::new(AtomicUsize::new(0));
         let mut s = studio(OutputMode::Device, &top);
         if windowed {
             s.transport.bind_window();
@@ -250,29 +272,29 @@ fn review_shared_preview_releases_before_exclusive_output_opens() {
             .set("audio.driver", &serde_json::json!("wasapi-shared"))
             .unwrap();
         let mut drivers = Drivers::system();
+        drivers.devices = Arc::new(Vec::new);
         let h = held.clone();
         let close_gate = close_gate.clone();
         drivers.shared_out = Arc::new(move |audio, _, _| {
             let h = h.clone();
-            let close_gate = close_gate.clone();
+            let Some(close) = close_gate.lock().unwrap().pop_front() else {
+                return Err("unexpected shared fallback".into());
+            };
             DeviceOutput::open_with(audio, move |audio| {
-                let previous = h.fetch_add(1, SeqCst);
-                let close = if previous == 1 {
-                    close_gate.lock().unwrap().take()
-                } else {
-                    None
-                };
+                h.fetch_add(1, SeqCst);
                 Ok(Box::new(ReviewStream {
                     out: Some(SilentOutput::start(audio, true)),
                     held: h,
-                    close,
+                    close: Some(close),
                 }))
             })
             .map(Output::Device)
         });
         let h = held.clone();
         let accepted_out = accepted.clone();
+        let attempts = attempted.clone();
         drivers.exclusive_out = Some(Arc::new(move |audio, _, _| {
+            attempts.fetch_add(1, SeqCst);
             if h.load(SeqCst) != 0 {
                 return Err(Refused {
                     error: "held by shared preview".into(),
@@ -306,6 +328,7 @@ fn review_shared_preview_releases_before_exclusive_output_opens() {
         let p = s.project();
         s.transport.configure_io(&p, None, prefs).unwrap();
         closing.recv_timeout(GUARD).unwrap();
+        song_closing.recv_timeout(GUARD).unwrap();
         assert!(
             !s.transport.is_live(),
             "the new engine must wait for output close acknowledgement"
@@ -315,7 +338,33 @@ fn review_shared_preview_releases_before_exclusive_output_opens() {
             s.poll_device();
             assert_eq!(accepted.load(SeqCst), 0);
         }
-        release_close.0.take().unwrap().send(()).unwrap();
+        // Release only one output. The other is still held by an actual close gate.
+        if preview_first {
+            release_close.0.take().unwrap().send(()).unwrap();
+            preview_closed.recv_timeout(GUARD).unwrap();
+            let end = Instant::now() + GUARD;
+            while !release_output_ready() {
+                assert!(Instant::now() < end, "preview acknowledgement watchdog");
+                std::thread::yield_now();
+            }
+        } else {
+            release_song.0.take().unwrap().send(()).unwrap();
+            song_closed.recv_timeout(GUARD).unwrap();
+        }
+        for _ in 0..20 {
+            s.poll_preparing();
+            s.poll_device();
+            assert_eq!(
+                attempted.load(SeqCst),
+                0,
+                "opened before both outputs closed: ended={ended}, windowed={windowed}, preview_first={preview_first}"
+            );
+        }
+        if preview_first {
+            release_song.0.take().unwrap().send(()).unwrap();
+        } else {
+            release_close.0.take().unwrap().send(()).unwrap();
+        }
         let end = Instant::now() + GUARD;
         while !s.transport.is_live() {
             assert!(Instant::now() < end);
@@ -326,7 +375,12 @@ fn review_shared_preview_releases_before_exclusive_output_opens() {
         assert_eq!(
             accepted.load(SeqCst),
             1,
-            "the shared audition prevented exclusive open"
+            "the shared audition prevented exclusive open: ended={ended}, windowed={windowed}, preview_first={preview_first}"
+        );
+        assert_eq!(
+            attempted.load(SeqCst),
+            1,
+            "one exclusive attempt after both close acknowledgements"
         );
         assert!(
             s.transport.take_driver_notice().is_none(),

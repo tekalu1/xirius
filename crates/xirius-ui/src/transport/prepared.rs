@@ -85,6 +85,11 @@ impl Retiring {
     pub fn finished(&self) -> bool {
         self.job.poll().is_some() || self.job.finished()
     }
+    /// The same release acknowledgement consumed by a preparation worker.
+    /// Polling this never waits for output or SDK destruction on the caller.
+    pub fn released(&self) -> bool {
+        self.done.load(Ordering::Acquire)
+    }
 }
 
 #[cfg(test)]

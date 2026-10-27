@@ -460,6 +460,27 @@ fn export_jobs_live_in_the_song_folder_and_outlast_the_server() {
     assert_eq!(done["result"]["path"], flac.display().to_string());
     assert_eq!(&std::fs::read(&flac).unwrap()[..4], b"fLaC");
     assert!(dir.join("exports").join(format!("{id}.json")).exists());
+    // The server publishes memory-only completion without waiting for record I/O.
+    // Store::end writes the final record before releasing this lock. Observe that
+    // actual completion barrier before checking the record from another process.
+    let record_lock = dir.join("exports").join(format!("{id}.lock"));
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        match std::fs::File::open(&record_lock) {
+            Ok(file) => match file.try_lock() {
+                Ok(()) => break,
+                Err(std::fs::TryLockError::WouldBlock) => {}
+                Err(e) => panic!("record lock: {e}"),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
+            Err(e) => panic!("record lock: {e}"),
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "export record completion watchdog"
+        );
+        std::thread::yield_now();
+    }
     let seen = cli(&dir, &["export.status", "--job", &id]);
     assert_eq!(seen["state"], "done", "{seen}");
     assert_eq!(seen["args"]["format"], "flac");

@@ -573,6 +573,14 @@ impl Transport {
                 return Err(PREVIEW_CLOSING.into());
             }
             let at = self.parked;
+            // Initial preparation also creates threaded players for headless
+            // callers. After reconfiguration their old song output can still
+            // be retiring even when the separate preview has acknowledged close.
+            // Match Start::new's barrier without waiting on this caller.
+            if self.mode == OutputMode::Device && self.retired.iter().any(|old| !old.released()) {
+                self.pending_output.get_or_insert((false, at));
+                return Err(PREVIEW_CLOSING.into());
+            }
             if self.mode == OutputMode::None {
                 return Err("オーディオ出力がありません".into());
             }
