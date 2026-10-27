@@ -125,6 +125,14 @@ impl SessionHost {
             self.input_retiring.push(opening.work);
         }
     }
+    /// Cancel pending opens and observe their real destruction without waiting.
+    /// Player retirement keeps this host until it returns true, so a new host
+    /// cannot overtake an old driver's late connection.
+    pub fn retire_input_preparations(&mut self) -> bool {
+        self.cancel_input_open();
+        self.input_retiring.retain(|job| !job.finished());
+        self.input_retiring.is_empty()
+    }
     pub(crate) fn input_retirement_ready(&mut self) -> bool {
         if self.input_close_requested {
             if !self.send(Command::SetInput(None)) {

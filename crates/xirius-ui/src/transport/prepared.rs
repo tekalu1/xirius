@@ -43,13 +43,21 @@ fn retire(player: Player) {
         owners: player.host.plugins().owner_retirements(),
         previous: Vec::new(),
     };
-    let Player { out, host, dir, .. } = player;
+    let Player {
+        out, mut host, dir, ..
+    } = player;
     #[cfg(any(test, feature = "loading-probe"))]
     let _ = xirius_core::io_test::before(
         "prepare_output_stop",
         dir.as_deref().unwrap_or_else(|| std::path::Path::new("")),
     );
     drop(out);
+    // This function is worker-only, as is output/SDK destruction above. The
+    // retirement acknowledgement must include late input opening/close Jobs,
+    // not just destruction of their handles when the old host is dropped.
+    while !host.retire_input_preparations() {
+        std::thread::sleep(Duration::from_millis(2));
+    }
     drop(host);
     drop(dir);
 }
@@ -76,6 +84,105 @@ impl Retiring {
     }
     pub fn finished(&self) -> bool {
         self.job.poll().is_some() || self.job.finished()
+    }
+}
+
+#[cfg(test)]
+mod retirement_tests {
+    use super::*;
+    use std::{
+        sync::{atomic::AtomicUsize, mpsc},
+        time::Instant,
+    };
+    use xirius_engine::record::AudioInput;
+    use xirius_session::output::{DeviceInput, Drivers, SilentOutput};
+
+    #[test]
+    fn the_next_player_waits_for_an_old_hosts_late_input_open_and_actual_close() {
+        let project = Project::new("Fixture");
+        let (mut host, audio, _) = SessionHost::start(&project, HostConfig::default()).unwrap();
+        host.set_windowed();
+        let opening = crate::browser_io_tests::Release::new();
+        let closing = crate::browser_io_tests::Release::new();
+        let open_gate = opening.0.clone();
+        let close_gate = closing.0.clone();
+        let (entered_tx, entered) = mpsc::channel();
+        let (closing_tx, is_closing) = mpsc::channel();
+        struct Input {
+            gate: Arc<(Mutex<bool>, std::sync::Condvar)>,
+            entered: mpsc::Sender<()>,
+        }
+        impl AudioInput for Input {
+            fn read(&mut self, l: &mut [f32], r: &mut [f32]) {
+                l.fill(0.0);
+                r.fill(0.0);
+            }
+            fn close(self: Box<Self>) {
+                self.entered.send(()).unwrap();
+                let held = self.gate.0.lock().unwrap();
+                drop(self.gate.1.wait_while(held, |done| !*done).unwrap());
+            }
+        }
+        let connected = Arc::new(AtomicUsize::new(0));
+        let calls = connected.clone();
+        let drivers = Drivers {
+            exclusive_out: None,
+            exclusive_in: None,
+            devices: Arc::new(Vec::new),
+            shared_out: Arc::new(move |audio, _, _| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(Output::Silent(SilentOutput::start(audio, true)))
+            }),
+            shared_in: Arc::new(move |_, _, _| {
+                entered_tx.send(()).unwrap();
+                let held = open_gate.0.lock().unwrap();
+                drop(open_gate.1.wait_while(held, |done| !*done).unwrap());
+                Ok(DeviceInput::new(
+                    "Fixture".into(),
+                    false,
+                    Arc::new(std::sync::atomic::AtomicU64::new(1)),
+                    Box::new(Input {
+                        gate: close_gate.clone(),
+                        entered: closing_tx.clone(),
+                    }),
+                ))
+            }),
+        };
+        host.drivers = drivers.clone();
+        host.watch_start(xirius_session::record::Input::Device)
+            .unwrap();
+        entered.recv_timeout(Duration::from_secs(20)).unwrap();
+        let mut transport = Transport::new(OutputMode::Device);
+        transport.set_drivers(drivers);
+        transport.retired.push(
+            Retiring::new(Player {
+                threaded: true,
+                host,
+                out: Output::Silent(SilentOutput::start(audio, true)),
+                dir: None,
+            })
+            .unwrap(),
+        );
+        let next = Start::new(&transport, &project, None).unwrap();
+        opening.release();
+        is_closing.recv_timeout(Duration::from_secs(20)).unwrap();
+        for _ in 0..32 {
+            assert!(!transport.retired[0].finished());
+            assert!(!next.job.ready());
+            assert_eq!(connected.load(Ordering::SeqCst), 0);
+        }
+        closing.release();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !next.job.ready() {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(connected.load(Ordering::SeqCst), 1);
+        next.cancel();
+        while !next.job.finished() {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
     }
 }
 
