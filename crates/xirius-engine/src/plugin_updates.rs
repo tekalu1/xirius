@@ -49,6 +49,8 @@ struct Source {
 #[derive(Clone, Debug, Default)]
 pub struct UpdateGate {
     stamp: Stamp,
+    /// Actual editor/SDK observations, never predicted or rejected commands.
+    observed_revision: u64,
     sources: Vec<Source>,
     state_floor: u64,
     value_floor: u64,
@@ -58,6 +60,7 @@ impl UpdateGate {
     pub fn new(stamp: Stamp) -> Self {
         Self {
             stamp,
+            observed_revision: stamp.revision,
             ..Self::default()
         }
     }
@@ -68,6 +71,7 @@ impl UpdateGate {
         let mut next = self.clone();
         if instance != next.stamp.instance {
             next.stamp.revision = 0;
+            next.observed_revision = 0;
         }
         next.stamp.instance = instance;
         next.sources.clear();
@@ -85,6 +89,7 @@ impl UpdateGate {
         next.stamp.instance = instance;
         if instance != self.stamp.instance {
             next.stamp.revision = 0;
+            next.observed_revision = 0;
         }
         next
     }
@@ -94,6 +99,7 @@ impl UpdateGate {
     pub fn remap_instances(&mut self, mut instance: impl FnMut(u64) -> Option<u64>) {
         self.stamp.instance = instance(self.stamp.instance).expect("reopened instance registered");
         self.stamp.revision = 0;
+        self.observed_revision = 0;
         self.sources.retain_mut(|source| {
             if let Some(next) = instance(source.instance) {
                 source.instance = next;
@@ -110,21 +116,38 @@ impl UpdateGate {
             .expect("plugin intent generations exhausted")
     }
     pub fn next_revision(&mut self) -> Stamp {
+        self.advance_revision();
+        self.observed_revision = self.stamp.revision;
+        self.stamp
+    }
+    /// Sending a command advances the receipt fence, not observed editor state.
+    pub fn command_revision(&mut self) -> (Stamp, u64) {
+        self.advance_revision();
+        (self.stamp, self.observed_revision)
+    }
+    fn advance_revision(&mut self) {
         self.stamp.revision = self
             .stamp
             .revision
             .checked_add(1)
             .expect("plugin revision sequence exhausted");
-        self.stamp
     }
     pub fn received(&mut self, source: Stamp) {
         if source.instance == self.stamp.instance {
             self.stamp.revision = self.stamp.revision.max(source.revision);
+            if source.generation == self.stamp.generation {
+                self.observed_revision = self.observed_revision.max(source.revision);
+            }
         }
     }
     /// Map model deltas to a monotonic intent boundary before sending SDK work.
     pub fn explicit(&mut self, generation: u64, replace: bool, keys: &[String]) {
         assert!(generation >= self.stamp.generation);
+        if generation > self.stamp.generation {
+            // New explicit intent supersedes editor activity from older intent,
+            // including the parameter replay following an explicit opaque state.
+            self.observed_revision = 0;
+        }
         self.stamp.generation = generation;
         if replace {
             self.state_floor = generation;
@@ -148,7 +171,7 @@ impl UpdateGate {
         if generation < self.stamp.generation {
             return None;
         }
-        if generation == self.stamp.generation && basis < self.stamp.revision {
+        if generation == self.stamp.generation && basis < self.observed_revision {
             self.stamp.revision = self.stamp.revision.max(revision);
             return None;
         }
@@ -234,6 +257,53 @@ fn names(key: &str, id: u32, title: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn command_sequences_need_actual_observation_but_new_intent_can_replay_its_values() {
+        let mut parent = UpdateGate::new(Stamp {
+            instance: 1,
+            ..Default::default()
+        });
+        let mut endpoint = parent.clone();
+        let edited = endpoint.next_revision();
+        for _ in 0..16 {
+            let (command, basis) = parent.command_revision();
+            assert!(
+                endpoint
+                    .command(
+                        command.generation,
+                        command.revision,
+                        basis,
+                        false,
+                        &["1".into()]
+                    )
+                    .is_none()
+            );
+        }
+        parent.received(edited);
+        let (command, basis) = parent.command_revision();
+        assert!(
+            endpoint
+                .command(0, command.revision, basis, false, &["2".into()])
+                .is_some()
+        );
+        endpoint.next_revision(); // another unreported edit
+        parent.explicit(1, true, &[]);
+        for replace in [true, false, false] {
+            let (command, basis) = parent.command_revision();
+            assert!(
+                endpoint
+                    .command(1, command.revision, basis, replace, &["1".into()])
+                    .is_some()
+            );
+        }
+        endpoint.next_revision(); // actual edit of the new intent blocks blind relays again
+        let (command, basis) = parent.command_revision();
+        assert!(
+            endpoint
+                .command(1, command.revision, basis, false, &["1".into()])
+                .is_none()
+        );
+    }
     #[test]
     fn relay_cannot_overwrite_an_unreported_current_editor_action_but_explicit_intent_wins() {
         let mut owner = UpdateGate::new(Stamp {

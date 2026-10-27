@@ -60,6 +60,149 @@ unsafe extern "C" {
     fn _dup2(from: i32, to: i32) -> i32;
 }
 
+#[cfg(test)]
+mod relay_tests {
+    use super::*;
+    use xirius_engine::plugin_updates::{Stamp, UpdateGate};
+
+    #[test]
+    fn consecutive_relays_leave_an_unreported_real_sdk_edit_intact() {
+        xirius_test_clap::fixture_marker();
+        let root = tempfile::tempdir().unwrap();
+        let dll = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("xirius_test_clap.dll");
+        let bundle = root.path().join("relay.clap");
+        std::fs::copy(dll, &bundle).unwrap();
+        let mut host = Host {
+            out: tempfile::tempfile().unwrap(),
+            modules: HashMap::new(),
+            claps: HashMap::new(),
+            instances: HashMap::new(),
+        };
+        let open = OpenSlot {
+            slot: 1,
+            epoch: 0,
+            generation: 0,
+            revision: 0,
+            shm: String::new(),
+            req: String::new(),
+            done: String::new(),
+            bundle: bundle.to_str().unwrap().into(),
+            class: None,
+            state: None,
+            params: Vec::new(),
+        };
+        let (plugin, _) = host.create(&open).unwrap();
+        let old_state = plugin.get_state().unwrap();
+        let setup = xirius_engine::ProcessSetup {
+            sample_rate: 48_000.0,
+            max_block: 64,
+            mode: xirius_engine::RenderMode::Offline,
+        };
+        let rings = Arc::new(
+            SharedRings::create(
+                &format!("Local\\xirius-relay-sdk-{}", std::process::id()),
+                1024,
+                &setup,
+                64,
+                false,
+            )
+            .unwrap(),
+        );
+        let mut parent = UpdateGate::new(Stamp {
+            instance: 1,
+            ..Default::default()
+        });
+        host.instances.insert(
+            1,
+            Instance {
+                updates: parent.clone(),
+                plugin,
+                editor: None,
+                audio: None,
+                stop: Arc::new(AtomicBool::new(false)),
+                fault: Arc::new(FaultCtl::default()),
+                rings,
+                epoch: 0,
+                capture: None,
+                capture_requests: Vec::new(),
+                note_names: Vec::new(),
+            },
+        );
+        host.instances[&1]
+            .plugin
+            .edit_like_editor(xirius_test_clap::GAIN, &[0.875]);
+        // Host output is retained in a file: the sender cannot observe/acknowledge
+        // the SDK's gestures while it queues an entire sequence of old relays.
+        for n in 0..16 {
+            let (stamp, basis_revision) = parent.command_revision();
+            let message = if n % 2 == 0 {
+                ToHost::SetParam {
+                    slot: 1,
+                    generation: 0,
+                    revision: stamp.revision,
+                    basis_revision,
+                    key: "Gain".into(),
+                    value: 0.25,
+                }
+            } else {
+                ToHost::SetState {
+                    slot: 1,
+                    generation: 0,
+                    revision: stamp.revision,
+                    basis_revision,
+                    state: old_state.clone(),
+                }
+            };
+            host.handle(message);
+            assert_eq!(
+                host.instances[&1]
+                    .plugin
+                    .param_values()
+                    .iter()
+                    .find(|(id, _, _)| *id == xirius_test_clap::GAIN)
+                    .unwrap()
+                    .2,
+                0.875
+            );
+        }
+        parent.explicit(1, true, &[]);
+        let (stamp, basis_revision) = parent.command_revision();
+        host.handle(ToHost::SetState {
+            slot: 1,
+            generation: 1,
+            revision: stamp.revision,
+            basis_revision,
+            state: old_state,
+        });
+        let (stamp, basis_revision) = parent.command_revision();
+        host.handle(ToHost::SetParam {
+            slot: 1,
+            generation: 1,
+            revision: stamp.revision,
+            basis_revision,
+            key: "Gain".into(),
+            value: 0.5,
+        });
+        assert_eq!(
+            host.instances[&1]
+                .plugin
+                .param_values()
+                .iter()
+                .find(|(id, _, _)| *id == xirius_test_clap::GAIN)
+                .unwrap()
+                .2,
+            0.5
+        );
+        for (_, instance) in host.instances.drain() {
+            instance.close();
+        }
+    }
+}
+
 thread_local! {
     /// The instance this thread is calling into: its header and host generation.
     static IN_PLUGIN: Cell<(*const Header, u64)> = const { Cell::new((std::ptr::null(), 0)) };

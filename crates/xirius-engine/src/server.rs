@@ -691,6 +691,37 @@ mod capture_tests {
         }
     }
     #[test]
+    fn consecutive_blind_relays_cannot_cross_an_unreported_target_editor_boundary() {
+        let (server, _link, _, messages) = fixture();
+        let mut endpoint = server.inner.lock().slots[&2].updates.clone();
+        let actual_edit = endpoint.next_revision();
+        for value in [0.5, 0.625, 0.75, 0.875] {
+            late(&server, 1, 0, value);
+        }
+        let mut relays = 0;
+        for message in messages.try_iter() {
+            if let ToHost::SetParam {
+                slot: 2,
+                generation,
+                revision,
+                basis_revision,
+                key,
+                ..
+            } = message
+            {
+                relays += 1;
+                assert!(
+                    endpoint
+                        .command(generation, revision, basis_revision, false, &[key])
+                        .is_none(),
+                    "sending another command cannot acknowledge the held editor notification"
+                );
+            }
+        }
+        assert_eq!(relays, 4);
+        assert_eq!(actual_edit.generation, endpoint.stamp().generation);
+    }
+    #[test]
     fn post_promotion_explicit_values_and_undo_reject_old_and_same_instance_old_generation_notifications()
      {
         for closing in [false, true] {
@@ -1224,8 +1255,7 @@ struct SlotRec {
 }
 impl SlotRec {
     fn parameter_message(&mut self, key: String, value: f64) -> ToHost {
-        let basis_revision = self.updates.stamp().revision;
-        let stamp = self.updates.next_revision();
+        let (stamp, basis_revision) = self.updates.command_revision();
         self.open.revision = stamp.revision;
         ToHost::SetParam {
             slot: self.open.slot,
@@ -1237,8 +1267,7 @@ impl SlotRec {
         }
     }
     fn state_message(&mut self, state: PluginState) -> ToHost {
-        let basis_revision = self.updates.stamp().revision;
-        let stamp = self.updates.next_revision();
+        let (stamp, basis_revision) = self.updates.command_revision();
         self.open.revision = stamp.revision;
         ToHost::SetState {
             slot: self.open.slot,
