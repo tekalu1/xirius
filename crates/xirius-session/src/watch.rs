@@ -125,13 +125,20 @@ impl SessionHost {
             self.input_retiring.push(opening.work);
         }
     }
-    /// Cancel pending opens and observe their real destruction without waiting.
+    /// Cancel pending opens and observe all actual input releases without waiting.
     /// Player retirement keeps this host until it returns true, so a new host
     /// cannot overtake an old driver's late connection.
-    pub fn retire_input_preparations(&mut self) -> bool {
+    pub fn retire_inputs(&mut self) -> bool {
         self.cancel_input_open();
+        self.input_resources_retired()
+    }
+    fn input_resources_retired(&mut self) -> bool {
         self.input_retiring.retain(|job| !job.finished());
         self.input_retiring.is_empty()
+            && self
+                .input_closed
+                .as_ref()
+                .is_none_or(|done| done.load(Ordering::Acquire))
     }
     pub(crate) fn input_retirement_ready(&mut self) -> bool {
         if self.input_close_requested {
@@ -140,12 +147,7 @@ impl SessionHost {
             }
             self.input_close_requested = false;
         }
-        self.input_retiring.retain(|job| !job.finished());
-        self.input_retiring.is_empty()
-            && self
-                .input_closed
-                .as_ref()
-                .is_none_or(|done| done.load(Ordering::Acquire))
+        self.input_resources_retired()
     }
     pub(crate) fn close_input(&mut self) {
         self.input_close_requested = true;

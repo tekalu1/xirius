@@ -107,7 +107,7 @@ impl SharedStream for CpalOutput {
 pub struct DeviceOutput {
     /// What the device said it is, e.g. `Speakers（48000 Hz、2 ch）`.
     pub name: String,
-    stop: Option<mpsc::Sender<()>>,
+    owner: xirius_engine::device_owner::Owner,
     thread: Option<JoinHandle<Option<AudioEngine>>>,
     lost: Lost,
 }
@@ -139,43 +139,46 @@ impl DeviceOutput {
         + Send
         + 'static,
     ) -> Result<DeviceOutput, String> {
+        static OWNERS: xirius_engine::device_owner::Registry =
+            xirius_engine::device_owner::Registry::new();
+        let opening = OWNERS.opening();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<(String, Lost), String>>();
-        let (stop_tx, stop_rx) = mpsc::channel::<()>();
-        let thread = thread::spawn(move || match open(audio) {
-            Ok(o) => {
-                let _ = ready_tx.send(Ok((o.name(), o.lost())));
-                // Dropping the sender (or sending) ends the wait.
-                let _ = stop_rx.recv();
-                o.stop()
-            }
-            Err(e) => {
-                let (e, audio) = *e;
-                let _ = ready_tx.send(Err(e));
-                audio
+        let stop = opening.stop_flag();
+        let finished = opening.completion();
+        let thread = thread::spawn(move || {
+            let _finished = finished;
+            match open(audio) {
+                Ok(o) => {
+                    let _ = ready_tx.send(Ok((o.name(), o.lost())));
+                    xirius_engine::device_owner::wait_closed(&stop);
+                    o.stop()
+                }
+                Err(e) => {
+                    let (e, audio) = *e;
+                    let _ = ready_tx.send(Err(e));
+                    audio
+                }
             }
         });
-        match ready_rx.recv() {
-            Ok(Ok((name, lost))) => Ok(DeviceOutput {
+        let ready = ready_rx
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|_| "オーディオ出力が応答しません".to_string())
+            .and_then(|ready| ready);
+        match opening.accept(ready) {
+            Ok(((name, lost), owner)) => Ok(DeviceOutput {
                 name,
-                stop: Some(stop_tx),
+                owner,
                 thread: Some(thread),
                 lost,
             }),
-            Ok(Err(e)) => {
-                let _ = thread.join();
-                Err(e)
-            }
-            Err(_) => {
-                let _ = thread.join();
-                Err("オーディオ出力のスレッドが停止しました".into())
-            }
+            Err(error) => Err(error),
         }
     }
 }
 
 impl Drop for DeviceOutput {
     fn drop(&mut self) {
-        drop(self.stop.take());
+        self.owner.close();
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }

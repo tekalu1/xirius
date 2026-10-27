@@ -75,8 +75,7 @@ pub fn find_port(name: Option<&str>, ports: &[String]) -> Result<Option<usize>, 
 pub struct MidirInput {
     rings: Vec<Consumer<[u8; 3]>>,
     names: Vec<String>,
-    stop: Arc<AtomicBool>,
-    done: Arc<AtomicBool>,
+    owner: crate::device_owner::Owner,
 }
 
 impl MidirInput {
@@ -138,42 +137,17 @@ impl MidirInput {
 type Rings = Vec<(String, Consumer<[u8; 3]>)>;
 type Ready = Result<Rings, String>;
 
-// Failed readiness attempts remain serialized with later connections. Waiting
-// here is worker-only; no driver is forcibly terminated.
-static ABANDONED: std::sync::Mutex<Vec<Arc<AtomicBool>>> = std::sync::Mutex::new(Vec::new());
-
-pub(crate) struct Finished(pub(crate) Arc<AtomicBool>);
-impl Drop for Finished {
-    fn drop(&mut self) {
-        self.0.store(true, Ordering::Release);
-    }
-}
-pub(crate) fn wait_closed(done: &AtomicBool) {
-    while !done.load(Ordering::Acquire) {
-        std::thread::sleep(Duration::from_millis(2));
-    }
-}
+static OWNERS: crate::device_owner::Registry = crate::device_owner::Registry::new();
 
 fn open_owned<C: 'static>(
     connect: impl FnOnce() -> Result<(C, Rings), String> + Send + 'static,
     close: impl FnOnce(C) + Send + 'static,
     wait: impl FnOnce(&std::sync::mpsc::Receiver<Ready>) -> Ready,
 ) -> Result<MidirInput, String> {
-    // Keep pending entries visible to every concurrent retry, rather than
-    // taking the list and allowing a third opener to overtake its waiter.
-    let pending = ABANDONED.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    for done in pending {
-        wait_closed(&done);
-    }
-    ABANDONED
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .retain(|done| !done.load(Ordering::Acquire));
-    let stop = Arc::new(AtomicBool::new(false));
-    let done = Arc::new(AtomicBool::new(false));
+    let opening = OWNERS.opening();
     let (tx, rx) = std::sync::mpsc::channel();
-    let flag = stop.clone();
-    let finished = Finished(done.clone());
+    let flag = opening.stop_flag();
+    let finished = opening.completion();
     std::thread::Builder::new()
         .name("xirius-midi-in".into())
         .spawn(move || {
@@ -193,25 +167,13 @@ fn open_owned<C: 'static>(
             }
         })
         .map_err(|e| e.to_string())?;
-    match wait(&rx) {
-        Ok(rings) => {
-            let (names, rings) = rings.into_iter().unzip();
-            Ok(MidirInput {
-                rings,
-                names,
-                stop,
-                done,
-            })
-        }
-        Err(error) => {
-            stop.store(true, Ordering::Release);
-            ABANDONED
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push(done);
-            Err(error)
-        }
-    }
+    let (rings, owner) = opening.accept(wait(&rx))?;
+    let (names, rings) = rings.into_iter().unzip();
+    Ok(MidirInput {
+        rings,
+        names,
+        owner,
+    })
 }
 
 /// A channel message of up to three bytes, padded with zeros; `None` for anything else.
@@ -228,12 +190,10 @@ fn channel_message(bytes: &[u8]) -> Option<[u8; 3]> {
 
 impl MidiInput for MidirInput {
     fn closed(&self) -> Option<Arc<AtomicBool>> {
-        Some(self.done.clone())
+        self.owner.closed()
     }
     fn close(self: Box<Self>) {
-        let done = self.done.clone();
-        drop(self);
-        wait_closed(&done);
+        self.owner.close();
     }
 
     fn read(&mut self, frames: usize, f: &mut dyn FnMut(usize, [u8; 3])) {
@@ -255,7 +215,7 @@ impl MidiInput for MidirInput {
 
 impl Drop for MidirInput {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Release);
+        self.owner.request_stop();
     }
 }
 
@@ -291,8 +251,6 @@ mod tests {
         release.send(()).unwrap();
         closing.recv_timeout(Duration::from_secs(20)).unwrap();
         let (retry_tx, retry) = mpsc::channel();
-        let pending = ABANDONED.lock().unwrap().clone();
-        assert!(pending.iter().any(|done| !done.load(Ordering::Acquire)));
         let work = std::thread::spawn(move || {
             open_owned(
                 move || {
@@ -307,7 +265,6 @@ mod tests {
         finish.send(()).unwrap();
         let input = work.join().unwrap().unwrap();
         retry.recv_timeout(Duration::from_secs(20)).unwrap();
-        assert!(pending.iter().all(|done| done.load(Ordering::Acquire)));
         let done = input.closed().unwrap();
         Box::new(input).close();
         assert!(done.load(Ordering::Acquire));

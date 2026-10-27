@@ -9,6 +9,7 @@ pub mod click;
 pub mod control;
 pub mod crash;
 pub mod device;
+pub mod device_owner;
 pub mod devices;
 pub mod disk_stream;
 pub mod engine;

@@ -413,9 +413,8 @@ impl MidiInput for MidiFeed {
 /// every channel's frames into a ring the audio thread reads; frames the audio thread finds
 /// missing are silence.
 pub struct CpalInput {
-    done: Option<Arc<AtomicBool>>,
+    owner: crate::device_owner::Owner,
     rx: Consumer<f32>,
-    stop: Arc<AtomicBool>,
     pub name: String,
     pub channels: u16,
     /// Capture time to callback time, as the device reports it ([`crate::stats::Steady`] over the
@@ -465,7 +464,7 @@ impl Heard {
     }
 }
 
-static ABANDONED_INPUTS: std::sync::Mutex<Vec<Arc<AtomicBool>>> = std::sync::Mutex::new(Vec::new());
+static INPUT_OWNERS: crate::device_owner::Registry = crate::device_owner::Registry::new();
 
 impl CpalInput {
     /// Opens the default input at `sample_rate` (the engine's; the device must run at it).
@@ -479,21 +478,10 @@ impl CpalInput {
         buffer: Option<u32>,
     ) -> Result<CpalInput, String> {
         use cpal::traits::{DeviceTrait, StreamTrait};
-        let pending = ABANDONED_INPUTS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        for done in pending {
-            crate::midi_in::wait_closed(&done);
-        }
-        ABANDONED_INPUTS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|done| !done.load(Ordering::Acquire));
-        let done = Arc::new(AtomicBool::new(false));
-        let finished = crate::midi_in::Finished(done.clone());
+        let opening = INPUT_OWNERS.opening();
+        let finished = opening.completion();
         let wanted = name.to_string();
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = opening.stop_flag();
         let latency_ns = Arc::new(AtomicU64::new(0));
         let lost = Lost::default();
         // Callbacks so far: the thread below watches it move.
@@ -593,13 +581,14 @@ impl CpalInput {
                 }
             })
             .map_err(|e| format!("入力のスレッドを作成できません: {e}"))?;
-        let (name, channels, rx) = ready_rx
+        let ready = ready_rx
             .recv_timeout(Duration::from_secs(5))
-            .map_err(|_| "入力デバイスが応答しません".to_string())??;
+            .map_err(|_| "入力デバイスが応答しません".to_string())
+            .and_then(|ready| ready);
+        let ((name, channels, rx), owner) = opening.accept(ready)?;
         Ok(CpalInput {
-            done: Some(done),
+            owner,
             rx,
-            stop,
             name,
             channels,
             latency_ns,
@@ -619,9 +608,8 @@ impl CpalInput {
         lost: Lost,
     ) -> CpalInput {
         CpalInput {
-            done: None,
+            owner: crate::device_owner::Owner::external(stop),
             rx,
-            stop,
             name,
             channels,
             latency_ns,
@@ -636,7 +624,7 @@ impl CpalInput {
     }
 
     pub(crate) fn stop_now(&self) {
-        self.stop.store(true, Ordering::Release);
+        self.owner.request_stop();
     }
 
     /// A handle that reads the device's input latency after the input went to the engine.
@@ -664,11 +652,7 @@ impl CpalInput {
 
 impl AudioInput for CpalInput {
     fn close(self: Box<Self>) {
-        let done = self.done.clone();
-        drop(self);
-        if let Some(done) = done {
-            crate::midi_in::wait_closed(&done);
-        }
+        self.owner.close();
     }
 
     fn read(&mut self, left: &mut [f32], right: &mut [f32]) {
@@ -716,7 +700,7 @@ impl AudioInput for CpalInput {
 
 impl Drop for CpalInput {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Release);
+        self.owner.request_stop();
     }
 }
 
@@ -737,11 +721,11 @@ mod input_close_tests {
                 Lost::default(),
             );
             let done = Arc::new(AtomicBool::new(false));
-            input.done = Some(done.clone());
+            input.owner.done = Some(done.clone());
             (input, done)
         };
         let (input, done) = make();
-        let stop = input.stop.clone();
+        let stop = input.owner.stop.clone();
         drop(input);
         assert!(stop.load(Ordering::Acquire));
         assert!(
@@ -750,11 +734,11 @@ mod input_close_tests {
         );
 
         let (input, done) = make();
-        let stop = input.stop.clone();
+        let stop = input.owner.stop.clone();
         let (stopped_tx, stopped) = std::sync::mpsc::channel();
         let (release, close) = std::sync::mpsc::channel();
         let owner = std::thread::spawn(move || {
-            crate::midi_in::wait_closed(&stop);
+            crate::device_owner::wait_closed(&stop);
             stopped_tx.send(()).unwrap();
             close.recv_timeout(Duration::from_secs(20)).unwrap();
             done.store(true, Ordering::Release);

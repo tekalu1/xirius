@@ -8,7 +8,6 @@
 //! tests and opens nothing.
 
 use std::collections::VecDeque;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -94,8 +93,7 @@ struct Timed {
 pub struct MidirOutput {
     names: Vec<String>,
     ring: Producer<Timed>,
-    stop: Arc<AtomicBool>,
-    done: Arc<AtomicBool>,
+    owner: crate::device_owner::Owner,
     rate: f64,
     /// A full ring: messages that were not sent.
     dropped: u64,
@@ -114,22 +112,13 @@ impl MidirOutput {
     /// Opens the ports `wanted` names, for blocks of a song at `rate`. A name no port has is
     /// left out of [`MidiOutput::ports`]; the caller says so.
     pub fn open(wanted: &[String], rate: f64) -> Result<MidirOutput, String> {
-        let pending = ABANDONED.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        for done in pending {
-            crate::midi_in::wait_closed(&done);
-        }
-        ABANDONED
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|done| !done.load(Ordering::Acquire));
+        let opening = OWNERS.opening();
         let wanted = wanted.to_vec();
-        let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = RingBuffer::<Timed>::new(RING);
         type Ready = Result<Vec<String>, String>;
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Ready>();
-        let flag = stop.clone();
-        let done = Arc::new(AtomicBool::new(false));
-        let finished = crate::midi_in::Finished(done.clone());
+        let flag = opening.stop_flag();
+        let finished = opening.completion();
         std::thread::Builder::new()
             .name("xirius-midi-out".into())
             .spawn(move || {
@@ -172,14 +161,15 @@ impl MidirOutput {
                 }
             })
             .map_err(|e| format!("MIDI 出力のスレッドを作成できません: {e}"))?;
-        let names = ready_rx
+        let ready = ready_rx
             .recv_timeout(Duration::from_secs(5))
-            .map_err(|_| "MIDI 出力デバイスが応答しません".to_string())??;
+            .map_err(|_| "MIDI 出力デバイスが応答しません".to_string())
+            .and_then(|ready| ready);
+        let (names, owner) = opening.accept(ready)?;
         Ok(MidirOutput {
             names,
             ring: tx,
-            stop,
-            done,
+            owner,
             rate,
             dropped: 0,
         })
@@ -251,13 +241,11 @@ impl Drop for Resolution {
     }
 }
 
-static ABANDONED: std::sync::Mutex<Vec<Arc<AtomicBool>>> = std::sync::Mutex::new(Vec::new());
+static OWNERS: crate::device_owner::Registry = crate::device_owner::Registry::new();
 
 impl MidiOutput for MidirOutput {
     fn close(self: Box<Self>) {
-        let done = self.done.clone();
-        drop(self);
-        crate::midi_in::wait_closed(&done);
+        self.owner.close();
     }
 
     fn ports(&self) -> Vec<String> {
@@ -282,7 +270,7 @@ impl MidiOutput for MidirOutput {
 
 impl Drop for MidirOutput {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Release);
+        self.owner.request_stop();
     }
 }
 

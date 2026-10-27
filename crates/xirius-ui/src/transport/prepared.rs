@@ -55,7 +55,7 @@ fn retire(player: Player) {
     // This function is worker-only, as is output/SDK destruction above. The
     // retirement acknowledgement must include late input opening/close Jobs,
     // not just destruction of their handles when the old host is dropped.
-    while !host.retire_input_preparations() {
+    while !host.retire_inputs() {
         std::thread::sleep(Duration::from_millis(2));
     }
     drop(host);
@@ -99,6 +99,11 @@ mod retirement_tests {
 
     #[test]
     fn the_next_player_waits_for_an_old_hosts_late_input_open_and_actual_close() {
+        for pending_open in [true, false] {
+            retiring_input_case(pending_open);
+        }
+    }
+    fn retiring_input_case(pending_open: bool) {
         let project = Project::new("Fixture");
         let (mut host, audio, _) = SessionHost::start(&project, HostConfig::default()).unwrap();
         host.set_windowed();
@@ -152,20 +157,50 @@ mod retirement_tests {
         host.watch_start(xirius_session::record::Input::Device)
             .unwrap();
         entered.recv_timeout(Duration::from_secs(20)).unwrap();
+        if !pending_open {
+            opening.release();
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while host
+                .watch_start(xirius_session::record::Input::Device)
+                .unwrap()
+                == 0
+            {
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+        }
+        let out = Output::Silent(SilentOutput::start(audio, true));
+        if !pending_open {
+            host.watch_stop();
+            let deadline = Instant::now() + Duration::from_secs(20);
+            loop {
+                host.poll();
+                if is_closing.try_recv().is_ok() {
+                    break;
+                }
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            // The resource has left the engine for a separate retire worker.
+            // The exact retirement predicate must still reject completion.
+            assert!(!host.retire_inputs());
+        }
         let mut transport = Transport::new(OutputMode::Device);
         transport.set_drivers(drivers);
         transport.retired.push(
             Retiring::new(Player {
                 threaded: true,
                 host,
-                out: Output::Silent(SilentOutput::start(audio, true)),
+                out,
                 dir: None,
             })
             .unwrap(),
         );
         let next = Start::new(&transport, &project, None).unwrap();
-        opening.release();
-        is_closing.recv_timeout(Duration::from_secs(20)).unwrap();
+        if pending_open {
+            opening.release();
+            is_closing.recv_timeout(Duration::from_secs(20)).unwrap();
+        }
         for _ in 0..32 {
             assert!(!transport.retired[0].finished());
             assert!(!next.job.ready());
