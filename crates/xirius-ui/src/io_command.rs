@@ -193,6 +193,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut s = Studio::new(Song::empty());
         s.song.settings().lock().unwrap().dir = Some(root.path().to_owned());
+        std::fs::write(root.path().join("prefs.toml"), "[ui]\ntheme = 'dark'\n").unwrap();
         s.bind_window_io();
         let release = Release::new();
         let gate = release.0.clone();

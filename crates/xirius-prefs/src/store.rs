@@ -453,6 +453,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut settings = Settings::open(root.path());
         settings.defer_window_reads();
+        // The held read must contain a real external change, rather than an
+        // unchanged snapshot which would be ignored even without revision checks.
+        std::fs::write(root.path().join("prefs.toml"), "[ui]\ntheme = 'dark'\n").unwrap();
         let reads = settings.reads.clone().unwrap();
         let gate = Arc::new((Mutex::new(false), Condvar::new()));
         struct Release(Arc<(Mutex<bool>, Condvar)>);
@@ -496,7 +499,12 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::yield_now();
         }
-        assert!(reads.reply.lock().unwrap().is_some());
+        {
+            let reply = reads.reply.lock().unwrap();
+            let (base, old) = reply.as_ref().unwrap();
+            assert_ne!(old.rev, *base);
+            assert_eq!(old.prefs.text("ui.theme"), "dark");
+        }
         settings.reload_if_changed();
         assert_eq!(settings.prefs.text("ui.theme"), "light");
     }

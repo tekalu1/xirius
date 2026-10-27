@@ -572,6 +572,7 @@ pub fn argument(name: &str) -> &str {
         "into" | "bus" => "送り先",
         "format" => "形式",
         "path" | "file" | "files" | "source" => "ファイル",
+        "text" => "内容",
         "new_path" => "新しい場所",
         "dir" => "フォルダー",
         "sample_rate" | "rate" => "サンプルレート",

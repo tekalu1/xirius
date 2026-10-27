@@ -2864,6 +2864,7 @@ MIDI ファイルとして書き出す…
 | `path` | — | `{"type":"string"}` | 読み込むファイル（Studio Pro は省略時に利用者の user.keyscheme） |
 | `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
 | `source` | 必須 | `{"enum":["studio-pro","toml"],"type":"string"}` | 読み込む形式 |
+| `text` | — | `{"type":"string"}` | 読み込む TOML の内容（path と同時には指定できません） |
 | `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
 
 ## `keymap.preset`
