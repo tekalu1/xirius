@@ -135,14 +135,45 @@ fn a_window_never_waits_for_midi_open_and_rejects_the_superseded_port_result() {
     rig.host.set_windowed();
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
+    struct Closing {
+        entered: mpsc::Sender<()>,
+        release: mpsc::Receiver<()>,
+    }
+    impl MidiOutput for Closing {
+        fn ports(&self) -> Vec<String> {
+            PORTS.iter().map(|s| s.to_string()).collect()
+        }
+        fn port_index(&self, name: &str) -> Option<usize> {
+            PORTS.iter().position(|p| *p == name)
+        }
+        fn send(&mut self, _: usize, _: usize, _: [u8; 3]) {}
+    }
+    impl Drop for Closing {
+        fn drop(&mut self) {
+            let _ = self.entered.send(());
+            let _ = self.release.recv_timeout(Duration::from_secs(30));
+        }
+    }
+    let (closing_tx, closing_rx) = mpsc::channel();
+    let (closed_tx, closed_rx) = mpsc::channel();
+    let mut close_gate = Some(closed_rx);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let called = calls.clone();
     let mut first = true;
     assert!(
         rig.host
             .set_midi_out(Some(Box::new(move |_, _| {
+                called.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 if first {
                     first = false;
                     entered_tx.send(std::thread::current().id()).unwrap();
                     release_rx.recv().unwrap();
+                }
+                if let Some(release) = close_gate.take() {
+                    return Ok(Box::new(Closing {
+                        entered: closing_tx.clone(),
+                        release,
+                    }));
                 }
                 Ok(Box::new(MockMidiOut::new(PORTS).0))
             })))
@@ -169,6 +200,22 @@ fn a_window_never_waits_for_midi_open_and_rejects_the_superseded_port_result() {
         std::thread::yield_now();
     }
     release_tx.send(()).unwrap();
+    while closing_rx.try_recv().is_err() {
+        rig.host.poll();
+        rig.audio.render(&mut [0.0; 512], 2);
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    for _ in 0..32 {
+        rig.host.poll();
+        rig.audio.render(&mut [0.0; 512], 2);
+    }
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "old port still held"
+    );
+    closed_tx.send(()).unwrap();
     while rig.host.midi_out_ports() != ["Loop B"] {
         rig.host.poll();
         rig.audio.render(&mut [0.0; 512], 2);

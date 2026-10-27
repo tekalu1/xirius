@@ -76,6 +76,7 @@ pub struct MidirInput {
     rings: Vec<Consumer<[u8; 3]>>,
     names: Vec<String>,
     stop: Arc<AtomicBool>,
+    done: Arc<AtomicBool>,
 }
 
 impl MidirInput {
@@ -83,71 +84,133 @@ impl MidirInput {
     /// `all`. An error when there is no port to connect to.
     pub fn open(name: Option<&str>) -> Result<MidirInput, String> {
         let wanted = name.map(str::to_string);
-        let stop = Arc::new(AtomicBool::new(false));
-        type Ready = Result<Vec<(String, Consumer<[u8; 3]>)>, String>;
-        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Ready>();
-        let flag = stop.clone();
-        std::thread::Builder::new()
-            .name("xirius-midi-in".into())
-            .spawn(move || {
-                let opened = (|| {
-                    let names = midi_ports()?;
-                    if names.is_empty() {
-                        return Err("MIDI 入力デバイスが見つかりません".to_string());
-                    }
-                    let picked: Vec<usize> = match find_port(wanted.as_deref(), &names)? {
-                        Some(i) => vec![i],
-                        None => (0..names.len()).collect(),
-                    };
-                    let mut conns = Vec::new();
-                    let mut rings = Vec::new();
-                    for i in picked {
-                        // A connection takes its midir::MidiInput, so each port has its own.
-                        let midi = midir::MidiInput::new(CLIENT)
-                            .map_err(|e| format!("MIDI 入力を初期化できません: {e}"))?;
-                        let ports = midi.ports();
-                        let port = ports
-                            .get(i)
-                            .ok_or_else(|| format!("MIDI 入力「{}」が見つかりません", names[i]))?;
-                        let (tx, rx) = RingBuffer::<[u8; 3]>::new(RING);
-                        let conn = midi
-                            .connect(
-                                port,
-                                "xirius-in",
-                                |_stamp, bytes: &[u8], tx: &mut rtrb::Producer<[u8; 3]>| {
-                                    if let Some(msg) = channel_message(bytes) {
-                                        let _ = tx.push(msg);
-                                    }
-                                },
-                                tx,
-                            )
-                            .map_err(|e| format!("MIDI 入力「{}」を開けません: {e}", names[i]))?;
-                        conns.push(conn);
-                        rings.push((names[i].clone(), rx));
-                    }
-                    Ok((conns, rings))
-                })();
-                match opened {
-                    Ok((conns, rings)) => {
-                        let _ = ready_tx.send(Ok(rings));
-                        while !flag.load(Ordering::Acquire) {
-                            std::thread::sleep(Duration::from_millis(20));
-                        }
-                        for c in conns {
-                            c.close();
-                        }
-                    }
-                    Err(e) => {
-                        let _ = ready_tx.send(Err(e));
-                    }
+        open_owned(
+            move || {
+                let names = midi_ports()?;
+                if names.is_empty() {
+                    return Err("MIDI 入力デバイスが見つかりません".to_string());
                 }
+                let picked: Vec<usize> = match find_port(wanted.as_deref(), &names)? {
+                    Some(i) => vec![i],
+                    None => (0..names.len()).collect(),
+                };
+                let mut conns = Vec::new();
+                let mut rings = Vec::new();
+                for i in picked {
+                    // A connection takes its midir::MidiInput, so each port has its own.
+                    let midi = midir::MidiInput::new(CLIENT)
+                        .map_err(|e| format!("MIDI 入力を初期化できません: {e}"))?;
+                    let ports = midi.ports();
+                    let port = ports
+                        .get(i)
+                        .ok_or_else(|| format!("MIDI 入力「{}」が見つかりません", names[i]))?;
+                    let (tx, rx) = RingBuffer::<[u8; 3]>::new(RING);
+                    let conn = midi
+                        .connect(
+                            port,
+                            "xirius-in",
+                            |_stamp, bytes: &[u8], tx: &mut rtrb::Producer<[u8; 3]>| {
+                                if let Some(msg) = channel_message(bytes) {
+                                    let _ = tx.push(msg);
+                                }
+                            },
+                            tx,
+                        )
+                        .map_err(|e| format!("MIDI 入力「{}」を開けません: {e}", names[i]))?;
+                    conns.push(conn);
+                    rings.push((names[i].clone(), rx));
+                }
+                Ok((conns, rings))
+            },
+            |conns| {
+                for c in conns {
+                    c.close();
+                }
+            },
+            |rx| {
+                rx.recv_timeout(Duration::from_secs(5))
+                    .map_err(|e| e.to_string())?
+            },
+        )
+    }
+}
+
+type Rings = Vec<(String, Consumer<[u8; 3]>)>;
+type Ready = Result<Rings, String>;
+
+// Failed readiness attempts remain serialized with later connections. Waiting
+// here is worker-only; no driver is forcibly terminated.
+static ABANDONED: std::sync::Mutex<Vec<Arc<AtomicBool>>> = std::sync::Mutex::new(Vec::new());
+
+pub(crate) struct Finished(pub(crate) Arc<AtomicBool>);
+impl Drop for Finished {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+pub(crate) fn wait_closed(done: &AtomicBool) {
+    while !done.load(Ordering::Acquire) {
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+fn open_owned<C: 'static>(
+    connect: impl FnOnce() -> Result<(C, Rings), String> + Send + 'static,
+    close: impl FnOnce(C) + Send + 'static,
+    wait: impl FnOnce(&std::sync::mpsc::Receiver<Ready>) -> Ready,
+) -> Result<MidirInput, String> {
+    // Keep pending entries visible to every concurrent retry, rather than
+    // taking the list and allowing a third opener to overtake its waiter.
+    let pending = ABANDONED.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    for done in pending {
+        wait_closed(&done);
+    }
+    ABANDONED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|done| !done.load(Ordering::Acquire));
+    let stop = Arc::new(AtomicBool::new(false));
+    let done = Arc::new(AtomicBool::new(false));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let flag = stop.clone();
+    let finished = Finished(done.clone());
+    std::thread::Builder::new()
+        .name("xirius-midi-in".into())
+        .spawn(move || {
+            let _finished = finished;
+            match connect() {
+                Ok((connections, rings)) => {
+                    if tx.send(Ok(rings)).is_ok() {
+                        while !flag.load(Ordering::Acquire) {
+                            std::thread::sleep(Duration::from_millis(2));
+                        }
+                    }
+                    close(connections);
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e));
+                }
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    match wait(&rx) {
+        Ok(rings) => {
+            let (names, rings) = rings.into_iter().unzip();
+            Ok(MidirInput {
+                rings,
+                names,
+                stop,
+                done,
             })
-            .map_err(|e| format!("MIDI 入力のスレッドを作成できません: {e}"))?;
-        let rings = ready_rx
-            .recv_timeout(Duration::from_secs(5))
-            .map_err(|_| "MIDI 入力デバイスが応答しません".to_string())??;
-        let (names, rings) = rings.into_iter().unzip();
-        Ok(MidirInput { rings, names, stop })
+        }
+        Err(error) => {
+            stop.store(true, Ordering::Release);
+            ABANDONED
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(done);
+            Err(error)
+        }
     }
 }
 
@@ -164,6 +227,15 @@ fn channel_message(bytes: &[u8]) -> Option<[u8; 3]> {
 }
 
 impl MidiInput for MidirInput {
+    fn closed(&self) -> Option<Arc<AtomicBool>> {
+        Some(self.done.clone())
+    }
+    fn close(self: Box<Self>) {
+        let done = self.done.clone();
+        drop(self);
+        wait_closed(&done);
+    }
+
     fn read(&mut self, frames: usize, f: &mut dyn FnMut(usize, [u8; 3])) {
         self.read_ports(frames, &mut |offset, _, msg| f(offset, msg));
     }
@@ -190,6 +262,56 @@ impl Drop for MidirInput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn abandoned_readiness_closes_late_connection_before_a_retry_can_connect() {
+        use std::sync::mpsc;
+        let (entered_tx, entered) = mpsc::channel();
+        let (release, connect) = mpsc::channel();
+        let (closing_tx, closing) = mpsc::channel();
+        let (finish, close) = mpsc::channel();
+        let failed = open_owned(
+            move || {
+                entered_tx.send(()).unwrap();
+                connect.recv_timeout(Duration::from_secs(20)).unwrap();
+                // The resource is created on its owner and need not be Send.
+                Ok((std::rc::Rc::new(()), Vec::new()))
+            },
+            move |resource| {
+                closing_tx.send(()).unwrap();
+                close.recv_timeout(Duration::from_secs(20)).unwrap();
+                drop(resource);
+            },
+            |_| {
+                entered.recv_timeout(Duration::from_secs(20)).unwrap();
+                Err("readiness abandoned".into())
+            },
+        );
+        assert!(failed.is_err());
+        release.send(()).unwrap();
+        closing.recv_timeout(Duration::from_secs(20)).unwrap();
+        let (retry_tx, retry) = mpsc::channel();
+        let pending = ABANDONED.lock().unwrap().clone();
+        assert!(pending.iter().any(|done| !done.load(Ordering::Acquire)));
+        let work = std::thread::spawn(move || {
+            open_owned(
+                move || {
+                    retry_tx.send(()).unwrap();
+                    Ok(((), Vec::new()))
+                },
+                |_| {},
+                |rx| rx.recv_timeout(Duration::from_secs(20)).unwrap(),
+            )
+        });
+        assert!(retry.try_recv().is_err());
+        finish.send(()).unwrap();
+        let input = work.join().unwrap().unwrap();
+        retry.recv_timeout(Duration::from_secs(20)).unwrap();
+        assert!(pending.iter().all(|done| done.load(Ordering::Acquire)));
+        let done = input.closed().unwrap();
+        Box::new(input).close();
+        assert!(done.load(Ordering::Acquire));
+    }
 
     #[test]
     fn only_channel_messages_pass() {

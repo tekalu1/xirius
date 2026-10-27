@@ -75,6 +75,17 @@ pub trait AudioInput: Send {
 
 /// A MIDI input the engine reads on the audio thread.
 pub trait MidiInput: Send {
+    /// Actual owner-side connection closure, also observable after handing this
+    /// input to the recording engine. None means synchronous destruction.
+    fn closed(&self) -> Option<Arc<AtomicBool>> {
+        None
+    }
+
+    /// Retirement worker only. Drop on the audio thread must never wait.
+    fn close(self: Box<Self>) {
+        drop(self);
+    }
+
     /// Calls `f(offset, message)` for each message that arrived for the next `frames` frames,
     /// `offset` within them. Called once per block, before it is rendered; must not allocate,
     /// lock or wait.

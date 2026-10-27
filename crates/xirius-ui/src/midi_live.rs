@@ -14,6 +14,9 @@ pub struct LiveMidi {
     pub opener: Option<crate::midi_open::Opener>,
     pub opening: Option<crate::midi_open::Opening>,
     pub generation: u64,
+    pub retiring: Vec<xirius_session::background::Job<()>>,
+    pub connection_end: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    pub retirement_failed: bool,
     pub opening_for_record: bool,
     pub opening_error: Option<String>,
     pub input: Option<Box<dyn MidiInput>>,
@@ -72,7 +75,7 @@ impl Studio {
         self.live_midi.retry_at = None;
         self.release_midi();
         if let Some(previous) = self.live_midi.input.take() {
-            crate::midi_open::retire(previous);
+            self.retire_midi_input(previous);
         }
         self.song
             .io
@@ -80,6 +83,7 @@ impl Studio {
             .unwrap_or_else(|e| e.into_inner())
             .view
             .ports = input.ports();
+        self.live_midi.connection_end = input.closed();
         self.live_midi.input = Some(input);
     }
 
@@ -279,7 +283,7 @@ impl Studio {
 impl Drop for LiveMidi {
     fn drop(&mut self) {
         if let Some(input) = self.input.take() {
-            crate::midi_open::retire(input);
+            let _ = crate::midi_open::retire(input);
         }
         if let Some(opener) = self.opener.take() {
             let _ = xirius_session::background::Job::spawn("midi-opener-retire", move || {

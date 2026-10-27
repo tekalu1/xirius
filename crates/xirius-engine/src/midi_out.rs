@@ -35,6 +35,11 @@ pub fn midi_out_ports() -> Result<Vec<String>, String> {
 
 /// Where a track's notes go when its output is a MIDI port.
 pub trait MidiOutput: Send {
+    /// Called only on a retirement worker, after detaching from the audio engine.
+    fn close(self: Box<Self>) {
+        drop(self);
+    }
+
     /// The ports this output holds open, in order.
     fn ports(&self) -> Vec<String>;
 
@@ -90,6 +95,7 @@ pub struct MidirOutput {
     names: Vec<String>,
     ring: Producer<Timed>,
     stop: Arc<AtomicBool>,
+    done: Arc<AtomicBool>,
     rate: f64,
     /// A full ring: messages that were not sent.
     dropped: u64,
@@ -108,15 +114,26 @@ impl MidirOutput {
     /// Opens the ports `wanted` names, for blocks of a song at `rate`. A name no port has is
     /// left out of [`MidiOutput::ports`]; the caller says so.
     pub fn open(wanted: &[String], rate: f64) -> Result<MidirOutput, String> {
+        let pending = ABANDONED.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        for done in pending {
+            crate::midi_in::wait_closed(&done);
+        }
+        ABANDONED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|done| !done.load(Ordering::Acquire));
         let wanted = wanted.to_vec();
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = RingBuffer::<Timed>::new(RING);
         type Ready = Result<Vec<String>, String>;
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Ready>();
         let flag = stop.clone();
+        let done = Arc::new(AtomicBool::new(false));
+        let finished = crate::midi_in::Finished(done.clone());
         std::thread::Builder::new()
             .name("xirius-midi-out".into())
             .spawn(move || {
+                let _finished = finished;
                 let opened = (|| {
                     let all = midi_out_ports()?;
                     let mut conns = Vec::new();
@@ -144,7 +161,9 @@ impl MidirOutput {
                 })();
                 match opened {
                     Ok((conns, names)) => {
-                        let _ = ready_tx.send(Ok(names));
+                        if ready_tx.send(Ok(names)).is_err() {
+                            flag.store(true, Ordering::Release);
+                        }
                         port_thread(conns, rx, &flag);
                     }
                     Err(e) => {
@@ -160,6 +179,7 @@ impl MidirOutput {
             names,
             ring: tx,
             stop,
+            done,
             rate,
             dropped: 0,
         })
@@ -231,7 +251,15 @@ impl Drop for Resolution {
     }
 }
 
+static ABANDONED: std::sync::Mutex<Vec<Arc<AtomicBool>>> = std::sync::Mutex::new(Vec::new());
+
 impl MidiOutput for MidirOutput {
+    fn close(self: Box<Self>) {
+        let done = self.done.clone();
+        drop(self);
+        crate::midi_in::wait_closed(&done);
+    }
+
     fn ports(&self) -> Vec<String> {
         self.names.clone()
     }

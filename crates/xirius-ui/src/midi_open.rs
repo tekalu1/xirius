@@ -13,14 +13,28 @@ struct Opened {
     result: Result<Box<dyn MidiInput>, String>,
 }
 
-pub(crate) fn retire(input: Box<dyn MidiInput>) {
-    let _ = xirius_session::background::Job::spawn("live-midi-retire", move || {
-        drop(input);
+pub(crate) fn retire(
+    input: Box<dyn MidiInput>,
+) -> Result<xirius_session::background::Job<()>, String> {
+    let work = xirius_session::background::Job::spawn("live-midi-retire", move || {
+        input.close();
         Ok(())
-    });
+    })?;
+    work.cancel();
+    Ok(work)
 }
 
 impl Studio {
+    pub(crate) fn retire_midi_input(&mut self, input: Box<dyn MidiInput>) {
+        match retire(input) {
+            Ok(work) => self.live_midi.retiring.push(work),
+            Err(error) => {
+                self.error = Some(error);
+                self.live_midi.retirement_failed = true;
+            }
+        }
+    }
+
     pub(crate) fn midi_open_failed(&mut self, error: String) {
         if self.error.is_none() || self.error == self.live_midi.opening_error {
             self.error = Some(error.clone());
@@ -36,10 +50,20 @@ impl Studio {
     ) {
         self.invalidate_midi_open();
         if let Some(previous) = self.live_midi.opener.replace(Box::new(opener)) {
-            let _ = xirius_session::background::Job::spawn("midi-opener-retire", move || {
+            let retired = xirius_session::background::Job::spawn("midi-opener-retire", move || {
                 drop(previous);
                 Ok(())
             });
+            match retired {
+                Ok(job) => {
+                    job.cancel();
+                    self.live_midi.retiring.push(job);
+                }
+                Err(error) => {
+                    self.error = Some(error);
+                    self.live_midi.retirement_failed = true;
+                }
+            }
         }
     }
     pub(crate) fn can_open_live_midi(&self) -> bool {
@@ -55,12 +79,25 @@ impl Studio {
             .checked_add(1)
             .expect("MIDI generations exhausted");
         if let Some(input) = self.live_midi.input.take() {
-            retire(input);
+            self.retire_midi_input(input);
         }
     }
 
     pub(crate) fn open_midi_port(&mut self) -> Option<Result<Box<dyn MidiInput>, String>> {
         if self.live_midi.opening.is_none() {
+            self.live_midi.retiring.retain(|job| !job.finished());
+            if self.live_midi.retirement_failed
+                || !self.live_midi.retiring.is_empty()
+                || self
+                    .live_midi
+                    .connection_end
+                    .as_ref()
+                    .is_some_and(|done| !done.load(std::sync::atomic::Ordering::Acquire))
+            {
+                return None;
+            }
+            self.live_midi.connection_end = None;
+
             if !self.can_open_live_midi() {
                 return Some(Err("MIDI入力がありません".into()));
             }
@@ -93,17 +130,29 @@ impl Studio {
             self.live_midi.opener = opened.opener.take();
         }
         if let Some(previous) = opened.opener.take() {
-            let _ = xirius_session::background::Job::spawn("midi-opener-retire", move || {
+            let retired = xirius_session::background::Job::spawn("midi-opener-retire", move || {
                 drop(previous);
                 Ok(())
             });
+            match retired {
+                Ok(job) => {
+                    job.cancel();
+                    self.live_midi.retiring.push(job);
+                }
+                Err(error) => {
+                    self.error = Some(error);
+                    self.live_midi.retirement_failed = true;
+                }
+            }
         }
         if !current {
-            let _ = xirius_session::background::Job::spawn("stale-live-midi", move || {
-                drop(opened);
-                Ok(())
-            });
+            if let Ok(input) = opened.result {
+                self.retire_midi_input(input);
+            }
             return None;
+        }
+        if let Ok(input) = &opened.result {
+            self.live_midi.connection_end = input.closed();
         }
         Some(opened.result)
     }
@@ -148,8 +197,13 @@ mod tests {
     struct Midi {
         ports: Vec<String>,
         dropped: mpsc::Sender<std::thread::ThreadId>,
+        close_gate: Option<Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>>,
+        done: Arc<std::sync::atomic::AtomicBool>,
     }
     impl MidiInput for Midi {
+        fn closed(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+            Some(self.done.clone())
+        }
         fn ports(&self) -> Vec<String> {
             self.ports.clone()
         }
@@ -158,6 +212,11 @@ mod tests {
     impl Drop for Midi {
         fn drop(&mut self) {
             let _ = self.dropped.send(std::thread::current().id());
+            if let Some(gate) = &self.close_gate {
+                let held = gate.0.lock().unwrap();
+                drop(gate.1.wait_while(held, |done| !*done).unwrap());
+            }
+            self.done.store(true, Ordering::Release);
         }
     }
 
@@ -166,6 +225,8 @@ mod tests {
         let mut s = Studio::sample();
         let release = crate::browser_io_tests::Release::new();
         let gate = release.0.clone();
+        let closing = crate::browser_io_tests::Release::new();
+        let close_gate = closing.0.clone();
         let calls = Arc::new(AtomicUsize::new(0));
         let count = calls.clone();
         let (entered_tx, entered) = mpsc::channel();
@@ -182,6 +243,8 @@ mod tests {
             Ok(Box::new(Midi {
                 ports: vec![if n == 0 { "Old" } else { "New" }.into()],
                 dropped: dropped_tx.clone(),
+                close_gate: (n == 0).then(|| close_gate.clone()),
+                done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             }))
         });
         s.midi_ports_now(vec!["Old".into()]);
@@ -208,6 +271,25 @@ mod tests {
         assert!(!s.transport.pending_record && !s.transport.recording);
         release.release();
         let deadline = Instant::now() + Duration::from_secs(30);
+        while s.live_midi.opening.is_some() {
+            s.poll_live_midi();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_ne!(dropped.recv_timeout(Duration::from_secs(20)).unwrap(), ui);
+        for _ in 0..32 {
+            s.idle();
+            s.tick();
+            s.poll_live_midi();
+            s.geometry(960.0, 640.0);
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "old connection still closing"
+        );
+        assert!(s.live_midi.input.is_none());
+        closing.release();
         while s.live_midi.input.is_none() {
             s.poll_live_midi();
             assert!(Instant::now() < deadline);
@@ -215,9 +297,55 @@ mod tests {
         }
         assert_eq!(s.live_midi.input.as_ref().unwrap().ports(), ["New"]);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
-        assert_ne!(dropped.recv_timeout(Duration::from_secs(20)).unwrap(), ui);
         s.midi_ports_now(Vec::new());
         assert_ne!(dropped.recv_timeout(Duration::from_secs(20)).unwrap(), ui);
         assert!(!s.transport.recording);
+    }
+
+    #[test]
+    fn recording_handoff_keeps_actual_owner_close_ack_before_live_reconnect() {
+        let mut s = Studio::sample();
+        let closing = crate::browser_io_tests::Release::new();
+        let gate = closing.0.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let called = calls.clone();
+        let (tx, dropped) = mpsc::channel();
+        s.midi_opener(move || {
+            let n = called.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(Midi {
+                ports: vec!["Fixture".into()],
+                dropped: tx.clone(),
+                close_gate: (n == 0).then(|| gate.clone()),
+                done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            }))
+        });
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let input = loop {
+            if let Some(result) = s.open_midi_port() {
+                break result.unwrap();
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        };
+        // As in REC, ownership is now outside LiveMidi; only its completion
+        // token remains here. No retirement Job was installed in LiveMidi.
+        let retiring = retire(input).unwrap();
+        dropped.recv_timeout(Duration::from_secs(20)).unwrap();
+        for _ in 0..32 {
+            assert!(s.open_midi_port().is_none());
+            s.geometry(800.0, 600.0);
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        closing.release();
+        let next = loop {
+            if let Some(result) = s.open_midi_port() {
+                break result.unwrap();
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        };
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        drop(retiring);
+        let _ = retire(next);
     }
 }
