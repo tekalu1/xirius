@@ -10,61 +10,79 @@ use std::sync::{
 use std::time::Duration;
 
 #[derive(Default)]
-pub struct Registry(Mutex<Vec<Arc<AtomicBool>>>);
+pub struct Registry(Mutex<Vec<Registered>>);
+#[derive(Clone)]
+struct Registered {
+    stop: Arc<AtomicBool>,
+    done: Arc<AtomicBool>,
+}
 impl Registry {
     pub const fn new() -> Self {
         Self(Mutex::new(Vec::new()))
     }
-    pub fn opening(&self) -> Opening<'_> {
+    pub fn opening(&self) -> Opening {
         self.opening_observed(|| {})
     }
-    fn opening_observed(&self, waiting: impl FnOnce()) -> Opening<'_> {
+    fn opening_observed(&self, waiting: impl FnOnce()) -> Opening {
         let pending = self.0.lock().unwrap_or_else(|e| e.into_inner()).clone();
         waiting();
-        for done in pending {
-            wait_closed(&done);
+        for owner in pending {
+            if owner.stop.load(Ordering::Acquire) {
+                wait_closed(&owner.done);
+            }
         }
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|d| !d.load(Ordering::Acquire));
+        let owner = Owner {
+            stop: Arc::new(AtomicBool::new(false)),
+            done: Some(Arc::new(AtomicBool::new(false))),
+        };
+        let mut owners = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        owners.retain(|owner| !owner.done.load(Ordering::Acquire));
+        // Register before starting the driver, not on RT Drop. A plain stop and
+        // an abandoned opening therefore have exactly the same retry barrier.
+        owners.push(Registered {
+            stop: owner.stop.clone(),
+            done: owner.done.clone().unwrap(),
+        });
         Opening {
-            registry: self,
-            owner: Some(Owner {
-                stop: Arc::new(AtomicBool::new(false)),
-                done: Some(Arc::new(AtomicBool::new(false))),
-            }),
+            owner: Some(owner),
+            started: std::cell::Cell::new(false),
         }
     }
 }
-
-pub struct Opening<'a> {
-    registry: &'a Registry,
+pub struct Opening {
     owner: Option<Owner>,
+    started: std::cell::Cell<bool>,
 }
-impl Opening<'_> {
+impl Opening {
     pub fn stop_flag(&self) -> Arc<AtomicBool> {
         self.owner.as_ref().unwrap().stop.clone()
     }
     /// Install before constructing any resource on the owner thread.
     pub fn completion(&self) -> Finished {
+        assert!(
+            !self.started.replace(true),
+            "a device has exactly one owning thread"
+        );
         Finished(self.owner.as_ref().unwrap().done.clone().unwrap())
     }
     /// All readiness outcomes, including timeout/disconnect/driver errors, go here.
     pub fn accept<T>(mut self, result: Result<T, String>) -> Result<(T, Owner), String> {
         let value = result?;
+        assert!(
+            self.started.get(),
+            "readiness requires an owner completion guard"
+        );
         Ok((value, self.owner.take().unwrap()))
     }
 }
-impl Drop for Opening<'_> {
+impl Drop for Opening {
     fn drop(&mut self) {
         if let Some(owner) = self.owner.take() {
             owner.request_stop();
-            self.registry
-                .0
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push(owner.done.clone().unwrap());
+            if !self.started.get() {
+                // No owner ever started, including a rejected thread spawn.
+                owner.done.as_ref().unwrap().store(true, Ordering::Release);
+            }
         }
     }
 }
@@ -114,6 +132,43 @@ pub fn wait_closed(done: &AtomicBool) {
 mod tests {
     use super::*;
     use std::sync::mpsc;
+    #[test]
+    fn a_normal_drop_uses_the_same_release_barrier_without_locking_on_rt() {
+        let registry = Arc::new(Registry::new());
+        let opening = registry.opening();
+        let stop = opening.stop_flag();
+        let done = opening.completion();
+        let (_, owner) = opening.accept(Ok(())).unwrap();
+        let (stopped_tx, stopped) = mpsc::channel();
+        let (finish, closed) = mpsc::channel();
+        let owner_thread = std::thread::spawn(move || {
+            let _done = done;
+            wait_closed(&stop);
+            stopped_tx.send(()).unwrap();
+            closed.recv_timeout(Duration::from_secs(20)).unwrap();
+        });
+        // A registry mutex held elsewhere cannot delay the RT stop request.
+        let held = registry.0.lock().unwrap();
+        drop(owner);
+        drop(held);
+        stopped.recv_timeout(Duration::from_secs(20)).unwrap();
+        let (waiting_tx, waiting) = mpsc::channel();
+        let (entered_tx, entered) = mpsc::channel();
+        let next = registry.clone();
+        let retry = std::thread::spawn(move || {
+            let _opening = next.opening_observed(|| waiting_tx.send(()).unwrap());
+            entered_tx.send(()).unwrap();
+        });
+        waiting.recv_timeout(Duration::from_secs(20)).unwrap();
+        assert!(entered.try_recv().is_err());
+        finish.send(()).unwrap();
+        owner_thread.join().unwrap();
+        entered.recv_timeout(Duration::from_secs(20)).unwrap();
+        retry.join().unwrap();
+        // An opening abandoned before any owner starts leaves no ghost token.
+        drop(registry.opening());
+        drop(registry.opening());
+    }
     #[test]
     fn every_readiness_failure_stops_even_a_successfully_sent_late_reply_and_serializes_retry() {
         for sent_before_abandon in [false, true] {

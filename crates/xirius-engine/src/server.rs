@@ -858,6 +858,60 @@ mod capture_tests {
         }
     }
     #[test]
+    fn process_retirement_and_restart_replace_identities_and_reject_old_epoch_and_receipts() {
+        let (server, link, old, _messages) = fixture();
+        let captured = server.request_state(&link);
+        assert!(link.complete_capture_values(captured, Ok(state(3)), &[]));
+        {
+            let mut st = server.inner.lock();
+            st.epoch = 1;
+            st.fresh_instances(&[1, 2]);
+            assert_ne!(st.slots[&1].updates.stamp().instance, old.instance);
+            let source = st.slots[&1].updates.stamp();
+            assert!(
+                st.slots[&2].updates.accepts(source, Field::State),
+                "valid lineage is remapped to actual new instances"
+            );
+            assert!(!st.slots[&2].updates.accepts(old, Field::State));
+        }
+        assert!(link.take_capture_edits(captured).is_err());
+        server.inner.dispatch(
+            0,
+            FromHost::Gesture {
+                slot: 1,
+                generation: 0,
+                revision: 1,
+                gesture: Gesture::Perform(1, 0.5),
+            },
+        );
+        assert_eq!(server.current(&link).unwrap().params[0].1, 0.25);
+        server.inner.dispatch(
+            1,
+            FromHost::Gesture {
+                slot: 1,
+                generation: 0,
+                revision: 1,
+                gesture: Gesture::Perform(1, 0.625),
+            },
+        );
+        assert_eq!(server.current(&link).unwrap().params[0].1, 0.625);
+        let pending = server.request_state(&link);
+        server.inner.went_down(1, Some(1), false, false);
+        assert!(link.capture_finished(pending));
+        assert!(link.capture_error(pending).is_some());
+        server.inner.dispatch(
+            1,
+            FromHost::Gesture {
+                slot: 1,
+                generation: 0,
+                revision: 2,
+                gesture: Gesture::Perform(1, 0.125),
+            },
+        );
+        assert_eq!(server.current(&link).unwrap().params[0].1, 0.625);
+    }
+
+    #[test]
     fn an_editor_change_after_extraction_rejects_old_cache_writes_and_state_receipts() {
         let (server, link, _, _messages) = fixture();
         server.close(2); // keep the first, playing instance
@@ -1990,6 +2044,7 @@ impl Inner {
         let mut st = self.lock();
         if st.epoch == epoch {
             st.proc = None;
+            st.retire_process();
             st.closing.clear();
             if !asked {
                 st.crashed = true;
@@ -2013,7 +2068,7 @@ impl Inner {
 
     fn dispatch(&self, epoch: u64, msg: FromHost) {
         let mut st = self.lock();
-        if st.epoch != epoch {
+        if st.epoch != epoch || st.proc.is_none() {
             return;
         }
         match msg {
@@ -2209,6 +2264,7 @@ impl Inner {
         slots.sort_unstable();
         st = self.spawn(st)?;
         let epoch = st.epoch;
+        st.fresh_instances(&slots);
         for &slot in &slots {
             let rec = st.slots.get_mut(&slot).unwrap();
             rec.open.epoch = epoch;
@@ -2311,6 +2367,54 @@ fn merge_state(
     replay
 }
 impl State {
+    fn retire_process(&mut self) {
+        let links: Vec<_> = self
+            .slots
+            .values()
+            .map(|rec| rec.link.clone())
+            .chain(self.closing.values().cloned())
+            .collect();
+        for link in links {
+            let mut inner = link.lock();
+            inner.receipts = inner.updates.rebind(0);
+            inner.origins.clear();
+            for (_, reply) in inner.captures.values_mut() {
+                if reply.is_none() {
+                    *reply = Some(Err("プラグインのプロセスが終了しました".into()));
+                }
+            }
+        }
+    }
+    fn fresh_instances(&mut self, slots: &[u32]) {
+        let ids: HashMap<_, _> = slots
+            .iter()
+            .map(|slot| {
+                (
+                    self.slots[slot].updates.stamp().instance,
+                    crate::plugin_updates::new_instance(),
+                )
+            })
+            .collect();
+        let links: Vec<_> = slots
+            .iter()
+            .map(|slot| self.slots[slot].link.clone())
+            .collect();
+        for link in &links {
+            link.lock().origins.clear();
+        }
+        for slot in slots {
+            let rec = self.slots.get_mut(slot).unwrap();
+            rec.updates.remap_instances(|old| ids.get(&old).copied());
+            rec.open.revision = 0;
+            rec.link
+                .lock()
+                .origins
+                .insert(*slot, rec.updates.stamp().instance);
+        }
+        for link in links {
+            self.publish(&link);
+        }
+    }
     fn source_instance(&self, slot: u32, link: &PluginLink) -> u64 {
         self.slots
             .get(&slot)

@@ -89,6 +89,18 @@ impl UpdateGate {
     pub fn retain_sources(&mut self, mut alive: impl FnMut(u64) -> bool) {
         self.sources.retain(|source| alive(source.instance));
     }
+    pub fn remap_instances(&mut self, mut instance: impl FnMut(u64) -> Option<u64>) {
+        self.stamp.instance = instance(self.stamp.instance).expect("reopened instance registered");
+        self.stamp.revision = 0;
+        self.sources.retain_mut(|source| {
+            if let Some(next) = instance(source.instance) {
+                source.instance = next;
+                true
+            } else {
+                false
+            }
+        });
+    }
     pub fn next_generation(&self) -> u64 {
         self.stamp
             .generation
