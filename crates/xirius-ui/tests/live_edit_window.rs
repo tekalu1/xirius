@@ -18,6 +18,9 @@ fn live_edit_recording_and_editor_survive_held_work_and_native_window_operations
         "record_directory",
         "live_midi_open",
         "settings_write",
+        "export_metadata",
+        "live_midi_close",
+        "input_close",
     ] {
         for size in ["1200,800", "880,600"] {
             let root = tempfile::tempdir().unwrap();

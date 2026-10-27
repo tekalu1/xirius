@@ -135,6 +135,14 @@ fn stage(s: &mut Studio, n: u8) {
                 serde_json::json!({"file":base,"track":track}),
             )
             .unwrap();
+            if operation() == "export_metadata" {
+                xirius_session::jobs::Store::of_song(&dir)
+                    .write(&serde_json::json!({
+                        "job":"export-fixture", "command":"export.mixdown", "state":"done",
+                        "result":{"path":base}, "args":{}
+                    }))
+                    .unwrap();
+            }
             song.run("plugin.add", serde_json::json!({"track":track,"name":"Live Fixture","format":"vst3","uid":catalog.entries[0].uid})).unwrap();
             let wav = root.join("new-material.wav");
             let prime = operation() == "prepare_prime";
@@ -230,11 +238,45 @@ pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
             }
             let Some(editor) = crate::park::own_handle("Live Fixture") else { return false; };
             assert!(!crate::park::is_foreground(editor));
-            eprintln!("live-probe editor found");
             p.editor = editor;
+            if operation() == "export_metadata" && s.export.jobs.is_empty() {
+                s.reload_exports();
+                return false;
+            }
+            eprintln!("live-probe editor found");
             p.gate = Some(Gate::new());
             let track = s.project().tracks.values().find(|t| !t.inserts.is_empty()).unwrap().id;
             match operation().as_str() {
+                "input_close" => {
+                    struct Input;
+                    impl xirius_engine::record::AudioInput for Input {
+                        fn read(&mut self, l: &mut [f32], r: &mut [f32]) { l.fill(0.0); r.fill(0.0); }
+                        fn close(self: Box<Self>) {
+                            let _ = xirius_core::io_test::before("input_close", std::path::Path::new("fixture-input"));
+                        }
+                    }
+                    let input = DeviceInput::new("Fixture".into(), false, Arc::new(std::sync::atomic::AtomicU64::new(1)), Box::new(Input));
+                    let host = s.transport.host_mut().unwrap();
+                    assert!(host.watch_start(xirius_session::record::Input::Given(Box::new(input))).unwrap() > 0);
+                    host.watch_stop();
+                }
+                "export_metadata" => {
+                    s.export.files = Default::default();
+                    s.poll_export_files();
+                }
+                "live_midi_close" => {
+                    struct Midi;
+                    impl xirius_engine::record::MidiInput for Midi {
+                        fn read(&mut self, _: usize, _: &mut dyn FnMut(usize, [u8; 3])) {}
+                    }
+                    impl Drop for Midi {
+                        fn drop(&mut self) {
+                            let _ = xirius_core::io_test::before("live_midi_close", std::path::Path::new("fixture-midi"));
+                        }
+                    }
+                    s.live_midi_input(Box::new(Midi));
+                    s.invalidate_midi_open();
+                }
                 "input_open" | "record_writer" | "record_directory" => {
                     s.song.toggle_arm(track).unwrap();
                     s.toggle_record();
@@ -275,6 +317,9 @@ pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
         if p.phase == 3 {
             if p.gate.as_ref().unwrap().entered.try_recv().is_err() { return false; }
             let mut s = s.borrow_mut();
+            if operation() == "export_metadata" {
+                assert!(s.export_confirm_trash("export-fixture", crate::studio::Rect { x: 20.0, y: 20.0, w: 10.0, h: 10.0 }));
+            }
             if matches!(operation().as_str(), "input_open" | "record_writer" | "record_directory") {
                 s.stop_transport();
             } else {
@@ -290,6 +335,7 @@ pub(crate) fn ready(s: &Rc<RefCell<Studio>>) -> bool {
             let mut s = s.borrow_mut();
             if s.transport.host().unwrap().swap_pending() || s.transport.take.is_some() || s.saving.is_some() { return false; }
             if operation() == "live_midi_open" && s.live_midi.input.is_none() { return false; }
+            if operation() == "live_midi_close" && s.live_midi.retiring.iter().any(|job| !job.finished()) { return false; }
             assert!(s.preparing.is_none());
             assert!(s.editor_shown(fixture_plugin(&s).id));
             assert!(crate::park::own_handle("Live Fixture").is_some());
