@@ -754,7 +754,7 @@ impl SessionHost {
         match a.watched {
             Some(w) => self.watch = Some(w),
             None => {
-                let _ = self.send(Command::SetInput(None));
+                self.close_input();
                 self.input_state().set_monitor(0, 0);
             }
         }

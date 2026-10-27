@@ -10,7 +10,7 @@
 //! audio thread reads and writes through atomics only.
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use xirius_core::model::{Project, Track, TrackKind};
 use xirius_core::{CmdError, CmdResult};
@@ -26,6 +26,36 @@ use crate::record::{Input, column, input_channels};
 pub(crate) struct Opening {
     prefs: xirius_prefs::Prefs,
     work: crate::background::Job<(DeviceInput, Option<String>)>,
+}
+
+struct TrackedInput {
+    input: Option<Box<dyn AudioInput>>,
+    done: Arc<AtomicBool>,
+}
+impl AudioInput for TrackedInput {
+    fn played(&mut self, left: &[f32], right: &[f32]) {
+        self.input.as_mut().unwrap().played(left, right);
+    }
+    fn read(&mut self, l: &mut [f32], r: &mut [f32]) {
+        self.input.as_mut().unwrap().read(l, r);
+    }
+    fn channels(&self) -> usize {
+        self.input.as_ref().unwrap().channels()
+    }
+    fn read_channels(&mut self, out: &mut [f32], frames: usize) {
+        self.input.as_mut().unwrap().read_channels(out, frames);
+    }
+    fn delivered(&self, frames: usize) -> usize {
+        self.input.as_ref().unwrap().delivered(frames)
+    }
+}
+impl Drop for TrackedInput {
+    fn drop(&mut self) {
+        if let Some(input) = self.input.take() {
+            input.close();
+        }
+        self.done.store(true, Ordering::Release);
+    }
 }
 
 /// The input the engine holds for watching.
@@ -89,6 +119,31 @@ pub fn input_plan(p: &Project, channels: usize) -> ([f32; MAX_INPUT_CHANNELS], (
 }
 
 impl SessionHost {
+    fn cancel_input_open(&mut self) {
+        if let Some(opening) = self.input_opening.take() {
+            opening.work.cancel();
+            self.input_retiring.push(opening.work);
+        }
+    }
+    pub(crate) fn input_retirement_ready(&mut self) -> bool {
+        if self.input_close_requested {
+            if !self.send(Command::SetInput(None)) {
+                return false;
+            }
+            self.input_close_requested = false;
+        }
+        self.input_retiring.retain(|job| !job.finished());
+        self.input_retiring.is_empty()
+            && self
+                .input_closed
+                .as_ref()
+                .is_none_or(|done| done.load(Ordering::Acquire))
+    }
+    pub(crate) fn close_input(&mut self) {
+        self.input_close_requested = true;
+        self.input_retirement_ready();
+    }
+
     /// Opens the input device by the `audio.driver` setting: in exclusive mode where the
     /// system has it, and in shared mode, said by [`SessionHost::take_driver_notice`], when the
     /// device will not open that way. A device that will not open is said by
@@ -129,8 +184,8 @@ impl SessionHost {
             .as_ref()
             .is_some_and(|old| old.prefs != prefs)
         {
-            // The abandoned worker owns any late device and its destruction.
-            self.input_opening = None;
+            self.cancel_input_open();
+            return Ok(None);
         }
         if self.input_opening.is_none() {
             let snapshot = prefs.clone();
@@ -202,6 +257,9 @@ impl SessionHost {
         if self.recording.is_some() || self.watch.is_some() {
             return Ok(self.watch_channels());
         }
+        if self.windowed && !self.input_retirement_ready() {
+            return Ok(0);
+        }
         let (input, name, probe, lost): (Box<dyn AudioInput>, _, _, _) = match input {
             Input::None => {
                 return Err(CmdError::conflict("入力がありません".to_string()));
@@ -221,6 +279,16 @@ impl SessionHost {
             }
         };
         let channels = input.channels().clamp(1, MAX_INPUT_CHANNELS);
+        let input = if self.windowed {
+            let done = Arc::new(AtomicBool::new(false));
+            self.input_closed = Some(done.clone());
+            Box::new(TrackedInput {
+                input: Some(input),
+                done,
+            }) as Box<dyn AudioInput>
+        } else {
+            input
+        };
         if !self.send(Command::SetInput(Some(input))) {
             return Err(CmdError::conflict(
                 "オーディオエンジンが処理中です。しばらく待ってからやり直してください".to_string(),
@@ -239,12 +307,12 @@ impl SessionHost {
 
     /// Lets the input go (a microphone is released). A recording under way keeps its input.
     pub fn watch_stop(&mut self) {
-        self.input_opening = None;
+        self.cancel_input_open();
         if self.recording.is_some() {
             return;
         }
         if self.watch.take().is_some() {
-            let _ = self.send(Command::SetInput(None));
+            self.close_input();
             self.input_state().set_monitor(0, 0);
         }
     }

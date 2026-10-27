@@ -36,6 +36,11 @@ pub const MAX_INPUT_CHANNELS: usize = 32;
 
 /// An audio input the engine reads on the audio thread.
 pub trait AudioInput: Send {
+    /// Retirement worker only. Direct Drop remains nonblocking for RT handles.
+    fn close(self: Box<Self>) {
+        drop(self);
+    }
+
     /// Fills `left` and `right` (same length, at most the plan's `max_block`) with the next
     /// frames. Called once per block, after the block was rendered, while the engine runs,
     /// recording or not; it must not allocate, lock or wait. Frames that are not there yet stay
@@ -408,6 +413,7 @@ impl MidiInput for MidiFeed {
 /// every channel's frames into a ring the audio thread reads; frames the audio thread finds
 /// missing are silence.
 pub struct CpalInput {
+    done: Option<Arc<AtomicBool>>,
     rx: Consumer<f32>,
     stop: Arc<AtomicBool>,
     pub name: String,
@@ -459,6 +465,8 @@ impl Heard {
     }
 }
 
+static ABANDONED_INPUTS: std::sync::Mutex<Vec<Arc<AtomicBool>>> = std::sync::Mutex::new(Vec::new());
+
 impl CpalInput {
     /// Opens the default input at `sample_rate` (the engine's; the device must run at it).
     pub fn open(sample_rate: u32) -> Result<CpalInput, String> {
@@ -471,6 +479,19 @@ impl CpalInput {
         buffer: Option<u32>,
     ) -> Result<CpalInput, String> {
         use cpal::traits::{DeviceTrait, StreamTrait};
+        let pending = ABANDONED_INPUTS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        for done in pending {
+            crate::midi_in::wait_closed(&done);
+        }
+        ABANDONED_INPUTS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|done| !done.load(Ordering::Acquire));
+        let done = Arc::new(AtomicBool::new(false));
+        let finished = crate::midi_in::Finished(done.clone());
         let wanted = name.to_string();
         let stop = Arc::new(AtomicBool::new(false));
         let latency_ns = Arc::new(AtomicU64::new(0));
@@ -484,6 +505,7 @@ impl CpalInput {
         std::thread::Builder::new()
             .name("xirius-input".into())
             .spawn(move || {
+                let _finished = finished;
                 let opened = (|| {
                     let device = crate::devices::endpoint(&wanted, true)?;
                     let config = device
@@ -553,7 +575,9 @@ impl CpalInput {
                 })();
                 match opened {
                     Ok((stream, name, channels, rx)) => {
-                        let _ = ready_tx.send(Ok((name, channels, rx)));
+                        if ready_tx.send(Ok((name, channels, rx))).is_err() {
+                            stop2.store(true, Ordering::Release);
+                        }
                         let mut heard = Heard::new(beats2.load(Ordering::Relaxed), Instant::now());
                         while !stop2.load(Ordering::Acquire) {
                             std::thread::sleep(Duration::from_millis(20));
@@ -573,6 +597,7 @@ impl CpalInput {
             .recv_timeout(Duration::from_secs(5))
             .map_err(|_| "入力デバイスが応答しません".to_string())??;
         Ok(CpalInput {
+            done: Some(done),
             rx,
             stop,
             name,
@@ -594,6 +619,7 @@ impl CpalInput {
         lost: Lost,
     ) -> CpalInput {
         CpalInput {
+            done: None,
             rx,
             stop,
             name,
@@ -637,6 +663,14 @@ impl CpalInput {
 }
 
 impl AudioInput for CpalInput {
+    fn close(self: Box<Self>) {
+        let done = self.done.clone();
+        drop(self);
+        if let Some(done) = done {
+            crate::midi_in::wait_closed(&done);
+        }
+    }
+
     fn read(&mut self, left: &mut [f32], right: &mut [f32]) {
         let n = left.len().min(right.len());
         let mono = self.channels < 2;
@@ -683,6 +717,60 @@ impl AudioInput for CpalInput {
 impl Drop for CpalInput {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+mod input_close_tests {
+    use super::*;
+
+    #[test]
+    fn close_ack_waits_for_owner_release_but_plain_drop_only_requests_stop() {
+        let make = || {
+            let (_, rx) = RingBuffer::new(16);
+            let mut input = CpalInput::from_parts(
+                rx,
+                Arc::new(AtomicBool::new(false)),
+                "Fixture".into(),
+                2,
+                Arc::new(AtomicU64::new(1)),
+                Lost::default(),
+            );
+            let done = Arc::new(AtomicBool::new(false));
+            input.done = Some(done.clone());
+            (input, done)
+        };
+        let (input, done) = make();
+        let stop = input.stop.clone();
+        drop(input);
+        assert!(stop.load(Ordering::Acquire));
+        assert!(
+            !done.load(Ordering::Acquire),
+            "RT Drop must not await owner"
+        );
+
+        let (input, done) = make();
+        let stop = input.stop.clone();
+        let (stopped_tx, stopped) = std::sync::mpsc::channel();
+        let (release, close) = std::sync::mpsc::channel();
+        let owner = std::thread::spawn(move || {
+            crate::midi_in::wait_closed(&stop);
+            stopped_tx.send(()).unwrap();
+            close.recv_timeout(Duration::from_secs(20)).unwrap();
+            done.store(true, Ordering::Release);
+        });
+        let finished = Arc::new(AtomicBool::new(false));
+        let flag = finished.clone();
+        let retirement = std::thread::spawn(move || {
+            Box::new(input).close();
+            flag.store(true, Ordering::Release);
+        });
+        stopped.recv_timeout(Duration::from_secs(20)).unwrap();
+        assert!(!finished.load(Ordering::Acquire));
+        release.send(()).unwrap();
+        retirement.join().unwrap();
+        owner.join().unwrap();
+        assert!(finished.load(Ordering::Acquire));
     }
 }
 

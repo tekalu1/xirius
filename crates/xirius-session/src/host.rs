@@ -17,6 +17,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
@@ -213,6 +214,10 @@ pub struct SessionHost {
     nonblocking: bool,
     pub(crate) windowed: bool,
     pub(crate) input_opening: Option<crate::watch::Opening>,
+    pub(crate) input_retiring:
+        Vec<crate::background::Job<(crate::output::DeviceInput, Option<String>)>>,
+    pub(crate) input_closed: Option<Arc<AtomicBool>>,
+    pub(crate) input_close_requested: bool,
     automation_start: u64,
     seek_serial: u64,
     pending_seek: Option<u64>,
@@ -359,6 +364,9 @@ impl SessionHost {
             nonblocking: false,
             windowed: false,
             input_opening: None,
+            input_retiring: Vec::new(),
+            input_closed: None,
+            input_close_requested: false,
             automation_start: 0,
             seek_serial: 0,
             pending_seek: None,
@@ -502,6 +510,7 @@ impl SessionHost {
 
     /// Takes in what the engine reported: the position, whether it plays and the levels.
     pub fn poll(&mut self) -> Status {
+        self.input_retirement_ready();
         let status = &mut self.status;
         let levels = &mut self.levels;
         if self.swapping.is_some_and(|t| t.elapsed() > SWAP_WAIT) {

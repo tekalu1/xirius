@@ -565,6 +565,9 @@ impl ExclusiveInput {
             }
             Err(_) => {
                 stop.store(true, Ordering::Release);
+                // Opening is worker-owned. Do not start a shared fallback or
+                // report retirement until this owner actually releases WASAPI.
+                let _ = thread.join();
                 Err("入力デバイスが応答しません".into())
             }
         }

@@ -180,6 +180,135 @@ fn device_enumeration_and_open_gates_never_hold_watch_or_rec_and_cancel_discards
 }
 
 #[test]
+fn reconnect_waits_for_stale_and_engine_owned_input_close_acknowledgements() {
+    use std::{
+        sync::{
+            Arc, Condvar, Mutex,
+            atomic::{AtomicU64, AtomicUsize, Ordering},
+            mpsc,
+        },
+        time::Instant,
+    };
+    use xirius_engine::record::AudioInput;
+    use xirius_session::output::{DeviceInput, Drivers};
+    type Gate = Arc<(Mutex<bool>, Condvar)>;
+    struct Release(Gate);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            *self.0.0.lock().unwrap() = true;
+            self.0.1.notify_all();
+        }
+    }
+    fn hold(gate: &Gate) {
+        drop(
+            gate.1
+                .wait_while(gate.0.lock().unwrap(), |done| !*done)
+                .unwrap(),
+        );
+    }
+    struct InputClose {
+        gate: Option<Gate>,
+        entered: mpsc::Sender<()>,
+    }
+    impl AudioInput for InputClose {
+        fn read(&mut self, l: &mut [f32], r: &mut [f32]) {
+            l.fill(0.0);
+            r.fill(0.0);
+        }
+        fn close(self: Box<Self>) {
+            if let Some(gate) = &self.gate {
+                self.entered.send(()).unwrap();
+                hold(gate);
+            }
+        }
+    }
+    for already_attached in [false, true] {
+        let mut s = session();
+        armed_audio(&mut s, "Vox");
+        let mut rig = Rig::new(&s);
+        rig.host.set_windowed();
+        let settings = Arc::new(Mutex::new(xirius_prefs::Settings::memory()));
+        rig.host.io_settings = Some(settings.clone());
+        let opening = Release(Arc::new((Mutex::new(false), Condvar::new())));
+        let closing = Release(Arc::new((Mutex::new(false), Condvar::new())));
+        let open_gate = opening.0.clone();
+        let close_gate = closing.0.clone();
+        let (open_tx, opened) = mpsc::channel();
+        let (close_tx, closed) = mpsc::channel();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let called = calls.clone();
+        rig.host.drivers = Drivers {
+            exclusive_in: None,
+            exclusive_out: None,
+            shared_out: Arc::new(|_, _, _| panic!("no physical output")),
+            devices: Arc::new(Vec::new),
+            shared_in: Arc::new(move |_, _, _| {
+                let n = called.fetch_add(1, Ordering::SeqCst);
+                if n == 0 && !already_attached {
+                    open_tx.send(()).unwrap();
+                    hold(&open_gate);
+                }
+                Ok(DeviceInput::new(
+                    "Fixture".into(),
+                    false,
+                    Arc::new(AtomicU64::new(1)),
+                    Box::new(InputClose {
+                        gate: (n == 0).then(|| close_gate.clone()),
+                        entered: close_tx.clone(),
+                    }),
+                ))
+            }),
+        };
+        let deadline = Instant::now() + Duration::from_secs(30);
+        rig.host.watch_start(Input::Device).unwrap();
+        if already_attached {
+            while !rig.host.is_watching() {
+                rig.host.watch_start(Input::Device).unwrap();
+                rig.pull(480);
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            rig.pull(480);
+            rig.host.watch_stop();
+        } else {
+            opened.recv_timeout(Duration::from_secs(30)).unwrap();
+            settings
+                .lock()
+                .unwrap()
+                .prefs
+                .set("audio.device", &json!("Other"))
+                .unwrap();
+            assert_eq!(rig.host.watch_start(Input::Device).unwrap(), 0);
+            drop(opening);
+        }
+        loop {
+            rig.pull(480);
+            if closed.try_recv().is_ok() {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        for _ in 0..32 {
+            assert_eq!(rig.host.watch_start(Input::Device).unwrap(), 0);
+            rig.pull(480);
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "old driver still closing");
+        assert!(!rig.host.is_watching());
+        drop(closing);
+        while !rig.host.is_watching() {
+            rig.host.watch_start(Input::Device).unwrap();
+            rig.pull(480);
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        rig.host.watch_stop();
+        rig.pull(480);
+    }
+}
+
+#[test]
 fn the_level_of_an_input_is_measured_with_the_transport_stopped() {
     let mut s = session();
     armed_audio(&mut s, "Vox");

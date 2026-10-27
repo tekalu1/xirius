@@ -438,7 +438,7 @@ pub struct DeviceInput {
     pub name: String,
     pub exclusive: bool,
     probe: Arc<std::sync::atomic::AtomicU64>,
-    input: Box<dyn AudioInput>,
+    input: Option<Box<dyn AudioInput>>,
     lost: Lost,
 }
 
@@ -453,26 +453,24 @@ impl DeviceInput {
             name,
             exclusive,
             probe,
-            input,
+            input: Some(input),
             lost: Lost::default(),
         }
     }
 
     pub fn shared(c: CpalInput) -> DeviceInput {
         let (name, probe, lost) = (c.name.clone(), c.latency_probe(), c.lost());
-        DeviceInput {
-            lost,
-            ..DeviceInput::new(name, false, probe, Box::new(c))
-        }
+        let mut input = DeviceInput::new(name, false, probe, Box::new(c));
+        input.lost = lost;
+        input
     }
 
     #[cfg(windows)]
     pub fn exclusive(c: xirius_engine::exclusive::ExclusiveInput) -> DeviceInput {
         let (name, probe, lost) = (c.info.device.clone(), c.latency_probe(), c.lost());
-        DeviceInput {
-            lost,
-            ..DeviceInput::new(name, true, probe, Box::new(c))
-        }
+        let mut input = DeviceInput::new(name, true, probe, Box::new(c));
+        input.lost = lost;
+        input
     }
 
     /// Says why the device stopped by itself, once it has: what it no longer delivers reads as
@@ -489,19 +487,26 @@ impl DeviceInput {
 
 impl AudioInput for DeviceInput {
     fn read(&mut self, left: &mut [f32], right: &mut [f32]) {
-        self.input.read(left, right);
+        self.input.as_mut().unwrap().read(left, right);
     }
     fn channels(&self) -> usize {
-        self.input.channels()
+        self.input.as_ref().unwrap().channels()
     }
     fn read_channels(&mut self, buf: &mut [f32], frames: usize) {
-        self.input.read_channels(buf, frames);
+        self.input.as_mut().unwrap().read_channels(buf, frames);
     }
     fn delivered(&self, frames: usize) -> usize {
-        self.input.delivered(frames)
+        self.input.as_ref().unwrap().delivered(frames)
     }
 }
 
+impl Drop for DeviceInput {
+    fn drop(&mut self) {
+        if let Some(input) = self.input.take() {
+            input.close();
+        }
+    }
+}
 /// Opens the input device by the `audio.driver` setting, as [`Output::open`] does the output:
 /// exclusive where the system has it, and shared with a notice when the device will not. The
 /// buffer is asked for in exclusive mode only, as for the output.
