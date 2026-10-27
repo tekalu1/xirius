@@ -892,18 +892,11 @@ impl Studio {
 
     /// Runs one settings command; a refusal is said on the toast.
     fn settings_run(&mut self, command: &str, args: Value) -> Option<String> {
-        if (self.transport.recording || self.transport.take.is_some())
-            && matches!(
-                args["key"].as_str(),
-                Some("audio.driver" | "audio.device" | "audio.buffer")
-            )
+        if let Some(error) = self
+            .io_device_change_error(command, args.as_object().unwrap_or(&serde_json::Map::new()))
         {
             if let Some(ui) = &mut self.settings {
-                ui.tell(
-                    "録音またはテイクの配置が未完了のため、オーディオデバイスを変更できません"
-                        .into(),
-                    None,
-                );
+                ui.tell(error, None);
             }
             return None;
         }

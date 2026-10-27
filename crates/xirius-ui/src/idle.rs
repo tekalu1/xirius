@@ -30,6 +30,7 @@ impl Studio {
         }
         let saved = self.poll_saving();
         if self.saving.is_some() {
+            self.poll_saving_transport();
             return Idle {
                 changed: true,
                 went_down: false,

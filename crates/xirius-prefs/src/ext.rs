@@ -4,7 +4,7 @@
 //! settings in hand and writes the file at once. The commands do not touch the song and do not
 //! enter its history (KEY-023).
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use xirius_core::command::{Args, Author, CommandDef, Output, Registry};
 use xirius_core::error::{CmdError, CmdResult, ErrorCode};
 use xirius_core::extension::{ExtContext, Extension};
@@ -58,6 +58,31 @@ pub const NAMES: &[&str] = &[
 /// song, so it is not one.
 pub fn is_settings_command(name: &str) -> bool {
     name != "macro.run" && NAMES.contains(&name)
+}
+
+/// Settings targeted by a mutation, independent of its caller (UI, menu or MCP).
+/// Reset uses exactly Prefs::reset's key/prefix/all selection semantics.
+pub fn targets_audio_device(name: &str, raw: &Map<String, Value>) -> bool {
+    const KEYS: [&str; 3] = ["audio.driver", "audio.device", "audio.buffer"];
+    let key = raw.get("key").and_then(Value::as_str);
+    match name {
+        "prefs.reset" => KEYS.iter().any(|target| {
+            key.is_none_or(|key| {
+                let key = key.trim_end_matches('.');
+                *target == key || target.starts_with(&format!("{key}."))
+            })
+        }),
+        "prefs.set" => key.is_some_and(|key| KEYS.contains(&key)),
+        "audio.set" => key.is_some_and(|key| {
+            let key = if key.starts_with("audio.") {
+                key.to_owned()
+            } else {
+                format!("audio.{key}")
+            };
+            KEYS.contains(&key.as_str())
+        }),
+        _ => false,
+    }
 }
 
 pub struct PrefsExt {

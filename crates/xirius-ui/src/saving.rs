@@ -34,6 +34,7 @@ pub(crate) struct Saving {
     draft: Option<PathBuf>,
     close_when_done: bool,
     stop_take: bool,
+    record_error: Option<String>,
 }
 
 struct McpSave {
@@ -421,6 +422,7 @@ impl Studio {
             draft,
             close_when_done,
             stop_take: false,
+            record_error: None,
         });
     }
 
@@ -597,6 +599,9 @@ impl Studio {
             if save.close_when_done {
                 self.request_close();
             }
+            if let Some(error) = save.record_error {
+                self.error = Some(error);
+            }
             return true;
         }
         let result = result.map(|_| ());
@@ -645,7 +650,42 @@ impl Studio {
                 }
             }
         }
+        if let Some(error) = save.record_error {
+            self.error = Some(error);
+        }
         true
+    }
+
+    /// The actual Session may be on a file worker; recording control still owns
+    /// its running host. Only placing the closed take needs that Session back.
+    pub(crate) fn poll_saving_transport(&mut self) {
+        if let Some(at) = self.transport.poll() {
+            self.playhead = at;
+        }
+        if self.transport.recording {
+            let input_lost = self.transport.input_lost();
+            let output_lost = self.transport.is_lost();
+            let due = self.transport.host().is_some_and(|host| host.record_due());
+            if input_lost.is_some() || output_lost || due {
+                self.stop_record_during_save();
+                if let Some(save) = &mut self.saving {
+                    save.record_error = input_lost.or_else(|| {
+                        output_lost.then(|| "オーディオ出力が停止したため録音を止めました".into())
+                    });
+                }
+            }
+        }
+    }
+
+    fn stop_record_during_save(&mut self) {
+        if let Some(host) = self.transport.host_mut() {
+            host.record_stop();
+        }
+        self.transport.pause();
+        self.transport.finishing_take = true;
+        if let Some(save) = &mut self.saving {
+            save.stop_take = true;
+        }
     }
 
     pub(crate) fn saving_key(&mut self, key: &str) -> bool {
@@ -660,11 +700,7 @@ impl Studio {
                 return true;
             }
             if self.transport.take.is_some() {
-                if let Some(host) = self.transport.host_mut() {
-                    host.record_stop();
-                }
-                self.transport.pause();
-                self.saving.as_mut().unwrap().stop_take = true;
+                self.stop_record_during_save();
             } else {
                 self.toggle_play();
             }

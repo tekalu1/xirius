@@ -1763,9 +1763,7 @@ impl Studio {
         }
         let saved = self.poll_saving();
         if self.saving.is_some() {
-            if let Some(at) = self.transport.poll() {
-                self.playhead = at;
-            }
+            self.poll_saving_transport();
             return true;
         }
         if self.sound_preparing() {

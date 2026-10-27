@@ -23,7 +23,7 @@ pub mod studio_pro;
 mod tomlw;
 
 pub use chord::{Chord, Os};
-pub use ext::{PrefsExt, is_settings_command};
+pub use ext::{PrefsExt, is_settings_command, targets_audio_device};
 pub use keymap::Keymap;
 pub use macros::Macros;
 pub use midimap::Midimap;
