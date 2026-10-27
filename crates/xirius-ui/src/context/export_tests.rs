@@ -434,7 +434,21 @@ fn an_export_from_before_records_kept_the_song_can_still_be_written_again() {
     s.new_song_sync();
     // As an export of an earlier version left it, newer than the one made: no fingerprints.
     let store = xirius_session::jobs::Store::of_song(&dir);
-    let mut v = store.read(&job).unwrap();
+    // The completed render is visible before its final disk write finishes.
+    // Copy an actually completed record, not a transient running snapshot whose
+    // lock belongs to the original id and would make the copy interrupted.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut v = loop {
+        let record = store.read(&job).unwrap();
+        if record["state"] == "done" {
+            break record;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "terminal export record: {record}"
+        );
+        std::thread::yield_now();
+    };
     let m = v.as_object_mut().unwrap();
     m.remove("base");
     m.insert("job".into(), serde_json::json!("export-before"));
