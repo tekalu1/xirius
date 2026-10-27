@@ -146,6 +146,24 @@ fn state_requests_cancel_without_waiting_and_the_audio_returns_before_terminatio
     unsafe { gate(0, 0) };
     // A new request has its own reply, unaffected by the abandoned first one.
     assert!(wait(&opened.controller.capture().unwrap()).is_ok());
+    let first = opened
+        .controller
+        .on_owner_versioned(|_, serial| Ok((std::thread::current().id(), serial)))
+        .unwrap();
+    let edits = opened.controller.clone().edits().unwrap();
+    let last = opened
+        .controller
+        .on_owner_versioned(|_, serial| Ok((std::thread::current().id(), serial)))
+        .unwrap();
+    let first = wait(&first).unwrap();
+    let edits = wait(&edits).unwrap();
+    let last = wait(&last).unwrap();
+    assert_eq!(first.0, last.0);
+    assert_ne!(first.0, std::thread::current().id());
+    assert!(
+        first.1 < edits.serial && edits.serial < last.1,
+        "cloned controllers share actual owner execution order"
+    );
     let retirement = opened.retirement.clone();
     // SAFETY: plain fixture counters, no other instance in this executable.
     let before = unsafe { terminations() };

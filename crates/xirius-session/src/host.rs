@@ -398,6 +398,9 @@ impl SessionHost {
             driver_notice: None,
             cpu: CpuWindow::default(),
         };
+        // This engine already contains the newly built plan. There is no old
+        // playing seat after initial/device preparation, even with a reused loader.
+        host.builder.plugins_mut().promote_opened();
         host.send_transport(p);
         host.follow_song(p);
         host.sweep_processed();
@@ -1034,6 +1037,7 @@ impl SessionHost {
     }
 
     fn sync_with(&mut self, p: &Project, later: bool) -> SyncReport {
+        self.builder.plugins_mut().advance_intents(&self.song, p);
         self.song = p.clone();
         let mut report = SyncReport::default();
         // The song's values may have been given to the plugins again: the lanes are sent anew.
@@ -1698,15 +1702,15 @@ fn collect_edits(
             }
         }
         if commands.len() != before {
-            taken.push((e.plugin, state, params));
+            taken.push((e.plugin, state, params, e.stamp, e.origin));
         }
     }
     out.params.sort_by_key(|p| p.at);
     if !commands.is_empty() {
-        for (id, state, params) in &taken {
+        for (id, state, params, stamp, origin) in &taken {
             host.builder
                 .plugins_mut()
-                .taken(*id, Some(state.clone()), params);
+                .taken(*id, Some(state.clone()), params, *stamp, *origin);
         }
         let mut args = Map::new();
         args.insert("commands".into(), Value::Array(commands));

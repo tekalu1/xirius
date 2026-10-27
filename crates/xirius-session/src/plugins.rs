@@ -45,6 +45,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
+use xirius_engine::plugin_updates::{Field, Origin, Stamp, UpdateGate, new_instance};
 
 use xirius_core::id::PluginId;
 use xirius_core::model::{Plugin, PluginIsolation, PluginKind};
@@ -116,6 +117,8 @@ impl Default for Isolation {
 /// [`PluginLoader::take_edits`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct RemoteEdit {
+    pub origin: Origin,
+    pub stamp: xirius_engine::plugin_updates::Stamp,
     pub plugin: PluginId,
     /// The plugin's state after the last edit settled (base64, as the song keeps it).
     pub state: Option<String>,
@@ -182,7 +185,23 @@ impl StateIntent {
                         .zip(param_id(key))
                         .is_some_and(|(a, b)| a == b)
             }) {
-                runtime.push((key.clone(), *value));
+                let changed = changed.iter().any(|changed| {
+                    changed.eq_ignore_ascii_case(key)
+                        || param_id(changed)
+                            .zip(param_id(key))
+                            .is_some_and(|(a, b)| a == b)
+                });
+                let value = if changed {
+                    *value
+                } else {
+                    reports
+                        .iter()
+                        .rev()
+                        .filter(|p| names(key, p))
+                        .find_map(|p| p.value)
+                        .unwrap_or(*value)
+                };
+                runtime.push((key.clone(), value));
             }
         }
         runtime
@@ -195,16 +214,22 @@ impl StateIntent {
             && old.state == current.state
     }
     fn reconcile(&self, current: &Plugin, edit: &mut RemoteEdit) -> bool {
-        if !self.accepts(current) {
+        let mut gate = UpdateGate::new(edit.stamp);
+        let keys = self.protected_params(current);
+        if !self.accepts(current) || !keys.is_empty() {
+            gate.explicit(gate.next_generation(), !self.accepts(current), &keys);
+        }
+        if !gate.accepts(edit.stamp, Field::State) {
             return false;
         }
-        edit.params.retain(|param| {
-            self.0
-                .params
-                .keys()
-                .chain(current.params.keys())
-                .filter(|key| names(key, param))
-                .all(|key| self.0.params.get(key) == current.params.get(key))
+        edit.params.retain(|p| {
+            gate.accepts(
+                edit.stamp,
+                Field::Parameter {
+                    id: p.id,
+                    title: &p.title,
+                },
+            )
         });
         true
     }
@@ -418,6 +443,7 @@ impl<T> Drop for OnThread<T> {
 /// A plugin running in this process: its UI-thread side, kept so that its editor is the
 /// instance that plays and what the editor moves is heard and reaches the song.
 struct Local {
+    updates: Box<UpdateGate>,
     restart_pending: i32,
     plugin: Option<OnThread<xirius_vst3::Plugin>>,
     owned: Option<Box<crate::owned_local::OwnedLocal>>,
@@ -434,6 +460,29 @@ struct Local {
 }
 
 impl Local {
+    fn update_gate(&self) -> UpdateGate {
+        self.owned
+            .as_ref()
+            .map_or_else(|| (*self.updates).clone(), |owned| owned.update_gate())
+    }
+    fn inherit_updates(&mut self, basis: &UpdateGate, protected: Vec<String>) {
+        if let Some(owned) = &self.owned {
+            owned.inherit_updates(basis, protected.clone());
+        }
+        *self.updates = basis.successor(self.updates.stamp().instance, protected);
+    }
+    fn invalidate(&mut self, replace: bool, keys: &[String]) {
+        if let Some(owned) = &self.owned {
+            owned.invalidate(replace, keys);
+        }
+        if let Some(plugin) = self.plugin.as_ref().and_then(OnThread::get) {
+            plugin.handler().take_gestures();
+            self.capture = None;
+        }
+        let next = self.updates.next_generation();
+        self.updates.explicit(next, replace, keys);
+    }
+
     fn direct(&self) -> Option<&xirius_vst3::Plugin> {
         self.plugin.as_ref()?.get()
     }
@@ -509,6 +558,8 @@ impl Local {
             }));
         }
         Some(RemoteEdit {
+            origin: Origin::Editor,
+            stamp: self.update_gate().stamp(),
             plugin: id,
             state: state.as_ref().map(xirius_plugins::encode_state),
             params,
@@ -659,6 +710,7 @@ pub struct OpenTime {
 /// does not load the DLL again; a plugin in a host process keeps its link across builds.
 #[derive(Default)]
 pub struct PluginLoader {
+    intents: HashMap<PluginId, Option<Plugin>>,
     pending_owned: HashMap<PluginId, PendingOwned>,
     threaded_local: bool,
     process_setup: Option<ProcessSetup>,
@@ -717,7 +769,7 @@ pub struct PluginLoader {
     following: Vec<Following>,
     /// The last value moved in each plugin's window since the last state it sent, for
     /// [`PluginLoader::moves_until`].
-    unsettled: HashMap<PluginId, Vec<ParamEdit>>,
+    unsettled: HashMap<PluginId, Vec<(Stamp, ParamEdit)>>,
 }
 
 struct OwnedPreload {
@@ -751,6 +803,66 @@ fn names(key: &str, p: &ParamEdit) -> bool {
 }
 
 impl PluginLoader {
+    pub(crate) fn advance_intents(
+        &mut self,
+        before: &xirius_core::model::Project,
+        after: &xirius_core::model::Project,
+    ) {
+        let before: HashMap<_, _> = crate::starting::hosted(before)
+            .into_iter()
+            .map(|(_, p)| (p.id, p))
+            .collect();
+        let after: HashMap<_, _> = crate::starting::hosted(after)
+            .into_iter()
+            .map(|(_, p)| (p.id, p))
+            .collect();
+        let ids: HashSet<_> = before.keys().chain(after.keys()).copied().collect();
+        for id in ids {
+            let old = self
+                .intents
+                .get(&id)
+                .cloned()
+                .unwrap_or_else(|| before.get(&id).map(|p| (*p).clone()));
+            let now = after.get(&id).map(|p| (*p).clone());
+            let replace = old
+                .as_ref()
+                .zip(now.as_ref())
+                .is_none_or(|(old, now)| !StateIntent(old.clone()).accepts(now));
+            let keys = old
+                .as_ref()
+                .zip(now.as_ref())
+                .map(|(old, now)| StateIntent(old.clone()).protected_params(now))
+                .unwrap_or_default();
+            if old != now && (replace || !keys.is_empty()) {
+                if let Some(r) = self.remotes.get(&id) {
+                    r.server.invalidate(&r.link, replace, &keys);
+                }
+                if let Some(l) = self.locals.get_mut(&id) {
+                    l.invalidate(replace, &keys);
+                }
+                if let Some(leaving) = self.leaving.get_mut(&id) {
+                    match leaving {
+                        Leaving::Remote(r) => r.server.invalidate(&r.link, replace, &keys),
+                        Leaving::Local(l, _) => l.invalidate(replace, &keys),
+                    }
+                }
+            }
+            self.intents.insert(id, now);
+        }
+    }
+    fn update_gate(&self, id: PluginId) -> Option<UpdateGate> {
+        self.locals
+            .get(&id)
+            .map(Local::update_gate)
+            .or_else(|| self.remotes.get(&id).map(|r| r.link.update_gate()))
+            .or_else(|| {
+                self.leaving.get(&id).map(|leaving| match leaving {
+                    Leaving::Local(l, _) => l.update_gate(),
+                    Leaving::Remote(r) => r.link.update_gate(),
+                })
+            })
+    }
+
     /// Capture only safe controller handles for a live background build. Raw
     /// compatibility instances never cross their creator thread.
     pub(crate) fn live_copy(&self) -> Result<impl FnOnce() -> Self + Send + 'static, String> {
@@ -762,6 +874,7 @@ impl PluginLoader {
             locals.insert(
                 *id,
                 Local {
+                    updates: local.updates.clone(),
                     plugin: None,
                     owned: local.owned.as_ref().map(|owned| Box::new(owned.fork())),
                     restart_pending: local.restart_pending,
@@ -778,6 +891,7 @@ impl PluginLoader {
         let shared = self.shared.clone();
         let dedicated = self.dedicated.clone();
         let remotes = self.remotes.clone();
+        let intents = self.intents.clone();
         let senders = self.senders.clone();
         let stock = self
             .stock
@@ -797,6 +911,7 @@ impl PluginLoader {
             (self.dir.clone(), self.rate, self.tempo, self.process_setup);
         let clap_names = self.clap_names.clone();
         Ok(move || Self {
+            intents,
             threaded_local: true,
             catalog,
             isolation,
@@ -828,7 +943,10 @@ impl PluginLoader {
             .collect();
         let receipt = self.begin_pull_states_matching(Some(&wanted));
         let receipt = Self::wait_for_pull(receipt, crate::host::PULL_WAIT)?;
-        let edits = self.current_edits(target, Some(&receipt))?;
+        let mut edits = self.current_edits(target, Some(&receipt))?;
+        for edit in &mut edits {
+            edit.origin = Origin::Transfer;
+        }
         self.carried.extend(edits);
         Ok(())
     }
@@ -993,6 +1111,8 @@ impl PluginLoader {
             let params = StateIntent(r.applied.clone()).values(x, now.params, &reports, &titles);
             if edits.state.is_some() || !edits.params.is_empty() {
                 self.carried.push(RemoteEdit {
+                    origin: edits.origin,
+                    stamp: edits.stamp,
                     plugin: x.id,
                     state: edits.state.as_ref().map(xirius_plugins::encode_state),
                     params: edits.params,
@@ -1092,6 +1212,7 @@ impl PluginLoader {
             .get(&x.id)
             .filter(|old| StateIntent(old.applied.clone()).accepts(x));
         let intent = old.map(|old| StateIntent(old.applied.clone()));
+        let predecessor = old.map(Local::update_gate);
         let snapshot = old
             .and_then(|old| old.owned.as_ref())
             .map(|old| old.snapshot());
@@ -1143,6 +1264,8 @@ impl PluginLoader {
                         .collect();
                 }
                 let mut edit = RemoteEdit {
+                    origin: Origin::Transfer,
+                    stamp: snapshot.stamp,
                     plugin: value.id,
                     state: Some(snapshot.state),
                     params: reports,
@@ -1164,6 +1287,13 @@ impl PluginLoader {
                 .map(|(p, w)| (Box::new(Readied::new(p, &setup)) as Box<dyn Processor>, w));
             let mut local = loader.locals.remove(&value.id);
             if let Some(local) = &mut local {
+                if let Some(basis) = &predecessor {
+                    let protected = intent
+                        .as_ref()
+                        .map(|intent| intent.protected_params(&original))
+                        .unwrap_or_default();
+                    local.inherit_updates(basis, protected);
+                }
                 local.applied = original.clone();
             }
             Ok(OwnedPreload {
@@ -1386,20 +1516,30 @@ impl PluginLoader {
             .as_ref()
             .filter(|_| !stays)
             .and_then(|r| r.link.editor());
-        let transfer = moving
+        let mut transfer = moving
             .as_ref()
             .filter(|old| StateIntent(old.applied.clone()).accepts(x))
             .map(|old| {
                 (
                     old.link.live_revision(),
                     StateIntent(old.applied.clone()).protected_params(x),
+                    (!stays).then(|| old.link.update_gate()),
                 )
             });
+        let mut predecessor = transfer
+            .as_ref()
+            .and_then(|(_, protected, gate)| gate.clone().map(|gate| (gate, protected.clone())));
         let mut values = self.values(x, moving)?;
         // The instance that played in this process until now: what its editor changed that
         // the song has not taken yet goes to the new one, and to the song later.
         if let Some(mut old) = self.locals.remove(&x.id) {
             let preserve = StateIntent(old.applied.clone()).accepts(x);
+            if preserve {
+                let basis = old.update_gate();
+                let protected = StateIntent(old.applied.clone()).protected_params(x);
+                predecessor = Some((basis.clone(), protected.clone()));
+                transfer = Some((0, protected, Some(basis)));
+            }
             // Latency-only notifications need not include gestures or a parameter edit.
             if preserve {
                 values.state = old
@@ -1476,8 +1616,12 @@ impl PluginLoader {
                 server.open_editor_later(&link, &title, caption);
             }
             let mut processor = RemotePlugin::new(server, link, spec);
-            if let Some((revision, protected)) = transfer {
-                processor.preserve_live_edits_since(revision, protected);
+            if let Some((revision, protected, basis)) = transfer {
+                if let Some(basis) = basis {
+                    processor.preserve_updates_from(basis, revision, protected);
+                } else {
+                    processor.preserve_live_edits_since(revision, protected);
+                }
             } else {
                 processor.discard_previous_editor_changes();
             }
@@ -1543,6 +1687,11 @@ impl PluginLoader {
             self.locals.insert(
                 x.id,
                 Local {
+                    updates: Box::new(UpdateGate::new(Stamp {
+                        instance: new_instance(),
+                        generation: 0,
+                        revision: 0,
+                    })),
                     plugin: None,
                     owned: Some(Box::new(crate::owned_local::OwnedLocal::new(
                         opened.controller,
@@ -1559,6 +1708,12 @@ impl PluginLoader {
                     capture: None,
                 },
             );
+            if let Some((basis, protected)) = predecessor {
+                self.locals
+                    .get_mut(&x.id)
+                    .unwrap()
+                    .inherit_updates(&basis, protected);
+            }
             self.fresh_locals.push(x.id);
             return Ok((Box::new(Vst3Processor::owned(opened.audio)), warnings));
         }
@@ -1615,6 +1770,11 @@ impl PluginLoader {
         self.locals.insert(
             x.id,
             Local {
+                updates: Box::new(UpdateGate::new(Stamp {
+                    instance: new_instance(),
+                    generation: 0,
+                    revision: 0,
+                })),
                 restart_pending: 0,
                 plugin: Some(OnThread::new(plugin)),
                 owned: None,
@@ -1625,6 +1785,12 @@ impl PluginLoader {
                 capture: None,
             },
         );
+        if let Some((basis, protected)) = predecessor {
+            self.locals
+                .get_mut(&x.id)
+                .unwrap()
+                .inherit_updates(&basis, protected);
+        }
         self.fresh_locals.push(x.id);
         Ok((Box::new(Vst3Processor::new(part)), warnings))
     }
@@ -1949,23 +2115,69 @@ impl PluginLoader {
     /// than the moves were taken in (ENG-071), so the moves of an edit without a state are
     /// kept for the one that brings it.
     pub fn moves_until(&mut self, e: &RemoteEdit) -> Option<Vec<ParamEdit>> {
+        let gate = self
+            .update_gate(e.plugin)
+            .unwrap_or_else(|| UpdateGate::new(e.stamp));
         let moves = self.unsettled.entry(e.plugin).or_default();
+        moves.retain(|(stamp, p)| {
+            gate.accepts(
+                *stamp,
+                Field::Parameter {
+                    id: p.id,
+                    title: &p.title,
+                },
+            )
+        });
         for p in e.params.iter().filter(|p| p.value.is_some()) {
-            moves.retain(|m| m.id != p.id);
-            moves.push(p.clone());
+            if !gate.accepts(
+                e.stamp,
+                Field::Parameter {
+                    id: p.id,
+                    title: &p.title,
+                },
+            ) {
+                continue;
+            }
+            moves.retain(|(_, m)| m.id != p.id);
+            moves.push((e.stamp, p.clone()));
         }
         e.state.as_ref()?;
-        self.unsettled.remove(&e.plugin)
+        self.unsettled
+            .remove(&e.plugin)
+            .map(|moves| moves.into_iter().map(|(_, p)| p).collect())
     }
 
     /// Records that the song now holds `state` and `params` for a plugin because they were
     /// taken from the plugin itself, so they are not sent back to it.
-    pub fn taken(&mut self, id: PluginId, state: Option<String>, params: &[(String, f64)]) {
+    pub fn taken(
+        &mut self,
+        id: PluginId,
+        state: Option<String>,
+        params: &[(String, f64)],
+        stamp: Stamp,
+        origin: Origin,
+    ) {
+        let playing = self
+            .playing_local(id)
+            .map(Local::update_gate)
+            .or_else(|| self.playing_remote(id).map(|r| r.link.current_gate()));
+        let accepted = match origin {
+            Origin::Capture => playing.is_some_and(|gate| gate.accepts(stamp, Field::Receipt)),
+            Origin::Editor | Origin::Transfer => self
+                .update_gate(id)
+                .is_some_and(|gate| gate.accepts(stamp, Field::State)),
+        };
+        if !accepted {
+            return;
+        }
+
         if let Some(r) = self.remotes.get_mut(&id) {
             if state.is_some() {
                 r.applied.state.clone_from(&state);
-                if let Some(decoded) = state.as_deref().and_then(|s| decode_state(s).ok()) {
-                    r.server.remember_snapshot(&r.link, decoded, params);
+                if origin == Origin::Capture
+                    && let Some(decoded) = state.as_deref().and_then(|s| decode_state(s).ok())
+                {
+                    r.server.remember_snapshot(&r.link, stamp, decoded, params);
                 }
             }
             for (k, v) in params {
@@ -1979,6 +2191,14 @@ impl PluginLoader {
             for (k, v) in params {
                 l.applied.params.insert(k.clone(), *v);
             }
+        }
+        if let Some(applied) = self
+            .remotes
+            .get(&id)
+            .map(|r| &r.applied)
+            .or_else(|| self.locals.get(&id).map(|l| &l.applied))
+        {
+            self.intents.insert(id, Some(applied.clone()));
         }
         let applied = match self.leaving.get_mut(&id) {
             Some(Leaving::Remote(r)) => &mut r.applied,
@@ -2013,7 +2233,7 @@ impl PluginLoader {
         let mut owned = Vec::new();
         let mut local = false;
         for (id, l) in &mut self.locals {
-            if !selected(id) {
+            if !selected(id) || self.leaving.contains_key(id) {
                 continue;
             }
             local = true;
@@ -2157,12 +2377,43 @@ impl PluginLoader {
             .into_iter()
             .map(|(_, p)| (p.id, p))
             .collect();
+        let mut stale_receipt = false;
         edits.retain_mut(|edit| {
+            if edit.origin == Origin::Capture {
+                let playing = self
+                    .playing_local(edit.plugin)
+                    .map(Local::update_gate)
+                    .or_else(|| {
+                        self.playing_remote(edit.plugin)
+                            .map(|r| r.link.current_gate())
+                    });
+                if playing.is_none_or(|gate| !gate.accepts(edit.stamp, Field::Receipt)) {
+                    stale_receipt = true;
+                    return false;
+                }
+            }
+            if let Some(gate) = self.update_gate(edit.plugin) {
+                if edit.state.is_some() && !gate.accepts(edit.stamp, Field::State) {
+                    return false;
+                }
+                edit.params.retain(|p| {
+                    gate.accepts(
+                        edit.stamp,
+                        Field::Parameter {
+                            id: p.id,
+                            title: &p.title,
+                        },
+                    )
+                });
+            }
             basis
                 .get(&edit.plugin)
                 .zip(current.get(&edit.plugin))
                 .is_some_and(|(old, now)| old.reconcile(now, edit))
         });
+        if stale_receipt {
+            return Err(xirius_engine::plugin_updates::STALE_UPDATE.into());
+        }
         Ok(edits)
     }
 
@@ -2180,6 +2431,8 @@ impl PluginLoader {
                 if let Some(snapshot) = capture.take() {
                     let snapshot = snapshot?;
                     out.push(RemoteEdit {
+                        origin: Origin::Capture,
+                        stamp: snapshot.stamp,
                         plugin: *id,
                         state: Some(snapshot.state),
                         params: snapshot
@@ -2225,6 +2478,8 @@ impl PluginLoader {
                 continue;
             }
             out.push(RemoteEdit {
+                origin: e.origin,
+                stamp: e.stamp,
                 plugin: *id,
                 state: e.state.as_ref().map(xirius_plugins::encode_state),
                 params: e.params,
@@ -2546,6 +2801,11 @@ impl PluginLoader {
     /// this process has it opened by the screen ([`PluginLoader::window_moved_in`]) once the
     /// old host has let go ([`PluginLoader::settle_following`]).
     pub fn promote_opened(&mut self) {
+        for local in self.locals.values() {
+            if let Some(owned) = &local.owned {
+                owned.resume_edits();
+            }
+        }
         self.moved_in.clear();
         let until = Instant::now() + HAND_OVER;
         let mut following = Vec::new();
@@ -2670,6 +2930,83 @@ mod tests {
     use super::*;
 
     #[test]
+    fn model_commands_reset_undo_and_observations_use_one_monotonic_intent_clock() {
+        use xirius_core::{
+            id::{Node, TrackId},
+            model::{Project, Track, TrackKind},
+        };
+        let plugin = Plugin {
+            id: PluginId(42),
+            name: "Fixture".into(),
+            kind: PluginKind::Effect,
+            format: "vst3".into(),
+            uid: "fixture".into(),
+            bypass: false,
+            deactivated: false,
+            params: [("1".into(), 0.25)].into_iter().collect(),
+            state: Some("initial".into()),
+            sidechain: None,
+            preset: None,
+            samples: Vec::new(),
+            isolation: PluginIsolation::Shared,
+        };
+        let mut initial = Project::new("Fixture");
+        let track = TrackId(1);
+        let mut row = Track::new(track, TrackKind::Audio, "A");
+        row.inserts.push(plugin.clone());
+        initial.root.push(Node::Track(track));
+        initial.tracks.insert(track, Arc::new(row));
+        let link = PluginLink::new();
+        let server = PluginServer::new(None);
+        let mut loader = PluginLoader::new(None);
+        loader.remotes.insert(
+            plugin.id,
+            Remote {
+                link: link.clone(),
+                server,
+                placement: PluginIsolation::Shared,
+                owner: String::new(),
+                applied: plugin.clone(),
+            },
+        );
+        loader.advance_intents(&initial, &initial);
+        let old = link.update_gate().stamp();
+        let mut changed = initial.clone();
+        Arc::make_mut(changed.tracks.get_mut(&track).unwrap()).inserts[0]
+            .params
+            .insert("1".into(), 0.75);
+        loader.advance_intents(&initial, &changed);
+        let first = link.update_gate().stamp();
+        assert!(first.generation > old.generation);
+        let mut reset = changed.clone();
+        Arc::make_mut(reset.tracks.get_mut(&track).unwrap()).inserts[0].state = None;
+        loader.advance_intents(&changed, &reset);
+        let second = link.update_gate().stamp();
+        assert!(second.generation > first.generation);
+        loader.advance_intents(&reset, &initial); // undo restores the same values/bytes
+        let restored = link.update_gate().stamp();
+        assert!(restored.generation > second.generation);
+        assert!(!link.update_gate().accepts(old, Field::State));
+        loader.taken(
+            plugin.id,
+            Some("observed".into()),
+            &[("1".into(), 0.5)],
+            restored,
+            Origin::Capture,
+        );
+        let mut observed = initial.clone();
+        let row = Arc::make_mut(observed.tracks.get_mut(&track).unwrap());
+        row.inserts[0].state = Some("observed".into());
+        row.inserts[0].params.insert("1".into(), 0.5);
+        loader.advance_intents(&initial, &observed);
+        assert_eq!(
+            link.update_gate().stamp(),
+            restored,
+            "accepted state is an observation, not another explicit change"
+        );
+    }
+
+    #[test]
     fn one_intent_rule_preserves_reset_replacement_and_changed_parameter_aliases() {
         let old = Plugin {
             id: PluginId(42),
@@ -2701,6 +3038,8 @@ mod tests {
         current.params.clear();
         current.params.insert("Latency".into(), 0.75);
         let mut edit = RemoteEdit {
+            origin: Origin::Editor,
+            stamp: Stamp::default(),
             plugin: old.id,
             state: Some("observed".into()),
             params: vec![ParamEdit {
@@ -2899,6 +3238,8 @@ mod tests {
         let plugin = PluginId(3);
         // The moves are taken in one frame; the plugin's state comes in the next.
         let moved = RemoteEdit {
+            origin: Origin::Editor,
+            stamp: Stamp::default(),
             plugin,
             state: None,
             params: vec![
@@ -2910,6 +3251,8 @@ mod tests {
         };
         assert_eq!(loader.moves_until(&moved), None);
         let settled = RemoteEdit {
+            origin: Origin::Editor,
+            stamp: Stamp::default(),
             plugin,
             state: Some("c3RhdGU=".into()),
             params: vec![edit(1, EditPhase::End, None)],

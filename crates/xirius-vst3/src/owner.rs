@@ -232,6 +232,7 @@ impl Drop for AudioLease {
 }
 
 pub struct Edits {
+    pub serial: u64,
     pub gestures: Vec<Gesture>,
     pub restart_flags: i32,
     pub note_names: Vec<(u8, String)>,
@@ -241,6 +242,7 @@ pub struct Edits {
 }
 
 struct Instance {
+    serial: u64,
     // Drop the editor before the plugin, on this thread.
     editor: Option<Editor>,
     plugin: Plugin,
@@ -287,6 +289,14 @@ impl Controller {
     ) -> Result<Ticket<T>, String> {
         self.ask(move |instance| work(&mut instance.plugin))
     }
+    /// The sequence is assigned when the owner executes the job, not when a
+    /// caller enqueues it. Cloned controllers therefore share actual SDK order.
+    pub fn on_owner_versioned<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&mut Plugin, u64) -> Result<T, String> + Send + 'static,
+    ) -> Result<Ticket<T>, String> {
+        self.ask(move |instance| work(&mut instance.plugin, instance.serial))
+    }
     /// Starts the owner and returns immediately. Thread creation is the only
     /// synchronous fallible work; DLL loading and initial getState happen there.
     pub fn open(open: Open) -> Result<Ticket<Opened>, String> {
@@ -322,6 +332,7 @@ impl Controller {
                 let plugin = load(open);
                 let mut instance = match plugin {
                     Ok(plugin) => Instance {
+                        serial: 0,
                         editor: None,
                         plugin,
                     },
@@ -415,6 +426,10 @@ impl Controller {
         self.commands
             .try_send(Box::new(move |instance| {
                 if !abandoned.load(Ordering::Acquire) {
+                    instance.serial = instance
+                        .serial
+                        .checked_add(1)
+                        .expect("owner job sequence exhausted");
                     let result = f(instance);
                     // Liveness recovered; the abandoned value is still discarded.
                     // A permanently stopped call never reaches this boundary.
@@ -461,6 +476,7 @@ impl Controller {
         self.ask(|i| {
             i.plugin.follow_processor();
             Ok(Edits {
+                serial: i.serial,
                 gestures: i.plugin.handler().take_gestures(),
                 restart_flags: i.plugin.handler().take_restart_flags(),
                 note_names: i.plugin.note_names(),

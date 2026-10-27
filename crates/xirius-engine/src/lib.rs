@@ -20,6 +20,7 @@ pub mod mixer;
 pub mod monitor;
 mod parallel;
 pub mod plugin;
+pub mod plugin_updates;
 pub mod prefetch;
 pub mod processor;
 pub mod record;

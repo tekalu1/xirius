@@ -130,6 +130,7 @@ struct FaultCtl {
 }
 
 struct Instance {
+    updates: xirius_engine::plugin_updates::UpdateGate,
     plugin: Loaded,
     editor: Option<Editor>,
     audio: Option<JoinHandle<Audio>>,
@@ -139,13 +140,35 @@ struct Instance {
     /// The host generation that opened it.
     epoch: u64,
     /// Read the state once the processor has run to this block, or at this time.
-    capture: Option<(u64, Instant)>,
+    capture: Option<(u64, Instant, u64)>,
     capture_requests: Vec<u64>,
     /// The names of its keys last sent to the engine.
     note_names: Vec<(u8, String)>,
 }
 
 impl Instance {
+    fn gestures(&mut self, slot: u32) -> Vec<FromHost> {
+        let generation = self.updates.stamp().generation;
+        let mut out = Vec::new();
+        for gesture in self.plugin.take_gestures() {
+            let revision = self.updates.next_revision().revision;
+            if matches!(gesture, Gesture::End(_)) {
+                self.capture = Some((
+                    self.blocks() + CAPTURE_BLOCKS,
+                    Instant::now() + CAPTURE_WAIT,
+                    generation,
+                ));
+            }
+            out.push(FromHost::Gesture {
+                slot,
+                generation,
+                revision,
+                gesture,
+            });
+        }
+        out
+    }
+
     /// Reads the names of its keys again; the message for the engine when they changed.
     fn reread_note_names(&mut self, slot: u32) -> Option<FromHost> {
         let names = self.plugin.note_names();
@@ -250,30 +273,71 @@ impl Host {
                 }
                 self.send(&FromHost::Closed { slot });
             }
-            ToHost::SetState { slot, state } => {
+            ToHost::SetState {
+                slot,
+                generation,
+                revision,
+                basis_revision,
+                state,
+            } => {
+                let mut out = Vec::new();
                 if let Some(inst) = self.instances.get_mut(&slot) {
-                    if let Err(e) = inst.plugin.set_state(&state) {
-                        eprintln!("xirius-plugin-host: slot {slot}: {e}");
-                    }
-                    // What the plugin reports about its own new state is not the user's.
-                    inst.capture = None;
-                    inst.plugin.take_gestures();
-                    let latency_changed = inst.plugin.take_changes().latency;
-                    let latency = inst.plugin.latency();
-                    let names = inst.reread_note_names(slot);
-                    if latency_changed {
-                        self.send(&FromHost::Latency { slot, latency });
-                    }
-                    if let Some(msg) = names {
-                        self.send(&msg);
+                    out = inst.gestures(slot);
+                    if inst
+                        .updates
+                        .command(generation, revision, basis_revision, true, &[])
+                        .is_some()
+                    {
+                        if let Err(e) = inst.plugin.set_state(&state) {
+                            eprintln!("xirius-plugin-host: slot {slot}: {e}");
+                        }
+                        inst.capture = None;
+                        inst.plugin.take_gestures();
+                        let changed = inst.plugin.take_changes().latency;
+                        if changed {
+                            out.push(FromHost::Latency {
+                                slot,
+                                latency: inst.plugin.latency(),
+                            });
+                        }
+                        if let Some(msg) = inst.reread_note_names(slot) {
+                            out.push(msg);
+                        }
                     }
                 }
+                for msg in out {
+                    self.send(&msg);
+                }
             }
-            ToHost::SetParam { slot, key, value } => {
-                if let Some(inst) = self.instances.get(&slot)
-                    && let Some(id) = inst.plugin.resolve(&key)
-                {
-                    inst.plugin.set_param(id, value.clamp(0.0, 1.0));
+            ToHost::SetParam {
+                slot,
+                generation,
+                revision,
+                basis_revision,
+                key,
+                value,
+            } => {
+                let mut out = Vec::new();
+                if let Some(inst) = self.instances.get_mut(&slot) {
+                    out = inst.gestures(slot);
+                    if inst
+                        .updates
+                        .command(
+                            generation,
+                            revision,
+                            basis_revision,
+                            false,
+                            std::slice::from_ref(&key),
+                        )
+                        .is_some()
+                        && let Some(id) = inst.plugin.resolve(&key)
+                    {
+                        inst.plugin.set_param(id, value.clamp(0.0, 1.0));
+                        inst.plugin.take_gestures();
+                    }
+                }
+                for msg in out {
+                    self.send(&msg);
                 }
             }
             ToHost::OpenEditor {
@@ -311,7 +375,7 @@ impl Host {
                 {
                     // Play presses the window took until now still count.
                     keys = editor.take_play_requests();
-                    inst.capture = Some((0, Instant::now()));
+                    inst.capture = Some((0, Instant::now(), inst.updates.stamp().generation));
                     // Shut by the person since the last `poll`, as with `Close`.
                     shut = !editor.is_visible();
                 }
@@ -325,11 +389,12 @@ impl Host {
             ToHost::CaptureState { slot, request } => {
                 // Read in the next `poll`, on this thread, where the plugin may be used.
                 if let Some(inst) = self.instances.get_mut(&slot) {
-                    inst.capture = Some((0, Instant::now()));
                     inst.capture_requests.push(request);
                 } else {
                     self.send(&FromHost::CapturedState {
                         slot,
+                        generation: 0,
+                        revision: 0,
                         request,
                         result: Err("プラグインが開かれていません".into()),
                         values: Vec::new(),
@@ -486,6 +551,13 @@ impl Host {
             note_names: note_names.clone(),
         };
         let inst = Instance {
+            updates: xirius_engine::plugin_updates::UpdateGate::new(
+                xirius_engine::plugin_updates::Stamp {
+                    instance: u64::from(o.slot),
+                    generation: o.generation,
+                    revision: o.revision,
+                },
+            ),
             plugin,
             editor: None,
             audio: Some(thread),
@@ -505,52 +577,57 @@ impl Host {
         let mut out = Vec::new();
         for (&slot, inst) in &mut self.instances {
             let _in = inst.enter();
-            for g in inst.plugin.take_gestures() {
-                if matches!(g, Gesture::End(_)) {
-                    inst.capture = Some((
-                        inst.blocks() + CAPTURE_BLOCKS,
-                        Instant::now() + CAPTURE_WAIT,
-                    ));
-                }
-                out.push(FromHost::Gesture { slot, gesture: g });
-            }
+            out.extend(inst.gestures(slot));
             let changes = inst.plugin.take_changes();
             if changes.values && inst.capture.is_none() {
                 inst.capture = Some((
                     inst.blocks() + CAPTURE_BLOCKS,
                     Instant::now() + CAPTURE_WAIT,
+                    inst.updates.stamp().generation,
                 ));
             }
             let latency_changed = changes.latency;
             let mut names_changed = changes.note_names;
-            if !inst.capture_requests.is_empty()
-                || inst.capture.is_some_and(|(blocks, at)| {
-                    latency_changed || inst.blocks() >= blocks || Instant::now() >= at
-                })
-            {
-                inst.capture = None;
+            let passive = inst.capture.filter(|(blocks, at, _)| {
+                latency_changed || inst.blocks() >= *blocks || Instant::now() >= *at
+            });
+            if !inst.capture_requests.is_empty() || passive.is_some() {
+                if passive.is_some() {
+                    inst.capture = None;
+                }
                 let result = inst.plugin.get_state();
-                if !inst.capture_requests.is_empty() {
-                    let values = if result.is_ok() {
-                        inst.plugin.param_values()
-                    } else {
-                        Vec::new()
-                    };
-                    for request in inst.capture_requests.drain(..) {
-                        out.push(FromHost::CapturedState {
-                            slot,
-                            request,
-                            result: result.clone(),
-                            values: values.clone(),
-                        });
-                    }
+                let values = if result.is_ok() {
+                    inst.plugin.param_values()
                 } else {
+                    Vec::new()
+                };
+                let revision = if passive.is_some() {
+                    inst.updates.next_revision().revision
+                } else {
+                    inst.updates.stamp().revision
+                };
+                for request in inst.capture_requests.drain(..) {
+                    out.push(FromHost::CapturedState {
+                        slot,
+                        generation: inst.updates.stamp().generation,
+                        revision,
+                        request,
+                        result: result.clone(),
+                        values: values.clone(),
+                    });
+                }
+                if let Some((_, _, generation)) = passive {
                     match result {
-                        Ok(state) => out.push(FromHost::State { slot, state }),
+                        Ok(state) => out.push(FromHost::State {
+                            slot,
+                            generation,
+                            revision,
+                            state,
+                            values,
+                        }),
                         Err(e) => eprintln!("xirius-plugin-host: slot {slot}: {e}"),
                     }
                 }
-                // A preset chosen in the plugin may name its keys anew.
                 names_changed = true;
             }
             if names_changed && let Some(msg) = inst.reread_note_names(slot) {
@@ -570,7 +647,7 @@ impl Host {
             if inst.editor.as_ref().is_some_and(|e| !e.is_visible()) {
                 inst.editor = None;
                 // The patch may have been changed in the window without a word about it.
-                inst.capture = Some((0, Instant::now()));
+                inst.capture = Some((0, Instant::now(), inst.updates.stamp().generation));
                 out.push(FromHost::EditorClosed { slot });
             }
         }

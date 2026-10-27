@@ -12,11 +12,14 @@ use xirius_vst3::owner::{Controller, Edits, Ticket};
 use xirius_vst3::{Caption, Gesture, Placement};
 
 use crate::plugins::RemoteEdit;
+use xirius_engine::plugin_updates::{Field, Stamp, UpdateGate, new_instance};
 
 #[derive(Clone)]
 pub(crate) struct Capture(Arc<Mutex<CaptureInner>>);
 
 struct CaptureInner {
+    updates: Arc<Mutex<UpdateGate>>,
+    stamp: Stamp,
     controller: Option<Controller>,
     due: Instant,
     task: Option<Ticket<Snapshot>>,
@@ -27,8 +30,16 @@ struct CaptureInner {
 }
 
 impl Capture {
-    fn new(controller: Controller, due: Instant, validity: Arc<Mutex<Option<String>>>) -> Self {
+    fn new(
+        controller: Controller,
+        due: Instant,
+        validity: Arc<Mutex<Option<String>>>,
+        updates: Arc<Mutex<UpdateGate>>,
+    ) -> Self {
+        let stamp = updates.lock().unwrap_or_else(|e| e.into_inner()).stamp();
         Self(Arc::new(Mutex::new(CaptureInner {
+            updates,
+            stamp,
             controller: Some(controller),
             due,
             task: None,
@@ -48,7 +59,13 @@ impl Capture {
         }
         if let Some(controller) = capture.controller.take() {
             let validity = capture.validity.clone();
-            match controller.on_owner(move |plugin| {
+            let stamp = capture.stamp;
+            let updates = capture.updates.clone();
+            match controller.on_owner_versioned(move |plugin, serial| {
+                let stamp = Stamp {
+                    revision: serial,
+                    ..stamp
+                };
                 #[cfg(feature = "test-io")]
                 xirius_core::io_test::before(
                     "prepare_get_state",
@@ -58,13 +75,28 @@ impl Capture {
                 if let Some(error) = validity.lock().unwrap_or_else(|e| e.into_inner()).clone() {
                     return Err(error);
                 }
+                if !updates
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .accepts(stamp, Field::Receipt)
+                {
+                    return Err(xirius_engine::plugin_updates::STALE_UPDATE.into());
+                }
                 let state = plugin.get_state().map_err(|e| e.to_string())?;
                 let params = plugin
                     .params()
                     .iter()
                     .filter_map(|p| plugin.param(p.id).map(|v| (p.id, p.title.clone(), v)))
                     .collect();
+                if !updates
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .accepts(stamp, Field::Receipt)
+                {
+                    return Err(xirius_engine::plugin_updates::STALE_UPDATE.into());
+                }
                 Ok(Snapshot {
+                    stamp,
                     state: xirius_plugins::encode_state(&state),
                     params,
                 })
@@ -79,6 +111,9 @@ impl Capture {
             }
         }
         if let Some(result) = capture.task.as_ref().and_then(Ticket::poll) {
+            if let Ok(snapshot) = &result {
+                capture.stamp = snapshot.stamp;
+            }
             capture.error = result.as_ref().err().cloned();
             capture.value = Some(result);
             capture.completed = true;
@@ -98,7 +133,17 @@ impl Capture {
 
     pub(crate) fn take(&self) -> Option<Result<Snapshot, String>> {
         self.poll();
-        self.0.try_lock().ok()?.value.take()
+        let mut capture = self.0.try_lock().ok()?;
+        let value = capture.value.take()?;
+        if !capture
+            .updates
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .accepts(capture.stamp, Field::Receipt)
+        {
+            return Some(Err(xirius_engine::plugin_updates::STALE_UPDATE.into()));
+        }
+        Some(value)
     }
 
     pub(crate) fn cancel(&self) {
@@ -127,12 +172,15 @@ impl Capture {
     }
 }
 
+type PendingEdits = Option<(Stamp, Ticket<Edits>)>;
 pub(crate) struct OwnedLocal {
+    updates: Arc<Mutex<UpdateGate>>,
     controller: Controller,
     retirement: xirius_vst3::owner::Retirement,
     params: Vec<(u32, String)>,
     requests: RefCell<Vec<Ticket<()>>>,
-    edits: RefCell<Option<Ticket<Edits>>>,
+    edits: Arc<Mutex<PendingEdits>>,
+    poll_gui: Cell<bool>,
     captures: RefCell<Vec<Capture>>,
     error: RefCell<Option<String>>,
     validity: Arc<Mutex<Option<String>>>,
@@ -147,6 +195,7 @@ pub(crate) struct OwnedLocal {
 }
 
 pub(crate) struct Snapshot {
+    pub stamp: Stamp,
     pub state: String,
     pub params: Vec<(u32, String, f64)>,
 }
@@ -162,12 +211,28 @@ impl OwnedLocal {
             self.latency.get(),
         );
         copy.validity = self.validity.clone();
+        copy.updates = self.updates.clone();
+        copy.edits = self.edits.clone();
+        copy.poll_gui.set(false);
         copy.visible.set(self.visible());
         copy
     }
 
     pub fn snapshot(&self) -> Result<Ticket<Snapshot>, String> {
-        self.controller.on_owner(|plugin| {
+        let updates = self.updates.clone();
+        let stamp = self.update_gate().stamp();
+        self.controller.on_owner_versioned(move |plugin, serial| {
+            let stamp = Stamp {
+                revision: serial,
+                ..stamp
+            };
+            if !updates
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .accepts(stamp, Field::Receipt)
+            {
+                return Err(xirius_engine::plugin_updates::STALE_UPDATE.into());
+            }
             let state = plugin.get_state().map_err(|e| e.to_string())?;
             let params = plugin
                 .params()
@@ -178,7 +243,15 @@ impl OwnedLocal {
                         .map(|value| (p.id, p.title.clone(), value))
                 })
                 .collect();
+            if !updates
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .accepts(stamp, Field::Receipt)
+            {
+                return Err(xirius_engine::plugin_updates::STALE_UPDATE.into());
+            }
             Ok(Snapshot {
+                stamp,
                 state: xirius_plugins::encode_state(&state),
                 params,
             })
@@ -192,11 +265,17 @@ impl OwnedLocal {
         latency: u32,
     ) -> Self {
         Self {
+            updates: Arc::new(Mutex::new(UpdateGate::new(Stamp {
+                instance: new_instance(),
+                generation: 0,
+                revision: 0,
+            }))),
             controller,
             retirement,
             params,
             requests: Default::default(),
             edits: Default::default(),
+            poll_gui: Cell::new(true),
             captures: Default::default(),
             error: Default::default(),
             validity: Default::default(),
@@ -211,6 +290,24 @@ impl OwnedLocal {
         }
     }
 
+    pub fn resume_edits(&self) {
+        self.poll_gui.set(true);
+    }
+    pub fn update_gate(&self) -> UpdateGate {
+        self.updates
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+    pub fn inherit_updates(&self, basis: &UpdateGate, protected: Vec<String>) {
+        let mut gate = self.updates.lock().unwrap_or_else(|e| e.into_inner());
+        *gate = basis.successor(gate.stamp().instance, protected);
+    }
+    pub fn invalidate(&self, replace: bool, keys: &[String]) {
+        let mut gate = self.updates.lock().unwrap_or_else(|e| e.into_inner());
+        let next = gate.next_generation();
+        gate.explicit(next, replace, keys);
+    }
     pub fn retirement(&self) -> xirius_vst3::owner::Retirement {
         self.retirement.clone()
     }
@@ -250,6 +347,7 @@ impl OwnedLocal {
             self.controller.clone(),
             Instant::now() + delay,
             self.validity.clone(),
+            self.updates.clone(),
         )
     }
 
@@ -271,7 +369,16 @@ impl OwnedLocal {
             .map(|(key, value)| (key.clone(), *value))
             .collect();
         let validity = self.validity.clone();
+        let updates = self.updates.clone();
+        let stamp = self.update_gate().stamp();
         self.keep(self.controller.on_owner(move |plugin| {
+            if !updates
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .accepts(stamp, Field::Receipt)
+            {
+                return Ok(());
+            }
             let result = (|| {
                 if let Some(text) = state.as_deref() {
                     let state = xirius_plugins::decode_state(text).map_err(|e| e.to_string())?;
@@ -297,7 +404,16 @@ impl OwnedLocal {
                 plugin.handler().take_gestures();
                 Ok(())
             })();
-            *validity.lock().unwrap_or_else(|e| e.into_inner()) = result.as_ref().err().cloned();
+            if updates
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .accepts(stamp, Field::Receipt)
+            {
+                *validity.lock().unwrap_or_else(|e| e.into_inner()) =
+                    result.as_ref().err().cloned();
+            } else {
+                return Ok(());
+            }
             result
         }))
     }
@@ -318,7 +434,9 @@ impl OwnedLocal {
             Ok(job) => {
                 // Reports queued before this command cannot close a newly opened
                 // editor or erase the handoff intention.
-                self.edits.borrow_mut().take();
+                if let Ok(mut edits) = self.edits.try_lock() {
+                    edits.take();
+                }
                 self.editor_intent.set(Some(open));
                 *self.editor_job.borrow_mut() = Some(job);
                 true
@@ -367,16 +485,41 @@ impl OwnedLocal {
     }
 
     pub fn take(&self, id: PluginId) -> Option<RemoteEdit> {
+        if !self.poll_gui.get() {
+            return None;
+        }
         self.poll_requests();
         if !self.poll_editor() {
             return None;
         }
-        let result = self.edits.borrow().as_ref().and_then(Ticket::poll);
+        let result = {
+            let Ok(mut pending) = self.edits.try_lock() else {
+                return None;
+            };
+            let result = pending
+                .as_ref()
+                .and_then(|(stamp, ticket)| ticket.poll().map(|result| (*stamp, result)));
+            if result.is_some() {
+                pending.take();
+            }
+            result
+        };
         let mut params = Vec::new();
-        if let Some(result) = result {
-            *self.edits.borrow_mut() = None;
+        if let Some((stamp, result)) = result
+            && self.update_gate().accepts(
+                Stamp {
+                    revision: result.as_ref().map_or(stamp.revision, |edits| edits.serial),
+                    ..stamp
+                },
+                Field::Receipt,
+            )
+        {
             match result {
                 Ok(edits) => {
+                    let stamp = Stamp {
+                        revision: edits.serial,
+                        ..stamp
+                    };
                     self.flags.set(self.flags.get() | edits.restart_flags);
                     self.visible.set(edits.editor_visible);
                     self.play
@@ -384,6 +527,10 @@ impl OwnedLocal {
                     self.latency.set(edits.latency);
                     *self.names.borrow_mut() = edits.note_names;
                     if edits.restart_flags & 4 != 0 {
+                        self.updates
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .observed(stamp, Field::State);
                         self.due
                             .set(Some(Instant::now() + super::plugins::CAPTURE_WAIT));
                     }
@@ -403,6 +550,16 @@ impl OwnedLocal {
                             .find(|(p, _)| *p == pid)
                             .map(|(_, t)| t.clone())
                             .unwrap_or_default();
+                        self.updates
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .observed(
+                                stamp,
+                                Field::Parameter {
+                                    id: pid,
+                                    title: &title,
+                                },
+                            );
                         params.push(ParamEdit {
                             id: pid,
                             phase,
@@ -415,9 +572,12 @@ impl OwnedLocal {
                 Err(error) => *self.error.borrow_mut() = Some(error),
             }
         }
-        if self.edits.borrow().is_none() {
+        if let Ok(mut pending) = self.edits.try_lock()
+            && pending.is_none()
+        {
+            let stamp = self.update_gate().stamp();
             match self.controller.edits() {
-                Ok(task) => *self.edits.borrow_mut() = Some(task),
+                Ok(task) => *pending = Some((stamp, task)),
                 Err(error) => *self.error.borrow_mut() = Some(error),
             }
         }
@@ -442,12 +602,15 @@ impl OwnedLocal {
                         }));
                         *self.error.borrow_mut() = None;
                     }
+                    Err(error) if error == xirius_engine::plugin_updates::STALE_UPDATE => {}
                     Err(error) => *self.error.borrow_mut() = Some(error),
                 }
             }
             !capture.ready()
         });
         (state.is_some() || !params.is_empty()).then_some(RemoteEdit {
+            origin: xirius_engine::plugin_updates::Origin::Editor,
+            stamp: self.update_gate().stamp(),
             plugin: id,
             state,
             params,

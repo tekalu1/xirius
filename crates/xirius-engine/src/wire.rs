@@ -12,7 +12,7 @@ use xirius_vst3::{Caption, PluginState};
 
 /// The version of these messages and of the shared memory's layout together. Bump it with
 /// any change to either.
-pub const PROTOCOL: u32 = 8;
+pub const PROTOCOL: u32 = 9;
 /// Starts the encoded [`FromHost::Hello`], so a stray first message is not taken for one.
 const HELLO_MAGIC: u32 = u32::from_le_bytes(*b"XPHH");
 
@@ -26,11 +26,17 @@ pub enum ToHost {
     /// Replace the plugin's state (an undo, or a state the song was given).
     SetState {
         slot: u32,
+        generation: u64,
+        revision: u64,
+        basis_revision: u64,
         state: PluginState,
     },
     /// Set a parameter by numeric id or title, normalised 0..1.
     SetParam {
         slot: u32,
+        generation: u64,
+        revision: u64,
+        basis_revision: u64,
         key: String,
         value: f64,
     },
@@ -84,6 +90,8 @@ pub struct OpenSlot {
     /// The host process's generation; it is written into the shared memory when the instance
     /// is ready, so the engine can tell a fresh instance from one of a host that went down.
     pub epoch: u64,
+    pub generation: u64,
+    pub revision: u64,
     pub shm: String,
     pub req: String,
     pub done: String,
@@ -112,17 +120,24 @@ pub enum FromHost {
     /// A step of the user's edit in the editor (automation writing follows these).
     Gesture {
         slot: u32,
+        generation: u64,
+        revision: u64,
         gesture: Gesture,
     },
     /// The plugin's state after the user's edit settled.
     State {
         slot: u32,
+        generation: u64,
+        revision: u64,
         state: PluginState,
+        values: Vec<(u32, String, f64)>,
     },
     /// A reply to one exact CaptureState request; unrelated edit reports never
     /// acknowledge a save, and an abandoned request cannot answer a retry.
     CapturedState {
         slot: u32,
+        generation: u64,
+        revision: u64,
         request: u64,
         result: Result<PluginState, String>,
         values: Vec<(u32, String, f64)>,
@@ -287,7 +302,11 @@ impl ToHost {
         let mut o = Out::default();
         match self {
             ToHost::Open(s) => {
-                o.u8(1).u32(s.slot).u64(s.epoch);
+                o.u8(1)
+                    .u32(s.slot)
+                    .u64(s.epoch)
+                    .u64(s.generation)
+                    .u64(s.revision);
                 o.str(&s.shm).str(&s.req).str(&s.done).str(&s.bundle);
                 match &s.class {
                     Some(c) => o.u8(1).bytes(c),
@@ -305,11 +324,35 @@ impl ToHost {
             ToHost::Close { slot } => {
                 o.u8(2).u32(*slot);
             }
-            ToHost::SetState { slot, state } => {
-                o.u8(3).u32(*slot).state(state);
+            ToHost::SetState {
+                slot,
+                generation,
+                revision,
+                basis_revision,
+                state,
+            } => {
+                o.u8(3)
+                    .u32(*slot)
+                    .u64(*generation)
+                    .u64(*revision)
+                    .u64(*basis_revision)
+                    .state(state);
             }
-            ToHost::SetParam { slot, key, value } => {
-                o.u8(4).u32(*slot).str(key).f64(*value);
+            ToHost::SetParam {
+                slot,
+                generation,
+                revision,
+                basis_revision,
+                key,
+                value,
+            } => {
+                o.u8(4)
+                    .u32(*slot)
+                    .u64(*generation)
+                    .u64(*revision)
+                    .u64(*basis_revision)
+                    .str(key)
+                    .f64(*value);
             }
             ToHost::OpenEditor {
                 slot,
@@ -356,7 +399,7 @@ impl ToHost {
         let mut i = In(b);
         Ok(match i.u8()? {
             1 => {
-                let (slot, epoch) = (i.u32()?, i.u64()?);
+                let (slot, epoch, generation, revision) = (i.u32()?, i.u64()?, i.u64()?, i.u64()?);
                 let (shm, req, done, bundle) = (i.str()?, i.str()?, i.str()?, i.str()?);
                 let class = match i.u8()? {
                     0 => None,
@@ -370,6 +413,8 @@ impl ToHost {
                 ToHost::Open(OpenSlot {
                     slot,
                     epoch,
+                    generation,
+                    revision,
                     shm,
                     req,
                     done,
@@ -382,10 +427,16 @@ impl ToHost {
             2 => ToHost::Close { slot: i.u32()? },
             3 => ToHost::SetState {
                 slot: i.u32()?,
+                generation: i.u64()?,
+                revision: i.u64()?,
+                basis_revision: i.u64()?,
                 state: i.state()?,
             },
             4 => ToHost::SetParam {
                 slot: i.u32()?,
+                generation: i.u64()?,
+                revision: i.u64()?,
+                basis_revision: i.u64()?,
                 key: i.str()?,
                 value: i.f64()?,
             },
@@ -456,24 +507,49 @@ impl FromHost {
                     }
                 }
             }
-            FromHost::Gesture { slot, gesture } => {
-                o.u8(2).u32(*slot);
+            FromHost::Gesture {
+                slot,
+                generation,
+                revision,
+                gesture,
+            } => {
+                o.u8(2).u32(*slot).u64(*generation).u64(*revision);
                 match *gesture {
                     Gesture::Begin(id) => o.u8(0).u32(id).f64(0.0),
                     Gesture::Perform(id, v) => o.u8(1).u32(id).f64(v),
                     Gesture::End(id) => o.u8(2).u32(id).f64(0.0),
                 };
             }
-            FromHost::State { slot, state } => {
-                o.u8(3).u32(*slot).state(state);
+            FromHost::State {
+                slot,
+                generation,
+                revision,
+                state,
+                values,
+            } => {
+                o.u8(3)
+                    .u32(*slot)
+                    .u64(*generation)
+                    .u64(*revision)
+                    .state(state);
+                o.u32(values.len() as u32);
+                for (id, title, value) in values {
+                    o.u32(*id).str(title).f64(*value);
+                }
             }
             FromHost::CapturedState {
                 slot,
+                generation,
+                revision,
                 request,
                 result,
                 values,
             } => {
-                o.u8(9).u32(*slot).u64(*request);
+                o.u8(9)
+                    .u32(*slot)
+                    .u64(*generation)
+                    .u64(*revision)
+                    .u64(*request);
                 match result {
                     Ok(state) => {
                         o.u8(1).state(state);
@@ -538,6 +614,8 @@ impl FromHost {
             }
             2 => {
                 let slot = i.u32()?;
+                let generation = i.u64()?;
+                let revision = i.u64()?;
                 let (kind, id, v) = (i.u8()?, i.u32()?, i.f64()?);
                 let gesture = match kind {
                     0 => Gesture::Begin(id),
@@ -545,11 +623,19 @@ impl FromHost {
                     2 => Gesture::End(id),
                     _ => return Err(bad("gesture")),
                 };
-                FromHost::Gesture { slot, gesture }
+                FromHost::Gesture {
+                    slot,
+                    generation,
+                    revision,
+                    gesture,
+                }
             }
             3 => FromHost::State {
                 slot: i.u32()?,
+                generation: i.u64()?,
+                revision: i.u64()?,
                 state: i.state()?,
+                values: i.list(|i| Ok((i.u32()?, i.str()?, i.f64()?)))?,
             },
             4 => FromHost::Latency {
                 slot: i.u32()?,
@@ -564,6 +650,8 @@ impl FromHost {
             8 => FromHost::Closed { slot: i.u32()? },
             9 => FromHost::CapturedState {
                 slot: i.u32()?,
+                generation: i.u64()?,
+                revision: i.u64()?,
                 request: i.u64()?,
                 result: if i.u8()? == 0 {
                     Err(i.str()?)
@@ -626,6 +714,8 @@ mod tests {
             ToHost::Open(OpenSlot {
                 slot: 3,
                 epoch: 7,
+                generation: 0,
+                revision: 11,
                 shm: "a".into(),
                 req: "b".into(),
                 done: "c".into(),
@@ -637,10 +727,16 @@ mod tests {
             ToHost::Close { slot: 1 },
             ToHost::SetState {
                 slot: 2,
+                generation: 7,
+                revision: 11,
+                basis_revision: 10,
                 state: state.clone(),
             },
             ToHost::SetParam {
                 slot: 2,
+                generation: 7,
+                revision: 11,
+                basis_revision: 10,
                 key: "Mix".into(),
                 value: 0.5,
             },
@@ -700,25 +796,39 @@ mod tests {
             },
             FromHost::Gesture {
                 slot: 1,
+                generation: 7,
+                revision: 11,
                 gesture: Gesture::Perform(3, 0.75),
             },
             FromHost::Gesture {
                 slot: 1,
+                generation: 7,
+                revision: 11,
                 gesture: Gesture::End(3),
             },
             FromHost::CapturedState {
                 slot: 1,
+                generation: 7,
+                revision: 11,
                 request: 24,
                 result: Ok(state.clone()),
                 values: vec![(3, "Parameter".into(), 0.75)],
             },
             FromHost::CapturedState {
                 slot: 1,
+                generation: 7,
+                revision: 11,
                 request: 25,
                 result: Err("状態を取得できません".into()),
                 values: Vec::new(),
             },
-            FromHost::State { slot: 1, state },
+            FromHost::State {
+                slot: 1,
+                generation: 7,
+                revision: 11,
+                values: Vec::new(),
+                state,
+            },
             FromHost::Latency {
                 slot: 1,
                 latency: 128,
