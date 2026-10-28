@@ -8316,7 +8316,7 @@ name = "xirius-mcp"
 version = "1.1.0-beta.2"
 dependencies = [
  "axum",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "rmcp",
  "serde_json",
  "tempfile",
