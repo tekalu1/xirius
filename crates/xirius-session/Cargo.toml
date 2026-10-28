@@ -45,7 +45,7 @@ symphonia = { version = "0.6", default-features = false, features = [
 # The one way a file's rate becomes the song's (ENG-022).
 rubato = "0.16"
 # The app's own update (UI-282): the ed25519 signature of the installer, checked before it runs.
-ed25519-dalek = "2"
+ed25519-dalek = "3"
 sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
