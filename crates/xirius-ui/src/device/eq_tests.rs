@@ -181,6 +181,49 @@ fn ui_326_a_point_pulled_aslant_is_heard_both_ways() {
     assert_eq!(plain(&s, t, "mid1_gain"), gh);
 }
 
+/// M-ui-4: Tab goes through every band's point, each chosen as the keys reach it (on to
+/// its first control), and Shift+Tab back the same way; wide (all the bands' columns) and
+/// narrow (the chosen band's only).
+#[test]
+fn ui_326_tab_reaches_every_band() {
+    for w in [eq::NATURAL_W, 520.0] {
+        tab_round(w);
+    }
+}
+
+fn tab_round(w: f32) {
+    let (mut s, g, t, id) = eq_window();
+    resize(&mut s, t, w);
+    s.device_blur();
+    assert!(s.device_enter(true));
+    let start = s.instruments.focus;
+    let shift = Mods {
+        shift: true,
+        ..Mods::NONE
+    };
+    let mut seen = Vec::new();
+    let mut ahead = vec![start];
+    for _ in 0..200 {
+        assert!(s.field_keys(&g, "tab", None, Mods::NONE));
+        let band = s.instruments.band(id);
+        if !seen.contains(&band) {
+            seen.push(band);
+        }
+        ahead.push(s.instruments.focus);
+        if s.instruments.focus == start {
+            break;
+        }
+    }
+    assert_eq!(s.instruments.focus, start, "{w}: round in one turn");
+    seen.sort_unstable();
+    assert_eq!(seen, (0..eq::NAMES.len()).collect::<Vec<_>>(), "{w}");
+    // Back the same way.
+    for want in ahead.iter().rev().skip(1) {
+        assert!(s.field_keys(&g, "tab", None, shift));
+        assert_eq!(s.instruments.focus, *want, "{w}");
+    }
+}
+
 #[test]
 fn ui_326_the_spectrum_menu_chooses_what_the_analyser_shows() {
     let (mut s, g, _, id) = eq_window();

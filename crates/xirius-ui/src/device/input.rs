@@ -48,6 +48,15 @@ impl Entry {
     }
 }
 
+/// A stop of Tab in a device's window: the control `k`, or the point `point` (its graph
+/// and its index) whose value `k` is; `lone`: a point whose controls are not on show.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Stop {
+    k: usize,
+    point: Option<(usize, usize)>,
+    lone: bool,
+}
+
 /// A control the wheel, the keys or a controller's knob turns.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sweep {
@@ -608,8 +617,14 @@ impl Studio {
                     e.field.set(String::new());
                 }
                 "backspace" => e.field.backspace(),
-                "enter" | "tab" => {
+                "enter" => {
                     self.device_commit();
+                }
+                // Tab puts the value in and goes on (M-ui-4).
+                "tab" if !mods.ctrl && !mods.alt => {
+                    self.device_commit();
+                    self.device_key(key, mods);
+                    return true;
                 }
                 _ => {}
             }
@@ -630,32 +645,18 @@ impl Studio {
         };
         let now = self.device_value(plugin, k).unwrap_or(spec.default_norm());
         match key {
+            // Space is the transport's, whatever has the keys (M-ui-4).
+            "space" => return false,
             "tab" => {
-                let win = self.instruments.win_of(plugin);
-                let w = win.map_or_else(|| layout::natural_w(def), |w| w.body.0);
-                let p = self.project();
-                let x = p
-                    .tracks
-                    .get(&track)
-                    .and_then(|t| t.inserts.iter().find(|x| x.id == plugin));
-                let shape = layout::Shape {
-                    w,
-                    band: self.instruments.band(plugin),
-                    values: &values,
-                    plugin: x,
-                    pick: win.map_or(0, |w| w.pick),
-                    layer: win.map_or(0, |w| w.layer),
-                };
-                let order: Vec<usize> = layout::body(def, &shape)
-                    .slots
-                    .iter()
-                    .map(|s| s.k)
-                    .collect();
-                let at = order.iter().position(|&x| x == k).unwrap_or(0);
+                let order = self.device_stops(track, plugin, def, &values);
+                let at = order.iter().position(|s| s.k == k).unwrap_or(0);
                 let n = order.len().max(1);
                 let next = if mods.shift { at + n - 1 } else { at + 1 } % n;
                 self.device_sweep_end();
-                self.instruments.focus = order.get(next).map(|&k| (plugin, k));
+                match order.get(next) {
+                    Some(&stop) => self.device_stop(track, plugin, def, stop, !mods.shift),
+                    None => self.instruments.focus = None,
+                }
                 return true;
             }
             "escape" => {
@@ -680,7 +681,7 @@ impl Studio {
             "home" => control::snap(spec, 0.0),
             "end" => control::snap(spec, 1.0),
             "delete" | "backspace" => control::snap(spec, spec.default_norm()),
-            "enter" | "space" => match control::look(spec) {
+            "enter" => match control::look(spec) {
                 Look::Toggle => 1.0 - now.round(),
                 Look::Knob if key == "enter" => {
                     if !self.param_locked(track, plugin, spec.id) {
@@ -696,6 +697,148 @@ impl Studio {
         if !self.param_locked(track, plugin, spec.id) {
             self.device_set(plugin, k, to);
         }
+        true
+    }
+
+    /// The stops Tab goes through in the window of `plugin` (UI-324, M-ui-4): its controls
+    /// in their order, a point's chosen as the keys reach it; and where a graph shows the
+    /// controls of one point at a time (a narrow EQ's band), every point of it in its place:
+    /// the chosen one by its controls, the others by the first value each moves.
+    fn device_stops(
+        &self,
+        track: TrackId,
+        plugin: PluginId,
+        def: &'static BuiltinDef,
+        values: &[f64],
+    ) -> Vec<Stop> {
+        let win = self.instruments.win_of(plugin);
+        let p = self.project();
+        let x = p
+            .tracks
+            .get(&track)
+            .and_then(|t| t.inserts.iter().find(|x| x.id == plugin));
+        let shape = layout::Shape {
+            w: win.map_or_else(|| layout::natural_w(def), |w| w.body.0),
+            band: self.instruments.band(plugin),
+            values,
+            plugin: x,
+            pick: win.map_or(0, |w| w.pick),
+            layer: win.map_or(0, |w| w.layer),
+        };
+        let body = layout::body(def, &shape);
+        let shown: Vec<usize> = body.slots.iter().map(|s| s.k).collect();
+        let (mut points, mut every): (Vec<_>, Vec<_>) = (Vec::new(), Vec::new());
+        for (n, &g) in body.graphs.iter().enumerate() {
+            let pts: Vec<((usize, usize), Point)> = graph::points(def, n, g, values)
+                .into_iter()
+                .enumerate()
+                .map(|(i, pt)| ((n, i), pt))
+                .collect();
+            let hidden = pts
+                .iter()
+                .any(|(_, pt)| pt.params().next().is_some_and(|k| !shown.contains(&k)));
+            if hidden {
+                points.extend(pts.iter().cloned());
+            }
+            every.extend(pts);
+        }
+        let find = |pts: &[((usize, usize), Point)], k: usize| {
+            pts.iter()
+                .find(|(_, pt)| pt.resets().contains(&k))
+                .map(|(at, _)| *at)
+        };
+        let owner = |k: usize| find(&points, k);
+        let all_points = |out: &mut Vec<Stop>| {
+            for (at, pt) in &points {
+                let mine: Vec<usize> = shown
+                    .iter()
+                    .copied()
+                    .filter(|&k| owner(k) == Some(*at))
+                    .collect();
+                if mine.is_empty() {
+                    out.extend(pt.params().next().map(|k| Stop {
+                        k,
+                        point: Some(*at),
+                        lone: true,
+                    }));
+                }
+                out.extend(mine.into_iter().map(|k| Stop {
+                    k,
+                    point: Some(*at),
+                    lone: false,
+                }));
+            }
+        };
+        let mut out = Vec::new();
+        let mut placed = points.is_empty();
+        for &k in &shown {
+            if owner(k).is_none() {
+                out.push(Stop {
+                    k,
+                    point: find(&every, k),
+                    lone: false,
+                });
+            } else if !placed {
+                placed = true;
+                all_points(&mut out);
+            }
+        }
+        if !placed {
+            all_points(&mut out);
+        }
+        let mut seen = Vec::new();
+        out.retain(|s| {
+            let first = !seen.contains(&s.k);
+            seen.push(s.k);
+            first
+        });
+        out
+    }
+
+    /// The keys go to the stop `stop` of the window of `plugin`. A point not on show is
+    /// chosen, and the keys go on to the first of its controls (`ahead`; else the last).
+    fn device_stop(
+        &mut self,
+        track: TrackId,
+        plugin: PluginId,
+        def: &'static BuiltinDef,
+        stop: Stop,
+        ahead: bool,
+    ) {
+        self.instruments.focus = Some((plugin, stop.k));
+        let Some(at) = stop.point else {
+            return;
+        };
+        self.instruments.chosen.insert(plugin, at);
+        if !stop.lone {
+            return;
+        }
+        let Some((_, _, values)) = self.device(plugin) else {
+            return;
+        };
+        let order = self.device_stops(track, plugin, def, &values);
+        let mut mine = order.iter().filter(|s| s.point == Some(at) && !s.lone);
+        let to = if ahead { mine.next() } else { mine.next_back() };
+        if let Some(s) = to {
+            self.instruments.focus = Some((plugin, s.k));
+        }
+    }
+
+    /// Tab from the screen's last place (Shift+Tab from its first) goes into the window on
+    /// top: the keys go to its first stop (back: its last) (M-ui-4). False with no window.
+    pub(crate) fn device_enter(&mut self, ahead: bool) -> bool {
+        let Some(w) = self.instruments.open.last().copied() else {
+            return false;
+        };
+        let Some((track, def, values)) = self.device(w.plugin) else {
+            return false;
+        };
+        let order = self.device_stops(track, w.plugin, def, &values);
+        let to = if ahead { order.first() } else { order.last() };
+        let Some(&stop) = to else {
+            return false;
+        };
+        self.device_stop(track, w.plugin, def, stop, ahead);
         true
     }
 

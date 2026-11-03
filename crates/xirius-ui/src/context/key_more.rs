@@ -236,6 +236,11 @@ impl Studio {
         }
         let n = shown.len();
         let i = shown.iter().position(|p| *p == self.place()).unwrap_or(0);
+        // Past the last place (before the first), the device window on top (M-ui-4).
+        let edge = if forward { i + 1 == n } else { i == 0 };
+        if edge && self.device_enter(forward) {
+            return true;
+        }
         let to = shown[if forward {
             (i + 1) % n
         } else {

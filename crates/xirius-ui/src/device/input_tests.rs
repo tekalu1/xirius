@@ -224,8 +224,67 @@ fn ui_324_on_off_is_a_button_and_the_beats_a_box_with_its_menu() {
     assert_eq!(value(&s, t, "sync").1, 0.0);
     assert_eq!(look(&s, "time"), Some(Look::Field));
     assert_eq!(look(&s, "division"), None);
-    assert!(s.field_keys(&g, "space", None, Mods::NONE));
+    assert!(s.field_keys(&g, "enter", None, Mods::NONE));
     assert_eq!(value(&s, t, "sync").1, 1.0);
+}
+
+/// M-ui-4: Space is the transport's after a press on a knob or a button: the device does
+/// not take it, and the rest of the keys stay the control's.
+#[test]
+fn ui_324_space_plays_after_a_press_on_a_control() {
+    let (mut s, g, t, id) = delay();
+    for param in ["feedback", "sync"] {
+        let (k, was) = value(&s, t, param);
+        click(&mut s, &g, id, k, 1, Mods::NONE);
+        let now = value(&s, t, param).1;
+        assert_eq!(s.instruments.focus, Some((id, k)));
+        assert!(!s.field_keys(&g, "space", None, Mods::NONE), "{param}");
+        assert_eq!(value(&s, t, param).1, now, "{param}: {was}");
+    }
+}
+
+/// M-ui-4: Tab in a typed value puts it in and goes on to the next control.
+#[test]
+fn ui_324_tab_in_a_typed_value_puts_it_in_and_goes_on() {
+    let (mut s, g, t, id) = delay();
+    let (k, _) = value(&s, t, "feedback");
+    let before = s.song().steps();
+    type_in(&mut s, &g, id, k, "50%");
+    assert!(s.field_keys(&g, "tab", None, Mods::NONE));
+    assert!(s.instruments.entry.is_none());
+    assert_eq!(s.song().steps(), before + 1);
+    assert!((plain(&s, t, "feedback") - 50.0).abs() < 0.5);
+    let to = s.instruments.focus.expect("the keys stay in the window");
+    assert_ne!(to, (id, k), "on to the next");
+}
+
+/// M-ui-4: Tab past the screen's last place goes into the window on top, and Shift+Tab
+/// before its first, to the window's last control; Esc gives the keys back.
+#[test]
+fn ui_324_tab_from_the_screen_goes_into_the_window_on_top() {
+    let (mut s, g, _, id) = delay();
+    s.device_blur();
+    let mut n = 0;
+    while s.instruments.focus.is_none() {
+        assert!(s.run_binding(&g, "view.focus --way next"));
+        n += 1;
+        assert!(n <= 4, "the window is a stop");
+    }
+    let first = s.instruments.focus.unwrap();
+    assert_eq!(first.0, id);
+    assert!(s.field_keys(&g, "escape", None, Mods::NONE));
+    assert_eq!(s.instruments.focus, None);
+    let mut n = 0;
+    while s.instruments.focus.is_none() {
+        assert!(s.run_binding(&g, "view.focus --way prev"));
+        n += 1;
+        assert!(n <= 4);
+    }
+    let last = s.instruments.focus.unwrap();
+    assert_ne!(last, first);
+    // From the last, Tab comes round to the first.
+    assert!(s.field_keys(&g, "tab", None, Mods::NONE));
+    assert_eq!(s.instruments.focus, Some(first));
 }
 
 #[test]
