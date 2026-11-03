@@ -14,6 +14,7 @@ use std::collections::HashSet;
 use std::ffi::{CString, c_char};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use crate::host::{self, ArchiveReader, ArchiveWriter, HostSide};
 use crate::sys::{self, Bool, ContentType, FALSE, Ref, TRUE};
@@ -60,23 +61,64 @@ unsafe extern "C" fn on_assert(
 
 static ASSERT_FUNCTION: sys::AssertFunction = on_assert;
 
-/// Factories already initialized in this process, with the generation they were given.
+/// A factory's initialization in this process.
+#[derive(Clone, Copy)]
+enum Init {
+    /// Under way on some thread since then; the lock is not held through the plugin's call.
+    Running(Instant),
+    Done(sys::ApiGeneration),
+}
+
+/// Factories initialized in this process, with the generation they were given.
 /// `initializeARAWithConfiguration` is called once per factory and process; the factory is
 /// never uninitialized, because its module stays loaded to the end (ARC-043).
-static INITIALIZED: Mutex<Vec<(usize, sys::ApiGeneration)>> = Mutex::new(Vec::new());
+static INITIALIZED: Mutex<Vec<(usize, Init)>> = Mutex::new(Vec::new());
+
+/// How long a factory's initialization on another thread is waited for. One that takes
+/// longer was ended by the watch (or hangs): the factory is not used again.
+pub const INIT_WAIT: Duration = Duration::from_secs(35);
 
 /// Initializes `factory` once and returns the API generation it runs at.
 ///
 /// # Safety
 /// `factory` points to a live factory whose struct stays valid for the process.
 pub unsafe fn initialize(factory: *const sys::Factory) -> Result<sys::ApiGeneration, Error> {
+    // SAFETY: per the contract.
+    unsafe { initialize_within(factory, INIT_WAIT) }
+}
+
+/// As [`initialize`], waiting at most `wait` for an initialization on another thread.
+///
+/// # Safety
+/// As [`initialize`].
+unsafe fn initialize_within(
+    factory: *const sys::Factory,
+    wait: Duration,
+) -> Result<sys::ApiGeneration, Error> {
     if factory.is_null() {
         return Err(error("the plugin has no ARA factory"));
     }
-    let mut done = INITIALIZED.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some(&(_, g)) = done.iter().find(|(f, _)| *f == factory as usize) {
-        return Ok(g);
-    }
+    let lock = || INITIALIZED.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut done = loop {
+        let done = lock();
+        match done
+            .iter()
+            .find(|(f, _)| *f == factory as usize)
+            .map(|e| e.1)
+        {
+            Some(Init::Done(g)) => return Ok(g),
+            Some(Init::Running(since)) => {
+                drop(done);
+                if since.elapsed() >= wait {
+                    return Err(error(
+                        "the plugin's ARA factory did not finish its initialization",
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            None => break done,
+        }
+    };
     // SAFETY: per the contract; fields are read by value from the packed struct.
     let (size, lowest, highest, init) = unsafe {
         let f = &*factory;
@@ -105,11 +147,18 @@ pub unsafe fn initialize(factory: *const sys::Factory) -> Result<sys::ApiGenerat
         desired_api_generation: generation,
         assert_function_address: &ASSERT_FUNCTION,
     };
+    // The lock is let go through the call: a call that never comes back (its thread ended by
+    // the watch) must not keep the other plugins' documents from being made.
+    done.push((factory as usize, Init::Running(Instant::now())));
+    drop(done);
     contain::call(|| {
         // SAFETY: a configuration that lives through the call; the assert function is static.
         unsafe { init(&config) }
     });
-    done.push((factory as usize, generation));
+    let mut done = lock();
+    if let Some(e) = done.iter_mut().find(|(f, _)| *f == factory as usize) {
+        e.1 = Init::Done(generation);
+    }
     Ok(generation)
 }
 
@@ -706,21 +755,10 @@ impl Document {
             debug_assert!(self.is_editing());
             // SAFETY: as above; a null filter restores everything.
             contain::call(|| unsafe { restore(self.dc, r, std::ptr::null()) })
-        } else if let (Some(begin), Some(end)) = (
-            f.begin_restoring_document_from_archive,
-            f.end_restoring_document_from_archive,
-        ) {
-            // SAFETY: as above.
-            contain::call(|| unsafe {
-                let a = begin(self.dc, r);
-                let b = end(self.dc, r);
-                if a != FALSE && b != FALSE {
-                    TRUE
-                } else {
-                    FALSE
-                }
-            })
         } else {
+            // Every plugin this host takes speaks ARA 2 (`initialize`), which restores objects
+            // already made. The ARA 1 way (`begin`/`endRestoringDocumentFromArchive`) restores
+            // a whole document from nothing, which this host never makes.
             FALSE
         };
         ok != FALSE
@@ -743,5 +781,65 @@ impl Drop for Document {
         let f = self.f().destroy_document_controller;
         // SAFETY: the controller is destroyed once, on its thread.
         contain::call(|| unsafe { f(self.dc) });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+
+    static RELEASE: AtomicBool = AtomicBool::new(false);
+
+    unsafe extern "C" fn slow_init(_c: *const sys::InterfaceConfiguration) {
+        while !RELEASE.load(Ordering::Acquire) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// A factory of its own (a leaked copy of the fake's), optionally slow to initialize.
+    fn factory(slow: bool) -> usize {
+        // SAFETY: the fake's factory is a static.
+        let mut f = unsafe { *crate::fake::factory() };
+        if slow {
+            f.initialize_ara_with_configuration = slow_init;
+        }
+        Box::leak(Box::new(f)) as *const sys::Factory as usize
+    }
+
+    #[test]
+    fn a_factory_that_does_not_finish_initializing_holds_up_no_other() {
+        let slow = factory(true);
+        let other = factory(false);
+        // SAFETY: a leaked factory, valid for the process.
+        let t = std::thread::spawn(move || unsafe { initialize(slow as *const sys::Factory) });
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !INITIALIZED
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .any(|(f, _)| *f == slow)
+        {
+            assert!(
+                Instant::now() < deadline,
+                "the slow initialization never started"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let at = Instant::now();
+        // SAFETY: as above.
+        assert!(unsafe { initialize(other as *const sys::Factory) }.is_ok());
+        assert!(at.elapsed() < Duration::from_secs(2), "{:?}", at.elapsed());
+        // A second caller of the slow one waits for it, and gives up after its wait.
+        // SAFETY: as above.
+        let second = unsafe { initialize_within(slow as *const sys::Factory, Duration::ZERO) };
+        assert!(second.is_err());
+        RELEASE.store(true, Ordering::Release);
+        let g = t.join().unwrap().unwrap();
+        // SAFETY: as above.
+        assert_eq!(
+            unsafe { initialize(slow as *const sys::Factory) }.unwrap(),
+            g
+        );
     }
 }

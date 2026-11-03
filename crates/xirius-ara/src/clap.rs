@@ -211,6 +211,11 @@ impl Binary for ClapBinary {
         self.factory
     }
 
+    fn module(&self) -> usize {
+        // `clap_entry` is in the module (registered when loaded).
+        self.entry as usize
+    }
+
     fn instance(
         &mut self,
         dc: Ref,

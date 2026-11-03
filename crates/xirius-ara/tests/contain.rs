@@ -124,6 +124,28 @@ fn a_fault_and_a_hang_in_the_plugin_are_contained() {
     });
     drop(again);
 
+    // A fault on a thread the plugin made itself: the ARA thread learns of it in its next
+    // turn, and the plugin's documents count as crashed (no thread waits on the dead one).
+    let s = Service::start(
+        fake::loader(Config {
+            fault_on_own_thread: true,
+            ..Config::default()
+        }),
+        None,
+        Arc::new(|| {}),
+    );
+    s.sync(&song(7));
+    until("the crash on the plugin's thread", || s.crashed().is_some());
+    let why = s.crashed().unwrap();
+    assert!(why.contains("thread of its own"), "{why}");
+    until("the clip's state", || {
+        s.state(7).is_some_and(|c| c.phase == Phase::Crashed)
+    });
+    let asked = Instant::now();
+    s.wait_idle(asked + Duration::from_secs(5));
+    assert!(asked.elapsed() < Duration::from_secs(1));
+    drop(s);
+
     // The process goes on, and a plugin that behaves still works.
     let s = Service::start(fake::loader(Config::default()), None, Arc::new(|| {}));
     s.sync(&song(3));

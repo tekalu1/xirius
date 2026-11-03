@@ -1,8 +1,9 @@
 //! The host against the ARA SDK's `ARATestPlugIn` (VST3), PLG-031 to PLG-038.
 //!
 //! Needs the plugin built from the ARA SDK (`ARA_Examples`): set `XIRIUS_ARA_TEST_PLUGIN` to
-//! its `ARATestPlugIn.vst3`. Without it the test says so and passes. Prints what it saw, for
-//! the record of PLG-038.
+//! its `ARATestPlugIn.vst3` and run with `--ignored` (`scripts/ci_tests.py` lists it among the
+//! runs before a release). Asked for without the plugin, it fails. Prints what it saw, for the
+//! record of PLG-038.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,9 +17,12 @@ const FACTORY_ID: &str = "org.ara-audio.examples.testplugin.arafactory";
 const ARCHIVE_ID: &str = "org.ara-audio.examples.testplugin.aradocumentarchive.version1";
 const WAIT: Duration = Duration::from_secs(20);
 
-fn plugin() -> Option<PathBuf> {
-    let path = PathBuf::from(std::env::var_os("XIRIUS_ARA_TEST_PLUGIN")?);
-    path.exists().then_some(path)
+fn plugin() -> PathBuf {
+    let path = std::env::var_os("XIRIUS_ARA_TEST_PLUGIN")
+        .map(PathBuf::from)
+        .expect("set XIRIUS_ARA_TEST_PLUGIN to the ARA SDK's ARATestPlugIn.vst3");
+    assert!(path.exists(), "XIRIUS_ARA_TEST_PLUGIN names no file");
+    path
 }
 
 fn loader(path: &std::path::Path) -> Loader {
@@ -76,16 +80,13 @@ fn ready(s: &Service, key: u64) -> Arc<xirius_ara::service::Rendered> {
 }
 
 #[test]
+#[ignore = "needs XIRIUS_ARA_TEST_PLUGIN; run with --ignored"]
 fn the_ara_test_plugin_passes_every_step() {
-    let Some(path) = plugin() else {
-        eprintln!("XIRIUS_ARA_TEST_PLUGIN is not set; skipped");
-        return;
-    };
+    let path = plugin();
     xirius_ara::contain::install_own_filter();
     let rate = 48000.0;
     let audio = bursts(rate, 4.0);
     let song = |clips| Song {
-        rate,
         clips,
         ..Song::default()
     };
@@ -150,7 +151,7 @@ fn the_ara_test_plugin_passes_every_step() {
     println!("step 4: archive of {} bytes", bytes.len());
     let calls = s.probe(WAIT).unwrap().calls;
     println!("step 4: calls per interface {calls:?}");
-    drop(s);
+    assert!(s.close(Instant::now() + WAIT));
     let s = Service::start(loader(&path), Some((bytes, id)), Arc::new(|| {}));
     s.sync(&song(vec![clip(1, &audio, 2.0, 0.5, 3.0)]));
     let again = ready(&s, 1);
@@ -164,25 +165,17 @@ fn the_ara_test_plugin_passes_every_step() {
         restored.len()
     );
 
-    // 5. A new sample rate (PLG-047). The test plugin renders only at its source's rate, so
-    // this checks the host's steps, not the sound.
-    s.sync(&Song {
-        rate: 44100.0,
-        ..song(vec![clip(1, &audio, 2.0, 0.5, 3.0)])
-    });
-    until("the render at 44.1 kHz", || {
-        s.state(1).is_some_and(|c| {
-            c.phase == Phase::Ready && c.rendered.is_some_and(|r| r.rate == 44100.0)
-        })
-    });
-    s.sync(&song(vec![clip(1, &audio, 2.0, 0.5, 3.0)]));
-    until("the render at 48 kHz", || {
-        s.state(1)
-            .is_some_and(|c| c.phase == Phase::Ready && c.rendered.is_some_and(|r| r.rate == rate))
-    });
-    let back = ready(&s, 1);
-    assert_eq!(back.left, r.left);
-    println!("step 5: 48 -> 44.1 -> 48 kHz rendered again");
+    // 5. A source at another rate renders at its own rate, and the first clip keeps its render
+    // (PLG-047): the song's rate is the caller's to convert to.
+    let slow = bursts(44100.0, 4.0);
+    let mut c3 = clip(3, &slow, 6.0, 0.5, 3.0);
+    c3.source = source_id("bursts-44100.wav");
+    s.sync(&song(vec![clip(1, &audio, 2.0, 0.5, 3.0), c3]));
+    let at_own = ready(&s, 3);
+    assert_eq!(at_own.rate, 44100.0);
+    assert_eq!(at_own.left.len(), (3.0 * 44100.0) as usize);
+    assert!(Arc::ptr_eq(&again, &s.state(1).unwrap().rendered.unwrap()));
+    println!("step 5: a 44.1 kHz source rendered at 44.1 kHz; the 48 kHz clip kept its render");
 
     // 6. An export waits for the analysis of a new clip (ENG-025).
     let other = bursts(rate, 8.0);
@@ -195,6 +188,6 @@ fn the_ara_test_plugin_passes_every_step() {
 
     let p = s.probe(WAIT).unwrap();
     assert_eq!(p.asserts, 0, "the plugin asserted: {}", p.last_assert);
-    drop(s);
+    assert!(s.close(Instant::now() + WAIT));
     println!("step 7: the document was taken down without asserts");
 }

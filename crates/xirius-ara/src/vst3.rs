@@ -101,9 +101,11 @@ pub fn main_factory_class<'a>(classes: &'a [ClassInfo], processor: &str) -> Opti
         .copied()
 }
 
-/// The ARA factory of `module` for its processor class `processor`. The main factory object
-/// is kept (never released): the factory struct belongs to it and the module stays loaded.
-pub fn factory(module: &Module, processor: &str) -> Result<*const sys::Factory, Error> {
+/// The ARA factory of `module` for its processor class `processor`, and an address in the
+/// module's code (registered with [`contain::add_module`]). The main factory object is kept on
+/// purpose (its reference is never released): the factory struct belongs to it, and the
+/// module stays loaded to the end of the process anyway.
+pub fn factory(module: &Module, processor: &str) -> Result<(*const sys::Factory, usize), Error> {
     let classes = module.classes();
     let class = main_factory_class(&classes, processor)
         .ok_or_else(|| error(format!("{processor} has no ARA main factory class")))?;
@@ -119,8 +121,9 @@ pub fn factory(module: &Module, processor: &str) -> Result<*const sys::Factory, 
     }
     // The plugin's own threads run in its module; a fault there is contained too.
     // SAFETY: as above.
-    contain::add_module(unsafe { vtbl::<MainFactoryVtbl>(obj).get_factory } as usize);
-    Ok(f)
+    let code = unsafe { vtbl::<MainFactoryVtbl>(obj).get_factory } as usize;
+    contain::add_module(code);
+    Ok((f, code))
 }
 
 /// Binds the instance `plugin` to the document controller `dc` with roles. Tries
@@ -173,6 +176,7 @@ pub struct Vst3Binary {
     module: Arc<Module>,
     class: ClassInfo,
     factory: *const sys::Factory,
+    code: usize,
 }
 
 impl Vst3Binary {
@@ -187,11 +191,12 @@ impl Vst3Binary {
             .find(|c| class_name.is_none_or(|n| c.name == n))
             .cloned()
             .ok_or_else(|| error(format!("{} has no audio processor class", path.display())))?;
-        let factory = factory(&module, &class.name)?;
+        let (factory, code) = factory(&module, &class.name)?;
         Ok(Vst3Binary {
             module,
             class,
             factory,
+            code,
         })
     }
 }
@@ -199,6 +204,10 @@ impl Vst3Binary {
 impl Binary for Vst3Binary {
     fn factory(&self) -> *const sys::Factory {
         self.factory
+    }
+
+    fn module(&self) -> usize {
+        self.code
     }
 
     fn instance(

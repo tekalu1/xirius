@@ -3,8 +3,9 @@
 //! gives the plugin its archive back, and detach.
 //!
 //! Needs `XIRIUS_ARA_REAL_PLUGIN` set to the plugin's `.vst3` (Melodyne's, for the table in
-//! `docs/ara-verification.md`). Without it the test says so and passes. The song is made of
-//! tones written into a folder of its own under the temp folder.
+//! `docs/ara-verification.md`) and `--ignored`; without the plugin it fails. The song is made of
+//! tones written into a folder of its own under the temp folder, and opened again at another
+//! rate.
 //!
 //! The plugin must not need anyone: a window of the plugin (an activation, a question) ends
 //! the test at once, untouched, and the test says which window it was.
@@ -29,12 +30,17 @@ use xirius_session::graph::Select;
 use xirius_session::tempo::TempoMap;
 
 const RATE: u32 = 48_000;
+/// The song's rate when opened again.
+const OTHER_RATE: u32 = 44_100;
 const UID: &str = "real:ara";
 const WAIT: Duration = Duration::from_secs(120);
 
-fn plugin() -> Option<PathBuf> {
-    let path = PathBuf::from(std::env::var_os("XIRIUS_ARA_REAL_PLUGIN")?);
-    path.exists().then_some(path)
+fn plugin() -> PathBuf {
+    let path = std::env::var_os("XIRIUS_ARA_REAL_PLUGIN")
+        .map(PathBuf::from)
+        .expect("XIRIUS_ARA_REAL_PLUGIN names no plugin");
+    assert!(path.exists(), "XIRIUS_ARA_REAL_PLUGIN names no file");
+    path
 }
 
 fn loader(path: &Path) -> Loader {
@@ -173,11 +179,9 @@ fn stopped(b: &Builder) -> Option<String> {
 }
 
 #[test]
+#[ignore = "needs XIRIUS_ARA_REAL_PLUGIN; run with --ignored"]
 fn a_real_plugin_through_the_songs_clips() {
-    let Some(path) = plugin() else {
-        eprintln!("XIRIUS_ARA_REAL_PLUGIN is not set; skipped");
-        return;
-    };
+    let path = plugin();
     watch_windows();
     // As the app: the fault filter is there before any plugin.
     xirius_ara::contain::install_own_filter();
@@ -203,7 +207,6 @@ fn a_real_plugin_through_the_songs_clips() {
         duration: seconds,
     };
     let song = Song {
-        rate: f64::from(RATE),
         clips: vec![spec],
         ..Song::default()
     };
@@ -235,7 +238,7 @@ fn a_real_plugin_through_the_songs_clips() {
     );
     let stored = s.store(WAIT).expect("an archive");
     println!("archive: {} bytes ({})", stored.0.len(), stored.1);
-    drop(s);
+    assert!(s.close(Instant::now() + WAIT));
     let s = Service::start_shared(UID, loader(&path), Some(stored), Arc::new(|| {}));
     s.sync(&song);
     until("the restored render", || {
@@ -257,7 +260,7 @@ fn a_real_plugin_through_the_songs_clips() {
         rms(&again.left),
         s.notes(1, false, WAIT).len()
     );
-    drop(s);
+    assert!(s.close(Instant::now() + WAIT));
 
     // The song: attach, analysis, playback, written and opened again, detach.
     xirius_session::ara::register(UID, "Real ARA", {
@@ -323,7 +326,8 @@ fn a_real_plugin_through_the_songs_clips() {
     drop(player);
     let mut reopened = session(serde_json::from_str(&saved).unwrap());
     let opened = reopened.project().clone();
-    let mut player = Builder::new(RATE, Some(dir.path().to_path_buf()));
+    // At another rate: the plugin still renders at the file's, so its edits stay (PLG-047).
+    let mut player = Builder::new(OTHER_RATE, Some(dir.path().to_path_buf()));
     player.set_ara_live(true);
     let p = reopened.project().clone();
     player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
@@ -337,7 +341,7 @@ fn a_real_plugin_through_the_songs_clips() {
     std::thread::sleep(Duration::from_millis(500));
     let changed = xirius_session::ara::take_archives(&mut reopened, player.ara()).unwrap();
     println!(
-        "4. written and opened again: archive in the song {}, rms {:.4}, changed by opening: {}",
+        "4. written and opened again at {OTHER_RATE} Hz: archive in the song {}, rms {:.4}, changed by opening: {}",
         p.ara.archives.contains_key(UID),
         rms(&replayed),
         changed || *reopened.project() != opened

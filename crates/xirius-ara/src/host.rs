@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 use std::ffi::{CString, c_void};
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 use std::thread::ThreadId;
 
 use crate::sys::{self, Bool, ContentTimeRange, ContentType, FALSE, Ref, TRUE};
@@ -131,7 +131,8 @@ type Slot = Arc<RwLock<Arc<SourceAudio>>>;
 
 /// The host's side of one document.
 pub struct HostSide {
-    main: Mutex<Option<ThreadId>>,
+    /// Set once, so the plugin's every read asks without a lock.
+    main: OnceLock<ThreadId>,
     sources: RwLock<HashMap<usize, Slot>>,
     musical: Mutex<HashMap<usize, Musical>>,
     notices: Mutex<Vec<(Notice, ThreadId)>>,
@@ -146,7 +147,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 impl HostSide {
     pub fn new() -> Arc<HostSide> {
         Arc::new(HostSide {
-            main: Mutex::new(None),
+            main: OnceLock::new(),
             sources: RwLock::new(HashMap::new()),
             musical: Mutex::new(HashMap::new()),
             notices: Mutex::new(Vec::new()),
@@ -155,13 +156,14 @@ impl HostSide {
         })
     }
 
-    /// Makes the calling thread the document's main thread (the ARA thread).
+    /// Makes the calling thread the document's main thread (the ARA thread). A side belongs to
+    /// one document on one thread, so a second call keeps the first.
     pub fn set_main(&self) {
-        *lock(&self.main) = Some(std::thread::current().id());
+        let _ = self.main.set(std::thread::current().id());
     }
 
     pub fn is_main(&self) -> bool {
-        *lock(&self.main) == Some(std::thread::current().id())
+        self.main.get() == Some(&std::thread::current().id())
     }
 
     pub fn set_source(&self, key: usize, audio: Arc<SourceAudio>) {
@@ -261,30 +263,32 @@ unsafe extern "C" fn read_audio_samples(
     let r = unsafe { &*(reader as *const Reader) };
     let frames = r.audio.frames() as i64;
     let count = count as usize;
-    let mut ok = TRUE;
+    // The part of the asked range inside the source: `inside` samples from `from`, written at
+    // `skip`. Asking outside the source is the plugin's mistake; the rest gets silence.
+    let from = position.clamp(0, frames);
+    let to = position.saturating_add(count as i64).clamp(0, frames);
+    let skip = (from - position).clamp(0, count as i64) as usize;
+    let inside = (to - from).max(0) as usize;
+    let ok = if inside == count { TRUE } else { FALSE };
     for (ch, data) in r.audio.channels.iter().enumerate() {
         // SAFETY: the plugin passes one buffer per channel of the source.
         let out = unsafe { *buffers.add(ch) };
         if out.is_null() {
             return FALSE;
         }
-        for i in 0..count {
-            let at = position + i as i64;
-            let v = if (0..frames).contains(&at) {
-                data[at as usize]
-            } else {
-                // Asking outside the source is the plugin's mistake; it gets silence.
-                ok = FALSE;
-                0.0
-            };
+        let data = &data[from as usize..from as usize + inside];
+        if r.use_64 {
             // SAFETY: each buffer holds `count` samples of the asked size.
-            unsafe {
-                if r.use_64 {
-                    *(out as *mut f64).add(i) = f64::from(v);
-                } else {
-                    *(out as *mut f32).add(i) = v;
-                }
+            let out = unsafe { std::slice::from_raw_parts_mut(out as *mut f64, count) };
+            out.fill(0.0);
+            for (o, v) in out[skip..skip + inside].iter_mut().zip(data) {
+                *o = f64::from(*v);
             }
+        } else {
+            // SAFETY: as above.
+            let out = unsafe { std::slice::from_raw_parts_mut(out as *mut f32, count) };
+            out.fill(0.0);
+            out[skip..skip + inside].copy_from_slice(data);
         }
     }
     ok
@@ -364,7 +368,16 @@ unsafe extern "C" fn write_bytes_to_archive(
         &*(writer as *const ArchiveWriter)
     };
     let mut data = lock(&w.data);
-    let end = position + length;
+    // A range past the address space is the plugin's mistake; it is refused, not wrapped.
+    let Some(end) = position.checked_add(length) else {
+        return FALSE;
+    };
+    if length == 0 {
+        return TRUE;
+    }
+    if buffer.is_null() {
+        return FALSE;
+    }
     if data.len() < end {
         data.resize(end, 0);
     }
@@ -678,5 +691,106 @@ pub fn host_instance(side: &Arc<HostSide>) -> sys::DocumentControllerHostInstanc
         model_update_controller_interface: &MODEL_UPDATE,
         playback_controller_host_ref: r,
         playback_controller_interface: &PLAYBACK,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reader(side: &Arc<HostSide>, use_64: bool) -> Ref {
+        side.set_source(
+            7,
+            Arc::new(SourceAudio::stereo(
+                48_000.0,
+                vec![1.0, 2.0, 3.0],
+                vec![4.0, 5.0, 6.0],
+            )),
+        );
+        let ctrl = Arc::as_ptr(side) as Ref;
+        // SAFETY: `ctrl` is the live side; source 7 is set.
+        let r = unsafe { create_audio_reader(ctrl, 7 as Ref, if use_64 { TRUE } else { FALSE }) };
+        assert!(!r.is_null());
+        r
+    }
+
+    #[test]
+    fn a_read_past_the_source_gets_its_samples_and_silence_around() {
+        let side = HostSide::new();
+        let ctrl = Arc::as_ptr(&side) as Ref;
+        let r = reader(&side, false);
+        let (mut left, mut right) = ([9.0f32; 5], [9.0f32; 5]);
+        let buffers = [
+            left.as_mut_ptr() as *mut c_void,
+            right.as_mut_ptr() as *mut c_void,
+        ];
+        // SAFETY: two buffers of five samples.
+        let ok = unsafe { read_audio_samples(ctrl, r, -1, 5, buffers.as_ptr()) };
+        assert_eq!(ok, FALSE);
+        assert_eq!(left, [0.0, 1.0, 2.0, 3.0, 0.0]);
+        assert_eq!(right, [0.0, 4.0, 5.0, 6.0, 0.0]);
+        // Wholly inside: true and exact; wholly outside: silence.
+        let (mut l, mut rr) = ([9.0f64; 2], [9.0f64; 2]);
+        let r64 = reader(&side, true);
+        let buffers = [
+            l.as_mut_ptr() as *mut c_void,
+            rr.as_mut_ptr() as *mut c_void,
+        ];
+        // SAFETY: as above.
+        assert_eq!(
+            unsafe { read_audio_samples(ctrl, r64, 1, 2, buffers.as_ptr()) },
+            TRUE
+        );
+        assert_eq!((l, rr), ([2.0, 3.0], [5.0, 6.0]));
+        // SAFETY: as above.
+        assert_eq!(
+            unsafe { read_audio_samples(ctrl, r64, 10, 2, buffers.as_ptr()) },
+            FALSE
+        );
+        assert_eq!((l, rr), ([0.0; 2], [0.0; 2]));
+        // SAFETY: made above, destroyed once.
+        unsafe {
+            destroy_audio_reader(ctrl, r);
+            destroy_audio_reader(ctrl, r64);
+        }
+    }
+
+    #[test]
+    fn an_archive_write_past_the_address_space_is_refused() {
+        let side = HostSide::new();
+        let ctrl = Arc::as_ptr(&side) as Ref;
+        let w = ArchiveWriter {
+            data: Mutex::new(Vec::new()),
+        };
+        let wr = &w as *const ArchiveWriter as Ref;
+        let bytes = [1u8, 2, 3];
+        // SAFETY: a live writer and three bytes.
+        unsafe {
+            assert_eq!(
+                write_bytes_to_archive(ctrl, wr, usize::MAX, 3, bytes.as_ptr()),
+                FALSE
+            );
+            assert_eq!(write_bytes_to_archive(ctrl, wr, 2, 3, bytes.as_ptr()), TRUE);
+            assert_eq!(
+                write_bytes_to_archive(ctrl, wr, 9, 0, std::ptr::null()),
+                TRUE
+            );
+        }
+        assert_eq!(*lock(&w.data), [0, 0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn the_main_thread_is_the_first_one_set() {
+        let side = HostSide::new();
+        assert!(!side.is_main());
+        side.set_main();
+        assert!(side.is_main());
+        let other = Arc::clone(&side);
+        let moved = std::thread::spawn(move || {
+            other.set_main();
+            other.is_main()
+        });
+        assert!(!moved.join().unwrap());
+        assert!(side.is_main());
     }
 }

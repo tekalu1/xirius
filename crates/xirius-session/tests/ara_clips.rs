@@ -194,23 +194,38 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
         through(&player, &p, &a),
         "the moved clip fell back to its file"
     );
+    // Trimmed, it keeps the render where it still covers it, with the plugin's edit.
+    run(&mut s, "clip.trim", json!({"ids": [a], "by": 480}));
+    let p = s.project().clone();
+    player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
+    assert!(
+        through(&player, &p, &a),
+        "the trimmed clip fell back to its file"
+    );
+    let v = peak(&mut player, &p);
+    assert!(
+        (v - 0.25).abs() < 1e-3,
+        "the trimmed clip lost its edit: {v}"
+    );
 
-    // ENG-025: an export at the same rate uses the player's document; at another rate, a
-    // document of its own from the player's edits, waited for.
+    // ENG-025: an export uses the player's document when it has the same song, at any rate
+    // (the plugin renders at the file's, PLG-047).
     let mut export = Builder::new(RATE, Some(dir.0.clone()));
     assert!((peak(&mut export, &p) - 0.25).abs() < 1e-3);
     let mut other = Builder::new(44_100, Some(dir.0.clone()));
     let started = Instant::now();
-    // The file at 44.1 kHz rings a little at its edges.
+    // Converted to 44.1 kHz, it rings a little at its edges.
     assert!((peak(&mut other, &p) - 0.25).abs() < 0.02);
     assert!(started.elapsed() < Duration::from_secs(10));
     drop((export, other));
 
-    // PLG-047: the player at another rate keeps playing the file until the plugin's render at
-    // that rate is there, then plays it.
+    // PLG-047: the player at another rate plays the plugin's render with its edit at once,
+    // converted from the file's rate.
     let mut player2 = live(44_100, &dir.0);
     player2.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
-    until("the render at the new rate", || through(&player2, &p, &a));
+    assert!(through(&player2, &p, &a), "the new rate lost the render");
+    let v = peak(&mut player2, &p);
+    assert!((v - 0.25).abs() < 0.02, "the new rate lost the edit: {v}");
     drop((player, player2));
 
     // PLG-037: written and opened again, the song gives the plugin its edits back.
@@ -221,7 +236,8 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     let p = reopened.project().clone();
     player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
     until("the restored render", || through(&player, &p, &a));
-    assert!((peak(&mut player, &p) - 0.25).abs() < 1e-3);
+    let v = peak(&mut player, &p);
+    assert!((v - 0.25).abs() < 1e-3, "{v}");
     // ARC-025: opening and playing it leaves it as it was.
     assert!(!xirius_session::ara::take_archives(&mut reopened, player.ara()).unwrap());
     assert!(

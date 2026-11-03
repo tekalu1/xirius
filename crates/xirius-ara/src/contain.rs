@@ -5,9 +5,10 @@
 //! fault that nothing in the plugin handles reaches Windows's last-chance filter; there,
 //! [`last_chance`] ends the faulting thread alone when it is a marked thread, or a thread
 //! running inside a plugin module that was registered with [`add_module`] (the plugin's own
-//! analysis threads). The faults are counted ([`faults`]) and the service marks the plugin as
-//! crashed. A call that does not come back in time is found by [`Watch`] and its thread is
-//! ended.
+//! analysis threads). The faults are counted, in all ([`faults`]) and by module
+//! ([`faults_in`]), and the service marks the plugin as crashed: a fault on its ARA thread is
+//! seen by the [`Watch`], one on a thread of the plugin's own by the module's count. A call
+//! that does not come back in time is found by the [`Watch`] and its thread is ended.
 //!
 //! The decision is taken at the last chance, not first: plugins may catch their own access
 //! violations (a copy protection that probes memory), and a first-chance handler would end
@@ -53,6 +54,8 @@ thread_local! {
 /// Plugin modules' address ranges, `[start, end)`, as pairs. A zero start is a free slot.
 const SLOTS: usize = 32;
 static RANGES: [AtomicUsize; SLOTS * 2] = [const { AtomicUsize::new(0) }; SLOTS * 2];
+/// The faults contained in each range's code.
+static RANGE_FAULTS: [AtomicU64; SLOTS] = [const { AtomicU64::new(0) }; SLOTS];
 static FAULTS: AtomicU64 = AtomicU64::new(0);
 static LAST_CODE: AtomicU32 = AtomicU32::new(0);
 
@@ -120,13 +123,24 @@ pub fn call<R>(f: impl FnOnce() -> R) -> R {
     f()
 }
 
-/// Whether `address` is inside a registered plugin module.
-pub fn in_module(address: usize) -> bool {
-    (0..SLOTS).any(|i| {
+/// The slot of the registered range that holds `address`.
+fn slot_of(address: usize) -> Option<usize> {
+    (0..SLOTS).find(|&i| {
         let start = RANGES[i * 2].load(Ordering::Acquire);
         let end = RANGES[i * 2 + 1].load(Ordering::Acquire);
         start != 0 && (start..end).contains(&address)
     })
+}
+
+/// Whether `address` is inside a registered plugin module.
+pub fn in_module(address: usize) -> bool {
+    slot_of(address).is_some()
+}
+
+/// How many faults were contained in the code of the registered module that holds `address`
+/// (on any thread: the plugin's own ones too). 0 when it is not registered.
+pub fn faults_in(address: usize) -> u64 {
+    slot_of(address).map_or(0, |i| RANGE_FAULTS[i].load(Ordering::Acquire))
 }
 
 /// Registers the address range `[start, end)` of plugin code. Returns false when the table is
@@ -212,8 +226,12 @@ pub unsafe extern "system" fn last_chance(info: *const EXCEPTION_POINTERS) -> i3
             | INTEGER_DIVIDE_BY_ZERO
             | IN_PAGE_ERROR
     );
-    if ours && (IN_PLUGIN.with(Cell::get) > 0 || in_module(address)) {
+    let slot = slot_of(address);
+    if ours && (IN_PLUGIN.with(Cell::get) > 0 || slot.is_some()) {
         LAST_CODE.store(code, Ordering::Release);
+        if let Some(i) = slot {
+            RANGE_FAULTS[i].fetch_add(1, Ordering::AcqRel);
+        }
         FAULTS.fetch_add(1, Ordering::AcqRel);
         // SAFETY: only this thread ends; the app's threads go on.
         unsafe { ExitThread(CONTAINED) }

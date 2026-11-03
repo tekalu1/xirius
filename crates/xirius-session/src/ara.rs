@@ -8,10 +8,13 @@
 //! of the file; until it is there, after a crash or when the plugin is missing, the clip plays
 //! its file.
 //!
-//! - The player's builder holds the live document ([`Held::live`]); it follows the song's
-//!   rate (PLG-047). Another builder (an export, a bounce) uses the live document as it is when
-//!   it has the same song at the same rate, and otherwise a document of its own, started from
-//!   the live one's archive. It waits for the analysis, at most [`EXPORT_WAIT`] (ENG-025).
+//! - Each clip goes to its plugin and comes back at its file's own rate, and is converted to the
+//!   song's rate to play (PLG-047), so changing the song's rate keeps the plugin's edits. The
+//!   files are read on a thread of their own for the player ([`Doc::hand_over`]).
+//! - The player's builder holds the live document ([`Held::live`]). Another builder (an export,
+//!   a bounce) uses the live document as it is when it has the same song, at any rate, and
+//!   otherwise a document of its own, started from the live one's archive. It waits for the
+//!   analysis, at most [`EXPORT_WAIT`] (ENG-025).
 //! - A song keeps each plugin's archive ([`take_archives`], ARC-025, PLG-037). The archive is
 //!   asked for only after the plugin said its document changed, so opening a song and playing it
 //!   leaves it as it was.
@@ -21,7 +24,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use xirius_ara::service::{Binary, Loader, Rendered, source_id};
 use xirius_ara::{ClipSpec, Phase, Service, Song, SourceAudio};
@@ -30,7 +33,6 @@ use xirius_engine::AudioData;
 use xirius_plugins::Catalog;
 
 use crate::tempo::TempoMap;
-use crate::wav::WavCache;
 
 /// How long a builder that is not the player's waits for the plugins' analysis (ENG-025).
 pub const EXPORT_WAIT: Duration = Duration::from_secs(10);
@@ -126,8 +128,121 @@ fn existing(key: &Key) -> Option<Arc<Doc>> {
     map.get(key).and_then(Weak::upgrade)
 }
 
-/// A clip's render and its samples as the engine plays them.
-type Sound = (Arc<Rendered>, Arc<AudioData>);
+/// A file's samples at its own rate (PLG-047), shared by every document and read again when
+/// the file changes. Nothing here keeps them: the documents' songs do.
+enum File {
+    Loading,
+    Ready(Weak<SourceAudio>),
+    Failed(String),
+}
+
+/// A file's length and time of change, to see that it changed.
+type Stamp = (u64, Option<SystemTime>);
+
+fn files() -> &'static Mutex<HashMap<PathBuf, (Stamp, File)>> {
+    static MAP: OnceLock<Mutex<HashMap<PathBuf, (Stamp, File)>>> = OnceLock::new();
+    MAP.get_or_init(Default::default)
+}
+
+fn stamp(path: &Path) -> Result<Stamp, String> {
+    std::fs::metadata(path)
+        .map(|m| (m.len(), m.modified().ok()))
+        .map_err(|e| format!("{} を開けません: {e}", path.display()))
+}
+
+fn read_source(path: &Path) -> Result<Arc<SourceAudio>, String> {
+    let d = crate::decode::decode(path)?;
+    Ok(Arc::new(SourceAudio::stereo(
+        f64::from(d.rate),
+        d.left,
+        d.right,
+    )))
+}
+
+fn store(path: PathBuf, stamp: Stamp, read: &Result<Arc<SourceAudio>, String>) {
+    let file = match read {
+        Ok(a) => File::Ready(Arc::downgrade(a)),
+        Err(e) => File::Failed(e.clone()),
+    };
+    lock(files()).insert(path, (stamp, file));
+}
+
+/// The samples of `path`, once read. With `wait` the file is read here; otherwise on a thread
+/// of its own, and `None` until it is: then every document is handed its song again
+/// ([`Doc::hand_over`]), so the UI thread never decodes a file for a plugin.
+fn source(path: &Path, wait: bool) -> Option<Result<Arc<SourceAudio>, String>> {
+    let stamp = match stamp(path) {
+        Ok(s) => s,
+        Err(e) => return Some(Err(e)),
+    };
+    {
+        let mut map = lock(files());
+        map.retain(|_, (_, f)| !matches!(f, File::Ready(w) if w.strong_count() == 0));
+        match map.get(path) {
+            Some((s, File::Ready(w))) if *s == stamp => {
+                if let Some(a) = w.upgrade() {
+                    return Some(Ok(a));
+                }
+            }
+            Some((s, File::Failed(e))) if *s == stamp => return Some(Err(e.clone())),
+            Some((s, File::Loading)) if *s == stamp && !wait => return None,
+            _ => {}
+        }
+        if !wait {
+            map.insert(path.to_path_buf(), (stamp, File::Loading));
+        }
+    }
+    if wait {
+        let read = read_source(path);
+        store(path.to_path_buf(), stamp, &read);
+        return Some(read);
+    }
+    let owned = path.to_path_buf();
+    let spawned = std::thread::Builder::new()
+        .name("ara-source".into())
+        .spawn(move || {
+            let read = read_source(&owned);
+            store(owned, stamp, &read);
+            let docs: Vec<Arc<Doc>> = lock(docs()).values().filter_map(Weak::upgrade).collect();
+            for d in docs {
+                d.hand_over();
+            }
+            // Kept until the documents took it.
+            drop(read);
+            crate::processed::bump();
+        });
+    if let Err(e) = spawned {
+        lock(files()).remove(path);
+        return Some(Err(format!("{} を読み込めません: {e}", path.display())));
+    }
+    None
+}
+
+/// The samples of a clip whose file is still being read.
+fn unread() -> Arc<SourceAudio> {
+    static UNREAD: OnceLock<Arc<SourceAudio>> = OnceLock::new();
+    UNREAD
+        .get_or_init(|| Arc::new(SourceAudio::stereo(0.0, Vec::new(), Vec::new())))
+        .clone()
+}
+
+/// The song as the builder last saw it: every clip, with the ones whose files are still being
+/// read on samples of none ([`unread`]).
+struct Wanted {
+    song: Song,
+    /// Each clip's file, in the song's order.
+    files: Vec<PathBuf>,
+}
+
+/// A clip's render as the engine plays it: for the clip's start in its file and its length,
+/// at the song's rate.
+struct Sound {
+    rendered: Arc<Rendered>,
+    at: f64,
+    length: f64,
+    rate: u32,
+    data: Arc<AudioData>,
+}
 
 /// One plugin's document of one song.
 pub struct Doc {
@@ -135,10 +250,9 @@ pub struct Doc {
     pub name: String,
     key: Key,
     service: Service,
-    /// The song last handed over.
+    /// The song last handed over: the clips whose files are read.
     song: Mutex<Option<Song>>,
-    /// The files' samples at the song's rate, by file and rate.
-    sources: Mutex<HashMap<(PathBuf, u32), Arc<SourceAudio>>>,
+    wanted: Mutex<Option<Wanted>>,
     /// Each clip's render as the engine plays it.
     sounds: Mutex<HashMap<u64, Sound>>,
     /// The archive last taken from the plugin.
@@ -157,7 +271,7 @@ impl Doc {
             key: key.clone(),
             service,
             song: Mutex::new(None),
-            sources: Mutex::new(HashMap::new()),
+            wanted: Mutex::new(None),
             sounds: Mutex::new(HashMap::new()),
             stored: Mutex::new(None),
         });
@@ -169,42 +283,19 @@ impl Doc {
         &self.service
     }
 
-    fn rate(&self) -> Option<f64> {
-        lock(&self.song).as_ref().map(|s| s.rate)
-    }
-
-    fn source(
-        &self,
-        path: &Path,
-        rate: u32,
-        cache: &mut WavCache,
-    ) -> Result<Arc<SourceAudio>, String> {
-        let key = (path.to_path_buf(), rate);
-        if let Some(s) = lock(&self.sources).get(&key) {
-            return Ok(s.clone());
-        }
-        let data = cache.load(path, rate)?;
-        let s = Arc::new(SourceAudio::stereo(
-            f64::from(rate),
-            data.left.clone(),
-            data.right.clone(),
-        ));
-        lock(&self.sources).insert(key, s.clone());
-        Ok(s)
-    }
-
-    /// The song of `p` as this plugin sees it: its clips that play their files as they are.
+    /// The song of `p` as this plugin sees it: its clips that play their files as they are,
+    /// each at its file's own rate (PLG-047). Without `wait`, a file not read yet is read on a
+    /// thread of its own and its clip waits ([`unread`]).
     fn song_of(
         &self,
         p: &Project,
         tmap: &TempoMap,
-        rate: u32,
         dir: Option<&Path>,
-        cache: &mut WavCache,
+        wait: bool,
         warnings: &mut Vec<String>,
-    ) -> (Song, BTreeSet<(PathBuf, u32)>) {
+    ) -> (Song, Vec<PathBuf>) {
         let mut clips = Vec::new();
-        let mut used = BTreeSet::new();
+        let mut files = Vec::new();
         for t in p.tracks.values().filter(|t| t.kind == TrackKind::Audio) {
             for c in &t.clips {
                 let Some(row) = p.ara.clips.get(&c.id).filter(|r| r.plugin == self.plugin) else {
@@ -223,14 +314,14 @@ impl Doc {
                     continue;
                 }
                 let path = resolve(dir, file);
-                let audio = match self.source(&path, rate, cache) {
-                    Ok(a) => a,
-                    Err(e) => {
+                let audio = match source(&path, wait) {
+                    Some(Ok(a)) => a,
+                    Some(Err(e)) => {
                         warnings.push(format!("{} / {}: {e}", t.name, c.name));
                         continue;
                     }
+                    None => unread(),
                 };
-                used.insert((path, rate));
                 let (start, offset, duration) = times(c, *offset, tmap);
                 clips.push(ClipSpec {
                     key: c.id.0,
@@ -248,6 +339,7 @@ impl Doc {
                     offset,
                     duration,
                 });
+                files.push(path);
             }
         }
         let (numerator, denominator) = p
@@ -255,24 +347,61 @@ impl Doc {
             .first()
             .map_or((4, 4), |s| (s.num as i32, s.den as i32));
         let song = Song {
-            rate: f64::from(rate),
             bpm: tmap.bpm_at(0),
             numerator,
             denominator,
             clips,
         };
-        (song, used)
+        (song, files)
     }
 
-    fn sync(&self, song: Song, used: BTreeSet<(PathBuf, u32)>) {
-        lock(&self.sources).retain(|k, _| used.contains(k));
+    fn sync(&self, song: Song, files: Vec<PathBuf>) {
+        *lock(&self.wanted) = Some(Wanted { song, files });
+        self.hand_over();
+    }
+
+    /// Hands the plugin the wanted song's clips whose files are read.
+    fn hand_over(&self) {
+        let mut wanted = lock(&self.wanted);
+        let Some(w) = wanted.as_mut() else {
+            return;
+        };
+        let none = unread();
+        for (c, path) in w.song.clips.iter_mut().zip(&w.files) {
+            if Arc::ptr_eq(&c.audio, &none)
+                && let Some(Ok(a)) = source(path, false)
+            {
+                c.audio = a;
+            }
+        }
+        let song = Song {
+            bpm: w.song.bpm,
+            numerator: w.song.numerator,
+            denominator: w.song.denominator,
+            clips: w
+                .song
+                .clips
+                .iter()
+                .filter(|c| !Arc::ptr_eq(&c.audio, &none))
+                .cloned()
+                .collect(),
+        };
         self.service.sync(&song);
         let keys: BTreeSet<u64> = song.clips.iter().map(|c| c.key).collect();
         lock(&self.sounds).retain(|k, _| keys.contains(k));
         *lock(&self.song) = Some(song);
     }
 
-    /// The clip's sound through the plugin, when it is rendered for the clip as it is now.
+    /// The samples of the clip's file, once read.
+    fn source_of(&self, key: u64) -> Option<Arc<SourceAudio>> {
+        let song = lock(&self.song);
+        let c = song.as_ref()?.clips.iter().find(|c| c.key == key)?;
+        Some(c.audio.clone())
+    }
+
+    /// The clip's sound through the plugin at the song's `rate`. A clip trimmed or slipped in
+    /// its file since its render plays the render where it covers the clip and its file
+    /// elsewhere, until the plugin renders it again (PLG-036).
     fn sound(&self, c: &Clip, offset: i64, tmap: &TempoMap, rate: u32) -> Option<Arc<AudioData>> {
         let state = self.service.state(c.id.0)?;
         if state.phase == Phase::Crashed {
@@ -280,23 +409,32 @@ impl Doc {
         }
         let r = state.rendered?;
         let (_, at, length) = times(c, offset, tmap);
-        if r.rate != f64::from(rate)
-            || (r.offset - at).abs() > 1e-6
-            || (r.duration - length).abs() > 1e-6
+        if let Some(s) = lock(&self.sounds).get(&c.id.0)
+            && Arc::ptr_eq(&s.rendered, &r)
+            && (s.rate, s.at, s.length) == (rate, at, length)
         {
-            return None;
+            return Some(s.data.clone());
         }
-        let mut sounds = lock(&self.sounds);
-        if let Some((seen, data)) = sounds.get(&c.id.0)
-            && Arc::ptr_eq(seen, &r)
-        {
-            return Some(data.clone());
-        }
-        let data = Arc::new(AudioData {
-            left: r.left.clone(),
-            right: r.right.clone(),
-        });
-        sounds.insert(c.id.0, (r, data.clone()));
+        let fits = (r.offset - at).abs() <= 1e-6 && (r.duration - length).abs() <= 1e-6;
+        let (left, right) = if fits {
+            (r.left.clone(), r.right.clone())
+        } else {
+            splice(&r, &*self.source_of(c.id.0)?, at, length)?
+        };
+        // Rendered at the file's rate; played at the song's (ENG-022).
+        let (left, right) =
+            crate::decode::convert(left, right, false, r.rate.round() as u32, rate).ok()?;
+        let data = Arc::new(AudioData { left, right });
+        lock(&self.sounds).insert(
+            c.id.0,
+            Sound {
+                rendered: r,
+                at,
+                length,
+                rate,
+                data: data.clone(),
+            },
+        );
         Some(data)
     }
 
@@ -345,10 +483,49 @@ fn times(c: &Clip, offset: i64, tmap: &TempoMap) -> (f64, f64, f64) {
     )
 }
 
-/// The song's archive of a plugin, as the plugin reads it: `None` when there is none or it is
-/// of a later Xirius.
+/// The clip from `at` in its file for `length` seconds, at the render's rate: the render where it
+/// covers the clip, the file's samples elsewhere (PLG-036). `None` when the file is at another
+/// rate than the render.
+fn splice(
+    r: &Rendered,
+    source: &SourceAudio,
+    at: f64,
+    length: f64,
+) -> Option<(Vec<f32>, Vec<f32>)> {
+    if source.rate != r.rate || source.channels.len() < 2 {
+        return None;
+    }
+    let frames = |s: f64| (s * r.rate).round() as i64;
+    let n = frames(length).max(0) as usize;
+    let shift = frames(at - r.offset);
+    let rendered = frames(r.duration)
+        .max(0)
+        .min(r.left.len().min(r.right.len()) as i64);
+    let from = frames(at);
+    let dry = |c: &[f32], i: i64| usize::try_from(i).ok().and_then(|i| c.get(i)).copied();
+    let mut left = Vec::with_capacity(n);
+    let mut right = Vec::with_capacity(n);
+    for k in 0..n as i64 {
+        let j = k + shift;
+        let (l, rr) = if (0..rendered).contains(&j) {
+            (r.left[j as usize], r.right[j as usize])
+        } else {
+            (
+                dry(&source.channels[0], from + k).unwrap_or(0.0),
+                dry(&source.channels[1], from + k).unwrap_or(0.0),
+            )
+        };
+        left.push(l);
+        right.push(rr);
+    }
+    Some((left, right))
+}
+
+/// The song's archive of a plugin, as the plugin reads it: `None` when there is none, it is
+/// another plugin's or it is of a later Xirius. The document checks its archive id against the
+/// factory's before restoring it.
 fn archive_of(p: &Project, plugin: &str) -> Option<(Vec<u8>, String)> {
-    let a = p.ara.archives.get(plugin)?;
+    let a = p.ara.archives.get(plugin).filter(|a| a.plugin == plugin)?;
     let a = xirius_ara::Archive {
         version: a.version,
         plugin: a.plugin.clone(),
@@ -427,7 +604,6 @@ impl Held {
         tmap: &TempoMap,
         rate: u32,
         dir: Option<&Path>,
-        cache: &mut WavCache,
         catalog: &mut dyn FnMut() -> Arc<Catalog>,
         warnings: &mut Vec<String>,
     ) {
@@ -440,10 +616,10 @@ impl Held {
             if !self.live
                 && !docs.contains_key(plugin)
                 && let Some(live) = existing(&(scope.clone(), plugin.to_string(), 0))
-                && live.rate() == Some(f64::from(rate))
             {
-                // The player's document, when it already has this song.
-                let (song, _) = live.song_of(p, tmap, rate, dir, cache, &mut Vec::new());
+                // The player's document, when it already has this song, at any rate: each clip
+                // renders at its file's (PLG-047).
+                let (song, _) = live.song_of(p, tmap, dir, true, &mut Vec::new());
                 if lock(&live.song).as_ref() == Some(&song) {
                     docs.insert(plugin.to_string(), live);
                 }
@@ -471,8 +647,9 @@ impl Held {
             };
             // Another builder never hands the player's document a song of its own.
             if self.live || doc.key.2 != 0 {
-                let (song, used) = doc.song_of(p, tmap, rate, dir, cache, warnings);
-                doc.sync(song, used);
+                // The player's builder never waits for a file to be read (it is read aside).
+                let (song, files) = doc.song_of(p, tmap, dir, !self.live, warnings);
+                doc.sync(song, files);
             }
             if !self.live {
                 doc.service.wait_idle(deadline);
@@ -611,4 +788,50 @@ pub fn take_archives(
         }
     })?;
     Ok(!changes.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rendered(offset: f64, duration: f64, value: f32) -> Rendered {
+        let n = (duration * 10.0) as usize;
+        Rendered {
+            rate: 10.0,
+            duration,
+            offset,
+            left: vec![value; n],
+            right: vec![-value; n],
+        }
+    }
+
+    fn file() -> SourceAudio {
+        let s: Vec<f32> = (0..40).map(|i| i as f32 / 100.0).collect();
+        SourceAudio::stereo(10.0, s.clone(), s)
+    }
+
+    #[test]
+    fn a_trimmed_clip_keeps_its_render_where_it_still_covers_it() {
+        // Rendered from 1 s for 2 s; the clip now starts at 1.5 s and goes on to 3.5 s.
+        let (l, r) = splice(&rendered(1.0, 2.0, 1.0), &file(), 1.5, 2.0).unwrap();
+        assert_eq!(l.len(), 20);
+        assert!(l[..15].iter().all(|&v| v == 1.0));
+        assert!(r[..15].iter().all(|&v| v == -1.0));
+        // Past the render, the file as it is: frames 30 to 34.
+        assert_eq!(l[15..], file().channels[0][30..35]);
+        assert_eq!(r[15..], l[15..]);
+    }
+
+    #[test]
+    fn a_clip_slipped_earlier_plays_its_file_before_the_render() {
+        let (l, _) = splice(&rendered(1.0, 2.0, 1.0), &file(), 0.5, 1.0).unwrap();
+        assert_eq!(l[..5], file().channels[0][5..10]);
+        assert!(l[5..].iter().all(|&v| v == 1.0));
+    }
+
+    #[test]
+    fn a_file_at_another_rate_is_not_spliced() {
+        let s = SourceAudio::stereo(20.0, vec![0.0; 80], vec![0.0; 80]);
+        assert!(splice(&rendered(0.0, 2.0, 1.0), &s, 0.5, 1.0).is_none());
+    }
 }

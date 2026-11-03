@@ -95,7 +95,7 @@ fn the_plugin_calls_all_five_host_interfaces() {
             .iter()
             .any(|r| matches!(r, Request::Position(t) if (*t - 1.0).abs() < 1e-9))
     );
-    drop(s);
+    assert!(s.close(Instant::now() + WAIT));
     no_violations();
 }
 
@@ -127,7 +127,7 @@ fn a_clip_plays_through_its_region() {
             .and_then(|c| c.rendered)
             .is_some_and(|r| r.left.len() == (0.5 * rate) as usize)
     });
-    drop(s);
+    assert!(s.close(Instant::now() + WAIT));
     no_violations();
 }
 
@@ -154,7 +154,7 @@ fn analysis_reads_on_other_threads_and_notices_stay_on_the_model_thread() {
     assert!(p.reads > 0 && p.reads == p.reads_off_thread);
     assert!(p.notices > 0);
     assert_eq!(p.notices_off_thread, 0);
-    drop(s);
+    assert!(s.close(Instant::now() + WAIT));
     no_violations();
 }
 
@@ -195,7 +195,7 @@ fn the_end_of_analysis_is_seen_and_the_notes_are_read() {
             .first()
             .is_some_and(|n| (n.duration - 60.0 / 90.0).abs() < 1e-6)
     });
-    drop(s);
+    assert!(s.close(Instant::now() + WAIT));
     no_violations();
 }
 
@@ -225,7 +225,7 @@ fn moving_a_region_keeps_its_sound() {
     assert_eq!(after.phase, Phase::Ready);
     assert!(Arc::ptr_eq(&before, after.rendered.as_ref().unwrap()));
     assert!(s.generation() >= generation);
-    drop(s);
+    assert!(s.close(Instant::now() + WAIT));
     no_violations();
 }
 
@@ -247,7 +247,7 @@ fn edits_survive_saving_and_opening_and_a_clone_keeps_them() {
     });
     let (bytes, id) = s.store(WAIT).unwrap();
     assert_eq!(id, fake::ARCHIVE_ID);
-    drop(s);
+    assert!(s.close(Instant::now() + WAIT));
 
     let s = start(Config::default(), Some((bytes.clone(), id.clone())));
     // Before any clip, the archive is kept as it was given.
@@ -275,35 +275,90 @@ fn edits_survive_saving_and_opening_and_a_clone_keeps_them() {
     assert!((s.notes(3702, true, WAIT)[0].volume - volume).abs() < 1e-4);
     std::thread::sleep(Duration::from_millis(200));
     assert!(!s.take_dirty(), "opening the song made it look changed");
-    drop(s);
+    assert!(s.close(Instant::now() + WAIT));
     no_violations();
 }
 
-/// PLG-047: a new sample rate renders again without a silent gap and within ARA's rules.
+/// PLG-047: each clip renders at its source's rate, whatever the song's, so a new song rate
+/// leaves the document and the user's edits alone (the caller converts).
 #[test]
-fn a_new_sample_rate_keeps_the_sound() {
-    let audio = tone(48000.0, 1.0, 0.5);
+fn a_clip_renders_at_its_source_rate_with_its_edits() {
+    let slow = tone(44100.0, 1.0, 0.5);
+    let fast = tone(48000.0, 1.0, 0.5);
+    let s = start(Config::default(), None);
+    s.sync(&song(vec![
+        clip(4701, "g.wav", &slow, 0.0, 0.0, 1.0),
+        clip(4702, "g2.wav", &fast, 1.0, 0.0, 1.0),
+    ]));
+    let first = ready(&s, 4702);
+    fake::edit(&modification_id(4701), 0.5);
+    let full = peak(&slow.channels[0]);
+    until("the edited render", || {
+        s.state(4701)
+            .filter(|c| c.phase == Phase::Ready)
+            .and_then(|c| c.rendered)
+            .is_some_and(|r| (peak(&r.left) - full * 0.5).abs() < 1e-4)
+    });
+    let r = s.state(4701).unwrap().rendered.unwrap();
+    assert_eq!((r.rate, r.left.len()), (44100.0, 44100));
+    assert!(Arc::ptr_eq(
+        &first,
+        &s.state(4702).unwrap().rendered.unwrap()
+    ));
+    assert_eq!(first.rate, 48000.0);
+    assert!(s.close(Instant::now() + WAIT));
+    no_violations();
+}
+
+/// PLG-034: a wait right after a change does not end on the render from before it.
+#[test]
+fn waiting_for_idle_after_a_change_ends_on_the_new_render() {
+    let audio = tone(48000.0, 2.0, 0.5);
+    let s = start(Config::default(), None);
+    s.sync(&song(vec![clip(4801, "w.wav", &audio, 0.0, 0.0, 2.0)]));
+    ready(&s, 4801);
+    s.sync(&song(vec![clip(4801, "w.wav", &audio, 0.0, 0.25, 0.5)]));
+    assert!(s.wait_idle(Instant::now() + WAIT));
+    let c = s.state(4801).unwrap();
+    assert_eq!(c.phase, Phase::Ready);
+    let r = c.rendered.unwrap();
+    assert_eq!((r.offset, r.duration), (0.25, 0.5));
+    assert!(s.close(Instant::now() + WAIT));
+    no_violations();
+}
+
+/// A long clip renders a second at a time, so the ARA thread answers in between.
+#[test]
+fn a_long_render_still_answers() {
+    let audio = tone(48000.0, 10.0, 0.5);
     let s = start(
         Config {
-            analysis_ms: 50,
+            render_spin_us: 1000,
             ..Config::default()
         },
         None,
     );
-    let clips = vec![clip(4701, "g.wav", &audio, 0.0, 0.0, 1.0)];
-    s.sync(&song(clips.clone()));
-    ready(&s, 4701);
-    s.sync(&Song {
-        rate: 44100.0,
-        ..song(clips)
-    });
-    until("the render at the new rate", || {
-        let c = s.state(4701).unwrap();
-        assert!(c.rendered.is_some(), "the clip went silent");
-        c.phase == Phase::Ready && c.rendered.unwrap().rate == 44100.0
-    });
-    assert_eq!(s.state(4701).unwrap().rendered.unwrap().left.len(), 44100);
-    drop(s);
+    let begun = Instant::now();
+    s.sync(&song(vec![clip(4901, "long.wav", &audio, 0.0, 0.0, 10.0)]));
+    let mut slowest = Duration::ZERO;
+    let mut answered = 0;
+    while s.state(4901).is_none_or(|c| c.phase != Phase::Ready) {
+        let asked = Instant::now();
+        assert!(s.probe(WAIT).is_some());
+        slowest = slowest.max(asked.elapsed());
+        answered += 1;
+        assert!(begun.elapsed() < WAIT, "the render did not end");
+    }
+    // About 940 blocks of a millisecond: the whole render takes most of a second, a turn a
+    // tenth of one.
+    assert!(
+        begun.elapsed() >= Duration::from_millis(800),
+        "{:?}",
+        begun.elapsed()
+    );
+    assert!(answered >= 3, "{answered}");
+    assert!(slowest < Duration::from_millis(400), "{slowest:?}");
+    assert!(s.close(Instant::now() + WAIT));
     no_violations();
 }
 
@@ -326,7 +381,7 @@ fn waiting_for_idle_ends_after_the_analysis() {
     assert!(s.wait_idle(begun + WAIT));
     assert!(begun.elapsed() >= Duration::from_millis(100));
     assert!(s.states().values().all(|c| c.phase == Phase::Ready));
-    drop(s);
+    assert!(s.close(Instant::now() + WAIT));
     no_violations();
 }
 
@@ -348,7 +403,7 @@ fn removing_a_clip_keeps_the_others() {
         &kept,
         s.state(5102).unwrap().rendered.as_ref().unwrap()
     ));
-    drop(s);
+    assert!(s.close(Instant::now() + WAIT));
     no_violations();
 }
 
@@ -378,5 +433,43 @@ fn documents_of_one_plugin_share_its_thread() {
     assert!(b.crashed().is_none() && b.failed().is_none());
     assert!(b.state(5202).unwrap().rendered.is_some());
     drop(b);
+    no_violations();
+}
+
+/// An archive of a kind the factory does not read is never handed to the plugin.
+#[test]
+fn an_archive_of_another_kind_is_not_restored() {
+    let audio = tone(48000.0, 1.0, 0.5);
+    let s = start(
+        Config::default(),
+        Some((vec![1, 2, 3], "com.example.other.document".into())),
+    );
+    s.sync(&song(vec![clip(5201, "k.wav", &audio, 0.0, 0.0, 1.0)]));
+    until("the refusal", || s.failed().is_some());
+    assert!(
+        s.failed().unwrap().contains("another kind"),
+        "{:?}",
+        s.failed()
+    );
+    assert!(s.close(Instant::now() + WAIT));
+    no_violations();
+}
+
+/// A first song without clips (its files still being read) keeps the archive for the clips that
+/// come after.
+#[test]
+fn an_archive_waits_for_the_first_clips() {
+    let audio = tone(48000.0, 1.0, 0.5);
+    let s = start(
+        Config::default(),
+        Some((vec![1, 2, 3], "com.example.other.document".into())),
+    );
+    s.sync(&song(Vec::new()));
+    s.wait_idle(Instant::now() + WAIT);
+    assert!(s.failed().is_none());
+    s.sync(&song(vec![clip(5202, "k.wav", &audio, 0.0, 0.0, 1.0)]));
+    // Handed over (and refused, being of another kind) only now.
+    until("the archive", || s.failed().is_some());
+    assert!(s.close(Instant::now() + WAIT));
     no_violations();
 }

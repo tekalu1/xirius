@@ -353,7 +353,6 @@ impl Builder {
         }
         let Builder {
             ara,
-            cache,
             plugins,
             dir,
             rate,
@@ -364,7 +363,6 @@ impl Builder {
             tmap,
             *rate,
             dir.as_deref(),
-            cache,
             &mut || plugins.shared_catalog(),
             warnings,
         );

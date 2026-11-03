@@ -25,7 +25,7 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Barrier, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::service::{Binary, Instance, Loader};
 use crate::sys::{self, Bool, ContentType, FALSE, Ref, RoleFlags, TRUE};
@@ -42,15 +42,21 @@ pub struct Config {
     pub analysis_ms: u64,
     /// Faults on the host's thread when asked to analyse.
     pub fault_on_analysis: bool,
+    /// Faults on one of its own analysis threads. The executable the fake is linked into is
+    /// then registered as the plugin's module ([`contain::add_module`]): use it in a test
+    /// binary that expects no other fault.
+    pub fault_on_own_thread: bool,
     /// Never returns from rendering.
     pub hang_in_render: bool,
     /// The tail after each region, in seconds.
     pub tail: f64,
+    /// Microseconds each block of rendering takes, spent spinning.
+    pub render_spin_us: u64,
 }
 
 thread_local! {
     /// The configuration of the next document made on this thread.
-    static NEXT: Cell<Config> = const { Cell::new(Config { analysis_ms: 0, fault_on_analysis: false, hang_in_render: false, tail: 0.0 }) };
+    static NEXT: Cell<Config> = const { Cell::new(Config { analysis_ms: 0, fault_on_analysis: false, fault_on_own_thread: false, hang_in_render: false, tail: 0.0, render_spin_us: 0 }) };
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -615,6 +621,10 @@ fn start_job(d: &Dc, src: &mut Source) {
     let barrier = Arc::new(Barrier::new(2));
     let half = frames / 2;
     let ms = d.config.analysis_ms;
+    if d.config.fault_on_own_thread {
+        // A thread of its own that nothing joins: a thread that ended this way has no result.
+        drop(std::thread::spawn(own_fault));
+    }
     for (from, to) in [(0, half), (half, frames)] {
         let job = job.clone();
         let barrier = barrier.clone();
@@ -624,6 +634,13 @@ fn start_job(d: &Dc, src: &mut Source) {
             analyse(host, source as Ref, &job, &barrier, from, to, channels, ms);
         }));
     }
+}
+
+/// The fault of [`Config::fault_on_own_thread`], on a thread the host never called into.
+#[inline(never)]
+fn own_fault() {
+    // SAFETY: none; the fault PLG-058 is about.
+    unsafe { std::ptr::write_volatile(std::ptr::null_mut::<u8>(), 1) };
 }
 
 /// One of the two analysis threads: reads `[from, to)` of the source through its own reader.
@@ -1217,6 +1234,14 @@ impl Binary for FakeBinary {
         factory()
     }
 
+    fn module(&self) -> usize {
+        if !self.config.fault_on_own_thread {
+            return 0;
+        }
+        contain::add_module(own_fault as *const () as usize);
+        own_fault as *const () as usize
+    }
+
     fn instance(
         &mut self,
         dc: Ref,
@@ -1290,6 +1315,11 @@ impl Instance for FakeInstance {
                     std::thread::sleep(Duration::from_millis(10));
                 }
             });
+        }
+        let spin = Duration::from_micros(self.renderer.dc.config.render_spin_us);
+        let begun = Instant::now();
+        while begun.elapsed() < spin {
+            std::hint::spin_loop();
         }
         let n = left.len().min(right.len());
         left[..n].fill(0.0);

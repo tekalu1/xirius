@@ -257,7 +257,6 @@ fn a_clap_plugin_binds_to_the_document_and_plays_the_region() {
     ));
     let s = Service::start(loader(), None, Arc::new(|| {}));
     s.sync(&Song {
-        rate,
         clips: vec![ClipSpec {
             key: 1,
             clone_of: None,
@@ -299,5 +298,5 @@ fn a_clap_plugin_binds_to_the_document_and_plays_the_region() {
     assert_eq!(r.left.len(), (0.5 * rate) as usize);
     assert!(r.left.iter().all(|v| (v - 0.25).abs() < 1e-6));
     assert!(r.right.iter().all(|v| (v - 0.5).abs() < 1e-6));
-    drop(s);
+    assert!(s.close(Instant::now() + Duration::from_secs(10)));
 }

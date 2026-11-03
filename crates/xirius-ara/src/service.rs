@@ -13,10 +13,15 @@
 //! The song is handed over whole ([`Service::sync`]); the thread compares it with the model it
 //! made and edits the document in one cycle: sources (one per file), modifications and
 //! regions (one each per clip). After the plugin's analysis of a source completes, each clip
-//! is rendered offline through its own playback renderer, and the result is handed back
-//! ([`Service::state`]). Moving a clip keeps its rendered sound (PLG-036); a new length or a
-//! new start in the source renders again. The plugin's notifications are pulled on the ARA
-//! thread every 30 ms (PLG-034).
+//! is rendered offline through its own playback renderer, a second of sound per turn, and the
+//! result is handed back ([`Service::state`]). Moving a clip keeps its rendered sound
+//! (PLG-036); a new length or a new start in the source renders again. The plugin's
+//! notifications are pulled on the ARA thread every 30 ms (PLG-034).
+//!
+//! Sources are given at their files' own rates, and each clip renders at its source's rate
+//! (PLG-047): the song's rate is not the plugin's business, so a new song rate changes
+//! nothing in the document and the user's edits stay. The caller converts the sound to the
+//! song's rate.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -34,6 +39,11 @@ use crate::{Error, error};
 /// A plugin binary with an ARA factory, used on the ARA thread only.
 pub trait Binary {
     fn factory(&self) -> *const sys::Factory;
+    /// An address in the plugin's module, registered with [`contain::add_module`], so a fault
+    /// on a thread of the plugin's own is noticed ([`contain::faults_in`]). 0 for none.
+    fn module(&self) -> usize {
+        0
+    }
     /// A new plugin instance bound to the document controller `dc`.
     fn instance(
         &mut self,
@@ -58,7 +68,6 @@ pub type Loader = Box<dyn FnOnce() -> Result<Box<dyn Binary>, Error> + Send>;
 /// The song as the plugin sees it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Song {
-    pub rate: f64,
     pub bpm: f64,
     pub numerator: i32,
     pub denominator: i32,
@@ -68,7 +77,6 @@ pub struct Song {
 impl Default for Song {
     fn default() -> Song {
         Song {
-            rate: 48_000.0,
             bpm: 120.0,
             numerator: 4,
             denominator: 4,
@@ -86,7 +94,7 @@ pub struct ClipSpec {
     /// The persistent id of the clip's audio source (one per file, see [`source_id`]).
     pub source: String,
     pub name: String,
-    /// The file's samples at the song's rate.
+    /// The file's samples at its own rate.
     pub audio: Arc<SourceAudio>,
     /// Seconds on the timeline.
     pub start: f64,
@@ -137,6 +145,7 @@ pub enum Phase {
 /// A clip's sound through the plugin, starting at the clip's start.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Rendered {
+    /// The source's rate, which the clip was rendered at.
     pub rate: f64,
     /// The clip's length when rendered, in seconds (the buffers may be longer: the tail).
     pub duration: f64,
@@ -181,7 +190,8 @@ pub struct Probe {
 }
 
 enum Msg {
-    Sync(Song),
+    /// The song and its number (see [`Shared::synced`]).
+    Sync(Song, u64),
     Store(Sender<Option<(Vec<u8>, String)>>),
     Notes(u64, bool, Sender<Vec<Note>>),
     Probe(Sender<Probe>),
@@ -196,6 +206,9 @@ struct Shared {
     finished: AtomicBool,
     loaded: AtomicBool,
     generation: AtomicU64,
+    /// The number of the last song the ARA thread took in. Until it is the last one sent, the
+    /// states may be of an older song.
+    synced: AtomicU64,
     requests: Mutex<Vec<Request>>,
     info: Mutex<Option<FactoryInfo>>,
     notify: Arc<dyn Fn() + Send + Sync>,
@@ -216,6 +229,8 @@ impl Shared {
 pub const CALL_LIMIT: Duration = Duration::from_secs(30);
 /// Frames per render block.
 pub const BLOCK: usize = 512;
+/// Seconds of sound rendered per turn of the ARA thread, so its messages are answered between.
+pub const RENDER_STEP: f64 = 1.0;
 /// The longest tail rendered after a clip.
 pub const MAX_TAIL: f64 = 2.0;
 
@@ -225,7 +240,8 @@ pub struct Service {
     tx: Sender<Job>,
     host: Arc<Host>,
     shared: Arc<Shared>,
-    last: Mutex<Option<Song>>,
+    /// The last song sent and its number.
+    last: Mutex<(Option<Song>, u64)>,
 }
 
 impl Service {
@@ -280,6 +296,7 @@ impl Service {
             finished: AtomicBool::new(false),
             loaded: AtomicBool::new(false),
             generation: AtomicU64::new(0),
+            synced: AtomicU64::new(0),
             requests: Mutex::new(Vec::new()),
             info: Mutex::new(None),
             notify,
@@ -310,7 +327,7 @@ impl Service {
             tx,
             host,
             shared,
-            last: Mutex::new(None),
+            last: Mutex::new((None, 0)),
         }
     }
 
@@ -321,10 +338,11 @@ impl Service {
     /// Hands the song over. Nothing is sent when it did not change.
     pub fn sync(&self, song: &Song) {
         let mut last = lock(&self.last);
-        if last.as_ref() == Some(song) {
+        if last.0.as_ref() == Some(song) {
             return;
         }
-        *last = Some(song.clone());
+        last.0 = Some(song.clone());
+        last.1 += 1;
         {
             // Every clip has a state from now on, so a crash before the first render still
             // shows on it.
@@ -337,7 +355,7 @@ impl Service {
                 }
             }
         }
-        self.send(Msg::Sync(song.clone()));
+        self.send(Msg::Sync(song.clone(), last.1));
     }
 
     /// The plugin's archive of the document and its archive id, or `None` when the plugin
@@ -393,9 +411,13 @@ impl Service {
     }
 
     fn idle(&self) -> bool {
-        let Some(song) = lock(&self.last).clone() else {
+        let (Some(song), sent) = lock(&self.last).clone() else {
             return true;
         };
+        // The states of an older song say nothing about this one.
+        if self.shared.synced.load(Ordering::Acquire) < sent {
+            return false;
+        }
         let states = lock(&self.shared.states);
         song.clips.iter().all(|c| {
             states
@@ -436,16 +458,28 @@ impl Service {
     pub fn take_requests(&self) -> Vec<Request> {
         std::mem::take(&mut *lock(&self.shared.requests))
     }
+
+    /// Closes the document and waits, at most to `deadline`, until the ARA thread took it
+    /// down. Whether it did. Dropping a service closes it without waiting.
+    pub fn close(self, deadline: Instant) -> bool {
+        self.send(Msg::Stop);
+        loop {
+            if self.shared.finished.load(Ordering::Acquire) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
 }
 
 impl Drop for Service {
     fn drop(&mut self) {
+        // The ARA thread tears the document down in its next turn; nothing here waits for
+        // it (the UI thread drops services).
         self.send(Msg::Stop);
-        // The thread tears the document down; it is not joined (see `start`).
-        let until = Instant::now() + Duration::from_secs(5);
-        while !self.shared.finished.load(Ordering::Acquire) && Instant::now() < until {
-            std::thread::sleep(Duration::from_millis(5));
-        }
         self.host.forget(&self.shared);
     }
 }
@@ -469,8 +503,21 @@ struct Clip {
     instance: Option<Box<dyn Instance>>,
     prepared: f64,
     rendered: Option<Arc<Rendered>>,
+    /// The render under way, a step per turn.
+    pass: Option<Pass>,
     stale: bool,
     failed: bool,
+}
+
+/// A render under way: its buffers, filled up to `at`.
+struct Pass {
+    rate: f64,
+    start: i64,
+    at: usize,
+    duration: f64,
+    offset: f64,
+    left: Vec<f32>,
+    right: Vec<f32>,
 }
 
 struct Ara {
@@ -482,7 +529,6 @@ struct Ara {
     context: Ref,
     sequence: Ref,
     musical: Musical,
-    rate: f64,
     sources: HashMap<String, Source>,
     next_source: usize,
     clips: HashMap<u64, Clip>,
@@ -492,6 +538,9 @@ struct Ara {
     ara_thread: Option<ThreadId>,
     notices: u64,
     notices_off_thread: u64,
+    /// The plugin's module and the faults on its own threads when the document was made.
+    module: usize,
+    module_faults: u64,
 }
 
 // The ARA threads ------------------------------------------------------------------------------
@@ -551,8 +600,16 @@ impl Host {
                     watch.attach();
                     thread_init();
                     let _ = ready_tx.send(());
-                    host_loop(&rx);
-                    host.ended.store(true, Ordering::Release);
+                    let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        host_loop(&rx, &host)
+                    }));
+                    if host.ended.swap(true, Ordering::AcqRel) {
+                        return;
+                    }
+                    if run.is_err() {
+                        // Not the plugin's fault: an error of the host's own on this thread.
+                        host.crash("the ARA thread stopped on an error of Xirius's");
+                    }
                 })
                 .map_err(|_| "could not start the ARA thread".to_string())?;
         }
@@ -671,19 +728,23 @@ impl Slot {
     /// Handles one cycle's messages. Whether the document was stopped.
     fn handle(&mut self, msgs: Vec<Msg>) -> bool {
         // Only the newest song matters.
-        let newest = msgs.iter().rposition(|m| matches!(m, Msg::Sync(_)));
+        let newest = msgs.iter().rposition(|m| matches!(m, Msg::Sync(..)));
         let mut stop = false;
         for (i, m) in msgs.into_iter().enumerate() {
             match (&mut *self, m) {
                 (_, Msg::Stop) => stop = true,
-                (Slot::Open(ara), Msg::Sync(song)) if Some(i) == newest => ara.sync(song),
-                (Slot::Failed(shared), Msg::Sync(song)) => {
+                (Slot::Open(ara), Msg::Sync(song, n)) if Some(i) == newest => {
+                    ara.sync(song);
+                    ara.shared.synced.fetch_max(n, Ordering::AcqRel);
+                }
+                (Slot::Failed(shared), Msg::Sync(song, n)) => {
                     let mut states = lock(&shared.states);
                     for c in &song.clips {
                         states.entry(c.key).or_default().phase = Phase::Failed;
                     }
+                    shared.synced.fetch_max(n, Ordering::AcqRel);
                 }
-                (_, Msg::Sync(_)) => {}
+                (_, Msg::Sync(..)) => {}
                 (Slot::Open(ara), Msg::Store(tx)) => drop(tx.send(ara.store())),
                 (Slot::Open(ara), Msg::Notes(key, of_mod, tx)) => {
                     drop(tx.send(ara.notes(key, of_mod)))
@@ -725,11 +786,18 @@ fn open(loader: Loader, archive: Option<(Vec<u8>, String)>, shared: Arc<Shared>)
 
 /// The ARA thread: its documents, each edited, asked and rendered in turn, and the plugins'
 /// window messages answered between.
-fn host_loop(rx: &Receiver<Job>) {
+fn host_loop(rx: &Receiver<Job>, host: &Host) {
     let mut slots: Vec<(u64, Slot)> = Vec::new();
+    let mut busy = false;
     loop {
         pump();
-        let first = match rx.recv_timeout(Duration::from_millis(30)) {
+        // While a render is under way, the next turn comes at once.
+        let wait = if busy {
+            Duration::ZERO
+        } else {
+            Duration::from_millis(30)
+        };
+        let first = match rx.recv_timeout(wait) {
             Ok(j) => Some(j),
             Err(RecvTimeoutError::Timeout) => None,
             Err(RecvTimeoutError::Disconnected) => break,
@@ -747,6 +815,7 @@ fn host_loop(rx: &Receiver<Job>) {
             }
         }
         // Messages for documents already closed are dropped, and so are their answers.
+        busy = false;
         let mut i = 0;
         while i < slots.len() {
             let mine = msgs.remove(&slots[i].0).unwrap_or_default();
@@ -755,14 +824,35 @@ fn host_loop(rx: &Receiver<Job>) {
                 continue;
             }
             if let Slot::Open(ara) = &mut slots[i].1 {
-                ara.tick();
+                busy |= ara.tick();
             }
             i += 1;
+        }
+        if let Some(why) = own_thread_fault(&slots) {
+            // A thread of the plugin's own ended in a fault (PLG-058): its state is not to be
+            // trusted, so its documents are left as they are, not taken down.
+            host.ended.store(true, Ordering::Release);
+            host.crash(&why);
+            std::mem::forget(slots);
+            return;
         }
     }
     for (_, slot) in slots {
         slot.close();
     }
+}
+
+/// Why a document's plugin is crashed, when a thread of its own faulted since it was made.
+fn own_thread_fault(slots: &[(u64, Slot)]) -> Option<String> {
+    slots.iter().find_map(|(_, s)| match s {
+        Slot::Open(a) if a.module != 0 && contain::faults_in(a.module) > a.module_faults => {
+            Some(format!(
+                "the plugin stopped with an {} on a thread of its own",
+                contain::describe(contain::last_code())
+            ))
+        }
+        _ => None,
+    })
 }
 
 fn start(
@@ -776,6 +866,7 @@ fn start(
     let doc = unsafe { Document::new(binary.factory(), side.clone(), "Xirius")? };
     let info = doc.info();
     *lock(&shared.info) = Some(info.clone());
+    let module = binary.module();
     Ok(Ara {
         doc,
         binary,
@@ -785,7 +876,6 @@ fn start(
         context: std::ptr::null_mut(),
         sequence: std::ptr::null_mut(),
         musical: Musical::default(),
-        rate: 0.0,
         sources: HashMap::new(),
         next_source: 1,
         clips: HashMap::new(),
@@ -794,6 +884,8 @@ fn start(
         ara_thread: Some(std::thread::current().id()),
         notices: 0,
         notices_off_thread: 0,
+        module,
+        module_faults: contain::faults_in(module),
     })
 }
 
@@ -818,10 +910,6 @@ impl Ara {
             numerator: song.numerator,
             denominator: song.denominator,
         };
-        if self.rate != 0.0 && self.rate != song.rate {
-            self.change_rate(&song);
-        }
-        self.rate = song.rate;
 
         let wanted: HashMap<u64, &ClipSpec> = song.clips.iter().map(|c| (c.key, c)).collect();
         let wanted_sources: HashSet<&str> = song.clips.iter().map(|c| c.source.as_str()).collect();
@@ -890,17 +978,20 @@ impl Ara {
                     if c.spec == *spec {
                         continue;
                     }
+                    let same_audio = Arc::ptr_eq(&c.spec.audio, &spec.audio);
                     let moved_only = c.spec.offset == spec.offset
                         && c.spec.duration == spec.duration
-                        && Arc::ptr_eq(&c.spec.audio, &spec.audio);
+                        && same_audio;
                     let p = region_props(spec);
                     self.doc
                         .update_playback_region(c.region, &p, self.context, self.sequence);
                     if !moved_only {
-                        if c.spec.offset != spec.offset {
-                            // The old sound is of another part of the file.
+                        if !same_audio {
+                            // The old sound is of another file's content.
                             c.rendered = None;
                         }
+                        // A new start or length in the file keeps the old sound until the new
+                        // one is rendered: the caller plays what of it still fits (PLG-036).
                         c.stale = true;
                     }
                     c.spec = spec.clone();
@@ -913,11 +1004,20 @@ impl Ara {
             }
         }
 
-        // The archive goes into the objects just made with the same persistent ids.
-        if let Some((data, id)) = self.archive.take()
-            && !self.clips.is_empty()
+        // The archive goes into the objects just made with the same persistent ids; kept while
+        // there are none yet (a song whose files are still being read).
+        if !self.clips.is_empty()
+            && let Some((data, id)) = self.archive.take()
         {
-            if self.doc.restore(&data, &id) {
+            // Only an archive of this factory's own kind (or one it says it reads) is handed
+            // over; a song's archive of another plugin never reaches it.
+            let info = self.doc.info();
+            let readable = id == info.archive_id || info.compatible_archive_ids.contains(&id);
+            if !readable {
+                *lock(&self.shared.failed) = Some(format!(
+                    "the archive is of another kind ({id}) than the plugin reads"
+                ));
+            } else if self.doc.restore(&data, &id) {
                 self.quiet = 3;
                 for c in self.clips.values_mut() {
                     c.stale = true;
@@ -926,9 +1026,6 @@ impl Ara {
                 *lock(&self.shared.failed) =
                     Some("the plugin could not restore its archive".into());
             }
-        } else if let Some(a) = self.archive.take() {
-            // Nothing to restore into yet.
-            self.archive = Some(a);
         }
         self.doc.end_editing();
 
@@ -943,11 +1040,13 @@ impl Ara {
 
     fn ensure_source(&mut self, spec: &ClipSpec, new: &mut Vec<String>) -> Result<(), Error> {
         if let Some(s) = self.sources.get_mut(&spec.source) {
-            if !Arc::ptr_eq(&s.audio, &spec.audio) && spec.audio.rate == s.audio.rate {
+            if !Arc::ptr_eq(&s.audio, &spec.audio) {
                 // The file changed on disk: the plugin reads it again.
                 self.doc.enable_samples_access(s.r, false);
                 s.audio = spec.audio.clone();
                 s.props.frames = spec.audio.frames() as i64;
+                s.props.rate = spec.audio.rate;
+                s.props.channels = spec.audio.channels.len() as i32;
                 self.side.set_source(s.key, s.audio.clone());
                 self.doc.update_audio_source_properties(s.r, &s.props);
                 self.doc.update_audio_source_content(s.r);
@@ -1023,6 +1122,7 @@ impl Ara {
                 instance: None,
                 prepared: 0.0,
                 rendered: None,
+                pass: None,
                 stale: true,
                 failed: false,
             },
@@ -1030,44 +1130,15 @@ impl Ara {
         Ok(())
     }
 
-    /// A new song rate (PLG-047): the plugin's reading stops, each source gets its samples at
-    /// the new rate, reading starts again, and the clips render again. They play dry
-    /// meanwhile; the instances are set up again at the new rate when they render.
-    fn change_rate(&mut self, song: &Song) {
-        let audio: HashMap<&str, &Arc<SourceAudio>> = song
-            .clips
-            .iter()
-            .map(|c| (c.source.as_str(), &c.audio))
-            .collect();
-        for s in self.sources.values() {
-            self.doc.enable_samples_access(s.r, false);
-        }
-        self.doc.begin_editing();
-        for (id, s) in self.sources.iter_mut() {
-            let Some(a) = audio.get(id.as_str()) else {
-                continue;
-            };
-            s.audio = (*a).clone();
-            s.props.rate = a.rate;
-            s.props.frames = a.frames() as i64;
-            self.side.set_source(s.key, s.audio.clone());
-            self.doc.update_audio_source_properties(s.r, &s.props);
-        }
-        self.doc.end_editing();
-        for s in self.sources.values_mut() {
-            self.doc.enable_samples_access(s.r, true);
-            s.analysed = self.kinds.is_empty();
-            self.doc.request_analysis(s.r, &self.kinds);
-        }
-        for c in self.clips.values_mut() {
-            c.stale = true;
-        }
-    }
-
-    fn tick(&mut self) {
+    /// One turn: the plugin's notifications, the analysis, and a step of a render. Whether a
+    /// render is under way.
+    fn tick(&mut self) -> bool {
         self.doc.notify_model_updates();
         let here = std::thread::current().id();
         let mut dirty = false;
+        // A clip the plugin changed shows as rendering at once, so a wait for its sound does
+        // not end on the old one.
+        let mut restale = false;
         for (n, thread) in self.side.take_notices() {
             self.notices += 1;
             if Some(thread) != self.ara_thread || thread != here {
@@ -1096,6 +1167,7 @@ impl Ara {
                     for c in self.clips.values_mut() {
                         if Some(&c.spec.source) == id.as_ref() {
                             c.stale = true;
+                            restale = true;
                         }
                     }
                 }
@@ -1105,6 +1177,7 @@ impl Ara {
                 | Notice::RegionContent { region: r, .. } => {
                     if let Some(c) = self.clips.values_mut().find(|c| clip_ref(c.spec.key) == r) {
                         c.stale = true;
+                        restale = true;
                     }
                 }
                 Notice::DocumentData => dirty |= self.quiet == 0,
@@ -1116,7 +1189,7 @@ impl Ara {
         }
         lock(&self.shared.requests).extend(self.side.take_requests());
 
-        let mut changed = dirty;
+        let mut changed = dirty || restale;
         for s in self.sources.values_mut() {
             if !s.analysed && self.doc.incomplete(s.r, &self.kinds).is_empty() {
                 s.analysed = true;
@@ -1124,90 +1197,134 @@ impl Ara {
                 changed = true;
             }
         }
-        // One clip per turn, so the messages are answered between renders.
+        // A render that a change made old starts again.
+        for c in self.clips.values_mut() {
+            if c.stale
+                && let Some(p) = c.pass.take()
+                && let Some(i) = c.instance.as_mut()
+            {
+                i.set_transport(false, p.start + p.at as i64);
+                changed = true;
+            }
+        }
+        // One clip at a time, a step per turn, so the messages are answered between.
         let next = self
             .clips
             .iter()
-            .filter(|(_, c)| {
-                c.stale && !c.failed && self.sources.get(&c.spec.source).is_some_and(|s| s.analysed)
-            })
+            .filter(|(_, c)| c.pass.is_some())
             .map(|(k, _)| *k)
-            .min();
+            .min()
+            .or_else(|| {
+                self.clips
+                    .iter()
+                    .filter(|(_, c)| {
+                        c.stale
+                            && !c.failed
+                            && self.sources.get(&c.spec.source).is_some_and(|s| s.analysed)
+                    })
+                    .map(|(k, _)| *k)
+                    .min()
+            });
         if let Some(key) = next {
-            self.render(key);
-            changed = true;
+            changed |= self.render(key);
         }
         if changed {
             self.publish();
         }
+        self.clips.values().any(|c| c.pass.is_some())
     }
 
-    fn render(&mut self, key: u64) {
-        let rate = self.rate;
+    /// Starts the clip's render, or goes on with it for a step. Whether the clip's state
+    /// changed (its render ended or failed).
+    fn render(&mut self, key: u64) -> bool {
         let dc = self.doc.controller_ref();
         let Some(c) = self.clips.get_mut(&key) else {
-            return;
+            return false;
         };
-        c.stale = false;
-        if c.instance.is_none() {
-            match self
-                .binary
-                .instance(dc, sys::ROLES_ALL, sys::ROLE_PLAYBACK_RENDERER)
-            {
-                Ok(i) => {
-                    let ext = i.extension();
-                    if ext.playback_renderer_interface.is_null()
-                        || ext.playback_renderer_ref.is_null()
-                    {
-                        c.failed = true;
-                        return;
-                    }
-                    // SAFETY: the renderer of a live instance, before it is set up to process.
-                    contain::call(|| unsafe {
-                        ((*ext.playback_renderer_interface).add_playback_region)(
-                            ext.playback_renderer_ref,
-                            c.region,
-                        )
-                    });
-                    c.instance = Some(i);
-                    c.prepared = 0.0;
-                }
-                Err(_) => {
-                    c.failed = true;
-                    return;
-                }
-            }
-        }
-        let instance = c.instance.as_mut().expect("made above");
-        if c.prepared != rate {
-            if instance.prepare(rate, BLOCK).is_err() {
+        if c.pass.is_none() {
+            // The clip renders at its source's rate: the plugin never converts (PLG-047).
+            let Some(rate) = self.sources.get(&c.spec.source).map(|s| s.audio.rate) else {
                 c.failed = true;
-                return;
+                return true;
+            };
+            c.stale = false;
+            if c.instance.is_none() {
+                match self
+                    .binary
+                    .instance(dc, sys::ROLES_ALL, sys::ROLE_PLAYBACK_RENDERER)
+                {
+                    Ok(i) => {
+                        let ext = i.extension();
+                        if ext.playback_renderer_interface.is_null()
+                            || ext.playback_renderer_ref.is_null()
+                        {
+                            c.failed = true;
+                            return true;
+                        }
+                        // SAFETY: the renderer of a live instance, before it is set up to
+                        // process.
+                        contain::call(|| unsafe {
+                            ((*ext.playback_renderer_interface).add_playback_region)(
+                                ext.playback_renderer_ref,
+                                c.region,
+                            )
+                        });
+                        c.instance = Some(i);
+                        c.prepared = 0.0;
+                    }
+                    Err(_) => {
+                        c.failed = true;
+                        return true;
+                    }
+                }
             }
-            c.prepared = rate;
+            let instance = c.instance.as_mut().expect("made above");
+            if c.prepared != rate {
+                if instance.prepare(rate, BLOCK).is_err() {
+                    c.failed = true;
+                    return true;
+                }
+                c.prepared = rate;
+            }
+            let (_, tail) = self.doc.head_and_tail(c.region);
+            let spec = &c.spec;
+            let frames = (spec.duration * rate).ceil().max(0.0) as usize
+                + (tail.min(MAX_TAIL) * rate).ceil() as usize;
+            let start = (spec.start * rate).round() as i64;
+            instance.set_transport(true, start);
+            c.pass = Some(Pass {
+                rate,
+                start,
+                at: 0,
+                duration: spec.duration,
+                offset: spec.offset,
+                left: vec![0.0; frames],
+                right: vec![0.0; frames],
+            });
         }
-        let (_, tail) = self.doc.head_and_tail(c.region);
-        let spec = &c.spec;
-        let frames = (spec.duration * rate).ceil().max(0.0) as usize
-            + (tail.min(MAX_TAIL) * rate).ceil() as usize;
-        let start = (spec.start * rate).round() as i64;
-        let mut left = vec![0.0f32; frames];
-        let mut right = vec![0.0f32; frames];
-        instance.set_transport(true, start);
-        let mut at = 0;
-        while at < frames {
-            let n = BLOCK.min(frames - at);
-            instance.process(&mut left[at..at + n], &mut right[at..at + n]);
-            at += n;
+        let (Some(p), Some(instance)) = (c.pass.as_mut(), c.instance.as_mut()) else {
+            return false;
+        };
+        let frames = p.left.len();
+        let end = frames.min(p.at + (RENDER_STEP * p.rate).ceil() as usize);
+        while p.at < end {
+            let n = BLOCK.min(end - p.at);
+            instance.process(&mut p.left[p.at..p.at + n], &mut p.right[p.at..p.at + n]);
+            p.at += n;
         }
-        instance.set_transport(false, start + frames as i64);
+        if p.at < frames {
+            return false;
+        }
+        instance.set_transport(false, p.start + frames as i64);
+        let p = c.pass.take().expect("looked at above");
         c.rendered = Some(Arc::new(Rendered {
-            rate,
-            duration: spec.duration,
-            offset: spec.offset,
-            left,
-            right,
+            rate: p.rate,
+            duration: p.duration,
+            offset: p.offset,
+            left: p.left,
+            right: p.right,
         }));
+        true
     }
 
     fn publish(&self) {
@@ -1219,7 +1336,7 @@ impl Ara {
                 Phase::Failed
             } else if !analysed {
                 Phase::Analysing
-            } else if c.stale || c.rendered.is_none() {
+            } else if c.stale || c.pass.is_some() || c.rendered.is_none() {
                 Phase::Rendering
             } else {
                 Phase::Ready
