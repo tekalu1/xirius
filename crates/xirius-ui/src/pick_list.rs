@@ -633,6 +633,7 @@ pub fn is(kind: PopupKind) -> bool {
             | PopupKind::Send(_)
             | PopupKind::KeySources(_)
             | PopupKind::MacroAxis(..)
+            | PopupKind::SplitMode(..)
             | PopupKind::Input(_)
             | PopupKind::Output(_)
             | PopupKind::AutomationTargets(..)
@@ -906,6 +907,7 @@ impl Studio {
                         .collect(),
                 ))
             }
+            PopupKind::SplitMode(t, id) => Some(crate::channel::mode_pick(&self.project(), t, id)),
             PopupKind::Send(t) => {
                 let p = self.project();
                 let mut list =

@@ -805,7 +805,7 @@ impl Studio {
                     .find(|c| c.pick == Pick::Split(id))
                     .and_then(|c| card_parts(c).mode)
                     .unwrap_or(v.r);
-                self.mode_menu(t, id, at.x, at.bottom());
+                self.open_popup(PopupKind::SplitMode(t, id), at);
             }
             Part::Gap(i) => {
                 let Some(gap) = v.flow.gaps.get(i).copied() else {
@@ -1023,25 +1023,15 @@ impl Studio {
         self.open_context(items, x, y);
     }
 
-    /// A splitter's modes, a check on its own.
-    fn mode_menu(&mut self, t: TrackId, id: NodeId, x: f32, y: f32) {
-        let now = split_of(&self.project(), t, id).map(|s| s.mode);
-        let items = [
-            (SplitMode::Normal, "normal"),
-            (SplitMode::Channel, "channel"),
-            (SplitMode::Frequency, "frequency"),
-        ]
-        .into_iter()
-        .map(|(mode, word)| {
-            self.ctx_as(
-                mode_text(mode),
-                "rack.split.mode",
-                json!({ "id": id.to_string(), "mode": word }),
-            )
-            .on(now == Some(mode))
-        })
-        .collect();
-        self.open_context(items, x, y);
+    /// A row of a splitter's mode list: the splitter takes the mode.
+    pub(crate) fn split_mode(&mut self, id: NodeId, word: &str) -> bool {
+        self.popup = None;
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+        self.run_command(
+            "rack.split.mode",
+            json!({ "id": id.to_string(), "mode": word }),
+        );
+        true
     }
 
     /// The pointer moves with something of the window held.
@@ -1241,6 +1231,26 @@ impl Studio {
         }
         true
     }
+}
+
+/// A splitter's modes as a list (UI-320), the one it has checked.
+pub fn mode_pick(p: &Project, t: TrackId, id: NodeId) -> crate::pick_list::PickList {
+    use crate::pick_list::{PickList, PickRow};
+    let now = split_of(p, t, id).map(|s| s.mode);
+    PickList::of(
+        [
+            (SplitMode::Normal, "normal"),
+            (SplitMode::Channel, "channel"),
+            (SplitMode::Frequency, "frequency"),
+        ]
+        .into_iter()
+        .map(|(mode, word)| {
+            PickRow::new(mode_text(mode))
+                .act(crate::popup::Action::SplitMode(id, word))
+                .on(now == Some(mode))
+        })
+        .collect(),
+    )
 }
 
 /// What a branch's or a layer's head speaks for: 「分岐 N」 (L, R on a channel split) or the

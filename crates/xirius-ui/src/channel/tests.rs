@@ -437,7 +437,17 @@ fn the_mode_pill_lists_the_three_modes() {
     let pill = card_parts(&card(&v, Pick::Split(sp))).mode.unwrap();
     assert_eq!(part_at(&v, mid(pill).0, mid(pill).1), Some(Part::Mode(sp)));
     press(&mut s, &g, mid(pill));
-    assert!(s.ctx.is_some());
+    let popup = s.popup.as_ref().expect("the mode's list");
+    assert!(crate::pick_list::is(popup.kind), "a PickList (UI-320)");
+    let rows: Vec<_> = crate::pick_list::found(popup).cloned().collect();
+    assert_eq!(rows.len(), 3);
+    assert!(rows[0].on, "a new splitter is normal");
+    let act = rows[1].act.clone().unwrap();
+    assert_eq!(crate::operations::of_action(&act), "rack.split.mode");
+    assert!(s.popup_action(&g, act));
+    assert!(s.popup.is_none());
+    let mode = super::split_of(&s.project(), track(&s, "Vocal"), sp).map(|x| x.mode);
+    assert_eq!(mode, Some(SplitMode::Channel));
 }
 
 #[test]
