@@ -23,7 +23,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         edit(
             "clip.ara.attach.apply",
-            "オーディオクリップを ARA のプラグインに付けます（clip.ara.attach が使います）",
+            "オーディオクリップを ARA のプラグインに付けます。clip.ara.attach と窓が使う道で、プラグインの id が入っているか・ARA のプラグインかは確かめません（無ければ「見つからない」の印になります）",
             vec![
                 ArgDef::ids(IdKind::Clip, "クリップ"),
                 ArgDef::text("plugin", "プラグインの id").req(),
@@ -91,6 +91,8 @@ pub enum Unfit {
     Speed,
     Pitch,
     Reverse,
+    /// Some other process of the clip's own, which the reasons above do not name yet.
+    Processed,
 }
 
 impl Unfit {
@@ -102,6 +104,7 @@ impl Unfit {
             Unfit::Speed => "速さが変更されています",
             Unfit::Pitch => "ピッチが変更されています",
             Unfit::Reverse => "逆再生が有効です",
+            Unfit::Processed => "クリップに処理が掛かっています",
         }
     }
 
@@ -132,8 +135,11 @@ pub fn unfit(p: &Project, id: ClipId) -> CmdResult<Option<Unfit>> {
         Some(Unfit::Pitch)
     } else if process.reverse {
         Some(Unfit::Reverse)
+    } else if !process.is_plain() {
+        // A field added to the process and not named above: still refused, in a release too.
+        debug_assert!(false, "a process field unfit does not name");
+        Some(Unfit::Processed)
     } else {
-        debug_assert!(process.is_plain());
         None
     })
 }
