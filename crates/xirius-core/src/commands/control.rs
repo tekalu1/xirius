@@ -29,6 +29,26 @@ pub(super) fn defs() -> Vec<CommandDef> {
             |p, _, a| set(p, a),
         ),
         edit(
+            "control.xy",
+            "X/Y パッドを動かし、X と Y に当てた 2 つのマクロ（つまみ）を一緒に設定します",
+            vec![
+                track(),
+                ArgDef::float("x", "X の値（0〜1）").range(0.0, 1.0).req(),
+                ArgDef::float("y", "Y の値（0〜1）").range(0.0, 1.0).req(),
+            ],
+            |p, _, a| xy(p, a),
+        ),
+        edit(
+            "control.xy.assign",
+            "X/Y パッドの X か Y に当てるマクロ（k1〜k8）を選びます（もう片方に当たっていれば入れ替えます）",
+            vec![
+                track(),
+                ArgDef::text("axis", "x か y").req(),
+                ArgDef::text("control", "マクロ: k1〜k8").req(),
+            ],
+            |p, _, a| xy_assign(p, a),
+        ),
+        edit(
             "control.assign",
             "マクロコントロールに割り当て先を足します（同じ先の範囲は書き換えます。ほかのマクロの先は割り当てられません）",
             vec![
@@ -110,6 +130,45 @@ fn set(p: &mut Project, a: &Args) -> CmdResult<Output> {
         "{} を {:.0} % にしました",
         t.control_label(id),
         v * 100.0
+    )))
+}
+
+fn xy(p: &mut Project, a: &Args) -> CmdResult<Output> {
+    let tid: TrackId = a.id("track")?;
+    let t = p.track_mut(tid)?;
+    let mut said = Vec::new();
+    for (id, arg) in t.controls.xy_knobs().into_iter().zip(["x", "y"]) {
+        let v = a.opt_f64(arg).unwrap_or(0.0).clamp(0.0, 1.0);
+        t.controls.get_mut(id).value = v;
+        t.apply_control_at(id, v);
+        said.push(format!("{} を {:.0} %", t.control_label(id), v * 100.0));
+    }
+    Ok(Output::msg(format!("{}にしました", said.join("、"))))
+}
+
+fn xy_assign(p: &mut Project, a: &Args) -> CmdResult<Output> {
+    let tid: TrackId = a.id("track")?;
+    let axis = match a.str("axis")? {
+        "x" | "X" => 0,
+        "y" | "Y" => 1,
+        other => {
+            return Err(CmdError::invalid(format!(
+                "`{other}` は x でも y でもありません"
+            )));
+        }
+    };
+    let ControlId::Knob(k) = control_of(a)? else {
+        return Err(CmdError::invalid(
+            "X/Y パッドに当てられるのはつまみ（k1〜k8）だけです",
+        ));
+    };
+    let t = p.track_mut(tid)?;
+    t.controls.set_xy(axis, k);
+    let [x, y] = t.controls.xy_knobs();
+    Ok(Output::msg(format!(
+        "X/Y パッドを X {}、Y {} にしました",
+        t.control_label(x),
+        t.control_label(y)
     )))
 }
 

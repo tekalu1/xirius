@@ -447,58 +447,128 @@ pub fn paint(pen: &mut Pen, r: Rect, v: &View<'_>) {
 }
 
 /// The channel editor's bar (MIX-042): the route icon and the track's name, the empty
-/// stretch, the pin and the close. No power, no preset (PLG-065 brings its tag).
+/// stretch, the pin and the close. No power, no preset (PLG-065 brings its tag). The macro
+/// window's (MIX-041) is the same with «track › Macro Controls» and the channel editor's
+/// button before the pin.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlainBar {
     pub name: Rect,
     pub name_text: Rect,
     pub space: Rect,
+    pub channel: Option<Rect>,
     pub pin: Rect,
     pub close: Rect,
 }
 
 pub fn plain_layout(r: Rect, track: &str) -> PlainBar {
+    plain_layout_of(r, track, None)
+}
+
+/// The plain bar with `device` after the track's name, and then the channel editor's button.
+pub fn plain_layout_of(r: Rect, track: &str, device: Option<&str>) -> PlainBar {
     let cy = r.y + (r.h - BTN) / 2.0;
     let close = Rect::new(r.right() - PAD - BTN, cy, BTN, BTN);
     let pin = Rect::new(close.x - GAP - BTN, cy, BTN, BTN);
+    let channel = device.map(|_| Rect::new(pin.x - GAP - BTN, cy, BTN, BTN));
+    let right = channel.unwrap_or(pin).x;
     let x = r.x + PAD;
     let lead = NAME_L + ICON + NAME_GAP;
-    let room = (pin.x - GAP - x).max(0.0);
-    let content = lead + estimated_text_width(track, FontSize::Body) * SEMIBOLD_RUN + NAME_R;
-    let name = Rect::new(x, cy, content.min(room), BTN);
+    let room = (right - GAP - x).max(0.0);
+    let text = match device {
+        Some(d) => {
+            estimated_text_width(track, FontSize::Body)
+                + 2.0 * SEP_PAD
+                + estimated_text_width("›", FontSize::Body)
+                + estimated_text_width(d, FontSize::Body) * SEMIBOLD_RUN
+        }
+        None => estimated_text_width(track, FontSize::Body) * SEMIBOLD_RUN,
+    };
+    let name = Rect::new(x, cy, (lead + text + NAME_R).min(room), BTN);
     let name_text = Rect::new(name.x + lead, cy, (name.w - lead - NAME_R).max(0.0), BTN);
     let space = Rect::new(
         name.right() + GAP,
         cy,
-        (pin.x - GAP - name.right() - GAP).max(0.0),
+        (right - GAP - name.right() - GAP).max(0.0),
         BTN,
     );
     PlainBar {
         name,
         name_text,
         space,
+        channel,
         pin,
         close,
     }
 }
 
 pub fn paint_plain(pen: &mut Pen, r: Rect, track: &str, pinned: bool) {
+    paint_plain_of(pen, r, "route", track, None, pinned);
+}
+
+/// The plain bar of [`plain_layout_of`]: «track › device» as a device's bar says it.
+pub fn paint_plain_of(
+    pen: &mut Pen,
+    r: Rect,
+    icon: &str,
+    track: &str,
+    device: Option<&str>,
+    pinned: bool,
+) {
     let c = pen.c;
-    let bar = plain_layout(r, track);
+    let bar = plain_layout_of(r, track, device);
     pen.shape(r, c.surface_1, Radius::M, Round::rows(true, false));
     pen.mask(bar.name, |pen| {
-        let icon = Rect::new(bar.name.x + NAME_L, cy_of(bar.name), ICON, ICON);
-        pen.icon("route", icon, c.ink_strong);
-        let shown = pen.fit(track, FontSize::Body, Weight::Semibold, bar.name_text.w);
+        let at = Rect::new(bar.name.x + NAME_L, cy_of(bar.name), ICON, ICON);
+        pen.icon(icon, at, c.ink_strong);
+        let t = bar.name_text;
+        let Some(device) = device else {
+            let shown = pen.fit(track, FontSize::Body, Weight::Semibold, t.w);
+            pen.text(
+                &shown,
+                FontSize::Body,
+                Weight::Semibold,
+                c.ink_strong,
+                t,
+                Align::Left,
+            );
+            return;
+        };
+        let ink = name_inks(c, true);
+        let sep_w = pen.measure("›", FontSize::Body, Weight::Regular);
+        let dev_w = pen.measure(device, FontSize::Body, Weight::Semibold);
+        let track_room = (t.w - dev_w - 2.0 * SEP_PAD - sep_w).max(0.0);
+        let track = pen.fit(track, FontSize::Body, Weight::Regular, track_room);
+        let track_w = pen.measure(&track, FontSize::Body, Weight::Regular);
         pen.text(
-            &shown,
+            &track,
+            FontSize::Body,
+            Weight::Regular,
+            ink.track,
+            Rect::new(t.x, t.y, track_w, t.h),
+            Align::Left,
+        );
+        let sx = t.x + track_w + SEP_PAD;
+        pen.text(
+            "›",
+            FontSize::Body,
+            Weight::Regular,
+            ink.track,
+            Rect::new(sx, t.y, sep_w, t.h),
+            Align::Left,
+        );
+        let dx = sx + sep_w + SEP_PAD;
+        pen.text(
+            device,
             FontSize::Body,
             Weight::Semibold,
-            c.ink_strong,
-            bar.name_text,
+            ink.device,
+            Rect::new(dx, t.y, (t.right() - dx).max(0.0), t.h),
             Align::Left,
         );
     });
+    if let Some(b) = bar.channel {
+        pen.icon("route", icon_box(b), c.ink);
+    }
     if pinned {
         let (face, ink) = c.primary;
         pen.round(bar.pin, face, Radius::S);

@@ -583,6 +583,11 @@ fn every_history_command_undoes_and_redoes() {
         json!({"track": rt, "control": "k1", "value": 0.25}),
     );
     rig.step(
+        "control.xy.assign",
+        json!({"track": rt, "axis": "y", "control": "k1"}),
+    );
+    rig.step("control.xy", json!({"track": rt, "x": 0.4, "y": 0.7}));
+    rig.step(
         "control.rename",
         json!({"track": rt, "control": "k1", "name": "Tone"}),
     );

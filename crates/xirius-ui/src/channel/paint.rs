@@ -44,6 +44,9 @@ pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry, over: bool) {
     pen.floating(v.r, c.paper, Radius::M);
     title_bar::paint_plain(pen, v.bar_rect(), &v.name, w.pinned);
     paint_tools(pen, w, &v);
+    if let Some(m) = &v.macros {
+        paint_macros(pen, s, w, t, m);
+    }
     pen.mask(v.body, |pen| paint_flow(pen, s, w, t, &v.flow));
     if let Some(k) = &v.keys {
         paint_keys(pen, w, t, k);
@@ -271,6 +274,37 @@ fn paint_tools(pen: &mut Pen, w: &ChannelWin, v: &View) {
             Align::Left,
         );
     }
+}
+
+/// The macro row: the band under the toolbar, Macro 1–8 and the button to the macro window.
+fn paint_macros(pen: &mut Pen, s: &Studio, w: &ChannelWin, t: &Track, m: &super::MacroRow) {
+    let c = pen.c;
+    pen.fill(m.band, c.surface_1);
+    for (i, cell) in m.cells.iter().enumerate() {
+        let k = i as u8;
+        crate::macro_pad::paint::paint_knob(
+            pen,
+            *cell,
+            crate::macro_pad::knob_value(s, t, k),
+            &t.control_label(xirius_core::controls::ControlId::Knob(k)),
+            w.hot == Some(Part::Macro(k)),
+        );
+    }
+    if w.hot == Some(Part::MacroOut) {
+        pen.round(m.popout, c.surface_3, Radius::Clip);
+    }
+    let icon = super::TBTN_ICON;
+    let r = m.popout;
+    pen.icon(
+        "popout",
+        Rect::new(
+            r.x + (r.w - icon) / 2.0,
+            r.y + (r.h - icon) / 2.0,
+            icon,
+            icon,
+        ),
+        c.ink_strong,
+    );
 }
 
 /// The key of what the pointer is on, for the links that light with it.

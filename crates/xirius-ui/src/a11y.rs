@@ -330,6 +330,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     out.extend(inspector_marks(s, g));
     out.extend(instrument_marks(s, g));
     out.extend(crate::channel::marks(s, g));
+    out.extend(crate::macro_pad::marks(s, g));
     out.extend(flow_marks(s, g));
     out.extend(device_marks(s, g));
     out.extend(audition_mark(s, g));

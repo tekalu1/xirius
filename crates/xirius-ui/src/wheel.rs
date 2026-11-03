@@ -95,6 +95,10 @@ impl Studio {
         if self.home_shown() {
             return self.home_wheel(g, x, y, notch);
         }
+        // The macro window takes the wheel from what is under it (MIX-041).
+        if self.over_macros(g, x, y) {
+            return true;
+        }
         // The channel editor's flow scrolls under it (MIX-042).
         if self.channel_wheel(g, x, y, dx, dy) {
             return true;

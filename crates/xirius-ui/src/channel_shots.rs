@@ -1,7 +1,7 @@
 //! The channel editor (MIX-042): a vocal's chain with a splitter of three branches, the keys'
 //! three layers, a branch under the pointer and a chosen card, as the mock's s03 shows them; the
 //! keys' ranges under them (MIX-043), as v2's s04 does, with the first layer and then the third
-//! chosen.
+//! chosen. Then the macro row and the macro window beside the editor (MIX-041), as v3's s06.
 use crate::{
     mixer::flow::Pick,
     shot::{Act, Play, Shot},
@@ -31,6 +31,10 @@ pub const SHOTS: &[Shot] = &[
     Shot {
         name: "channel05",
         acts: &[Act::Reset, Act::Stage(Play::Laid(setup), 4)],
+    },
+    Shot {
+        name: "channel06",
+        acts: &[Act::Reset, Act::Stage(Play::Laid(setup), 5)],
     },
 ];
 
@@ -135,6 +139,32 @@ fn setup(s: &mut Studio, g: &Geometry, n: u8) {
         4 => {
             if let Some(w) = s.channel.as_mut() {
                 w.chosen = Some(Pick::Plugin(strings));
+            }
+        }
+        // the macro row on, and the macro window to the editor's right with its point at 40 % 70 %
+        5 => {
+            for (k, v) in [0.4, 0.7, 0.25, 0.5, 0.1, 0.8, 0.3, 0.6]
+                .into_iter()
+                .enumerate()
+            {
+                let args = json!({ "track": vocal, "control": format!("k{}", k + 1), "value": v });
+                s.run_command("control.set", args);
+            }
+            if let Some(w) = s.channel.as_mut() {
+                w.macros = true;
+                w.at = Some((12.0, 56.0));
+            }
+            // beside the editor when the screen has the room, else over its lower part
+            let right = s.channel_view(g).map_or(0.0, |v| v.r.right());
+            let beside = right + 16.0 + crate::macro_pad::W <= g.size.0 - 12.0;
+            let at = if beside {
+                (right + 16.0, 56.0)
+            } else {
+                ((g.size.0 - crate::macro_pad::W - 12.0).max(0.0), 300.0)
+            };
+            s.open_macros(vocal);
+            if let Some(w) = s.macro_pad.as_mut() {
+                w.at = Some(at);
             }
         }
         _ => {}

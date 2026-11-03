@@ -18,6 +18,8 @@ use crate::model::Track;
 pub const KNOBS: usize = 8;
 pub const BUTTONS: usize = 8;
 pub const PADS: usize = 2;
+/// The knobs the screen's X/Y pad moves (MIX-041) before others are chosen: Macro 1 and 2.
+pub const XY: [u8; 2] = [0, 1];
 
 /// One control of the set. Text form: `k1`..`k8`, `b1`..`b8`, `x1`, `y1`,
 /// `x2`, `y2`. The number inside is zero-based.
@@ -183,7 +185,7 @@ impl Pad {
 
 /// The track's set of macro controls. Saved as lists without the unused
 /// controls at their ends, and nothing at all while every control is unused.
-#[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(from = "Saved", into = "Saved")]
 pub struct MacroControls {
     pub knobs: [Control; KNOBS],
@@ -191,6 +193,20 @@ pub struct MacroControls {
     pub pads: [Pad; PADS],
     /// The page the screen last showed (knobs, buttons or pad).
     pub page: Option<String>,
+    /// The knobs (zero-based) the screen's X/Y pad moves across and up; never the same one.
+    pub xy: [u8; 2],
+}
+
+impl Default for MacroControls {
+    fn default() -> MacroControls {
+        MacroControls {
+            knobs: Default::default(),
+            buttons: Default::default(),
+            pads: Default::default(),
+            page: None,
+            xy: XY,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -203,6 +219,8 @@ struct Saved {
     pads: Vec<Pad>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     page: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    xy: Option<[u8; 2]>,
 }
 
 fn trimmed<T: Clone>(xs: &[T], unused: impl Fn(&T) -> bool) -> Vec<T> {
@@ -222,6 +240,7 @@ impl From<MacroControls> for Saved {
             buttons: trimmed(&m.buttons, Control::is_default),
             pads: trimmed(&m.pads, Pad::is_default),
             page: m.page,
+            xy: (m.xy != XY).then_some(m.xy),
         }
     }
 }
@@ -233,6 +252,10 @@ impl From<Saved> for MacroControls {
             buttons: filled(s.buttons),
             pads: filled(s.pads),
             page: s.page,
+            xy: s
+                .xy
+                .filter(|[x, y]| x != y && usize::from(*x.max(y)) < KNOBS)
+                .unwrap_or(XY),
         };
         for id in ControlId::all() {
             let c = m.get_mut(id);
@@ -252,7 +275,7 @@ impl From<Saved> for MacroControls {
 impl MacroControls {
     /// Nothing named, set or mapped (the set is not saved).
     pub fn is_empty(&self) -> bool {
-        self.page.is_none() && ControlId::all().all(|id| self.get(id).is_default())
+        self.page.is_none() && self.xy == XY && ControlId::all().all(|id| self.get(id).is_default())
     }
 
     pub fn get(&self, id: ControlId) -> &Control {
@@ -276,6 +299,21 @@ impl MacroControls {
     /// Every control with its id, knobs first.
     pub fn iter(&self) -> impl Iterator<Item = (ControlId, &Control)> {
         ControlId::all().map(move |id| (id, self.get(id)))
+    }
+
+    /// The knobs the X/Y pad moves: across, then up.
+    pub fn xy_knobs(&self) -> [ControlId; 2] {
+        self.xy.map(ControlId::Knob)
+    }
+
+    /// Puts knob `k` on the pad's axis (`0` across, `1` up); the knob the other axis had
+    /// already goes to this axis's old one, so the two stay apart.
+    pub fn set_xy(&mut self, axis: usize, k: u8) {
+        let other = 1 - axis.min(1);
+        if self.xy[other] == k {
+            self.xy[other] = self.xy[axis.min(1)];
+        }
+        self.xy[axis.min(1)] = k;
     }
 
     /// The control that moves `target`, if one does.
@@ -470,6 +508,27 @@ mod tests {
         assert_eq!(v["pads"].as_array().unwrap().len(), 1);
         let back: MacroControls = serde_json::from_value(v).unwrap();
         assert_eq!(back, m);
+    }
+
+    #[test]
+    fn the_pads_knobs_stay_apart_and_are_saved_once_chosen() {
+        let mut m = MacroControls::default();
+        assert_eq!(m.xy_knobs(), [ControlId::Knob(0), ControlId::Knob(1)]);
+        m.set_xy(0, 4);
+        assert_eq!(m.xy, [4, 1]);
+        // the other axis's knob: the two trade places
+        m.set_xy(1, 4);
+        assert_eq!(m.xy, [1, 4]);
+        assert!(!m.is_empty());
+        let v = serde_json::to_value(&m).unwrap();
+        assert_eq!(v, serde_json::json!({"xy": [1, 4]}));
+        assert_eq!(serde_json::from_value::<MacroControls>(v).unwrap(), m);
+        for bad in [
+            serde_json::json!({"xy": [2, 2]}),
+            serde_json::json!({"xy": [0, 8]}),
+        ] {
+            assert_eq!(serde_json::from_value::<MacroControls>(bad).unwrap().xy, XY);
+        }
     }
 
     #[test]

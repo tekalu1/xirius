@@ -767,6 +767,8 @@ pub struct Studio {
     pub instruments: crate::instrument::window::Windows,
     /// The open channel editor (MIX-042).
     pub channel: Option<crate::channel::ChannelWin>,
+    /// The open macro window (MIX-041).
+    pub macro_pad: Option<crate::macro_pad::MacroWin>,
     /// The right-click menu that is open (CTX-001).
     pub(crate) ctx: Option<crate::context::State>,
     /// The PC keys as a keyboard (UI-074).
@@ -923,6 +925,7 @@ impl Studio {
             live_midi: Default::default(),
             instruments: crate::instrument::window::Windows::default(),
             channel: None,
+            macro_pad: None,
             ctx: None,
             pc_keys: crate::instrument::keys::PcKeys::default(),
             drop_over: false,
@@ -1880,7 +1883,8 @@ impl Studio {
         mods: Mods,
     ) -> bool {
         self.inspector_follow(g);
-        self.device_key(key, mods)
+        self.macro_key(key, mods)
+            || self.device_key(key, mods)
             || self.name_key(key, mods)
             || self.bar_key(key, ch, mods)
             || self.inspector_key(g, key, ch, mods)

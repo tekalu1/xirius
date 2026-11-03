@@ -27,6 +27,10 @@ use flow::{CardKind, Chain, ColKind, Column, Flow, Key, Slot};
 
 /// A row of the toolbar.
 pub const TOOL_H: f32 = 40.0;
+/// The macro row's band, its least room round the knobs, and its widest knob cell (MIX-041).
+pub const MACRO_H: f32 = 80.0;
+const MACRO_TOP: f32 = 8.0;
+pub const MACRO_CELL: f32 = 60.0;
 /// The window's least width (the mock's).
 pub const MIN_W: f32 = 520.0;
 /// How much of a dragged window stays on the screen.
@@ -124,6 +128,9 @@ pub enum Part {
     /// A layer's box in the key range figure, and one of its sides.
     Range(NodeId),
     Side(NodeId, keys::Edge),
+    /// A knob of the macro row, and the row's button that opens the macro window.
+    Macro(u8),
+    MacroOut,
     Body,
 }
 
@@ -210,6 +217,44 @@ pub struct View {
     pub flow: Flow,
     /// A multi-instrument's key range figure, under the body, when the window is wide enough.
     pub keys: Option<keys::Keys>,
+    /// The macro row, under the toolbar, while Macro Controls is on.
+    pub macros: Option<MacroRow>,
+}
+
+/// The row of Macro 1–8 under the toolbar (MIX-041).
+#[derive(Clone, Debug, PartialEq)]
+pub struct MacroRow {
+    pub band: Rect,
+    pub cells: [Rect; xirius_core::controls::KNOBS],
+    /// Opens the macro window.
+    pub popout: Rect,
+}
+
+/// The macro row in its band: the knobs from the left, as wide as the band lets them up to
+/// [`MACRO_CELL`], and the window's button at the top right.
+pub fn macro_row(band: Rect) -> MacroRow {
+    use xirius_core::controls::KNOBS;
+    let popout = Rect::new(
+        band.right() - TOOL_PAD - TBTN_H,
+        band.y + MACRO_TOP + (crate::macro_pad::DIAL - TBTN_H) / 2.0,
+        TBTN_H,
+        TBTN_H,
+    );
+    let room = (popout.x - TOOL_GAP - band.x - TOOL_PAD).max(0.0);
+    let cell = (room / KNOBS as f32).min(MACRO_CELL);
+    let cells = std::array::from_fn(|i| {
+        Rect::new(
+            band.x + TOOL_PAD + i as f32 * cell,
+            band.y + MACRO_TOP,
+            cell,
+            crate::macro_pad::KNOB_H,
+        )
+    });
+    MacroRow {
+        band,
+        cells,
+        popout,
+    }
 }
 
 /// The width of a toolbar's button.
@@ -276,7 +321,8 @@ pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
     } else {
         0.0
     };
-    let height = (BAR_H + tool_h + probe.h + panel_h).min((size.1 - ROOM_Y).max(200.0));
+    let macro_h = if w.macros { MACRO_H } else { 0.0 };
+    let height = (BAR_H + tool_h + macro_h + probe.h + panel_h).min((size.1 - ROOM_Y).max(200.0));
     let (x, y) = w.at.unwrap_or(((size.0 - width) / 2.0, TOP));
     let r = Rect::new(
         x.clamp(0.0, (size.0 - KEEP_W).max(0.0)),
@@ -288,11 +334,14 @@ pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
     let bar = title_bar::plain_layout(Rect::new(r.x, r.y, r.w, BAR_H), &name);
     let (tools, _) = tools_of(r, instrument);
     let toolbar = Rect::new(r.x, r.y + BAR_H, r.w, tool_h);
+    let macros = w
+        .macros
+        .then(|| macro_row(Rect::new(r.x, toolbar.bottom(), r.w, MACRO_H)));
     let body = Rect::new(
         r.x,
-        toolbar.bottom(),
+        toolbar.bottom() + macro_h,
         r.w,
-        (r.h - BAR_H - tool_h - panel_h).max(0.0),
+        (r.h - BAR_H - tool_h - macro_h - panel_h).max(0.0),
     );
     let keys = (panel_h > 0.0).then(|| {
         let held = match &w.grab {
@@ -319,6 +368,7 @@ pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
         body,
         flow,
         keys,
+        macros,
     })
 }
 
@@ -481,6 +531,19 @@ pub fn part_at(v: &View, x: f32, y: f32) -> Option<Part> {
                 .iter()
                 .find(|(_, r)| r.contains(x, y))
                 .map_or(Part::Body, |(t, _)| Part::Tool(*t)),
+        );
+    }
+    if let Some(m) = &v.macros
+        && m.band.contains(x, y)
+    {
+        if m.popout.contains(x, y) {
+            return Some(Part::MacroOut);
+        }
+        return Some(
+            m.cells
+                .iter()
+                .position(|c| c.contains(x, y))
+                .map_or(Part::Body, |i| Part::Macro(i as u8)),
         );
     }
     if let Some(k) = &v.keys
@@ -824,6 +887,10 @@ impl Studio {
                     });
                 }
             }
+            Part::Macro(i) => {
+                self.control_drag(t, xirius_core::controls::ControlId::Knob(i), y);
+            }
+            Part::MacroOut => self.open_macros(t),
             Part::Body => w.chosen = None,
         }
         true
@@ -870,8 +937,7 @@ impl Studio {
                     w.macros = !w.macros;
                 }
             }
-            // The macro window comes with MIX-041.
-            Tool::Popout => {}
+            Tool::Popout => self.open_macros(t),
         }
     }
 
@@ -1117,7 +1183,7 @@ impl Studio {
         if self.channel.is_none() {
             return false;
         }
-        let over = self.over_channel(g, x, y);
+        let over = self.over_channel(g, x, y) && !self.over_macros(g, x, y);
         let hot = if over {
             self.channel_view(g).and_then(|v| part_at(&v, x, y))
         } else {
@@ -1251,6 +1317,25 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<crate::a11y::Mark> {
             toggled(&mut node, w.macros);
         }
         children.push(mark(format!("channel-tool-{tool:?}"), node));
+    }
+    if let Some(m) = &v.macros {
+        for (i, cell) in m.cells.iter().enumerate() {
+            let k = i as u8;
+            let id = xirius_core::controls::ControlId::Knob(k);
+            let value = crate::macro_pad::knob_value(s, t, k);
+            let mut node = accesskit::Node::new(accesskit::Role::Slider);
+            node.set_label(t.control_label(id));
+            node.set_bounds(bounds(*cell));
+            node.set_min_numeric_value(0.0);
+            node.set_max_numeric_value(100.0);
+            node.set_numeric_value((value * 100.0).round());
+            node.set_value(crate::macro_pad::percent(value));
+            children.push(mark(format!("channel-macro-{i}"), node));
+        }
+        children.push(mark(
+            "channel-macro-out".into(),
+            button(POPOUT_LABEL, m.popout),
+        ));
     }
     let shown = |r: Rect| v.body.contains(r.x + r.w / 2.0, r.y + r.h / 2.0);
     for card in v.flow.cards.iter().filter(|c| shown(c.rect)) {

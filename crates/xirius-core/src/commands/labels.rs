@@ -228,6 +228,8 @@ pub const LABELS: &[(&str, &str)] = &[
     ("rack.layer.set", "レイヤーを設定"),
     ("rack.layer.remove", "レイヤーを削除"),
     ("control.set", "マクロコントロールを設定"),
+    ("control.xy", "X/Y パッドを設定"),
+    ("control.xy.assign", "X/Y パッドのマクロを選択"),
     ("control.assign", "マクロコントロールに割り当て"),
     ("control.unassign", "マクロコントロールの割り当てを解除"),
     ("control.rename", "マクロコントロール名を変更"),

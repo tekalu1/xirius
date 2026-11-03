@@ -160,6 +160,7 @@ mod live_edit_shots;
 pub mod loading;
 pub mod local_time;
 pub mod macro_lane_shots;
+pub mod macro_pad;
 mod macro_run;
 mod manual_update_shots;
 pub mod menu_key_shots;

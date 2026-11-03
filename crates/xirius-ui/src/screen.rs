@@ -260,11 +260,17 @@ impl Screen {
             cx.notify();
             return;
         }
-        if studio.channel_moved(&g, x, y) || studio.instrument_moved(&g, x, y, ev.modifiers.shift) {
+        if studio.macro_moved(&g, x, y)
+            || studio.channel_moved(&g, x, y)
+            || studio.instrument_moved(&g, x, y, ev.modifiers.shift)
+        {
             cx.notify();
             return;
         }
-        if studio.channel_hover(&g, x, y) | studio.instrument_hover(&g, x, y) {
+        if studio.macro_hover(&g, x, y)
+            | studio.channel_hover(&g, x, y)
+            | studio.instrument_hover(&g, x, y)
+        {
             cx.notify();
         }
         if let Some(ctx) = studio.roll_input(&g) {
@@ -389,7 +395,8 @@ impl Screen {
             return;
         }
         if studio.popup.is_none()
-            && (studio.channel_press(&g, x, y, ev.click_count as u32)
+            && (studio.macro_press(&g, x, y)
+                || studio.channel_press(&g, x, y, ev.click_count as u32)
                 || studio.instrument_press(&g, x, y, ev.click_count as u32, mods(ev.modifiers)))
         {
             cx.notify();
@@ -690,7 +697,7 @@ impl Screen {
             cx.notify();
             return;
         }
-        if studio.channel_up(&g) || studio.instrument_up() {
+        if studio.macro_up() || studio.channel_up(&g) || studio.instrument_up() {
             cx.notify();
             return;
         }
@@ -1540,6 +1547,8 @@ impl Render for Screen {
             {
                 studio.ai.motion.reduced = reduced;
             }
+            // An unpinned macro window shows the channel chosen since (MIX-041).
+            studio.macro_follow();
             let g = geometry(&studio, window);
             studio.resized(&g);
             if !studio.input_blocked() {

@@ -1687,6 +1687,28 @@ impl Studio {
         }
     }
 
+    /// Starts dragging a macro knob of a window (MIX-041) as a mixer knob: it is one step when
+    /// let go. False when it does not move.
+    pub(crate) fn control_drag(&mut self, t: TrackId, c: ControlId, y: f32) -> bool {
+        let hit = MixerHit::Control(t, c);
+        if self.mixer_locked(hit) {
+            return false;
+        }
+        let Some(start) = self.mixer_value(hit) else {
+            return false;
+        };
+        self.mixer.drag = Some(Drag {
+            hit,
+            y0: y,
+            travel: KNOB_TRAVEL,
+            start,
+            value: start,
+            alone: false,
+        });
+        self.auto_touch(hit, Phase::Begin, Some(start));
+        true
+    }
+
     /// The pointer moved during a drag; `fine` (Shift) moves a quarter as far.
     pub fn drag_move(&mut self, y: f32, fine: bool) -> bool {
         let Some(d) = self.mixer.drag else {
@@ -1697,6 +1719,10 @@ impl Studio {
             MixerHit::Pan(_) => {
                 let v = (d.start as f32 + dy * 2.0 / d.travel).clamp(-1.0, 1.0);
                 let v = if v.abs() < 0.03 { 0.0 } else { v };
+                f64::from((v * 100.0).round() / 100.0)
+            }
+            MixerHit::Control(..) => {
+                let v = (d.start as f32 + dy / d.travel).clamp(0.0, 1.0);
                 f64::from((v * 100.0).round() / 100.0)
             }
             _ => {
