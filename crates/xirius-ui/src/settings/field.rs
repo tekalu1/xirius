@@ -48,7 +48,7 @@ impl Field {
                 .chars()
                 .filter(|c| c.is_ascii_digit() || matches!(c, '.' | '-'))
                 .collect(),
-            FieldId::Search | FieldId::MacroName | FieldId::MacroPick => text,
+            FieldId::Search | FieldId::MacroName | FieldId::MacroPick | FieldId::Value => text,
         }
     }
 

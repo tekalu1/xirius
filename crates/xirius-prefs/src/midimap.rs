@@ -80,10 +80,17 @@ pub enum Target {
     Pan(String),
     /// A command (a pad runs it).
     Command(String),
+    /// A parameter of a built-in device (UI-324): its part, its plug-in and its id.
+    Param {
+        track: String,
+        plugin: String,
+        param: String,
+    },
 }
 
 impl Target {
-    /// `track.volume:<id>`, `track.pan:<id>`, or a command's name.
+    /// `track.volume:<id>`, `track.pan:<id>`, `plugin.param:<track>:<plugin>:<param>`, or a
+    /// command's name.
     pub fn parse(text: &str) -> Result<Target, String> {
         let text = text.trim();
         let part = |prefix: &str| {
@@ -98,10 +105,22 @@ impl Target {
         if let Some(id) = part("track.pan:") {
             return Ok(Target::Pan(id));
         }
+        if let Some(rest) = part("plugin.param:") {
+            let mut it = rest.splitn(3, ':').map(str::trim);
+            if let (Some(t), Some(p), Some(k)) = (it.next(), it.next(), it.next())
+                && ![t, p, k].iter().any(|s| s.is_empty())
+            {
+                return Ok(Target::Param {
+                    track: t.into(),
+                    plugin: p.into(),
+                    param: k.into(),
+                });
+            }
+        }
         let first = text.split_whitespace().next().unwrap_or("");
         if first.is_empty() || first.contains(':') {
             return Err(format!(
-                "「{text}」は割り当て先ではありません（track.volume:<id>・track.pan:<id>・コマンド名）"
+                "「{text}」は割り当て先ではありません（track.volume:<id>・track.pan:<id>・plugin.param:<track>:<plugin>:<param>・コマンド名）"
             ));
         }
         Ok(Target::Command(text.to_string()))
@@ -110,7 +129,7 @@ impl Target {
     /// The part this moves, `None` for a command.
     pub fn track(&self) -> Option<&str> {
         match self {
-            Target::Volume(id) | Target::Pan(id) => Some(id),
+            Target::Volume(id) | Target::Pan(id) | Target::Param { track: id, .. } => Some(id),
             Target::Command(_) => None,
         }
     }
@@ -122,6 +141,11 @@ impl std::fmt::Display for Target {
             Target::Volume(id) => write!(f, "track.volume:{id}"),
             Target::Pan(id) => write!(f, "track.pan:{id}"),
             Target::Command(c) => f.write_str(c),
+            Target::Param {
+                track,
+                plugin,
+                param,
+            } => write!(f, "plugin.param:{track}:{plugin}:{param}"),
         }
     }
 }
@@ -338,6 +362,16 @@ mod tests {
             Target::parse("transport.play").unwrap(),
             Target::Command("transport.play".into())
         );
+        let param = Target::Param {
+            track: "t3".into(),
+            plugin: "p2".into(),
+            param: "b1_gain".into(),
+        };
+        assert_eq!(Target::parse("plugin.param:t3:p2:b1_gain").unwrap(), param);
+        assert_eq!(Target::parse(&param.to_string()).unwrap(), param);
+        assert_eq!(param.track(), Some("t3"));
+        assert!(Target::parse("plugin.param:t3:p2").is_err());
+        assert!(Target::parse("plugin.param:t3::gain").is_err());
         assert!(Target::parse("track.volume:").is_err());
         assert!(Target::parse("send:1").is_err());
         assert!(Target::parse("").is_err());

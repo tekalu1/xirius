@@ -159,7 +159,8 @@ impl Screen {
             }
             return;
         }
-        if s.popup.is_none() && s.over_instrument(&g, x, y) {
+        if s.popup.is_none() && s.instrument_right(&g, x, y) {
+            cx.notify();
             return;
         }
         if s.cpu_context(&g, x, y)
@@ -307,6 +308,10 @@ impl Screen {
             return;
         }
         studio.input_map.browser_focus = studio.browser.open && g.panel.contains(x, y);
+        // A press anywhere else takes the keys from a device's control (UI-324).
+        if studio.popup.is_none() && !studio.over_instrument(&g, x, y) {
+            studio.device_blur();
+        }
         if studio.prepare_press(&g, x, y)
             || studio.recovery_press(&g, x, y)
             || studio.toast_press(&g, x, y)
@@ -369,7 +374,9 @@ impl Screen {
             self.files(cx);
             return;
         }
-        if studio.popup.is_none() && studio.instrument_down(&g, x, y) {
+        if studio.popup.is_none()
+            && studio.instrument_press(&g, x, y, ev.click_count as u32, mods(ev.modifiers))
+        {
             cx.notify();
             return;
         }

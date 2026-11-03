@@ -95,6 +95,12 @@ impl Studio {
         if self.home_shown() {
             return self.home_wheel(g, x, y, notch);
         }
+        // A device's window floats over the rest: its controls turn (UI-324).
+        if notch != 0.0
+            && self.device_wheel(g, x, y, f64::from(field_px / ZOOM_NOTCH_PX), mods.shift)
+        {
+            return true;
+        }
         if let Some(ctx) = self.roll_ctx(g)
             && ctx.body.contains(x, y)
         {

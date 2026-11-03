@@ -256,7 +256,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 ArgDef::text("message", "メッセージ（cc:21 のつまみ、note:41 のパッド）").req(),
                 ArgDef::text(
                     "target",
-                    "動かすもの（track.volume:<トラックの id>・track.pan:<トラックの id>・コマンド名）",
+                    "動かすもの（track.volume:<トラックの id>・track.pan:<トラックの id>・plugin.param:<トラックの id>:<プラグインの id>:<パラメーター>・コマンド名）",
                 )
                 .req(),
                 ArgDef::text("port", "MIDI の入力ポートの名前（省略時はどのポートでも）"),
@@ -272,7 +272,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 ArgDef::text("port", "MIDI の入力ポートの名前（省略時はどのポートでも）"),
                 ArgDef::text(
                     "target",
-                    "割り当て先（track.volume:<id>・track.pan:<id>・コマンド）で外す",
+                    "割り当て先（track.volume:<id>・track.pan:<id>・plugin.param:<トラック>:<プラグイン>:<パラメーター>・コマンド）で外す",
                 ),
             ],
             Risk::Write,

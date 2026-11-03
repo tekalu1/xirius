@@ -319,6 +319,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     out.extend(start_marks(s, g));
     out.extend(inspector_marks(s, g));
     out.extend(instrument_marks(s, g));
+    out.extend(device_marks(s, g));
     out.extend(audition_mark(s, g));
     out.extend(drawer_marks(s, g));
     out
@@ -687,6 +688,60 @@ fn instrument_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             })
         })
         .collect()
+}
+
+/// The controls of the open device windows (UI-324): a knob or a row of
+/// segments is a Slider named as the window names it, with the value it reads;
+/// an on and off button is a toggle Button.
+fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
+    use crate::device::control::{self, Look};
+    use crate::instrument::window::{live, slots, values};
+    let p = s.project();
+    let mut out = Vec::new();
+    for (i, w) in s.instruments.open.iter().enumerate() {
+        let Some((_, x, def)) = live(&p, w) else {
+            continue;
+        };
+        let now = values(x);
+        let r = s.instruments.rect(i, g.size);
+        for slot in slots(r, def) {
+            let spec = &def.params[slot.k];
+            let v = s
+                .instruments
+                .turning(w.plugin, slot.k)
+                .unwrap_or(now[slot.k]);
+            let mut node = match slot.look {
+                Look::Toggle => {
+                    let mut n = accesskit::Node::new(accesskit::Role::Button);
+                    n.set_toggled(if v >= 0.5 {
+                        accesskit::Toggled::True
+                    } else {
+                        accesskit::Toggled::False
+                    });
+                    n
+                }
+                Look::Knob | Look::Segments => {
+                    let mut n = accesskit::Node::new(accesskit::Role::Slider);
+                    n.set_min_numeric_value(0.0);
+                    n.set_max_numeric_value(100.0);
+                    n.set_numeric_value((v * 100.0).round());
+                    n
+                }
+            };
+            node.set_label(control::name(def, spec));
+            node.set_value(control::text(spec, v));
+            node.set_bounds(bounds(slot.hit(def)));
+            out.push(Mark {
+                key: format!("device-{}-{}", w.plugin, spec.id),
+                children: Vec::new(),
+                node,
+                fold: None,
+                pick: None,
+                press: None,
+            });
+        }
+    }
+    out
 }
 
 /// A screen reader's press on the icon-only row: the same press as the pointer's.

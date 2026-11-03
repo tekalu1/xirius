@@ -4,11 +4,12 @@
 //! in the mixer opens an instrument's or an effect's. A plug-in of its own
 //! (VST3) opens its own window instead.
 //!
-//! The knobs are the built-in's parameters as `xirius-params` lists them, in
-//! its order: a parameter added there gets its knob here. A knob turns while
-//! it is dragged and goes into the song when it is let go (`plugin.param.set`,
-//! 0..1, one step); a preset sets its knobs at once (`plugin.preset.load`,
-//! one step).
+//! The controls are the built-in's parameters as `xirius-params` lists them,
+//! where the device's layout puts them (`device::layout`): a parameter added
+//! there gets its control here. A knob turns while it is dragged and goes into
+//! the song when it is let go (`plugin.param.set`, 0..1, one step); the other
+//! ways a control moves are `device::input`'s (UI-324). A preset sets its
+//! knobs at once (`plugin.preset.load`, one step).
 
 use std::collections::HashMap;
 
@@ -16,24 +17,17 @@ use gpui::{Bounds, Corners, point, px, size};
 use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::{Plugin, PluginKind, Project, Track, TrackKind};
-use xirius_design::{FontSize, Radius, Weight};
-use xirius_params::{BuiltinDef, Curve, ParamSpec};
+use xirius_design::Radius;
+use xirius_params::{BuiltinDef, ParamSpec};
 
 use super::menu::Menu;
-use crate::draw::{Align, Pen};
+use crate::device::control::{self, KnobView, Look};
+use crate::device::layout::{self, Slot};
+use crate::draw::Pen;
 use crate::popup::PopupKind;
 use crate::studio::{Geometry, Rect, Studio};
 use crate::title_bar;
 
-const PAD: f32 = 12.0;
-/// A knob, its value and its name.
-const CELL_W: f32 = 92.0;
-const CELL_H: f32 = 60.0;
-const KNOB: f32 = 30.0;
-const COL_GAP: f32 = 8.0;
-const ROW_GAP: f32 = 12.0;
-/// How far the pointer goes for the whole of a knob's sweep.
-const KNOB_TRAVEL: f32 = 150.0;
 /// How much of a window stays on the screen when it is dragged off.
 const KEEP_W: f32 = 80.0;
 
@@ -42,31 +36,6 @@ pub const PRESETS: [&str; 4] = ["初期", "やさしく", "強め", "声を前�
 
 /// What the preset box says when the knobs match no preset.
 pub const CUSTOM: &str = "カスタム";
-
-/// Knobs in a row: three, four for a long list (the EQ's).
-fn columns(n: usize) -> usize {
-    if n > 12 { 4 } else { 3 }
-}
-
-/// A window's width for `n` knobs.
-pub fn width(n: usize) -> f32 {
-    let c = columns(n);
-    PAD * 2.0 + c as f32 * CELL_W + (c - 1) as f32 * COL_GAP
-}
-
-fn body_h(n: usize) -> f32 {
-    let rows = n.div_ceil(columns(n)).max(1) as f32;
-    PAD * 2.0 + rows * CELL_H + (rows - 1.0) * ROW_GAP
-}
-
-/// A value on a parameter's own steps (a choice, a whole number, on/off).
-fn snap(spec: &ParamSpec, norm: f64) -> f64 {
-    let n = norm.clamp(0.0, 1.0);
-    match spec.steps() {
-        Some(_) => spec.to_norm(spec.to_plain(n)),
-        None => (n * 10_000.0).round() / 10_000.0,
-    }
-}
 
 /// The knobs' values (0..1) of a preset: `初期` is the defaults, the rest are the
 /// factory presets `xirius-params` ships (PLG-063), which leave the knobs no preset
@@ -120,7 +89,7 @@ pub fn preset_of(plugin: &Plugin) -> &'static str {
 
 /// A knob's value as it reads (`-12.0 dB`, `1.20 kHz`, `付点`).
 pub fn text(spec: &ParamSpec, norm: f64) -> String {
-    spec.text(spec.to_plain(norm))
+    control::text(spec, norm)
 }
 
 /// Does this plugin open in the window here (a built-in instrument or effect)?
@@ -133,8 +102,10 @@ pub fn is_built_in(plugin: &Plugin) -> bool {
 pub struct Win {
     pub track: TrackId,
     pub plugin: PluginId,
-    /// How many knobs it has (its size follows).
+    /// How many controls it has.
     pub knobs: usize,
+    /// Its body's size, as the device's layout wants it.
+    pub body: (f32, f32),
     /// Where its corner is, once it was dragged; else it sits where new ones go.
     pub at: Option<(f32, f32)>,
     /// The pin is down. UI-323 decides what an unpinned window does; the seat
@@ -144,7 +115,7 @@ pub struct Win {
 
 /// What a press in a window took hold of.
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum Grab {
+pub(crate) enum Grab {
     /// The bar: the window moves with the pointer.
     Move {
         plugin: PluginId,
@@ -186,7 +157,14 @@ pub enum Part {
 #[derive(Debug, Default)]
 pub struct Windows {
     pub open: Vec<Win>,
-    grab: Option<Grab>,
+    pub(crate) grab: Option<Grab>,
+    /// The control the keys move (UI-324): its plug-in and its parameter.
+    pub focus: Option<(PluginId, usize)>,
+    /// The value being typed in a knob.
+    pub entry: Option<crate::device::input::Entry>,
+    /// A control the wheel or a controller's knob is turning (one step once
+    /// it is still).
+    pub(crate) sweep: Option<crate::device::input::Sweep>,
     /// Where the open instrument menu hangs, for the menu a row opens next.
     pub menu_at: Option<Rect>,
     /// The preset each plug-in was last set to: the tag keeps its name and
@@ -199,8 +177,8 @@ impl Windows {
         self.open.iter().any(|w| w.plugin == id)
     }
 
-    /// The value a knob shows while it is dragged.
-    fn turning(&self, id: PluginId, k: usize) -> Option<f64> {
+    /// The value a control shows while it is dragged or swept.
+    pub(crate) fn turning(&self, id: PluginId, k: usize) -> Option<f64> {
         match self.grab {
             Some(Grab::Knob {
                 plugin,
@@ -208,14 +186,18 @@ impl Windows {
                 value,
                 ..
             }) if plugin == id && at == k => Some(value),
-            _ => None,
+            _ => self
+                .sweep
+                .as_ref()
+                .filter(|s| s.plugin == id && s.k == k)
+                .map(|s| s.value),
         }
     }
 
     /// The `i`th window's frame on a screen of `size`.
     pub fn rect(&self, i: usize, size: (f32, f32)) -> Rect {
-        let n = self.open[i].knobs;
-        let (w, h) = (width(n), title_bar::BAR_H + body_h(n));
+        let (w, h) = self.open[i].body;
+        let h = title_bar::BAR_H + h;
         let (x, y) = self.open[i].at.unwrap_or((
             size.0 / 2.0 - w / 2.0 + i as f32 * 24.0,
             64.0 + i as f32 * 24.0,
@@ -256,16 +238,16 @@ impl Windows {
                 .map_or(Part::Head, |(_, part)| part);
                 return Some((i, part));
             }
-            let n = w.knobs;
-            let part = (0..n)
-                .find(|&k| part_rect(r, track, plugin, def, Part::Knob(k)).contains(x, y))
-                .map_or(Part::Body, Part::Knob);
+            let part = slots(r, def)
+                .into_iter()
+                .find(|s| s.hit(def).contains(x, y))
+                .map_or(Part::Body, |s| Part::Knob(s.k));
             Some((i, part))
         })
     }
 
     /// Brings the `i`th window to the top; returns its new index.
-    fn raise(&mut self, i: usize) -> usize {
+    pub(crate) fn raise(&mut self, i: usize) -> usize {
         let w = self.open.remove(i);
         self.open.push(w);
         self.open.len() - 1
@@ -285,6 +267,12 @@ impl Windows {
             && !self.is_open(plugin)
         {
             self.grab = None;
+        }
+        if self.focus.is_some_and(|(id, _)| !self.is_open(id)) {
+            self.focus = None;
+        }
+        if self.entry.as_ref().is_some_and(|e| !self.is_open(e.plugin)) {
+            self.entry = None;
         }
     }
 
@@ -337,25 +325,32 @@ pub fn part_rect(r: Rect, track: &Track, plugin: &Plugin, def: &BuiltinDef, part
         Part::Channel => b.channel.unwrap_or_default(),
         Part::Pin => b.pin,
         Part::Close => b.close,
-        Part::Knob(k) => {
-            let c = columns(def.params.len());
-            let (col, row) = ((k % c) as f32, (k / c) as f32);
-            Rect::new(
-                r.x + PAD + col * (CELL_W + COL_GAP),
-                r.y + title_bar::BAR_H + PAD + row * (CELL_H + ROW_GAP),
-                CELL_W,
-                CELL_H,
-            )
-        }
-        // The empty rest under the knobs' grid (a press in a gap is Body
-        // too; the strip is where a point of it always is).
-        Part::Body => Rect::new(r.x, r.bottom() - PAD, r.w, PAD),
+        Part::Knob(k) => slots(r, def)
+            .into_iter()
+            .find(|s| s.k == k)
+            .map(|s| s.hit(def))
+            .unwrap_or_default(),
+        // The empty rest under the controls (a press in a gap is Body too;
+        // the strip is where a point of it always is).
+        Part::Body => Rect::new(r.x, r.bottom() - layout::PAD, r.w, layout::PAD),
     }
+}
+
+/// The controls of the window whose frame is `r`, where they are on the screen.
+pub(crate) fn slots(r: Rect, def: &BuiltinDef) -> Vec<Slot> {
+    layout::body(def)
+        .slots
+        .into_iter()
+        .map(|s| s.at(r.x, r.y + title_bar::BAR_H))
+        .collect()
 }
 
 /// The track, the plugin and its parameters of a window, while it is still
 /// there.
-fn live<'a>(p: &'a Project, w: &Win) -> Option<(&'a Track, &'a Plugin, &'static BuiltinDef)> {
+pub(crate) fn live<'a>(
+    p: &'a Project,
+    w: &Win,
+) -> Option<(&'a Track, &'a Plugin, &'static BuiltinDef)> {
     let track = p.tracks.get(&w.track)?;
     let plugin = track.inserts.iter().find(|x| x.id == w.plugin)?;
     let def = plugin.builtin()?;
@@ -398,17 +393,18 @@ impl Studio {
             }
             None => {
                 let p = self.project();
-                let knobs = p
+                let def = p
                     .tracks
                     .get(&t)
                     .and_then(|x| x.inserts.iter().find(|x| x.id == id))
-                    .and_then(Plugin::builtin)
-                    .map(|d| d.params.len());
-                if let Some(knobs) = knobs {
+                    .and_then(Plugin::builtin);
+                if let Some(def) = def {
+                    let body = layout::body(def);
                     self.instruments.open.push(Win {
                         track: t,
                         plugin: id,
-                        knobs,
+                        knobs: def.params.len(),
+                        body: (body.w, body.h),
                         at: None,
                         pinned: false,
                     });
@@ -432,11 +428,28 @@ impl Studio {
 
     /// A press: true when it was on a window (nothing under it gets it).
     pub fn instrument_down(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
+        self.instrument_press(g, x, y, 1, crate::tools::Mods::NONE)
+    }
+
+    /// A press with its count of clicks and its keys held (UI-324): a
+    /// double click types a knob's value, Alt puts it back to its default.
+    pub fn instrument_press(
+        &mut self,
+        g: &Geometry,
+        x: f32,
+        y: f32,
+        clicks: u32,
+        mods: crate::tools::Mods,
+    ) -> bool {
         self.instruments.prune(&self.project());
         let p = self.project();
         let Some((i, part)) = self.instruments.at(&p, g.size, x, y) else {
+            self.device_blur();
             return false;
         };
+        if !matches!(part, Part::Knob(_)) {
+            self.device_blur();
+        }
         self.error = None;
         let i = self.instruments.raise(i);
         let w = self.instruments.open[i];
@@ -483,20 +496,11 @@ impl Studio {
                 self.instruments.open[i].pinned = !w.pinned;
             }
             Part::Knob(k) => {
-                let held = live(&p, &w)
-                    .and_then(|(_, _, d)| d.params.get(k))
-                    .is_some_and(|spec| self.param_locked(w.track, w.plugin, spec.id));
-                if held {
-                    return true;
-                }
-                if let Some(value) = live(&p, &w).and_then(|(_, x, _)| values(x).get(k).copied()) {
-                    self.instruments.grab = Some(Grab::Knob {
-                        plugin: w.plugin,
-                        k,
-                        start: value,
-                        y,
-                        value,
-                    });
+                let slot = live(&p, &w).and_then(|(_, _, d)| {
+                    slots(r, d).into_iter().find(|s| s.k == k).map(|s| (s, d))
+                });
+                if let Some((slot, def)) = slot {
+                    self.device_press(w, def, slot, x, y, clicks, mods);
                 }
             }
             Part::Body | Part::Sidechain | Part::Channel => {}
@@ -558,27 +562,35 @@ impl Studio {
                 ..
             }) => {
                 let p = self.project();
-                let w = self.instruments.open.iter().find(|w| w.plugin == plugin);
-                let Some(spec) = w
-                    .and_then(|w| live(&p, w))
-                    .and_then(|(_, _, d)| d.params.get(k))
+                let Some(w) = self
+                    .instruments
+                    .open
+                    .iter()
+                    .find(|w| w.plugin == plugin)
+                    .copied()
                 else {
                     return false;
                 };
-                let scale = if fine { 0.25 } else { 1.0 };
-                let t = start - f64::from((y - y0) / KNOB_TRAVEL * scale);
-                let next = snap(spec, t);
+                let Some(spec) = live(&p, &w).and_then(|(_, _, d)| d.params.get(k)) else {
+                    return false;
+                };
+                let next = control::dragged(spec, start, y - y0, fine);
                 if let Some(Grab::Knob { value, .. }) = &mut self.instruments.grab {
+                    if *value == next {
+                        return true;
+                    }
                     *value = next;
                 }
+                // Only the sound and the screen follow the drag; the song takes
+                // the value once it is let go.
+                self.device_hear(w.track, plugin, spec.id, next);
                 true
             }
             None => false,
         }
     }
 
-    /// Lets go: a turned knob goes into the song as one step. A click on an
-    /// on/off knob that did not turn it flips it.
+    /// Lets go: a turned knob goes into the song as one step.
     pub fn instrument_up(&mut self) -> bool {
         let Some(grab) = self.instruments.grab.take() else {
             return false;
@@ -593,11 +605,6 @@ impl Studio {
                 return true;
             };
             let (spec, before) = (&def.params[k], values(x)[k]);
-            let value = if (before - value).abs() < 1e-9 && matches!(spec.curve, Curve::Toggle) {
-                1.0 - before.round()
-            } else {
-                value
-            };
             if (before - value).abs() > 1e-9 {
                 // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command(
@@ -707,45 +714,46 @@ fn paint_window(
             },
         );
 
-        // The knobs: the knob, its value, its name. A knob of a range across
-        // zero (a gain, a tune) lights from its middle.
+        // The controls, where the device's layout puts them.
         let now = values(plugin);
-        for (k, spec) in def.params.iter().enumerate() {
-            let cell = part_rect(r, track, plugin, def, Part::Knob(k));
-            let v = studio.instruments.turning(plugin.id, k).unwrap_or(now[k]);
-            let from = if spec.min < 0.0 && spec.max > 0.0 {
-                spec.to_norm(0.0) as f32
-            } else {
-                0.0
+        let ins = &studio.instruments;
+        let entry = ins.entry.as_ref().filter(|e| e.plugin == plugin.id);
+        for slot in slots(r, def) {
+            let k = slot.k;
+            let spec = &def.params[k];
+            let v = ins.turning(plugin.id, k).unwrap_or(now[k]);
+            let focused = ins.focus == Some((plugin.id, k));
+            let name = control::name(def, spec);
+            let hit = slot.hit(def);
+            match slot.look {
+                Look::Knob => control::paint_knob(
+                    pen,
+                    slot.cell,
+                    &KnobView {
+                        spec,
+                        name,
+                        value: v,
+                        dial: slot.dial,
+                        entry: entry.filter(|e| e.k == k).map(|e| &e.field),
+                        focused,
+                    },
+                ),
+                Look::Segments => {
+                    control::paint_segments(pen, hit, spec, v, focused);
+                    control::paint_name(pen, slot.cell, slot.dial, name);
+                }
+                Look::Toggle => control::paint_toggle(pen, hit, name, v >= 0.5, focused),
+            }
+            let mark = match slot.look {
+                Look::Knob => control::dial_rect(slot.cell, slot.dial),
+                _ => hit,
             };
-            let knob = Rect::new(cell.x + (cell.w - KNOB) / 2.0, cell.y, KNOB, KNOB);
-            crate::mixer::paint::knob(pen, knob, v as f32, from, 3.0, true);
             crate::auto_mark::paint(
                 pen,
                 track,
                 xirius_core::auto::AutoTarget::Param(plugin.id, spec.id.to_string()),
-                knob,
+                mark,
             );
-            let value = Rect::new(cell.x, knob.bottom() + 2.0, cell.w, 14.0);
-            pen.text(
-                &text(spec, v),
-                FontSize::Micro,
-                Weight::Regular,
-                c.ink_strong,
-                value,
-                Align::Center,
-            );
-            let name = Rect::new(cell.x, value.bottom(), cell.w, 14.0);
-            pen.mask(name, |pen| {
-                pen.text(
-                    spec.label,
-                    FontSize::Micro,
-                    Weight::Regular,
-                    c.ink,
-                    name,
-                    Align::Center,
-                );
-            });
         }
     });
 }

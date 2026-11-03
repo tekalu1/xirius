@@ -9,6 +9,8 @@ pub(crate) enum ImeTarget {
     Name,
     Pick,
     Settings,
+    /// A value typed in a device's knob (UI-324).
+    Device,
     Palette,
 }
 
@@ -24,6 +26,8 @@ impl Studio {
             Some(ImeTarget::Pick)
         } else if self.settings.as_ref().is_some_and(|s| s.field.is_some()) {
             Some(ImeTarget::Settings)
+        } else if self.instruments.entry.is_some() {
+            Some(ImeTarget::Device)
         } else if self.palette.is_some() {
             Some(ImeTarget::Palette)
         } else {
@@ -95,6 +99,7 @@ impl Studio {
             ImeTarget::Ask => self.ask_field(),
             ImeTarget::Name => self.input_map.name.as_ref().map(|n| &n.field),
             ImeTarget::Settings => self.settings.as_ref()?.field.as_ref(),
+            ImeTarget::Device => self.instruments.entry.as_ref().map(|e| &e.field),
             ImeTarget::Pick | ImeTarget::Palette => None,
         }
     }
@@ -120,6 +125,10 @@ impl Studio {
                 }
             }
             Some(ImeTarget::Settings) => self.settings_text(range, text, marked),
+            Some(ImeTarget::Device) => {
+                let entry = self.instruments.entry.as_mut().unwrap();
+                entry.type_text(range, text, marked);
+            }
             Some(ImeTarget::Palette) => {
                 let palette = self.palette.as_mut().unwrap();
                 if marked {
@@ -140,6 +149,7 @@ impl Studio {
             }
             Some(ImeTarget::Name) => self.input_map.name.as_mut().unwrap().field.unmark(),
             Some(ImeTarget::Settings) => self.settings_unmark(),
+            Some(ImeTarget::Device) => self.instruments.entry.as_mut().unwrap().field.unmark(),
             Some(ImeTarget::Palette) => self.palette.as_mut().unwrap().unmark(),
             None => {}
         }

@@ -234,7 +234,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
             vec![
                 ArgDef::text(
                     "target",
-                    "割り当てるもの（track.volume:<id>・track.pan:<id>）",
+                    "割り当てるもの（track.volume:<id>・track.pan:<id>・plugin.param:<トラック>:<プラグイン>:<パラメーター>）",
                 ),
                 ArgDef::flag("cancel", "待つのをやめる"),
                 ArgDef::flag("confirm", "つまみを持っていたパートから譲り受ける"),

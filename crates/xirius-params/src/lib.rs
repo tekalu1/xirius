@@ -242,6 +242,80 @@ impl ParamSpec {
     }
 }
 
+impl ParamSpec {
+    /// Reads what is typed into a device window's value (UI-324): a number with or without its
+    /// unit ("2k", "2.5 kHz", "-3", "-3 dB", "120ms", "0.5 s"), a share of the sweep ("50%" on
+    /// a knob that is not in percent), a fraction ("1/8"), a choice's label, on/off or "off"
+    /// for a cut. The value is taken to the nearest end of the range. `None` when the text is
+    /// none of these or its unit is not the parameter's.
+    pub fn typed(&self, text: &str) -> Option<f64> {
+        let t: String = text.trim().chars().map(halfwidth).collect();
+        let (lo, hi) = self.range();
+        let clamp = |v: f64| v.is_finite().then(|| v.clamp(lo, hi));
+        match self.curve {
+            Curve::Choice(labels) => {
+                if let Some(i) = labels.iter().position(|l| l.eq_ignore_ascii_case(&t)) {
+                    return Some(i as f64);
+                }
+                return t.parse::<f64>().ok().and_then(|v| clamp(v.round()));
+            }
+            Curve::Toggle => {
+                return match t.to_lowercase().as_str() {
+                    "on" | "true" | "1" | "オン" => Some(1.0),
+                    "off" | "false" | "0" | "オフ" => Some(0.0),
+                    _ => None,
+                };
+            }
+            _ => {}
+        }
+        let lower = t.to_lowercase();
+        if matches!(lower.as_str(), "off" | "オフ") {
+            return match self.off {
+                Off::AtOrBelow(_) => Some(lo),
+                Off::AtOrAbove(_) => Some(hi),
+                Off::Never => None,
+            };
+        }
+        if let Some((a, b)) = lower.split_once('/') {
+            let (a, b) = (a.trim().parse::<f64>().ok()?, b.trim().parse::<f64>().ok()?);
+            return (b != 0.0).then(|| a / b).and_then(clamp);
+        }
+        let split = lower
+            .find(|c: char| !(c.is_ascii_digit() || matches!(c, '.' | '-' | '+')))
+            .unwrap_or(lower.len());
+        let (number, unit) = lower.split_at(split);
+        let v: f64 = number.trim().parse().ok()?;
+        let plain = match (unit.trim(), self.unit) {
+            ("", _) => v,
+            ("k" | "khz", Unit::Hz) => v * 1000.0,
+            ("hz", Unit::Hz)
+            | ("db", Unit::Db)
+            | ("ms", Unit::Ms)
+            | ("s", Unit::Seconds)
+            | ("%", Unit::Percent)
+            | (":1", Unit::Ratio)
+            | ("st", Unit::Semitones)
+            | ("cent", Unit::Cents) => v,
+            ("s", Unit::Ms) => v * 1000.0,
+            ("ms", Unit::Seconds) => v / 1000.0,
+            // A share of the sweep on a knob of another unit.
+            ("%", _) => self.to_plain(v / 100.0),
+            _ => return None,
+        };
+        clamp(plain)
+    }
+}
+
+/// A full-width digit, sign or mark as the half-width one (what an IME types).
+fn halfwidth(c: char) -> char {
+    match c {
+        '\u{2212}' | '\u{FF0D}' => '-',
+        '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
+        '\u{3000}' => ' ',
+        c => c,
+    }
+}
+
 /// Whether a built-in makes sound from notes or changes the sound it is given.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -491,5 +565,48 @@ mod tests {
             assert_eq!(div.to_plain((norm + 0.01).min(1.0)), i as f64);
         }
         assert_eq!(div.steps(), Some(n as u32));
+    }
+
+    #[test]
+    fn ui_324_typed_values_read_units_shares_fractions_and_labels() {
+        let freq = EQ.param("mid1_freq").unwrap().1;
+        assert_eq!(freq.typed("2k"), Some(2000.0));
+        assert_eq!(freq.typed("2.5 kHz"), Some(2500.0));
+        assert_eq!(freq.typed("440hz"), Some(440.0));
+        assert_eq!(
+            freq.typed("３００"),
+            Some(300.0),
+            "full-width digits from an IME"
+        );
+        assert_eq!(
+            freq.typed("99k"),
+            Some(20_000.0),
+            "past the end goes to the end"
+        );
+        assert_eq!(freq.typed("3 dB"), None, "another unit");
+        let gain = EQ.param("mid1_gain").unwrap().1;
+        assert_eq!(gain.typed("-3"), Some(-3.0));
+        assert_eq!(gain.typed("\u{2212}3 dB"), Some(-3.0));
+        assert_eq!(gain.typed("+4.5db"), Some(4.5));
+        assert_eq!(gain.typed("50%"), Some(0.0), "half the sweep of -18..18");
+        let mix = DELAY.param("mix").unwrap().1;
+        assert_eq!(mix.typed("50%"), Some(50.0));
+        assert_eq!(mix.typed("50"), Some(50.0));
+        let time = DELAY.param("time").unwrap().1;
+        assert_eq!(time.typed("0.5 s"), Some(500.0));
+        assert_eq!(time.typed("120ms"), Some(120.0));
+        let division = DELAY.param("division").unwrap().1;
+        assert_eq!(division.typed("1/8"), Some(2.0), "a label");
+        assert_eq!(division.typed("1/2"), Some(4.0));
+        let ratio = COMPRESSOR.param("ratio").unwrap().1;
+        assert_eq!(ratio.typed("4:1"), Some(4.0));
+        assert_eq!(ratio.typed("1/2"), Some(1.0), "a fraction, to the range");
+        let low_cut = COMPRESSOR.param("low_cut").unwrap().1;
+        assert_eq!(low_cut.typed("off"), Some(20.0));
+        let on = EQ.param("low_cut_on").unwrap().1;
+        assert_eq!(on.typed("On"), Some(1.0));
+        assert_eq!(on.typed("オフ"), Some(0.0));
+        assert_eq!(gain.typed("loud"), None);
+        assert_eq!(gain.typed(""), None);
     }
 }

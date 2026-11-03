@@ -1864,7 +1864,8 @@ impl Studio {
         mods: Mods,
     ) -> bool {
         self.inspector_follow(g);
-        self.name_key(key, mods)
+        self.device_key(key, mods)
+            || self.name_key(key, mods)
             || self.bar_key(key, ch, mods)
             || self.inspector_key(g, key, ch, mods)
             || self.field_key(g, key, ch, mods.shift).is_some()

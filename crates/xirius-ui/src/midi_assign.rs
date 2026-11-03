@@ -64,6 +64,29 @@ impl Studio {
             Target::Volume(id) => format!("{} · ボリューム", name(id)),
             Target::Pan(id) => format!("{} · パン", name(id)),
             Target::Command(c) => c.clone(),
+            Target::Param {
+                track,
+                plugin,
+                param,
+            } => {
+                let p = self.project();
+                let found = track
+                    .parse::<TrackId>()
+                    .ok()
+                    .and_then(|t| p.tracks.get(&t))
+                    .and_then(|t| t.inserts.iter().find(|x| x.id.to_string() == *plugin))
+                    .and_then(|x| Some((x, x.builtin()?)))
+                    .and_then(|(x, d)| Some((x, d, d.param(param)?.1)));
+                match found {
+                    Some((x, d, spec)) => format!(
+                        "{} · {} · {}",
+                        name(track),
+                        x.name,
+                        crate::device::control::name(d, spec)
+                    ),
+                    None => format!("{} · {param}", name(track)),
+                }
+            }
         }
     }
 
@@ -83,7 +106,7 @@ impl Studio {
         match self.live_midi.assign.learning.as_ref()? {
             Target::Volume(id) => id.parse().ok().map(MixerHit::Fader),
             Target::Pan(id) => id.parse().ok().map(MixerHit::Pan),
-            Target::Command(_) => None,
+            Target::Command(_) | Target::Param { .. } => None,
         }
     }
 
@@ -235,6 +258,15 @@ impl Studio {
                     self.knob_move(MixerHit::Pan(t), msg[2]);
                 }
             }
+            Target::Param {
+                track,
+                plugin,
+                param,
+            } => {
+                if let (Ok(t), Ok(p)) = (track.parse(), plugin.parse()) {
+                    self.device_midi(t, p, param, msg[2]);
+                }
+            }
             Target::Command(c) => {
                 let pressed = match msg[0] & 0xf0 {
                     0x90 => msg[2] > 0,
@@ -270,7 +302,7 @@ impl Studio {
         let hit = match &c.target {
             Target::Volume(id) => id.parse().ok().map(MixerHit::Fader),
             Target::Pan(id) => id.parse().ok().map(MixerHit::Pan),
-            Target::Command(_) => None,
+            Target::Command(_) | Target::Param { .. } => None,
         };
         let (x, y) = hit
             .and_then(|h| self.mixer_rect(g, h))

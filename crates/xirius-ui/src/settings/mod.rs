@@ -101,6 +101,8 @@ pub enum FieldId {
     MacroName,
     /// The search over the commands a macro can take.
     MacroPick,
+    /// A value typed in a device's knob (UI-324).
+    Value,
 }
 
 /// What a press on a part of the screen does.
@@ -1065,7 +1067,7 @@ impl Studio {
                     }),
                     FieldId::Search => ui.query.clone(),
                     FieldId::MacroName => ui.macro_open.clone().unwrap_or_default(),
-                    FieldId::MacroPick => String::new(),
+                    FieldId::MacroPick | FieldId::Value => String::new(),
                 };
                 if let Some(ui) = &mut self.settings {
                     if id == FieldId::Search {

@@ -125,7 +125,7 @@ impl Studio {
     // ------------------------------------------------------------ the rows' parts
 
     /// Row "オートメーションを表示" for one lane; on while the lane shows.
-    fn lane_item(&self, t: TrackId, target: AutoTarget) -> Item {
+    pub(crate) fn lane_item(&self, t: TrackId, target: AutoTarget) -> Item {
         let p = self.project();
         let shown = p.tracks.get(&t).is_some_and(|track| {
             self.arrange.open.contains(&t)
@@ -333,6 +333,11 @@ impl Studio {
         } else {
             Target::Volume(t.to_string())
         };
+        self.midi_rows(target)
+    }
+
+    /// The rows of any target's controller: wait for a knob, let it go.
+    pub(crate) fn midi_rows(&mut self, target: Target) -> Vec<Item> {
         let learning = self.live_midi.assign.learning.as_ref() == Some(&target);
         let learn = if learning {
             Item::act("MIDI 学習", "", Act::MidiLearnCancel).on(true)

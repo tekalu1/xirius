@@ -574,6 +574,7 @@ fn assignments(b: &mut B, ui: &SettingsUi, s: &Settings, x: f32, top: f32, w: f3
             Target::Volume(id) => format!("{} · ボリューム", name(id)),
             Target::Pan(id) => format!("{} · パン", name(id)),
             Target::Command(cmd) => cmd.clone(),
+            Target::Param { track, param, .. } => format!("{} · {param}", name(track)),
         };
         b.text(
             &a.message.label(),

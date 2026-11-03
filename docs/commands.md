@@ -3455,7 +3455,7 @@ MIDI 学習
 |---|---|---|---|
 | `cancel` | — | `{"type":"boolean"}` | 待つのをやめる |
 | `confirm` | — | `{"type":"boolean"}` | つまみを持っていたパートから譲り受ける |
-| `target` | — | `{"type":"string"}` | 割り当てるもの（track.volume:<id>・track.pan:<id>） |
+| `target` | — | `{"type":"string"}` | 割り当てるもの（track.volume:<id>・track.pan:<id>・plugin.param:<トラック>:<プラグイン>:<パラメーター>） |
 
 ## `midimap.list`
 
@@ -3486,7 +3486,7 @@ MIDI 学習
 | `message` | 必須 | `{"type":"string"}` | メッセージ（cc:21 のつまみ、note:41 のパッド） |
 | `port` | — | `{"type":"string"}` | MIDI の入力ポートの名前（省略時はどのポートでも） |
 | `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
-| `target` | 必須 | `{"type":"string"}` | 動かすもの（track.volume:<トラックの id>・track.pan:<トラックの id>・コマンド名） |
+| `target` | 必須 | `{"type":"string"}` | 動かすもの（track.volume:<トラックの id>・track.pan:<トラックの id>・plugin.param:<トラックの id>:<プラグインの id>:<パラメーター>・コマンド名） |
 | `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
 
 ## `midimap.unset`
@@ -3505,7 +3505,7 @@ MIDI 学習
 | `message` | — | `{"type":"string"}` | メッセージ（cc:21 のつまみ、note:41 のパッド） |
 | `port` | — | `{"type":"string"}` | MIDI の入力ポートの名前（省略時はどのポートでも） |
 | `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
-| `target` | — | `{"type":"string"}` | 割り当て先（track.volume:<id>・track.pan:<id>・コマンド）で外す |
+| `target` | — | `{"type":"string"}` | 割り当て先（track.volume:<id>・track.pan:<id>・plugin.param:<トラック>:<プラグイン>:<パラメーター>・コマンド）で外す |
 | `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
 
 ## `mix.listen`

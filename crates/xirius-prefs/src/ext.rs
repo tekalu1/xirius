@@ -212,7 +212,33 @@ fn checked_target(text: &str, cx: &ExtContext<'_>) -> CmdResult<Target> {
         Target::Command(c) => check_binding(c, cx.registry)
             .map(Target::Command)
             .map_err(invalid),
+        Target::Param {
+            track,
+            plugin,
+            param,
+        } => {
+            let found = param_of(cx, track, plugin, param).is_some();
+            if !found {
+                return Err(CmdError::not_found(format!(
+                    "「{track}」の「{plugin}」に「{param}」という値はありません"
+                )));
+            }
+            Ok(target)
+        }
     }
+}
+
+/// The track, the plug-in and the parameter's label a `plugin.param:` target names.
+fn param_of<'a>(
+    cx: &'a ExtContext<'_>,
+    track: &str,
+    plugin: &str,
+    param: &str,
+) -> Option<(&'a str, &'a str, &'static str)> {
+    let t = cx.project.tracks.get(&track.parse::<TrackId>().ok()?)?;
+    let p = t.inserts.iter().find(|p| p.id.to_string() == plugin)?;
+    let (_, spec) = p.builtin()?.param(param)?;
+    Some((&t.name, &p.name, spec.label))
 }
 
 /// The name the screen shows for a target: the part's name and the value, or the command's.
@@ -227,6 +253,14 @@ pub fn target_label(target: &Target, cx: &ExtContext<'_>) -> String {
         Target::Volume(id) => format!("{} · ボリューム", part(id).unwrap_or_else(|| id.clone())),
         Target::Pan(id) => format!("{} · パン", part(id).unwrap_or_else(|| id.clone())),
         Target::Command(c) => command_label(c, cx.registry),
+        Target::Param {
+            track,
+            plugin,
+            param,
+        } => match param_of(cx, track, plugin, param) {
+            Some((t, p, label)) => format!("{t} · {p} · {label}"),
+            None => format!("{} · {param}", part(track).unwrap_or_else(|| track.clone())),
+        },
     }
 }
 

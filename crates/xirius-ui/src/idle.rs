@@ -66,6 +66,7 @@ impl Studio {
             | self.poll_input_channels()
             | self.poll_midi_ports()
             | self.poll_live_midi()
+            | self.device_quiet()
             | crate::wave::poll()
             | {
                 let listed = crate::browser_files::poll();

@@ -81,6 +81,7 @@ pub mod dawproject_reference_shots;
 pub mod dawproject_shots;
 pub mod dawproject_ui;
 pub mod dblclick_shots;
+pub mod device;
 pub mod disabled_reason;
 pub mod drag_scroll;
 pub mod draw;
