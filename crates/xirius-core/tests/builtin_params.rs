@@ -222,3 +222,41 @@ fn a_fraction_given_as_plain_to_a_percent_parameter_says_which_flag_is_the_fract
         "{mix}"
     );
 }
+
+#[test]
+fn ui_325_a_point_sets_two_parameters_in_one_step() {
+    let mut s = Session::new("also");
+    let t = id_of(&run(&mut s, "track.add.audio", json!({})));
+    let comp = id_of(&run(
+        &mut s,
+        "plugin.add",
+        json!({"track": t, "name": "Compressor"}),
+    ));
+    run(
+        &mut s,
+        "plugin.param.set",
+        json!({"id": comp, "param": "threshold", "value": 0.25,
+               "also": [{"param": "knee", "value": 1.0}]}),
+    );
+    let list = run(&mut s, "plugin.param.list", json!({"id": comp}));
+    assert!((row(&list.data, "threshold")["value"].as_f64().unwrap() - 0.25).abs() < 1e-9);
+    assert!((row(&list.data, "knee")["value"].as_f64().unwrap() - 1.0).abs() < 1e-9);
+    run(&mut s, "history.undo", json!({}));
+    let list = run(&mut s, "plugin.param.list", json!({"id": comp}));
+    assert!((row(&list.data, "knee")["value"].as_f64().unwrap() - 1.0).abs() > 1e-6);
+    assert!((row(&list.data, "threshold")["value"].as_f64().unwrap() - 0.25).abs() > 1e-6);
+    // A name the built-in lacks, or a value outside 0..1, sets nothing.
+    for also in [
+        json!([{"param": "nope", "value": 0.5}]),
+        json!([{"param": "knee", "value": 2}]),
+    ] {
+        assert!(
+            try_run(
+                &mut s,
+                "plugin.param.set",
+                json!({"id": comp, "param": "ratio", "value": 1.0, "also": also}),
+            )
+            .is_err()
+        );
+    }
+}

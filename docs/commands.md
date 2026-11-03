@@ -4403,6 +4403,7 @@ MIDI 学習
 
 | 引数 | 必須 | 型・範囲・既定値 | 内容 |
 |---|---|---|---|
+| `also` | — | `{"items":{"type":"object"},"type":"array"}` | 同じ 1 手で設定するほかのパラメーター [{param, value}]（内蔵プラグインだけ、値は 0〜1） |
 | `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
 | `id` | 必須 | `{"type":"string"}` | プラグイン（plugin の ID） |
 | `param` | 必須 | `{"type":"string"}` | パラメーターの名前 |

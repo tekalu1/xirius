@@ -515,6 +515,10 @@ pub(super) fn defs() -> Vec<CommandDef> {
                     "plain",
                     "内蔵プラグインの値を単位で指定します（-6 dB なら -6。0〜1 の割合は --value を使います。選択肢は名前、オン/オフは on/off でも可）",
                 ),
+                ArgDef::objects(
+                    "also",
+                    "同じ 1 手で設定するほかのパラメーター [{param, value}]（内蔵プラグインだけ、値は 0〜1）",
+                ),
             ],
             set_param,
         ),
@@ -1401,6 +1405,7 @@ fn set_param(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
         .find(|x| x.id == id)
         .expect("found");
     let spec = x.builtin().and_then(|d| d.param(&name)).map(|(_, s)| s);
+    let also = also_params(x, a)?;
     let mut plain_value: Option<f64> = None;
     let value = match (a.opt_f64("value"), a.opt_str("plain")) {
         (Some(v), None) => v,
@@ -1441,6 +1446,9 @@ fn set_param(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
     match spec {
         Some(s) => {
             x.params.insert(s.id.to_string(), value);
+            for (id, v) in &also {
+                x.params.insert(id.to_string(), *v);
+            }
             // `--plain 0.25` on a 0〜100 % parameter is the value in the unit (0.25 %) and
             // stays so, but a person who meant the 0〜1 fraction needs to hear which flag
             // says that.
@@ -1463,6 +1471,9 @@ fn set_param(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
                 None => Output::msg(message),
             })
         }
+        None if !also.is_empty() => Err(CmdError::invalid(
+            "--also は内蔵プラグインのパラメーターにだけ使えます",
+        )),
         None => {
             x.params.insert(name.clone(), value);
             Ok(Output::msg(format!(
@@ -1470,6 +1481,39 @@ fn set_param(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
             )))
         }
     }
+}
+
+/// The other parameters `plugin.param.set` sets in the same step (`--also`), as the
+/// built-in's ids and 0..1 values: a point dragged on a device's graph moves two (UI-325).
+fn also_params(x: &Plugin, a: &Args) -> CmdResult<Vec<(&'static str, f64)>> {
+    let list = match a.0.get("also") {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(Value::Array(list)) => list,
+        Some(_) => {
+            return Err(CmdError::invalid(
+                "also には [{param, value}] の配列を指定してください",
+            ));
+        }
+    };
+    let def = x.builtin();
+    list.iter()
+        .map(|o| {
+            let name = o.get("param").and_then(Value::as_str).unwrap_or_default();
+            let Some((_, s)) = def.and_then(|d| d.param(name)) else {
+                return Err(CmdError::invalid(format!(
+                    "also の {name} は {} のパラメーターではありません",
+                    x.name
+                )));
+            };
+            match o.get("value").and_then(Value::as_f64) {
+                Some(v) if (0.0..=1.0).contains(&v) => Ok((s.id, v)),
+                _ => Err(CmdError::range(format!(
+                    "also の {} の value は 0〜1 で指定してください",
+                    s.id
+                ))),
+            }
+        })
+        .collect()
 }
 
 fn add_plugin(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
