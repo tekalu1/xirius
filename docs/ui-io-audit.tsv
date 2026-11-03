@@ -77,6 +77,7 @@ crates/xirius-ui/src/console.rs	std :: fs :: OpenOptions :: new	1
 crates/xirius-ui/src/console.rs	write	1
 crates/xirius-ui/src/context/ask.rs	arrange_run	1
 crates/xirius-ui/src/context/browser.rs	arrange_run	2
+crates/xirius-ui/src/context/browser.rs	run_command	1
 crates/xirius-ui/src/context/export.rs	run_command	1
 crates/xirius-ui/src/context/fields.rs	arrange_run	1
 crates/xirius-ui/src/context/key_more.rs	arrange_run	5
@@ -92,6 +93,7 @@ crates/xirius-ui/src/context/screen_cmd_rows.rs	arrange_run	2
 crates/xirius-ui/src/context/track.rs	arrange_run	1
 crates/xirius-ui/src/cpu_list.rs	arrange_run	1
 crates/xirius-ui/src/dawproject_ui.rs	std :: thread :: sleep	1
+crates/xirius-ui/src/device/input.rs	run_command	2
 crates/xirius-ui/src/drawer_edge.rs	std :: fs :: create_dir_all	1
 crates/xirius-ui/src/drawer_edge.rs	std :: fs :: read_to_string	1
 crates/xirius-ui/src/drawer_edge.rs	std :: fs :: rename	1
@@ -119,6 +121,8 @@ crates/xirius-ui/src/instrument/keys.rs	lock	2
 crates/xirius-ui/src/instrument/keys.rs	seek	1
 crates/xirius-ui/src/instrument/menu.rs	arrange_run	1
 crates/xirius-ui/src/instrument/mod.rs	run_command	2
+crates/xirius-ui/src/instrument/presets.rs	run	1
+crates/xirius-ui/src/instrument/presets.rs	run_command	1
 crates/xirius-ui/src/instrument/window.rs	run_command	3
 crates/xirius-ui/src/keep.rs	std :: fs :: remove_dir_all	1
 crates/xirius-ui/src/key_rows.rs	arrange_run	1

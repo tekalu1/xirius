@@ -28,6 +28,8 @@ bootstrap だけに限る。窓を作った後は完了を poll する。
 | MCP の起動 | `start_window` の所有者 worker | readiness の完了だけ受け取り、サーバーを Screen に保持する |
 | OS の motion 設定の再取得 | `MotionWatch` の worker | 前回の値と完了 |
 | 外部変更の監視 | `other_change::window` の専用 worker | 監視登録・metadata・project の read・watcher の破棄を UI に戻さない |
+| 内蔵の機器の窓のつまみ・プリセットの保存・工場出荷の復元 | `run_command` の守られた UI dispatcher。Session の I/O は worker へ回す | 1 手の受付と完了。値の入力中（`instruments.entry`）と機器の窓が開いている間は MCP の受付を待たせる |
+| プリセットの一覧（`preset.list`） | 窓のスレッドでは Session のキャッシュが答え、ファイルは裏のジョブが読む | キャッシュの一覧と値 |
 
 recent.json、設定・プラグイン一覧・preset・ブラウザー・波形・素材・書き出し・装置・MIDI・
 SDK の所有者は PRJ-029/030 と BRW-019 の worker を引き続き使う。共有 mutex の中は
