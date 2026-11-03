@@ -1818,8 +1818,16 @@ impl Studio {
         let raw = self.project();
         if !self.instruments.open.is_empty() {
             self.refresh_presets();
-            // A Sampler's or a Drum Kit's window follows its files (UI-333, UI-334).
-            self.instruments.refit(&raw);
+            // A Sampler's or a Drum Kit's window follows its files (UI-333, UI-334); the
+            // window of a device deleted goes, and a key or pad it held ends (L-ui-11).
+            self.instruments.prune(&raw);
+            if self
+                .instruments
+                .note
+                .is_some_and(|n| !self.instruments.is_open(n.plugin))
+            {
+                self.window_note_off();
+            }
         }
         let project = self.auto_heard(&raw);
         self.transport.sync(&project, self.song.dir());

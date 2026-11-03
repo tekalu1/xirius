@@ -412,6 +412,14 @@ impl Studio {
         true
     }
 
+    /// The window lost the keyboard (M-ui-3): the button will be let go elsewhere, so it is
+    /// let go here. A held key or pad ends its note, a knob or a point goes in as one step.
+    /// True when something was held.
+    pub(crate) fn device_focus_lost(&mut self) -> bool {
+        let held = self.instrument_up();
+        self.window_note_off() || held
+    }
+
     /// A sweep goes into the song (one step). Also before anything that reads or moves the
     /// song's history or file: undo, redo, save, another song (M-par-1), so the turn is its
     /// own step there and not lost or put after them.

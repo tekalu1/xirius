@@ -2376,9 +2376,13 @@ pub fn run(opts: Options) {
                         let _ai_server = None;
                         watch(window, cx, !scripted);
                         let _activation =
-                            Some(cx.observe_window_activation(window, |this, window, _| {
+                            Some(cx.observe_window_activation(window, |this, window, cx| {
                                 if !window.is_window_active() {
                                     this.last_caps = None;
+                                    // The release will not come here (M-ui-3).
+                                    if this.studio.borrow_mut().device_focus_lost() {
+                                        cx.notify();
+                                    }
                                 }
                             }));
                         Screen {

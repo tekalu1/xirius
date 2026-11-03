@@ -189,6 +189,55 @@ fn plg_066_a_drum_kit_pad_plays_its_note() {
     assert!(a5.1 < a1.1);
 }
 
+/// M-ui-3: the window losing the keyboard with a pad held (Alt+Tab) ends its note, since
+/// the release goes to the other window.
+#[test]
+fn plg_066_a_pad_held_ends_when_the_window_loses_the_keyboard() {
+    let (mut s, g, t, id) = played("Drum Kit");
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).unwrap();
+    assert!(s.instrument_down(&g, x, y));
+    wait_sounding(&mut s, id, |n| n > 0);
+    assert!(s.device_focus_lost());
+    assert_eq!(last_sent(&s), Some((t, NoteKind::Off { pitch: 36 })));
+    assert_eq!(s.instruments.note, None);
+    assert!(s.instruments.grab.is_none());
+    wait_sounding(&mut s, id, |n| n == 0);
+    assert!(!s.device_focus_lost(), "nothing is held any more");
+}
+
+/// L-ui-11: a pad held while its device or its track is deleted ends its note; the next
+/// frame sees the window gone.
+#[test]
+fn plg_066_a_pad_held_ends_when_its_device_or_track_goes() {
+    for (command, of_track) in [("plugin.remove", false), ("track.delete", true)] {
+        let (mut s, g, t, id) = played("Drum Kit");
+        let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).unwrap();
+        assert!(s.instrument_down(&g, x, y));
+        wait_sounding(&mut s, id, |n| n > 0);
+        let ids = if of_track {
+            t.to_string()
+        } else {
+            id.to_string()
+        };
+        assert!(
+            s.run_command(command, serde_json::json!({ "ids": [ids] })),
+            "{command}: {:?}",
+            s.error
+        );
+        s.poll_probes();
+        assert_eq!(s.instruments.note, None, "{command}");
+        assert_eq!(
+            last_sent(&s),
+            Some((t, NoteKind::Off { pitch: 36 })),
+            "{command}"
+        );
+        assert!(
+            !s.instrument_up() || s.instruments.grab.is_none(),
+            "{command}"
+        );
+    }
+}
+
 #[test]
 fn plg_066_the_keys_and_the_pads_read_their_notes() {
     let (s, g, _, id) = played(DEFAULT);

@@ -140,6 +140,25 @@ fn ui_326_a_point_drag_is_one_step_and_each_frame_keeps_up() {
     assert_eq!(plain(&s, t, "mid1_gain"), gx0);
 }
 
+/// M-ui-3: a point held when the window loses the keyboard goes in where it is, as one
+/// step, and is let go.
+#[test]
+fn ui_326_a_point_held_goes_in_when_the_window_loses_the_keyboard() {
+    let (mut s, g, t, id) = eq_window();
+    let (fx0, before) = (plain(&s, t, "mid1_freq"), s.song().steps());
+    let (x, y) = s
+        .instrument_center(&g, id, Part::Point(0, 2))
+        .expect("the LMF point");
+    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
+    assert!(s.instrument_moved(&g, x + 40.0, y - 20.0, false));
+    assert!(s.device_focus_lost());
+    assert!(s.instruments.grab.is_none());
+    assert_eq!(s.song().steps(), before + 1);
+    assert!(plain(&s, t, "mid1_freq") > fx0);
+    // The pointer coming back moves nothing.
+    assert!(!s.instrument_moved(&g, x + 80.0, y, false));
+}
+
 /// M-ui-1: a point pulled aslant is heard moving both ways at once, and the other syncs
 /// keep it, until it goes into the song.
 #[test]

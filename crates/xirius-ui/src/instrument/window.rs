@@ -737,7 +737,7 @@ impl Windows {
     }
 
     /// Forgets the windows whose plugin is gone or is no longer built in.
-    fn prune(&mut self, p: &Project) {
+    pub(crate) fn prune(&mut self, p: &Project) {
         self.open.retain(|w| live(p, w).is_some());
         self.refit(p);
         if self.grab.is_some_and(|g| !self.is_open(g.plugin())) {
