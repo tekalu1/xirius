@@ -225,6 +225,7 @@ pub fn of_action(action: &Action) -> &'static str {
         Action::Cleanup(crate::cleanup_dialog::Act::Trash) => "project.cleanup",
         Action::Cleanup(crate::cleanup_dialog::Act::Cancel) => "cleanup.cancel",
         Action::Cpu(_) => "cpu.row",
+        Action::KeySource(..) => "sidechain.source",
         Action::Field(..) => "context.field",
     }
 }

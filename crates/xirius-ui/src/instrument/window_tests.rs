@@ -484,14 +484,22 @@ fn the_sidechain_seat_is_only_on_the_devices_that_take_a_key() {
         let r = s.instruments.rect(i, g.size);
         let track = &p.tracks[&t];
         let plugin = track.inserts.iter().find(|x| x.id == plugin_id).unwrap();
-        let seat =
-            s.instruments
-                .part_rect(r, track, plugin, plugin.builtin().unwrap(), Part::Sidechain);
+        let seat = s.instruments.part_rect(
+            r,
+            &p,
+            track,
+            plugin,
+            plugin.builtin().unwrap(),
+            Part::Sidechain,
+        );
         if takes {
-            // Width 0 until UI-336 fills it, between the empty stretch and
-            // the channel editor's button.
-            assert_eq!(seat.w, 0.0);
-            assert!(seat.x > r.x && seat.x < r.right(), "{seat:?} in {r:?}");
+            // The on button, between the empty stretch and the channel
+            // editor's button (UI-336).
+            assert!(seat.w > 0.0);
+            assert!(
+                seat.x > r.x && seat.right() < r.right(),
+                "{seat:?} in {r:?}"
+            );
         } else {
             assert_eq!(seat, Rect::default());
         }

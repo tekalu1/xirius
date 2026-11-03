@@ -2464,6 +2464,9 @@ impl Studio {
             Action::Report(act) => return self.report_action(act),
             Action::Cleanup(act) => return self.cleanup_action(g, act),
             Action::Cpu(act) => return self.cpu_action(act),
+            Action::KeySource(plugin, track, part) => {
+                return self.key_source_action(plugin, track, part);
+            }
             Action::OpenNoteEdit(kind) => {
                 self.open_note_edit(kind, p.anchor);
                 return true;

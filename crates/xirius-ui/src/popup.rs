@@ -65,6 +65,8 @@ pub enum PopupKind {
     AraPlugin,
     /// Another instrument for a track that has one: a new layer (MIX-044).
     Layer(TrackId),
+    /// The channels that key a plug-in, from the seat of its window (UI-336).
+    KeySources(PluginId),
     AutomationTargets(TrackId, bool),
     BrowserView,
     /// The + at the head of the track column.
@@ -190,6 +192,8 @@ pub enum Action {
     Cleanup(crate::cleanup_dialog::Act),
     /// A press in the CPU list.
     Cpu(crate::cpu_list::CAct),
+    /// A part of a source's row in a plug-in's key sources (UI-336).
+    KeySource(PluginId, TrackId, crate::key_sources::KeyPart),
     /// A part of the field of row `i` at the head of an audio clip's menu.
     Field(usize, crate::context::fields::FieldAct),
     /// `audio.set` of the device: its name.
@@ -465,6 +469,8 @@ pub enum Look {
     Meter(crate::meter_popup::MLook),
     /// A part of the CPU list.
     Cpu(crate::cpu_list::CLook),
+    /// A part of a plug-in's key sources (UI-336).
+    Key(crate::key_sources::KLook),
     /// A part of 「Xirius について」.
     About(crate::about::AboutLook),
     /// A part of 「使われていない録音を整理」.
@@ -764,7 +770,7 @@ impl Popup {
         // bottom bar (UI-300), so its list opens from its left edge.
         let right_aligned = matches!(
             self.kind,
-            PopupKind::History | PopupKind::Export | PopupKind::Ai
+            PopupKind::History | PopupKind::Export | PopupKind::Ai | PopupKind::KeySources(_)
         );
         let mut x = if right_aligned {
             self.anchor.right() - width
@@ -1405,6 +1411,7 @@ pub(crate) fn paint_cell(pen: &mut Pen, cell: &Cell, hot: bool) {
         Look::Quant(q) => crate::quantize_panel::paint_cell(pen, cell, *q),
         Look::Meter(m) => crate::meter_popup::paint_cell(pen, cell, *m),
         Look::Cpu(l) => crate::cpu_list::paint_cell(pen, cell, l, hot),
+        Look::Key(l) => crate::key_sources::paint_cell(pen, cell, l, hot),
         Look::Field => crate::context::fields::paint_cell(pen, cell),
         Look::About(a) => crate::about::paint_cell(pen, cell, a, hot),
         Look::Clean(l) => crate::cleanup_dialog::paint_cell(pen, cell, *l),

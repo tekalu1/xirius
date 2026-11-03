@@ -4,7 +4,10 @@ use xirius_core::id::{PluginId, SendId, TrackId};
 use xirius_core::model::{KEY_MAX_DB, KEY_MIN_DB, Plugin, Project};
 
 use serde_json::json;
-use xirius_core::model::KeyMode;
+use xirius_core::model::{KeyMode, KeySource};
+
+use crate::key_sources::KeyPart;
+use crate::popup::{Action, PopupKind};
 
 use super::MixerHit;
 use crate::studio::{Geometry, Hit, Rect, Studio};
@@ -122,6 +125,20 @@ pub fn key_rows(p: &Project, t: TrackId) -> Vec<crate::pick_list::PickRow> {
         .collect()
 }
 
+/// `t`'s key into `plugin`, when it is one of its sources.
+pub fn source(p: &Project, plugin: PluginId, t: TrackId) -> Option<KeySource> {
+    p.tracks
+        .values()
+        .flat_map(|o| &o.inserts)
+        .find(|x| x.id == plugin)?
+        .sidechain
+        .as_ref()?
+        .sources
+        .iter()
+        .find(|s| s.track == t)
+        .cloned()
+}
+
 /// `t` keys `plugin` already, by a send or by its output.
 pub fn keys(p: &Project, t: TrackId, plugin: PluginId) -> bool {
     p.tracks.values().any(|o| {
@@ -215,16 +232,27 @@ pub struct KeyDrag {
 }
 
 impl Studio {
-    /// A press on a key send's bar: the level goes where it is pressed, and follows.
+    /// A press on a key send's bar, on the mixer or in a receiver's key sources (UI-336): the
+    /// level goes where it is pressed, and follows.
     pub(crate) fn key_down(&mut self, g: &Geometry, hit: Hit, x: f32) -> bool {
-        let Hit::Mixer(h @ MixerHit::KeyLevel(t, id)) = hit else {
+        let (bar, t, id) = match hit {
+            Hit::Mixer(h @ MixerHit::KeyLevel(t, id)) => {
+                let Some(zone) = self.mixer_rect(g, h) else {
+                    return false;
+                };
+                (key_bar(zone), t, id)
+            }
+            Hit::Item(i) => {
+                let Some((bar, t, id)) = self.source_bar(g, i) else {
+                    return false;
+                };
+                (bar, t, id)
+            }
+            _ => return false,
+        };
+        let Some(k) = key_send(&self.project(), t, id) else {
             return false;
         };
-        let (Some(zone), Some(k)) = (self.mixer_rect(g, h), key_send(&self.project(), t, id))
-        else {
-            return false;
-        };
-        let bar = key_bar(zone);
         let w = bar.w.max(1.0);
         self.mixer.key_drag = Some(KeyDrag {
             track: t,
@@ -252,6 +280,7 @@ impl Studio {
         }
         d.value = db;
         self.mixer.key_drag = Some(d);
+        self.refresh_sources();
         if self.transport.is_live() {
             let mut p = (*self.project()).clone();
             set_level(&mut p, d.plugin, d.track, db);
@@ -272,6 +301,76 @@ impl Studio {
             return true;
         }
         self.set_key_level(d.plugin, d.track, d.value);
+        self.refresh_sources();
+        true
+    }
+
+    /// The bar of the key sources' cell `i`, with the source's channel and its send.
+    fn source_bar(&self, g: &Geometry, i: usize) -> Option<(Rect, TrackId, SendId)> {
+        let popup = self.popup.as_ref()?;
+        let cell = popup.layout(g.size).cells.get(i)?.clone();
+        let Some(Action::KeySource(plugin, t, KeyPart::Amount)) = cell.action else {
+            return None;
+        };
+        let id = source(&self.project(), plugin, t)?.id;
+        Some((cell.rect, t, id))
+    }
+
+    /// The key sources' rows again, when they show (a send's amount moved).
+    fn refresh_sources(&mut self) {
+        if matches!(
+            self.popup.as_ref().map(|p| p.kind),
+            Some(PopupKind::KeySources(_))
+        ) {
+            self.refresh_popup();
+        }
+    }
+
+    /// A press on a part of a source's row in `plugin`'s key sources (UI-336): each is one
+    /// step, and the list stays open. The send box and the output box take the channel on or
+    /// off, or move it from the one to the other.
+    pub(crate) fn key_source_action(
+        &mut self,
+        plugin: PluginId,
+        t: TrackId,
+        part: KeyPart,
+    ) -> bool {
+        let p = self.project();
+        let mode = source(&p, plugin, t).map(|s| s.mode);
+        let sending = mode.as_ref().and_then(KeyMode::send);
+        let base = json!({ "id": plugin.to_string(), "from": t.to_string() });
+        let with = |key: &str, value: &str| {
+            let mut a = base.clone();
+            a[key] = json!(value);
+            a
+        };
+        let (name, args) = match (part, &mode) {
+            (KeyPart::Amount, _) => return true,
+            (KeyPart::Send, Some(KeyMode::Send { .. })) => ("plugin.sidechain.remove", base),
+            (KeyPart::Send, Some(KeyMode::Output)) => {
+                ("plugin.sidechain.set", with("mode", "send"))
+            }
+            (KeyPart::Send, None) => ("plugin.sidechain.add", base),
+            (KeyPart::Output, Some(KeyMode::Output)) => ("plugin.sidechain.remove", base),
+            (KeyPart::Output, Some(KeyMode::Send { .. })) => {
+                ("plugin.sidechain.set", with("mode", "output"))
+            }
+            (KeyPart::Output, None) => {
+                let mut a = base;
+                a["output"] = json!(true);
+                ("plugin.sidechain.add", a)
+            }
+            (KeyPart::Pre, _) => {
+                let Some((pre, _, _)) = sending else {
+                    return false;
+                };
+                let to = if pre { "post" } else { "pre" };
+                ("plugin.sidechain.set", with("position", to))
+            }
+        };
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+        self.run_command(name, args);
+        self.refresh_popup();
         true
     }
 

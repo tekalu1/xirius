@@ -52,6 +52,8 @@ pub struct PickRow {
     pub act: Option<Action>,
     /// Said in a balloon while the pointer is on it (a cut name in full).
     pub tip: String,
+    /// A receiver's key source: the row shows its boxes instead of a check (UI-336).
+    pub key: Option<crate::key_sources::KeyRow>,
 }
 
 impl PickRow {
@@ -65,6 +67,7 @@ impl PickRow {
             note: false,
             act: None,
             tip: String::new(),
+            key: None,
         }
     }
 
@@ -175,6 +178,8 @@ pub struct PickList {
     /// current one) wherever it is (UI-338). The first key or wheel turn
     /// settles the scroll there.
     pub fresh: bool,
+    /// A receiver's key sources: the headings name the boxes' columns (UI-336).
+    pub keyed: bool,
 }
 
 /// What a key did to a [`PickList`].
@@ -204,6 +209,7 @@ impl PickList {
             icon: None,
             marked: String::new(),
             fresh: false,
+            keyed: false,
         }
     }
 
@@ -625,6 +631,7 @@ pub fn is(kind: PopupKind) -> bool {
             | PopupKind::Instrument(_)
             | PopupKind::Layer(_)
             | PopupKind::Send(_)
+            | PopupKind::KeySources(_)
             | PopupKind::Input(_)
             | PopupKind::Output(_)
             | PopupKind::AutomationTargets(..)
@@ -647,6 +654,7 @@ pub fn width(kind: PopupKind) -> f32 {
         | PopupKind::Send(_)
         | PopupKind::AraPlugin => 260.0,
         PopupKind::Device(_) => 280.0,
+        PopupKind::KeySources(_) => crate::key_sources::WIDTH,
         PopupKind::BrowserView => 168.0,
         PopupKind::AddTrack => 184.0,
         _ => Layout::MENU_W,
@@ -724,10 +732,11 @@ pub fn cells(pick: &PickList, w: f32, size: (f32, f32)) -> Vec<Cell> {
         for (y, slot) in pick.window(offset, body) {
             let (flat, row) = match slot {
                 Slot::Head(heading) => {
-                    out.push(
-                        Cell::new(Rect::new(pad, top + y, w - pad * 2.0, HEAD_H), Look::Label)
-                            .text(heading.to_string()),
-                    );
+                    let r = Rect::new(pad, top + y, w - pad * 2.0, HEAD_H);
+                    out.push(Cell::new(r, Look::Label).text(heading.to_string()));
+                    if pick.keyed {
+                        out.extend(crate::key_sources::head_cells(r));
+                    }
                     continue;
                 }
                 Slot::Row(flat, row) => (flat, row),
@@ -736,6 +745,11 @@ pub fn cells(pick: &PickList, w: f32, size: (f32, f32)) -> Vec<Cell> {
             let r = Rect::new(pad, top + y, w - pad * 2.0, row_h);
             if row.note {
                 out.push(Cell::new(r, Look::Note).text(row.label.clone()));
+                continue;
+            }
+            if let Some(key) = &row.key {
+                let cur = flat == pick.selected && row.enabled;
+                out.extend(crate::key_sources::row_cells(r, &row.label, key, cur));
                 continue;
             }
             let icon = row.icon.or(pick.icon);
@@ -872,6 +886,10 @@ impl Studio {
             PopupKind::Insert(_) => Some(self.insert_pick()),
             PopupKind::Instrument(_) | PopupKind::Layer(_) => Some(self.instrument_pick()),
             PopupKind::AraPlugin => Some(self.ara_pick_list()),
+            PopupKind::KeySources(plugin) => {
+                let p = self.project();
+                crate::key_sources::list(&p, plugin, |t, id| self.key_level(t, id))
+            }
             PopupKind::Send(t) => {
                 let p = self.project();
                 let mut list =

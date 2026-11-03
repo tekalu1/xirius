@@ -261,6 +261,9 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                         turn: None,
                     });
                 }
+                if let crate::popup::Look::Key(look) = c.look {
+                    return key_source_mark(i, c, look);
+                }
                 None
             })
             .collect();
@@ -902,6 +905,7 @@ fn flow_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 fold: None,
                 pick: None,
                 press: Some(crate::studio::Hit::Mixer(hit)),
+                turn: None,
             });
         }
     }
@@ -913,13 +917,76 @@ fn flow_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
 /// an on and off button is a toggle Button, a choice shown as its name a
 /// ComboBox. An EQ's band tabs are Tabs and its analyser's button a ComboBox
 /// (UI-326).
+/// A part of a receiver's key sources (UI-336): a source's row is a Group named by its channel,
+/// its boxes CheckBoxes 「<channel> センド」「<channel> 出力」, the position a toggle Button
+/// 「<channel> プリフェーダー」, the send's amount a Slider in dB, and the loop mark an Image
+/// 「ループ」.
+fn key_source_mark(
+    i: usize,
+    c: &crate::popup::Cell,
+    look: crate::key_sources::KLook,
+) -> Option<Mark> {
+    use crate::key_sources::KLook;
+    let toggled = |on: bool| {
+        if on {
+            accesskit::Toggled::True
+        } else {
+            accesskit::Toggled::False
+        }
+    };
+    let mut node = match look {
+        KLook::Row { .. } => {
+            let mut n = accesskit::Node::new(accesskit::Role::Group);
+            n.set_label(c.text.clone());
+            n
+        }
+        KLook::Check { on } => {
+            let mut n = accesskit::Node::new(accesskit::Role::CheckBox);
+            n.set_toggled(toggled(on));
+            n
+        }
+        KLook::Pre { on } => {
+            let mut n = accesskit::Node::new(accesskit::Role::Button);
+            n.set_toggled(toggled(on));
+            n
+        }
+        KLook::Bar { .. } => {
+            let mut n = accesskit::Node::new(accesskit::Role::Slider);
+            let db = c.text.trim_end_matches(" dB").parse::<f64>().unwrap_or(0.0);
+            n.set_min_numeric_value(xirius_core::model::KEY_MIN_DB);
+            n.set_max_numeric_value(xirius_core::model::KEY_MAX_DB);
+            n.set_numeric_value(db);
+            n.set_value(c.text.clone());
+            n
+        }
+        KLook::Loop => accesskit::Node::new(accesskit::Role::Image),
+        KLook::Column | KLook::Value => return None,
+    };
+    if !c.spoken.is_empty() {
+        node.set_label(c.spoken.clone());
+    }
+    if !c.enabled {
+        node.set_disabled();
+    }
+    node.set_bounds(bounds(c.rect));
+    Some(Mark {
+        key: format!("key-{i}"),
+        children: Vec::new(),
+        node,
+        fold: None,
+        pick: None,
+        press: c.live().then_some(crate::studio::Hit::Item(i)),
+        turn: None,
+    })
+}
+
 fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     use crate::device::control::{self, Look};
-    use crate::instrument::window::{live, values_of};
+    use crate::instrument::window::{Part, live, source_of, values_of};
     let p = s.project();
     let mut out = Vec::new();
     for (i, w) in s.instruments.open.iter().enumerate() {
-        let Some((_, x, def)) = live(&p, w) else {
+        let Some((track, x, def)) = live(&p, w) else {
             continue;
         };
         let now = values_of(x, def);
@@ -934,6 +1001,38 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             press: None,
             turn: None,
         };
+        // The sidechain's seat (UI-336): its on button, and the button that lists the sources
+        // (expanded while the list is open).
+        let seat = s
+            .instruments
+            .part_rect(r, &p, track, x, def, Part::Sidechain);
+        if seat.w > 0.0 {
+            let on = x.sidechain.as_ref().is_some_and(|sc| sc.on);
+            let mut node = accesskit::Node::new(accesskit::Role::Button);
+            node.set_label("サイドチェーン");
+            node.set_toggled(if on {
+                accesskit::Toggled::True
+            } else {
+                accesskit::Toggled::False
+            });
+            node.set_bounds(bounds(seat));
+            out.push(mark(format!("device-{}-sidechain", w.plugin), node));
+            let list = s.instruments.part_rect(r, &p, track, x, def, Part::Sources);
+            let name = source_of(&p, x);
+            let mut node = accesskit::Node::new(accesskit::Role::Button);
+            node.set_label(if name.is_empty() {
+                "サイドチェーンのソース".to_string()
+            } else {
+                format!("サイドチェーンのソース {name}")
+            });
+            let open = s
+                .popup
+                .as_ref()
+                .is_some_and(|p| p.kind == crate::popup::PopupKind::KeySources(w.plugin));
+            node.set_expanded(open);
+            node.set_bounds(bounds(list));
+            out.push(mark(format!("device-{}-sources", w.plugin), node));
+        }
         for (t, tab) in body.tabs.iter().enumerate() {
             let mut node = accesskit::Node::new(accesskit::Role::Tab);
             node.set_label(tab.text);

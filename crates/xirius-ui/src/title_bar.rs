@@ -1,6 +1,6 @@
 //! The shared title bar of a floating window (UI-322): the power, the kind
 //! icon and the «track › device» name, the preset tag «‹ ▾ name ›», a
-//! draggable empty stretch, the side-chain seat, the channel editor's
+//! draggable empty stretch, the side-chain seat (UI-336), the channel editor's
 //! button, the pin and the close, in this order on one surface. The built-in
 //! devices' windows carry it; the channel editor's and the external
 //! plug-ins' share it when they come (MIX-042, UI-337).
@@ -67,14 +67,38 @@ const DOT: f32 = 6.0;
 const SPACE_MIN: f32 = 8.0;
 const SPACE_MIN_NARROW: f32 = 0.0;
 
+/// The side-chain seat (UI-336): the on button around its 16 icon, then the
+/// source button «name ▾» with its padding, the gap before the ▾ and the ▾,
+/// the source button at most [`SC_SRC_MAX`] wide.
+const SC_ON_W: f32 = 6.0 + ICON + 6.0;
+const SC_SRC_L: f32 = 4.0;
+const SC_SRC_R: f32 = 5.0;
+const SC_SRC_GAP: f32 = 4.0;
+const SC_SRC_MAX: f32 = 110.0;
+/// What the estimate of the name's width can fall short of the drawn text.
+const SC_SRC_SLACK: f32 = 8.0;
+
 /// Which of the bar's seats a window has. The channel editor's own window
-/// has no channel button; a device that takes no side-chain key has a seat
-/// of width 0 (UI-336 fills the seats it shows).
+/// has no channel button; a device that takes no side-chain key has no
+/// side-chain seat.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct Seats {
+pub struct Seats<'a> {
     pub power: bool,
     pub sidechain: bool,
     pub channel: bool,
+    /// The side-chain seat's source name ([`source_name`]): empty while
+    /// nothing keys the device.
+    pub source: &'a str,
+}
+
+/// The seat's name for a device's sources: the first one's, «+n» for the
+/// rest ("Kick +1"); empty with none.
+pub fn source_name(first: Option<&str>, count: usize) -> String {
+    match (first, count) {
+        (None, _) | (_, 0) => String::new(),
+        (Some(name), 1) => name.to_string(),
+        (Some(name), n) => format!("{name} +{}", n - 1),
+    }
 }
 
 /// Where the parts of a bar over `r` lie. The name's band and the space are
@@ -96,8 +120,15 @@ pub struct Bar {
     pub chevron: Option<Rect>,
     /// The name's zone inside the tag.
     pub tag_text: Rect,
-    /// The side-chain seat: width 0 until UI-336 fills it.
+    /// The side-chain seat, whole: its face while something keys the device.
     pub sidechain: Option<Rect>,
+    /// The seat's on button (the device's sidechain on or off) and its
+    /// source button «name ▾» that opens the source list.
+    pub sidechain_on: Option<Rect>,
+    pub sidechain_list: Option<Rect>,
+    /// The source name's zone in the source button: `None` with no source or
+    /// while the bar is [`NARROW`].
+    pub sidechain_name: Option<Rect>,
     /// The channel editor's button (MIX-042 opens its window).
     pub channel: Option<Rect>,
     /// The always-empty draggable stretch.
@@ -116,7 +147,7 @@ pub fn takes_sidechain(def: &BuiltinDef) -> bool {
 /// name group's width. The buttons never give; the group does before the
 /// name, the empty stretch last but never below its smallest width. The
 /// name keeps room for the device alone while the group keeps its smallest.
-pub fn layout(r: Rect, track: &str, device: &str, seats: Seats) -> Bar {
+pub fn layout(r: Rect, track: &str, device: &str, seats: Seats<'_>) -> Bar {
     let narrow = r.w < NARROW;
     let cy = r.y + (r.h - BTN) / 2.0;
     let btn = |x: f32| Rect::new(x, cy, BTN, BTN);
@@ -138,16 +169,41 @@ pub fn layout(r: Rect, track: &str, device: &str, seats: Seats) -> Bar {
     if seats.channel {
         rx -= BTN + GAP;
     }
-    let sidechain = seats.sidechain.then(|| Rect::new(rx, cy, 0.0, BTN));
-    if seats.sidechain {
-        rx -= GAP;
-    }
+    // The seat: the on button, then «name ▾» (the name gone while narrow).
+    let named = !narrow && !seats.source.is_empty();
+    let src_w = if named {
+        (SC_SRC_L
+            + estimated_text_width(seats.source, FontSize::Small)
+            + SC_SRC_SLACK
+            + SC_SRC_GAP
+            + CHEV
+            + SC_SRC_R)
+            .min(SC_SRC_MAX)
+    } else {
+        SC_SRC_L + CHEV + SC_SRC_R
+    };
+    let seat_w = SC_ON_W + src_w;
+    let sidechain = seats
+        .sidechain
+        .then(|| Rect::new(rx - seat_w, cy, seat_w, BTN));
+    let sidechain_on = sidechain.map(|s| Rect::new(s.x, cy, SC_ON_W, BTN));
+    let sidechain_list = sidechain.map(|s| Rect::new(s.x + SC_ON_W, cy, src_w, BTN));
+    let sidechain_name = sidechain_list.filter(|_| named).map(|l| {
+        Rect::new(
+            l.x + SC_SRC_L,
+            cy,
+            (l.w - SC_SRC_L - SC_SRC_GAP - CHEV - SC_SRC_R).max(0.0),
+            BTN,
+        )
+    });
+    let seat_room = if seats.sidechain { seat_w + GAP } else { 0.0 };
+    rx -= seat_room;
     let space_min = if narrow { SPACE_MIN_NARROW } else { SPACE_MIN };
     let group_min = if narrow { GROUP_MIN_NARROW } else { GROUP_MIN };
 
     // The name group's own width, capped so the rest keeps its room; the
     // cap stays at the device's own name while the group keeps its least.
-    let room = if narrow { NAME_ROOM_NARROW } else { NAME_ROOM };
+    let room = if narrow { NAME_ROOM_NARROW } else { NAME_ROOM } + seat_room;
     let lead = NAME_L + ICON + NAME_GAP;
     let budget = (rx - x - 2.0 * GAP - GROUP_ML - space_min - group_min).max(0.0);
     let device_w = estimated_text_width(device, FontSize::Body) * SEMIBOLD_RUN;
@@ -200,6 +256,9 @@ pub fn layout(r: Rect, track: &str, device: &str, seats: Seats) -> Bar {
         chevron,
         tag_text,
         sidechain,
+        sidechain_on,
+        sidechain_list,
+        sidechain_name,
         channel,
         space,
         pin,
@@ -222,7 +281,9 @@ pub struct View<'a> {
     pub modified: bool,
     /// The pin is down: the `primary` pair paints it.
     pub pinned: bool,
-    pub seats: Seats,
+    /// The device's sidechain is on: the seat's icon takes the mark's ink.
+    pub keyed: bool,
+    pub seats: Seats<'a>,
 }
 
 /// The bar over `r` (the window's head, [`BAR_H`] tall).
@@ -343,7 +404,35 @@ pub fn paint(pen: &mut Pen, r: Rect, v: &View<'_>) {
         }
     });
 
-    // The empty stretch and the side-chain seat paint nothing yet.
+    // The side-chain seat (UI-336); the empty stretch paints nothing.
+    if let (Some(seat), Some(on), Some(list)) =
+        (bar.sidechain, bar.sidechain_on, bar.sidechain_list)
+    {
+        let has = !v.seats.source.is_empty();
+        let ink = seat_inks(c, has, v.keyed);
+        if has {
+            pen.round(seat, c.surface_3, Radius::S);
+        }
+        pen.icon("sc", icon_box(on), ink.icon);
+        if let Some(t) = bar.sidechain_name {
+            let shown = pen.fit(v.seats.source, FontSize::Small, Weight::Regular, t.w);
+            pen.text(
+                &shown,
+                FontSize::Small,
+                Weight::Regular,
+                ink.name,
+                t,
+                Align::Left,
+            );
+        }
+        let chev = Rect::new(
+            list.right() - SC_SRC_R - CHEV,
+            list.y + (list.h - CHEV) / 2.0,
+            CHEV,
+            CHEV,
+        );
+        pen.icon("chevron-down", chev, ink.chevron);
+    }
     if let Some(b) = bar.channel {
         pen.icon("route", icon_box(b), c.ink);
     }
@@ -408,6 +497,37 @@ fn name_inks(c: &Colors, powered: bool) -> NameInks {
     }
 }
 
+/// The side-chain seat's inks.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SeatInks {
+    icon: Hsla,
+    name: Hsla,
+    chevron: Hsla,
+}
+
+/// Keyed and on, the icon takes the mark's ink and the name the strong; keyed
+/// but off, the icon the power's off colour and the name the blue-grey ink,
+/// as a device's name off; with no source, the body's ink.
+fn seat_inks(c: &Colors, has: bool, on: bool) -> SeatInks {
+    match (has, on) {
+        (true, true) => SeatInks {
+            icon: c.ink_mark,
+            name: c.ink_strong,
+            chevron: c.ink_strong,
+        },
+        (true, false) => SeatInks {
+            icon: c.line[0],
+            name: c.ink_blue,
+            chevron: c.ink_strong,
+        },
+        (false, _) => SeatInks {
+            icon: c.ink,
+            name: c.ink,
+            chevron: c.ink,
+        },
+    }
+}
+
 /// The preset name's room inside the tag: with the changed mark, the dot and
 /// its space step after the name come off it so the dot never covers it.
 fn preset_room(tag_text: Rect, modified: bool) -> f32 {
@@ -442,10 +562,11 @@ fn cy_of(b: Rect) -> f32 {
 mod tests {
     use super::*;
 
-    const SEATS: Seats = Seats {
+    const SEATS: Seats<'static> = Seats {
         power: true,
         sidechain: true,
         channel: true,
+        source: "Kick +1",
     };
 
     /// Every part is inside the bar and none of them overlap.
@@ -488,8 +609,8 @@ mod tests {
             assert!(b.name.right() < b.tag.x + 0.01, "{w}");
             assert!(b.tag.right() <= b.space.x + GAP + 0.01);
             let sidechain = b.sidechain.unwrap();
-            assert_eq!(sidechain.w, 0.0, "the seat is empty until UI-336");
-            assert!(sidechain.x <= b.channel.unwrap().x);
+            assert!(b.space.right() <= sidechain.x + 0.01);
+            assert!(sidechain.right() + GAP <= b.channel.unwrap().x + 0.01);
             assert!(b.channel.unwrap().right() <= b.pin.x + GAP + 0.01);
             assert!(b.pin.right() <= b.close.x + GAP + 0.01);
             assert_eq!(b.close.right(), r.right() - PAD);
@@ -563,18 +684,18 @@ mod tests {
 
     #[test]
     fn the_narrow_windows_keep_the_device_name_whole() {
-        // The 3-column windows are 316 wide; with and without the seat.
-        for sidechain in [true, false] {
-            let seats = Seats { sidechain, ..SEATS };
+        // The 3-column windows are 316 wide and take no key: no seat. (A
+        // seat's window cuts the name at its narrowest, as the mock does.)
+        {
+            let seats = Seats {
+                sidechain: false,
+                ..SEATS
+            };
             for (device, w) in SEMIBOLD_14 {
                 let r = Rect::new(0.0, 0.0, 316.0, BAR_H);
                 let b = layout(r, "Vocal", device, seats);
                 inside(&b, r);
-                assert!(
-                    b.name_text.w >= w,
-                    "{device} ({w}) in {:?} with the seat {sidechain}",
-                    b.name_text
-                );
+                assert!(b.name_text.w >= w, "{device} ({w}) in {:?}", b.name_text);
                 // The tag keeps two 14 wide characters readable.
                 assert!(b.tag_text.w >= 28.0, "{device}: {:?}", b.tag_text);
             }
@@ -586,9 +707,14 @@ mod tests {
         // Measured Regular at 14: «Vocal» 37.3, «›» 5.4, «V…» 21.8.
         let sep_room = 2.0 * SEP_PAD + 5.4;
         let (track_w, track_min) = (37.3, 21.8);
+        // The 316 wide windows take no key: no seat.
+        let seats = Seats {
+            sidechain: false,
+            ..SEATS
+        };
         let name_room = |device: &str| {
             let r = Rect::new(0.0, 0.0, 316.0, BAR_H);
-            layout(r, "Vocal", device, SEATS).name_text.w
+            layout(r, "Vocal", device, seats).name_text.w
         };
         for (device, dev_w) in SEMIBOLD_14 {
             let fit = name_fit(track_w, track_min, sep_room, dev_w, name_room(device));
@@ -661,11 +787,85 @@ mod tests {
     }
 
     #[test]
+    fn the_seat_holds_the_on_button_and_the_source_button() {
+        let wide = Rect::new(0.0, 0.0, 680.0, BAR_H);
+        let b = layout(wide, "Bass", "Compressor", SEATS);
+        let (seat, on, list) = (
+            b.sidechain.unwrap(),
+            b.sidechain_on.unwrap(),
+            b.sidechain_list.unwrap(),
+        );
+        assert_eq!((on.x, on.w, on.h), (seat.x, SC_ON_W, BTN));
+        assert_eq!(list.x, on.right());
+        assert_eq!(list.right(), seat.right());
+        let name = b.sidechain_name.unwrap();
+        assert!(name.x >= list.x && name.right() + CHEV <= list.right());
+        assert!(name.w >= estimated_text_width("Kick +1", FontSize::Small) - 0.01);
+        // A long name stops at the source button's most.
+        let long = Seats {
+            source: "A very long track name +3",
+            ..SEATS
+        };
+        let b = layout(wide, "Bass", "Compressor", long);
+        assert_eq!(b.sidechain_list.unwrap().w, SC_SRC_MAX);
+        // No source, or narrow: «▾» alone.
+        let none = Seats {
+            source: "",
+            ..SEATS
+        };
+        let bare = SC_SRC_L + CHEV + SC_SRC_R;
+        let b = layout(wide, "Bass", "Compressor", none);
+        assert!(b.sidechain_name.is_none());
+        assert_eq!(b.sidechain_list.unwrap().w, bare);
+        for w in [360.0, 320.0] {
+            let r = Rect::new(0.0, 0.0, w, BAR_H);
+            let b = layout(r, "Bass", "Compressor", SEATS);
+            inside(&b, r);
+            assert!(b.sidechain_name.is_none(), "{w}");
+            assert_eq!(b.sidechain_list.unwrap().w, bare);
+            // the name and the tag keep clear of it, the tag two characters
+            assert!(b.tag.right() <= b.sidechain.unwrap().x + 0.01, "{w}");
+            assert!(b.tag_text.w >= 28.0, "{w}: {:?}", b.tag_text);
+        }
+    }
+
+    #[test]
+    fn the_source_name_counts_the_rest() {
+        assert_eq!(source_name(None, 0), "");
+        assert_eq!(source_name(Some("Kick"), 1), "Kick");
+        assert_eq!(source_name(Some("Kick"), 3), "Kick +2");
+    }
+
+    #[test]
+    fn the_seat_reads_on_off_and_empty_apart() {
+        use xirius_design::{Ink, MIN_TEXT_CONTRAST, Readable, Surface, Theme, contrast_ratio};
+        for theme in [Theme::Dark, Theme::Light] {
+            let c = Colors::new(theme);
+            let on = seat_inks(&c, true, true);
+            let idle = seat_inks(&c, true, false);
+            let empty = seat_inks(&c, false, false);
+            assert_eq!(on.icon, c.ink_mark);
+            assert_eq!(idle.icon, c.line[0], "off as the power's off");
+            assert_ne!(on.name, idle.name);
+            assert_eq!(empty.icon, c.ink);
+            // the idle name keeps the text's contrast on the seat's s3 face
+            let blue = Readable::new(Surface::S3, Ink::Blue)
+                .expect("Blue is readable on S3")
+                .ink_color(theme);
+            assert!(
+                contrast_ratio(Surface::S3.color(theme), blue) >= MIN_TEXT_CONTRAST,
+                "{theme:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_window_without_the_seats_lays_the_rest() {
         let seats = Seats {
             power: false,
             sidechain: false,
             channel: false,
+            source: "",
         };
         let r = Rect::new(0.0, 0.0, 416.0, BAR_H);
         let b = layout(r, "Vocal", "EQ", seats);

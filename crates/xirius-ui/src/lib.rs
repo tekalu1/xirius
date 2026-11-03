@@ -146,6 +146,8 @@ mod io_command;
 pub mod keep;
 pub mod keep_shots;
 pub mod key_rows;
+pub mod key_sources;
+pub mod key_sources_shots;
 pub mod keymap_shots;
 pub mod keys_rest_shots;
 pub mod keys_view_menu_shots;
@@ -390,6 +392,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("instrument", instrument::shots::SHOTS),
     ("instrument-menu", fixed_screens_shots::INSTRUMENT_MENU),
     ("keep", keep_shots::KEEP),
+    ("key-sources", key_sources_shots::SHOTS),
     ("keymap", keymap_shots::SHOTS),
     ("keys-rest", keys_rest_shots::SHOTS),
     ("keys-view-menu", keys_view_menu_shots::SHOTS),

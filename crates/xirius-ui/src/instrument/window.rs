@@ -226,8 +226,10 @@ pub enum Part {
     /// The ‹ › stepping the presets (gone while the bar is narrow).
     PrevPreset,
     NextPreset,
-    /// The side-chain seat: empty until UI-336 fills it.
+    /// The side-chain seat's on button: the device's key on or off (UI-336).
     Sidechain,
+    /// The seat's source button «name ▾»: opens the source list.
+    Sources,
     /// The channel editor's button: a seat until MIX-042 opens its window.
     Channel,
     Pin,
@@ -541,12 +543,13 @@ impl Windows {
     pub fn part_rect(
         &self,
         r: Rect,
+        p: &Project,
         track: &Track,
         plugin: &Plugin,
         def: &BuiltinDef,
         part: Part,
     ) -> Rect {
-        let bar = bar(r, track, plugin, def);
+        let bar = bar(r, p, track, plugin, def);
         let body = || self.body(r, plugin, def);
         match part {
             Part::Head => bar.space,
@@ -554,7 +557,8 @@ impl Windows {
             Part::Preset => bar.tag,
             Part::PrevPreset => bar.prev.unwrap_or_default(),
             Part::NextPreset => bar.next.unwrap_or_default(),
-            Part::Sidechain => bar.sidechain.unwrap_or_default(),
+            Part::Sidechain => bar.sidechain_on.unwrap_or_default(),
+            Part::Sources => bar.sidechain_list.unwrap_or_default(),
             Part::Channel => bar.channel.unwrap_or_default(),
             Part::Pin => bar.pin,
             Part::Close => bar.close,
@@ -624,13 +628,14 @@ impl Windows {
             // forgotten (L-ui-2): what is under it does.
             let (track, plugin, def) = live(p, &w)?;
             if y < r.y + title_bar::BAR_H {
-                let b = bar(r, track, plugin, def);
+                let b = bar(r, p, track, plugin, def);
                 let part = [
                     (b.power, Part::Power),
                     (b.prev, Part::PrevPreset),
                     (Some(b.tag), Part::Preset),
                     (b.next, Part::NextPreset),
-                    (b.sidechain, Part::Sidechain),
+                    (b.sidechain_on, Part::Sidechain),
+                    (b.sidechain_list, Part::Sources),
                     (b.channel, Part::Channel),
                     (Some(b.pin), Part::Pin),
                     (Some(b.close), Part::Close),
@@ -872,14 +877,34 @@ impl Windows {
 
 /// The shared title bar over a window's frame (UI-322): the same part on
 /// every built-in device's window, its seats following the device.
-fn bar(r: Rect, track: &Track, plugin: &Plugin, def: &BuiltinDef) -> title_bar::Bar {
-    let seats = title_bar::Seats {
+fn bar(r: Rect, p: &Project, track: &Track, plugin: &Plugin, def: &BuiltinDef) -> title_bar::Bar {
+    let source = source_of(p, plugin);
+    let head = Rect::new(r.x, r.y, r.w, title_bar::BAR_H);
+    title_bar::layout(head, track.shown_name(), &plugin.name, seats(def, &source))
+}
+
+/// The bar's seats for a built-in device whose sources are named `source`.
+fn seats<'a>(def: &BuiltinDef, source: &'a str) -> title_bar::Seats<'a> {
+    title_bar::Seats {
         power: true,
         sidechain: title_bar::takes_sidechain(def),
         channel: true,
-    };
-    let head = Rect::new(r.x, r.y, r.w, title_bar::BAR_H);
-    title_bar::layout(head, track.shown_name(), &plugin.name, seats)
+        source,
+    }
+}
+
+/// The side-chain seat's name for `plugin`'s sources: the first source's
+/// channel, «+n» for the rest (UI-336).
+pub(crate) fn source_of(p: &Project, plugin: &Plugin) -> String {
+    let sources = plugin
+        .sidechain
+        .as_ref()
+        .map_or(&[][..], |sc| &sc.sources[..]);
+    let first = sources
+        .first()
+        .and_then(|k| p.tracks.get(&k.track))
+        .map(|t| t.shown_name());
+    title_bar::source_name(first, sources.len())
 }
 
 /// Where the key or pad playing `pitch` is.
@@ -1115,7 +1140,7 @@ impl Studio {
                 };
                 let anchor = self
                     .instruments
-                    .part_rect(r, track, plugin, def, Part::Preset);
+                    .part_rect(r, &p, track, plugin, def, Part::Preset);
                 self.open_inst_menu(Menu::Preset(w.track, w.plugin), anchor);
             }
             // The press raised this window to the top, so the shared step
@@ -1165,7 +1190,7 @@ impl Studio {
                 };
                 let at = self
                     .instruments
-                    .part_rect(r, track, plugin, def, Part::Spectrum);
+                    .part_rect(r, &p, track, plugin, def, Part::Spectrum);
                 self.spectrum_menu(w.plugin, at);
             }
             Part::Readout(at) => {
@@ -1181,7 +1206,34 @@ impl Studio {
                     d.clear(dynamics::most_of(kind));
                 }
             }
-            Part::Graph(_) | Part::Body | Part::Sidechain | Part::Channel => {}
+            // The on button turns the key on or off; with nothing keying the
+            // device yet it opens the source list, where a key is given.
+            Part::Sidechain | Part::Sources => {
+                let Some((track, plugin, def)) = live(&p, &w) else {
+                    return true;
+                };
+                let keyed = plugin
+                    .sidechain
+                    .as_ref()
+                    .filter(|sc| !sc.sources.is_empty());
+                match keyed {
+                    Some(sc) if part == Part::Sidechain => {
+                        let state = if sc.on { "off" } else { "on" };
+                        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+                        self.run_command(
+                            "plugin.sidechain.enable",
+                            json!({ "id": w.plugin.to_string(), "state": state }),
+                        );
+                    }
+                    _ => {
+                        let anchor =
+                            self.instruments
+                                .part_rect(r, &p, track, plugin, def, Part::Sources);
+                        self.open_popup(PopupKind::KeySources(w.plugin), anchor);
+                    }
+                }
+            }
+            Part::Graph(_) | Part::Body | Part::Channel => {}
         }
         true
     }
@@ -1202,6 +1254,7 @@ impl Studio {
         let spec = def.params.get(k)?;
         let r = self.instruments.part_rect(
             self.instruments.rect(i, g.size),
+            &p,
             track,
             plugin,
             def,
@@ -1542,9 +1595,14 @@ impl Studio {
         let i = self.instruments.open.iter().position(|w| w.plugin == id)?;
         let p = self.project();
         let (track, plugin, def) = live(&p, &self.instruments.open[i])?;
-        let r =
-            self.instruments
-                .part_rect(self.instruments.rect(i, g.size), track, plugin, def, part);
+        let r = self.instruments.part_rect(
+            self.instruments.rect(i, g.size),
+            &p,
+            track,
+            plugin,
+            def,
+            part,
+        );
         let at = (r.x + r.w / 2.0, r.y + r.h / 2.0);
         // Only if nothing covers it.
         (self.instruments.at(&p, g.size, at.0, at.1) == Some((i, part))).then_some(at)
@@ -1604,11 +1662,8 @@ fn paint_window(
                 preset: &preset,
                 modified,
                 pinned: w.pinned,
-                seats: title_bar::Seats {
-                    power: true,
-                    sidechain: title_bar::takes_sidechain(def),
-                    channel: true,
-                },
+                keyed: plugin.sidechain.as_ref().is_some_and(|sc| sc.on),
+                seats: seats(def, &source_of(&studio.project(), plugin)),
             },
         );
 

@@ -353,7 +353,7 @@ fn set_source(
 ) -> CmdResult<Output> {
     if level.is_none() && position.is_none() && mode.is_none() {
         return Err(CmdError::invalid(
-            "--level・--position・--mode のどれかが必要です",
+            "--level・--position・--mode のいずれかが必要です",
         ));
     }
     if mode == Some("output") && (level.is_some() || position.is_some()) {
