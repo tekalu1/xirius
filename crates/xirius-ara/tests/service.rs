@@ -158,6 +158,47 @@ fn analysis_reads_on_other_threads_and_notices_stay_on_the_model_thread() {
     no_violations();
 }
 
+/// PLG-035: the host sees the analysis end and reads its notes.
+#[test]
+fn the_end_of_analysis_is_seen_and_the_notes_are_read() {
+    let audio = tone(48000.0, 1.0, 0.5);
+    let s = start(
+        Config {
+            analysis_ms: 200,
+            ..Config::default()
+        },
+        None,
+    );
+    s.sync(&song(vec![clip(3501, "d.wav", &audio, 0.0, 0.0, 1.0)]));
+    let mut seen_analysing = false;
+    until("the analysis", || {
+        let c = s.state(3501);
+        seen_analysing |= c.as_ref().is_some_and(|c| c.phase == Phase::Analysing);
+        c.is_some_and(|c| c.phase == Phase::Ready)
+    });
+    assert!(seen_analysing);
+    assert_eq!(s.state(3501).unwrap().progress, 1.0);
+    let notes = s.notes(3501, false, WAIT);
+    assert_eq!(notes.len(), 1);
+    assert!((notes[0].volume - peak(&audio.channels[0])).abs() < 1e-4);
+    assert!((notes[0].duration - 1.0).abs() < 1e-6);
+    // The modification's note is a beat at the song's tempo, read by the plugin through the
+    // host's content access.
+    let beat = s.notes(3501, true, WAIT);
+    assert!((beat[0].duration - 0.5).abs() < 1e-6);
+    s.sync(&Song {
+        bpm: 90.0,
+        ..song(vec![clip(3501, "d.wav", &audio, 0.0, 0.0, 1.0)])
+    });
+    until("the new tempo", || {
+        s.notes(3501, true, WAIT)
+            .first()
+            .is_some_and(|n| (n.duration - 60.0 / 90.0).abs() < 1e-6)
+    });
+    drop(s);
+    no_violations();
+}
+
 /// Clips that go away are taken down in ARA's order; the rest keep playing.
 #[test]
 fn removing_a_clip_keeps_the_others() {
