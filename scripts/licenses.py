@@ -33,6 +33,8 @@ VENDORED = [
     # Bitwig's example project (bitwig-5.0-readme.xml) and the reference files; the shots of the
     # DAWproject screen read them, so they are built into the app.
     ("crates/xirius-core/src/dawproject/testdata/reference", "dawproject", "-", "MIT", "LICENSE"),
+    # The ARA API headers (LIC-004); crates/xirius-ara/src/sys.rs is written from them.
+    ("third_party/ara_api", "ara-api", "2.3.0", "Apache-2.0", "LICENSE.txt"),
 ]
 
 # Folders under vendor/ or third_party/ that the app is not built with, and why.
@@ -41,7 +43,7 @@ NOT_SHIPPED = {
 }
 
 # The first words of a licence text, so a copy is not listed under another licence.
-LICENSE_HEADS = {"MIT": "MIT License"}
+LICENSE_HEADS = {"MIT": "MIT License", "Apache-2.0": "Apache License"}
 
 VENDOR_DIRS = ("vendor", "third_party")
 
@@ -104,7 +106,7 @@ def vendored_text(root: Path = ROOT, vendored=VENDORED) -> str:
         if head is None or not text.lstrip().startswith(head):
             raise SystemExit(f"licenses: {folder}/{file} is not the text of {license}")
         lines.append(f"vendor {name} {version} {license}")
-        texts += ["", f"==== {license}", f"used {name} {version}", "", text]
+        texts += ["", f"==== {license}", f"used {name} {version}", "", text.strip()]
     return "\n" + "\n".join(lines + texts) + "\n"
 
 

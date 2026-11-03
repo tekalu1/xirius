@@ -2346,16 +2346,21 @@ used {} {}
             }
         }
         // Copies that sit with what they are, not in a `vendor` folder.
-        const ELSEWHERE: &[(&str, &str)] = &[(
-            "dawproject",
-            "crates/xirius-core/src/dawproject/testdata/reference/LICENSE",
-        )];
-        for &(name, path) in ELSEWHERE {
+        const ELSEWHERE: &[(&str, &str, &str)] = &[
+            (
+                "dawproject",
+                "MIT",
+                "crates/xirius-core/src/dawproject/testdata/reference/LICENSE",
+            ),
+            // LIC-004: the ARA API headers, which crates/xirius-ara is written from.
+            ("ara-api", "Apache-2.0", "third_party/ara_api/LICENSE.txt"),
+        ];
+        for &(name, license, path) in ELSEWHERE {
             let c = listed
                 .iter()
                 .find(|c| c.name == name)
                 .unwrap_or_else(|| panic!("{name}: run python scripts/licenses.py"));
-            assert_eq!(c.license, "MIT", "{name}");
+            assert_eq!(c.license, license, "{name}");
             let text = std::fs::read_to_string(root.join(path))
                 .unwrap()
                 .replace("\r\n", "\n");

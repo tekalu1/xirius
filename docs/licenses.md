@@ -5,7 +5,7 @@
 | ファイル | 中身 | 作り方 |
 |---|---|---|
 | `NOTICE` | Xirius の著作権表示と、組み込んだほかの人の物（書体・LAME・写したコード）の出どころ | 手で書く |
-| `THIRD-PARTY-LICENSES.txt` | アプリに組み込んだ Rust のライブラリ（名前・版・ライセンス）と、ライセンスの文。その後に、ソースを写して一緒にビルドするほかの人のコード（`crates/*/vendor` の signalsmith-stretch・signalsmith-linear）を同じ形で（LIC-021） | `scripts/licenses.py` で作る |
+| `THIRD-PARTY-LICENSES.txt` | アプリに組み込んだ Rust のライブラリ（名前・版・ライセンス）と、ライセンスの文。その後に、ソースを写して一緒にビルドするほかの人のコード（`crates/*/vendor` の signalsmith-stretch・signalsmith-linear、`third_party/ara_api` の ARA API 2.3.0）を同じ形で（LIC-021・LIC-004） | `scripts/licenses.py` で作る |
 | LAME の `COPYING` | LGPL の文（`xirius-session` の `mp3::LAME_LICENSE`） | LAME の版に付いてくる |
 | `licenses/octicons-LICENSE.txt` | 「Xirius について」の GitHub の印（Octicons の `mark-github`、MIT、GitHub Inc.）のライセンスの文。元は `crates/xirius-ui/assets/octicons/LICENSE`（UI-303） | Octicons の版に付いてくる |
 
@@ -29,6 +29,7 @@ python scripts/licenses.py --check  # 古いと exit 1
 - 出力からは、この PC のパス（`C:\Users\…`・`.cargo/registry`）を除く。入っていると止まる。
 - cargo-about はクレートしか書かないので、`vendor/` と `third_party/` の下に写したコードは、`scripts/licenses.py` の `VENDORED`（名前・版・ライセンス・ライセンスの文のファイル）から後ろに足す。
   アプリに入らないもの（`third_party/vst3sdk` は試験のプラグインを作るためだけ）は `NOT_SHIPPED` に理由と一緒に書く。
+  `third_party/ara_api`（ARA の C のヘッダー、Apache-2.0）は、`crates/xirius-ara` の Rust の束縛がそれを写した物なので `VENDORED` に載せ、SDK の `NOTICE.txt` もそこに置く（LIC-004）。ARA_Library・ARA_Examples・`3rdParty`・`install_JUCE_ARA.cmake` は写さない。
   どちらにも無いフォルダーがあると、`python scripts/licenses.py` も `--check` も止まる。ライセンスの文が書いたライセンスで始まらないときも止まる。
 
 ## 古くならないための確かめ

@@ -26,3 +26,10 @@ crates/xirius-core/src/dawproject/testdata are from the DAWproject repository
 (https://github.com/bitwig/dawproject), Copyright (c) 2020 Bitwig, MIT. Their licence text is
 testdata/reference/LICENSE; they are listed as copied code in THIRD-PARTY-LICENSES.txt. The
 DAWproject screen reads them to draw its pictures.
+
+The ARA host is written from the ARA Audio Random Access API 2.3.0 by Celemony Software GmbH,
+developed in cooperation with PreSonus Software Ltd. (Copyright (c) 2012-2025, Celemony Software
+GmbH), licensed under the Apache License 2.0 (https://github.com/Celemony/ARA_SDK). Its headers,
+licence text and NOTICE are in third_party/ara_api; the licence text is listed as copied code in
+THIRD-PARTY-LICENSES.txt and opens under 「Xirius について」. Xirius uses ARA_API only, not the
+ARA Library, the ARA Examples or what the SDK installer fetches.
