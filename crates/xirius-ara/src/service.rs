@@ -35,6 +35,7 @@ use crate::document::{Document, FactoryInfo, Note, RegionProps, SourceProps};
 use crate::host::{HostSide, Musical, Notice, Request, SourceAudio};
 use crate::sys::{self, Ref, RoleFlags};
 use crate::{Error, error};
+pub use xirius_vst3::{Caption, Placement};
 
 /// A plugin binary with an ARA factory, used on the ARA thread only.
 pub trait Binary {
@@ -60,6 +61,20 @@ pub trait Instance {
     fn prepare(&mut self, rate: f64, max_block: usize) -> Result<u32, Error>;
     fn set_transport(&mut self, playing: bool, position: i64);
     fn process(&mut self, left: &mut [f32], right: &mut [f32]);
+    /// Opens the instance's editor (its ARA editor view) in a window of its own, on the ARA
+    /// thread, which answers its messages.
+    fn open_editor(&mut self, _title: &str, _place: Placement) -> Result<Box<dyn Window>, Error> {
+        Err(error("the plugin has no editor"))
+    }
+}
+
+/// A plugin's editor window, on the ARA thread. Dropping it closes it.
+pub trait Window {
+    /// False once its close box hid it.
+    fn is_visible(&self) -> bool;
+    /// Brings it above the other windows, without taking the foreground.
+    fn raise(&self);
+    fn set_caption(&self, _caption: Caption) {}
 }
 
 /// Makes the binary, on the ARA thread.
@@ -195,6 +210,16 @@ enum Msg {
     Store(Sender<Option<(Vec<u8>, String)>>),
     Notes(u64, bool, Sender<Vec<Note>>),
     Probe(Sender<Probe>),
+    /// Opens the editor showing these clips, or raises it when it is open.
+    Edit {
+        title: String,
+        place: Placement,
+        clips: Vec<u64>,
+        /// The answer; without one, a failure is kept for [`Service::take_editor_error`].
+        tx: Option<Sender<Result<(), String>>>,
+    },
+    Caption(Caption),
+    CloseEditor,
     Stop,
 }
 
@@ -211,6 +236,10 @@ struct Shared {
     synced: AtomicU64,
     requests: Mutex<Vec<Request>>,
     info: Mutex<Option<FactoryInfo>>,
+    /// The plugin's editor window is open.
+    editing: AtomicBool,
+    /// Why the editor asked for without waiting did not open.
+    editor_error: Mutex<Option<String>>,
     notify: Arc<dyn Fn() + Send + Sync>,
 }
 
@@ -299,6 +328,8 @@ impl Service {
             synced: AtomicU64::new(0),
             requests: Mutex::new(Vec::new()),
             info: Mutex::new(None),
+            editing: AtomicBool::new(false),
+            editor_error: Mutex::new(None),
             notify,
         });
         let (host, tx) = match host {
@@ -454,6 +485,76 @@ impl Service {
         self.shared.generation.load(Ordering::Acquire)
     }
 
+    /// Opens the plugin's editor showing `clips` (by key), or raises it when it is open: one
+    /// window per document. It closes by its own close box, by [`Service::close_editor`] or
+    /// with the document; [`Service::editing`] tells. Waits for the ARA thread at most `limit`.
+    pub fn open_editor(
+        &self,
+        title: &str,
+        place: Placement,
+        clips: &[u64],
+        limit: Duration,
+    ) -> Result<(), String> {
+        if let Some(why) = self.crashed().or_else(|| self.failed()) {
+            return Err(why);
+        }
+        let (tx, rx) = mpsc::channel();
+        let sent = self.send(Msg::Edit {
+            title: title.to_string(),
+            place,
+            clips: clips.to_vec(),
+            tx: Some(tx),
+        });
+        if !sent {
+            return Err("the ARA thread has ended".into());
+        }
+        rx.recv_timeout(limit)
+            .unwrap_or_else(|_| Err("the plugin did not open its editor in time".into()))
+    }
+
+    /// As [`Service::open_editor`], without waiting (from the UI thread): a failure shows in
+    /// [`Service::take_editor_error`].
+    pub fn request_editor(
+        &self,
+        title: &str,
+        place: Placement,
+        clips: &[u64],
+    ) -> Result<(), String> {
+        if let Some(why) = self.crashed().or_else(|| self.failed()) {
+            return Err(why);
+        }
+        let sent = self.send(Msg::Edit {
+            title: title.to_string(),
+            place,
+            clips: clips.to_vec(),
+            tx: None,
+        });
+        if sent {
+            Ok(())
+        } else {
+            Err("the ARA thread has ended".into())
+        }
+    }
+
+    /// Why the editor last asked for with [`Service::request_editor`] did not open, once.
+    pub fn take_editor_error(&self) -> Option<String> {
+        lock(&self.shared.editor_error).take()
+    }
+
+    /// Whether the plugin's editor window is open.
+    pub fn editing(&self) -> bool {
+        self.shared.editing.load(Ordering::Acquire)
+    }
+
+    /// The editor's caption colours, as the app's theme changed.
+    pub fn set_editor_caption(&self, caption: Caption) {
+        self.send(Msg::Caption(caption));
+    }
+
+    pub fn close_editor(&self) {
+        self.send(Msg::CloseEditor);
+    }
+
     /// The plugin's requests to the transport since the last call.
     pub fn take_requests(&self) -> Vec<Request> {
         std::mem::take(&mut *lock(&self.shared.requests))
@@ -541,6 +642,14 @@ struct Ara {
     /// The plugin's module and the faults on its own threads when the document was made.
     module: usize,
     module_faults: u64,
+    editor: Option<EditorView>,
+}
+
+/// The plugin's editor: its window and the instance in the editor view role behind it.
+struct EditorView {
+    // Dropped before the instance it shows.
+    window: Box<dyn Window>,
+    instance: Box<dyn Instance>,
 }
 
 // The ARA threads ------------------------------------------------------------------------------
@@ -750,6 +859,30 @@ impl Slot {
                     drop(tx.send(ara.notes(key, of_mod)))
                 }
                 (Slot::Open(ara), Msg::Probe(tx)) => drop(tx.send(ara.probe())),
+                (
+                    Slot::Open(ara),
+                    Msg::Edit {
+                        title,
+                        place,
+                        clips,
+                        tx,
+                    },
+                ) => {
+                    let opened = ara.edit(&title, place, &clips);
+                    answer_edit(&ara.shared, tx, opened);
+                }
+                (Slot::Open(ara), Msg::Caption(c)) => {
+                    if let Some(e) = &ara.editor {
+                        e.window.set_caption(c);
+                    }
+                }
+                (Slot::Open(ara), Msg::CloseEditor) => ara.close_editor(),
+                (Slot::Failed(shared), Msg::Edit { tx, .. }) => {
+                    let why = lock(&shared.failed).clone();
+                    let why = why.unwrap_or_else(|| "the plugin failed".into());
+                    answer_edit(shared, tx, Err(why));
+                }
+                (Slot::Failed(_), Msg::Caption(_) | Msg::CloseEditor) => {}
                 (Slot::Failed(_), Msg::Store(tx)) => drop(tx.send(None)),
                 (Slot::Failed(_), Msg::Notes(_, _, tx)) => drop(tx.send(Vec::new())),
                 (Slot::Failed(_), Msg::Probe(tx)) => drop(tx.send(Probe::default())),
@@ -764,6 +897,18 @@ impl Slot {
             ara.teardown();
         }
         shared.finished.store(true, Ordering::Release);
+    }
+}
+
+fn answer_edit(shared: &Shared, tx: Option<Sender<Result<(), String>>>, r: Result<(), String>) {
+    match tx {
+        Some(tx) => drop(tx.send(r)),
+        None => {
+            if let Err(why) = r {
+                *lock(&shared.editor_error) = Some(why);
+                shared.changed();
+            }
+        }
     }
 }
 
@@ -789,11 +934,15 @@ fn open(loader: Loader, archive: Option<(Vec<u8>, String)>, shared: Arc<Shared>)
 fn host_loop(rx: &Receiver<Job>, host: &Host) {
     let mut slots: Vec<(u64, Slot)> = Vec::new();
     let mut busy = false;
+    let mut windows = false;
     loop {
         pump();
-        // While a render is under way, the next turn comes at once.
+        // While a render is under way, the next turn comes at once; while an editor is open,
+        // soon, so its window answers.
         let wait = if busy {
             Duration::ZERO
+        } else if windows {
+            Duration::from_millis(5)
         } else {
             Duration::from_millis(30)
         };
@@ -816,6 +965,7 @@ fn host_loop(rx: &Receiver<Job>, host: &Host) {
         }
         // Messages for documents already closed are dropped, and so are their answers.
         busy = false;
+        windows = false;
         let mut i = 0;
         while i < slots.len() {
             let mine = msgs.remove(&slots[i].0).unwrap_or_default();
@@ -825,6 +975,7 @@ fn host_loop(rx: &Receiver<Job>, host: &Host) {
             }
             if let Slot::Open(ara) = &mut slots[i].1 {
                 busy |= ara.tick();
+                windows |= ara.editor.is_some();
             }
             i += 1;
         }
@@ -886,6 +1037,7 @@ fn start(
         notices_off_thread: 0,
         module,
         module_faults: contain::faults_in(module),
+        editor: None,
     })
 }
 
@@ -1133,6 +1285,7 @@ impl Ara {
     /// One turn: the plugin's notifications, the analysis, and a step of a render. Whether a
     /// render is under way.
     fn tick(&mut self) -> bool {
+        self.watch_editor();
         self.doc.notify_model_updates();
         let here = std::thread::current().id();
         let mut dirty = false;
@@ -1327,6 +1480,60 @@ impl Ara {
         true
     }
 
+    fn edit(&mut self, title: &str, place: Placement, keys: &[u64]) -> Result<(), String> {
+        if self.editor.is_none() {
+            let dc = self.doc.controller_ref();
+            let mut instance = self
+                .binary
+                .instance(dc, sys::ROLES_ALL, sys::ROLE_EDITOR_VIEW)
+                .map_err(|e| e.0)?;
+            let window = contain::call(|| instance.open_editor(title, place)).map_err(|e| e.0)?;
+            self.editor = Some(EditorView { window, instance });
+            self.shared.editing.store(true, Ordering::Release);
+            self.shared.changed();
+        }
+        let e = self.editor.as_ref().expect("made above");
+        let regions: Vec<Ref> = keys
+            .iter()
+            .filter_map(|k| self.clips.get(k).map(|c| c.region))
+            .collect();
+        let ext = e.instance.extension();
+        if !regions.is_empty()
+            && !ext.editor_view_interface.is_null()
+            && !ext.editor_view_ref.is_null()
+        {
+            let selection = sys::ViewSelection {
+                struct_size: sys::VIEW_SELECTION_SIZE,
+                playback_region_refs_count: regions.len(),
+                playback_region_refs: regions.as_ptr(),
+                region_sequence_refs_count: 0,
+                region_sequence_refs: std::ptr::null(),
+                time_range: std::ptr::null(),
+            };
+            // SAFETY: the editor view of a live instance; the selection outlives the call.
+            contain::call(|| unsafe {
+                ((*ext.editor_view_interface).notify_selection)(ext.editor_view_ref, &selection)
+            });
+        }
+        e.window.raise();
+        Ok(())
+    }
+
+    /// Takes the editor down once its close box hid it.
+    fn watch_editor(&mut self) {
+        if self.editor.as_ref().is_some_and(|e| !e.window.is_visible()) {
+            self.close_editor();
+        }
+    }
+
+    fn close_editor(&mut self) {
+        if let Some(e) = self.editor.take() {
+            contain::call(|| drop(e));
+            self.shared.editing.store(false, Ordering::Release);
+            self.shared.changed();
+        }
+    }
+
     fn publish(&self) {
         let mut states = lock(&self.shared.states);
         for (key, c) in &self.clips {
@@ -1416,6 +1623,7 @@ impl Ara {
     /// Takes the model down in the order ARA asks: instances, then regions, modifications
     /// and sources, then the context; the document last (when `self` drops).
     fn teardown(&mut self) {
+        self.close_editor();
         for c in self.clips.values_mut() {
             c.instance = None;
         }

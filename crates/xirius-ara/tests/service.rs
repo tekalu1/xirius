@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use xirius_ara::fake::{self, Config};
 use xirius_ara::host::Request;
-use xirius_ara::service::{modification_id, source_id};
+use xirius_ara::service::{Placement, modification_id, source_id};
 use xirius_ara::{ClipSpec, Phase, Service, Song, SourceAudio};
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -471,5 +471,43 @@ fn an_archive_waits_for_the_first_clips() {
     // Handed over (and refused, being of another kind) only now.
     until("the archive", || s.failed().is_some());
     assert!(s.close(Instant::now() + WAIT));
+    no_violations();
+}
+
+/// PLG-036: the plugin's editor opens with the clips shown in it, one window per document; a
+/// second open raises it and shows the new clips, and its close box or the document's end takes
+/// it down. The only test here that opens editors (the fake's windows are per process).
+#[test]
+fn the_editor_opens_once_per_document_and_closes_by_its_close_box() {
+    let s = start(Config::default(), None);
+    let a = tone(48_000.0, 1.0, 0.5);
+    s.sync(&song(vec![
+        clip(9101, "editor.wav", &a, 0.0, 0.0, 0.5),
+        clip(9102, "editor.wav", &a, 0.5, 0.5, 0.5),
+    ]));
+    ready(&s, 9101);
+    let mine = || {
+        fake::windows()
+            .iter()
+            .filter(|t| *t == "editor test")
+            .count()
+    };
+    assert!(!s.editing());
+    s.open_editor("editor test", Placement::default(), &[9101, 9102], WAIT)
+        .unwrap();
+    assert!(s.editing());
+    assert_eq!(mine(), 1);
+    assert_eq!(fake::selection(), 2);
+    s.open_editor("editor test", Placement::default(), &[9102], WAIT)
+        .unwrap();
+    assert_eq!(mine(), 1, "a second open raises the window it has");
+    assert_eq!(fake::selection(), 1);
+    fake::close_windows();
+    until("the editor taken down", || !s.editing());
+    assert_eq!(mine(), 0);
+    s.open_editor("editor test", Placement::default(), &[9101], WAIT)
+        .unwrap();
+    assert!(s.close(Instant::now() + WAIT));
+    assert_eq!(mine(), 0, "the document's end closes its editor");
     no_violations();
 }

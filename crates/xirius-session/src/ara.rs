@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::{Duration, Instant, SystemTime};
 
-use xirius_ara::service::{Binary, Loader, Rendered, source_id};
+use xirius_ara::service::{Binary, Caption, Loader, Placement, Rendered, source_id};
 use xirius_ara::{ClipSpec, Phase, Service, Song, SourceAudio};
 use xirius_core::model::{Clip, ClipBody, Project, TrackKind};
 use xirius_engine::AudioData;
@@ -548,6 +548,10 @@ pub struct Report {
     pub working: usize,
     /// The analysis's progress over those clips, 0 to 1.
     pub progress: f32,
+    /// Each clip's phase, by its key (the clip id), in order.
+    pub phases: Vec<(u64, Phase)>,
+    /// The plugin's editor window is open.
+    pub editing: bool,
 }
 
 /// The documents a builder holds, shared with its copies on the workers
@@ -729,6 +733,9 @@ impl Held {
                 } else {
                     working.iter().map(|c| c.progress).sum::<f32>() / working.len() as f32
                 };
+                let mut phases: Vec<(u64, Phase)> =
+                    states.iter().map(|(k, c)| (*k, c.phase)).collect();
+                phases.sort_by_key(|(k, _)| *k);
                 Report {
                     plugin: d.plugin.clone(),
                     name: d.name.clone(),
@@ -738,11 +745,61 @@ impl Held {
                     clips: states.len(),
                     working: working.len(),
                     progress,
+                    phases,
+                    editing: s.editing(),
                 }
             })
             .collect();
         out.sort_by(|a, b| a.plugin.cmp(&b.plugin));
         out
+    }
+
+    /// Opens `plugin`'s editor showing `clips` (by key), or raises it (PLG-036), without
+    /// waiting: one window per document, on its ARA thread; a failure comes in
+    /// [`Held::take_editor_errors`]. Its edits come into the song with [`take_archives`].
+    pub fn open_editor(
+        &self,
+        plugin: &str,
+        title: &str,
+        place: Placement,
+        clips: &[u64],
+    ) -> Result<(), String> {
+        let doc = self
+            .doc(plugin)
+            .ok_or_else(|| "the plugin's document is not open".to_string())?;
+        doc.service.request_editor(title, place, clips)
+    }
+
+    /// Why editors asked for did not open, by plugin, once.
+    pub fn take_editor_errors(&self) -> Vec<(String, String)> {
+        let docs = lock(&self.docs);
+        let mut out: Vec<(String, String)> = docs
+            .iter()
+            .filter_map(|(k, d)| d.service.take_editor_error().map(|e| (k.clone(), e)))
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// The plugins whose editor window is open.
+    pub fn editing(&self) -> Vec<String> {
+        let docs = lock(&self.docs);
+        let mut out: Vec<String> = docs
+            .iter()
+            .filter(|(_, d)| d.service.editing())
+            .map(|(k, _)| k.clone())
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// The editors' caption colours, as the app's theme changed.
+    pub fn set_editor_caption(&self, caption: Caption) {
+        for d in lock(&self.docs).values() {
+            if d.service.editing() {
+                d.service.set_editor_caption(caption);
+            }
+        }
     }
 
     /// Lets go of the documents that crashed or failed (or of `plugin`'s), so the next build

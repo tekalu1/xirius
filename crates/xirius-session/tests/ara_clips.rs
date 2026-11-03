@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 use xirius_ara::fake::{self, Config};
-use xirius_ara::service::modification_id;
+use xirius_ara::service::{Placement, modification_id};
 use xirius_core::id::ClipId;
 use xirius_core::model::{Clip, Project};
 use xirius_core::session::{RunOptions, RunResult, Session};
@@ -171,6 +171,27 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     assert!((peak(&mut player, &p) - 0.5).abs() < 1e-3);
     // ARC-025: nothing changed in the plugin, nothing changes in the song.
     assert!(!xirius_session::ara::take_archives(&mut s, player.ara()).unwrap());
+
+    // PLG-036: the plugin's editor opens on its ARA thread without the caller waiting, and the
+    // report says so until its close box closes it.
+    let key = a.parse::<ClipId>().unwrap().0;
+    player
+        .ara()
+        .open_editor(PLUGIN, "Fake ARA", Placement::default(), &[key])
+        .unwrap();
+    until("the editor", || player.ara().editing() == [PLUGIN]);
+    let report = &player.ara().reports()[0];
+    assert!(report.editing);
+    assert_eq!(report.phases, [(key, xirius_ara::Phase::Ready)]);
+    assert!(player.ara().take_editor_errors().is_empty());
+    assert!(
+        player
+            .ara()
+            .open_editor("nope", "x", Placement::default(), &[key])
+            .is_err()
+    );
+    fake::close_windows();
+    until("the editor closed", || player.ara().editing().is_empty());
 
     // PLG-037: an edit in the plugin is heard and its archive goes into the song, in place.
     let steps = s.steps().len();

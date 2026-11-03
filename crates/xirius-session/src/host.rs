@@ -817,6 +817,34 @@ impl SessionHost {
         self.builder.ara().reports()
     }
 
+    /// Opens `plugin`'s ARA editor showing `clips`, or raises it (PLG-036), without waiting.
+    /// When it closes, [`SessionHost::pull_plugin_states`] takes its edits into the song.
+    pub fn open_ara_editor(
+        &self,
+        plugin: &str,
+        title: &str,
+        place: xirius_ara::service::Placement,
+        clips: &[ClipId],
+    ) -> Result<(), String> {
+        let keys: Vec<u64> = clips.iter().map(|c| c.0).collect();
+        self.builder.ara().open_editor(plugin, title, place, &keys)
+    }
+
+    /// The ARA plugins whose editor window is open.
+    pub fn ara_editing(&self) -> Vec<String> {
+        self.builder.ara().editing()
+    }
+
+    /// Why ARA editors asked for did not open, by plugin, once.
+    pub fn take_ara_editor_errors(&self) -> Vec<(String, String)> {
+        self.builder.ara().take_editor_errors()
+    }
+
+    /// The ARA editors' caption colours, as the app's theme changed.
+    pub fn set_ara_editor_caption(&self, caption: xirius_ara::service::Caption) {
+        self.builder.ara().set_editor_caption(caption);
+    }
+
     /// Opens again, from the song's archive, the ARA documents that crashed (or `plugin`'s);
     /// their clips play their files until then (PLG-058). How many.
     pub fn restart_ara(&self, plugin: Option<&str>) -> usize {

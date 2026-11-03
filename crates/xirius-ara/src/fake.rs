@@ -14,6 +14,9 @@
 //!   persistent ids;
 //! - its playback renderer plays the regions added to it: the source times the gain.
 //!
+//! - its editor ([`windows`]) is a window that is not on the screen: [`close_windows`] closes
+//!   them as their close box would, and [`selection`] tells what the host showed in it.
+//!
 //! It checks the host against ARA's rules ([`violations`]): a model change outside editing, a
 //! region added to a renderer that is set up to process, new source properties while the
 //! samples may be read, objects left when the document is destroyed. It can fault or hang
@@ -27,7 +30,7 @@ use std::sync::{Arc, Barrier, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use crate::service::{Binary, Instance, Loader};
+use crate::service::{Binary, Instance, Loader, Placement, Window};
 use crate::sys::{self, Bool, ContentType, FALSE, Ref, RoleFlags, TRUE};
 use crate::{Error, contain, error};
 
@@ -66,6 +69,8 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 static VIOLATIONS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static LIVE_DOCUMENTS: AtomicI64 = AtomicI64::new(0);
 static EDITS: Mutex<Vec<(String, f32)>> = Mutex::new(Vec::new());
+static WINDOWS: Mutex<Vec<(String, Arc<AtomicBool>)>> = Mutex::new(Vec::new());
+static SELECTION: AtomicU64 = AtomicU64::new(0);
 
 fn violation(what: impl Into<String>) {
     lock(&VIOLATIONS).push(what.into());
@@ -85,6 +90,29 @@ pub fn live_documents() -> i64 {
 /// the plugin's window. Applied at the next `notifyModelUpdates`.
 pub fn edit(modification: &str, gain: f32) {
     lock(&EDITS).push((modification.to_string(), gain));
+}
+
+/// The titles of the editor windows open, in every document of this process.
+pub fn windows() -> Vec<String> {
+    let mut all = lock(&WINDOWS);
+    all.retain(|(_, open)| Arc::strong_count(open) > 1);
+    all.iter()
+        .filter(|(_, open)| open.load(Ordering::Acquire))
+        .map(|(t, _)| t.clone())
+        .collect()
+}
+
+/// Closes every editor window as its close box would: it is hidden, and the host takes it
+/// down.
+pub fn close_windows() {
+    for (_, open) in lock(&WINDOWS).iter() {
+        open.store(false, Ordering::Release);
+    }
+}
+
+/// The number of regions the host last showed in an editor.
+pub fn selection() -> u64 {
+    SELECTION.load(Ordering::Acquire)
 }
 
 /// The loader of a fake plugin binary for [`crate::Service`].
@@ -1223,6 +1251,43 @@ static RENDERER: Shared<sys::PlaybackRendererInterface> = Shared(sys::PlaybackRe
     remove_playback_region: remove_region,
 });
 
+unsafe extern "C" fn notify_selection(_view: Ref, selection: *const sys::ViewSelection) {
+    if selection.is_null() {
+        violation("a null selection");
+        return;
+    }
+    // SAFETY: the host's selection, valid during the call.
+    let n = unsafe { (*selection).playback_region_refs_count };
+    SELECTION.store(n as u64, Ordering::Release);
+}
+
+unsafe extern "C" fn notify_hide_region_sequences(_view: Ref, _count: usize, _refs: *const Ref) {}
+
+static EDITOR_VIEW: Shared<sys::EditorViewInterface> = Shared(sys::EditorViewInterface {
+    struct_size: std::mem::size_of::<sys::EditorViewInterface>(),
+    notify_selection,
+    notify_hide_region_sequences,
+});
+
+/// The fake's editor window: only a flag.
+struct FakeWindow {
+    open: Arc<AtomicBool>,
+}
+
+impl Window for FakeWindow {
+    fn is_visible(&self) -> bool {
+        self.open.load(Ordering::Acquire)
+    }
+
+    fn raise(&self) {}
+}
+
+impl Drop for FakeWindow {
+    fn drop(&mut self) {
+        self.open.store(false, Ordering::Release);
+    }
+}
+
 struct FakeBinary {
     config: Config,
 }
@@ -1262,6 +1327,7 @@ impl Binary for FakeBinary {
             active: AtomicBool::new(false),
         });
         let plays = assigned & sys::ROLE_PLAYBACK_RENDERER != 0;
+        let views = assigned & sys::ROLE_EDITOR_VIEW != 0;
         let ext = sys::PlugInExtensionInstance {
             struct_size: std::mem::size_of::<sys::PlugInExtensionInstance>(),
             plug_in_extension_ref: std::ptr::null_mut(),
@@ -1274,12 +1340,21 @@ impl Binary for FakeBinary {
             playback_renderer_interface: if plays { &RENDERER.0 } else { std::ptr::null() },
             editor_renderer_ref: std::ptr::null_mut(),
             editor_renderer_interface: std::ptr::null(),
-            editor_view_ref: std::ptr::null_mut(),
-            editor_view_interface: std::ptr::null(),
+            editor_view_ref: if views {
+                &*renderer as *const Renderer as Ref
+            } else {
+                std::ptr::null_mut()
+            },
+            editor_view_interface: if views {
+                &EDITOR_VIEW.0
+            } else {
+                std::ptr::null()
+            },
         };
         Ok(Box::new(FakeInstance {
             renderer,
             ext,
+            views,
             rate: 0.0,
             position: 0,
         }))
@@ -1289,6 +1364,7 @@ impl Binary for FakeBinary {
 struct FakeInstance {
     renderer: Box<Renderer>,
     ext: sys::PlugInExtensionInstance,
+    views: bool,
     rate: f64,
     position: i64,
 }
@@ -1306,6 +1382,16 @@ impl Instance for FakeInstance {
 
     fn set_transport(&mut self, _playing: bool, position: i64) {
         self.position = position;
+    }
+
+    fn open_editor(&mut self, title: &str, _place: Placement) -> Result<Box<dyn Window>, Error> {
+        if !self.views {
+            violation("an editor opened on an instance without the editor view role");
+            return Err(error("not an editor view"));
+        }
+        let open = Arc::new(AtomicBool::new(true));
+        lock(&WINDOWS).push((title.to_string(), open.clone()));
+        Ok(Box::new(FakeWindow { open }))
     }
 
     fn process(&mut self, left: &mut [f32], right: &mut [f32]) {

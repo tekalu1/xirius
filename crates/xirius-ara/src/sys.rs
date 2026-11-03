@@ -508,6 +508,8 @@ ara_struct! {
 /// The smallest document controller the header allows (`kARADocumentControllerInterfaceMinSize`).
 pub const DOCUMENT_CONTROLLER_MIN_SIZE: usize =
     implemented_size!(DocumentControllerInterface, destroy_content_reader);
+/// The whole `ARAViewSelection`.
+pub const VIEW_SELECTION_SIZE: usize = implemented_size!(ViewSelection, time_range);
 /// `kARAFactoryMinSize`.
 pub const FACTORY_MIN_SIZE: usize =
     implemented_size!(Factory, supported_playback_transformation_flags);

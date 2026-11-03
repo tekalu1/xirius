@@ -14,9 +14,9 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 
 use vst3::Steinberg::{TUID, tresult};
-use xirius_vst3::{AudioPart, ClassInfo, Module, Plugin};
+use xirius_vst3::{AudioPart, Caption, ClassInfo, Editor, Module, Placement, Plugin};
 
-use crate::service::{Binary, Instance};
+use crate::service::{Binary, Instance, Window};
 use crate::sys::{self, Ref, RoleFlags};
 use crate::{Error, contain, error};
 
@@ -258,5 +258,27 @@ impl Instance for Vst3Instance {
         if let Some(a) = &mut self.audio {
             contain::call(|| a.process(left, right, &[]));
         }
+    }
+
+    fn open_editor(&mut self, title: &str, place: Placement) -> Result<Box<dyn Window>, Error> {
+        let editor = self
+            .plugin
+            .open_editor_at(title, place)
+            .map_err(|e| error(e.to_string()))?;
+        Ok(Box::new(editor))
+    }
+}
+
+impl Window for Editor {
+    fn is_visible(&self) -> bool {
+        Editor::is_visible(self)
+    }
+
+    fn raise(&self) {
+        Editor::raise(self);
+    }
+
+    fn set_caption(&self, caption: Caption) {
+        Editor::set_caption(self, caption);
     }
 }
