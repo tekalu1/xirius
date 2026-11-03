@@ -843,6 +843,27 @@ fn saving_a_preset_names_the_device_after_it() {
     );
 }
 
+/// L-pre-2: the song's «hall» is the file «Hall», as the session finds it: the tag names the
+/// file, so the list's ✓ and ‹ › find its row, and its knobs tell whether the device is off.
+#[test]
+fn the_tag_finds_a_preset_whatever_its_letter_case() {
+    let (mut s, g, t, _) = studio();
+    let id = compressor(&mut s, t);
+    nudge(&mut s, &g, id, "threshold");
+    assert!(s.save_preset(id, "Hall", false));
+    let mut x = insert(&s, id);
+    x.preset = Some("hall".into());
+    let presets = &s.instruments.presets;
+    let def = x.builtin().unwrap();
+    assert_eq!(
+        presets.values_of(def, "hall"),
+        presets.values_of(def, "Hall")
+    );
+    assert!(presets.values_of(def, "hall").is_some());
+    assert_eq!(presets.tag_of(&x), ("Hall".to_string(), false));
+    assert_eq!(presets.origin(&x).as_deref(), Some("Hall"));
+}
+
 /// 名前を付けて保存… asks for the name in the list's place, starting with a name no preset
 /// has: the preset's with a number.
 #[test]

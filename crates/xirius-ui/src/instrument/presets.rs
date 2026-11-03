@@ -70,15 +70,24 @@ impl Presets {
         }
     }
 
+    /// The device's preset file named `name`, letter case aside as the session finds it
+    /// (L-pre-2): the one of that very name first.
+    fn file_of(&self, def: &BuiltinDef, name: &str) -> Option<&Saved> {
+        let saved = self.saved.as_ref()?;
+        let mine = || saved.iter().filter(|s| s.device == def.uid);
+        mine().find(|s| s.name == name).or_else(|| {
+            let fold = |s: &str| s.trim().to_lowercase();
+            mine().find(|s| fold(&s.name) == fold(name))
+        })
+    }
+
     /// The knobs' values (0..1) of the preset `name`, a knob its file leaves out at its
     /// default.
     pub fn values_of(&self, def: &BuiltinDef, name: &str) -> Option<Vec<f64>> {
-        let Some(saved) = self.saved.as_ref().filter(|_| name != DEFAULT) else {
+        if self.saved.is_none() || name == DEFAULT {
             return preset_values(def, name);
-        };
-        let s = saved
-            .iter()
-            .find(|s| s.device == def.uid && s.name == name)?;
+        }
+        let s = self.file_of(def, name)?;
         Some(
             def.params
                 .iter()
@@ -106,7 +115,11 @@ impl Presets {
                 // Until the files were read once, only the factory set is known.
                 None => self.saved.is_some(),
             };
-            return (name.to_string(), off);
+            // By the file's own name, so the list's ✓ and ‹ › find its row.
+            let name = self
+                .file_of(def, name)
+                .map_or_else(|| name.to_string(), |s| s.name.clone());
+            return (name, off);
         }
         let found = self
             .names(def)
