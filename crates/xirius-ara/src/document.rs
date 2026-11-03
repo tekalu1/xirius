@@ -64,9 +64,12 @@ static ASSERT_FUNCTION: sys::AssertFunction = on_assert;
 /// A factory's initialization in this process.
 #[derive(Clone, Copy)]
 enum Init {
-    /// Under way on some thread since then; the lock is not held through the plugin's call.
-    Running(Instant),
+    /// Under way since then on the thread of the handle ([`contain::this_thread`]); the lock
+    /// is not held through the plugin's call.
+    Running(Instant, usize),
     Done(sys::ApiGeneration),
+    /// Its thread was ended in the call (a contained fault): it is not called again.
+    Ended,
 }
 
 /// Factories initialized in this process, with the generation they were given.
@@ -75,7 +78,7 @@ enum Init {
 static INITIALIZED: Mutex<Vec<(usize, Init)>> = Mutex::new(Vec::new());
 
 /// How long a factory's initialization on another thread is waited for. One that takes
-/// longer was ended by the watch (or hangs): the factory is not used again.
+/// longer hangs: the factory is not used again. One whose thread was ended fails at once.
 pub const INIT_WAIT: Duration = Duration::from_secs(35);
 
 /// Initializes `factory` once and returns the API generation it runs at.
@@ -99,15 +102,26 @@ unsafe fn initialize_within(
         return Err(error("the plugin has no ARA factory"));
     }
     let lock = || INITIALIZED.lock().unwrap_or_else(PoisonError::into_inner);
+    let ended = || error("the plugin's ARA factory went down in its initialization");
     let mut done = loop {
-        let done = lock();
+        let mut done = lock();
         match done
             .iter()
             .find(|(f, _)| *f == factory as usize)
             .map(|e| e.1)
         {
             Some(Init::Done(g)) => return Ok(g),
-            Some(Init::Running(since)) => {
+            Some(Init::Ended) => return Err(ended()),
+            // A fault in the call ended its thread: nothing will finish it, so its callers do
+            // not wait (and the factory is not called again in this process).
+            Some(Init::Running(_, thread)) if contain::thread_ended(thread) => {
+                if let Some(e) = done.iter_mut().find(|(f, _)| *f == factory as usize) {
+                    e.1 = Init::Ended;
+                }
+                contain::close_thread(thread);
+                return Err(ended());
+            }
+            Some(Init::Running(since, _)) => {
                 drop(done);
                 if since.elapsed() >= wait {
                     return Err(error(
@@ -149,7 +163,8 @@ unsafe fn initialize_within(
     };
     // The lock is let go through the call: a call that never comes back (its thread ended by
     // the watch) must not keep the other plugins' documents from being made.
-    done.push((factory as usize, Init::Running(Instant::now())));
+    let thread = contain::this_thread();
+    done.push((factory as usize, Init::Running(Instant::now(), thread)));
     drop(done);
     contain::call(|| {
         // SAFETY: a configuration that lives through the call; the assert function is static.
@@ -159,6 +174,7 @@ unsafe fn initialize_within(
     if let Some(e) = done.iter_mut().find(|(f, _)| *f == factory as usize) {
         e.1 = Init::Done(generation);
     }
+    contain::close_thread(thread);
     Ok(generation)
 }
 
@@ -841,5 +857,47 @@ mod tests {
             unsafe { initialize(slow as *const sys::Factory) }.unwrap(),
             g
         );
+    }
+
+    #[cfg(windows)]
+    unsafe extern "C" fn ending_init(_c: *const sys::InterfaceConfiguration) {
+        // As the last-chance filter does to a thread that faulted in the plugin.
+        // SAFETY: ends this test's own thread, which holds nothing of the host's.
+        unsafe { windows_sys::Win32::System::Threading::ExitThread(contain::CONTAINED) }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn a_factory_whose_initialization_went_down_fails_at_once() {
+        // SAFETY: the fake's factory is a static.
+        let mut f = unsafe { *crate::fake::factory() };
+        f.initialize_ara_with_configuration = ending_init;
+        let ending = Box::leak(Box::new(f)) as *const sys::Factory as usize;
+        // The thread ends in the call; its handle is not joined (its result never comes).
+        // SAFETY: a leaked factory, valid for the process.
+        let t = std::thread::spawn(move || unsafe { initialize(ending as *const sys::Factory) });
+        use std::os::windows::io::AsRawHandle;
+        // SAFETY: the spawned thread's handle, live while `t` is.
+        let waited = unsafe {
+            windows_sys::Win32::System::Threading::WaitForSingleObject(t.as_raw_handle(), 10_000)
+        };
+        assert_eq!(waited, windows_sys::Win32::Foundation::WAIT_OBJECT_0);
+        drop(t);
+        let at = Instant::now();
+        // SAFETY: as above.
+        let first = unsafe { initialize(ending as *const sys::Factory) };
+        assert!(first.is_err());
+        assert!(at.elapsed() < Duration::from_secs(2), "{:?}", at.elapsed());
+        // SAFETY: as above.
+        assert!(unsafe { initialize(ending as *const sys::Factory) }.is_err());
+        assert!(matches!(
+            INITIALIZED
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .iter()
+                .find(|(f, _)| *f == ending)
+                .map(|e| e.1),
+            Some(Init::Ended)
+        ));
     }
 }

@@ -143,6 +143,40 @@ pub fn faults_in(address: usize) -> u64 {
     slot_of(address).map_or(0, |i| RANGE_FAULTS[i].load(Ordering::Acquire))
 }
 
+/// A handle to this thread, to see later whether it was ended ([`thread_ended`]); 0 when none
+/// could be had. [`close_thread`] lets it go.
+pub fn this_thread() -> usize {
+    #[cfg(windows)]
+    // SAFETY: opens this thread's own handle, for waiting only.
+    unsafe {
+        OpenThread(THREAD_SYNCHRONIZE, 0, GetCurrentThreadId()) as usize
+    }
+    #[cfg(not(windows))]
+    0
+}
+
+/// Whether the thread of a handle from [`this_thread`] has ended (a fault on it was contained,
+/// or the watch ended it). False for 0.
+pub fn thread_ended(thread: usize) -> bool {
+    #[cfg(windows)]
+    if thread != 0 {
+        // SAFETY: a handle from `this_thread`, not closed yet.
+        return unsafe { WaitForSingleObject(thread as HANDLE, 0) } == WAIT_OBJECT_0;
+    }
+    let _ = thread;
+    false
+}
+
+/// Lets go a handle from [`this_thread`].
+pub fn close_thread(thread: usize) {
+    #[cfg(windows)]
+    if thread != 0 {
+        // SAFETY: a handle from `this_thread`, closed once.
+        unsafe { CloseHandle(thread as HANDLE) };
+    }
+    let _ = thread;
+}
+
 /// Registers the address range `[start, end)` of plugin code. Returns false when the table is
 /// full; a range already there is not added twice.
 pub fn add_range(start: usize, end: usize) -> bool {
