@@ -12,6 +12,7 @@
 //! The crate has no dependencies, so the project model, the engine and the UI can all read it.
 
 mod catalog;
+pub mod pitch;
 
 pub use catalog::{
     BUILTINS, COMPRESSOR, DELAY, DIVISIONS, DRUM_KIT, EQ, FEELS, KITS, LIMITER, REVERB, SAMPLER,

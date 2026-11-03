@@ -705,7 +705,7 @@ pub fn paint_roll(
             };
             window.paint_quad(key);
             if pitch.is_multiple_of(12) {
-                let label = format!("C{}", i32::from(pitch) / 12 - 1);
+                let label = xirius_params::pitch::name(pitch);
                 text(
                     window,
                     cx,

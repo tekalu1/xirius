@@ -73,6 +73,8 @@ pub enum ArgType {
     Position,
     /// `1/16`, `1/8t`, `1/4d` or a tick count.
     Grid,
+    /// A MIDI pitch: a note name with C3 = 60 (`C3`, `F#2`, UI-335) or the number.
+    Pitch,
     /// A list of objects (JSON text is accepted too, for the command line).
     Objects,
 }
@@ -147,6 +149,10 @@ impl ArgDef {
     pub fn grid(name: &'static str, help: &'static str) -> ArgDef {
         Self::new(name, ArgType::Grid, help)
     }
+    /// A pitch, 0..=127, given as a number or a note name (UI-335).
+    pub fn pitch(name: &'static str, help: &'static str) -> ArgDef {
+        Self::new(name, ArgType::Pitch, help).range(0.0, 127.0)
+    }
     /// Also accepts these names for the argument.
     pub fn alias(mut self, names: &'static [&'static str]) -> ArgDef {
         self.aliases = names;
@@ -203,6 +209,10 @@ impl ArgDef {
                 "description": "1/16・1/8t（3 連符）・1/4d（付点）または tick 数",
             }),
             ArgType::Objects => json!({"type": "array", "items": {"type": "object"}}),
+            ArgType::Pitch => json!({
+                "oneOf": [{"type": "integer"}, {"type": "string"}],
+                "description": "ノート番号 0〜127 または音名（C3 = 60、例: F#2）",
+            }),
         };
         let obj = s.as_object_mut().expect("object");
         let help = if self.help.is_empty() {
@@ -593,6 +603,19 @@ fn coerce(cmd: &str, a: &ArgDef, v: &Value) -> CmdResult<Value> {
             } else {
                 n
             };
+            json!(n)
+        }
+        ArgType::Pitch => {
+            let n = match v {
+                Value::Number(n) => n.as_i64(),
+                Value::String(s) => match xirius_params::pitch::parse(s) {
+                    Some(p) => Some(i64::from(p)),
+                    None => s.trim().parse::<i64>().ok(),
+                },
+                _ => None,
+            }
+            .ok_or_else(|| bad("ノート番号か音名（C3 = 60）"))?;
+            checked(n as f64)?;
             json!(n)
         }
         ArgType::Float => {

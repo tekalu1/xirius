@@ -3684,7 +3684,7 @@ MIDI 学習
 | `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
 | `length` | — | `{"default":"1/16","oneOf":[{"type":"integer"},{"type":"string"}]}` | 長さ（1/4・1/8t・tick 数）（1/16・1/8t（3 連符）・1/4d（付点）または tick 数） |
 | `overlap` | — | `{"enum":["allow","trim"],"type":"string"}` | 同じピッチのノートの重なり: trim で前のノートの終わりを後のノートの頭で切り詰め、完全に覆われたノートを消す（省略時は設定の edit.note.overlap） |
-| `pitch` | 必須 | `{"maximum":127.0,"minimum":0.0,"type":"integer"}` | ピッチ（MIDI ノート番号 0〜127。60 が中央の C） |
+| `pitch` | 必須 | `{"maximum":127.0,"minimum":0.0,"oneOf":[{"type":"integer"},{"type":"string"}]}` | ピッチ（音名か MIDI ノート番号。C3 = 60）（ノート番号 0〜127 または音名（C3 = 60、例: F#2）） |
 | `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
 | `velocity` | — | `{"default":100,"maximum":127.0,"minimum":1.0,"type":"integer"}` | ベロシティ 1〜127 |
 | `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
@@ -5748,7 +5748,7 @@ MIDI 学習
 | 引数 | 必須 | 型・範囲・既定値 | 内容 |
 |---|---|---|---|
 | `clip` | 必須 | `{"type":"string"}` | クリップ（clip の ID） |
-| `pitch` | 必須 | `{"maximum":127.0,"minimum":0.0,"type":"integer"}` | 行のノート番号 |
+| `pitch` | 必須 | `{"maximum":127.0,"minimum":0.0,"oneOf":[{"type":"integer"},{"type":"string"}]}` | 行のノート番号か音名（C3 = 60）（ノート番号 0〜127 または音名（C3 = 60、例: F#2）） |
 | `show` | — | `{"type":"boolean"}` | 隠した行を戻す |
 
 ## `roll.drum.move`
@@ -5765,7 +5765,7 @@ MIDI 学習
 |---|---|---|---|
 | `by` | 必須 | `{"type":"integer"}` | 移す行の数（負で上へ） |
 | `clip` | 必須 | `{"type":"string"}` | クリップ（clip の ID） |
-| `pitch` | 必須 | `{"maximum":127.0,"minimum":0.0,"type":"integer"}` | 行のノート番号 |
+| `pitch` | 必須 | `{"maximum":127.0,"minimum":0.0,"oneOf":[{"type":"integer"},{"type":"string"}]}` | 行のノート番号か音名（C3 = 60）（ノート番号 0〜127 または音名（C3 = 60、例: F#2）） |
 
 ## `roll.drum.rename`
 
@@ -5781,7 +5781,7 @@ MIDI 学習
 |---|---|---|---|
 | `clip` | 必須 | `{"type":"string"}` | クリップ（clip の ID） |
 | `name` | 必須 | `{"type":"string"}` | 名前 |
-| `pitch` | 必須 | `{"maximum":127.0,"minimum":0.0,"type":"integer"}` | 行のノート番号 |
+| `pitch` | 必須 | `{"maximum":127.0,"minimum":0.0,"oneOf":[{"type":"integer"},{"type":"string"}]}` | 行のノート番号か音名（C3 = 60）（ノート番号 0〜127 または音名（C3 = 60、例: F#2）） |
 
 ## `roll.drum.reset`
 
@@ -6196,7 +6196,7 @@ MIDI 学習
 
 | 引数 | 必須 | 型・範囲・既定値 | 内容 |
 |---|---|---|---|
-| `pitch` | 必須 | `{"maximum":127.0,"minimum":0.0,"type":"integer"}` | ノート番号（0〜127） |
+| `pitch` | 必須 | `{"maximum":127.0,"minimum":0.0,"oneOf":[{"type":"integer"},{"type":"string"}]}` | ノート番号（0〜127）か音名（C3 = 60）（ノート番号 0〜127 または音名（C3 = 60、例: F#2）） |
 
 ## `select.remove`
 

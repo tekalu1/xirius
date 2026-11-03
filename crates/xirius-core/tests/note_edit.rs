@@ -497,3 +497,35 @@ fn note_put_says_the_shape_of_an_at_it_cannot_read() {
     assert!(e.message.contains("小節.拍.tick"), "{e:?}");
     assert!(!e.message.contains("ありません"), "{e:?}");
 }
+
+#[test]
+fn ui_335_a_pitch_can_be_a_note_name_with_c3_at_60_and_numbers_still_work() {
+    let (mut s, clip, n) = song();
+    run(
+        &mut s,
+        "note.add",
+        json!({"clip": clip, "at": 480, "pitch": "C3", "length": 240}),
+    );
+    run(
+        &mut s,
+        "note.add",
+        json!({"clip": clip, "at": 1440, "pitch": 61, "length": 240}),
+    );
+    run(
+        &mut s,
+        "note.set",
+        json!({"notes": [{"id": n[1], "pitch": "F#2"}]}),
+    );
+    let pitches: Vec<u8> = notes_of(&s).iter().map(|n| n.2).collect();
+    assert!(pitches.contains(&60), "C3 is 60: {pitches:?}");
+    assert!(pitches.contains(&61), "a number is still a number");
+    assert!(pitches.contains(&54), "F#2 is 54: {pitches:?}");
+    assert!(
+        s.run_value(
+            "note.add",
+            json!({"clip": clip, "at": 0, "pitch": "H3"}),
+            &RunOptions::human()
+        )
+        .is_err()
+    );
+}

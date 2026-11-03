@@ -332,6 +332,9 @@ fn note_list(p: &Project, clip_start: Tick, list: &[Value]) -> CmdResult<Vec<Not
                     p.time_map().parse(s).map_err(|_| bad())?
                         - if key == "at" { clip_start } else { 0 }
                 }
+                Some(Value::String(s)) if key == "pitch" => {
+                    i64::from(xirius_params::pitch::parse(s).ok_or_else(bad)?)
+                }
                 _ => return Err(bad()),
             };
             if (lo..=hi).contains(&v) {

@@ -28,9 +28,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
                     "開始位置（曲の中の位置。小節.拍.tick または tick 数）",
                 )
                 .req(),
-                ArgDef::int("pitch", "ピッチ（MIDI ノート番号 0〜127。60 が中央の C）")
-                    .req()
-                    .range(0.0, 127.0),
+                ArgDef::pitch("pitch", "ピッチ（音名か MIDI ノート番号。C3 = 60）").req(),
                 ArgDef::grid("length", "長さ（1/4・1/8t・tick 数）").default(json!("1/16")),
                 ArgDef::int("velocity", "ベロシティ 1〜127")
                     .default(json!(100))
@@ -371,7 +369,14 @@ pub(super) fn set_notes(p: &mut Project, cx: &EditCtx<'_>, a: &Args) -> CmdResul
     let scope = scope_of(changes.keys().copied());
     let n = edit_notes(p, &scope, cx.author.is_ai(), |n, _| {
         let c = &changes[&n.id];
-        let int = |key: &str| c.get(key).map(|v| v.as_i64().ok_or(key.to_string()));
+        let int = |key: &str| {
+            c.get(key).map(|v| match v {
+                Value::String(s) if key == "pitch" => xirius_params::pitch::parse(s)
+                    .map(i64::from)
+                    .ok_or(key.to_string()),
+                _ => v.as_i64().ok_or(key.to_string()),
+            })
+        };
         let num = |key: &str, lo: i64, hi: i64| -> CmdResult<Option<i64>> {
             match int(key) {
                 None => Ok(None),
@@ -434,6 +439,10 @@ fn put_notes(p: &mut Project, cx: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
                     .parse(s)
                     .ok()
                     .map(|tick| if key == "at" { tick - clip_start } else { tick }),
+                // A pitch may be a note name, C3 = 60 (UI-335).
+                Some(Value::String(s)) if key == "pitch" => {
+                    xirius_params::pitch::parse(s).map(i64::from)
+                }
                 _ => None,
             };
             let Some(v) = v else {

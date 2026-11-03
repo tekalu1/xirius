@@ -742,13 +742,13 @@ fn a_pc_key_on_the_midi_page_lights_the_pc_keyboard_and_shows_its_note() {
         io.view.received.clone()
     };
     assert!(poll(&s).is_empty());
-    assert!(!s.settings_scene(&g).has_text("G4"));
+    assert!(!s.settings_scene(&g).has_text("G3"));
 
-    // G is the G of the fourth octave.
+    // G is the G above C3 (UI-335).
     assert!(s.settings_key("g", Mods::default()));
     assert!(s.settings.is_some(), "the key stays on the page");
     assert_eq!(poll(&s), vec![PC_KEYBOARD.to_string()]);
-    assert!(s.settings_scene(&g).has_text("G4"));
+    assert!(s.settings_scene(&g).has_text("G3"));
     s.pc_key_up("g");
 
     // Off: the keys light nothing and play nothing.
@@ -760,7 +760,7 @@ fn a_pc_key_on_the_midi_page_lights_the_pc_keyboard_and_shows_its_note() {
     assert!(poll(&s).is_empty());
     assert!(s.settings_key("a", Mods::default()));
     assert!(poll(&s).is_empty());
-    assert!(!s.settings_scene(&g).has_text("C4"));
+    assert!(!s.settings_scene(&g).has_text("C3"));
     s.settings = None;
     s.pc_keys.on = true;
     assert!(

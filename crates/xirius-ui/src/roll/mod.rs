@@ -522,16 +522,9 @@ pub fn ids_json<'a>(ids: impl IntoIterator<Item = &'a NoteId>) -> Value {
     Value::Array(ids.into_iter().map(|i| json!(i.to_string())).collect())
 }
 
-/// "C4", "F#3": the name of a pitch (60 is C4).
+/// "C3", "F#2": the name of a pitch (60 is C3, UI-335).
 pub fn pitch_name(pitch: u8) -> String {
-    const NAMES: [&str; 12] = [
-        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-    ];
-    format!(
-        "{}{}",
-        NAMES[usize::from(pitch % 12)],
-        i32::from(pitch) / 12 - 1
-    )
+    xirius_params::pitch::name(pitch)
 }
 
 /// A length as a note value ("1/16") when it is one, else in beats.

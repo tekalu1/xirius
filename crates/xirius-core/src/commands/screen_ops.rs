@@ -97,7 +97,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
             "select.pitch",
             "ピアノロールで同じ高さのノートを選択します",
             vec![
-                ArgDef::int("pitch", "ノート番号（0〜127）")
+                ArgDef::pitch("pitch", "ノート番号（0〜127）か音名（C3 = 60）")
                     .req()
                     .range(0.0, 127.0),
             ],

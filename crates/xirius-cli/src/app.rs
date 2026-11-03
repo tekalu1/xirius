@@ -487,6 +487,7 @@ fn type_name(t: &ArgType) -> String {
         ArgType::Position => "位置（小節.拍.tick または tick）".into(),
         ArgType::Objects => "JSON（オブジェクトの配列）".into(),
         ArgType::Grid => "グリッド（1/16・1/8t・tick）".into(),
+        ArgType::Pitch => "音名（C3 = 60）またはノート番号".into(),
     }
 }
 

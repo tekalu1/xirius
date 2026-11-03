@@ -101,7 +101,7 @@ fn rows_out(text: String, map: &str, e: &drum::RowEdits, used: &[u8]) -> Output 
 fn row_defs() -> Vec<CommandDef> {
     let clip = || ArgDef::id("clip", IdKind::Clip, "クリップ").req();
     let pitch_arg = || {
-        ArgDef::int("pitch", "行のノート番号")
+        ArgDef::pitch("pitch", "行のノート番号か音名（C3 = 60）")
             .req()
             .range(0.0, 127.0)
     };
