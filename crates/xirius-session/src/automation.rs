@@ -76,30 +76,53 @@ pub(crate) fn at_each(
             let Some(v) = lane.value_at(tick(*id, &lane.target)) else {
                 continue;
             };
-            lane.target.set_on(t, v);
+            match &lane.target {
+                // the control's own value; what it moves is set below
+                AutoTarget::Control(c) => t.controls.get_mut(*c).value = control_value(*c, v),
+                target => {
+                    target.set_on(t, v);
+                }
+            }
         }
-        // a mapped target follows its macro control, not its own lane (MIX-039)
-        t.apply_controls();
+        // a mapped target follows its macro control, not its own lane (MIX-039), and a
+        // control's lane is read at the time of each target: a plug-in's parameter as late as
+        // that plug-in, not as the fader (AUT-019)
+        for (c, control) in t.controls.clone().iter() {
+            let lane = t
+                .automation
+                .iter()
+                .find(|l| l.target == AutoTarget::Control(c) && !l.points.is_empty())
+                .cloned();
+            for m in &control.maps {
+                if !m.target.exists_on(t) {
+                    continue;
+                }
+                let v = lane
+                    .as_ref()
+                    .and_then(|l| l.value_at(tick(*id, &m.target)))
+                    .map_or(control.value, |v| control_value(c, v));
+                m.target.set_on(t, m.value(v));
+            }
+        }
     }
     out
+}
+
+/// A control's value as its lane says it: a button is on or off.
+fn control_value(c: xirius_core::controls::ControlId, v: f64) -> f64 {
+    if c.is_button() { v.round() } else { v }.clamp(0.0, 1.0)
 }
 
 /// The plugin parameter values a played track's lanes set at `tick`: its own
 /// parameter lanes, and its macro controls (at their lanes' values, AUT-018)
 /// for the parameters they are mapped to, whose own lanes rest.
-fn lane_params(
+pub(crate) fn lane_params(
     t: &Track,
     mut tick: impl FnMut(&AutoTarget) -> f64,
     out: &mut Vec<(PluginId, String, f64)>,
 ) {
-    let mut controls = t.controls.clone();
     for lane in &t.automation {
         match &lane.target {
-            AutoTarget::Control(c) => {
-                if let Some(v) = lane.value_at(tick(&lane.target)) {
-                    controls.get_mut(*c).value = if c.is_button() { v.round() } else { v };
-                }
-            }
             AutoTarget::Param(pid, name)
                 if t.controls.owner_of(&lane.target).is_none()
                     && t.inserts.iter().any(|x| x.id == *pid) =>
@@ -111,12 +134,20 @@ fn lane_params(
             _ => {}
         }
     }
-    for (_, c) in controls.iter() {
-        for m in &c.maps {
+    // a control's lane is read as late as the plug-in it moves (AUT-019)
+    for (c, control) in t.controls.iter() {
+        let lane = t
+            .automation
+            .iter()
+            .find(|l| l.target == AutoTarget::Control(c) && !l.points.is_empty());
+        for m in &control.maps {
             if let AutoTarget::Param(pid, name) = &m.target
                 && m.target.exists_on(t)
             {
-                out.push((*pid, name.clone(), m.value(c.value)));
+                let v = lane
+                    .and_then(|l| l.value_at(tick(&m.target)))
+                    .map_or(control.value, |v| control_value(c, v));
+                out.push((*pid, name.clone(), m.value(v)));
             }
         }
     }
