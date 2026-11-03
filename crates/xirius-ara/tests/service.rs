@@ -98,3 +98,57 @@ fn the_plugin_calls_all_five_host_interfaces() {
     drop(s);
     no_violations();
 }
+
+/// PLG-032: a clip becomes a playback region, and every change is made inside editing.
+#[test]
+fn a_clip_plays_through_its_region() {
+    let rate = 48000.0;
+    let audio = tone(rate, 2.0, 0.5);
+    let s = start(Config::default(), None);
+    s.sync(&song(vec![clip(3201, "b.wav", &audio, 0.5, 0.25, 1.0)]));
+    let r = ready(&s, 3201);
+    assert_eq!(r.rate, rate);
+    assert_eq!(r.left.len(), rate as usize);
+    let from = (0.25 * rate) as usize;
+    for i in [0, 1, 1000, 47_999] {
+        assert!(
+            (r.left[i] - audio.channels[0][from + i]).abs() < 1e-6,
+            "frame {i}"
+        );
+        assert!(
+            (r.right[i] - audio.channels[1][from + i]).abs() < 1e-6,
+            "frame {i}"
+        );
+    }
+    // Shorter: the region is updated, not made again.
+    s.sync(&song(vec![clip(3201, "b.wav", &audio, 0.5, 0.25, 0.5)]));
+    until("the new length", || {
+        s.state(3201)
+            .and_then(|c| c.rendered)
+            .is_some_and(|r| r.left.len() == (0.5 * rate) as usize)
+    });
+    drop(s);
+    no_violations();
+}
+
+/// Clips that go away are taken down in ARA's order; the rest keep playing.
+#[test]
+fn removing_a_clip_keeps_the_others() {
+    let audio = tone(48000.0, 1.0, 0.5);
+    let other = tone(48000.0, 1.0, 0.25);
+    let s = start(Config::default(), None);
+    s.sync(&song(vec![
+        clip(5101, "j.wav", &audio, 0.0, 0.0, 1.0),
+        clip(5102, "k.wav", &other, 1.0, 0.0, 1.0),
+    ]));
+    ready(&s, 5101);
+    let kept = ready(&s, 5102);
+    s.sync(&song(vec![clip(5102, "k.wav", &other, 1.0, 0.0, 1.0)]));
+    std::thread::sleep(Duration::from_millis(150));
+    assert!(Arc::ptr_eq(
+        &kept,
+        s.state(5102).unwrap().rendered.as_ref().unwrap()
+    ));
+    drop(s);
+    no_violations();
+}
