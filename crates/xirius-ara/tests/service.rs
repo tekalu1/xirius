@@ -279,6 +279,34 @@ fn edits_survive_saving_and_opening_and_a_clone_keeps_them() {
     no_violations();
 }
 
+/// PLG-047: a new sample rate renders again without a silent gap and within ARA's rules.
+#[test]
+fn a_new_sample_rate_keeps_the_sound() {
+    let audio = tone(48000.0, 1.0, 0.5);
+    let s = start(
+        Config {
+            analysis_ms: 50,
+            ..Config::default()
+        },
+        None,
+    );
+    let clips = vec![clip(4701, "g.wav", &audio, 0.0, 0.0, 1.0)];
+    s.sync(&song(clips.clone()));
+    ready(&s, 4701);
+    s.sync(&Song {
+        rate: 44100.0,
+        ..song(clips)
+    });
+    until("the render at the new rate", || {
+        let c = s.state(4701).unwrap();
+        assert!(c.rendered.is_some(), "the clip went silent");
+        c.phase == Phase::Ready && c.rendered.unwrap().rate == 44100.0
+    });
+    assert_eq!(s.state(4701).unwrap().rendered.unwrap().left.len(), 44100);
+    drop(s);
+    no_violations();
+}
+
 /// Clips that go away are taken down in ARA's order; the rest keep playing.
 #[test]
 fn removing_a_clip_keeps_the_others() {
