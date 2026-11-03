@@ -497,7 +497,7 @@ fn a_preset_of_a_built_in_effect_loads_in_one_step() {
     assert!(press(&mut s, &g, MixerHit::Open(vocal, comp)));
     assert!(enabled(&s, "プリセット"));
     assert!(choose(&mut s, &g, "プリセット"));
-    assert!(choose(&mut s, &g, "強め"));
+    assert!(choose(&mut s, &g, "ドラムをまとめる"));
     assert_eq!(steps(&s), n + 1);
     assert!(s.song.undo());
     assert!(s.song.can_redo());

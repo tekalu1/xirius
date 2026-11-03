@@ -183,23 +183,21 @@ fn the_first_run_copies_the_factory_presets_in_once() {
     // Listing writes nothing; the app's start (or the first save or load) copies them.
     assert_eq!(preset_names(&mut r.s, "eq"), ["Default"]);
     xirius_session::xpreset::seed(&r.dir).unwrap();
-    for uid in ["eq", "compressor", "delay", "reverb", "limiter"] {
-        for name in ["やさしく", "強め", "声を前に"] {
-            assert!(
-                r.dir
-                    .join("fx")
-                    .join(uid)
-                    .join(format!("{name}.xpreset"))
-                    .is_file(),
-                "{uid}/{name}"
-            );
-        }
+    for (uid, name, _) in xirius_params::FACTORY_PRESETS {
+        assert!(
+            r.dir
+                .join("fx")
+                .join(uid)
+                .join(format!("{name}.xpreset"))
+                .is_file(),
+            "{uid}/{name}"
+        );
     }
     // The Sampler and the Drum Kit have only their Default (PLG-064).
     assert!(!r.dir.join("instrument").exists());
     assert_eq!(preset_names(&mut r.s, "eq").len(), 4);
     // A factory file the user deleted does not come back on the next start or command.
-    let gone = r.dir.join("fx").join("eq").join("やさしく.xpreset");
+    let gone = r.dir.join("fx").join("eq").join("ボーカルを明るく.xpreset");
     std::fs::remove_file(&gone).unwrap();
     xirius_session::xpreset::seed(&r.dir).unwrap();
     let (t, of) = eq_track(&mut r);
@@ -211,12 +209,12 @@ fn the_first_run_copies_the_factory_presets_in_once() {
 fn factory_files_are_plain_files_and_restore_adds_only_what_is_missing() {
     let mut r = rig("factory");
     xirius_session::xpreset::seed(&r.dir).unwrap();
-    let mild = r.dir.join("fx").join("eq").join("やさしく.xpreset");
+    let mild = r.dir.join("fx").join("eq").join("ボーカルを明るく.xpreset");
     // The user's edit of a factory file is kept: restore never overwrites.
     let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&mild).unwrap()).unwrap();
     v["devices"][0]["params"]["low_gain"] = json!(0.99);
     std::fs::write(&mild, v.to_string()).unwrap();
-    let strong = r.dir.join("fx").join("eq").join("強め.xpreset");
+    let strong = r.dir.join("fx").join("eq").join("低域を締める.xpreset");
     std::fs::remove_file(&strong).unwrap();
     let out = run(
         &mut r.s,
@@ -234,7 +232,7 @@ fn factory_files_are_plain_files_and_restore_adds_only_what_is_missing() {
     run(
         &mut r.s,
         "preset.rename",
-        json!({ "preset": "声を前に", "name": "前へ", "device": "eq" }),
+        json!({ "preset": "電話の声", "name": "前へ", "device": "eq" }),
     );
     assert!(r.dir.join("fx").join("eq").join("前へ.xpreset").is_file());
     run(
@@ -249,22 +247,25 @@ fn factory_files_are_plain_files_and_restore_adds_only_what_is_missing() {
 fn a_name_shared_by_every_device_loads_for_the_device_on_the_track() {
     let mut r = rig("shared");
     let t = audio(&mut r.s, "Vocal");
-    let _eq = plugin(&mut r.s, &t, "EQ");
-    xirius_session::xpreset::seed(&r.dir).unwrap();
+    let eq = plugin(&mut r.s, &t, "EQ");
+    save(&mut r, &t, &eq, "共通");
+    let bus = audio(&mut r.s, "Bus");
+    let comp = plugin(&mut r.s, &bus, "Compressor");
+    save(&mut r, &bus, &comp, "共通");
     run(
         &mut r.s,
         "preset.load",
-        json!({ "track": t, "preset": "強め" }),
+        json!({ "track": t, "preset": "共通" }),
     );
     let x = &track(&r.s, &t).inserts[0];
     assert_eq!(x.uid, "eq");
-    assert_eq!(x.preset.as_deref(), Some("強め"));
+    assert_eq!(x.preset.as_deref(), Some("共通"));
     // And without such a device on the track the name is honestly ambiguous.
     let bare = audio(&mut r.s, "Plain");
     let m = fails(
         &mut r.s,
         "preset.load",
-        json!({ "track": bare, "preset": "強め" }),
+        json!({ "track": bare, "preset": "共通" }),
     );
     assert!(m.contains("ほかの機器"), "{m}");
 }
@@ -746,7 +747,7 @@ fn x3_restore_does_not_write_over_a_file_the_list_does_not_show_as_that_preset()
     let mut r = rig("x3");
     let (t, eq) = eq_track(&mut r);
     save(&mut r, &t, &eq, "Mine"); // the first copy is made by now
-    let strong = eq_dir(&r).join("強め.xpreset");
+    let strong = eq_dir(&r).join("低域を締める.xpreset");
     assert!(strong.is_file());
     std::fs::remove_file(&strong).unwrap();
     std::fs::rename(eq_dir(&r).join("Mine.xpreset"), &strong).unwrap();
@@ -757,7 +758,7 @@ fn x3_restore_does_not_write_over_a_file_the_list_does_not_show_as_that_preset()
     );
     assert_eq!(inner_name(&strong), "Mine", "{out:?}");
     assert!(
-        out["skipped"].to_string().contains("強め.xpreset"),
+        out["skipped"].to_string().contains("低域を締める.xpreset"),
         "says what it left: {out:?}"
     );
     // A file that cannot be read is left alone too.
@@ -774,11 +775,11 @@ fn x3_restore_does_not_write_over_a_file_the_list_does_not_show_as_that_preset()
 fn x3_the_first_copy_does_not_write_over_a_file_that_cannot_be_read() {
     let mut r = rig("x3seed");
     std::fs::create_dir_all(eq_dir(&r)).unwrap();
-    let strong = eq_dir(&r).join("強め.xpreset");
+    let strong = eq_dir(&r).join("低域を締める.xpreset");
     std::fs::write(&strong, b"{ half written").unwrap();
     let (t, eq) = eq_track(&mut r);
     save(&mut r, &t, &eq, "Mine"); // makes the first copy
-    assert!(eq_dir(&r).join("やさしく.xpreset").is_file());
+    assert!(eq_dir(&r).join("ボーカルを明るく.xpreset").is_file());
     assert_eq!(std::fs::read(&strong).unwrap(), b"{ half written");
 }
 
@@ -857,22 +858,25 @@ fn n1_a_save_onto_a_name_two_files_hold_says_a_way_out_that_works() {
 fn y2_a_name_every_device_has_loads_onto_an_empty_track_with_device() {
     let mut r = rig("y2");
     let (t, eq) = eq_track(&mut r);
-    save(&mut r, &t, &eq, "Mine"); // the first copy is made by now
+    save(&mut r, &t, &eq, "Mine");
+    let bus = audio(&mut r.s, "Bus");
+    let comp = plugin(&mut r.s, &bus, "Compressor");
+    save(&mut r, &bus, &comp, "Mine");
     let bare = audio(&mut r.s, "Plain");
     let m = fails(
         &mut r.s,
         "preset.load",
-        json!({ "track": bare, "preset": "強め" }),
+        json!({ "track": bare, "preset": "Mine" }),
     );
     assert!(m.contains("--device"), "{m}");
     run(
         &mut r.s,
         "preset.load",
-        json!({ "track": bare, "preset": "強め", "device": "Compressor" }),
+        json!({ "track": bare, "preset": "Mine", "device": "Compressor" }),
     );
     let x = &track(&r.s, &bare).inserts[0];
     assert_eq!(x.uid, "compressor");
-    assert_eq!(x.preset.as_deref(), Some("強め"));
+    assert_eq!(x.preset.as_deref(), Some("Mine"));
     // Default names its device the same way.
     run(
         &mut r.s,
@@ -1041,7 +1045,7 @@ fn y5_factory_presets_carry_no_samples_and_skip_the_sampler_and_the_drum_kit() {
     let mut r = rig("y5");
     let (t, eq) = eq_track(&mut r);
     save(&mut r, &t, &eq, "Mine"); // the first copy is made by now
-    let strong = eq_dir(&r).join("強め.xpreset");
+    let strong = eq_dir(&r).join("低域を締める.xpreset");
     let v: Value = serde_json::from_str(&std::fs::read_to_string(&strong).unwrap()).unwrap();
     assert!(v["devices"][0].get("samples").is_none(), "{v}");
     for uid in ["sampler", "drum-kit"] {
@@ -1065,7 +1069,11 @@ fn y6_the_mark_records_what_was_copied_with_its_hash() {
             .unwrap();
     assert!(mark["version"].as_u64().is_some(), "{mark}");
     let recorded = mark["files"].as_array().unwrap();
-    assert_eq!(recorded.len(), 15, "{mark}");
+    assert_eq!(
+        recorded.len(),
+        xirius_params::FACTORY_PRESETS.len(),
+        "{mark}"
+    );
     for f in recorded {
         let p = r.dir.join(f["file"].as_str().unwrap());
         assert_eq!(
@@ -1097,10 +1105,10 @@ fn y6_a_newer_factory_set_removes_only_untouched_old_files_and_adds_the_new() {
         json!({ "kind": "fx", "device": "eq", "name": name,
                 "file": format!("fx/eq/{name}.xpreset"), "sha256": sha256_hex(body.as_bytes()) })
     };
-    // Version 0 copied 古い, 手を入れた and やさしく; the user deleted やさしく since.
+    // Version 0 copied 古い, 手を入れた and ボーカルを明るく; the user deleted ボーカルを明るく since.
     let mark = json!({
         "version": 0,
-        "files": [rec("古い", &old), rec("手を入れた", &touched), rec("やさしく", "gone")],
+        "files": [rec("古い", &old), rec("手を入れた", &touched), rec("ボーカルを明るく", "gone")],
     });
     std::fs::write(r.dir.join(".factory-seeded"), mark.to_string()).unwrap();
     let (t, eq) = eq_track(&mut r);
@@ -1113,8 +1121,11 @@ fn y6_a_newer_factory_set_removes_only_untouched_old_files_and_adds_the_new() {
         ed.join("手を入れた.xpreset").is_file(),
         "the user's edit stays"
     );
-    assert!(!ed.join("やさしく.xpreset").exists(), "the user deleted it");
-    assert!(ed.join("強め.xpreset").is_file(), "new in the set");
+    assert!(
+        !ed.join("ボーカルを明るく.xpreset").exists(),
+        "the user deleted it"
+    );
+    assert!(ed.join("低域を締める.xpreset").is_file(), "new in the set");
     let mark: Value =
         serde_json::from_str(&std::fs::read_to_string(r.dir.join(".factory-seeded")).unwrap())
             .unwrap();
@@ -1373,17 +1384,17 @@ fn a_compressor_preset_leaves_the_sidechain_knobs_where_they_are() {
     let def = xirius_params::find("Compressor").unwrap();
     let strong = xirius_params::factory_presets(def)
         .into_iter()
-        .find(|(n, _)| *n == "強め")
+        .find(|(n, _)| *n == "ドラムをまとめる")
         .unwrap()
         .1;
-    for name in ["強め", "Default", "mine", "written"] {
+    for name in ["ドラムをまとめる", "Default", "mine", "written"] {
         run(
             &mut r.s,
             "preset.load",
             json!({ "track": t, "preset": name, "of": comp }),
         );
         assert_eq!(knobs(&r.s), set, "{name}");
-        if name == "強め" {
+        if name == "ドラムをまとめる" {
             let at = param(&r.s, &t, "compressor", "threshold");
             assert!((at - strong[0]).abs() < 1e-9, "{at} {}", strong[0]);
         }
@@ -1402,14 +1413,16 @@ fn a_compressor_preset_leaves_the_sidechain_knobs_where_they_are() {
 }
 
 /// The factory Compressor files hold the seven knobs it had before the sidechain (PLG-071),
-/// at the values they had: each sweeping knob a share of its sweep off its default, every
-/// other one the other way.
+/// at the values the set names (PLG-064) and the defaults where it names none.
 #[test]
 fn the_factory_compressor_presets_hold_the_seven_knobs_they_did() {
     let r = rig("comp-factory");
     xirius_session::xpreset::seed(&r.dir).unwrap();
     let def = xirius_params::find("Compressor").unwrap();
-    for (name, share) in xirius_params::FACTORY_PRESETS {
+    for (uid, name, set) in xirius_params::FACTORY_PRESETS {
+        if *uid != "compressor" {
+            continue;
+        }
         let v = read_json(
             &r.dir
                 .join("fx")
@@ -1421,12 +1434,9 @@ fn the_factory_compressor_presets_hold_the_seven_knobs_they_did() {
         for (i, k) in COMP_OLD.iter().enumerate() {
             let (at, p) = def.param(k).unwrap();
             assert_eq!(at, i, "{k} kept its place");
-            let d = p.default_norm();
-            let sign = if i % 2 == 1 { -1.0 } else { 1.0 };
-            let want = if p.steps().is_some() {
-                d
-            } else {
-                (d + share * sign).clamp(0.0, 1.0)
+            let want = match set.iter().find(|(id, _)| id == k) {
+                Some((_, v)) => p.to_norm(*v),
+                None => p.default_norm(),
             };
             let at = held[*k].as_f64().unwrap();
             assert!((at - want).abs() < 1e-9, "{name}: {k} {at} {want}");
@@ -1434,8 +1444,8 @@ fn the_factory_compressor_presets_hold_the_seven_knobs_they_did() {
     }
 }
 
-/// A song saved before the sidechain (PLG-071) holds the Compressor's seven knobs at 「強め」
-/// and that name. It opens with them, and loading 「強め」 again moves none of its knobs.
+/// A song saved before the sidechain (PLG-071) holds the Compressor's seven knobs at 「ドラムをまとめる」
+/// and that name. It opens with them, and loading 「ドラムをまとめる」 again moves none of its knobs.
 #[test]
 fn an_old_songs_compressor_opens_at_its_preset_and_reloads_it_unchanged() {
     let mut r = rig("comp-old");
@@ -1444,7 +1454,7 @@ fn an_old_songs_compressor_opens_at_its_preset_and_reloads_it_unchanged() {
     let def = xirius_params::find("Compressor").unwrap();
     let strong = xirius_params::factory_presets(def)
         .into_iter()
-        .find(|(n, _)| *n == "強め")
+        .find(|(n, _)| *n == "ドラムをまとめる")
         .unwrap()
         .1;
     let mut p = r.s.project().clone();
@@ -1455,7 +1465,7 @@ fn an_old_songs_compressor_opens_at_its_preset_and_reloads_it_unchanged() {
         .zip(&strong)
         .map(|(k, v)| (k.to_string(), *v))
         .collect();
-    x.preset = Some("強め".into());
+    x.preset = Some("ドラムをまとめる".into());
     let comp = x.id.to_string();
     let song = r.dir.with_extension("song");
     let _ = std::fs::remove_dir_all(&song);
@@ -1464,14 +1474,14 @@ fn an_old_songs_compressor_opens_at_its_preset_and_reloads_it_unchanged() {
     let _ = std::fs::remove_dir_all(&song);
     r.s = session_with(&r.dir, opened);
     let before = track(&r.s, &t).inserts[0].clone();
-    assert_eq!(before.preset.as_deref(), Some("強め"));
+    assert_eq!(before.preset.as_deref(), Some("ドラムをまとめる"));
     assert_eq!(before.params.len(), COMP_OLD.len(), "{:?}", before.params);
     run(
         &mut r.s,
         "preset.load",
-        json!({ "track": t, "preset": "強め", "of": comp }),
+        json!({ "track": t, "preset": "ドラムをまとめる", "of": comp }),
     );
     let after = &track(&r.s, &t).inserts[0];
     assert_eq!(after.params, before.params);
-    assert_eq!(after.preset.as_deref(), Some("強め"));
+    assert_eq!(after.preset.as_deref(), Some("ドラムをまとめる"));
 }

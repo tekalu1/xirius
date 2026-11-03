@@ -26,7 +26,6 @@ const fn spec(
         curve,
         off: Off::Never,
         preset: true,
-        factory: true,
     }
 }
 
@@ -35,12 +34,10 @@ const fn no_preset(p: ParamSpec) -> ParamSpec {
     ParamSpec { preset: false, ..p }
 }
 
-/// A knob added after the factory presets were made: they leave it at its default.
+/// A knob added after the first factory presets were made (PLG-062). The set now names
+/// each device's knobs one by one (PLG-064), so it is a knob like the others.
 const fn later(p: ParamSpec) -> ParamSpec {
-    ParamSpec {
-        factory: false,
-        ..p
-    }
+    p
 }
 
 /// A cut that is off at or below `at` (the bottom of its range).

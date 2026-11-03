@@ -4,8 +4,7 @@
 
 use xirius_core::id::{PluginId, TrackId};
 
-use crate::instrument::window::{CUSTOM, PRESETS, Part, preset_of};
-use crate::instrument::{DEFAULT, Pick, current};
+use crate::instrument::window::{Part, preset_of, presets};
 use crate::studio::{DrawerTab, Geometry, Studio};
 use crate::tools::Mods;
 use crate::tree::RowKind;
@@ -104,54 +103,73 @@ fn the_channel_commands_run_by_name_without_the_mixer_but_its_keys_wait_for_it()
     assert_eq!(selected(&s), Some(order[0]));
 }
 
-/// The sample song with Keys playing the built-in sampler, its window open.
+/// The sample song with an EQ on Keys, its window open. The EQ has its own presets
+/// (PLG-064); the Sampler has only its Default.
 fn keys_window() -> (Studio, Geometry, TrackId, PluginId) {
     let mut s = Studio::sample();
     let g = s.geometry(1600.0, H);
     let t = crate::arrange::probe::track(&s, "Keys");
-    assert!(s.set_instrument(t, &Pick::built_in(DEFAULT)));
-    let id = current(&s.project().tracks[&t]).unwrap().id;
+    assert!(s.run_command(
+        "plugin.add",
+        serde_json::json!({ "track": t.to_string(), "name": "EQ" }),
+    ));
+    let id = eq(&s, t).id;
     s.show_instrument(t, id);
     (s, g, t, id)
 }
 
-fn preset(s: &Studio, t: TrackId) -> &'static str {
-    preset_of(current(&s.project().tracks[&t]).unwrap())
+fn eq(s: &Studio, t: TrackId) -> xirius_core::model::Plugin {
+    s.project().tracks[&t]
+        .inserts
+        .iter()
+        .find(|x| x.name == "EQ")
+        .cloned()
+        .unwrap()
+}
+
+fn preset(s: &Studio, t: TrackId) -> Option<&'static str> {
+    preset_of(&eq(s, t))
+}
+
+fn list() -> Vec<&'static str> {
+    presets(xirius_params::find("eq").unwrap())
 }
 
 #[test]
 fn alt_page_keys_load_the_next_and_the_previous_preset_round_the_list() {
     let (mut s, g, t, _) = keys_window();
-    assert_eq!(preset(&s, t), PRESETS[0]);
+    let list = list();
+    let last = list.last().copied();
+    assert_eq!(preset(&s, t), Some(list[0]));
     let before = s.song().steps();
     assert!(key(&mut s, &g, "pagedown", alt()));
-    assert_eq!(preset(&s, t), PRESETS[1]);
+    assert_eq!(preset(&s, t), Some(list[1]));
     assert_eq!(s.song().steps(), before + 1, "one step a preset");
     assert!(key(&mut s, &g, "pageup", alt()));
-    assert_eq!(preset(&s, t), PRESETS[0]);
+    assert_eq!(preset(&s, t), Some(list[0]));
     // Before the first is the last, after the last the first.
     assert!(key(&mut s, &g, "pageup", alt()));
-    assert_eq!(preset(&s, t), PRESETS[PRESETS.len() - 1]);
+    assert_eq!(preset(&s, t), last);
     assert!(s.run_binding(&g, "plugin.preset.next"));
-    assert_eq!(preset(&s, t), PRESETS[0]);
+    assert_eq!(preset(&s, t), Some(list[0]));
     assert!(s.run_binding(&g, "plugin.preset.prev"));
-    assert_eq!(preset(&s, t), PRESETS[PRESETS.len() - 1]);
+    assert_eq!(preset(&s, t), last);
 }
 
 #[test]
 fn from_a_turned_knob_the_preset_keys_start_at_the_ends_and_without_a_window_do_nothing() {
     let (mut s, g, t, id) = keys_window();
-    let def = current(&s.project().tracks[&t]).unwrap().builtin().unwrap();
-    let (cutoff, _) = def.param("cutoff").unwrap();
+    let def = eq(&s, t).builtin().unwrap();
+    let (gain, _) = def.param("output").unwrap();
     let (x, y) = s
-        .instrument_center(&g, id, Part::Knob(cutoff))
+        .instrument_center(&g, id, Part::Knob(gain))
         .expect("in sight");
     assert!(s.instrument_down(&g, x, y));
     assert!(s.instrument_moved(&g, x, y + 30.0, false));
     assert!(s.instrument_up());
-    assert_eq!(preset(&s, t), CUSTOM);
+    assert_eq!(preset(&s, t), None);
     assert!(key(&mut s, &g, "pageup", alt()));
-    assert_eq!(preset(&s, t), PRESETS[PRESETS.len() - 1]);
+    assert_eq!(preset(&s, t), list().last().copied());
     // The window shut, the keys have nothing to load into.
     s.instruments.open.clear();
     let steps = s.song().steps();

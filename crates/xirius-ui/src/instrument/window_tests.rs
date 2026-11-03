@@ -1,4 +1,4 @@
-use super::window::{CUSTOM, Part, preset_of, preset_values, text, values};
+use super::window::{Part, preset_of, preset_values, presets, text, values};
 use super::*;
 use crate::mixer::MixerHit;
 use crate::popup::{Action, PopupKind};
@@ -119,7 +119,7 @@ fn a_knob_turns_while_dragged_and_is_one_step_when_let_go() {
     assert!((now - 0.6).abs() < 1e-6, "{now}");
     assert_eq!(plugin(&s, t).params.get("cutoff"), Some(&now), "by its id");
     assert_eq!(text(spec, now), spec.text(spec.to_plain(0.6)));
-    assert_eq!(preset_of(&plugin(&s, t)), CUSTOM);
+    assert_eq!(preset_of(&plugin(&s, t)), None);
     // A press that does not turn it puts nothing in.
     let (x, y) = at(&s, &g, id, Part::Knob(cutoff));
     assert!(s.instrument_down(&g, x, y));
@@ -151,26 +151,29 @@ fn a_stepped_knob_lands_on_its_steps() {
 fn a_preset_sets_every_knob_in_one_step() {
     let (mut s, g, t, id) = studio();
     s.show_instrument(t, id);
-    assert_eq!(preset_of(&plugin(&s, t)), "初期");
+    assert_eq!(preset_of(&plugin(&s, t)), Some("Default"));
+    nudge(&mut s, &g, id, "cutoff");
+    nudge(&mut s, &g, id, "attack");
+    assert_eq!(preset_of(&plugin(&s, t)), None);
     let (x, y) = at(&s, &g, id, Part::Preset);
     assert!(s.instrument_down(&g, x, y));
     let popup = s.popup.as_ref().expect("the presets");
     assert!(matches!(popup.kind, PopupKind::InstMenu(_)));
     let cs = popup.choices();
     let labels: Vec<&str> = cs.iter().map(|c| c.label.as_str()).collect();
-    assert_eq!(labels, ["初期", "やさしく", "強め", "声を前に"]);
-    assert_eq!(popup.current(), "初期");
+    assert_eq!(labels, ["Default"]);
+    assert_eq!(popup.current(), "");
     let before = s.song().steps();
-    s.popup_action(&g, Action::Pick("強め".into()));
+    s.popup_action(&g, Action::Pick("Default".into()));
     assert!(s.popup.is_none());
     assert_eq!(s.song().steps(), before + 1);
-    assert_eq!(preset_of(&plugin(&s, t)), "強め");
+    assert_eq!(preset_of(&plugin(&s, t)), Some("Default"));
     assert_eq!(
         values(&plugin(&s, t)),
-        preset_values(plugin(&s, t).builtin().unwrap(), "強め").unwrap()
+        preset_values(plugin(&s, t).builtin().unwrap(), "Default").unwrap()
     );
     assert!(s.undo(&g));
-    assert_eq!(preset_of(&plugin(&s, t)), "初期");
+    assert_eq!(preset_of(&plugin(&s, t)), None);
 }
 
 #[test]
@@ -225,14 +228,22 @@ fn the_knobs_are_the_built_in_parameters_in_their_order() {
     // Every parameter has its knob, at its default.
     let defaults: Vec<f64> = def.params.iter().map(|p| p.default_norm()).collect();
     assert_eq!(values(&x), defaults);
-    assert_eq!(preset_values(def, "初期").unwrap(), defaults);
-    assert_eq!(preset_of(&x), "初期");
-    // 強め moves the sweeping ones and leaves 音色 (a choice) where it is.
-    let strong = preset_values(def, "強め").unwrap();
-    assert_eq!(strong[0], defaults[0]);
-    assert_ne!(strong[1], defaults[1]);
-    assert!(strong.iter().all(|v| (0.0..=1.0).contains(v)));
+    assert_eq!(preset_values(def, "Default").unwrap(), defaults);
+    assert_eq!(preset_of(&x), Some("Default"));
+    // The Sampler has only its Default (PLG-064); an effect's are its own.
+    assert_eq!(presets(def), ["Default"]);
+    assert_eq!(preset_values(def, "ドラムをまとめる"), None);
     assert_eq!(preset_values(def, "no such"), None);
+    let comp = xirius_params::find("compressor").unwrap();
+    assert_eq!(
+        presets(comp),
+        [
+            "Default",
+            "ボーカルを整える",
+            "ドラムをまとめる",
+            "並列で太く"
+        ]
+    );
     assert_eq!(text(&def.params[5], 1.0), "20.0 kHz");
 }
 
@@ -358,18 +369,18 @@ fn the_steps_hide_on_a_narrow_bar_and_walk_the_presets_on_a_wide_one() {
             .unwrap()
     };
     // EQ's window is wider than the bar's narrow width: the ‹ › show.
-    assert_eq!(preset_of(&fx_of(&s)), "初期");
+    assert_eq!(preset_of(&fx_of(&s)), Some("Default"));
     let (x, y) = at(&s, &g, eq, Part::NextPreset);
     assert!(s.instrument_down(&g, x, y));
-    assert_eq!(preset_of(&fx_of(&s)), "やさしく");
+    assert_eq!(preset_of(&fx_of(&s)), Some("ボーカルを明るく"));
     let (x, y) = at(&s, &g, eq, Part::NextPreset);
     s.instrument_down(&g, x, y);
-    assert_eq!(preset_of(&fx_of(&s)), "強め");
+    assert_eq!(preset_of(&fx_of(&s)), Some("低域を締める"));
     // ‹ steps back and wraps at the ends.
-    for want in ["やさしく", "初期", "声を前に"] {
+    for want in ["ボーカルを明るく", "Default", "電話の声"] {
         let (x, y) = at(&s, &g, eq, Part::PrevPreset);
         s.instrument_down(&g, x, y);
-        assert_eq!(preset_of(&fx_of(&s)), want);
+        assert_eq!(preset_of(&fx_of(&s)), Some(want));
     }
 }
 
@@ -440,22 +451,35 @@ fn the_sidechain_seat_is_only_on_the_devices_that_take_a_key() {
 
 #[test]
 fn the_tag_marks_the_preset_the_knobs_moved_off() {
-    let (mut s, g, t, id) = studio();
-    s.show_instrument(t, id);
+    let (mut s, g, t, _) = studio();
+    let id = compressor(&mut s, t);
     // At the defaults the tag names the preset with no mark.
-    assert_eq!(s.instruments.tag_of(&plugin(&s, t)), ("初期", false));
+    assert_eq!(s.instruments.tag_of(&insert(&s, id)), ("Default", false));
     // Load another: it names that one; a knob off it marks it.
-    assert!(s.load_preset(id, "強め"));
-    assert_eq!(s.instruments.tag_of(&plugin(&s, t)), ("強め", false));
-    let (cutoff, _) = plugin(&s, t).builtin().unwrap().param("cutoff").unwrap();
-    let (x, y) = at(&s, &g, id, Part::Knob(cutoff));
-    assert!(s.instrument_down(&g, x, y));
-    assert!(s.instrument_moved(&g, x, y + 30.0, false));
-    assert!(s.instrument_up());
-    assert_eq!(s.instruments.tag_of(&plugin(&s, t)), ("強め", true));
+    assert!(s.load_preset(id, "ドラムをまとめる"));
+    assert_eq!(
+        s.instruments.tag_of(&insert(&s, id)),
+        ("ドラムをまとめる", false)
+    );
+    nudge(&mut s, &g, id, "threshold");
+    assert_eq!(
+        s.instruments.tag_of(&insert(&s, id)),
+        ("ドラムをまとめる", true)
+    );
     // Back on a preset's values the mark is gone.
-    assert!(s.load_preset(id, "初期"));
-    assert_eq!(s.instruments.tag_of(&plugin(&s, t)), ("初期", false));
+    assert!(s.load_preset(id, "Default"));
+    assert_eq!(s.instruments.tag_of(&insert(&s, id)), ("Default", false));
+}
+
+/// A Compressor on the track, its window open.
+fn compressor(s: &mut Studio, t: TrackId) -> PluginId {
+    assert!(s.run_command(
+        "plugin.add",
+        serde_json::json!({ "track": t.to_string(), "name": "Compressor" }),
+    ));
+    let comp = added(s, t, "Compressor");
+    s.show_instrument(t, comp);
+    comp
 }
 
 /// Moves the knob `param` of the window of `id` off where it is, as a drag
@@ -488,18 +512,26 @@ fn an_effects_preset_list_checks_the_preset_it_is_at() {
     ));
     let comp = added(&s, t, "Compressor");
     s.show_instrument(t, comp);
-    assert!(s.load_preset(comp, "強め"));
+    assert!(s.load_preset(comp, "ドラムをまとめる"));
     let (x, y) = at(&s, &g, comp, Part::Preset);
     assert!(s.instrument_down(&g, x, y));
     let popup = s.popup.as_ref().expect("the presets");
-    assert_eq!(popup.current(), "強め", "not the instrument's 初期");
-    assert_eq!(s.instruments.tag_of(&insert(&s, comp)), ("強め", false));
+    assert_eq!(
+        popup.current(),
+        "ドラムをまとめる",
+        "not the instrument's Default"
+    );
+    assert_eq!(
+        s.instruments.tag_of(&insert(&s, comp)),
+        ("ドラムをまとめる", false)
+    );
 }
 
 #[test]
 fn the_tag_keeps_its_preset_in_a_song_opened_again() {
-    let (mut s, _, t, id) = studio();
-    assert!(s.load_preset(id, "強め"));
+    let (mut s, _, t, _) = studio();
+    let id = compressor(&mut s, t);
+    assert!(s.load_preset(id, "ドラムをまとめる"));
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -517,46 +549,59 @@ fn the_tag_keeps_its_preset_in_a_song_opened_again() {
     let t2 = keys(&s);
     assert_eq!(t2, t);
     s.show_instrument(t, id);
-    assert_eq!(s.instruments.tag_of(&plugin(&s, t)), ("強め", false));
-    nudge(&mut s, &g, id, "cutoff");
-    assert_eq!(s.instruments.tag_of(&plugin(&s, t)), ("強め", true));
+    assert_eq!(
+        s.instruments.tag_of(&insert(&s, id)),
+        ("ドラムをまとめる", false)
+    );
+    nudge(&mut s, &g, id, "threshold");
+    assert_eq!(
+        s.instruments.tag_of(&insert(&s, id)),
+        ("ドラムをまとめる", true)
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn the_tag_keeps_the_preset_an_undo_went_back_to() {
-    let (mut s, g, t, id) = studio();
-    s.show_instrument(t, id);
-    assert!(s.load_preset(id, "強め"));
-    assert!(s.load_preset(id, "やさしく"));
+    let (mut s, g, t, _) = studio();
+    let id = compressor(&mut s, t);
+    assert!(s.load_preset(id, "ドラムをまとめる"));
+    assert!(s.load_preset(id, "ボーカルを整える"));
     assert!(s.undo(&g));
-    assert_eq!(preset_of(&plugin(&s, t)), "強め");
-    nudge(&mut s, &g, id, "cutoff");
-    assert_eq!(s.instruments.tag_of(&plugin(&s, t)), ("強め", true));
+    assert_eq!(preset_of(&insert(&s, id)), Some("ドラムをまとめる"));
+    nudge(&mut s, &g, id, "threshold");
+    assert_eq!(
+        s.instruments.tag_of(&insert(&s, id)),
+        ("ドラムをまとめる", true)
+    );
 }
 
 #[test]
 fn the_tag_keeps_a_preset_loaded_from_the_cli() {
-    let (mut s, g, t, id) = studio();
-    s.show_instrument(t, id);
+    let (mut s, g, t, _) = studio();
+    let id = compressor(&mut s, t);
     // The CLI and the MCP send the command itself, not through the tag.
-    let def = plugin(&s, t).builtin().unwrap();
+    let def = insert(&s, id).builtin().unwrap();
     let values: Vec<_> = def
         .params
         .iter()
-        .zip(preset_values(def, "強め").unwrap())
+        .zip(preset_values(def, "ドラムをまとめる").unwrap())
+        .filter(|(p, _)| p.preset)
         .map(|(p, v)| serde_json::json!({ "param": p.id, "value": v }))
         .collect();
     assert!(s.run_command(
         "plugin.preset.load",
-        serde_json::json!({ "id": id.to_string(), "preset": "強め", "values": values }),
+        serde_json::json!({ "id": id.to_string(), "preset": "ドラムをまとめる", "values": values }),
     ));
-    nudge(&mut s, &g, id, "cutoff");
-    assert_eq!(s.instruments.tag_of(&plugin(&s, t)), ("強め", true));
+    nudge(&mut s, &g, id, "threshold");
+    assert_eq!(
+        s.instruments.tag_of(&insert(&s, id)),
+        ("ドラムをまとめる", true)
+    );
 }
 
 /// A Compressor in a song from before the sidechain (PLG-071) keeps only its seven knobs. At
-/// 「強め」 it opens again as 「強め」, its knobs reading as they did.
+/// 「ドラムをまとめる」 it opens again as that, its knobs reading as they did.
 #[test]
 fn an_old_songs_compressor_opens_at_its_preset() {
     let (mut s, _, t, _) = studio();
@@ -575,24 +620,10 @@ fn an_old_songs_compressor_opens_at_its_preset() {
         "makeup",
         "mix",
     ];
-    // 「強め」 as it was: each sweeping knob 0.22 of its sweep off its default, every
-    // other one the other way.
-    let strong: Vec<f64> = old
-        .iter()
-        .enumerate()
-        .map(|(i, id)| {
-            let (k, p) = def.param(id).unwrap();
-            assert_eq!(k, i, "{id} kept its place");
-            let d = p.default_norm();
-            let f = if i % 2 == 1 { -0.22 } else { 0.22 };
-            if p.steps().is_some() {
-                d
-            } else {
-                (d + f).clamp(0.0, 1.0)
-            }
-        })
-        .collect();
-    assert_eq!(preset_values(def, "強め").unwrap()[..old.len()], strong);
+    for (i, id) in old.iter().enumerate() {
+        assert_eq!(def.param(id).unwrap().0, i, "{id} kept its place");
+    }
+    let strong = preset_values(def, "ドラムをまとめる").unwrap()[..old.len()].to_vec();
     let values_of: Vec<_> = old
         .iter()
         .zip(&strong)
@@ -600,7 +631,7 @@ fn an_old_songs_compressor_opens_at_its_preset() {
         .collect();
     assert!(s.run_command(
         "plugin.preset.load",
-        serde_json::json!({ "id": comp.to_string(), "preset": "強め", "values": values_of }),
+        serde_json::json!({ "id": comp.to_string(), "preset": "ドラムをまとめる", "values": values_of }),
     ));
     let texts = |x: &Plugin| -> Vec<String> {
         def.params
@@ -649,8 +680,8 @@ fn an_old_songs_compressor_opens_at_its_preset() {
     let x = insert(&s, comp);
     assert_eq!(x.params.len(), old.len(), "the old knobs only");
     assert_eq!(texts(&x), before);
-    assert_eq!(preset_of(&x), "強め");
-    assert_eq!(s.instruments.tag_of(&x), ("強め", false));
+    assert_eq!(preset_of(&x), Some("ドラムをまとめる"));
+    assert_eq!(s.instruments.tag_of(&x), ("ドラムをまとめる", false));
 }
 
 /// A preset is the compressor's own knobs (PLG-071): the Gain and the key's filter and
@@ -689,10 +720,10 @@ fn a_preset_leaves_the_sidechain_knobs_where_they_are() {
             .collect()
     };
     let before = kept(&s);
-    for preset in ["強め", "やさしく", "初期"] {
+    for preset in ["ドラムをまとめる", "ボーカルを整える", "Default"] {
         assert!(s.load_preset(comp, preset));
         assert_eq!(kept(&s), before, "{preset}");
-        assert_eq!(preset_of(&insert(&s, comp)), preset);
+        assert_eq!(preset_of(&insert(&s, comp)), Some(preset));
         assert_eq!(s.instruments.tag_of(&insert(&s, comp)), (preset, false));
     }
 }

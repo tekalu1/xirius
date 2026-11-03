@@ -45,7 +45,7 @@ const SEMIBOLD_RUN: f32 = 1.12;
 
 /// The preset group «‹ tag ›»: its left margin, its width it shrinks from
 /// and to, and a ‹ › button's width. Narrow, the tag gives up to two wide
-/// characters («初期») so the device keeps its name.
+/// characters so the device keeps its name.
 const GROUP_ML: f32 = 6.0;
 const GROUP_BASIS: f32 = 220.0;
 const GROUP_MIN: f32 = 120.0;
@@ -575,7 +575,7 @@ mod tests {
                     "{device} ({w}) in {:?} with the seat {sidechain}",
                     b.name_text
                 );
-                // The tag keeps «初期» (two 14 wide characters) readable.
+                // The tag keeps two 14 wide characters readable.
                 assert!(b.tag_text.w >= 28.0, "{device}: {:?}", b.tag_text);
             }
         }
@@ -649,7 +649,7 @@ mod tests {
         let room = preset_room(t, true);
         assert_eq!(room, t.w - DOT_GAP - DOT);
         assert_eq!(preset_room(t, false), t.w);
-        // «初期» keeps whole with the mark even at 316.
+        // Two wide characters keep whole with the mark even at 316.
         assert!(room >= 28.0, "{t:?}");
         // Whatever the shown width up to the room, the dot keeps the gap
         // and stays inside the name's zone.

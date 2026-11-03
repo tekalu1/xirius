@@ -106,9 +106,11 @@ fn open_presets_and_replace_go_where_the_row_says() {
     let popup = s.popup.as_ref().expect("the presets");
     assert_eq!(popup.kind, PopupKind::InstMenu(Menu::Preset(t, id)));
     assert_eq!(popup.anchor, anchor);
-    assert_eq!(popup.current(), "初期");
-    pick(&mut s, &g, "強め");
-    assert_eq!(window::preset_of(&plugin(&s, t)), "強め");
+    // The Sampler has only its Default (PLG-064).
+    assert_eq!(popup.current(), "Default");
+    assert_eq!(popup.choices().len(), 1);
+    pick(&mut s, &g, "Default");
+    assert_eq!(window::preset_of(&plugin(&s, t)), Some("Default"));
     // 差し替える… is the instrument picker.
     right_press(&mut s, &g, t, id);
     pick(&mut s, &g, "replace");

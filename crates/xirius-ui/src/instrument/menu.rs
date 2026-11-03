@@ -12,7 +12,7 @@ use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::{Plugin, Project};
 
 use super::current;
-use super::window::{PRESETS, is_built_in, preset_of};
+use super::window::{DEFAULT, is_built_in, preset_of, presets};
 use crate::popup::{Action, Choice, PopupKind};
 use crate::studio::{Rect, Studio};
 use crate::tools::Mods;
@@ -111,8 +111,10 @@ pub fn view(p: &Project, menu: Menu) -> (Vec<Choice>, String) {
     };
     match menu {
         Menu::Preset(_, id) => {
-            let now = device_of(p, id).map_or(PRESETS[0], preset_of);
-            (PRESETS.iter().map(|n| row(n, n)).collect(), now.into())
+            let x = device_of(p, id);
+            let list = x.and_then(Plugin::builtin).map_or(vec![DEFAULT], presets);
+            let now = x.and_then(preset_of).unwrap_or_default();
+            (list.iter().map(|n| row(n, n)).collect(), now.into())
         }
         Menu::Row(t, id) => {
             let built_in = plugin_of(p, t, id).is_some_and(is_built_in);

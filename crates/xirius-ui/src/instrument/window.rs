@@ -37,17 +37,22 @@ use crate::title_bar;
 /// How much of a window stays on the screen when it is dragged off.
 const KEEP_W: f32 = 80.0;
 
-/// The presets, the first being the defaults.
-pub const PRESETS: [&str; 4] = ["初期", "やさしく", "強め", "声を前に"];
+/// The preset that is the device's own defaults (PLG-063).
+pub const DEFAULT: &str = xirius_core::xpreset::DEFAULT_PRESET;
 
-/// What the preset box says when the knobs match no preset.
-pub const CUSTOM: &str = "カスタム";
+/// A built-in's presets: its Default first, then its factory presets (PLG-064). The
+/// Sampler and the Drum Kit have only their Default.
+pub fn presets(def: &BuiltinDef) -> Vec<&'static str> {
+    let mut v = vec![DEFAULT];
+    v.extend(xirius_params::factory_names(def));
+    v
+}
 
-/// The knobs' values (0..1) of a preset: `初期` is the defaults, the rest are the
-/// factory presets `xirius-params` ships (PLG-063), which leave the knobs no preset
-/// sets ([`ParamSpec::preset`]) at their defaults.
+/// The knobs' values (0..1) of a preset: [`DEFAULT`] is the defaults, the rest are the
+/// factory presets `xirius-params` ships (PLG-064), which leave the knobs they do not
+/// name at their defaults.
 pub fn preset_values(def: &BuiltinDef, preset: &str) -> Option<Vec<f64>> {
-    if preset == "初期" {
+    if preset == DEFAULT {
         return Some(def.params.iter().map(|p| p.default_norm()).collect());
     }
     xirius_params::factory_presets(def)
@@ -73,24 +78,18 @@ pub fn values(plugin: &Plugin) -> Vec<f64> {
     })
 }
 
-/// The preset the knobs a preset sets are at, or [`CUSTOM`].
-pub fn preset_of(plugin: &Plugin) -> &'static str {
-    let Some(def) = plugin.builtin() else {
-        return CUSTOM;
-    };
+/// The preset the knobs a preset sets are at, if any.
+pub fn preset_of(plugin: &Plugin) -> Option<&'static str> {
+    let def = plugin.builtin()?;
     let now = values(plugin);
-    PRESETS
-        .iter()
-        .find(|p| {
-            preset_values(def, p).is_some_and(|v| {
-                def.params
-                    .iter()
-                    .zip(v.iter().zip(&now))
-                    .all(|(s, (a, b))| !s.preset || (a - b).abs() < 1e-6)
-            })
+    presets(def).into_iter().find(|p| {
+        preset_values(def, p).is_some_and(|v| {
+            def.params
+                .iter()
+                .zip(v.iter().zip(&now))
+                .all(|(s, (a, b))| !s.preset || (a - b).abs() < 1e-6)
         })
-        .copied()
-        .unwrap_or(CUSTOM)
+    })
 }
 
 /// A knob's value as it reads (`-12.0 dB`, `1.20 kHz`, `付点`).
@@ -693,11 +692,8 @@ impl Windows {
     /// the tag, the CLI or the MCP, an undo, a song opened after a restart.
     pub(crate) fn learn(&mut self, p: &Project) {
         for x in p.tracks.values().flat_map(|t| &t.inserts) {
-            match preset_of(x) {
-                CUSTOM => {}
-                name => {
-                    self.base.insert(x.id, name);
-                }
+            if let Some(name) = preset_of(x) {
+                self.base.insert(x.id, name);
             }
         }
     }
@@ -706,8 +702,8 @@ impl Windows {
     /// last set to plus the mark while they are off it.
     pub(crate) fn tag_of(&self, plugin: &Plugin) -> (&'static str, bool) {
         match preset_of(plugin) {
-            CUSTOM => (*self.base.get(&plugin.id).unwrap_or(&PRESETS[0]), true),
-            name => (name, false),
+            Some(name) => (name, false),
+            None => (*self.base.get(&plugin.id).unwrap_or(&DEFAULT), true),
         }
     }
 }

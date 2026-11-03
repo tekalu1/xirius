@@ -94,10 +94,6 @@ pub struct ParamSpec {
     /// are not (PLG-071): a preset leaves them where they are, and a song from before them
     /// still reads the preset it was at.
     pub preset: bool,
-    /// Whether the factory presets move it ([`factory_presets`]) and their files hold it.
-    /// Knobs added after the factory set was made are not: the set keeps its sound and its
-    /// files their bytes, and loading one puts those knobs at their defaults (PLG-062).
-    pub factory: bool,
 }
 
 impl ParamSpec {
@@ -372,42 +368,213 @@ fn squash(s: &str) -> String {
         .collect()
 }
 
-/// The named factory presets shipped with every built-in (PLG-063): name and the share of
-/// each parameter's sweep it moves by. The session writes them into the user's preset folder
-/// on the first run; after that they are plain preset files (`preset.factory.restore` adds
-/// back the ones still missing). `Default` is not among them: it is the device's own
-/// defaults, not a file.
-pub const FACTORY_PRESETS: &[(&str, f64)] =
-    &[("やさしく", -0.18), ("強め", 0.22), ("声を前に", 0.1)];
+/// The knobs a factory preset sets: each knob's id and its plain value.
+pub type FactorySet = &'static [(&'static str, f64)];
+
+/// The named factory presets of the built-ins (PLG-064): the device's uid, the preset's name
+/// and the plain values it sets. The knobs a preset leaves out sit at their defaults. The
+/// session writes them into the user's preset folder on the first run; after that they are
+/// plain preset files (`preset.factory.restore` adds back the ones still missing). `Default`
+/// is not among them: it is the device's own defaults, not a file. The Sampler and the Drum
+/// Kit have only their Default.
+pub const FACTORY_PRESETS: &[(&str, &str, FactorySet)] = &[
+    (
+        "eq",
+        "ボーカルを明るく",
+        &[
+            ("low_cut_on", 1.0),
+            ("low_cut_freq", 80.0),
+            ("low_cut_slope", 1.0),
+            ("low_freq", 120.0),
+            ("low_gain", 2.0),
+            ("mid1_freq", 350.0),
+            ("mid1_gain", -3.5),
+            ("mid1_q", 1.4),
+            ("mid2_freq", 3200.0),
+            ("mid2_gain", 2.5),
+            ("mid2_q", 0.9),
+            ("high_freq", 10_000.0),
+            ("high_gain", 1.5),
+        ],
+    ),
+    (
+        "eq",
+        "低域を締める",
+        &[
+            ("low_cut_on", 1.0),
+            ("low_cut_freq", 90.0),
+            ("low_cut_slope", 2.0),
+            ("low_freq", 180.0),
+            ("low_gain", -2.5),
+            ("mid1_freq", 320.0),
+            ("mid1_gain", -2.0),
+            ("mid1_q", 1.2),
+        ],
+    ),
+    (
+        "eq",
+        "電話の声",
+        &[
+            ("low_cut_on", 1.0),
+            ("low_cut_freq", 400.0),
+            ("low_cut_slope", 2.0),
+            ("mid1_freq", 1500.0),
+            ("mid1_gain", 4.0),
+            ("high_cut_on", 1.0),
+            ("high_cut_freq", 3200.0),
+            ("high_cut_slope", 2.0),
+        ],
+    ),
+    (
+        "compressor",
+        "ボーカルを整える",
+        &[
+            ("threshold", -24.0),
+            ("ratio", 3.0),
+            ("attack", 8.0),
+            ("release", 140.0),
+            ("knee", 6.0),
+            ("makeup", 5.0),
+        ],
+    ),
+    (
+        "compressor",
+        "ドラムをまとめる",
+        &[
+            ("threshold", -16.0),
+            ("ratio", 4.0),
+            ("attack", 25.0),
+            ("release", 90.0),
+            ("knee", 3.0),
+            ("makeup", 3.0),
+        ],
+    ),
+    (
+        "compressor",
+        "並列で太く",
+        &[
+            ("threshold", -34.0),
+            ("ratio", 8.0),
+            ("attack", 1.5),
+            ("release", 70.0),
+            ("knee", 0.0),
+            ("makeup", 12.0),
+            ("mix", 45.0),
+        ],
+    ),
+    (
+        "limiter",
+        "マスターの仕上げ",
+        &[("input", 4.0), ("ceiling", -1.0), ("release", 120.0)],
+    ),
+    (
+        "limiter",
+        "配信の音量",
+        &[("input", 8.0), ("ceiling", -1.0), ("release", 200.0)],
+    ),
+    (
+        "delay",
+        "4 分のピンポン",
+        &[
+            ("division", 3.0),
+            ("feel", 0.0),
+            ("ping_pong", 1.0),
+            ("feedback", 40.0),
+            ("mix", 25.0),
+        ],
+    ),
+    (
+        "delay",
+        "スラップバック",
+        &[
+            ("sync", 0.0),
+            ("time", 90.0),
+            ("feedback", 5.0),
+            ("mix", 25.0),
+            ("low_cut", 120.0),
+            ("high_cut", 5000.0),
+        ],
+    ),
+    (
+        "delay",
+        "3 連の広がり",
+        &[
+            ("division", 2.0),
+            ("feel", 2.0),
+            ("ping_pong", 1.0),
+            ("feedback", 45.0),
+        ],
+    ),
+    (
+        "reverb",
+        "小さい部屋",
+        &[
+            ("size", 25.0),
+            ("decay", 0.6),
+            ("predelay", 2.0),
+            ("damping", 9000.0),
+            ("early", 60.0),
+            ("mix", 20.0),
+        ],
+    ),
+    (
+        "reverb",
+        "ホール",
+        &[
+            ("size", 85.0),
+            ("decay", 3.2),
+            ("predelay", 24.0),
+            ("damping", 6000.0),
+            ("early", 30.0),
+            ("mix", 25.0),
+        ],
+    ),
+    (
+        "reverb",
+        "ボーカルのプレート",
+        &[
+            ("size", 55.0),
+            ("decay", 1.8),
+            ("predelay", 40.0),
+            ("damping", 10_000.0),
+            ("low_cut", 250.0),
+            ("early", 15.0),
+            ("mix", 20.0),
+        ],
+    ),
+];
 
 /// The version of the factory set the session copies to the user's folder. Raise it when
 /// the set changes: a folder copied from an older set then gets the new presets, and loses
-/// the old ones it copied that the user left untouched.
-pub const FACTORY_VERSION: u32 = 1;
+/// the old ones it copied that the user left untouched. 2: each device's own presets
+/// (PLG-064) in place of the three shared ones.
+pub const FACTORY_VERSION: u32 = 2;
 
-/// The factory presets of a built-in: a name and the knob values (0..1) in `def.params`
-/// order. A stepped parameter, one no preset sets ([`ParamSpec::preset`]) and one the
-/// factory set leaves out ([`ParamSpec::factory`]) keep their default; the others move
-/// `share` of their sweep from the default, alternating the direction down the panel.
-pub fn factory_presets(def: &BuiltinDef) -> Vec<(&'static str, Vec<f64>)> {
+/// The names of a built-in's factory presets, in the set's order.
+pub fn factory_names(def: &BuiltinDef) -> Vec<&'static str> {
     FACTORY_PRESETS
         .iter()
-        .map(|(name, share)| (*name, preset_values(def, *share)))
+        .filter(|(uid, _, _)| *uid == def.uid)
+        .map(|(_, name, _)| *name)
         .collect()
 }
 
-/// The knob values (0..1) of one factory preset, in `def.params` order.
-fn preset_values(def: &BuiltinDef, share: f64) -> Vec<f64> {
-    def.params
+/// The factory presets of a built-in: a name and the knob values (0..1) in `def.params`
+/// order. A knob a preset leaves out keeps its default.
+pub fn factory_presets(def: &BuiltinDef) -> Vec<(&'static str, Vec<f64>)> {
+    FACTORY_PRESETS
         .iter()
-        .enumerate()
-        .map(|(i, p)| {
-            let d = p.default_norm();
-            if p.steps().is_some() || !p.preset || !p.factory {
-                return d;
-            }
-            let sign = if i % 2 == 1 { -1.0 } else { 1.0 };
-            (d + share * sign).clamp(0.0, 1.0)
+        .filter(|(uid, _, _)| *uid == def.uid)
+        .map(|(_, name, set)| {
+            let values = def
+                .params
+                .iter()
+                .map(|p| match set.iter().find(|(id, _)| *id == p.id) {
+                    Some((_, v)) => p.to_norm(*v),
+                    None => p.default_norm(),
+                })
+                .collect();
+            (*name, values)
         })
         .collect()
 }
@@ -492,18 +659,32 @@ mod tests {
     }
 
     #[test]
-    fn the_factory_presets_leave_the_eqs_later_knobs_at_their_defaults() {
-        // PLG-062: the band types, ons, Qs and slopes came after the set; it keeps its sound.
-        let first = EQ.param("b1_type").unwrap().0;
-        assert_eq!(first, 17);
-        for (name, values) in factory_presets(&EQ) {
-            for (i, p) in EQ.params.iter().enumerate() {
-                assert_eq!(p.factory, i < first, "{}", p.id);
-                if i >= first {
-                    assert_eq!(values[i], p.default_norm(), "{name}: {}", p.id);
-                }
+    fn each_factory_preset_names_its_devices_knobs_inside_their_ranges() {
+        // PLG-064: every id is the device's, every value inside its range, and one no preset
+        // sets (the Compressor's sidechain) is never among them.
+        for (uid, name, set) in FACTORY_PRESETS {
+            let def = find(uid).unwrap_or_else(|| panic!("{uid}"));
+            assert_eq!(def.kind, Kind::Effect, "{name}");
+            for (id, v) in *set {
+                let (_, p) = def.param(id).unwrap_or_else(|| panic!("{name}: {id}"));
+                assert!(p.preset, "{name}: {id}");
+                let (lo, hi) = p.range();
+                assert!((lo..=hi).contains(v), "{name}: {id} = {v}");
+                assert!((p.to_plain(p.to_norm(*v)) - v).abs() < 1e-6 * v.abs().max(1.0));
             }
         }
+        assert_eq!(
+            factory_names(&EQ),
+            ["ボーカルを明るく", "低域を締める", "電話の声"]
+        );
+        assert_eq!(factory_names(&LIMITER).len(), 2);
+        assert!(factory_names(&SAMPLER).is_empty());
+        assert!(factory_names(&DRUM_KIT).is_empty());
+        let phone = &factory_presets(&EQ)[2].1;
+        let (k, p) = EQ.param("high_cut_freq").unwrap();
+        assert!((p.to_plain(phone[k]) - 3200.0).abs() < 1e-6);
+        let (k, p) = EQ.param("b2_type").unwrap();
+        assert_eq!(phone[k], p.default_norm());
     }
 
     #[test]
