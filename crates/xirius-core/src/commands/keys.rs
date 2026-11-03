@@ -1398,8 +1398,15 @@ pub const ENTRIES: &[Entry] = &[
         context: "global",
         command: "app.quit",
         label: None,
-        keys: &["Mod+Q", "Mod+W", "Mod+F4"],
+        keys: &["Mod+Q", "Mod+F4"],
         cat: Cat::View,
+    },
+    Entry {
+        context: "global",
+        command: "project.close",
+        label: None,
+        keys: &["Mod+W"],
+        cat: Cat::Edit,
     },
     Entry {
         context: "arrange",

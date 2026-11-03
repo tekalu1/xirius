@@ -312,7 +312,7 @@ pub(crate) fn ready(studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut 
                     drop(s);
                     // The same close request the native caption calls, without closing this
                     // picture window before its waiting card has been captured.
-                    key(window, cx, "ctrl-w");
+                    key(window, cx, "ctrl-q");
                 }
                 12 => {
                     studio.borrow_mut().window_ask = None;

@@ -377,6 +377,23 @@ fn button_width(b: Button, keys: bool) -> f32 {
 }
 
 impl Studio {
+    /// 「閉じる」 (Ctrl+W, UI-350): the song leaves the way it does for a new one — kept,
+    /// saved, and asked about when its plugin state could not be kept — and the start screen
+    /// shows once the empty song is in. Nothing to close while the start screen shows.
+    pub(crate) fn close_to_home(&mut self) -> bool {
+        if self.home_shown() {
+            return false;
+        }
+        self.popup = None;
+        if self.request_open(crate::opening::Request::New) {
+            self.after_open(|s| {
+                s.home = Some(Home::default());
+                s.poll_io();
+            });
+        }
+        true
+    }
+
     /// The start screen shows: the window has not opened a song yet (UI-350).
     pub fn home_shown(&self) -> bool {
         self.home.is_some() && self.start_shown()

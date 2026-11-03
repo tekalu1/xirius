@@ -36,6 +36,7 @@ pub const NAMES: &[&str] = &[
     "view.focus",
     "view.fullscreen",
     "app.quit",
+    "project.close",
     "marker.add.named",
     "range.from-clips",
     "browser.search",
@@ -274,6 +275,13 @@ pub(super) fn defs() -> Vec<CommandDef> {
         session(
             "app.quit",
             "窓を閉じて終了します",
+            vec![],
+            Risk::HumanOnly,
+            false,
+        ),
+        session(
+            "project.close",
+            "曲を閉じて、スタート画面へ戻ります",
             vec![],
             Risk::HumanOnly,
             false,

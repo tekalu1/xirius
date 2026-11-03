@@ -365,3 +365,58 @@ fn a_screen_reader_reads_the_buttons_the_search_and_the_list() {
     // No transport under the start screen.
     assert!(crate::a11y::bottom_bar_nodes(&s, &g).is_empty());
 }
+
+fn finish_open(s: &mut Studio) {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while s.opening.is_some() {
+        assert!(std::time::Instant::now() < end, "open never returned");
+        s.poll_opening();
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn ctrl_w_closes_the_song_and_the_start_screen_shows() {
+    let mut s = Studio::sample();
+    with_device(&mut s, true);
+    let g = s.geometry(1280.0, 720.0);
+    assert!(!s.home_shown());
+    assert!(s.mapped_key(&g, "w", Some("w"), Mods::ctrl()));
+    assert_eq!(s.window_ask, None, "Ctrl+W no longer quits");
+    finish_open(&mut s);
+    assert!(s.home_shown());
+    assert!(s.project().root.is_empty());
+    // On the start screen there is nothing to close.
+    assert!(!s.close_to_home());
+    assert!(s.opening.is_none());
+}
+
+#[test]
+fn closing_from_the_song_menu_asks_first_when_the_plugin_state_was_not_kept() {
+    let mut s = Studio::sample();
+    with_device(&mut s, true);
+    let g = s.geometry(1280.0, 720.0);
+    s.keep.plugin_state_failed = true;
+    let tracks = s.project().root.len();
+    let popup = crate::popup::Popup::new(
+        crate::popup::PopupKind::Song,
+        Rect::new(40.0, -34.0, 160.0, 28.0),
+    );
+    s.popup = Some(popup);
+    s.popup_action(&g, crate::popup::Action::CloseSong);
+    s.poll_opening();
+    assert!(s.unsaved.is_some());
+    // Staying keeps the song.
+    s.answer_unsaved(false);
+    finish_open(&mut s);
+    assert!(!s.home_shown());
+    assert_eq!(s.project().root.len(), tracks);
+    // Going on closes it.
+    assert!(s.close_to_home());
+    s.poll_opening();
+    assert!(s.unsaved.is_some());
+    s.answer_unsaved(true);
+    finish_open(&mut s);
+    assert!(s.home_shown());
+    assert!(s.project().root.is_empty());
+}

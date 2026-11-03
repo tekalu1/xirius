@@ -500,6 +500,7 @@ pub const LABELS: &[(&str, &str)] = &[
     ("view.focus", "フォーカスを移動"),
     ("view.fullscreen", "全画面表示"),
     ("app.quit", "終了"),
+    ("project.close", "閉じる"),
     ("marker.add.named", "名前を付けてマーカーを追加…"),
     ("range.from-clips", "クリップから範囲を作成"),
     ("browser.search", "ブラウザーで検索"),

@@ -196,6 +196,8 @@ pub enum Action {
     AudioSettings,
     /// 「DAWproject を開く…」 of the song menu (EXP-006).
     OpenDawproject,
+    /// 「閉じる」 of the song menu: the song closes and the start screen shows (UI-350).
+    CloseSong,
     /// 「DAWproject として書き出す…」 of the song menu (EXP-007).
     ExportDawproject,
 }
@@ -977,7 +979,7 @@ impl Popup {
             });
             *y += Layout::MENU_ROW_H;
         };
-        // 新規 / 開く… / DAWproject を開く… / 最近の曲 (the songs, one row each) — / 保存 /
+        // 新規 / 開く… / DAWproject を開く… / 閉じる / 最近の曲 (the songs, one row each) — / 保存 /
         // 別名で保存… / DAWproject として書き出す… / 版の一覧… — / 書き出し / 曲の設定
         let cell = row(y, "新規", "Ctrl+N", "plus");
         put(&mut cells, &mut y, cell, Some(Action::NewSong));
@@ -985,6 +987,8 @@ impl Popup {
         put(&mut cells, &mut y, cell, Some(Action::OpenSong));
         let cell = row(y, "DAWproject を開く…", "", "open");
         put(&mut cells, &mut y, cell, Some(Action::OpenDawproject));
+        let cell = row(y, "閉じる", "Ctrl+W", "close");
+        put(&mut cells, &mut y, cell, Some(Action::CloseSong));
         if !self.recent.is_empty() {
             cells.push(
                 Cell::new(Rect::new(pad, y + gap, w - pad * 2.0, LABEL_H), Look::Label)
@@ -2174,6 +2178,7 @@ mod tests {
                 "新規",
                 "開く…",
                 "DAWproject を開く…",
+                "閉じる",
                 "最近の曲",
                 "夏の曲",
                 "無題（保存前）",
@@ -2197,6 +2202,7 @@ mod tests {
                 ("新規", Action::NewSong),
                 ("開く…", Action::OpenSong),
                 ("DAWproject を開く…", Action::OpenDawproject),
+                ("閉じる", Action::CloseSong),
                 ("夏の曲", Action::OpenRecent(0)),
                 ("無題（保存前）", Action::OpenRecent(1)),
                 ("保存", Action::Save),
@@ -2209,6 +2215,7 @@ mod tests {
         let by = |t: &str| l.cells.iter().find(|c| c.text == t).unwrap();
         assert_eq!(by("保存").hint, "Ctrl+S");
         assert_eq!(by("別名で保存…").hint, "Ctrl+Shift+S");
+        assert_eq!(by("閉じる").hint, "Ctrl+W");
         assert_eq!(by("夏の曲").hint, "3 分前");
         p.can_export = true;
         assert!(

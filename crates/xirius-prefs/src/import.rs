@@ -26,7 +26,7 @@ pub const STUDIO_PRO: &[(&str, &str, &str)] = &[
     ("Bounce To New Track", "arrange", "clip.bounce --new-track"),
     ("Browser", "global", "view.browser"),
     ("Click", "global", "transport.metronome"),
-    ("Close", "global", "app.quit"),
+    ("Close", "global", "project.close"),
     ("Console", "global", "view.mixer"),
     ("Copy", "edit", "edit.copy"),
     ("Create Autofades", "arrange", "clip.fade.set --auto"),
@@ -387,6 +387,23 @@ mod tests {
         // A command the scheme names with no key loses its key.
         assert!(k.keys_of("roll", "note.mute").is_empty());
         assert!(studio_pro("<nothing/>", &mut k).is_err());
+    }
+
+    /// Studio Pro's Close closes the song and goes to the start screen (UI-350); only Quit
+    /// quits.
+    #[test]
+    fn close_closes_the_song_and_quit_quits() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<KeyScheme title="Mine">
+  <Command category="File" name="Close"><Key name="Ctrl+W"/></Command>
+  <Command category="File" name="Quit"><Key name="Ctrl+Q"/></Command>
+</KeyScheme>"#;
+        let mut k = Keymap::default();
+        studio_pro(xml, &mut k).unwrap();
+        let w = Chord::parse("Mod+W", Os::Win).unwrap();
+        let q = Chord::parse("Mod+Q", Os::Win).unwrap();
+        assert_eq!(k.lookup("global", &w).unwrap().1, "project.close");
+        assert_eq!(k.lookup("global", &q).unwrap().1, "app.quit");
     }
 
     /// A line is written once (a name may repeat in another context), so a lookup gives one

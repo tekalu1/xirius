@@ -2347,6 +2347,10 @@ impl Studio {
                 self.start_leaving(crate::saving::Leave::New);
                 self.rebuild(g);
             }
+            Action::CloseSong => {
+                self.close_to_home();
+                self.rebuild(g);
+            }
             Action::OpenRecent(i) => {
                 self.popup = None;
                 if let Some(song) = p.recent.get(i) {

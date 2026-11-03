@@ -316,7 +316,7 @@ impl Studio {
                 self.request_close();
             } else if matches!(
                 name.as_str(),
-                "project.open" | "project.new" | "version.open"
+                "project.open" | "project.new" | "project.close" | "version.open"
             ) {
                 self.warn(crate::opening::BUSY.into(), None);
             }

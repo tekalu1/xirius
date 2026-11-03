@@ -66,6 +66,7 @@ impl Studio {
                 self.window_ask = Some(WindowAsk::Quit);
                 true
             }
+            "project.close" => self.close_to_home(),
             "marker.add.named" => {
                 self.popup = None;
                 let at = self.playhead;

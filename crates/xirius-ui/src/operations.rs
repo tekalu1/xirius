@@ -176,6 +176,7 @@ pub fn of_action(action: &Action) -> &'static str {
         Action::OpenDawproject => "song.open_dawproject",
         Action::ExportDawproject => "export.dawproject",
         Action::NewSong => "song.new",
+        Action::CloseSong => "song.close",
         Action::Rescan => "audio.rescan",
         Action::AudioSettings => "settings.open",
         Action::OpenRecent(_) => "song.open_recent",

@@ -83,6 +83,7 @@ UI-004: 同じ操作を画面の 2 か所に置かない。この一覧は `crat
 | `send.add` | `mixer.add_send` |
 | `send.pick` | `popup.send` |
 | `settings.open` | `popup.nodevice`, `rail.settings` |
+| `song.close` | `popup.song` |
 | `song.menu` | `bar.song` |
 | `song.new` | `home.new`, `popup.song` |
 | `song.open` | `home.open`, `popup.song` |
@@ -136,7 +137,7 @@ UI-004: 同じ操作を画面の 2 か所に置かない。この一覧は `crat
 | `view.zoom.out` | `head.zoom_out` |
 | `view.zoom.wave` | `head.wave_zoom` |
 
-操作 109 件、うち 2 か所にあるもの 13 件（すべて承認済み）。
+操作 110 件、うち 2 か所にあるもの 13 件（すべて承認済み）。
 
 保存（UI-288）: Ctrl+S と曲のメニューは同じ保存を開始する。場所が未定なら別名保存の窓を開く。書き込み中の印は少なくとも 450 ms 保ち、200 ms を超える待ちは幕に載せる。別名保存の幕だけに進捗の棒と「中止 Esc」を置く。保存の警告の札の「別名で保存…」は同じ窓を開き、「もう一度」は同じ保存を再試行する。札を閉じても、保存成功まで警告の印を保つ。
 
