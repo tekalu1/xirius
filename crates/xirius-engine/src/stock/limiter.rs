@@ -5,6 +5,11 @@
 //! with the release, and averaged over the lookahead. Since every value averaged for a frame
 //! is at most what that frame needs, the delayed audio never goes over the ceiling, and the
 //! gain moves with no corner. The lookahead is the latency the mix is told of (PDC).
+//!
+//! With a sidechain key (PLG-072, Ext) the key's peaks are detected too: the louder of the key
+//! and the main signal sets the gain, so the key turns the audio down and the audio still
+//! never goes over the ceiling. No key is Int, the brickwall as before. The key has no filter
+//! and no listen, and Input stays on the audio.
 
 use super::bank::Params;
 use super::dsp::{Glide, Line, STEP, db_to_gain, gain_to_db};
@@ -115,6 +120,7 @@ impl Processor for Limiter {
     fn process(&mut self, io: &mut AudioIo<'_>, _events: &[NoteEvent]) {
         let n = io.frames();
         let look = self.look;
+        let key = io.key.filter(|(l, r)| l.len() >= n && r.len() >= n);
         let watch = self.params.probe().watching();
         if watch {
             self.params.probe().note_input(io.left, io.right);
@@ -131,7 +137,13 @@ impl Processor for Limiter {
             for i in at..at + len {
                 let l = f64::from(io.left[i]) * input;
                 let r = f64::from(io.right[i]) * input;
-                let peak = l.abs().max(r.abs());
+                let peak = match key {
+                    Some((kl, kr)) => l
+                        .abs()
+                        .max(r.abs())
+                        .max(f64::from(kl[i].abs()).max(f64::from(kr[i].abs()))),
+                    None => l.abs().max(r.abs()),
+                };
                 let need = if peak > ceiling { ceiling / peak } else { 1.0 };
                 let held = self.hold(need);
                 self.env = if held < self.env {
@@ -238,6 +250,54 @@ mod tests {
         // Just after, still turned down by most of the 12 dB; five release times on, back.
         assert!(level(at(2.0)) < -8.0, "{}", level(at(2.0)));
         assert!(level(at(300.0)).abs() < 0.1, "{}", level(at(300.0)));
+    }
+
+    /// Renders with the same key on both channels.
+    fn keyed(p: &mut dyn crate::Processor, x: &[f32], key: &[f32]) -> Vec<f32> {
+        render_keyed(p, x, x, Some((key, key)), &[]).0
+    }
+
+    #[test]
+    fn a_key_turns_the_audio_down_and_it_still_stays_under_the_ceiling() {
+        let (mut p, h) = make("limiter");
+        set_plain(&h, "ceiling", -6.0);
+        p.prepare(&setup());
+        let ceiling = 10f64.powf(-6.0 / 20.0);
+        let n = RATE as usize / 2;
+        // A quiet main signal and a key twice the ceiling for the second half.
+        let x = sine(300.0, 0.2, n);
+        let key: Vec<f32> = (0..n)
+            .map(|i| if i < n / 2 { 0.0 } else { 2.0 * ceiling as f32 })
+            .collect();
+        let l = keyed(p.as_mut(), &x, &key);
+        let level = |from: usize| db(rms(&l[from..from + 4_800]) / (0.2 / 2f64.sqrt()));
+        // Before the key, the audio as it was; with it, turned down by the 6 dB it is over.
+        assert!(level(LOOK + 4_800).abs() < 0.01, "{}", level(LOOK + 4_800));
+        assert!((level(n / 2 + LOOK + 4_800) + 6.0).abs() < 0.1);
+
+        // A loud main signal under a quiet key: the ceiling holds.
+        let (mut p, h) = make("limiter");
+        set_plain(&h, "ceiling", -6.0);
+        set_plain(&h, "input", 12.0);
+        p.prepare(&setup());
+        let mut x = sine(110.0, 0.8, n);
+        x[n / 3] = 2.0;
+        let l = keyed(p.as_mut(), &x, &vec![0.05; n]);
+        assert!(peak(&l) <= ceiling + 1e-6, "{}", peak(&l));
+        assert!(peak(&l) > ceiling * 0.98);
+    }
+
+    #[test]
+    fn a_silent_key_leaves_the_brickwall_as_it_was() {
+        let x = sine(110.0, 0.9, RATE as usize / 4);
+        let (mut a, h) = make("limiter");
+        set_plain(&h, "input", 6.0);
+        a.prepare(&setup());
+        let (mut b, h) = make("limiter");
+        set_plain(&h, "input", 6.0);
+        b.prepare(&setup());
+        let (int, _) = render(a.as_mut(), &x, &x, &[]);
+        assert_eq!(keyed(b.as_mut(), &x, &vec![0.0; x.len()]), int);
     }
 
     #[test]
