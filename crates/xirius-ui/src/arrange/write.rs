@@ -110,6 +110,25 @@ impl Studio {
                 }
             }
         }
+        // What a device's window is turning is heard until it goes into the song (M-ui-1).
+        let turned = self.instruments.turned();
+        if !turned.is_empty() {
+            let held = |x: &xirius_core::model::Plugin| turned.iter().any(|(id, ..)| *id == x.id);
+            for track in heard.tracks.values_mut() {
+                if !track.inserts.iter().any(held) {
+                    continue;
+                }
+                let t = std::sync::Arc::make_mut(track);
+                for x in &mut t.inserts {
+                    for (_, k, v) in turned.iter().filter(|(id, ..)| *id == x.id) {
+                        let def = self.instruments.def_of(x);
+                        if let Some(spec) = def.and_then(|d| d.params.get(*k)) {
+                            x.params.insert(spec.id.to_string(), *v);
+                        }
+                    }
+                }
+            }
+        }
         heard
     }
 

@@ -412,6 +412,31 @@ impl Windows {
         }
     }
 
+    /// What is turning now, not yet in the song (M-ui-1): a knob dragged or swept, both
+    /// values of a point dragged. Each is its plug-in, the index in its window's parameters
+    /// and the value (0..1).
+    pub(crate) fn turned(&self) -> Vec<(PluginId, usize, f64)> {
+        let mut out = Vec::new();
+        match self.grab {
+            Some(Grab::Knob {
+                plugin, k, value, ..
+            }) => out.push((plugin, k, value)),
+            Some(Grab::Point { plugin, x, y, .. }) => {
+                out.extend(
+                    [x, y]
+                        .into_iter()
+                        .flatten()
+                        .map(|(k, _, now)| (plugin, k, now)),
+                );
+            }
+            _ => {}
+        }
+        if let Some(s) = &self.sweep {
+            out.push((s.plugin, s.k, s.value));
+        }
+        out
+    }
+
     /// A device's values (0..1) as its window shows them: a control that is
     /// dragged or swept where it is turning to.
     pub(crate) fn shown(&self, plugin: &Plugin) -> Vec<f64> {
@@ -1268,7 +1293,7 @@ impl Studio {
                 }
                 // Only the sound and the screen follow the drag; the song takes
                 // the value once it is let go.
-                self.device_hear(w.track, plugin, spec.id, next);
+                self.device_hear();
                 true
             }
             Some(Grab::Point { .. }) => self.device_point_moved(g, x, y, fine),

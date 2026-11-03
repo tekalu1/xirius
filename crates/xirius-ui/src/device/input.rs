@@ -126,23 +126,14 @@ impl Studio {
         true
     }
 
-    /// The player hears `value` for the parameter `id` while the song keeps
-    /// the old one (a drag, a sweep).
-    pub(crate) fn device_hear(&mut self, track: TrackId, plugin: PluginId, id: &str, value: f64) {
+    /// The player hears what the devices' windows are turning (a drag, a sweep) while the
+    /// song keeps the old values: all of them in one sync (M-ui-1), as every other sync
+    /// through [`Studio::auto_heard`] does.
+    pub(crate) fn device_hear(&mut self) {
         if !self.transport.is_live() {
             return;
         }
-        let mut p = (*self.project()).clone();
-        let Some(x) = p.tracks.get_mut(&track).and_then(|t| {
-            std::sync::Arc::make_mut(t)
-                .inserts
-                .iter_mut()
-                .find(|x| x.id == plugin)
-        }) else {
-            return;
-        };
-        x.params.insert(id.to_string(), value);
-        let heard = self.auto_heard(&p);
+        let heard = self.auto_heard(&self.project());
         self.transport.sync(&heard, self.song().dir());
     }
 
@@ -363,9 +354,8 @@ impl Studio {
             *x = nx;
             *y = ny;
         }
-        for (k, _, v) in [nx, ny].into_iter().flatten() {
-            self.device_hear(w.track, plugin, def.params[k].id, v);
-        }
+        // Both axes at once: a point pulled aslant is heard moving both ways (M-ui-1).
+        self.device_hear();
         true
     }
 
@@ -417,7 +407,7 @@ impl Studio {
             at: Instant::now(),
         });
         if next != from {
-            self.device_hear(track, plugin, spec.id, next);
+            self.device_hear();
         }
         true
     }

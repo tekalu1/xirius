@@ -74,9 +74,39 @@ fn ui_326_it_opens_wide_on_the_lmf_band_and_the_output_spectrum() {
     assert_eq!(s.instruments.tap(id), Tap::Output);
 }
 
+/// The song playing to a silent output (M-ui-7): each move of a drag copies the song and
+/// syncs the player, as it does on a real one.
+fn play_silent(s: &mut Studio) {
+    s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
+    assert!(s.toggle_play(), "{:?}", s.error);
+    let t = Instant::now();
+    while !s.transport.is_live() {
+        assert!(
+            t.elapsed().as_secs() < 60,
+            "the player starts: {:?}",
+            s.error
+        );
+        s.tick();
+        std::thread::yield_now();
+    }
+}
+
+/// The plain value of `id` in what the player hears of the EQ.
+fn heard(s: &Studio, t: TrackId, id: &str) -> f64 {
+    let p = s.auto_heard(&s.project());
+    let x = p.tracks[&t]
+        .inserts
+        .iter()
+        .find(|x| x.name == "EQ")
+        .unwrap();
+    let (k, spec) = x.builtin().unwrap().param(id).unwrap();
+    spec.to_plain(values(x)[k])
+}
+
 #[test]
 fn ui_326_a_point_drag_is_one_step_and_each_frame_keeps_up() {
     let (mut s, g, t, id) = eq_window();
+    play_silent(&mut s);
     let (fx0, gx0) = (plain(&s, t, "mid1_freq"), plain(&s, t, "mid1_gain"));
     let before = s.song().steps();
     let (x, y) = s
@@ -89,6 +119,7 @@ fn ui_326_a_point_drag_is_one_step_and_each_frame_keeps_up() {
     let mut frames = Vec::new();
     for d in 1..=120 {
         let start = Instant::now();
+        // The move syncs the playing player with what it is dragged to (M-ui-7).
         assert!(s.instrument_moved(&g, x + d as f32, y - d as f32 * 0.5, false));
         // What a frame draws: the curve through the values it is dragged to.
         let shown = s.instruments.shown(&fx(&s, t));
@@ -107,6 +138,28 @@ fn ui_326_a_point_drag_is_one_step_and_each_frame_keeps_up() {
     assert!(s.undo(&g));
     assert_eq!(plain(&s, t, "mid1_freq"), fx0);
     assert_eq!(plain(&s, t, "mid1_gain"), gx0);
+}
+
+/// M-ui-1: a point pulled aslant is heard moving both ways at once, and the other syncs
+/// keep it, until it goes into the song.
+#[test]
+fn ui_326_a_point_pulled_aslant_is_heard_both_ways() {
+    let (mut s, g, t, id) = eq_window();
+    let (fx0, gx0) = (plain(&s, t, "mid1_freq"), plain(&s, t, "mid1_gain"));
+    let (x, y) = s
+        .instrument_center(&g, id, Part::Point(0, 2))
+        .expect("the LMF point");
+    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
+    assert!(s.instrument_moved(&g, x + 40.0, y - 20.0, false));
+    let (fh, gh) = (heard(&s, t, "mid1_freq"), heard(&s, t, "mid1_gain"));
+    assert!(fh > fx0 && gh > gx0, "heard {fh} Hz {gh} dB");
+    assert_eq!(plain(&s, t, "mid1_freq"), fx0, "the song has not taken it");
+    // Another edit's sync goes through the same overlay.
+    s.after_edit();
+    assert_eq!(heard(&s, t, "mid1_freq"), fh);
+    assert!(s.instrument_up());
+    assert_eq!(heard(&s, t, "mid1_freq"), plain(&s, t, "mid1_freq"));
+    assert_eq!(plain(&s, t, "mid1_gain"), gh);
 }
 
 #[test]
