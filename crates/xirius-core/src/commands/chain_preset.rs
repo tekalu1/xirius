@@ -127,7 +127,14 @@ pub(super) fn put(
                     _ => None,
                 })
                 .collect();
-            merge(&mut controls, &chain.controls, &laned, &name, &mut rows, &mut moved);
+            merge(
+                &mut controls,
+                &chain.controls,
+                &laned,
+                &name,
+                &mut rows,
+                &mut moved,
+            );
             t.controls = controls;
             gone_keys = take_off(t, &taken);
             t.inserts.extend(chain.devices);

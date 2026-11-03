@@ -245,12 +245,7 @@ pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry) {
     }
     // A control its lane holds says why it does not move (UI-063).
     if let Some((why, rect)) = s.lock_hovered(g) {
-        balloon(
-            pen,
-            why,
-            rect,
-            Rect::new(0.0, 0.0, g.size.0, g.size.1),
-        );
+        balloon(pen, why, rect, Rect::new(0.0, 0.0, g.size.0, g.size.1));
         return;
     }
     if let Some((name, rect)) = roll_control(s, g) {

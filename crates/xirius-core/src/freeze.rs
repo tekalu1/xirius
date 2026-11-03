@@ -34,9 +34,12 @@ fn same_source(before: &Project, old: &Track, after: &Project, new: &Track) -> b
     // moves either
     let rendered = |t: &Track, target: &AutoTarget| match target {
         AutoTarget::Param(..) | AutoTarget::Branch(..) => true,
-        AutoTarget::Control(c) => t.controls.get(*c).maps.iter().any(|m| {
-            matches!(m.target, AutoTarget::Param(..) | AutoTarget::Branch(..))
-        }),
+        AutoTarget::Control(c) => t
+            .controls
+            .get(*c)
+            .maps
+            .iter()
+            .any(|m| matches!(m.target, AutoTarget::Param(..) | AutoTarget::Branch(..))),
         _ => false,
     };
     let params = |t: &Track| {

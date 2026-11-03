@@ -65,7 +65,12 @@ impl Studio {
     }
 
     /// What holds the knob `param` of the plug-in `plugin` on `track`, as its reason.
-    pub fn param_held(&self, track: TrackId, plugin: PluginId, param: &str) -> Option<&'static str> {
+    pub fn param_held(
+        &self,
+        track: TrackId,
+        plugin: PluginId,
+        param: &str,
+    ) -> Option<&'static str> {
         let target = AutoTarget::Param(plugin, param.to_string());
         held(self.project().tracks.get(&track)?, &target)
     }
@@ -248,7 +253,10 @@ mod tests {
         }
         assert_eq!(s.project().tracks[&t].volume_db, was);
         // the knob itself turns
-        assert!(!s.mixer_locked(MixerHit::Control(t, xirius_core::controls::ControlId::Knob(0))));
+        assert!(!s.mixer_locked(MixerHit::Control(
+            t,
+            xirius_core::controls::ControlId::Knob(0)
+        )));
     }
 
     #[test]

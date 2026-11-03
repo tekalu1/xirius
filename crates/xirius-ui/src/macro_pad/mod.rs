@@ -372,7 +372,11 @@ impl Studio {
                 let from = self.pad_now(track);
                 let now = pad_values(v.pad, x, y);
                 if let Some(w) = self.macro_pad.as_mut() {
-                    w.grab = Some(Grab::Pad { track: t, from, now });
+                    w.grab = Some(Grab::Pad {
+                        track: t,
+                        from,
+                        now,
+                    });
                 }
                 // as a knob's drag does: while writing, the lanes take the pad's way
                 self.pad_touch(t, Phase::Begin, from);

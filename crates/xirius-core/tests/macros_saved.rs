@@ -35,8 +35,16 @@ fn a_target_a_macro_moves_stays_the_knobs() {
     let t = id_of(&run(&mut s, "track.add.audio", json!({"name": "Vocal"})));
     let u = id_of(&run(&mut s, "track.add.audio", json!({"name": "Keys"})));
     let fx = id_of(&run(&mut s, "track.add.bus", json!({"name": "FX"})));
-    let eq = id_of(&run(&mut s, "plugin.add", json!({"track": t, "name": "EQ"})));
-    run(&mut s, "send.add", json!({"ids": [t], "to": fx, "level": -6}));
+    let eq = id_of(&run(
+        &mut s,
+        "plugin.add",
+        json!({"track": t, "name": "EQ"}),
+    ));
+    run(
+        &mut s,
+        "send.add",
+        json!({"ids": [t], "to": fx, "level": -6}),
+    );
     let tid: TrackId = t.parse().unwrap();
     let send = s.project().track(tid).unwrap().sends[0].id.to_string();
     run(
@@ -73,7 +81,11 @@ fn a_target_a_macro_moves_stays_the_knobs() {
         ),
     ] {
         let e = try_run(&mut s, name, args).expect_err(name);
-        assert!(e.message.contains("マクロのつまみ"), "{name}: {}", e.message);
+        assert!(
+            e.message.contains("マクロのつまみ"),
+            "{name}: {}",
+            e.message
+        );
         assert!(
             e.message.contains("K1") || e.message.contains("K2") || e.message.contains("K3"),
             "{name}: {}",
@@ -84,7 +96,11 @@ fn a_target_a_macro_moves_stays_the_knobs() {
     assert_eq!(volume(&s, &t), by_knob);
 
     // two faders at once: the free one moves, the held one stays, and it says so
-    let r = run(&mut s, "track.volume.set", json!({"ids": [t, u], "db": -3.0}));
+    let r = run(
+        &mut s,
+        "track.volume.set",
+        json!({"ids": [t, u], "db": -3.0}),
+    );
     assert_eq!(volume(&s, &u), -3.0);
     assert_eq!(volume(&s, &t), by_knob);
     assert!(r.message.contains("変えませんでした"), "{}", r.message);
@@ -188,7 +204,10 @@ fn macros_branches_layers_and_keys_come_back_and_opening_is_not_an_edit() {
     assert!(!s.is_dirty(), "opening alone is no edit");
     let back = s.project().track(tid).unwrap();
     assert_eq!(back.controls, before.controls);
-    assert_eq!(back.controls.get(ControlId::Knob(0)).name.as_deref(), Some("Tone"));
+    assert_eq!(
+        back.controls.get(ControlId::Knob(0)).name.as_deref(),
+        Some("Tone")
+    );
     assert_eq!(back.controls.xy_knobs()[1], ControlId::Knob(1));
     assert_eq!(back.rack, before.rack);
     drop(s);
@@ -235,7 +254,11 @@ fn a_gone_branch_takes_its_lanes_and_a_frozen_track_keeps_its_macro_lane() {
     let mut s = Session::new("lanes");
     let t = id_of(&run(&mut s, "track.add.audio", json!({"name": "Vocal"})));
     let tid: TrackId = t.parse().unwrap();
-    let eq = id_of(&run(&mut s, "plugin.add", json!({"track": t, "name": "EQ"})));
+    let eq = id_of(&run(
+        &mut s,
+        "plugin.add",
+        json!({"track": t, "name": "EQ"}),
+    ));
     let split = run(&mut s, "rack.split.add", json!({"track": t, "branches": 2}));
     let sp = split.data["id"].as_str().unwrap().to_string();
     let branch = split.data["branches"][1].as_str().unwrap().to_string();
@@ -248,7 +271,10 @@ fn a_gone_branch_takes_its_lanes_and_a_frozen_track_keeps_its_macro_lane() {
     );
     run(&mut s, "rack.split.remove", json!({"id": sp}));
     let left = &s.project().track(tid).unwrap().automation;
-    assert!(left.iter().all(|l| l.target.to_string() != lane), "{left:?}");
+    assert!(
+        left.iter().all(|l| l.target.to_string() != lane),
+        "{left:?}"
+    );
 
     // a frozen track: K1's lane moves the EQ it was rendered with, so it stays as it was
     run(
@@ -256,7 +282,11 @@ fn a_gone_branch_takes_its_lanes_and_a_frozen_track_keeps_its_macro_lane() {
         "control.assign",
         json!({"track": t, "control": "k1", "target": format!("param:{eq}:gain")}),
     );
-    run(&mut s, "auto.lane.add", json!({"track": t, "target": "control:k1"}));
+    run(
+        &mut s,
+        "auto.lane.add",
+        json!({"track": t, "target": "control:k1"}),
+    );
     let before = s.project().clone();
     let mut frozen = before.clone();
     std::sync::Arc::make_mut(frozen.tracks.get_mut(&tid).unwrap()).frozen =

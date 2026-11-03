@@ -348,7 +348,10 @@ fn a_press_on_the_window_stays_in_it_and_one_elsewhere_takes_the_keys() {
         (g.lanes.x + 10.0, g.lanes.y + 4.0),
         (g.lanes.right() - 10.0, g.lanes.bottom() - 4.0),
     ];
-    let (ax, ay) = away.into_iter().find(|&(x, y)| !v.r.contains(x, y)).unwrap();
+    let (ax, ay) = away
+        .into_iter()
+        .find(|&(x, y)| !v.r.contains(x, y))
+        .unwrap();
     s.press_keys(&g, ax, ay);
     assert!(!s.macro_pad.as_ref().unwrap().focused);
     assert!(!s.macro_key("right", crate::tools::Mods::default()));
