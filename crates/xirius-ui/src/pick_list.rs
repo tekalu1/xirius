@@ -632,6 +632,7 @@ pub fn is(kind: PopupKind) -> bool {
             | PopupKind::Layer(_)
             | PopupKind::Send(_)
             | PopupKind::KeySources(_)
+            | PopupKind::MacroAxis(..)
             | PopupKind::Input(_)
             | PopupKind::Output(_)
             | PopupKind::AutomationTargets(..)
@@ -889,6 +890,21 @@ impl Studio {
             PopupKind::KeySources(plugin) => {
                 let p = self.project();
                 crate::key_sources::list(&p, plugin, |t, id| self.key_level(t, id))
+            }
+            PopupKind::MacroAxis(t, axis) => {
+                let p = self.project();
+                let track = p.tracks.get(&t)?;
+                let now = track.controls.xy[usize::from(axis.min(1))];
+                Some(PickList::of(
+                    (0..xirius_core::controls::KNOBS as u8)
+                        .map(|k| {
+                            let id = xirius_core::controls::ControlId::Knob(k);
+                            PickRow::new(track.control_label(id))
+                                .act(Action::MacroAxis(t, axis, k))
+                                .on(k == now)
+                        })
+                        .collect(),
+                ))
             }
             PopupKind::Send(t) => {
                 let p = self.project();

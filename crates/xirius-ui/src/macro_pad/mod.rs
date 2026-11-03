@@ -13,6 +13,7 @@ use xirius_core::id::TrackId;
 use xirius_core::model::{Project, Track};
 
 use crate::mixer::MixerHit;
+use crate::popup::PopupKind;
 use crate::studio::{Geometry, Rect, Studio};
 use crate::title_bar::{self, BAR_H, PlainBar};
 use crate::tools::Mods;
@@ -363,35 +364,23 @@ impl Studio {
                 }
                 self.pad_heard(t, now);
             }
-            Part::Pick(axis) => self.pick_menu(t, axis, v.picks[axis]),
+            Part::Pick(axis) => self.open_popup(PopupKind::MacroAxis(t, axis as u8), v.picks[axis]),
             Part::Body => {}
         }
         true
     }
 
-    /// The menu of an axis's pick: the eight knobs, the one it has checked.
-    fn pick_menu(&mut self, t: TrackId, axis: usize, at: Rect) {
-        let p = self.project();
-        let Some(track) = p.tracks.get(&t) else {
-            return;
-        };
-        let now = track.controls.xy[axis];
-        let items = (0..KNOBS as u8)
-            .map(|k| {
-                let id = ControlId::Knob(k);
-                self.ctx_as(
-                    &track.control_label(id),
-                    "control.xy.assign",
-                    json!({
-                        "track": t.to_string(),
-                        "axis": AXES[axis].to_lowercase(),
-                        "control": id.to_string(),
-                    }),
-                )
-                .on(k == now)
-            })
-            .collect();
-        self.open_context(items, at.x, at.bottom());
+    /// A row of an axis's pick list: the axis takes the knob (the other axis takes its old one).
+    pub(crate) fn macro_axis(&mut self, t: TrackId, axis: u8, k: u8) -> bool {
+        self.popup = None;
+        let axis = AXES[usize::from(axis.min(1))].to_lowercase();
+        let control = ControlId::Knob(k).to_string();
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+        self.run_command(
+            "control.xy.assign",
+            json!({ "track": t.to_string(), "axis": axis, "control": control }),
+        );
+        true
     }
 
     /// While the pad is held, the player hears its two knobs where the point is.

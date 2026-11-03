@@ -67,6 +67,8 @@ pub enum PopupKind {
     Layer(TrackId),
     /// The channels that key a plug-in, from the seat of its window (UI-336).
     KeySources(PluginId),
+    /// The knob an axis of a track's X/Y pad moves (MIX-041): 0 is X, 1 is Y.
+    MacroAxis(TrackId, u8),
     AutomationTargets(TrackId, bool),
     BrowserView,
     /// The + at the head of the track column.
@@ -194,6 +196,8 @@ pub enum Action {
     Cpu(crate::cpu_list::CAct),
     /// A part of a source's row in a plug-in's key sources (UI-336).
     KeySource(PluginId, TrackId, crate::key_sources::KeyPart),
+    /// `control.xy.assign`: the track, the axis (0 is X) and the knob it takes (MIX-041).
+    MacroAxis(TrackId, u8, u8),
     /// A part of the field of row `i` at the head of an audio clip's menu.
     Field(usize, crate::context::fields::FieldAct),
     /// `audio.set` of the device: its name.

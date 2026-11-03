@@ -2475,6 +2475,7 @@ impl Studio {
             Action::KeySource(plugin, track, part) => {
                 return self.key_source_action(plugin, track, part);
             }
+            Action::MacroAxis(t, axis, k) => return self.macro_axis(t, axis, k),
             Action::OpenNoteEdit(kind) => {
                 self.open_note_edit(kind, p.anchor);
                 return true;

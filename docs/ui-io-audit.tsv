@@ -130,7 +130,7 @@ crates/xirius-ui/src/instrument/window.rs	run_command	5
 crates/xirius-ui/src/keep.rs	std :: fs :: remove_dir_all	1
 crates/xirius-ui/src/key_rows.rs	arrange_run	1
 crates/xirius-ui/src/key_rows.rs	seek	1
-crates/xirius-ui/src/macro_pad/mod.rs	run_command	1
+crates/xirius-ui/src/macro_pad/mod.rs	run_command	2
 crates/xirius-ui/src/macro_run.rs	lock	1
 crates/xirius-ui/src/macro_run.rs	run_parsed	1
 crates/xirius-ui/src/main.rs	eprintln	4

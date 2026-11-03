@@ -4,7 +4,7 @@ use xirius_core::id::TrackId;
 
 use super::*;
 use crate::channel::{self, POPOUT_LABEL};
-use crate::context::Run;
+use crate::popup::{Action, PopupKind};
 use crate::studio::{Geometry, Studio};
 use crate::tree::RowKind;
 
@@ -215,17 +215,19 @@ fn a_pick_lists_the_eight_and_chooses_the_axis_knob() {
     s.open_macros(t);
     let pick = mid(s.macro_view(&g).unwrap().picks[1]);
     press(&mut s, &g, pick);
-    let items = s.ctx.as_ref().expect("the pick's menu").items.clone();
-    assert_eq!(items.len(), 8);
-    assert_eq!(items[0].label, "Macro 1");
-    assert!(items[1].on, "Y has Macro 2");
-    let Run::Cmd(name, args) = &items[0].run else {
-        panic!("{:?}", items[0].run);
-    };
-    assert_eq!(*name, "control.xy.assign");
+    let popup = s.popup.as_ref().expect("the pick's list");
+    assert_eq!(popup.kind, PopupKind::MacroAxis(t, 1));
+    assert!(crate::pick_list::is(popup.kind), "a PickList (UI-320)");
+    let rows: Vec<_> = crate::pick_list::found(popup).cloned().collect();
+    assert_eq!(rows.len(), 8);
+    assert_eq!(rows[0].label, "Macro 1");
+    assert!(rows[1].on, "Y has Macro 2");
+    let act = rows[0].act.clone().unwrap();
+    assert_eq!(act, Action::MacroAxis(t, 1, 0));
+    assert_eq!(crate::operations::of_action(&act), "control.xy.assign");
     // choosing X's knob for Y swaps them
-    assert!(s.run_command(name, args.clone()));
-    s.ctx = None;
+    assert!(s.popup_action(&g, act));
+    assert!(s.popup.is_none());
     assert_eq!(s.project().tracks[&t].controls.xy, [1, 0]);
     let v = s.macro_view(&g).unwrap();
     let (x, y) = pad_point(v.pad, (0.25, 0.75));
