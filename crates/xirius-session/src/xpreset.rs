@@ -1011,13 +1011,14 @@ fn load(
         let (preset, rows) = DevicePreset::parse(&v, Some(&fallback))?;
         (v, preset, rows)
     };
-    // A sample that is not on the disk any more is left out, and said so.
+    // A sample that is not on the disk any more is left out, and said so. A name relative to
+    // a song not saved yet is not known to be gone: it is kept, as the song keeps it.
     let lost: Vec<String> = preset
         .device
         .samples
         .iter()
         .flatten()
-        .filter(|s| !sample_path(s, song).is_some_and(|p| p.is_file()))
+        .filter(|s| sample_path(s, song).is_some_and(|p| !p.is_file()))
         .cloned()
         .collect();
     if !lost.is_empty()

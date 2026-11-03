@@ -183,9 +183,9 @@ fn a_preset_sets_every_knob_in_one_step() {
         ]
     );
     // The ✓ stays on the preset the knobs moved off.
-    assert_eq!(popup.current(), "Default");
+    assert_eq!(popup.current(), format!("{}Default", super::menu::LOAD));
     let before = s.song().steps();
-    s.popup_action(&g, Action::Pick("Default".into()));
+    s.popup_action(&g, Action::Pick(format!("{}Default", super::menu::LOAD)));
     assert!(s.popup.is_none());
     assert_eq!(s.song().steps(), before + 1);
     assert_eq!(preset_of(&plugin(&s, t)), Some("Default"));
@@ -553,7 +553,7 @@ fn an_effects_preset_list_checks_the_preset_it_is_at() {
     let popup = s.popup.as_ref().expect("the presets");
     assert_eq!(
         popup.current(),
-        "ドラムをまとめる",
+        format!("{}ドラムをまとめる", super::menu::LOAD),
         "not the instrument's Default"
     );
     assert_eq!(
@@ -783,6 +783,10 @@ fn preset_rows(s: &mut Studio, g: &Geometry, id: PluginId) -> (Vec<(String, bool
         .into_iter()
         .map(|c| (c.label, !c.to.starts_with("off:")))
         .collect();
+    let now = now
+        .strip_prefix(super::menu::LOAD)
+        .unwrap_or(&now)
+        .to_string();
     (rows, now)
 }
 
@@ -839,7 +843,8 @@ fn saving_a_preset_names_the_device_after_it() {
     );
 }
 
-/// 名前を付けて保存… asks for the name in the list's place, starting with the preset's.
+/// 名前を付けて保存… asks for the name in the list's place, starting with a name no preset
+/// has: the preset's with a number.
 #[test]
 fn save_as_asks_for_the_name() {
     let (mut s, g, t, _) = studio();
@@ -851,7 +856,7 @@ fn save_as_asks_for_the_name() {
     assert!(s.context_open());
     assert_eq!(
         s.ask_field().map(|f| f.text()),
-        Some("ドラムをまとめる".to_string())
+        Some("ドラムをまとめる 2".to_string())
     );
     for _ in 0..40 {
         s.ask_key("backspace");
@@ -869,6 +874,120 @@ fn save_as_asks_for_the_name() {
         s.instruments.tag_of(&insert(&s, id)),
         ("ドラムをまとめる".to_string(), false)
     );
+}
+
+/// 名前を付けて保存… with a name the device has asks once more (上書きして保存…); Enter on
+/// that writes over the file, Escape writes nothing.
+#[test]
+fn save_as_over_a_name_asks_first() {
+    let (mut s, g, t, _) = studio();
+    let id = compressor(&mut s, t);
+    nudge(&mut s, &g, id, "threshold");
+    assert!(s.save_preset(id, "締める", false));
+    let kept = values(&insert(&s, id));
+    nudge(&mut s, &g, id, "ratio");
+    let moved = values(&insert(&s, id));
+    assert_ne!(moved, kept);
+    let name_it = |s: &mut Studio, name: &str| {
+        preset_rows(s, &g, id);
+        s.inst_menu_pick(Menu::Preset(t, id), super::menu::SAVE_AS);
+        assert!(s.context_open());
+        for _ in 0..40 {
+            s.ask_key("backspace");
+        }
+        s.ask_text(None, name, false);
+        s.ask_key("enter");
+    };
+    // The name in other letter case is the same file: it asks, and Escape leaves it.
+    let before = s.song().steps();
+    name_it(&mut s, "締める");
+    assert!(s.context_open(), "上書きして保存…");
+    assert_eq!(s.ask_field().map(|f| f.text()), Some("締める".to_string()));
+    s.ask_key("escape");
+    assert!(!s.context_open());
+    assert_eq!(s.song().steps(), before, "nothing written");
+    assert!(s.load_preset(id, "締める"));
+    assert_near(&values(&insert(&s, id)), &kept);
+    // Again, and Enter on the second box writes over it.
+    nudge(&mut s, &g, id, "ratio");
+    let moved = values(&insert(&s, id));
+    name_it(&mut s, "締める");
+    assert!(s.context_open());
+    assert_eq!(s.ask_key("enter"), Some(true));
+    assert!(!s.context_open());
+    assert_eq!(
+        s.instruments.tag_of(&insert(&s, id)),
+        ("締める".to_string(), false)
+    );
+    assert!(s.load_preset(id, "Default"));
+    assert!(s.load_preset(id, "締める"));
+    assert_near(&values(&insert(&s, id)), &moved);
+}
+
+/// The knobs read back from a file: as kept, to the file's digits.
+fn assert_near(got: &[f64], want: &[f64]) {
+    assert_eq!(got.len(), want.len());
+    for (g, w) in got.iter().zip(want) {
+        assert!((g - w).abs() < 1e-9, "{got:?} {want:?}");
+    }
+}
+
+/// A preset's row is told from the list's own rows whatever its name: `-`, `@save` and
+/// `off:x` load as presets (M-pre-1).
+#[test]
+fn a_preset_named_like_a_row_loads() {
+    let (mut s, g, t, _) = studio();
+    let id = compressor(&mut s, t);
+    let names = ["-", "@save", "off:x"];
+    let mut kept = Vec::new();
+    for name in names {
+        nudge(&mut s, &g, id, "threshold");
+        assert!(s.save_preset(id, name, false), "{name}");
+        kept.push(values(&insert(&s, id)));
+    }
+    for (name, v) in names.iter().zip(&kept) {
+        assert!(s.load_preset(id, "Default"));
+        let (rows, _) = preset_rows(&mut s, &g, id);
+        assert!(enabled(&rows, name), "{name}");
+        let before = s.song().steps();
+        s.inst_menu_pick(Menu::Preset(t, id), &format!("{}{name}", super::menu::LOAD));
+        assert_eq!(s.song().steps(), before + 1, "{name}");
+        assert_near(&values(&insert(&s, id)), v);
+        assert_eq!(insert(&s, id).preset.as_deref(), Some(*name));
+        let (_, now) = preset_rows(&mut s, &g, id);
+        assert_eq!(now, *name);
+    }
+}
+
+/// A preset whose file went (removed from the CLI) keeps its name, marked, and 上書き保存
+/// writes it again (M-pre-3).
+#[test]
+fn a_gone_presets_name_is_marked_and_saves_again() {
+    let (mut s, g, t, _) = studio();
+    let id = compressor(&mut s, t);
+    nudge(&mut s, &g, id, "threshold");
+    assert!(s.save_preset(id, "締める", false));
+    assert!(s.run_command(
+        "preset.remove",
+        serde_json::json!({ "preset": "締める", "device": "Compressor" }),
+    ));
+    s.refresh_presets();
+    assert_eq!(
+        s.instruments.tag_of(&insert(&s, id)),
+        ("締める".to_string(), true)
+    );
+    let (rows, now) = preset_rows(&mut s, &g, id);
+    assert!(!rows.iter().any(|(l, _)| l == "締める"), "not listed");
+    assert_eq!(now, "締める");
+    assert!(enabled(&rows, "上書き保存"));
+    s.inst_menu_pick(Menu::Preset(t, id), super::menu::SAVE);
+    s.refresh_presets();
+    assert_eq!(
+        s.instruments.tag_of(&insert(&s, id)),
+        ("締める".to_string(), false)
+    );
+    let (rows, _) = preset_rows(&mut s, &g, id);
+    assert!(rows.iter().any(|(l, _)| l == "締める"));
 }
 
 /// A device that keeps no preset (a song from before) and is at none shows 「—」 marked.

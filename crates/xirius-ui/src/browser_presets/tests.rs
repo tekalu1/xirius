@@ -233,6 +233,8 @@ fn enter_loads_the_chosen_effect_preset_on_the_chosen_track() {
         devices(&s, keys, uid("Reverb")),
         [Some("ホール".to_string())]
     );
+    // The Reverb and its preset went in as one step (M-pre-4).
+    assert_eq!(s.song().steps(), steps + 1);
     // Again: the track's Reverb takes it, no second one.
     click(&mut s, &g, "小さい部屋", 1);
     assert!(s.pick_typed(&g, "enter", None));
@@ -271,6 +273,10 @@ fn a_preset_dropped_on_a_track_loads_there() {
         devices(&s, bass, uid("Compressor")),
         [Some("ドラムをまとめる".to_string())]
     );
+    // One undo takes the Compressor away with its preset.
+    s.undo(&g);
+    assert!(devices(&s, bass, uid("Compressor")).is_empty());
+    s.redo(&g);
     assert_eq!(s.selected_row, Some(RowKind::Track(bass)));
     assert!(s.browser.drag.is_none());
     // Off the tracks it does nothing.
@@ -295,7 +301,33 @@ fn an_instrument_preset_loads_on_the_chosen_instrument_track_or_a_new_one() {
     let id = crate::instrument::current(&s.project().tracks[&keys])
         .unwrap()
         .id;
+    // Its samples go into the preset with the knobs (H-pre-1).
+    let files = json!([{ "file": "Piano C3.wav" }, { "file": "Piano C5.wav" }]);
+    assert!(s.run_command(
+        "plugin.samples.add",
+        json!({ "id": id.to_string(), "files": files }),
+    ));
+    assert!(s.run_command(
+        "plugin.param.set",
+        json!({ "id": id.to_string(), "param": "file2.start", "value": 0.25 }),
+    ));
     assert!(s.save_preset(id, "柔らかい鍵盤", false));
+    // The track's Sampler moves on: other samples.
+    assert!(s.run_command(
+        "plugin.samples.add",
+        json!({ "id": id.to_string(), "files": [{ "file": "Organ.wav" }] }),
+    ));
+    let samples = |s: &Studio, t: TrackId| {
+        let x = crate::instrument::current(&s.project().tracks[&t])
+            .cloned()
+            .unwrap();
+        (x.samples.clone(), x.params.get("file2.start").copied())
+    };
+    let kept = (
+        vec!["Piano C3.wav".to_string(), "Piano C5.wav".to_string()],
+        Some(0.25),
+    );
+    assert_ne!(samples(&s, keys), kept);
     s.refresh_presets();
     s.browser.press_rail(RailTab::Instruments);
     assert_eq!(device(&s, &g, "Sampler").1, Some(false));
@@ -303,11 +335,19 @@ fn an_instrument_preset_loads_on_the_chosen_instrument_track_or_a_new_one() {
     assert_eq!(presets_under(&s, &g, uid("Sampler")), ["柔らかい鍵盤"]);
     // On the chosen instrument track.
     s.select_row(Some(RowKind::Track(keys)));
+    let steps = s.song().steps();
     click(&mut s, &g, "柔らかい鍵盤", 2);
     let plugin = crate::instrument::current(&s.project().tracks[&keys])
         .cloned()
         .unwrap();
     assert_eq!(plugin.preset.as_deref(), Some("柔らかい鍵盤"));
+    assert_eq!(samples(&s, keys), kept);
+    assert_eq!(s.song().steps(), steps + 1);
+    // Default is the Sampler as it comes, with no sample; one undo brings them back.
+    assert!(s.load_preset(plugin.id, DEFAULT));
+    assert!(samples(&s, keys).0.is_empty());
+    s.undo(&g);
+    assert_eq!(samples(&s, keys), kept);
     // With none chosen, on a new track.
     s.select_row(None);
     let before = s.project().tracks.len();
@@ -321,6 +361,7 @@ fn an_instrument_preset_loads_on_the_chosen_instrument_track_or_a_new_one() {
         .unwrap();
     assert_eq!(plugin.name, "Sampler");
     assert_eq!(plugin.preset.as_deref(), Some("柔らかい鍵盤"));
+    assert_eq!(samples(&s, t), kept);
 }
 
 #[test]

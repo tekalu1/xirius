@@ -93,15 +93,19 @@ impl Presets {
     }
 
     /// The tag's «name ●»: the preset the device keeps and whether the knobs are off it.
-    /// A preset whose file is gone keeps its name, unmarked.
+    /// A preset whose file is gone (renamed, removed, replaced by a newer factory set)
+    /// keeps its name, marked: nothing holds those knobs any more, and 上書き保存 writes it
+    /// again.
     pub fn tag_of(&self, plugin: &Plugin) -> (String, bool) {
         let Some(def) = plugin.builtin() else {
             return (UNKNOWN.into(), false);
         };
         if let Some(name) = plugin.preset.as_deref() {
-            let off = self
-                .values_of(def, name)
-                .is_some_and(|v| !at(def, plugin, &v));
+            let off = match self.values_of(def, name) {
+                Some(v) => !at(def, plugin, &v),
+                // Until the files were read once, only the factory set is known.
+                None => self.saved.is_some(),
+            };
             return (name.to_string(), off);
         }
         let found = self
@@ -237,9 +241,28 @@ impl Studio {
         )
     }
 
-    /// 名前を付けて保存…: the box for the name under the list's tag.
+    /// The device's preset named `name`, letter case aside (as the session finds it).
+    fn preset_named(&self, id: PluginId, name: &str) -> Option<String> {
+        let p = self.project();
+        let def = p
+            .tracks
+            .values()
+            .flat_map(|t| &t.inserts)
+            .find(|x| x.id == id)?
+            .builtin()?;
+        let fold = |s: &str| s.trim().to_lowercase();
+        self.instruments
+            .presets
+            .names(def)
+            .into_iter()
+            .find(|n| fold(n) == fold(name))
+    }
+
+    /// 名前を付けて保存…: the box for the name under the list's tag. It starts with a name
+    /// no preset of the device has, the tag's with a number (empty at Default), so Enter
+    /// saves a new one.
     pub(crate) fn save_preset_as(&mut self, id: PluginId) -> bool {
-        let Some((t, kind)) = self.device_place(id) else {
+        let Some((t, _)) = self.device_place(id) else {
             return false;
         };
         let p = self.project();
@@ -249,20 +272,41 @@ impl Studio {
             .and_then(|t| t.inserts.iter().find(|x| x.id == id))
             .and_then(|x| self.instruments.presets.origin(x))
             .filter(|n| n != DEFAULT)
+            .map(|n| {
+                (2..)
+                    .map(|k| format!("{n} {k}"))
+                    .find(|c| self.preset_named(id, c).is_none())
+                    .unwrap_or(n)
+            })
             .unwrap_or_default();
+        self.ask_save_name("名前を付けて保存…", id, None, &initial);
+        true
+    }
+
+    /// The name box of 名前を付けて保存… (`over`: the name it asks again to write over).
+    fn ask_save_name(&mut self, label: &str, id: PluginId, over: Option<&str>, initial: &str) {
         let at = self.instruments.menu_at.unwrap_or_default();
         self.ask_name(
-            "名前を付けて保存…",
-            "preset.save",
-            json!({
-                "track": t.to_string(),
-                "kind": xirius_core::xpreset::kind_name(kind),
-                "of": id.to_string(),
-            }),
+            label,
+            "ui.preset.save",
+            json!({ "id": id.to_string(), "over": over }),
             "name",
-            &initial,
+            initial,
             (at.x, at.bottom() + 4.0),
         );
-        true
+    }
+
+    /// Enter in the name box of 名前を付けて保存…: a new name saves; a name the device has
+    /// asks once more (上書きして保存…) and Enter on it again writes over that file.
+    pub(crate) fn save_preset_named(&mut self, id: PluginId, name: &str, over: Option<&str>) {
+        let fold = |s: &str| s.trim().to_lowercase();
+        match self.preset_named(id, name) {
+            Some(had) if over.is_none_or(|o| fold(o) != fold(&had)) => {
+                self.ask_save_name("上書きして保存…", id, Some(&had), &had);
+            }
+            had => {
+                self.save_preset(id, name, had.is_some());
+            }
+        }
     }
 }

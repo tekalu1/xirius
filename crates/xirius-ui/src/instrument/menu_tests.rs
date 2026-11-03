@@ -107,7 +107,7 @@ fn open_presets_and_replace_go_where_the_row_says() {
     assert_eq!(popup.kind, PopupKind::InstMenu(Menu::Preset(t, id)));
     assert_eq!(popup.anchor, anchor);
     // The Sampler has only its Default (PLG-064), then the saves under it.
-    assert_eq!(popup.current(), "Default");
+    assert_eq!(popup.current(), format!("{}Default", super::menu::LOAD));
     let labels: Vec<String> = popup.choices().into_iter().map(|c| c.label).collect();
     assert_eq!(
         labels,

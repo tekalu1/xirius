@@ -60,6 +60,7 @@ crates/xirius-ui/src/browser_prefs_save.rs	lock	5
 crates/xirius-ui/src/browser_prefs_save.rs	places :: load	1
 crates/xirius-ui/src/browser_prefs_save.rs	places :: save	1
 crates/xirius-ui/src/browser_prefs_save.rs	wait	1
+crates/xirius-ui/src/browser_presets.rs	run_command	1
 crates/xirius-ui/src/chrome.rs	eprintln	1
 crates/xirius-ui/src/chrome.rs	println	1
 crates/xirius-ui/src/chrome.rs	std :: fs :: create_dir_all	1
@@ -124,7 +125,7 @@ crates/xirius-ui/src/instrument/mod.rs	run_command	2
 crates/xirius-ui/src/instrument/presets.rs	run	1
 crates/xirius-ui/src/instrument/presets.rs	run_command	1
 crates/xirius-ui/src/instrument/spots.rs	run_command	3
-crates/xirius-ui/src/instrument/window.rs	run_command	3
+crates/xirius-ui/src/instrument/window.rs	run_command	4
 crates/xirius-ui/src/keep.rs	std :: fs :: remove_dir_all	1
 crates/xirius-ui/src/key_rows.rs	arrange_run	1
 crates/xirius-ui/src/key_rows.rs	seek	1

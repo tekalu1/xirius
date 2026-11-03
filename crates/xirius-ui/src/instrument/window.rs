@@ -8,8 +8,8 @@
 //! where the device's layout puts them (`device::layout`): a parameter added
 //! there gets its control here. A knob turns while it is dragged and goes into
 //! the song when it is let go (`plugin.param.set`, 0..1, one step); the other
-//! ways a control moves are `device::input`'s (UI-324). A preset sets its
-//! knobs at once (`plugin.preset.load`, one step).
+//! ways a control moves are `device::input`'s (UI-324). A preset sets the device as its
+//! file holds it, the knobs and the samples (`preset.load`, one step).
 
 use std::collections::HashMap;
 
@@ -1421,19 +1421,30 @@ impl Studio {
         changed
     }
 
-    /// Sets every knob a preset sets of a built-in plugin (one step); the
-    /// device keeps the preset's name for its tag.
+    /// Loads the preset `preset` into the built-in plugin `id` (one step): its knobs and,
+    /// for a Sampler or a Drum Kit, its samples. The device keeps the preset's name for its
+    /// tag.
     pub fn load_preset(&mut self, id: PluginId, preset: &str) -> bool {
         let p = self.project();
-        let Some(def) = p
-            .tracks
-            .values()
-            .flat_map(|t| &t.inserts)
-            .find(|x| x.id == id)
-            .and_then(Plugin::builtin)
-        else {
+        let Some((t, def)) = p.tracks.values().find_map(|t| {
+            t.inserts
+                .iter()
+                .find(|x| x.id == id)
+                .and_then(Plugin::builtin)
+                .map(|d| (t.id, d))
+        }) else {
             return false;
         };
+        // The session's load sets what the file holds, the samples too (H-pre-1); Default is
+        // the device as it comes, with no sample.
+        if self.instruments.presets.saved.is_some() || preset == DEFAULT {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+            return self.run_command(
+                "preset.load",
+                json!({ "track": t.to_string(), "preset": preset, "of": id.to_string() }),
+            );
+        }
+        // Before the files were read once, the factory set's knobs (it holds no sample).
         let Some(v) = self.instruments.presets.values_of(def, preset) else {
             return false;
         };

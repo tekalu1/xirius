@@ -219,17 +219,29 @@ impl Studio {
         }
     }
 
-    /// The rename of a browser tab (`ui.place.rename`).
+    /// The rename of a browser tab (`ui.place.rename`) and 名前を付けて保存… of a device's
+    /// preset (`ui.preset.save`, which asks before it writes over a file).
     fn ask_own(&mut self, name: &str, args: &Value) {
-        if name != "place.rename" {
-            return;
-        }
-        let (Some(i), Some(to)) = (args["index"].as_u64(), args["name"].as_str()) else {
-            return;
-        };
-        match self.browser.rename_place(i as usize, to) {
-            Ok(name) => self.tell(format!("場所のタブを「{name}」にしました")),
-            Err(e) => self.error = Some(e),
+        match name {
+            "place.rename" => {
+                let (Some(i), Some(to)) = (args["index"].as_u64(), args["name"].as_str()) else {
+                    return;
+                };
+                match self.browser.rename_place(i as usize, to) {
+                    Ok(name) => self.tell(format!("場所のタブを「{name}」にしました")),
+                    Err(e) => self.error = Some(e),
+                }
+            }
+            "preset.save" => {
+                let (Some(id), Some(to)) = (
+                    args["id"].as_str().and_then(|s| s.parse().ok()),
+                    args["name"].as_str(),
+                ) else {
+                    return;
+                };
+                self.save_preset_named(id, to, args["over"].as_str());
+            }
+            _ => {}
         }
     }
 }

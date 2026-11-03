@@ -4,9 +4,11 @@
 //!
 //! The rows come from the same read as the window's list (`preset.list --values`, read again
 //! when the files change), so the list and the windows never disagree. Loading puts the
-//! preset on the track's device of that kind (the last one of an effect), adding the device
-//! first when the track has none.
+//! preset on the track's device of that kind (the last one of an effect); on a track
+//! without one, the device goes in with the preset as one step (`preset.load` with
+//! `device`). On no track at all it is two: the new track, then the preset.
 
+use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::TrackKind;
 use xirius_params::Kind;
@@ -53,12 +55,35 @@ impl Studio {
     }
 
     /// Loads the preset `name` of the device `uid` on track `t`, putting the device there
-    /// first when the track has none (an instrument in place of the track's). The track is
-    /// selected.
+    /// with it when the track has none (an instrument in place of the track's), one step.
+    /// The track is selected.
     pub fn load_browser_preset(&mut self, t: TrackId, uid: &str, name: &str) -> bool {
         let Some(def) = xirius_params::find(uid) else {
             return false;
         };
+        if self.device_on(t, uid).is_none()
+            && name != DEFAULT
+            && self.instruments.presets.saved.is_some()
+        {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+            if !self.run_command(
+                "preset.load",
+                json!({ "track": t.to_string(), "preset": name, "device": def.uid }),
+            ) {
+                return false;
+            }
+            self.select_row(Some(RowKind::Track(t)));
+            // As a device added by hand: an effect's window opens on it.
+            if def.kind == Kind::Effect
+                && let Some(id) = self.device_on(t, uid)
+            {
+                self.reveal_last(t, crate::mixer::List::Inserts);
+                self.open_plugin(t, id);
+            }
+            return true;
+        }
+        // Default (the device as it comes) is the device alone; before the files were read
+        // once, the factory set's knobs go on after it.
         if self.device_on(t, uid).is_none() {
             let added = match def.kind {
                 Kind::Instrument => self.use_on_track(t, def.name),

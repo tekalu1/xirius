@@ -5,7 +5,8 @@
 //! A menu is a list of [`Choice`]s: `to` says what the row does, and a row
 //! that cannot run now has `to` starting with [`OFF`]; [`GAP`] puts space
 //! between two groups, and a row whose `to` starts with [`FOOT`] goes under
-//! the list, where the query never filters it.
+//! the list, where the query never filters it. A preset's row is [`LOAD`] and
+//! its name, so no name can read as one of those.
 
 use serde_json::json;
 use xirius_core::auto::AutoTarget;
@@ -30,6 +31,9 @@ pub const FOOT: &str = "@";
 pub const SAVE: &str = "@save";
 pub const SAVE_AS: &str = "@save-as";
 pub const SHOW: &str = "@show";
+/// What a preset's row starts with, before its name (a name is anything but empty and
+/// Default: `-`, `@save` and `off:x` are names too).
+pub const LOAD: &str = "load:";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Menu {
@@ -133,13 +137,18 @@ pub fn view(p: &Project, presets: &Presets, menu: Menu) -> (Vec<Choice>, String)
             };
             let list = presets.names(def);
             let (name, off) = presets.tag_of(x);
-            let mut rows: Vec<Choice> = list.iter().map(|n| row(n, n)).collect();
-            // Over a preset's file, once the knobs moved off it; never over Default.
-            let save = off && name != super::window::DEFAULT && list.contains(&name);
+            let mut rows: Vec<Choice> =
+                list.iter().map(|n| row(&format!("{LOAD}{n}"), n)).collect();
+            // Over a preset's file once the knobs moved off it, or again when its file is
+            // gone; never over Default.
+            let save = off && name != super::window::DEFAULT;
             rows.push(row(if save { SAVE } else { "off:@save" }, "上書き保存"));
             rows.push(row(SAVE_AS, "名前を付けて保存…"));
             rows.push(row(SHOW, "ブラウザーに表示"));
-            let now = presets.origin(x).unwrap_or_default();
+            let now = presets
+                .origin(x)
+                .map(|n| format!("{LOAD}{n}"))
+                .unwrap_or_default();
             (rows, now)
         }
         Menu::Row(t, id) => {
@@ -216,7 +225,9 @@ impl Studio {
                     self.show_preset_in_browser(def.uid, origin.as_deref());
                 }
                 _ => {
-                    self.load_preset(id, to);
+                    if let Some(name) = to.strip_prefix(LOAD) {
+                        self.load_preset(id, name);
+                    }
                 }
             },
             Menu::Row(t, id) => self.row_pick(t, id, to),
