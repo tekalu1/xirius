@@ -1,18 +1,21 @@
 //! `rack.show`: the track's insert wiring as a tree (PRJ-026). The `rack.split.*`,
 //! `rack.branch.*`, `rack.node.move` and `rack.flatten` edits shape it (ENG-074): a track
 //! without a rack gets its serial one first, and the edited rack is fixed the way a song is
-//! read, so a splitter left with one branch folds back into a line.
+//! read, so a splitter left with one branch folds back into a line. `rack.layer.*` turn an
+//! instrument track's source into a multi-instrument and edit its layers (ENG-075).
 use serde_json::json;
 
 use super::*;
 use crate::auto::AutoTarget;
 use crate::id::{AnyId, IdKind, NodeId, PluginId, SendId, TrackId};
-use crate::model::{MAX_DB, MIN_DB, PluginKind, Project, Track};
+use crate::model::{MAX_DB, MIN_DB, PluginKind, Project, Track, TrackKind};
 use crate::rack::{
-    Branch, MAX_BRANCHES, MAX_SPLIT_DEPTH, Rack, RackNode, Source, Split, SplitMode,
+    Branch, Layer, MAX_BRANCHES, MAX_SPLIT_DEPTH, Rack, RackNode, Source, Split, SplitMode,
 };
 
 const MODES: &[&str] = &["normal", "channel", "frequency"];
+/// The most layers a multi-instrument holds (the engine's `multi::MAX_LAYERS`).
+const MAX_LAYERS: usize = 64;
 
 pub(super) fn defs() -> Vec<CommandDef> {
     vec![
@@ -119,6 +122,45 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 t.flatten_rack();
                 Ok(Output::msg(format!("{} を直列に戻しました", t.name)))
             },
+        ),
+        edit(
+            "rack.layer.add",
+            "インストゥルメントトラックにレイヤー（インストゥルメント）を足してマルチインストゥルメントにします（いまの音源はレイヤー 1 になります。--keys は C1-B3 か 36-59、--velocity は 1-127）",
+            vec![
+                ArgDef::id("track", IdKind::Track, "インストゥルメントトラック").req(),
+                ArgDef::text("name", "インストゥルメントの名前").req(),
+                ArgDef::text("format", "vst3・clap・builtin など").default(json!("builtin")),
+                ArgDef::text("uid", "形式ごとの固有 ID（省略時は名前）"),
+                ArgDef::text("keys", "鍵盤の範囲（C1-B3 か 36-59。省略時は全音域）"),
+                ArgDef::text("velocity", "ベロシティの範囲（1-127。省略時は全域）"),
+                ArgDef::int("transpose", "移調（半音）").range(-48.0, 48.0),
+                ArgDef::text(
+                    "label",
+                    "レイヤーの名前（省略時はインストゥルメントの名前）",
+                ),
+            ],
+            |p, _, a| layer_add(p, a),
+        ),
+        edit(
+            "rack.layer.set",
+            "レイヤーの鍵盤とベロシティの範囲・移調・音量・パン・ミュート・名前を設定します",
+            vec![
+                ArgDef::id("id", IdKind::RackNode, "レイヤー").req(),
+                ArgDef::text("keys", "鍵盤の範囲（C1-B3 か 36-59）"),
+                ArgDef::text("velocity", "ベロシティの範囲（1-127）"),
+                ArgDef::int("transpose", "移調（半音）").range(-48.0, 48.0),
+                ArgDef::float("gain", "音量（dB）").range(MIN_DB, MAX_DB),
+                ArgDef::float("pan", "パン（-1 左〜1 右）").range(-1.0, 1.0),
+                ArgDef::choice("mute", &["on", "off"], "ミュート"),
+                ArgDef::text("label", "レイヤーの名前"),
+            ],
+            |p, _, a| layer_set(p, a),
+        ),
+        destroy(
+            "rack.layer.remove",
+            "レイヤーをインストゥルメントと FX ごと削除します（最後の 1 つは外せません）",
+            vec![ArgDef::id("id", IdKind::RackNode, "レイヤー").req()],
+            |p, _, a| layer_remove(p, a.id("id")?),
         ),
     ]
 }
@@ -376,6 +418,267 @@ fn node_move(p: &mut Project, a: &Args) -> CmdResult<Output> {
 enum Chain {
     Top,
     Branch(NodeId),
+}
+
+// ---- layers (ENG-075) ---------------------------------------------------------------
+
+fn layer_add(p: &mut Project, a: &Args) -> CmdResult<Output> {
+    let tid: TrackId = a.id("track")?;
+    let keys = a.opt_str("keys").map(keys_of).transpose()?;
+    let velocity = a.opt_str("velocity").map(velocity_of).transpose()?;
+    let transpose = a.opt_i64("transpose").map(|t| t as i8);
+    let label = a.opt_str("label").map(str::trim).filter(|l| !l.is_empty());
+    let t = p.track(tid)?;
+    if t.kind != TrackKind::Instrument {
+        return Err(CmdError::conflict(
+            "レイヤーはインストゥルメントトラックにだけ足せます",
+        ));
+    }
+    let name = t.name.clone();
+    if let Some(Source::Multi { layers, .. }) = t.rack.as_ref().and_then(|r| r.source.as_ref())
+        && layers.len() >= MAX_LAYERS
+    {
+        return Err(CmdError::conflict(format!(
+            "レイヤーは {MAX_LAYERS} 個までです"
+        )));
+    }
+    // The instrument the track plays becomes the first layer.
+    make_multi(p, tid)?;
+    let plugin = super::track::place_new_plugin(
+        p,
+        tid,
+        PluginKind::Instrument,
+        a.str("name")?.trim(),
+        a.str("format")?,
+        a.opt_str("uid"),
+        None,
+    )?;
+    // A track that had no instrument gets it as its source: that is the first layer.
+    make_multi(p, tid)?;
+    let layer = layer_mut(p, tid, |l| l.instrument == plugin).expect("the fix made a layer");
+    if let Some(k) = keys {
+        layer.keys = k;
+    }
+    if let Some(v) = velocity {
+        layer.velocity = v;
+    }
+    if let Some(x) = transpose {
+        layer.transpose = x;
+    }
+    if let Some(l) = label {
+        layer.name = l.to_string();
+    }
+    let id = layer.id;
+    Ok(Output::with(
+        format!("{name} にレイヤー「{}」を追加しました", layer.name),
+        json!({"id": id.to_string(), "plugin": plugin.to_string(), "track": tid.to_string()}),
+    ))
+}
+
+fn layer_set(p: &mut Project, a: &Args) -> CmdResult<Output> {
+    let id: NodeId = a.id("id")?;
+    let keys = a.opt_str("keys").map(keys_of).transpose()?;
+    let velocity = a.opt_str("velocity").map(velocity_of).transpose()?;
+    let transpose = a.opt_i64("transpose").map(|t| t as i8);
+    let gain = a.opt_f64("gain");
+    let pan = a.opt_f64("pan");
+    let mute = a.opt_str("mute").map(|m| m == "on");
+    let label = a.opt_str("label").map(str::trim);
+    if label == Some("") {
+        return Err(CmdError::invalid("--label が空です"));
+    }
+    if keys.is_none()
+        && velocity.is_none()
+        && transpose.is_none()
+        && gain.is_none()
+        && pan.is_none()
+        && mute.is_none()
+        && label.is_none()
+    {
+        return Err(CmdError::invalid(
+            "--keys・--velocity・--transpose・--gain・--pan・--mute・--label のいずれかが必要です",
+        ));
+    }
+    let tid = node_track(p, id)?;
+    let l = layer_mut(p, tid, |l| l.id == id).ok_or_else(|| not_layer(id))?;
+    if let Some(k) = keys {
+        l.keys = k;
+    }
+    if let Some(v) = velocity {
+        l.velocity = v;
+    }
+    if let Some(x) = transpose {
+        l.transpose = x;
+    }
+    if let Some(g) = gain {
+        l.gain_db = g;
+    }
+    if let Some(x) = pan {
+        l.pan = x;
+    }
+    if let Some(m) = mute {
+        l.mute = m;
+    }
+    if let Some(n) = label {
+        l.name = n.to_string();
+    }
+    Ok(Output::msg(format!("レイヤー「{}」を設定しました", l.name)))
+}
+
+fn layer_remove(p: &mut Project, id: NodeId) -> CmdResult<Output> {
+    let tid = node_track(p, id)?;
+    let t = p.track_mut(tid)?;
+    let Some(Source::Multi { layers, .. }) = t.rack.as_mut().and_then(|r| r.source.as_mut()) else {
+        return Err(not_layer(id));
+    };
+    let i = layers
+        .iter()
+        .position(|l| l.id == id)
+        .ok_or_else(|| not_layer(id))?;
+    if layers.len() == 1 {
+        return Err(CmdError::conflict(
+            "最後のレイヤーは外せません（インストゥルメントごと消すなら plugin.remove を使ってください）",
+        ));
+    }
+    let gone = layers.remove(i);
+    let mut plugins = vec![gone.instrument];
+    plugins_in(&gone.fx, &mut plugins);
+    // The sidechain sends the removed plug-ins received go with them, as with `plugin.remove`.
+    let gone_keys: Vec<SendId> = t
+        .inserts
+        .iter()
+        .filter(|x| plugins.contains(&x.id))
+        .filter_map(|x| x.sidechain.as_ref())
+        .flat_map(|sc| sc.sources.iter().map(|s| s.id))
+        .collect();
+    t.inserts.retain(|x| !plugins.contains(&x.id));
+    p.fix_track_rack(tid);
+    for t in p.tracks.keys().copied().collect::<Vec<_>>() {
+        p.track_mut(t)?
+            .automation
+            .retain(|l| !matches!(&l.target, AutoTarget::Send(id) if gone_keys.contains(id)));
+    }
+    Ok(Output::msg(format!(
+        "レイヤー「{}」をプラグイン {} 件とともに削除しました",
+        gone.name,
+        plugins.len()
+    )))
+}
+
+/// Turns the track's single instrument into a multi-instrument of one layer; a multi, or a
+/// track with no instrument, is left as it is.
+fn make_multi(p: &mut Project, tid: TrackId) -> CmdResult<()> {
+    let t = p.track(tid)?;
+    let single = match t
+        .rack
+        .as_ref()
+        .map_or_else(|| Rack::serial(t).source, |r| r.source.clone())
+    {
+        Some(Source::Single(i)) => i,
+        _ => return Ok(()),
+    };
+    let name = t
+        .inserts
+        .iter()
+        .find(|x| x.id == single)
+        .map(|x| x.name.clone())
+        .unwrap_or_default();
+    let (multi, layer) = (NodeId(p.alloc()), NodeId(p.alloc()));
+    let r = rack_of(p.track_mut(tid)?);
+    r.source = Some(Source::Multi {
+        id: multi,
+        layers: vec![Layer {
+            id: layer,
+            name,
+            instrument: single,
+            fx: Vec::new(),
+            keys: (0, 127),
+            velocity: (1, 127),
+            transpose: 0,
+            gain_db: 0.0,
+            pan: 0.0,
+            mute: false,
+        }],
+    });
+    p.fix_track_rack(tid);
+    Ok(())
+}
+
+/// The layer `hit` picks in the track's multi-instrument.
+fn layer_mut(p: &mut Project, tid: TrackId, hit: impl Fn(&Layer) -> bool) -> Option<&mut Layer> {
+    match p.track_mut(tid).ok()?.rack.as_mut()?.source.as_mut()? {
+        Source::Multi { layers, .. } => layers.iter_mut().find(|l| hit(l)),
+        Source::Single(_) => None,
+    }
+}
+
+fn not_layer(id: NodeId) -> CmdError {
+    CmdError::not_found(format!("レイヤー {id} が見つかりません"))
+}
+
+/// A key range: `C1-B3` (60 is C4, as the piano roll names it) or `36-59`; one note is a
+/// range of one.
+fn keys_of(s: &str) -> CmdResult<(u8, u8)> {
+    let s = s.trim();
+    let bad = || CmdError::invalid(format!("--keys `{s}` を読み取れません（C1-B3 か 36-59）"));
+    // A note name may hold a dash of its own (`C-1`): the range splits at the dash that leaves
+    // a pitch on both sides.
+    let (lo, hi) = pitch_of(s)
+        .map(|p| (p, p))
+        .or_else(|| {
+            s.char_indices()
+                .filter(|(_, c)| *c == '-')
+                .find_map(|(i, _)| Some((pitch_of(s[..i].trim())?, pitch_of(s[i + 1..].trim())?)))
+        })
+        .ok_or_else(bad)?;
+    if lo > hi {
+        return Err(CmdError::range("--keys の下限が上限を越えています"));
+    }
+    Ok((lo, hi))
+}
+
+/// A velocity range `1-127`; one number is a range of one.
+fn velocity_of(s: &str) -> CmdResult<(u8, u8)> {
+    let bad = || CmdError::invalid(format!("--velocity `{s}` を読み取れません（1-127）"));
+    let (lo, hi) = s.trim().split_once('-').unwrap_or((s.trim(), s.trim()));
+    let (lo, hi): (u8, u8) = (
+        lo.trim().parse().map_err(|_| bad())?,
+        hi.trim().parse().map_err(|_| bad())?,
+    );
+    if !(1..=127).contains(&lo) || !(1..=127).contains(&hi) {
+        return Err(CmdError::range("--velocity は 1〜127 です"));
+    }
+    if lo > hi {
+        return Err(CmdError::range("--velocity の下限が上限を越えています"));
+    }
+    Ok((lo, hi))
+}
+
+/// A pitch by number (0..=127) or by name: `C4` is 60, `F#3`, `Db2`, `C-1` is 0.
+fn pitch_of(s: &str) -> Option<u8> {
+    if let Ok(n) = s.parse::<u8>() {
+        return (n <= 127).then_some(n);
+    }
+    let mut chars = s.chars();
+    let base: i32 = match chars.next()?.to_ascii_uppercase() {
+        'C' => 0,
+        'D' => 2,
+        'E' => 4,
+        'F' => 5,
+        'G' => 7,
+        'A' => 9,
+        'B' => 11,
+        _ => return None,
+    };
+    let rest = chars.as_str();
+    let (shift, octave) = match rest.chars().next() {
+        Some('#') | Some('♯') => (1, &rest[rest.chars().next()?.len_utf8()..]),
+        Some('b') | Some('♭') => (-1, &rest[rest.chars().next()?.len_utf8()..]),
+        _ => (0, rest),
+    };
+    let octave: i32 = octave.parse().ok()?;
+    let n = (octave + 1) * 12 + base + shift;
+    u8::try_from(n).ok().filter(|n| *n <= 127)
 }
 
 fn mode_of(s: &str) -> CmdResult<SplitMode> {

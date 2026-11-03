@@ -30,7 +30,7 @@ pub struct BranchCell {
 }
 
 impl BranchCell {
-    fn new(gain: f32, pan: f32, mute: bool) -> BranchCell {
+    pub(crate) fn new(gain: f32, pan: f32, mute: bool) -> BranchCell {
         let cell = BranchCell {
             gain: AtomicU32::new(0),
             pan: AtomicU32::new(0),
@@ -85,20 +85,20 @@ impl BranchSpec {
 }
 
 /// A value moved to its target across one block, as the mixer's faders are.
-struct Ramp {
-    current: f32,
-    target: f32,
+pub(crate) struct Ramp {
+    pub(crate) current: f32,
+    pub(crate) target: f32,
 }
 
 impl Ramp {
-    fn new(v: f32) -> Ramp {
+    pub(crate) fn new(v: f32) -> Ramp {
         Ramp {
             current: v,
             target: v,
         }
     }
 
-    fn at(&self, i: usize, n: usize) -> f32 {
+    pub(crate) fn at(&self, i: usize, n: usize) -> f32 {
         if self.current == self.target {
             self.current
         } else {
@@ -106,14 +106,14 @@ impl Ramp {
         }
     }
 
-    fn settle(&mut self) {
+    pub(crate) fn settle(&mut self) {
         self.current = self.target;
     }
 }
 
 /// A delay applied in place: a power-of-two ring sized in `prepare`.
 #[derive(Default)]
-struct Line {
+pub(crate) struct Line {
     l: Vec<f32>,
     r: Vec<f32>,
     frames: usize,
@@ -121,7 +121,7 @@ struct Line {
 }
 
 impl Line {
-    fn new(frames: u32, max_block: usize) -> Line {
+    pub(crate) fn new(frames: u32, max_block: usize) -> Line {
         let len = if frames == 0 {
             0
         } else {
@@ -135,7 +135,7 @@ impl Line {
         }
     }
 
-    fn apply(&mut self, left: &mut [f32], right: &mut [f32]) {
+    pub(crate) fn apply(&mut self, left: &mut [f32], right: &mut [f32]) {
         if self.frames == 0 {
             return;
         }
@@ -393,6 +393,15 @@ impl Cells {
             }
         }
         Cells(out)
+    }
+
+    /// A track's: its splitters' and those of its multi-instrument's layers (ENG-075).
+    pub(crate) fn of_track(source: &dyn Processor, inserts: &[Box<dyn Processor>]) -> Cells {
+        let mut cells = Cells::of(inserts);
+        if let Some(m) = source.multi() {
+            m.cells(&mut cells.0);
+        }
+        cells
     }
 
     /// Sets a branch's values; false when no branch here has that id.

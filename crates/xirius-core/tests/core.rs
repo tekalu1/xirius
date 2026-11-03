@@ -552,6 +552,20 @@ fn every_history_command_undoes_and_redoes() {
     rig.step("rack.branch.remove", json!({"id": b0}));
     rig.step("rack.node.move", json!({"id": rb, "to": rt, "index": 1}));
     rig.step("rack.flatten", json!({"track": rt}));
+    let lt = id_of(&rig.step("track.add.instrument", json!({"name": "Layers"})));
+    rig.step(
+        "plugin.add",
+        json!({"track": lt, "name": "Sampler", "kind": "instrument"}),
+    );
+    let ly = id_of(&rig.step(
+        "rack.layer.add",
+        json!({"track": lt, "name": "Sampler", "keys": "C1-B3"}),
+    ));
+    rig.step(
+        "rack.layer.set",
+        json!({"id": ly, "gain": -3.0, "transpose": 12}),
+    );
+    rig.step("rack.layer.remove", json!({"id": ly}));
     let comp_threshold = format!("param:{rb}:threshold");
     rig.step(
         "control.assign",

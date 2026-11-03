@@ -19,6 +19,7 @@ pub mod midi_in;
 pub mod midi_out;
 pub mod mixer;
 pub mod monitor;
+pub mod multi;
 mod parallel;
 pub mod plugin;
 pub mod plugin_updates;

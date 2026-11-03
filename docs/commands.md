@@ -5489,6 +5489,71 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 | `track` | 必須 | `{"type":"string"}` | トラック（track の ID） |
 | `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
 
+## `rack.layer.add`
+
+レイヤーを追加
+
+インストゥルメントトラックにレイヤー（インストゥルメント）を足してマルチインストゥルメントにします（いまの音源はレイヤー 1 になります。--keys は C1-B3 か 36-59、--velocity は 1-127）
+
+事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 1 操作で取り消し可能。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `format` | — | `{"default":"builtin","type":"string"}` | vst3・clap・builtin など |
+| `keys` | — | `{"type":"string"}` | 鍵盤の範囲（C1-B3 か 36-59。省略時は全音域） |
+| `label` | — | `{"type":"string"}` | レイヤーの名前（省略時はインストゥルメントの名前） |
+| `name` | 必須 | `{"type":"string"}` | インストゥルメントの名前 |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `track` | 必須 | `{"type":"string"}` | インストゥルメントトラック（track の ID） |
+| `transpose` | — | `{"maximum":48.0,"minimum":-48.0,"type":"integer"}` | 移調（半音） |
+| `uid` | — | `{"type":"string"}` | 形式ごとの固有 ID（省略時は名前） |
+| `velocity` | — | `{"type":"string"}` | ベロシティの範囲（1-127。省略時は全域） |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
+## `rack.layer.remove`
+
+レイヤーを削除
+
+レイヤーをインストゥルメントと FX ごと削除します（最後の 1 つは外せません）
+
+事前条件: AI の権限が編集以上。削除の確認設定に従う。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 1 操作で取り消し可能。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `id` | 必須 | `{"type":"string"}` | レイヤー（rack node の ID） |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
+## `rack.layer.set`
+
+レイヤーを設定
+
+レイヤーの鍵盤とベロシティの範囲・移調・音量・パン・ミュート・名前を設定します
+
+事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 1 操作で取り消し可能。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `gain` | — | `{"maximum":12.0,"minimum":-120.0,"type":"number"}` | 音量（dB） |
+| `id` | 必須 | `{"type":"string"}` | レイヤー（rack node の ID） |
+| `keys` | — | `{"type":"string"}` | 鍵盤の範囲（C1-B3 か 36-59） |
+| `label` | — | `{"type":"string"}` | レイヤーの名前 |
+| `mute` | — | `{"enum":["on","off"],"type":"string"}` | ミュート |
+| `pan` | — | `{"maximum":1.0,"minimum":-1.0,"type":"number"}` | パン（-1 左〜1 右） |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `transpose` | — | `{"maximum":48.0,"minimum":-48.0,"type":"integer"}` | 移調（半音） |
+| `velocity` | — | `{"type":"string"}` | ベロシティの範囲（1-127） |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
 ## `rack.node.move`
 
 ラックの中で移動

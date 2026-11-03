@@ -658,3 +658,84 @@ fn preview_bus_switch_stop_and_underrun_do_not_allocate() {
     }
     assert_eq!(violation_count(), 0);
 }
+
+/// A multi-instrument (ENG-075): notes routed to layers by range, note-offs to the layers that
+/// took them, the layers' values changed and a kept plan swapped in.
+#[test]
+fn a_multi_instrument_routing_notes_and_its_layer_values_does_not_allocate() {
+    use xirius_engine::multi::{LayerSpec, MultiProc};
+    let setup = ProcessSetup {
+        sample_rate: 48_000.0,
+        max_block: 256,
+        mode: RenderMode::Realtime,
+    };
+    let spec = || {
+        let mut low = LayerSpec::new(2, Box::new(SineSynth::new()), Vec::new());
+        low.keys = (0, 59);
+        let mut high = LayerSpec::new(
+            3,
+            Box::new(SineSynth::new()),
+            vec![(31, Box::new(Delay::new(300)))],
+        );
+        high.keys = (60, 127);
+        high.transpose = 12;
+        let mut soft = LayerSpec::new(4, Box::new(SineSynth::new()), Vec::new());
+        soft.velocity = (1, 63);
+        let mut t = TrackSpec::new("multi", Box::new(MultiProc::new(1, vec![low, high, soft])));
+        t.prefetch = false;
+        MixSpec {
+            tracks: vec![TrackSlot::New(t)],
+            ..MixSpec::default()
+        }
+    };
+    let (mut audio, mut control) = engine::create(
+        Plan::build(spec(), setup, None).unwrap(),
+        EngineConfig::default(),
+    );
+    let mut out = vec![0.0f32; 1000 * 2];
+    reset_violation_count();
+    for i in 0..200u32 {
+        let pitch = 40 + (i % 40) as u8;
+        control
+            .send(Command::Note {
+                track: 0,
+                kind: NoteKind::On {
+                    pitch,
+                    velocity: (i % 127) as f32 / 127.0,
+                },
+            })
+            .ok()
+            .unwrap();
+        if i >= 3 {
+            control
+                .send(Command::Note {
+                    track: 0,
+                    kind: NoteKind::Off {
+                        pitch: 40 + ((i - 3) % 40) as u8,
+                    },
+                })
+                .ok()
+                .unwrap();
+        }
+        for node in [2, 3, 4] {
+            control
+                .send(Command::BranchGain {
+                    node,
+                    gain: (i % 10) as f32 / 10.0,
+                    pan: (i % 5) as f32 / 2.0 - 1.0,
+                    mute: (i + node as u32) % 7 < 3,
+                })
+                .ok()
+                .unwrap();
+        }
+        if i % 50 == 25 {
+            let mut s = spec();
+            s.tracks[0] = TrackSlot::Keep(0);
+            control.swap(s).unwrap();
+        }
+        audio.render(&mut out, 2);
+        control.poll(|_| {});
+    }
+    assert_eq!(violation_count(), 0);
+    assert!(out.iter().any(|s| *s != 0.0));
+}

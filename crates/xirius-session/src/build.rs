@@ -9,7 +9,7 @@
 //! placeholder of [`crate::synth`] for a built-in without a processor); such an effect is left
 //! out.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -26,8 +26,9 @@ use xirius_engine::{
     timing::{Timed, Timings},
 };
 
-use xirius_core::rack::{Rack, SplitMode};
+use xirius_core::rack::{Layer, Rack, Source, SplitMode};
 use xirius_engine::disk_stream::DiskAudio;
+use xirius_engine::multi::{LayerSpec, MAX_LAYERS, MultiProc};
 use xirius_engine::split::{BranchSpec, SplitProc};
 use xirius_engine::timeline::StreamRegion;
 use xirius_params::Kind;
@@ -191,6 +192,9 @@ pub struct Builder {
     /// The ARA plugins' documents the song's clips play through ([`crate::ara`]).
     ara: crate::ara::Held,
 }
+
+/// Inserts in order, each beside the plug-in id its automation is under (ENG-075).
+type Placed = Vec<(u64, Box<dyn Processor>)>;
 
 impl Builder {
     /// `dir` is the song folder, which relative audio paths are taken from.
@@ -412,21 +416,40 @@ impl Builder {
             let included = scope.includes(*id);
             // A track that plays to a MIDI port makes no sound of its own.
             let source: Box<dyn Processor> = if !unavailable && included && shape.midi.is_none() {
-                self.source_for(t, &mut warnings)
+                self.source_for(
+                    t,
+                    shape.rack.as_ref(),
+                    &graph,
+                    &scope,
+                    &mix.branches,
+                    &mut warnings,
+                )
             } else {
                 Box::new(Silence)
             };
             let mut spec = TrackSpec::new(t.name.clone(), source);
             spec.live = crate::automation::realtime(t);
             if !unavailable {
+                // A layer's plug-ins play inside the multi-instrument (ENG-075).
+                let layered = shape
+                    .rack
+                    .as_ref()
+                    .map(crate::rack_row::layered)
+                    .unwrap_or_default();
+                let row: Vec<Plugin> = shape
+                    .inserts
+                    .iter()
+                    .filter(|x| !layered.contains(&x.id.0))
+                    .cloned()
+                    .collect();
                 let (inserts, keys) =
-                    self.inserts_for(&t.name, &shape.inserts, &graph, &scope, &mut warnings);
+                    self.inserts_for(&t.name, &row, &graph, &scope, &mut warnings);
                 (spec.inserts, spec.keys) = self.arrange(
                     &t.name,
                     shape.rack.as_ref(),
                     inserts,
                     keys,
-                    &shape.inserts,
+                    &row,
                     &mix.branches,
                     &mut warnings,
                 );
@@ -850,16 +873,92 @@ impl Builder {
         Timeline::new(Vec::new(), regions)
     }
 
-    fn source_for(&mut self, t: &Track, warnings: &mut Vec<String>) -> Box<dyn Processor> {
+    /// A track's sound source: its instrument, or the multi-instrument its rack holds.
+    fn source_for(
+        &mut self,
+        t: &Track,
+        rack: Option<&Rack>,
+        g: &Graph,
+        scope: &Scope,
+        values: &[BranchMix],
+        warnings: &mut Vec<String>,
+    ) -> Box<dyn Processor> {
         if t.kind != TrackKind::Instrument || t.frozen.is_some() {
             return Box::new(Silence);
         }
+        if let Some(Source::Multi { id, layers }) = rack.and_then(|r| r.source.as_ref()) {
+            return self.multi_for(t, id.0, layers, g, scope, values, warnings);
+        }
         let inst = t.inserts.iter().find(|x| x.kind == PluginKind::Instrument);
+        self.played(t, inst, warnings)
+    }
+
+    /// An instrument as it plays: timed under its plug-in's id when it runs.
+    fn played(
+        &mut self,
+        t: &Track,
+        inst: Option<&Plugin>,
+        warnings: &mut Vec<String>,
+    ) -> Box<dyn Processor> {
         let source = self.instrument_for(t, inst, warnings);
         match inst {
             Some(x) if x.runs() => self.timed(x.id.0, source),
             _ => source,
         }
+    }
+
+    /// A multi-instrument (ENG-075): each layer's instrument and its own chain arranged by the
+    /// layer's fx tree, with the layer's ranges and transpose, and its gain, pan and mute from
+    /// `values`. A plug-in in a layer hears no sidechain key yet: its key is left out with a
+    /// warning.
+    #[allow(clippy::too_many_arguments)]
+    fn multi_for(
+        &mut self,
+        t: &Track,
+        node: u64,
+        layers: &[Layer],
+        g: &Graph,
+        scope: &Scope,
+        values: &[BranchMix],
+        warnings: &mut Vec<String>,
+    ) -> Box<dyn Processor> {
+        let mut specs = Vec::with_capacity(layers.len().min(MAX_LAYERS));
+        for l in layers.iter().take(MAX_LAYERS) {
+            let inst = t.inserts.iter().find(|x| x.id == l.instrument);
+            let instrument = self.played(t, inst, warnings);
+            let mut ids = HashSet::new();
+            crate::rack_row::fx_ids(&l.fx, &mut ids);
+            let plugins: Vec<Plugin> = t
+                .inserts
+                .iter()
+                .filter(|x| ids.contains(&x.id.0))
+                .cloned()
+                .collect();
+            let (row, keys) = self.inserts_for(&t.name, &plugins, g, scope, warnings);
+            let chain = Rack {
+                source: None,
+                fx: l.fx.clone(),
+            };
+            let (inserts, keys) =
+                self.arrange_ids(&t.name, Some(&chain), row, keys, &plugins, values, warnings);
+            if !keys.is_empty() {
+                warnings.push(format!(
+                    "{}: レイヤー「{}」の中のサイドチェーンのキーはまだ届きません",
+                    t.name, l.name
+                ));
+            }
+            let mut spec = LayerSpec::new(l.id.0, instrument, inserts);
+            spec.keys = l.keys;
+            spec.velocity = l.velocity;
+            spec.transpose = l.transpose;
+            if let Some(v) = values.iter().find(|v| v.node == l.id.0) {
+                spec.gain = v.gain;
+                spec.pan = v.pan;
+                spec.mute = v.mute;
+            }
+            specs.push(spec);
+        }
+        Box::new(MultiProc::new(node, specs))
     }
 
     fn instrument_for(
@@ -995,17 +1094,36 @@ impl Builder {
         let Some(rack) = rack else {
             return (row, keys);
         };
+        let (out, keys) = self.arrange_ids(owner, Some(rack), row, keys, plugins, values, warnings);
+        (out.into_iter().map(|(_, p)| p).collect(), keys)
+    }
+
+    /// [`Builder::arrange`] with each insert's automation id beside it.
+    #[allow(clippy::too_many_arguments)]
+    fn arrange_ids(
+        &self,
+        owner: &str,
+        rack: Option<&Rack>,
+        row: Vec<Box<dyn Processor>>,
+        keys: Vec<KeySpec>,
+        plugins: &[Plugin],
+        values: &[BranchMix],
+        warnings: &mut Vec<String>,
+    ) -> (Placed, Vec<KeySpec>) {
         // Each insert `inserts_for` built went through `timed`, which noted its plug-in's id, so
         // the row's ids are the last ones noted.
         let ids = self.timed[self.timed.len() - row.len()..].to_vec();
+        let Some(rack) = rack else {
+            return (ids.into_iter().zip(row).collect(), keys);
+        };
         let slots = crate::rack_row::layout(rack, &ids);
         let mut built: HashMap<u64, Box<dyn Processor>> = ids.into_iter().zip(row).collect();
         let values: HashMap<u64, &BranchMix> = values.iter().map(|b| (b.node, b)).collect();
         let mut whole = false;
-        let (top, out): (Vec<u64>, Vec<Box<dyn Processor>>) = slots
+        let out: Placed = slots
             .into_iter()
             .filter_map(|s| fill(s, &mut built, &values, &mut whole))
-            .unzip();
+            .collect();
         if whole {
             warnings.push(format!(
                 "{owner}: チャンネル・周波数のスプリッターはまだ音を分けないため、どの分岐にも同じ音を送ります"
@@ -1013,22 +1131,24 @@ impl Builder {
         }
         let keys = keys
             .into_iter()
-            .filter_map(|mut k| match top.iter().position(|id| *id == k.plugin) {
-                Some(i) => {
-                    k.insert = i;
-                    Some(k)
-                }
-                None => {
-                    let name = plugins
-                        .iter()
-                        .find(|x| x.id.0 == k.plugin)
-                        .map_or("?", |x| x.name.as_str());
-                    warnings.push(format!(
+            .filter_map(
+                |mut k| match out.iter().position(|(id, _)| *id == k.plugin) {
+                    Some(i) => {
+                        k.insert = i;
+                        Some(k)
+                    }
+                    None => {
+                        let name = plugins
+                            .iter()
+                            .find(|x| x.id.0 == k.plugin)
+                            .map_or("?", |x| x.name.as_str());
+                        warnings.push(format!(
                         "{owner}: {name} は分岐の中にあるため、サイドチェーンのキーはまだ届きません"
                     ));
-                    None
-                }
-            })
+                        None
+                    }
+                },
+            )
             .collect();
         (out, keys)
     }

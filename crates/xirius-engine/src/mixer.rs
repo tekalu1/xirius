@@ -949,7 +949,7 @@ impl Plan {
                         name: t.name,
                         prefetch,
                         strip: Strip::new(t.gain, t.pan, t.mute),
-                        branches: crate::split::Cells::of(&t.inserts),
+                        branches: crate::split::Cells::of_track(&*t.source, &t.inserts),
                         sends: t
                             .sends
                             .iter()

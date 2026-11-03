@@ -143,6 +143,12 @@ pub trait Processor: Send {
     fn split(&self) -> Option<&crate::split::SplitProc> {
         None
     }
+
+    /// The multi-instrument itself, for a [`crate::multi::MultiProc`] (ENG-075): the plan
+    /// reaches its layers' values through it. `None` for every other processor.
+    fn multi(&self) -> Option<&crate::multi::MultiProc> {
+        None
+    }
 }
 
 /// A processor made ready before its plan (ENG-064): `prepare` with the setup it was readied
@@ -202,5 +208,9 @@ impl Processor for Readied {
 
     fn split(&self) -> Option<&crate::split::SplitProc> {
         self.inner.split()
+    }
+
+    fn multi(&self) -> Option<&crate::multi::MultiProc> {
+        self.inner.multi()
     }
 }

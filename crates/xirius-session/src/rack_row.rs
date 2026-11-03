@@ -1,14 +1,16 @@
 //! How a track's rack becomes its engine insert row (ENG-074): the plug-ins outside the fx tree
-//! (a multi instrument's layer fx) first in a line, then the fx tree, where each splitter is one
-//! insert holding its branches. The same layout serves the build (which fills it with
-//! processors) and the automation timing (which needs each plug-in's place in the row).
+//! first in a line, then the fx tree, where each splitter is one insert holding its branches.
+//! The same layout serves the build (which fills it with processors) and the automation timing
+//! (which needs each plug-in's place in the row). A multi-instrument's layer fx are not in the
+//! row: they play inside the layers (ENG-075, [`layered`]).
 //!
-//! A branch's gain, pan and mute are values, not structure: [`structure`] blanks them so a change
-//! goes to the running plan as `Command::BranchGain`, and [`values`] reads them for the mix.
+//! A branch's or a layer's gain, pan and mute are values, not structure: [`structure`] blanks
+//! them so a change goes to the running plan as `Command::BranchGain`, and [`values`] reads them
+//! for the mix.
 
 use std::collections::HashSet;
 
-use xirius_core::rack::{Rack, RackNode, SplitMode};
+use xirius_core::rack::{Rack, RackNode, Source, SplitMode};
 
 use crate::graph::db_to_gain;
 
@@ -28,9 +30,9 @@ pub enum Slot {
 /// The row of a rack over the plug-ins that were built, in their built order. A plug-in that
 /// was not built leaves no slot; a splitter whose branches are all empty still stands (its
 /// branches are copies of the signal). A splitter with one branch is its branch in a line, and
-/// one with none is left out.
+/// one with none is left out. A layer's plug-in has no slot here.
 pub fn layout(rack: &Rack, built: &[u64]) -> Vec<Slot> {
-    let mut tree = HashSet::new();
+    let mut tree = layered(rack);
     fx_ids(&rack.fx, &mut tree);
     let have: HashSet<u64> = built.iter().copied().collect();
     let mut row: Vec<Slot> = built
@@ -71,7 +73,18 @@ fn chain(nodes: &[RackNode], have: &HashSet<u64>, out: &mut Vec<Slot>) {
     }
 }
 
-fn fx_ids(nodes: &[RackNode], out: &mut HashSet<u64>) {
+/// The plug-ins in the layers' fx chains of the rack's multi-instrument (ENG-075).
+pub fn layered(rack: &Rack) -> HashSet<u64> {
+    let mut out = HashSet::new();
+    if let Some(Source::Multi { layers, .. }) = &rack.source {
+        for l in layers {
+            fx_ids(&l.fx, &mut out);
+        }
+    }
+    out
+}
+
+pub(crate) fn fx_ids(nodes: &[RackNode], out: &mut HashSet<u64>) {
     for n in nodes {
         match n {
             RackNode::Plugin(id) => {
@@ -86,10 +99,18 @@ fn fx_ids(nodes: &[RackNode], out: &mut HashSet<u64>) {
     }
 }
 
-/// The rack as structure: every branch's gain, pan and mute set to rest.
+/// The rack as structure: every branch's and layer's gain, pan and mute set to rest.
 pub fn structure(rack: &Rack) -> Rack {
     let mut r = rack.clone();
     blank(&mut r.fx);
+    if let Some(Source::Multi { layers, .. }) = &mut r.source {
+        for l in layers {
+            l.gain_db = 0.0;
+            l.pan = 0.0;
+            l.mute = false;
+            blank(&mut l.fx);
+        }
+    }
     r
 }
 
@@ -106,10 +127,10 @@ fn blank(nodes: &mut [RackNode]) {
     }
 }
 
-/// One branch's live values.
+/// One branch's or layer's live values.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BranchMix {
-    /// The branch's node id.
+    /// The branch's or layer's node id.
     pub node: u64,
     /// Linear.
     pub gain: f32,
@@ -117,7 +138,8 @@ pub struct BranchMix {
     pub mute: bool,
 }
 
-/// The values of every branch in the rack's fx tree, depth first.
+/// The values of every layer of the rack's multi-instrument and every branch in the layers' and
+/// the rack's fx trees, depth first.
 pub fn values(rack: &Rack, out: &mut Vec<BranchMix>) {
     fn walk(nodes: &[RackNode], out: &mut Vec<BranchMix>) {
         for n in nodes {
@@ -132,6 +154,17 @@ pub fn values(rack: &Rack, out: &mut Vec<BranchMix>) {
                     walk(&b.fx, out);
                 }
             }
+        }
+    }
+    if let Some(Source::Multi { layers, .. }) = &rack.source {
+        for l in layers {
+            out.push(BranchMix {
+                node: l.id.0,
+                gain: db_to_gain(l.gain_db),
+                pan: l.pan as f32,
+                mute: l.mute,
+            });
+            walk(&l.fx, out);
         }
     }
     walk(&rack.fx, out);
