@@ -9,10 +9,12 @@
 //! [`band_db`], [`response_db`] and [`Response`] give the curve a panel draws, from the same
 //! coefficients the sound goes through.
 
+use rtrb::{Producer, RingBuffer};
 use xirius_params::{BandType, EQ, EQ_BANDS, MAX_PARAMS};
 
 use super::bank::Params;
 use super::dsp::{Biquad, Coefs, Glide, Ramp, STEP, butterworth_qs, db_to_gain, q_ratio};
+use super::probe::Tap;
 use crate::processor::{AudioIo, NoteEvent, ProcessSetup, Processor};
 
 /// Where a band's parameters are in `xirius_params::EQ`.
@@ -178,6 +180,15 @@ pub fn response_db(values: &[f64], freq: f64, rate: f64) -> f64 {
     Response::new(values, rate).db(freq)
 }
 
+/// Pushes the mono (L+R)/2 of a block into `ring`, dropping what does not fit.
+fn feed(ring: &mut Producer<f32>, left: &[f32], right: &[f32]) {
+    for (l, r) in left.iter().zip(right) {
+        if ring.push(0.5 * (l + r)).is_err() {
+            break;
+        }
+    }
+}
+
 pub struct Eq {
     params: Params,
     glide: Glide,
@@ -188,11 +199,20 @@ pub struct Eq {
     state: [[Biquad; SECTIONS]; 2],
     gain: f64,
     out: Ramp,
+    /// The audio thread's ends of the analyser's rings (ENG-073): the mono input and output.
+    rings: (Producer<f32>, Producer<f32>),
 }
+
+/// What each analyser ring holds.
+pub const RING: usize = 2048;
 
 impl Eq {
     pub fn new(params: Params) -> Eq {
+        let (input, input_out) = RingBuffer::new(RING);
+        let (output, output_out) = RingBuffer::new(RING);
+        params.probe().give_rings(input_out, output_out);
         Eq {
+            rings: (input, output),
             glide: Glide::new(&EQ),
             params,
             rate: 48_000.0,
@@ -243,9 +263,14 @@ impl Processor for Eq {
 
     fn process(&mut self, io: &mut AudioIo<'_>, _events: &[NoteEvent]) {
         let n = io.frames();
-        let watch = self.params.probe().watching();
+        let probe = self.params.probe();
+        let watch = probe.watching();
+        let tap = if watch { probe.tap() } else { Tap::Off };
         if watch {
-            self.params.probe().note_input(io.left, io.right);
+            probe.note_input(io.left, io.right);
+        }
+        if tap.input() {
+            feed(&mut self.rings.0, io.left, io.right);
         }
         let mut at = 0;
         while at < n {
@@ -271,6 +296,9 @@ impl Processor for Eq {
         }
         if watch {
             self.params.probe().note_output(io.left, io.right);
+        }
+        if tap.output() {
+            feed(&mut self.rings.1, io.left, io.right);
         }
         for ch in &mut self.state {
             for b in ch.iter_mut() {
@@ -792,5 +820,65 @@ mod tests {
         assert!(none > -1e-6, "{none}");
         let cut = values(&[("low_cut_on", 1.0), ("low_cut_freq", 400.0), ("b1_q", 4.0)]);
         assert!(band_db(&cut, 0, 400.0, RATE) > 6.0);
+    }
+
+    #[test]
+    fn the_rings_are_fed_only_while_watched() {
+        let (mut p, h) = make("eq");
+        let probe = h.probe();
+        let (mut input, mut output) = (Vec::new(), Vec::new());
+        assert_eq!(probe.tap(), Tap::Output);
+        let left = vec![1.0f32; 1000];
+        let right = vec![0.0f32; 1000];
+        render(p.as_mut(), &left, &right, &[]);
+        assert!(probe.take_samples(&mut input, &mut output));
+        assert!(input.is_empty() && output.is_empty(), "not watched");
+        probe.watch(true);
+        render(p.as_mut(), &left, &right, &[]);
+        probe.take_samples(&mut input, &mut output);
+        // Flat, the output is the input: the mono of 1 and 0.
+        assert!(input.is_empty());
+        assert_eq!(output, vec![0.5; 1000]);
+        probe.set_tap(Tap::Both);
+        let (mut input, mut output) = (Vec::new(), Vec::new());
+        let long = vec![0.25f32; 5000];
+        render(p.as_mut(), &long, &long, &[]);
+        probe.take_samples(&mut input, &mut output);
+        // A full ring drops the rest until it is read.
+        assert_eq!((input.len(), output.len()), (RING, RING));
+        assert!(input.iter().chain(&output).all(|x| *x == 0.25));
+        probe.set_tap(Tap::Off);
+        render(p.as_mut(), &long, &long, &[]);
+        probe.set_tap(Tap::Input);
+        render(p.as_mut(), &long[..300], &long[..300], &[]);
+        let (mut input, mut output) = (Vec::new(), Vec::new());
+        probe.take_samples(&mut input, &mut output);
+        assert_eq!((input.len(), output.len()), (300, 0));
+        probe.watch(false);
+        render(p.as_mut(), &long, &long, &[]);
+        probe.take_samples(&mut input, &mut output);
+        assert_eq!((input.len(), output.len()), (300, 0));
+    }
+
+    #[test]
+    fn only_the_eq_has_rings() {
+        let (_, h) = make("compressor");
+        assert!(!h.probe().take_samples(&mut Vec::new(), &mut Vec::new()));
+    }
+
+    #[test]
+    fn the_analyser_finds_a_tone_the_eq_passes() {
+        let (mut p, h) = make("eq");
+        let probe = h.probe();
+        probe.watch(true);
+        let x = sine(1000.0, 0.5, RING);
+        render(p.as_mut(), &x, &x, &[]);
+        let (mut input, mut output) = (Vec::new(), Vec::new());
+        probe.take_samples(&mut input, &mut output);
+        let points = 200;
+        let s = crate::analyzer::spectrum(&output, RATE, points);
+        let top = (0..points).max_by(|a, b| s[*a].total_cmp(&s[*b])).unwrap();
+        let f = 20.0 * 1000f64.powf(top as f64 / (points - 1) as f64);
+        assert!((f / 1000.0).log2().abs() <= 1.0 / 6.0, "{f} Hz");
     }
 }

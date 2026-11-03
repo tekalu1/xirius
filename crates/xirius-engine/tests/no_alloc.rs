@@ -288,6 +288,11 @@ fn the_builtins_do_not_allocate_while_their_values_move() {
                 let probe = h.probe();
                 probe.watch(i % 40 < 30);
                 probe.take_peaks();
+                // The EQ's analyser rings, every tap, read now and then (ENG-073).
+                probe.set_tap(stock::Tap::ALL[(i / 5 % 4) as usize]);
+                if i % 10 == 0 {
+                    probe.take_samples(&mut Vec::new(), &mut Vec::new());
+                }
             }
             let on = i % 15 != 10;
             control

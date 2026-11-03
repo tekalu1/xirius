@@ -1,11 +1,16 @@
 //! What a built-in shows of its sound while its window watches (ENG-072): the gain
 //! reduction, the peaks in and out, the onsets of what goes into a delay or a reverb, the
-//! hits of the Drum Kit and the Sampler's newest voice.
+//! hits of the Drum Kit and the Sampler's newest voice; and the EQ's samples for the
+//! analyser (ENG-073).
 //!
-//! The audio thread writes only while [`Probe::watching`], into atomics: nothing locks or
-//! allocates. The window reads them on its own clock.
+//! The audio thread writes only while [`Probe::watching`], into atomics and rings: nothing
+//! locks or allocates. The window reads them on its own clock; only its side locks.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+
+use rtrb::Consumer;
+
+use crate::rt_lock::Mutex;
 
 /// The groups of the Drum Kit, in the order of its group levels.
 pub const HIT_GROUPS: usize = 6;
@@ -35,6 +40,42 @@ pub struct Probe {
     ///
     /// The three are written one after the other, so a read can mix two blocks.
     voice: [AtomicU32; 3],
+    /// Which of the EQ's samples go into the rings, as a [`Tap`].
+    tap: AtomicU8,
+    /// The window's ends of the EQ's rings: the mono input and output.
+    rings: Mutex<Option<(Consumer<f32>, Consumer<f32>)>>,
+}
+
+/// What the EQ hands its analyser: its input, its output, both or neither.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Tap {
+    Off = 0,
+    Input = 1,
+    #[default]
+    Output = 2,
+    Both = 3,
+}
+
+impl Tap {
+    pub const ALL: [Tap; 4] = [Tap::Off, Tap::Input, Tap::Output, Tap::Both];
+
+    pub fn input(self) -> bool {
+        matches!(self, Tap::Input | Tap::Both)
+    }
+
+    pub fn output(self) -> bool {
+        matches!(self, Tap::Output | Tap::Both)
+    }
+
+    fn from_bits(b: u8) -> Tap {
+        match b {
+            0 => Tap::Off,
+            1 => Tap::Input,
+            3 => Tap::Both,
+            _ => Tap::Output,
+        }
+    }
 }
 
 impl Default for Probe {
@@ -57,6 +98,8 @@ impl Probe {
                 AtomicU32::new(0),
                 AtomicU32::new(0),
             ],
+            tap: AtomicU8::new(Tap::default() as u8),
+            rings: Mutex::new(None),
         }
     }
 
@@ -118,6 +161,39 @@ impl Probe {
             position: f32::from_bits(self.voice[1].load(Ordering::Relaxed)),
             env: f32::from_bits(self.voice[2].load(Ordering::Relaxed)),
         })
+    }
+
+    /// Which samples the EQ hands its analyser while watched.
+    pub fn tap(&self) -> Tap {
+        Tap::from_bits(self.tap.load(Ordering::Relaxed))
+    }
+
+    pub fn set_tap(&self, tap: Tap) {
+        self.tap.store(tap as u8, Ordering::Relaxed);
+    }
+
+    /// Appends the samples the EQ handed over since the last call: the mono (L+R)/2 of its
+    /// input and of its output, as [`Probe::tap`] picks. A ring holds 2048; what comes while
+    /// it is full is dropped, so the window takes them often. False for a built-in with no
+    /// rings (all but the EQ). Locks: the window's side only.
+    pub fn take_samples(&self, input: &mut Vec<f32>, output: &mut Vec<f32>) -> bool {
+        let mut rings = self.rings.lock().unwrap_or_else(|e| e.into_inner());
+        let Some((i, o)) = rings.as_mut() else {
+            return false;
+        };
+        for (ring, to) in [(i, input), (o, output)] {
+            let n = ring.slots();
+            if let Ok(chunk) = ring.read_chunk(n) {
+                to.extend(chunk);
+            }
+        }
+        true
+    }
+
+    /// Keeps the window's ends of the rings. Called where the processor is made, off the
+    /// audio thread.
+    pub(crate) fn give_rings(&self, input: Consumer<f32>, output: Consumer<f32>) {
+        *self.rings.lock().unwrap_or_else(|e| e.into_inner()) = Some((input, output));
     }
 
     // What the audio thread writes. Each is for a block, after a check of `watching`.

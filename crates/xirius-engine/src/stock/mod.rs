@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 pub use bank::StockHandle;
 use bank::{ParamBank, Params};
-pub use probe::{Probe, VoiceStage, VoiceView};
+pub use probe::{Probe, Tap, VoiceStage, VoiceView};
 use xirius_params::BuiltinDef;
 
 use crate::processor::Processor;
