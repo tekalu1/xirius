@@ -199,6 +199,36 @@ fn the_end_of_analysis_is_seen_and_the_notes_are_read() {
     no_violations();
 }
 
+/// PLG-036: moving a clip keeps its sound: the render stays, nothing is made again.
+#[test]
+fn moving_a_region_keeps_its_sound() {
+    let audio = tone(48000.0, 1.0, 0.5);
+    let s = start(Config::default(), None);
+    s.sync(&song(vec![clip(3601, "e.wav", &audio, 0.0, 0.0, 1.0)]));
+    let before = ready(&s, 3601);
+    let generation = s.generation();
+    for step in 1..=5 {
+        s.sync(&song(vec![clip(
+            3601,
+            "e.wav",
+            &audio,
+            step as f64 * 0.1,
+            0.0,
+            1.0,
+        )]));
+        let c = s.state(3601).unwrap();
+        assert_eq!(c.phase, Phase::Ready);
+        assert!(c.rendered.is_some());
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    let after = s.state(3601).unwrap();
+    assert_eq!(after.phase, Phase::Ready);
+    assert!(Arc::ptr_eq(&before, after.rendered.as_ref().unwrap()));
+    assert!(s.generation() >= generation);
+    drop(s);
+    no_violations();
+}
+
 /// Clips that go away are taken down in ARA's order; the rest keep playing.
 #[test]
 fn removing_a_clip_keeps_the_others() {
