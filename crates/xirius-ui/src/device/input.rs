@@ -14,9 +14,10 @@ use xirius_params::{BuiltinDef, ParamSpec};
 use xirius_prefs::midimap::Target;
 
 use super::control::{self, Look, Step};
+use super::graph::{self, Point};
 use super::layout::{self, Slot};
 use crate::context::Item;
-use crate::instrument::window::{Grab, Part, Win, values};
+use crate::instrument::window::{Grab, Part, Win, live, points_of, values};
 use crate::settings::FieldId;
 use crate::settings::field::Field;
 use crate::studio::{Geometry, Studio};
@@ -92,6 +93,34 @@ impl Studio {
             "plugin.param.set",
             json!({ "id": plugin.to_string(), "param": spec.id, "value": value }),
         );
+        true
+    }
+
+    /// The controls `set` (parameter, value) of `plugin` go into the song as
+    /// one step (a graph's point moves two); false when they are there
+    /// already.
+    pub(crate) fn device_set_all(&mut self, plugin: PluginId, set: &[(usize, f64)]) -> bool {
+        let Some((_, def, now)) = self.device(plugin) else {
+            return false;
+        };
+        let moved: Vec<(&str, f64)> = set
+            .iter()
+            .filter(|(k, v)| now.get(*k).is_some_and(|b| (b - v).abs() > 1e-9))
+            .filter_map(|&(k, v)| Some((def.params.get(k)?.id, v)))
+            .collect();
+        let Some(((first, value), rest)) = moved.split_first() else {
+            return false;
+        };
+        let also: Vec<_> = rest
+            .iter()
+            .map(|(id, v)| json!({ "param": id, "value": v }))
+            .collect();
+        let mut args = json!({ "id": plugin.to_string(), "param": first, "value": value });
+        if !also.is_empty() {
+            args["also"] = json!(also);
+        }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+        self.run_command("plugin.param.set", args);
         true
     }
 
@@ -204,6 +233,132 @@ impl Studio {
         }
     }
 
+    /// A press on a graph's point (`at`: its graph and its index): it is
+    /// chosen and takes the keys; Alt puts its y and its wheel's values back
+    /// to their defaults, a double click types its x's, else it is taken
+    /// hold of.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn device_point_press(
+        &mut self,
+        w: Win,
+        def: &'static BuiltinDef,
+        at: (usize, usize),
+        point: &Point,
+        pointer: (f32, f32),
+        clicks: u32,
+        mods: Mods,
+    ) {
+        self.device_commit();
+        self.device_sweep_end();
+        self.instruments.chosen.insert(w.plugin, at);
+        let first = point.params().next();
+        self.instruments.focus = first.map(|k| (w.plugin, k));
+        let free = |s: &Studio, k: usize| {
+            def.params
+                .get(k)
+                .is_some_and(|spec| !s.param_locked(w.track, w.plugin, spec.id))
+        };
+        if mods.alt {
+            let back: Vec<(usize, f64)> = [point.y.map(|d| d.k), point.wheel]
+                .into_iter()
+                .flatten()
+                .filter(|&k| free(self, k))
+                .map(|k| {
+                    (
+                        k,
+                        control::snap(&def.params[k], def.params[k].default_norm()),
+                    )
+                })
+                .collect();
+            self.device_set_all(w.plugin, &back);
+            return;
+        }
+        if clicks >= 2 {
+            if let Some(k) = point.x.map(|d| d.k).filter(|&k| free(self, k))
+                && let Some(now) = self.device_value(w.plugin, k)
+            {
+                self.device_type(w.plugin, k, &def.params[k], now);
+            }
+            return;
+        }
+        let side = |s: &Studio, d: Option<graph::Drive>| {
+            let k = d.map(|d| d.k).filter(|&k| free(s, k))?;
+            let v = s.device_value(w.plugin, k)?;
+            Some((k, v, v))
+        };
+        let (x, y) = (side(self, point.x), side(self, point.y));
+        if x.is_some() || y.is_some() {
+            self.instruments.grab = Some(Grab::Point {
+                plugin: w.plugin,
+                graph: at.0,
+                i: at.1,
+                pointer,
+                x,
+                y,
+            });
+        }
+    }
+
+    /// The pointer moves a held point: its x and y follow it (a quarter as
+    /// far with Shift); only the sound and the screen follow until it is let
+    /// go.
+    pub(crate) fn device_point_moved(
+        &mut self,
+        g: &Geometry,
+        px: f32,
+        py: f32,
+        fine: bool,
+    ) -> bool {
+        let Some(Grab::Point {
+            plugin,
+            graph: n,
+            i,
+            pointer,
+            x,
+            y,
+        }) = self.instruments.grab
+        else {
+            return false;
+        };
+        let p = self.project();
+        let Some(at) = self
+            .instruments
+            .open
+            .iter()
+            .position(|w| w.plugin == plugin)
+        else {
+            return false;
+        };
+        let w = self.instruments.open[at];
+        let Some((_, plugin_now, def)) = live(&p, &w) else {
+            return false;
+        };
+        let r = self.instruments.rect(at, g.size);
+        let shown = self.instruments.shown(plugin_now);
+        let Some(point) = points_of(r, def, n, &shown).get(i).cloned() else {
+            return false;
+        };
+        let scale = if fine { graph::FINE } else { 1.0 };
+        let step = |side: Option<(usize, f64, f64)>, drive: Option<graph::Drive>, d: f32| {
+            let (k, start, _) = side?;
+            let drive = drive.filter(|dr| dr.k == k)?;
+            Some((k, start, drive.moved(&def.params[k], start, d * scale)))
+        };
+        let nx = step(x, point.x, px - pointer.0).or(x);
+        let ny = step(y, point.y, py - pointer.1).or(y);
+        if (nx, ny) == (x, y) {
+            return true;
+        }
+        if let Some(Grab::Point { x, y, .. }) = &mut self.instruments.grab {
+            *x = nx;
+            *y = ny;
+        }
+        for (k, _, v) in [nx, ny].into_iter().flatten() {
+            self.device_hear(w.track, plugin, def.params[k].id, v);
+        }
+        true
+    }
+
     /// Opens the field a knob's value is typed in.
     fn device_type(&mut self, plugin: PluginId, k: usize, spec: &ParamSpec, now: f64) {
         self.instruments.grab = None;
@@ -287,12 +442,93 @@ impl Studio {
         let Some((i, part)) = self.instruments.at(&p, g.size, x, y) else {
             return false;
         };
-        let Part::Knob(k) = part else {
-            return true;
+        let k = match part {
+            Part::Knob(k) => k,
+            Part::Point(n, at) => {
+                let Some(k) = self.point(g, i, n, at).and_then(|(_, pt)| pt.wheel) else {
+                    return true;
+                };
+                k
+            }
+            _ => return true,
         };
         let plugin = self.instruments.open[i].plugin;
         self.device_turn(plugin, k, |spec, v| control::wheel(spec, v, notches, fine));
         true
+    }
+
+    /// The `at`th point of the `n`th graph of the `i`th window, and the
+    /// device's parameters.
+    fn point(
+        &self,
+        g: &Geometry,
+        i: usize,
+        n: usize,
+        at: usize,
+    ) -> Option<(&'static BuiltinDef, Point)> {
+        let p = self.project();
+        let w = self.instruments.open.get(i)?;
+        let (_, x, def) = live(&p, w)?;
+        let r = self.instruments.rect(i, g.size);
+        let pt = points_of(r, def, n, &self.instruments.shown(x))
+            .get(at)
+            .cloned()?;
+        Some((def, pt))
+    }
+
+    /// A right press on a graph's point: what it can be (its menu's rows),
+    /// then back to the defaults of all it moves.
+    fn point_menu(&mut self, g: &Geometry, i: usize, at: (usize, usize), x: f32, y: f32) {
+        let Some((def, pt)) = self.point(g, i, at.0, at.1) else {
+            return;
+        };
+        let w = self.instruments.open[i];
+        self.device_blur();
+        self.instruments.chosen.insert(w.plugin, at);
+        let held = pt
+            .params()
+            .any(|k| self.param_locked(w.track, w.plugin, def.params[k].id));
+        let set_args = |set: &[(usize, f64)]| {
+            let mut args = json!({ "id": w.plugin.to_string() });
+            if let Some(((k, v), rest)) = set.split_first() {
+                args["param"] = json!(def.params[*k].id);
+                args["value"] = json!(v);
+                if !rest.is_empty() {
+                    args["also"] = json!(
+                        rest.iter()
+                            .map(|(k, v)| json!({ "param": def.params[*k].id, "value": v }))
+                            .collect::<Vec<_>>()
+                    );
+                }
+            }
+            args
+        };
+        let mut items = Vec::new();
+        for row in &pt.menu {
+            let item = match row {
+                Some(c) => {
+                    let item = self.ctx_as(&c.label, "plugin.param.set", set_args(&c.set));
+                    crate::auto_lock::gate(item.on(c.on), held)
+                }
+                None => Item::gap(),
+            };
+            items.push(item);
+        }
+        let back: Vec<(usize, f64)> = pt
+            .params()
+            .map(|k| {
+                (
+                    k,
+                    control::snap(&def.params[k], def.params[k].default_norm()),
+                )
+            })
+            .collect();
+        if !items.is_empty() {
+            items.push(Item::gap());
+        }
+        let reset = self.ctx_as("既定に戻す", "plugin.param.set", set_args(&back));
+        items.push(crate::auto_lock::gate(reset, held));
+        self.open_context(items, x, y);
     }
 
     /// A controller's knob learnt for a parameter moves it (0..=127 over the
@@ -400,8 +636,13 @@ impl Studio {
         let Some((i, part)) = self.instruments.at(&p, g.size, x, y) else {
             return false;
         };
-        let Part::Knob(k) = part else {
-            return true;
+        let k = match part {
+            Part::Knob(k) => k,
+            Part::Point(n, at) => {
+                self.point_menu(g, i, (n, at), x, y);
+                return true;
+            }
+            _ => return true,
         };
         let w = self.instruments.open[i];
         let Some((track, def, _)) = self.device(w.plugin) else {

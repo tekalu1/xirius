@@ -258,6 +258,9 @@ impl Screen {
             cx.notify();
             return;
         }
+        if studio.instrument_hover(&g, x, y) {
+            cx.notify();
+        }
         if let Some(ctx) = studio.roll_input(&g) {
             let out = studio.roll.moved(&ctx, x, y, mods(ev.modifiers));
             if studio.apply_roll(&g, out) {

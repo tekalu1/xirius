@@ -4,6 +4,7 @@
 //! `instrument::window`'s.
 
 pub mod control;
+pub mod graph;
 pub mod input;
 pub mod layout;
 

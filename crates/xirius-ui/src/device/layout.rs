@@ -56,12 +56,13 @@ impl Slot {
     }
 }
 
-/// A device's body: its size and its controls.
+/// A device's body: its size, its controls and its graphs' planes (UI-325).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Body {
     pub w: f32,
     pub h: f32,
     pub slots: Vec<Slot>,
+    pub graphs: Vec<Rect>,
 }
 
 impl Body {
@@ -109,6 +110,7 @@ fn rows(def: &BuiltinDef) -> Body {
         w: PAD * 2.0 + c as f32 * CELL_W + (c - 1) as f32 * COL_GAP,
         h: PAD * 2.0 + lines * CELL_H + (lines - 1.0) * ROW_GAP,
         slots,
+        graphs: Vec::new(),
     }
 }
 
@@ -125,6 +127,18 @@ mod tests {
                 let h = s.hit(def);
                 assert!(h.x >= 0.0 && h.right() <= b.w, "{} {}", def.uid, s.k);
                 assert!(h.y >= 0.0 && h.bottom() <= b.h, "{} {}", def.uid, s.k);
+            }
+            for g in &b.graphs {
+                assert!(g.x >= 0.0 && g.right() <= b.w, "{}", def.uid);
+                assert!(g.y >= 0.0 && g.bottom() <= b.h, "{}", def.uid);
+                for s in &b.slots {
+                    let h = s.hit(def);
+                    let apart = h.right() <= g.x
+                        || h.x >= g.right()
+                        || h.bottom() <= g.y
+                        || h.y >= g.bottom();
+                    assert!(apart, "{} {}", def.uid, s.k);
+                }
             }
         }
     }

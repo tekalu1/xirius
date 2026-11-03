@@ -22,6 +22,7 @@ use xirius_params::{BuiltinDef, ParamSpec};
 
 use super::menu::Menu;
 use crate::device::control::{self, KnobView, Look};
+use crate::device::graph::{self, Point};
 use crate::device::layout::{self, Slot};
 use crate::draw::Pen;
 use crate::popup::PopupKind;
@@ -130,6 +131,36 @@ pub(crate) enum Grab {
         y: f32,
         value: f64,
     },
+    /// A graph's point (UI-325): the parameters its x and y move, each with
+    /// its value when it was taken and now (0..1).
+    Point {
+        plugin: PluginId,
+        graph: usize,
+        i: usize,
+        pointer: (f32, f32),
+        x: Option<(usize, f64, f64)>,
+        y: Option<(usize, f64, f64)>,
+    },
+}
+
+impl Grab {
+    fn plugin(&self) -> PluginId {
+        match *self {
+            Grab::Move { plugin, .. } | Grab::Knob { plugin, .. } | Grab::Point { plugin, .. } => {
+                plugin
+            }
+        }
+    }
+
+    /// The point held: its plug-in, its graph and its index.
+    fn point(&self) -> Option<(PluginId, usize, usize)> {
+        match *self {
+            Grab::Point {
+                plugin, graph, i, ..
+            } => Some((plugin, graph, i)),
+            _ => None,
+        }
+    }
 }
 
 /// A part of a window: the title bar's seats first (UI-322), then the body.
@@ -150,6 +181,10 @@ pub enum Part {
     Pin,
     Close,
     Knob(usize),
+    /// The `i`th point of the `graph`th graph (UI-325).
+    Point(usize, usize),
+    /// A graph's plane away from its points: a press there does nothing.
+    Graph(usize),
     Body,
 }
 
@@ -167,6 +202,10 @@ pub struct Windows {
     pub(crate) sweep: Option<crate::device::input::Sweep>,
     /// Where the open instrument menu hangs, for the menu a row opens next.
     pub menu_at: Option<Rect>,
+    /// The part under the pointer, while nothing is held (a point grows).
+    pub hot: Option<(PluginId, Part)>,
+    /// The point chosen on each device's graph: its graph and its index.
+    pub chosen: HashMap<PluginId, (usize, usize)>,
     /// The preset each plug-in was last set to: the tag keeps its name and
     /// marks it while the knobs are off it (UI-332 keeps the list itself).
     base: HashMap<PluginId, &'static str>,
@@ -186,11 +225,45 @@ impl Windows {
                 value,
                 ..
             }) if plugin == id && at == k => Some(value),
+            Some(Grab::Point { plugin, x, y, .. })
+                if plugin == id && [x, y].iter().flatten().any(|(at, ..)| *at == k) =>
+            {
+                [x, y]
+                    .into_iter()
+                    .flatten()
+                    .find(|(at, ..)| *at == k)
+                    .map(|(.., now)| now)
+            }
             _ => self
                 .sweep
                 .as_ref()
                 .filter(|s| s.plugin == id && s.k == k)
                 .map(|s| s.value),
+        }
+    }
+
+    /// A device's values (0..1) as its window shows them: a control that is
+    /// dragged or swept where it is turning to.
+    pub(crate) fn shown(&self, plugin: &Plugin) -> Vec<f64> {
+        let mut v = values(plugin);
+        for (k, x) in v.iter_mut().enumerate() {
+            if let Some(t) = self.turning(plugin.id, k) {
+                *x = t;
+            }
+        }
+        v
+    }
+
+    /// The point a graph draws as hot: the one held, else the one under the
+    /// pointer.
+    fn hot_point(&self, plugin: PluginId, n: usize) -> Option<usize> {
+        match (self.grab, self.hot) {
+            (Some(g), _) => g
+                .point()
+                .filter(|(id, graph, _)| (*id, *graph) == (plugin, n))
+                .map(|(.., i)| i),
+            (None, Some((id, Part::Point(graph, i)))) if (id, graph) == (plugin, n) => Some(i),
+            _ => None,
         }
     }
 
@@ -238,10 +311,26 @@ impl Windows {
                 .map_or(Part::Head, |(_, part)| part);
                 return Some((i, part));
             }
-            let part = slots(r, def)
-                .into_iter()
-                .find(|s| s.hit(def).contains(x, y))
-                .map_or(Part::Body, |s| Part::Knob(s.k));
+            let planes = graphs(r, def);
+            let now = self.shown(plugin);
+            let point = planes.iter().enumerate().find_map(|(n, &plane)| {
+                graph::point_at(&graph::points(def, n, plane, &now), x, y)
+                    .map(|at| Part::Point(n, at))
+            });
+            let part = point
+                .or_else(|| {
+                    slots(r, def)
+                        .into_iter()
+                        .find(|s| s.hit(def).contains(x, y))
+                        .map(|s| Part::Knob(s.k))
+                })
+                .or_else(|| {
+                    planes
+                        .iter()
+                        .position(|g| g.contains(x, y))
+                        .map(Part::Graph)
+                })
+                .unwrap_or(Part::Body);
             Some((i, part))
         })
     }
@@ -263,11 +352,15 @@ impl Windows {
                 .any(|x| x.id == *id)
         });
         self.learn(p);
-        if let Some(Grab::Move { plugin, .. } | Grab::Knob { plugin, .. }) = self.grab
-            && !self.is_open(plugin)
-        {
+        if self.grab.is_some_and(|g| !self.is_open(g.plugin())) {
             self.grab = None;
         }
+        let open: Vec<PluginId> = self.open.iter().map(|w| w.plugin).collect();
+        self.chosen.retain(|id, _| open.contains(id));
+        if self.hot.is_some_and(|(id, _)| !open.contains(&id)) {
+            self.hot = None;
+        }
+        graph::forget(|id| open.contains(&id));
         if self.focus.is_some_and(|(id, _)| !self.is_open(id)) {
             self.focus = None;
         }
@@ -330,10 +423,35 @@ pub fn part_rect(r: Rect, track: &Track, plugin: &Plugin, def: &BuiltinDef, part
             .find(|s| s.k == k)
             .map(|s| s.hit(def))
             .unwrap_or_default(),
+        Part::Point(n, i) => points_of(r, def, n, &values(plugin))
+            .get(i)
+            .map(|p| {
+                let d = graph::POINT;
+                Rect::new(p.at.0 - d / 2.0, p.at.1 - d / 2.0, d, d)
+            })
+            .unwrap_or_default(),
+        Part::Graph(n) => graphs(r, def).get(n).copied().unwrap_or_default(),
         // The empty rest under the controls (a press in a gap is Body too;
         // the strip is where a point of it always is).
         Part::Body => Rect::new(r.x, r.bottom() - layout::PAD, r.w, layout::PAD),
     }
+}
+
+/// The planes of the graphs of the window whose frame is `r`, on the screen.
+pub(crate) fn graphs(r: Rect, def: &BuiltinDef) -> Vec<Rect> {
+    layout::body(def)
+        .graphs
+        .into_iter()
+        .map(|g| Rect::new(r.x + g.x, r.y + title_bar::BAR_H + g.y, g.w, g.h))
+        .collect()
+}
+
+/// The points of the `n`th graph of the window whose frame is `r`, for the
+/// values (0..1) it shows.
+pub(crate) fn points_of(r: Rect, def: &BuiltinDef, n: usize, now: &[f64]) -> Vec<Point> {
+    graphs(r, def)
+        .get(n)
+        .map_or_else(Vec::new, |&g| graph::points(def, n, g, now))
 }
 
 /// The controls of the window whose frame is `r`, where they are on the screen.
@@ -447,7 +565,7 @@ impl Studio {
             self.device_blur();
             return false;
         };
-        if !matches!(part, Part::Knob(_)) {
+        if !matches!(part, Part::Knob(_) | Part::Point(..)) {
             self.device_blur();
         }
         self.error = None;
@@ -503,7 +621,16 @@ impl Studio {
                     self.device_press(w, def, slot, x, y, clicks, mods);
                 }
             }
-            Part::Body | Part::Sidechain | Part::Channel => {}
+            Part::Point(n, at) => {
+                let Some((_, x0, def)) = live(&p, &w) else {
+                    return true;
+                };
+                let now = self.instruments.shown(x0);
+                if let Some(point) = points_of(r, def, n, &now).get(at) {
+                    self.device_point_press(w, def, (n, at), point, (x, y), clicks, mods);
+                }
+            }
+            Part::Graph(_) | Part::Body | Part::Sidechain | Part::Channel => {}
         }
         true
     }
@@ -586,6 +713,7 @@ impl Studio {
                 self.device_hear(w.track, plugin, spec.id, next);
                 true
             }
+            Some(Grab::Point { .. }) => self.device_point_moved(g, x, y, fine),
             None => false,
         }
     }
@@ -613,7 +741,32 @@ impl Studio {
                 );
             }
         }
+        if let Grab::Point { plugin, x, y, .. } = grab {
+            // Both of a point's values go in as one step.
+            let moved: Vec<(usize, f64)> = [x, y]
+                .into_iter()
+                .flatten()
+                .map(|(k, _, now)| (k, now))
+                .collect();
+            self.device_set_all(plugin, &moved);
+        }
         true
+    }
+
+    /// The pointer over the windows while nothing is held: the part under it,
+    /// for a point to grow. True when that changed.
+    pub fn instrument_hover(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
+        if self.instruments.grab.is_some() {
+            return false;
+        }
+        let p = self.project();
+        let hot = self
+            .instruments
+            .at(&p, g.size, x, y)
+            .map(|(i, part)| (self.instruments.open[i].plugin, part));
+        let changed = hot != self.instruments.hot;
+        self.instruments.hot = hot;
+        changed
     }
 
     /// Sets every knob a preset sets of a built-in plugin (one step). The tag
@@ -714,9 +867,31 @@ fn paint_window(
             },
         );
 
-        // The controls, where the device's layout puts them.
+        // The graphs (UI-325), then the controls, where the device's layout
+        // puts them.
         let now = values(plugin);
         let ins = &studio.instruments;
+        let shown = ins.shown(plugin);
+        for (n, plane) in graphs(r, def).into_iter().enumerate() {
+            let chosen = ins.chosen.get(&plugin.id).filter(|c| c.0 == n).map(|c| c.1);
+            let focused = ins.focus.is_some_and(|(id, k)| {
+                id == plugin.id
+                    && chosen
+                        .and_then(|c| points_of(r, def, n, &shown).get(c).cloned())
+                        .is_some_and(|pt| pt.params().any(|x| x == k))
+            });
+            let view = graph::View {
+                plugin: Some(plugin.id),
+                chosen,
+                hot: ins.hot_point(plugin.id, n),
+                held: ins
+                    .grab
+                    .and_then(|g| g.point())
+                    .is_some_and(|(id, graph, _)| (id, graph) == (plugin.id, n)),
+                focused,
+            };
+            graph::paint(pen, def, n, plane, &shown, &view);
+        }
         let entry = ins.entry.as_ref().filter(|e| e.plugin == plugin.id);
         for slot in slots(r, def) {
             let k = slot.k;
