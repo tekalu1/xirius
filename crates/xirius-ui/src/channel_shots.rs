@@ -1,5 +1,7 @@
 //! The channel editor (MIX-042): a vocal's chain with a splitter of three branches, the keys'
-//! three layers, a branch under the pointer and a chosen card, as the mock's s03 shows them.
+//! three layers, a branch under the pointer and a chosen card, as the mock's s03 shows them; the
+//! keys' ranges under them (MIX-043), as v2's s04 does, with the first layer and then the third
+//! chosen.
 use crate::{
     mixer::flow::Pick,
     shot::{Act, Play, Shot},
@@ -25,6 +27,10 @@ pub const SHOTS: &[Shot] = &[
     Shot {
         name: "channel04",
         acts: &[Act::Reset, Act::Stage(Play::Laid(setup), 3)],
+    },
+    Shot {
+        name: "channel05",
+        acts: &[Act::Reset, Act::Stage(Play::Laid(setup), 4)],
     },
 ];
 
@@ -76,29 +82,38 @@ fn vocal(s: &mut Studio) -> (TrackId, PluginId) {
     (t, verb)
 }
 
-/// Piano with EQ, Strings with Reverb and Bass, then Limiter.
-fn keys(s: &mut Studio) -> TrackId {
+/// Bass low with Compressor, Piano above it with EQ and Strings over Piano's loud notes with
+/// Reverb, then Limiter. The third layer's instrument too.
+fn keys(s: &mut Studio) -> (TrackId, PluginId) {
     let t = track(s, "Keys");
-    for name in ["Piano", "Strings", "Bass"] {
+    for name in ["Bass", "Piano", "Strings"] {
         s.run_command("rack.layer.add", json!({ "track": t, "name": name }));
     }
     let layers = match &s.project().tracks[&t].rack.as_ref().unwrap().source {
-        Some(Source::Multi { layers, .. }) => layers.iter().map(|l| l.id).collect::<Vec<_>>(),
+        Some(Source::Multi { layers, .. }) => layers.clone(),
         other => panic!("{other:?}"),
     };
-    let eq = add(s, t, "EQ");
-    moved(s, eq, layers[0]);
-    let verb = add(s, t, "Reverb");
-    moved(s, verb, layers[1]);
+    for (l, (keys, velocity)) in
+        layers
+            .iter()
+            .zip([("E0-B1", "1-127"), ("C2-C6", "1-100"), ("C2-C6", "80-127")])
+    {
+        let args = json!({ "id": l.id.to_string(), "keys": keys, "velocity": velocity });
+        s.run_command("rack.layer.set", args);
+    }
+    for (l, name) in layers.iter().zip(["Compressor", "EQ", "Reverb"]) {
+        let id = add(s, t, name);
+        moved(s, id, l.id);
+    }
     add(s, t, "Limiter");
-    t
+    (t, layers[2].instrument)
 }
 
 fn setup(s: &mut Studio, g: &Geometry, n: u8) {
     s.instruments.open.clear();
     let (vocal, verb) = vocal(s);
-    let keys = keys(s);
-    s.open_channel(if n == 1 { keys } else { vocal });
+    let (keys, strings) = keys(s);
+    s.open_channel(if matches!(n, 1 | 4) { keys } else { vocal });
     match n {
         // the pointer over the second branch: its head shows its parts
         2 => {
@@ -114,6 +129,12 @@ fn setup(s: &mut Studio, g: &Geometry, n: u8) {
         3 => {
             if let Some(w) = s.channel.as_mut() {
                 w.chosen = Some(Pick::Plugin(verb));
+            }
+        }
+        // Strings chosen: the header names it and its box has the handles
+        4 => {
+            if let Some(w) = s.channel.as_mut() {
+                w.chosen = Some(Pick::Plugin(strings));
             }
         }
         _ => {}

@@ -61,7 +61,7 @@ crates/xirius-ui/src/browser_prefs_save.rs	places :: load	1
 crates/xirius-ui/src/browser_prefs_save.rs	places :: save	1
 crates/xirius-ui/src/browser_prefs_save.rs	wait	1
 crates/xirius-ui/src/browser_presets.rs	run_command	1
-crates/xirius-ui/src/channel/mod.rs	run_command	5
+crates/xirius-ui/src/channel/mod.rs	run_command	6
 crates/xirius-ui/src/chrome.rs	eprintln	1
 crates/xirius-ui/src/chrome.rs	println	1
 crates/xirius-ui/src/chrome.rs	std :: fs :: create_dir_all	1

@@ -5,6 +5,7 @@ use xirius_core::model::{Plugin, Track};
 use xirius_design::{FontSize, LineState, Radius, Weight};
 
 use super::flow::{CardKind, Column, Flow, Key};
+use super::keys;
 use super::{
     ChannelWin, Grab, Part, Tool, View, card_parts, col_label, head_parts, head_shown, mode_text,
 };
@@ -44,6 +45,177 @@ pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry, over: bool) {
     title_bar::paint_plain(pen, v.bar_rect(), &v.name, w.pinned);
     paint_tools(pen, w, &v);
     pen.mask(v.body, |pen| paint_flow(pen, s, w, t, &v.flow));
+    if let Some(k) = &v.keys {
+        paint_keys(pen, w, t, k);
+    }
+}
+
+/// A layer's name: its instrument's.
+fn layer_name(t: &Track, index: usize) -> String {
+    let layers = keys::layers(t);
+    let Some(l) = layers.get(index) else {
+        return String::new();
+    };
+    t.inserts
+        .iter()
+        .find(|p| p.id == l.instrument)
+        .map_or_else(|| format!("レイヤー {}", index + 1), |p| p.name.clone())
+}
+
+/// The key range figure: the chosen layer's header, the boxes over the map and the keyboard.
+fn paint_keys(pen: &mut Pen, w: &ChannelWin, t: &Track, k: &keys::Keys) {
+    let c = pen.c;
+    pen.fill(Rect::new(k.panel.x, k.panel.y, k.panel.w, 1.0), c.line[0]);
+    // The header: the chosen layer's chip, name, transpose and ranges.
+    if let Some(b) = k.boxes.get(k.chosen) {
+        let h = k.head;
+        let cy = h.y + h.h / 2.0;
+        let mut x = h.x;
+        let chip = Rect::new(x, cy - super::CHIP / 2.0, super::CHIP, super::CHIP);
+        // design-lint: allow(exception-family) 層の色の印（層はトラックの色の族で見分ける。v2 s04 の鍵域の図）
+        pen.round(chip, c.tracks[b.index % c.tracks.len()], Radius::Clip);
+        x += super::CHIP + 6.0;
+        let name = layer_name(t, b.index);
+        x += pen.text(
+            &name,
+            FontSize::Body,
+            Weight::Semibold,
+            c.ink_strong,
+            Rect::new(x, h.y, 200.0, h.h),
+            Align::Left,
+        ) + 16.0;
+        let transpose = keys::layers(t)
+            .get(b.index)
+            .map_or(0, |l| l.transpose)
+            .to_string();
+        for (label, value) in [
+            ("Transpose", transpose),
+            ("Range", keys::keys_text(b.ranges.0)),
+            ("Velocity", keys::velocity_text(b.ranges.1)),
+        ] {
+            x += pen.text(
+                label,
+                FontSize::Small,
+                Weight::Regular,
+                c.ink,
+                Rect::new(x, h.y, 120.0, h.h),
+                Align::Left,
+            ) + 6.0;
+            x += pen.text(
+                &value,
+                FontSize::Small,
+                Weight::Semibold,
+                c.ink_strong,
+                Rect::new(x, h.y, 120.0, h.h),
+                Align::Left,
+            ) + 16.0;
+        }
+    }
+    // The map: a line at each C, then the boxes, the chosen one over the rest.
+    let m = k.map;
+    pen.round(m, c.well, Radius::Xs);
+    let (first, n) = k.span;
+    for key in (first as u16 + 1..(first + n) as u16).filter(|key| key % 12 == 0) {
+        let x = keys::key_x(m, k.span, f32::from(key));
+        pen.fill(Rect::new(x, m.y, 1.0, m.h), c.line[0]);
+    }
+    let mut order: Vec<&keys::LayerBox> = k.boxes.iter().collect();
+    order.sort_by_key(|b| b.index == k.chosen);
+    let mut labels: Vec<Rect> = Vec::new();
+    for b in order.iter().rev() {
+        // Each box's label under the ones above it that it would cover.
+        let mut at = Rect::new(b.rect.x, b.rect.y, b.rect.w, 18.0);
+        while labels
+            .iter()
+            .any(|l| l.y == at.y && l.x < at.right() && at.x < l.right())
+        {
+            at.y += 18.0;
+        }
+        labels.push(at);
+    }
+    labels.reverse();
+    // A box past the map's ends while its side is dragged there is cut at them.
+    let near = Rect::new(
+        m.x - keys::GRIP_T,
+        m.y - keys::GRIP_T,
+        m.w + 2.0 * keys::GRIP_T,
+        m.h + 2.0 * keys::GRIP_T,
+    );
+    pen.mask(near, |pen| {
+        for (b, label) in order.iter().zip(&labels) {
+            let chosen = b.index == k.chosen;
+            let hot = matches!(w.hot, Some(Part::Range(id) | Part::Side(id, _)) if id == b.id);
+            let (line, width) = if chosen {
+                (c.ring, 1.5)
+            } else if hot {
+                (c.line[1], 1.0)
+            } else {
+                (c.line[0], 1.0)
+            };
+            pen.outline(b.rect, line, Radius::Xs, width);
+            if label.bottom() <= b.rect.bottom() {
+                pen.mask(b.rect, |pen| {
+                    let cy = label.y + label.h / 2.0;
+                    let mut x = label.x + 6.0;
+                    let chip = Rect::new(x, cy - 4.0, 8.0, 8.0);
+                    // design-lint: allow(exception-family) 層の色の印（層はトラックの色の族で見分ける。v2 s04 の鍵域の図）
+                    pen.round(chip, c.tracks[b.index % c.tracks.len()], Radius::Clip);
+                    x += 12.0;
+                    x += pen.text(
+                        &layer_name(t, b.index),
+                        FontSize::Small,
+                        Weight::Semibold,
+                        c.ink_strong,
+                        Rect::new(x, label.y, (label.right() - x).max(0.0), label.h),
+                        Align::Left,
+                    ) + 6.0;
+                    let ranges = format!(
+                        "{} · {}",
+                        keys::keys_text(b.ranges.0).replace(' ', ""),
+                        keys::velocity_text(b.ranges.1).replace(' ', "")
+                    );
+                    pen.text(
+                        &ranges,
+                        FontSize::Small,
+                        Weight::Regular,
+                        c.ink,
+                        Rect::new(x, label.y, (label.right() - x).max(0.0), label.h),
+                        Align::Left,
+                    );
+                });
+            }
+            if chosen {
+                for e in keys::Edge::ALL {
+                    pen.round(keys::grip(b, e), c.ring, Radius::Pill);
+                }
+            }
+        }
+    });
+    // The keyboard, with each C named.
+    let (whites, blacks) = keys::key_rects(k.keyboard, k.span);
+    pen.fill(k.keyboard, c.line[0]);
+    for (_, r) in &whites {
+        pen.round(
+            Rect::new(r.x + 0.5, r.y, (r.w - 1.0).max(0.0), r.h - 1.0),
+            c.key_white,
+            Radius::Clip,
+        );
+    }
+    for (key, r) in &whites {
+        if key % 12 == 0 {
+            pen.text(
+                &xirius_params::pitch::name(*key),
+                FontSize::Small,
+                Weight::Regular,
+                c.key_label,
+                Rect::new(r.x + 2.0, r.bottom() - 16.0, 40.0, 16.0),
+                Align::Left,
+            );
+        }
+    }
+    for (_, r) in &blacks {
+        pen.round(*r, c.key_black, Radius::Clip);
+    }
 }
 
 impl View {

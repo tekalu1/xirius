@@ -519,7 +519,7 @@ fn a_reader_hears_the_window_its_cards_and_its_heads() {
 fn a_reader_hears_a_layer_by_its_instrument() {
     let (mut s, g) = studio();
     let t = track(&s, "Keys");
-    for name in ["Piano", "Pad"] {
+    for name in ["Piano", "Strings", "Pad"] {
         assert!(s.run_command("rack.layer.add", json!({"track":t,"name":name})));
     }
     s.open_channel(t);
@@ -538,4 +538,177 @@ fn a_reader_hears_a_layer_by_its_instrument() {
 fn a_split_mode_has_its_words() {
     assert_eq!(mode_text(SplitMode::Normal), "ノーマル");
     assert_eq!(mode_text(SplitMode::Frequency), "周波数分割");
+}
+
+/// Keys as a multi-instrument of three layers: Piano, Strings and Pad.
+fn multi(s: &mut Studio) -> (TrackId, Vec<xirius_core::rack::Layer>) {
+    let t = track(s, "Keys");
+    for name in ["Piano", "Strings", "Pad"] {
+        assert!(s.run_command("rack.layer.add", json!({"track":t,"name":name})));
+    }
+    s.open_channel(t);
+    let layers = keys::layers(&s.project().tracks[&t]).to_vec();
+    (t, layers)
+}
+
+#[test]
+fn a_multi_instrument_has_the_key_figure_when_the_window_is_wide() {
+    let (mut s, g) = studio();
+    let (_, layers) = multi(&mut s);
+    let v = s.channel_view(&g).unwrap();
+    assert!(v.r.w >= keys::LEAST_W, "{}", v.r.w);
+    let k = v.keys.expect("the figure");
+    assert_eq!(k.boxes.len(), layers.len());
+    assert!(k.panel.y >= v.body.bottom() - 0.5);
+    assert!(k.panel.bottom() <= v.r.bottom() + 0.5);
+    // A full layer's box takes the whole map.
+    assert!((k.boxes[0].rect.w - k.map.w).abs() < 0.5);
+    let narrow = s.geometry(700.0, 1000.0);
+    assert!(s.channel_view(&narrow).unwrap().keys.is_none());
+    // A track of one instrument has none.
+    let vocal = track(&s, "Vocal");
+    s.channel = Some(ChannelWin::new(vocal));
+    assert!(s.channel_view(&g).unwrap().keys.is_none());
+}
+
+#[test]
+fn a_box_pressed_chooses_its_layer() {
+    let (mut s, g) = studio();
+    let (t, layers) = multi(&mut s);
+    let id = layers[2].id.to_string();
+    assert!(s.run_command(
+        "rack.layer.set",
+        json!({"id": id, "keys": "60-72", "velocity": "80-127"})
+    ));
+    let v = s.channel_view(&g).unwrap();
+    let k = v.keys.unwrap();
+    assert_eq!(k.chosen, 0);
+    let b = &k.boxes[2];
+    press(
+        &mut s,
+        &g,
+        (b.rect.x + b.rect.w / 2.0, b.rect.y + b.rect.h / 2.0),
+    );
+    assert_eq!(
+        s.channel.as_ref().unwrap().chosen,
+        Some(Pick::Plugin(layers[2].instrument))
+    );
+    assert_eq!(s.channel_view(&g).unwrap().keys.unwrap().chosen, 2);
+    // A card in a layer's chain chooses that layer too.
+    let eq = add(&mut s, t, "EQ");
+    assert!(s.run_command("rack.node.move", json!({"id":eq,"to":layers[1].id})));
+    s.channel.as_mut().unwrap().chosen = Some(Pick::Plugin(eq));
+    assert_eq!(s.channel_view(&g).unwrap().keys.unwrap().chosen, 1);
+}
+
+#[test]
+fn a_side_dragged_sets_the_layer_in_one_step() {
+    let (mut s, g) = studio();
+    let (t, layers) = multi(&mut s);
+    let k = s.channel_view(&g).unwrap().keys.unwrap();
+    let b = k.boxes[0].clone();
+    let high = keys::grip(&b, keys::Edge::High);
+    let (x, y) = mid(high);
+    assert!(s.channel_press(&g, x, y, 1));
+    s.channel_moved(&g, keys::key_x(k.map, k.span, 80.0), y);
+    s.channel_moved(&g, keys::key_x(k.map, k.span, 60.0), y);
+    // The box follows the pointer before it is let go; the layer does not change yet.
+    let held = s.channel_view(&g).unwrap().keys.unwrap();
+    assert_eq!(held.boxes[0].ranges.0, (0, 59));
+    assert_eq!(keys::layers(&s.project().tracks[&t])[0].keys, (0, 127));
+    s.channel_up(&g);
+    assert_eq!(keys::layers(&s.project().tracks[&t])[0].keys, (0, 59));
+    let loud = keys::grip(
+        &s.channel_view(&g).unwrap().keys.unwrap().boxes[0],
+        keys::Edge::Loud,
+    );
+    let (x, y) = mid(loud);
+    assert!(s.channel_press(&g, x, y, 1));
+    s.channel_moved(&g, x, keys::vel_y(k.map, 100.0));
+    s.channel_up(&g);
+    let l = keys::layers(&s.project().tracks[&t])[0].clone();
+    assert_eq!((l.keys, l.velocity), ((0, 59), (1, 100)));
+    s.undo(&g);
+    assert_eq!(keys::layers(&s.project().tracks[&t])[0].velocity, (1, 127));
+    assert_eq!(keys::layers(&s.project().tracks[&t])[0].keys, (0, 59));
+    assert_eq!(layers[0].id, keys::layers(&s.project().tracks[&t])[0].id);
+}
+
+#[test]
+fn a_side_does_not_pass_the_other() {
+    let map = Rect::new(0.0, 0.0, 128.0, 127.0);
+    let from = ((40, 50), (20, 90));
+    assert_eq!(
+        keys::dragged(from, keys::Edge::Low, map, (0.0, 128.0), 100.0, 0.0),
+        ((50, 50), (20, 90))
+    );
+    assert_eq!(
+        keys::dragged(from, keys::Edge::High, map, (0.0, 128.0), 0.0, 0.0),
+        ((40, 40), (20, 90))
+    );
+    assert_eq!(
+        keys::dragged(from, keys::Edge::Loud, map, (0.0, 128.0), 0.0, 127.0),
+        ((40, 50), (20, 20))
+    );
+    assert_eq!(
+        keys::dragged(from, keys::Edge::Soft, map, (0.0, 128.0), 0.0, 0.0),
+        ((40, 50), (90, 90))
+    );
+    assert_eq!(
+        keys::dragged(from, keys::Edge::Soft, map, (0.0, 128.0), 0.0, 200.0),
+        ((40, 50), (1, 90))
+    );
+    assert_eq!(
+        keys::dragged(from, keys::Edge::High, map, (0.0, 128.0), 999.0, 0.0),
+        ((40, 127), (20, 90))
+    );
+}
+
+#[test]
+fn the_figure_shows_the_octaves_the_layers_take() {
+    let (mut s, _) = studio();
+    let (t, layers) = multi(&mut s);
+    assert_eq!(keys::span(&layers), (0.0, 128.0));
+    for (l, keys) in layers.iter().zip(["E0-B1", "C2-C6", "C2-C6"]) {
+        assert!(s.run_command(
+            "rack.layer.set",
+            json!({"id": l.id.to_string(), "keys": keys})
+        ));
+    }
+    // C0 to C6, as the mock shows them.
+    let layers = keys::layers(&s.project().tracks[&t]).to_vec();
+    assert_eq!(keys::span(&layers), (24.0, 73.0));
+    // Six octaves at the least, and no key past 127.
+    let mut high = layers.clone();
+    for l in &mut high {
+        l.keys = (120, 125);
+    }
+    assert_eq!(keys::span(&high), (48.0, 80.0));
+    let board = Rect::new(0.0, 0.0, 730.0, 64.0);
+    let (whites, blacks) = keys::key_rects(board, (24.0, 73.0));
+    assert_eq!((whites.len(), blacks.len()), (43, 30));
+    assert_eq!(whites[0], (24, Rect::new(0.0, 0.0, 15.0, 64.0)));
+    assert!((whites.last().unwrap().1.right() - 730.0).abs() < 0.01);
+}
+
+#[test]
+fn a_reader_hears_each_layers_range_and_its_sides() {
+    let (mut s, g) = studio();
+    let (_, layers) = multi(&mut s);
+    assert!(s.run_command(
+        "rack.layer.set",
+        json!({"id": layers[0].id.to_string(), "keys": "C2-C6", "velocity": "1-100"})
+    ));
+    let marks = marks(&s, &g);
+    let find = |label: &str| {
+        marks[0]
+            .children
+            .iter()
+            .find(|m| m.node.label() == Some(label))
+            .map(|m| m.node.clone())
+            .unwrap_or_else(|| panic!("{label}"))
+    };
+    assert_eq!(find("Piano の範囲").value(), Some("C2 – C6 · 1 – 100"));
+    assert_eq!(find("Piano の下の鍵").value(), Some("C2"));
+    assert_eq!(find("Piano のベロシティの上").numeric_value(), Some(100.0));
 }

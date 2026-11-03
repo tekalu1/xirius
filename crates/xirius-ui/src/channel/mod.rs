@@ -2,9 +2,11 @@
 //! path as a flow, from its input down through its chain, its splitters' branches and its
 //! layers to its output. A card picks, opens and moves its device; a gap's ＋ adds one there;
 //! a branch's or a layer's head sets its level, its mute and takes it away. The mixer's
-//! «route» button opens it, and so does a device window's.
+//! «route» button opens it, and so does a device window's. A multi-instrument's window has
+//! the key range figure under its flow (MIX-043).
 
 pub mod flow;
+pub mod keys;
 pub mod paint;
 #[cfg(test)]
 mod tests;
@@ -119,6 +121,9 @@ pub enum Part {
     Remove(NodeId),
     /// A frequency split's `i`th crossover.
     Cross(NodeId, usize),
+    /// A layer's box in the key range figure, and one of its sides.
+    Range(NodeId),
+    Side(NodeId, keys::Edge),
     Body,
 }
 
@@ -143,6 +148,13 @@ pub(crate) enum Grab {
         x0: f32,
         from: Vec<f64>,
         now: Vec<f64>,
+    },
+    /// A side of a layer's box: the layer's ranges when it was taken and now.
+    Side {
+        layer: NodeId,
+        edge: keys::Edge,
+        from: keys::Ranges,
+        now: keys::Ranges,
     },
 }
 
@@ -196,6 +208,8 @@ pub struct View {
     /// Where the flow shows; it is cut to it.
     pub body: Rect,
     pub flow: Flow,
+    /// A multi-instrument's key range figure, under the body, when the window is wide enough.
+    pub keys: Option<keys::Keys>,
 }
 
 /// The width of a toolbar's button.
@@ -252,10 +266,17 @@ pub fn tools_of(r: Rect, instrument: bool) -> (Vec<(Tool, Rect)>, f32) {
 pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
     let t = p.tracks.get(&w.track)?;
     let probe = flow::layout(p, t, (0.0, 0.0));
-    let width = probe.w.max(MIN_W).min((size.0 - 2.0 * SIDE).max(KEEP_W));
+    let multi = !keys::layers(t).is_empty();
+    let least = if multi { keys::LEAST_W } else { MIN_W };
+    let width = probe.w.max(least).min((size.0 - 2.0 * SIDE).max(KEEP_W));
     let instrument = t.kind == xirius_core::model::TrackKind::Instrument;
     let (_, tool_h) = tools_of(Rect::new(0.0, 0.0, width, 0.0), instrument);
-    let height = (BAR_H + tool_h + probe.h).min((size.1 - ROOM_Y).max(200.0));
+    let panel_h = if multi && width >= keys::LEAST_W {
+        keys::PANEL_H
+    } else {
+        0.0
+    };
+    let height = (BAR_H + tool_h + probe.h + panel_h).min((size.1 - ROOM_Y).max(200.0));
     let (x, y) = w.at.unwrap_or(((size.0 - width) / 2.0, TOP));
     let r = Rect::new(
         x.clamp(0.0, (size.0 - KEEP_W).max(0.0)),
@@ -267,7 +288,20 @@ pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
     let bar = title_bar::plain_layout(Rect::new(r.x, r.y, r.w, BAR_H), &name);
     let (tools, _) = tools_of(r, instrument);
     let toolbar = Rect::new(r.x, r.y + BAR_H, r.w, tool_h);
-    let body = Rect::new(r.x, toolbar.bottom(), r.w, (r.h - BAR_H - tool_h).max(0.0));
+    let body = Rect::new(
+        r.x,
+        toolbar.bottom(),
+        r.w,
+        (r.h - BAR_H - tool_h - panel_h).max(0.0),
+    );
+    let keys = (panel_h > 0.0).then(|| {
+        let held = match &w.grab {
+            Some(Grab::Side { layer, now, .. }) => Some((*layer, *now)),
+            _ => None,
+        };
+        let panel = Rect::new(r.x, body.bottom(), r.w, panel_h);
+        keys::layout(t, panel, keys::chosen_layer(t, w.chosen), held)
+    });
     let (sx, sy) = clamp_scroll(w.scroll, &probe, body);
     // A flow narrower than the window sits in its middle; a wider one shows from its left.
     let x0 = if probe.w <= body.w {
@@ -284,6 +318,7 @@ pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
         toolbar,
         body,
         flow,
+        keys,
     })
 }
 
@@ -447,6 +482,15 @@ pub fn part_at(v: &View, x: f32, y: f32) -> Option<Part> {
                 .find(|(_, r)| r.contains(x, y))
                 .map_or(Part::Body, |(t, _)| Part::Tool(*t)),
         );
+    }
+    if let Some(k) = &v.keys
+        && k.panel.contains(x, y)
+    {
+        return Some(match keys::hit(k, x, y) {
+            Some((id, Some(e))) => Part::Side(id, e),
+            Some((id, None)) => Part::Range(id),
+            None => Part::Body,
+        });
     }
     if !v.body.contains(x, y) {
         return Some(Part::Body);
@@ -757,6 +801,29 @@ impl Studio {
                     });
                 }
             }
+            Part::Range(id) => {
+                let pick = layer_pick(&self.project(), t, id);
+                if let Some(w) = self.channel.as_mut() {
+                    w.chosen = pick;
+                }
+            }
+            Part::Side(id, edge) => {
+                let p = self.project();
+                let layer = p
+                    .tracks
+                    .get(&t)
+                    .and_then(|t| keys::layers(t).iter().find(|l| l.id == id).cloned());
+                if let (Some(l), Some(w)) = (layer, self.channel.as_mut()) {
+                    w.chosen = Some(Pick::Plugin(l.instrument));
+                    let from = (l.keys, l.velocity);
+                    w.grab = Some(Grab::Side {
+                        layer: id,
+                        edge,
+                        from,
+                        now: from,
+                    });
+                }
+            }
             Part::Body => w.chosen = None,
         }
         true
@@ -949,6 +1016,22 @@ impl Studio {
                     });
                 }
             }
+            Grab::Side {
+                layer, edge, from, ..
+            } => {
+                let Some(k) = self.channel_view(g).and_then(|v| v.keys) else {
+                    return true;
+                };
+                let now = keys::dragged(from, edge, k.map, k.span, x, y);
+                if let Some(w) = self.channel.as_mut() {
+                    w.grab = Some(Grab::Side {
+                        layer,
+                        edge,
+                        from,
+                        now,
+                    });
+                }
+            }
             Grab::Cross {
                 split, i, x0, from, ..
             } => {
@@ -1010,6 +1093,19 @@ impl Studio {
                     "rack.split.mode",
                     json!({ "id": split.to_string(), "mode": "frequency", "crossovers": list }),
                 );
+            }
+            Grab::Side {
+                layer, from, now, ..
+            } if from != now => {
+                let mut args = json!({ "id": layer.to_string() });
+                if now.0 != from.0 {
+                    args["keys"] = json!(format!("{}-{}", now.0.0, now.0.1));
+                }
+                if now.1 != from.1 {
+                    args["velocity"] = json!(format!("{}-{}", now.1.0, now.1.1));
+                }
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+                self.run_command("rack.layer.set", args);
             }
             _ => {}
         }
@@ -1083,6 +1179,15 @@ impl Studio {
 
 /// What a branch's or a layer's head speaks for: 「分岐 N」 (L, R on a channel split) or the
 /// layer's instrument.
+/// The card that picks a layer: its instrument.
+fn layer_pick(p: &Project, t: TrackId, id: NodeId) -> Option<Pick> {
+    let t = p.tracks.get(&t)?;
+    keys::layers(t)
+        .iter()
+        .find(|l| l.id == id)
+        .map(|l| Pick::Plugin(l.instrument))
+}
+
 fn col_who(t: &xirius_core::model::Track, f: &Flow, col: &Column) -> String {
     match col.kind {
         ColKind::Branch { .. } => format!("分岐 {}", col_label(col)),
@@ -1203,6 +1308,40 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<crate::a11y::Mark> {
                 format!("channel-remove-{}", col.id),
                 button(&format!("{who} を外す"), r),
             ));
+        }
+    }
+    if let Some(k) = &v.keys {
+        for b in &k.boxes {
+            let name = keys::layers(t)
+                .get(b.index)
+                .and_then(|l| t.inserts.iter().find(|p| p.id == l.instrument))
+                .map_or_else(|| format!("レイヤー {}", b.index + 1), |p| p.name.clone());
+            let mut node = button(&format!("{name} の範囲"), b.rect);
+            node.set_value(format!(
+                "{} · {}",
+                keys::keys_text(b.ranges.0),
+                keys::velocity_text(b.ranges.1)
+            ));
+            node.set_selected(b.index == k.chosen);
+            children.push(mark(format!("channel-range-{}", b.id), node));
+            let ((lo, hi), (soft, loud)) = b.ranges;
+            for (e, v) in keys::Edge::ALL.into_iter().zip([lo, hi, soft, loud]) {
+                let mut node = accesskit::Node::new(accesskit::Role::Slider);
+                node.set_label(format!("{name} {}", e.label()));
+                node.set_bounds(bounds(keys::reach(b, e)));
+                let (min, max) = match e {
+                    keys::Edge::Low | keys::Edge::High => (0.0, 127.0),
+                    keys::Edge::Soft | keys::Edge::Loud => (1.0, 127.0),
+                };
+                node.set_min_numeric_value(min);
+                node.set_max_numeric_value(max);
+                node.set_numeric_value(f64::from(v));
+                node.set_value(match e {
+                    keys::Edge::Low | keys::Edge::High => xirius_params::pitch::name(v),
+                    keys::Edge::Soft | keys::Edge::Loud => v.to_string(),
+                });
+                children.push(mark(format!("channel-side-{}-{e:?}", b.id), node));
+            }
         }
     }
     let mut node = accesskit::Node::new(accesskit::Role::Group);
