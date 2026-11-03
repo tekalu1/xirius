@@ -1,0 +1,26 @@
+[package]
+name = "xirius-ara"
+description = "ARA 2 host: the five host controllers, the document model, VST3 and CLAP binding, containment"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+vst3 = "0.3"
+xirius-vst3 = { path = "../xirius-vst3" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+clap-sys = "0.5"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Kernel",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+] }

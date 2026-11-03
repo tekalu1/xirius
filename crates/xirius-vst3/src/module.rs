@@ -2,6 +2,7 @@
 
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
+use std::ptr::NonNull;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use vst3::Steinberg::{
@@ -314,6 +315,28 @@ impl Module {
         }
         // SAFETY: the factory returned an `I` with one reference for us.
         unsafe { ComPtr::from_raw(obj as *mut I) }
+    }
+}
+
+impl Module {
+    /// Creates an instance of class `cid` and asks it for the interface `iid`, for interfaces
+    /// the bindings do not know (ARA's `IMainFactory`, PLG-033). Takes a turn. The caller owns
+    /// one reference to the result and releases it through its `FUnknown`.
+    pub fn create_raw(&self, cid: &[u8; 16], iid: &[u8; 16]) -> Option<NonNull<c_void>> {
+        let _turn = turn("create a companion object of", &self.path);
+        let mut obj: *mut c_void = std::ptr::null_mut();
+        // SAFETY: both ids are 16-byte arrays; on success `obj` holds a reference we own.
+        let r = unsafe {
+            self.factory().createInstance(
+                cid.as_ptr() as FIDString,
+                iid.as_ptr() as FIDString,
+                &mut obj,
+            )
+        };
+        if r != kResultOk {
+            return None;
+        }
+        NonNull::new(obj)
     }
 }
 

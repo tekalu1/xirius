@@ -1,8 +1,10 @@
 //! One plugin instance: the component with its processor, and its edit controller.
 
 use std::cell::RefCell;
+use std::ffi::c_void;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
+use std::ptr::NonNull;
 use std::sync::Arc;
 
 use vst3::Steinberg::Vst::BusDirections_::{kInput, kOutput};
@@ -248,6 +250,22 @@ impl Plugin {
             reported: RefCell::new(None),
             _ui_thread: PhantomData,
         })
+    }
+
+    /// Asks the component for an interface the bindings do not know (ARA's
+    /// `IPlugInEntryPoint2`, PLG-033). The caller owns one reference to the result and
+    /// releases it through its `FUnknown`, on this thread.
+    pub fn query_component(&self, iid: &[u8; 16]) -> Option<NonNull<c_void>> {
+        let mut obj: *mut c_void = std::ptr::null_mut();
+        let unknown = self.shared.component.as_ptr() as *mut FUnknown;
+        // SAFETY: a plain `queryInterface` on the live component; on success `obj` holds a
+        // reference for the caller.
+        let r =
+            unsafe { ((*(*unknown).vtbl).queryInterface)(unknown, iid.as_ptr().cast(), &mut obj) };
+        if r != kResultOk {
+            return None;
+        }
+        NonNull::new(obj)
     }
 
     pub fn class(&self) -> &ClassInfo {
@@ -780,6 +798,22 @@ impl AudioPart {
                 self.shared.component.setActive(0);
             }
             self.active = false;
+        }
+    }
+
+    /// Moves the transport the plugin is told about, for a render that follows the song (an
+    /// ARA playback renderer, PLG-036): whether it plays, and the song position in frames.
+    /// Each block still moves the position on by its length.
+    pub fn set_transport(&mut self, playing: bool, position: i64) {
+        let c = &mut *self.context;
+        if playing {
+            c.state |= kPlaying as u32;
+        } else {
+            c.state &= !(kPlaying as u32);
+        }
+        c.projectTimeSamples = position;
+        if c.sampleRate > 0.0 {
+            c.projectTimeMusic = position as f64 / c.sampleRate * c.tempo / 60.0;
         }
     }
 
