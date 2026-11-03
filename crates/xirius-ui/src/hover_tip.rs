@@ -156,6 +156,10 @@ pub fn text(s: &Studio, hit: Hit) -> Option<String> {
     {
         return Some(crate::audition::READING.into());
     }
+    // The ARA badge says the plugin and its state, and why it cannot be opened (PLG-055).
+    if let Hit::Ara(_, c) = hit {
+        return s.ara_tip(c);
+    }
     // The pill after a track's name says the values it stands for (UI-312).
     if let Hit::TrackMark(t) = hit {
         return crate::draw::track_mark_tip(s.project().tracks.get(&t)?);

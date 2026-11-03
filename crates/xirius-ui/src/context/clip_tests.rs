@@ -572,8 +572,15 @@ fn an_audio_clip_starts_with_following_the_tempo_and_groups_processing_and_bounc
     assert!(choose(&mut s, &g, "処理"));
     assert_eq!(
         labels(&s),
-        ["戻る", "ノーマライズ", "逆再生", "テンポを検出"]
+        [
+            "戻る",
+            "ノーマライズ",
+            "逆再生",
+            "テンポを検出",
+            crate::clip_ara::ADD
+        ]
     );
+    assert_eq!(key(&s, crate::clip_ara::ADD), "Ctrl+M");
     assert_eq!(key(&s, "逆再生"), "Ctrl+R");
     assert_eq!(key(&s, "ノーマライズ"), "Alt+N");
     assert!(press_on(&mut s, &g, "Vocal", 0));

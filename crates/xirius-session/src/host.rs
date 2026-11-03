@@ -806,9 +806,12 @@ impl SessionHost {
     }
 
     /// Starts the plugin host again after a crash; each plugin comes back with the state it
-    /// had and takes over from the dry signal.
+    /// had and takes over from the dry signal. When only ARA documents went down, only they
+    /// open again.
     pub fn restart_plugins(&self) -> Result<(), String> {
-        self.restart_ara(None);
+        if self.restart_ara(None) > 0 && !self.builder.plugins().crashed() {
+            return Ok(());
+        }
         self.builder.plugins().restart()
     }
 
@@ -863,8 +866,12 @@ impl SessionHost {
     }
 
     /// As [`SessionHost::restart_plugins`], without waiting for the plugins to open again
-    /// (ENG-065): each plays dry until it is back.
+    /// (ENG-065): each plays dry until it is back. The ARA documents that went down open
+    /// again too (PLG-058), and alone when no host process went down.
     pub fn restart_plugins_later(&self) -> Result<(), String> {
+        if self.restart_ara(None) > 0 && !self.builder.plugins().crashed() {
+            return Ok(());
+        }
         self.builder.plugins().restart_later()
     }
 

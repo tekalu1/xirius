@@ -1179,6 +1179,7 @@ impl Studio {
     /// A choice picked in an insert or send list.
     pub(crate) fn mixer_pick(&mut self, kind: PopupKind, to: &str) {
         match kind {
+            PopupKind::AraPlugin => self.ara_picked(to),
             PopupKind::Insert(_) | PopupKind::Instrument(_) if to == scan::RESCAN => {
                 if let Err(e) = self.start_plugin_scan() {
                     self.error = Some(e);

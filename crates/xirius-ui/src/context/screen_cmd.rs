@@ -63,6 +63,8 @@ pub fn act_command(act: &Act) -> (&'static str, Value) {
             json!({"id": id.to_string(), "save": save}),
         ),
         Act::RestartPlugin(id) => ("plugin.restart", json!({"id": id.to_string()})),
+        Act::RestartPlugins => ("plugin.restart", json!({})),
+        Act::AraAttach(ids) => ("clip.ara.attach", json!({ "ids": ids })),
         Act::RangeFrame(place, from, to) => (
             "range.transform",
             match place {

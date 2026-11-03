@@ -137,6 +137,9 @@ impl Studio {
                 _ => {}
             }
         }
+        if let Some(host) = self.transport.host() {
+            host.set_ara_editor_caption(caption);
+        }
     }
 
     /// Opens `plugin`'s own window, on the instance that plays it. `at` keeps the corner of a

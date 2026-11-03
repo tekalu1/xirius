@@ -29,7 +29,8 @@ fn on_screen(act: &Act) -> bool {
         | Act::HideLane(..)
         | Act::RangeFrame(..)
         | Act::Tool(_)
-        | Act::Seek(_) => false,
+        | Act::Seek(_)
+        | Act::AraAttach(_) => false,
         Act::RollPitch(_)
         | Act::RollLaneKind(..)
         | Act::RollLaneHide(_)
@@ -48,6 +49,7 @@ fn on_screen(act: &Act) -> bool {
         | Act::PointValue(..)
         | Act::Preset(..)
         | Act::RestartPlugin(_)
+        | Act::RestartPlugins
         | Act::PickInsert(_)
         | Act::InsertRecent(..)
         | Act::PresetFile(..)
@@ -95,6 +97,8 @@ fn samples(t: TrackId, p: PluginId, f: FolderId) -> Vec<Act> {
         Act::OpenPlugin(t, p),
         Act::Preset(p, "Warm".into()),
         Act::RestartPlugin(p),
+        Act::RestartPlugins,
+        Act::AraAttach(vec!["c1".into()]),
         Act::PickInsert(t),
         Act::InsertRecent(t, "EQ".into()),
         Act::PresetFile(p, false),

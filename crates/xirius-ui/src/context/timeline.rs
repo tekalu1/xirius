@@ -31,9 +31,9 @@ impl Studio {
                 self.open_context(items, x, y);
                 true
             }
-            Spot::Clip { track, clip, .. } | Spot::Fx { track, clip, .. } => {
-                self.clip_context(g, track, clip, x, y)
-            }
+            Spot::Clip { track, clip, .. }
+            | Spot::Fx { track, clip, .. }
+            | Spot::Ara { track, clip } => self.clip_context(g, track, clip, x, y),
             Spot::Loop(grip) => self.ruler_context(g, Some(grip), x, y),
             Spot::Section { id, .. } => self.section_context(g, id, x, y),
             Spot::Band => self.band_context(g, x, y),

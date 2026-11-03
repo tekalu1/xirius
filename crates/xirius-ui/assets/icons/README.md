@@ -20,6 +20,9 @@ licence text beside it and its line in `NOTICE`.
 - Draw it on the same 24 × 24 grid, with `fill="none"`, `stroke="currentColor"`,
   `stroke-width="1.6"`, round ends and joins, so the colour comes from the screen and it sits
   with the others.
+- An icon shown smaller than the rest may use a finer grid with a heavier stroke so it stays
+  legible: the ARA badge (`ara.svg`, `ara-off.svg`) is drawn on 16 × 16 with stroke 2 and shown
+  at 12 × 12 after a clip's name.
 - Name it for what it shows (`record.svg`), and add it to the design lint's list if the lint
   asks for it.
 - If it comes from somewhere else, say where and under which licence in this file, and add the

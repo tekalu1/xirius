@@ -26,8 +26,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::{Duration, Instant, SystemTime};
 
-use xirius_ara::service::{Binary, Caption, Loader, Placement, Rendered, source_id};
-use xirius_ara::{ClipSpec, Phase, Service, Song, SourceAudio};
+pub use xirius_ara::Phase;
+pub use xirius_ara::service::Loader;
+use xirius_ara::service::{Binary, Caption, Placement, Rendered, source_id};
+use xirius_ara::{ClipSpec, Service, Song, SourceAudio};
 use xirius_core::model::{Clip, ClipBody, Project, TrackKind};
 use xirius_engine::AudioData;
 use xirius_plugins::Catalog;

@@ -3,7 +3,7 @@
 //! reads the list. Only while the settings are closed — they cover the column.
 //! Over the picture, the controls a screen reader could not reach (UI-298): the search box of
 //! the effects and instruments lists, and each clip's count of takes.
-use crate::studio::{Geometry, Rect, Studio};
+use crate::studio::{Geometry, Hit, Rect, Studio};
 use crate::tree::RowKind;
 use gpui::accesskit;
 use xirius_core::id::TrackId;
@@ -270,6 +270,26 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
         };
         let stacks = xirius_core::takes::stacks(track);
         for clip in &track.clips {
+            // The ARA badge: a button with the plugin's state, and why it cannot be opened.
+            if let (Some(badge), Some(at)) = (s.ara_badge(clip.id), s.ara_badge_at(g, t, clip.id))
+                && g.lanes.contains(at.x + at.w / 2.0, at.y + at.h / 2.0)
+            {
+                let name = s.ara_name(clip.id).unwrap_or_default();
+                let mut node = accesskit::Node::new(accesskit::Role::Button);
+                node.set_label(format!("{name}: {}", badge.said()));
+                if let Some(why) = badge.reason() {
+                    node.set_description(why.to_string());
+                }
+                node.set_bounds(bounds(at));
+                out.push(Mark {
+                    key: format!("ara-{}", clip.id),
+                    children: Vec::new(),
+                    node,
+                    fold: None,
+                    pick: None,
+                    press: Some(Hit::Ara(t, clip.id)),
+                });
+            }
             let Some(n) = crate::draw::takes_under(&stacks, clip) else {
                 continue;
             };

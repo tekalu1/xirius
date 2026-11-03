@@ -61,6 +61,8 @@ pub enum PopupKind {
     Send(TrackId),
     /// The instrument of an instrument track (PLG-019).
     Instrument(TrackId),
+    /// The ARA plugin for the clips of `Studio::ara.pick` (EDT-023).
+    AraPlugin,
     AutomationTargets(TrackId, bool),
     BrowserView,
     /// The + at the head of the track column.

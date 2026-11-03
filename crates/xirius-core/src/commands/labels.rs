@@ -62,7 +62,7 @@ pub const LABELS: &[(&str, &str)] = &[
     ("bounce.apply", "バウンスした音を置く"),
     ("clip.tempo.detect", "テンポを検出"),
     ("clip.tempo.detect.apply", "検出したテンポを設定"),
-    ("clip.ara.attach", "ARA プラグインに付ける"),
+    ("clip.ara.attach", "ARA プラグインを追加…"),
     ("clip.ara.attach.apply", "クリップを ARA プラグインに付ける"),
     ("clip.ara.detach", "ARA プラグインから外す"),
     ("track.freeze", "トラックをフリーズ"),

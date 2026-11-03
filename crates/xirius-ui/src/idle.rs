@@ -78,6 +78,7 @@ impl Studio {
             | self.poll_export()
             | self.poll_job()
             | self.poll_processed()
+            | self.poll_ara()
             | self.expire_toast()
             | self.expire_gain_tip()
             | self.settings_reload()

@@ -89,6 +89,8 @@ pub enum Hit {
     /// A track or folder row, in the column or in its lane.
     Row(RowKind),
     Clip(TrackId, ClipId),
+    /// The ARA badge after a clip's name (PLG-055).
+    Ara(TrackId, ClipId),
     /// The ruler or the section band: a click moves the playhead here.
     Ruler(Tick),
     Tab(DrawerTab),
@@ -753,6 +755,9 @@ pub struct Studio {
     pub(crate) browser_import_io: crate::browser_import_io::ImportIo,
     /// The clips whose failed stretch the toast has said ([`crate::clip_marks`]).
     pub stretch_told: HashSet<xirius_core::id::ClipId>,
+    /// ARA on the clips: the plugins' state and the clips the plugin list is open for
+    /// ([`crate::clip_ara`]).
+    pub ara: crate::clip_ara::AraUi,
     /// The device's channels, while a thread reads them ([`crate::input_row`]).
     pub input_channels: crate::input_row::ChannelsRead,
     /// This PC's MIDI ports, as last listed ([`crate::midi_watch`]).
@@ -910,6 +915,7 @@ impl Studio {
             browser_menu_io: Default::default(),
             browser_import_io: Default::default(),
             stretch_told: HashSet::new(),
+            ara: Default::default(),
             input_channels: None,
             midi_ports: crate::midi_watch::Ports::default(),
             live_midi: Default::default(),
@@ -1253,6 +1259,7 @@ impl Studio {
                 let clip = project.tracks.get(&t)?.clips.iter().find(|k| k.id == c)?;
                 Some(mid(self.clip_rect(g, row, clip)))
             }
+            Hit::Ara(t, c) => self.ara_badge_at(g, t, c).map(mid),
         }?;
         // Only if what is there is really that: not scrolled out, not covered.
         let got = self.hit(g, at.0, at.1);
@@ -1437,7 +1444,13 @@ impl Studio {
                     if clip.muted && crate::draw::in_stack(&stacks, clip) {
                         continue;
                     }
-                    if self.clip_rect(g, row, clip).contains(x, y) {
+                    let r = self.clip_rect(g, row, clip);
+                    if r.contains(x, y) {
+                        if let Some(badge) = self.ara_badge(clip.id)
+                            && self.ara_badge_rect(track, clip, r, &badge).contains(x, y)
+                        {
+                            return Hit::Ara(t, clip.id);
+                        }
                         return Hit::Clip(t, clip.id);
                     }
                 }
@@ -1751,6 +1764,7 @@ impl Studio {
                 self.select_clip_here(t, c);
                 true
             }
+            Hit::Ara(t, c) => self.ara_badge_press(g, t, c),
             Hit::Ruler(tick) => {
                 // `ruler.any.empty.click`: the map says what a click on the ruler does.
                 let act = {
@@ -2733,7 +2747,7 @@ impl Studio {
         match self.hover {
             Hit::Row(kind) => Some(kind),
             Hit::Chevron(f) | Hit::FolderBus(f) => Some(RowKind::Folder(f)),
-            Hit::Mute(t) | Hit::Solo(t) | Hit::TrackMark(t) | Hit::Clip(t, _) => {
+            Hit::Mute(t) | Hit::Solo(t) | Hit::TrackMark(t) | Hit::Clip(t, _) | Hit::Ara(t, _) => {
                 Some(RowKind::Track(t))
             }
             _ => None,
@@ -3079,6 +3093,9 @@ mod tests {
                     let project = s.project();
                     for clip in &project.tracks[&t].clips {
                         targets.push(Hit::Clip(t, clip.id));
+                        if s.ara_badge(clip.id).is_some() {
+                            targets.push(Hit::Ara(t, clip.id));
+                        }
                     }
                 }
             }

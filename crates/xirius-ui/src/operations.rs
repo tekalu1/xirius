@@ -33,6 +33,7 @@ pub fn of_hit(hit: Hit) -> Option<(&'static str, &'static str)> {
         Hit::Solo(_) => ("head.solo", "track.solo"),
         Hit::Row(_) => ("row", "row.select"),
         Hit::Clip(..) => ("clip", "clip.select"),
+        Hit::Ara(..) => ("clip.ara", "clip.ara.attach"),
         Hit::Ruler(_) => ("ruler", "transport.seek"),
         Hit::Tab(_) => ("drawer.tab", "drawer.tab"),
         Hit::RollView(_) => ("drawer.roll.view", "roll.view"),
@@ -223,6 +224,7 @@ pub fn of_cell(kind: &PopupKind, action: &Action) -> &'static str {
         (PopupKind::Insert(_), Action::Pick(_)) => "insert.pick",
         (PopupKind::Send(_), Action::Pick(_)) => "send.pick",
         (PopupKind::Instrument(_), Action::Pick(_)) => "instrument.pick",
+        (PopupKind::AraPlugin, Action::Pick(_)) => "ara.pick",
         _ => of_action(action),
     }
 }

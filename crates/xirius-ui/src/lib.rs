@@ -10,6 +10,8 @@ pub mod aiarc_shots;
 mod ancillary_io;
 pub mod app;
 pub mod app_menu;
+pub mod ara_real_shots;
+pub mod ara_shots;
 pub mod arrange;
 pub mod arrange_v1_shots;
 pub mod assets;
@@ -57,6 +59,7 @@ pub mod caption_shots;
 pub mod channel_step_shots;
 pub mod chrome;
 pub mod cleanup_dialog;
+pub mod clip_ara;
 pub mod clip_marks;
 pub mod clip_menu_rows_shots;
 pub mod clipedit_shots;
@@ -315,6 +318,8 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("ai", ai::shots::AI),
     ("aiarc", aiarc_shots::AIARC),
     ("all", shot::SCRIPT),
+    ("ara", ara_shots::SHOTS),
+    ("ara-real", ara_real_shots::SHOTS),
     ("arrange-v1", arrange_v1_shots::SHOTS),
     ("audioproc", audioproc_shots::AUDIOPROC),
     ("audioset", audioset_shots::AUDIOSET),

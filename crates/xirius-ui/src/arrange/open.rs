@@ -80,6 +80,8 @@ impl Studio {
         }
         match spot {
             Spot::Clip { track, clip, .. } => self.open_clip(g, track, clip, mods.alt),
+            // The press has opened the plugin's window already.
+            Spot::Ara { .. } => true,
             Spot::Space(RowKind::Track(track)) => self.make_part(g, track, x),
             _ => false,
         }
@@ -159,6 +161,11 @@ impl Studio {
         }
         self.select_row(Some(RowKind::Track(track)));
         self.arrange.touched();
+        // A clip through an ARA plugin opens the plugin's window (PLG-036).
+        if self.project().ara.clips.contains_key(&clip) {
+            self.open_ara_editor_for(&[clip]);
+            return true;
+        }
         let ClipBody::Midi { notes, .. } = &c.body else {
             return true;
         };

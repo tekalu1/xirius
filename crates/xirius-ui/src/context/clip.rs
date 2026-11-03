@@ -114,7 +114,7 @@ impl Studio {
     }
 
     /// The right press on a clip (or on one of an audio clip's handles).
-    pub(super) fn clip_context(
+    pub(crate) fn clip_context(
         &mut self,
         g: &Geometry,
         track: TrackId,
@@ -198,6 +198,10 @@ impl Studio {
                     .enabled(enabled)
             });
             items.splice(0..0, fields);
+        }
+        // A plugin of these clips went down: its restart heads the menu (PLG-055).
+        if let Some(restart) = self.ara_restart_row(&got.ids) {
+            items.splice(0..0, [restart, Item::gap()]);
         }
         self.open_context(items, x, y);
         true
@@ -330,16 +334,17 @@ impl Studio {
                 reason,
             )
         };
+        let mut rows = vec![
+            row(self, "clip.normalize"),
+            row(self, "clip.reverse"),
+            row(self, "clip.tempo.detect"),
+            Item::gap(),
+        ];
+        // The ARA plugin ends the list (EDT-023).
+        rows.extend(self.ara_rows(&got.ids, got.frozen > 0));
         Item {
             reason: reason.to_string(),
-            ..Item::sub(
-                "処理",
-                vec![
-                    row(self, "clip.normalize"),
-                    row(self, "clip.reverse"),
-                    row(self, "clip.tempo.detect"),
-                ],
-            )
+            ..Item::sub("処理", rows)
         }
     }
 

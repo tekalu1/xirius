@@ -82,6 +82,20 @@ impl Studio {
         args: &Map<String, Value>,
     ) -> Option<bool> {
         match name {
+            // Without a plugin: the list that picks it, or the window of the one attached.
+            "clip.ara.attach" if !args.contains_key("plugin") => {
+                Some(self.ara_attach_command(g, args))
+            }
+            "clip.ara.attach" => {
+                let plugin = text(args, "plugin").unwrap_or_default().to_string();
+                let ids: Vec<String> = self
+                    .ara_targets(args)
+                    .iter()
+                    .map(|(_, c)| c.to_string())
+                    .collect();
+                Some(self.ara_attach_to(&ids, &plugin))
+            }
+            "clip.ara.detach" if !args.contains_key("ids") => Some(self.ara_detach_selected()),
             "transport.play" if args.contains_key("at") => {
                 let Some(at) = self.tick_arg(args.get("at")) else {
                     return self.said("--at の位置を読み取れません");

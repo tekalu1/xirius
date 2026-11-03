@@ -143,26 +143,49 @@ pub fn dim(status: Option<Status>) -> f32 {
     }
 }
 
-/// Draws the marks that fit at the right of the head of the clip at `r`, whose name is
-/// `name_w` wide; returns the x the name ends before.
-pub fn paint_marks(pen: &mut Pen, marks: &[Mark], r: Rect, name_w: f32) -> f32 {
-    let c = pen.c;
-    let widths: Vec<f32> = marks
+/// How wide each mark is.
+fn widths(marks: &[Mark]) -> Vec<f32> {
+    marks
         .iter()
         .map(|m| match m {
             Mark::Icon(_) => ICON_MARK_W,
-            Mark::Text(t) => pen.measure(t, FontSize::Micro, Weight::Semibold) + MARK_PAD * 2.0,
+            Mark::Text(t) => {
+                crate::fonts::measure(t, FontSize::Micro, Weight::Semibold) + MARK_PAD * 2.0
+            }
         })
-        .collect();
-    let room = r.w - 12.0 - name_w.min(NAME_KEEPS);
+        .collect()
+}
+
+/// How many of the marks fit in the clip at `r`, whose name is `name_w` wide, when `reserve`
+/// more is kept for what follows the name (the ARA badge).
+fn kept(widths: &[f32], r: Rect, name_w: f32, reserve: f32) -> usize {
+    let room = r.w - 12.0 - name_w.min(NAME_KEEPS) - reserve;
     let (mut keep, mut used) = (0, 0.0);
-    for w in &widths {
+    for w in widths {
         if used + w + MARK_GAP > room {
             break;
         }
         keep += 1;
         used += w + MARK_GAP;
     }
+    keep
+}
+
+/// The x the marks that fit start at (what [`paint_marks`] returns), without drawing them.
+pub fn marks_left(marks: &[Mark], r: Rect, name_w: f32, reserve: f32) -> f32 {
+    let widths = widths(marks);
+    let keep = kept(&widths, r, name_w, reserve);
+    widths[..keep]
+        .iter()
+        .fold(r.right() - MARK_RIGHT, |x, w| x - w - MARK_GAP)
+}
+
+/// Draws the marks that fit at the right of the head of the clip at `r`, whose name is
+/// `name_w` wide and is followed by `reserve` more; returns the x the name ends before.
+pub fn paint_marks(pen: &mut Pen, marks: &[Mark], r: Rect, name_w: f32, reserve: f32) -> f32 {
+    let c = pen.c;
+    let widths = widths(marks);
+    let keep = kept(&widths, r, name_w, reserve);
     let mut x = r.right() - MARK_RIGHT;
     for (m, w) in marks[..keep].iter().zip(&widths).rev() {
         x -= w;
@@ -247,10 +270,7 @@ pub fn paint_status(pen: &mut Pen, status: Status, r: Rect) {
             let w = pen.measure(&text, FontSize::Caption, Weight::Semibold);
             let chip = chip_rect(r, w);
             pen.round(chip, c.surface_1, Radius::Xs);
-            let centre = (chip.x + 8.0, chip.y + CHIP_H / 2.0);
-            let turn = since_start_ms() / TURN_MS;
-            ring(pen, centre, 0.0, std::f32::consts::TAU, c.surface_3);
-            ring(pen, centre, turn, turn + ARC, c.ring);
+            spinner(pen, (chip.x + 8.0, chip.y + CHIP_H / 2.0));
             let label = Rect::new(chip.x + CHIP_LEAD, chip.y, w, CHIP_H);
             pen.text(
                 &text,
@@ -300,6 +320,14 @@ pub fn paint_status(pen: &mut Pen, status: Status, r: Rect) {
             );
         }
     }
+}
+
+/// The turning ring centred at `centre`: its track and the arc that goes round.
+pub(crate) fn spinner(pen: &mut Pen, centre: (f32, f32)) {
+    let c = pen.c;
+    let turn = since_start_ms() / TURN_MS;
+    ring(pen, centre, 0.0, std::f32::consts::TAU, c.surface_3);
+    ring(pen, centre, turn, turn + ARC, c.ring);
 }
 
 /// Milliseconds since the first ring was drawn, which turns the rings.

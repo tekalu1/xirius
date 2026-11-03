@@ -69,6 +69,7 @@ crates/xirius-ui/src/chrome.rs	writeln	10
 crates/xirius-ui/src/cleanup_dialog.rs	arrange_run	1
 crates/xirius-ui/src/cleanup_dialog.rs	std :: fs :: metadata	1
 crates/xirius-ui/src/cleanup_dialog.rs	xirius_session :: cleanup :: unused	1
+crates/xirius-ui/src/clip_ara.rs	arrange_run	2
 crates/xirius-ui/src/clip_marks.rs	exists	1
 crates/xirius-ui/src/clipops.rs	arrange_run	22
 crates/xirius-ui/src/clipops.rs	run	1

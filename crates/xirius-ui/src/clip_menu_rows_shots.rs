@@ -1,6 +1,6 @@
 //! `--script clip-menu-rows`: the 1.0 rows of the clip menus (CTX-057): 処理 › and バウンス › of
 //! an audio clip (S02), バウンス › and the MIDI file of a MIDI clip (S03), and バウンス › of
-//! several clips (S04). ARA is after 1.0 (EDT-023) and has no row. Nothing is chosen but the
+//! several clips (S04). 処理 › ends with ARA's row (EDT-023). Nothing is chosen but the
 //! submenus. Silent; no OS input.
 
 use crate::arrange::probe::{clip_mid, track};
@@ -64,7 +64,13 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             assert!(s.context_choose(g, "処理"));
             assert_eq!(
                 labels(s),
-                ["戻る", "ノーマライズ", "逆再生", "テンポを検出"]
+                [
+                    "戻る",
+                    "ノーマライズ",
+                    "逆再生",
+                    "テンポを検出",
+                    crate::clip_ara::ADD
+                ]
             );
         }
         2 => {

@@ -154,6 +154,10 @@ impl Studio {
 
     fn restart(&mut self, only: Option<PluginId>) -> bool {
         self.health.restarts += 1;
+        // The ARA plugins that stopped start again with the rest (PLG-055).
+        if only.is_none() {
+            self.ara_restarted();
+        }
         if let Some(fake) = &mut self.health.fake {
             for r in fake.iter_mut().filter(|r| only.is_none_or(|id| r.id == id)) {
                 r.crashed = false;

@@ -147,6 +147,9 @@ const ICONS_HEAD: &[(&str, &[u8])] = icons!(
     "pin",
     "route",
     "ins",
+    // The ARA badge after a clip's name (PLG-055): a 16 grid, stroke 2, shown at 12 px.
+    "ara",
+    "ara-off",
 );
 
 /// The Windows minimise, maximise, restore and close buttons (UI-005): filled shapes on a 10 px
@@ -263,7 +266,13 @@ mod tests {
         for (name, bytes) in all_icons() {
             let svg = std::str::from_utf8(bytes).unwrap();
             if svg.contains("stroke-width=") {
-                assert!(svg.contains("stroke-width=\"1.6\""), "{name}");
+                // The ARA badge is drawn on a 16 grid with a heavier stroke to stay legible at
+                // 12 px (PLG-055).
+                let stroke = if name.starts_with("ara") { "2" } else { "1.6" };
+                assert!(
+                    svg.contains(&format!("stroke-width=\"{stroke}\"")),
+                    "{name}"
+                );
             }
         }
         assert!(Assets.load("icons/solo.svg").unwrap().is_some());

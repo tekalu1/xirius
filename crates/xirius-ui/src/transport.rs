@@ -1831,8 +1831,11 @@ impl Studio {
         let loading = self.poll_loading();
         let audition = self.audition_frame();
         let export = self.poll_export();
-        let job =
-            self.poll_job() | self.poll_processed() | self.poll_dawproject() | self.poll_tidy();
+        let job = self.poll_job()
+            | self.poll_processed()
+            | self.poll_ara()
+            | self.poll_dawproject()
+            | self.poll_tidy();
         let plugins = self.poll_preparing()
             | self.poll_swap()
             | self.poll_waiting_key()

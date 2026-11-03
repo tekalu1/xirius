@@ -211,6 +211,11 @@ pub enum Spot {
         clip: ClipId,
         grip: Grip,
     },
+    /// The ARA badge after a clip's name (PLG-055).
+    Ara {
+        track: TrackId,
+        clip: ClipId,
+    },
     /// A handle of an audio clip: a fade, the gain, a crossfade, the slip, or
     /// the join with the next clip.
     Fx {
@@ -693,6 +698,10 @@ impl Studio {
                 _ => Spot::None,
             };
         }
+        // The ARA badge after a clip's name is a button, also on a locked track (PLG-055).
+        if let Hit::Ara(track, clip) = self.hit(g, x, y) {
+            return Spot::Ara { track, clip };
+        }
         // A clip's count of takes is a button: it opens the take rows and folds them (UI-296).
         if let RowKind::Track(t) = row.kind
             && let Some(track) = p.tracks.get(&t)
@@ -893,6 +902,11 @@ impl Studio {
         self.comp_sel = None;
         self.arrange.swept.clear();
         let mut spot = self.arrange_spot(g, x, y);
+        // The ARA badge is a button: its window, its reason, or the menu that restarts it.
+        if let Spot::Ara { track, clip } = spot {
+            self.clear_section();
+            return self.ara_badge_press(g, track, clip);
+        }
         match spot {
             Spot::Section { id, .. } => self.select_section(id),
             // A press on the empty band keeps it when it adds (Shift), and lets go otherwise.
@@ -1006,6 +1020,7 @@ impl Studio {
                 self.arrange.touched();
                 false
             }
+            Spot::Ara { .. } => true,
             Spot::Clip { track, clip, .. } => {
                 if !self.clip_down(&drag, track, clip) {
                     return true;

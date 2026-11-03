@@ -122,7 +122,11 @@ pub enum Act {
     OpenPlugin(TrackId, PluginId),
     /// Loads a preset into an effect.
     Preset(PluginId, String),
-    /// Reloads the effects that went down.
+    /// Reloads the plugins that went down, ARA's with them (PLG-055).
+    RestartPlugins,
+    /// The ARA plugin of these clips: the list that picks it, or its window when one is
+    /// attached (EDT-023, PLG-036).
+    AraAttach(Vec<String>),
     /// Starts the process of this plugin again (it went down).
     RestartPlugin(PluginId),
     /// Opens the list of effects under a channel's ＋ row.

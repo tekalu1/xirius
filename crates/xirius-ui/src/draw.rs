@@ -1572,7 +1572,7 @@ pub fn output_label(project: &Project, track: &Track) -> String {
     }
 }
 
-const CLIP_BADGE: f32 = 12.0;
+pub(crate) const CLIP_BADGE: f32 = 12.0;
 /// How wide the AI's edge on a clip or a note is (AI-030).
 pub(crate) const AI_EDGE: f32 = 1.5;
 
@@ -1677,12 +1677,29 @@ fn paint_clip(
             pen.icon(badge, at, pen.c.ink);
             name_x += CLIP_BADGE + Space::X1.px();
         }
-        let name_end = if marks.is_empty() {
+        // The ARA badge follows the name and stays when the name is cut short (PLG-055).
+        let ara = studio.ara_badge(clip.id);
+        let reserve = if ara.is_some() {
+            crate::clip_ara::ara_reserve()
+        } else {
+            0.0
+        };
+        let mut name_end = if marks.is_empty() {
             r.right()
         } else {
             let name_w = pen.measure(&clip.name, FontSize::Caption, Weight::Medium);
-            crate::clip_marks::paint_marks(pen, &marks, r, name_w) - 2.0
+            crate::clip_marks::paint_marks(pen, &marks, r, name_w, reserve) - 2.0
         };
+        if let Some(badge) = &ara {
+            let at = studio.ara_badge_rect(track, clip, r, badge);
+            let hot = studio.arrange.hover
+                == crate::arrange::Spot::Ara {
+                    track: track.id,
+                    clip: clip.id,
+                };
+            crate::clip_ara::paint_badge(pen, badge, at, hot);
+            name_end = name_end.min(at.x - 2.0);
+        }
         let name_r = Rect::new(name_x, r.y + 1.0, (name_end - name_x).max(0.0), name_h);
         pen.mask(name_r, |pen| {
             // design-lint: allow(translucent-text-surface) フリーズの薄い色は不透明なクリップの面に重ねたもので、文字の下は不透明

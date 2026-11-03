@@ -633,13 +633,17 @@ pub fn is(kind: PopupKind) -> bool {
             | PopupKind::Device(_)
             | PopupKind::BrowserView
             | PopupKind::AddTrack
+            | PopupKind::AraPlugin
     )
 }
 
 /// The width a list menu keeps, by kind.
 pub fn width(kind: PopupKind) -> f32 {
     match kind {
-        PopupKind::Insert(_) | PopupKind::Instrument(_) | PopupKind::Send(_) => 260.0,
+        PopupKind::Insert(_)
+        | PopupKind::Instrument(_)
+        | PopupKind::Send(_)
+        | PopupKind::AraPlugin => 260.0,
         PopupKind::Device(_) => 280.0,
         PopupKind::BrowserView => 168.0,
         PopupKind::AddTrack => 184.0,
@@ -865,6 +869,7 @@ impl Studio {
         match kind {
             PopupKind::Insert(_) => Some(self.insert_pick()),
             PopupKind::Instrument(_) => Some(self.instrument_pick()),
+            PopupKind::AraPlugin => Some(self.ara_pick_list()),
             PopupKind::Send(t) => {
                 let p = self.project();
                 Some(
