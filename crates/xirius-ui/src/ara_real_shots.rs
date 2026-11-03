@@ -306,7 +306,8 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             }
             wait(s, 30.0, |s| !s.ara.editing.iter().any(|p| p == uid()));
             let closed = !s.ara.editing.iter().any(|p| p == uid());
-            // The window's close brings its edits into the song (`take_archives`).
+            // The window's edits come into the song once the plugin wrote its archive
+            // (`take_archives`, at a later frame).
             wait(s, 10.0, |s| !s.project().ara.archives.is_empty());
             let archived = s.project().ara.archives.len();
             let saved = s.run_command("project.save", json!({}));

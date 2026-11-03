@@ -251,6 +251,7 @@ impl Studio {
             self.ara.reports = host.ara_reports();
             let editing = host.ara_editing();
             let errors = host.take_ara_editor_errors();
+            let pending = host.ara_archives_pending();
             let closed = self.ara.editing.iter().any(|p| !editing.contains(p));
             self.ara.editing = editing;
             if closed {
@@ -258,6 +259,10 @@ impl Studio {
             }
             if let Some((_, why)) = errors.first() {
                 self.warn(format!("プラグインの窓を開けません（{why}）"), None);
+            }
+            // An archive on its way comes in at a later frame: keep them coming.
+            if pending {
+                return true;
             }
         }
         let p = self.project();

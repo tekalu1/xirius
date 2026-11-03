@@ -77,6 +77,9 @@ pub trait Window {
     fn set_caption(&self, _caption: Caption) {}
 }
 
+/// The plugin's answer to [`Service::store_later`]: its archive and the archive id, or `None`.
+pub type Stored = Receiver<Option<(Vec<u8>, String)>>;
+
 /// Makes the binary, on the ARA thread.
 pub type Loader = Box<dyn FnOnce() -> Result<Box<dyn Binary>, Error> + Send>;
 
@@ -392,14 +395,17 @@ impl Service {
     /// The plugin's archive of the document and its archive id, or `None` when the plugin
     /// failed, crashed or did not answer within `limit`.
     pub fn store(&self, limit: Duration) -> Option<(Vec<u8>, String)> {
+        self.store_later()?.recv_timeout(limit).ok().flatten()
+    }
+
+    /// Asks the plugin for its archive without waiting: the answer of [`Service::store`] comes
+    /// on the receiver when the plugin's thread has it. `None` when it crashed or is gone.
+    pub fn store_later(&self) -> Option<Stored> {
         if self.crashed().is_some() {
             return None;
         }
         let (tx, rx) = mpsc::channel();
-        if !self.send(Msg::Store(tx)) {
-            return None;
-        }
-        rx.recv_timeout(limit).ok().flatten()
+        self.send(Msg::Store(tx)).then_some(rx)
     }
 
     /// The notes of a clip's source (or of its modification, with the edits).

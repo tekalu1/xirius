@@ -305,6 +305,8 @@ impl SessionHost {
     }
 
     pub fn begin_pull_states(&mut self) -> crate::plugins::StatePull {
+        // The ARA plugins' archives too, so they are written by the time the song is.
+        self.builder.ara().ask_archives(&self.song);
         self.builder.plugins_mut().begin_pull_states()
     }
 
@@ -836,6 +838,11 @@ impl SessionHost {
     /// The ARA plugins whose editor window is open.
     pub fn ara_editing(&self) -> Vec<String> {
         self.builder.ara().editing()
+    }
+
+    /// Whether an ARA plugin's archive asked for has not come into the song yet.
+    pub fn ara_archives_pending(&self) -> bool {
+        self.builder.ara().archives_pending()
     }
 
     /// Why ARA editors asked for did not open, by plugin, once.
@@ -1681,17 +1688,30 @@ fn same_values(a: &Plugin, b: &Plugin) -> bool {
 /// undo takes back: each plugin's state, and the song's values for the parameters it names.
 /// The parameter moves come back for automation. A plugin whose latency changed gets a new
 /// mix afterwards, so delay compensation follows it (ENG-011).
+///
+/// It does not wait for the ARA plugins' archives: each frame of the window calls it, and an
+/// archive asked for comes in at a later call ([`crate::ara::take_archives`]).
 pub fn collect_plugin_states(
     session: &mut Session,
     host: &mut SessionHost,
     opts: &RunOptions,
+) -> CmdResult<Collected> {
+    collect_current(session, host, opts, false)
+}
+
+/// [`collect_plugin_states`], waiting with `wait` for the ARA plugins' archives asked for.
+pub(crate) fn collect_current(
+    session: &mut Session,
+    host: &mut SessionHost,
+    opts: &RunOptions,
+    wait: bool,
 ) -> CmdResult<Collected> {
     let edits = host
         .builder
         .plugins_mut()
         .current_edits(session.project(), None)
         .map_err(xirius_core::CmdError::io)?;
-    collect_edits(session, host, opts, edits)
+    collect_edits(session, host, opts, edits, wait)
 }
 
 pub fn collect_pulled_states(
@@ -1705,7 +1725,8 @@ pub fn collect_pulled_states(
         .plugins_mut()
         .current_edits(session.project(), Some(pull))
         .map_err(xirius_core::CmdError::io)?;
-    collect_edits(session, host, opts, edits)
+    // Written, opened or left: the archives asked for are waited for.
+    collect_edits(session, host, opts, edits, true)
 }
 
 fn collect_edits(
@@ -1713,6 +1734,7 @@ fn collect_edits(
     host: &mut SessionHost,
     opts: &RunOptions,
     edits: Vec<crate::plugins::RemoteEdit>,
+    wait: bool,
 ) -> CmdResult<Collected> {
     let mut out = Collected::default();
     let mut commands = Vec::new();
@@ -1789,7 +1811,7 @@ fn collect_edits(
         out.result = Some(r);
     }
     // The ARA plugins' edits: their archives, in place and only when changed (ARC-025).
-    if crate::ara::take_archives(session, host.builder.ara())? {
+    if crate::ara::take_archives(session, host.builder.ara(), wait)? {
         host.sync(session.project());
     }
     // Every link is asked, so none keeps a change for the next time.

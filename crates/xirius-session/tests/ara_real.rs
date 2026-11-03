@@ -299,7 +299,7 @@ fn a_real_plugin_through_the_songs_clips() {
         rms(&samples)
     );
     assert!(rms(&played) > 0.01, "the plugin played silence");
-    let changed = xirius_session::ara::take_archives(&mut song, player.ara()).unwrap();
+    let changed = xirius_session::ara::take_archives(&mut song, player.ara(), true).unwrap();
     println!("   the song changed by playing: {changed}");
 
     // An edit in the plugin's window would put its archive into the song; the window is not
@@ -339,7 +339,7 @@ fn a_real_plugin_through_the_songs_clips() {
     });
     let replayed = render(&mut player, &p, 4);
     std::thread::sleep(Duration::from_millis(500));
-    let changed = xirius_session::ara::take_archives(&mut reopened, player.ara()).unwrap();
+    let changed = xirius_session::ara::take_archives(&mut reopened, player.ara(), true).unwrap();
     println!(
         "4. written and opened again at {OTHER_RATE} Hz: archive in the song {}, rms {:.4}, changed by opening: {}",
         p.ara.archives.contains_key(UID),

@@ -132,7 +132,7 @@ fn a_faulting_plugin_leaves_the_app_and_the_song_playing() {
     assert!(started.elapsed() < Duration::from_secs(5));
     drop(export);
     // Nothing of the plugin's goes into the song.
-    assert!(!xirius_session::ara::take_archives(&mut s, player.ara()).unwrap());
+    assert!(!xirius_session::ara::take_archives(&mut s, player.ara(), false).unwrap());
 
     // plugin.restart: the document that crashed goes, and the plugin is opened again.
     MENDED.store(true, Ordering::Release);

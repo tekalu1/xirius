@@ -674,7 +674,8 @@ fn collect(
     let done = if dry {
         None
     } else {
-        Some(collect_plugin_states(session, host, opts)?)
+        // Asked for by name: the ARA plugins' archives on their way are waited for.
+        Some(crate::host::collect_current(session, host, opts, true)?)
     };
     let moves = done.as_ref().map_or(0, |c| c.params.len());
     let data = json!({ "param_moves": moves });

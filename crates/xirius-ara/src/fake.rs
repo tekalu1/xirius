@@ -71,6 +71,7 @@ static LIVE_DOCUMENTS: AtomicI64 = AtomicI64::new(0);
 static EDITS: Mutex<Vec<(String, f32)>> = Mutex::new(Vec::new());
 static WINDOWS: Mutex<Vec<(String, Arc<AtomicBool>)>> = Mutex::new(Vec::new());
 static SELECTION: AtomicU64 = AtomicU64::new(0);
+static STORE_PAUSE_MS: AtomicU64 = AtomicU64::new(0);
 
 fn violation(what: impl Into<String>) {
     lock(&VIOLATIONS).push(what.into());
@@ -108,6 +109,11 @@ pub fn close_windows() {
     for (_, open) in lock(&WINDOWS).iter() {
         open.store(false, Ordering::Release);
     }
+}
+
+/// Makes every document take `pause` to write its archive, as a large one would.
+pub fn slow_store(pause: Duration) {
+    STORE_PAUSE_MS.store(pause.as_millis() as u64, Ordering::Release);
 }
 
 /// The number of regions the host last showed in an editor.
@@ -1064,6 +1070,9 @@ fn archive_json(s: &State) -> Vec<u8> {
 }
 
 fn write_archive(d: &Dc, writer: Ref) -> Bool {
+    std::thread::sleep(Duration::from_millis(
+        STORE_PAUSE_MS.load(Ordering::Acquire),
+    ));
     let bytes = archive_json(&lock(&d.state));
     let (aref, a) = d.host.archiving();
     // SAFETY: the host's writer, written from the start.

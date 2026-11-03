@@ -17,18 +17,19 @@
 //!   analysis, at most [`EXPORT_WAIT`] (ENG-025).
 //! - A song keeps each plugin's archive ([`take_archives`], ARC-025, PLG-037). The archive is
 //!   asked for only after the plugin said its document changed, so opening a song and playing it
-//!   leaves it as it was.
+//!   leaves it as it was. The window's frames do not wait for it: the plugin's thread writes it
+//!   and a later frame puts it in; writing or leaving the song waits for the one asked.
 //! - A plugin that faults or hangs ends its own thread only ([`xirius_ara::contain`]); its
 //!   clips play their files and `plugin.status` lists it until `plugin.restart` (PLG-058).
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak, mpsc};
 use std::time::{Duration, Instant, SystemTime};
 
 pub use xirius_ara::Phase;
 pub use xirius_ara::service::Loader;
-use xirius_ara::service::{Binary, Caption, Placement, Rendered, source_id};
+use xirius_ara::service::{Binary, Caption, Placement, Rendered, Stored, source_id};
 use xirius_ara::{ClipSpec, Service, Song, SourceAudio};
 use xirius_core::model::{Clip, ClipBody, Project, TrackKind};
 use xirius_engine::AudioData;
@@ -259,6 +260,8 @@ pub struct Doc {
     sounds: Mutex<HashMap<u64, Sound>>,
     /// The archive last taken from the plugin.
     stored: Mutex<Option<xirius_core::ara::Archive>>,
+    /// The archive asked for and not come yet.
+    asked: Mutex<Option<Stored>>,
 }
 
 impl Doc {
@@ -276,6 +279,7 @@ impl Doc {
             wanted: Mutex::new(None),
             sounds: Mutex::new(HashMap::new()),
             stored: Mutex::new(None),
+            asked: Mutex::new(None),
         });
         lock(docs()).insert(key, Arc::downgrade(&doc));
         doc
@@ -440,20 +444,52 @@ impl Doc {
         Some(data)
     }
 
-    /// The plugin's archive when it changed its document since it was last asked (or the one
-    /// taken then).
-    fn archive(&self) -> Option<xirius_core::ara::Archive> {
-        if self.service.take_dirty()
-            && let Some((bytes, id)) = self.service.store(STORE_WAIT)
-        {
-            let a = xirius_ara::Archive::new(&self.plugin, &id, &bytes);
-            *lock(&self.stored) = Some(xirius_core::ara::Archive {
-                version: a.version,
-                plugin: a.plugin,
-                archive_id: a.archive_id,
-                data: a.data,
-            });
+    /// Asks the plugin for its archive, without waiting, when it changed its document since it
+    /// was last asked and no answer is on its way.
+    fn ask(&self, asked: &mut Option<Stored>) {
+        if asked.is_none() && self.service.take_dirty() {
+            *asked = self.service.store_later();
         }
+    }
+
+    /// The plugin's archive: the one taken last, or the newer one it was asked for when it has
+    /// come. With `wait`, the one asked is waited for, at most [`STORE_WAIT`]; without, an edit
+    /// asks for it and a later call takes it.
+    fn archive(&self, wait: bool) -> Option<xirius_core::ara::Archive> {
+        let mut asked = lock(&self.asked);
+        // An edit made while the plugin wrote the archive asks again; a few rounds at most.
+        for _ in 0..3 {
+            self.ask(&mut asked);
+            let Some(rx) = asked.as_ref() else {
+                break;
+            };
+            let got = if wait {
+                rx.recv_timeout(STORE_WAIT)
+                    .map_err(|e| e == mpsc::RecvTimeoutError::Timeout)
+            } else {
+                rx.try_recv().map_err(|e| e == mpsc::TryRecvError::Empty)
+            };
+            match got {
+                // Still being written: a later call takes it.
+                Err(true) => break,
+                // The plugin failed or went down: nothing comes.
+                Err(false) | Ok(None) => {
+                    *asked = None;
+                    break;
+                }
+                Ok(Some((bytes, id))) => {
+                    *asked = None;
+                    let a = xirius_ara::Archive::new(&self.plugin, &id, &bytes);
+                    *lock(&self.stored) = Some(xirius_core::ara::Archive {
+                        version: a.version,
+                        plugin: a.plugin,
+                        archive_id: a.archive_id,
+                        data: a.data,
+                    });
+                }
+            }
+        }
+        drop(asked);
         lock(&self.stored).clone()
     }
 }
@@ -816,13 +852,35 @@ impl Held {
         before - docs.len()
     }
 
-    /// The archives of the plugins whose documents changed and differ from the song's.
-    pub fn archives(&self, p: &Project) -> Vec<xirius_core::ara::Archive> {
-        let docs: Vec<Arc<Doc>> = lock(&self.docs).values().cloned().collect();
-        let mut out: Vec<_> = docs
-            .iter()
+    /// The documents of the song's plugins whose archives the song keeps.
+    fn kept(&self, p: &Project) -> Vec<Arc<Doc>> {
+        lock(&self.docs)
+            .values()
             .filter(|d| d.key.2 == 0 && p.ara.clips.values().any(|r| r.plugin == d.plugin))
-            .filter_map(|d| d.archive())
+            .cloned()
+            .collect()
+    }
+
+    /// Asks, without waiting, the plugins whose documents changed for their archives, so that
+    /// they are ready when the song is written or left.
+    pub fn ask_archives(&self, p: &Project) {
+        for d in self.kept(p) {
+            d.ask(&mut lock(&d.asked));
+        }
+    }
+
+    /// Whether an archive asked for has not come yet.
+    pub fn archives_pending(&self) -> bool {
+        lock(&self.docs).values().any(|d| lock(&d.asked).is_some())
+    }
+
+    /// The archives of the plugins whose documents changed and differ from the song's: those
+    /// that have come, or with `wait` also those on their way.
+    pub fn archives(&self, p: &Project, wait: bool) -> Vec<xirius_core::ara::Archive> {
+        let mut out: Vec<_> = self
+            .kept(p)
+            .iter()
+            .filter_map(|d| d.archive(wait))
             .filter(|a| p.ara.archives.get(&a.plugin) != Some(a))
             .collect();
         out.sort_by(|a, b| a.plugin.cmp(&b.plugin));
@@ -833,11 +891,17 @@ impl Held {
 /// Puts into the song the archives of the plugins whose documents changed (ARC-025): in place,
 /// without a step of the history (the plugin keeps its own), and only when they differ, so a
 /// song only opened and played is not changed. Whether the song changed.
+///
+/// Without `wait` (each frame of the window) nothing is waited for: an edit asks the plugin
+/// for its archive, which its thread writes, and a later call puts it in, even after the
+/// plugin's window closed. With `wait` (writing, opening or leaving the song) the archives
+/// asked are waited for, each at most [`STORE_WAIT`].
 pub fn take_archives(
     session: &mut xirius_core::session::Session,
     held: &Held,
+    wait: bool,
 ) -> xirius_core::CmdResult<bool> {
-    let archives = held.archives(session.project());
+    let archives = held.archives(session.project(), wait);
     if archives.is_empty() {
         return Ok(false);
     }

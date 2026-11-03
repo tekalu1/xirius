@@ -83,6 +83,19 @@ fn until(what: &str, mut f: impl FnMut() -> bool) {
     }
 }
 
+/// The plugins' archives taken into the song as a frame of the window does, without waiting:
+/// whether the song changed.
+fn take(s: &mut Session, b: &Builder) -> bool {
+    let started = Instant::now();
+    let changed = xirius_session::ara::take_archives(s, b.ara(), false).unwrap();
+    assert!(
+        started.elapsed() < Duration::from_millis(150),
+        "a frame waited {:?} for the archive",
+        started.elapsed()
+    );
+    changed
+}
+
 fn clip(p: &Project, id: &str) -> Clip {
     let id: ClipId = id.parse().unwrap();
     p.clip(id).unwrap().1.clone()
@@ -170,7 +183,7 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     until("the analysis", || through(&player, &p, &a));
     assert!((peak(&mut player, &p) - 0.5).abs() < 1e-3);
     // ARC-025: nothing changed in the plugin, nothing changes in the song.
-    assert!(!xirius_session::ara::take_archives(&mut s, player.ara()).unwrap());
+    assert!(!take(&mut s, &player));
 
     // PLG-036: the plugin's editor opens on its ARA thread without the caller waiting, and the
     // report says so until its close box closes it.
@@ -196,9 +209,7 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     // PLG-037: an edit in the plugin is heard and its archive goes into the song, in place.
     let steps = s.steps().len();
     fake::edit(&modification_id(a.parse::<ClipId>().unwrap().0), 0.5);
-    until("the archive", || {
-        xirius_session::ara::take_archives(&mut s, player.ara()).unwrap()
-    });
+    until("the archive", || take(&mut s, &player));
     assert_eq!(s.steps().len(), steps, "the archive is not a step");
     let archive = s.project().ara.archives[PLUGIN].clone();
     assert_eq!(archive.version, xirius_core::ara::ARCHIVE_VERSION);
@@ -206,6 +217,61 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     until("the edited render", || {
         (peak(&mut player, &p) - 0.25).abs() < 1e-3
     });
+
+    // PLG-036, ARC-025: the window's frames do not wait for the archive. The plugin writes it
+    // on its own thread, and a later frame puts it in.
+    let modification = modification_id(key);
+    fake::slow_store(Duration::from_millis(300));
+    fake::edit(&modification, 0.4);
+    let mut waited = false;
+    until("the archive written on the plugin's thread", || {
+        let changed = take(&mut s, &player);
+        waited |= player.ara().archives_pending();
+        changed
+    });
+    assert!(waited, "the archive came in at the frame that asked for it");
+    assert_ne!(s.project().ara.archives[PLUGIN], archive);
+    let p = s.project().clone();
+    until("the render of that edit", || {
+        (peak(&mut player, &p) - 0.2).abs() < 1e-3
+    });
+
+    // An edit in the window, and the window closed before its archive came: the edit still
+    // comes into the song. The archive is asked for as the song would be written
+    // (`SessionHost::begin_pull_states`).
+    player
+        .ara()
+        .open_editor(PLUGIN, "Fake ARA", Placement::default(), &[key])
+        .unwrap();
+    until("the editor", || player.ara().editing() == [PLUGIN]);
+    fake::edit(&modification, 0.3);
+    until("the archive asked for", || {
+        player.ara().ask_archives(s.project());
+        player.ara().archives_pending()
+    });
+    fake::close_windows();
+    until("the editor closed", || player.ara().editing().is_empty());
+    assert!(
+        player.ara().archives_pending(),
+        "closing the window lost the archive asked for"
+    );
+    until("the archive after the close", || take(&mut s, &player));
+    assert!(!player.ara().archives_pending());
+    let p = s.project().clone();
+    until("the render of the edit before the close", || {
+        (peak(&mut player, &p) - 0.15).abs() < 1e-3
+    });
+
+    // Written or left, the song waits for the archive on its way.
+    fake::edit(&modification, 0.5);
+    until("the archive asked for", || {
+        assert!(!take(&mut s, &player));
+        player.ara().archives_pending()
+    });
+    assert!(xirius_session::ara::take_archives(&mut s, player.ara(), true).unwrap());
+    assert!(!player.ara().archives_pending());
+    assert_eq!(s.project().ara.archives[PLUGIN], archive);
+    fake::slow_store(Duration::ZERO);
 
     // PLG-036: moved, the clip keeps its render: no gap while the plugin renders it again.
     run(&mut s, "clip.move", json!({"ids": [a], "to": 960}));
@@ -260,7 +326,7 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     let v = peak(&mut player, &p);
     assert!((v - 0.25).abs() < 1e-3, "{v}");
     // ARC-025: opening and playing it leaves it as it was.
-    assert!(!xirius_session::ara::take_archives(&mut reopened, player.ara()).unwrap());
+    assert!(!take(&mut reopened, &player));
     assert!(
         *reopened.project() == opened,
         "opening and playing changed the song"
