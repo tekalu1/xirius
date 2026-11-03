@@ -4732,6 +4732,24 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 | `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
 | `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
 
+## `plugin.rename`
+
+プラグイン名を変更
+
+プラグインの名前を変更します
+
+事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 1 操作で取り消し可能。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `id` | 必須 | `{"type":"string"}` | プラグイン（plugin の ID） |
+| `name` | 必須 | `{"type":"string"}` | 新しい名前 |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
 ## `plugin.replace`
 
 プラグインを差し替え
@@ -5625,6 +5643,23 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 | `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
 | `id` | 必須 | `{"type":"string"}` | スプリッター（rack node の ID） |
 | `mode` | 必須 | `{"enum":["normal","channel","frequency"],"type":"string"}` | 分け方 |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
+## `rack.split.remove`
+
+スプリッターを外す
+
+スプリッターを外し、分岐の中身を上の分岐から順にその場所へ並べます（分岐の音量・パン・ミュートは無くなります）
+
+事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 1 操作で取り消し可能。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `id` | 必須 | `{"type":"string"}` | スプリッター（rack node の ID） |
 | `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
 | `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
 

@@ -72,6 +72,12 @@ pub(super) fn defs() -> Vec<CommandDef> {
             vec![ArgDef::id("split", IdKind::RackNode, "スプリッター").req()],
             |p, _, a| branch_add(p, a.id("split")?),
         ),
+        edit(
+            "rack.split.remove",
+            "スプリッターを外し、分岐の中身を上の分岐から順にその場所へ並べます（分岐の音量・パン・ミュートは無くなります）",
+            vec![ArgDef::id("id", IdKind::RackNode, "スプリッター").req()],
+            |p, _, a| split_remove(p, a.id("id")?),
+        ),
         destroy(
             "rack.branch.remove",
             "分岐を中のプラグインごと削除します（1 本だけ残ったスプリッターは直列に戻ります）",
@@ -268,6 +274,37 @@ fn branch_add(p: &mut Project, id: NodeId) -> CmdResult<Output> {
         "分岐を追加しました",
         json!({"id": new.to_string(), "split": id.to_string()}),
     ))
+}
+
+fn split_remove(p: &mut Project, id: NodeId) -> CmdResult<Output> {
+    fn walk(nodes: &mut Vec<RackNode>, id: NodeId) -> bool {
+        if let Some(i) = nodes
+            .iter()
+            .position(|n| matches!(n, RackNode::Split(s) if s.id == id))
+        {
+            let RackNode::Split(s) = nodes.remove(i) else {
+                unreachable!("matched a split")
+            };
+            let fx: Vec<RackNode> = s.branches.into_iter().flat_map(|b| b.fx).collect();
+            nodes.splice(i..i, fx);
+            return true;
+        }
+        nodes.iter_mut().any(|n| match n {
+            RackNode::Split(s) => s.branches.iter_mut().any(|b| walk(&mut b.fx, id)),
+            RackNode::Plugin(_) => false,
+        })
+    }
+    let tid = node_track(p, id)?;
+    let t = p.track_mut(tid)?;
+    let r = rack_of(t);
+    if !roots(r).into_iter().any(|c| walk(c, id)) {
+        return Err(not_split(id));
+    }
+    let name = t.name.clone();
+    p.fix_track_rack(tid);
+    Ok(Output::msg(format!(
+        "{name} のスプリッター {id} を外しました"
+    )))
 }
 
 fn branch_remove(p: &mut Project, id: NodeId) -> CmdResult<Output> {

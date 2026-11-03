@@ -466,6 +466,31 @@ pub(super) fn defs() -> Vec<CommandDef> {
             },
         ),
         edit(
+            "plugin.rename",
+            "プラグインの名前を変更します",
+            vec![
+                ArgDef::id("id", IdKind::Plugin, "プラグイン").req(),
+                ArgDef::text("name", "新しい名前").req(),
+            ],
+            |p, _, a| {
+                let id: PluginId = a.id("id")?;
+                let name = name_arg(a)?;
+                let tid = p
+                    .tracks
+                    .values()
+                    .find(|t| t.inserts.iter().any(|x| x.id == id))
+                    .map(|t| t.id)
+                    .ok_or_else(|| CmdError::not_found(format!("プラグイン {id} が見つかりません")))?;
+                let t = p.track_mut(tid)?;
+                if let Some(x) = t.inserts.iter_mut().find(|x| x.id == id) {
+                    x.name = name.clone();
+                }
+                Ok(Output::msg(format!(
+                    "{id} の名前を「{name}」に変更しました"
+                )))
+            },
+        ),
+        edit(
             "plugin.bypass",
             "プラグインのバイパスを切り替えます（--on / --off。省略時は現在の状態を反転）",
             [

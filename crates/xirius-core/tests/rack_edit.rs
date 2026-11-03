@@ -433,3 +433,57 @@ fn an_effect_added_after_a_row_lands_beside_it_in_that_chain_in_one_step() {
     assert!(e.contains("--after"), "{e}");
     assert_eq!(*s.project(), before_u);
 }
+
+#[test]
+fn removing_a_splitter_lays_its_branches_out_in_order_where_it_was() {
+    let (mut s, t, _, _, b1) = branched();
+    run(
+        &mut s,
+        "rack.branch.set",
+        json!({ "id": b1, "gain": -6.0, "mute": "on" }),
+    );
+    let r = s.project().tracks[&tid(&t)].rack.clone().unwrap();
+    let split =
+        r.fx.iter()
+            .find_map(|n| match n {
+                RackNode::Split(x) => Some(x.id.to_string()),
+                RackNode::Plugin(_) => None,
+            })
+            .unwrap();
+    step(&mut s, "rack.split.remove", json!({ "id": split }));
+    // C stayed before the split; A's branch came first, then B's
+    assert_eq!(names(&s, &t), ["C", "A", "B"]);
+    assert!(s.project().tracks[&tid(&t)].rack.is_none());
+    let e = fails(&mut s, "rack.split.remove", json!({ "id": split }));
+    assert!(e.contains(&split), "{e}");
+}
+
+#[test]
+fn a_splitter_inside_a_branch_comes_out_into_that_branch() {
+    let (mut s, t, fx, b0, _) = branched();
+    let inner = run(
+        &mut s,
+        "rack.split.add",
+        json!({ "track": t, "at": format!("branch:{b0}:1") }),
+    );
+    let ib = inner["branches"][1].as_str().unwrap().to_string();
+    run(&mut s, "rack.node.move", json!({ "id": fx[2], "to": ib }));
+    step(&mut s, "rack.split.remove", json!({ "id": id(&inner) }));
+    assert_eq!(
+        branch_fx(&s, &t, 0),
+        vec![RackNode::Plugin(pid(&fx[0])), RackNode::Plugin(pid(&fx[2]))]
+    );
+}
+
+#[test]
+fn a_plug_in_is_renamed_in_one_step() {
+    let (mut s, t, fx) = song();
+    step(
+        &mut s,
+        "plugin.rename",
+        json!({ "id": fx[1], "name": "Glue" }),
+    );
+    assert_eq!(names(&s, &t), ["A", "Glue", "C"]);
+    let e = fails(&mut s, "plugin.rename", json!({ "id": fx[1], "name": "" }));
+    assert!(!e.is_empty());
+}
