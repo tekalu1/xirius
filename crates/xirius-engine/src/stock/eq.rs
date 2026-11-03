@@ -97,13 +97,17 @@ fn sections(p: &[f64], band: usize, rate: f64) -> [Option<Coefs>; SLOTS] {
     let (freq, gain, q) = (p[b.freq], p[b.gain], p[b.q]);
     match EQ_BANDS[band].type_of(p[b.kind]) {
         kind @ (BandType::LowCut | BandType::HighCut) => {
+            // The Q goes on the last section (the highest Q) only: at the corner the gain of
+            // a section is about its Q, so the whole is `q` (0.707 at 1, flat) at every
+            // slope, rather than the bump raised to the power of the sections.
             let r = q_ratio(q);
             let qs = butterworth_qs(order(p[b.slope].max(0.0).round() as usize));
             for (k, bq) in qs.iter().enumerate() {
+                let bq = if k + 1 == qs.len() { *bq * r } else { *bq };
                 out[k] = Some(if kind == BandType::LowCut {
-                    Coefs::highpass(freq, *bq * r, rate)
+                    Coefs::highpass(freq, bq, rate)
                 } else {
-                    Coefs::lowpass(freq, *bq * r, rate)
+                    Coefs::lowpass(freq, bq, rate)
                 });
             }
         }
@@ -820,6 +824,51 @@ mod tests {
         assert!(none > -1e-6, "{none}");
         let cut = values(&[("low_cut_on", 1.0), ("low_cut_freq", 400.0), ("b1_q", 4.0)]);
         assert!(band_db(&cut, 0, 400.0, RATE) > 6.0);
+    }
+
+    #[test]
+    fn a_cut_bumps_by_its_q_alone_at_every_slope() {
+        // The peak of one section of Q `q`: none up to 0.707.
+        let one = |q: f64| {
+            if q <= std::f64::consts::FRAC_1_SQRT_2 {
+                0.0
+            } else {
+                20.0 * (q * q / (q * q - 0.25).sqrt()).log10()
+            }
+        };
+        let freqs: Vec<f64> = (0..=3000)
+            .map(|i| 20.0 * 1000f64.powf(f64::from(i) / 3000.0))
+            .collect();
+        for (band, on, freq, q, slope, corner) in [
+            (0, "low_cut_on", "low_cut_freq", "b1_q", "low_cut_slope", 400.0),
+            (5, "high_cut_on", "high_cut_freq", "b6_q", "high_cut_slope", 2000.0),
+        ] {
+            for qv in [0.3, 0.707, 1.0, 2.0, 4.0, 10.0, 18.0] {
+                let mut peaks = Vec::new();
+                for s in 0..3 {
+                    let v = values(&[(on, 1.0), (freq, corner), (q, qv), (slope, f64::from(s))]);
+                    let r = Response::new(&v, RATE);
+                    let peak = freqs.iter().map(|&f| r.band_db(band, f)).fold(f64::MIN, f64::max);
+                    assert!(peak <= one(qv) + 0.5, "{q}={qv} slope {s}: {peak} dB");
+                    // At the corner the whole is the Q, whatever the slope.
+                    let at = r.band_db(band, corner);
+                    assert!((at - 20.0 * qv.log10()).abs() < 0.5, "{q}={qv} slope {s}: {at} dB");
+                    peaks.push(peak);
+                }
+                let spread = peaks.iter().fold(f64::MIN, |a, &b| a.max(b))
+                    - peaks.iter().fold(f64::MAX, |a, &b| a.min(b));
+                assert!(spread < 1.0, "{q}={qv}: {peaks:?}");
+            }
+        }
+        // And the sound: 48 dB per octave at Q 18 is as loud at the corner as one section.
+        let set = [
+            ("low_cut_on", 1.0),
+            ("low_cut_freq", 400.0),
+            ("b1_q", 18.0),
+            ("low_cut_slope", 2.0),
+        ];
+        let heard = gain_at(400.0, &set);
+        assert!(heard < 20.0 * 18f64.log10() + 0.5, "{heard}");
     }
 
     #[test]
