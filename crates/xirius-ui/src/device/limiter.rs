@@ -86,9 +86,6 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
         side
     };
     b.levels = dynamics::side(side, &WORDS);
-    for l in &mut b.levels {
-        l.loud = true;
-    }
     y += GAP;
     let span = KNOBS.len() as f32 * KNOB_W + (KNOBS.len() - 1) as f32 * KNOB_GAP;
     let x0 = PAD + (inner - span) / 2.0;

@@ -162,8 +162,8 @@ pub struct Level {
     pub name: Rect,
     pub bars: Vec<Rect>,
     pub readout: Rect,
-    /// Its readout says `+` over full scale and turns red there (the
-    /// output's always; the Limiter's input too).
+    /// Its readout says `+` over full scale and turns red there: the input's and the
+    /// output's, not the reduction's (ui-approved, M-ui-5).
     pub loud: bool,
 }
 
@@ -182,7 +182,7 @@ impl Level {
     pub fn text(&self, d: &Dynamics) -> String {
         let i = most_of(self.kind);
         let t = d.readout(i);
-        if self.loud && self.kind == Kind::In && d.over_at(i) {
+        if self.loud && d.over_at(i) {
             format!("+{t}")
         } else {
             t
@@ -250,7 +250,7 @@ pub fn side(r: Rect, labels: &[(&'static str, Kind)]) -> Vec<Level> {
                 name: Rect::new(x, top, w, NAME_H),
                 bars,
                 readout: Rect::new(x - 2.0, bar_y + bar_h + 4.0, w + 4.0, READ_H),
-                loud: kind == Kind::Out,
+                loud: kind != Kind::Gr,
             };
             x += w + COL_GAP;
             level

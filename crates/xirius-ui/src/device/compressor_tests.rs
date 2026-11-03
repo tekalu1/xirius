@@ -174,6 +174,27 @@ fn ui_327_the_history_keeps_four_seconds_and_the_readouts_their_most() {
     assert!(!d.over());
 }
 
+/// M-ui-5: the input's and the output's readouts say + over full scale and turn red, as
+/// every meter's does; the reduction's does not.
+#[test]
+fn ui_327_the_input_and_output_read_plus_and_red_over_full_scale() {
+    let (s, g, t, _) = cmp_window();
+    let x = fx(&s, t);
+    let r = s.instruments.rect(0, g.size);
+    let b = s.instruments.body(r, &x, x.builtin().unwrap());
+    let mut d = Dynamics::default();
+    d.feed(([1.2, 0.3], [1.1, 0.9]), 3.0, Instant::now(), SPAN);
+    assert_eq!(b.levels[0].text(&d), "+1.6");
+    assert_eq!(b.levels[2].text(&d), "+0.8");
+    assert!(b.levels[0].alert(&d) && b.levels[2].alert(&d));
+    assert_eq!(b.levels[1].text(&d), "-3.0");
+    assert!(!b.levels[1].alert(&d));
+    // Under full scale: no + and not red.
+    let mut d = Dynamics::default();
+    d.feed(([0.9, 0.3], [0.8, 0.5]), 0.0, Instant::now(), SPAN);
+    assert!(!b.levels[0].text(&d).starts_with('+') && !b.levels[0].alert(&d));
+}
+
 #[test]
 fn ui_327_a_press_on_a_readout_clears_its_most() {
     let (mut s, g, _, id) = cmp_window();

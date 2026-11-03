@@ -223,6 +223,12 @@ fn ui_328_the_peaks_are_sample_peaks_and_the_input_reads_plus_over_full_scale() 
     let d = &s.instruments.dynamics[&id];
     assert!(b.levels[0].alert(d), "the input over full scale is red");
     assert!(!b.levels[2].alert(d));
+    // The output over full scale too (M-ui-5); the reduction never.
+    let mut over = d.clone();
+    over.feed(([0.5, 0.3], [1.1, 0.9]), 1.0, Instant::now(), SPAN);
+    assert_eq!(b.levels[2].text(&over), "+0.8");
+    assert!(b.levels[2].alert(&over));
+    assert!(!b.levels[1].text(&over).starts_with('+') && !b.levels[1].alert(&over));
     // A press clears it.
     let (x, y) = s.instrument_center(&g, id, Part::Readout(0)).unwrap();
     assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
