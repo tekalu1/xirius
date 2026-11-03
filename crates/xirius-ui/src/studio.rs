@@ -1816,7 +1816,9 @@ impl Studio {
         self.roll.scale = self.song.session().state.view.scale;
         self.tree = self.shape_tree();
         let raw = self.project();
-        self.instruments.learn(&raw);
+        if !self.instruments.open.is_empty() {
+            self.refresh_presets();
+        }
         let project = self.auto_heard(&raw);
         self.transport.sync(&project, self.song.dir());
         self.mixer_follow();

@@ -73,8 +73,16 @@ const DIALOG_ACTS: &[&str] = &[
 ];
 
 /// Rows that end with "…" and are neither an `ask_number` nor one of the acts above: the four
-/// values of a note's panel, and the picker of the instrument's menu.
-const OTHER_DOTS: &[&str] = &["位置…", "長さ…", "ピッチ…", "ベロシティ…", "差し替える…"];
+/// values of a note's panel, the picker of the instrument's menu and the box for a preset's
+/// name (UI-332).
+const OTHER_DOTS: &[&str] = &[
+    "位置…",
+    "長さ…",
+    "ピッチ…",
+    "ベロシティ…",
+    "差し替える…",
+    "名前を付けて保存…",
+];
 
 #[test]
 fn only_a_row_that_asks_or_opens_a_dialog_ends_with_the_dots() {

@@ -196,7 +196,7 @@ fn stored(dir: &Path) -> (Vec<Entry>, Vec<Skipped>) {
             if p.extension().and_then(|e| e.to_str()) != Some("xpreset") || p.is_dir() {
                 continue;
             }
-            match entry_at(&p) {
+            match entry_cached(&p) {
                 Ok(e) => out.push(e),
                 Err(reason) => skipped.push(Skipped { path: p, reason }),
             }
@@ -215,6 +215,35 @@ fn files_in(d: &Path) -> Vec<PathBuf> {
         .collect();
     v.sort();
     v
+}
+
+/// Each file read before with its time and size, so a list read again (the window's, every
+/// moment it is open, UI-332, and the browser's, BRW-017) opens only the files that changed.
+static READ: Mutex<BTreeMap<PathBuf, Read>> = Mutex::new(BTreeMap::new());
+
+/// A file's time and size when it was read, and what it read as.
+type Read = (std::time::SystemTime, u64, Result<Entry, String>);
+
+/// [`entry_at`], from [`READ`] while the file's time and size are what they were.
+fn entry_cached(path: &Path) -> Result<Entry, String> {
+    let stamp = std::fs::metadata(path)
+        .ok()
+        .and_then(|m| Some((m.modified().ok()?, m.len())));
+    let Some((at, len)) = stamp else {
+        return entry_at(path);
+    };
+    let mut read = READ
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((t, n, e)) = read.get(path)
+        && *t == at
+        && *n == len
+    {
+        return e.clone();
+    }
+    let e = entry_at(path);
+    read.insert(path.to_path_buf(), (at, len, e.clone()));
+    e
 }
 
 /// The preset the file `path` holds, or why it is not one.
@@ -743,6 +772,16 @@ fn save(
     if !dry {
         put_file(own, &to, &to_bytes(&preset.to_value())?)?;
     }
+    // The device is at the preset it was saved as: its tag names it (UI-332).
+    let edits = if dry || x.preset.as_deref() == Some(name.as_str()) {
+        Vec::new()
+    } else {
+        let mut m = Map::new();
+        m.insert("id".into(), json!(x.id.to_string()));
+        m.insert("preset".into(), json!(name));
+        m.insert("values".into(), json!([]));
+        vec![("plugin.preset.load".to_string(), m)]
+    };
     Ok((
         Output::with(
             format!(
@@ -756,7 +795,7 @@ fn save(
                 "kind": kind_name(kind),
             }),
         ),
-        Vec::new(),
+        edits,
     ))
 }
 
@@ -845,6 +884,12 @@ fn list(
             r.insert("file".into(), json!(e.path.to_string_lossy()));
             if let Some(at) = e.saved_at {
                 r.insert("saved_at".into(), json!(at));
+            }
+            // The knobs too, for a window to tell whether a device is still at it (UI-332).
+            if a.flag("values")
+                && let Ok((p, _)) = DevicePreset::parse(&e.value, None)
+            {
+                r.insert("params".into(), json!(p.device.params));
             }
             presets.push(Value::Object(r));
         }

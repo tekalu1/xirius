@@ -54,6 +54,51 @@ impl Presets {
         self.view.clone()
     }
 }
+/// The device presets' list for the window (UI-332), one per set of arguments: read off
+/// the window thread, the last one read answering until the next comes in.
+#[derive(Default)]
+pub(super) struct DevicePresets(std::collections::HashMap<String, Presets>);
+impl DevicePresets {
+    pub(super) fn read(&mut self, dir: PathBuf, project: Arc<Project>, args: &Args) -> Value {
+        let raw = args.0.clone();
+        let entry = self
+            .0
+            .entry(Value::Object(raw.clone()).to_string())
+            .or_default();
+        if let Some(result) = entry.work.as_ref().and_then(crate::background::Job::poll) {
+            entry.work = None;
+            if let Ok(view) = result {
+                entry.view = view;
+            }
+        }
+        if entry.work.is_none() && entry.due.is_none_or(|due| Instant::now() >= due) {
+            entry.work = crate::background::Job::spawn("device-preset-list", move || {
+                let args = xirius_core::command::Args(raw);
+                crate::xpreset::run(
+                    &dir,
+                    None,
+                    &project,
+                    &Catalog::default(),
+                    "preset.list",
+                    &args,
+                    false,
+                )
+                .map(|(output, _)| output.data)
+                .map_err(|e| e.to_string())
+            })
+            .ok();
+            entry.due = Some(Instant::now() + Duration::from_millis(250));
+        }
+        entry.view.clone()
+    }
+
+    /// A preset was saved, renamed or removed: the next read goes to the files at once.
+    pub(super) fn stale(&mut self) {
+        for entry in self.0.values_mut() {
+            entry.due = None;
+        }
+    }
+}
 impl Cache {
     pub(super) fn removed(&self, id: &str) {
         for entry in self.0.borrow_mut().values_mut() {

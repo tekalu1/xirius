@@ -338,6 +338,7 @@ pub struct SessionExt {
     places_file: Option<PathBuf>,
     disk_cache: disk_cache::Cache,
     preset_cache: disk_cache::Presets,
+    device_preset_cache: disk_cache::DevicePresets,
     io_settings: Option<xirius_prefs::Shared>,
     output: OutputMode,
     preview: Option<crate::export_preview::Preview>,
@@ -519,6 +520,7 @@ impl SessionExt {
             places_file: extras.places_file,
             disk_cache: Default::default(),
             preset_cache: Default::default(),
+            device_preset_cache: Default::default(),
             io_settings: extras.io_settings,
             output: config.output,
             preview: None,
@@ -1858,8 +1860,17 @@ impl Extension for SessionExt {
             n if crate::xpreset::NAMES.contains(&n) => {
                 let catalog = self.catalog();
                 let dir = self.presets.clone().unwrap_or_else(crate::xpreset::dir);
-                let (output, edits) =
-                    crate::xpreset::run(&dir, cx.dir, cx.project, &catalog, n, args, dry)?;
+                if n == "preset.list" && crate::host::on_window_thread() {
+                    return Ok(Output::with(
+                        "",
+                        self.device_preset_cache.read(dir, cx.project.clone(), args),
+                    ));
+                }
+                let run = crate::xpreset::run(&dir, cx.dir, cx.project, &catalog, n, args, dry);
+                if !dry && n != "preset.list" {
+                    self.device_preset_cache.stale();
+                }
+                let (output, edits) = run?;
                 self.pending.extend(edits);
                 Ok(output)
             }

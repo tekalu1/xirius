@@ -1590,6 +1590,7 @@ pub(super) fn place_new_plugin(
     // automated before it is first moved (PLG-045).
     if let Some(def) = x.builtin() {
         x.params = def.defaults().map(|(k, v)| (k.to_string(), v)).collect();
+        x.preset = Some(crate::xpreset::DEFAULT_PRESET.to_string());
     }
     let t = p.track_mut(tid)?;
     let at = match (kind, index) {

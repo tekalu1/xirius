@@ -34,6 +34,10 @@ const fn pin_stage(n: u8) -> Act {
     Act::Stage(Play::Laid(play_pin), n)
 }
 
+const fn pre_stage(n: u8) -> Act {
+    Act::Stage(Play::Laid(play_presets), n)
+}
+
 const fn size_stage(n: u8) -> Act {
     Act::Stage(Play::Laid(play_size), n)
 }
@@ -103,6 +107,22 @@ pub const SHOTS: &[Shot] = &[
     Shot {
         name: "pin01-pinned-and-next",
         acts: &[Act::Reset, pin_stage(0), pin_stage(1)],
+    },
+    // The Compressor at a saved preset, a knob moved off it: the tag's mark (UI-332).
+    Shot {
+        name: "pre01-tag-marked",
+        acts: &[Act::Reset, pre_stage(0)],
+    },
+    // Its list: Default first, then by name, the ✓ on the preset it moved off, the saves
+    // under them.
+    Shot {
+        name: "pre02-list",
+        acts: &[Act::Reset, pre_stage(0), pre_stage(1)],
+    },
+    // The same list from the narrow window.
+    Shot {
+        name: "pre03-list-narrow",
+        acts: &[Act::Reset, pre_stage(0), pre_stage(2), pre_stage(1)],
     },
     // The Reverb as it opens: how its sound dies away, the Color band and the six knobs.
     Shot {
@@ -421,6 +441,69 @@ fn play_pin(s: &mut Studio, g: &Geometry, n: u8) {
     }
 }
 
+/// Waits for a command the window gave to a worker (the preset files') to finish.
+fn settle(s: &mut Studio) {
+    for _ in 0..3000 {
+        if s.saving.is_none() {
+            return;
+        }
+        s.poll_saving();
+        s.poll_saving_transport();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// The shots' own folder of presets has the factory set, and 「いつもの」 saved from the
+/// Compressor before its threshold moved.
+fn play_presets(s: &mut Studio, g: &Geometry, n: u8) {
+    let g = &s.geometry(g.size.0, g.size.1);
+    match n {
+        0 => {
+            s.run_command("preset.factory.restore", json!({}));
+            settle(s);
+            let Some(id) = open_device(s, "Compressor") else {
+                return;
+            };
+            s.save_preset(id, "いつもの", true);
+            settle(s);
+            if let Some(k) = param(s, id, "threshold") {
+                let p = s.project();
+                let x = p
+                    .tracks
+                    .values()
+                    .flat_map(|t| &t.inserts)
+                    .find(|x| x.id == id);
+                if let Some((x, spec)) = x.and_then(|x| Some((x, x.builtin()?.params.get(k)?))) {
+                    let v = x
+                        .params
+                        .get(spec.id)
+                        .copied()
+                        .unwrap_or(spec.default_norm());
+                    s.run_command(
+                        "plugin.param.set",
+                        json!({ "id": id.to_string(), "param": spec.id, "value": (v - 0.12).max(0.0) }),
+                    );
+                }
+            }
+            s.refresh_presets();
+        }
+        1 => {
+            if let Some(id) = s.instruments.open.last().map(|w| w.plugin) {
+                s.popup = None;
+                if let Some((x, y)) = s.instrument_center(g, id, Part::Preset) {
+                    s.instrument_down(g, x, y);
+                }
+            }
+        }
+        2 => {
+            if let Some(id) = s.instruments.open.last().map(|w| w.plugin) {
+                width(s, id, compressor::MIN_W + 40.0);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn play_reverb(s: &mut Studio, g: &Geometry, n: u8) {
     let g = &s.geometry(g.size.0, g.size.1);
     if n == 0 {
@@ -454,6 +537,26 @@ mod tests {
         }
         assert_eq!(s.instruments.open.len(), 1);
         assert!(!s.context_rows().is_empty(), "the type menu is open");
+    }
+
+    #[test]
+    fn the_preset_stages_play_without_a_window() {
+        let mut s = Studio::sample();
+        let g = s.geometry(1600.0, 1000.0);
+        for n in [0, 2, 1] {
+            assert!(Play::Laid(play_presets).without_window(&mut s, &g, n));
+        }
+        let id = s.instruments.open[0].plugin;
+        let x = s
+            .project()
+            .tracks
+            .values()
+            .flat_map(|t| &t.inserts)
+            .find(|x| x.id == id)
+            .cloned()
+            .unwrap();
+        assert_eq!(s.instruments.tag_of(&x), ("いつもの".to_string(), true));
+        assert!(s.popup.is_some(), "the list is open");
     }
 
     #[test]

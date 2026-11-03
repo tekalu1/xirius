@@ -4927,6 +4927,7 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 | `device` | — | `{"type":"string"}` | 機器の uid か名前（その機器のプリセットだけに絞ります） |
 | `kind` | — | `{"enum":["fx","instrument"],"type":"string"}` | プリセットの種類 |
 | `query` | — | `{"type":"string"}` | 名前で絞る文字列 |
+| `values` | — | `{"type":"boolean"}` | 各プリセットのつまみの値（params）も返す |
 
 ## `preset.load`
 

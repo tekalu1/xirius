@@ -157,7 +157,7 @@ fn alt_page_keys_load_the_next_and_the_previous_preset_round_the_list() {
 }
 
 #[test]
-fn from_a_turned_knob_the_preset_keys_start_at_the_ends_and_without_a_window_do_nothing() {
+fn from_a_turned_knob_the_preset_keys_step_from_its_preset_and_without_a_window_do_nothing() {
     let (mut s, g, t, id) = keys_window();
     let def = eq(&s, t).builtin().unwrap();
     let (gain, _) = def.param("output").unwrap();
@@ -168,8 +168,15 @@ fn from_a_turned_knob_the_preset_keys_start_at_the_ends_and_without_a_window_do_
     assert!(s.instrument_moved(&g, x, y + 30.0, false));
     assert!(s.instrument_up());
     assert_eq!(preset(&s, t), None);
+    // The tag still names the first; the one before it is the last (UI-332).
     assert!(key(&mut s, &g, "pageup", alt()));
     assert_eq!(preset(&s, t), list().last().copied());
+    // Off the last, the next is the first again.
+    assert!(s.instrument_down(&g, x, y));
+    assert!(s.instrument_moved(&g, x, y + 30.0, false));
+    assert!(s.instrument_up());
+    assert!(key(&mut s, &g, "pagedown", alt()));
+    assert_eq!(preset(&s, t), Some(list()[0]));
     // The window shut, the keys have nothing to load into.
     s.instruments.open.clear();
     let steps = s.song().steps();

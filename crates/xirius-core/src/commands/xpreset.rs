@@ -62,6 +62,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 ArgDef::choice("kind", &["fx", "instrument"], "プリセットの種類"),
                 device(),
                 ArgDef::text("query", "名前で絞る文字列"),
+                ArgDef::flag("values", "各プリセットのつまみの値（params）も返す"),
             ],
             Risk::Read,
             false,

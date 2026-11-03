@@ -36,6 +36,23 @@ pub fn cells(text: &str, w: f32) -> Vec<Cell> {
 }
 
 impl Studio {
+    /// Opens a menu that is only the name box at `at`: Enter runs `name` with what was
+    /// typed as its `arg` (名前を付けて保存…, UI-332).
+    pub(crate) fn ask_name(
+        &mut self,
+        label: &str,
+        name: &'static str,
+        args: Value,
+        arg: &'static str,
+        initial: &str,
+        at: (f32, f32),
+    ) {
+        let item = super::Item::ask(label, name, args, arg, initial);
+        let run = item.run.clone();
+        self.open_context(vec![item], at.0, at.1);
+        self.ask_open(run);
+    }
+
     /// Turns the open menu into the name box, with `initial` in it.
     pub(super) fn ask_open(&mut self, run: Run) {
         let (number, (name, args, arg, initial)) = match run {

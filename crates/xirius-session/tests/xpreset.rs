@@ -146,6 +146,60 @@ fn a_saved_preset_is_an_xpreset_in_the_devices_folder_and_lists_under_it() {
     assert!(names.contains(&"暖かく".to_string()), "{names:?}");
 }
 
+/// A save names the device after the preset (UI-332), one undo apart; the list gives each
+/// preset's knobs when asked.
+#[test]
+fn a_save_names_the_device_and_the_list_gives_the_knobs() {
+    let mut r = rig("save-name");
+    let t = audio(&mut r.s, "Vocal");
+    let eq = plugin(&mut r.s, &t, "EQ");
+    assert_eq!(
+        track(&r.s, &t).inserts[0].preset.as_deref(),
+        Some("Default"),
+        "a new device is at its Default"
+    );
+    run(
+        &mut r.s,
+        "plugin.param.set",
+        json!({ "id": eq, "param": "low_gain", "value": 0.8 }),
+    );
+    let before = r.s.project().clone();
+    run(
+        &mut r.s,
+        "preset.save",
+        json!({ "track": t, "kind": "fx", "of": eq, "name": "暖かく" }),
+    );
+    let x = &track(&r.s, &t).inserts[0];
+    assert_eq!(x.preset.as_deref(), Some("暖かく"));
+    assert_eq!(x.params["low_gain"], 0.8, "the knobs stay");
+    run(&mut r.s, "history.undo", json!({}));
+    assert_eq!(*r.s.project(), before);
+    run(&mut r.s, "history.redo", json!({}));
+    // Saved again under the same name, the device is already named: nothing to undo.
+    let steps = r.s.steps().len();
+    run(
+        &mut r.s,
+        "preset.save",
+        json!({ "track": t, "kind": "fx", "of": eq, "name": "暖かく", "overwrite": true }),
+    );
+    assert_eq!(r.s.steps().len(), steps);
+
+    let list = run(
+        &mut r.s,
+        "preset.list",
+        json!({ "device": "eq", "values": true }),
+    );
+    let row = list["presets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "暖かく")
+        .unwrap();
+    assert_eq!(row["params"]["low_gain"], 0.8);
+    let plain = run(&mut r.s, "preset.list", json!({ "device": "eq" }));
+    assert!(plain["presets"][1].get("params").is_none());
+}
+
 #[test]
 fn loading_a_preset_is_one_undo() {
     let mut r = rig("undo");

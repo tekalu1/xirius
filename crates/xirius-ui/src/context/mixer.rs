@@ -15,7 +15,7 @@ use xirius_prefs::midimap::Target;
 
 use super::{Act, Item};
 use crate::arrange::{lane_name, targets_of};
-use crate::instrument::window::{is_built_in, preset_of, presets};
+use crate::instrument::window::is_built_in;
 use crate::mixer::{List, MixerHit, NEW_BUS, row_at, send_choices, send_parts};
 use crate::popup::PopupKind;
 use crate::studio::{Geometry, Studio};
@@ -520,14 +520,16 @@ impl Studio {
         };
         let pid = id.to_string();
         let builtin = is_built_in(plugin);
-        let now = preset_of(plugin);
         let mut presets: Vec<Item> = Vec::new();
         if let Some(def) = plugin.builtin().filter(|_| builtin) {
-            presets.extend(
-                self::presets(def)
-                    .into_iter()
-                    .map(|n| Item::act(n, "", Act::Preset(id, n.to_string())).on(Some(n) == now)),
-            );
+            // The window's list, the ✓ on the preset its tag names (UI-332).
+            self.refresh_presets();
+            let list = &self.instruments.presets;
+            let now = list.origin(plugin);
+            presets.extend(list.names(def).into_iter().map(|n| {
+                let on = Some(&n) == now.as_ref();
+                Item::act(&n, "", Act::Preset(id, n.clone())).on(on)
+            }));
             presets.push(Item::gap());
         }
         presets.push(Item::act(

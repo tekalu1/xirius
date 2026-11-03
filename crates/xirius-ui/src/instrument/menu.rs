@@ -4,7 +4,8 @@
 //!
 //! A menu is a list of [`Choice`]s: `to` says what the row does, and a row
 //! that cannot run now has `to` starting with [`OFF`]; [`GAP`] puts space
-//! between two groups.
+//! between two groups, and a row whose `to` starts with [`FOOT`] goes under
+//! the list, where the query never filters it.
 
 use serde_json::json;
 use xirius_core::auto::AutoTarget;
@@ -12,7 +13,8 @@ use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::{Plugin, Project};
 
 use super::current;
-use super::window::{DEFAULT, is_built_in, preset_of, presets};
+use super::presets::Presets;
+use super::window::is_built_in;
 use crate::popup::{Action, Choice, PopupKind};
 use crate::studio::{Rect, Studio};
 use crate::tools::Mods;
@@ -22,6 +24,12 @@ use crate::tree::RowKind;
 pub const OFF: &str = "off:";
 /// The space between two groups.
 pub const GAP: &str = "-";
+/// What a row under the list starts with (the preset list's 上書き保存, UI-332).
+pub const FOOT: &str = "@";
+/// The preset list's rows under it (UI-332).
+pub const SAVE: &str = "@save";
+pub const SAVE_AS: &str = "@save-as";
+pub const SHOW: &str = "@show";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Menu {
@@ -84,37 +92,55 @@ pub fn params(plugin: &Plugin) -> Vec<(String, String)> {
 pub fn pick(menu: Menu, choices: Vec<Choice>, current: &str) -> crate::pick_list::PickList {
     use crate::pick_list::{PickGroup, PickList, PickRow};
     let mut groups: Vec<PickGroup> = vec![PickGroup::new("", Vec::new())];
+    let mut foot = Vec::new();
     for ch in choices {
         if ch.to == GAP {
             groups.push(PickGroup::new("", Vec::new()));
             continue;
         }
-        let (_, key) = look(menu, ch.to.trim_start_matches(OFF));
+        let to = ch.to.trim_start_matches(OFF);
+        let (_, key) = look(menu, to);
         let row = PickRow::new(ch.label).hint(key).on(ch.to == current);
         let row = match ch.to.strip_prefix(OFF) {
             Some(_) => row.disabled(),
             None => row.act(Action::Pick(ch.to.clone())),
         };
-        groups.last_mut().unwrap().rows.push(row);
+        if to.starts_with(FOOT) {
+            foot.push(row);
+        } else {
+            groups.last_mut().unwrap().rows.push(row);
+        }
     }
     groups.retain(|g| !g.rows.is_empty());
-    let mut list = PickList::of(Vec::new());
+    let mut list = PickList::of(Vec::new()).footer(foot);
     list.groups = groups;
     list
 }
 
 /// The rows of a menu as it is now, and the row that is on.
-pub fn view(p: &Project, menu: Menu) -> (Vec<Choice>, String) {
+pub fn view(p: &Project, presets: &Presets, menu: Menu) -> (Vec<Choice>, String) {
     let row = |to: &str, label: &str| Choice {
         to: to.into(),
         label: label.into(),
     };
     match menu {
         Menu::Preset(_, id) => {
-            let x = device_of(p, id);
-            let list = x.and_then(Plugin::builtin).map_or(vec![DEFAULT], presets);
-            let now = x.and_then(preset_of).unwrap_or_default();
-            (list.iter().map(|n| row(n, n)).collect(), now.into())
+            // The device's presets, the ✓ on the one its tag names (the knobs
+            // off it or not), then 上書き保存 / 名前を付けて保存… / ブラウザーに表示
+            // under them.
+            let Some((x, def)) = device_of(p, id).and_then(|x| Some((x, x.builtin()?))) else {
+                return (Vec::new(), String::new());
+            };
+            let list = presets.names(def);
+            let (name, off) = presets.tag_of(x);
+            let mut rows: Vec<Choice> = list.iter().map(|n| row(n, n)).collect();
+            // Over a preset's file, once the knobs moved off it; never over Default.
+            let save = off && name != super::window::DEFAULT && list.contains(&name);
+            rows.push(row(if save { SAVE } else { "off:@save" }, "上書き保存"));
+            rows.push(row(SAVE_AS, "名前を付けて保存…"));
+            rows.push(row("off:@show", "ブラウザーに表示"));
+            let now = presets.origin(x).unwrap_or_default();
+            (rows, now)
         }
         Menu::Row(t, id) => {
             let built_in = plugin_of(p, t, id).is_some_and(is_built_in);
@@ -153,19 +179,36 @@ pub fn view(p: &Project, menu: Menu) -> (Vec<Choice>, String) {
 impl Studio {
     pub(crate) fn open_inst_menu(&mut self, menu: Menu, anchor: Rect) {
         self.instruments.menu_at = Some(anchor);
+        if matches!(menu, Menu::Preset(..)) {
+            self.refresh_presets();
+        }
         self.open_popup(PopupKind::InstMenu(menu), anchor);
     }
 
     pub(crate) fn inst_menu_view(&self, menu: Menu) -> (Vec<Choice>, String) {
-        view(&self.project(), menu)
+        view(&self.project(), &self.instruments.presets, menu)
     }
 
     /// A row of an instrument's menu was picked (the menu is shut already).
     pub(crate) fn inst_menu_pick(&mut self, menu: Menu, to: &str) {
         match menu {
-            Menu::Preset(_, id) => {
-                self.load_preset(id, to);
-            }
+            Menu::Preset(_, id) => match to {
+                SAVE => {
+                    let p = self.project();
+                    if let Some(name) =
+                        device_of(&p, id).and_then(|x| self.instruments.presets.origin(x))
+                    {
+                        self.save_preset(id, &name, true);
+                    }
+                }
+                SAVE_AS => {
+                    self.save_preset_as(id);
+                }
+                SHOW => {}
+                _ => {
+                    self.load_preset(id, to);
+                }
+            },
             Menu::Row(t, id) => self.row_pick(t, id, to),
             Menu::Params(t, id) => {
                 self.show_param_lane(t, id, to);

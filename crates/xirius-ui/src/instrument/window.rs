@@ -43,8 +43,11 @@ pub const DEFAULT: &str = xirius_core::xpreset::DEFAULT_PRESET;
 /// A built-in's presets: its Default first, then its factory presets (PLG-064). The
 /// Sampler and the Drum Kit have only their Default.
 pub fn presets(def: &BuiltinDef) -> Vec<&'static str> {
+    let mut names = xirius_params::factory_names(def);
+    // By name, as the session lists the files.
+    names.sort_unstable();
     let mut v = vec![DEFAULT];
-    v.extend(xirius_params::factory_names(def));
+    v.extend(names);
     v
 }
 
@@ -78,7 +81,9 @@ pub fn values(plugin: &Plugin) -> Vec<f64> {
     })
 }
 
-/// The preset the knobs a preset sets are at, if any.
+/// The preset of the factory set (`Default` among them) the knobs a preset
+/// sets are at, if any. The window's tag reads the files instead
+/// ([`super::presets`]).
 pub fn preset_of(plugin: &Plugin) -> Option<&'static str> {
     let def = plugin.builtin()?;
     let now = values(plugin);
@@ -292,9 +297,8 @@ pub struct Windows {
     pub(crate) echoes: HashMap<PluginId, delay::Echo>,
     /// The devices whose probes write for a window, so a closed one stops.
     watched: Vec<PluginId>,
-    /// The preset each plug-in was last set to: the tag keeps its name and
-    /// marks it while the knobs are off it (UI-332 keeps the list itself).
-    base: HashMap<PluginId, &'static str>,
+    /// The preset files the tags and their lists read (UI-332).
+    pub(crate) presets: super::presets::Presets,
     /// The window a device last opened in and when: its frame lights a
     /// moment so the eye finds it (UI-323).
     pub(crate) flash: Option<(PluginId, std::time::Instant)>,
@@ -610,13 +614,6 @@ impl Windows {
     /// Forgets the windows whose plugin is gone or is no longer built in.
     fn prune(&mut self, p: &Project) {
         self.open.retain(|w| live(p, w).is_some());
-        self.base.retain(|id, _| {
-            p.tracks
-                .values()
-                .flat_map(|t| t.inserts.iter())
-                .any(|x| x.id == *id)
-        });
-        self.learn(p);
         if self.grab.is_some_and(|g| !self.is_open(g.plugin())) {
             self.grab = None;
         }
@@ -687,24 +684,9 @@ impl Windows {
         moving
     }
 
-    /// Learns the preset each built-in device's knobs are at as the one its
-    /// tag keeps once they move off it, however they got there: a load from
-    /// the tag, the CLI or the MCP, an undo, a song opened after a restart.
-    pub(crate) fn learn(&mut self, p: &Project) {
-        for x in p.tracks.values().flat_map(|t| &t.inserts) {
-            if let Some(name) = preset_of(x) {
-                self.base.insert(x.id, name);
-            }
-        }
-    }
-
-    /// The tag's «name ●»: the preset the knobs are at, or the one they were
-    /// last set to plus the mark while they are off it.
-    pub(crate) fn tag_of(&self, plugin: &Plugin) -> (&'static str, bool) {
-        match preset_of(plugin) {
-            Some(name) => (name, false),
-            None => (*self.base.get(&plugin.id).unwrap_or(&DEFAULT), true),
-        }
+    /// The tag's «name ●» (see [`super::presets`]).
+    pub(crate) fn tag_of(&self, plugin: &Plugin) -> (String, bool) {
+        self.presets.tag_of(plugin)
     }
 }
 
@@ -1195,8 +1177,8 @@ impl Studio {
         changed
     }
 
-    /// Sets every knob a preset sets of a built-in plugin (one step). The tag
-    /// keeps the preset's name while the knobs stay on it.
+    /// Sets every knob a preset sets of a built-in plugin (one step); the
+    /// device keeps the preset's name for its tag.
     pub fn load_preset(&mut self, id: PluginId, preset: &str) -> bool {
         let p = self.project();
         let Some(def) = p
@@ -1208,7 +1190,7 @@ impl Studio {
         else {
             return false;
         };
-        let Some(v) = preset_values(def, preset) else {
+        let Some(v) = self.instruments.presets.values_of(def, preset) else {
             return false;
         };
         let values: Vec<_> = def
@@ -1218,7 +1200,6 @@ impl Studio {
             .filter(|(p, _)| p.preset)
             .map(|(p, v)| json!({ "param": p.id, "value": v }))
             .collect();
-        // The edit's own pass learns the preset as the tag's base.
         // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         self.run_command(
             "plugin.preset.load",
@@ -1296,7 +1277,7 @@ fn paint_window(
                     _ => "ins",
                 },
                 powered: plugin.runs(),
-                preset,
+                preset: &preset,
                 modified,
                 pinned: w.pinned,
                 seats: title_bar::Seats {

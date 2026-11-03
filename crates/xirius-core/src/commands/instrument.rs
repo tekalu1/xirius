@@ -111,7 +111,7 @@ fn replace_plugin(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Outpu
         (tid, kind)
     };
     let id = PluginId(p.alloc());
-    let x = Plugin {
+    let mut x = Plugin {
         samples: Vec::new(),
         id,
         name: name.clone(),
@@ -128,6 +128,9 @@ fn replace_plugin(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Outpu
         sidechain: None,
         preset: None,
     };
+    if x.builtin().is_some() {
+        x.preset = Some(crate::xpreset::DEFAULT_PRESET.to_string());
+    }
     let t = p.track_mut(tid)?;
     let at = match kind {
         PluginKind::Instrument => t
@@ -202,6 +205,11 @@ fn load_preset(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> 
         .find(|x| x.id == id)
         .expect("found");
     x.params.extend(values);
+    // The device keeps the preset's name in the song, so its tag still names it after the
+    // knobs move and after a restart (UI-332).
+    if !preset.is_empty() {
+        x.preset = Some(preset.clone());
+    }
     Ok(Output::msg(format!(
         "{} のプリセットを「{preset}」にしました",
         x.name
@@ -253,6 +261,9 @@ pub(super) fn add_with_instrument(p: &mut Project, _: &EditCtx<'_>, a: &Args) ->
         sidechain: None,
         preset: None,
     });
+    if let Some(x) = track.inserts.last_mut().filter(|x| x.builtin().is_some()) {
+        x.preset = Some(crate::xpreset::DEFAULT_PRESET.to_string());
+    }
     track.armed = armed;
     let count = notes.len();
     let clip = if notes.is_empty() {

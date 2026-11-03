@@ -1,3 +1,4 @@
+use super::menu::Menu;
 use super::window::{Part, preset_of, preset_values, presets, text, values};
 use super::*;
 use crate::mixer::MixerHit;
@@ -161,8 +162,17 @@ fn a_preset_sets_every_knob_in_one_step() {
     assert!(matches!(popup.kind, PopupKind::InstMenu(_)));
     let cs = popup.choices();
     let labels: Vec<&str> = cs.iter().map(|c| c.label.as_str()).collect();
-    assert_eq!(labels, ["Default"]);
-    assert_eq!(popup.current(), "");
+    assert_eq!(
+        labels,
+        [
+            "Default",
+            "上書き保存",
+            "名前を付けて保存…",
+            "ブラウザーに表示"
+        ]
+    );
+    // The ✓ stays on the preset the knobs moved off.
+    assert_eq!(popup.current(), "Default");
     let before = s.song().steps();
     s.popup_action(&g, Action::Pick("Default".into()));
     assert!(s.popup.is_none());
@@ -239,8 +249,8 @@ fn the_knobs_are_the_built_in_parameters_in_their_order() {
         presets(comp),
         [
             "Default",
-            "ボーカルを整える",
             "ドラムをまとめる",
+            "ボーカルを整える",
             "並列で太く"
         ]
     );
@@ -454,21 +464,27 @@ fn the_tag_marks_the_preset_the_knobs_moved_off() {
     let (mut s, g, t, _) = studio();
     let id = compressor(&mut s, t);
     // At the defaults the tag names the preset with no mark.
-    assert_eq!(s.instruments.tag_of(&insert(&s, id)), ("Default", false));
+    assert_eq!(
+        s.instruments.tag_of(&insert(&s, id)),
+        ("Default".to_string(), false)
+    );
     // Load another: it names that one; a knob off it marks it.
     assert!(s.load_preset(id, "ドラムをまとめる"));
     assert_eq!(
         s.instruments.tag_of(&insert(&s, id)),
-        ("ドラムをまとめる", false)
+        ("ドラムをまとめる".to_string(), false)
     );
     nudge(&mut s, &g, id, "threshold");
     assert_eq!(
         s.instruments.tag_of(&insert(&s, id)),
-        ("ドラムをまとめる", true)
+        ("ドラムをまとめる".to_string(), true)
     );
     // Back on a preset's values the mark is gone.
     assert!(s.load_preset(id, "Default"));
-    assert_eq!(s.instruments.tag_of(&insert(&s, id)), ("Default", false));
+    assert_eq!(
+        s.instruments.tag_of(&insert(&s, id)),
+        ("Default".to_string(), false)
+    );
 }
 
 /// A Compressor on the track, its window open.
@@ -523,7 +539,7 @@ fn an_effects_preset_list_checks_the_preset_it_is_at() {
     );
     assert_eq!(
         s.instruments.tag_of(&insert(&s, comp)),
-        ("ドラムをまとめる", false)
+        ("ドラムをまとめる".to_string(), false)
     );
 }
 
@@ -541,7 +557,7 @@ fn the_tag_keeps_its_preset_in_a_song_opened_again() {
     let _ = std::fs::remove_dir_all(&dir);
     s.command(|song| song.save_as(&dir));
     assert!(s.error.is_none(), "{:?}", s.error);
-    // A fresh start opens the song: the tag learns its preset from the knobs.
+    // A fresh start opens the song: the device keeps its preset's name in it.
     let mut s = Studio::sample();
     let g = s.geometry(1600.0, 1000.0);
     s.finish_file_request_sync(crate::studio::FileRequest::Open, &dir);
@@ -551,12 +567,12 @@ fn the_tag_keeps_its_preset_in_a_song_opened_again() {
     s.show_instrument(t, id);
     assert_eq!(
         s.instruments.tag_of(&insert(&s, id)),
-        ("ドラムをまとめる", false)
+        ("ドラムをまとめる".to_string(), false)
     );
     nudge(&mut s, &g, id, "threshold");
     assert_eq!(
         s.instruments.tag_of(&insert(&s, id)),
-        ("ドラムをまとめる", true)
+        ("ドラムをまとめる".to_string(), true)
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -572,7 +588,7 @@ fn the_tag_keeps_the_preset_an_undo_went_back_to() {
     nudge(&mut s, &g, id, "threshold");
     assert_eq!(
         s.instruments.tag_of(&insert(&s, id)),
-        ("ドラムをまとめる", true)
+        ("ドラムをまとめる".to_string(), true)
     );
 }
 
@@ -596,7 +612,7 @@ fn the_tag_keeps_a_preset_loaded_from_the_cli() {
     nudge(&mut s, &g, id, "threshold");
     assert_eq!(
         s.instruments.tag_of(&insert(&s, id)),
-        ("ドラムをまとめる", true)
+        ("ドラムをまとめる".to_string(), true)
     );
 }
 
@@ -681,7 +697,10 @@ fn an_old_songs_compressor_opens_at_its_preset() {
     assert_eq!(x.params.len(), old.len(), "the old knobs only");
     assert_eq!(texts(&x), before);
     assert_eq!(preset_of(&x), Some("ドラムをまとめる"));
-    assert_eq!(s.instruments.tag_of(&x), ("ドラムをまとめる", false));
+    assert_eq!(
+        s.instruments.tag_of(&x),
+        ("ドラムをまとめる".to_string(), false)
+    );
 }
 
 /// A preset is the compressor's own knobs (PLG-071): the Gain and the key's filter and
@@ -724,6 +743,151 @@ fn a_preset_leaves_the_sidechain_knobs_where_they_are() {
         assert!(s.load_preset(comp, preset));
         assert_eq!(kept(&s), before, "{preset}");
         assert_eq!(preset_of(&insert(&s, comp)), Some(preset));
-        assert_eq!(s.instruments.tag_of(&insert(&s, comp)), (preset, false));
+        assert_eq!(
+            s.instruments.tag_of(&insert(&s, comp)),
+            (preset.to_string(), false)
+        );
     }
+}
+
+/// The rows of the open preset list: (label, enabled), and the row with the ✓.
+fn preset_rows(s: &mut Studio, g: &Geometry, id: PluginId) -> (Vec<(String, bool)>, String) {
+    s.popup = None;
+    let (x, y) = at(s, g, id, Part::Preset);
+    assert!(s.instrument_down(g, x, y));
+    let popup = s.popup.as_ref().expect("the presets");
+    let PopupKind::InstMenu(menu) = popup.kind else {
+        panic!("{:?}", popup.kind);
+    };
+    let (rows, now) = s.inst_menu_view(menu);
+    let rows = rows
+        .into_iter()
+        .map(|c| (c.label, !c.to.starts_with("off:")))
+        .collect();
+    (rows, now)
+}
+
+fn enabled(rows: &[(String, bool)], label: &str) -> bool {
+    rows.iter().find(|(l, _)| l == label).expect(label).1
+}
+
+/// 上書き保存 is there once the knobs moved off a preset's file, never over Default; the
+/// device then keeps the name it was saved as, the mark gone, in one step.
+#[test]
+fn saving_a_preset_names_the_device_after_it() {
+    let (mut s, g, t, _) = studio();
+    let id = compressor(&mut s, t);
+    let (rows, now) = preset_rows(&mut s, &g, id);
+    assert_eq!(now, "Default");
+    assert!(!enabled(&rows, "上書き保存"), "at Default");
+    assert!(enabled(&rows, "名前を付けて保存…"));
+    assert!(!enabled(&rows, "ブラウザーに表示"));
+    nudge(&mut s, &g, id, "threshold");
+    let (rows, _) = preset_rows(&mut s, &g, id);
+    assert!(!enabled(&rows, "上書き保存"), "never over Default");
+    // Save it as a new preset: the list has it and the tag names it.
+    let before = s.song().steps();
+    assert!(s.save_preset(id, "締める", false));
+    assert_eq!(s.song().steps(), before + 1);
+    assert_eq!(
+        s.instruments.tag_of(&insert(&s, id)),
+        ("締める".to_string(), false)
+    );
+    let (rows, now) = preset_rows(&mut s, &g, id);
+    assert_eq!(now, "締める");
+    assert!(rows.iter().any(|(l, _)| l == "締める"));
+    assert!(!enabled(&rows, "上書き保存"), "the knobs are at it");
+    // Off it: 上書き保存 writes over its file and the mark goes.
+    nudge(&mut s, &g, id, "ratio");
+    assert_eq!(
+        s.instruments.tag_of(&insert(&s, id)),
+        ("締める".to_string(), true)
+    );
+    let (rows, now) = preset_rows(&mut s, &g, id);
+    assert_eq!(now, "締める", "the ✓ stays on it");
+    assert!(enabled(&rows, "上書き保存"));
+    s.inst_menu_pick(Menu::Preset(t, id), super::menu::SAVE);
+    assert_eq!(
+        s.instruments.tag_of(&insert(&s, id)),
+        ("締める".to_string(), false)
+    );
+    // Loading another and back reads the file's knobs.
+    assert!(s.load_preset(id, "Default"));
+    assert!(s.load_preset(id, "締める"));
+    assert_eq!(
+        s.instruments.tag_of(&insert(&s, id)),
+        ("締める".to_string(), false)
+    );
+}
+
+/// 名前を付けて保存… asks for the name in the list's place, starting with the preset's.
+#[test]
+fn save_as_asks_for_the_name() {
+    let (mut s, g, t, _) = studio();
+    let id = compressor(&mut s, t);
+    assert!(s.load_preset(id, "ドラムをまとめる"));
+    nudge(&mut s, &g, id, "threshold");
+    preset_rows(&mut s, &g, id);
+    s.inst_menu_pick(Menu::Preset(t, id), super::menu::SAVE_AS);
+    assert!(s.context_open());
+    assert_eq!(
+        s.ask_field().map(|f| f.text()),
+        Some("ドラムをまとめる".to_string())
+    );
+    for _ in 0..40 {
+        s.ask_key("backspace");
+    }
+    s.ask_text(None, "強く締める", false);
+    assert_eq!(s.ask_key("enter"), Some(true));
+    assert!(!s.context_open());
+    assert_eq!(
+        s.instruments.tag_of(&insert(&s, id)),
+        ("強く締める".to_string(), false)
+    );
+    // The factory preset it came from is as it was.
+    assert!(s.load_preset(id, "ドラムをまとめる"));
+    assert_eq!(
+        s.instruments.tag_of(&insert(&s, id)),
+        ("ドラムをまとめる".to_string(), false)
+    );
+}
+
+/// A device that keeps no preset (a song from before) and is at none shows 「—」 marked.
+#[test]
+fn a_device_at_no_known_preset_shows_a_dash() {
+    let (mut s, g, t, _) = studio();
+    let id = compressor(&mut s, t);
+    nudge(&mut s, &g, id, "threshold");
+    let mut x = insert(&s, id);
+    x.preset = None;
+    assert_eq!(
+        s.instruments.tag_of(&x),
+        (super::presets::UNKNOWN.to_string(), true)
+    );
+    assert_eq!(s.instruments.presets.origin(&x), None);
+    // At a preset's knobs it takes that preset's name.
+    let def = x.builtin().unwrap();
+    let v = s.instruments.presets.values_of(def, "Default").unwrap();
+    x.params.clear();
+    for (p, v) in def.params.iter().zip(v) {
+        x.params.insert(p.id.to_string(), v);
+    }
+    assert_eq!(s.instruments.tag_of(&x), ("Default".to_string(), false));
+}
+
+/// The search box filters the presets, not the saves under them.
+#[test]
+fn the_saves_stay_under_a_filtered_list() {
+    let (mut s, _, t, _) = studio();
+    let id = compressor(&mut s, t);
+    let (choices, now) = s.inst_menu_view(Menu::Preset(t, id));
+    let mut list = super::menu::pick(Menu::Preset(t, id), choices, &now);
+    list.query = "ドラム".into();
+    let rows: Vec<String> = list.visible().iter().map(|r| r.label.clone()).collect();
+    assert_eq!(rows, ["ドラムをまとめる"]);
+    let foot: Vec<String> = list.footer.iter().map(|r| r.label.clone()).collect();
+    assert_eq!(
+        foot,
+        ["上書き保存", "名前を付けて保存…", "ブラウザーに表示"]
+    );
 }

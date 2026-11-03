@@ -106,9 +106,18 @@ fn open_presets_and_replace_go_where_the_row_says() {
     let popup = s.popup.as_ref().expect("the presets");
     assert_eq!(popup.kind, PopupKind::InstMenu(Menu::Preset(t, id)));
     assert_eq!(popup.anchor, anchor);
-    // The Sampler has only its Default (PLG-064).
+    // The Sampler has only its Default (PLG-064), then the saves under it.
     assert_eq!(popup.current(), "Default");
-    assert_eq!(popup.choices().len(), 1);
+    let labels: Vec<String> = popup.choices().into_iter().map(|c| c.label).collect();
+    assert_eq!(
+        labels,
+        [
+            "Default",
+            "上書き保存",
+            "名前を付けて保存…",
+            "ブラウザーに表示"
+        ]
+    );
     pick(&mut s, &g, "Default");
     assert_eq!(window::preset_of(&plugin(&s, t)), Some("Default"));
     // 差し替える… is the instrument picker.

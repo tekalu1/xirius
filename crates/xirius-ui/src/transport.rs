@@ -1879,7 +1879,7 @@ impl Studio {
         let editors = self.poll_editors();
         let ai = self.ai_moving();
         let said = self.say_driver_notice();
-        let device = self.poll_device() | self.poll_probes();
+        let device = self.poll_device() | self.poll_probes() | self.poll_presets();
         self.expire_notice();
         let shaking = self
             .record_shake

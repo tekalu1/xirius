@@ -290,6 +290,7 @@ impl Song {
                     | "export.status"
                     | "export.cancel"
                     | "track.preset.list"
+                    | "preset.list"
                     | "view.snap"
                     | "view.groove.import"
                     | "tool.draw.shape"

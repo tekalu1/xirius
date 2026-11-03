@@ -16,6 +16,7 @@ use crate::studio::{Rect, Studio};
 
 pub mod keys;
 pub mod menu;
+pub mod presets;
 pub mod shots;
 pub mod window;
 
