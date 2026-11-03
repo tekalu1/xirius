@@ -9,11 +9,21 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::auto::AutoTarget;
+use crate::chain_preset::{self, ChainPreset};
 use crate::command::EditCtx;
 use crate::id::{IdKind, PluginId, SendId, TrackId};
 use crate::model::{Plugin, PluginKind, TrackKind};
 use crate::track_preset::{Adjust, AdjustKind};
 use crate::xpreset::{self, DevicePreset, PresetDevice};
+
+/// The kinds a preset file is of: one device's, or a chain's (PLG-065).
+const KINDS: &[&str] = &[
+    "fx",
+    "instrument",
+    "fx-chain",
+    "instrument-fx",
+    "multi-instrument",
+];
 
 pub(super) fn defs() -> Vec<CommandDef> {
     let track = || ArgDef::id("track", IdKind::Track, "トラック").req();
@@ -25,6 +35,13 @@ pub(super) fn defs() -> Vec<CommandDef> {
         .req()
     };
     let of = || ArgDef::id("of", IdKind::Plugin, "プリセットを読み込むプラグイン");
+    let at = || {
+        ArgDef::text(
+            "at",
+            "エフェクトとチェーンを入れる場所（track・after:<機器>・branch:<分岐か層>[:<位置>]）",
+        )
+    };
+    let replace = || ArgDef::flag("replace", "その場所の機器の列を置き換えます");
     let device = || {
         ArgDef::text(
             "device",
@@ -34,11 +51,15 @@ pub(super) fn defs() -> Vec<CommandDef> {
     vec![
         session(
             "preset.save",
-            "機器の今の設定を .xpreset のプリセットに保存します（同じ名前があるときは --overwrite で上書きします）",
+            "機器の今の設定か機器の列（チェーン）を .xpreset のプリセットに保存します（同じ名前があるときは --overwrite で上書きします）",
             vec![
                 track(),
-                ArgDef::choice("kind", &["fx", "instrument"], "プリセットの種類").req(),
-                ArgDef::id("of", IdKind::Plugin, "プリセットにするプラグイン"),
+                ArgDef::choice("kind", KINDS, "プリセットの種類").req(),
+                ArgDef::id(
+                    "of",
+                    IdKind::RackNodeOrPlugin,
+                    "プリセットにするプラグイン（チェーンなら、スプリッター・分岐・層も）",
+                ),
                 ArgDef::text("name", "プリセットの名前").req(),
                 ArgDef::flag(
                     "overwrite",
@@ -51,7 +72,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
         session(
             "preset.load",
             "プリセットをトラックの機器に読み込みます（1 回の取り消しで戻せます）",
-            vec![track(), preset(), of(), device()],
+            vec![track(), preset(), of(), device(), at(), replace()],
             Risk::Write,
             false,
         ),
@@ -59,7 +80,11 @@ pub(super) fn defs() -> Vec<CommandDef> {
             "preset.list",
             "機器のプリセットを一覧します（機器ごとに Default が先頭、ほかは名前の順）",
             vec![
-                ArgDef::choice("kind", &["fx", "instrument"], "プリセットの種類"),
+                ArgDef::choice(
+                    "kind",
+                    KINDS,
+                    "プリセットの種類（チェーンは、その種類のときだけ一覧します）",
+                ),
                 device(),
                 ArgDef::text("query", "名前で絞る文字列"),
                 ArgDef::flag("values", "各プリセットのつまみの値（params）も返す"),
@@ -104,6 +129,8 @@ pub(super) fn defs() -> Vec<CommandDef> {
                     "lost",
                     "見つからないため外したサンプルの名前（JSON の配列。調整の行に出します）",
                 ),
+                at(),
+                replace(),
             ],
             put,
         ),
@@ -114,14 +141,7 @@ fn put(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
     let tid: TrackId = a.id("track")?;
     let v: Value = serde_json::from_str(a.str("preset")?)
         .map_err(|e| CmdError::invalid(format!("プリセットを読み込めません: {e}")))?;
-    let (preset, mut rows) = DevicePreset::parse(&v, None)?;
-    let name = a
-        .opt_str("name")
-        .map(str::trim)
-        .filter(|n| !n.is_empty())
-        .unwrap_or(&preset.name)
-        .to_string();
-    let of: Option<PluginId> = a.opt_id("of")?;
+    let given = a.opt_str("name").map(str::trim).filter(|n| !n.is_empty());
     let missing: Vec<String> = a
         .opt_str("missing")
         .unwrap_or_default()
@@ -135,14 +155,44 @@ fn put(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
             .map_err(|e| CmdError::invalid(format!("lost を読み込めません: {e}")))?,
         _ => Vec::new(),
     };
-    for s in &lost {
-        rows.push(Adjust::new(
-            AdjustKind::Rejected,
-            s.as_str(),
-            "サンプルが見つからないため外しました",
-        ));
+    let lost_rows = || {
+        lost.iter().map(|s| {
+            Adjust::new(
+                AdjustKind::Rejected,
+                s.as_str(),
+                "サンプルが見つからないため外しました",
+            )
+        })
+    };
+    // A chain (PLG-065) goes in as a whole.
+    if chain_preset::kind_of_value(&v).is_some() {
+        if a.opt_str("of").is_some() {
+            return Err(CmdError::invalid(
+                "チェーンのプリセットは --of ではなく --at で場所を選びます",
+            ));
+        }
+        let (mut preset, mut rows) = ChainPreset::parse(&v, None)?;
+        if let Some(n) = given {
+            preset.name = n.to_string();
+        }
+        rows.extend(lost_rows());
+        return super::chain_preset::put(p, a, preset, rows, &missing);
     }
+    let (preset, mut rows) = DevicePreset::parse(&v, None)?;
+    let name = given.unwrap_or(&preset.name).to_string();
+    let of: Option<PluginId> = a.opt_id("of")?;
+    rows.extend(lost_rows());
     let dev = &preset.device;
+    // An effect given a place goes in there as a chain of one.
+    if super::chain_preset::placed(a) {
+        if of.is_some() || preset.kind != PluginKind::Effect {
+            return Err(CmdError::invalid(
+                "--at・--replace は、エフェクトかチェーンのプリセットで使います",
+            ));
+        }
+        let one = ChainPreset::of_effect(&name, plugin_of(dev, &name, PluginId(1)));
+        return super::chain_preset::put(p, a, one, rows, &missing);
+    }
     if missing.contains(&dev.uid) {
         rows.push(Adjust::new(
             AdjustKind::Rejected,

@@ -380,3 +380,81 @@ fn a_bus_takes_a_preset_too() {
     assert_eq!(out["adjusted"][0]["kind"], json!("rejected"));
     assert!(track(&s, &bus).sends.is_empty());
 }
+
+/// A puts its EQ on a branch of a splitter, and knob 1 drives the EQ's low gain.
+fn split_eq(s: &mut Session, a: &str) -> String {
+    let eq = track(s, a).inserts[1].id.to_string();
+    let split = run(s, "rack.split.add", json!({ "track": a }));
+    let b0 = split["branches"][0].as_str().unwrap().to_string();
+    run(s, "rack.node.move", json!({ "id": eq, "to": b0 }));
+    run(
+        s,
+        "control.assign",
+        json!({ "track": a, "control": "k1", "target": format!("param:{eq}:low_gain") }),
+    );
+    eq
+}
+
+#[test]
+fn a_version_2_preset_keeps_the_rack_and_the_macros() {
+    let Song { mut s, a, b, .. } = song();
+    let eq = split_eq(&mut s, &a);
+    let preset = preset_of(&s, &a, "Wide");
+    assert_eq!(preset["version"], json!(2));
+    let (back, rows) = TrackPreset::parse(&preset).unwrap();
+    assert!(rows.is_empty(), "{rows:?}");
+    assert_eq!(back.to_value(), preset);
+    let n = s.steps().len();
+    put(&mut s, &[&b], &preset);
+    assert_eq!(s.steps().len(), n + 1);
+    assert_eq!(names(&s, &b), ["Compressor", "EQ"]);
+    let t = track(&s, &b);
+    let new_eq = t.inserts[1].id;
+    assert_ne!(new_eq.to_string(), eq, "the song's own ids");
+    let rack = t.rack.as_ref().expect("the rack came along");
+    assert!(matches!(
+        &rack.fx[..],
+        [xirius_core::rack::RackNode::Plugin(_), xirius_core::rack::RackNode::Split(s)]
+            if matches!(s.branches[0].fx[..], [xirius_core::rack::RackNode::Plugin(x)] if x == new_eq)
+    ));
+    let maps: Vec<_> = t
+        .controls
+        .get(xirius_core::controls::ControlId::Knob(0))
+        .maps
+        .iter()
+        .map(|m| m.target.clone())
+        .collect();
+    assert_eq!(
+        maps,
+        [xirius_core::auto::AutoTarget::Param(
+            new_eq,
+            "low_gain".into()
+        )]
+    );
+}
+
+#[test]
+fn a_rack_on_an_instrument_track_keeps_its_own_instrument() {
+    let Song {
+        mut s, a, synth, ..
+    } = song();
+    split_eq(&mut s, &a);
+    let preset = preset_of(&s, &a, "Wide");
+    put(&mut s, &[&synth], &preset);
+    assert_eq!(names(&s, &synth), ["Sampler", "Compressor", "EQ"]);
+    let t = track(&s, &synth);
+    assert_eq!(t.inserts[0].kind, PluginKind::Instrument);
+}
+
+#[test]
+fn a_version_1_preset_still_reads_without_a_row() {
+    let Song { mut s, a, b, .. } = song();
+    let mut preset = preset_of(&s, &b, "Old");
+    preset["version"] = json!(1);
+    let (_, rows) = TrackPreset::parse(&preset).unwrap();
+    assert!(rows.is_empty(), "{rows:?}");
+    let out = put(&mut s, &[&a], &preset);
+    assert!(out["adjusted"].as_array().unwrap().is_empty());
+    assert_eq!(names(&s, &a), ["Reverb"]);
+    assert!(track(&s, &a).rack.is_none());
+}

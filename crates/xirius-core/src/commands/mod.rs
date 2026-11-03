@@ -19,6 +19,7 @@ mod bounce;
 mod browser;
 mod bus_group;
 mod cc;
+mod chain_preset;
 mod channel_settings;
 mod clip;
 pub mod clip_ara;

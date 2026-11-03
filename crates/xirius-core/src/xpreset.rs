@@ -27,7 +27,7 @@ pub const FORMAT: &str = "xirius-preset";
 /// stays at the head even after every preset file is deleted.
 pub const DEFAULT_PRESET: &str = "Default";
 
-/// The preset kinds a `.xpreset` may hold (PLG-065 adds the chain kinds).
+/// The kinds of one device a `.xpreset` may hold (the chains are [`crate::chain_preset`]).
 pub const KINDS: [&str; 2] = ["fx", "instrument"];
 
 const KEYS: [&str; 6] = ["format", "version", "kind", "name", "saved_at", "devices"];
@@ -167,7 +167,12 @@ impl DevicePreset {
         let o = v.as_object().ok_or_else(|| {
             CmdError::invalid("プリセットではありません（オブジェクトが必要です）")
         })?;
-        if o.get("format").and_then(Value::as_str) == Some(FORMAT) {
+        if let Some(k) = crate::chain_preset::kind_of_value(v) {
+            Err(CmdError::invalid(format!(
+                "{} のプリセットで、1 つの機器のプリセットではありません",
+                k.name()
+            )))
+        } else if o.get("format").and_then(Value::as_str) == Some(FORMAT) {
             parse_xpreset(o, fallback)
         } else if o.contains_key("uid") {
             parse_legacy(o, fallback)

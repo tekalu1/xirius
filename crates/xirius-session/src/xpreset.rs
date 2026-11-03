@@ -18,6 +18,10 @@
 //! be overwritten, renamed and deleted. A newer set adds what it brings and takes away the
 //! old files the user left as they were copied. `preset.factory.restore` adds back the
 //! factory presets that are missing, and touches nothing that is there.
+//!
+//! A chain (PLG-065) — an FX chain, an instrument with its FX, a multi-instrument — is a
+//! `.xpreset` too, in `presets/<chain kind>/` with no device folder. It is listed only when
+//! the list asks for its kind, and goes in as the edit `preset.put` with `--at`/`--replace`.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -25,8 +29,9 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
 use serde_json::{Map, Value, json};
+use xirius_core::chain_preset::{Chain, ChainKind, ChainPreset, kind_of_value};
 use xirius_core::command::Output;
-use xirius_core::id::{PluginId, TrackId};
+use xirius_core::id::{AnyId, PluginId, TrackId};
 use xirius_core::model::{Plugin, PluginKind, Project};
 use xirius_core::store::{atomic_write, sha256_hex};
 use xirius_core::xpreset::{DEFAULT_PRESET, DevicePreset, PresetDevice, kind_name, kind_of};
@@ -144,6 +149,25 @@ struct Entry {
     device_name: String,
     device_format: String,
     saved_at: Option<u64>,
+    /// A chain's kind; its "device" is then the kind's name.
+    chain: Option<ChainKind>,
+}
+
+/// The format a chain's entry is filed under, in place of a device's.
+const CHAIN: &str = "chain";
+
+/// The plug-in kind a chain is listed with.
+fn chain_plugin_kind(k: ChainKind) -> PluginKind {
+    match k {
+        ChainKind::Fx => PluginKind::Effect,
+        ChainKind::Instrument | ChainKind::Multi => PluginKind::Instrument,
+    }
+}
+
+/// The file the chain preset `name` of kind `kind` makes.
+fn chain_path(dir: &Path, kind: ChainKind, name: &str) -> PathBuf {
+    dir.join(kind.name())
+        .join(format!("{}.xpreset", file_name(name)))
 }
 
 impl Entry {
@@ -175,12 +199,17 @@ fn canon_uid(format: &str, uid: &str) -> String {
 }
 
 /// Every `.xpreset` under `presets/<kind>/`, both the device folders and loose files left
-/// at the kind folder itself, ordered by path: those that parse, and those that do not.
+/// at the kind folder itself (a chain kind's are all loose), ordered by path: those that
+/// parse, and those that do not.
 fn stored(dir: &Path) -> (Vec<Entry>, Vec<Skipped>) {
     let mut out = Vec::new();
     let mut skipped = Vec::new();
-    for kind in [PluginKind::Effect, PluginKind::Instrument] {
-        let kd = dir.join(kind_name(kind));
+    let folders = [PluginKind::Effect, PluginKind::Instrument]
+        .map(kind_name)
+        .into_iter()
+        .chain(ChainKind::ALL.iter().map(|k| k.name()));
+    for folder in folders {
+        let kd = dir.join(folder);
         let mut dirs = Vec::new();
         let mut loose = Vec::new();
         for e in std::fs::read_dir(&kd).into_iter().flatten().flatten() {
@@ -256,6 +285,20 @@ fn entry_at(path: &Path) -> Result<Entry, String> {
     let v: Value =
         serde_json::from_slice(&bytes).map_err(|e| format!("JSON として読めません: {e}"))?;
     let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned());
+    if let Some(kind) = kind_of_value(&v) {
+        let (c, _) = ChainPreset::parse(&v, stem.as_deref()).map_err(|e| e.message)?;
+        return Ok(Entry {
+            path: path.to_path_buf(),
+            value: v,
+            name: c.name,
+            kind: chain_plugin_kind(kind),
+            device_uid: kind.name().to_string(),
+            device_name: String::new(),
+            device_format: CHAIN.to_string(),
+            saved_at: c.saved_at,
+            chain: Some(kind),
+        });
+    }
     let (preset, _) = DevicePreset::parse(&v, stem.as_deref()).map_err(|e| e.message)?;
     Ok(Entry {
         path: path.to_path_buf(),
@@ -266,6 +309,7 @@ fn entry_at(path: &Path) -> Result<Entry, String> {
         device_name: preset.device.name,
         device_format: preset.device.format,
         saved_at: preset.saved_at,
+        chain: None,
     })
 }
 
@@ -694,6 +738,9 @@ fn save(
     a: &Args,
     dry: bool,
 ) -> CmdResult<(Output, Edits)> {
+    if let Some(kind) = ChainKind::of(a.str("kind")?) {
+        return save_chain(dir, song, project, entries, a, dry, kind);
+    }
     let tid: TrackId = a.id("track")?;
     let kind = kind_arg(a, "kind")?;
     let name = preset_name(a, "name")?;
@@ -737,39 +784,9 @@ fn save(
         .iter()
         .filter(|e| e.is(kind, &device, &name))
         .collect();
-    let (own, to) = match same.as_slice() {
-        [] => {
-            let to = path_of(dir, kind, &device, &name);
-            free(&to, None)?;
-            (None, to)
-        }
-        [e] => {
-            if !a.flag("overwrite") {
-                return Err(CmdError::conflict(format!(
-                    "プリセット「{}」はこの機器にもうあります（上書きするには --overwrite を付けてください）",
-                    e.name
-                )));
-            }
-            // At the file its name made, it follows the new spelling; a file the user named
-            // keeps its name.
-            let to = if e.path == path_of(dir, kind, &device, &e.name) {
-                path_of(dir, kind, &device, &name)
-            } else {
-                e.path.clone()
-            };
-            free(&to, Some(&e.path))?;
-            (Some(e.path.as_path()), to)
-        }
-        many => {
-            // A save has no file to pick: one of them goes first, by its path.
-            let files: Vec<String> = many.iter().map(|e| shown(&e.path)).collect();
-            return Err(CmdError::conflict(format!(
-                "「{name}」というプリセットがこの機器に {} 個あります（{}）。保存する前に、preset.remove か preset.rename の --preset にファイルのパスを指定して、1 つにしてください",
-                many.len(),
-                files.join("、")
-            )));
-        }
-    };
+    let (own, to) = target(&same, &name, "この機器", a.flag("overwrite"), |n| {
+        path_of(dir, kind, &device, n)
+    })?;
     if !dry {
         put_file(own, &to, &to_bytes(&preset.to_value())?)?;
     }
@@ -800,6 +817,109 @@ fn save(
     ))
 }
 
+/// Where a save of the preset `name` writes, given the presets `same` of its name already
+/// there: a new file, or (with `overwrite`) the one there, which follows the new spelling at
+/// the file its name made (`path_for`) and keeps a name the user gave it. `whose` is what
+/// the name is unique in (この機器, この種類).
+fn target<'e>(
+    same: &[&'e Entry],
+    name: &str,
+    whose: &str,
+    overwrite: bool,
+    path_for: impl Fn(&str) -> PathBuf,
+) -> CmdResult<(Option<&'e Path>, PathBuf)> {
+    match same {
+        [] => {
+            let to = path_for(name);
+            free(&to, None)?;
+            Ok((None, to))
+        }
+        [e] => {
+            if !overwrite {
+                return Err(CmdError::conflict(format!(
+                    "プリセット「{}」は{whose}にもうあります（上書きするには --overwrite を付けてください）",
+                    e.name
+                )));
+            }
+            let to = if e.path == path_for(&e.name) {
+                path_for(name)
+            } else {
+                e.path.clone()
+            };
+            free(&to, Some(&e.path))?;
+            Ok((Some(e.path.as_path()), to))
+        }
+        many => {
+            // A save has no file to pick: one of them goes first, by its path.
+            let files: Vec<String> = many.iter().map(|e| shown(&e.path)).collect();
+            Err(CmdError::conflict(format!(
+                "「{name}」というプリセットが{whose}に {} 個あります（{}）。保存する前に、preset.remove か preset.rename の --preset にファイルのパスを指定して、1 つにしてください",
+                many.len(),
+                files.join("、")
+            )))
+        }
+    }
+}
+
+/// Saves the chain of kind `kind` the track holds (or the part `--of`) as a chain preset.
+/// The macros that reach outside what is kept are left out, and said so.
+fn save_chain(
+    dir: &Path,
+    song: Option<&Path>,
+    project: &Project,
+    entries: &[Entry],
+    a: &Args,
+    dry: bool,
+    kind: ChainKind,
+) -> CmdResult<(Output, Edits)> {
+    let tid: TrackId = a.id("track")?;
+    let name = preset_name(a, "name")?;
+    let of: Option<AnyId> = a.opt_id("of")?;
+    let (mut chain, dropped) = Chain::capture(project.track(tid)?, kind, of)?;
+    for x in &mut chain.devices {
+        for s in &mut x.samples {
+            if let Some(p) = sample_path(s, song) {
+                *s = p.to_string_lossy().into_owned();
+            }
+        }
+    }
+    let preset = ChainPreset {
+        name: name.clone(),
+        kind,
+        saved_at: Some(now_ms()),
+        chain,
+    };
+    let same: Vec<&Entry> = entries
+        .iter()
+        .filter(|e| e.chain == Some(kind) && fold(&e.name) == fold(&name))
+        .collect();
+    let (own, to) = target(&same, &name, "この種類", a.flag("overwrite"), |n| {
+        chain_path(dir, kind, n)
+    })?;
+    if !dry {
+        put_file(own, &to, &to_bytes(&preset.to_value())?)?;
+    }
+    let mut message = format!(
+        "プリセット「{name}」を保存{}",
+        if dry { "します" } else { "しました" }
+    );
+    if dropped > 0 {
+        let _ = write!(message, "。{dropped} 件の割り当てを除きました");
+    }
+    Ok((
+        Output::with(
+            message,
+            json!({
+                "name": name,
+                "file": to.to_string_lossy(),
+                "kind": kind.name(),
+                "dropped": dropped,
+            }),
+        ),
+        Vec::new(),
+    ))
+}
+
 fn list(
     dir: &Path,
     catalog: &Catalog,
@@ -807,6 +927,9 @@ fn list(
     skipped: &[Skipped],
     a: &Args,
 ) -> CmdResult<(Output, Edits)> {
+    if let Some(k) = a.opt_str("kind").and_then(ChainKind::of) {
+        return list_chains(dir, entries, skipped, a, k);
+    }
     let kind =
         match a.opt_str("kind") {
             Some(k) => Some(kind_of(k).ok_or_else(|| {
@@ -829,7 +952,7 @@ fn list(
             .or_insert_with(|| (def.name.to_string(), dk, def.uid.to_string()));
     }
     for e in entries {
-        if kind.is_some_and(|k| k != e.kind) {
+        if e.chain.is_some() || kind.is_some_and(|k| k != e.kind) {
             continue;
         }
         devices
@@ -866,7 +989,7 @@ fn list(
         }
         let mut es: Vec<&Entry> = entries
             .iter()
-            .filter(|e| e.device() == *uid && e.kind == *dk)
+            .filter(|e| e.chain.is_none() && e.device() == *uid && e.kind == *dk)
             .filter(|e| q(&e.name))
             .collect();
         es.sort_by(|a, b| {
@@ -911,6 +1034,57 @@ fn list(
                 }
             })
         })
+        .map(|s| json!({ "file": s.path.to_string_lossy(), "reason": s.reason }))
+        .collect();
+    let mut message = format!("プリセットは {} 個です", presets.len());
+    if !bad.is_empty() {
+        let _ = write!(message, "。読めないファイルが {} 個あります", bad.len());
+    }
+    let mut data = json!({ "presets": presets, "dir": dir.to_string_lossy() });
+    if !bad.is_empty() {
+        data["skipped"] = json!(bad);
+    }
+    Ok((Output::with(message, data), Vec::new()))
+}
+
+/// The chain presets of kind `kind`, by name.
+fn list_chains(
+    dir: &Path,
+    entries: &[Entry],
+    skipped: &[Skipped],
+    a: &Args,
+    kind: ChainKind,
+) -> CmdResult<(Output, Edits)> {
+    let query = a.opt_str("query").unwrap_or_default().to_lowercase();
+    let mut es: Vec<&Entry> = entries
+        .iter()
+        .filter(|e| e.chain == Some(kind))
+        .filter(|e| query.is_empty() || e.name.to_lowercase().contains(&query))
+        .collect();
+    es.sort_by(|a, b| {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    let presets: Vec<Value> = es
+        .iter()
+        .map(|e| {
+            let mut r = Map::new();
+            r.insert("name".into(), json!(e.name));
+            r.insert("kind".into(), json!(kind.name()));
+            r.insert("file".into(), json!(e.path.to_string_lossy()));
+            if let Some(at) = e.saved_at {
+                r.insert("saved_at".into(), json!(at));
+            }
+            Value::Object(r)
+        })
+        .collect();
+    let kd = dir.join(kind.name());
+    let bad: Vec<Value> = skipped
+        .iter()
+        .filter(|s| s.path.starts_with(&kd))
         .map(|s| json!({ "file": s.path.to_string_lossy(), "reason": s.reason }))
         .collect();
     let mut message = format!("プリセットは {} 個です", presets.len());
@@ -971,7 +1145,8 @@ fn load(
         let mut found = find_in(entries, spec, device.as_deref());
         // A name every device has (a factory preset's, say) is still clear when the track
         // holds one of those devices: that device's file is meant.
-        if device.is_none() && found.len() > 1 {
+        // (A chain of the name is not narrowed away: it is on no track.)
+        if device.is_none() && found.len() > 1 && found.iter().all(|e| e.chain.is_none()) {
             let on_track: Vec<String> = project
                 .track(tid)?
                 .inserts
@@ -1009,6 +1184,9 @@ fn load(
         }
         let v: Value = serde_json::from_slice(&std::fs::read(&path).map_err(io)?)
             .map_err(|e| CmdError::invalid(format!("プリセットを読み込めません: {e}")))?;
+        if kind_of_value(&v).is_some() {
+            return load_chain(song, catalog, tid, v, &fallback, a, dry);
+        }
         let (preset, rows) = DevicePreset::parse(&v, Some(&fallback))?;
         (v, preset, rows)
     };
@@ -1042,9 +1220,10 @@ fn load(
     if !lost.is_empty() {
         args["lost"] = json!(json!(lost).to_string());
     }
+    let placed = place_args(a, &mut args);
     if let Some(id) = of {
         args["of"] = json!(id.to_string());
-    } else if device.is_some() {
+    } else if device.is_some() && !placed {
         // A device named by --device and on the track takes it, as with --of.
         if let Some(x) = project
             .track(tid)?
@@ -1076,6 +1255,104 @@ fn load(
         vec![("preset.put".into(), args.as_object().unwrap().clone())]
     };
     Ok((out, edits))
+}
+
+/// Hands `--at` and `--replace` on to the edit; whether either was given.
+fn place_args(a: &Args, args: &mut Value) -> bool {
+    let mut placed = false;
+    if let Some(at) = a.opt_str("at").map(str::trim).filter(|s| !s.is_empty()) {
+        args["at"] = json!(at);
+        placed = true;
+    }
+    if a.flag("replace") {
+        args["replace"] = json!(true);
+        placed = true;
+    }
+    placed
+}
+
+/// Loads the chain preset `v` (read from a file named `fallback`) onto the track `tid`: the
+/// samples no longer on the disk are left out and the devices this PC lacks stay as empty
+/// slots, said so; the rest is the edit `preset.put`.
+fn load_chain(
+    song: Option<&Path>,
+    catalog: &Catalog,
+    tid: TrackId,
+    mut v: Value,
+    fallback: &str,
+    a: &Args,
+    dry: bool,
+) -> CmdResult<(Output, Edits)> {
+    let (preset, mut rows) = ChainPreset::parse(&v, Some(fallback))?;
+    let mut lost: Vec<String> = Vec::new();
+    for d in v
+        .get_mut("devices")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(list) = d.get_mut("samples").and_then(Value::as_array_mut) {
+            list.retain(|s| match s.as_str() {
+                Some(s) if !sample_path(s, song).is_some_and(|p| p.is_file()) => {
+                    lost.push(s.to_string());
+                    false
+                }
+                _ => true,
+            });
+        }
+    }
+    let missing: Vec<&Plugin> = preset
+        .chain
+        .devices
+        .iter()
+        .filter(|x| {
+            !x.format.eq_ignore_ascii_case("builtin")
+                && !catalog.entries.is_empty()
+                && catalog.find(&x.uid).is_none()
+        })
+        .collect();
+    let name = preset.name.clone();
+    let mut uids: Vec<&str> = missing.iter().map(|x| x.uid.as_str()).collect();
+    uids.sort_unstable();
+    uids.dedup();
+    let mut args = json!({
+        "track": tid.to_string(),
+        "preset": v.to_string(),
+        "name": name,
+        "missing": uids.join(","),
+    });
+    if !lost.is_empty() {
+        args["lost"] = json!(json!(lost).to_string());
+    }
+    place_args(a, &mut args);
+    if dry {
+        use xirius_core::track_preset::{Adjust, AdjustKind};
+        for s in &lost {
+            rows.push(Adjust::new(
+                AdjustKind::Rejected,
+                s.as_str(),
+                "サンプルが見つからないため外しました",
+            ));
+        }
+        for x in &missing {
+            rows.push(Adjust::new(
+                AdjustKind::Rejected,
+                x.name.as_str(),
+                "この PC に無いため、空のスロットにしました",
+            ));
+        }
+        return Ok((
+            Output::with(
+                format!("プリセット「{name}」を読み込みます"),
+                json!({ "adjusted": rows, "kind": preset.kind.name() }),
+            ),
+            Vec::new(),
+        ));
+    }
+    Ok((
+        Output::msg(""),
+        vec![("preset.put".into(), args.as_object().unwrap().clone())],
+    ))
 }
 
 /// The answer of a removal: of the preset `name`, or of a file by its path.

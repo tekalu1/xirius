@@ -6,6 +6,7 @@ pub mod auto;
 mod auto_point_push;
 mod auto_write_bounds;
 pub mod autosave;
+pub mod chain_preset;
 pub mod clipboard;
 pub mod clipfx;
 pub mod command;

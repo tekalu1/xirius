@@ -12,14 +12,18 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
+use crate::chain_preset::Chain;
+use crate::controls::MacroControls;
 use crate::error::{CmdError, CmdResult};
 use crate::id::{PluginId, TrackId};
 use crate::model::{MAX_DB, MIN_DB, Plugin, PluginIsolation, PluginKind, Project, TrackKind};
+use crate::rack::Rack;
 
-/// The version this writes. Newer files are read as far as they are understood.
-pub const VERSION: u32 = 1;
+/// The version this writes. Newer files are read as far as they are understood. Version 2
+/// (PLG-065) keeps the rack — splits, branches, layers — and the macros too.
+pub const VERSION: u32 = 2;
 
-const KEYS: [&str; 9] = [
+const KEYS: [&str; 11] = [
     "version",
     "saved_at",
     "name",
@@ -29,8 +33,11 @@ const KEYS: [&str; 9] = [
     "pan",
     "inserts",
     "sends",
+    "rack",
+    "controls",
 ];
-const PLUGIN_KEYS: [&str; 11] = [
+const PLUGIN_KEYS: [&str; 12] = [
+    "ref",
     "name",
     "kind",
     "format",
@@ -101,6 +108,11 @@ pub struct TrackPreset {
     /// placeholders: a track gets new ones.
     pub inserts: Vec<Plugin>,
     pub sends: Vec<PresetSend>,
+    /// How `inserts` are wired (version 2); `None` from a version 1 file, whose inserts are a
+    /// plain chain after the instrument.
+    pub rack: Option<Rack>,
+    /// The macros (version 2), names and values with their maps; empty from version 1.
+    pub controls: MacroControls,
 }
 
 impl TrackPreset {
@@ -116,6 +128,7 @@ impl TrackPreset {
         if name.is_empty() {
             return Err(CmdError::invalid("プリセットの名前が空です"));
         }
+        let (chain, _) = Chain::of_track(t);
         Ok(TrackPreset {
             name: name.to_string(),
             saved_at: None,
@@ -123,7 +136,9 @@ impl TrackPreset {
             color: t.color.clone(),
             volume_db: t.volume_db,
             pan: t.pan,
-            inserts: t.inserts.clone(),
+            inserts: chain.devices,
+            rack: Some(chain.rack),
+            controls: chain.controls,
             sends: t
                 .sends
                 .iter()
@@ -156,10 +171,27 @@ impl TrackPreset {
         }
         m.insert("volume_db".into(), json!(self.volume_db));
         m.insert("pan".into(), json!(self.pan));
-        m.insert(
-            "inserts".into(),
-            Value::Array(self.inserts.iter().map(plugin_value).collect()),
-        );
+        match &self.rack {
+            Some(rack) => {
+                let chain = Chain {
+                    devices: self.inserts.clone(),
+                    rack: rack.clone(),
+                    controls: self.controls.clone(),
+                };
+                let (devices, rack, controls) = chain.to_values(true);
+                m.insert("inserts".into(), Value::Array(devices));
+                m.insert("rack".into(), rack);
+                if let Some(c) = controls {
+                    m.insert("controls".into(), c);
+                }
+            }
+            None => {
+                m.insert(
+                    "inserts".into(),
+                    Value::Array(self.inserts.iter().map(plugin_value).collect()),
+                );
+            }
+        }
         m.insert(
             "sends".into(),
             Value::Array(
@@ -250,22 +282,29 @@ impl TrackPreset {
         };
         let volume_db = number(o, "volume_db", "ボリューム", 0.0, MIN_DB, MAX_DB, &mut rows);
         let pan = number(o, "pan", "パン", 0.0, -1.0, 1.0, &mut rows);
-        let mut inserts = Vec::new();
-        match o.get("inserts") {
-            Some(Value::Array(xs)) => {
-                for (i, x) in xs.iter().enumerate() {
-                    if let Some(x) = parse_plugin(i + 1, x, &mut rows) {
-                        inserts.push(x);
+        let v2 = o.get("version").and_then(Value::as_u64).unwrap_or(1) >= 2;
+        let (inserts, rack, controls) = if v2 {
+            let chain = Chain::parse(o, "inserts", kind, true, &mut rows);
+            (chain.devices, Some(chain.rack), chain.controls)
+        } else {
+            let mut inserts = Vec::new();
+            match o.get("inserts") {
+                Some(Value::Array(xs)) => {
+                    for (i, x) in xs.iter().enumerate() {
+                        if let Some(x) = parse_plugin(i + 1, x, &mut rows) {
+                            inserts.push(x);
+                        }
                     }
                 }
+                _ => rows.push(Adjust::new(
+                    AdjustKind::Filled,
+                    "エフェクト",
+                    "無いため、空にしました",
+                )),
             }
-            _ => rows.push(Adjust::new(
-                AdjustKind::Filled,
-                "エフェクト",
-                "無いため、空にしました",
-            )),
-        }
-        inserts = one_instrument_first(inserts, &mut rows);
+            let inserts = one_instrument_first(inserts, &mut rows);
+            (inserts, None, MacroControls::default())
+        };
         let mut sends = Vec::new();
         match o.get("sends") {
             Some(Value::Array(xs)) => {
@@ -291,13 +330,15 @@ impl TrackPreset {
                 pan,
                 inserts,
                 sends,
+                rack,
+                controls,
             },
             rows,
         ))
     }
 }
 
-fn plugin_value(x: &Plugin) -> Value {
+pub(crate) fn plugin_value(x: &Plugin) -> Value {
     let mut v = serde_json::to_value(x).unwrap_or(Value::Null);
     if let Some(o) = v.as_object_mut() {
         o.remove("id");
@@ -345,7 +386,7 @@ fn number(
     }
 }
 
-fn parse_plugin(n: usize, v: &Value, rows: &mut Vec<Adjust>) -> Option<Plugin> {
+pub(crate) fn parse_plugin(n: usize, v: &Value, rows: &mut Vec<Adjust>) -> Option<Plugin> {
     let label = format!("エフェクト {n}");
     let Some(o) = v.as_object() else {
         rows.push(Adjust::new(

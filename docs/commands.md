@@ -5232,7 +5232,7 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 | 引数 | 必須 | 型・範囲・既定値 | 内容 |
 |---|---|---|---|
 | `device` | — | `{"type":"string"}` | 機器の uid か名前（その機器のプリセットだけに絞ります） |
-| `kind` | — | `{"enum":["fx","instrument"],"type":"string"}` | プリセットの種類 |
+| `kind` | — | `{"enum":["fx","instrument","fx-chain","instrument-fx","multi-instrument"],"type":"string"}` | プリセットの種類（チェーンは、その種類のときだけ一覧します） |
 | `query` | — | `{"type":"string"}` | 名前で絞る文字列 |
 | `values` | — | `{"type":"boolean"}` | 各プリセットのつまみの値（params）も返す |
 
@@ -5248,10 +5248,12 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 
 | 引数 | 必須 | 型・範囲・既定値 | 内容 |
 |---|---|---|---|
+| `at` | — | `{"type":"string"}` | エフェクトとチェーンを入れる場所（track・after:<機器>・branch:<分岐か層>[:<位置>]） |
 | `device` | — | `{"type":"string"}` | 機器の uid か名前（その機器のプリセットだけに絞ります） |
 | `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
 | `of` | — | `{"type":"string"}` | プリセットを読み込むプラグイン（plugin の ID） |
 | `preset` | 必須 | `{"type":"string"}` | プリセットの名前か、.xpreset / plugin.preset のファイル |
+| `replace` | — | `{"type":"boolean"}` | その場所の機器の列を置き換えます |
 | `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
 | `track` | 必須 | `{"type":"string"}` | トラック（track の ID） |
 | `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
@@ -5268,12 +5270,14 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 
 | 引数 | 必須 | 型・範囲・既定値 | 内容 |
 |---|---|---|---|
+| `at` | — | `{"type":"string"}` | エフェクトとチェーンを入れる場所（track・after:<機器>・branch:<分岐か層>[:<位置>]） |
 | `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
 | `lost` | — | `{"type":"string"}` | 見つからないため外したサンプルの名前（JSON の配列。調整の行に出します） |
 | `missing` | — | `{"type":"string"}` | この PC に無いプラグインの uid（コンマ区切り。空のスロットとして残します） |
 | `name` | — | `{"type":"string"}` | プリセットの名前（プラグインに記録します） |
 | `of` | — | `{"type":"string"}` | プリセットを読み込むプラグイン（plugin の ID） |
 | `preset` | 必須 | `{"type":"string"}` | プリセットの内容（JSON） |
+| `replace` | — | `{"type":"boolean"}` | その場所の機器の列を置き換えます |
 | `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
 | `track` | 必須 | `{"type":"string"}` | トラック（track の ID） |
 | `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
@@ -5319,7 +5323,7 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 
 プリセットを保存
 
-機器の今の設定を .xpreset のプリセットに保存します（同じ名前があるときは --overwrite で上書きします）
+機器の今の設定か機器の列（チェーン）を .xpreset のプリセットに保存します（同じ名前があるときは --overwrite で上書きします）
 
 事前条件: AI の権限が保存以上、またはユーザーの承認。指定した ID が存在し、引数が次の型・範囲に一致すること。
 
@@ -5328,9 +5332,9 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 | 引数 | 必須 | 型・範囲・既定値 | 内容 |
 |---|---|---|---|
 | `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
-| `kind` | 必須 | `{"enum":["fx","instrument"],"type":"string"}` | プリセットの種類 |
+| `kind` | 必須 | `{"enum":["fx","instrument","fx-chain","instrument-fx","multi-instrument"],"type":"string"}` | プリセットの種類 |
 | `name` | 必須 | `{"type":"string"}` | プリセットの名前 |
-| `of` | — | `{"type":"string"}` | プリセットにするプラグイン（plugin の ID） |
+| `of` | — | `{"type":"string"}` | プリセットにするプラグイン（チェーンなら、スプリッター・分岐・層も）（plugin\|rack node の ID） |
 | `overwrite` | — | `{"type":"boolean"}` | この機器に同じ名前（大文字と小文字の違いは同じ）のプリセットがあれば上書きします |
 | `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
 | `track` | 必須 | `{"type":"string"}` | トラック（track の ID） |

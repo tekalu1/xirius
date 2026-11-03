@@ -453,7 +453,7 @@ fn node_move(p: &mut Project, a: &Args) -> CmdResult<Output> {
 
 /// A chain of the rack, by what holds it: the track's fx, a branch, or a layer's fx.
 #[derive(Clone, Copy)]
-enum Chain {
+pub(super) enum Chain {
     Top,
     Branch(NodeId),
     Layer(NodeId),
@@ -722,7 +722,7 @@ fn not_branch(id: NodeId) -> CmdError {
 }
 
 /// The track's rack, made from its serial inserts when it has none yet.
-fn rack_of(t: &mut Track) -> &mut Rack {
+pub(super) fn rack_of(t: &mut Track) -> &mut Rack {
     if t.rack.is_none() {
         t.rack = Some(Rack::serial(t));
     }
@@ -747,7 +747,7 @@ fn roots(r: &mut Rack) -> Vec<&mut Vec<RackNode>> {
     out
 }
 
-fn chain_mut(r: &mut Rack, c: Chain) -> Option<&mut Vec<RackNode>> {
+pub(super) fn chain_mut(r: &mut Rack, c: Chain) -> Option<&mut Vec<RackNode>> {
     match c {
         Chain::Top => Some(&mut r.fx),
         Chain::Branch(b) => find_branch_parent(r, b).map(|(s, i)| &mut s.branches[i].fx),
@@ -765,14 +765,14 @@ fn layer_fx(r: &mut Rack, id: NodeId) -> Option<&mut Vec<RackNode>> {
     }
 }
 
-fn insert_at(r: &mut Rack, c: Chain, index: usize, node: RackNode) {
+pub(super) fn insert_at(r: &mut Rack, c: Chain, index: usize, node: RackNode) {
     let chain = chain_mut(r, c).expect("chain checked by the caller");
     let at = index.min(chain.len());
     chain.insert(at, node);
 }
 
 /// Where `--at` points: the chain, the index in it and the chain's split depth.
-fn place(r: &mut Rack, at: &str) -> CmdResult<(Chain, usize, usize)> {
+pub(super) fn place(r: &mut Rack, at: &str) -> CmdResult<(Chain, usize, usize)> {
     if at == "track" {
         return Ok((Chain::Top, r.fx.len(), 0));
     }
@@ -940,7 +940,7 @@ fn take_node(r: &mut Rack, hit: &dyn Fn(&RackNode) -> bool) -> Option<RackNode> 
 }
 
 /// How many splits deep `s` reaches, itself counted.
-fn height(s: &Split) -> usize {
+pub(super) fn height(s: &Split) -> usize {
     1 + s
         .branches
         .iter()
@@ -967,7 +967,7 @@ fn node_ids_of(s: &Split) -> Vec<NodeId> {
     out
 }
 
-fn plugins_in(nodes: &[RackNode], out: &mut Vec<PluginId>) {
+pub(super) fn plugins_in(nodes: &[RackNode], out: &mut Vec<PluginId>) {
     for n in nodes {
         match n {
             RackNode::Plugin(id) => out.push(*id),

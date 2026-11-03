@@ -11,9 +11,12 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::auto::AutoTarget;
+use crate::chain_preset::Chain;
 use crate::clipboard::ChannelCopy;
+use crate::controls::MacroControls;
 use crate::id::{IdKind, PluginId, SendId, TrackId};
 use crate::model::{AuxSend, Plugin, PluginKind, Track, TrackKind};
+use crate::rack::Rack;
 use crate::track_preset::{Adjust, AdjustKind, TrackPreset};
 
 pub(super) fn defs() -> Vec<CommandDef> {
@@ -235,7 +238,12 @@ fn apply_to(
         volume_db: preset.volume_db,
         pan: preset.pan,
     };
-    let keys = super::channel_settings::replace_inserts(p, id, &copy)?;
+    let keys = if preset.rack.is_some() {
+        put_rack(p, id, preset, missing, rows)?;
+        0
+    } else {
+        super::channel_settings::replace_inserts(p, id, &copy)?
+    };
     if keys > 0 {
         rows.push(Adjust::new(
             AdjustKind::Rejected,
@@ -251,10 +259,12 @@ fn apply_to(
             format!("{dropped} 件は、ルーティングがループするため外しました"),
         ));
     }
-    match (
-        kind,
-        preset.inserts.iter().find(|x| is_instrument(x)).cloned(),
-    ) {
+    let instrument = preset
+        .inserts
+        .iter()
+        .find(|x| is_instrument(x))
+        .filter(|_| preset.rack.is_none());
+    match (kind, instrument.cloned()) {
         (TrackKind::Instrument, Some(mut inst)) => {
             inst.id = PluginId(p.alloc());
             let t = p.track_mut(id)?;
@@ -293,6 +303,85 @@ fn apply_to(
     }
     t.preset = Some(preset.name.clone());
     Ok(())
+}
+
+/// A version 2 preset's devices, rack and macros in place of the track's (PLG-065). A track
+/// that is not an instrument track takes no instrument; an instrument track keeps its own
+/// when the preset has none. The page the macros show stays.
+fn put_rack(
+    p: &mut Project,
+    id: TrackId,
+    preset: &TrackPreset,
+    missing: &HashSet<String>,
+    rows: &mut Vec<Adjust>,
+) -> CmdResult<()> {
+    let kind = p.track(id)?.kind;
+    let mut chain = Chain {
+        devices: preset.inserts.clone(),
+        rack: preset.rack.clone().unwrap_or_default(),
+        controls: preset.controls.clone(),
+    };
+    let gone: HashSet<PluginId> = chain
+        .devices
+        .iter()
+        .filter(|x| missing.contains(&x.uid))
+        .map(|x| x.id)
+        .collect();
+    chain.controls.retarget(|t| match t {
+        AutoTarget::Param(pid, _) if gone.contains(pid) => None,
+        _ => Some(t.clone()),
+    });
+    if kind != TrackKind::Instrument && chain.rack.source.is_some() {
+        chain.rack.source = None;
+        for x in chain
+            .devices
+            .iter()
+            .filter(|x| !chain.rack.uses_plugin(x.id))
+        {
+            rows.push(Adjust::new(
+                AdjustKind::Dropped,
+                x.name.as_str(),
+                "インストゥルメントトラックではないため、外しました",
+            ));
+        }
+        let rack = &chain.rack;
+        chain.devices.retain(|x| rack.uses_plugin(x.id));
+    }
+    chain.renumber(&mut || p.alloc());
+    let t = p.track_mut(id)?;
+    // An instrument track whose preset has no instrument keeps its own (a multi too).
+    let keep_source = kind == TrackKind::Instrument && chain.rack.source.is_none();
+    let (kept, source) = if keep_source {
+        let source = t.rack.clone().unwrap_or_else(|| Rack::serial(t)).source;
+        let ids = Rack {
+            source: source.clone(),
+            fx: Vec::new(),
+        }
+        .flatten_order();
+        (ids, source)
+    } else {
+        (Vec::new(), None)
+    };
+    let old: Vec<PluginId> = t
+        .inserts
+        .iter()
+        .map(|x| x.id)
+        .filter(|x| !kept.contains(x))
+        .collect();
+    let keys = super::chain_preset::take_off(t, &old);
+    if keep_source {
+        chain.rack.source = source;
+    }
+    let mut inserts: Vec<Plugin> = std::mem::take(&mut t.inserts);
+    inserts.extend(chain.devices);
+    t.inserts = inserts;
+    t.rack = Some(chain.rack);
+    let page = t.controls.page.take();
+    t.controls = MacroControls {
+        page,
+        ..chain.controls
+    };
+    super::chain_preset::settle(p, id, &keys, rows)
 }
 
 /// The bus a send of a preset goes to on this song: the one with its id and name, else the only
