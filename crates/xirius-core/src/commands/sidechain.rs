@@ -41,7 +41,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         edit(
             "plugin.sidechain.set",
-            "サイドチェーンの送り元の量やプリ／ポストを変更します",
+            "サイドチェーンの送り元の量やプリ／ポスト、送り方（センドか出力か）を変更します",
             vec![
                 plugin(),
                 from(),
@@ -51,6 +51,11 @@ pub(super) fn defs() -> Vec<CommandDef> {
                     &["pre", "post"],
                     "プリフェーダーかポストフェーダーか",
                 ),
+                ArgDef::choice(
+                    "mode",
+                    &["send", "output"],
+                    "センドで送るか、出力そのものを送るか（センドに戻すとポストフェーダー・0 dB）",
+                ),
             ],
             |p, _, a| {
                 set_source(
@@ -59,6 +64,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
                     a.id("from")?,
                     a.opt_f64("level"),
                     a.opt_str("position"),
+                    a.opt_str("mode"),
                 )
             },
         ),
@@ -343,10 +349,16 @@ fn set_source(
     from: TrackId,
     level: Option<f64>,
     position: Option<&str>,
+    mode: Option<&str>,
 ) -> CmdResult<Output> {
-    if level.is_none() && position.is_none() {
+    if level.is_none() && position.is_none() && mode.is_none() {
         return Err(CmdError::invalid(
-            "--level か --position のどちらかが必要です",
+            "--level・--position・--mode のどれかが必要です",
+        ));
+    }
+    if mode == Some("output") && (level.is_some() || position.is_some()) {
+        return Err(CmdError::invalid(
+            "--mode output では --level と --position は指定できません（量は掛かりません）",
         ));
     }
     let owner = owner(p, plugin)?;
@@ -363,6 +375,24 @@ fn set_source(
         .flat_map(|sc| &mut sc.sources)
         .find(|s| s.track == from)
         .ok_or_else(|| CmdError::not_found(format!("{name} は {plugin} の送り元ではありません")))?;
+    // The way the sound is taken changes in the same step as the rest (UI-336): an output
+    // takes no level, a send comes back after the fader at 0 dB.
+    match (mode, &s.mode) {
+        (Some("output"), _) => s.mode = KeyMode::Output,
+        (Some("send"), KeyMode::Output) => {
+            s.mode = KeyMode::Send {
+                pre: false,
+                level_db: 0.0,
+                muted_level: None,
+            }
+        }
+        _ => {}
+    }
+    if level.is_none() && position.is_none() {
+        return Ok(Output::msg(format!(
+            "{plugin} の送り元 {name} を変更しました"
+        )));
+    }
     let KeyMode::Send {
         pre,
         level_db,

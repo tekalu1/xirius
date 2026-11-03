@@ -468,3 +468,48 @@ fn a_loop_through_an_output_key_is_refused() {
     assert!(e.contains("ループ"), "{e}");
     assert!(sidechain(s.project(), comp).is_none());
 }
+
+#[test]
+fn set_switches_a_source_between_a_send_and_the_output_in_one_step() {
+    let (mut s, kick, _, comp) = song();
+    let id = comp.to_string();
+    let from = kick.to_string();
+    run(
+        &mut s,
+        "plugin.sidechain.add",
+        json!({"id": id, "from": from, "pre": true, "level": -6.0}),
+    );
+    run(
+        &mut s,
+        "plugin.sidechain.set",
+        json!({"id": id, "from": from, "mode": "output"}),
+    );
+    assert_eq!(
+        sidechain(s.project(), comp).unwrap().sources[0].mode,
+        KeyMode::Output
+    );
+    assert!(
+        run_err(
+            &mut s,
+            "plugin.sidechain.set",
+            json!({"id": id, "from": from, "mode": "output", "level": -3.0}),
+        )
+        .contains("--mode output")
+    );
+    // back to a send: after the fader at 0 dB, with a level given in the same step
+    run(
+        &mut s,
+        "plugin.sidechain.set",
+        json!({"id": id, "from": from, "mode": "send", "level": -9.0}),
+    );
+    let KeyMode::Send { pre, level_db, .. } = sidechain(s.project(), comp).unwrap().sources[0].mode
+    else {
+        panic!("a send");
+    };
+    assert!(!pre && level_db == -9.0);
+    run(&mut s, "history.undo", json!({}));
+    assert_eq!(
+        sidechain(s.project(), comp).unwrap().sources[0].mode,
+        KeyMode::Output
+    );
+}
