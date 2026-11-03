@@ -19,6 +19,9 @@ pub use xirius_params::PADS as HIT_PADS;
 const NO_VOICE: u32 = u32::MAX;
 /// The bit of `voice[0]` that says the source is a file slot, not a synthesized sound.
 const FILE_BIT: u32 = 0x8000;
+/// [`Probe`]'s seams: a ring that turned on again, or one that dropped samples.
+const FRESH: u8 = 1;
+const DROPPED: u8 = 2;
 
 pub struct Probe {
     watching: AtomicBool,
@@ -47,6 +50,10 @@ pub struct Probe {
     tap: AtomicU8,
     /// The window's ends of the EQ's rings: the mono input and output.
     rings: Mutex<Option<(Consumer<f32>, Consumer<f32>)>>,
+    /// A seam in each ring's samples (input, output): [`FRESH`] when its tap or the watch
+    /// turned on again, [`DROPPED`] when it was full and dropped some. The next take starts
+    /// over after it.
+    seam: [AtomicU8; 2],
 }
 
 /// What the EQ hands its analyser: its input, its output, both or neither.
@@ -104,11 +111,12 @@ impl Probe {
             sounding: AtomicU32::new(0),
             tap: AtomicU8::new(Tap::default() as u8),
             rings: Mutex::new(None),
+            seam: [AtomicU8::new(0), AtomicU8::new(0)],
         }
     }
 
-    /// Starts or stops the writes. Starting clears the reduction, the peaks and the voice, so
-    /// nothing from an earlier watch shows.
+    /// Starts or stops the writes. Starting clears the reduction, the peaks, the voice and the
+    /// rings, so nothing from an earlier watch shows.
     pub fn watch(&self, on: bool) {
         if on && !self.watching() {
             self.gr.store(0, Ordering::Relaxed);
@@ -116,6 +124,7 @@ impl Probe {
                 p.store(0, Ordering::Relaxed);
             }
             self.voice[0].store(NO_VOICE, Ordering::Relaxed);
+            self.fresh([true, true]);
         }
         self.watching.store(on, Ordering::Release);
     }
@@ -177,26 +186,68 @@ impl Probe {
         Tap::from_bits(self.tap.load(Ordering::Relaxed))
     }
 
+    /// Sets the tap; a ring it turns on starts again (what it held is from before).
     pub fn set_tap(&self, tap: Tap) {
-        self.tap.store(tap as u8, Ordering::Relaxed);
+        let was = Tap::from_bits(self.tap.swap(tap as u8, Ordering::Relaxed));
+        self.fresh([!was.input() && tap.input(), !was.output() && tap.output()]);
+    }
+
+    /// Empties the rings `which` (the audio thread writes none of them now: they are off or
+    /// not watched) and has the next take clear what the window gathered before.
+    fn fresh(&self, which: [bool; 2]) {
+        if !which.contains(&true) {
+            return;
+        }
+        let mut rings = self.rings.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((i, o)) = rings.as_mut() {
+            for (ring, on) in [i, o].into_iter().zip(which) {
+                if !on {
+                    continue;
+                }
+                if let Ok(chunk) = ring.read_chunk(ring.slots()) {
+                    chunk.commit_all();
+                }
+            }
+        }
+        for (seam, on) in self.seam.iter().zip(which) {
+            if on {
+                seam.fetch_max(FRESH, Ordering::AcqRel);
+            }
+        }
     }
 
     /// Appends the samples the EQ handed over since the last call: the mono (L+R)/2 of its
-    /// input and of its output, as [`Probe::tap`] picks. A ring holds 2048; what comes while
-    /// it is full is dropped, so the window takes them often. False for a built-in with no
-    /// rings (all but the EQ). Locks: the window's side only.
+    /// input and of its output, as [`Probe::tap`] picks. A ring holds 2048. What comes while
+    /// it is full is dropped; the take after that clears its `Vec` and what the ring held
+    /// (all from before the gap), and the one after a new watch or tap clears the `Vec`: what
+    /// the window gathers never spans a seam. False for a built-in with no rings (all but the
+    /// EQ). Locks: the window's side only.
     pub fn take_samples(&self, input: &mut Vec<f32>, output: &mut Vec<f32>) -> bool {
         let mut rings = self.rings.lock().unwrap_or_else(|e| e.into_inner());
         let Some((i, o)) = rings.as_mut() else {
             return false;
         };
-        for (ring, to) in [(i, input), (o, output)] {
+        for ((ring, to), seam) in [(i, input), (o, output)].into_iter().zip(&self.seam) {
+            // The seam first: one the audio thread marks after this is read next time.
+            let cut = seam.swap(0, Ordering::AcqRel);
+            if cut != 0 {
+                to.clear();
+            }
             let n = ring.slots();
             if let Ok(chunk) = ring.read_chunk(n) {
-                to.extend(chunk);
+                if cut == DROPPED {
+                    chunk.commit_all();
+                } else {
+                    to.extend(chunk);
+                }
             }
         }
         true
+    }
+
+    /// The EQ's ring `ring` (0 the input, 1 the output) was full and dropped samples.
+    pub(crate) fn mark_seam(&self, ring: usize) {
+        self.seam[ring].fetch_max(DROPPED, Ordering::AcqRel);
     }
 
     /// Keeps the window's ends of the rings. Called where the processor is made, off the

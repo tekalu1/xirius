@@ -13,8 +13,9 @@ pub const HIGHEST: f64 = 20_000.0;
 
 /// The level in dBFS (a full-scale sine reads 0) at `points` frequencies spaced evenly in
 /// pitch from [`LOWEST`] to [`HIGHEST`], of the newest [`FFT_LEN`] of `samples` (fewer are
-/// padded with silence before them). Each point is the mean power within a sixth of an
-/// octave around it, or between the two bins nearest it where the bins are wider than that.
+/// padded with silence before them). Each point is the strongest bin within a sixth of an
+/// octave around it, or between the two bins nearest it where the bins are wider than that,
+/// so a sine reads its level at any pitch (less the window's scallop, at most 1.5 dB).
 pub fn spectrum(samples: &[f32], rate: f64, points: usize) -> Vec<f32> {
     if points == 0 {
         return Vec::new();
@@ -55,7 +56,7 @@ pub fn spectrum(samples: &[f32], rate: f64, points: usize) -> Vec<f32> {
             let lo = (f / half / bin).ceil().max(0.0) as usize;
             let hi = ((f * half / bin).floor() as usize).min(n / 2);
             let p = if lo <= hi {
-                power[lo..=hi].iter().sum::<f64>() / (hi - lo + 1) as f64
+                power[lo..=hi].iter().copied().fold(0.0, f64::max)
             } else {
                 // Narrower than a bin: between the two around it.
                 let x = (f / bin).min((n / 2) as f64);
@@ -157,11 +158,28 @@ mod tests {
             );
         let octaves = (freq_of(top, points) / 1000.0).log2().abs();
         assert!(octaves <= 1.0 / 6.0, "{} Hz", freq_of(top, points));
-        // Half of full scale, less what the smoothing spreads.
-        assert!((-12.0..-5.0).contains(&level), "{level}");
+        // Half of full scale.
+        assert!((level + 6.02).abs() < 1.5, "{level}");
         // Far from it, the window keeps it down.
         assert!(s[0] < level - 60.0, "{}", s[0]);
         assert!(s[points - 1] < level - 60.0, "{}", s[points - 1]);
+    }
+
+    /// A sine reads its level wherever it is, low or high (M-dsp-2): the band's strongest bin,
+    /// not its mean, which read high tones low and tilted the picture.
+    #[test]
+    fn a_sine_reads_its_level_at_every_pitch() {
+        let points = 240;
+        for freq in [
+            45.0, 110.0, 333.0, 1000.0, 2345.0, 7000.0, 12_500.0, 18_000.0,
+        ] {
+            for amp in [1.0, 0.5, 0.1] {
+                let s = spectrum(&sine(freq, amp, 4096), RATE, points);
+                let top = s.iter().copied().fold(f32::MIN, f32::max);
+                let want = 20.0 * (amp as f32).log10();
+                assert!((top - want).abs() < 1.5, "{freq} Hz at {amp}: {top} dB");
+            }
+        }
     }
 
     #[test]

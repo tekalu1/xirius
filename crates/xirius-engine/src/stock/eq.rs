@@ -14,7 +14,7 @@ use xirius_params::{BandType, EQ, EQ_BANDS, MAX_PARAMS};
 
 use super::bank::Params;
 use super::dsp::{Biquad, Coefs, Glide, Ramp, STEP, butterworth_qs, db_to_gain, q_ratio};
-use super::probe::Tap;
+use super::probe::{Probe, Tap};
 use crate::processor::{AudioIo, NoteEvent, ProcessSetup, Processor};
 
 /// Where a band's parameters are in `xirius_params::EQ`.
@@ -184,10 +184,12 @@ pub fn response_db(values: &[f64], freq: f64, rate: f64) -> f64 {
     Response::new(values, rate).db(freq)
 }
 
-/// Pushes the mono (L+R)/2 of a block into `ring`, dropping what does not fit.
-fn feed(ring: &mut Producer<f32>, left: &[f32], right: &[f32]) {
+/// Pushes the mono (L+R)/2 of a block into ring `which`, dropping what does not fit and
+/// marking the seam that leaves.
+fn feed(ring: &mut Producer<f32>, probe: &Probe, which: usize, left: &[f32], right: &[f32]) {
     for (l, r) in left.iter().zip(right) {
         if ring.push(0.5 * (l + r)).is_err() {
+            probe.mark_seam(which);
             break;
         }
     }
@@ -274,7 +276,7 @@ impl Processor for Eq {
             probe.note_input(io.left, io.right);
         }
         if tap.input() {
-            feed(&mut self.rings.0, io.left, io.right);
+            feed(&mut self.rings.0, self.params.probe(), 0, io.left, io.right);
         }
         let mut at = 0;
         while at < n {
@@ -302,7 +304,7 @@ impl Processor for Eq {
             self.params.probe().note_output(io.left, io.right);
         }
         if tap.output() {
-            feed(&mut self.rings.1, io.left, io.right);
+            feed(&mut self.rings.1, self.params.probe(), 1, io.left, io.right);
         }
         for ch in &mut self.state {
             for b in ch.iter_mut() {
@@ -840,19 +842,39 @@ mod tests {
             .map(|i| 20.0 * 1000f64.powf(f64::from(i) / 3000.0))
             .collect();
         for (band, on, freq, q, slope, corner) in [
-            (0, "low_cut_on", "low_cut_freq", "b1_q", "low_cut_slope", 400.0),
-            (5, "high_cut_on", "high_cut_freq", "b6_q", "high_cut_slope", 2000.0),
+            (
+                0,
+                "low_cut_on",
+                "low_cut_freq",
+                "b1_q",
+                "low_cut_slope",
+                400.0,
+            ),
+            (
+                5,
+                "high_cut_on",
+                "high_cut_freq",
+                "b6_q",
+                "high_cut_slope",
+                2000.0,
+            ),
         ] {
             for qv in [0.3, 0.707, 1.0, 2.0, 4.0, 10.0, 18.0] {
                 let mut peaks = Vec::new();
                 for s in 0..3 {
                     let v = values(&[(on, 1.0), (freq, corner), (q, qv), (slope, f64::from(s))]);
                     let r = Response::new(&v, RATE);
-                    let peak = freqs.iter().map(|&f| r.band_db(band, f)).fold(f64::MIN, f64::max);
+                    let peak = freqs
+                        .iter()
+                        .map(|&f| r.band_db(band, f))
+                        .fold(f64::MIN, f64::max);
                     assert!(peak <= one(qv) + 0.5, "{q}={qv} slope {s}: {peak} dB");
                     // At the corner the whole is the Q, whatever the slope.
                     let at = r.band_db(band, corner);
-                    assert!((at - 20.0 * qv.log10()).abs() < 0.5, "{q}={qv} slope {s}: {at} dB");
+                    assert!(
+                        (at - 20.0 * qv.log10()).abs() < 0.5,
+                        "{q}={qv} slope {s}: {at} dB"
+                    );
                     peaks.push(peak);
                 }
                 let spread = peaks.iter().fold(f64::MIN, |a, &b| a.max(b))
@@ -893,9 +915,14 @@ mod tests {
         let long = vec![0.25f32; 5000];
         render(p.as_mut(), &long, &long, &[]);
         probe.take_samples(&mut input, &mut output);
-        // A full ring drops the rest until it is read.
-        assert_eq!((input.len(), output.len()), (RING, RING));
-        assert!(input.iter().chain(&output).all(|x| *x == 0.25));
+        // The input's ring is new, and a full ring drops the rest until it is read (M-dsp-3):
+        // what was gathered and what it held are before a seam, so the take starts over.
+        assert_eq!((input.len(), output.len()), (0, 0));
+        let fresh: Vec<f32> = (0..700).map(|i| i as f32 / 700.0).collect();
+        render(p.as_mut(), &fresh, &fresh, &[]);
+        probe.take_samples(&mut input, &mut output);
+        assert_eq!(input, fresh);
+        assert_eq!(output, fresh);
         probe.set_tap(Tap::Off);
         render(p.as_mut(), &long, &long, &[]);
         probe.set_tap(Tap::Input);
@@ -907,6 +934,11 @@ mod tests {
         render(p.as_mut(), &long, &long, &[]);
         probe.take_samples(&mut input, &mut output);
         assert_eq!((input.len(), output.len()), (300, 0));
+        // Watched again, what the window gathered before the gap is gone.
+        probe.watch(true);
+        render(p.as_mut(), &long[..200], &long[..200], &[]);
+        probe.take_samples(&mut input, &mut output);
+        assert_eq!((input.len(), output.len()), (200, 0));
     }
 
     #[test]
