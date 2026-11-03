@@ -8,7 +8,8 @@
 //! in [`overlay`].
 
 use gpui::{Hsla, PathBuilder, point, px};
-use xirius_core::auto::{AutoLane, AutoMode};
+use xirius_core::auto::{AutoLane, AutoMode, AutoTarget};
+use xirius_core::controls::ControlId;
 use xirius_core::model::{Project, Track};
 use xirius_core::time::Tick;
 use xirius_design::{FontSize, Layout, Radius, Space, Weight};
@@ -72,6 +73,38 @@ pub(super) fn polyline(pen: &mut Pen, pts: &[(f32, f32)], color: Hsla) {
     }
     if let Ok(path) = path.build() {
         pen.window.paint_path(path, color);
+    }
+}
+
+/// A broken line through window points: the lane of a target a macro control
+/// moves, resting while it does (AUT-018).
+fn dashed(pen: &mut Pen, pts: &[(f32, f32)], color: Hsla) {
+    let (dash, gap) = (Space::X1.px() + LINE_W, Space::X1.px());
+    let mut on = true;
+    let mut left = dash;
+    let mut run: Vec<(f32, f32)> = pts.first().copied().into_iter().collect();
+    for w in pts.windows(2) {
+        let (mut a, b) = (w[0], w[1]);
+        let mut len = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+        while len > left {
+            let f = left / len;
+            a = (a.0 + (b.0 - a.0) * f, a.1 + (b.1 - a.1) * f);
+            len -= left;
+            if on {
+                run.push(a);
+                polyline(pen, &run, color);
+            }
+            run = vec![a];
+            on = !on;
+            left = if on { dash } else { gap };
+        }
+        left -= len;
+        if on {
+            run.push(b);
+        }
+    }
+    if on {
+        polyline(pen, &run, color);
     }
 }
 
@@ -146,6 +179,26 @@ pub fn head(pen: &mut Pen, studio: &Studio, project: &Project, g: &Geometry, row
                 Align::Left,
             );
         });
+        // A target a macro control moves names the control under its button (AUT-018).
+        if let Some(by) = track.controls.owner_of(&lane.target) {
+            let under = Rect::new(
+                text.x,
+                r.bottom(),
+                text.w,
+                (lane_top + LANE_H - r.bottom()).max(0.0),
+            );
+            let by = format!("← {}", track.control_label(by));
+            pen.mask(under, |pen| {
+                pen.text(
+                    &by,
+                    FontSize::Micro,
+                    Weight::Regular,
+                    c.ink,
+                    under,
+                    Align::Left,
+                );
+            });
+        }
         pen.icon(
             "chevron-down",
             Rect::new(
@@ -220,8 +273,14 @@ pub fn lanes(
         if lane_top > g.lanes.bottom() || lane_top + LANE_H < g.lanes.y {
             continue;
         }
-        let lane = with_preview(lane, track, pv.as_ref());
         let y = |v: f64| lane_top + lane_value_y(&lane.target, v);
+        // A target a macro control moves rests: its lane draws, broken, what the control makes of it.
+        if let Some(by) = track.controls.owner_of(&lane.target) {
+            let line = mapped_line(studio, g, track, by, &lane.target, y);
+            dashed(pen, &line, color);
+            continue;
+        }
+        let lane = with_preview(lane, track, pv.as_ref());
         let line = lane_line(studio, g, &lane, track, y);
         polyline(pen, &line, color);
         for (index, p) in lane.points.iter().enumerate() {
@@ -289,6 +348,49 @@ fn with_preview(lane: &AutoLane, track: &Track, pv: Option<&Preview>) -> AutoLan
         _ => {}
     }
     lane
+}
+
+/// The window points of the lane of `target`, which the control `by` moves:
+/// the control's lane through the map, or the level the control holds.
+fn mapped_line(
+    studio: &Studio,
+    g: &Geometry,
+    track: &Track,
+    by: ControlId,
+    target: &AutoTarget,
+    y: impl Fn(f64) -> f32,
+) -> Vec<(f32, f32)> {
+    let (left, right) = (g.lanes.x, g.lanes.right());
+    let control = track.controls.get(by);
+    let at = |v: f64| {
+        control
+            .maps
+            .iter()
+            .find(|m| m.target == *target)
+            .map_or(v, |m| m.value(v))
+    };
+    let lane = track
+        .automation
+        .iter()
+        .find(|l| l.target == AutoTarget::Control(by) && !l.points.is_empty())
+        .filter(|_| track.auto_mode.plays());
+    let Some(lane) = lane else {
+        let v = y(at(control.value));
+        return vec![(left, v), (right, v)];
+    };
+    let step = Space::X1.px();
+    let mut out = Vec::new();
+    let mut x = left;
+    loop {
+        let tick = studio.tick_at(g, x) as f64;
+        let v = lane.value_at(tick).unwrap_or(control.value);
+        out.push((x, y(at(v))));
+        if x >= right {
+            break;
+        }
+        x = (x + step).min(right);
+    }
+    out
 }
 
 /// The window points of a lane's line, across the visible lanes.

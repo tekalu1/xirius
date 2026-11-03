@@ -16,6 +16,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use serde_json::{Value, json};
 use xirius_core::auto::{AutoLane, AutoMode, AutoTarget, BranchPart};
+use xirius_core::controls::ControlId;
 use xirius_core::id::{ClipId, FolderId, Node, SectionId, TrackId};
 use xirius_core::model::{ClipBody, MAX_DB, MIN_DB, Parent, Project, Track, TrackKind};
 use xirius_core::time::Tick;
@@ -497,7 +498,23 @@ pub fn lane_name(p: &Project, t: &Track, target: &AutoTarget) -> String {
                 .map_or("?", |x| x.name.as_str());
             format!("{plugin} · {name}")
         }
-        AutoTarget::Branch(..) => xirius_core::controls::target_name(t, target),
+        AutoTarget::Branch(n, _) => {
+            let layer = t
+                .rack
+                .as_ref()
+                .and_then(|r| r.node_label(*n))
+                .is_some_and(|(layer, _)| layer);
+            let place = if layer {
+                "マルチインストゥルメント"
+            } else {
+                "スプリッター"
+            };
+            format!(
+                "{place} · {}",
+                xirius_core::controls::target_name(t, target)
+            )
+        }
+        AutoTarget::Control(c) => format!("マクロコントロール · {}", t.control_label(*c)),
     }
 }
 
@@ -528,6 +545,8 @@ pub fn value_text(target: &AutoTarget, v: f64) -> String {
         }
         .into(),
         AutoTarget::Param(..) => format!("{v:.2}"),
+        AutoTarget::Control(c) if c.is_button() => if v >= 0.5 { "オン" } else { "オフ" }.into(),
+        AutoTarget::Control(_) => format!("{:.0} %", v * 100.0),
     }
 }
 
@@ -535,6 +554,22 @@ pub fn value_text(target: &AutoTarget, v: f64) -> String {
 pub fn targets_of(t: &Track) -> Vec<AutoTarget> {
     let mut out = vec![AutoTarget::Volume, AutoTarget::Pan, AutoTarget::Mute];
     out.extend(t.sends.iter().map(|s| AutoTarget::Send(s.id)));
+    // every knob; a button or a pad once it is named or moves something (AUT-018)
+    out.extend(
+        ControlId::all()
+            .filter(|c| {
+                let x = t.controls.get(*c);
+                matches!(c, ControlId::Knob(_)) || x.name.is_some() || !x.maps.is_empty()
+            })
+            .map(AutoTarget::Control),
+    );
+    if let Some(rack) = &t.rack {
+        for n in rack.node_ids() {
+            if rack.levels(n).is_some() {
+                out.extend(BranchPart::ALL.map(|part| AutoTarget::Branch(n, part)));
+            }
+        }
+    }
     for plugin in &t.inserts {
         if let Some(def) = plugin.builtin() {
             out.extend(
@@ -838,6 +873,10 @@ impl Studio {
                     };
                 }
             }
+            return Spot::None;
+        }
+        // a target a macro control moves rests: its lane takes no edit (AUT-018)
+        if track.controls.owner_of(&target).is_some() {
             return Spot::None;
         }
         for (index, pt) in lane.points.iter().enumerate() {

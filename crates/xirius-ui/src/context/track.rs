@@ -269,6 +269,8 @@ impl Studio {
         };
         let mut rows = Vec::new();
         let mut params: Vec<Item> = Vec::new();
+        // the macro controls, the splitters' branches and the layers (AUT-018)
+        let (mut controls, mut branches, mut layers) = (Vec::new(), Vec::new(), Vec::new());
         for target in targets_of(track) {
             let row = Item::act(
                 &lane_name(p, track, &target),
@@ -276,11 +278,30 @@ impl Studio {
                 Act::Lane(t, target.to_string()),
             )
             .on(shown(&target));
-            match target {
+            match &target {
                 AutoTarget::Param(..) => params.push(row),
+                AutoTarget::Control(c) => controls.push(row.labelled(&track.control_label(*c))),
+                AutoTarget::Branch(n, _) => {
+                    let row = row.labelled(&xirius_core::controls::target_name(track, &target));
+                    let label = track.rack.as_ref().and_then(|r| r.node_label(*n));
+                    if label.is_some_and(|(layer, _)| layer) {
+                        layers.push(row);
+                    } else {
+                        branches.push(row);
+                    }
+                }
                 _ => rows.push(row),
             }
         }
+        let mut lists: Vec<Item> = [
+            ("マクロコントロール", controls),
+            ("スプリッター", branches),
+            ("マルチインストゥルメント", layers),
+        ]
+        .into_iter()
+        .filter(|(_, list)| !list.is_empty())
+        .map(|(name, list)| Item::sub(name, list))
+        .collect();
         if !params.is_empty() {
             // One list per plugin, the plugin's name leaving the rows.
             let mut by_plugin: Vec<(String, Vec<Item>)> = Vec::new();
@@ -299,8 +320,11 @@ impl Studio {
                 .into_iter()
                 .map(|(name, rows)| Item::sub(&name, rows))
                 .collect();
+            lists.push(Item::sub("パラメーターを選ぶ", subs));
+        }
+        if !lists.is_empty() {
             rows.push(Item::gap());
-            rows.push(Item::sub("パラメーターを選ぶ", subs));
+            rows.extend(lists);
         }
         rows
     }

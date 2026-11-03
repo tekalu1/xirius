@@ -155,6 +155,7 @@ pub mod lane_shots;
 mod live_edit_shots;
 pub mod loading;
 pub mod local_time;
+pub mod macro_lane_shots;
 mod macro_run;
 mod manual_update_shots;
 pub mod menu_key_shots;
@@ -391,6 +392,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("keys-view-menu", keys_view_menu_shots::SHOTS),
     ("lane-rect", lane_rect_shots::SHOTS),
     ("lanes", lane_shots::LANES),
+    ("macro-lane", macro_lane_shots::SHOTS),
     ("menu-key", menu_key_shots::SHOTS),
     ("midi-assign", midi_assign_shots::SHOTS),
     ("midi-auto", midi_auto_shots::SHOTS),

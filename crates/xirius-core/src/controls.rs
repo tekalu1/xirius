@@ -337,11 +337,18 @@ pub fn target_name(t: &Track, target: &AutoTarget) -> String {
             .and_then(|x| x.builtin())
             .and_then(|d| d.params.iter().find(|p| p.id == name))
             .map_or_else(|| name.clone(), |p| p.label.to_string()),
-        AutoTarget::Branch(_, part) => match part {
-            BranchPart::Gain => "分岐のゲイン".into(),
-            BranchPart::Pan => "分岐のパン".into(),
-            BranchPart::Mute => "分岐のミュート".into(),
-        },
+        AutoTarget::Branch(n, part) => {
+            let part = match part {
+                BranchPart::Gain => "レベル",
+                BranchPart::Pan => "パン",
+                BranchPart::Mute => "ミュート",
+            };
+            match t.rack.as_ref().and_then(|r| r.node_label(*n)) {
+                Some((_, name)) => format!("{name} · {part}"),
+                None => format!("分岐 · {part}"),
+            }
+        }
+        AutoTarget::Control(c) => t.control_label(*c),
     }
 }
 
@@ -482,5 +489,38 @@ mod tests {
         assert!(can_map(&AutoTarget::Volume));
         assert!(can_map(&"branch:nod_2:gain".parse().unwrap()));
         assert!(!can_map(&AutoTarget::Mute));
+    }
+
+    #[test]
+    fn a_control_lane_reads_back_and_moves_what_the_control_moves() {
+        let k1: AutoTarget = "control:k1".parse().unwrap();
+        assert_eq!(k1, AutoTarget::Control(ControlId::Knob(0)));
+        assert_eq!(k1.to_string(), "control:k1");
+        assert_eq!(k1.range(), (0.0, 1.0));
+        assert!(!k1.stepped());
+        let b2: AutoTarget = "control:b2".parse().unwrap();
+        assert!(b2.stepped());
+        assert!("control:k9".parse::<AutoTarget>().is_err());
+
+        let mut t =
+            crate::model::Track::new(crate::id::TrackId(1), crate::model::TrackKind::Audio, "A");
+        let mut m = Mapping::new(AutoTarget::Pan);
+        (m.from, m.to) = (0.5, 1.0);
+        t.controls.get_mut(ControlId::Knob(0)).maps.push(m);
+        assert!(k1.exists_on(&t), "every control is there to write");
+        k1.set_on(&mut t, 1.0);
+        assert_eq!(t.controls.get(ControlId::Knob(0)).value, 1.0);
+        assert!((t.pan - 1.0).abs() < 1e-9, "{}", t.pan);
+        b2.set_on(&mut t, 0.6);
+        assert_eq!(t.controls.get(ControlId::Button(1)).value, 1.0);
+        // the lane is saved with the track and named by the control
+        let mut lane = crate::auto::AutoLane::new(k1.clone());
+        lane.points = std::sync::Arc::new(vec![crate::auto::AutoPoint::new(0, 0.25)]);
+        t.automation.push(lane);
+        let back: crate::model::Track =
+            serde_json::from_str(&serde_json::to_string(&t).unwrap()).unwrap();
+        assert_eq!(back.automation[0].target, k1);
+        assert_eq!(back.automation[0].points[0].value, 0.25);
+        assert_eq!(target_name(&back, &k1), "パン");
     }
 }

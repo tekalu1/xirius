@@ -338,6 +338,70 @@ fn a_macro_moves_a_branch_and_a_parameter_offline_and_live() {
     assert!(near(level(&s), one, 1e-3), "undo puts the parameter back");
 }
 
+/// A macro control's lane plays what the control moves; the lane of a target it moves rests
+/// (AUT-018).
+#[test]
+fn a_macro_lane_moves_its_targets_and_their_own_lanes_rest() {
+    use xirius_core::auto::{AutoTarget, BranchPart};
+    use xirius_core::id::{NodeId, PluginId, TrackId};
+    let (mut s, t, eq, b) = split_song("macro lane");
+    let both = level(&s);
+    let tid: TrackId = t.parse().unwrap();
+    let b0: NodeId = b[0].parse().unwrap();
+    let pid: PluginId = eq.parse().unwrap();
+    let gain = AutoTarget::Branch(b0, BranchPart::Gain);
+    let out = format!("param:{eq}:output");
+    for (control, target) in [("k1", gain.to_string()), ("k2", out.clone())] {
+        run(
+            &mut s,
+            "control.assign",
+            json!({ "track": t, "control": control, "target": target }),
+        );
+    }
+    let point = |s: &mut Session, target: &str, at: i64, value: f64| {
+        run(
+            s,
+            "auto.point.add",
+            json!({ "track": t, "target": target, "at": at, "value": value }),
+        );
+    };
+    // the macro's lane holds the branch at -6 dB through the bar
+    for at in [0, 3840] {
+        point(&mut s, "control:k1", at, gain.to_norm(-6.0));
+        point(&mut s, "control:k2", at, 0.3);
+        // the branch's and the EQ's own lanes say otherwise, and rest
+        point(&mut s, &gain.to_string(), at, 0.0);
+        point(&mut s, &out, at, 0.9);
+    }
+    let played = xirius_session::automation::at(s.project(), 1920.0);
+    let levels = played.tracks[&tid].rack.as_ref().unwrap().levels(b0);
+    assert!(near(levels.unwrap().0, -6.0, 1e-6), "{levels:?}");
+    let k1 = played.tracks[&tid].controls.knobs[0].value;
+    assert!(near(k1, gain.to_norm(-6.0), 1e-6), "{k1}");
+    let params = xirius_session::automation::params_at(s.project(), 1920.0);
+    let eq_out: Vec<f64> = params
+        .iter()
+        .filter(|(p, name, _)| *p == pid && name == "output")
+        .map(|x| x.2)
+        .collect();
+    assert_eq!(eq_out, vec![0.3], "{params:?}");
+    // offline, the bar sounds as the branch at -6 dB does
+    let lane = level(&s);
+    run(
+        &mut s,
+        "auto.lane.remove",
+        json!({ "track": t, "target": "control:k1" }),
+    );
+    run(
+        &mut s,
+        "control.set",
+        json!({ "track": t, "control": "k1", "value": gain.to_norm(-6.0) }),
+    );
+    let set = level(&s);
+    assert!(lane < both * 0.95, "{lane} vs {both}");
+    assert!(near(lane, set, 0.02), "{lane} vs {set}");
+}
+
 /// A target belongs to one control; a gone target leaves its control; the set is saved.
 #[test]
 fn a_macro_target_has_one_owner_and_goes_with_its_plugin() {

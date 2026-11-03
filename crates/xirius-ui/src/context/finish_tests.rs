@@ -256,3 +256,46 @@ fn ruler_units_are_view_state_and_selected_export_does_not_change_the_loop() {
     assert_eq!(s.export.range, crate::export::Range::Selection);
     assert_eq!(s.project().loop_range, span);
 }
+
+#[test]
+fn the_macro_controls_have_lanes_of_their_own_in_the_automation_list() {
+    let (mut s, g) = studio();
+    let t = track(&s, "Vocal");
+    let y = crate::arrange::probe::row_at(&s, &g, crate::tree::RowKind::Track(t), 0.5);
+    assert!(s.scene_context(&g, g.column.x + 50.0, y));
+    assert!(choose(&mut s, &g, "オートメーションを表示"));
+    // a list of their own after the channel's rows, flattened in the second level
+    let rows = labels(&s);
+    let first = rows
+        .iter()
+        .position(|r| r == "マクロコントロール · Macro 1");
+    assert_eq!(
+        first,
+        rows.iter().position(|r| r == "ミュート").map(|i| i + 1)
+    );
+    assert!(rows.contains(&"マクロコントロール · Macro 8".to_string()));
+    assert!(!rows.iter().any(|r| r.contains("Button")), "{rows:?}");
+    assert!(choose(&mut s, &g, "マクロコントロール · Macro 1"));
+    let k1: xirius_core::auto::AutoTarget = "control:k1".parse().unwrap();
+    assert!(
+        s.project().tracks[&t]
+            .automation
+            .iter()
+            .any(|l| l.target == k1)
+    );
+    // a named one goes by its name
+    s.song
+        .run(
+            "control.rename",
+            json!({"track": t, "control": "k1", "name": "Air"}),
+        )
+        .unwrap();
+    let track = &s.project().tracks[&t];
+    assert_eq!(
+        crate::arrange::lane_name(&s.project(), track, &k1),
+        "マクロコントロール · Air"
+    );
+    assert_eq!(crate::arrange::value_text(&k1, 0.5), "50 %");
+    let b1: xirius_core::auto::AutoTarget = "control:b1".parse().unwrap();
+    assert_eq!(crate::arrange::value_text(&b1, 1.0), "オン");
+}

@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use xirius_core::auto::AutoTarget;
-use xirius_core::controls::ControlId;
 use xirius_core::id::PluginId;
 use xirius_core::model::{Project, Track};
 use xirius_engine::Command;
@@ -34,8 +33,21 @@ pub(crate) fn realtime(t: &Track) -> bool {
         || (t.auto_mode.plays()
             && t.automation.iter().any(|lane| {
                 !lane.points.is_empty()
-                    && matches!(&lane.target, AutoTarget::Param(id, _) if t.inserts.iter().any(|p| p.id == *id && p.runs()))
+                    && match &lane.target {
+                        AutoTarget::Control(c) => t
+                            .controls
+                            .get(*c)
+                            .maps
+                            .iter()
+                            .any(|m| runs_param(t, &m.target)),
+                        target => runs_param(t, target),
+                    }
             }))
+}
+
+/// Is `target` a parameter of a plug-in that runs?
+fn runs_param(t: &Track, target: &AutoTarget) -> bool {
+    matches!(target, AutoTarget::Param(id, _) if t.inserts.iter().any(|p| p.id == *id && p.runs()))
 }
 
 /// The song with every played lane's value written into its channel at `tick`.
@@ -57,6 +69,10 @@ pub(crate) fn at_each(
         };
         let t = Arc::make_mut(slot);
         for lane in t.automation.clone() {
+            // a mapped target's own lane rests while its macro control moves it (AUT-018)
+            if t.controls.owner_of(&lane.target).is_some() {
+                continue;
+            }
             let Some(v) = lane.value_at(tick(*id, &lane.target)) else {
                 continue;
             };
@@ -68,31 +84,49 @@ pub(crate) fn at_each(
     out
 }
 
-/// The parameter values the track's macro controls set: plugin, parameter, value (0..1).
-fn control_params(t: &Track) -> impl Iterator<Item = (PluginId, String, f64)> + '_ {
-    ControlId::all().flat_map(move |id| {
-        t.control_values(id, t.controls.get(id).value)
-            .into_iter()
-            .filter_map(|(target, v)| match target {
-                AutoTarget::Param(pid, name) => Some((pid, name, v)),
-                _ => None,
-            })
-    })
+/// The plugin parameter values a played track's lanes set at `tick`: its own
+/// parameter lanes, and its macro controls (at their lanes' values, AUT-018)
+/// for the parameters they are mapped to, whose own lanes rest.
+fn lane_params(
+    t: &Track,
+    mut tick: impl FnMut(&AutoTarget) -> f64,
+    out: &mut Vec<(PluginId, String, f64)>,
+) {
+    let mut controls = t.controls.clone();
+    for lane in &t.automation {
+        match &lane.target {
+            AutoTarget::Control(c) => {
+                if let Some(v) = lane.value_at(tick(&lane.target)) {
+                    controls.get_mut(*c).value = if c.is_button() { v.round() } else { v };
+                }
+            }
+            AutoTarget::Param(pid, name)
+                if t.controls.owner_of(&lane.target).is_none()
+                    && t.inserts.iter().any(|x| x.id == *pid) =>
+            {
+                if let Some(v) = lane.value_at(tick(&lane.target)) {
+                    out.push((*pid, name.clone(), v));
+                }
+            }
+            _ => {}
+        }
+    }
+    for (_, c) in controls.iter() {
+        for m in &c.maps {
+            if let AutoTarget::Param(pid, name) = &m.target
+                && m.target.exists_on(t)
+            {
+                out.push((*pid, name.clone(), m.value(c.value)));
+            }
+        }
+    }
 }
 
 /// What the plugin parameter lanes set at `tick`: plugin, parameter, value (0..1).
 pub fn params_at(p: &Project, tick: f64) -> Vec<(PluginId, String, f64)> {
     let mut out = Vec::new();
     for t in p.tracks.values().filter(|t| plays(t)) {
-        for lane in &t.automation {
-            if let AutoTarget::Param(pid, name) = &lane.target
-                && t.inserts.iter().any(|x| x.id == *pid)
-                && let Some(v) = lane.value_at(tick)
-            {
-                out.push((*pid, name.clone(), v));
-            }
-        }
-        out.extend(control_params(t));
+        lane_params(t, |_| tick, &mut out);
     }
     out
 }
@@ -117,15 +151,7 @@ impl ParamFollow {
     ) -> usize {
         let mut values = Vec::new();
         for t in p.tracks.values().filter(|t| plays(t)) {
-            for lane in &t.automation {
-                if let AutoTarget::Param(pid, name) = &lane.target
-                    && t.inserts.iter().any(|x| x.id == *pid)
-                    && let Some(v) = lane.value_at(tick(t.id, &lane.target))
-                {
-                    values.push((*pid, name.clone(), v));
-                }
-            }
-            values.extend(control_params(t));
+            lane_params(t, |target| tick(t.id, target), &mut values);
         }
         let mut n = 0;
         for (pid, name, v) in values {

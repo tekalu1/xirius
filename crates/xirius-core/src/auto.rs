@@ -10,12 +10,14 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::controls::ControlId;
 use crate::id::{NodeId, PluginId, SendId};
 use crate::model::{MAX_DB, MIN_DB, Track};
 use crate::time::Tick;
 
 /// What a lane moves. Text form: `volume`, `pan`, `mute`, `send:<send id>`,
-/// `param:<plugin id>:<parameter name>`, `branch:<node id>:gain|pan|mute`.
+/// `param:<plugin id>:<parameter name>`, `branch:<node id>:gain|pan|mute`,
+/// `control:k1`..`k8`, `b1`..`b8`, `x1`, `y1`, `x2`, `y2`.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum AutoTarget {
     Volume,
@@ -26,6 +28,9 @@ pub enum AutoTarget {
     /// The gain, pan or mute of a splitter's branch or a multi-instrument's
     /// layer (PRJ-026, MIX-039).
     Branch(NodeId, BranchPart),
+    /// A macro control of the track, 0..1 (AUT-018). Its lane moves the
+    /// control and through it every target the control is mapped to.
+    Control(ControlId),
 }
 
 /// Which level of a branch (or layer) a [`AutoTarget::Branch`] moves.
@@ -61,6 +66,7 @@ impl fmt::Display for AutoTarget {
             AutoTarget::Send(s) => write!(f, "send:{s}"),
             AutoTarget::Param(p, name) => write!(f, "param:{p}:{name}"),
             AutoTarget::Branch(n, part) => write!(f, "branch:{n}:{}", part.name()),
+            AutoTarget::Control(c) => write!(f, "control:{c}"),
         }
     }
 }
@@ -89,8 +95,11 @@ impl std::str::FromStr for AutoTarget {
         {
             return Ok(AutoTarget::Branch(id.parse()?, part));
         }
+        if let Some(c) = s.strip_prefix("control:") {
+            return Ok(AutoTarget::Control(c.parse()?));
+        }
         Err(format!(
-            "`{s}` は volume・pan・mute・send:<ID>・param:<ID>:<名前>・branch:<ID>:gain|pan|mute のいずれでもありません"
+            "`{s}` は volume・pan・mute・send:<ID>・param:<ID>:<名前>・branch:<ID>:gain|pan|mute・control:<k1〜k8|b1〜b8|x1|y1|x2|y2> のいずれでもありません"
         ))
     }
 }
@@ -117,18 +126,20 @@ impl AutoTarget {
                 (MIN_DB, MAX_DB)
             }
             AutoTarget::Pan | AutoTarget::Branch(_, BranchPart::Pan) => (-1.0, 1.0),
-            AutoTarget::Mute | AutoTarget::Param(..) | AutoTarget::Branch(_, BranchPart::Mute) => {
-                (0.0, 1.0)
-            }
+            AutoTarget::Mute
+            | AutoTarget::Param(..)
+            | AutoTarget::Branch(_, BranchPart::Mute)
+            | AutoTarget::Control(_) => (0.0, 1.0),
         }
     }
 
-    /// Mute jumps from point to point; the rest glide.
+    /// Mute and a macro button jump from point to point; the rest glide.
     pub fn stepped(&self) -> bool {
-        matches!(
-            self,
-            AutoTarget::Mute | AutoTarget::Branch(_, BranchPart::Mute)
-        )
+        match self {
+            AutoTarget::Mute | AutoTarget::Branch(_, BranchPart::Mute) => true,
+            AutoTarget::Control(c) => c.is_button(),
+            _ => false,
+        }
     }
 
     /// A level in dB that moves along the fader's feel.
@@ -198,6 +209,7 @@ impl AutoTarget {
                         BranchPart::Mute => f64::from(u8::from(mute)),
                     })
             }
+            AutoTarget::Control(c) => Some(t.controls.get(*c).value),
         }
     }
 
@@ -225,6 +237,12 @@ impl AutoTarget {
                 },
                 None => return false,
             },
+            // the control moves what it is mapped to as well
+            AutoTarget::Control(c) => {
+                let v = if c.is_button() { v.round() } else { v }.clamp(0.0, 1.0);
+                t.controls.get_mut(*c).value = v;
+                t.apply_control_at(*c, v);
+            }
         }
         true
     }

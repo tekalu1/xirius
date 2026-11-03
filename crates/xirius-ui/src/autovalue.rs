@@ -50,7 +50,8 @@ pub fn unit(target: &AutoTarget) -> &'static str {
         AutoTarget::Volume | AutoTarget::Send(_) | AutoTarget::Branch(_, BranchPart::Gain) => "dB",
         AutoTarget::Pan | AutoTarget::Branch(_, BranchPart::Pan) => "L−100 … R+100",
         AutoTarget::Mute | AutoTarget::Branch(_, BranchPart::Mute) => "0 か 1",
-        AutoTarget::Param(..) => "%",
+        AutoTarget::Control(c) if c.is_button() => "0 か 1",
+        AutoTarget::Param(..) | AutoTarget::Control(_) => "%",
     }
 }
 
@@ -68,7 +69,8 @@ pub fn text(target: &AutoTarget, v: f64) -> String {
         AutoTarget::Mute | AutoTarget::Branch(_, BranchPart::Mute) => {
             if v >= 0.5 { "1" } else { "0" }.into()
         }
-        AutoTarget::Param(..) => format!("{}", (v * 100.0).round()),
+        AutoTarget::Control(c) if c.is_button() => if v >= 0.5 { "1" } else { "0" }.into(),
+        AutoTarget::Param(..) | AutoTarget::Control(_) => format!("{}", (v * 100.0).round()),
     }
 }
 
@@ -110,7 +112,12 @@ pub fn parse(target: &AutoTarget, typed: &str) -> Option<f64> {
         AutoTarget::Mute | AutoTarget::Branch(_, BranchPart::Mute) => {
             number(&s).map(|n| if n >= 0.5 { 1.0 } else { 0.0 })
         }
-        AutoTarget::Param(..) => number(&s).map(|n| (n / 100.0).clamp(0.0, 1.0)),
+        AutoTarget::Control(c) if c.is_button() => {
+            number(&s).map(|n| if n >= 0.5 { 1.0 } else { 0.0 })
+        }
+        AutoTarget::Param(..) | AutoTarget::Control(_) => {
+            number(&s).map(|n| (n / 100.0).clamp(0.0, 1.0))
+        }
     }
 }
 

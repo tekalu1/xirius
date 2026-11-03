@@ -436,6 +436,38 @@ impl Rack {
         out
     }
 
+    /// What the branch or layer `id` is called, and whether it is a layer:
+    /// a branch is `分岐 n` in its splitter, a layer its name or `層 n` (AUT-018).
+    pub fn node_label(&self, id: NodeId) -> Option<(bool, String)> {
+        fn walk(nodes: &[RackNode], id: NodeId) -> Option<String> {
+            nodes.iter().find_map(|n| match n {
+                RackNode::Plugin(_) => None,
+                RackNode::Split(s) => s.branches.iter().enumerate().find_map(|(i, b)| {
+                    if b.id == id {
+                        Some(format!("分岐 {}", i + 1))
+                    } else {
+                        walk(&b.fx, id)
+                    }
+                }),
+            })
+        }
+        if let Some(Source::Multi { layers, .. }) = &self.source {
+            for (i, l) in layers.iter().enumerate() {
+                if l.id == id {
+                    let name = match l.name.trim() {
+                        "" => format!("層 {}", i + 1),
+                        name => name.to_string(),
+                    };
+                    return Some((true, name));
+                }
+                if let Some(x) = walk(&l.fx, id) {
+                    return Some((false, x));
+                }
+            }
+        }
+        walk(&self.fx, id).map(|x| (false, x))
+    }
+
     /// The gain (dB), pan and mute of the branch or layer `id`.
     pub fn levels(&self, id: NodeId) -> Option<(f64, f64, bool)> {
         fn walk(nodes: &[RackNode], id: NodeId) -> Option<(f64, f64, bool)> {

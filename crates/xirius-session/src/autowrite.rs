@@ -166,6 +166,15 @@ impl Pass {
         let Some(mode) = self.mode(track) else {
             return false;
         };
+        // a target a macro control moves is not written: the control's lane is (AUT-018)
+        if self
+            .song
+            .tracks
+            .get(&track)
+            .is_some_and(|t| t.controls.owner_of(&target).is_some())
+        {
+            return false;
+        }
         let key = (track, target);
         if let Some(s) = self.open.get(&key)
             && s.last().is_some_and(|(t, _)| tick < t)
@@ -572,6 +581,27 @@ mod tests {
             .iter()
             .map(|x| (x["tick"].as_i64().unwrap(), x["value"].as_f64().unwrap()))
             .collect()
+    }
+
+    #[test]
+    fn a_target_a_macro_moves_is_not_written_but_the_macro_is() {
+        use xirius_core::controls::{ControlId, Mapping};
+        let (mut p, t) = song(AutoMode::Touch);
+        let k1 = ControlId::Knob(0);
+        std::sync::Arc::make_mut(p.tracks.get_mut(&t).unwrap())
+            .controls
+            .get_mut(k1)
+            .maps
+            .push(Mapping::new(AutoTarget::Volume));
+        let mut pass = Pass::begin(&p, 0);
+        let v = AutoTarget::Volume;
+        assert!(!pass.touch(t, v, Phase::Begin, 1000, Some(-10.0)));
+        let c = AutoTarget::Control(k1);
+        assert!(pass.touch(t, c.clone(), Phase::Begin, 1000, Some(0.2)));
+        pass.touch(t, c.clone(), Phase::End, 2000, Some(0.8));
+        let w = pass.finish(9000);
+        assert_eq!(w.len(), 1);
+        assert_eq!(w[0]["target"].as_str(), Some("control:k1"));
     }
 
     #[test]

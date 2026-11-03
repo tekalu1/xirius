@@ -29,6 +29,7 @@ pub(crate) fn target_of(hit: MixerHit) -> Option<AutoTarget> {
         MixerHit::Fader(_) => Some(AutoTarget::Volume),
         MixerHit::Pan(_) => Some(AutoTarget::Pan),
         MixerHit::SendLevel(_, s) => Some(AutoTarget::Send(s)),
+        MixerHit::Control(_, c) => Some(AutoTarget::Control(c)),
         _ => None,
     }
 }
