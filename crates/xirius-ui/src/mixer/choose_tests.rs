@@ -85,7 +85,7 @@ fn key(s: &mut Studio, g: &Geometry, key: &str, alt: bool) -> bool {
 /// A press and a let go on a row's name, as the pointer does it.
 fn click_row(s: &mut Studio, g: &Geometry, t: TrackId, id: PluginId) {
     let (x, y) = s.mixer_center(g, MixerHit::Open(t, id)).unwrap();
-    s.chosen_press(g, x, y);
+    s.press_keys(g, x, y);
     assert!(s.chain_down(g, x, y));
     assert!(s.fx_up(g, x, y, false));
 }
@@ -257,7 +257,13 @@ fn a_touch_makes_the_rows_32_high() {
     let eq = add(&mut s, t, "EQ");
     let fine = flow_of(&s, &g, t).plugin(eq).unwrap().1.h;
     assert!(fine < COARSE_H);
-    s.mixer.coarse = true;
+    // a touch's press is hit at the height drawn; the rows grow once it is let go
+    let row = flow_of(&s, &g, t).plugin(eq).unwrap().1;
+    s.mixer.coarse_next = Some(true);
+    s.press_keys(&g, row.x + 4.0, row.y + row.h - 2.0);
+    assert_eq!(flow_of(&s, &g, t).plugin(eq).unwrap().1, row);
+    s.coarse_up();
+    assert!(s.mixer.coarse);
     assert_eq!(flow_of(&s, &g, t).plugin(eq).unwrap().1.h, COARSE_H);
 }
 
@@ -306,4 +312,38 @@ fn the_screen_reader_names_the_m_the_plus_the_level_and_the_name_buttons() {
     let widen = find(MixerHit::Widen(t));
     assert_eq!(widen.node.label(), Some("広げる"));
     assert_eq!(widen.node.toggled(), Some(accesskit::Toggled::False));
+}
+
+#[test]
+fn a_press_on_the_arrangement_gives_the_keys_back() {
+    let (mut s, g) = studio();
+    let t = track(&s, "Guitar");
+    let eq = add(&mut s, t, "EQ");
+    s.instruments.open.clear();
+    click_row(&mut s, &g, t, eq);
+    assert_eq!(s.mixer.chosen, Some((t, Pick::Plugin(eq))));
+    // the screen begins every press with this (`screen.rs`, `pressed`)
+    let (x, y) = (g.lanes.x + g.lanes.w / 2.0, g.lanes.y + 4.0);
+    assert!(!matches!(s.hit(&g, x, y), Hit::Mixer(_)));
+    s.press_keys(&g, x, y);
+    assert_eq!(s.mixer.chosen, None);
+    for k in ["space", "delete", "enter", "m", "insert", "down"] {
+        assert!(!key(&mut s, &g, k, false), "{k} goes on to the keymap");
+    }
+    assert!(!s.project().tracks[&t].inserts[0].bypass);
+    assert_eq!(names(&s, t), ["EQ"]);
+}
+
+#[test]
+fn esc_while_a_knob_is_awaited_ends_the_wait_first() {
+    let (mut s, g) = studio();
+    let t = track(&s, "Guitar");
+    let eq = add(&mut s, t, "EQ");
+    s.instruments.open.clear();
+    click_row(&mut s, &g, t, eq);
+    // a part waits for a knob (as `midimap.learn` leaves it with an input open)
+    let target = format!("track.volume:{t}");
+    s.live_midi.assign.learning = Some(xirius_prefs::midimap::Target::parse(&target).unwrap());
+    assert!(!key(&mut s, &g, "escape", false), "the keymap's Esc ends it");
+    assert_eq!(s.mixer.chosen, Some((t, Pick::Plugin(eq))));
 }

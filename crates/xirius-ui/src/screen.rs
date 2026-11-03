@@ -328,15 +328,13 @@ impl Screen {
             return;
         }
         studio.input_map.browser_focus = studio.browser.open && g.panel.contains(x, y);
+        // The rows grow for a touch when it is let go: this press lands where the rows were
+        // drawn.
         #[cfg(windows)]
         {
-            studio.mixer.coarse = crate::pointer_os::from_touch();
+            studio.mixer.coarse_next = Some(crate::pointer_os::from_touch());
         }
-        studio.chosen_press(&g, x, y);
-        // A press anywhere else takes the keys from a device's control (UI-324).
-        if studio.popup.is_none() && !studio.over_instrument(&g, x, y) {
-            studio.device_blur();
-        }
+        studio.press_keys(&g, x, y);
         if studio.prepare_press(&g, x, y)
             || studio.recovery_press(&g, x, y)
             || studio.toast_press(&g, x, y)
@@ -364,6 +362,15 @@ impl Screen {
             cx.notify();
             drop(studio);
             self.files(cx);
+            return;
+        }
+        // The windows that float over the screen take a press before what is under them.
+        if studio.popup.is_none()
+            && (studio.macro_press(&g, x, y)
+                || studio.channel_press(&g, x, y, ev.click_count as u32)
+                || studio.instrument_press(&g, x, y, ev.click_count as u32, mods(ev.modifiers)))
+        {
+            cx.notify();
             return;
         }
         if studio.grip_down(&g, x, y) {
@@ -401,14 +408,6 @@ impl Screen {
             cx.notify();
             drop(studio);
             self.files(cx);
-            return;
-        }
-        if studio.popup.is_none()
-            && (studio.macro_press(&g, x, y)
-                || studio.channel_press(&g, x, y, ev.click_count as u32)
-                || studio.instrument_press(&g, x, y, ev.click_count as u32, mods(ev.modifiers)))
-        {
-            cx.notify();
             return;
         }
         studio.ruler_drag_down(&g, x, y, mods(ev.modifiers));
@@ -669,7 +668,9 @@ impl Screen {
             return;
         }
         let mut studio = self.studio.borrow_mut();
+        studio.coarse_up();
         if studio.input_blocked() {
+            studio.let_go_drags();
             return;
         }
         if studio.bar_up() || studio.edge_up() | studio.side_up() {
@@ -681,6 +682,7 @@ impl Screen {
             || studio.recovery.is_some()
             || studio.sound_preparing()
         {
+            studio.let_go_drags();
             return;
         }
         let g = geometry(&studio, window);

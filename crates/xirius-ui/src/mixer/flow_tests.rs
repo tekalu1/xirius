@@ -293,7 +293,7 @@ fn the_screen_reader_names_the_splitter_and_the_plus_of_each_area() {
             .unwrap_or_else(|| panic!("no {key}"))
     };
     let split = find(format!("flow-{t}-{:?}", MixerHit::Fold(t, sp)));
-    assert_eq!(split.node.label(), Some("スプリッター"));
+    assert_eq!(split.node.label(), Some("スプリッター 1"));
     assert_eq!(split.node.is_expanded(), Some(true));
     let plus = find(format!("flow-{t}-{:?}", MixerHit::AddInsert(t)));
     assert_eq!(plus.node.label(), Some("プラグインを追加"));

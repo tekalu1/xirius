@@ -817,10 +817,13 @@ fn flow_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
         let mut widen = button(crate::mixer::WIDEN_LABEL);
         toggled(&mut widen, s.mixer.wide.contains(&t));
         parts.push((MixerHit::Widen(t), widen));
+        let mut splits = 0;
         for (l, _) in &flow.rows {
             match (l.kind, l.area) {
                 (Kind::Split { id, open, .. }, _) => {
-                    let mut node = button("スプリッター");
+                    // each its own name: the first, the second, … from the top
+                    splits += 1;
+                    let mut node = button(&format!("スプリッター {splits}"));
                     node.set_expanded(open);
                     parts.push((MixerHit::Fold(t, id), node));
                 }
@@ -853,9 +856,12 @@ fn flow_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 } else {
                     "分岐"
                 };
-                let mut mute = button(&format!("{name} の{whose}をミュート"));
-                toggled(&mut mute, target.mute);
-                parts.push((MixerHit::RowMute(t, target.id), mute));
+                // the level row's mute is the chosen row's, said once
+                if l.kind != Kind::Level {
+                    let mut mute = button(&format!("{name} の{whose}をミュート"));
+                    toggled(&mut mute, target.mute);
+                    parts.push((MixerHit::RowMute(t, target.id), mute));
+                }
                 if l.kind == Kind::Level {
                     let mut node = accesskit::Node::new(accesskit::Role::Slider);
                     node.set_label(format!("{name} の{whose}の音量"));
@@ -915,11 +921,6 @@ fn flow_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     out
 }
 
-/// The controls of the open device windows (UI-324): a knob or a row of
-/// segments is a Slider named as the window names it, with the value it reads;
-/// an on and off button is a toggle Button, a choice shown as its name a
-/// ComboBox. An EQ's band tabs are Tabs and its analyser's button a ComboBox
-/// (UI-326).
 /// A part of a receiver's key sources (UI-336): a source's row is a Group named by its channel,
 /// its boxes CheckBoxes 「<channel> センド」「<channel> 出力」, the position a toggle Button
 /// 「<channel> プリフェーダー」, the send's amount a Slider in dB, and the loop mark an Image
@@ -983,6 +984,11 @@ fn key_source_mark(
     })
 }
 
+/// The controls of the open device windows (UI-324): a knob or a row of
+/// segments is a Slider named as the window names it, with the value it reads;
+/// an on and off button is a toggle Button, a choice shown as its name a
+/// ComboBox. An EQ's band tabs are Tabs and its analyser's button a ComboBox
+/// (UI-326).
 fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     use crate::device::control::{self, Look};
     use crate::instrument::window::{Part, live, source_of, values_of};

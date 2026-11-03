@@ -338,6 +338,48 @@ fn the_drawer_grows_for_the_mixer_and_scrolls_its_strips() {
 }
 
 #[test]
+fn a_bank_of_strips_starts_at_a_strip_however_wide_the_strips_are() {
+    let (mut s, _) = studio();
+    for i in 0..6 {
+        bus(&mut s, &format!("Bus {i}"));
+    }
+    let g = s.geometry(1000.0, H);
+    let order: Vec<TrackId> = strip_order(&s.project())
+        .into_iter()
+        .filter(|t| !t.is_master())
+        .collect();
+    s.mixer.wide.insert(order[1]);
+    let lefts: Vec<f32> = order
+        .iter()
+        .map(|t| s.strip_offset(&g, *t).unwrap())
+        .collect();
+    let max = s.mixer_max_scroll(&g);
+    assert!(max > 0.0);
+    let view = s.mixer_view(&g);
+    let mut seen = vec![0.0];
+    while s.mixer.scroll < max {
+        let to = s.mixer_page(&g, true);
+        assert!(to > s.mixer.scroll, "{to} after {}", s.mixer.scroll);
+        assert!(to == max || lefts.contains(&to), "{to} is a strip's left");
+        // no strip is skipped: the one at the new left was not wholly in view
+        if to < max {
+            let k = lefts.iter().position(|l| *l == to).unwrap();
+            assert!(to + s.width_of(&g, order[k]) > s.mixer.scroll + view.w);
+        }
+        s.mixer.scroll = to;
+        seen.push(to);
+    }
+    // and back the same way, to the first
+    while s.mixer.scroll > 0.0 {
+        let to = s.mixer_page(&g, false);
+        assert!(to < s.mixer.scroll);
+        assert!(lefts.contains(&to));
+        s.mixer.scroll = to;
+    }
+    assert!(seen.len() > 1);
+}
+
+#[test]
 fn levels_from_the_player_reach_the_strip_meters() {
     let (mut s, _) = studio();
     s.transport.mode = OutputMode::Silent { paced: true };

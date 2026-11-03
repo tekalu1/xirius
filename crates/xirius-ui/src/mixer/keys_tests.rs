@@ -195,6 +195,10 @@ fn the_arrows_move_the_bar_pressed_last_by_a_db_and_with_shift_a_fifth() {
     assert!(s.key_bar_key("escape", Mods::default()));
     assert_eq!(s.mixer.key_focus, None);
     assert!(!s.key_bar_key("left", Mods::default()));
+    // a press elsewhere takes the arrows back
+    assert!(s.press(&g, Hit::Mixer(MixerHit::KeyLevel(drums, id))));
+    s.press_keys(&g, g.lanes.x + 10.0, g.lanes.y + 4.0);
+    assert_eq!(s.mixer.key_focus, None);
 }
 
 #[test]

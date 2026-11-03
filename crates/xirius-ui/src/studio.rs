@@ -1290,9 +1290,9 @@ impl Studio {
                 return l.item_at(x, y).map_or(Hit::PopupBody, Hit::Item);
             }
         }
-        // An instrument's window and the channel editor float over everything but the
-        // pop-over.
-        if self.over_channel(g, x, y) || self.over_instrument(g, x, y) {
+        // An instrument's window, the channel editor and the macros float over everything
+        // but the pop-over.
+        if self.over_float(g, x, y) {
             return Hit::None;
         }
         if let Some(part) = crate::toast::part_at(self, g, x, y) {
@@ -1891,10 +1891,15 @@ impl Studio {
         mods: Mods,
     ) -> bool {
         self.inspector_follow(g);
-        self.grip_key(g, key)
+        // Esc while waiting for a controller's knob ends the wait first (OPS-007), not a row's
+        // or the pad's hold on the keys.
+        if key == "escape" && self.live_midi.assign.learning.is_some() {
+            return false;
+        }
+        self.name_key(key, mods)
+            || self.grip_key(g, key)
             || self.macro_key(key, mods)
             || self.device_key(key, mods)
-            || self.name_key(key, mods)
             || self.bar_key(key, ch, mods)
             || self.inspector_key(g, key, ch, mods)
             || self.field_key(g, key, ch, mods.shift).is_some()

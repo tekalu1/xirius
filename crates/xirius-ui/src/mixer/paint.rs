@@ -326,13 +326,14 @@ fn paint_strip(
                 let hot = matches!(hover, Some(MixerHit::KeySend(h, id) | MixerHit::KeyLevel(h, id))
                     if h == t && id == key.id);
                 let level = studio.key_level(t, key.id).unwrap_or(key.level_db);
+                let keys = studio.mixer.key_focus == Some((t, key.id));
                 key_row(
                     pen,
                     p,
                     row,
                     key,
                     level,
-                    (hot, lit.sends.contains(&(t, key.id))),
+                    (hot, lit.sends.contains(&(t, key.id)), keys),
                 );
             } else if k == track.sends.len() + keyed.len() {
                 add_row(pen, row, hover == Some(MixerHit::AddSend(t)));
@@ -370,14 +371,15 @@ fn paint_strip(
 }
 
 /// A key send's row (MIX-048): the sidechain mark, the receiving strip's chip, the plug-in's
-/// name and the bar of the level. `(hot, lit)`: the pointer is on it, its partner is.
+/// name and the bar of the level. `(hot, lit, keys)`: the pointer is on it, its partner is,
+/// its bar has the keys (←→).
 fn key_row(
     pen: &mut Pen,
     p: &Project,
     row: Rect,
     key: &super::keys::KeySend,
     level: f64,
-    (hot, lit): (bool, bool),
+    (hot, lit, keys): (bool, bool, bool),
 ) {
     let c = pen.c;
     pen.round(row, if hot { c.surface_3 } else { c.surface_2 }, Radius::S);
@@ -406,6 +408,10 @@ fn key_row(
     let w = (bar.w * super::keys::bar_t(level)).round();
     if w > 0.0 {
         pen.round(Rect::new(bar.x, bar.y, w, 6.0), c.ink_mark, Radius::Pill);
+    }
+    if keys {
+        let around = Rect::new(bar.x - 2.0, bar.y - 2.0, bar.w + 4.0, bar.h + 4.0);
+        pen.outline(around, c.ring, Radius::Pill, 1.5);
     }
     if lit {
         partner_ring(pen, row);

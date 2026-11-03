@@ -545,6 +545,8 @@ pub struct Mixer {
     pub wide: HashSet<TrackId>,
     /// The last press was a touch: the flows' rows are 32 high (MIX-045).
     pub coarse: bool,
+    /// What the press held now was, for [`Mixer::coarse`] once it is let go.
+    pub coarse_next: Option<bool>,
     pub level_drag: Option<LevelDrag>,
     /// The bar of a key send held (MIX-048).
     pub key_drag: Option<keys::KeyDrag>,
@@ -952,6 +954,42 @@ impl Studio {
             x += self.width_of(g, id) + STRIP_GAP;
         }
         None
+    }
+
+    /// The scroll a bank of channels further on (or back) starts at: always a strip's left
+    /// edge, strips of every width counted as they are (MIX-045). On, the first strip not
+    /// wholly in view comes to the left; back, as many whole strips as fit end where the
+    /// first one began.
+    pub(crate) fn mixer_page(&self, g: &Geometry, next: bool) -> f32 {
+        let view = self.mixer_view(g).w;
+        let mut strips = Vec::new();
+        let mut x = 0.0;
+        for id in strip_order(&self.project())
+            .into_iter()
+            .filter(|id| !id.is_master())
+        {
+            let w = self.width_of(g, id);
+            strips.push((x, x + w));
+            x += w + STRIP_GAP;
+        }
+        let before = self.mixer.scroll;
+        let to = if next {
+            strips
+                .iter()
+                .find(|(l, r)| *l > before + 0.5 && *r > before + view)
+                .map_or(before, |(l, _)| *l)
+        } else {
+            let earlier: Vec<f32> = (strips.iter().map(|(l, _)| *l))
+                .filter(|l| *l < before - 0.5)
+                .collect();
+            earlier
+                .iter()
+                .copied()
+                .find(|l| *l >= before - view)
+                .or(earlier.last().copied())
+                .unwrap_or(0.0)
+        };
+        to.clamp(0.0, self.mixer_max_scroll(g))
     }
 
     /// The part of the body the channels scroll in: all of it left of the master, which

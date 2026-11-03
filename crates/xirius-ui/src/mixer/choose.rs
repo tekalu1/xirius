@@ -56,6 +56,39 @@ impl Studio {
         self.set_target(target, json!({ "mute": mute }))
     }
 
+    /// A press takes the keys from what had them, unless it lands on it: the picked row, a
+    /// key send's bar, the pad, a device's control (UI-324).
+    pub fn press_keys(&mut self, g: &Geometry, x: f32, y: f32) {
+        self.chosen_press(g, x, y);
+        if self.popup.is_some() {
+            return;
+        }
+        if !matches!(self.hit(g, x, y), Hit::Mixer(MixerHit::KeyLevel(..))) {
+            self.mixer.key_focus = None;
+        }
+        if !self.over_macros(g, x, y)
+            && let Some(w) = self.macro_pad.as_mut()
+        {
+            w.focused = false;
+        }
+        if !self.over_instrument(g, x, y) {
+            self.device_blur();
+        }
+    }
+
+    /// Is one of the windows that float over the screen under the point?
+    pub(crate) fn over_float(&self, g: &Geometry, x: f32, y: f32) -> bool {
+        self.over_channel(g, x, y) || self.over_macros(g, x, y) || self.over_instrument(g, x, y)
+    }
+
+    /// A press let go: the rows take the height of what pressed (a touch, 32), so the press
+    /// itself was hit where the rows were drawn.
+    pub fn coarse_up(&mut self) {
+        if let Some(c) = self.mixer.coarse_next.take() {
+            self.mixer.coarse = c;
+        }
+    }
+
     /// A press anywhere but on a strip's flow lets the picked row go.
     pub fn chosen_press(&mut self, g: &Geometry, x: f32, y: f32) {
         if self.mixer.chosen.is_none() || self.popup.is_some() {
@@ -170,7 +203,18 @@ impl Studio {
         let Some((t, pick)) = self.mixer.chosen else {
             return false;
         };
-        if !self.mixer_shown() || self.popup.is_some() || m.ctrl {
+        // the keys are the mixer's only while nothing else holds them
+        if !self.mixer_shown()
+            || self.popup.is_some()
+            || m.ctrl
+            || self.input_map.browser_focus
+            || self.instruments.focus.is_some()
+        {
+            return false;
+        }
+        // Esc while a part waits for a knob ends the wait first (the keymap's)
+        let assign = &self.live_midi.assign;
+        if key == "escape" && (assign.learning.is_some() || assign.clash.is_some()) {
             return false;
         }
         let p = self.project();

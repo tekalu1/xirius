@@ -114,8 +114,13 @@ pub fn chosen_layer(t: &Track, chosen: Option<Pick>) -> usize {
 /// The keys the figure shows for the layers: from the C at or under the lowest key to the C at
 /// or over the highest, and six octaves at the least.
 pub fn span(layers: &[Layer]) -> Span {
-    let lo = layers.iter().map(|l| l.keys.0).min().unwrap_or(0);
-    let hi = layers.iter().map(|l| l.keys.1).max().unwrap_or(127);
+    // a range kept backwards counts from its lower key
+    let lo = (layers.iter().map(|l| l.keys.0.min(l.keys.1)).min())
+        .unwrap_or(0)
+        .min(127);
+    let hi = (layers.iter().map(|l| l.keys.0.max(l.keys.1)).max())
+        .unwrap_or(127)
+        .min(127);
     let mut lo = lo / 12 * 12;
     let mut end = (hi.div_ceil(12) * 12).saturating_add(1).min(128);
     while end - lo < LEAST_KEYS {

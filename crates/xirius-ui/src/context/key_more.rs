@@ -302,18 +302,8 @@ impl Studio {
         if !(self.drawer_open && self.tab == DrawerTab::Mixer) {
             return false;
         }
-        let w = crate::mixer::STRIP_W
-            * if self.song.session().state.view.mixer_wide {
-                1.4
-            } else {
-                1.0
-            }
-            + crate::mixer::STRIP_GAP;
-        let page = ((self.mixer_view(g).w / w).floor() * w).max(w);
         let before = self.mixer.scroll;
-        let to = if next { before + page } else { before - page };
-        // Whole strips: the bank starts at a strip's left edge.
-        self.mixer.scroll = ((to / w).round() * w).clamp(0.0, self.mixer_max_scroll(g));
+        self.mixer.scroll = self.mixer_page(g, next);
         self.mixer.scroll != before
     }
 
