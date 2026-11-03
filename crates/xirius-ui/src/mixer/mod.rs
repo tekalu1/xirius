@@ -496,6 +496,24 @@ pub struct LevelDrag {
     w: f32,
 }
 
+impl LevelDrag {
+    /// A row's level taken at `x` on its bar `bar` (the strip's row, and the channel editor's
+    /// heads of MIX-042).
+    pub(crate) fn taken(t: TrackId, target: flow::Target, bar: Rect, x: f32) -> LevelDrag {
+        let w = bar.w.max(1.0);
+        LevelDrag {
+            track: t,
+            node: target.id,
+            layer: target.layer,
+            start: target.db,
+            value: target.db,
+            x0: x,
+            t0: ((x - bar.x) / w).clamp(0.0, 1.0),
+            w,
+        }
+    }
+}
+
 /// The mixer's own state; the levels and the routing are the song's.
 #[derive(Default)]
 pub struct Mixer {
@@ -537,6 +555,9 @@ pub struct Mixer {
     pub(crate) gr_watched: Vec<PluginId>,
     /// The node the open plug-in list puts its pick after (the ＋ on a row's edge).
     pub insert_after: Option<(TrackId, flow::Pick)>,
+    /// The channel editor's ＋ the insert list was opened from, when nothing is before it in
+    /// its chain (MIX-042): the new effect is moved there.
+    pub insert_into: Option<(TrackId, crate::channel::flow::Chain, usize)>,
     pub(crate) editors: Vec<OpenEditor>,
     /// The plugins found by the last scan; read when a list first needs it.
     pub catalog: Option<Arc<Catalog>>,
@@ -1353,8 +1374,10 @@ impl Studio {
                 self.mixer.scroll = self.mixer.scroll.min(self.mixer_max_scroll(g));
                 true
             }
-            // the channel editor's window comes with MIX-042
-            MixerHit::Editor(_) => true,
+            MixerHit::Editor(t) => {
+                self.open_channel(t);
+                true
+            }
             MixerHit::AddInsert(t)
             | MixerHit::AddInstrument(t)
             | MixerHit::AddLayer(t)
@@ -1365,6 +1388,7 @@ impl Studio {
                     return false;
                 };
                 self.mixer.insert_after = None;
+                self.mixer.insert_into = None;
                 let kind = match hit {
                     MixerHit::AddInsert(_) => PopupKind::Insert(t),
                     MixerHit::AddInstrument(_) => PopupKind::Instrument(t),
@@ -1454,12 +1478,16 @@ impl Studio {
             }
             PopupKind::Insert(t) => {
                 let after = self.mixer.insert_after.take().filter(|(x, _)| *x == t);
+                let into = self.mixer.insert_into.take().filter(|(x, ..)| *x == t);
                 if let Some(pick) = self.effect_pick(to) {
-                    match after {
-                        Some((_, after)) => {
+                    match (after, into) {
+                        (Some((_, after)), _) => {
                             self.add_effect_after(t, after, &pick);
                         }
-                        None => {
+                        (None, Some((_, chain, index))) => {
+                            self.add_effect_into(t, chain, index, &pick);
+                        }
+                        (None, None) => {
                             let n = self.project().tracks[&t].inserts.len();
                             self.add_effect(t, n, &pick);
                         }

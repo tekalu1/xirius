@@ -36,7 +36,7 @@ impl Studio {
     }
 
     /// Sets a branch's or a layer's levels: one step of the history.
-    fn set_target(&mut self, target: Target, mut args: Value) -> bool {
+    pub(crate) fn set_target(&mut self, target: Target, mut args: Value) -> bool {
         args["id"] = json!(target.id.to_string());
         let command = if target.layer {
             "rack.layer.set"
@@ -86,9 +86,11 @@ impl Studio {
             .is_some_and(|x| x.inserts.iter().any(|p| p.id == id && p.kind == PluginKind::Instrument)));
         if instrument {
             self.mixer.insert_after = None;
+            self.mixer.insert_into = None;
             self.open_popup(PopupKind::Layer(t), anchor);
             return;
         }
+        self.mixer.insert_into = None;
         self.mixer.insert_after = Some((t, pick));
         self.open_popup(PopupKind::Insert(t), anchor);
         if self.popup.is_none() {
@@ -107,18 +109,7 @@ impl Studio {
         let (Some(bar), Some(target)) = (self.mixer_rect(g, h), self.row_target(t, n)) else {
             return false;
         };
-        let w = bar.w.max(1.0);
-        let t0 = ((x - bar.x) / w).clamp(0.0, 1.0);
-        self.mixer.level_drag = Some(LevelDrag {
-            track: t,
-            node: n,
-            layer: target.layer,
-            start: target.db,
-            value: target.db,
-            x0: x,
-            t0,
-            w,
-        });
+        self.mixer.level_drag = Some(LevelDrag::taken(t, target, bar, x));
         self.level_move(x, false);
         true
     }

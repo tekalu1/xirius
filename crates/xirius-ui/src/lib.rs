@@ -57,6 +57,8 @@ mod browser_review_tests;
 pub mod bugs2_shots;
 pub mod caption;
 pub mod caption_shots;
+pub mod channel;
+pub mod channel_shots;
 pub mod channel_step_shots;
 pub mod chrome;
 pub mod cleanup_dialog;
@@ -348,6 +350,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("browser-files-menu", browser_files_menu_shots::SHOTS),
     ("bugs2", bugs2_shots::SHOTS),
     ("caption", caption_shots::CAPTION),
+    ("channel", channel_shots::SHOTS),
     ("channel-step", channel_step_shots::SHOTS),
     ("clip-menu-rows", clip_menu_rows_shots::SHOTS),
     ("clipedit", clipedit_shots::CLIPEDIT),

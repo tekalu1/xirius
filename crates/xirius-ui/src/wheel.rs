@@ -95,6 +95,10 @@ impl Studio {
         if self.home_shown() {
             return self.home_wheel(g, x, y, notch);
         }
+        // The channel editor's flow scrolls under it (MIX-042).
+        if self.channel_wheel(g, x, y, dx, dy) {
+            return true;
+        }
         // A device's window floats over the rest: its controls turn (UI-324).
         if notch != 0.0
             && self.device_wheel(g, x, y, f64::from(field_px / ZOOM_NOTCH_PX), mods.shift)

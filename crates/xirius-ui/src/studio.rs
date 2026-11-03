@@ -765,6 +765,8 @@ pub struct Studio {
     pub live_midi: crate::midi_live::LiveMidi,
     /// The open windows of built-in instruments (UI-098).
     pub instruments: crate::instrument::window::Windows,
+    /// The open channel editor (MIX-042).
+    pub channel: Option<crate::channel::ChannelWin>,
     /// The right-click menu that is open (CTX-001).
     pub(crate) ctx: Option<crate::context::State>,
     /// The PC keys as a keyboard (UI-074).
@@ -920,6 +922,7 @@ impl Studio {
             midi_ports: crate::midi_watch::Ports::default(),
             live_midi: Default::default(),
             instruments: crate::instrument::window::Windows::default(),
+            channel: None,
             ctx: None,
             pc_keys: crate::instrument::keys::PcKeys::default(),
             drop_over: false,
@@ -1284,8 +1287,9 @@ impl Studio {
                 return l.item_at(x, y).map_or(Hit::PopupBody, Hit::Item);
             }
         }
-        // An instrument's window floats over everything but the pop-over.
-        if self.over_instrument(g, x, y) {
+        // An instrument's window and the channel editor float over everything but the
+        // pop-over.
+        if self.over_channel(g, x, y) || self.over_instrument(g, x, y) {
             return Hit::None;
         }
         if let Some(part) = crate::toast::part_at(self, g, x, y) {

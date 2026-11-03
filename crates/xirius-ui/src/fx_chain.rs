@@ -342,6 +342,42 @@ impl Studio {
     pub fn add_effect_after(&mut self, t: TrackId, after: Choose, pick: &Pick) -> bool {
         self.add_effect_at(t, pick, Some(after), 0)
     }
+    /// Adds an effect at `index` of a chain of the track's rack (MIX-042), as one undo step:
+    /// it goes in at the track's end, then moves into the chain.
+    pub(crate) fn add_effect_into(
+        &mut self,
+        t: TrackId,
+        chain: crate::channel::flow::Chain,
+        index: usize,
+        pick: &Pick,
+    ) -> bool {
+        use crate::channel::flow::Chain;
+        let ids = |s: &Self| -> Vec<xirius_core::id::PluginId> {
+            s.project()
+                .tracks
+                .get(&t)
+                .map(|x| x.inserts.iter().map(|p| p.id).collect())
+                .unwrap_or_default()
+        };
+        let before = ids(self);
+        self.song.session_mut().begin_group();
+        let end = before.len();
+        let mut done = self.add_effect(t, end, pick);
+        let new = ids(self).into_iter().find(|id| !before.contains(id));
+        if let Some(id) = new {
+            let to = match chain {
+                Chain::Top => t.to_string(),
+                Chain::Branch(n) | Chain::Layer(n) => n.to_string(),
+            };
+            let args = json!({"id": id.to_string(), "to": to, "index": index});
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+            let moved = self.arrange_run("rack.node.move", args);
+            done &= moved.is_some();
+            self.mixer.chosen = Some((t, Choose::Plugin(id)));
+        }
+        self.song.session_mut().end_group();
+        done
+    }
     fn add_effect_at(
         &mut self,
         t: TrackId,

@@ -446,6 +446,69 @@ pub fn paint(pen: &mut Pen, r: Rect, v: &View<'_>) {
     pen.icon("close", icon_box(bar.close), c.ink);
 }
 
+/// The channel editor's bar (MIX-042): the route icon and the track's name, the empty
+/// stretch, the pin and the close. No power, no preset (PLG-065 brings its tag).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlainBar {
+    pub name: Rect,
+    pub name_text: Rect,
+    pub space: Rect,
+    pub pin: Rect,
+    pub close: Rect,
+}
+
+pub fn plain_layout(r: Rect, track: &str) -> PlainBar {
+    let cy = r.y + (r.h - BTN) / 2.0;
+    let close = Rect::new(r.right() - PAD - BTN, cy, BTN, BTN);
+    let pin = Rect::new(close.x - GAP - BTN, cy, BTN, BTN);
+    let x = r.x + PAD;
+    let lead = NAME_L + ICON + NAME_GAP;
+    let room = (pin.x - GAP - x).max(0.0);
+    let content = lead + estimated_text_width(track, FontSize::Body) * SEMIBOLD_RUN + NAME_R;
+    let name = Rect::new(x, cy, content.min(room), BTN);
+    let name_text = Rect::new(name.x + lead, cy, (name.w - lead - NAME_R).max(0.0), BTN);
+    let space = Rect::new(
+        name.right() + GAP,
+        cy,
+        (pin.x - GAP - name.right() - GAP).max(0.0),
+        BTN,
+    );
+    PlainBar {
+        name,
+        name_text,
+        space,
+        pin,
+        close,
+    }
+}
+
+pub fn paint_plain(pen: &mut Pen, r: Rect, track: &str, pinned: bool) {
+    let c = pen.c;
+    let bar = plain_layout(r, track);
+    pen.shape(r, c.surface_1, Radius::M, Round::rows(true, false));
+    pen.mask(bar.name, |pen| {
+        let icon = Rect::new(bar.name.x + NAME_L, cy_of(bar.name), ICON, ICON);
+        pen.icon("route", icon, c.ink_strong);
+        let shown = pen.fit(track, FontSize::Body, Weight::Semibold, bar.name_text.w);
+        pen.text(
+            &shown,
+            FontSize::Body,
+            Weight::Semibold,
+            c.ink_strong,
+            bar.name_text,
+            Align::Left,
+        );
+    });
+    if pinned {
+        let (face, ink) = c.primary;
+        pen.round(bar.pin, face, Radius::S);
+        pen.icon("pin", icon_box(bar.pin), ink);
+    } else {
+        pen.icon("pin", icon_box(bar.pin), c.ink);
+    }
+    pen.icon("close", icon_box(bar.close), c.ink);
+}
+
 /// How «track › device» goes into the name's zone.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum NameFit {

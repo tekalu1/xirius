@@ -174,7 +174,7 @@ pub struct Mark {
     pub turn: Option<(PluginId, usize)>,
 }
 
-fn bounds(r: Rect) -> accesskit::Rect {
+pub(crate) fn bounds(r: Rect) -> accesskit::Rect {
     accesskit::Rect::new(
         r.x as f64,
         (r.y + Layout::TOP_BAR_H) as f64,
@@ -329,6 +329,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     out.extend(start_marks(s, g));
     out.extend(inspector_marks(s, g));
     out.extend(instrument_marks(s, g));
+    out.extend(crate::channel::marks(s, g));
     out.extend(flow_marks(s, g));
     out.extend(device_marks(s, g));
     out.extend(audition_mark(s, g));
@@ -809,7 +810,7 @@ fn flow_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             });
         };
         let mut editor = button(crate::mixer::EDITOR_LABEL);
-        editor.set_expanded(false);
+        editor.set_expanded(s.channel.as_ref().is_some_and(|w| w.track == t));
         parts.push((MixerHit::Editor(t), editor));
         let mut widen = button(crate::mixer::WIDEN_LABEL);
         toggled(&mut widen, s.mixer.wide.contains(&t));

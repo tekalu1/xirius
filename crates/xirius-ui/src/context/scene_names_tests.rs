@@ -164,6 +164,8 @@ const TAKE_OFF: &[&str] = &[
     "clip.ara.detach",
     // The file stays on the disk: only the device stops reading it.
     "plugin.samples.remove",
+    // The splitter leaves; its branches' effects stay where it was.
+    "rack.split.remove",
 ];
 
 #[test]

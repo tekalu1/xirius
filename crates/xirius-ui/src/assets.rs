@@ -65,6 +65,8 @@ const ICONS_HEAD: &[(&str, &[u8])] = icons!(
     "arrange",
     "bus",
     "sc",
+    "macro",
+    "popout",
     "pre",
     "post",
     "cable",

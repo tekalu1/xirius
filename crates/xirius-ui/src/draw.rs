@@ -597,7 +597,9 @@ pub fn paint_overlay(pen: &mut Pen, studio: &Studio, g: &Geometry) {
         crate::mixer::paint::paint(pen, studio, g);
     }
     crate::fx_chain::paint_headers(pen, studio, g);
+    crate::channel::paint::paint(pen, studio, g, false);
     crate::instrument::window::paint(pen, studio, g);
+    crate::channel::paint::paint(pen, studio, g, true);
     crate::browser_inst::paint(pen, studio, g);
     crate::fx_chain::paint_drag(pen, studio, g);
     crate::name_drag::paint(pen, studio, g);

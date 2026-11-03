@@ -520,7 +520,7 @@ impl Studio {
 
     // ------------------------------------------------------------ S31 S32 the inserts
 
-    fn plugin_items(&mut self, t: TrackId, id: PluginId) -> Vec<Item> {
+    pub(crate) fn plugin_items(&mut self, t: TrackId, id: PluginId) -> Vec<Item> {
         let p = self.project();
         let Some(track) = p.tracks.get(&t) else {
             return Vec::new();
