@@ -7,11 +7,17 @@ fail there for reasons that are not the app's. Everything else runs here.
 
     python scripts/ci_tests.py            # run
     python scripts/ci_tests.py --list     # print the cargo commands only
+    python scripts/ci_tests.py --plugins  # the tests with a real ARA plugin, before a release
+
+The tests with a real ARA plugin are `#[ignore]`d, so a run without one never passes them by
+skipping: each needs its variable set to the plugin's file (`docs/ara-verification.md`), and
+fails when it is not.
 
 Standard library only.
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 
@@ -28,6 +34,12 @@ WINDOW_TESTS = {
 }
 # Unit tests inside a library that open windows.
 WINDOW_UNIT_TESTS = ["mixer::editor_tests"]
+# The integration tests that need a real ARA plugin, by package and target: the variable that
+# names the plugin's file.
+PLUGIN_TESTS = {
+    ("xirius-ara", "test_plugin"): "XIRIUS_ARA_TEST_PLUGIN",
+    ("xirius-session", "ara_real"): "XIRIUS_ARA_REAL_PLUGIN",
+}
 
 
 def opens_windows(package, target):
@@ -67,12 +79,27 @@ def commands():
     ]
 
 
+def plugin_commands():
+    return [
+        ["cargo", "test", "-p", package, "--test", target, "--", "--ignored", "--nocapture"]
+        for (package, target) in sorted(PLUGIN_TESTS)
+    ]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--list", action="store_true", help="print the commands, run nothing")
+    parser.add_argument(
+        "--plugins", action="store_true", help="the tests with a real ARA plugin instead"
+    )
     args = parser.parse_args()
+    if args.plugins and not args.list:
+        missing = [v for v in sorted(PLUGIN_TESTS.values()) if not os.environ.get(v)]
+        if missing:
+            print("set " + ", ".join(missing) + " to the plugins' files", file=sys.stderr)
+            return 1
     failed = []
-    for command in commands():
+    for command in plugin_commands() if args.plugins else commands():
         print("$ " + " ".join(command), flush=True)
         if args.list:
             continue

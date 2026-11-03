@@ -160,7 +160,9 @@ python scripts/update_sign.py verify `
    版を上げて出し直します（アプリは公開された版を既に読んでいるかもしれません）。
 5. 次の版を出す前に、1.0 のアプリが知らせを出し、ダウンロード・署名の確認・終了時の
    入れ替えまで通ることを、別の利用者（または VM）で確かめます。本物の窓を開く試験
-   （`scripts/ci_tests.py` の一覧）も、窓の大きさが決まった PC で流します。
+   （`scripts/ci_tests.py` の一覧）も、窓の大きさが決まった PC で流します。本物の ARA の
+   プラグインの試験は `python scripts/ci_tests.py --plugins` で流します
+   （`docs/ara-verification.md`）。
 
 ## 7. 気をつけること
 
