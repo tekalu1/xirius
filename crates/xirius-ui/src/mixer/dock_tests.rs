@@ -210,13 +210,23 @@ fn a_narrow_mixer_folds_to_bands_and_keeps_the_strip_in_front() {
     s.grip_up();
     let folded = s.mixer_split(&g).unwrap();
     assert!(folded.folded);
-    assert_eq!(folded.mixer.w, FOLDED_MIN);
+    let n = s.project().tracks.len();
+    assert_eq!(folded.mixer.w, folded_w(n));
     let strips = s.mixer_strips(&g);
     assert_eq!(strips.len(), 1);
     assert_eq!(strips[0].track, t);
     assert_eq!(strips[0].rect.w, WIDE_W);
+    // every other channel is a band, none scrolled away, and the master stays at the right
     let bands = s.mixer_bands(&g);
-    assert!(!bands.is_empty());
+    assert_eq!(bands.len(), n - 1);
+    assert_eq!(s.mixer_max_scroll(&g), 0.0);
+    let (_, master) = bands.iter().find(|(x, _)| x.is_master()).unwrap();
+    assert_eq!(master.right(), folded.mixer.right() - STRIP_GAP);
+    assert!(
+        bands
+            .iter()
+            .all(|(_, r)| r.x >= folded.mixer.x && r.right() <= folded.mixer.right())
+    );
     assert!(bands.iter().all(|(_, r)| r.w == BAND_W));
     assert!(bands.iter().any(|(x, _)| x.is_master()));
     assert!(bands.iter().all(|(x, _)| *x != t));
@@ -232,6 +242,65 @@ fn a_narrow_mixer_folds_to_bands_and_keeps_the_strip_in_front() {
     assert!(s.mixer_strips(&g).iter().all(|x| x.track != t));
     // the face is the same device
     assert!(s.docked().is_some());
+}
+
+/// The window at its least (960×600): the face sits beside the strips, not under them, and
+/// pulled wide it folds every channel to a band beside it, all inside the drawer (MIX-046).
+#[test]
+fn at_the_least_window_the_face_sits_beside_the_strips_and_folds_them_all() {
+    let mut s = Studio::sample();
+    s.drawer_open = true;
+    s.tab = DrawerTab::Mixer;
+    // the drawer as tall as the least window lets it be, so the row to press is in view
+    s.drawer_size.mixer = Some(600.0);
+    s.instruments.open.clear();
+    let (w, h) = crate::studio::WINDOW_MIN;
+    let g = s.geometry(w, h);
+    let body = g.drawer_body;
+    assert!(body.h > 0.0 && body.w >= STACK_W, "{body:?}");
+    // a channel with no instrument area, so the row is in sight in the short drawer
+    let t = s
+        .mixer_strips(&g)
+        .iter()
+        .map(|x| x.track)
+        .find(|t| s.project().tracks[t].kind != xirius_core::model::TrackKind::Instrument)
+        .unwrap();
+    let eq = add(&mut s, t, "EQ");
+    click_row(&mut s, &g, t, eq);
+    let inside = |r: Rect| {
+        r.x >= body.x - 0.5
+            && r.right() <= body.right() + 0.5
+            && r.y >= body.y - 0.5
+            && r.bottom() <= body.bottom() + 0.5
+    };
+    let split = s.mixer_split(&g).unwrap();
+    assert!(!split.stacked);
+    assert!(inside(split.mixer) && inside(split.panel), "{split:?}");
+    assert!(split.grip.w == GRIP_W && split.grip.x >= split.mixer.right());
+
+    let i = s.docked().unwrap();
+    s.instruments.dock_w = None;
+    s.instruments.open[i].body.0 = widest(body);
+    let split = s.mixer_split(&g).unwrap();
+    assert!(split.folded && !split.stacked);
+    assert!(inside(split.mixer) && inside(split.panel), "{split:?}");
+    assert!(split.panel.w >= FOLD_W, "{split:?}");
+    assert_eq!(s.instruments.rect(i, &g), split.panel);
+    let strips = s.mixer_strips(&g);
+    assert_eq!(strips.len(), 1);
+    assert_eq!(strips[0].rect.w, WIDE_W);
+    let bands = s.mixer_bands(&g);
+    assert_eq!(strips.len() + bands.len(), s.project().tracks.len());
+    assert_eq!(s.mixer_max_scroll(&g), 0.0);
+    assert!(
+        strips
+            .iter()
+            .map(|x| x.rect)
+            .chain(bands.iter().map(|(_, r)| *r))
+            .all(|r| r.x >= split.mixer.x && r.right() <= split.mixer.right() && inside(r))
+    );
+    let (_, master) = bands.iter().find(|(x, _)| x.is_master()).unwrap();
+    assert_eq!(master.right(), split.mixer.right() - STRIP_GAP);
 }
 
 #[test]

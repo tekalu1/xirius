@@ -642,7 +642,8 @@ impl Windows {
     /// The drawer split for the face `i` in the mixer's drawer (MIX-046).
     pub(crate) fn dock_split(&self, i: usize, g: &Geometry) -> crate::mixer::dock::Split {
         let (w, h) = self.open[i].body;
-        crate::mixer::dock::split(g.drawer_body, w, title_bar::BAR_H + h)
+        let fold = crate::mixer::dock::folded_w(usize::from(g.panels.strips));
+        crate::mixer::dock::split(g.drawer_body, w, title_bar::BAR_H + h, fold)
     }
 
     /// The top window under a point, and the part of it. The face in the

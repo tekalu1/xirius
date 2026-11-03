@@ -3,7 +3,8 @@
 //! sitting in the drawer: its bar has 「窓で開く」 where the pin is, and a double click on the bar
 //! takes it out as a window. The grip sets the face's width, ←→ move it by [`STEP`]. When the
 //! strips have less than [`FOLD_W`], the other channels fold to bands of [`BAND_W`] with their
-//! name and meter, and only the strip in front stays, [`super::WIDE_W`] wide. A drawer too
+//! name and meter, and only the strip in front stays, [`super::WIDE_W`] wide; the strips then
+//! take the room every band needs, as far as the face keeps [`FOLD_W`]. A drawer too
 //! narrow for both side by side has the face under the strips, without the grip.
 
 use gpui::accesskit;
@@ -13,7 +14,7 @@ use xirius_design::{FontSize, Radius, Weight};
 use xirius_session::host::Strip;
 
 use super::flow::Pick;
-use super::{MixerHit, STRIP_GAP, WIDE_W};
+use super::{MASTER_GAP, MixerHit, STRIP_GAP, WIDE_W};
 use crate::a11y::{Mark, bounds};
 use crate::draw::{Align, Pen};
 use crate::instrument::window::{Win, is_built_in, live};
@@ -53,9 +54,18 @@ pub struct Split {
     pub stacked: bool,
 }
 
+/// How wide `strips` strips (the master's with them) are folded: the one in front, a band
+/// for each of the others and their gaps, so that none scrolls away. At least
+/// [`FOLDED_MIN`].
+pub fn folded_w(strips: usize) -> f32 {
+    let others = strips.saturating_sub(1) as f32;
+    (WIDE_W + others * (BAND_W + STRIP_GAP) + 2.0 * STRIP_GAP + MASTER_GAP).max(FOLDED_MIN)
+}
+
 /// The drawer's body `body` split for a face that wants to be `want` wide and, under the
-/// strips, `tall` high.
-pub fn split(body: Rect, want: f32, tall: f32) -> Split {
+/// strips, `tall` high; folded, the strips take `fold` ([`folded_w`]) as far as the face
+/// keeps [`FOLD_W`].
+pub fn split(body: Rect, want: f32, tall: f32, fold: f32) -> Split {
     if body.w < STACK_W {
         let h = tall.min(body.h * STACK_SHARE).max(0.0);
         let mixer = Rect::new(body.x, body.y, body.w, (body.h - h - GRIP_W).max(0.0));
@@ -72,7 +82,8 @@ pub fn split(body: Rect, want: f32, tall: f32) -> Split {
     let open = room - want;
     let folded = open < FOLD_W;
     let mixer_w = if folded {
-        open.max(FOLDED_MIN.min(room))
+        let most = (room - FOLD_W).max(FOLDED_MIN).min(room);
+        open.max(fold.max(FOLDED_MIN).min(most))
     } else {
         open
     };
@@ -232,7 +243,7 @@ impl Studio {
     /// keys go.
     pub fn grip_down(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
         let on = self.popup.is_none()
-            && !self.over_instrument(g, x, y)
+            && !self.over_float(g, x, y)
             && self.mixer_split(g).is_some_and(|s| s.grip.contains(x, y));
         self.mixer.grip_focus = on;
         if !on {
@@ -259,7 +270,7 @@ impl Studio {
 
     /// ← and → on the grip pressed last move it by [`STEP`].
     pub(crate) fn grip_key(&mut self, g: &Geometry, key: &str) -> bool {
-        if !self.mixer.grip_focus || self.docked().is_none() {
+        if !self.mixer.grip_focus || self.docked().is_none() || self.popup.is_some() {
             return false;
         }
         let w = self.instruments.open[self.docked().expect("docked")].body.0;

@@ -2402,10 +2402,13 @@ pub fn run(opts: Options) {
                     focus: false,
                     // The body keeps 520 px between the two bars (UI-300). A run of shots may
                     // ask for less, to show a narrow layout (UI-350).
-                    window_min_size: Some(if scripted {
-                        size(px(w.min(960.0)), px(h.min(600.0)))
-                    } else {
-                        size(px(960.0), px(600.0))
+                    window_min_size: Some({
+                        let (mw, mh) = crate::studio::WINDOW_MIN;
+                        if scripted {
+                            size(px(w.min(mw)), px(h.min(mh)))
+                        } else {
+                            size(px(mw), px(mh))
+                        }
                     }),
                     ..WindowOptions::default()
                 },

@@ -194,6 +194,8 @@ pub struct Panels {
     pub folded: bool,
     /// The record panel under the top bar (REC-007).
     pub record: bool,
+    /// The mixer's strips, the master's with them: the room they take folded (MIX-046).
+    pub strips: u16,
 }
 
 /// Where the regions sit, for a body of the given size.
@@ -239,6 +241,7 @@ impl Geometry {
                 mixer: false,
                 folded: false,
                 record: false,
+                strips: 0,
             },
         )
     }
@@ -828,6 +831,9 @@ pub enum FileRequest {
 /// Quarter notes per pixel row in the roll: the roll shows this many px per beat.
 pub const ROLL_BEAT_W: f32 = 48.0;
 
+/// The least the window is let be: the body keeps 520 px between the two bars (UI-300).
+pub const WINDOW_MIN: (f32, f32) = (960.0, 600.0);
+
 impl Studio {
     pub fn new(song: Song) -> Studio {
         let project = song.project();
@@ -1049,6 +1055,7 @@ impl Studio {
             mixer: self.mixer_shown(),
             record: self.rec_panel.open,
             folded: self.side_size.folded,
+            strips: u16::try_from(self.project().tracks.len()).unwrap_or(u16::MAX),
         };
         let head_w = self.tree.head_w.max(Layout::TRACK_HEAD_W);
         let head_w = self.side_size.head_w(w, panels, head_w);

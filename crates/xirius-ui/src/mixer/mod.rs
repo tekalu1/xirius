@@ -86,7 +86,7 @@ const KNOB_TRAVEL: f32 = 150.0;
 /// The least the fader's part of a strip keeps under the flow: the pan and three buttons.
 const MIN_ZONE: f32 = KNOB + BTN_GAP + 3.0 * (BTN + BTN_GAP);
 /// The space between the channels and the master (the mock's `.mixer` gap).
-const MASTER_GAP: f32 = 6.0;
+pub(crate) const MASTER_GAP: f32 = 6.0;
 /// The scroll bar under the channels, the space above it, and the thumb's least length.
 pub const BAR_H: f32 = 8.0;
 const BAR_GAP: f32 = 4.0;
