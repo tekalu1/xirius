@@ -290,6 +290,10 @@ impl ParamSpec {
             };
         }
         if let Some((a, b)) = lower.split_once('/') {
+            // A time is not a share: «1/8» on a knob of ms is a beat, which it does not know.
+            if matches!(self.unit, Unit::Ms | Unit::Seconds) {
+                return None;
+            }
             let (a, b) = (a.trim().parse::<f64>().ok()?, b.trim().parse::<f64>().ok()?);
             return (b != 0.0).then(|| a / b).and_then(clamp);
         }
@@ -298,7 +302,9 @@ impl ParamSpec {
             .unwrap_or(lower.len());
         let (number, unit) = lower.split_at(split);
         let v: f64 = number.trim().parse().ok()?;
-        let plain = match (unit.trim(), self.unit) {
+        // «4 : 1» reads as «4:1».
+        let unit: String = unit.chars().filter(|c| !c.is_whitespace()).collect();
+        let plain = match (unit.as_str(), self.unit) {
             ("", _) => v,
             ("k" | "khz", Unit::Hz) => v * 1000.0,
             ("hz", Unit::Hz)
@@ -308,7 +314,7 @@ impl ParamSpec {
             | ("%", Unit::Percent)
             | (":1", Unit::Ratio)
             | ("st", Unit::Semitones)
-            | ("cent", Unit::Cents) => v,
+            | ("cent" | "cents" | "ct", Unit::Cents) => v,
             ("s", Unit::Ms) => v * 1000.0,
             ("ms", Unit::Seconds) => v / 1000.0,
             // A share of the sweep on a knob of another unit.
@@ -986,6 +992,11 @@ mod tests {
         let ratio = COMPRESSOR.param("ratio").unwrap().1;
         assert_eq!(ratio.typed("4:1"), Some(4.0));
         assert_eq!(ratio.typed("1/2"), Some(1.0), "a fraction, to the range");
+        assert_eq!(ratio.typed("4 : 1"), Some(4.0), "spaces in it");
+        assert_eq!(time.typed("1/8"), None, "a time is not a share");
+        let fine = SAMPLER.param("fine").unwrap().1;
+        assert_eq!(fine.typed("-20 cents"), Some(-20.0));
+        assert_eq!(fine.typed("12ct"), Some(12.0));
         let low_cut = COMPRESSOR.param("low_cut").unwrap().1;
         assert_eq!(low_cut.typed("off"), Some(20.0));
         let on = EQ.param("low_cut_on").unwrap().1;
