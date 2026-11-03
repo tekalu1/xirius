@@ -1294,6 +1294,7 @@ pub(crate) fn plugins_on(
         .map_err(CmdError::conflict)?;
         return Ok(("プラグインのプロセスを再起動しました".into(), Value::Null));
     }
+    let ara = ara_rows(host);
     let list = host.plugins().reports();
     let rows: Vec<Value> = list
         .iter()
@@ -1319,7 +1320,9 @@ pub(crate) fn plugins_on(
         })
         .collect();
     let down = list.iter().filter(|r| r.status.crashed).count();
-    let mut msg = if list.is_empty() {
+    let mut msg = if list.is_empty() && !ara.is_empty() {
+        String::new()
+    } else if list.is_empty() {
         "別のプロセスで実行中のプラグインはありません".to_string()
     } else if down > 0 {
         format!(
@@ -1343,7 +1346,46 @@ pub(crate) fn plugins_on(
             ));
         }
     }
-    Ok((msg, json!({ "plugins": rows })))
+    let ara_down: Vec<&str> = ara
+        .iter()
+        .filter(|r| r.crashed.is_some())
+        .map(|r| r.name.as_str())
+        .collect();
+    if !ara.is_empty() {
+        let line = if ara_down.is_empty() {
+            format!("ARA のプラグイン {} 個が動いています", ara.len())
+        } else {
+            format!(
+                "ARA のプラグイン {} が止まり、そのクリップは元の音で鳴っています（plugin.restart で開き直せます）",
+                ara_down.join("・")
+            )
+        };
+        if !msg.is_empty() {
+            msg.push('\n');
+        }
+        msg.push_str(&line);
+    }
+    let ara: Vec<Value> = ara
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.plugin,
+                "name": r.name,
+                "loaded": r.loaded,
+                "crashed": r.crashed.is_some(),
+                "error": r.crashed.clone().or_else(|| r.failed.clone()),
+                "clips": r.clips,
+                "working": r.working,
+                "progress": r.progress,
+            })
+        })
+        .collect();
+    Ok((msg, json!({ "plugins": rows, "ara": ara })))
+}
+
+/// The ARA plugins' documents (PLG-058).
+fn ara_rows(host: &SessionHost) -> Vec<crate::ara::Report> {
+    host.ara_reports()
 }
 
 /// A transport command on a host that follows `p`.
