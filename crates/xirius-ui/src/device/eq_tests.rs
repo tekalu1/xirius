@@ -11,10 +11,25 @@ use xirius_engine::stock::Tap;
 use super::eq;
 use super::layout;
 use crate::instrument::window::{Part, values};
-use crate::studio::{Geometry, Studio};
+use crate::studio::{Geometry, Rect, Studio};
 use crate::tools::Mods;
 
 /// The sample song with an EQ on Keys, its window open.
+/// L-ui-1: a curve drawn at one rate is not drawn again at another from the cache.
+#[test]
+fn ui_325_the_curve_is_drawn_again_at_another_rate() {
+    let values: Vec<f64> = xirius_params::EQ
+        .params
+        .iter()
+        .map(|p| p.default_norm())
+        .collect();
+    let r = Rect::new(0.0, 0.0, 400.0, 160.0);
+    let at = |rate| eq::curve_stamp(&values, r, Some(1), rate);
+    assert_ne!(at(44_100.0), at(48_000.0));
+    assert_ne!(at(48_000.0), at(96_000.0));
+    assert_eq!(at(48_000.0), at(48_000.0));
+}
+
 fn eq_window() -> (Studio, Geometry, TrackId, PluginId) {
     let mut s = Studio::sample();
     let g = s.geometry(1600.0, 1000.0);

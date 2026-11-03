@@ -318,6 +318,12 @@ pub fn gain_axis(r: Rect) -> Axis {
     Axis::lin(r.y + 14.0, r.bottom() - 14.0, RANGE, -RANGE)
 }
 
+/// What the cached curves of a plane `r` are made of: the values, the band drawn on its own
+/// and the rate, which shapes the curve near the top (L-ui-1).
+pub(crate) fn curve_stamp(values: &[f64], r: Rect, band: Option<usize>, rate: f64) -> u64 {
+    graph::stamp(values, r) ^ band.map_or(0, |b| b as u64 + 1) ^ rate.to_bits().rotate_left(17)
+}
+
 /// The rate the curve is worked out at when the song's is not known.
 const RATE: f64 = 48_000.0;
 
@@ -572,7 +578,7 @@ pub fn paint(pen: &mut Pen, r: Rect, values: &[f64], view: &View) {
         let make = || curves(values, r, band, rate);
         let (whole, own) = match view.plugin {
             Some(id) => {
-                let stamp = graph::stamp(values, r) ^ band.map_or(0, |b| b as u64 + 1);
+                let stamp = curve_stamp(values, r, band, rate);
                 let both = graph::curve((id, 0), stamp, || make().0);
                 let mine = graph::curve((id, 1), stamp, || {
                     // The runs of the band's own curve, one after another;
