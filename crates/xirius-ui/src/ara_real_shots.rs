@@ -211,7 +211,15 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             .map(|t| t.id.to_string())
             .collect();
         s.song.run("track.delete", json!({ "ids": ids })).unwrap();
-        assert!(s.command(|song| song.save_as(&dir.join("song"))));
+        // The window's song is saved by its owner (the save on the worker), as the folder
+        // dialog's answer would.
+        s.start_file_request(crate::studio::FileRequest::SaveAs, &dir.join("song"));
+        wait(s, 30.0, |s| s.saving.is_none());
+        assert!(
+            s.song.dir().is_some(),
+            "the song was not saved: {:?}",
+            s.error
+        );
         // Four bars at 120: the tone's eight seconds.
         let ok = s.run_command(
             "clip.import.place",
