@@ -58,6 +58,10 @@ pub fn act_command(act: &Act) -> (&'static str, Value) {
             "plugin.preset.choose",
             json!({"id": id.to_string(), "preset": name}),
         ),
+        Act::Analyser(id, tap) => (
+            "plugin.analyzer",
+            json!({"id": id.to_string(), "spectrum": SHOWS[*tap as usize]}),
+        ),
         Act::PresetFile(id, save) => (
             "plugin.preset.file",
             json!({"id": id.to_string(), "save": save}),
@@ -168,6 +172,9 @@ fn lane_of(s: &str) -> Option<LaneKind> {
     CtrlKind::parse(s).map(LaneKind::Ctrl)
 }
 
+/// What `plugin.analyzer --spectrum` names, in the order of `Tap`.
+const SHOWS: [&str; 4] = ["off", "input", "output", "both"];
+
 fn id<T: FromStr>(args: &Map<String, Value>, key: &str) -> Option<T> {
     args.get(key)?.as_str()?.parse().ok()
 }
@@ -258,6 +265,17 @@ impl Studio {
                 Some(i) => self.roll.hide_lane(i),
                 None => false,
             },
+            "plugin.analyzer" => {
+                let show = args.get("spectrum").and_then(Value::as_str);
+                let Some(t) = SHOWS.iter().position(|s| Some(*s) == show) else {
+                    return Some(false);
+                };
+                let tap = xirius_engine::stock::Tap::ALL[t];
+                match id::<PluginId>(args, "id") {
+                    Some(p) => self.instruments.set_tap(p, tap),
+                    None => false,
+                }
+            }
             _ => return self.screen_rows(g, name, args),
         })
     }

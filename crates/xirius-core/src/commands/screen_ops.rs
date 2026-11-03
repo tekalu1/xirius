@@ -32,6 +32,7 @@ pub const NAMES: &[&str] = &[
     "mixer.channel.prev",
     "plugin.preset.next",
     "plugin.preset.prev",
+    "plugin.analyzer",
     "view.page",
     "view.focus",
     "view.fullscreen",
@@ -260,6 +261,14 @@ pub(super) fn defs() -> Vec<CommandDef> {
             "plugin.preset.prev",
             "いちばん手前のプラグインの窓に、前のプリセットを読み込みます（最初の前は最後）",
             vec![],
+        ),
+        screen(
+            "plugin.analyzer",
+            "EQ の窓のアナライザーに出すものを選びます（off・input・output・both）",
+            vec![
+                ArgDef::id("id", IdKind::Plugin, "プラグイン").req(),
+                ArgDef::choice("spectrum", &["off", "input", "output", "both"], "出すもの").req(),
+            ],
         ),
         screen(
             "view.page",

@@ -82,6 +82,7 @@ pub mod dawproject_shots;
 pub mod dawproject_ui;
 pub mod dblclick_shots;
 pub mod device;
+pub mod devices_shots;
 pub mod disabled_reason;
 pub mod drag_scroll;
 pub mod draw;
@@ -361,6 +362,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("drawer", drawer_shots::DRAWER),
     ("drum-names", drum_names_shots::SHOTS),
     ("drum-rows", drum_rows_shots::SHOTS),
+    ("devices", devices_shots::SHOTS),
     ("drum-view", drum_view_shots::SHOTS),
     ("e2e", e2e_shots::SHOTS),
     ("edit3", edit3_shots::EDIT3),

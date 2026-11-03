@@ -1,4 +1,4 @@
-use super::window::{CUSTOM, Part, part_rect, preset_of, preset_values, text, values};
+use super::window::{CUSTOM, Part, preset_of, preset_values, text, values};
 use super::*;
 use crate::mixer::MixerHit;
 use crate::popup::{Action, PopupKind};
@@ -422,7 +422,9 @@ fn the_sidechain_seat_is_only_on_the_devices_that_take_a_key() {
         let r = s.instruments.rect(i, g.size);
         let track = &p.tracks[&t];
         let plugin = track.inserts.iter().find(|x| x.id == plugin_id).unwrap();
-        let seat = part_rect(r, track, plugin, plugin.builtin().unwrap(), Part::Sidechain);
+        let seat =
+            s.instruments
+                .part_rect(r, track, plugin, plugin.builtin().unwrap(), Part::Sidechain);
         if takes {
             // Width 0 until UI-336 fills it, between the empty stretch and
             // the channel editor's button.

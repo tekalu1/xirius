@@ -34,6 +34,8 @@ pub const TOGGLE_H: f32 = 26.0;
 const TOGGLE_PAD: f32 = 10.0;
 /// The field a value is typed in.
 pub const ENTRY_W: f32 = 64.0;
+/// The dot of an on button.
+pub const DOT: f32 = 10.0;
 
 /// What a parameter looks like in the window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,6 +45,11 @@ pub enum Look {
     Segments,
     /// On and off.
     Toggle,
+    /// On and off as a dot (a band's head: blue while on).
+    Dot,
+    /// A choice that says its value and opens a menu of the others (a
+    /// band's type).
+    Menu,
 }
 
 pub fn look(spec: &ParamSpec) -> Look {
@@ -74,6 +81,26 @@ pub fn name(def: &BuiltinDef, spec: &ParamSpec) -> &'static str {
         ("eq", "high_cut_on") => "High Cut",
         ("eq", "high_cut_freq") => "HC Freq",
         ("eq", "high_cut_slope") => "HC Slope",
+        ("eq", "b1_type") => "LC Type",
+        ("eq", "b1_gain") => "LC Gain",
+        ("eq", "b1_q") => "LC Q",
+        ("eq", "b2_on") => "LF On",
+        ("eq", "b2_type") => "LF Type",
+        ("eq", "b2_q") => "LF Q",
+        ("eq", "b2_slope") => "LF Slope",
+        ("eq", "b3_on") => "LMF On",
+        ("eq", "b3_type") => "LMF Type",
+        ("eq", "b3_slope") => "LMF Slope",
+        ("eq", "b4_on") => "HMF On",
+        ("eq", "b4_type") => "HMF Type",
+        ("eq", "b4_slope") => "HMF Slope",
+        ("eq", "b5_on") => "HF On",
+        ("eq", "b5_type") => "HF Type",
+        ("eq", "b5_q") => "HF Q",
+        ("eq", "b5_slope") => "HF Slope",
+        ("eq", "b6_type") => "HC Type",
+        ("eq", "b6_gain") => "HC Gain",
+        ("eq", "b6_q") => "HC Q",
         ("compressor", "makeup") => "Makeup",
         ("limiter", "input") => "Gain",
         ("delay", "division") => "Beats",
@@ -277,6 +304,8 @@ pub struct KnobView<'a> {
     pub dial: f32,
     pub entry: Option<&'a Field>,
     pub focused: bool,
+    /// What it shapes is off (an EQ's band): its value is the plain ink.
+    pub dim: bool,
 }
 
 /// The dial of a knob in its cell: centred at the top.
@@ -305,7 +334,7 @@ pub fn paint_knob(pen: &mut Pen, cell: Rect, k: &KnobView) {
                 &text(k.spec, k.value),
                 FontSize::Micro,
                 Weight::Regular,
-                c.ink_strong,
+                if k.dim { c.ink } else { c.ink_strong },
                 value,
                 Align::Center,
             );
@@ -398,6 +427,44 @@ pub fn paint_toggle(pen: &mut Pen, r: Rect, label: &str, on: bool, focused: bool
             ink,
             r,
             Align::Center,
+        );
+    });
+    if focused {
+        pen.outline(r, c.ring, Radius::S, 2.0);
+    }
+}
+
+/// The dot of a band's on (UI-326) in its round button `r`: blue while on.
+pub fn paint_dot(pen: &mut Pen, r: Rect, on: bool, hot: bool, focused: bool) {
+    let c = pen.c;
+    if hot {
+        pen.round(r, c.surface_3, Radius::Pill);
+    }
+    let dot = Rect::new(r.x + (r.w - DOT) / 2.0, r.y + (r.h - DOT) / 2.0, DOT, DOT);
+    let dot_face = if on { c.ink_blue } else { c.scroll_thumb[0] };
+    pen.round(dot, dot_face, Radius::Pill);
+    if focused {
+        pen.outline(r, c.ring, Radius::Pill, 2.0);
+    }
+}
+
+/// A choice's button that opens its menu (a band's type): its label to the
+/// right, cut short when it does not fit.
+pub fn paint_choice(pen: &mut Pen, r: Rect, label: &str, hot: bool, focused: bool) {
+    let c = pen.c;
+    if hot {
+        pen.round(r, c.surface_3, Radius::S);
+    }
+    let ink = if hot { c.ink_strong } else { c.ink };
+    let t = Rect::new(r.x + 4.0, r.y, (r.w - 8.0).max(0.0), r.h);
+    pen.mask(t, |pen| {
+        pen.text(
+            label,
+            FontSize::Caption,
+            Weight::Regular,
+            ink,
+            t,
+            Align::Right,
         );
     });
     if focused {

@@ -17,7 +17,7 @@ use super::control::{self, Look, Step};
 use super::graph::{self, Point};
 use super::layout::{self, Slot};
 use crate::context::Item;
-use crate::instrument::window::{Grab, Part, Win, live, points_of, values};
+use crate::instrument::window::{Grab, Part, Win, live, values};
 use crate::settings::FieldId;
 use crate::settings::field::Field;
 use crate::studio::{Geometry, Studio};
@@ -212,8 +212,12 @@ impl Studio {
             return;
         }
         match slot.look {
-            Look::Toggle => {
+            Look::Toggle | Look::Dot => {
                 self.device_set(w.plugin, k, 1.0 - now.round());
+            }
+            Look::Menu => {
+                let hit = slot.hit(def);
+                self.device_menu(w, def, k, now, hit.x, hit.bottom() + 4.0);
             }
             Look::Segments => {
                 if let Some(v) = control::segment_value(slot.hit(def), spec, x) {
@@ -334,8 +338,12 @@ impl Studio {
             return false;
         };
         let r = self.instruments.rect(at, g.size);
-        let shown = self.instruments.shown(plugin_now);
-        let Some(point) = points_of(r, def, n, &shown).get(i).cloned() else {
+        let Some(point) = self
+            .instruments
+            .points_of(r, plugin_now, def, n)
+            .get(i)
+            .cloned()
+        else {
             return false;
         };
         let scale = if fine { graph::FINE } else { 1.0 };
@@ -470,10 +478,42 @@ impl Studio {
         let w = self.instruments.open.get(i)?;
         let (_, x, def) = live(&p, w)?;
         let r = self.instruments.rect(i, g.size);
-        let pt = points_of(r, def, n, &self.instruments.shown(x))
-            .get(at)
-            .cloned()?;
+        let pt = self.instruments.points_of(r, x, def, n).get(at).cloned()?;
         Some((def, pt))
+    }
+
+    /// The menu of a control that is a choice shown as its name (an EQ
+    /// band's type), at `(x, y)`: each choice, the one it is on checked.
+    fn device_menu(
+        &mut self,
+        w: Win,
+        def: &'static BuiltinDef,
+        k: usize,
+        now: f64,
+        x: f32,
+        y: f32,
+    ) {
+        let spec = &def.params[k];
+        let Some(band) = super::eq::band_of(def, k) else {
+            return;
+        };
+        let b = &xirius_params::EQ_BANDS[band];
+        let at = b.type_of(spec.to_plain(now));
+        let items = b
+            .types
+            .iter()
+            .enumerate()
+            .map(|(t, ty)| {
+                let args = json!({
+                    "id": w.plugin.to_string(),
+                    "param": spec.id,
+                    "value": super::eq::choice(b.types.len(), t),
+                });
+                self.ctx_as(ty.label(), "plugin.param.set", args)
+                    .on(*ty == at)
+            })
+            .collect();
+        self.open_context(items, x, y);
     }
 
     /// A right press on a graph's point: what it can be (its menu's rows),
@@ -486,7 +526,8 @@ impl Studio {
         self.device_blur();
         self.instruments.chosen.insert(w.plugin, at);
         let held = pt
-            .params()
+            .resets()
+            .into_iter()
             .any(|k| self.param_locked(w.track, w.plugin, def.params[k].id));
         let set_args = |set: &[(usize, f64)]| {
             let mut args = json!({ "id": w.plugin.to_string() });
@@ -515,7 +556,8 @@ impl Studio {
             items.push(item);
         }
         let back: Vec<(usize, f64)> = pt
-            .params()
+            .resets()
+            .into_iter()
             .map(|k| {
                 (
                     k,
@@ -570,7 +612,7 @@ impl Studio {
         if mods.ctrl || mods.alt {
             return false;
         }
-        let Some((track, def, _)) = self.device(plugin) else {
+        let Some((track, def, values)) = self.device(plugin) else {
             self.instruments.focus = None;
             return false;
         };
@@ -580,7 +622,22 @@ impl Studio {
         let now = self.device_value(plugin, k).unwrap_or(spec.default_norm());
         match key {
             "tab" => {
-                let order: Vec<usize> = layout::body(def).slots.iter().map(|s| s.k).collect();
+                let w = self
+                    .instruments
+                    .open
+                    .iter()
+                    .find(|w| w.plugin == plugin)
+                    .map_or_else(|| layout::natural_w(def), |w| w.body.0);
+                let shape = layout::Shape {
+                    w,
+                    band: self.instruments.band(plugin),
+                    values: &values,
+                };
+                let order: Vec<usize> = layout::body(def, &shape)
+                    .slots
+                    .iter()
+                    .map(|s| s.k)
+                    .collect();
                 let at = order.iter().position(|&x| x == k).unwrap_or(0);
                 let n = order.len().max(1);
                 let next = if mods.shift { at + n - 1 } else { at + 1 } % n;

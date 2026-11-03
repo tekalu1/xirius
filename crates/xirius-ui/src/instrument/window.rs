@@ -17,14 +17,17 @@ use gpui::{Bounds, Corners, point, px, size};
 use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::{Plugin, PluginKind, Project, Track, TrackKind};
-use xirius_design::Radius;
+use xirius_design::{FontSize, Radius, Weight};
 use xirius_params::{BuiltinDef, ParamSpec};
 
 use super::menu::Menu;
+use crate::context::{Act, Item};
 use crate::device::control::{self, KnobView, Look};
+use crate::device::eq;
 use crate::device::graph::{self, Point};
-use crate::device::layout::{self, Slot};
-use crate::draw::Pen;
+use crate::device::layout::{self, Body, Slot};
+use crate::draw::{Align, Pen};
+use crate::mixer::meters::Meter;
 use crate::popup::PopupKind;
 use crate::studio::{Geometry, Rect, Studio};
 use crate::title_bar;
@@ -185,7 +188,59 @@ pub enum Part {
     Point(usize, usize),
     /// A graph's plane away from its points: a press there does nothing.
     Graph(usize),
+    /// A tab of a narrow EQ choosing the band it shows (UI-326).
+    Tab(usize),
+    /// The button choosing what an EQ's analyser shows.
+    Spectrum,
     Body,
+}
+
+/// What an EQ's analyser shows and last heard (UI-326, ENG-073).
+#[derive(Debug, Default)]
+pub(crate) struct Analyser {
+    pub tap: xirius_engine::stock::Tap,
+    /// The samples gathered since the last look, the input's and the output's.
+    gathered: [Vec<f32>; 2],
+    /// The levels (dB at log-spaced frequencies) last worked out.
+    pub levels: [Vec<f32>; 2],
+    /// When they were.
+    last: Option<std::time::Instant>,
+}
+
+impl Analyser {
+    /// How often the levels are worked out again.
+    const EVERY: std::time::Duration = std::time::Duration::from_millis(33);
+    /// How many levels a line has.
+    const POINTS: usize = 200;
+
+    /// Takes what the probe gathered and, 30 times a second, works the
+    /// levels out from the last of it. False for a device with no analyser.
+    pub(crate) fn feed(&mut self, probe: &xirius_engine::stock::Probe, rate: f64) -> bool {
+        use xirius_engine::analyzer;
+        probe.set_tap(self.tap);
+        let [input, output] = &mut self.gathered;
+        if !probe.take_samples(input, output) {
+            return false;
+        }
+        for buf in &mut self.gathered {
+            let extra = buf.len().saturating_sub(analyzer::FFT_LEN);
+            buf.drain(..extra);
+        }
+        let now = std::time::Instant::now();
+        if self.last.is_some_and(|t| now - t < Self::EVERY) {
+            return true;
+        }
+        self.last = Some(now);
+        let wanted = [self.tap.input(), self.tap.output()];
+        for ((levels, buf), on) in self.levels.iter_mut().zip(&self.gathered).zip(wanted) {
+            *levels = if on && !buf.is_empty() {
+                analyzer::spectrum(buf, rate, Self::POINTS)
+            } else {
+                Vec::new()
+            };
+        }
+        true
+    }
 }
 
 /// The open windows, the last on top.
@@ -206,6 +261,12 @@ pub struct Windows {
     pub hot: Option<(PluginId, Part)>,
     /// The point chosen on each device's graph: its graph and its index.
     pub chosen: HashMap<PluginId, (usize, usize)>,
+    /// Each open EQ's analyser.
+    pub(crate) analysers: HashMap<PluginId, Analyser>,
+    /// Each open window's output meter (ENG-072).
+    pub(crate) meters: HashMap<PluginId, Meter>,
+    /// The devices whose probes write for a window, so a closed one stops.
+    watched: Vec<PluginId>,
     /// The preset each plug-in was last set to: the tag keeps its name and
     /// marks it while the knobs are off it (UI-332 keeps the list itself).
     base: HashMap<PluginId, &'static str>,
@@ -252,6 +313,102 @@ impl Windows {
             }
         }
         v
+    }
+
+    /// The band an EQ's window shows (the point chosen on its graph).
+    pub fn band(&self, id: PluginId) -> usize {
+        self.chosen
+            .get(&id)
+            .filter(|c| c.0 == 0)
+            .map_or(eq::FIRST_BAND, |c| c.1.min(eq::NAMES.len() - 1))
+    }
+
+    /// What an EQ's analyser shows.
+    pub fn tap(&self, id: PluginId) -> xirius_engine::stock::Tap {
+        self.analysers.get(&id).map(|a| a.tap).unwrap_or_default()
+    }
+
+    /// Chooses what the analyser of an open EQ's window shows.
+    pub fn set_tap(&mut self, id: PluginId, tap: xirius_engine::stock::Tap) -> bool {
+        if !self.open.iter().any(|w| w.plugin == id) {
+            return false;
+        }
+        let a = self.analysers.entry(id).or_default();
+        if a.tap != tap {
+            a.tap = tap;
+            a.levels = Default::default();
+        }
+        true
+    }
+
+    /// The body of the window whose frame is `r`, on the screen, for the
+    /// values it shows and the band chosen.
+    pub(crate) fn body(&self, r: Rect, plugin: &Plugin, def: &BuiltinDef) -> Body {
+        body_of(r, def, &self.shown(plugin), self.band(plugin.id))
+    }
+
+    /// The controls of the window whose frame is `r`, on the screen.
+    pub(crate) fn slots(&self, r: Rect, plugin: &Plugin, def: &BuiltinDef) -> Vec<Slot> {
+        self.body(r, plugin, def).slots
+    }
+
+    /// The points of the `n`th graph of the window whose frame is `r`.
+    pub(crate) fn points_of(
+        &self,
+        r: Rect,
+        plugin: &Plugin,
+        def: &BuiltinDef,
+        n: usize,
+    ) -> Vec<Point> {
+        let now = self.shown(plugin);
+        self.body(r, plugin, def)
+            .graphs
+            .get(n)
+            .map_or_else(Vec::new, |&g| graph::points(def, n, g, &now))
+    }
+
+    /// The analyser's button of an EQ's window whose body is `b`.
+    fn spectrum_of(&self, b: &Body, id: PluginId) -> Option<Rect> {
+        b.spectrum.map(|at| eq::spectrum_rect(at, self.tap(id)))
+    }
+
+    /// Where a part sits in the window whose frame is `r`.
+    pub fn part_rect(
+        &self,
+        r: Rect,
+        track: &Track,
+        plugin: &Plugin,
+        def: &BuiltinDef,
+        part: Part,
+    ) -> Rect {
+        let bar = bar(r, track, plugin, def);
+        let body = || self.body(r, plugin, def);
+        match part {
+            Part::Head => bar.space,
+            Part::Power => bar.power.unwrap_or_default(),
+            Part::Preset => bar.tag,
+            Part::PrevPreset => bar.prev.unwrap_or_default(),
+            Part::NextPreset => bar.next.unwrap_or_default(),
+            Part::Sidechain => bar.sidechain.unwrap_or_default(),
+            Part::Channel => bar.channel.unwrap_or_default(),
+            Part::Pin => bar.pin,
+            Part::Close => bar.close,
+            Part::Knob(k) => body().slot(k).map(|s| s.hit(def)).unwrap_or_default(),
+            Part::Point(n, i) => self
+                .points_of(r, plugin, def, n)
+                .get(i)
+                .map(|p| {
+                    let d = graph::POINT;
+                    Rect::new(p.at.0 - d / 2.0, p.at.1 - d / 2.0, d, d)
+                })
+                .unwrap_or_default(),
+            Part::Graph(n) => body().graphs.get(n).copied().unwrap_or_default(),
+            Part::Tab(t) => body().tabs.get(t).map(|t| t.r).unwrap_or_default(),
+            Part::Spectrum => self.spectrum_of(&body(), plugin.id).unwrap_or_default(),
+            // The empty rest under the controls (a press in a gap is Body
+            // too; the strip is where a point of it always is).
+            Part::Body => Rect::new(r.x, r.bottom() - layout::PAD, r.w, layout::PAD),
+        }
     }
 
     /// The point a graph draws as hot: the one held, else the one under the
@@ -311,18 +468,31 @@ impl Windows {
                 .map_or(Part::Head, |(_, part)| part);
                 return Some((i, part));
             }
-            let planes = graphs(r, def);
             let now = self.shown(plugin);
+            let b = body_of(r, def, &now, self.band(plugin.id));
+            if self
+                .spectrum_of(&b, plugin.id)
+                .is_some_and(|s| s.contains(x, y))
+            {
+                return Some((i, Part::Spectrum));
+            }
+            let planes = &b.graphs;
             let point = planes.iter().enumerate().find_map(|(n, &plane)| {
                 graph::point_at(&graph::points(def, n, plane, &now), x, y)
                     .map(|at| Part::Point(n, at))
             });
             let part = point
                 .or_else(|| {
-                    slots(r, def)
-                        .into_iter()
+                    b.slots
+                        .iter()
                         .find(|s| s.hit(def).contains(x, y))
                         .map(|s| Part::Knob(s.k))
+                })
+                .or_else(|| {
+                    b.tabs
+                        .iter()
+                        .position(|t| t.r.contains(x, y))
+                        .map(Part::Tab)
                 })
                 .or_else(|| {
                     planes
@@ -357,6 +527,8 @@ impl Windows {
         }
         let open: Vec<PluginId> = self.open.iter().map(|w| w.plugin).collect();
         self.chosen.retain(|id, _| open.contains(id));
+        self.analysers.retain(|id, _| open.contains(id));
+        self.meters.retain(|id, _| open.contains(id));
         if self.hot.is_some_and(|(id, _)| !open.contains(&id)) {
             self.hot = None;
         }
@@ -405,62 +577,18 @@ fn bar(r: Rect, track: &Track, plugin: &Plugin, def: &BuiltinDef) -> title_bar::
     title_bar::layout(head, track.shown_name(), &plugin.name, seats)
 }
 
-/// Where a part sits in the window whose frame is `r`.
-pub fn part_rect(r: Rect, track: &Track, plugin: &Plugin, def: &BuiltinDef, part: Part) -> Rect {
-    let b = bar(r, track, plugin, def);
-    match part {
-        Part::Head => b.space,
-        Part::Power => b.power.unwrap_or_default(),
-        Part::Preset => b.tag,
-        Part::PrevPreset => b.prev.unwrap_or_default(),
-        Part::NextPreset => b.next.unwrap_or_default(),
-        Part::Sidechain => b.sidechain.unwrap_or_default(),
-        Part::Channel => b.channel.unwrap_or_default(),
-        Part::Pin => b.pin,
-        Part::Close => b.close,
-        Part::Knob(k) => slots(r, def)
-            .into_iter()
-            .find(|s| s.k == k)
-            .map(|s| s.hit(def))
-            .unwrap_or_default(),
-        Part::Point(n, i) => points_of(r, def, n, &values(plugin))
-            .get(i)
-            .map(|p| {
-                let d = graph::POINT;
-                Rect::new(p.at.0 - d / 2.0, p.at.1 - d / 2.0, d, d)
-            })
-            .unwrap_or_default(),
-        Part::Graph(n) => graphs(r, def).get(n).copied().unwrap_or_default(),
-        // The empty rest under the controls (a press in a gap is Body too;
-        // the strip is where a point of it always is).
-        Part::Body => Rect::new(r.x, r.bottom() - layout::PAD, r.w, layout::PAD),
-    }
-}
-
-/// The planes of the graphs of the window whose frame is `r`, on the screen.
-pub(crate) fn graphs(r: Rect, def: &BuiltinDef) -> Vec<Rect> {
-    layout::body(def)
-        .graphs
-        .into_iter()
-        .map(|g| Rect::new(r.x + g.x, r.y + title_bar::BAR_H + g.y, g.w, g.h))
-        .collect()
-}
-
-/// The points of the `n`th graph of the window whose frame is `r`, for the
-/// values (0..1) it shows.
-pub(crate) fn points_of(r: Rect, def: &BuiltinDef, n: usize, now: &[f64]) -> Vec<Point> {
-    graphs(r, def)
-        .get(n)
-        .map_or_else(Vec::new, |&g| graph::points(def, n, g, now))
-}
-
-/// The controls of the window whose frame is `r`, where they are on the screen.
-pub(crate) fn slots(r: Rect, def: &BuiltinDef) -> Vec<Slot> {
-    layout::body(def)
-        .slots
-        .into_iter()
-        .map(|s| s.at(r.x, r.y + title_bar::BAR_H))
-        .collect()
+/// The body of the window whose frame is `r`, on the screen, for the values
+/// (0..1) it shows and the band chosen (an EQ's).
+pub(crate) fn body_of(r: Rect, def: &BuiltinDef, now: &[f64], band: usize) -> Body {
+    layout::body(
+        def,
+        &layout::Shape {
+            w: r.w,
+            band,
+            values: now,
+        },
+    )
+    .at(r.x, r.y + title_bar::BAR_H)
 }
 
 /// The track, the plugin and its parameters of a window, while it is still
@@ -517,12 +645,12 @@ impl Studio {
                     .and_then(|x| x.inserts.iter().find(|x| x.id == id))
                     .and_then(Plugin::builtin);
                 if let Some(def) = def {
-                    let body = layout::body(def);
+                    let body = layout::size(def, layout::natural_w(def));
                     self.instruments.open.push(Win {
                         track: t,
                         plugin: id,
                         knobs: def.params.len(),
-                        body: (body.w, body.h),
+                        body,
                         at: None,
                         pinned: false,
                     });
@@ -599,7 +727,9 @@ impl Studio {
                 let Some((track, plugin, def)) = live(&p, &w) else {
                     return true;
                 };
-                let anchor = part_rect(r, track, plugin, def, Part::Preset);
+                let anchor = self
+                    .instruments
+                    .part_rect(r, track, plugin, def, Part::Preset);
                 self.open_inst_menu(Menu::Preset(w.track, w.plugin), anchor);
             }
             // The press raised this window to the top, so the shared step
@@ -614,10 +744,20 @@ impl Studio {
                 self.instruments.open[i].pinned = !w.pinned;
             }
             Part::Knob(k) => {
-                let slot = live(&p, &w).and_then(|(_, _, d)| {
-                    slots(r, d).into_iter().find(|s| s.k == k).map(|s| (s, d))
+                let slot = live(&p, &w).and_then(|(_, x0, d)| {
+                    self.instruments
+                        .slots(r, x0, d)
+                        .into_iter()
+                        .find(|s| s.k == k)
+                        .map(|s| (s, d))
                 });
                 if let Some((slot, def)) = slot {
+                    // A press in a band's column chooses the band (UI-326).
+                    if def.uid == "eq"
+                        && let Some(band) = eq::band_of(def, k)
+                    {
+                        self.instruments.chosen.insert(w.plugin, (0, band));
+                    }
                     self.device_press(w, def, slot, x, y, clicks, mods);
                 }
             }
@@ -625,10 +765,22 @@ impl Studio {
                 let Some((_, x0, def)) = live(&p, &w) else {
                     return true;
                 };
-                let now = self.instruments.shown(x0);
-                if let Some(point) = points_of(r, def, n, &now).get(at) {
-                    self.device_point_press(w, def, (n, at), point, (x, y), clicks, mods);
+                let point = self.instruments.points_of(r, x0, def, n).get(at).cloned();
+                if let Some(point) = point {
+                    self.device_point_press(w, def, (n, at), &point, (x, y), clicks, mods);
                 }
+            }
+            Part::Tab(band) => {
+                self.instruments.chosen.insert(w.plugin, (0, band));
+            }
+            Part::Spectrum => {
+                let Some((track, plugin, def)) = live(&p, &w) else {
+                    return true;
+                };
+                let at = self
+                    .instruments
+                    .part_rect(r, track, plugin, def, Part::Spectrum);
+                self.spectrum_menu(w.plugin, at);
             }
             Part::Graph(_) | Part::Body | Part::Sidechain | Part::Channel => {}
         }
@@ -649,7 +801,7 @@ impl Studio {
         let w = self.instruments.open[i];
         let (track, plugin, def) = live(&p, &w)?;
         let spec = def.params.get(k)?;
-        let r = part_rect(
+        let r = self.instruments.part_rect(
             self.instruments.rect(i, g.size),
             track,
             plugin,
@@ -755,6 +907,58 @@ impl Studio {
 
     /// The pointer over the windows while nothing is held: the part under it,
     /// for a point to grow. True when that changed.
+    /// One frame of the open windows' probes (ENG-072, ENG-073): their
+    /// output meters move and an EQ's analyser takes what it heard. A
+    /// device whose window closed stops writing. True while a meter still
+    /// moves or an analyser hears something.
+    pub(crate) fn poll_probes(&mut self) -> bool {
+        let rate = f64::from(self.project().settings.sample_rate);
+        let Some(host) = self.transport.host() else {
+            return false;
+        };
+        let plugins = host.plugins();
+        let ins = &mut self.instruments;
+        let open: Vec<PluginId> = ins.open.iter().map(|w| w.plugin).collect();
+        for id in ins.watched.iter().filter(|id| !open.contains(id)) {
+            if let Some(probe) = plugins.stock_probe(*id) {
+                probe.watch(false);
+            }
+        }
+        ins.watched.clear();
+        let mut moving = false;
+        for id in open {
+            let Some(probe) = plugins.stock_probe(id) else {
+                continue;
+            };
+            probe.watch(true);
+            ins.watched.push(id);
+            let (_, out) = probe.take_peaks();
+            let m = ins.meters.entry(id).or_default();
+            m.step(xirius_engine::mixer::MeterReading {
+                peak: out,
+                rms: out.map(|v| v * std::f32::consts::FRAC_1_SQRT_2),
+            });
+            moving |= m.level.iter().chain(&m.hold).any(|v| *v > 0.0);
+            let a = ins.analysers.entry(id).or_default();
+            if a.feed(&probe, rate) {
+                moving |= a.levels.iter().any(|l| !l.is_empty());
+            }
+        }
+        moving
+    }
+
+    /// Opens the menu of what an EQ's analyser shows under its button `at`.
+    pub(crate) fn spectrum_menu(&mut self, id: PluginId, at: Rect) {
+        let now = self.instruments.tap(id);
+        let items = xirius_engine::stock::Tap::ALL
+            .into_iter()
+            .map(|tap| {
+                Item::act(eq::SPECTRUM[tap as usize], "", Act::Analyser(id, tap)).on(tap == now)
+            })
+            .collect();
+        self.open_context(items, at.x, at.bottom() + 4.0);
+    }
+
     pub fn instrument_hover(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
         if self.instruments.grab.is_some() {
             return false;
@@ -805,7 +1009,9 @@ impl Studio {
         let i = self.instruments.open.iter().position(|w| w.plugin == id)?;
         let p = self.project();
         let (track, plugin, def) = live(&p, &self.instruments.open[i])?;
-        let r = part_rect(self.instruments.rect(i, g.size), track, plugin, def, part);
+        let r =
+            self.instruments
+                .part_rect(self.instruments.rect(i, g.size), track, plugin, def, part);
         let at = (r.x + r.w / 2.0, r.y + r.h / 2.0);
         // Only if nothing covers it.
         (self.instruments.at(&p, g.size, at.0, at.1) == Some((i, part))).then_some(at)
@@ -867,17 +1073,25 @@ fn paint_window(
             },
         );
 
-        // The graphs (UI-325), then the controls, where the device's layout
-        // puts them.
+        // The body: the chosen band's face, the graphs (UI-325) and what
+        // lies on them, the names and tabs, the meters, then the controls,
+        // where the device's layout puts them.
         let now = values(plugin);
         let ins = &studio.instruments;
         let shown = ins.shown(plugin);
-        for (n, plane) in graphs(r, def).into_iter().enumerate() {
+        let body = ins.body(r, plugin, def);
+        let hot = ins.hot.filter(|h| h.0 == plugin.id).map(|h| h.1);
+        for &face in &body.faces {
+            pen.round(face, c.surface_1, Radius::S);
+        }
+        let analyser = ins.analysers.get(&plugin.id);
+        let rate = f64::from(studio.project().settings.sample_rate);
+        for (n, &plane) in body.graphs.iter().enumerate() {
             let chosen = ins.chosen.get(&plugin.id).filter(|c| c.0 == n).map(|c| c.1);
             let focused = ins.focus.is_some_and(|(id, k)| {
                 id == plugin.id
                     && chosen
-                        .and_then(|c| points_of(r, def, n, &shown).get(c).cloned())
+                        .and_then(|c| graph::points(def, n, plane, &shown).get(c).cloned())
                         .is_some_and(|pt| pt.params().any(|x| x == k))
             });
             let view = graph::View {
@@ -889,17 +1103,64 @@ fn paint_window(
                     .and_then(|g| g.point())
                     .is_some_and(|(id, graph, _)| (id, graph) == (plugin.id, n)),
                 focused,
+                bypassed: !plugin.runs(),
+                spectrum: analyser.map_or([&[][..], &[][..]], |a| {
+                    [a.levels[0].as_slice(), a.levels[1].as_slice()]
+                }),
+                rate,
             };
             graph::paint(pen, def, n, plane, &shown, &view);
         }
+        if let Some(button) = ins.spectrum_of(&body, plugin.id) {
+            eq::paint_spectrum(pen, button, ins.tap(plugin.id), hot == Some(Part::Spectrum));
+        }
+        for name in &body.names {
+            let ink = if name.strong { c.ink_strong } else { c.ink };
+            let w = name.r.w + 4.0;
+            pen.text(
+                name.text,
+                name.size,
+                Weight::Semibold,
+                ink,
+                Rect::new(name.r.x, name.r.y, w, name.r.h),
+                Align::Left,
+            );
+        }
+        for (i, tab) in body.tabs.iter().enumerate() {
+            if tab.chosen {
+                pen.round(tab.r, c.surface_1, Radius::S);
+            } else if hot == Some(Part::Tab(i)) {
+                pen.round(tab.r, c.surface_3, Radius::S);
+            }
+            let ink = if !tab.on {
+                c.scroll_thumb[0]
+            } else if tab.chosen {
+                c.ink_strong
+            } else {
+                c.ink
+            };
+            pen.text(
+                tab.text,
+                FontSize::Small,
+                Weight::Semibold,
+                ink,
+                tab.r,
+                Align::Center,
+            );
+        }
+        let meter = ins.meters.get(&plugin.id).copied().unwrap_or_default();
+        for (ch, &m) in body.meters.iter().enumerate() {
+            crate::mixer::paint::meter(pen, m, &meter, ch.min(1));
+        }
         let entry = ins.entry.as_ref().filter(|e| e.plugin == plugin.id);
-        for slot in slots(r, def) {
+        for slot in &body.slots {
             let k = slot.k;
             let spec = &def.params[k];
             let v = ins.turning(plugin.id, k).unwrap_or(now[k]);
             let focused = ins.focus == Some((plugin.id, k));
-            let name = control::name(def, spec);
+            let name = slot.label.unwrap_or_else(|| control::name(def, spec));
             let hit = slot.hit(def);
+            let over = hot == Some(Part::Knob(k));
             match slot.look {
                 Look::Knob => control::paint_knob(
                     pen,
@@ -911,6 +1172,7 @@ fn paint_window(
                         dial: slot.dial,
                         entry: entry.filter(|e| e.k == k).map(|e| &e.field),
                         focused,
+                        dim: slot.dim,
                     },
                 ),
                 Look::Segments => {
@@ -918,6 +1180,13 @@ fn paint_window(
                     control::paint_name(pen, slot.cell, slot.dial, name);
                 }
                 Look::Toggle => control::paint_toggle(pen, hit, name, v >= 0.5, focused),
+                Look::Dot => control::paint_dot(pen, hit, spec.to_plain(v) >= 0.5, over, focused),
+                Look::Menu => {
+                    let label = eq::band_of(def, k).map_or("", |b| {
+                        xirius_params::EQ_BANDS[b].type_of(spec.to_plain(v)).label()
+                    });
+                    control::paint_choice(pen, hit, label, over, focused);
+                }
             }
             let mark = match slot.look {
                 Look::Knob => control::dial_rect(slot.cell, slot.dial),

@@ -692,10 +692,12 @@ fn instrument_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
 
 /// The controls of the open device windows (UI-324): a knob or a row of
 /// segments is a Slider named as the window names it, with the value it reads;
-/// an on and off button is a toggle Button.
+/// an on and off button is a toggle Button, a choice shown as its name a
+/// ComboBox. An EQ's band tabs are Tabs and its analyser's button a ComboBox
+/// (UI-326).
 fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     use crate::device::control::{self, Look};
-    use crate::instrument::window::{live, slots, values};
+    use crate::instrument::window::{live, values};
     let p = s.project();
     let mut out = Vec::new();
     for (i, w) in s.instruments.open.iter().enumerate() {
@@ -704,14 +706,38 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
         };
         let now = values(x);
         let r = s.instruments.rect(i, g.size);
-        for slot in slots(r, def) {
+        let body = s.instruments.body(r, x, def);
+        let mark = |key: String, node: accesskit::Node| Mark {
+            key,
+            children: Vec::new(),
+            node,
+            fold: None,
+            pick: None,
+            press: None,
+        };
+        for (t, tab) in body.tabs.iter().enumerate() {
+            let mut node = accesskit::Node::new(accesskit::Role::Tab);
+            node.set_label(tab.text);
+            node.set_selected(tab.chosen);
+            node.set_bounds(bounds(tab.r));
+            out.push(mark(format!("device-{}-tab-{t}", w.plugin), node));
+        }
+        if let Some(at) = body.spectrum {
+            let tap = s.instruments.tap(w.plugin);
+            let mut node = accesskit::Node::new(accesskit::Role::ComboBox);
+            node.set_label("Spectrum");
+            node.set_value(crate::device::eq::SPECTRUM[tap as usize]);
+            node.set_bounds(bounds(crate::device::eq::spectrum_rect(at, tap)));
+            out.push(mark(format!("device-{}-spectrum", w.plugin), node));
+        }
+        for slot in body.slots {
             let spec = &def.params[slot.k];
             let v = s
                 .instruments
                 .turning(w.plugin, slot.k)
                 .unwrap_or(now[slot.k]);
             let mut node = match slot.look {
-                Look::Toggle => {
+                Look::Toggle | Look::Dot => {
                     let mut n = accesskit::Node::new(accesskit::Role::Button);
                     n.set_toggled(if v >= 0.5 {
                         accesskit::Toggled::True
@@ -727,6 +753,7 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                     n.set_numeric_value((v * 100.0).round());
                     n
                 }
+                Look::Menu => accesskit::Node::new(accesskit::Role::ComboBox),
             };
             node.set_label(control::name(def, spec));
             node.set_value(control::text(spec, v));

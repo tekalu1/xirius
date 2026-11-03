@@ -4202,6 +4202,21 @@ MIDI 学習
 | `uid` | — | `{"type":"string"}` | 形式ごとの固有 ID（省略時は名前） |
 | `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
 
+## `plugin.analyzer`
+
+アナライザーに出すもの
+
+EQ の窓のアナライザーに出すものを選びます（off・input・output・both）
+
+事前条件: AI の権限が読み取り以上。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 記録なし。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `id` | 必須 | `{"type":"string"}` | プラグイン（plugin の ID） |
+| `spectrum` | 必須 | `{"enum":["off","input","output","both"],"type":"string"}` | 出すもの |
+
 ## `plugin.builtin.list`
 
 内蔵プラグインの一覧

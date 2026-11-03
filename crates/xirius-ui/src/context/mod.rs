@@ -124,6 +124,8 @@ pub enum Act {
     OpenPlugin(TrackId, PluginId),
     /// Loads a preset into an effect.
     Preset(PluginId, String),
+    /// Chooses what an EQ's analyser shows (UI-326).
+    Analyser(PluginId, xirius_engine::stock::Tap),
     /// Reloads the plugins that went down, ARA's with them (PLG-055).
     RestartPlugins,
     /// The ARA plugin of these clips: the list that picks it, or its window when one is

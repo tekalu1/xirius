@@ -174,7 +174,7 @@ fn ui_324_a_choice_of_three_is_segments_and_on_off_is_a_button() {
     let (mut s, g, t, id) = delay();
     let def = fx(&s, t).builtin().unwrap();
     let r = s.instruments.rect(0, g.size);
-    let slots = crate::instrument::window::slots(r, def);
+    let slots = s.instruments.slots(r, &fx(&s, t), def);
     let look = |p: &str| slots[def.param(p).unwrap().0].look;
     use crate::device::control::Look;
     assert_eq!(look("feel"), Look::Segments);

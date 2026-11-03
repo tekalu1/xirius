@@ -143,6 +143,9 @@ pub struct Point {
     /// It does something (a band switched off is dim).
     pub on: bool,
     pub menu: Vec<Option<Choice>>,
+    /// What else its menu's «back to the defaults» puts back (a band's type,
+    /// its on, its slope).
+    pub rest: Vec<usize>,
 }
 
 impl Point {
@@ -157,6 +160,18 @@ impl Point {
         [self.x.map(|d| d.k), self.y.map(|d| d.k), self.wheel]
             .into_iter()
             .flatten()
+    }
+
+    /// The parameters its menu puts back to their defaults: those it moves
+    /// and the rest.
+    pub fn resets(&self) -> Vec<usize> {
+        let mut all: Vec<usize> = self.params().collect();
+        for &k in &self.rest {
+            if !all.contains(&k) {
+                all.push(k);
+            }
+        }
+        all
     }
 }
 
@@ -175,13 +190,15 @@ pub fn point_at(points: &[Point], x: f32, y: f32) -> Option<usize> {
 /// The points of a device's `n`th graph, whose plane is `r` on the screen,
 /// for its values (0..1). Each device with a graph says what they are.
 pub fn points(def: &BuiltinDef, n: usize, r: Rect, values: &[f64]) -> Vec<Point> {
-    let _ = (def, n, r, values);
-    Vec::new()
+    match (def.uid, n) {
+        ("eq", 0) => super::eq::points(def, r, values),
+        _ => Vec::new(),
+    }
 }
 
 /// What a graph is drawn with besides its values.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct View {
+pub struct View<'a> {
     pub plugin: Option<PluginId>,
     /// The point chosen, and the one under the pointer.
     pub chosen: Option<usize>,
@@ -190,13 +207,29 @@ pub struct View {
     pub held: bool,
     /// The point has the keys.
     pub focused: bool,
+    /// The device is bypassed: its curve dims.
+    pub bypassed: bool,
+    /// What the analyser heard (dB at log-spaced frequencies): the input,
+    /// then the output; empty when not shown.
+    pub spectrum: [&'a [f32]; 2],
+    /// The song's sample rate (0 when not known).
+    pub rate: f64,
 }
 
 /// Paints a device's `n`th graph on its plane `r`, then its points.
 pub fn paint(pen: &mut Pen, def: &BuiltinDef, n: usize, r: Rect, values: &[f64], view: &View) {
-    let _ = (def, n, values);
-    pen.round(r, pen.c.surface_2, Radius::S);
-    paint_points(pen, &points(def, n, r, values), view);
+    let pts = match (def.uid, n) {
+        ("eq", 0) => {
+            super::eq::paint(pen, r, values, view);
+            let rate = if view.rate > 0.0 { view.rate } else { 48_000.0 };
+            super::eq::points_at(def, r, values, rate)
+        }
+        _ => {
+            pen.round(r, pen.c.surface_2, Radius::S);
+            points(def, n, r, values)
+        }
+    };
+    paint_points(pen, r, &pts, view);
 }
 
 // ------------------------------------------------------------------ curves
@@ -333,7 +366,7 @@ pub fn point_size(hot: bool) -> f32 {
 /// The points over a graph: the chosen and the hot one light, a switched-off
 /// one dim, each with its short name over it, and the tip of the one held or
 /// under the pointer.
-pub fn paint_points(pen: &mut Pen, points: &[Point], view: &View) {
+pub fn paint_points(pen: &mut Pen, plane: Rect, points: &[Point], view: &View) {
     let c = pen.c;
     for (i, p) in points.iter().enumerate() {
         let chosen = view.chosen == Some(i);
@@ -369,20 +402,29 @@ pub fn paint_points(pen: &mut Pen, points: &[Point], view: &View) {
         .or(view.hot)
         .and_then(|i| points.get(i));
     if let Some(p) = tip {
-        paint_tip(pen, p);
+        paint_tip(pen, plane, p);
     }
 }
 
+/// Where the value of a point `w` wide goes: over it, or under it near the
+/// plane's top; never past the plane's sides.
+pub fn tip_rect(plane: Rect, at: (f32, f32), w: f32) -> Rect {
+    let y = if at.1 - plane.y > 44.0 {
+        at.1 - 36.0
+    } else {
+        at.1 + 18.0
+    };
+    let x = (at.0 - w / 2.0)
+        .min(plane.right() - w - 4.0)
+        .max(plane.x + 4.0);
+    Rect::new(x, y, w, TIP_H)
+}
+
 /// The value of a point in a box over it.
-fn paint_tip(pen: &mut Pen, p: &Point) {
+fn paint_tip(pen: &mut Pen, plane: Rect, p: &Point) {
     let c = pen.c;
     let w = pen.measure(&p.value, FontSize::Caption, Weight::Regular) + TIP_PAD.0 * 2.0;
-    let r = Rect::new(
-        p.at.0 - w / 2.0,
-        p.at.1 - POINT_HOT / 2.0 - 22.0 - TIP_H,
-        w,
-        TIP_H,
-    );
+    let r = tip_rect(plane, p.at, w);
     pen.floating(r, c.surface_3, Radius::S);
     pen.text(
         &p.value,
@@ -430,6 +472,7 @@ mod tests {
             wheel: None,
             on: true,
             menu: Vec::new(),
+            rest: Vec::new(),
         }
     }
 

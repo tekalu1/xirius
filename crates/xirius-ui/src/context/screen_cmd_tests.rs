@@ -48,6 +48,7 @@ fn on_screen(act: &Act) -> bool {
         | Act::MidiExport(..)
         | Act::PointValue(..)
         | Act::Preset(..)
+        | Act::Analyser(..)
         | Act::RestartPlugin(_)
         | Act::RestartPlugins
         | Act::PickInsert(_)
@@ -96,6 +97,7 @@ fn samples(t: TrackId, p: PluginId, f: FolderId) -> Vec<Act> {
         Act::SelectSources(t),
         Act::OpenPlugin(t, p),
         Act::Preset(p, "Warm".into()),
+        Act::Analyser(p, xirius_engine::stock::Tap::Both),
         Act::RestartPlugin(p),
         Act::RestartPlugins,
         Act::AraAttach(vec!["c1".into()]),

@@ -4,9 +4,12 @@
 //! `instrument::window`'s.
 
 pub mod control;
+pub mod eq;
 pub mod graph;
 pub mod input;
 pub mod layout;
 
+#[cfg(test)]
+mod eq_tests;
 #[cfg(test)]
 mod input_tests;
