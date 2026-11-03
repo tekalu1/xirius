@@ -573,6 +573,7 @@ fn assignments(b: &mut B, ui: &SettingsUi, s: &Settings, x: f32, top: f32, w: f3
         let target = match &a.target {
             Target::Volume(id) => format!("{} · ボリューム", name(id)),
             Target::Pan(id) => format!("{} · パン", name(id)),
+            Target::Control(id, k) => format!("{} · {}", name(id), name(&format!("{id}:{k}"))),
             Target::Command(cmd) => cmd.clone(),
             Target::Param { track, param, .. } => format!("{} · {param}", name(track)),
         };

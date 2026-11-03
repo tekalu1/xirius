@@ -479,21 +479,7 @@ fn entry(
 }
 
 fn set(t: &mut Track, target: &AutoTarget, v: f64) {
-    match target {
-        AutoTarget::Volume => t.volume_db = v,
-        AutoTarget::Pan => t.pan = v,
-        AutoTarget::Mute => t.mute = v >= 0.5,
-        AutoTarget::Send(s) => {
-            if let Some(x) = t.sends.iter_mut().find(|x| x.id == *s) {
-                x.level_db = v;
-            }
-        }
-        AutoTarget::Param(pid, name) => {
-            if let Some(x) = t.inserts.iter_mut().find(|x| x.id == *pid) {
-                x.params.insert(name.clone(), v);
-            }
-        }
-    }
+    target.set_on(t, v);
 }
 
 /// Fewer points for the same line: one point per tick (the last), and a

@@ -796,6 +796,12 @@ pub struct Track {
     pub automation: Vec<AutoLane>,
     #[serde(default, skip_serializing_if = "AutoMode::is_read")]
     pub auto_mode: AutoMode,
+    /// The track's macro controls and what each moves (MIX-039).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::controls::MacroControls::is_empty"
+    )]
+    pub controls: crate::controls::MacroControls,
     /// The track preset this track was made from, saved as or last applied (MIX-030).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<String>,
@@ -852,6 +858,7 @@ impl Track {
             icon: None,
             automation: Vec::new(),
             auto_mode: AutoMode::Read,
+            controls: Default::default(),
             preset: None,
             frozen: None,
             transpose: 0,

@@ -9,7 +9,7 @@ use serde_json::json;
 use super::*;
 use crate::auto::AutoTarget;
 use crate::command::EditCtx;
-use crate::id::{FolderId, IdKind, PluginId, SendId, TrackId};
+use crate::id::{FolderId, IdKind, NodeId, PluginId, SendId, TrackId};
 use crate::model::{
     AuxSend, Folder, MAX_DB, MIN_DB, MidiOut, Output as Route, Plugin, PluginIsolation, PluginKind,
     Track, TrackIcon, TrackKind, pan_moved, volume_moved,
@@ -998,17 +998,29 @@ pub(super) fn clone_track(p: &mut Project, t: &Track, settings_only: bool) -> Tr
             }
         }
     }
-    // the lanes follow the new send and plug-in ids
-    for (k, l) in copy.automation.iter_mut().enumerate() {
-        l.target = match &t.automation[k].target {
-            AutoTarget::Send(s) => AutoTarget::Send(sends.get(s).copied().unwrap_or(*s)),
-            AutoTarget::Param(id, name) => {
-                let i = t.inserts.iter().position(|x| x.id == *id);
-                AutoTarget::Param(i.map_or(*id, |i| copy.inserts[i].id), name.clone())
-            }
-            other => other.clone(),
-        };
+    // the lanes and the macro controls follow the new send, plug-in and node ids
+    let nodes: HashMap<NodeId, NodeId> = match (&t.rack, &copy.rack) {
+        (Some(a), Some(b)) => a.node_ids().into_iter().zip(b.node_ids()).collect(),
+        _ => HashMap::new(),
+    };
+    let moved = |target: &AutoTarget| match target {
+        AutoTarget::Send(s) => AutoTarget::Send(sends.get(s).copied().unwrap_or(*s)),
+        AutoTarget::Param(id, name) => {
+            let i = t.inserts.iter().position(|x| x.id == *id);
+            AutoTarget::Param(i.map_or(*id, |i| copy.inserts[i].id), name.clone())
+        }
+        AutoTarget::Branch(n, part) => {
+            AutoTarget::Branch(nodes.get(n).copied().unwrap_or(*n), *part)
+        }
+        other => other.clone(),
+    };
+    let lanes: Vec<AutoTarget> = t.automation.iter().map(|l| moved(&l.target)).collect();
+    let mut controls = copy.controls.clone();
+    controls.retarget(|x| Some(moved(x)));
+    for (l, target) in copy.automation.iter_mut().zip(lanes) {
+        l.target = target;
     }
+    copy.controls = controls;
     copy.clips = if settings_only {
         Vec::new()
     } else {

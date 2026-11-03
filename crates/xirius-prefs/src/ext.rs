@@ -197,7 +197,7 @@ fn rows_json(k: &Keymap, os: Os, ctx: Option<&str>, changed_only: bool) -> Value
 fn checked_target(text: &str, cx: &ExtContext<'_>) -> CmdResult<Target> {
     let target = Target::parse(text).map_err(invalid)?;
     match &target {
-        Target::Volume(id) | Target::Pan(id) => {
+        Target::Volume(id) | Target::Pan(id) | Target::Control(id, _) => {
             let found = id
                 .parse::<TrackId>()
                 .ok()
@@ -206,6 +206,10 @@ fn checked_target(text: &str, cx: &ExtContext<'_>) -> CmdResult<Target> {
                 return Err(CmdError::not_found(format!(
                     "「{id}」というトラックはありません"
                 )));
+            }
+            if let Target::Control(_, c) = &target {
+                c.parse::<xirius_core::controls::ControlId>()
+                    .map_err(invalid)?;
             }
             Ok(target)
         }
@@ -252,6 +256,11 @@ pub fn target_label(target: &Target, cx: &ExtContext<'_>) -> String {
     match target {
         Target::Volume(id) => format!("{} · ボリューム", part(id).unwrap_or_else(|| id.clone())),
         Target::Pan(id) => format!("{} · パン", part(id).unwrap_or_else(|| id.clone())),
+        Target::Control(id, c) => format!(
+            "{} · {}",
+            part(id).unwrap_or_else(|| id.clone()),
+            control_label(id, c, cx)
+        ),
         Target::Command(c) => command_label(c, cx.registry),
         Target::Param {
             track,
@@ -261,6 +270,19 @@ pub fn target_label(target: &Target, cx: &ExtContext<'_>) -> String {
             Some((t, p, label)) => format!("{t} · {p} · {label}"),
             None => format!("{} · {param}", part(track).unwrap_or_else(|| track.clone())),
         },
+    }
+}
+
+/// A macro control's name on its track (`Macro 1`, or what it moves).
+fn control_label(id: &str, c: &str, cx: &ExtContext<'_>) -> String {
+    let track = id
+        .parse::<TrackId>()
+        .ok()
+        .and_then(|t| cx.project.tracks.get(&t));
+    match (track, c.parse::<xirius_core::controls::ControlId>()) {
+        (Some(t), Ok(c)) => t.control_label(c),
+        (None, Ok(c)) => c.default_name(),
+        _ => c.to_string(),
     }
 }
 

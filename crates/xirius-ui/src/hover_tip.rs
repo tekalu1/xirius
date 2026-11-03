@@ -74,6 +74,7 @@ pub fn command(hit: Hit) -> Option<String> {
                     crate::mixer::MixerHit::SendPre(..) => Some("send.set".into()),
                     crate::mixer::MixerHit::Bypass(..) => Some("plugin.bypass".into()),
                     crate::mixer::MixerHit::Open(..) => Some("plugin.open".into()),
+                    crate::mixer::MixerHit::Control(..) => Some("control.set".into()),
                     crate::mixer::MixerHit::Strip(_) => None,
                 };
             }

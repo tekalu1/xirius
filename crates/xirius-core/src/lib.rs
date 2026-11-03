@@ -10,6 +10,7 @@ pub mod clipboard;
 pub mod clipfx;
 pub mod command;
 pub mod commands;
+pub mod controls;
 pub mod dawproject;
 pub mod diff;
 pub mod drum;

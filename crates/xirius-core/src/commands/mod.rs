@@ -27,6 +27,7 @@ mod clipfx;
 mod comp;
 mod context_scope;
 mod context_view;
+mod control;
 pub mod docs;
 mod edit;
 mod edit_clip_join;
@@ -91,6 +92,7 @@ pub fn all() -> Vec<CommandDef> {
     v.extend(send_menu::defs());
     v.extend(sidechain::defs());
     v.extend(samples::defs());
+    v.extend(control::defs());
     v.extend(insert::defs());
     v.extend(group::defs());
     v.extend(preset::defs());

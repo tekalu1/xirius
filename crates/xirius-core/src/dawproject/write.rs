@@ -1088,7 +1088,7 @@ impl<'a> Writer<'a> {
             _ if plain.is_some() => plain.map(|p| p.2),
             AutoTarget::Volume | AutoTarget::Send(_) => Some("linear"),
             AutoTarget::Pan | AutoTarget::Param(..) => Some("normalized"),
-            AutoTarget::Mute => None,
+            AutoTarget::Mute | AutoTarget::Branch(..) => None,
         };
         let mut el = El::new("Points")
             .a("id", self.id())

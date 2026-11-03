@@ -131,6 +131,7 @@ fn track_fields(a: &Track, b: &Track) -> Vec<&'static str> {
         icon,
         automation,
         auto_mode,
+        controls,
         transpose,
         velocity
     );

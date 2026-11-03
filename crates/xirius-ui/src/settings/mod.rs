@@ -335,7 +335,8 @@ pub struct SettingsUi {
     pub zone: String,
     /// Why a hold was not moved: (context, modifier, text).
     pub hold_error: Option<(String, String, String)>,
-    /// The names of the parts the controller's knobs are given to, by track id.
+    /// The names of the parts the controller's knobs are given to, by track id (and a macro
+    /// control's by `<track>:<control>`).
     pub parts: HashMap<String, String>,
     pub toast: Option<Toast>,
     pub detect: Option<Instant>,
@@ -881,7 +882,12 @@ impl Studio {
             .project()
             .tracks
             .iter()
-            .map(|(id, t)| (id.to_string(), t.name.clone()))
+            .flat_map(|(id, t)| {
+                // a macro control under `<track>:<control>` (MIX-039)
+                let controls = xirius_core::controls::ControlId::all()
+                    .map(move |c| (format!("{id}:{c}"), t.control_label(c)));
+                std::iter::once((id.to_string(), t.name.clone())).chain(controls)
+            })
             .collect();
         ui.plugins = self.plugin_page();
         ui.tone = self.rig_tone;

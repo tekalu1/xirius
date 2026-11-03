@@ -138,6 +138,13 @@ pub enum Source {
     Multi { id: NodeId, layers: Vec<Layer> },
 }
 
+/// The gain, pan and mute of one branch or layer, borrowed to change them.
+pub struct Levels<'a> {
+    pub gain_db: &'a mut f64,
+    pub pan: &'a mut f64,
+    pub mute: &'a mut bool,
+}
+
 /// The ordering overlay over `Track::inserts` (PRJ-026).
 #[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize)]
 pub struct Rack {
@@ -427,6 +434,68 @@ impl Rack {
         }
         node_ids_of(&self.fx, &mut out);
         out
+    }
+
+    /// The gain (dB), pan and mute of the branch or layer `id`.
+    pub fn levels(&self, id: NodeId) -> Option<(f64, f64, bool)> {
+        fn walk(nodes: &[RackNode], id: NodeId) -> Option<(f64, f64, bool)> {
+            nodes.iter().find_map(|n| match n {
+                RackNode::Plugin(_) => None,
+                RackNode::Split(s) => s.branches.iter().find_map(|b| {
+                    if b.id == id {
+                        Some((b.gain_db, b.pan, b.mute))
+                    } else {
+                        walk(&b.fx, id)
+                    }
+                }),
+            })
+        }
+        if let Some(Source::Multi { layers, .. }) = &self.source {
+            for l in layers {
+                if l.id == id {
+                    return Some((l.gain_db, l.pan, l.mute));
+                }
+                if let Some(x) = walk(&l.fx, id) {
+                    return Some(x);
+                }
+            }
+        }
+        walk(&self.fx, id)
+    }
+
+    /// The levels of the branch or layer `id`, to change them.
+    pub fn levels_mut(&mut self, id: NodeId) -> Option<Levels<'_>> {
+        fn walk(nodes: &mut [RackNode], id: NodeId) -> Option<Levels<'_>> {
+            nodes.iter_mut().find_map(|n| match n {
+                RackNode::Plugin(_) => None,
+                RackNode::Split(s) => s.branches.iter_mut().find_map(|b| {
+                    if b.id == id {
+                        Some(Levels {
+                            gain_db: &mut b.gain_db,
+                            pan: &mut b.pan,
+                            mute: &mut b.mute,
+                        })
+                    } else {
+                        walk(&mut b.fx, id)
+                    }
+                }),
+            })
+        }
+        if let Some(Source::Multi { layers, .. }) = &mut self.source {
+            for l in layers {
+                if l.id == id {
+                    return Some(Levels {
+                        gain_db: &mut l.gain_db,
+                        pan: &mut l.pan,
+                        mute: &mut l.mute,
+                    });
+                }
+                if let Some(x) = walk(&mut l.fx, id) {
+                    return Some(x);
+                }
+            }
+        }
+        walk(&mut self.fx, id)
     }
 
     /// The tree `rack.show` answers.
@@ -1040,6 +1109,23 @@ impl crate::model::Project {
             }
         }
         self.next_id = self.next_id.max(next);
+        // a macro control's map whose target is gone is dropped too (MIX-039)
+        for t in self.tracks.values_mut() {
+            let dead = t
+                .controls
+                .iter()
+                .any(|(_, c)| c.maps.iter().any(|m| !m.target.exists_on(t)));
+            if !dead {
+                continue;
+            }
+            let t = std::sync::Arc::make_mut(t);
+            let n = t.prune_controls();
+            rows.push(Adjust::new(
+                AdjustKind::Dropped,
+                format!("{} のマクロコントロール", t.name),
+                format!("割り当て先が無いため、{n} 件の割り当てを外しました"),
+            ));
+        }
         rows
     }
 

@@ -7,6 +7,7 @@
 //! follows the knob while a take is being made.
 
 use serde_json::{Map, Value, json};
+use xirius_core::controls::ControlId;
 use xirius_core::id::TrackId;
 use xirius_prefs::Midimap;
 use xirius_prefs::midimap::{Message, Row, Target};
@@ -51,6 +52,16 @@ fn is_cc(msg: [u8; 3]) -> bool {
     matches!(Message::of(msg), Some(Message::Cc(_)))
 }
 
+/// The fader, knob or macro control a target moves.
+fn hit_of(target: &Target) -> Option<MixerHit> {
+    match target {
+        Target::Volume(id) => id.parse().ok().map(MixerHit::Fader),
+        Target::Pan(id) => id.parse().ok().map(MixerHit::Pan),
+        Target::Control(id, c) => Some(MixerHit::Control(id.parse().ok()?, c.parse().ok()?)),
+        Target::Command(_) | Target::Param { .. } => None,
+    }
+}
+
 impl Studio {
     /// The part and the value a target stands for, as the screen says it.
     pub fn midi_target_name(&self, target: &Target) -> String {
@@ -63,6 +74,15 @@ impl Studio {
         match target {
             Target::Volume(id) => format!("{} · ボリューム", name(id)),
             Target::Pan(id) => format!("{} · パン", name(id)),
+            Target::Control(id, c) => {
+                let label = id
+                    .parse::<TrackId>()
+                    .ok()
+                    .and_then(|t| self.project().tracks.get(&t).cloned())
+                    .zip(c.parse::<ControlId>().ok())
+                    .map_or_else(|| c.clone(), |(t, c)| t.control_label(c));
+                format!("{} · {label}", name(id))
+            }
             Target::Command(c) => c.clone(),
             Target::Param {
                 track,
@@ -103,11 +123,7 @@ impl Studio {
 
     /// The target the part waiting for a knob stands for, with its hit on the mixer.
     pub fn learning_hit(&self) -> Option<MixerHit> {
-        match self.live_midi.assign.learning.as_ref()? {
-            Target::Volume(id) => id.parse().ok().map(MixerHit::Fader),
-            Target::Pan(id) => id.parse().ok().map(MixerHit::Pan),
-            Target::Command(_) | Target::Param { .. } => None,
-        }
+        hit_of(self.live_midi.assign.learning.as_ref()?)
     }
 
     /// `midimap.learn`: a part waits for a knob; `cancel` gives it up; `confirm` takes the knob
@@ -267,6 +283,11 @@ impl Studio {
                     self.device_midi(t, p, param, msg[2]);
                 }
             }
+            Target::Control(..) => {
+                if let Some(hit) = hit_of(&row.target) {
+                    self.knob_move(hit, msg[2]);
+                }
+            }
             Target::Command(c) => {
                 let pressed = match msg[0] & 0xf0 {
                     0x90 => msg[2] > 0,
@@ -299,11 +320,7 @@ impl Studio {
         let Some(c) = self.live_midi.assign.clash.clone() else {
             return false;
         };
-        let hit = match &c.target {
-            Target::Volume(id) => id.parse().ok().map(MixerHit::Fader),
-            Target::Pan(id) => id.parse().ok().map(MixerHit::Pan),
-            Target::Command(_) | Target::Param { .. } => None,
-        };
+        let hit = hit_of(&c.target);
         let (x, y) = hit
             .and_then(|h| self.mixer_rect(g, h))
             .map_or(self.input_map.pointer, |r| (r.x + r.w, r.y));

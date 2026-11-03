@@ -222,6 +222,11 @@ pub const LABELS: &[(&str, &str)] = &[
     ("rack.branch.set", "分岐の量を設定"),
     ("rack.node.move", "ラックの中で移動"),
     ("rack.flatten", "ラックを直列に戻す"),
+    ("control.set", "マクロコントロールを設定"),
+    ("control.assign", "マクロコントロールに割り当て"),
+    ("control.unassign", "マクロコントロールの割り当てを解除"),
+    ("control.rename", "マクロコントロール名を変更"),
+    ("control.list", "マクロコントロールの一覧"),
     (
         "track.add.with-instrument",
         "インストゥルメント付きトラックを追加",
@@ -534,6 +539,9 @@ pub fn label(name: &str) -> Option<&'static str> {
 pub fn argument(name: &str) -> &str {
     match name {
         "action" => "操作",
+        "control" => "マクロコントロール",
+        "min" => "最小",
+        "max" => "最大",
         "dry_run" => "プレビュー",
         "failed" => "エラー",
         "groove-hits" | "hits" => "グルーヴのポイント",

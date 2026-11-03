@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use xirius_core::auto::AutoTarget;
+use xirius_core::controls::ControlId;
 use xirius_core::id::PluginId;
 use xirius_core::model::{Project, Track};
 use xirius_engine::Command;
@@ -59,24 +60,24 @@ pub(crate) fn at_each(
             let Some(v) = lane.value_at(tick(*id, &lane.target)) else {
                 continue;
             };
-            match &lane.target {
-                AutoTarget::Volume => t.volume_db = v,
-                AutoTarget::Pan => t.pan = v,
-                AutoTarget::Mute => t.mute = v >= 0.5,
-                AutoTarget::Send(s) => {
-                    if let Some(x) = t.sends.iter_mut().find(|x| x.id == *s) {
-                        x.level_db = v;
-                    }
-                }
-                AutoTarget::Param(pid, name) => {
-                    if let Some(x) = t.inserts.iter_mut().find(|x| x.id == *pid) {
-                        x.params.insert(name.clone(), v);
-                    }
-                }
-            }
+            lane.target.set_on(t, v);
         }
+        // a mapped target follows its macro control, not its own lane (MIX-039)
+        t.apply_controls();
     }
     out
+}
+
+/// The parameter values the track's macro controls set: plugin, parameter, value (0..1).
+fn control_params(t: &Track) -> impl Iterator<Item = (PluginId, String, f64)> + '_ {
+    ControlId::all().flat_map(move |id| {
+        t.control_values(id, t.controls.get(id).value)
+            .into_iter()
+            .filter_map(|(target, v)| match target {
+                AutoTarget::Param(pid, name) => Some((pid, name, v)),
+                _ => None,
+            })
+    })
 }
 
 /// What the plugin parameter lanes set at `tick`: plugin, parameter, value (0..1).
@@ -91,6 +92,7 @@ pub fn params_at(p: &Project, tick: f64) -> Vec<(PluginId, String, f64)> {
                 out.push((*pid, name.clone(), v));
             }
         }
+        out.extend(control_params(t));
     }
     out
 }
@@ -123,6 +125,7 @@ impl ParamFollow {
                     values.push((*pid, name.clone(), v));
                 }
             }
+            values.extend(control_params(t));
         }
         let mut n = 0;
         for (pid, name, v) in values {

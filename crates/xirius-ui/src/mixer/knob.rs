@@ -24,6 +24,9 @@ pub fn value_of(hit: MixerHit, cc: u8) -> f64 {
             let v = if v.abs() < 0.03 { 0.0 } else { v };
             f64::from((v * 100.0).round() / 100.0)
         }
+        // a button is on from the middle up
+        MixerHit::Control(_, c) if c.is_button() => f64::from(u8::from(cc >= 64)),
+        MixerHit::Control(..) => f64::from(n),
         _ => {
             let db = t_to_db(n);
             if db <= FLOOR_DB {

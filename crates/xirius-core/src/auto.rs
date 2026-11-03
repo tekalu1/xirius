@@ -10,12 +10,12 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::id::{PluginId, SendId};
+use crate::id::{NodeId, PluginId, SendId};
 use crate::model::{MAX_DB, MIN_DB, Track};
 use crate::time::Tick;
 
 /// What a lane moves. Text form: `volume`, `pan`, `mute`, `send:<send id>`,
-/// `param:<plugin id>:<parameter name>`.
+/// `param:<plugin id>:<parameter name>`, `branch:<node id>:gain|pan|mute`.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum AutoTarget {
     Volume,
@@ -23,6 +23,33 @@ pub enum AutoTarget {
     Mute,
     Send(SendId),
     Param(PluginId, String),
+    /// The gain, pan or mute of a splitter's branch or a multi-instrument's
+    /// layer (PRJ-026, MIX-039).
+    Branch(NodeId, BranchPart),
+}
+
+/// Which level of a branch (or layer) a [`AutoTarget::Branch`] moves.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum BranchPart {
+    Gain,
+    Pan,
+    Mute,
+}
+
+impl BranchPart {
+    pub const ALL: [BranchPart; 3] = [BranchPart::Gain, BranchPart::Pan, BranchPart::Mute];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            BranchPart::Gain => "gain",
+            BranchPart::Pan => "pan",
+            BranchPart::Mute => "mute",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<BranchPart> {
+        BranchPart::ALL.into_iter().find(|p| p.name() == s)
+    }
 }
 
 impl fmt::Display for AutoTarget {
@@ -33,6 +60,7 @@ impl fmt::Display for AutoTarget {
             AutoTarget::Mute => f.write_str("mute"),
             AutoTarget::Send(s) => write!(f, "send:{s}"),
             AutoTarget::Param(p, name) => write!(f, "param:{p}:{name}"),
+            AutoTarget::Branch(n, part) => write!(f, "branch:{n}:{}", part.name()),
         }
     }
 }
@@ -55,8 +83,14 @@ impl std::str::FromStr for AutoTarget {
         {
             return Ok(AutoTarget::Param(id.parse()?, name.to_string()));
         }
+        if let Some(rest) = s.strip_prefix("branch:")
+            && let Some((id, part)) = rest.split_once(':')
+            && let Some(part) = BranchPart::parse(part)
+        {
+            return Ok(AutoTarget::Branch(id.parse()?, part));
+        }
         Err(format!(
-            "`{s}` は volume・pan・mute・send:<ID>・param:<ID>:<名前> のいずれでもありません"
+            "`{s}` は volume・pan・mute・send:<ID>・param:<ID>:<名前>・branch:<ID>:gain|pan|mute のいずれでもありません"
         ))
     }
 }
@@ -79,15 +113,30 @@ impl AutoTarget {
     /// The lowest and highest value a point may hold.
     pub fn range(&self) -> (f64, f64) {
         match self {
-            AutoTarget::Volume | AutoTarget::Send(_) => (MIN_DB, MAX_DB),
-            AutoTarget::Pan => (-1.0, 1.0),
-            AutoTarget::Mute | AutoTarget::Param(..) => (0.0, 1.0),
+            AutoTarget::Volume | AutoTarget::Send(_) | AutoTarget::Branch(_, BranchPart::Gain) => {
+                (MIN_DB, MAX_DB)
+            }
+            AutoTarget::Pan | AutoTarget::Branch(_, BranchPart::Pan) => (-1.0, 1.0),
+            AutoTarget::Mute | AutoTarget::Param(..) | AutoTarget::Branch(_, BranchPart::Mute) => {
+                (0.0, 1.0)
+            }
         }
     }
 
     /// Mute jumps from point to point; the rest glide.
     pub fn stepped(&self) -> bool {
-        matches!(self, AutoTarget::Mute)
+        matches!(
+            self,
+            AutoTarget::Mute | AutoTarget::Branch(_, BranchPart::Mute)
+        )
+    }
+
+    /// A level in dB that moves along the fader's feel.
+    pub fn is_level(&self) -> bool {
+        matches!(
+            self,
+            AutoTarget::Volume | AutoTarget::Send(_) | AutoTarget::Branch(_, BranchPart::Gain)
+        )
     }
 
     /// The value as a height of the lane, 0 (bottom) ..= 1 (top). Levels use
@@ -95,7 +144,7 @@ impl AutoTarget {
     pub fn to_norm(&self, v: f64) -> f64 {
         let (lo, hi) = self.range();
         let n = match self {
-            AutoTarget::Volume | AutoTarget::Send(_) => {
+            t if t.is_level() => {
                 if v <= MIN_DB {
                     0.0
                 } else {
@@ -111,14 +160,14 @@ impl AutoTarget {
         let n = n.clamp(0.0, 1.0);
         let (lo, hi) = self.range();
         match self {
-            AutoTarget::Volume | AutoTarget::Send(_) => {
+            t if t.is_level() => {
                 if n <= 0.0 {
                     MIN_DB
                 } else {
                     (MAX_DB + 60.0 * n.log10()).clamp(MIN_DB, MAX_DB)
                 }
             }
-            AutoTarget::Mute => n.round(),
+            t if t.stepped() => n.round(),
             _ => lo + (hi - lo) * n,
         }
     }
@@ -131,12 +180,53 @@ impl AutoTarget {
             AutoTarget::Pan => Some(t.pan),
             AutoTarget::Mute => Some(if t.mute { 1.0 } else { 0.0 }),
             AutoTarget::Send(s) => t.sends.iter().find(|x| x.id == *s).map(|x| x.level_db),
-            AutoTarget::Param(p, name) => t
-                .inserts
-                .iter()
-                .find(|x| x.id == *p)
-                .map(|x| x.params.get(name).copied().unwrap_or(0.0)),
+            AutoTarget::Param(p, name) => t.inserts.iter().find(|x| x.id == *p).map(|x| {
+                x.params.get(name).copied().unwrap_or_else(|| {
+                    // an untouched builtin parameter sits at its default
+                    x.builtin()
+                        .and_then(|d| d.param(name))
+                        .map_or(0.0, |(_, p)| p.default_norm())
+                })
+            }),
+            AutoTarget::Branch(n, part) => {
+                t.rack
+                    .as_ref()
+                    .and_then(|r| r.levels(*n))
+                    .map(|(gain, pan, mute)| match part {
+                        BranchPart::Gain => gain,
+                        BranchPart::Pan => pan,
+                        BranchPart::Mute => f64::from(u8::from(mute)),
+                    })
+            }
         }
+    }
+
+    /// Writes `v` where this target lives on the channel; `false` when it is gone.
+    pub fn set_on(&self, t: &mut Track, v: f64) -> bool {
+        match self {
+            AutoTarget::Volume => t.volume_db = v,
+            AutoTarget::Pan => t.pan = v,
+            AutoTarget::Mute => t.mute = v >= 0.5,
+            AutoTarget::Send(s) => match t.sends.iter_mut().find(|x| x.id == *s) {
+                Some(x) => x.level_db = v,
+                None => return false,
+            },
+            AutoTarget::Param(pid, name) => match t.inserts.iter_mut().find(|x| x.id == *pid) {
+                Some(x) => {
+                    x.params.insert(name.clone(), v);
+                }
+                None => return false,
+            },
+            AutoTarget::Branch(n, part) => match t.rack.as_mut().and_then(|r| r.levels_mut(*n)) {
+                Some(l) => match part {
+                    BranchPart::Gain => *l.gain_db = v,
+                    BranchPart::Pan => *l.pan = v,
+                    BranchPart::Mute => *l.mute = v >= 0.5,
+                },
+                None => return false,
+            },
+        }
+        true
     }
 
     /// The saved value, without inventing a value for an unknown plug-in parameter.
@@ -301,9 +391,10 @@ impl AutoLane {
         let (na, nb) = (self.target.to_norm(a.value), self.target.to_norm(b.value));
         let n = na + (nb - na) * bend(f, a.curve);
         // levels glide along the lane's height, as drawn
-        Some(match self.target {
-            AutoTarget::Volume | AutoTarget::Send(_) => self.target.from_norm(n),
-            _ => a.value + (b.value - a.value) * bend(f, a.curve),
+        Some(if self.target.is_level() {
+            self.target.from_norm(n)
+        } else {
+            a.value + (b.value - a.value) * bend(f, a.curve)
         })
     }
 
@@ -379,12 +470,22 @@ mod tests {
 
     #[test]
     fn targets_read_back_from_their_text() {
-        for s in ["volume", "pan", "mute", "send:snd_4", "param:plg_9:cutoff"] {
+        for s in [
+            "volume",
+            "pan",
+            "mute",
+            "send:snd_4",
+            "param:plg_9:cutoff",
+            "branch:nod_3:gain",
+            "branch:nod_3:pan",
+            "branch:nod_3:mute",
+        ] {
             let t: AutoTarget = s.parse().unwrap();
             assert_eq!(t.to_string(), s);
         }
         assert!("param:plg_9:".parse::<AutoTarget>().is_err());
         assert!("gain".parse::<AutoTarget>().is_err());
+        assert!("branch:nod_3:width".parse::<AutoTarget>().is_err());
     }
 
     #[test]

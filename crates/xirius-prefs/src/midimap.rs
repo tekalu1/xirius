@@ -78,6 +78,8 @@ pub enum Target {
     Volume(String),
     /// The pan of a part.
     Pan(String),
+    /// A macro control of a part (MIX-039): the track's id and the control (`k1`, `b1`, `x1`…).
+    Control(String, String),
     /// A command (a pad runs it).
     Command(String),
     /// A parameter of a built-in device (UI-324): its part, its plug-in and its id.
@@ -89,8 +91,8 @@ pub enum Target {
 }
 
 impl Target {
-    /// `track.volume:<id>`, `track.pan:<id>`, `plugin.param:<track>:<plugin>:<param>`, or a
-    /// command's name.
+    /// `track.volume:<id>`, `track.pan:<id>`, `track.control:<id>:<control>`,
+    /// `plugin.param:<track>:<plugin>:<param>`, or a command's name.
     pub fn parse(text: &str) -> Result<Target, String> {
         let text = text.trim();
         let part = |prefix: &str| {
@@ -117,10 +119,20 @@ impl Target {
                 });
             }
         }
+        if let Some(rest) = part("track.control:") {
+            return match rest.split_once(':') {
+                Some((id, c)) if !id.trim().is_empty() && !c.trim().is_empty() => {
+                    Ok(Target::Control(id.trim().into(), c.trim().into()))
+                }
+                _ => Err(format!(
+                    "「{text}」は割り当て先ではありません（track.control:<id>:<k1〜k8・b1〜b8・x1・y1・x2・y2>）"
+                )),
+            };
+        }
         let first = text.split_whitespace().next().unwrap_or("");
         if first.is_empty() || first.contains(':') {
             return Err(format!(
-                "「{text}」は割り当て先ではありません（track.volume:<id>・track.pan:<id>・plugin.param:<track>:<plugin>:<param>・コマンド名）"
+                "「{text}」は割り当て先ではありません（track.volume:<id>・track.pan:<id>・track.control:<id>:<k1>・plugin.param:<track>:<plugin>:<param>・コマンド名）"
             ));
         }
         Ok(Target::Command(text.to_string()))
@@ -129,7 +141,10 @@ impl Target {
     /// The part this moves, `None` for a command.
     pub fn track(&self) -> Option<&str> {
         match self {
-            Target::Volume(id) | Target::Pan(id) | Target::Param { track: id, .. } => Some(id),
+            Target::Volume(id)
+            | Target::Pan(id)
+            | Target::Control(id, _)
+            | Target::Param { track: id, .. } => Some(id),
             Target::Command(_) => None,
         }
     }
@@ -140,6 +155,7 @@ impl std::fmt::Display for Target {
         match self {
             Target::Volume(id) => write!(f, "track.volume:{id}"),
             Target::Pan(id) => write!(f, "track.pan:{id}"),
+            Target::Control(id, c) => write!(f, "track.control:{id}:{c}"),
             Target::Command(c) => f.write_str(c),
             Target::Param {
                 track,
@@ -372,6 +388,16 @@ mod tests {
         assert_eq!(param.track(), Some("t3"));
         assert!(Target::parse("plugin.param:t3:p2").is_err());
         assert!(Target::parse("plugin.param:t3::gain").is_err());
+        assert_eq!(
+            Target::parse("track.control:t3:k2").unwrap(),
+            Target::Control("t3".into(), "k2".into())
+        );
+        assert_eq!(
+            Target::Control("t3".into(), "b1".into()).to_string(),
+            "track.control:t3:b1"
+        );
+        assert!(Target::parse("track.control:t3").is_err());
+        assert!(Target::parse("track.control:t3:").is_err());
         assert!(Target::parse("track.volume:").is_err());
         assert!(Target::parse("send:1").is_err());
         assert!(Target::parse("").is_err());

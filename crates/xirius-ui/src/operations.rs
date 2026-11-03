@@ -135,6 +135,7 @@ pub fn of_hit(hit: Hit) -> Option<(&'static str, &'static str)> {
             MixerHit::AddSend(_) => ("mixer.add_send", "send.add"),
             MixerHit::Output(_) => ("mixer.output", "track.output.menu"),
             MixerHit::Input(_) => ("mixer.input", "track.input.menu"),
+            MixerHit::Control(..) => ("mixer.control", "control.set"),
         },
         Hit::Start(e) => match e {
             Entry::Audio => ("start.audio", "start.audio"),

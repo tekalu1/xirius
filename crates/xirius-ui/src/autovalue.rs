@@ -5,7 +5,7 @@
 //! one of several); Esc closes the box.
 
 use serde_json::json;
-use xirius_core::auto::{AutoPoint, AutoTarget};
+use xirius_core::auto::{AutoPoint, AutoTarget, BranchPart};
 use xirius_core::id::TrackId;
 use xirius_core::model::{MAX_DB, MIN_DB};
 use xirius_design::{FontSize, Layout, Radius, Space, Weight};
@@ -47,9 +47,9 @@ pub enum AutoLook {
 /// The unit the box asks for.
 pub fn unit(target: &AutoTarget) -> &'static str {
     match target {
-        AutoTarget::Volume | AutoTarget::Send(_) => "dB",
-        AutoTarget::Pan => "L−100 … R+100",
-        AutoTarget::Mute => "0 か 1",
+        AutoTarget::Volume | AutoTarget::Send(_) | AutoTarget::Branch(_, BranchPart::Gain) => "dB",
+        AutoTarget::Pan | AutoTarget::Branch(_, BranchPart::Pan) => "L−100 … R+100",
+        AutoTarget::Mute | AutoTarget::Branch(_, BranchPart::Mute) => "0 か 1",
         AutoTarget::Param(..) => "%",
     }
 }
@@ -57,15 +57,17 @@ pub fn unit(target: &AutoTarget) -> &'static str {
 /// A value as the box shows it, in its unit.
 pub fn text(target: &AutoTarget, v: f64) -> String {
     match target {
-        AutoTarget::Volume | AutoTarget::Send(_) => {
+        AutoTarget::Volume | AutoTarget::Send(_) | AutoTarget::Branch(_, BranchPart::Gain) => {
             if v <= MIN_DB {
                 "-∞".into()
             } else {
                 format!("{v:.1}")
             }
         }
-        AutoTarget::Pan => value_text(target, v),
-        AutoTarget::Mute => if v >= 0.5 { "1" } else { "0" }.into(),
+        AutoTarget::Pan | AutoTarget::Branch(_, BranchPart::Pan) => value_text(target, v),
+        AutoTarget::Mute | AutoTarget::Branch(_, BranchPart::Mute) => {
+            if v >= 0.5 { "1" } else { "0" }.into()
+        }
         AutoTarget::Param(..) => format!("{}", (v * 100.0).round()),
     }
 }
@@ -85,13 +87,13 @@ pub fn parse(target: &AutoTarget, typed: &str) -> Option<f64> {
         })
         .collect();
     match target {
-        AutoTarget::Volume | AutoTarget::Send(_) => {
+        AutoTarget::Volume | AutoTarget::Send(_) | AutoTarget::Branch(_, BranchPart::Gain) => {
             if s.contains('∞') || s.contains("INF") {
                 return Some(MIN_DB);
             }
             number(&s).map(|v| v.clamp(MIN_DB, MAX_DB))
         }
-        AutoTarget::Pan => {
+        AutoTarget::Pan | AutoTarget::Branch(_, BranchPart::Pan) => {
             if s == "C" {
                 return Some(0.0);
             }
@@ -105,7 +107,9 @@ pub fn parse(target: &AutoTarget, typed: &str) -> Option<f64> {
             };
             Some((n / 100.0).clamp(-1.0, 1.0))
         }
-        AutoTarget::Mute => number(&s).map(|n| if n >= 0.5 { 1.0 } else { 0.0 }),
+        AutoTarget::Mute | AutoTarget::Branch(_, BranchPart::Mute) => {
+            number(&s).map(|n| if n >= 0.5 { 1.0 } else { 0.0 })
+        }
         AutoTarget::Param(..) => number(&s).map(|n| (n / 100.0).clamp(0.0, 1.0)),
     }
 }

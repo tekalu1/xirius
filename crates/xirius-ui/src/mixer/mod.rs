@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::json;
+use xirius_core::controls::ControlId;
 use xirius_core::id::{PluginId, SendId, TrackId};
 use xirius_core::model::{AuxSend, MIN_DB, Output, PluginKind, Project, Track, TrackKind};
 use xirius_plugins::Catalog;
@@ -104,6 +105,8 @@ pub enum MixerHit {
     Output(TrackId),
     /// The input row of an audio track: the device it records (REC-017).
     Input(TrackId),
+    /// A macro control of the track (MIX-039): a controller's knob moves it as it moves a fader.
+    Control(TrackId, ControlId),
 }
 
 impl MixerHit {
@@ -123,7 +126,8 @@ impl MixerHit {
             | MixerHit::SendPre(t, _)
             | MixerHit::AddSend(t)
             | MixerHit::Output(t)
-            | MixerHit::Input(t) => t,
+            | MixerHit::Input(t)
+            | MixerHit::Control(t, _) => t,
         }
     }
 }
@@ -577,6 +581,10 @@ fn apply(p: &mut Project, hit: MixerHit, value: f64) {
                 }
             }
         }
+        MixerHit::Control(_, c) => {
+            t.controls.get_mut(c).value = value;
+            t.apply_control_at(c, value);
+        }
         _ => {}
     }
 }
@@ -983,6 +991,8 @@ impl Studio {
             MixerHit::Input(_) => s
                 .input
                 .filter(|_| matches!(track.kind, TrackKind::Audio | TrackKind::Instrument)),
+            // a macro sits in the channel editor, not on the strip
+            MixerHit::Control(..) => None,
         }
     }
 
@@ -1027,6 +1037,7 @@ impl Studio {
             MixerHit::Fader(_) => Some(t.volume_db),
             MixerHit::Pan(_) => Some(t.pan),
             MixerHit::SendLevel(_, s) => t.sends.iter().find(|x| x.id == s).map(send_level_db),
+            MixerHit::Control(_, c) => Some(t.controls.get(c).value),
             _ => None,
         }
     }
@@ -1117,6 +1128,7 @@ impl Studio {
                 self.open_popup(kind, anchor);
                 true
             }
+            MixerHit::Control(..) => false,
         }
     }
 
@@ -1407,6 +1419,13 @@ impl Studio {
             MixerHit::SendLevel(_, s) => {
                 // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command("send.set", json!({ "id": s.to_string(), "level": d.value }))
+            }
+            MixerHit::Control(t, c) => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+                self.run_command(
+                    "control.set",
+                    json!({ "track": t.to_string(), "control": c.to_string(), "value": d.value }),
+                )
             }
             _ => false,
         };

@@ -15,7 +15,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use serde_json::{Value, json};
-use xirius_core::auto::{AutoLane, AutoMode, AutoTarget};
+use xirius_core::auto::{AutoLane, AutoMode, AutoTarget, BranchPart};
 use xirius_core::id::{ClipId, FolderId, Node, SectionId, TrackId};
 use xirius_core::model::{ClipBody, MAX_DB, MIN_DB, Parent, Project, Track, TrackKind};
 use xirius_core::time::Tick;
@@ -497,20 +497,21 @@ pub fn lane_name(p: &Project, t: &Track, target: &AutoTarget) -> String {
                 .map_or("?", |x| x.name.as_str());
             format!("{plugin} · {name}")
         }
+        AutoTarget::Branch(..) => xirius_core::controls::target_name(t, target),
     }
 }
 
 /// A value of a lane, in words.
 pub fn value_text(target: &AutoTarget, v: f64) -> String {
     match target {
-        AutoTarget::Volume | AutoTarget::Send(_) => {
+        AutoTarget::Volume | AutoTarget::Send(_) | AutoTarget::Branch(_, BranchPart::Gain) => {
             if v <= MIN_DB {
                 "-∞ dB".into()
             } else {
                 format!("{v:+.1} dB")
             }
         }
-        AutoTarget::Pan => {
+        AutoTarget::Pan | AutoTarget::Branch(_, BranchPart::Pan) => {
             let n = (v * 100.0).round();
             if n == 0.0 {
                 "C".into()
@@ -520,7 +521,7 @@ pub fn value_text(target: &AutoTarget, v: f64) -> String {
                 format!("R{n}")
             }
         }
-        AutoTarget::Mute => if v >= 0.5 {
+        AutoTarget::Mute | AutoTarget::Branch(_, BranchPart::Mute) => if v >= 0.5 {
             "ミュート"
         } else {
             "ミュート解除"

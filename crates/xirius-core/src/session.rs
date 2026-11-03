@@ -1497,6 +1497,7 @@ impl Session {
         }
         work.prune_clip_fx();
         work.prune_ara();
+        work.prune_controls();
         crate::retime::retime(&before, &mut work);
         let taken = out.clipboard.take();
         work.validate()

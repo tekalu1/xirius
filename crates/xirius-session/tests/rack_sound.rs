@@ -242,3 +242,166 @@ fn flattening_gives_the_line_back_and_one_branch_sounds_like_the_line() {
     assert!(s.project().tracks.values().all(|x| x.rack.is_none()));
     assert_eq!(render(&s), (bl, br));
 }
+
+/// A macro control (MIX-039) moves a branch and a plug-in parameter offline and in the running
+/// engine, wins over the target's own lane, and goes back in one undo step.
+#[test]
+fn a_macro_moves_a_branch_and_a_parameter_offline_and_live() {
+    use xirius_core::auto::{AutoTarget, BranchPart};
+    use xirius_core::id::{NodeId, TrackId};
+    let (mut s, t, eq, b) = split_song("macro");
+    let both = level(&s);
+    let mut rig = Rig::new(&s);
+    let tid: TrackId = t.parse().unwrap();
+    let b0: NodeId = b[0].parse().unwrap();
+    let gain = AutoTarget::Branch(b0, BranchPart::Gain);
+    run(
+        &mut s,
+        "control.assign",
+        json!({ "track": t, "control": "k1", "target": gain.to_string() }),
+    );
+    run(
+        &mut s,
+        "control.assign",
+        json!({ "track": t, "control": "b1", "target": format!("branch:{}:mute", b[1]) }),
+    );
+    // the first target leaves the control where the branch already is (0 dB)
+    let k1 = s.project().tracks[&tid].controls.knobs[0].value;
+    assert!(near(k1, gain.to_norm(0.0), 1e-6), "{k1}");
+    assert!(near(level(&s), both, 1e-3));
+
+    let steps = s.steps().len();
+    run(
+        &mut s,
+        "control.set",
+        json!({ "track": t, "control": "k1", "value": gain.to_norm(-6.0) }),
+    );
+    assert_eq!(s.steps().len(), steps + 1, "one undo step");
+    let levels = s.project().tracks[&tid].rack.as_ref().unwrap().levels(b0);
+    assert!(near(levels.unwrap().0, -6.0, 1e-6), "{levels:?}");
+    let low = level(&s);
+    assert!(near(low / both, 0.75, 0.01), "{low} vs {both}");
+    let rep = rig.host.sync(s.project());
+    assert!(!rep.swapped, "a macro moves the running mix: {rep:?}");
+    assert!(near(rig.level(&s), low, 1e-3));
+
+    // a button is on or off: 0.7 is on, and the second branch goes quiet
+    run(
+        &mut s,
+        "control.set",
+        json!({ "track": t, "control": "b1", "value": 0.7 }),
+    );
+    assert_eq!(s.project().tracks[&tid].controls.buttons[0].value, 1.0);
+    let one = level(&s);
+    assert!(near(one / both, 0.25, 0.01), "{one} vs {both}");
+    assert!(!rig.host.sync(s.project()).swapped);
+    assert!(near(rig.level(&s), one, 1e-3));
+
+    // a plug-in parameter: the EQ's output before the splitter at -6 dB
+    let spec = xirius_params::find("EQ")
+        .unwrap()
+        .param("output")
+        .unwrap()
+        .1;
+    let out = format!("param:{eq}:output");
+    run(
+        &mut s,
+        "control.assign",
+        json!({ "track": t, "control": "k2", "target": out }),
+    );
+    run(
+        &mut s,
+        "control.set",
+        json!({ "track": t, "control": "k2", "value": spec.to_norm(-6.0) }),
+    );
+    let quiet = level(&s);
+    assert!(near(quiet / one, 0.501, 0.01), "{quiet} vs {one}");
+
+    // the branch's own lane does not move it while the macro holds it
+    for (at, v) in [(0, 0.0), (3840, 0.0)] {
+        run(
+            &mut s,
+            "auto.point.add",
+            json!({ "track": t, "target": gain.to_string(), "at": at, "value": v }),
+        );
+    }
+    let played = xirius_session::automation::at(s.project(), 100.0);
+    let held = played.tracks[&tid]
+        .rack
+        .as_ref()
+        .unwrap()
+        .levels(b0)
+        .unwrap();
+    assert!(near(held.0, -6.0, 1e-6), "{held:?}");
+
+    s.undo(4).unwrap();
+    assert!(near(level(&s), one, 1e-3), "undo puts the parameter back");
+}
+
+/// A target belongs to one control; a gone target leaves its control; the set is saved.
+#[test]
+fn a_macro_target_has_one_owner_and_goes_with_its_plugin() {
+    use xirius_core::id::TrackId;
+    let (mut s, t, eq, b) = split_song("owners");
+    let tid: TrackId = t.parse().unwrap();
+    let gain = format!("branch:{}:gain", b[0]);
+    run(
+        &mut s,
+        "control.assign",
+        json!({ "track": t, "control": "k1", "target": gain, "min": 0.2, "max": 0.9, "curve": 0.5 }),
+    );
+    let args = json!({ "track": t, "control": "k2", "target": gain });
+    let e = commands::run(
+        &mut s,
+        None,
+        "control.assign",
+        args.as_object().unwrap(),
+        &RunOptions::human(),
+    )
+    .unwrap_err();
+    assert!(e.to_string().contains("k1"), "{e}");
+    for bad in ["control:k3", "mute", "branch:nod_999:gain"] {
+        let args = json!({ "track": t, "control": "k2", "target": bad });
+        assert!(
+            commands::run(
+                &mut s,
+                None,
+                "control.assign",
+                args.as_object().unwrap(),
+                &RunOptions::human()
+            )
+            .is_err(),
+            "{bad}"
+        );
+    }
+    run(
+        &mut s,
+        "control.assign",
+        json!({ "track": t, "control": "k1", "target": format!("param:{eq}:output") }),
+    );
+    run(
+        &mut s,
+        "control.rename",
+        json!({ "track": t, "control": "k1", "name": "Body" }),
+    );
+    let list = run(&mut s, "control.list", json!({ "track": t })).data;
+    assert_eq!(list["controls"][0]["name"], "Body");
+    assert_eq!(list["controls"][0]["maps"].as_array().unwrap().len(), 2);
+    assert_eq!(list["controls"][0]["maps"][0]["to"], 0.9);
+
+    let text = serde_json::to_string(s.project()).unwrap();
+    let back: Project = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        back.tracks[&tid].controls,
+        s.project().tracks[&tid].controls
+    );
+
+    run(&mut s, "plugin.remove", json!({ "ids": [eq] }));
+    let c = &s.project().tracks[&tid].controls.knobs[0];
+    assert_eq!(c.maps.len(), 1, "the EQ's map left with the EQ");
+    run(&mut s, "rack.flatten", json!({ "track": t }));
+    assert!(
+        s.project().tracks[&tid].controls.knobs[0].maps.is_empty(),
+        "the branch's map left with the splitter"
+    );
+}

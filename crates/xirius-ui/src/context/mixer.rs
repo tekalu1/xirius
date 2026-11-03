@@ -107,6 +107,7 @@ impl Studio {
             | MixerHit::Arm(t)
             | MixerHit::Output(t)
             | MixerHit::Input(t) => Spot::Head(t),
+            MixerHit::Control(..) => return None,
         })
     }
 

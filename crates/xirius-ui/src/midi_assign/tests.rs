@@ -196,3 +196,39 @@ fn the_settings_list_shows_and_frees_the_assignments() {
     let texts = s.settings_scene(&g).texts;
     assert!(texts.iter().any(|x| x == "未設定"));
 }
+
+#[test]
+fn a_knob_learned_for_a_macro_moves_its_targets_in_one_step() {
+    let (mut s, ids) = studio(1);
+    let t = ids[0];
+    s.song
+        .run(
+            "control.assign",
+            json!({"track": t.to_string(), "control": "k1", "target": "pan"}),
+        )
+        .unwrap();
+    plug(&mut s, &[(1, [0xb0, 30, 5]), (2, [0xb0, 30, 127])]);
+    assert!(learn(&mut s, &format!("track.control:{t}:k1")));
+    assert_eq!(
+        s.learning_hit(),
+        Some(MixerHit::Control(t, ControlId::Knob(0)))
+    );
+    polls(&mut s, 2);
+    let map = s.midimap();
+    assert_eq!(
+        map.rows()[0].target,
+        Target::Control(t.to_string(), "k1".into())
+    );
+    assert_eq!(s.midi_target_name(&map.rows()[0].target), "Part 0 · パン");
+    // the first message only gave the knob; the next turns the macro all the way
+    polls(&mut s, 1);
+    assert!(s.mixer.drag.is_some());
+    s.mixer.knob_at = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+    polls(&mut s, 1);
+    assert!(s.mixer.drag.is_none());
+    let p = s.project();
+    assert_eq!(p.tracks[&t].controls.knobs[0].value, 1.0);
+    assert_eq!(p.tracks[&t].pan, 1.0);
+    assert!(s.song.undo());
+    assert_eq!(s.project().tracks[&t].pan, 0.0);
+}

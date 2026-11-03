@@ -552,6 +552,27 @@ fn every_history_command_undoes_and_redoes() {
     rig.step("rack.branch.remove", json!({"id": b0}));
     rig.step("rack.node.move", json!({"id": rb, "to": rt, "index": 1}));
     rig.step("rack.flatten", json!({"track": rt}));
+    let comp_threshold = format!("param:{rb}:threshold");
+    rig.step(
+        "control.assign",
+        json!({"track": rt, "control": "k1", "target": comp_threshold, "max": 0.8}),
+    );
+    rig.step(
+        "control.assign",
+        json!({"track": rt, "control": "k1", "target": "volume", "curve": 0.5}),
+    );
+    rig.step(
+        "control.set",
+        json!({"track": rt, "control": "k1", "value": 0.25}),
+    );
+    rig.step(
+        "control.rename",
+        json!({"track": rt, "control": "k1", "name": "Tone"}),
+    );
+    rig.step(
+        "control.unassign",
+        json!({"track": rt, "control": "k1", "target": "volume"}),
+    );
     rig.step(
         "plugin.preset.apply",
         json!({"id":comp,"values":[{"param":"threshold","value":0.3}]}),
