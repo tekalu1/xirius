@@ -4,7 +4,8 @@
 //! a shelf are those of the Audio EQ Cookbook. At their defaults the bands are a low cut, a
 //! low shelf, two bells, a high shelf and a high cut, as they were before they had a type.
 //! Moved values glide, and the filters are worked out again once every [`STEP`] frames while
-//! they do. No latency.
+//! they do. A band's switch, type and slope do not glide: the band crossfades from the old
+//! filter to the new one over [`FADE_SECONDS`]. No latency.
 //!
 //! [`band_db`], [`response_db`] and [`Response`] give the curve a panel draws, from the same
 //! coefficients the sound goes through.
@@ -85,6 +86,39 @@ const OUTPUT: usize = 16;
 const SLOTS: usize = 4;
 /// Sections in a row, band by band.
 const SECTIONS: usize = BANDS.len() * SLOTS;
+/// How long a band takes to go from its old filter to the new one when its switch, type or
+/// slope changes (M-dsp-1).
+pub const FADE_SECONDS: f64 = 0.01;
+
+/// What of a band does not glide: off, or its type and (a cut's) order.
+type Shape = Option<(BandType, usize)>;
+
+/// The shape of band `band` for the plain values `p`.
+fn shape(p: &[f64], band: usize) -> Shape {
+    let b = &BANDS[band];
+    if p[b.on] < 0.5 {
+        return None;
+    }
+    let kind = EQ_BANDS[band].type_of(p[b.kind]);
+    let cut = matches!(kind, BandType::LowCut | BandType::HighCut);
+    let ord = if cut {
+        order(p[b.slope].max(0.0).round() as usize)
+    } else {
+        0
+    };
+    Some((kind, ord))
+}
+
+/// Runs `x` through the active sections of a band.
+#[inline]
+fn chain(state: &mut [Biquad], coefs: &[Coefs], active: &[bool], mut x: f64) -> f64 {
+    for ((b, c), on) in state.iter_mut().zip(coefs).zip(active) {
+        if *on {
+            x = b.tick(c, x);
+        }
+    }
+    x
+}
 
 /// The sections of band `band` for the plain values `p` (in `EQ` order); none where it
 /// leaves the sound be (off, or a bell or a shelf at 0 dB).
@@ -203,6 +237,15 @@ pub struct Eq {
     /// Sections that change the sound; the others are skipped and their state kept at rest.
     active: [bool; SECTIONS],
     state: [[Biquad; SECTIONS]; 2],
+    /// Each band's shape as last worked out.
+    shapes: [Shape; BANDS.len()],
+    /// The filters a band is fading out of (its sections as they were when its shape
+    /// changed), and the frames left of each band's fade.
+    old_coefs: [Coefs; SECTIONS],
+    old_active: [bool; SECTIONS],
+    old_state: [[Biquad; SECTIONS]; 2],
+    fade: [usize; BANDS.len()],
+    fade_len: usize,
     gain: f64,
     out: Ramp,
     /// The audio thread's ends of the analyser's rings (ENG-073): the mono input and output.
@@ -225,17 +268,41 @@ impl Eq {
             coefs: [Coefs::THROUGH; SECTIONS],
             active: [false; SECTIONS],
             state: [[Biquad::default(); SECTIONS]; 2],
+            shapes: [None; BANDS.len()],
+            old_coefs: [Coefs::THROUGH; SECTIONS],
+            old_active: [false; SECTIONS],
+            old_state: [[Biquad::default(); SECTIONS]; 2],
+            fade: [0; BANDS.len()],
+            fade_len: 1,
             gain: 1.0,
             out: Ramp::new(1.0),
         }
     }
 
-    /// Works out every section from the gliding values.
-    fn update(&mut self) {
+    /// Works out every section from the gliding values. A band whose shape changed starts
+    /// a fade from what it was, its new sections from rest; `fade` false (preparing) jumps.
+    fn update(&mut self, fade: bool) {
         let g = &self.glide;
         let mut next = [None; SECTIONS];
         for (b, slots) in next.as_chunks_mut::<SLOTS>().0.iter_mut().enumerate() {
             *slots = sections(&g.cur, b, self.rate);
+            let now = shape(&g.cur, b);
+            if now == self.shapes[b] {
+                continue;
+            }
+            self.shapes[b] = now;
+            if fade {
+                // A change again before the fade ends fades out of the newer filter.
+                let r = b * SLOTS..(b + 1) * SLOTS;
+                self.old_coefs[r.clone()].copy_from_slice(&self.coefs[r.clone()]);
+                self.old_active[r.clone()].copy_from_slice(&self.active[r.clone()]);
+                for (old, ch) in self.old_state.iter_mut().zip(&mut self.state) {
+                    old[r.clone()].copy_from_slice(&ch[r.clone()]);
+                }
+                // Its new sections come up from rest below.
+                self.active[r].fill(false);
+                self.fade[b] = self.fade_len;
+            }
         }
         for (k, c) in next.into_iter().enumerate() {
             let on = c.is_some();
@@ -263,7 +330,9 @@ impl Processor for Eq {
         self.glide.prepare(&self.params, self.rate);
         self.state = [[Biquad::default(); SECTIONS]; 2];
         self.active = [false; SECTIONS];
-        self.update();
+        self.fade = [0; BANDS.len()];
+        self.fade_len = ((FADE_SECONDS * self.rate).round() as usize).max(1);
+        self.update(false);
         self.out.set(self.gain);
     }
 
@@ -282,21 +351,42 @@ impl Processor for Eq {
         while at < n {
             let len = STEP.min(n - at);
             if self.glide.step(&mut self.params) {
-                self.update();
+                self.update(true);
             }
             let (g0, dg) = self.out.toward(self.gain, len);
+            let fading = self.fade.iter().any(|f| *f > 0);
+            let whole = self.fade_len as f64;
             for (ch, buf) in [&mut *io.left, &mut *io.right].into_iter().enumerate() {
                 let state = &mut self.state[ch];
+                let old = &mut self.old_state[ch];
                 let mut g = g0;
-                for s in &mut buf[at..at + len] {
+                for (j, s) in buf[at..at + len].iter_mut().enumerate() {
                     let mut x = f64::from(*s);
-                    let sections = state.iter_mut().zip(&self.coefs).zip(&self.active);
-                    for ((b, c), _) in sections.filter(|(_, on)| **on) {
-                        x = b.tick(c, x);
+                    if fading {
+                        let bands = state.as_chunks_mut::<SLOTS>().0.iter_mut();
+                        let olds = old.as_chunks_mut::<SLOTS>().0.iter_mut();
+                        for (b, (now, was)) in bands.zip(olds).enumerate() {
+                            let r = b * SLOTS..(b + 1) * SLOTS;
+                            let y = chain(now, &self.coefs[r.clone()], &self.active[r.clone()], x);
+                            let left = self.fade[b].saturating_sub(j);
+                            x = if left == 0 {
+                                y
+                            } else {
+                                let z =
+                                    chain(was, &self.old_coefs[r.clone()], &self.old_active[r], x);
+                                let a = 1.0 - left as f64 / whole;
+                                z + (y - z) * a
+                            };
+                        }
+                    } else {
+                        x = chain(state, &self.coefs, &self.active, x);
                     }
                     g += dg;
                     *s = (x * g) as f32;
                 }
+            }
+            for f in &mut self.fade {
+                *f = f.saturating_sub(len);
             }
             at += len;
         }
@@ -306,7 +396,7 @@ impl Processor for Eq {
         if tap.output() {
             feed(&mut self.rings.1, self.params.probe(), 1, io.left, io.right);
         }
-        for ch in &mut self.state {
+        for ch in self.state.iter_mut().chain(&mut self.old_state) {
             for b in ch.iter_mut() {
                 b.flush();
             }
@@ -678,8 +768,11 @@ mod tests {
 
     #[test]
     fn the_old_knobs_anywhere_sound_as_they_did_to_the_bit() {
+        // The cuts' switches and slopes aside: they jumped before and crossfade now (M-dsp-1;
+        // `a_bands_switch_type_and_slope_crossfade` holds them).
+        let shapes = [BANDS[0].on, BANDS[0].slope, BANDS[5].on, BANDS[5].slope];
         against_before(|bank, seed| {
-            for i in 0..=OUTPUT {
+            for i in (0..=OUTPUT).filter(|i| !shapes.contains(i)) {
                 let mut v = noise(seed);
                 // A gain at 0 dB now and then, so a band leaves and comes back.
                 if EQ.params[i].unit == xirius_params::Unit::Db && noise(seed) < 0.3 {
@@ -797,6 +890,73 @@ mod tests {
         ];
         let one = gain_at(4000.0, &high);
         assert!((-14.0..-10.0).contains(&one), "{one}");
+    }
+
+    /// The largest second difference of `x`: a sine's is its amplitude times
+    /// (2π·f/rate)², a jump's is about the jump.
+    fn roughness(x: &[f32]) -> f64 {
+        x.windows(3)
+            .map(|w| (f64::from(w[2]) - 2.0 * f64::from(w[1]) + f64::from(w[0])).abs())
+            .fold(0.0, f64::max)
+    }
+
+    /// A 1 kHz sine through an EQ whose `id` is set to each of `values` in turn, every
+    /// 1999 frames (so the changes fall at many phases): the output's roughness.
+    fn switched(p: &mut dyn Processor, h: &StockHandle, id: &str, values: &[f64]) -> f64 {
+        let input = sine(1000.0, 0.25, 1999 * 8 * values.len());
+        let mut out = Vec::new();
+        let chunks = input.chunks(1999);
+        for (chunk, v) in chunks.zip(values.iter().cycle()) {
+            set_plain(h, id, *v);
+            out.extend(render(p, chunk, chunk, &[]).0);
+        }
+        roughness(&out)
+    }
+
+    /// M-dsp-1: a band's switch, type and slope go over in a crossfade, with no click; the
+    /// EQ before (the cuts' switch and slope jumped) clicks there.
+    #[test]
+    fn a_bands_switch_type_and_slope_crossfade() {
+        // A sine of 0.25 lifted 12 dB at most: 1.0 × (2π/48)² ≈ 0.017 at rest.
+        let calm = 0.03;
+        let bell = |set: &[(&str, f64)]| {
+            let (p, h) = make("eq");
+            for (id, v) in [("mid1_freq", 1000.0), ("mid1_gain", 12.0), ("mid1_q", 1.0)] {
+                set_plain(&h, id, v);
+            }
+            for (id, v) in set {
+                set_plain(&h, id, *v);
+            }
+            (p, h)
+        };
+        let (mut p, h) = bell(&[]);
+        let on = switched(p.as_mut(), &h, "b3_on", &[0.0, 1.0]);
+        let (mut p, h) = bell(&[]);
+        let kind = switched(p.as_mut(), &h, "b3_type", &[2.0, 0.0, 5.0, 3.0]);
+        let (mut p, h) = bell(&[("b3_type", 0.0)]);
+        let slope = switched(p.as_mut(), &h, "b3_slope", &[0.0, 2.0, 1.0]);
+        let (mut p, h) = bell(&[("low_cut_freq", 1000.0)]);
+        let cut = switched(p.as_mut(), &h, "low_cut_on", &[1.0, 0.0]);
+        for (what, r) in [("on", on), ("type", kind), ("slope", slope), ("cut", cut)] {
+            assert!(r < calm, "{what}: {r}");
+        }
+        // The EQ before, its low cut switched the same way.
+        let bank = Arc::new(ParamBank::new(&EQ));
+        let mut was = before::Eq::new(Params::new(bank.clone()));
+        was.prepare(&setup());
+        let id = |k: &str| EQ.params.iter().position(|p| p.id == k).unwrap();
+        bank.set_norm(
+            id("low_cut_freq"),
+            EQ.params[id("low_cut_freq")].to_norm(1000.0),
+        );
+        let input = sine(1000.0, 0.25, 1999 * 16);
+        let mut out = Vec::new();
+        for (chunk, v) in input.chunks(1999).zip([1.0, 0.0].iter().cycle()) {
+            bank.set_norm(id("low_cut_on"), *v);
+            out.extend(render(&mut was, chunk, chunk, &[]).0);
+        }
+        let before = roughness(&out);
+        assert!(before > 2.0 * calm, "{before}");
     }
 
     #[test]
