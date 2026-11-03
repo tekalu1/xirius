@@ -87,6 +87,12 @@ impl CloseJob {
 }
 
 impl Opening {
+    /// The plugins' states it asked for are in, and the song is not being read yet.
+    #[cfg(test)]
+    pub(crate) fn states_ready(&self) -> bool {
+        self.job.is_none() && self.pull.as_ref().is_some_and(|p| p.ready())
+    }
+
     pub fn close_title(&self) -> &'static str {
         if self.adopting {
             "閉じますか"

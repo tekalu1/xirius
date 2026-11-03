@@ -85,6 +85,8 @@ encoding_rs = "0.8"
 proc-macro2 = { version = "1", features = ["span-locations"] }
 syn = { version = "2", features = ["full", "visit"] }
 xirius-test-vst3 = { path = "../xirius-test-vst3" }
+# The stand-in ARA plugin of the window's save tests (PLG-036).
+xirius-ara = { path = "../xirius-ara" }
 
 # The tests read the version information back as Explorer does (LIC-022), and walk the
 # parked window's UI Automation tree (UI-026, tests/uia_window.rs).

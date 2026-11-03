@@ -1268,3 +1268,7 @@ mod tests {
         finish(&mut s);
     }
 }
+
+#[cfg(test)]
+#[path = "saving_ara_tests.rs"]
+mod ara_tests;

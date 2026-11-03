@@ -8446,6 +8446,7 @@ dependencies = [
  "unicode-segmentation",
  "windows 0.61.3",
  "windows-sys 0.61.2",
+ "xirius-ara",
  "xirius-core",
  "xirius-design",
  "xirius-engine",
