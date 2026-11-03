@@ -841,9 +841,11 @@ impl SessionHost {
     }
 
     /// Whether an ARA plugin's archive asked for is still on its way, taking in the ones that
-    /// came (a later collect puts them into the song). Never waits.
+    /// came (a later collect puts them into the song). Never waits. Only the song's plugins
+    /// count: a document no clip uses any more is let go of once its last edits came, and not
+    /// waited for.
     pub fn ara_archives_pending(&self) -> bool {
-        self.builder.ara().archives_pending()
+        self.builder.ara().archives_pending(&self.song)
     }
 
     /// Why ARA editors asked for did not open, by plugin, once.

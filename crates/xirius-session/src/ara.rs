@@ -939,11 +939,14 @@ impl Held {
         }
     }
 
-    /// Takes in the archives asked for that have come, without waiting. Whether one is still
-    /// on its way: writing or leaving the song waits for it over the window's frames.
-    pub fn archives_pending(&self) -> bool {
-        lock(&self.docs)
-            .values()
+    /// Takes in the archives asked for that have come, without waiting, and lets go of the
+    /// documents no clip of `p` uses once theirs came ([`Held::release`]). Whether one of the
+    /// song's is still on its way: writing or leaving the song waits for it over the window's
+    /// frames. A document let go of is not waited for: its archive is no longer the song's.
+    pub fn archives_pending(&self, p: &Project) -> bool {
+        self.release(p);
+        self.kept(p)
+            .iter()
             .fold(false, |on, d| d.receive(&mut lock(&d.asked), false) | on)
     }
 

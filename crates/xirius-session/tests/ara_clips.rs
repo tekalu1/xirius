@@ -96,11 +96,11 @@ fn take(s: &mut Session, b: &Builder) -> bool {
     changed
 }
 
-/// Whether an archive asked for is on its way, as a frame of the window asks while it writes
-/// the song: never waiting.
-fn pending(b: &Builder) -> bool {
+/// Whether an archive of the song's plugins asked for is on its way, as a frame of the window
+/// asks while it writes the song: never waiting.
+fn pending(b: &Builder, p: &Project) -> bool {
     let started = Instant::now();
-    let on = b.ara().archives_pending();
+    let on = b.ara().archives_pending(p);
     assert!(
         started.elapsed() < Duration::from_millis(150),
         "a frame waited {:?} for the archive",
@@ -239,7 +239,7 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     let mut waited = false;
     until("the archive written on the plugin's thread", || {
         let changed = take(&mut s, &player);
-        waited |= player.ara().archives_pending();
+        waited |= player.ara().archives_pending(s.project());
         changed
     });
     assert!(waited, "the archive came in at the frame that asked for it");
@@ -260,13 +260,13 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     fake::edit(&modification, 0.3);
     until("the archive asked for", || {
         player.ara().ask_archives(s.project());
-        player.ara().archives_pending()
+        player.ara().archives_pending(s.project())
     });
     fake::close_windows();
     until("the editor closed", || player.ara().editing().is_empty());
     // Come or still on its way, the archive asked for goes into the song.
     until("the archive after the close", || take(&mut s, &player));
-    assert!(!player.ara().archives_pending());
+    assert!(!player.ara().archives_pending(s.project()));
     let p = s.project().clone();
     until("the render of the edit before the close", || {
         (peak(&mut player, &p) - 0.15).abs() < 1e-3
@@ -277,9 +277,9 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     fake::edit(&modification, 0.5);
     until("the archive asked for", || {
         player.ara().ask_archives(s.project());
-        player.ara().archives_pending()
+        player.ara().archives_pending(s.project())
     });
-    until("the archive on its way", || !pending(&player));
+    until("the archive on its way", || !pending(&player, s.project()));
     assert!(take(&mut s, &player));
     assert_eq!(s.project().ara.archives[PLUGIN], archive);
     fake::slow_store(Duration::ZERO);
@@ -290,16 +290,16 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
         fake::edit(&modification, gain);
         player.ara().ask_archives(s.project());
         assert!(
-            pending(&player),
+            pending(&player, s.project()),
             "the edit before its notice asked for nothing"
         );
-        until("the archive on its way", || !pending(&player));
+        until("the archive on its way", || !pending(&player, s.project()));
         assert!(take(&mut s, &player), "the edit before its notice was lost");
     }
     assert_eq!(s.project().ara.archives[PLUGIN], archive);
     // Nothing changed since: asked again, nothing is written and the song stays as it is.
     player.ara().ask_archives(s.project());
-    until("the answer", || !pending(&player));
+    until("the answer", || !pending(&player, s.project()));
     assert!(!take(&mut s, &player));
 
     // PLG-036: moved, the clip keeps its render: no gap while the plugin renders it again.
@@ -352,7 +352,7 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     fake::edit(&modification, 0.6);
     until("the archive asked for", || {
         player.ara().ask_archives(s.project());
-        pending(&player)
+        pending(&player, s.project())
     });
     assert!(!take(&mut s, &player));
     s.save().unwrap();
@@ -405,7 +405,7 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     fake::edit(&modification, 0.8);
     until("the archive asked for", || {
         player.ara().ask_archives(reopened.project());
-        pending(&player)
+        pending(&player, reopened.project())
     });
     run(&mut reopened, "clip.ara.detach", json!({"ids": [a, b]}));
     let p = reopened.project().clone();
@@ -426,15 +426,21 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
 
     // PLG-036: detached after the plugin's last edit, its document is let go of once its last
     // archive came, and an undo opens it again with that edit, not the song's older archive;
-    // back and forth (redo, undo), the edit stays.
+    // back and forth (redo, undo), the edit stays. Leaving or writing the song does not wait
+    // for the document let go of, though its archive takes a while.
+    fake::slow_store(Duration::from_millis(300));
     fake::edit(&modification, 0.9);
     run(&mut reopened, "clip.ara.detach", json!({"ids": [a, b]}));
     let p = reopened.project().clone();
     player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
     until("the document let go of", || {
-        player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
+        assert!(
+            !pending(&player, &p),
+            "the song waits for a plugin it no longer uses"
+        );
         player.ara().doc(PLUGIN).is_none()
     });
+    fake::slow_store(Duration::ZERO);
     for round in 0..2 {
         reopened.undo(1).unwrap();
         let p = reopened.project().clone();
@@ -451,7 +457,7 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
         let p = reopened.project().clone();
         player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
         until("the document let go of", || {
-            player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
+            assert!(!pending(&player, &p));
             player.ara().doc(PLUGIN).is_none()
         });
     }
