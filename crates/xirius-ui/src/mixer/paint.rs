@@ -278,6 +278,8 @@ fn paint_strip(
     if let Some(list) = s.sends {
         pen.icon("send", section_icon(list_row(list, 0)), c.ink);
         let off = studio.mixer.offset(t, List::Sends);
+        let keyed = super::keys::key_sends(p, t);
+        let lit = studio.mixer_partners();
         for i in 0..s.rows.sends {
             let k = off + i;
             let row = list_row(list, i);
@@ -310,7 +312,19 @@ fn paint_strip(
                     pen.round(pp, c.surface_3, Radius::Xs);
                 }
                 pre_glyph(pen, pp, if send.pre { c.ink_blue } else { c.ink });
-            } else if k == track.sends.len() {
+            } else if let Some(key) = k.checked_sub(track.sends.len()).and_then(|j| keyed.get(j)) {
+                let hot = matches!(hover, Some(MixerHit::KeySend(h, id) | MixerHit::KeyLevel(h, id))
+                    if h == t && id == key.id);
+                let level = studio.key_level(t, key.id).unwrap_or(key.level_db);
+                key_row(
+                    pen,
+                    p,
+                    row,
+                    key,
+                    level,
+                    (hot, lit.sends.contains(&(t, key.id))),
+                );
+            } else if k == track.sends.len() + keyed.len() {
                 add_row(pen, row, hover == Some(MixerHit::AddSend(t)));
             }
         }
@@ -343,6 +357,54 @@ fn paint_strip(
             true,
         );
     }
+}
+
+/// A key send's row (MIX-048): the sidechain mark, the receiving strip's chip, the plug-in's
+/// name and the bar of the level. `(hot, lit)`: the pointer is on it, its partner is.
+fn key_row(
+    pen: &mut Pen,
+    p: &Project,
+    row: Rect,
+    key: &super::keys::KeySend,
+    level: f64,
+    (hot, lit): (bool, bool),
+) {
+    let c = pen.c;
+    pen.round(row, if hot { c.surface_3 } else { c.surface_2 }, Radius::S);
+    let (mark, chip, nm, zone) = super::keys::key_parts(row);
+    pen.icon("sc", mark, c.ink_mark);
+    if let Some(owner) = p.tracks.get(&key.owner) {
+        // design-lint: allow(exception-family) 受ける側のチャンネルの色の印（トラックの表示、モックの sidechain.html）
+        pen.round(
+            chip,
+            c.tracks[crate::draw::track_color(owner) % c.tracks.len()],
+            Radius::Clip,
+        );
+    }
+    pen.mask(nm, |pen| {
+        pen.text(
+            &key.name,
+            FontSize::Caption,
+            Weight::Regular,
+            c.ink_strong,
+            nm,
+            Align::Left,
+        );
+    });
+    let bar = super::keys::key_bar(zone);
+    pen.round(bar, c.well, Radius::Pill);
+    let w = (bar.w * super::keys::bar_t(level)).round();
+    if w > 0.0 {
+        pen.round(Rect::new(bar.x, bar.y, w, 6.0), c.ink_mark, Radius::Pill);
+    }
+    if lit {
+        partner_ring(pen, row);
+    }
+}
+
+/// The ring around a row whose partner is under the pointer (MIX-048).
+pub(crate) fn partner_ring(pen: &mut Pen, row: Rect) {
+    pen.outline(row, pen.c.ring, Radius::S, 1.5);
 }
 
 fn add_row(pen: &mut Pen, r: Rect, hot: bool) {

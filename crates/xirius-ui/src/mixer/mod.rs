@@ -13,6 +13,7 @@ pub(crate) mod choose;
 pub(crate) mod editors;
 pub mod flow;
 pub(crate) mod group;
+pub mod keys;
 pub mod knob;
 pub mod meters;
 pub(crate) mod paint;
@@ -112,6 +113,10 @@ pub enum MixerHit {
     /// A splitter's chevron in the strip's flow: its branches shut or open (MIX-044).
     Fold(TrackId, NodeId),
     SendLevel(TrackId, SendId),
+    /// A key send's row (MIX-048): the receiving plug-in's window.
+    KeySend(TrackId, SendId),
+    /// The bar of a key send's level (MIX-048).
+    KeyLevel(TrackId, SendId),
     /// The glyph that sends from before or after the fader.
     SendPre(TrackId, SendId),
     AddSend(TrackId),
@@ -148,6 +153,8 @@ impl MixerHit {
             | MixerHit::AddLayer(t)
             | MixerHit::Fold(t, _)
             | MixerHit::SendLevel(t, _)
+            | MixerHit::KeySend(t, _)
+            | MixerHit::KeyLevel(t, _)
             | MixerHit::SendPre(t, _)
             | MixerHit::AddSend(t)
             | MixerHit::Output(t)
@@ -222,7 +229,19 @@ impl Rows {
             .unwrap_or(ROW_H as u32);
         Rows {
             inserts: most(|t| t.inserts.len() + crate::instrument::gap(t)).clamp(1, INSERT_ROWS),
-            sends: most(|t| if t.id.is_master() { 0 } else { t.sends.len() }).clamp(1, SEND_ROWS),
+            sends: p
+                .tracks
+                .values()
+                .map(|t| {
+                    if t.id.is_master() {
+                        1
+                    } else {
+                        t.sends.len() + keys::key_count(p, t.id) + 1
+                    }
+                })
+                .max()
+                .unwrap_or(1)
+                .clamp(1, SEND_ROWS),
             flow,
         }
     }
@@ -508,6 +527,14 @@ pub struct Mixer {
     /// The last press was a touch: the flows' rows are 32 high (MIX-045).
     pub coarse: bool,
     pub level_drag: Option<LevelDrag>,
+    /// The bar of a key send held (MIX-048).
+    pub key_drag: Option<keys::KeyDrag>,
+    /// The key send whose bar ←→ move: the one pressed last (MIX-048).
+    pub key_focus: Option<(TrackId, SendId)>,
+    /// The gain reduction of each receiving plug-in a strip shows, in dB (MIX-048).
+    pub gr: HashMap<PluginId, f32>,
+    /// The probes the mixer watches for [`Mixer::gr`].
+    pub(crate) gr_watched: Vec<PluginId>,
     /// The node the open plug-in list puts its pick after (the ＋ on a row's edge).
     pub insert_after: Option<(TrackId, flow::Pick)>,
     pub(crate) editors: Vec<OpenEditor>,
@@ -649,7 +676,7 @@ impl Mixer {
             let Some(track) = p.tracks.get(t) else {
                 return false;
             };
-            *off = (*off).min(list_max(track, *list, rows));
+            *off = (*off).min(list_max(p, track, *list, rows));
             true
         });
         self.folded
@@ -663,10 +690,10 @@ impl Mixer {
 }
 
 /// How far a list can scroll: its rows and the ＋ row, less what fits.
-fn list_max(track: &Track, list: List, rows: Rows) -> usize {
+fn list_max(p: &Project, track: &Track, list: List, rows: Rows) -> usize {
     let n = match list {
         List::Inserts => track.inserts.len() + crate::instrument::gap(track),
-        List::Sends => track.sends.len(),
+        List::Sends => track.sends.len() + keys::key_count(p, track.id),
         // The layout holds a flow's scroll to what is hidden; here only a bound.
         List::Flow => return flow::lines(track, &HashSet::new()).len(),
     };
@@ -1069,13 +1096,23 @@ impl Studio {
                 return Some(MixerHit::Strip(t));
             };
             let k = self.mixer.offset(t, List::Sends) + i;
-            let (_, knob, pp) = send_parts(list_row(list, i));
-            match track.sends.get(k) {
-                Some(send) if knob.contains(x, y) => MixerHit::SendLevel(t, send.id),
-                Some(send) if pp.contains(x, y) => MixerHit::SendPre(t, send.id),
-                Some(_) => MixerHit::Strip(t),
-                None if k == track.sends.len() => MixerHit::AddSend(t),
-                None => MixerHit::Strip(t),
+            let row = list_row(list, i);
+            let (_, knob, pp) = send_parts(row);
+            let keyed = keys::key_sends(&p, t);
+            let n = track.sends.len();
+            match (
+                track.sends.get(k),
+                k.checked_sub(n).and_then(|j| keyed.get(j)),
+            ) {
+                (Some(send), _) if knob.contains(x, y) => MixerHit::SendLevel(t, send.id),
+                (Some(send), _) if pp.contains(x, y) => MixerHit::SendPre(t, send.id),
+                (Some(_), _) => MixerHit::Strip(t),
+                (None, Some(key)) if keys::key_parts(row).3.contains(x, y) => {
+                    MixerHit::KeyLevel(t, key.id)
+                }
+                (None, Some(key)) => MixerHit::KeySend(t, key.id),
+                (None, None) if k == n + keyed.len() => MixerHit::AddSend(t),
+                (None, None) => MixerHit::Strip(t),
             }
         } else if on(s.output) {
             MixerHit::Output(t)
@@ -1103,6 +1140,11 @@ impl Studio {
             (i < s.rows.sends).then(|| list_row(list, i))
         };
         let send = |id: SendId| track.sends.iter().position(|x| x.id == id);
+        let keyed = keys::key_sends(&p, t);
+        let key = |id: SendId| {
+            let j = keyed.iter().position(|x| x.id == id)?;
+            send_row(track.sends.len() + j)
+        };
         match hit {
             MixerHit::Strip(_) => Some(s.name),
             MixerHit::Fader(_) => Some(s.fader),
@@ -1128,7 +1170,9 @@ impl Studio {
                 .map(|(l, r)| flow::fold_part(*r, l)),
             MixerHit::SendLevel(_, id) => send_row(send(id)?).map(|r| send_parts(r).1),
             MixerHit::SendPre(_, id) => send_row(send(id)?).map(|r| send_parts(r).2),
-            MixerHit::AddSend(_) => send_row(track.sends.len()),
+            MixerHit::KeySend(_, id) => key(id),
+            MixerHit::KeyLevel(_, id) => key(id).map(|r| keys::key_parts(r).3),
+            MixerHit::AddSend(_) => send_row(track.sends.len() + keyed.len()),
             MixerHit::Output(_) => s.output,
             MixerHit::Input(_) => s
                 .input
@@ -1212,6 +1256,9 @@ impl Studio {
         self.input_map.context_clipboard = None;
         let t = hit.track();
         self.mixer.master_picked = t.is_master();
+        if !matches!(hit, MixerHit::KeyLevel(..)) {
+            self.mixer.key_focus = None;
+        }
         if !t.is_master() {
             // The name and the ground choose as a head does (UI-340); any other part of a track
             // outside the selection acts on that track and leaves the selection as it is
@@ -1230,6 +1277,16 @@ impl Studio {
             | MixerHit::Fader(_)
             | MixerHit::Pan(_)
             | MixerHit::SendLevel(..) => true,
+            MixerHit::KeyLevel(t, id) => {
+                self.mixer.key_focus = Some((t, id));
+                true
+            }
+            MixerHit::KeySend(t, id) => {
+                let Some(k) = keys::key_send(&self.project(), t, id) else {
+                    return false;
+                };
+                self.open_plugin(k.owner, k.plugin)
+            }
             MixerHit::Mute(t) => self.track_toggle("track.mute", t),
             MixerHit::Solo(t) => self.track_toggle("track.solo", t),
             MixerHit::Arm(t) => self.track_toggle("track.arm", t),
@@ -1416,6 +1473,19 @@ impl Studio {
                 self.add_layer(t, to);
             }
             PopupKind::InstMenu(m) => self.inst_menu_pick(m, to),
+            PopupKind::Send(t) if to.starts_with(keys::PICK) => {
+                let Ok(plugin) = to[keys::PICK.len()..].parse::<xirius_core::id::PluginId>() else {
+                    return;
+                };
+                let args = json!({ "id": plugin.to_string(), "from": t.to_string() });
+                if keys::keys(&self.project(), t, plugin) {
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+                    self.run_command("plugin.sidechain.remove", args);
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+                } else if self.run_command("plugin.sidechain.add", args) {
+                    self.reveal_last(t, List::Sends);
+                }
+            }
             PopupKind::Send(t) => {
                 // A new bus and the send to it are one step: one undo takes
                 // both away (MIX-025).
@@ -1442,11 +1512,11 @@ impl Studio {
     pub(crate) fn reveal_last(&mut self, t: TrackId, list: List) {
         let p = self.project();
         if let Some(track) = p.tracks.get(&t) {
-            let max = list_max(track, list, Rows::with(&p, self.mixer.look()));
+            let max = list_max(&p, track, list, Rows::with(&p, self.mixer.look()));
             self.mixer.offsets.insert((t, list), max);
             // A new insert is the last row of the strip's flow too.
             if list == List::Inserts {
-                let max = list_max(track, List::Flow, Rows::of(&p));
+                let max = list_max(&p, track, List::Flow, Rows::of(&p));
                 self.mixer.offsets.insert((t, List::Flow), max);
             }
         }
@@ -1734,7 +1804,7 @@ impl Studio {
                 let max = if list == List::Flow {
                     self.flow_max(&s, track)
                 } else {
-                    list_max(track, list, s.rows)
+                    list_max(&p, track, list, s.rows)
                 };
                 let off = self.mixer.offset(s.track, list).min(max);
                 let next = if dy > 0.0 {

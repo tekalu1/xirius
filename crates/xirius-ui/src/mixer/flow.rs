@@ -57,6 +57,15 @@ const MM_H: f32 = 16.0;
 const MM_COARSE: f32 = 24.0;
 /// The ＋ on a row's bottom edge, half over the next row.
 const AFTER: f32 = 16.0;
+/// A receiving plug-in's sidechain mark after its name (MIX-048).
+const KEY_MARK: f32 = 12.0;
+/// The gain reduction meter at a receiving row's right edge, as the mock's `.grm`: so wide, so
+/// far in from the edge and from the top and bottom.
+const GR_W: f32 = 3.0;
+const GR_IN: f32 = 3.0;
+const GR_TB: f32 = 4.0;
+/// The reduction the meter's full height stands for, in dB (as the device's meter, UI-327).
+const GR_SPAN: f32 = 24.0;
 const AFTER_COARSE: f32 = 24.0;
 /// The level row under a picked row: its margins, its inner room and its value's width.
 const SUB_TOP: f32 = 1.0;
@@ -979,6 +988,16 @@ fn level_row(pen: &mut Pen, s: &Studio, t: TrackId, target: Target, sub: Rect) {
     mute_button(pen, mute, target.mute);
 }
 
+/// The sidechain mark of a keyed plug-in's row, ending at `end` (MIX-048).
+fn key_mark_part(row: Rect, end: f32) -> Rect {
+    Rect::new(
+        end - KEY_MARK,
+        row.y + (row.h - KEY_MARK) / 2.0,
+        KEY_MARK,
+        KEY_MARK,
+    )
+}
+
 /// One plug-in row; `(hot, chosen, mute)` is whether the pointer is on it, whether it is
 /// picked and whether it shows its M.
 #[allow(clippy::too_many_arguments)]
@@ -1031,6 +1050,21 @@ fn plugin_row(
     let it = item(row, l);
     let remove = remove_part(it);
     let soft = if chosen { c.primary.1 } else { c.ink };
+    // A plug-in keyed from another strip has the sidechain mark after its name and, while it
+    // listens to the key, the meter of its gain reduction at the right edge (MIX-048). The
+    // marks of a row under the pointer take their place.
+    let keyed = p
+        .sidechain
+        .as_ref()
+        .filter(|sc| !sc.is_empty() && !(hot && !mute))
+        .map(|sc| sc.on);
+    let room = if keyed == Some(true) {
+        GR_IN + GR_W
+    } else {
+        0.0
+    };
+    let mut lp = level_part(row);
+    lp.w -= room;
     // the M takes the level's place while it shows; a picked row's level is in the row under it
     let level = l.level.filter(|_| !mute && !chosen).map_or(0.0, |level| {
         pen.digits(
@@ -1038,13 +1072,25 @@ fn plugin_row(
             FontSize::Micro,
             Weight::Regular,
             soft,
-            level_part(row),
+            lp,
             Align::Right,
         )
     });
     // The gauge takes the place before the close; the name is cut short of it.
     let heavy = s.perf.heavy.is_heavy(p.id) && !frozen && !p.deactivated;
-    let name = name_part(row, l, chip.is_some(), level, heavy, mute);
+    let mut name = name_part(row, l, chip.is_some(), level, heavy, mute);
+    let key_mark = keyed.map(|on| {
+        let mut end = lp.right();
+        if level > 0.0 {
+            end -= level + CHIP_GAP;
+        }
+        if mute {
+            end = end.min(mute_part(row, l).x - SUB_PAD);
+        }
+        let r = key_mark_part(row, end);
+        name.w = name.w.min((r.x - CHIP_GAP - name.x).max(0.0));
+        (r, on)
+    });
     // The blue of an open plug-in falls under 4.5:1 on the ping's tint (light theme): while
     // the row is pinged its name is strong (UI-309).
     let off = p.bypass || p.deactivated;
@@ -1126,6 +1172,41 @@ fn plugin_row(
             locked,
         );
     }
+    if let Some((r, on)) = key_mark {
+        let ink = if chosen {
+            c.primary.1
+        } else if on {
+            c.ink_mark
+        } else {
+            c.ink
+        };
+        pen.icon("sc", r, ink);
+    }
+    if keyed == Some(true) {
+        let well = gr_part(row);
+        pen.round(well, c.well, Radius::Clip);
+        let gr = s.mixer.gr.get(&p.id).copied().unwrap_or(0.0);
+        let h = (gr / GR_SPAN).clamp(0.0, 1.0) * well.h;
+        if h > 0.0 {
+            let ink = if chosen { c.primary.1 } else { c.ink_blue };
+            pen.mask(well, |pen| {
+                pen.round(Rect::new(well.x, well.y, 3.0, h), ink, Radius::Clip);
+            });
+        }
+    }
+    if s.mixer_partners().plugins.contains(&p.id) {
+        super::paint::partner_ring(pen, row);
+    }
+}
+
+/// The meter of a receiving row's gain reduction (MIX-048): a thin well at its right edge.
+pub fn gr_part(row: Rect) -> Rect {
+    Rect::new(
+        row.right() - GR_IN - GR_W,
+        row.y + GR_TB,
+        GR_W,
+        row.h - 2.0 * GR_TB,
+    )
 }
 
 /// The structure lines of a flow: a hook from each open splitter's dot to the dot of each

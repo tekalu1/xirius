@@ -1881,6 +1881,7 @@ impl Studio {
             || self.bar_key(key, ch, mods)
             || self.inspector_key(g, key, ch, mods)
             || self.field_key(g, key, ch, mods.shift).is_some()
+            || self.key_bar_key(key, mods)
             || self.flow_key(g, key, ch, mods)
     }
 

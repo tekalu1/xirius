@@ -1418,9 +1418,16 @@ impl Studio {
         let plugins = host.plugins();
         let p = self.project();
         let now = std::time::Instant::now();
-        self.instruments
-            .poll_with(&p, rate, now, |id| plugins.stock_probe(id))
-            | lit
+        let shown = self
+            .instruments
+            .poll_with(&p, rate, now, |id| plugins.stock_probe(id));
+        // after the windows, so a probe a window let go is watched again for the mixer
+        let probes: Vec<_> = self
+            .gr_ids(&p)
+            .into_iter()
+            .filter_map(|id| plugins.stock_probe(id).map(|probe| (id, probe)))
+            .collect();
+        shown | self.poll_gr(&p, &probes) | lit
     }
 
     /// A key or a pad of the window `w` was pressed: its note plays on the window's track as

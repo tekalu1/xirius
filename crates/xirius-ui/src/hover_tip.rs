@@ -82,6 +82,8 @@ pub fn command(hit: Hit) -> Option<String> {
                         Some("rack.branch.set".into())
                     }
                     crate::mixer::MixerHit::After(..) => Some("plugin.add".into()),
+                    crate::mixer::MixerHit::KeySend(..) => Some("plugin.open".into()),
+                    crate::mixer::MixerHit::KeyLevel(..) => Some("plugin.sidechain.set".into()),
                     crate::mixer::MixerHit::Widen(_) | crate::mixer::MixerHit::Editor(_) => None,
                 };
             }

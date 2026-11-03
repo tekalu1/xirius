@@ -283,6 +283,8 @@ pub(super) fn add_source(
         on: true,
         sources: Vec::new(),
     });
+    // a key given is listened to: the receiver's sidechain comes on with it (MIX-048)
+    sc.on = true;
     sc.sources.push(KeySource {
         id: sid,
         track: from,

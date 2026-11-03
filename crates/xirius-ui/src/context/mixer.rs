@@ -96,7 +96,9 @@ impl Studio {
             | MixerHit::Fold(..)
             | MixerHit::RowMute(..)
             | MixerHit::Level(..)
-            | MixerHit::After(..) => return None,
+            | MixerHit::After(..)
+            | MixerHit::KeySend(..)
+            | MixerHit::KeyLevel(..) => return None,
             MixerHit::Bypass(t, id) | MixerHit::Open(t, id) => {
                 if crate::instrument::is_instrument_of(&p, t, id) || self.health.crashed(id) {
                     return None;

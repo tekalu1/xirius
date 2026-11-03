@@ -874,12 +874,19 @@ impl Studio {
             PopupKind::AraPlugin => Some(self.ara_pick_list()),
             PopupKind::Send(t) => {
                 let p = self.project();
-                Some(
+                let mut list =
                     PickList::of_choices(crate::mixer::send_choices(&p, t), "", "cable", |to| {
                         Action::Pick(to.to_string())
                     })
-                    .named("一致するバスはありません"),
-                )
+                    .named("一致するバスはありません");
+                // Under the buses, the plug-ins on other strips that take a key (MIX-048): a
+                // pick sends this strip's sound to one, or takes the send away again.
+                let keys = crate::mixer::keys::key_rows(&p, t);
+                if !keys.is_empty() {
+                    list.groups[0].heading = "バス".into();
+                    list.groups.push(PickGroup::new("サイドチェーン", keys));
+                }
+                Some(list)
             }
             PopupKind::Input(t) | PopupKind::Output(t) => {
                 let project = self.project();

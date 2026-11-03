@@ -98,6 +98,9 @@ impl Studio {
 
     /// A press on the bar of the level row: the level goes where it is pressed, and follows.
     pub fn level_down(&mut self, g: &Geometry, hit: Hit, x: f32) -> bool {
+        if self.key_down(g, hit, x) {
+            return true;
+        }
         let Hit::Mixer(h @ MixerHit::Level(t, n)) = hit else {
             return false;
         };
@@ -122,6 +125,9 @@ impl Studio {
 
     /// The pointer moved with the bar held; `fine` (Shift) moves a quarter as far.
     pub fn level_move(&mut self, x: f32, fine: bool) -> bool {
+        if self.mixer.key_drag.is_some() {
+            return self.key_move(x, fine);
+        }
         let Some(mut d) = self.mixer.level_drag else {
             return false;
         };
@@ -147,6 +153,9 @@ impl Studio {
 
     /// The bar let go: one step when the level moved.
     pub fn level_up(&mut self) -> bool {
+        if self.mixer.key_drag.is_some() {
+            return self.key_up();
+        }
         let Some(d) = self.mixer.level_drag.take() else {
             return false;
         };

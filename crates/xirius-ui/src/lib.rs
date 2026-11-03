@@ -174,6 +174,7 @@ pub mod mixer;
 pub mod mixer_copy_shots;
 pub mod mixer_flow_shots;
 pub mod mixer_order_shots;
+pub mod mixer_sc_shots;
 pub mod mixer_sel_shots;
 pub mod mixer_shots;
 pub mod motion_watch;
@@ -403,6 +404,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("mixer-copy", mixer_copy_shots::SHOTS),
     ("mixer-flow", mixer_flow_shots::SHOTS),
     ("mixer-order", mixer_order_shots::SHOTS),
+    ("mixer-sc", mixer_sc_shots::SHOTS),
     ("mixer-sel", mixer_sel_shots::SHOTS),
     ("more", shot_more::MORE),
     ("mouse-cut", mouse_cut_shots::SHOTS),

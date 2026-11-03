@@ -777,7 +777,9 @@ fn instrument_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
 /// area a Button named for what it adds. A row's M is a toggle Button named for the branch or
 /// layer it mutes, the ＋ after a row a Button 「<row> の後ろに挿す」 and the bar of the level
 /// row a Slider in dB; the buttons by a strip's name are 「チャンネルエディターを開く」 and
-/// 「広げる」 (a toggle) (MIX-045). Only a part on screen has one.
+/// 「広げる」 (a toggle) (MIX-045). A key send's row is a Button 「サイドチェーンのセンド：
+/// <strip> › <plug-in>」 that opens the receiver, its bar a Slider of the level in dB (MIX-048).
+/// Only a part on screen has one.
 fn flow_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     use crate::mixer::MixerHit;
     use crate::mixer::flow::{Area, Kind};
@@ -869,6 +871,21 @@ fn flow_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                     button(&format!("{name} の後ろに挿す")),
                 ));
             }
+        }
+        for key in crate::mixer::keys::key_sends(&p, t) {
+            let whom = crate::mixer::keys::key_label(&p, &key);
+            parts.push((
+                MixerHit::KeySend(t, key.id),
+                button(&format!("サイドチェーンのセンド：{whom}")),
+            ));
+            let mut node = accesskit::Node::new(accesskit::Role::Slider);
+            node.set_label(format!("{whom} へのセンドの量"));
+            let db = s.key_level(t, key.id).unwrap_or(key.level_db);
+            node.set_min_numeric_value(xirius_core::model::KEY_MIN_DB);
+            node.set_max_numeric_value(xirius_core::model::KEY_MAX_DB);
+            node.set_numeric_value(db);
+            node.set_value(crate::mixer::keys::level_words(db));
+            parts.push((MixerHit::KeyLevel(t, key.id), node));
         }
         for (hit, mut node) in parts {
             if s.mixer_center(g, hit).is_none() {
