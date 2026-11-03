@@ -1002,6 +1002,13 @@ impl PluginLoader {
             .get_or_insert_with(|| Arc::new(Catalog::load_standard()))
     }
 
+    /// The catalogue, shared ([`crate::ara`]).
+    pub(crate) fn shared_catalog(&mut self) -> Arc<Catalog> {
+        self.catalog
+            .get_or_insert_with(|| Arc::new(Catalog::load_standard()))
+            .clone()
+    }
+
     /// Called when a build starts.
     pub fn begin_build(&mut self) {
         self.fresh.clear();

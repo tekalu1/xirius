@@ -165,6 +165,8 @@ struct Sent {
 struct TimelineState {
     track: Arc<Track>,
     fx: BTreeMap<ClipId, ClipFx>,
+    /// The clips' ARA plugins: attaching or detaching one changes what the track plays.
+    ara: BTreeMap<ClipId, xirius_core::ara::AraClip>,
 }
 
 impl TimelineState {
@@ -175,6 +177,11 @@ impl TimelineState {
                 .clips
                 .iter()
                 .filter_map(|c| p.fx(c.id).map(|fx| (c.id, fx.clone())))
+                .collect(),
+            ara: track
+                .clips
+                .iter()
+                .filter_map(|c| p.ara.clips.get(&c.id).map(|a| (c.id, a.clone())))
                 .collect(),
         }
     }
@@ -193,6 +200,9 @@ impl TimelineState {
                 && self.track.transpose == t.transpose
                 && self.track.velocity == t.velocity))
             && t.clips.iter().all(|c| self.fx.get(&c.id) == p.fx(c.id))
+            && t.clips
+                .iter()
+                .all(|c| self.ara.get(&c.id) == p.ara.clips.get(&c.id))
     }
 }
 
@@ -620,11 +630,10 @@ impl SessionHost {
                 continue;
             };
             let dir = self.builder.dir();
-            if !t
-                .clips
-                .iter()
-                .any(|c| crate::processed::clip_key(c, &self.tmap, rate, dir).is_some())
-            {
+            if !t.clips.iter().any(|c| {
+                song.ara.clips.contains_key(&c.id)
+                    || crate::processed::clip_key(c, &self.tmap, rate, dir).is_some()
+            }) {
                 continue;
             }
             let timeline = self.builder.timeline(&song, t, &self.tmap, &mut warnings);
@@ -799,7 +808,24 @@ impl SessionHost {
     /// Starts the plugin host again after a crash; each plugin comes back with the state it
     /// had and takes over from the dry signal.
     pub fn restart_plugins(&self) -> Result<(), String> {
+        self.restart_ara(None);
         self.builder.plugins().restart()
+    }
+
+    /// The ARA plugins' documents, for `plugin.status` (PLG-058).
+    pub fn ara_reports(&self) -> Vec<crate::ara::Report> {
+        self.builder.ara().reports()
+    }
+
+    /// Opens again, from the song's archive, the ARA documents that crashed (or `plugin`'s);
+    /// their clips play their files until then (PLG-058). How many.
+    pub fn restart_ara(&self, plugin: Option<&str>) -> usize {
+        let n = self.builder.ara().restart(plugin);
+        if n > 0 {
+            // The next poll builds the tracks again, which opens the documents.
+            crate::processed::bump();
+        }
+        n
     }
 
     /// Starts the host process one plugin runs in again, as [`SessionHost::restart_plugins`]
@@ -1038,7 +1064,15 @@ impl SessionHost {
 
     fn sync_with(&mut self, p: &Project, later: bool) -> SyncReport {
         self.builder.plugins_mut().advance_intents(&self.song, p);
+        // A clip's ARA plugin taken away or the clip deleted: the plugin is told even when no
+        // track with its clips is built again.
+        let ara_changed = self.song.ara.clips != p.ara.clips;
+        self.builder.ara().release(p);
         self.song = p.clone();
+        if ara_changed && !self.windowed && !p.ara.clips.is_empty() {
+            let mut warnings = Vec::new();
+            self.builder.sync_ara(p, &self.tmap, &mut warnings);
+        }
         let mut report = SyncReport::default();
         // The song's values may have been given to the plugins again: the lanes are sent anew.
         self.params.clear();
@@ -1718,6 +1752,10 @@ fn collect_edits(
         let r = session.run("ai.batch", &args, opts)?;
         host.sync(session.project());
         out.result = Some(r);
+    }
+    // The ARA plugins' edits: their archives, in place and only when changed (ARC-025).
+    if crate::ara::take_archives(session, host.builder.ara())? {
+        host.sync(session.project());
     }
     // Every link is asked, so none keeps a change for the next time.
     host.refresh_latency();

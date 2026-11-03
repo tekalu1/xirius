@@ -173,6 +173,12 @@ pub fn generation() -> u64 {
     GENERATION.load(Ordering::Acquire)
 }
 
+/// Moves [`generation`] on for a clip's sound made elsewhere: a clip rendered through its ARA
+/// plugin ([`crate::ara`]).
+pub(crate) fn bump() {
+    GENERATION.fetch_add(1, Ordering::AcqRel);
+}
+
 /// A new owner for [`get`] and [`sweep`].
 pub fn owner() -> u64 {
     OWNERS.fetch_add(1, Ordering::Relaxed)

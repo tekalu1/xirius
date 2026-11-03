@@ -13,6 +13,7 @@
 //! - [`plugins`] opens the VST3 plugins a song names; [`output`] is where a player's sound goes.
 
 pub mod app;
+pub mod ara;
 pub mod audio_settings;
 pub mod audition;
 pub mod automation;

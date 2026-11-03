@@ -9,7 +9,7 @@ use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_ACCESS_DENIED, EXCEPTION_ACCESS_VIOLATION, FILETIME, GENERIC_READ,
     GENERIC_WRITE, GetLastError, HANDLE, STILL_ACTIVE,
@@ -36,6 +36,23 @@ struct Writer {
 }
 static WRITER: OnceLock<Writer> = OnceLock::new();
 static EXCEPTION_FILTER: AtomicBool = AtomicBool::new(false);
+/// A filter asked before the crash report, as a `usize` (0: none). See [`set_first_filter`].
+static FIRST_FILTER: AtomicUsize = AtomicUsize::new(0);
+
+/// The filter [`set_first_filter`] takes.
+pub type Filter = unsafe extern "system" fn(*const EXCEPTION_POINTERS) -> i32;
+
+/// Has `filter` look at an unhandled exception before the crash report is written: the ARA
+/// host's containment (PLG-058) ends a plugin's faulting thread there and never returns. A
+/// fault it leaves goes on to the report.
+pub fn set_first_filter(filter: Filter) {
+    FIRST_FILTER.store(filter as usize, Ordering::Release);
+}
+
+/// Whether this process's crash report is its last-chance filter.
+pub fn exception_filter_installed() -> bool {
+    EXCEPTION_FILTER.load(Ordering::Acquire)
+}
 
 #[derive(Clone, Debug)]
 pub struct CrashReport {
@@ -244,6 +261,15 @@ pub unsafe fn record_exception(exception: *const EXCEPTION_POINTERS) {
 }
 
 unsafe extern "system" fn on_exception(exception: *const EXCEPTION_POINTERS) -> i32 {
+    let first = FIRST_FILTER.load(Ordering::Acquire);
+    if first != 0 {
+        // SAFETY: a `Filter` stored by `set_first_filter`; it returns only for a fault that is
+        // not its own, and the report is written then.
+        unsafe {
+            let f = std::mem::transmute::<usize, Filter>(first);
+            f(exception);
+        }
+    }
     // SAFETY: forwarded directly from Windows's exception filter.
     unsafe {
         record_exception(exception);

@@ -8386,6 +8386,7 @@ dependencies = [
  "symphonia",
  "tempfile",
  "windows-sys 0.61.2",
+ "xirius-ara",
  "xirius-clap",
  "xirius-core",
  "xirius-engine",

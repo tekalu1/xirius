@@ -188,6 +188,8 @@ pub struct Builder {
     /// left silent until ready (the live mix), instead of being rendered on the spot.
     background: bool,
     owner: u64,
+    /// The ARA plugins' documents the song's clips play through ([`crate::ara`]).
+    ara: crate::ara::Held,
 }
 
 impl Builder {
@@ -207,6 +209,7 @@ impl Builder {
             timed: Vec::new(),
             background: false,
             owner: crate::processed::owner(),
+            ara: crate::ara::Held::default(),
         }
     }
 
@@ -327,6 +330,44 @@ impl Builder {
 
     pub fn plugins(&self) -> &PluginLoader {
         &self.plugins
+    }
+
+    /// The player's: the ARA documents follow the song, and nothing waits for their analysis
+    /// (PLG-047). Otherwise the build waits for it (ENG-025).
+    pub fn set_ara_live(&mut self, live: bool) {
+        self.ara.set_live(live);
+    }
+
+    pub fn ara(&self) -> &crate::ara::Held {
+        &self.ara
+    }
+
+    pub fn ara_mut(&mut self) -> &mut crate::ara::Held {
+        &mut self.ara
+    }
+
+    /// Hands the ARA plugins the song's clips of them ([`crate::ara::Held::sync`]).
+    pub fn sync_ara(&mut self, p: &Project, tmap: &TempoMap, warnings: &mut Vec<String>) {
+        if p.ara.clips.is_empty() && self.ara.is_empty() {
+            return;
+        }
+        let Builder {
+            ara,
+            cache,
+            plugins,
+            dir,
+            rate,
+            ..
+        } = self;
+        ara.sync(
+            p,
+            tmap,
+            *rate,
+            dir.as_deref(),
+            cache,
+            &mut || plugins.shared_catalog(),
+            warnings,
+        );
     }
 
     pub fn plugins_mut(&mut self) -> &mut PluginLoader {
@@ -559,18 +600,20 @@ impl Builder {
 
     /// Copy material cache handles, never SDK instances or controller ownership.
     pub(crate) fn material_copy(&self) -> impl FnOnce() -> Builder + Send + 'static {
-        let (rate, dir, cache, unavailable, owner) = (
+        let (rate, dir, cache, unavailable, owner, ara) = (
             self.rate,
             self.dir.clone(),
             self.cache.clone(),
             self.unavailable.clone(),
             self.owner,
+            self.ara.clone(),
         );
         move || {
             let mut builder = Builder::new(rate, dir);
             builder.cache = cache;
             builder.unavailable = unavailable;
             builder.owner = owner;
+            builder.ara = ara;
             builder
         }
     }
@@ -594,6 +637,9 @@ impl Builder {
         let rate = f64::from(self.rate);
         if let Some(f) = &t.frozen {
             return self.frozen(t, f, tmap, warnings);
+        }
+        if t.kind == TrackKind::Audio && t.clips.iter().any(|c| p.ara.clips.contains_key(&c.id)) {
+            self.sync_ara(p, tmap, warnings);
         }
         let mut notes = Vec::new();
         // Controllers go back to rest where their clip ends. They are added before the points so
@@ -681,6 +727,24 @@ impl Builder {
                             })
                             .collect::<Vec<_>>()
                     };
+                    // Through its ARA plugin once rendered for the clip as it is; until then, and
+                    // when the plugin is missing or crashed, the file (PLG-036, PLG-058).
+                    if parts.len() == 1
+                        && process.is_plain()
+                        && let Some(data) = self.ara.sound(p, clip, *offset, tmap, self.rate)
+                    {
+                        let start = tmap.frame_at(clip.start, rate);
+                        let end = tmap.frame_at(clip.end(), rate);
+                        regions.push(Region {
+                            start,
+                            len: end.saturating_sub(start),
+                            offset: 0,
+                            gain: db_to_gain(*gain_db),
+                            data,
+                            shape: shape_of(p, t, clip, tmap, rate),
+                        });
+                        continue;
+                    }
                     let bpm = tmap.bpm_at(clip.start);
                     if let Some(key) = crate::processed::Key::of(&path, self.rate, process, bpm) {
                         let (cache, at) = (&mut self.cache, self.rate);

@@ -23,6 +23,8 @@ xirius-plugins = { path = "../xirius-plugins" }
 xirius-vst3 = { path = "../xirius-vst3" }
 xirius-clap = { path = "../xirius-clap" }
 xirius-stretch = { path = "../xirius-stretch" }
+# ARA plugins (PLG-015 to PLG-058): the clips edited in them play their renders.
+xirius-ara = { path = "../xirius-ara" }
 hound = "3.5"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
@@ -74,3 +76,7 @@ xirius-test-clap = { path = "../xirius-test-clap" }
 [[test]]
 name = "export_mp3"
 harness = false
+
+# The real ARA plugin's test stops at a window of the plugin's (tests/ara_real.rs, PLG-049).
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
