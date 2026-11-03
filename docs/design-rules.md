@@ -13,7 +13,7 @@
 | 薄い色の面の上に文字を置かない（UI-108） | `*_tint` のトークンが無い・`Surface` に文字を置ける組だけ | 同上 | — |
 | 線を引かない（UI-109・UI-050） | 線（border）の API も、上辺の光の API も無い。区切りは面の段の明るさの差と、浮く面の外側の影（`FloatShadow`）だけ | `api_surface`: `border` が無い。`surface_steps`: 隣り合う面の段の差 ΔL* ≥ 1.25（暗い・明るい両方） | `border`: `.border_*` |
 | グラデーションを使わない（UI-105・UI-090） | グラデーションは `meter` モジュールの `LevelMeter` だけ | `api_surface`: `gradient` の語は `meter.rs` だけ | `gradient` |
-| 細い線を引かない。例外はフォルダーの範囲の構造線（MIX-038）と、時間のグリッドの線（UI-339）だけ | 線の型は `StructureLine`（太さ 2px・両端丸・溝の中・hover/選択でアクセント）と `GridLine`（小節 2px・ほか 1px、段ごとの色としきい値）の 2 つだけ | `contrast`: 構造線が中立の面の上で 3:1 以上。グリッドの 4 段がどの面の上でも 小節 > 拍 > 分割 > 細かい。`structure`・`grid` の単体テスト | `line`: 太さが 3px 以下の固定値の面、グリッドの色を `GridLine` を通さずに塗る `Pen` の面 |
+| 細い線を引かない。例外はフォルダーの範囲の構造線（MIX-038）と、時間のグリッドの線（UI-339）だけ | 線の型は `StructureLine`（太さ 2px・両端丸・溝の中・hover/選択でアクセント。経路の線は縦横の直線と半径 8 以下の四分円だけ・端は 8 手前、ストリップの行の中は 4 手前（UI-321））と `GridLine`（小節 2px・ほか 1px、段ごとの色としきい値）の 2 つだけ | `contrast`: 構造線が中立の面の上で 3:1 以上。グリッドの 4 段がどの面の上でも 小節 > 拍 > 分割 > 細かい。`structure`・`grid` の単体テスト（四分円でない曲がり・斜めの線・端の離れ） | `line`: 太さが 3px 以下の固定値の面、グリッドの色を `GridLine` を通さずに塗る `Pen` の面 |
 | 角丸の物の 1 辺だけに色・光・影を付けない（UI-103・UI-007） | 1 辺の色・光・影を作る API が無い | — | `one-sided-edge` |
 | 色・書体・角丸はトークンだけ（UI-110） | 値は `Surface`・`Ink`・`Accent`・`TrackColor`・`Radius`・`Font` から取る | — | `raw-color`・`raw-radius`・`raw-font` |
 | 書体は Inter と Noto Sans JP だけ（UI-111・UI-005） | `Font` は 2 値だけ | `api_surface` | `raw-font` |
@@ -119,6 +119,15 @@ let d = div().border_1(); // design-lint: allow(border) 同じ行にも書ける
 - lint: 細い固定値の面は `line` の違反。`StructureLine` の定数を通した物だけが通る
   （見本は `crates/xirius-design-lint/tests/fixtures/{clean/structure_line.rs,violations/line.rs}`）。
   ほかの線（区切りの線・枠・下線）は、これまでどおり `border`・`line` で止まる。
+- 曲がる線（UI-321）: チャンネルエディターとストリップの経路も、同じ構造線で描く。太さ・両端・色の 3 つの状態は変えない。
+  - 直線は縦か横だけ。曲がる所は四分円だけで、半径は `StructureLine::RADIUS`（Radius::S、8）。間が詰まっているときは、四分円のまま小さくする。
+    S 字のベジェや斜めの線は使わない。
+  - 線は縦 → 四分円 → 横 → 四分円 → 縦とつなぐ（`StructureLine::elbow`）。ストリップの分岐は、縦 → 四分円 → 横で止める（`hook`）。
+  - 分かれる所と合わさる所は、中央の縦の線から左右へ四分円で開く「かっこ」にする（`bracket`）。分岐が 1 本なら、まっすぐの縦の線だけ。
+  - 合流の点・矢印・分岐の点は打たない。向きは上から下で決まっている。
+  - 端は部品の縁から `END_INSET`（8）手前で止める。ストリップの 22 の行の中だけは、`TIGHT_INSET`（Space::X1、4）にする（`StructureLine::inset`）。
+  - 描くのは `Pen::structure` だけ（`paint_path` の線と、端の丸）。色は `line_structure`・`line_structure_hover`・`line_structure_selected` だけ。
+  - 試験: `structure` の単体テストで、四分円でない曲がりと斜めの線を断ること、どの形でも曲がりが四分円であること、端の離れを見る。
 
 ## 例外: 時間のグリッドの線（UI-339）
 

@@ -15,7 +15,7 @@ use gpui::{
 use xirius_core::id::Node;
 use xirius_core::model::{ClipBody, Project, Track};
 use xirius_design::{
-    FontSize, Layout, LineState, Radius, Space, StructureLine, TrackColor, Weight,
+    FontSize, Layout, LinePiece, LineState, Radius, Space, StructureLine, TrackColor, Weight,
 };
 
 use crate::assets::icon;
@@ -426,6 +426,47 @@ impl Pen<'_> {
         path.close();
         if let Ok(path) = path.build() {
             self.window.paint_path(path, color);
+        }
+    }
+
+    /// A structure line that turns (UI-321): the routes of the channel editor and the strip.
+    /// Straight runs and quarter circles only, as [`StructureLine`] lays them out; both ends
+    /// round, in the colour of `state`. `pieces` is in the pen's space and one unbroken line.
+    #[allow(dead_code)] // The channel editor and the strip's routes (MIX-042, PLG-065) draw with it.
+    pub(crate) fn structure(&mut self, pieces: &[LinePiece], state: LineState) {
+        let (Some(first), Some(last)) = (pieces.first(), pieces.last()) else {
+            return;
+        };
+        debug_assert!(StructureLine::lawful(pieces), "{pieces:?}");
+        let color = self.c.line[LineState::ALL.iter().position(|s| *s == state).unwrap_or(0)];
+        let (ox, oy) = self.origin;
+        let at = |p: (f32, f32)| point(px(ox + p.0), px(oy + p.1));
+        let mut path = PathBuilder::stroke(px(StructureLine::THICKNESS));
+        path.move_to(at(first.from()));
+        for piece in pieces {
+            match *piece {
+                LinePiece::Straight { to, .. } => path.line_to(at(to)),
+                LinePiece::Quarter { to, radius, .. } => path.arc_to(
+                    point(px(radius), px(radius)),
+                    px(0.0),
+                    false,
+                    piece.clockwise(),
+                    at(to),
+                ),
+            }
+        }
+        if let Ok(path) = path.build() {
+            self.window.paint_path(path, color);
+        }
+        let half = StructureLine::THICKNESS / 2.0;
+        for (x, y) in [first.from(), last.to()] {
+            let dot = Rect::new(
+                x - half,
+                y - half,
+                StructureLine::THICKNESS,
+                StructureLine::THICKNESS,
+            );
+            self.round(dot, color, StructureLine::CAP);
         }
     }
 
