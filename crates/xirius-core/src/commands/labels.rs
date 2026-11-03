@@ -625,6 +625,7 @@ pub fn argument(name: &str) -> &str {
         "parameter" | "param" => "パラメーター",
         "value" | "values" => "値",
         "index" | "slot" => "位置",
+        "after" => "後ろに挿す行",
         "plugin" | "uid" => "プラグイン",
         "instrument" => "インストゥルメント",
         "key" => "キー",

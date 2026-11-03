@@ -43,6 +43,7 @@ UI-004: 同じ操作を画面の 2 か所に置かない。この一覧は `crat
 | `browser.tab` | `rail.tab` |
 | `browser.view.menu` | `browser.view` |
 | `browser.view.set` | `popup.browserview` |
+| `channel.editor` | `mixer.editor` |
 | `clip.select` | `clip` |
 | `cpu.list` | `bar.cpu` |
 | `drawer.tab` | `drawer.tab` |
@@ -93,6 +94,7 @@ UI-004: 同じ操作を画面の 2 か所に置かない。この一覧は `crat
 | `song.save_as` | `popup.song` |
 | `start.audio` | `start.audio` |
 | `start.midi` | `start.midi` |
+| `strip.widen` | `mixer.widen` |
 | `tempo.set` | `bar.tempo` |
 | `timesig.set` | `popup.meter` |
 | `tool.alt.menu` | `bar.alt_tool` |

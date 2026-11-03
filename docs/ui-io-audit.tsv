@@ -146,6 +146,7 @@ crates/xirius-ui/src/mixer/bench.rs	run	2
 crates/xirius-ui/src/mixer/bench.rs	seek	2
 crates/xirius-ui/src/mixer/bench.rs	std :: fs :: create_dir_all	1
 crates/xirius-ui/src/mixer/bench.rs	std :: fs :: write	1
+crates/xirius-ui/src/mixer/choose.rs	run_command	4
 crates/xirius-ui/src/mixer/mod.rs	lock	1
 crates/xirius-ui/src/mixer/mod.rs	run_command	10
 crates/xirius-ui/src/mixer/paint.rs	lock	1

@@ -2,6 +2,7 @@
 use crate::browser::{BRow, BrowserHit};
 use crate::draw::{Align, Pen};
 use crate::instrument::Pick;
+use crate::mixer::flow::Pick as Choose;
 use crate::mixer::{List, MixerHit, ROW_H, bypass_part, list_row};
 use crate::popup::{Action, Choice, PopupKind};
 use crate::studio::{Geometry, Hit, Rect, Studio};
@@ -335,15 +336,42 @@ impl Studio {
             })
     }
     pub fn add_effect(&mut self, t: TrackId, index: usize, pick: &Pick) -> bool {
+        self.add_effect_at(t, pick, None, index)
+    }
+    /// Adds an effect right after a row of the flow (MIX-045), and picks it.
+    pub fn add_effect_after(&mut self, t: TrackId, after: Choose, pick: &Pick) -> bool {
+        self.add_effect_at(t, pick, Some(after), 0)
+    }
+    fn add_effect_at(
+        &mut self,
+        t: TrackId,
+        pick: &Pick,
+        after: Option<Choose>,
+        index: usize,
+    ) -> bool {
+        let mut args =
+            json!({"track":t.to_string(),"name":pick.name,"format":pick.format,"uid":pick.uid});
+        match after {
+            Some(Choose::Plugin(id)) => args["after"] = json!(id.to_string()),
+            Some(Choose::Split(id)) => args["after"] = json!(id.to_string()),
+            None => args["index"] = json!(index),
+        }
         // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
-        let Some(data)=self.arrange_run("plugin.add",json!({"track":t.to_string(),"name":pick.name,"format":pick.format,"uid":pick.uid,"index":index})) else{return false;};
+        let Some(data) = self.arrange_run("plugin.add", args) else {
+            return false;
+        };
         self.mixer
             .recent
             .retain(|p| p.format != pick.format || p.uid != pick.uid);
         self.mixer.recent.insert(0, pick.clone());
         self.mixer.recent.truncate(8);
-        self.reveal_last(t, List::Inserts);
+        if after.is_none() {
+            self.reveal_last(t, List::Inserts);
+        }
         if let Some(id) = data["id"].as_str().and_then(|s| s.parse().ok()) {
+            if after.is_some() {
+                self.mixer.chosen = Some((t, Choose::Plugin(id)));
+            }
             self.begin_loading(&pick.name, &pick.format, id);
             self.open_plugin(t, id);
         }
@@ -523,13 +551,26 @@ impl Studio {
             } else {
                 match d.source {
                     Source::Insert(t, id) => {
+                        // On a strip a press picks the row and a press on the picked row opens it
+                        // (MIX-045); the list in the track's head opens at once.
+                        let header = self
+                            .fx_header_rect(g, t)
+                            .is_some_and(|r| r.contains(d.from.0, d.from.1));
+                        let pick = (t, Choose::Plugin(id));
                         if self.health.crashed(id) {
+                            if !header {
+                                self.mixer.chosen = Some(pick);
+                            }
                             self.open_popup(
                                 crate::popup::PopupKind::CrashedPlugin(t, id),
                                 Rect::new(d.from.0, d.from.1, 1.0, ROW_H),
                             );
-                        } else {
+                        } else if header || self.mixer.chosen == Some(pick) {
                             self.open_plugin(t, id);
+                        } else {
+                            self.mixer.chosen = Some(pick);
+                            // the level row opens under it, in sight
+                            self.reveal_pick(g, t, pick.1);
                         }
                     }
                     Source::Effect(p) => {

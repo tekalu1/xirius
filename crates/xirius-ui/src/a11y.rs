@@ -774,7 +774,10 @@ fn instrument_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
 
 /// The parts of a strip's flow that show only an icon (MIX-044): a splitter's chevron is a
 /// Button named 「スプリッター」 that says whether its branches are open, and the ＋ of each
-/// area a Button named for what it adds. Only a part on screen has one.
+/// area a Button named for what it adds. A row's M is a toggle Button named for the branch or
+/// layer it mutes, the ＋ after a row a Button 「<row> の後ろに挿す」 and the bar of the level
+/// row a Slider in dB; the buttons by a strip's name are 「チャンネルエディターを開く」 and
+/// 「広げる」 (a toggle) (MIX-045). Only a part on screen has one.
 fn flow_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     use crate::mixer::MixerHit;
     use crate::mixer::flow::{Area, Kind};
@@ -785,30 +788,95 @@ fn flow_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
         let Some(track) = p.tracks.get(&strip.track) else {
             continue;
         };
+        let t = strip.track;
         let flow = s.strip_flow(&strip, track);
+        let mut parts: Vec<(MixerHit, accesskit::Node)> = Vec::new();
+        let button = |name: &str| {
+            let mut node = accesskit::Node::new(accesskit::Role::Button);
+            node.set_label(name);
+            node
+        };
+        let toggled = |node: &mut accesskit::Node, on: bool| {
+            node.set_toggled(if on {
+                accesskit::Toggled::True
+            } else {
+                accesskit::Toggled::False
+            });
+        };
+        let mut editor = button(crate::mixer::EDITOR_LABEL);
+        editor.set_expanded(false);
+        parts.push((MixerHit::Editor(t), editor));
+        let mut widen = button(crate::mixer::WIDEN_LABEL);
+        toggled(&mut widen, s.mixer.wide.contains(&t));
+        parts.push((MixerHit::Widen(t), widen));
         for (l, _) in &flow.rows {
-            let t = strip.track;
-            let (hit, name, open) = match (l.kind, l.area) {
+            match (l.kind, l.area) {
                 (Kind::Split { id, open, .. }, _) => {
-                    (MixerHit::Fold(t, id), "スプリッター", Some(open))
+                    let mut node = button("スプリッター");
+                    node.set_expanded(open);
+                    parts.push((MixerHit::Fold(t, id), node));
                 }
-                (Kind::Add, Area::Insert) => (MixerHit::AddInsert(t), "plugin.add", None),
+                (Kind::Add, Area::Insert) => {
+                    let name = label("plugin.add").unwrap_or("plugin.add");
+                    parts.push((MixerHit::AddInsert(t), button(name)));
+                }
                 (Kind::Add, Area::Instrument) if flow.has_instrument() => {
-                    (MixerHit::AddLayer(t), "rack.layer.add", None)
+                    let name = label("rack.layer.add").unwrap_or("rack.layer.add");
+                    parts.push((MixerHit::AddLayer(t), button(name)));
                 }
-                _ => continue,
+                _ => {}
+            }
+            // the level row speaks for the row it is under
+            let row = if l.kind == Kind::Level {
+                s.mixer
+                    .chosen
+                    .and_then(|(_, pick)| flow.picked(pick))
+                    .map(|(l, _)| *l)
+            } else {
+                Some(*l)
             };
+            let Some(row) = row else {
+                continue;
+            };
+            let name = crate::mixer::flow::row_name(track, &row);
+            if let Some(target) = l.target {
+                let whose = if target.layer {
+                    "レイヤー"
+                } else {
+                    "分岐"
+                };
+                let mut mute = button(&format!("{name} の{whose}をミュート"));
+                toggled(&mut mute, target.mute);
+                parts.push((MixerHit::RowMute(t, target.id), mute));
+                if l.kind == Kind::Level {
+                    let mut node = accesskit::Node::new(accesskit::Role::Slider);
+                    node.set_label(format!("{name} の{whose}の音量"));
+                    let db = s
+                        .mixer
+                        .level_drag
+                        .filter(|d| d.track == t && d.node == target.id)
+                        .map_or(target.db, |d| d.value);
+                    node.set_min_numeric_value(f64::from(crate::mixer::meters::FLOOR_DB));
+                    node.set_max_numeric_value(f64::from(crate::mixer::meters::CEIL_DB));
+                    node.set_numeric_value(db);
+                    node.set_value(crate::mixer::flow::level_text((db, false)));
+                    parts.push((MixerHit::Level(t, target.id), node));
+                }
+            }
+            if let Some(pick) = l.pick() {
+                parts.push((
+                    MixerHit::After(t, pick),
+                    button(&format!("{name} の後ろに挿す")),
+                ));
+            }
+        }
+        for (hit, mut node) in parts {
             if s.mixer_center(g, hit).is_none() {
                 continue;
             }
             let Some(r) = s.mixer_rect(g, hit) else {
                 continue;
             };
-            let mut node = accesskit::Node::new(accesskit::Role::Button);
-            node.set_label(label(name).unwrap_or(name));
-            if let Some(open) = open {
-                node.set_expanded(open);
-            }
             node.set_bounds(bounds(r));
             out.push(Mark {
                 key: format!("flow-{t}-{hit:?}"),

@@ -91,7 +91,12 @@ impl Studio {
             MixerHit::AddInsert(t) => Spot::AddInsert(t),
             // The instrument row has its own menu; a plugin that went down keeps the one
             // that restarts it.
-            MixerHit::AddInstrument(_) | MixerHit::AddLayer(_) | MixerHit::Fold(..) => return None,
+            MixerHit::AddInstrument(_)
+            | MixerHit::AddLayer(_)
+            | MixerHit::Fold(..)
+            | MixerHit::RowMute(..)
+            | MixerHit::Level(..)
+            | MixerHit::After(..) => return None,
             MixerHit::Bypass(t, id) | MixerHit::Open(t, id) => {
                 if crate::instrument::is_instrument_of(&p, t, id) || self.health.crashed(id) {
                     return None;
@@ -106,7 +111,9 @@ impl Studio {
             | MixerHit::Solo(t)
             | MixerHit::Arm(t)
             | MixerHit::Output(t)
-            | MixerHit::Input(t) => Spot::Head(t),
+            | MixerHit::Input(t)
+            | MixerHit::Widen(t)
+            | MixerHit::Editor(t) => Spot::Head(t),
             MixerHit::Control(..) => return None,
         })
     }
@@ -697,24 +704,18 @@ impl Studio {
 
     /// Scrolls the mixer so the channel's strip shows.
     pub(super) fn show_strip(&mut self, g: &Geometry, t: TrackId) -> bool {
-        let Some(i) = crate::mixer::strip_order(&self.project())
-            .iter()
-            .position(|x| *x == t)
-        else {
+        if !crate::mixer::strip_order(&self.project()).contains(&t) {
             return false;
-        };
+        }
         if t.is_master() {
             // The master does not scroll: it is always at the right edge.
             return true;
         }
-        let w = crate::mixer::STRIP_W
-            * if self.song.session().state.view.mixer_wide {
-                1.4
-            } else {
-                1.0
-            }
-            + crate::mixer::STRIP_GAP;
-        let left = i as f32 * w;
+        let Some(left) = self.strip_offset(t) else {
+            return false;
+        };
+        // A widened strip is wider than the rest (MIX-045).
+        let w = self.width_of(t) + crate::mixer::STRIP_GAP;
         let view = self.mixer_view(g).w;
         if left < self.mixer.scroll {
             self.mixer.scroll = left;

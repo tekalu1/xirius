@@ -244,6 +244,12 @@ impl Screen {
         if studio.edge_hover(&g, x, y) | studio.side_hover(&g, x, y) {
             cx.notify();
         }
+        if studio.mixer.level_drag.is_some() {
+            if studio.level_move(x, ev.modifiers.shift) {
+                cx.notify();
+            }
+            return;
+        }
         if studio.mixer.drag.is_some() {
             if studio.drag_move(y, ev.modifiers.shift) {
                 cx.notify();
@@ -311,6 +317,11 @@ impl Screen {
             return;
         }
         studio.input_map.browser_focus = studio.browser.open && g.panel.contains(x, y);
+        #[cfg(windows)]
+        {
+            studio.mixer.coarse = crate::pointer_os::from_touch();
+        }
+        studio.chosen_press(&g, x, y);
         // A press anywhere else takes the keys from a device's control (UI-324).
         if studio.popup.is_none() && !studio.over_instrument(&g, x, y) {
             studio.device_blur();
@@ -416,7 +427,8 @@ impl Screen {
         let pressed = studio.press(&g, hit);
         let grabbed =
             held || (!menu && !file_row && studio.lib_grab(&g, hit, x, y, ev.click_count));
-        if studio.drag_begin(&g, hit, y) || pressed || grabbed {
+        let level = studio.level_down(&g, hit, x);
+        if level || studio.drag_begin(&g, hit, y) || pressed || grabbed {
             cx.notify();
         }
         drop(studio);
@@ -669,7 +681,8 @@ impl Screen {
             cx.notify();
             return;
         }
-        if studio.name_drag_up(&g, x, y)
+        if studio.level_up()
+            || studio.name_drag_up(&g, x, y)
             || studio.fx_up(&g, x, y, ev.modifiers.alt)
             || studio.lib_up(&g, x, y)
         {

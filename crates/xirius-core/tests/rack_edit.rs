@@ -370,3 +370,66 @@ fn moving_a_plugin_in_a_branch_by_index_on_its_track_points_to_rack_node_move() 
     assert_eq!(names(&s, &u), ["B"]);
     assert_eq!(branch_fx(&s, &t, 1), vec![]);
 }
+
+#[test]
+fn an_effect_added_after_a_row_lands_beside_it_in_that_chain_in_one_step() {
+    // without a rack, right after the named effect
+    let (mut s, t, fx) = song();
+    step(
+        &mut s,
+        "plugin.add",
+        json!({ "track": t, "name": "D", "after": fx[0] }),
+    );
+    assert_eq!(names(&s, &t), ["A", "D", "B", "C"]);
+
+    // in a branch, beside the effect there
+    let (mut s, t, fx, _, _) = branched();
+    let v = step(
+        &mut s,
+        "plugin.add",
+        json!({ "track": t, "name": "D", "after": fx[0] }),
+    );
+    assert_eq!(
+        branch_fx(&s, &t, 0),
+        vec![
+            RackNode::Plugin(pid(&fx[0])),
+            RackNode::Plugin(pid(&id(&v)))
+        ]
+    );
+
+    // after a splitter, in the chain that holds the splitter
+    let split = s.project().tracks[&tid(&t)]
+        .rack
+        .as_ref()
+        .unwrap()
+        .fx
+        .iter()
+        .find_map(|n| match n {
+            RackNode::Split(sp) => Some(sp.id),
+            _ => None,
+        })
+        .unwrap();
+    let v = step(
+        &mut s,
+        "plugin.add",
+        json!({ "track": t, "name": "E", "after": split.to_string() }),
+    );
+    let fx_top = s.project().tracks[&tid(&t)].rack.clone().unwrap().fx;
+    let at = fx_top
+        .iter()
+        .position(|n| matches!(n, RackNode::Split(sp) if sp.id == split))
+        .unwrap();
+    assert_eq!(fx_top[at + 1], RackNode::Plugin(pid(&id(&v))));
+
+    // a stranger is refused and leaves the song as it was
+    let u = id(&run(&mut s, "track.add.audio", json!({ "name": "U" })));
+    let other = effect(&mut s, &u, "X");
+    let before_u = s.project().clone();
+    let e = fails(
+        &mut s,
+        "plugin.add",
+        json!({ "track": t, "name": "F", "after": other }),
+    );
+    assert!(e.contains("--after"), "{e}");
+    assert_eq!(*s.project(), before_u);
+}

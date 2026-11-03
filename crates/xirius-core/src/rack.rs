@@ -312,13 +312,23 @@ impl Rack {
     /// Puts `new` right after `after` in whichever chain holds it, a branch's too. False when
     /// no chain holds `after`.
     pub fn insert_after(&mut self, after: PluginId, new: PluginId) -> bool {
-        if insert_after_in(&mut self.fx, after, new) {
+        self.insert_after_node(&|n| *n == RackNode::Plugin(after), new)
+    }
+
+    /// Puts `new` right after the splitter `after` in whichever chain holds it (MIX-045).
+    /// False when no chain holds it.
+    pub fn insert_after_split(&mut self, after: NodeId, new: PluginId) -> bool {
+        self.insert_after_node(&|n| matches!(n, RackNode::Split(s) if s.id == after), new)
+    }
+
+    fn insert_after_node(&mut self, is: &dyn Fn(&RackNode) -> bool, new: PluginId) -> bool {
+        if insert_after_in(&mut self.fx, is, new) {
             return true;
         }
         match &mut self.source {
             Some(Source::Multi { layers, .. }) => layers
                 .iter_mut()
-                .any(|l| insert_after_in(&mut l.fx, after, new)),
+                .any(|l| insert_after_in(&mut l.fx, is, new)),
             _ => false,
         }
     }
@@ -589,8 +599,12 @@ fn branch_holds(nodes: &[RackNode], id: PluginId) -> bool {
     })
 }
 
-fn insert_after_in(nodes: &mut Vec<RackNode>, after: PluginId, new: PluginId) -> bool {
-    if let Some(i) = nodes.iter().position(|n| *n == RackNode::Plugin(after)) {
+fn insert_after_in(
+    nodes: &mut Vec<RackNode>,
+    is: &dyn Fn(&RackNode) -> bool,
+    new: PluginId,
+) -> bool {
+    if let Some(i) = nodes.iter().position(is) {
         nodes.insert(i + 1, RackNode::Plugin(new));
         return true;
     }
@@ -599,7 +613,7 @@ fn insert_after_in(nodes: &mut Vec<RackNode>, after: PluginId, new: PluginId) ->
         RackNode::Split(s) => s
             .branches
             .iter_mut()
-            .any(|b| insert_after_in(&mut b.fx, after, new)),
+            .any(|b| insert_after_in(&mut b.fx, is, new)),
     })
 }
 

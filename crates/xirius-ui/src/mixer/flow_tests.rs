@@ -307,3 +307,39 @@ fn the_screen_reader_names_the_splitter_and_the_plus_of_each_area() {
         .unwrap();
     assert_eq!(split.node.is_expanded(), Some(false));
 }
+
+#[test]
+fn at_the_narrow_width_a_hovered_or_picked_branch_row_keeps_its_whole_name() {
+    let (mut s, g) = studio();
+    let (t, _, [_, comp, verb]) = vocal(&mut s);
+    let room = |s: &Studio, id: PluginId| {
+        let flow = flow_of(s, &g, t);
+        let (l, r) = flow.plugin(id).unwrap();
+        assert!(r.w <= crate::mixer::STRIP_W);
+        let mute = shows_mute(s, t, l);
+        let level = if mute || picked(s, t, l) {
+            0.0
+        } else {
+            l.level.map_or(0.0, |v| {
+                crate::browser::text_width(&level_text(v), FontSize::Micro)
+            })
+        };
+        name_part(*r, l, false, level, false, mute).w
+    };
+    let fits = |w: f32, name: &str| w >= crate::browser::text_width(name, FontSize::Small);
+    // under the pointer the M takes the close's place
+    s.hover = crate::studio::Hit::Mixer(MixerHit::Open(t, comp));
+    assert!(shows_mute(
+        &s,
+        t,
+        &flow_of(&s, &g, t).plugin(comp).unwrap().0.clone()
+    ));
+    assert!(fits(room(&s, comp), "Comp"), "{}", room(&s, comp));
+    let flow = flow_of(&s, &g, t);
+    let (l, r) = flow.plugin(comp).unwrap();
+    assert_eq!(mute_part(*r, l).right(), remove_part(item(*r, l)).right());
+    // the picked row leaves its level to the row under it
+    s.hover = crate::studio::Hit::None;
+    s.mixer.chosen = Some((t, Pick::Plugin(verb)));
+    assert!(fits(room(&s, verb), "Reverb"), "{}", room(&s, verb));
+}

@@ -150,6 +150,8 @@ const ICONS_HEAD: &[(&str, &[u8])] = icons!(
     // The ARA badge after a clip's name (PLG-055): a 16 grid, stroke 2, shown at 12 px.
     "ara",
     "ara-off",
+    "widen",
+    "narrow",
 );
 
 /// The Windows minimise, maximise, restore and close buttons (UI-005): filled shapes on a 10 px

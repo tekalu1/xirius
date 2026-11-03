@@ -78,6 +78,11 @@ pub fn command(hit: Hit) -> Option<String> {
                     crate::mixer::MixerHit::Open(..) => Some("plugin.open".into()),
                     crate::mixer::MixerHit::Control(..) => Some("control.set".into()),
                     crate::mixer::MixerHit::Strip(_) => None,
+                    crate::mixer::MixerHit::RowMute(..) | crate::mixer::MixerHit::Level(..) => {
+                        Some("rack.branch.set".into())
+                    }
+                    crate::mixer::MixerHit::After(..) => Some("plugin.add".into()),
+                    crate::mixer::MixerHit::Widen(_) | crate::mixer::MixerHit::Editor(_) => None,
                 };
             }
             Hit::Browser(b) => match b {

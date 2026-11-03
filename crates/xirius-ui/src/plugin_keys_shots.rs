@@ -257,8 +257,11 @@ mod tests {
             let (x, y) = s
                 .mixer_center(&g, MixerHit::Open(t, crate::plugin_reload_shots::id(&s)))
                 .unwrap();
-            assert!(s.chain_down(&g, x, y));
-            assert!(s.fx_up(&g, x, y, false));
+            // the first press picks the row (MIX-045), the second opens it
+            for _ in 0..2 {
+                assert!(s.chain_down(&g, x, y));
+                assert!(s.fx_up(&g, x, y, false));
+            }
             for n in [2, 3, 4] {
                 stage(&mut s, n);
             }

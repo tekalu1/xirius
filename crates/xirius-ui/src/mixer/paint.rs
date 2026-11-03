@@ -5,6 +5,7 @@ use std::f32::consts::PI;
 use std::time::Instant;
 
 use gpui::{Hsla, PathBuilder, point, px};
+use xirius_core::id::TrackId;
 use xirius_core::model::{Project, Track, TrackKind};
 use xirius_design::{FontSize, Radius, Weight};
 
@@ -58,6 +59,29 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
         .set(started.elapsed().as_micros() as u64);
 }
 
+/// The buttons at the right of a strip's name (MIX-045): the channel editor and the widen
+/// button, on the strip's face so the name's tail goes under them.
+pub fn name_tools(s: &StripLayout) -> (Rect, Rect) {
+    let y = s.name.y + (s.name.h - TOOL) / 2.0;
+    let widen = Rect::new(s.name.right() - TOOL, y, TOOL, TOOL);
+    let editor = Rect::new(widen.x - TOOL_GAP - TOOL, y, TOOL, TOOL);
+    (editor, widen)
+}
+
+/// Whether a strip shows the buttons by its name: under the pointer, with a picked row, or
+/// widened.
+fn tools_shown(studio: &Studio, t: TrackId, hover: Option<MixerHit>) -> bool {
+    hover.is_some_and(|h| h.track() == t)
+        || studio.mixer.chosen.is_some_and(|(x, _)| x == t)
+        || studio.mixer.wide.contains(&t)
+}
+
+const TOOL: f32 = 22.0;
+const TOOL_GAP: f32 = 2.0;
+/// Room left of the buttons, where the name stops.
+const TOOL_PAD: f32 = 4.0;
+const TOOL_ICON: f32 = 14.0;
+
 fn paint_strip(
     pen: &mut Pen,
     studio: &Studio,
@@ -70,7 +94,8 @@ fn paint_strip(
     let t = track.id;
     // The strips of the selected tracks share the heads' face (UI-340).
     let selected = !t.is_master() && studio.is_picked(RowKind::Track(t));
-    pen.fill(s.rect, if selected { c.track_sel } else { c.surface_1 });
+    let face = if selected { c.track_sel } else { c.surface_1 };
+    pen.fill(s.rect, face);
     let lit = studio.mixer.flash_level(t, xirius_core::store::now_ms());
     if lit > 0.0 {
         pen.fill(s.rect, c.strip_flash.opacity(lit));
@@ -90,10 +115,12 @@ fn paint_strip(
     } else {
         0.0
     };
+    let tools = tools_shown(studio, t, hover).then(|| name_tools(s));
+    let end = tools.map_or(s.name.right(), |(editor, _)| editor.x - TOOL_PAD);
     let name_r = Rect::new(
         icon_r.right() + 5.0,
         s.name.y,
-        (s.name.right() - icon_r.right() - 5.0 - flake).max(0.0),
+        (end - icon_r.right() - 5.0 - flake).max(0.0),
         s.name.h,
     );
     if flake > 0.0 {
@@ -119,6 +146,40 @@ fn paint_strip(
             Align::Left,
         );
     });
+    if let Some((editor, widen)) = tools {
+        let wide = studio.mixer.wide.contains(&t);
+        for (r, icon, hit) in [
+            (editor, "route", MixerHit::Editor(t)),
+            (
+                widen,
+                if wide { "narrow" } else { "widen" },
+                MixerHit::Widen(t),
+            ),
+        ] {
+            pen.fill(
+                Rect::new(r.x - TOOL_GAP, s.name.y, r.w + TOOL_GAP * 2.0, s.name.h),
+                face,
+            );
+            if hover == Some(hit) {
+                pen.round(r, c.hover, Radius::S);
+            }
+            let i = Rect::new(
+                r.x + (r.w - TOOL_ICON) / 2.0,
+                r.y + (r.h - TOOL_ICON) / 2.0,
+                TOOL_ICON,
+                TOOL_ICON,
+            );
+            pen.icon(
+                icon,
+                i,
+                if wide && hit == MixerHit::Widen(t) {
+                    c.ink_strong
+                } else {
+                    c.ink
+                },
+            );
+        }
+    }
 
     if let Some(input) = s.input {
         pen.icon("input", section_icon(input), c.ink);

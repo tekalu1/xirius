@@ -138,6 +138,11 @@ pub fn of_hit(hit: Hit) -> Option<(&'static str, &'static str)> {
             MixerHit::Output(_) => ("mixer.output", "track.output.menu"),
             MixerHit::Input(_) => ("mixer.input", "track.input.menu"),
             MixerHit::Control(..) => ("mixer.control", "control.set"),
+            MixerHit::RowMute(..) => ("mixer.row_mute", "branch.mute"),
+            MixerHit::Level(..) => ("mixer.level", "branch.level"),
+            MixerHit::After(..) => ("mixer.after", "insert.after"),
+            MixerHit::Widen(_) => ("mixer.widen", "strip.widen"),
+            MixerHit::Editor(_) => ("mixer.editor", "channel.editor"),
         },
         Hit::Start(e) => match e {
             Entry::Audio => ("start.audio", "start.audio"),

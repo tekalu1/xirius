@@ -9,6 +9,7 @@
 //! the history when it is let go.
 
 pub mod bench;
+pub(crate) mod choose;
 pub(crate) mod editors;
 pub mod flow;
 pub(crate) mod group;
@@ -45,6 +46,11 @@ pub(crate) fn send_level_db(send: &AuxSend) -> f64 {
 /// mock's 340 px with their gap above and below.
 pub const BODY_H: f32 = 344.0;
 pub const STRIP_W: f32 = 116.0;
+/// A strip widened by the button by its name (MIX-045).
+pub const WIDE_W: f32 = 252.0;
+/// What the screen reader calls the buttons by a strip's name (MIX-045).
+pub const EDITOR_LABEL: &str = "チャンネルエディターを開く";
+pub const WIDEN_LABEL: &str = "広げる";
 pub const STRIP_GAP: f32 = 2.0;
 const PAD: f32 = 6.0;
 const GAP: f32 = 5.0;
@@ -114,6 +120,16 @@ pub enum MixerHit {
     Input(TrackId),
     /// A macro control of the track (MIX-039): a controller's knob moves it as it moves a fader.
     Control(TrackId, ControlId),
+    /// The M of a row of the flow: the branch it heads or its layer mutes (MIX-045).
+    RowMute(TrackId, NodeId),
+    /// The bar of the level row under the picked row (MIX-045).
+    Level(TrackId, NodeId),
+    /// The ＋ on a row's bottom edge: a plug-in after it (MIX-045).
+    After(TrackId, flow::Pick),
+    /// The button by the name that widens the strip or narrows it again (MIX-045).
+    Widen(TrackId),
+    /// The button by the name that opens the channel editor (MIX-042).
+    Editor(TrackId),
 }
 
 impl MixerHit {
@@ -136,7 +152,12 @@ impl MixerHit {
             | MixerHit::AddSend(t)
             | MixerHit::Output(t)
             | MixerHit::Input(t)
-            | MixerHit::Control(t, _) => t,
+            | MixerHit::Control(t, _)
+            | MixerHit::RowMute(t, _)
+            | MixerHit::Level(t, _)
+            | MixerHit::After(t, _)
+            | MixerHit::Widen(t)
+            | MixerHit::Editor(t) => t,
         }
     }
 }
@@ -180,16 +201,23 @@ pub struct Rows {
 
 impl Rows {
     pub fn of(p: &Project) -> Rows {
-        Self::with(p, &HashSet::new())
+        Self::with(
+            p,
+            flow::Look {
+                folded: &HashSet::new(),
+                chosen: None,
+                coarse: false,
+            },
+        )
     }
 
-    /// With the splitters in `folded` shut.
-    pub fn with(p: &Project, folded: &HashSet<NodeId>) -> Rows {
+    /// As the strips show their flows (the splitters shut, the row picked, touch).
+    pub fn with(p: &Project, look: flow::Look) -> Rows {
         let most = |n: fn(&Track) -> usize| p.tracks.values().map(|t| n(t) + 1).max().unwrap_or(1);
         let flow = p
             .tracks
             .values()
-            .map(|t| flow::Flow::height(&flow::lines(t, folded)).ceil() as u32)
+            .map(|t| look.height(t).ceil() as u32)
             .max()
             .unwrap_or(ROW_H as u32);
         Rows {
@@ -434,6 +462,21 @@ pub struct Drag {
     pub alone: bool,
 }
 
+/// The bar of a level row held (MIX-045): the branch or layer it moves.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LevelDrag {
+    pub track: TrackId,
+    pub node: NodeId,
+    pub layer: bool,
+    start: f64,
+    /// The value shown and heard now.
+    pub value: f64,
+    x0: f32,
+    t0: f32,
+    /// The bar's width.
+    w: f32,
+}
+
 /// The mixer's own state; the levels and the routing are the song's.
 #[derive(Default)]
 pub struct Mixer {
@@ -458,6 +501,15 @@ pub struct Mixer {
     offsets: HashMap<(TrackId, List), usize>,
     /// The splitters whose branches the strips' flows hide (MIX-044).
     pub folded: HashSet<NodeId>,
+    /// The row picked on a strip (MIX-045).
+    pub chosen: Option<(TrackId, flow::Pick)>,
+    /// The strips widened by the button by their names (MIX-045).
+    pub wide: HashSet<TrackId>,
+    /// The last press was a touch: the flows' rows are 32 high (MIX-045).
+    pub coarse: bool,
+    pub level_drag: Option<LevelDrag>,
+    /// The node the open plug-in list puts its pick after (the ＋ on a row's edge).
+    pub insert_after: Option<(TrackId, flow::Pick)>,
     pub(crate) editors: Vec<OpenEditor>,
     /// The plugins found by the last scan; read when a list first needs it.
     pub catalog: Option<Arc<Catalog>>,
@@ -556,10 +608,37 @@ impl Mixer {
         self.editors.iter().find(|e| e.id == id).map(|e| e.heard())
     }
 
+    /// How the strips show their flows.
+    pub fn look(&self) -> flow::Look<'_> {
+        flow::Look {
+            folded: &self.folded,
+            chosen: self.chosen,
+            coarse: self.coarse,
+        }
+    }
+
     /// The song changed: windows of plugins that are gone shut, lists keep
     /// their ＋ row in reach.
     fn follow(&mut self, p: &Project) {
-        let rows = Rows::with(p, &self.folded);
+        if let Some((t, pick)) = self.chosen
+            && !p.tracks.get(&t).is_some_and(|t| match pick {
+                flow::Pick::Plugin(id) => t.inserts.iter().any(|x| x.id == id),
+                flow::Pick::Split(id) => flow::has_split(t, id),
+            })
+        {
+            self.chosen = None;
+        }
+        self.wide.retain(|t| p.tracks.contains_key(t));
+        if self.level_drag.is_some_and(|d| {
+            p.track(d.track)
+                .ok()
+                .and_then(|t| t.rack.as_ref())
+                .and_then(|r| r.levels(d.node))
+                .is_none()
+        }) {
+            self.level_drag = None;
+        }
+        let rows = Rows::with(p, self.look());
         let live = |id: PluginId| {
             p.tracks
                 .values()
@@ -788,13 +867,37 @@ impl Studio {
         }
     }
 
+    /// How wide `t`'s strip is: [`WIDE_W`] when its button widened it (MIX-045).
+    pub(crate) fn width_of(&self, t: TrackId) -> f32 {
+        if self.mixer.wide.contains(&t) {
+            WIDE_W
+        } else {
+            self.strip_width()
+        }
+    }
+
+    /// Where `t`'s strip starts in the scrolled row of channels (0 at the first's left).
+    pub(crate) fn strip_offset(&self, t: TrackId) -> Option<f32> {
+        let mut x = 0.0;
+        for id in strip_order(&self.project())
+            .into_iter()
+            .filter(|id| !id.is_master())
+        {
+            if id == t {
+                return Some(x);
+            }
+            x += self.width_of(id) + STRIP_GAP;
+        }
+        None
+    }
+
     /// The part of the body the channels scroll in: all of it left of the master, which
     /// stays at the right edge (the master is not a channel that scrolls away).
     pub fn mixer_view(&self, g: &Geometry) -> Rect {
         let body = g.drawer_body;
         let master = self.project().tracks.contains_key(&TrackId::MASTER);
         let w = if master {
-            body.w - STRIP_GAP - self.strip_width() - MASTER_GAP
+            body.w - STRIP_GAP - self.width_of(TrackId::MASTER) - MASTER_GAP
         } else {
             body.w
         };
@@ -805,7 +908,6 @@ impl Studio {
     /// master. A channel at the view's right edge may reach under the master, so the
     /// parts of a channel count only where [`Studio::mixer_view`] holds the point.
     pub fn mixer_strips(&self, g: &Geometry) -> Vec<StripLayout> {
-        let width = self.strip_width();
         let p = self.project();
         let body = g.drawer_body;
         let view = self.mixer_view(g);
@@ -813,13 +915,15 @@ impl Studio {
             body.y + STRIP_GAP,
             (body.h - STRIP_GAP * 2.0 - BAR_H - BAR_GAP).max(0.0),
         );
-        let rows = Rows::with(&p, &self.mixer.folded);
+        let rows = Rows::with(&p, self.mixer.look());
+        let mut left = view.x + STRIP_GAP - self.mixer.scroll;
         let mut out: Vec<StripLayout> = strip_order(&p)
             .into_iter()
             .filter(|id| !id.is_master())
-            .enumerate()
-            .filter_map(|(i, id)| {
-                let x = view.x + STRIP_GAP + i as f32 * (width + STRIP_GAP) - self.mixer.scroll;
+            .filter_map(|id| {
+                let width = self.width_of(id);
+                let x = left;
+                left += width + STRIP_GAP;
                 if x + width <= view.x || x >= view.right() {
                     return None;
                 }
@@ -828,6 +932,7 @@ impl Studio {
             })
             .collect();
         if let Some(master) = p.tracks.get(&TrackId::MASTER) {
+            let width = self.width_of(master.id);
             let x = body.right() - STRIP_GAP - width;
             out.push(StripLayout::sized(
                 master.id,
@@ -849,11 +954,12 @@ impl Studio {
 
     /// How far the channels scroll: what does not fit left of the master.
     pub fn mixer_max_scroll(&self, g: &Geometry) -> f32 {
-        let n = strip_order(&self.project())
-            .iter()
+        let all: f32 = strip_order(&self.project())
+            .into_iter()
             .filter(|t| !t.is_master())
-            .count() as f32;
-        (STRIP_GAP + n * (self.strip_width() + STRIP_GAP) - self.mixer_view(g).w).max(0.0)
+            .map(|t| self.width_of(t) + STRIP_GAP)
+            .sum();
+        (STRIP_GAP + all - self.mixer_view(g).w).max(0.0)
     }
 
     /// The scroll bar under the channels: its groove and the thumb in it. None while
@@ -940,7 +1046,12 @@ impl Studio {
         let t = s.track;
         let track = p.tracks.get(&t)?;
         let on = |r: Option<Rect>| r.is_some_and(|r| r.contains(x, y));
-        let hit = if on(s.pan) {
+        let (editor, widen) = paint::name_tools(&s);
+        let hit = if editor.contains(x, y) {
+            MixerHit::Editor(t)
+        } else if widen.contains(x, y) {
+            MixerHit::Widen(t)
+        } else if on(s.pan) {
             MixerHit::Pan(t)
         } else if on(s.mute) {
             MixerHit::Mute(t)
@@ -1024,6 +1135,27 @@ impl Studio {
                 .filter(|_| matches!(track.kind, TrackKind::Audio | TrackKind::Instrument)),
             // a macro sits in the channel editor, not on the strip
             MixerHit::Control(..) => None,
+            MixerHit::RowMute(_, n) => flow
+                .rows
+                .iter()
+                .filter(|(l, r)| seen(*r) && l.target.is_some_and(|x| x.id == n))
+                .find_map(|(l, r)| match l.kind {
+                    flow::Kind::Level => Some(flow::sub_parts(*r).2),
+                    _ if self.mixer.chosen.is_none_or(|c| Some(c.1) != l.pick()) => {
+                        Some(flow::mute_part(*r, l))
+                    }
+                    _ => None,
+                }),
+            MixerHit::Level(_, n) => flow
+                .level()
+                .filter(|(l, r)| seen(*r) && l.target.is_some_and(|x| x.id == n))
+                .map(|(_, r)| flow::sub_parts(*r).0),
+            MixerHit::After(_, pick) => flow
+                .picked(pick)
+                .filter(|(_, r)| seen(*r))
+                .and_then(|_| flow.after(pick)),
+            MixerHit::Widen(_) => Some(paint::name_tools(&s).1),
+            MixerHit::Editor(_) => Some(paint::name_tools(&s).0),
         }
     }
 
@@ -1141,12 +1273,31 @@ impl Studio {
                 );
                 true
             }
-            MixerHit::Fold(_, id) => {
+            MixerHit::Fold(t, id) => {
                 if !self.mixer.folded.remove(&id) {
                     self.mixer.folded.insert(id);
                 }
+                self.mixer.chosen = Some((t, flow::Pick::Split(id)));
                 true
             }
+            MixerHit::RowMute(t, n) => self.row_mute(t, n),
+            MixerHit::Level(..) => true,
+            MixerHit::After(t, pick) => {
+                let Some(anchor) = self.mixer_rect(g, hit) else {
+                    return false;
+                };
+                self.insert_after(t, pick, anchor);
+                true
+            }
+            MixerHit::Widen(t) => {
+                if !self.mixer.wide.remove(&t) {
+                    self.mixer.wide.insert(t);
+                }
+                self.mixer.scroll = self.mixer.scroll.min(self.mixer_max_scroll(g));
+                true
+            }
+            // the channel editor's window comes with MIX-042
+            MixerHit::Editor(_) => true,
             MixerHit::AddInsert(t)
             | MixerHit::AddInstrument(t)
             | MixerHit::AddLayer(t)
@@ -1156,6 +1307,7 @@ impl Studio {
                 let Some(anchor) = self.mixer_rect(g, hit) else {
                     return false;
                 };
+                self.mixer.insert_after = None;
                 let kind = match hit {
                     MixerHit::AddInsert(_) => PopupKind::Insert(t),
                     MixerHit::AddInstrument(_) => PopupKind::Instrument(t),
@@ -1244,9 +1396,17 @@ impl Studio {
                 self.stop_plugin_scan()
             }
             PopupKind::Insert(t) => {
+                let after = self.mixer.insert_after.take().filter(|(x, _)| *x == t);
                 if let Some(pick) = self.effect_pick(to) {
-                    let n = self.project().tracks[&t].inserts.len();
-                    self.add_effect(t, n, &pick);
+                    match after {
+                        Some((_, after)) => {
+                            self.add_effect_after(t, after, &pick);
+                        }
+                        None => {
+                            let n = self.project().tracks[&t].inserts.len();
+                            self.add_effect(t, n, &pick);
+                        }
+                    }
                 }
             }
             PopupKind::Instrument(t) => {
@@ -1282,7 +1442,7 @@ impl Studio {
     pub(crate) fn reveal_last(&mut self, t: TrackId, list: List) {
         let p = self.project();
         if let Some(track) = p.tracks.get(&t) {
-            let max = list_max(track, list, Rows::with(&p, &self.mixer.folded));
+            let max = list_max(track, list, Rows::with(&p, self.mixer.look()));
             self.mixer.offsets.insert((t, list), max);
             // A new insert is the last row of the strip's flow too.
             if list == List::Inserts {
@@ -1295,11 +1455,12 @@ impl Studio {
     /// `track`'s flow on strip `s`, scrolled as far as its list was moved and no further
     /// than what is hidden (MIX-044).
     pub fn strip_flow(&self, s: &StripLayout, track: &Track) -> flow::Flow {
-        let lines = flow::lines(track, &self.mixer.folded);
-        let h = flow::Flow::height(&lines);
+        let look = self.mixer.look();
+        let lines = look.lines(track);
+        let h = flow::Flow::height(&lines, look.coarse);
         let scroll = (self.mixer.offset(track.id, List::Flow) as f32 * ROW_H)
             .min((h - s.inserts.h).max(0.0));
-        flow::Flow::lay(&lines, s.inserts, scroll)
+        flow::Flow::lay(&lines, s.inserts, scroll, look.coarse)
     }
 
     /// The row of plug-in `id` on `t`'s strip from its indent on, where its marks are.
@@ -1312,6 +1473,11 @@ impl Studio {
 
     /// Scrolls `t`'s flow so plug-in `id`'s row is in it, from above or from below.
     pub(crate) fn reveal_in_flow(&mut self, g: &Geometry, t: TrackId, id: PluginId) {
+        self.reveal_pick(g, t, flow::Pick::Plugin(id));
+    }
+
+    /// Scrolls `t`'s flow so a picked row (and its level row) is in it.
+    pub(crate) fn reveal_pick(&mut self, g: &Geometry, t: TrackId, pick: flow::Pick) {
         let Some(s) = self.mixer_strips(g).into_iter().find(|s| s.track == t) else {
             return;
         };
@@ -1319,11 +1485,20 @@ impl Studio {
         let Some(track) = p.tracks.get(&t) else {
             return;
         };
-        let lines = flow::lines(track, &self.mixer.folded);
-        let flow = flow::Flow::lay(&lines, Rect::new(0.0, 0.0, s.inserts.w, 0.0), 0.0);
-        let Some((_, r)) = flow.plugin(id) else {
+        let flow = self
+            .mixer
+            .look()
+            .lay(track, Rect::new(0.0, 0.0, s.inserts.w, 0.0), 0.0);
+        let Some((l, r)) = flow.picked(pick) else {
             return;
         };
+        let mut r = *r;
+        if let Some((_, sub)) = flow
+            .level()
+            .filter(|(sl, _)| sl.target.is_some() && sl.target == l.target)
+        {
+            r.h = sub.bottom() - r.y;
+        }
         let max = self.flow_max(&s, track);
         let off = self.mixer.offset(t, List::Flow).min(max);
         let top = off as f32 * ROW_H;
@@ -1339,7 +1514,7 @@ impl Studio {
 
     /// How many rows of [`ROW_H`] a strip's flow can move up: what it hides, rounded up.
     pub(crate) fn flow_max(&self, s: &StripLayout, track: &Track) -> usize {
-        let h = flow::Flow::height(&flow::lines(track, &self.mixer.folded));
+        let h = self.mixer.look().height(track);
         ((h - s.inserts.h).max(0.0) / ROW_H).ceil() as usize
     }
 

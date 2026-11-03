@@ -22,8 +22,8 @@ use windows_sys::Win32::Graphics::Gdi::{
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, GetWindowSubclass, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateIconIndirect, GetClientRect, GetCursorPos, GetIconInfo, HTCLIENT, ICONINFO, SendMessageW,
-    SetCursor, WM_MOUSEMOVE, WM_SETCURSOR, WM_USER, WindowFromPoint,
+    CreateIconIndirect, GetClientRect, GetCursorPos, GetIconInfo, GetMessageExtraInfo, HTCLIENT,
+    ICONINFO, SendMessageW, SetCursor, WM_MOUSEMOVE, WM_SETCURSOR, WM_USER, WindowFromPoint,
 };
 
 use crate::pointer::{Shape, picture};
@@ -36,6 +36,14 @@ const SUBCLASS_ID: usize = 0x5849_5249; // "XIRI"
 static ACTIVE: AtomicIsize = AtomicIsize::new(0);
 static CURSORS: LazyLock<Mutex<HashMap<(Shape, usize), isize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Whether the mouse message being handled was made from a touch: Windows marks those it makes
+/// from a pen or a finger, and a finger's with one more bit (MIX-045 makes rows 32 high).
+pub fn from_touch() -> bool {
+    // SAFETY: reads the extra information of the thread's last message; no pointers.
+    let extra = unsafe { GetMessageExtraInfo() } as u32;
+    extra & 0xFFFF_FF80 == 0xFF51_5780
+}
 
 /// The size of a cursor at the window's scale: 32 pixels at 96 dpi.
 pub fn size_for(hwnd: isize) -> usize {

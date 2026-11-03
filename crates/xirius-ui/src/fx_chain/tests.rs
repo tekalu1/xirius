@@ -73,6 +73,10 @@ fn click_opens_and_remove_button_removes_the_insert() {
     s.add_effect(a, 0, &Pick::built_in("EQ"));
     close(&mut s);
     let id = s.project().tracks[&a].inserts[0].id;
+    // the first press picks the row (MIX-045), the second opens it
+    let at = grab(&mut s, &g, a, id);
+    s.fx_up(&g, at.0, at.1, false);
+    assert!(!s.instruments.is_open(id));
     let at = grab(&mut s, &g, a, id);
     s.fx_up(&g, at.0, at.1, false);
     assert!(s.instruments.is_open(id));

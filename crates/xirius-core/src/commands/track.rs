@@ -421,6 +421,11 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 ArgDef::text("format", "vst3・clap・builtin など").default(json!("builtin")),
                 ArgDef::text("uid", "形式ごとの固有 ID（省略時は名前）"),
                 ArgDef::int("index", "インサート内の位置（省略時は末尾）"),
+                ArgDef::id(
+                    "after",
+                    IdKind::RackNodeOrPlugin,
+                    "このエフェクトかスプリッターのすぐ後ろ（分岐・レイヤーの中でも）に置く",
+                ),
             ],
             add_plugin,
         ),
@@ -1599,6 +1604,7 @@ fn add_plugin(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
         PluginKind::Effect
     };
     let name = name_arg(a)?;
+    let after: Option<AnyId> = a.opt_id("after")?;
     let id = place_new_plugin(
         p,
         tid,
@@ -1608,7 +1614,54 @@ fn add_plugin(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
         a.opt_str("uid"),
         a.opt_i64("index"),
     )?;
+    if let Some(after) = after {
+        place_after(p, tid, kind, after, id)?;
+    }
     Ok(created(&format!("プラグイン「{name}」"), id))
+}
+
+/// Moves the new effect `id` right after `after` in the chain that holds it, so adding
+/// after a row of a strip's flow is one step to undo (MIX-045).
+fn place_after(
+    p: &mut Project,
+    tid: TrackId,
+    kind: PluginKind,
+    after: AnyId,
+    id: PluginId,
+) -> CmdResult<()> {
+    if kind == PluginKind::Instrument {
+        return Err(CmdError::invalid("--after はエフェクトにだけ指定できます"));
+    }
+    let t = p.track_mut(tid)?;
+    let placed = match (after, t.rack.as_mut()) {
+        (AnyId::Plugin(x), Some(r)) => {
+            r.remove_plugin(id);
+            r.insert_after(x, id)
+        }
+        (AnyId::RackNode(x), Some(r)) => {
+            r.remove_plugin(id);
+            r.insert_after_split(x, id)
+        }
+        (AnyId::Plugin(x), None) if x != id && t.inserts.iter().any(|i| i.id == x) => {
+            let from = t
+                .inserts
+                .iter()
+                .position(|i| i.id == id)
+                .expect("just added");
+            let new = t.inserts.remove(from);
+            let at = t.inserts.iter().position(|i| i.id == x).expect("checked") + 1;
+            t.inserts.insert(at, new);
+            true
+        }
+        _ => false,
+    };
+    if !placed {
+        return Err(CmdError::not_found(format!(
+            "--after {after} はこのトラックのエフェクトかスプリッターではありません"
+        )));
+    }
+    p.fix_track_rack(tid);
+    Ok(())
 }
 
 /// A new plug-in in a track's inserts: an effect at `index` (the end without one), the

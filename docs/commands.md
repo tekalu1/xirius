@@ -4303,6 +4303,7 @@ MIDI 学習
 
 | 引数 | 必須 | 型・範囲・既定値 | 内容 |
 |---|---|---|---|
+| `after` | — | `{"type":"string"}` | このエフェクトかスプリッターのすぐ後ろ（分岐・レイヤーの中でも）に置く（plugin\|rack node の ID） |
 | `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
 | `format` | — | `{"default":"builtin","type":"string"}` | vst3・clap・builtin など |
 | `index` | — | `{"type":"integer"}` | インサート内の位置（省略時は末尾） |

@@ -3,17 +3,21 @@
 //! in under it with a structure line down their side; a serial chain has no line. A splitter is
 //! one row with its branch count and a chevron; open, a hook joins it to the first row of each
 //! branch (there is no merge dot).
+//!
+//! A row is picked with a press (MIX-045): it fills with the primary colour and, when it heads a
+//! branch or is a layer, a row under it moves that level. The pointer on a row shows its M and,
+//! at its bottom edge, the ＋ that puts a plug-in after it. Rows are 32 high for touch.
 
 use std::collections::HashSet;
 
 use gpui::Hsla;
 
-use xirius_core::id::{NodeId, PluginId};
+use xirius_core::id::{NodeId, PluginId, TrackId};
 use xirius_core::model::{Plugin, Track, TrackKind};
 use xirius_core::rack::{Rack, RackNode, Source};
 use xirius_design::{FontSize, LinePiece, LineState, Radius, Space, StructureLine, Weight};
 
-use super::{MixerHit, ROW_H};
+use super::{MixerHit, ROW_H, meters};
 use crate::draw::{Align, Pen};
 use crate::fx_chain::{preset_mark_fits, remove_part};
 use crate::studio::{Hit, Rect, Studio};
@@ -45,6 +49,25 @@ const HEAVY_W: f32 = 14.0;
 const GAUGE: f32 = 12.0;
 /// How strongly a locked row's lock shows.
 const LOCKED: f32 = 0.5;
+/// A row for touch (MIX-045).
+pub const COARSE_H: f32 = 32.0;
+/// A row's M: on the row under the pointer, and on the level row.
+const MM_W: f32 = 18.0;
+const MM_H: f32 = 16.0;
+const MM_COARSE: f32 = 24.0;
+/// The ＋ on a row's bottom edge, half over the next row.
+const AFTER: f32 = 16.0;
+const AFTER_COARSE: f32 = 24.0;
+/// The level row under a picked row: its margins, its inner room and its value's width.
+const SUB_TOP: f32 = 1.0;
+const SUB_BOTTOM: f32 = 6.0;
+const SUB_PAD: f32 = 4.0;
+const SUB_VAL: f32 = 26.0;
+/// The level bar: its rail and its cap.
+const RAIL: f32 = 3.0;
+const CAP_W: f32 = 4.0;
+const CAP_H: f32 = 10.0;
+const CAP_COARSE: f32 = 12.0;
 
 /// The two areas of a strip's flow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,6 +98,59 @@ pub enum Kind {
     },
     /// The ＋ that adds to the area.
     Add,
+    /// Under the picked row: the level of the branch it heads or of its layer (MIX-045).
+    Level,
+}
+
+/// A row picked on a strip (MIX-045).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Pick {
+    Plugin(PluginId),
+    Split(NodeId),
+}
+
+/// The level a row's M and level row move: the branch it heads, or its layer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Target {
+    pub id: NodeId,
+    pub layer: bool,
+    pub db: f64,
+    pub mute: bool,
+}
+
+/// How the strips show their flows: the splitters shut, the row picked and whether rows are
+/// for touch.
+#[derive(Clone, Copy)]
+pub struct Look<'a> {
+    pub folded: &'a HashSet<NodeId>,
+    pub chosen: Option<(TrackId, Pick)>,
+    pub coarse: bool,
+}
+
+impl Look<'_> {
+    /// `t`'s lines, with the level row under its picked row.
+    pub fn lines(&self, t: &Track) -> Vec<Line> {
+        let mut out = lines(t, self.folded);
+        if let Some((_, pick)) = self.chosen.filter(|(id, _)| *id == t.id)
+            && let Some(i) = out.iter().position(|l| l.pick() == Some(pick))
+            && out[i].target.is_some()
+        {
+            let mut level = out[i];
+            level.kind = Kind::Level;
+            level.heads = None;
+            out.insert(i + 1, level);
+        }
+        out
+    }
+
+    pub fn lay(&self, t: &Track, region: Rect, scroll: f32) -> Flow {
+        Flow::lay(&self.lines(t), region, scroll, self.coarse)
+    }
+
+    /// How tall `t`'s flow stands.
+    pub fn height(&self, t: &Track) -> f32 {
+        Flow::height(&self.lines(t), self.coarse)
+    }
 }
 
 /// One line of the flow.
@@ -91,6 +167,8 @@ pub struct Line {
     pub level: Option<(f64, bool)>,
     /// The instrument whose own effects this row is among.
     pub under: Option<PluginId>,
+    /// The branch this row heads or its layer, whose level its M and level row move.
+    pub target: Option<Target>,
 }
 
 impl Line {
@@ -102,6 +180,16 @@ impl Line {
             heads: None,
             level: None,
             under: None,
+            target: None,
+        }
+    }
+
+    /// What picking this row picks.
+    pub fn pick(&self) -> Option<Pick> {
+        match self.kind {
+            Kind::Instrument { id, .. } | Kind::Effect(id) => Some(Pick::Plugin(id)),
+            Kind::Split { id, .. } => Some(Pick::Split(id)),
+            _ => None,
         }
     }
 
@@ -153,6 +241,12 @@ pub fn lines(t: &Track, folded: &HashSet<NodeId>) -> Vec<Line> {
                     );
                     if multi {
                         row.level = shown(l.gain_db, l.mute);
+                        row.target = Some(Target {
+                            id: l.id,
+                            layer: true,
+                            db: l.gain_db,
+                            mute: l.mute,
+                        });
                     }
                     out.push(row);
                     let from = out.len();
@@ -199,6 +293,12 @@ fn chain(out: &mut Vec<Line>, area: Area, nodes: &[RackNode], depth: u8, folded:
                     if let Some(first) = out.get_mut(from) {
                         first.heads = Some(s.id);
                         first.level = shown(b.gain_db, b.mute);
+                        first.target = Some(Target {
+                            id: b.id,
+                            layer: false,
+                            db: b.gain_db,
+                            mute: b.mute,
+                        });
                     }
                 }
             }
@@ -222,6 +322,54 @@ pub fn has_split(t: &Track, id: NodeId) -> bool {
             if layers.iter().any(|l| within(&l.fx, id)))
 }
 
+/// Where a picked node sits: the branch or layer that holds it (none: the track's own chain),
+/// its place there and how many nodes are there.
+pub fn spot(t: &Track, pick: Pick) -> Option<(Option<NodeId>, usize, usize)> {
+    fn is(n: &RackNode, pick: Pick) -> bool {
+        match (n, pick) {
+            (RackNode::Plugin(x), Pick::Plugin(y)) => *x == y,
+            (RackNode::Split(s), Pick::Split(y)) => s.id == y,
+            _ => false,
+        }
+    }
+    fn within(
+        nodes: &[RackNode],
+        at: Option<NodeId>,
+        pick: Pick,
+    ) -> Option<(Option<NodeId>, usize, usize)> {
+        if let Some(i) = nodes.iter().position(|n| is(n, pick)) {
+            return Some((at, i, nodes.len()));
+        }
+        nodes.iter().find_map(|n| match n {
+            RackNode::Plugin(_) => None,
+            RackNode::Split(s) => s
+                .branches
+                .iter()
+                .find_map(|b| within(&b.fx, Some(b.id), pick)),
+        })
+    }
+    let Some(rack) = &t.rack else {
+        let Pick::Plugin(id) = pick else {
+            return None;
+        };
+        let fx: Vec<_> = t
+            .inserts
+            .iter()
+            .filter(|p| p.kind != xirius_core::model::PluginKind::Instrument)
+            .collect();
+        let i = fx.iter().position(|p| p.id == id)?;
+        return Some((None, i, fx.len()));
+    };
+    if let Some(Source::Multi { layers, .. }) = &rack.source {
+        for l in layers {
+            if let Some(x) = within(&l.fx, Some(l.id), pick) {
+                return Some(x);
+            }
+        }
+    }
+    within(&rack.fx, None, pick)
+}
+
 /// The flow laid out: the areas' panels and the rows, in screen space.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Flow {
@@ -232,8 +380,10 @@ pub struct Flow {
 }
 
 impl Flow {
-    /// `lines` from the top of `region`, moved up by `scroll` px.
-    pub fn lay(lines: &[Line], region: Rect, scroll: f32) -> Flow {
+    /// `lines` from the top of `region`, moved up by `scroll` px; rows are 32 high when
+    /// `coarse` (touch).
+    pub fn lay(lines: &[Line], region: Rect, scroll: f32, coarse: bool) -> Flow {
+        let row_h = if coarse { COARSE_H } else { ROW_H };
         let top = region.y - scroll;
         let mut y = top;
         let mut panels = Vec::new();
@@ -255,16 +405,24 @@ impl Flow {
                 area = Some((l.area, y));
                 y += AREA_TOP;
             }
+            if l.kind == Kind::Level {
+                // in from the picked row's indent, with room above and below
+                let x = region.x + AREA_SIDE + l.indent() + SUB_PAD;
+                let w = (region.right() - AREA_SIDE - x).max(0.0);
+                rows.push((*l, Rect::new(x, y + SUB_TOP, w, row_h)));
+                y += SUB_TOP + row_h + SUB_BOTTOM;
+                continue;
+            }
             rows.push((
                 *l,
                 Rect::new(
                     region.x + AREA_SIDE,
                     y,
                     (region.w - AREA_SIDE * 2.0).max(0.0),
-                    ROW_H,
+                    row_h,
                 ),
             ));
-            y += ROW_H;
+            y += row_h;
         }
         if let Some(a) = area {
             y = close(a, y, &mut panels);
@@ -277,13 +435,42 @@ impl Flow {
     }
 
     /// How tall `lines` stand.
-    pub fn height(lines: &[Line]) -> f32 {
-        Self::lay(lines, Rect::new(0.0, 0.0, 0.0, 0.0), 0.0).h
+    pub fn height(lines: &[Line], coarse: bool) -> f32 {
+        Self::lay(lines, Rect::new(0.0, 0.0, 0.0, 0.0), 0.0, coarse).h
+    }
+
+    /// The row a pick names.
+    pub fn picked(&self, pick: Pick) -> Option<&(Line, Rect)> {
+        self.rows.iter().find(|(l, _)| l.pick() == Some(pick))
+    }
+
+    /// The level row under the picked row.
+    pub fn level(&self) -> Option<&(Line, Rect)> {
+        self.rows.iter().find(|(l, _)| l.kind == Kind::Level)
     }
 
     /// The row under a point.
     pub fn at(&self, x: f32, y: f32) -> Option<&(Line, Rect)> {
         self.rows.iter().find(|(_, r)| r.contains(x, y))
+    }
+
+    /// Whether rows are for touch.
+    fn coarse(&self) -> bool {
+        self.rows
+            .iter()
+            .any(|(l, r)| l.kind != Kind::Level && r.h > ROW_H)
+    }
+
+    /// The ＋ that puts a plug-in after `pick`'s row: on the bottom edge of its level row
+    /// when it has one.
+    pub fn after(&self, pick: Pick) -> Option<Rect> {
+        let (l, row) = self.picked(pick)?;
+        let (x, edge) = match self.level() {
+            Some((sl, sub)) if l.target.is_some() && sl.target == l.target => (sub.x, sub.bottom()),
+            _ => (row.x + l.indent() + 2.0, row.bottom()),
+        };
+        let d = if self.coarse() { AFTER_COARSE } else { AFTER };
+        Some(Rect::new(x, edge - d / 2.0, d, d))
     }
 
     /// The row of a plug-in.
@@ -326,7 +513,7 @@ impl Flow {
 pub fn dot_button(row: Rect, l: &Line) -> Rect {
     Rect::new(
         row.x + l.indent() + DOT_X,
-        row.y + (ROW_H - DOT_BUTTON) / 2.0,
+        row.y + (row.h - DOT_BUTTON) / 2.0,
         DOT_BUTTON,
         DOT_BUTTON,
     )
@@ -357,7 +544,7 @@ fn level_part(row: Rect) -> Rect {
 
 /// Where a plug-in row's name is written: after its dot (and a layer's chip), short of its
 /// level (`level` wide) and, on a heavy plug-in, of the gauge before the close.
-fn name_part(row: Rect, l: &Line, chip: bool, level: f32, heavy: bool) -> Rect {
+fn name_part(row: Rect, l: &Line, chip: bool, level: f32, heavy: bool, mute: bool) -> Rect {
     let mut x = row.x + l.indent() + NAME_X;
     if chip {
         x += CHIP + CHIP_GAP;
@@ -366,10 +553,54 @@ fn name_part(row: Rect, l: &Line, chip: bool, level: f32, heavy: bool) -> Rect {
     if level > 0.0 {
         end -= level + CHIP_GAP;
     }
+    if mute {
+        end = end.min(mute_part(row, l).x - SUB_PAD);
+    }
     if heavy {
-        end = end.min(remove_part(item(row, l)).x - HEAVY_W);
+        let at = if mute {
+            mute_part(row, l).x - SUB_PAD
+        } else {
+            remove_part(item(row, l)).x
+        };
+        end = end.min(at - HEAVY_W);
     }
     Rect::new(x, row.y, (end - x).max(0.0), row.h)
+}
+
+/// The M of a row under the pointer that has a level: in the close's place at the row's end,
+/// so the name keeps its room (the close is not shown on such a row).
+pub fn mute_part(row: Rect, l: &Line) -> Rect {
+    let (w, h) = if row.h > ROW_H {
+        (MM_COARSE, MM_COARSE)
+    } else {
+        (MM_W, MM_H)
+    };
+    let end = remove_part(item(row, l)).right();
+    Rect::new(end - w, row.y + (row.h - h) / 2.0, w, h)
+}
+
+/// The parts of the level row: the bar, the value and the M.
+pub fn sub_parts(sub: Rect) -> (Rect, Rect, Rect) {
+    let (w, h) = if sub.h > ROW_H {
+        (MM_COARSE, MM_COARSE)
+    } else {
+        (MM_W, MM_H)
+    };
+    let mute = Rect::new(sub.right() - SUB_PAD - w, sub.y + (sub.h - h) / 2.0, w, h);
+    let val = Rect::new(mute.x - SUB_PAD - SUB_VAL, sub.y, SUB_VAL, sub.h);
+    let x = sub.x + SUB_PAD;
+    let bar = Rect::new(x, sub.y, (val.x - SUB_PAD - x).max(0.0), sub.h);
+    (bar, val, mute)
+}
+
+/// Where a level sits along the level row's bar, 0..1 (the fader's scale).
+pub fn level_t(db: f64) -> f32 {
+    meters::db_to_t(db as f32)
+}
+
+/// The level at a point of the bar.
+pub fn level_db(t: f32) -> f64 {
+    f64::from(meters::t_to_db(t))
 }
 
 pub fn item(row: Rect, l: &Line) -> Rect {
@@ -409,13 +640,72 @@ pub fn drop_index(t: &Track, flow: &Flow, y: f32) -> usize {
         .unwrap_or(n)
 }
 
+/// Whether `l` is the row picked on `t`.
+fn picked(s: &Studio, t: TrackId, l: &Line) -> bool {
+    l.kind != Kind::Level && l.pick().is_some() && s.mixer.chosen == l.pick().map(|p| (t, p))
+}
+
+/// Whether the pointer is on `l` (on any part of it).
+fn hovered(s: &Studio, t: TrackId, l: &Line) -> bool {
+    matches!(s.hover, Hit::Mixer(h) if h.track() == t && on(l, h))
+}
+
+/// Whether a row shows its ＋ after it: picked, or under the pointer.
+fn shows_after(s: &Studio, t: TrackId, l: &Line) -> bool {
+    l.kind != Kind::Level && l.pick().is_some() && (picked(s, t, l) || hovered(s, t, l))
+}
+
+/// Whether a row shows its M: one with a level, under the pointer, and not picked (the
+/// picked row's M is on its level row).
+fn shows_mute(s: &Studio, t: TrackId, l: &Line) -> bool {
+    l.kind != Kind::Level && l.target.is_some() && !picked(s, t, l) && hovered(s, t, l)
+}
+
+/// The name a row goes by: its plug-in's, or 「スプリッター」.
+pub fn row_name(t: &Track, l: &Line) -> String {
+    match l.kind {
+        Kind::Split { .. } => "スプリッター".into(),
+        _ => l
+            .plugin()
+            .and_then(|id| t.inserts.iter().find(|p| p.id == id))
+            .map(|p| p.name.clone())
+            .unwrap_or_default(),
+    }
+}
+
 /// What a point on a row of `t`'s flow is.
 pub fn hit(s: &Studio, t: &Track, flow: &Flow, x: f32, y: f32) -> MixerHit {
+    // the ＋ after a row lies over the top of the next
+    if t.frozen.is_none() {
+        for (l, _) in &flow.rows {
+            if let Some(pick) = l.pick()
+                && shows_after(s, t.id, l)
+                && flow.after(pick).is_some_and(|r| r.contains(x, y))
+            {
+                return MixerHit::After(t.id, pick);
+            }
+        }
+    }
     let Some((l, row)) = flow.at(x, y) else {
         return MixerHit::Strip(t.id);
     };
+    if let Some(target) = l.target
+        && t.frozen.is_none()
+    {
+        if l.kind == Kind::Level {
+            let (_, _, mute) = sub_parts(*row);
+            return if mute.contains(x, y) {
+                MixerHit::RowMute(t.id, target.id)
+            } else {
+                MixerHit::Level(t.id, target.id)
+            };
+        }
+        if shows_mute(s, t.id, l) && mute_part(*row, l).contains(x, y) {
+            return MixerHit::RowMute(t.id, target.id);
+        }
+    }
     match l.kind {
-        Kind::Head => MixerHit::Strip(t.id),
+        Kind::Head | Kind::Level => MixerHit::Strip(t.id),
         Kind::Add => match l.area {
             Area::Insert => MixerHit::AddInsert(t.id),
             Area::Instrument if flow.has_instrument() => MixerHit::AddLayer(t.id),
@@ -438,6 +728,8 @@ pub fn hit(s: &Studio, t: &Track, flow: &Flow, x: f32, y: f32) -> MixerHit {
 /// Whether the pointer's part `h` is on line `l`.
 fn on(l: &Line, h: MixerHit) -> bool {
     match (l.kind, h) {
+        (_, MixerHit::RowMute(_, n) | MixerHit::Level(_, n)) => l.target.is_some_and(|x| x.id == n),
+        (_, MixerHit::After(_, p)) => l.pick() == Some(p),
         (Kind::Instrument { id, .. } | Kind::Effect(id), MixerHit::Open(_, p))
         | (Kind::Instrument { id, .. } | Kind::Effect(id), MixerHit::Bypass(_, p)) => id == p,
         (Kind::Split { id, .. }, MixerHit::Fold(_, s)) => id == s,
@@ -480,7 +772,13 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
         for (l, row) in &flow.rows {
             let row = *row;
             let hot = hover.is_some_and(|h| on(l, h));
+            let chosen = picked(s, t.id, l);
             match l.kind {
+                Kind::Level => {
+                    if let Some(target) = l.target {
+                        level_row(pen, s, t.id, target, row);
+                    }
+                }
                 Kind::Head => {
                     let r = Rect::new(row.x + HEAD_X, row.y, row.w - HEAD_X, row.h);
                     let label = match l.area {
@@ -517,9 +815,16 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                     );
                 }
                 Kind::Split { branches, open, .. } => {
-                    if hot {
-                        pen.round(row, c.surface_3, Radius::Clip);
-                    }
+                    let ink = if chosen {
+                        pen.round(row, c.primary.0, Radius::Clip);
+                        c.primary.1
+                    } else {
+                        if hot {
+                            pen.round(row, c.surface_3, Radius::Clip);
+                        }
+                        c.ink_strong
+                    };
+                    let soft = if chosen { c.primary.1 } else { c.ink };
                     pen.round(dot(row, l), c.solo_on.0, Radius::Pill);
                     // the chevron follows the name, as a folder's does; a narrow strip cuts
                     // the name, not the chevron or the count
@@ -530,15 +835,20 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                             &n,
                             FontSize::Micro,
                             Weight::Regular,
-                            c.ink,
+                            soft,
                             Rect::new(row.x, row.y, row.right() - END - row.x, row.h),
                             Align::Right,
                         );
                         end -= w + CHIP_GAP;
                     }
+                    if shows_mute(s, t.id, l) {
+                        end = end.min(mute_part(row, l).x - SUB_PAD);
+                    }
                     let x = row.x + l.indent() + NAME_X;
+                    // the device's own name, as its window's title says it: short enough for a
+                    // strip of 116 (the screen reader still says 「スプリッター」)
                     let name = pen.fit(
-                        "スプリッター",
+                        "Splitter",
                         FontSize::Small,
                         Weight::Regular,
                         (end - x).max(0.0),
@@ -547,7 +857,7 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                         &name,
                         FontSize::Small,
                         Weight::Regular,
-                        c.ink_strong,
+                        ink,
                         Rect::new(x, row.y, (end - x).max(0.0), row.h),
                         Align::Left,
                     );
@@ -558,8 +868,11 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                             "chevron-right"
                         },
                         Rect::new(x + w + 2.0, row.y + (row.h - 12.0) / 2.0, 12.0, 12.0),
-                        c.ink,
+                        soft,
                     );
+                    if let Some(target) = l.target.filter(|_| shows_mute(s, t.id, l)) {
+                        row_mute(pen, row, l, target.mute);
+                    }
                 }
                 Kind::Instrument { id, .. } | Kind::Effect(id) => {
                     let Some(p) = t.inserts.iter().find(|p| p.id == id) else {
@@ -570,14 +883,104 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                         _ => None,
                     };
                     let chip = layer.map(|i| c.tracks[i % c.tracks.len()]);
-                    plugin_row(pen, s, p, l, row, hot, frozen, chip);
+                    let mute = !frozen && shows_mute(s, t.id, l);
+                    plugin_row(pen, s, p, l, row, (hot, chosen, mute), frozen, chip);
                 }
             }
         }
         structure(pen, flow);
+        if !frozen {
+            for (l, _) in &flow.rows {
+                if let Some(pick) = l.pick()
+                    && shows_after(s, t.id, l)
+                    && let Some(r) = flow.after(pick)
+                {
+                    let lit = picked(s, t.id, l);
+                    let (face, ink) = if lit {
+                        c.primary
+                    } else {
+                        (c.surface_3, c.ink_strong)
+                    };
+                    pen.floating(r, face, Radius::Pill);
+                    let i = (r.w * 0.625).round();
+                    pen.icon(
+                        "plus",
+                        Rect::new(r.x + (r.w - i) / 2.0, r.y + (r.h - i) / 2.0, i, i),
+                        ink,
+                    );
+                }
+            }
+        }
     });
 }
 
+/// The M of a row under the pointer, on a strip of the hover colour that covers the name's
+/// tail.
+fn row_mute(pen: &mut Pen, row: Rect, l: &Line, on: bool) {
+    let c = pen.c;
+    let m = mute_part(row, l);
+    pen.round(
+        Rect::new(m.x - SUB_PAD, row.y, m.w + SUB_PAD, row.h),
+        c.surface_3,
+        Radius::Clip,
+    );
+    mute_button(pen, m, on);
+}
+
+fn mute_button(pen: &mut Pen, m: Rect, on: bool) {
+    let c = pen.c;
+    let (face, ink) = if on { c.mute_on } else { (c.surface_2, c.ink) };
+    pen.round(m, face, Radius::Clip);
+    pen.text(
+        "M",
+        FontSize::Micro,
+        Weight::Semibold,
+        ink,
+        m,
+        Align::Center,
+    );
+}
+
+/// The level row under the picked row: the bar, the value and the M. While its bar is held,
+/// the value is the one heard.
+fn level_row(pen: &mut Pen, s: &Studio, t: TrackId, target: Target, sub: Rect) {
+    let c = pen.c;
+    pen.round(sub, c.surface_3, Radius::Clip);
+    let (bar, val, mute) = sub_parts(sub);
+    let db = s
+        .mixer
+        .level_drag
+        .filter(|d| d.track == t && d.node == target.id)
+        .map_or(target.db, |d| d.value);
+    let coarse = sub.h > ROW_H;
+    let mid = bar.y + bar.h / 2.0;
+    let rail = Rect::new(bar.x, mid - RAIL / 2.0, bar.w, RAIL);
+    pen.round(rail, c.well, Radius::Pill);
+    let x = bar.x + bar.w * level_t(db);
+    pen.round(
+        Rect::new(bar.x, rail.y, x - bar.x, RAIL),
+        c.ring,
+        Radius::Pill,
+    );
+    let ch = if coarse { CAP_COARSE } else { CAP_H };
+    pen.round(
+        Rect::new(x - CAP_W / 2.0, mid - ch / 2.0, CAP_W, ch),
+        c.ring,
+        Radius::Pill,
+    );
+    pen.digits(
+        &level_text((db, false)),
+        FontSize::Micro,
+        Weight::Regular,
+        c.ink_strong,
+        val,
+        Align::Right,
+    );
+    mute_button(pen, mute, target.mute);
+}
+
+/// One plug-in row; `(hot, chosen, mute)` is whether the pointer is on it, whether it is
+/// picked and whether it shows its M.
 #[allow(clippy::too_many_arguments)]
 fn plugin_row(
     pen: &mut Pen,
@@ -585,13 +988,17 @@ fn plugin_row(
     p: &Plugin,
     l: &Line,
     row: Rect,
-    hot: bool,
+    (hot, chosen, mute): (bool, bool, bool),
     frozen: bool,
     chip: Option<Hsla>,
 ) {
     let c = pen.c;
     let pinged = s.perf.pinged(p.id);
-    if hot {
+    // the face under the marks: the picked row's fill, or the hover colour
+    let face = if chosen { c.primary.0 } else { c.surface_3 };
+    if chosen {
+        pen.round(row, c.primary.0, Radius::Clip);
+    } else if hot {
         pen.round(row, c.surface_3, Radius::Clip);
     }
     if pinged {
@@ -599,11 +1006,18 @@ fn plugin_row(
     }
     let b = dot_button(row, l);
     let glyph = Rect::new(b.x + 2.0, b.y + 2.0, 12.0, 12.0);
+    // on the picked row's fill the marks wear its ink
+    let alert = if chosen { c.primary.1 } else { c.alert };
+    let locked = if chosen {
+        c.primary.1
+    } else {
+        c.ink.opacity(LOCKED)
+    };
     if frozen {
     } else if s.health.crashed(p.id) {
-        pen.icon("alert", glyph, c.alert);
+        pen.icon("alert", glyph, alert);
     } else if p.deactivated {
-        pen.icon("power", glyph, c.ink.opacity(LOCKED));
+        pen.icon("power", glyph, locked);
     } else if p.bypass {
         pen.outline(dot(row, l), c.line[0], Radius::Pill, RING);
     } else {
@@ -611,28 +1025,32 @@ fn plugin_row(
     }
     if let Some(color) = chip {
         let x = row.x + l.indent() + NAME_X;
-        let chip = Rect::new(x, row.y + (ROW_H - CHIP) / 2.0, CHIP, CHIP);
+        let chip = Rect::new(x, row.y + (row.h - CHIP) / 2.0, CHIP, CHIP);
         pen.round(chip, color, Radius::Clip);
     }
     let it = item(row, l);
     let remove = remove_part(it);
-    let level = l.level.map_or(0.0, |level| {
+    let soft = if chosen { c.primary.1 } else { c.ink };
+    // the M takes the level's place while it shows; a picked row's level is in the row under it
+    let level = l.level.filter(|_| !mute && !chosen).map_or(0.0, |level| {
         pen.digits(
             &level_text(level),
             FontSize::Micro,
             Weight::Regular,
-            c.ink,
+            soft,
             level_part(row),
             Align::Right,
         )
     });
     // The gauge takes the place before the close; the name is cut short of it.
     let heavy = s.perf.heavy.is_heavy(p.id) && !frozen && !p.deactivated;
-    let name = name_part(row, l, chip.is_some(), level, heavy);
+    let name = name_part(row, l, chip.is_some(), level, heavy, mute);
     // The blue of an open plug-in falls under 4.5:1 on the ping's tint (light theme): while
     // the row is pinged its name is strong (UI-309).
     let off = p.bypass || p.deactivated;
-    let ink = if off || frozen {
+    let ink = if chosen {
+        c.primary.1
+    } else if off || frozen {
         c.ink
     } else if !pinged && (s.mixer.is_open(p.id) || s.instruments.is_open(p.id)) {
         c.ink_blue
@@ -663,40 +1081,49 @@ fn plugin_row(
         };
     });
     if heavy {
+        let x = if mute {
+            mute_part(row, l).x - SUB_PAD
+        } else {
+            remove.x
+        };
         pen.icon(
             "gauge",
-            Rect::new(remove.x - GAUGE, remove.y + 5.0, GAUGE, GAUGE),
-            c.alert,
+            Rect::new(x - GAUGE, remove.y + 5.0, GAUGE, GAUGE),
+            alert,
         );
     }
-    if hot {
+    if hot && !mute {
         // The marks sit on the tail of a name that runs under them.
         if name.x + wide > remove.x - 16.0 {
             pen.round(
                 Rect::new(remove.x - 16.0, row.y, row.right() - remove.x + 16.0, row.h),
-                c.surface_3,
+                face,
                 Radius::Clip,
             );
         }
+        let mark = (row.h - 10.0) / 2.0;
         if preset_mark_fits(it, &p.name) {
             let preset = crate::fx_preset::part(it);
             pen.icon(
                 "file",
-                Rect::new(preset.x + 3.0, preset.y + 6.0, 10.0, 10.0),
-                c.ink,
+                Rect::new(preset.x + 3.0, preset.y + mark, 10.0, 10.0),
+                soft,
             );
         }
         pen.icon(
             "close",
-            Rect::new(remove.x + 3.0, remove.y + 6.0, 10.0, 10.0),
-            c.ink,
+            Rect::new(remove.x + 3.0, remove.y + mark, 10.0, 10.0),
+            soft,
         );
+    }
+    if let Some(target) = l.target.filter(|_| mute) {
+        row_mute(pen, row, l, target.mute);
     }
     if frozen {
         pen.icon(
             "lock",
             Rect::new(remove.x + 3.0, remove.y + 6.0, 10.0, 10.0),
-            c.ink.opacity(LOCKED),
+            locked,
         );
     }
 }
