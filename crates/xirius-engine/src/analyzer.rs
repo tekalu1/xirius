@@ -15,7 +15,8 @@ pub const HIGHEST: f64 = 20_000.0;
 /// pitch from [`LOWEST`] to [`HIGHEST`], of the newest [`FFT_LEN`] of `samples` (fewer are
 /// padded with silence before them). Each point is the strongest bin within a sixth of an
 /// octave around it, or between the two bins nearest it where the bins are wider than that,
-/// so a sine reads its level at any pitch (less the window's scallop, at most 1.5 dB).
+/// so a sine reads its level at any pitch (less the window's scallop, at most 1.5 dB). A
+/// point above Nyquist (at a rate under 40 kHz) reads the floor: nothing is there.
 pub fn spectrum(samples: &[f32], rate: f64, points: usize) -> Vec<f32> {
     if points == 0 {
         return Vec::new();
@@ -53,6 +54,9 @@ pub fn spectrum(samples: &[f32], rate: f64, points: usize) -> Vec<f32> {
                 0.0
             };
             let f = LOWEST * (HIGHEST / LOWEST).powf(t);
+            if f > rate / 2.0 {
+                return FLOOR_DB;
+            }
             let lo = (f / half / bin).ceil().max(0.0) as usize;
             let hi = ((f * half / bin).floor() as usize).min(n / 2);
             let p = if lo <= hi {
@@ -180,6 +184,28 @@ mod tests {
                 assert!((top - want).abs() < 1.5, "{freq} Hz at {amp}: {top} dB");
             }
         }
+    }
+
+    /// L-dsp-2: above Nyquist there is nothing, so the points there read the floor, not
+    /// the Nyquist bin over again.
+    #[test]
+    fn the_points_above_nyquist_read_the_floor() {
+        let points = 120;
+        let rate = 32_000.0;
+        let s: Vec<f32> = (0..FFT_LEN)
+            .map(|i| (0.5 * (TAU * 15_900.0 * i as f64 / rate).sin()) as f32)
+            .collect();
+        let out = spectrum(&s, rate, points);
+        for (i, v) in out.iter().enumerate() {
+            if freq_of(i, points) > rate / 2.0 {
+                assert_eq!(*v, FLOOR_DB, "{} Hz", freq_of(i, points));
+            }
+        }
+        let near = (0..points)
+            .filter(|&i| (freq_of(i, points) - 15_900.0).abs() < 1_000.0)
+            .map(|i| out[i])
+            .fold(FLOOR_DB, f32::max);
+        assert!(near > -10.0, "the tone below it still reads: {near}");
     }
 
     #[test]
