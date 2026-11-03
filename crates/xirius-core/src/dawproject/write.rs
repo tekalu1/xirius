@@ -576,43 +576,22 @@ impl<'a> Writer<'a> {
                         "low_cut_freq",
                         None,
                         None,
-                        Some("low_cut_on"),
                     ),
-                    ("lowShelf", None, "low_freq", Some("low_gain"), None, None),
-                    (
-                        "bell",
-                        None,
-                        "mid1_freq",
-                        Some("mid1_gain"),
-                        Some("mid1_q"),
-                        None,
-                    ),
-                    (
-                        "bell",
-                        None,
-                        "mid2_freq",
-                        Some("mid2_gain"),
-                        Some("mid2_q"),
-                        None,
-                    ),
-                    (
-                        "highShelf",
-                        None,
-                        "high_freq",
-                        Some("high_gain"),
-                        None,
-                        None,
-                    ),
+                    ("lowShelf", None, "low_freq", Some("low_gain"), None),
+                    ("bell", None, "mid1_freq", Some("mid1_gain"), Some("mid1_q")),
+                    ("bell", None, "mid2_freq", Some("mid2_gain"), Some("mid2_q")),
+                    ("highShelf", None, "high_freq", Some("high_gain"), None),
                     (
                         "lowPass",
                         Some(order("high_cut_slope")),
                         "high_cut_freq",
                         None,
                         None,
-                        Some("high_cut_on"),
                     ),
                 ];
-                for (kind, ord, freq, gain, q, on) in bands {
+                let shapes = bands.iter().zip(&xirius_params::EQ_BANDS);
+                for ((kind, ord, freq, gain, q), spec) in shapes {
+                    let (kind, ord, freq, gain, q) = (*kind, *ord, *freq, *gain, *q);
                     let mut band = El::new("Band")
                         .a("type", kind)
                         .opt("order", ord)
@@ -623,9 +602,34 @@ impl<'a> Writer<'a> {
                     if let Some(q) = q {
                         band.push(self.knob(t, x, def, q, "Q", "linear", 1.0));
                     }
-                    let enabled = on.is_none_or(|k| plain(k) >= 0.5);
+                    // Each band's own switch (PLG-062): a shelf or a bell that is off reads
+                    // back as at 0 dB, which sounds the same.
+                    let enabled = plain(spec.on) >= 0.5;
                     band.push(El::new("Enabled").a("value", enabled).a("id", self.id()));
                     el.push(band);
+                    // What the format's fixed band has no place for (M-par-3): another type,
+                    // a cut's gain and Q, a shelf's Q, a slope where the format has none. A
+                    // band that is off sounds the same without them.
+                    if !enabled {
+                        continue;
+                    }
+                    let mut unwritten = vec![spec.kind];
+                    if ord.is_none() {
+                        unwritten.push(spec.slope);
+                    }
+                    if gain.is_none() {
+                        unwritten.push(spec.gain);
+                    }
+                    if q.is_none() {
+                        unwritten.push(spec.q);
+                    }
+                    for key in unwritten {
+                        let (_, p) = def.param(key).expect("a parameter of the catalogue");
+                        if (norm(key) - p.default_norm()).abs() > 1e-6 {
+                            self.skips
+                                .item(format!("{} の {} の{}", t.name, x.name, p.label));
+                        }
+                    }
                 }
                 el.push(self.knob(t, x, def, "output", "OutputGain", "decibel", 1.0));
             }
@@ -1120,12 +1124,11 @@ impl<'a> Writer<'a> {
     }
 }
 
-/// A band of the EQ: its type and order, and the keys of its frequency, gain, Q and switch.
+/// A band of the format's Equalizer: its type, order, frequency, gain and Q.
 type Band = (
     &'static str,
     Option<i64>,
     &'static str,
-    Option<&'static str>,
     Option<&'static str>,
     Option<&'static str>,
 );

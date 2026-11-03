@@ -663,6 +663,49 @@ fn bitwigs_example_reads_as_a_song() {
     assert_eq!(asked.len(), 2);
 }
 
+/// The EQ's bands are the format's fixed six (M-par-3): another type, a cut's gain or Q, a
+/// shelf's Q or a bell's slope is listed, and each band's switch goes in its Enabled.
+#[test]
+fn an_eqs_values_the_format_has_no_place_for_are_listed() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut p = song(dir.path());
+    let keys = track(&p, "Keys").id;
+    let o = opts(dir.path(), &wav_info);
+    assert!(skipped_on_export(&p, &o).is_empty(), "as before PLG-062");
+    let def = xirius_params::find("eq").unwrap();
+    let norm = |k: &str, v: f64| def.param(k).unwrap().1.to_norm(v);
+    let eq = tm(&mut p, keys)
+        .inserts
+        .iter_mut()
+        .find(|x| x.uid == "eq")
+        .unwrap();
+    // Band 3 a notch, band 2 off with its slope changed (off: nothing to hear), band 5's Q.
+    eq.params.insert("b3_type".into(), norm("b3_type", 3.0));
+    eq.params.insert("b2_on".into(), 0.0);
+    eq.params.insert("b2_slope".into(), norm("b2_slope", 2.0));
+    eq.params.insert("b5_q".into(), norm("b5_q", 2.0));
+    assert_eq!(
+        skipped_on_export(&p, &o).lines(),
+        vec!["Keys の EQ の中域 1 の型", "Keys の EQ の高域の Q"]
+    );
+    let out = dir.path().join("Bands.dawproject");
+    export(&p, &out, &o).unwrap();
+    let f = std::fs::File::open(&out).unwrap();
+    let mut zip = zip::ZipReader::new(std::io::BufReader::new(f)).unwrap();
+    let xml = String::from_utf8(zip.read("project.xml").unwrap().unwrap()).unwrap();
+    let enabled: Vec<bool> = xml
+        .split("<Band ")
+        .skip(1)
+        .map(|b| {
+            b.split("</Band>")
+                .next()
+                .unwrap()
+                .contains(r#"<Enabled value="true""#)
+        })
+        .collect();
+    assert_eq!(enabled, [true, false, true, true, true, false]);
+}
+
 #[test]
 fn what_a_dawproject_cannot_carry_is_listed_on_export() {
     let dir = tempfile::tempdir().unwrap();
