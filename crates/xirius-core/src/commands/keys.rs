@@ -1405,7 +1405,7 @@ pub const ENTRIES: &[Entry] = &[
         context: "global",
         command: "project.close",
         label: None,
-        keys: &["Mod+W"],
+        keys: &["Mod+W", "Mod+F4"],
         cat: Cat::Edit,
     },
     Entry {

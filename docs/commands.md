@@ -4980,7 +4980,7 @@ MIDI 学習
 
 履歴: 実行結果の step で確認。アイコン: `prompt`。
 
-キー: global: Mod+W (`project.close`)。
+キー: global: Mod+W / Mod+F4 (`project.close`)。
 
 | 引数 | 必須 | 型・範囲・既定値 | 内容 |
 |---|---|---|---|

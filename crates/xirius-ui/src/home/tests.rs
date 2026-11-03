@@ -589,6 +589,21 @@ fn ctrl_w_closes_the_song_and_the_start_screen_shows() {
 }
 
 #[test]
+fn ctrl_f4_closes_the_song_like_ctrl_w() {
+    let mut s = Studio::sample();
+    with_device(&mut s, true);
+    let g = s.geometry(1280.0, 720.0);
+    assert!(s.mapped_key(&g, "f4", None, Mods::ctrl()));
+    assert_eq!(
+        s.window_ask, None,
+        "Ctrl+F4 closes the document, it does not quit"
+    );
+    finish_open(&mut s);
+    assert!(s.home_shown());
+    assert!(s.project().root.is_empty());
+}
+
+#[test]
 fn closing_from_the_song_menu_asks_first_when_the_plugin_state_was_not_kept() {
     let mut s = Studio::sample();
     with_device(&mut s, true);

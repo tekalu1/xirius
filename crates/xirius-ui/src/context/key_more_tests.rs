@@ -223,10 +223,11 @@ fn shift_f_and_ctrl_q_ask_the_window_for_full_screen_and_to_quit() {
     assert_eq!(s.window_ask.take(), Some(WindowAsk::Fullscreen));
     assert!(press(&mut s, &g, "q", Mods::ctrl()));
     assert_eq!(s.window_ask.take(), Some(WindowAsk::Quit));
-    // Ctrl+F4 is the Windows "close the document" key: it must not quit
-    // (UI-350: quitting is Ctrl+Q and Alt+F4 only; Alt+F4 is the window's).
-    press(&mut s, &g, "f4", Mods::ctrl());
-    assert_ne!(s.window_ask.take(), Some(WindowAsk::Quit));
+    // Ctrl+F4 is the Windows "close the document" key: it closes the song like
+    // Ctrl+W and never quits (UI-350: quitting is Ctrl+Q and Alt+F4 only; Alt+F4
+    // is the window's).
+    assert!(press(&mut s, &g, "f4", Mods::ctrl()));
+    assert_eq!(s.window_ask, None);
     // Ctrl+W closes the song instead (UI-350): no quitting.
     assert!(press(&mut s, &g, "w", Mods::ctrl()));
     assert_eq!(s.window_ask, None);
