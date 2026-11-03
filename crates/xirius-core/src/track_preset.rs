@@ -118,6 +118,12 @@ pub struct TrackPreset {
 impl TrackPreset {
     /// What `id` keeps of itself under `name`.
     pub fn snapshot(p: &Project, id: TrackId, name: &str) -> CmdResult<TrackPreset> {
+        Self::counted(p, id, name).map(|(preset, _)| preset)
+    }
+
+    /// [`Self::snapshot`], and how many macro maps were left out because what they move does
+    /// not go into the preset (a send, PLG-065).
+    pub fn counted(p: &Project, id: TrackId, name: &str) -> CmdResult<(TrackPreset, usize)> {
         let t = p.track(id)?;
         if t.kind == TrackKind::Master {
             return Err(CmdError::conflict(
@@ -128,8 +134,8 @@ impl TrackPreset {
         if name.is_empty() {
             return Err(CmdError::invalid("プリセットの名前が空です"));
         }
-        let (chain, _) = Chain::of_track(t);
-        Ok(TrackPreset {
+        let (chain, dropped) = Chain::of_track(t);
+        let preset = TrackPreset {
             name: name.to_string(),
             saved_at: None,
             kind: t.kind,
@@ -154,7 +160,8 @@ impl TrackPreset {
                     pre: s.pre,
                 })
                 .collect(),
-        })
+        };
+        Ok((preset, dropped))
     }
 
     /// The preset as the file keeps it.

@@ -499,3 +499,49 @@ fn saving_a_track_with_branches_says_they_were_saved_in_a_line() {
     );
     assert_eq!(plain["flattened"], false);
 }
+
+#[test]
+fn saving_a_macro_that_moves_a_send_says_the_map_was_left_out() {
+    let mut r = rig("send-map");
+    let v = vocal(&mut r);
+    let fx = id(&run(&mut r.s, "track.add.bus", json!({ "name": "FX" })));
+    run(
+        &mut r.s,
+        "send.add",
+        json!({ "ids": [v], "to": fx, "level": -6.0 }),
+    );
+    let send = track(&r.s, &v).sends[0].id.to_string();
+    let eq = track(&r.s, &v).inserts[1].id.to_string();
+    run(
+        &mut r.s,
+        "control.assign",
+        json!({ "track": v, "control": "k1", "target": format!("send:{send}") }),
+    );
+    run(
+        &mut r.s,
+        "control.assign",
+        json!({ "track": v, "control": "k2", "target": format!("param:{eq}:gain") }),
+    );
+    let saved =
+        r.s.run_value(
+            "track.preset.save",
+            json!({ "track": v, "name": "Send macro" }),
+            &RunOptions::human(),
+        )
+        .unwrap();
+    assert!(
+        saved.message.contains("1 件の割り当てを除きました"),
+        "{}",
+        saved.message
+    );
+    let other = vocal(&mut r);
+    let plain = r
+        .s
+        .run_value(
+            "track.preset.save",
+            json!({ "track": other, "name": "No macro" }),
+            &RunOptions::human(),
+        )
+        .unwrap();
+    assert!(!plain.message.contains("割り当て"), "{}", plain.message);
+}

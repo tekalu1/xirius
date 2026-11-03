@@ -192,7 +192,7 @@ pub(crate) fn run(
                 let at = found.value.get("saved_at").and_then(Value::as_u64);
                 (origin, found.path, at)
             };
-            let mut preset = TrackPreset::snapshot(project, id, &name)?;
+            let (mut preset, dropped) = TrackPreset::counted(project, id, &name)?;
             preset.saved_at = kept_at;
             if !dry {
                 write(&path, &preset)?;
@@ -214,6 +214,12 @@ pub(crate) fn run(
                 (true, true) => "。分岐はプリセットに入らないため、直列にして保存します",
                 (true, false) => "。分岐はプリセットに入らないため、直列にして保存しました",
             };
+            // a macro moving a send keeps no target in the preset (PLG-065)
+            let dropped = match (dropped, dry) {
+                (0, _) => String::new(),
+                (n, true) => format!("。{n} 件の割り当てを除きます"),
+                (n, false) => format!("。{n} 件の割り当てを除きました"),
+            };
             let edits = if dry || t.preset.as_deref() == Some(name.as_str()) {
                 Vec::new()
             } else {
@@ -224,7 +230,7 @@ pub(crate) fn run(
             };
             Ok((
                 Output::with(
-                    format!("{said}{verb}{note}"),
+                    format!("{said}{verb}{note}{dropped}"),
                     json!({
                         "name": name,
                         "file": path.to_string_lossy(),
