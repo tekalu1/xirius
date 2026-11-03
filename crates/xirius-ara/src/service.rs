@@ -1,11 +1,14 @@
-//! The ARA thread of one plugin: its document, its renderers, and the clips' sound
+//! The ARA thread of one plugin: its documents, their renderers, and the clips' sound
 //! (PLG-032, PLG-034 to PLG-037, PLG-047, PLG-058).
 //!
-//! A [`Service`] owns one thread. Everything the plugin is called with runs there, marked as a
-//! call into the plugin ([`crate::contain`]) and watched by a second thread: a contained fault
-//! or a call that does not come back ends the ARA thread alone, and the service reports
-//! itself crashed ([`Service::crashed`]). The song's clips then play dry until the service is
-//! made again from the last archive.
+//! A [`Service`] is one document on an ARA thread: a thread of its own ([`Service::start`]),
+//! or the plugin's one thread that all its documents in the process share
+//! ([`Service::start_shared`]; Melodyne faults on a second document made on another thread
+//! than its first). Everything the plugin is called with runs there, marked as a call into the
+//! plugin ([`crate::contain`]) and watched by a second thread: a contained fault or a call
+//! that does not come back ends the ARA thread alone, and its documents report themselves
+//! crashed ([`Service::crashed`]). The song's clips then play dry until a service is made
+//! again from the last archive.
 //!
 //! The song is handed over whole ([`Service::sync`]); the thread compares it with the model it
 //! made and edits the document in one cycle: sources (one per file), modifications and
@@ -18,7 +21,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
@@ -216,17 +219,19 @@ pub const BLOCK: usize = 512;
 /// The longest tail rendered after a clip.
 pub const MAX_TAIL: f64 = 2.0;
 
-/// One plugin's ARA document on its own thread.
+/// One plugin's ARA document, on an ARA thread.
 pub struct Service {
-    tx: Sender<Msg>,
+    id: u64,
+    tx: Sender<Job>,
+    host: Arc<Host>,
     shared: Arc<Shared>,
     last: Mutex<Option<Song>>,
 }
 
 impl Service {
-    /// Starts the thread. `archive` (bytes and archive id) is restored into the first synced
-    /// song. `notify` is called (on another thread) when a clip's sound or the document
-    /// changed.
+    /// Starts the document on a thread of its own. `archive` (bytes and archive id) is
+    /// restored into the first synced song. `notify` is called (on another thread) when a
+    /// clip's sound or the document changed.
     pub fn start(
         loader: Loader,
         archive: Option<(Vec<u8>, String)>,
@@ -235,13 +240,38 @@ impl Service {
         Service::start_with(loader, archive, notify, CALL_LIMIT)
     }
 
+    /// As [`Service::start`], with calls into the plugin limited to `limit`.
     pub fn start_with(
         loader: Loader,
         archive: Option<(Vec<u8>, String)>,
         notify: Arc<dyn Fn() + Send + Sync>,
         limit: Duration,
     ) -> Service {
-        let (tx, rx) = mpsc::channel();
+        Service::open(Host::spawn(None, limit), loader, archive, notify)
+    }
+
+    /// Starts the document on the ARA thread of `key` (the plugin), which every document of
+    /// that plugin in the process shares: plugins (Melodyne among them) keep to the thread
+    /// their first document was made on, and a second document on another thread faults.
+    /// The thread stays to the end of the process, or until a fault or a hang ends it; then
+    /// its documents are crashed and the next document starts a new thread.
+    pub fn start_shared(
+        key: &str,
+        loader: Loader,
+        archive: Option<(Vec<u8>, String)>,
+        notify: Arc<dyn Fn() + Send + Sync>,
+    ) -> Service {
+        Service::open(Host::shared(key), loader, archive, notify)
+    }
+
+    fn open(
+        host: Result<(Arc<Host>, Sender<Job>), String>,
+        loader: Loader,
+        archive: Option<(Vec<u8>, String)>,
+        notify: Arc<dyn Fn() + Send + Sync>,
+    ) -> Service {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
         let shared = Arc::new(Shared {
             states: Mutex::new(HashMap::new()),
             crashed: Mutex::new(None),
@@ -254,61 +284,38 @@ impl Service {
             info: Mutex::new(None),
             notify,
         });
-        let watch = Watch::new(limit);
-        let (ready_tx, ready_rx) = mpsc::channel::<()>();
-        {
-            let mine = shared.clone();
-            let watch = watch.clone();
-            // Never joined: a contained fault ends this thread without unwinding.
-            let spawned = std::thread::Builder::new()
-                .name("ara".into())
-                .spawn(move || {
-                    watch.attach();
-                    let _ = ready_tx.send(());
-                    run(loader, archive, &mine, &rx);
-                    mine.finished.store(true, Ordering::Release);
-                });
-            if spawned.is_err() {
-                *lock(&shared.failed) = Some("could not start the ARA thread".into());
+        let (host, tx) = match host {
+            Ok(h) => h,
+            Err(why) => {
+                *lock(&shared.failed) = Some(why);
                 shared.finished.store(true, Ordering::Release);
+                // A host that is already ended: every call answers at once.
+                let (tx, _) = mpsc::channel();
+                (Host::ended(), tx)
             }
-        }
-        let _ = ready_rx.recv_timeout(Duration::from_secs(5));
-        {
-            let shared = shared.clone();
-            let _ = std::thread::Builder::new()
-                .name("ara-watch".into())
-                .spawn(move || {
-                    loop {
-                        std::thread::sleep(Duration::from_millis(50));
-                        let seen = watch.check();
-                        if shared.finished.load(Ordering::Acquire) {
-                            return;
-                        }
-                        let why = match seen {
-                            Seen::Alive => continue,
-                            Seen::Ended => format!(
-                                "the plugin stopped with an {}",
-                                contain::describe(contain::last_code())
-                            ),
-                            Seen::Hung => "the plugin stopped answering".to_string(),
-                        };
-                        *lock(&shared.crashed) = Some(why);
-                        for s in lock(&shared.states).values_mut() {
-                            s.phase = Phase::Crashed;
-                            s.rendered = None;
-                        }
-                        shared.finished.store(true, Ordering::Release);
-                        shared.changed();
-                        return;
-                    }
-                });
+        };
+        host.add(&shared);
+        let sent = tx.send(Job::Open {
+            id,
+            loader,
+            archive,
+            shared: shared.clone(),
+        });
+        if sent.is_err() && !shared.finished.load(Ordering::Acquire) {
+            *lock(&shared.failed) = Some("the ARA thread has ended".into());
+            shared.finished.store(true, Ordering::Release);
         }
         Service {
+            id,
             tx,
+            host,
             shared,
             last: Mutex::new(None),
         }
+    }
+
+    fn send(&self, m: Msg) -> bool {
+        self.tx.send(Job::To(self.id, m)).is_ok()
     }
 
     /// Hands the song over. Nothing is sent when it did not change.
@@ -330,7 +337,7 @@ impl Service {
                 }
             }
         }
-        let _ = self.tx.send(Msg::Sync(song.clone()));
+        self.send(Msg::Sync(song.clone()));
     }
 
     /// The plugin's archive of the document and its archive id, or `None` when the plugin
@@ -340,14 +347,16 @@ impl Service {
             return None;
         }
         let (tx, rx) = mpsc::channel();
-        self.tx.send(Msg::Store(tx)).ok()?;
+        if !self.send(Msg::Store(tx)) {
+            return None;
+        }
         rx.recv_timeout(limit).ok().flatten()
     }
 
     /// The notes of a clip's source (or of its modification, with the edits).
     pub fn notes(&self, key: u64, of_modification: bool, limit: Duration) -> Vec<Note> {
         let (tx, rx) = mpsc::channel();
-        if self.tx.send(Msg::Notes(key, of_modification, tx)).is_err() {
+        if !self.send(Msg::Notes(key, of_modification, tx)) {
             return Vec::new();
         }
         rx.recv_timeout(limit).unwrap_or_default()
@@ -355,7 +364,9 @@ impl Service {
 
     pub fn probe(&self, limit: Duration) -> Option<Probe> {
         let (tx, rx) = mpsc::channel();
-        self.tx.send(Msg::Probe(tx)).ok()?;
+        if !self.send(Msg::Probe(tx)) {
+            return None;
+        }
         rx.recv_timeout(limit).ok()
     }
 
@@ -429,16 +440,15 @@ impl Service {
 
 impl Drop for Service {
     fn drop(&mut self) {
-        let _ = self.tx.send(Msg::Stop);
+        self.send(Msg::Stop);
         // The thread tears the document down; it is not joined (see `start`).
         let until = Instant::now() + Duration::from_secs(5);
         while !self.shared.finished.load(Ordering::Acquire) && Instant::now() < until {
             std::thread::sleep(Duration::from_millis(5));
         }
+        self.host.forget(&self.shared);
     }
 }
-
-// The ARA thread -----------------------------------------------------------------------------
 
 const CONTEXT_KEY: usize = 1;
 const SEQUENCE_KEY: usize = 1;
@@ -484,66 +494,275 @@ struct Ara {
     notices_off_thread: u64,
 }
 
-fn run(
-    loader: Loader,
-    archive: Option<(Vec<u8>, String)>,
-    shared: &Arc<Shared>,
-    rx: &Receiver<Msg>,
-) {
-    let mut ara = match start(loader, archive, shared) {
-        Ok(a) => a,
+// The ARA threads ------------------------------------------------------------------------------
+
+/// What an ARA thread is asked.
+enum Job {
+    Open {
+        id: u64,
+        loader: Loader,
+        archive: Option<(Vec<u8>, String)>,
+        shared: Arc<Shared>,
+    },
+    To(u64, Msg),
+}
+
+/// An ARA thread and the documents on it, as seen from the other threads.
+struct Host {
+    services: Mutex<Vec<Weak<Shared>>>,
+    ended: AtomicBool,
+}
+
+/// The shared ARA threads, by plugin. Their senders keep them running.
+type SharedHost = (String, Arc<Host>, Sender<Job>);
+static SHARED_HOSTS: Mutex<Vec<SharedHost>> = Mutex::new(Vec::new());
+
+impl Host {
+    fn shared(key: &str) -> Result<(Arc<Host>, Sender<Job>), String> {
+        let mut hosts = lock(&SHARED_HOSTS);
+        hosts.retain(|(_, h, _)| !h.ended.load(Ordering::Acquire));
+        if let Some((_, h, tx)) = hosts.iter().find(|(k, _, _)| k == key) {
+            return Ok((h.clone(), tx.clone()));
+        }
+        let (h, tx) = Host::spawn(Some(key), CALL_LIMIT)?;
+        hosts.push((key.to_string(), h.clone(), tx.clone()));
+        Ok((h, tx))
+    }
+
+    /// Starts an ARA thread and its watch. A thread of its own ends with its last sender.
+    fn spawn(key: Option<&str>, limit: Duration) -> Result<(Arc<Host>, Sender<Job>), String> {
+        let host = Arc::new(Host {
+            services: Mutex::new(Vec::new()),
+            ended: AtomicBool::new(false),
+        });
+        let (tx, rx) = mpsc::channel();
+        let watch = Watch::new(limit);
+        let (ready_tx, ready_rx) = mpsc::channel::<()>();
+        {
+            let watch = watch.clone();
+            let host = host.clone();
+            // Never joined: a contained fault ends this thread without unwinding.
+            std::thread::Builder::new()
+                .name(match key {
+                    Some(k) => format!("ara {k}"),
+                    None => "ara".into(),
+                })
+                .spawn(move || {
+                    watch.attach();
+                    thread_init();
+                    let _ = ready_tx.send(());
+                    host_loop(&rx);
+                    host.ended.store(true, Ordering::Release);
+                })
+                .map_err(|_| "could not start the ARA thread".to_string())?;
+        }
+        let _ = ready_rx.recv_timeout(Duration::from_secs(5));
+        {
+            let host = host.clone();
+            let _ = std::thread::Builder::new()
+                .name("ara-watch".into())
+                .spawn(move || {
+                    loop {
+                        std::thread::sleep(Duration::from_millis(50));
+                        let seen = watch.check();
+                        if host.ended.load(Ordering::Acquire) {
+                            return;
+                        }
+                        let why = match seen {
+                            Seen::Alive => continue,
+                            Seen::Ended => format!(
+                                "the plugin stopped with an {}",
+                                contain::describe(contain::last_code())
+                            ),
+                            Seen::Hung => "the plugin stopped answering".to_string(),
+                        };
+                        host.ended.store(true, Ordering::Release);
+                        host.crash(&why);
+                        return;
+                    }
+                });
+        }
+        Ok((host, tx))
+    }
+
+    /// The host of a service that could not start.
+    fn ended() -> Arc<Host> {
+        Arc::new(Host {
+            services: Mutex::new(Vec::new()),
+            ended: AtomicBool::new(true),
+        })
+    }
+
+    fn add(&self, shared: &Arc<Shared>) {
+        let mut all = lock(&self.services);
+        all.retain(|w| w.strong_count() > 0);
+        all.push(Arc::downgrade(shared));
+    }
+
+    fn forget(&self, shared: &Arc<Shared>) {
+        lock(&self.services)
+            .retain(|w| w.strong_count() > 0 && !std::ptr::eq(w.as_ptr(), Arc::as_ptr(shared)));
+    }
+
+    /// The thread ended in the plugin: every document on it is crashed.
+    fn crash(&self, why: &str) {
+        let all: Vec<Arc<Shared>> = lock(&self.services)
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect();
+        for shared in all {
+            if shared.finished.load(Ordering::Acquire) {
+                continue;
+            }
+            *lock(&shared.crashed) = Some(why.to_string());
+            for s in lock(&shared.states).values_mut() {
+                s.phase = Phase::Crashed;
+                s.rendered = None;
+            }
+            shared.finished.store(true, Ordering::Release);
+            shared.changed();
+        }
+    }
+}
+
+/// The ARA thread is the plugin's UI thread too (as the VST3 owner's): OLE, and its window
+/// messages answered.
+fn thread_init() {
+    #[cfg(windows)]
+    // SAFETY: initializes this thread once; it is never uninitialized (the thread may end by a
+    // contained fault).
+    unsafe {
+        windows_sys::Win32::System::Ole::OleInitialize(std::ptr::null());
+    }
+}
+
+fn pump() {
+    #[cfg(windows)]
+    // SAFETY: a standard PeekMessage loop on a zeroed MSG, bounded.
+    unsafe {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
+        };
+        let mut msg: MSG = std::mem::zeroed();
+        for _ in 0..64 {
+            if PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) == 0 {
+                break;
+            }
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+}
+
+/// A document on the ARA thread, or the place of one that could not be made.
+enum Slot {
+    Open(Box<Ara>),
+    Failed(Arc<Shared>),
+}
+
+impl Slot {
+    fn shared(&self) -> &Arc<Shared> {
+        match self {
+            Slot::Open(a) => &a.shared,
+            Slot::Failed(s) => s,
+        }
+    }
+
+    /// Handles one cycle's messages. Whether the document was stopped.
+    fn handle(&mut self, msgs: Vec<Msg>) -> bool {
+        // Only the newest song matters.
+        let newest = msgs.iter().rposition(|m| matches!(m, Msg::Sync(_)));
+        let mut stop = false;
+        for (i, m) in msgs.into_iter().enumerate() {
+            match (&mut *self, m) {
+                (_, Msg::Stop) => stop = true,
+                (Slot::Open(ara), Msg::Sync(song)) if Some(i) == newest => ara.sync(song),
+                (Slot::Failed(shared), Msg::Sync(song)) => {
+                    let mut states = lock(&shared.states);
+                    for c in &song.clips {
+                        states.entry(c.key).or_default().phase = Phase::Failed;
+                    }
+                }
+                (_, Msg::Sync(_)) => {}
+                (Slot::Open(ara), Msg::Store(tx)) => drop(tx.send(ara.store())),
+                (Slot::Open(ara), Msg::Notes(key, of_mod, tx)) => {
+                    drop(tx.send(ara.notes(key, of_mod)))
+                }
+                (Slot::Open(ara), Msg::Probe(tx)) => drop(tx.send(ara.probe())),
+                (Slot::Failed(_), Msg::Store(tx)) => drop(tx.send(None)),
+                (Slot::Failed(_), Msg::Notes(_, _, tx)) => drop(tx.send(Vec::new())),
+                (Slot::Failed(_), Msg::Probe(tx)) => drop(tx.send(Probe::default())),
+            }
+        }
+        stop
+    }
+
+    fn close(self) {
+        let shared = self.shared().clone();
+        if let Slot::Open(mut ara) = self {
+            ara.teardown();
+        }
+        shared.finished.store(true, Ordering::Release);
+    }
+}
+
+fn open(loader: Loader, archive: Option<(Vec<u8>, String)>, shared: Arc<Shared>) -> Slot {
+    match start(loader, archive, &shared) {
+        Ok(a) => {
+            shared.loaded.store(true, Ordering::Release);
+            Slot::Open(Box::new(a))
+        }
         Err(e) => {
             *lock(&shared.failed) = Some(e.0);
             for s in lock(&shared.states).values_mut() {
                 s.phase = Phase::Failed;
             }
             shared.changed();
-            // Answer until stopped, so callers do not wait for their limits.
-            while let Ok(m) = rx.recv() {
-                match m {
-                    Msg::Stop => return,
-                    Msg::Sync(song) => {
-                        let mut states = lock(&shared.states);
-                        for c in &song.clips {
-                            states.entry(c.key).or_default().phase = Phase::Failed;
-                        }
-                    }
-                    Msg::Store(tx) => drop(tx.send(None)),
-                    Msg::Notes(_, _, tx) => drop(tx.send(Vec::new())),
-                    Msg::Probe(tx) => drop(tx.send(Probe::default())),
-                }
-            }
-            return;
+            Slot::Failed(shared)
         }
-    };
-    shared.loaded.store(true, Ordering::Release);
-    loop {
-        let first = match rx.recv_timeout(Duration::from_millis(30)) {
-            Ok(m) => Some(m),
-            Err(RecvTimeoutError::Timeout) => None,
-            Err(RecvTimeoutError::Disconnected) => Some(Msg::Stop),
-        };
-        let mut msgs: Vec<Msg> = first.into_iter().collect();
-        msgs.extend(rx.try_iter());
-        // Only the newest song matters.
-        let newest = msgs.iter().rposition(|m| matches!(m, Msg::Sync(_)));
-        let mut stop = false;
-        for (i, m) in msgs.into_iter().enumerate() {
-            match m {
-                Msg::Stop => stop = true,
-                Msg::Sync(song) if Some(i) == newest => ara.sync(song),
-                Msg::Sync(_) => {}
-                Msg::Store(tx) => drop(tx.send(ara.store())),
-                Msg::Notes(key, of_mod, tx) => drop(tx.send(ara.notes(key, of_mod))),
-                Msg::Probe(tx) => drop(tx.send(ara.probe())),
-            }
-        }
-        if stop {
-            break;
-        }
-        ara.tick();
     }
-    ara.teardown();
+}
+
+/// The ARA thread: its documents, each edited, asked and rendered in turn, and the plugins'
+/// window messages answered between.
+fn host_loop(rx: &Receiver<Job>) {
+    let mut slots: Vec<(u64, Slot)> = Vec::new();
+    loop {
+        pump();
+        let first = match rx.recv_timeout(Duration::from_millis(30)) {
+            Ok(j) => Some(j),
+            Err(RecvTimeoutError::Timeout) => None,
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
+        let mut msgs: HashMap<u64, Vec<Msg>> = HashMap::new();
+        for job in first.into_iter().chain(rx.try_iter()) {
+            match job {
+                Job::Open {
+                    id,
+                    loader,
+                    archive,
+                    shared,
+                } => slots.push((id, open(loader, archive, shared))),
+                Job::To(id, m) => msgs.entry(id).or_default().push(m),
+            }
+        }
+        // Messages for documents already closed are dropped, and so are their answers.
+        let mut i = 0;
+        while i < slots.len() {
+            let mine = msgs.remove(&slots[i].0).unwrap_or_default();
+            if slots[i].1.handle(mine) {
+                slots.remove(i).1.close();
+                continue;
+            }
+            if let Slot::Open(ara) = &mut slots[i].1 {
+                ara.tick();
+            }
+            i += 1;
+        }
+    }
+    for (_, slot) in slots {
+        slot.close();
+    }
 }
 
 fn start(

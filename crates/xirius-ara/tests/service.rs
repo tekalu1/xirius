@@ -351,3 +351,32 @@ fn removing_a_clip_keeps_the_others() {
     drop(s);
     no_violations();
 }
+
+/// Two documents of one plugin on its one thread: both are edited and rendered, and one
+/// leaving does not stop the other.
+#[test]
+fn documents_of_one_plugin_share_its_thread() {
+    let audio = tone(48000.0, 1.0, 0.5);
+    let shared =
+        |config| Service::start_shared("fake:two", fake::loader(config), None, Arc::new(|| {}));
+    let a = shared(Config {
+        analysis_ms: 20,
+        ..Config::default()
+    });
+    let b = shared(Config::default());
+    a.sync(&song(vec![clip(5201, "l.wav", &audio, 0.0, 0.0, 1.0)]));
+    b.sync(&song(vec![clip(5202, "l.wav", &audio, 0.0, 0.0, 1.0)]));
+    ready(&a, 5201);
+    ready(&b, 5202);
+    assert_eq!(
+        a.probe(WAIT).unwrap().info.plugin_name,
+        b.probe(WAIT).unwrap().info.plugin_name
+    );
+    drop(a);
+    b.sync(&song(vec![clip(5202, "l.wav", &audio, 0.5, 0.0, 1.0)]));
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(b.crashed().is_none() && b.failed().is_none());
+    assert!(b.state(5202).unwrap().rendered.is_some());
+    drop(b);
+    no_violations();
+}

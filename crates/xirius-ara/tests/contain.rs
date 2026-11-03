@@ -85,6 +85,45 @@ fn a_fault_and_a_hang_in_the_plugin_are_contained() {
     );
     drop(s);
 
+    // On a plugin's shared thread, a fault in one document crashes all of them; the next
+    // document starts a thread of its own.
+    let calm = Service::start_shared(
+        "fake:shared",
+        fake::loader(Config::default()),
+        None,
+        Arc::new(|| {}),
+    );
+    calm.sync(&song(4));
+    until("the calm render", || {
+        calm.state(4).is_some_and(|c| c.phase == Phase::Ready)
+    });
+    let faulty = Service::start_shared(
+        "fake:shared",
+        fake::loader(Config {
+            fault_on_analysis: true,
+            ..Config::default()
+        }),
+        None,
+        Arc::new(|| {}),
+    );
+    faulty.sync(&song(5));
+    until("the shared crash", || {
+        faulty.crashed().is_some() && calm.crashed().is_some()
+    });
+    assert_eq!(calm.state(4).unwrap().phase, Phase::Crashed);
+    drop((calm, faulty));
+    let again = Service::start_shared(
+        "fake:shared",
+        fake::loader(Config::default()),
+        None,
+        Arc::new(|| {}),
+    );
+    again.sync(&song(6));
+    until("the render on a new thread", || {
+        again.state(6).is_some_and(|c| c.phase == Phase::Ready)
+    });
+    drop(again);
+
     // The process goes on, and a plugin that behaves still works.
     let s = Service::start(fake::loader(Config::default()), None, Arc::new(|| {}));
     s.sync(&song(3));
