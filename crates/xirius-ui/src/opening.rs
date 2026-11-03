@@ -642,6 +642,7 @@ impl Studio {
             self.warn(BUSY.into(), None);
             return false;
         }
+        self.device_sweep_end();
         let Some(raw) = args.as_object() else {
             return false;
         };

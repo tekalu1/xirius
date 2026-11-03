@@ -161,6 +161,8 @@ impl Studio {
         if self.input_blocked() {
             return false;
         }
+        // A device's knob still turning is saved with the song (M-par-1).
+        self.device_sweep_end();
         if self.song.dir().is_none() {
             self.file_request = Some(FileRequest::SaveAs);
             return true;
@@ -201,6 +203,8 @@ impl Studio {
     }
 
     pub(crate) fn start_leaving(&mut self, leave: Leave) {
+        // A device's knob still turning belongs to the song being left (M-par-1).
+        self.device_sweep_end();
         match &leave {
             Leave::File(request, path) => {
                 self.request_open_file(request.clone(), path);

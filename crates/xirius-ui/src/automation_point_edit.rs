@@ -59,6 +59,11 @@ impl Studio {
 
     pub(crate) fn automation_history(&mut self, redo: bool) -> bool {
         self.drag_drop();
+        // A device's knob turned by the wheel or keys a moment ago is a step of its own first
+        // (M-par-1): Ctrl+Z then takes it back, not the step before it.
+        if self.device_sweep_end() {
+            self.after_edit();
+        }
         // A bounce or freeze not yet in the song is taken back first (ENG-033).
         if !redo && self.job_undo() {
             self.error = None;

@@ -2680,6 +2680,8 @@ impl Studio {
         self.drag_drop();
         self.select_row(None);
         self.selected_clip = None;
+        // The devices' windows were of the song that closed (M-par-2).
+        self.instruments.forget_song();
         self.collapsed.clear();
         self.tall.clear();
         self.arrange = crate::arrange::Arrange::default();

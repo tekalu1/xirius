@@ -422,7 +422,9 @@ impl Studio {
         true
     }
 
-    /// A sweep goes into the song (one step).
+    /// A sweep goes into the song (one step). Also before anything that reads or moves the
+    /// song's history or file: undo, redo, save, another song (M-par-1), so the turn is its
+    /// own step there and not lost or put after them.
     pub(crate) fn device_sweep_end(&mut self) -> bool {
         match self.instruments.sweep.take() {
             Some(s) => self.device_set(s.plugin, s.k, s.value),

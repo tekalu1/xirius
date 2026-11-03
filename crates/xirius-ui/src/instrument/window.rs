@@ -697,6 +697,20 @@ impl Windows {
         self.open.len() - 1
     }
 
+    /// Another song is open (M-par-2): its devices' ids are counted afresh, so nothing a
+    /// window held (a grab, a sweep, a typed value, a note) or showed may reach one of the
+    /// new song's. The windows close; the preset list and the sizes stay.
+    pub(crate) fn forget_song(&mut self) {
+        let presets = std::mem::take(&mut self.presets);
+        let sizes = std::mem::take(&mut self.sizes);
+        *self = Windows {
+            presets,
+            sizes,
+            ..Windows::default()
+        };
+        graph::forget(|_| false);
+    }
+
     /// Forgets the windows whose plugin is gone or is no longer built in.
     fn prune(&mut self, p: &Project) {
         self.open.retain(|w| live(p, w).is_some());

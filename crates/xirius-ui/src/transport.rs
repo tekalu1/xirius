@@ -1741,6 +1741,7 @@ impl Studio {
             && let Some(raw) = args.as_object()
             && self.song.session().save_request(command, raw).is_some()
         {
+            self.device_sweep_end();
             self.save_command_on_worker(command, raw.clone());
             return true;
         }
