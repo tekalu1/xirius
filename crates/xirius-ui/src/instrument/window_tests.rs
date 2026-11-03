@@ -248,6 +248,23 @@ fn the_window_closes_when_its_instrument_goes() {
     assert!(s.instruments.open.is_empty());
 }
 
+/// L-ui-2: until it is forgotten, a window whose device went takes no hover or wheel.
+#[test]
+fn a_window_whose_device_went_takes_no_pointer() {
+    let (mut s, g, t, id) = studio();
+    s.show_instrument(t, id);
+    let r = s.instruments.rect(0, g.size);
+    let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    assert!(s.instruments.at(&s.project(), g.size, x, y).is_some());
+    let w = s.instruments.open[0];
+    assert!(s.remove_instrument(t));
+    // As between a change from elsewhere and the next look at the windows.
+    if s.instruments.open.is_empty() {
+        s.instruments.open.push(w);
+    }
+    assert_eq!(s.instruments.at(&s.project(), g.size, x, y), None);
+}
+
 #[test]
 fn the_knobs_are_the_built_in_parameters_in_their_order() {
     let (s, _, t, _) = studio();

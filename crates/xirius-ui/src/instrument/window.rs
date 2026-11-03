@@ -620,9 +620,9 @@ impl Windows {
                 return None;
             }
             let w = self.open[i];
-            let Some((track, plugin, def)) = live(p, &w) else {
-                return Some((i, Part::Body));
-            };
+            // A window whose device is gone is not drawn, and takes no pointer until it is
+            // forgotten (L-ui-2): what is under it does.
+            let (track, plugin, def) = live(p, &w)?;
             if y < r.y + title_bar::BAR_H {
                 let b = bar(r, track, plugin, def);
                 let part = [
