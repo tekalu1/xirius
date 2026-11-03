@@ -39,6 +39,7 @@ WINDOW_UNIT_TESTS = ["mixer::editor_tests"]
 PLUGIN_TESTS = {
     ("xirius-ara", "test_plugin"): "XIRIUS_ARA_TEST_PLUGIN",
     ("xirius-session", "ara_real"): "XIRIUS_ARA_REAL_PLUGIN",
+    ("xirius-ui", "ara_real_window"): "XIRIUS_ARA_REAL_PLUGIN",
 }
 
 

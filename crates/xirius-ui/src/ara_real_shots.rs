@@ -3,10 +3,13 @@
 //! the list, the badge while it analyses and when it is done, its window from a double click,
 //! the window closed and the song saved and opened again with the plugin's edits, and detached.
 //!
-//! Needs `XIRIUS_ARA_REAL_PLUGIN` set to the plugin's `.vst3`; without it each stage says
-//! `ara-skip`. Run with `--park --silent` and `XIRIUS_EDITOR_OFFSCREEN=1`: the app's window and
-//! the plugin's are off every screen, nothing is played to a speaker. The song is a tone
-//! written into a folder of its own under the temp folder; no song of the user's is opened.
+//! Needs `XIRIUS_ARA_REAL_PLUGIN` set to the plugin's `.vst3`; without it, or when it names no
+//! ARA plugin, the run fails at its first stage (it never passes by skipping). Each stage fails
+//! when it does not see what a person would. `tests/ara_real_window.rs` runs it (`python
+//! scripts/ci_tests.py --plugins`, before a release). Run with `--park --silent` and
+//! `XIRIUS_EDITOR_OFFSCREEN=1`: the app's window and the plugin's are off every screen, nothing
+//! is played to a speaker. The song is a tone written into a folder of its own under the temp
+//! folder; no song of the user's is opened.
 //!
 //! The plugin must not need anyone: a window of the app's process other than the app's and the
 //! plugin's editor (an activation, a question) ends the run at once, untouched, and the run
@@ -183,8 +186,7 @@ fn docs(s: &Studio) -> Vec<String> {
 
 fn play(s: &mut Studio, g: &Geometry, n: u8) {
     let Some(entry) = plugin().and(entry()) else {
-        eprintln!("ara-skip stage={n}: XIRIUS_ARA_REAL_PLUGIN names no ARA plugin");
-        return;
+        panic!("ara-real stage={n}: XIRIUS_ARA_REAL_PLUGIN names no ARA plugin");
     };
     if n == 0 {
         s.drawer_open = false;
@@ -222,12 +224,15 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
         s.prepare_song();
         wait(s, 60.0, |s| s.transport.host().is_some());
         eprintln!("ara-check prepared host={}", s.transport.host().is_some());
+        assert!(
+            s.transport.host().is_some(),
+            "the song's player did not start"
+        );
         return;
     }
     let g = &s.geometry(g.size.0, g.size.1);
     let Some(c) = clip(s) else {
-        eprintln!("ara-check stage={n} clip=missing");
-        return;
+        panic!("ara-real stage={n}: the song has no clip");
     };
     let shot = SHOTS[usize::from(n) - 1].name;
     match n {
@@ -241,8 +246,9 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             eprintln!(
                 "ara-check {shot} last={:?} key={:?}",
                 last.as_ref().map(|r| r.label.clone()),
-                last.map(|r| r.key)
+                last.as_ref().map(|r| r.key.clone())
             );
+            assert_eq!(last.map(|r| r.label).as_deref(), Some(crate::clip_ara::ADD));
         }
         2 => {
             assert!(s.context_choose(g, crate::clip_ara::ADD));
@@ -251,6 +257,7 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
                 .as_ref()
                 .is_some_and(|p| p.kind == crate::popup::PopupKind::AraPlugin);
             eprintln!("ara-check {shot} picking={picking}");
+            assert!(picking, "the list of plugins did not open");
         }
         3 => {
             s.typed(g, "enter", None);
@@ -267,15 +274,18 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
                 s.transport.host().is_some(),
                 s.error
             );
+            assert!(attached && s.popup.is_none(), "{:?}", s.error);
         }
         4 => {
             wait(s, 180.0, |s| badge(s) == "ready");
             eprintln!("ara-check {shot} badge={}", badge(s));
+            assert_eq!(badge(s), "ready");
         }
         5 => {
             let (x, y) = clip_mid(s, g, TRACK, 0);
             let asked = s.arrange_open(g, x, y, Mods::NONE);
             eprintln!("ara-check {shot} asked={asked}");
+            assert!(asked, "the double click did not ask for the window");
         }
         6 => {
             wait(s, 30.0, |s| s.ara.editing.iter().any(|p| p == uid()));
@@ -299,6 +309,11 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
                 hwnd.is_some()
             );
             eprintln!("ara-check {shot} docs={:?} error={:?}", docs(s), s.error);
+            assert!(editing && hwnd.is_some(), "the window did not open");
+            assert!(
+                offscreen && !front,
+                "the window came on a screen or to the front"
+            );
         }
         7 => {
             if let Some(h) = crate::park::own_handle(&title()) {
@@ -323,6 +338,8 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
                 badge(s)
             );
             eprintln!("ara-check {shot} docs={:?} error={:?}", docs(s), s.error);
+            assert!(closed && saved && opened && back, "{:?}", s.error);
+            assert_eq!(badge(s), "ready");
         }
         _ => {
             s.popup = None;
@@ -344,6 +361,7 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
                 s.project().ara.clips.is_empty(),
                 badge(s)
             );
+            assert!(s.project().ara.clips.is_empty(), "the clip did not let go");
         }
     }
 }
