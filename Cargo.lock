@@ -8232,6 +8232,7 @@ dependencies = [
  "clap-sys",
  "serde",
  "serde_json",
+ "sha2",
  "vst3",
  "windows-sys 0.61.2",
  "xirius-vst3",

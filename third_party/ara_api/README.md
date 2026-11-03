@@ -16,3 +16,9 @@ Rust の束縛 `crates/xirius-ara/src/sys.rs` は `ARAInterface.h`・`ARAVST3.h`
 macOS で AU を結ぶときに足す）。
 
 ARA_Examples の TestHost・TestPlugIn は試験のためだけに手元で作る（`docs/ara-host.md`）。
+
+`SHA256SUMS` は、写した 6 つのファイルの SHA-256（上の 2 つの commit から写したときの物）。
+`crates/xirius-ara/tests/api_copy.rs` が、写しがこれと同じことを確かめる（CI で流れる）。
+上げるときは、新しい commit から写し直して `sha256sum ARA*.h LICENSE.txt NOTICE.txt > SHA256SUMS`
+で書き直し、`git diff` でヘッダーの差を読んで、`sys.rs` の型と関数の表を同じに直す
+（構造体の大きさは `sys.rs` の試験が MSVC で測った値と照らす）。
