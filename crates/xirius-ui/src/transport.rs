@@ -193,8 +193,12 @@ pub struct Transport {
     /// The input device cannot be had now (it would not open, or stopped by itself): the
     /// output plays on, and the input is opened again every [`REOPEN`] while a track is armed.
     pub input_down: Option<Down>,
-    /// The last player started a little at a time did not start; the next start clears it.
+    /// The last player started a little at a time did not start, or could not begin; the next
+    /// start clears it.
     pub(crate) start_failed: bool,
+    /// The next player started a little at a time cannot begin, with this.
+    #[cfg(test)]
+    pub(crate) fail_start: Option<String>,
 }
 
 impl Transport {
@@ -241,6 +245,8 @@ impl Transport {
             not_ready: Vec::new(),
             input_down: None,
             start_failed: false,
+            #[cfg(test)]
+            fail_start: None,
         }
     }
 
@@ -348,19 +354,29 @@ impl Transport {
         }
         self.start_failed = false;
         if self.mode == OutputMode::Device || self.windowed {
-            match prepared::Start::new(self, p, dir) {
+            match self.new_start(p, dir) {
                 Ok(start) => {
                     self.prepared_start = Some(start);
                     return true;
                 }
                 Err(error) => {
                     self.driver_notice = Some(error);
+                    // No player will open the clips' ARA plugins: their badges say so.
+                    self.start_failed = true;
                     return false;
                 }
             }
         }
         self.starting = Some((Starting::new(p, self.host_config(dir.clone())), dir));
         true
+    }
+
+    fn new_start(&mut self, p: &Project, dir: Option<PathBuf>) -> Result<prepared::Start, String> {
+        #[cfg(test)]
+        if let Some(e) = self.fail_start.take() {
+            return Err(e);
+        }
+        prepared::Start::new(self, p, dir)
     }
 
     /// How far the player being started is.
