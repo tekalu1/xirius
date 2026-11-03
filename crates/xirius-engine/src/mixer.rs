@@ -167,9 +167,10 @@ pub struct KeySourceSpec {
 /// the insert listens to them at all (ENG-078).
 #[derive(Clone, Debug, PartialEq)]
 pub struct KeySpec {
-    /// The insert in the node's `inserts` that hears the key.
+    /// The insert in the node's `inserts` that hears the key: the plug-in itself, or the
+    /// splitter whose branches hold it (ENG-079).
     pub insert: usize,
-    /// The receiving plug-in's id, for [`Plan::set_key_on`].
+    /// The receiving plug-in's id, for [`Plan::set_key_on`] and to find it in a splitter.
     pub plugin: u64,
     /// `false`: the insert takes its own signal as its key (the model's Int).
     pub on: bool,
@@ -609,6 +610,8 @@ pub struct TrackNode {
 struct KeyIn {
     /// The insert in the node's `inserts` this key belongs to.
     insert: usize,
+    /// The plug-in in that insert's branches that hears it (ENG-079); `None`: the insert itself.
+    inner: Option<u64>,
     /// The summed key, ready for the insert when the node renders.
     buf: Stereo,
     /// The delay on the main signal that puts it at the same time as the key.
@@ -632,6 +635,37 @@ impl KeyIn {
         self.main_delay.apply(&mut left[..n], &mut right[..n], n);
         (self.on && self.acc != usize::MAX).then_some((&self.buf.l[..n], &self.buf.r[..n]))
     }
+}
+
+/// Hands insert `i` of a row its keys (ENG-078, ENG-079): a keyed plug-in's comes back for its
+/// `AudioIo`, a splitter's go to the plug-ins in its branches. `key` walks `keys` in insert
+/// order.
+fn keys_at<'a>(
+    keys: &'a mut [KeyIn],
+    key: &mut usize,
+    i: usize,
+    p: &mut dyn Processor,
+    left: &mut [f32],
+    right: &mut [f32],
+    n: usize,
+) -> Option<(&'a [f32], &'a [f32])> {
+    if *key >= keys.len() || keys[*key].insert != i {
+        return None;
+    }
+    if keys[*key].inner.is_none() {
+        *key += 1;
+        return keys[*key - 1].feed(left, right, n);
+    }
+    while *key < keys.len() && keys[*key].insert == i {
+        let k = &mut keys[*key];
+        *key += 1;
+        let plugin = k.inner;
+        let fed = k.feed(left, right, n);
+        if let (Some(plugin), Some(s)) = (plugin, p.split_mut()) {
+            s.hand_key(plugin, fed);
+        }
+    }
+    None
 }
 
 /// One outgoing key tap on a node (ENG-078): the receiver's accumulator, the
@@ -762,22 +796,29 @@ fn prepare_all(list: &mut [Box<dyn Processor>], setup: &ProcessSetup) {
 /// A key's insert index must be in the node's inserts, and every source a
 /// node in the plan (ENG-078). `node` is the receiver numbered the
 /// `PlanError` way: tracks first, then buses, `usize::MAX` for the master.
+/// A splitter's insert takes the keys of the plug-ins in its branches, one
+/// each (ENG-079); any other insert takes one key.
 fn check_keys(
     node: usize,
     keys: &[KeySpec],
-    inserts: usize,
+    inserts: &[Box<dyn Processor>],
     tracks: usize,
     buses: usize,
 ) -> Result<(), PlanError> {
-    let mut last = None;
+    let mut last: Option<&KeySpec> = None;
     for k in keys {
-        if k.insert >= inserts || last.is_some_and(|l| k.insert <= l) {
+        let split = inserts.get(k.insert).and_then(|p| p.split());
+        let inside = split.is_some_and(|s| s.offset_of(k.plugin).is_some());
+        let order = last.is_none_or(|l| {
+            k.insert > l.insert || (k.insert == l.insert && inside && k.plugin != l.plugin)
+        });
+        if k.insert >= inserts.len() || (split.is_some() && !inside) || !order {
             return Err(PlanError::KeyInsert {
                 node,
                 insert: k.insert,
             });
         }
-        last = Some(k.insert);
+        last = Some(k);
         for s in &k.sources {
             let ok = match s.from {
                 KeyFrom::Track(f) => f < tracks,
@@ -795,6 +836,24 @@ fn check_keys(
     Ok(())
 }
 
+/// Where each key is heard, after the inserts are prepared (ENG-079): `None` for a keyed
+/// insert of the row, the frames from the splitter's input to the plug-in for one in a
+/// splitter's branches, which is then made to listen for it.
+fn key_places(
+    keys: &[KeySpec],
+    inserts: &mut [Box<dyn Processor>],
+    max_block: usize,
+) -> Vec<Option<u32>> {
+    keys.iter()
+        .map(|k| {
+            let s = inserts.get_mut(k.insert)?.split_mut()?;
+            let at = s.offset_of(k.plugin)?;
+            s.listen(k.plugin, max_block);
+            Some(at)
+        })
+        .collect()
+}
+
 /// One node's keyed inserts (ENG-078). For each key, the main signal takes a
 /// delay so it meets the key at the same time as the slowest source; the
 /// faster sources take the matching delay, and the taps are pushed onto the
@@ -806,10 +865,16 @@ fn check_keys(
 /// ordering puts a key's sources in an earlier level. Returns the node's
 /// `KeyIn`s, the delay to apply before each insert, and the node's finished
 /// latency.
+///
+/// `places`: [`key_places`]. A plug-in in a splitter's branch hears the main
+/// signal its offset later than the splitter's input, so its key is aimed
+/// there; the wait goes before the whole splitter, so its branches stay
+/// lined up (ENG-079). Keys inside one splitter share the longest wait.
 #[allow(clippy::too_many_arguments)]
 fn keys_for(
     node_id: NodeId,
     keys: &[KeySpec],
+    places: &[Option<u32>],
     input: u32,
     lats: &[u32],
     eff: &[u32],
@@ -823,17 +888,28 @@ fn keys_for(
     let mut out = Vec::with_capacity(keys.len());
     let mut d = vec![0u32; lats.len()];
     let mut at = input;
-    let mut keyed = keys.iter().peekable();
+    let mut keyed = keys.iter().zip(places).peekable();
     for (i, &lat) in lats.iter().enumerate() {
-        if keyed.peek().is_some_and(|k| k.insert == i) {
-            let k = keyed.next().expect("peeked");
-            // The main signal waits for the slowest key; the faster keys wait.
-            let target = k
-                .sources
-                .iter()
-                .map(|s| eff[node_of(s.from)])
-                .fold(at, u32::max);
-            d[i] = target - at;
+        let mut here = Vec::new();
+        while let Some((k, place)) = keyed.next_if(|(k, _)| k.insert == i) {
+            here.push((k, *place));
+        }
+        // The main signal waits for the slowest key; the faster keys wait.
+        let wait = here
+            .iter()
+            .map(|(k, place)| {
+                let heard = at + place.unwrap_or(0);
+                k.sources
+                    .iter()
+                    .map(|s| eff[node_of(s.from)])
+                    .fold(heard, u32::max)
+                    - heard
+            })
+            .max()
+            .unwrap_or(0);
+        d[i] = wait;
+        for (j, (k, place)) in here.into_iter().enumerate() {
+            let target = at + wait + place.unwrap_or(0);
             let acc = accs.len();
             accs.push(Stereo::new(n));
             on.insert(k.plugin, (node_id, out.len()));
@@ -849,14 +925,15 @@ fn keys_for(
             }
             out.push(KeyIn {
                 insert: i,
+                inner: place.map(|_| k.plugin),
                 buf: Stereo::new(n),
-                main_delay: Delay::new(d[i], n),
+                // The splitter's keys share one wait, applied once.
+                main_delay: Delay::new(if j == 0 { wait } else { 0 }, n),
                 on: k.on,
                 acc,
             });
-            at = target;
         }
-        at += lat;
+        at += wait + lat;
     }
     (out, d, at)
 }
@@ -880,6 +957,7 @@ impl Plan {
         let mut routes = Vec::with_capacity(track_count);
         let mut track_timing = Vec::with_capacity(track_count);
         let mut track_keys = Vec::with_capacity(track_count);
+        let mut track_places = Vec::with_capacity(track_count);
         for (i, slot) in spec.tracks.into_iter().enumerate() {
             match slot {
                 TrackSlot::Keep(old) => {
@@ -902,6 +980,7 @@ impl Plan {
                     tracks.push(None);
                     keep_from.push(Some(old));
                     track_keys.push(Vec::new());
+                    track_places.push(Vec::new());
                 }
                 TrackSlot::New(mut t) => {
                     let bad_bus = t
@@ -916,13 +995,14 @@ impl Plan {
                     if let Some(bus) = bad_bus {
                         return Err(PlanError::UnknownBus { track: i, bus });
                     }
-                    check_keys(i, &t.keys, t.inserts.len(), track_count, bus_count)?;
+                    check_keys(i, &t.keys, &t.inserts, track_count, bus_count)?;
                     let keyed = !t.keys.is_empty();
                     track_keys.push(std::mem::take(&mut t.keys));
                     t.source.prepare(&setup);
                     t.timeline
                         .set_offline(setup.mode == crate::processor::RenderMode::Offline);
                     prepare_all(&mut t.inserts, &setup);
+                    track_places.push(key_places(&track_keys[i], &mut t.inserts, n));
                     track_timing.push(crate::automation_time::Chain {
                         input: t.source.latency(),
                         inserts: t.inserts.iter().map(|p| p.latency()).collect(),
@@ -988,6 +1068,7 @@ impl Plan {
         }
         let mut buses = Vec::with_capacity(bus_count);
         let mut bus_keys = Vec::with_capacity(bus_count);
+        let mut bus_places = Vec::with_capacity(bus_count);
         let mut bus_lats = Vec::with_capacity(bus_count);
         for (i, mut b) in spec.buses.into_iter().enumerate() {
             let feeds = b.sends.iter().map(|s| s.bus).chain(match b.output {
@@ -1002,14 +1083,9 @@ impl Plan {
                     return Err(PlanError::BusOrder { bus: i, to });
                 }
             }
-            check_keys(
-                track_count + i,
-                &b.keys,
-                b.inserts.len(),
-                track_count,
-                bus_count,
-            )?;
+            check_keys(track_count + i, &b.keys, &b.inserts, track_count, bus_count)?;
             prepare_all(&mut b.inserts, &setup);
+            bus_places.push(key_places(&b.keys, &mut b.inserts, n));
             bus_lats.push(b.inserts.iter().map(|p| p.latency()).collect::<Vec<u32>>());
             bus_keys.push(std::mem::take(&mut b.keys));
             buses.push(BusNode {
@@ -1038,10 +1114,11 @@ impl Plan {
         check_keys(
             usize::MAX,
             &master_keys,
-            master_inserts.len(),
+            &master_inserts,
             track_count,
             bus_count,
         )?;
+        let master_places = key_places(&master_keys, &mut master_inserts, n);
         let mut bus_routes: Vec<Route> = buses
             .iter()
             .map(|b| Route {
@@ -1163,6 +1240,7 @@ impl Plan {
                 let (keys, d, e) = keys_for(
                     NodeId::Track(i),
                     &track_keys[i],
+                    &track_places[i],
                     track_timing[i].input,
                     &lats,
                     &eff,
@@ -1190,6 +1268,7 @@ impl Plan {
                 let (keys, d, e) = keys_for(
                     NodeId::Bus(j),
                     &bus_keys[j],
+                    &bus_places[j],
                     arrive[j],
                     &bus_lats[j],
                     &eff,
@@ -1218,6 +1297,7 @@ impl Plan {
         let (master_key_ins, _d, master_eff) = keys_for(
             NodeId::Master,
             &master_keys,
+            &master_places,
             master_arrive,
             &master_lats,
             &eff,
@@ -1729,10 +1809,7 @@ impl Plan {
                 let mut key = 0;
                 for (i, p) in b.inserts.iter_mut().enumerate() {
                     let mut io = b.buf.io(n);
-                    if key < b.keys.len() && b.keys[key].insert == i {
-                        io.key = b.keys[key].feed(&mut io.left[..], &mut io.right[..], n);
-                        key += 1;
-                    }
+                    io.key = keys_at(&mut b.keys, &mut key, i, &mut **p, io.left, io.right, n);
                     p.process(&mut io, &[]);
                 }
                 let has_pre = b.sends.iter().any(|s| s.pre_fader)
@@ -1775,10 +1852,7 @@ impl Plan {
         let mut key = 0;
         for (i, p) in m.inserts.iter_mut().enumerate() {
             let mut io = m.buf.io(n);
-            if key < m.keys.len() && m.keys[key].insert == i {
-                io.key = m.keys[key].feed(&mut io.left[..], &mut io.right[..], n);
-                key += 1;
-            }
+            io.key = keys_at(&mut m.keys, &mut key, i, &mut **p, io.left, io.right, n);
             p.process(&mut io, &[]);
         }
         for i in 0..n {
@@ -1886,13 +1960,7 @@ impl Plan {
         }
         let mut key = 0;
         for (i, p) in c.inserts.iter_mut().enumerate() {
-            let io_key = if key < c.keys.len() && c.keys[key].insert == i {
-                let k = &mut c.keys[key];
-                key += 1;
-                k.feed(&mut left[..n], &mut right[..n], n)
-            } else {
-                None
-            };
+            let io_key = keys_at(&mut c.keys, &mut key, i, &mut **p, left, right, n);
             p.process(
                 &mut AudioIo {
                     left: &mut left[..n],

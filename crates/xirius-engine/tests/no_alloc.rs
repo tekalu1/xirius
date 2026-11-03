@@ -501,7 +501,8 @@ fn stock_devices_taking_file_sets_do_not_allocate() {
 }
 
 /// The splitter's branches (ENG-074): branches of different latency, one nested, while their
-/// values move, a branch mutes and comes back, and the plan is swapped with the track kept.
+/// values move, a branch mutes and comes back, and the plan is swapped with the track kept. A
+/// plug-in in a branch hears a sidechain key (ENG-079).
 #[test]
 fn split_branches_and_their_values_do_not_allocate() {
     use xirius_engine::split::{BranchSpec, SplitProc};
@@ -551,6 +552,18 @@ fn split_branches_and_their_values_do_not_allocate() {
             ],
         ))];
         home.prefetch = false;
+        // A plug-in in a branch hears a key (ENG-079).
+        home.keys = vec![KeySpec {
+            insert: 0,
+            plugin: 901,
+            on: true,
+            sources: vec![KeySourceSpec {
+                id: 1,
+                from: KeyFrom::Track(0),
+                pre: false,
+                level: 0.5,
+            }],
+        }];
         MixSpec {
             tracks: vec![TrackSlot::New(t), TrackSlot::New(home)],
             buses: vec![bus],

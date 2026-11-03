@@ -144,6 +144,11 @@ pub trait Processor: Send {
         None
     }
 
+    /// The splitter itself, to hand a sidechain key to a plug-in in its branches (ENG-079).
+    fn split_mut(&mut self) -> Option<&mut crate::split::SplitProc> {
+        None
+    }
+
     /// The multi-instrument itself, for a [`crate::multi::MultiProc`] (ENG-075): the plan
     /// reaches its layers' values through it. `None` for every other processor.
     fn multi(&self) -> Option<&crate::multi::MultiProc> {
@@ -208,6 +213,10 @@ impl Processor for Readied {
 
     fn split(&self) -> Option<&crate::split::SplitProc> {
         self.inner.split()
+    }
+
+    fn split_mut(&mut self) -> Option<&mut crate::split::SplitProc> {
+        self.inner.split_mut()
     }
 
     fn multi(&self) -> Option<&crate::multi::MultiProc> {

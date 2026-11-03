@@ -1,6 +1,6 @@
 //! A sidechain key (ENG-078) in a track with a splitter (ENG-074): the keyed insert's index is
 //! its place in the arranged row, where a splitter is one insert, and a keyed plug-in inside a
-//! branch hears no key yet and says so.
+//! branch hears its key through that splitter's place (ENG-079).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -10,7 +10,7 @@ use xirius_core::model::{
     KeyMode, KeySource, Plugin, PluginIsolation, PluginKind, Project, Sidechain, Track, TrackKind,
 };
 use xirius_core::rack::{Branch, Rack, RackNode, Split, SplitMode};
-use xirius_engine::TrackSlot;
+use xirius_engine::{Plan, ProcessSetup, RenderMode, TrackSlot};
 use xirius_session::build::Builder;
 use xirius_session::graph::Select;
 
@@ -95,20 +95,24 @@ fn a_key_after_a_splitter_points_at_its_place_in_the_arranged_row() {
 }
 
 #[test]
-fn a_keyed_plugin_inside_a_branch_hears_no_key_and_says_so() {
+fn a_keyed_plugin_inside_a_branch_hears_its_key_through_the_splitter() {
     let (p, t) = song(12);
     let built = Builder::new(48_000, None).build(&p, Select::All);
+    assert!(built.warnings.is_empty(), "{:?}", built.warnings);
     let at = built.graph.track_index(t).unwrap();
     let TrackSlot::New(spec) = &built.spec.tracks[at] else {
         panic!("not built fresh");
     };
-    assert!(spec.keys.is_empty());
+    assert_eq!(spec.keys.len(), 1);
+    assert_eq!(spec.keys[0].plugin, 12);
+    assert_eq!(spec.keys[0].insert, 0, "the splitter that holds it");
+    let setup = ProcessSetup {
+        sample_rate: 48_000.0,
+        max_block: 256,
+        mode: RenderMode::Offline,
+    };
     assert!(
-        built
-            .warnings
-            .iter()
-            .any(|w| w.contains("G12") && w.contains("サイドチェーン")),
-        "{:?}",
-        built.warnings
+        Plan::build(built.spec, setup, None).is_ok(),
+        "the plan takes it"
     );
 }

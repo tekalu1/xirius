@@ -158,6 +158,18 @@ impl Line {
     }
 }
 
+/// The sidechain key of a plug-in in a branch (ENG-079): the plan hands the block's key in
+/// before the splitter runs, already lined up with the main signal at that plug-in.
+struct KeySlot {
+    /// The plug-in's place in its branch.
+    insert: usize,
+    plugin: u64,
+    l: Vec<f32>,
+    r: Vec<f32>,
+    /// `false`: the plug-in takes its own signal as its key.
+    on: bool,
+}
+
 struct BranchProc {
     node: u64,
     cell: Arc<BranchCell>,
@@ -176,6 +188,8 @@ struct BranchProc {
     asleep: bool,
     /// Frames still to run silent after waking, before it fades in.
     hold: u32,
+    /// The keys of the plug-ins in this branch that hear one, in insert order.
+    keys: Vec<KeySlot>,
 }
 
 impl BranchProc {
@@ -212,6 +226,7 @@ impl SplitProc {
                         on: Ramp::new(if b.mute { 0.0 } else { 1.0 }),
                         asleep: false,
                         hold: 0,
+                        keys: Vec::new(),
                     }
                 })
                 .collect(),
@@ -259,6 +274,65 @@ impl SplitProc {
                 offset += p.latency();
             }
         }
+    }
+
+    /// The frames from the splitter's input to plug-in `plugin`'s, in whichever branch it is
+    /// (ENG-079); `None` when it is not inside.
+    pub fn offset_of(&self, plugin: u64) -> Option<u32> {
+        let mut out = Vec::new();
+        self.inner(0, 0, &mut out);
+        out.into_iter().find(|x| x.id == plugin).map(|x| x.offset)
+    }
+
+    /// Makes plug-in `plugin` hear a key handed in with [`SplitProc::hand_key`] (ENG-079).
+    /// Allocates; `false` when it is not inside.
+    pub fn listen(&mut self, plugin: u64, max_block: usize) -> bool {
+        for b in &mut self.branches {
+            for (at, (id, p)) in b.ids.iter().zip(&mut b.inserts).enumerate() {
+                if let Some(s) = p.split_mut() {
+                    if s.listen(plugin, max_block) {
+                        return true;
+                    }
+                } else if *id == plugin {
+                    if !b.keys.iter().any(|k| k.plugin == plugin) {
+                        b.keys.push(KeySlot {
+                            insert: at,
+                            plugin,
+                            l: vec![0.0; max_block],
+                            r: vec![0.0; max_block],
+                            on: false,
+                        });
+                        b.keys.sort_by_key(|k| k.insert);
+                    }
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Hands this block's key to plug-in `plugin` (ENG-079); `None`: it takes its own signal.
+    /// Runs on the audio thread: it copies and allocates nothing.
+    pub fn hand_key(&mut self, plugin: u64, key: Option<(&[f32], &[f32])>) -> bool {
+        for b in &mut self.branches {
+            if let Some(k) = b.keys.iter_mut().find(|k| k.plugin == plugin) {
+                k.on = key.is_some();
+                if let Some((l, r)) = key {
+                    let n = l.len().min(k.l.len());
+                    k.l[..n].copy_from_slice(&l[..n]);
+                    k.r[..n].copy_from_slice(&r[..n]);
+                }
+                return true;
+            }
+            for p in &mut b.inserts {
+                if let Some(s) = p.split_mut()
+                    && s.hand_key(plugin, key)
+                {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     fn size(&mut self, setup: &ProcessSetup) {
@@ -343,8 +417,13 @@ impl Processor for SplitProc {
             let (l, r) = (&mut b.l[..n], &mut b.r[..n]);
             l.copy_from_slice(&io.left[..n]);
             r.copy_from_slice(&io.right[..n]);
-            for p in &mut b.inserts {
-                p.process(&mut AudioIo::new(l, r), &[]);
+            let mut keys = b.keys.iter().peekable();
+            for (at, p) in b.inserts.iter_mut().enumerate() {
+                let mut io = AudioIo::new(l, r);
+                if let Some(k) = keys.next_if(|k| k.insert == at) {
+                    io.key = k.on.then(|| (&k.l[..n], &k.r[..n]));
+                }
+                p.process(&mut io, &[]);
             }
             b.delay.apply(l, r);
         }
@@ -375,6 +454,10 @@ impl Processor for SplitProc {
     }
 
     fn split(&self) -> Option<&SplitProc> {
+        Some(self)
+    }
+
+    fn split_mut(&mut self) -> Option<&mut SplitProc> {
         Some(self)
     }
 }

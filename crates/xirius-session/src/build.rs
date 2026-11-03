@@ -449,7 +449,6 @@ impl Builder {
                     shape.rack.as_ref(),
                     inserts,
                     keys,
-                    &row,
                     &mix.branches,
                     &mut warnings,
                 );
@@ -515,7 +514,6 @@ impl Builder {
                     shape.rack.as_ref(),
                     inserts,
                     keys,
-                    &shape.inserts,
                     &mix.branches,
                     &mut warnings,
                 );
@@ -562,7 +560,6 @@ impl Builder {
             structure.master_rack.as_ref(),
             master_inserts,
             master_keys,
-            &structure.master_inserts,
             &mix.branches,
             &mut warnings,
         );
@@ -940,7 +937,7 @@ impl Builder {
                 fx: l.fx.clone(),
             };
             let (inserts, keys) =
-                self.arrange_ids(&t.name, Some(&chain), row, keys, &plugins, values, warnings);
+                self.arrange_ids(&t.name, Some(&chain), row, keys, values, warnings);
             if !keys.is_empty() {
                 warnings.push(format!(
                     "{}: レイヤー「{}」の中のサイドチェーンのキーはまだ届きません",
@@ -1078,8 +1075,8 @@ impl Builder {
     /// plays exactly as before. The channel and frequency modes split nothing yet (ENG-076):
     /// every branch gets the whole signal.
     ///
-    /// A key (ENG-078) follows its plug-in to the plug-in's place in the arranged row. A
-    /// plug-in inside a branch hears no key yet: its key is left out with a warning.
+    /// A key (ENG-078) follows its plug-in to the plug-in's place in the arranged row; a
+    /// plug-in inside a branch hears it through the splitter's place (ENG-079).
     #[allow(clippy::too_many_arguments)]
     fn arrange(
         &self,
@@ -1087,14 +1084,13 @@ impl Builder {
         rack: Option<&Rack>,
         row: Vec<Box<dyn Processor>>,
         keys: Vec<KeySpec>,
-        plugins: &[Plugin],
         values: &[BranchMix],
         warnings: &mut Vec<String>,
     ) -> (Vec<Box<dyn Processor>>, Vec<KeySpec>) {
         let Some(rack) = rack else {
             return (row, keys);
         };
-        let (out, keys) = self.arrange_ids(owner, Some(rack), row, keys, plugins, values, warnings);
+        let (out, keys) = self.arrange_ids(owner, Some(rack), row, keys, values, warnings);
         (out.into_iter().map(|(_, p)| p).collect(), keys)
     }
 
@@ -1106,7 +1102,6 @@ impl Builder {
         rack: Option<&Rack>,
         row: Vec<Box<dyn Processor>>,
         keys: Vec<KeySpec>,
-        plugins: &[Plugin],
         values: &[BranchMix],
         warnings: &mut Vec<String>,
     ) -> (Placed, Vec<KeySpec>) {
@@ -1129,27 +1124,17 @@ impl Builder {
                 "{owner}: チャンネル・周波数のスプリッターはまだ音を分けないため、どの分岐にも同じ音を送ります"
             ));
         }
-        let keys = keys
+        // A plug-in in a branch hears its key through the splitter that holds it (ENG-079).
+        let mut keys: Vec<KeySpec> = keys
             .into_iter()
-            .filter_map(
-                |mut k| match out.iter().position(|(id, _)| *id == k.plugin) {
-                    Some(i) => {
-                        k.insert = i;
-                        Some(k)
-                    }
-                    None => {
-                        let name = plugins
-                            .iter()
-                            .find(|x| x.id.0 == k.plugin)
-                            .map_or("?", |x| x.name.as_str());
-                        warnings.push(format!(
-                        "{owner}: {name} は分岐の中にあるため、サイドチェーンのキーはまだ届きません"
-                    ));
-                        None
-                    }
-                },
-            )
+            .filter_map(|mut k| {
+                k.insert = out.iter().position(|(id, p)| {
+                    *id == k.plugin || p.split().is_some_and(|s| s.offset_of(k.plugin).is_some())
+                })?;
+                Some(k)
+            })
             .collect();
+        keys.sort_by_key(|k| k.insert);
         (out, keys)
     }
 
