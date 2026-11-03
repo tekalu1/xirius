@@ -294,6 +294,61 @@ fn ui_326_the_dot_switches_a_band_and_the_type_menu_sets_its_type() {
     assert_eq!(s.song().steps(), before + 2);
 }
 
+/// M-ui-2: every band's point is a Slider reading all it moves, its gain and Q its children;
+/// a screen reader's increment steps it as the arrow keys do, a value set puts it in at once,
+/// and the knobs take the same.
+#[test]
+fn ui_325_the_points_are_sliders_a_screen_reader_turns() {
+    use crate::a11y::Turn;
+    let (mut s, g, t, id) = eq_window();
+    let marks = crate::a11y::marks(&s, &g);
+    let points: Vec<_> = marks
+        .iter()
+        .filter(|m| m.key.starts_with(&format!("device-{id}-point-0-")))
+        .collect();
+    assert_eq!(points.len(), eq::NAMES.len(), "a mark for every band");
+    let lmf = points[2];
+    assert_eq!(lmf.node.role(), accesskit::Role::Slider);
+    assert!(lmf.node.label().unwrap().starts_with("LMF"));
+    assert!(lmf.node.value().unwrap().contains("Hz"));
+    assert_eq!(lmf.turn, Some((id, k_of(&s, t, "mid1_freq"))));
+    let kids: Vec<_> = lmf.children.iter().filter_map(|m| m.turn).collect();
+    assert!(kids.contains(&(id, k_of(&s, t, "mid1_gain"))));
+    assert!(
+        lmf.children
+            .iter()
+            .all(|m| m.node.role() == accesskit::Role::Slider)
+    );
+
+    // An increment steps as the arrow does, and goes in once still.
+    let (k, f0) = (k_of(&s, t, "mid1_freq"), plain(&s, t, "mid1_freq"));
+    let before = s.song().steps();
+    assert!(crate::a11y::turn(&mut s, id, k, Turn::Up));
+    assert!(s.device_sweep_end());
+    assert_eq!(s.song().steps(), before + 1);
+    assert!(plain(&s, t, "mid1_freq") > f0);
+    assert!(crate::a11y::turn(&mut s, id, k, Turn::Down));
+    assert!(s.device_sweep_end());
+    assert!((plain(&s, t, "mid1_freq") - f0).abs() < 1e-6 * f0.max(1.0) + 0.5);
+    // A value set: at once, in one step.
+    let gain = k_of(&s, t, "mid1_gain");
+    assert!(crate::a11y::turn(&mut s, id, gain, Turn::To(100.0)));
+    assert_eq!(s.song().steps(), before + 3);
+    assert_eq!(values(&fx(&s, t))[gain], 1.0);
+    let marks = crate::a11y::marks(&s, &g);
+    let knob = marks
+        .iter()
+        .find(|m| m.key == format!("device-{id}-mid1_gain"))
+        .unwrap();
+    assert_eq!(knob.turn, Some((id, gain)));
+    assert_eq!(knob.node.numeric_value(), Some(100.0));
+    let on = marks
+        .iter()
+        .find(|m| m.key == format!("device-{id}-b3_on"))
+        .unwrap();
+    assert_eq!(on.turn, None, "a button is pressed, not turned");
+}
+
 #[test]
 fn ui_326_the_tabs_the_spectrum_and_the_head_read_their_names() {
     let (mut s, g, t, id) = eq_window();

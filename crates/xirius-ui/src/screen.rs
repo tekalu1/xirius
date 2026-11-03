@@ -1743,6 +1743,38 @@ fn mark(m: crate::a11y::Mark, studio: Rc<RefCell<Studio>>) -> gpui::Stateful<gpu
     if let Some(toggled) = n.toggled() {
         el = el.aria_toggled(toggled);
     }
+    if let Some(v) = n.numeric_value() {
+        el = el.aria_numeric_value(v);
+    }
+    if let Some(v) = n.min_numeric_value() {
+        el = el.aria_min_numeric_value(v);
+    }
+    if let Some(v) = n.max_numeric_value() {
+        el = el.aria_max_numeric_value(v);
+    }
+    // A device's Slider steps and takes a value from a screen reader (M-ui-2).
+    if let Some((plugin, k)) = m.turn {
+        use crate::a11y::Turn;
+        use gpui::accesskit::{Action, ActionData};
+        for action in [Action::Increment, Action::Decrement, Action::SetValue] {
+            let studio = studio.clone();
+            el = el.on_a11y_action(action, move |data, window, _| {
+                let way = match (action, data) {
+                    (Action::Increment, _) => Turn::Up,
+                    (Action::Decrement, _) => Turn::Down,
+                    (_, Some(ActionData::NumericValue(v))) => Turn::To(*v),
+                    (_, Some(ActionData::Value(v))) => match v.trim().parse() {
+                        Ok(v) => Turn::To(v),
+                        Err(_) => return,
+                    },
+                    _ => return,
+                };
+                if crate::a11y::turn(&mut studio.borrow_mut(), plugin, k, way) {
+                    window.refresh();
+                }
+            });
+        }
+    }
     el = el.children(m.children.into_iter().map(|mut child| {
         if let Some(r) = child.node.bounds() {
             child.node.set_bounds(gpui::accesskit::Rect::new(

@@ -795,6 +795,38 @@ impl Studio {
         out
     }
 
+    /// A screen reader turns the control `k` of `plugin` (M-ui-2): a step up or down as the
+    /// arrow keys make it (the song takes it once still), or to a value in one step.
+    pub(crate) fn device_a11y_turn(
+        &mut self,
+        plugin: PluginId,
+        k: usize,
+        way: crate::a11y::Turn,
+    ) -> bool {
+        use crate::a11y::Turn;
+        let dir = match way {
+            Turn::Up => 1.0,
+            Turn::Down => -1.0,
+            Turn::To(at) => {
+                let Some((track, def, _)) = self.device(plugin) else {
+                    return false;
+                };
+                let Some(spec) = def.params.get(k) else {
+                    return false;
+                };
+                if self.param_locked(track, plugin, spec.id) {
+                    return false;
+                }
+                self.device_sweep_end();
+                let v = control::snap(spec, (at / 100.0).clamp(0.0, 1.0));
+                return self.device_set(plugin, k, v);
+            }
+        };
+        self.device_turn(plugin, k, |spec, v| {
+            control::step(spec, v, dir, Step::Small)
+        })
+    }
+
     /// The keys go to the stop `stop` of the window of `plugin`. A point not on show is
     /// chosen, and the keys go on to the first of its controls (`ahead`; else the last).
     fn device_stop(

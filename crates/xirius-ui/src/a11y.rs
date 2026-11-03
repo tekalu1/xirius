@@ -6,7 +6,7 @@
 use crate::studio::{Geometry, Hit, Rect, Studio};
 use crate::tree::RowKind;
 use gpui::accesskit;
-use xirius_core::id::TrackId;
+use xirius_core::id::{PluginId, TrackId};
 use xirius_design::Layout;
 
 /// The rows of the track column as accessible nodes (window coordinates).
@@ -169,6 +169,9 @@ pub struct Mark {
     pub pick: Option<TrackId>,
     /// What a press on it presses, as the pointer would (the audition's button, BRW-023).
     pub press: Option<crate::studio::Hit>,
+    /// The device's control a screen reader's increment, decrement and value set turn
+    /// (UI-325, M-ui-2).
+    pub turn: Option<(PluginId, usize)>,
 }
 
 fn bounds(r: Rect) -> accesskit::Rect {
@@ -214,6 +217,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                         fold: None,
                         pick: None,
                         press: None,
+                        turn: None,
                     }
                 })
                 .collect();
@@ -239,6 +243,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                         fold: None,
                         pick: None,
                         press: None,
+                        turn: None,
                     });
                 }
                 // 「一致する…はありません」 as a status (UI-320).
@@ -253,6 +258,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                         fold: None,
                         pick: None,
                         press: None,
+                        turn: None,
                     });
                 }
                 None
@@ -313,6 +319,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 fold: Some(t),
                 pick: None,
                 press: None,
+                turn: None,
             });
         }
     }
@@ -497,6 +504,7 @@ pub fn drawer_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             fold: None,
             pick: None,
             press,
+            turn: None,
         }
     };
     let mut out = Vec::new();
@@ -626,6 +634,7 @@ fn audition_mark(s: &Studio, g: &Geometry) -> Option<Mark> {
         press: Some(crate::studio::Hit::Browser(
             crate::browser::BrowserHit::Audition,
         )),
+        turn: None,
     })
 }
 
@@ -692,6 +701,7 @@ fn preset_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             fold: None,
             pick: None,
             press: Some(crate::studio::Hit::Browser(press)),
+            turn: None,
         });
     }
     out
@@ -724,6 +734,7 @@ fn inspector_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 fold: None,
                 pick: None,
                 press: None,
+                turn: None,
             }
         })
         .collect()
@@ -754,6 +765,7 @@ fn instrument_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 fold: None,
                 pick: Some(strip.track),
                 press: None,
+                turn: None,
             })
         })
         .collect()
@@ -783,6 +795,7 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             fold: None,
             pick: None,
             press: None,
+            turn: None,
         };
         for (t, tab) in body.tabs.iter().enumerate() {
             let mut node = accesskit::Node::new(accesskit::Role::Tab);
@@ -861,6 +874,54 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             node.set_bounds(bounds(spot.r));
             out.push(mark(format!("device-{}-spot-{n}", w.plugin), node));
         }
+        // A graph's point is a Slider of the first value it moves, reading all of them; the
+        // others are its children (UI-325, M-ui-2).
+        for n in 0..body.graphs.len() {
+            for (i, pt) in s.instruments.points_of(r, x, def, n).iter().enumerate() {
+                let ks: Vec<usize> = pt.params().collect();
+                let Some(&first) = ks.first() else {
+                    continue;
+                };
+                let at = Rect::new(pt.at.0 - 8.0, pt.at.1 - 8.0, 16.0, 16.0);
+                let slider = |k: usize, label: String, value: String| {
+                    let v = s.instruments.turning(w.plugin, k).unwrap_or(now[k]);
+                    let mut node = accesskit::Node::new(accesskit::Role::Slider);
+                    node.set_label(label);
+                    node.set_value(value);
+                    node.set_min_numeric_value(0.0);
+                    node.set_max_numeric_value(100.0);
+                    node.set_numeric_value((v * 100.0).round());
+                    node.set_bounds(bounds(at));
+                    node
+                };
+                let children = ks[1..]
+                    .iter()
+                    .map(|&k| {
+                        let spec = &def.params[k];
+                        let v = s.instruments.turning(w.plugin, k).unwrap_or(now[k]);
+                        let label = format!("{} {}", pt.label, control::name(def, spec));
+                        Mark {
+                            key: format!("device-{}-point-{n}-{i}-{}", w.plugin, spec.id),
+                            children: Vec::new(),
+                            node: slider(k, label, control::text(spec, v)),
+                            fold: None,
+                            pick: None,
+                            press: None,
+                            turn: Some((w.plugin, k)),
+                        }
+                    })
+                    .collect();
+                out.push(Mark {
+                    key: format!("device-{}-point-{n}-{i}", w.plugin),
+                    children,
+                    node: slider(first, pt.name.clone(), pt.value.clone()),
+                    fold: None,
+                    pick: None,
+                    press: None,
+                    turn: Some((w.plugin, first)),
+                });
+            }
+        }
         for slot in body.slots {
             let spec = &def.params[slot.k];
             let v = s
@@ -901,6 +962,7 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 _ => control::text(spec, v),
             });
             node.set_bounds(bounds(slot.hit(def)));
+            let turns = matches!(slot.look, Look::Knob | Look::Segments | Look::Field);
             out.push(Mark {
                 key: format!("device-{}-{}", w.plugin, spec.id),
                 children: Vec::new(),
@@ -908,10 +970,26 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 fold: None,
                 pick: None,
                 press: None,
+                turn: turns.then_some((w.plugin, slot.k)),
             });
         }
     }
     out
+}
+
+/// A screen reader turns a device's control `k`: a step up or down as the arrow keys make
+/// it, or to a value as if typed in (M-ui-2).
+pub fn turn(s: &mut Studio, plugin: PluginId, k: usize, way: Turn) -> bool {
+    s.device_a11y_turn(plugin, k, way)
+}
+
+/// What a screen reader does to a Slider.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Turn {
+    Up,
+    Down,
+    /// To this many hundredths of its travel.
+    To(f64),
 }
 
 /// A screen reader's press on the icon-only row: the same press as the pointer's.
