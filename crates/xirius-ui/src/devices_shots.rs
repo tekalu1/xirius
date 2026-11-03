@@ -34,6 +34,10 @@ const fn pin_stage(n: u8) -> Act {
     Act::Stage(Play::Laid(play_pin), n)
 }
 
+const fn size_stage(n: u8) -> Act {
+    Act::Stage(Play::Laid(play_size), n)
+}
+
 pub const SHOTS: &[Shot] = &[
     // The Compressor as it opens, four seconds of a beat in its history.
     Shot {
@@ -114,6 +118,17 @@ pub const SHOTS: &[Shot] = &[
     Shot {
         name: "rev03-decay-menu",
         acts: &[Act::Reset, rev_stage(0), rev_stage(2)],
+    },
+    // The EQ's window made bigger by its corner: the curve grows, the
+    // knobs keep their size, the grip shows under the pointer.
+    Shot {
+        name: "size01-eq-grown",
+        acts: &[Act::Reset, size_stage(0)],
+    },
+    // The Compressor's: its history and meters grow, the curve stays square.
+    Shot {
+        name: "size02-compressor-grown",
+        acts: &[Act::Reset, size_stage(1)],
     },
 ];
 
@@ -362,6 +377,35 @@ fn play_limiter(s: &mut Studio, g: &Geometry, n: u8) {
     }
 }
 
+/// Drags the corner of `id`'s window by `(dx, dy)` and leaves the pointer
+/// on it.
+fn grow(s: &mut Studio, g: &Geometry, id: PluginId, dx: f32, dy: f32) {
+    if let Some((x, y)) = s.instrument_center(g, id, Part::Resize) {
+        s.instrument_press(g, x, y, 1, Mods::NONE);
+        s.instrument_moved(g, x + dx, y + dy, false);
+        s.instrument_up();
+        s.instrument_hover(g, x + dx, y + dy);
+    }
+}
+
+fn play_size(s: &mut Studio, g: &Geometry, n: u8) {
+    let g = &s.geometry(g.size.0, g.size.1);
+    match n {
+        0 => {
+            if let Some(id) = open_device(s, "EQ") {
+                grow(s, g, id, 240.0, 160.0);
+            }
+        }
+        1 => {
+            if let Some(id) = open_device(s, "Compressor") {
+                hear_a_beat(s, id);
+                grow(s, g, id, 200.0, 140.0);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn play_pin(s: &mut Studio, g: &Geometry, n: u8) {
     let g = &s.geometry(g.size.0, g.size.1);
     match n {
@@ -466,6 +510,17 @@ mod tests {
         }
         assert_eq!(s.instruments.open.len(), 2);
         assert!(s.instruments.open[0].pinned && !s.instruments.open[1].pinned);
+    }
+
+    #[test]
+    fn the_size_stages_play_without_a_window() {
+        let mut s = Studio::sample();
+        let g = s.geometry(1600.0, 1000.0);
+        assert!(Play::Laid(play_size).without_window(&mut s, &g, 0));
+        let natural = layout::size(xirius_params::find("eq").unwrap(), eq::NATURAL_W);
+        let body = s.instruments.open[0].body;
+        assert_eq!(body, (natural.0 + 240.0, natural.1 + 160.0));
+        assert!(s.instruments.sizing(), "the grip shows");
     }
 
     #[test]

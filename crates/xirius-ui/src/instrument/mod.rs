@@ -216,6 +216,8 @@ mod menu_tests;
 #[cfg(test)]
 mod pin_tests;
 #[cfg(test)]
+mod resize_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod window_tests;

@@ -103,6 +103,8 @@ pub struct Body {
     pub levels: Vec<super::dynamics::Level>,
     /// Where a synced device says the tempo (UI-329).
     pub tempo: Option<Rect>,
+    /// The graph that grows when the window is taller (UI-331).
+    pub main: usize,
 }
 
 impl Body {
@@ -134,6 +136,76 @@ impl Body {
             tempo: self.tempo.map(m),
             ..self
         }
+    }
+
+    /// The same body `h` tall when that is taller (UI-331): the main graph
+    /// takes the rest, what is under it moves down, and in its row beside it
+    /// a meter or a column of levels stretches and a control at their foot
+    /// moves down with the graph's foot. The controls keep their size.
+    pub fn grown(mut self, h: f32) -> Body {
+        let dy = h - self.h;
+        let Some(&g) = self.graphs.get(self.main) else {
+            return self;
+        };
+        if dy <= 0.0 {
+            return self;
+        }
+        const E: f32 = 0.5;
+        let under = |r: &Rect| r.y >= g.bottom() - E;
+        let row = |r: &Rect| r.y >= g.y - E && r.bottom() <= g.bottom() + E;
+        let beside = |r: &Rect| r.y >= g.y - E && r.y < g.bottom() && r.x >= g.right();
+        let fit = |r: &mut Rect| {
+            if under(r) {
+                r.y += dy;
+            } else if row(r) {
+                r.h += dy;
+            }
+        };
+        for s in &mut self.slots {
+            if under(&s.cell) || beside(&s.cell) {
+                s.cell.y += dy;
+            }
+        }
+        for (n, r) in self.graphs.iter_mut().enumerate() {
+            if n == self.main {
+                r.h += dy;
+            } else if under(r) {
+                r.y += dy;
+            }
+        }
+        self.faces.iter_mut().for_each(fit);
+        self.meters.iter_mut().for_each(fit);
+        for n in &mut self.names {
+            if under(&n.r) {
+                n.r.y += dy;
+            }
+        }
+        for t in &mut self.tabs {
+            if under(&t.r) {
+                t.r.y += dy;
+            }
+        }
+        if let Some(r) = &mut self.tempo
+            && under(r)
+        {
+            r.y += dy;
+        }
+        for l in &mut self.levels {
+            if under(&l.name) {
+                *l = l.clone().at(0.0, dy);
+            } else if row(&Rect::new(
+                l.name.x,
+                l.name.y,
+                0.0,
+                l.readout.bottom() - l.name.y,
+            )) {
+                // Its bars stretch and its readout stays under them.
+                l.bars.iter_mut().for_each(|b| b.h += dy);
+                l.readout.y += dy;
+            }
+        }
+        self.h = h;
+        self
     }
 }
 
@@ -182,6 +254,18 @@ pub fn natural_w(def: &BuiltinDef) -> f32 {
         "limiter" => super::limiter::NATURAL_W,
         "delay" => super::delay::NATURAL_W,
         "reverb" => super::reverb::NATURAL_W,
+        _ => rows(def).w,
+    }
+}
+
+/// The narrowest a device's window goes (UI-331).
+pub fn min_w(def: &BuiltinDef) -> f32 {
+    match def.uid {
+        "eq" => super::eq::MIN_W,
+        "compressor" => super::compressor::MIN_W,
+        "limiter" => super::limiter::MIN_W,
+        "delay" => super::delay::MIN_W,
+        "reverb" => super::reverb::MIN_W,
         _ => rows(def).w,
     }
 }

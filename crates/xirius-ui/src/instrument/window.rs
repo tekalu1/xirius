@@ -135,6 +135,12 @@ pub(crate) enum Grab {
         from: (f32, f32),
         pointer: (f32, f32),
     },
+    /// The corner (UI-331): the body's size when it was taken.
+    Size {
+        plugin: PluginId,
+        from: (f32, f32),
+        pointer: (f32, f32),
+    },
     /// A knob: its value (0..1) while it turns.
     Knob {
         plugin: PluginId,
@@ -158,9 +164,10 @@ pub(crate) enum Grab {
 impl Grab {
     fn plugin(&self) -> PluginId {
         match *self {
-            Grab::Move { plugin, .. } | Grab::Knob { plugin, .. } | Grab::Point { plugin, .. } => {
-                plugin
-            }
+            Grab::Move { plugin, .. }
+            | Grab::Size { plugin, .. }
+            | Grab::Knob { plugin, .. }
+            | Grab::Point { plugin, .. } => plugin,
         }
     }
 
@@ -192,6 +199,8 @@ pub enum Part {
     Channel,
     Pin,
     Close,
+    /// The bottom right corner: the window's size (UI-331).
+    Resize,
     Knob(usize),
     /// The `i`th point of the `graph`th graph (UI-325).
     Point(usize, usize),
@@ -290,6 +299,9 @@ pub struct Windows {
     /// The window a device last opened in and when: its frame lights a
     /// moment so the eye finds it (UI-323).
     pub(crate) flash: Option<(PluginId, std::time::Instant)>,
+    /// The body's size each kind of device was last left at: its next
+    /// window opens so (UI-331).
+    pub(crate) sizes: HashMap<&'static str, (f32, f32)>,
 }
 
 /// How long an opened window's frame lights.
@@ -298,6 +310,20 @@ pub const FLASH: std::time::Duration = std::time::Duration::from_millis(500);
 const FLASH_W: f32 = 3.0;
 /// How far each new window sits from the one before it.
 pub const CASCADE: f32 = 28.0;
+/// The square in the bottom right corner that takes the window's size.
+pub const GRIP: f32 = 14.0;
+
+/// The corner of the window whose frame is `r` that takes its size.
+pub fn grip(r: Rect) -> Rect {
+    Rect::new(r.right() - GRIP, r.bottom() - GRIP, GRIP, GRIP)
+}
+
+/// The body's size of `def` at about `want`: no narrower than the device
+/// goes, no shorter than its controls need at that width (UI-331).
+pub fn fit(def: &BuiltinDef, want: (f32, f32)) -> (f32, f32) {
+    let (w, h) = layout::size(def, want.0.max(layout::min_w(def)));
+    (w, want.1.max(h))
+}
 
 impl Windows {
     pub fn is_open(&self, id: PluginId) -> bool {
@@ -430,6 +456,7 @@ impl Windows {
             Part::Channel => bar.channel.unwrap_or_default(),
             Part::Pin => bar.pin,
             Part::Close => bar.close,
+            Part::Resize => grip(r),
             Part::Knob(k) => body().slot(k).map(|s| s.hit(def)).unwrap_or_default(),
             Part::Point(n, i) => self
                 .points_of(r, plugin, def, n)
@@ -508,6 +535,9 @@ impl Windows {
                 .map_or(Part::Head, |(_, part)| part);
                 return Some((i, part));
             }
+            if grip(r).contains(x, y) {
+                return Some((i, Part::Resize));
+            }
             let now = self.shown(plugin);
             let b = body_of(r, def, &now, self.band(plugin.id));
             if self
@@ -549,6 +579,14 @@ impl Windows {
                 .unwrap_or(Part::Body);
             Some((i, part))
         })
+    }
+
+    /// Is a window's corner held, or the pointer on it (UI-331)?
+    pub fn sizing(&self) -> bool {
+        match self.grab {
+            Some(g) => matches!(g, Grab::Size { .. }),
+            None => self.hot.is_some_and(|(_, part)| part == Part::Resize),
+        }
     }
 
     /// How lit the frame of `id` is at `now`: 1 as it opens, 0 after
@@ -697,6 +735,7 @@ pub(crate) fn body_of(r: Rect, def: &BuiltinDef, now: &[f64], band: usize) -> Bo
             values: now,
         },
     )
+    .grown(r.h - title_bar::BAR_H)
     .at(r.x, r.y + title_bar::BAR_H)
 }
 
@@ -759,7 +798,11 @@ impl Studio {
                 let Some(def) = def else {
                     return;
                 };
-                let body = layout::size(def, layout::natural_w(def));
+                // The size this kind was last left at, else its own.
+                let body = match ins.sizes.get(def.uid) {
+                    Some(&want) => fit(def, want),
+                    None => layout::size(def, layout::natural_w(def)),
+                };
                 let win = Win {
                     track: t,
                     plugin: id,
@@ -849,6 +892,13 @@ impl Studio {
                 self.instruments.grab = Some(Grab::Move {
                     plugin: w.plugin,
                     from: (r.x, r.y),
+                    pointer: (x, y),
+                });
+            }
+            Part::Resize => {
+                self.instruments.grab = Some(Grab::Size {
+                    plugin: w.plugin,
+                    from: w.body,
                     pointer: (x, y),
                 });
             }
@@ -987,6 +1037,38 @@ impl Studio {
                 }
                 true
             }
+            Some(Grab::Size {
+                plugin,
+                from,
+                pointer,
+            }) => {
+                let p = self.project();
+                let Some(i) = self
+                    .instruments
+                    .open
+                    .iter()
+                    .position(|w| w.plugin == plugin)
+                else {
+                    return false;
+                };
+                let w = self.instruments.open[i];
+                let Some((_, _, def)) = live(&p, &w) else {
+                    return false;
+                };
+                // The frame stays where it is: its corner keeps on the screen.
+                let r = self.instruments.rect(i, g.size);
+                let want = (
+                    (from.0 + x - pointer.0).min(g.size.0 - r.x),
+                    (from.1 + y - pointer.1).min(g.size.1 - r.y - title_bar::BAR_H),
+                );
+                let body = fit(def, want);
+                if body == w.body {
+                    return true;
+                }
+                // Its corner stays: it sits by the width it was placed by.
+                self.instruments.open[i].body = body;
+                true
+            }
             Some(Grab::Knob {
                 plugin,
                 k,
@@ -1045,6 +1127,15 @@ impl Studio {
                     "plugin.param.set",
                     json!({ "id": plugin.to_string(), "param": spec.id, "value": value }),
                 );
+            }
+        }
+        if let Grab::Size { plugin, .. } = grab {
+            // The next window of its kind opens at this size.
+            let p = self.project();
+            if let Some(w) = self.instruments.open.iter().find(|w| w.plugin == plugin)
+                && let Some((_, _, def)) = live(&p, w)
+            {
+                self.instruments.sizes.insert(def.uid, w.body);
             }
         }
         if let Grab::Point { plugin, x, y, .. } = grab {
@@ -1384,6 +1475,16 @@ fn paint_window(
                 xirius_core::auto::AutoTarget::Param(plugin.id, spec.id.to_string()),
                 mark,
             );
+        }
+        // The corner's grip while the pointer is on it or holds it: three
+        // dots in its corner (UI-331).
+        let held = matches!(ins.grab, Some(Grab::Size { plugin: id, .. }) if id == plugin.id);
+        if held || hot == Some(Part::Resize) {
+            let (x, y) = (r.right() - 6.0, r.bottom() - 6.0);
+            for (dx, dy) in [(0.0, 0.0), (-4.0, 0.0), (0.0, -4.0)] {
+                let dot = Rect::new(x + dx - 1.0, y + dy - 1.0, 2.0, 2.0);
+                pen.round(dot, c.scroll_thumb[0], Radius::Xs);
+            }
         }
     });
 }

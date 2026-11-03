@@ -69,6 +69,8 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
     let inner = w - PAD * 2.0;
     let mut b = Body {
         w,
+        // The history grows; the transfer curve stays square.
+        main: 1,
         ..Body::default()
     };
     let side_w = dynamics::side_w(&LABELS);

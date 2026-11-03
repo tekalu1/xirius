@@ -99,6 +99,9 @@ pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {
     {
         return Pointer::style(CursorStyle::Arrow);
     }
+    if studio.instruments.sizing() {
+        return Pointer::style(CursorStyle::ResizeUpLeftDownRight);
+    }
     if studio.edge_cursor() {
         return Pointer::style(CursorStyle::ResizeRow);
     }
