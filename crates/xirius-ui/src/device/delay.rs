@@ -43,7 +43,7 @@ const PAD_FOOT: f32 = 6.0;
 const GAP: f32 = 8.0;
 const TAPS_H: f32 = 200.0;
 const TAPS_H_NARROW: f32 = 180.0;
-const BAND_H: f32 = 62.0;
+pub const BAND_H: f32 = 62.0;
 /// Below this the knobs go under the Color band.
 const NARROW: f32 = 520.0;
 /// How far in from the plane's sides the time runs.
@@ -57,6 +57,8 @@ const BOX_W: f32 = 84.0;
 const TEMPO_W: f32 = 60.0;
 /// Where the band's points sit, down from its top.
 const BAND_DOT: f32 = 38.0;
+/// The ends of the Color band.
+const CUTS: [&str; 2] = ["low_cut", "high_cut"];
 const BAND_MARKS: [(f64, &str); 3] = [(100.0, "100"), (1000.0, "1k"), (10_000.0, "10k")];
 const TIME_MARKS: [(f64, &str); 4] = [(0.5, "500 ms"), (1.0, "1 s"), (1.5, "1.5 s"), (2.0, "2 s")];
 
@@ -434,10 +436,15 @@ pub fn band_axis(r: Rect) -> Axis {
 /// The points on the Color band `r`: Low Cut and High Cut at its ends, each
 /// with its value over it.
 pub fn band_points(def: &BuiltinDef, r: Rect, values: &[f64]) -> Vec<Point> {
+    cut_points(def, r, values, CUTS)
+}
+
+/// The points at the ends of a band `r` whose ends are the parameters `ids`
+/// (the Delay's cuts, the Reverb's Low Cut and Damping).
+pub fn cut_points(def: &BuiltinDef, r: Rect, values: &[f64], ids: [&str; 2]) -> Vec<Point> {
     let ax = band_axis(r);
     let y = r.y + BAND_DOT;
-    ["low_cut", "high_cut"]
-        .iter()
+    ids.iter()
         .map(|id| {
             let k = index(def, id);
             let v = values
@@ -464,14 +471,19 @@ pub fn band_points(def: &BuiltinDef, r: Rect, values: &[f64]) -> Vec<Point> {
 /// Paints the Color band `r`: its rail, lighter between the cuts, and its
 /// frequencies under it.
 pub fn paint_band(pen: &mut Pen, def: &BuiltinDef, r: Rect, values: &[f64]) {
+    paint_cuts(pen, def, r, values, CUTS);
+}
+
+/// Paints a band `r` whose ends are the parameters `ids`.
+pub fn paint_cuts(pen: &mut Pen, def: &BuiltinDef, r: Rect, values: &[f64], ids: [&str; 2]) {
     let c = pen.c;
     let ax = band_axis(r);
     let y = r.y + BAND_DOT;
     let rail = Rect::new(ax.a, y - 4.0, ax.b - ax.a, 8.0);
     pen.round(rail, c.surface_2, Radius::Pill);
     let (lo, hi) = (
-        ax.px(plain(def, values, "low_cut")),
-        ax.px(plain(def, values, "high_cut")),
+        ax.px(plain(def, values, ids[0])),
+        ax.px(plain(def, values, ids[1])),
     );
     if hi > lo {
         pen.round(

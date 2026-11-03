@@ -4,7 +4,7 @@
 use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
 
-use crate::device::{compressor, delay, dynamics, eq, layout, limiter};
+use crate::device::{compressor, delay, dynamics, eq, layout, limiter, reverb};
 use crate::instrument::window::Part;
 use crate::shot::{Act, Play, Shot};
 use crate::studio::{Geometry, Studio};
@@ -24,6 +24,10 @@ const fn del_stage(n: u8) -> Act {
 
 const fn lim_stage(n: u8) -> Act {
     Act::Stage(Play::Laid(play_limiter), n)
+}
+
+const fn rev_stage(n: u8) -> Act {
+    Act::Stage(Play::Laid(play_reverb), n)
 }
 
 pub const SHOTS: &[Shot] = &[
@@ -86,6 +90,21 @@ pub const SHOTS: &[Shot] = &[
     Shot {
         name: "lim03-ceiling-menu",
         acts: &[Act::Reset, lim_stage(0), lim_stage(2)],
+    },
+    // The Reverb as it opens: how its sound dies away, the Color band and the six knobs.
+    Shot {
+        name: "rev01-wide",
+        acts: &[Act::Reset, rev_stage(0)],
+    },
+    // Narrow: a lower plane, the knobs in two rows.
+    Shot {
+        name: "rev02-narrow",
+        acts: &[Act::Reset, rev_stage(0), rev_stage(1)],
+    },
+    // The tail's menu of decays.
+    Shot {
+        name: "rev03-decay-menu",
+        acts: &[Act::Reset, rev_stage(0), rev_stage(2)],
     },
 ];
 
@@ -331,6 +350,26 @@ fn play_limiter(s: &mut Studio, g: &Geometry, n: u8) {
     }
 }
 
+fn play_reverb(s: &mut Studio, g: &Geometry, n: u8) {
+    let g = &s.geometry(g.size.0, g.size.1);
+    if n == 0 {
+        open_device(s, "Reverb");
+        return;
+    }
+    let Some(id) = s.instruments.open.last().map(|w| w.plugin) else {
+        return;
+    };
+    match n {
+        1 => width(s, id, reverb::MIN_W + 60.0),
+        2 => {
+            if let Some((x, y)) = s.instrument_center(g, id, Part::Point(0, 1)) {
+                s.instrument_right(g, x, y);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,5 +428,19 @@ mod tests {
         let v = crate::instrument::window::values(x)[k];
         assert!((spec.to_plain(v) - 6.0).abs() < 1e-6);
         assert!(!s.context_rows().is_empty(), "the ceiling's menu is open");
+    }
+
+    #[test]
+    fn the_reverb_stages_play_without_a_window() {
+        let mut s = Studio::sample();
+        let g = s.geometry(1600.0, 1000.0);
+        for n in 0..3 {
+            assert!(Play::Laid(play_reverb).without_window(&mut s, &g, n));
+        }
+        let rows = s.context_rows();
+        assert!(
+            rows.iter().any(|r| r.label == "Decay を 4 s に"),
+            "the decays"
+        );
     }
 }

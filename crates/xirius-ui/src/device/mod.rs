@@ -12,6 +12,7 @@ pub mod graph;
 pub mod input;
 pub mod layout;
 pub mod limiter;
+pub mod reverb;
 
 #[cfg(test)]
 mod compressor_tests;
@@ -23,3 +24,5 @@ mod eq_tests;
 mod input_tests;
 #[cfg(test)]
 mod limiter_tests;
+#[cfg(test)]
+mod reverb_tests;

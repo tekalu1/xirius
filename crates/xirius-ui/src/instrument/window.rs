@@ -272,7 +272,8 @@ pub struct Windows {
     pub(crate) meters: HashMap<PluginId, Meter>,
     /// Each open dynamics device's levels and their history (UI-327).
     pub(crate) dynamics: HashMap<PluginId, Dynamics>,
-    /// Each open Delay's onsets: its repeats light from the last (UI-329).
+    /// Each open Delay's or Reverb's onsets: its repeats or reflections
+    /// light from the last (UI-329, UI-330).
     pub(crate) echoes: HashMap<PluginId, delay::Echo>,
     /// The devices whose probes write for a window, so a closed one stops.
     watched: Vec<PluginId>,
@@ -606,7 +607,7 @@ impl Windows {
                 d.feed((input.map(|v| v * pre), out), probe.gr_db(), now, span);
                 moving |= d.moving();
             }
-            if live(p, &w).is_some_and(|(_, _, d)| d.uid == "delay") {
+            if live(p, &w).is_some_and(|(_, _, d)| matches!(d.uid, "delay" | "reverb")) {
                 let e = self.echoes.entry(id).or_default();
                 moving |= e.feed(probe.onsets(), now);
             }

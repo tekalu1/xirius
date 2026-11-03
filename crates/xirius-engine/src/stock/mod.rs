@@ -15,7 +15,7 @@ pub mod eq;
 pub mod files;
 mod limiter;
 pub mod probe;
-mod reverb;
+pub mod reverb;
 mod sampler;
 mod samples;
 #[cfg(test)]

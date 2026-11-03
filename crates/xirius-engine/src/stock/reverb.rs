@@ -62,6 +62,35 @@ fn scale(size: f64) -> f64 {
     0.4 + 1.2 * size
 }
 
+// ------------------------------------------------------------- for the window (UI-330)
+
+/// When the tail starts (s), at the size (0..100) and the predelay (ms): the predelay and the
+/// shortest line.
+pub fn tail_start(size: f64, predelay_ms: f64) -> f64 {
+    (predelay_ms + LENGTHS_MS[0] * scale(size * 0.01)) * 0.001
+}
+
+/// The early reflections (the left's): when each comes (s) and how loud (its gain's size).
+pub fn reflections(size: f64, predelay_ms: f64) -> [(f64, f64); 8] {
+    let s = scale(size * 0.01);
+    TAPS[0].map(|(ms, gain)| ((predelay_ms + ms * s) * 0.001, gain.abs()))
+}
+
+/// The time the tail takes to fall 60 dB at `hz` (s) at the sample rate `rate`: the decay,
+/// sooner in the highs by what the damping's lowpass takes on each pass round the lines.
+pub fn decay_at(size: f64, decay: f64, damping: f64, hz: f64, rate: f64) -> f64 {
+    let decay = decay.max(0.05);
+    let s = scale(size * 0.01);
+    let a = OnePole::coef(damping, rate);
+    let w = std::f64::consts::TAU * hz / rate;
+    let h = (1.0 - a) / ((1.0 - a * w.cos()).powi(2) + (a * w.sin()).powi(2)).sqrt();
+    // The passes a second. What is left late in the tail lingers in the longer lines (the
+    // slower modes), so each line's length counts as much as it holds the sound.
+    let long = LENGTHS_MS.iter().map(|ms| ms * ms).sum::<f64>() / LENGTHS_MS.iter().sum::<f64>();
+    let passes = 1000.0 / (long * s);
+    60.0 / (60.0 / decay - 20.0 * h.log10() * passes)
+}
+
 pub struct Reverb {
     params: Params,
     /// Counts the onsets of the input for the window (ENG-072).
@@ -320,16 +349,24 @@ mod tests {
     /// 2 kHz, as rooms are measured), from its fall from -5 to -35 dB (Schroeder's backward
     /// integration). The highs fall sooner, as in a room.
     fn rt60(l: &[f32], r: &[f32]) -> f64 {
+        rt60_in(l, r, 250.0, 2000.0, 1)
+    }
+
+    /// The same between `lo` and `hi` Hz, `order` sections a side.
+    fn rt60_in(l: &[f32], r: &[f32], lo: f64, hi: f64, order: usize) -> f64 {
         use super::super::dsp::{Biquad, Coefs};
         let q = std::f64::consts::FRAC_1_SQRT_2;
-        let (hp, lp) = (
-            Coefs::highpass(250.0, q, RATE),
-            Coefs::lowpass(2000.0, q, RATE),
-        );
+        let (hp, lp) = (Coefs::highpass(lo, q, RATE), Coefs::lowpass(hi, q, RATE));
         let band = |x: &[f32]| {
-            let (mut a, mut b) = (Biquad::default(), Biquad::default());
+            let mut f = vec![Biquad::default(); order * 2];
             x.iter()
-                .map(|v| b.tick(&lp, a.tick(&hp, f64::from(*v))))
+                .map(|v| {
+                    let mut y = f64::from(*v);
+                    for (i, b) in f.iter_mut().enumerate() {
+                        y = b.tick(if i < order { &hp } else { &lp }, y);
+                    }
+                    y
+                })
                 .collect::<Vec<f64>>()
         };
         let (l, r) = (band(l), band(r));
@@ -365,6 +402,52 @@ mod tests {
             let t = rt60(&l, &r);
             assert!((t / decay - 1.0).abs() < 0.05, "{decay} s at {size}%: {t}");
         }
+    }
+
+    /// UI-330: the window draws the tail from the values; it falls 60 dB when measured in the
+    /// middle of the band and around 8 kHz as it is drawn, within a tenth.
+    #[test]
+    fn ui_330_the_drawn_decay_is_the_one_measured() {
+        for (decay, size, damping) in [
+            (2.0, 50.0, 7000.0),
+            (0.8, 30.0, 7000.0),
+            (4.0, 80.0, 12_000.0),
+            (1.5, 50.0, 3000.0),
+        ] {
+            let (mut p, h) = make("reverb");
+            tail_only(&h);
+            set_plain(&h, "decay", decay);
+            set_plain(&h, "size", size);
+            set_plain(&h, "damping", damping);
+            p.prepare(&setup());
+            let (l, r) = impulse_response(p.as_mut(), decay * 2.0 + 0.5);
+            // A narrow band round each frequency, steep enough that the slower lows do not
+            // leak into it.
+            for hz in [1000.0, 8000.0] {
+                let drawn = super::decay_at(size, decay, damping, hz, RATE);
+                let t = rt60_in(&l, &r, hz / 1.06, hz * 1.06, 4);
+                assert!(
+                    (t / drawn - 1.0).abs() < 0.1,
+                    "{decay} s, {size} %, {damping} Hz at {hz} Hz: drawn {drawn}, measured {t}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ui_330_the_first_reflection_comes_when_drawn() {
+        let (mut p, h) = make("reverb");
+        set_plain(&h, "mix", 100.0);
+        set_plain(&h, "early", 100.0);
+        set_plain(&h, "low_cut", 20.0);
+        set_plain(&h, "predelay", 40.0);
+        set_plain(&h, "size", 70.0);
+        p.prepare(&setup());
+        let (l, _) = impulse_response(p.as_mut(), 0.3);
+        let first = l.iter().position(|v| *v != 0.0).unwrap() as f64;
+        let drawn = super::reflections(70.0, 40.0)[0].0 * RATE;
+        assert!((first - drawn).abs() <= 2.0, "{first} vs {drawn}");
+        assert!(super::tail_start(70.0, 40.0) > super::reflections(70.0, 40.0)[0].0);
     }
 
     #[test]

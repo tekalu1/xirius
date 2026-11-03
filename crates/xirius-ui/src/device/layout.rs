@@ -169,6 +169,7 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
         "compressor" => super::compressor::body(def, s),
         "limiter" => super::limiter::body(def, s),
         "delay" => super::delay::body(def, s),
+        "reverb" => super::reverb::body(def, s),
         _ => rows(def),
     }
 }
@@ -180,6 +181,7 @@ pub fn natural_w(def: &BuiltinDef) -> f32 {
         "compressor" => super::compressor::NATURAL_W,
         "limiter" => super::limiter::NATURAL_W,
         "delay" => super::delay::NATURAL_W,
+        "reverb" => super::reverb::NATURAL_W,
         _ => rows(def).w,
     }
 }
@@ -254,6 +256,9 @@ mod tests {
                 // Time or Beats (Feel goes with Beats), and the band's cuts
                 // and the taps' feedback are points.
                 assert!(b.slots.len() < def.params.len());
+            } else if def.uid == "reverb" {
+                // The Color band's ends are points.
+                assert_eq!(b.slots.len(), def.params.len() - 2);
             } else {
                 assert_eq!(b.slots.len(), def.params.len(), "{}", def.uid);
             }

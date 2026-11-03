@@ -42,6 +42,9 @@ pub struct Axis {
     pub hi: f64,
     /// Equal steps are equal ratios (a frequency, a time).
     pub log: bool,
+    /// What a log scale adds to its values first, so that it can start at 0
+    /// (a time from 10 ms on a scale of `1 + t / 10 ms`).
+    pub add: f64,
 }
 
 impl Axis {
@@ -52,6 +55,7 @@ impl Axis {
             lo,
             hi,
             log: false,
+            add: 0.0,
         }
     }
 
@@ -62,13 +66,23 @@ impl Axis {
             lo,
             hi,
             log: true,
+            add: 0.0,
+        }
+    }
+
+    /// A log scale of `v + add`.
+    pub fn log_from(a: f32, b: f32, lo: f64, hi: f64, add: f64) -> Axis {
+        Axis {
+            add,
+            ..Axis::log(a, b, lo, hi)
         }
     }
 
     /// How far along the value is (0 at `lo`, 1 at `hi`; past them outside).
     fn along(&self, v: f64) -> f64 {
         if self.log {
-            (v.max(f64::MIN_POSITIVE) / self.lo).ln() / (self.hi / self.lo).ln()
+            let (v, lo, hi) = (v + self.add, self.lo + self.add, self.hi + self.add);
+            (v.max(f64::MIN_POSITIVE) / lo).ln() / (hi / lo).ln()
         } else {
             (v - self.lo) / (self.hi - self.lo)
         }
@@ -83,7 +97,8 @@ impl Axis {
     pub fn value(&self, at: f32) -> f64 {
         let t = f64::from((at - self.a) / (self.b - self.a)).clamp(0.0, 1.0);
         if self.log {
-            self.lo * (self.hi / self.lo).powf(t)
+            let (lo, hi) = (self.lo + self.add, self.hi + self.add);
+            lo * (hi / lo).powf(t) - self.add
         } else {
             self.lo + (self.hi - self.lo) * t
         }
@@ -198,6 +213,8 @@ pub fn points(def: &BuiltinDef, n: usize, r: Rect, values: &[f64]) -> Vec<Point>
         ("limiter", 0) => super::limiter::points(def, r, values),
         ("delay", 0) => super::delay::points(def, r, values),
         ("delay", 1) => super::delay::band_points(def, r, values),
+        ("reverb", 0) => super::reverb::points(def, r, values),
+        ("reverb", 1) => super::reverb::band_points(def, r, values),
         _ => Vec::new(),
     }
 }
@@ -224,8 +241,8 @@ pub struct View<'a> {
     pub dynamics: Option<&'a super::dynamics::Dynamics>,
     /// The tempo at the playhead (bpm; 0 when not known).
     pub tempo: f64,
-    /// Seconds since a Delay last heard an onset, while its repeats light
-    /// (UI-329).
+    /// Seconds since a Delay or a Reverb last heard an onset, while its
+    /// repeats or its reflections light (UI-329, UI-330).
     pub echo: Option<f64>,
 }
 
@@ -256,6 +273,14 @@ pub fn paint(pen: &mut Pen, def: &BuiltinDef, n: usize, r: Rect, values: &[f64],
         ("delay", 1) => {
             super::delay::paint_band(pen, def, r, values);
             super::delay::band_points(def, r, values)
+        }
+        ("reverb", 0) => {
+            super::reverb::paint_plane(pen, def, r, values, view);
+            super::reverb::points(def, r, values)
+        }
+        ("reverb", 1) => {
+            super::reverb::paint_band(pen, def, r, values);
+            super::reverb::band_points(def, r, values)
         }
         _ => {
             pen.round(r, pen.c.surface_2, Radius::S);
