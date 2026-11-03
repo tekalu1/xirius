@@ -164,6 +164,7 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
     match def.uid {
         "eq" => super::eq::body(def, s),
         "compressor" => super::compressor::body(def, s),
+        "limiter" => super::limiter::body(def, s),
         _ => rows(def),
     }
 }
@@ -173,6 +174,7 @@ pub fn natural_w(def: &BuiltinDef) -> f32 {
     match def.uid {
         "eq" => super::eq::NATURAL_W,
         "compressor" => super::compressor::NATURAL_W,
+        "limiter" => super::limiter::NATURAL_W,
         _ => rows(def).w,
     }
 }

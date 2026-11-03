@@ -4,7 +4,7 @@
 use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
 
-use crate::device::{compressor, dynamics, eq, layout};
+use crate::device::{compressor, dynamics, eq, layout, limiter};
 use crate::instrument::window::Part;
 use crate::shot::{Act, Play, Shot};
 use crate::studio::{Geometry, Studio};
@@ -16,6 +16,10 @@ const fn eq_stage(n: u8) -> Act {
 
 const fn cmp_stage(n: u8) -> Act {
     Act::Stage(Play::Laid(play_compressor), n)
+}
+
+const fn lim_stage(n: u8) -> Act {
+    Act::Stage(Play::Laid(play_limiter), n)
 }
 
 pub const SHOTS: &[Shot] = &[
@@ -48,6 +52,21 @@ pub const SHOTS: &[Shot] = &[
     Shot {
         name: "eq04-type-menu",
         acts: &[Act::Reset, eq_stage(0), eq_stage(3)],
+    },
+    // The Limiter with its gain at +6 dB, five seconds of a mix in its history.
+    Shot {
+        name: "lim01-wide",
+        acts: &[Act::Reset, lim_stage(0)],
+    },
+    // Narrow: the meters under the history.
+    Shot {
+        name: "lim02-narrow",
+        acts: &[Act::Reset, lim_stage(0), lim_stage(1)],
+    },
+    // The ceiling's menu.
+    Shot {
+        name: "lim03-ceiling-menu",
+        acts: &[Act::Reset, lim_stage(0), lim_stage(2)],
     },
 ];
 
@@ -191,6 +210,86 @@ fn play_compressor(s: &mut Studio, _: &Geometry, n: u8) {
     }
 }
 
+/// Five seconds of a mix through the Limiter `id` as it is set: a hit each
+/// half second over a moving bed, the gain added, what is over the ceiling
+/// taken off at once and given back over the release.
+fn hear_a_mix(s: &mut Studio, id: PluginId) {
+    let p = s.project();
+    let Some(x) = p
+        .tracks
+        .values()
+        .flat_map(|t| &t.inserts)
+        .find(|x| x.id == id)
+    else {
+        return;
+    };
+    let Some(def) = x.builtin() else {
+        return;
+    };
+    let values = crate::instrument::window::values(x);
+    let at = |name: &str| {
+        def.param(name)
+            .map_or(0.0, |(k, spec)| spec.to_plain(values[k]) as f32)
+    };
+    let (gain, ceiling, release) = (at("input"), at("ceiling"), at("release"));
+    let t0 = std::time::Instant::now();
+    let d = s.instruments.dynamics.entry(id).or_default();
+    let steps = (limiter::SPAN.as_millis() / dynamics::STEP.as_millis()) as u32;
+    let fall = (-(dynamics::STEP.as_secs_f32() * 1000.0) / release).exp();
+    let mut gr = 0.0f32;
+    for i in 0..=steps {
+        let beat = (i % 20) as f32;
+        let bed = -12.0 + 2.0 * ((i as f32) * 0.7).sin() + ((i as f32) * 2.3).sin();
+        let hit = if beat < 1.0 {
+            -2.0 - (i % 3) as f32
+        } else {
+            -40.0
+        };
+        let level = bed.max(hit) + gain;
+        let need = (level - ceiling).max(0.0);
+        gr = if need > gr {
+            need
+        } else {
+            need + (gr - need) * fall
+        };
+        let lin = |db: f32| 10f32.powf(db / 20.0);
+        d.feed(
+            ([lin(level); 2], [lin(level - gr); 2]),
+            gr,
+            t0 + dynamics::STEP * i,
+            limiter::SPAN,
+        );
+    }
+}
+
+fn play_limiter(s: &mut Studio, g: &Geometry, n: u8) {
+    let g = &s.geometry(g.size.0, g.size.1);
+    if n == 0 {
+        if let Some(id) = open_device(s, "Limiter") {
+            let six = xirius_params::LIMITER
+                .param("input")
+                .map(|(k, spec)| (k, spec.to_norm(6.0)));
+            if let Some((k, v)) = six {
+                s.device_set(id, k, v);
+            }
+            hear_a_mix(s, id);
+        }
+        return;
+    }
+    let Some(id) = s.instruments.open.last().map(|w| w.plugin) else {
+        return;
+    };
+    match n {
+        1 => width(s, id, limiter::MIN_W + 60.0),
+        2 => {
+            if let Some((x, y)) = s.instrument_center(g, id, Part::Point(0, 1)) {
+                s.instrument_right(g, x, y);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,5 +314,27 @@ mod tests {
         }
         let id = s.instruments.open[0].plugin;
         assert_eq!(s.instruments.dynamics[&id].history.len(), 160);
+    }
+
+    #[test]
+    fn the_limiter_stages_play_without_a_window() {
+        let mut s = Studio::sample();
+        let g = s.geometry(1600.0, 1000.0);
+        for n in 0..3 {
+            assert!(Play::Laid(play_limiter).without_window(&mut s, &g, n));
+        }
+        let id = s.instruments.open[0].plugin;
+        assert_eq!(s.instruments.dynamics[&id].history.len(), 200);
+        let p = s.project();
+        let x = p
+            .tracks
+            .values()
+            .flat_map(|t| &t.inserts)
+            .find(|x| x.id == id)
+            .unwrap();
+        let (k, spec) = x.builtin().unwrap().param("input").unwrap();
+        let v = crate::instrument::window::values(x)[k];
+        assert!((spec.to_plain(v) - 6.0).abs() < 1e-6);
+        assert!(!s.context_rows().is_empty(), "the ceiling's menu is open");
     }
 }

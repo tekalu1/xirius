@@ -135,6 +135,12 @@ impl Dynamics {
     pub fn over(&self) -> bool {
         self.most[2] > 1.0
     }
+
+    /// The `i`th most went over full scale since it was cleared (the
+    /// reduction never does).
+    pub fn over_at(&self, i: usize) -> bool {
+        i != 1 && self.most.get(i).is_some_and(|m| *m > 1.0)
+    }
 }
 
 // ------------------------------------------------------------------ layout
@@ -156,6 +162,9 @@ pub struct Level {
     pub name: Rect,
     pub bars: Vec<Rect>,
     pub readout: Rect,
+    /// Its readout says `+` over full scale and turns red there (the
+    /// output's always; the Limiter's input too).
+    pub loud: bool,
 }
 
 impl Level {
@@ -168,10 +177,32 @@ impl Level {
             ..self
         }
     }
+
+    /// What its readout says.
+    pub fn text(&self, d: &Dynamics) -> String {
+        let i = most_of(self.kind);
+        let t = d.readout(i);
+        if self.loud && self.kind == Kind::In && d.over_at(i) {
+            format!("+{t}")
+        } else {
+            t
+        }
+    }
+
+    /// Its readout is red: it went over full scale.
+    pub fn alert(&self, d: &Dynamics) -> bool {
+        self.loud && d.over_at(most_of(self.kind))
+    }
 }
 
 /// The columns' names.
 pub const LABELS: [(&str, Kind); 3] = [("In", Kind::In), ("GR", Kind::Gr), ("Out", Kind::Out)];
+/// The Limiter's, spelt out (UI-328).
+pub const WORDS: [(&str, Kind); 3] = [
+    ("Input", Kind::In),
+    ("Reduction", Kind::Gr),
+    ("Output", Kind::Out),
+];
 
 const COL_MIN: f32 = 34.0;
 const COL_GAP: f32 = 6.0;
@@ -219,6 +250,7 @@ pub fn side(r: Rect, labels: &[(&'static str, Kind)]) -> Vec<Level> {
                 name: Rect::new(x, top, w, NAME_H),
                 bars,
                 readout: Rect::new(x - 2.0, bar_y + bar_h + 4.0, w + 4.0, READ_H),
+                loud: kind == Kind::Out,
             };
             x += w + COL_GAP;
             level
@@ -239,7 +271,23 @@ pub fn most_of(kind: Kind) -> usize {
 pub fn span(def: &xirius_params::BuiltinDef) -> Option<Duration> {
     match def.uid {
         "compressor" => Some(super::compressor::SPAN),
+        "limiter" => Some(super::limiter::SPAN),
         _ => None,
+    }
+}
+
+/// What a device's input meter adds to what its probe heard: the Limiter's
+/// input gain (its probe hears before it), else nothing.
+pub fn pre(def: &xirius_params::BuiltinDef, values: &[f64]) -> f32 {
+    match def.uid {
+        "limiter" => def
+            .param("input")
+            .map(|(k, spec)| {
+                let v = values.get(k).copied().unwrap_or(spec.default_norm());
+                10f32.powf(spec.to_plain(v) as f32 / 20.0)
+            })
+            .unwrap_or(1.0),
+        _ => 1.0,
     }
 }
 
@@ -282,13 +330,13 @@ pub fn paint_levels(pen: &mut Pen, levels: &[Level], d: &Dynamics, hot: Option<u
         if hot == Some(i) {
             pen.round(l.readout, c.surface_3, Radius::Clip);
         }
-        let ink = if l.kind == Kind::Out && d.over() {
+        let ink = if l.alert(d) {
             c.ink_alert
         } else {
             c.ink_strong
         };
         pen.text(
-            &d.readout(most_of(l.kind)),
+            &l.text(d),
             FontSize::Micro,
             Weight::Regular,
             ink,

@@ -193,6 +193,7 @@ pub fn points(def: &BuiltinDef, n: usize, r: Rect, values: &[f64]) -> Vec<Point>
     match (def.uid, n) {
         ("eq", 0) => super::eq::points(def, r, values),
         ("compressor", 0) => super::compressor::points(def, r, values),
+        ("limiter", 0) => super::limiter::points(def, r, values),
         _ => Vec::new(),
     }
 }
@@ -234,6 +235,10 @@ pub fn paint(pen: &mut Pen, def: &BuiltinDef, n: usize, r: Rect, values: &[f64],
         ("compressor", 1) => {
             super::compressor::paint_history(pen, def, r, values, view);
             Vec::new()
+        }
+        ("limiter", 0) => {
+            super::limiter::paint_history(pen, def, r, values, view);
+            super::limiter::points(def, r, values)
         }
         _ => {
             pen.round(r, pen.c.surface_2, Radius::S);

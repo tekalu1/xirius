@@ -278,7 +278,7 @@ impl Studio {
             return;
         }
         if clicks >= 2 {
-            if let Some(k) = point.x.map(|d| d.k).filter(|&k| free(self, k))
+            if let Some(k) = point.x.or(point.y).map(|d| d.k).filter(|&k| free(self, k))
                 && let Some(now) = self.device_value(w.plugin, k)
             {
                 self.device_type(w.plugin, k, &def.params[k], now);

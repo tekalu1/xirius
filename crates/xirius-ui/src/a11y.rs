@@ -731,7 +731,7 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             out.push(mark(format!("device-{}-spectrum", w.plugin), node));
         }
         if !body.levels.is_empty() {
-            use crate::device::dynamics::{Dynamics, Kind, most_of};
+            use crate::device::dynamics::{Dynamics, Kind};
             let none = Dynamics::default();
             let d = s.instruments.dynamics.get(&w.plugin).unwrap_or(&none);
             for (n, l) in body.levels.iter().enumerate() {
@@ -741,7 +741,7 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                     Kind::Gr => "Reduction peak",
                     Kind::Out => "Output peak",
                 });
-                node.set_value(d.readout(most_of(l.kind)));
+                node.set_value(l.text(d));
                 node.set_bounds(bounds(l.readout));
                 out.push(mark(format!("device-{}-readout-{n}", w.plugin), node));
             }

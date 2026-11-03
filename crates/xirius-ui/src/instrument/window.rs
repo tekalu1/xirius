@@ -595,9 +595,11 @@ impl Windows {
                 rms: out.map(|v| v * std::f32::consts::FRAC_1_SQRT_2),
             });
             moving |= m.level.iter().chain(&m.hold).any(|v| *v > 0.0);
-            if let Some(span) = live(p, &w).and_then(|(_, _, d)| dynamics::span(d)) {
+            if let Some((span, pre)) = live(p, &w)
+                .and_then(|(_, x, d)| Some((dynamics::span(d)?, dynamics::pre(d, &values(x)))))
+            {
                 let d = self.dynamics.entry(id).or_default();
-                d.feed((input, out), probe.gr_db(), now, span);
+                d.feed((input.map(|v| v * pre), out), probe.gr_db(), now, span);
                 moving |= d.moving();
             }
             let a = self.analysers.entry(id).or_default();
