@@ -326,6 +326,7 @@ fn the_blank_of_a_list_opens_folds_and_shows_the_hidden() {
             "すべて畳む",
             "隠したものを表示",
             "プラグインを再スキャン",
+            "工場出荷のプリセットを読み込み直す",
         ]
     );
     let items = |s: &Studio| {

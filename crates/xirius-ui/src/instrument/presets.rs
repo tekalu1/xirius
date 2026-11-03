@@ -152,14 +152,24 @@ impl Studio {
     /// Reads the preset files again; true when the list changed. The window's read is the
     /// session's last finished one (it reads the files off the window's thread).
     pub(crate) fn refresh_presets(&mut self) -> bool {
+        self.read_presets(true)
+    }
+
+    /// `seed`: a test's folder takes the factory set first (never from the window's tick,
+    /// which must not write).
+    fn read_presets(&mut self, seed: bool) -> bool {
         self.instruments.presets.read_at = Some(Instant::now());
         // design-lint: allow(ui-blocking-io) UI-332 review: on the window thread the session answers from its cache and reads the files on a background job.
         let Ok(data) = self.song.run("preset.list", json!({ "values": true })) else {
             return false;
         };
         #[cfg(test)]
-        let data = self.seeded(data);
-        self.instruments.presets.take(&data)
+        let data = if seed { self.seeded(data) } else { data };
+        #[cfg(not(test))]
+        let _ = seed;
+        let changed = self.instruments.presets.take(&data);
+        self.sync_browser_presets();
+        changed
     }
 
     /// A test's folder starts empty; the app copies the factory set in when it starts.
@@ -176,10 +186,16 @@ impl Studio {
         again.unwrap_or(data)
     }
 
-    /// Every half second while a device's window is open, so a preset saved, renamed or
-    /// deleted elsewhere (the browser, the CLI) shows; true when the list changed.
+    /// Every half second while a device's window is open or the browser lists the devices
+    /// (BRW-017), so a preset saved, renamed or deleted elsewhere (the CLI) shows; true when
+    /// the list changed.
     pub(crate) fn poll_presets(&mut self) -> bool {
-        if self.instruments.open.is_empty()
+        let listed = self.browser.open
+            && matches!(
+                self.browser.tab,
+                crate::browser::RailTab::Instruments | crate::browser::RailTab::Effects
+            );
+        if (self.instruments.open.is_empty() && !listed)
             || self
                 .instruments
                 .presets
@@ -188,7 +204,7 @@ impl Studio {
         {
             return false;
         }
-        self.refresh_presets()
+        self.read_presets(false)
     }
 
     /// The track and the kind of the built-in device `id`.

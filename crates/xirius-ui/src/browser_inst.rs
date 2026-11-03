@@ -25,6 +25,8 @@ pub struct LibDrag {
     pub at: (f32, f32),
     /// The pointer went past [`SLOP`]: letting go drops it.
     pub moved: bool,
+    /// A preset of the device, not the device (BRW-017).
+    pub preset: Option<crate::browser_presets::HeldPreset>,
 }
 
 /// What letting go of a dragged instrument does there.
@@ -110,6 +112,9 @@ impl Studio {
     /// After a press on the browser: an instrument item starts a drag, and
     /// a double click puts it on a new track.
     pub fn lib_grab(&mut self, g: &Geometry, hit: Hit, x: f32, y: f32, clicks: usize) -> bool {
+        if let Hit::Browser(BrowserHit::Preset(i)) = hit {
+            return self.preset_grab(g, i, x, y, clicks);
+        }
         let Hit::Browser(BrowserHit::Item(i)) = hit else {
             return self.file_grab(g, hit, x, y, clicks);
         };
@@ -126,6 +131,7 @@ impl Studio {
             from: (x, y),
             at: (x, y),
             moved: false,
+            preset: None,
         });
         true
     }
@@ -153,7 +159,9 @@ impl Studio {
         let Some(d) = self.browser.drag.take() else {
             return false;
         };
-        if d.moved {
+        if let Some(held) = d.preset.as_ref().filter(|_| d.moved) {
+            self.preset_drop(g, x, y, held);
+        } else if d.moved {
             match self.lib_drop_at(g, x, y) {
                 Drop::Replace(t) => {
                     self.use_on_track(t, d.name);
@@ -193,7 +201,10 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
         return;
     };
     let c = pen.c;
-    let drop = studio.lib_drop_at(g, d.at.0, d.at.1);
+    let drop = match &d.preset {
+        Some(held) => studio.preset_drop_at(g, d.at.0, d.at.1, held.effect),
+        None => studio.lib_drop_at(g, d.at.0, d.at.1),
+    };
     let tracks = Rect::new(
         g.column.x,
         g.column.y,
@@ -220,7 +231,11 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
                 });
             }
             let name = &studio.project().tracks[&t].name;
-            format!("{name} のインストゥルメントにする")
+            if d.preset.is_some() {
+                format!("{name} に読み込む")
+            } else {
+                format!("{name} のインストゥルメントにする")
+            }
         }
         Drop::New => {
             // Under the last row, where the new track goes.
@@ -243,7 +258,9 @@ fn chip(pen: &mut Pen, g: &Geometry, d: &LibDrag, label: &str) {
     let c = pen.c;
     let pad = Space::X2.px();
     let icon = 16.0;
-    let name_w = pen.measure(d.name, FontSize::Small, Weight::Medium);
+    // A preset shows its own name with its device's icon.
+    let name = d.preset.as_ref().map_or(d.name, |p| p.name.as_str());
+    let name_w = pen.measure(name, FontSize::Small, Weight::Medium);
     let label_w = pen.measure(label, FontSize::Caption, Weight::Regular);
     let w = pad * 2.0 + icon + Space::X1.px() * 2.0 + name_w.max(label_w);
     let h = if label.is_empty() { 28.0 } else { 44.0 };
@@ -259,7 +276,7 @@ fn chip(pen: &mut Pen, g: &Geometry, d: &LibDrag, label: &str) {
     let tx = r.x + pad + icon + Space::X1.px() * 2.0;
     let tw = r.right() - tx - pad;
     pen.text(
-        d.name,
+        name,
         FontSize::Small,
         Weight::Medium,
         c.ink_strong,

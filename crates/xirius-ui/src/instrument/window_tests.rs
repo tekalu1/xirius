@@ -781,7 +781,7 @@ fn saving_a_preset_names_the_device_after_it() {
     assert_eq!(now, "Default");
     assert!(!enabled(&rows, "上書き保存"), "at Default");
     assert!(enabled(&rows, "名前を付けて保存…"));
-    assert!(!enabled(&rows, "ブラウザーに表示"));
+    assert!(enabled(&rows, "ブラウザーに表示"), "BRW-017");
     nudge(&mut s, &g, id, "threshold");
     let (rows, _) = preset_rows(&mut s, &g, id);
     assert!(!enabled(&rows, "上書き保存"), "never over Default");

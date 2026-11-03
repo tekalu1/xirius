@@ -181,6 +181,7 @@ pub const LABELS: &[(&str, &str)] = &[
     ("browser.use", "ブラウザーのインストゥルメントを使う"),
     ("browser.fx", "ブラウザーのエフェクトを追加"),
     ("browser.groups", "ブラウザーのグループを開閉"),
+    ("browser.preset.load", "ブラウザーのプリセットを読み込む"),
     ("browser.put", "ファイルをトラックに置く"),
     ("plugin.add", "プラグインを追加"),
     ("plugin.remove", "プラグインを削除"),

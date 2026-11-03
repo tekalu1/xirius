@@ -39,6 +39,8 @@ pub enum BrowseAct {
     /// Makes an item a favourite (true) or takes it out of the favourites.
     Favourite(&'static str, bool),
     FavouriteFile(PathBuf, bool),
+    /// Makes a preset a favourite (its key, [`crate::browser::preset_key`]) or takes it out.
+    FavouritePreset(String, bool),
     /// Leaves an item out of the lists (true), or puts it back.
     Hide(&'static str, bool),
     Fx(FxTarget, &'static str),
@@ -63,6 +65,10 @@ pub enum BrowseAct {
     LocateFolder,
     /// Opens the dialog that lists the recordings nothing uses and asks before they go.
     Cleanup,
+    /// Loads a preset of a built-in device (its uid) on the chosen track (BRW-017).
+    LoadPreset(&'static str, String),
+    /// Copies the factory presets back in: of one device (its uid), or of all of them.
+    FactoryRestore(Option<&'static str>),
 }
 
 /// How a command names a tab: its folder, or its name when it has none.
@@ -81,7 +87,7 @@ fn dim(label: &str) -> Item {
 
 impl Studio {
     /// The selected track, when it is of `kind`.
-    pub(super) fn selected_track_of(&self, kind: TrackKind) -> Option<TrackId> {
+    pub(crate) fn selected_track_of(&self, kind: TrackKind) -> Option<TrackId> {
         let Some(RowKind::Track(t)) = self.selected_row else {
             return None;
         };
@@ -158,6 +164,31 @@ impl Studio {
                 rows
             }
             Some(BrowserHit::PoolMenu) => self.pool_menu_items(),
+            Some(h @ (BrowserHit::Preset(_) | BrowserHit::Fav(_)))
+                if self.preset_row(g, h).is_some() =>
+            {
+                let Some((device, name)) = self.preset_row(g, h) else {
+                    return false;
+                };
+                self.browser.selected_item = None;
+                self.browser.selected_preset = Some((device, name.clone()));
+                self.browser.typing = false;
+                self.mixer.browser_fx_focus = true;
+                self.preset_row_items(device, &name)
+            }
+            Some(BrowserHit::Disclose(i)) => {
+                let Some(item) = self.browser_item(g, i) else {
+                    return false;
+                };
+                self.browser.selected_item = Some(item.name);
+                self.browser.selected_preset = None;
+                self.browser.typing = false;
+                if item.effect {
+                    self.effect_items(item.name)
+                } else {
+                    self.instrument_items(item.name)
+                }
+            }
             Some(BrowserHit::Item(i) | BrowserHit::Fav(i)) => {
                 let Some(item) = self.browser_item(g, i) else {
                     return false;
@@ -244,6 +275,21 @@ impl Studio {
         ]
     }
 
+    /// A preset row of a built-in device (BRW-017).
+    fn preset_row_items(&mut self, device: &'static str, name: &str) -> Vec<Item> {
+        let key = crate::browser::preset_key(device, name);
+        let fav = self.browser.favourites.contains(&key);
+        vec![
+            act("読み込む", BrowseAct::LoadPreset(device, name.to_string())),
+            act("お気に入り", BrowseAct::FavouritePreset(key, !fav)).on(fav),
+            Item::gap(),
+            self.ctx_do(
+                "preset.factory.restore",
+                Act::Browse(BrowseAct::FactoryRestore(Some(device))),
+            ),
+        ]
+    }
+
     /// S40: the blank of an instrument or effect list, and a group's header.
     fn list_items(&mut self) -> Vec<Item> {
         let grouped = !self.browser.groups().is_empty();
@@ -260,6 +306,10 @@ impl Studio {
             Item::gap(),
             self.ctx_do("plugin.rescan", Act::Browse(BrowseAct::Rescan))
                 .enabled(!scanning),
+            self.ctx_do(
+                "preset.factory.restore",
+                Act::Browse(BrowseAct::FactoryRestore(None)),
+            ),
         ]
     }
 
@@ -465,6 +515,27 @@ impl Studio {
                     self.browser.toggle_favourite(name);
                 }
                 true
+            }
+            BrowseAct::FavouritePreset(key, on) => {
+                if self.browser.favourites.contains(&key) != on {
+                    self.browser.toggle_favourite(&key);
+                }
+                true
+            }
+            BrowseAct::LoadPreset(device, name) => {
+                self.browser.selected_item = None;
+                self.browser.selected_preset = Some((device, name));
+                self.load_selected_preset()
+            }
+            BrowseAct::FactoryRestore(device) => {
+                let args = match device {
+                    Some(d) => json!({ "device": d }),
+                    None => json!({}),
+                };
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+                let done = self.run_command("preset.factory.restore", args);
+                self.refresh_presets();
+                done
             }
             BrowseAct::FavouriteFile(path, on) => {
                 let key = format!("file:{}", path.display());

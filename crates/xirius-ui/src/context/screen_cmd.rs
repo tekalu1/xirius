@@ -87,6 +87,20 @@ pub fn act_command(act: &Act) -> (&'static str, Value) {
                 "browser.favorite",
                 on_off(json!({"item": format!("file:{}", p.display())}), *on),
             ),
+            BrowseAct::FavouritePreset(key, on) => {
+                ("browser.favorite", on_off(json!({"item": key}), *on))
+            }
+            BrowseAct::LoadPreset(device, name) => (
+                "browser.preset.load",
+                json!({"device": device, "preset": name}),
+            ),
+            BrowseAct::FactoryRestore(device) => (
+                "preset.factory.restore",
+                match device {
+                    Some(d) => json!({"device": d}),
+                    None => json!({}),
+                },
+            ),
             BrowseAct::Hide(n, on) => ("browser.hide", on_off(json!({"item": n}), *on)),
             BrowseAct::Fx(target, n) => (
                 "browser.fx",

@@ -26,6 +26,7 @@ pub const NAMES: &[&str] = &[
     "browser.fx",
     "browser.groups",
     "browser.put",
+    "browser.preset.load",
     "midimap.learn",
     "view.export.close",
     "mixer.channel.next",
@@ -215,6 +216,14 @@ pub(super) fn defs() -> Vec<CommandDef> {
             "browser.groups",
             "ブラウザーの一覧のグループをすべて開く・畳みます",
             vec![ArgDef::choice("state", &["open", "closed"], "開閉").req()],
+        ),
+        changes(
+            "browser.preset.load",
+            "内蔵の機器のプリセットを、選んだトラック（エフェクトは無ければマスター、インストゥルメントは無ければ新しいトラック）に読み込みます",
+            vec![
+                ArgDef::text("device", "機器の uid か名前").req(),
+                ArgDef::text("preset", "プリセットの名前").req(),
+            ],
         ),
         changes(
             "browser.put",

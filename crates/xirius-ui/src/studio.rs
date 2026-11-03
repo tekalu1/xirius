@@ -1931,6 +1931,10 @@ impl Studio {
     /// The window changed size: keep the scroll inside what there is.
     pub fn resized(&mut self, g: &Geometry) {
         self.clamp_scroll(g);
+        if self.browser.reveal {
+            let l = self.browser.layout(g.panel);
+            self.browser.reveal_selected(&l);
+        }
         if let Some(ctx) = self.roll_ctx(g) {
             self.roll.sync(&ctx);
         }

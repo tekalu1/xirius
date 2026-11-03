@@ -38,11 +38,36 @@ const fn pre_stage(n: u8) -> Act {
     Act::Stage(Play::Laid(play_presets), n)
 }
 
+const fn brw_stage(n: u8) -> Act {
+    Act::Stage(Play::Laid(play_browser), n)
+}
+
 const fn size_stage(n: u8) -> Act {
     Act::Stage(Play::Laid(play_size), n)
 }
 
 pub const SHOTS: &[Shot] = &[
+    // The browser's effects with the Reverb's presets open under it, one chosen and a
+    // favourite (BRW-017).
+    Shot {
+        name: "brw01-presets-wide",
+        acts: &[Act::Reset, brw_stage(0)],
+    },
+    // The same in the narrowest browser.
+    Shot {
+        name: "brw02-presets-narrow",
+        acts: &[Act::Reset, brw_stage(0), brw_stage(1)],
+    },
+    // A preset held over a track: the drop's label.
+    Shot {
+        name: "brw03-preset-drag",
+        acts: &[Act::Reset, brw_stage(0), brw_stage(2)],
+    },
+    // A search finds a preset under its device.
+    Shot {
+        name: "brw04-preset-search",
+        acts: &[Act::Reset, brw_stage(0), brw_stage(3)],
+    },
     // The Compressor as it opens, four seconds of a beat in its history.
     Shot {
         name: "cmp01-wide",
@@ -504,6 +529,81 @@ fn play_presets(s: &mut Studio, g: &Geometry, n: u8) {
     }
 }
 
+/// The browser on the effects, the factory presets read, the Reverb's open with ホール
+/// chosen and a favourite, Keys the chosen track.
+fn play_browser(s: &mut Studio, g: &Geometry, n: u8) {
+    use crate::browser::{BRow, BrowserHit, RailTab, preset_key};
+    let g = &s.geometry(g.size.0, g.size.1);
+    let reverb = xirius_params::find("Reverb").map_or("", |d| d.uid);
+    match n {
+        0 => {
+            s.run_command("preset.factory.restore", json!({}));
+            settle(s);
+            // The window's read is a worker's: wait for its answer.
+            for _ in 0..300 {
+                s.refresh_presets();
+                if s.browser.presets.contains_key(reverb) {
+                    break;
+                }
+                settle(s);
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let t = keys(s);
+            s.select_row(Some(crate::tree::RowKind::Track(t)));
+            if !(s.browser.open && s.browser.tab == RailTab::Effects) {
+                s.browser.press_rail(RailTab::Effects);
+            }
+            s.browser.toggle_device("Reverb");
+            let key = preset_key(reverb, "ホール");
+            if !s.browser.favourites.contains(&key) {
+                s.browser.toggle_favourite(&key);
+            }
+            s.browser.selected_item = None;
+            s.browser.selected_preset = Some((reverb, "ホール".to_string()));
+            s.mixer.browser_fx_focus = true;
+        }
+        1 => {
+            s.side_size.browser = Some(crate::side_edge::BROWSER_MIN_W);
+        }
+        2 => {
+            let l = s.browser.layout(g.panel);
+            let Some(i) = l
+                .rows
+                .iter()
+                .position(|p| matches!(&p.row, BRow::Preset { name, .. } if name == "小さい部屋"))
+            else {
+                return;
+            };
+            let hit = BrowserHit::Preset(i);
+            let Some((x, y)) = s.browser.center_of(&l, hit) else {
+                return;
+            };
+            let bass = s
+                .project()
+                .tracks
+                .values()
+                .find(|t| t.name == "Bass")
+                .map(|t| t.id);
+            let Some(row) = bass.and_then(|t| s.tree().row_of(crate::tree::RowKind::Track(t)))
+            else {
+                return;
+            };
+            let to = (
+                g.lanes.x + g.lanes.w * 0.4,
+                g.column.y + row.y - s.scroll.1 + row.h / 2.0,
+            );
+            let hit = crate::studio::Hit::Browser(hit);
+            s.press(g, hit);
+            s.lib_grab(g, hit, x, y, 1);
+            s.lib_move(to.0, to.1);
+        }
+        3 => {
+            s.browser.search = "ホール".into();
+        }
+        _ => {}
+    }
+}
+
 fn play_reverb(s: &mut Studio, g: &Geometry, n: u8) {
     let g = &s.geometry(g.size.0, g.size.1);
     if n == 0 {
@@ -624,6 +724,23 @@ mod tests {
         let body = s.instruments.open[0].body;
         assert_eq!(body, (natural.0 + 240.0, natural.1 + 160.0));
         assert!(s.instruments.sizing(), "the grip shows");
+    }
+
+    #[test]
+    fn the_browser_stages_play_without_a_window() {
+        let mut s = Studio::sample();
+        let g = s.geometry(1600.0, 1000.0);
+        for n in 0..3 {
+            assert!(Play::Laid(play_browser).without_window(&mut s, &g, n));
+        }
+        assert!(s.browser.open_devices.contains("Reverb"));
+        assert!(
+            s.browser
+                .drag
+                .as_ref()
+                .is_some_and(|d| d.moved && d.preset.is_some()),
+            "a preset is held"
+        );
     }
 
     #[test]

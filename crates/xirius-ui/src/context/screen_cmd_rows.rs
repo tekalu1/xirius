@@ -243,6 +243,16 @@ impl Studio {
                 };
                 Some(self.browse_run(BrowseAct::Groups(open)))
             }
+            "browser.preset.load" => {
+                let (Some(device), Some(preset)) = (text(args, "device"), text(args, "preset"))
+                else {
+                    return Some(false);
+                };
+                let Some(def) = xirius_params::find(device) else {
+                    return Some(false);
+                };
+                Some(self.browse_run(BrowseAct::LoadPreset(def.uid, preset.to_string())))
+            }
             "browser.put" => {
                 let Some(path) = text(args, "path").map(PathBuf::from) else {
                     return Some(false);
@@ -257,6 +267,9 @@ impl Studio {
                     return Some(false);
                 };
                 let on = wanted(args, true);
+                if item.starts_with("preset:") {
+                    return Some(self.browse_run(BrowseAct::FavouritePreset(item.to_string(), on)));
+                }
                 Some(match item.strip_prefix("file:") {
                     Some(path) => {
                         self.browse_run(BrowseAct::FavouriteFile(PathBuf::from(path), on))

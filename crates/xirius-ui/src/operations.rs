@@ -77,6 +77,8 @@ pub fn of_hit(hit: Hit) -> Option<(&'static str, &'static str)> {
             BrowserHit::Group(_) => ("browser.group", "browser.group.fold"),
             BrowserHit::Item(_) => ("browser.item", "browser.item.pick"),
             BrowserHit::Fav(_) => ("browser.fav", "browser.fav.toggle"),
+            BrowserHit::Disclose(_) => ("browser.disclose", "browser.device.fold"),
+            BrowserHit::Preset(_) => ("browser.preset", "browser.preset.pick"),
             BrowserHit::Dir(_) => ("browser.dir", "browser.dir.open"),
             BrowserHit::File(_) => ("browser.file", "browser.file.pick"),
             // The count is a part of its row, whose press it does.

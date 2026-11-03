@@ -1051,6 +1051,21 @@ impl Studio {
         if key == "escape" && self.mixer.fx_drag.take().is_some() {
             return true;
         }
+        // With no list open, Enter on the preset the browser's keys are on loads it
+        // (BRW-017).
+        if key == "enter"
+            && self.browser.open
+            && matches!(
+                self.browser.tab,
+                crate::browser::RailTab::Effects | crate::browser::RailTab::Instruments
+            )
+            && self.popup.is_none()
+            && !self.browser.typing
+            && self.mixer.browser_fx_focus
+            && self.browser.selected_preset.is_some()
+        {
+            return self.load_selected_preset();
+        }
         // With no list open, Enter on the effect the browser's keys are on
         // puts it on the chosen track (else the master), as it did before.
         if key == "enter"

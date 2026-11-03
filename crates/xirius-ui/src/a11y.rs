@@ -321,6 +321,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     out.extend(instrument_marks(s, g));
     out.extend(device_marks(s, g));
     out.extend(audition_mark(s, g));
+    out.extend(preset_marks(s, g));
     out.extend(drawer_marks(s, g));
     out
 }
@@ -626,6 +627,74 @@ fn audition_mark(s: &Studio, g: &Geometry) -> Option<Mark> {
             crate::browser::BrowserHit::Audition,
         )),
     })
+}
+
+/// The presets under the built-in devices in the browser (BRW-017): the arrow before a device
+/// is a Button 「EQ のプリセット」 that says whether they show, and each preset row a ListItem
+/// 「EQ のプリセット Hall」 that says whether it is chosen. A press is the pointer's (a row is
+/// chosen and Enter loads it).
+fn preset_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
+    use crate::browser::{BRow, BrowserHit, RailTab};
+    if !s.browser.open || !matches!(s.browser.tab, RailTab::Instruments | RailTab::Effects) {
+        return Vec::new();
+    }
+    let l = s.browser.layout(g.panel);
+    let mut out = Vec::new();
+    for (i, p) in l.rows.iter().enumerate() {
+        let r = s.browser.row_rect(&l, p);
+        if r.bottom() <= l.list.y || r.y >= l.list.bottom() {
+            continue;
+        }
+        let (key, role, label, press) = match &p.row {
+            BRow::Item {
+                item,
+                presets: Some(open),
+                ..
+            } => {
+                let mut node = accesskit::Node::new(accesskit::Role::Button);
+                node.set_expanded(*open);
+                (
+                    format!("presets-{}", item.name),
+                    node,
+                    format!("{} のプリセット", item.name),
+                    BrowserHit::Disclose(i),
+                )
+            }
+            BRow::Preset {
+                device,
+                name,
+                selected,
+                ..
+            } => {
+                let mut node = accesskit::Node::new(accesskit::Role::ListItem);
+                node.set_selected(*selected);
+                let device_name = xirius_params::find(device).map_or(*device, |d| d.name);
+                (
+                    format!("preset-{device}-{name}"),
+                    node,
+                    format!("{device_name} のプリセット {name}"),
+                    BrowserHit::Preset(i),
+                )
+            }
+            _ => continue,
+        };
+        let mut node = role;
+        node.set_label(label);
+        let at = match press {
+            BrowserHit::Disclose(_) => s.browser.disclose_rect(r),
+            _ => r,
+        };
+        node.set_bounds(bounds(at));
+        out.push(Mark {
+            key,
+            children: Vec::new(),
+            node,
+            fold: None,
+            pick: None,
+            press: Some(crate::studio::Hit::Browser(press)),
+        });
+    }
+    out
 }
 
 /// A screen reader's press on a mark that presses as the pointer does.

@@ -138,7 +138,7 @@ pub fn view(p: &Project, presets: &Presets, menu: Menu) -> (Vec<Choice>, String)
             let save = off && name != super::window::DEFAULT && list.contains(&name);
             rows.push(row(if save { SAVE } else { "off:@save" }, "上書き保存"));
             rows.push(row(SAVE_AS, "名前を付けて保存…"));
-            rows.push(row("off:@show", "ブラウザーに表示"));
+            rows.push(row(SHOW, "ブラウザーに表示"));
             let now = presets.origin(x).unwrap_or_default();
             (rows, now)
         }
@@ -204,7 +204,17 @@ impl Studio {
                 SAVE_AS => {
                     self.save_preset_as(id);
                 }
-                SHOW => {}
+                SHOW => {
+                    let p = self.project();
+                    let Some(x) = device_of(&p, id) else {
+                        return;
+                    };
+                    let Some(def) = x.builtin() else {
+                        return;
+                    };
+                    let origin = self.instruments.presets.origin(x);
+                    self.show_preset_in_browser(def.uid, origin.as_deref());
+                }
                 _ => {
                     self.load_preset(id, to);
                 }

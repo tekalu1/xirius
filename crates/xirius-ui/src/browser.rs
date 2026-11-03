@@ -346,6 +346,14 @@ pub struct Browser {
     /// Open folders of the tree, by their paths.
     pub(crate) open_dirs: HashSet<String>,
     pub selected_item: Option<&'static str>,
+    /// The preset files of the built-in devices, by the device's uid (BRW-017).
+    pub presets: BTreeMap<&'static str, Vec<String>>,
+    /// The built-in devices whose presets the list shows under them, by name.
+    pub(crate) open_devices: HashSet<&'static str>,
+    /// The preset row the keys are on: its device's uid and its name.
+    pub selected_preset: Option<(&'static str, String)>,
+    /// The selected row is brought into the list's view at the next look (「ブラウザーに表示」).
+    pub(crate) reveal: bool,
     pub selected_file: Option<String>,
     pub playing: Option<String>,
     pub scroll: f32,
@@ -400,6 +408,10 @@ pub enum BrowserHit {
     Group(usize),
     Item(usize),
     Fav(usize),
+    /// The arrow before a built-in device that has presets: it shows or hides them (BRW-017).
+    Disclose(usize),
+    /// A preset under its built-in device.
+    Preset(usize),
     Dir(usize),
     File(usize),
     /// The play / stop button of the audition row.
@@ -435,6 +447,17 @@ pub enum BRow {
     Item {
         item: LibItem,
         vendor_text: bool,
+        fav: bool,
+        selected: bool,
+        /// A built-in device's presets: `None` when it has none, else whether they show.
+        presets: Option<bool>,
+    },
+    /// A preset file under its built-in device (BRW-017).
+    Preset {
+        /// The device's uid.
+        device: &'static str,
+        name: String,
+        effect: bool,
         fav: bool,
         selected: bool,
     },
@@ -503,6 +526,18 @@ const SCAN_H: f32 = Layout::BROWSER_ROW_H + 12.0;
 const SCAN_BAR_H: f32 = 3.0;
 /// An unusable plugin's row: the name over the reason.
 const BAD_H: f32 = 40.0;
+
+/// Does a search find an item by its own words?
+fn item_hit(x: &LibItem, q: &str) -> bool {
+    format!("{} {} {}", x.name, x.vendor, x.kind)
+        .to_lowercase()
+        .contains(q)
+}
+
+/// What the favourites keep a built-in device's preset as (BRW-017).
+pub fn preset_key(device: &str, name: &str) -> String {
+    format!("preset:{device}/{name}")
+}
 
 /// Why a bundle could not be used, in a few words.
 pub(crate) fn failure_why(kind: FailureKind) -> &'static str {
@@ -589,6 +624,10 @@ impl Browser {
             path: Vec::new(),
             open_dirs: HashSet::new(),
             selected_item: None,
+            presets: BTreeMap::new(),
+            open_devices: HashSet::new(),
+            selected_preset: None,
+            reveal: false,
             selected_file: None,
             playing: None,
             scroll: 0.0,
@@ -675,19 +714,132 @@ impl Browser {
             .iter()
             .filter(|x| x.effect == effects)
             .filter(|x| !q.is_empty() || self.show_hidden || !self.hidden.contains(x.name))
-            .filter(|x| {
-                q.is_empty()
-                    || format!("{} {} {}", x.name, x.vendor, x.kind)
-                        .to_lowercase()
-                        .contains(&q)
-            })
+            .filter(|x| q.is_empty() || item_hit(x, &q) || !self.preset_hits(x, &q).is_empty())
             .copied()
             .collect();
         if self.view() == View::Favourites {
-            items.retain(|x| self.favourites.contains(x.name));
+            items.retain(|x| self.favourites.contains(x.name) || self.has_favourite_preset(x));
         }
         items.sort_by_key(|x| x.name);
         items
+    }
+
+    /// The built-in device an item is, and its preset files (BRW-017).
+    pub(crate) fn presets_of(&self, item: &LibItem) -> Option<(&'static str, &[String])> {
+        if item.format != BUILT_IN {
+            return None;
+        }
+        let def = xirius_params::find(item.name)?;
+        Some((
+            def.uid,
+            self.presets.get(def.uid).map_or(&[][..], Vec::as_slice),
+        ))
+    }
+
+    /// The presets of an item a search finds by their names (the rule of the list menus).
+    fn preset_hits(&self, item: &LibItem, q: &str) -> Vec<String> {
+        self.presets_of(item).map_or_else(Vec::new, |(_, all)| {
+            all.iter()
+                .filter(|n| n.to_lowercase().contains(q))
+                .cloned()
+                .collect()
+        })
+    }
+
+    fn has_favourite_preset(&self, item: &LibItem) -> bool {
+        self.presets_of(item).is_some_and(|(uid, all)| {
+            all.iter()
+                .any(|n| self.favourites.contains(&preset_key(uid, n)))
+        })
+    }
+
+    /// The presets an item has under it, and whether they show: the user opened it, or a
+    /// search finds some of them (then only those).
+    fn shown_presets(&self, item: &LibItem, q: &str) -> Option<(&'static str, Vec<String>, bool)> {
+        let (uid, all) = self.presets_of(item)?;
+        if all.is_empty() {
+            return None;
+        }
+        let hits = if q.is_empty() {
+            Vec::new()
+        } else {
+            self.preset_hits(item, q)
+        };
+        let open = self.open_devices.contains(item.name) || !hits.is_empty();
+        let shown = if hits.is_empty() { all.to_vec() } else { hits };
+        Some((uid, shown, open))
+    }
+
+    /// Shows or hides the presets under a built-in device.
+    pub fn toggle_device(&mut self, name: &'static str) {
+        if !self.open_devices.remove(name) {
+            self.open_devices.insert(name);
+        }
+    }
+
+    /// Opens the list on `tab` at the device `name`: its group and its presets open, the
+    /// preset `preset` chosen (else the device's row), brought into view by the next frame
+    /// (the device window's ブラウザーに表示).
+    pub fn show_device(
+        &mut self,
+        tab: RailTab,
+        name: &'static str,
+        preset: Option<(&'static str, String)>,
+    ) {
+        self.prefs_selection_changed();
+        if self.tab != tab {
+            self.pool_heading = None;
+        }
+        self.open = true;
+        self.tab = tab;
+        self.search.clear();
+        self.typing = false;
+        if self.view() == View::Favourites {
+            self.set_view(View::Kind);
+        }
+        let view = self.view();
+        let item = self
+            .items
+            .as_deref()
+            .unwrap_or(&LIB)
+            .iter()
+            .find(|x| x.name == name)
+            .copied();
+        if let Some(item) = item.filter(|_| view.grouped()) {
+            let key = format!("{:?}/{:?}/{}", self.tab, view, group_name(&item, view));
+            self.closed_groups.remove(&key);
+        }
+        match preset {
+            Some(p) => {
+                self.open_devices.insert(name);
+                self.selected_item = None;
+                self.selected_preset = Some(p);
+            }
+            None => {
+                self.selected_item = Some(name);
+                self.selected_preset = None;
+            }
+        }
+        self.reveal = true;
+    }
+
+    /// Scrolls the chosen row into view (once, after [`Browser::show_device`]).
+    pub(crate) fn reveal_selected(&mut self, l: &BrowserLayout) {
+        self.reveal = false;
+        let Some(p) = l.rows.iter().find(|p| {
+            matches!(
+                p.row,
+                BRow::Item { selected: true, .. } | BRow::Preset { selected: true, .. }
+            )
+        }) else {
+            return;
+        };
+        if p.y < self.scroll {
+            self.scroll = p.y;
+        } else if p.y + p.h > self.scroll + l.list.h {
+            self.scroll = p.y + p.h - l.list.h;
+        }
+        self.clamp_scroll(l);
     }
 
     // ------------------------------------------------------------------ rows
@@ -742,11 +894,30 @@ impl Browser {
         let view = self.view();
         let items = self.library();
         let q = self.query();
-        let item_row = |item: LibItem| BRow::Item {
-            item,
-            vendor_text: view != View::Vendor,
-            fav: self.favourites.contains(item.name),
-            selected: self.selected_item == Some(item.name),
+        let item_rows = |item: LibItem| {
+            let shown = self.shown_presets(&item, &q);
+            let mut rows = vec![BRow::Item {
+                item,
+                vendor_text: view != View::Vendor,
+                fav: self.favourites.contains(item.name),
+                selected: self.selected_item == Some(item.name),
+                presets: shown.as_ref().map(|s| s.2),
+            }];
+            if let Some((uid, names, true)) = shown {
+                rows.extend(names.into_iter().map(|name| {
+                    BRow::Preset {
+                        device: uid,
+                        fav: self.favourites.contains(&preset_key(uid, &name)),
+                        selected: self
+                            .selected_preset
+                            .as_ref()
+                            .is_some_and(|(d, n)| *d == uid && *n == name),
+                        effect: item.effect,
+                        name,
+                    }
+                }));
+            }
+            rows
         };
         if items.is_empty() {
             return vec![BRow::Note(if q.is_empty() {
@@ -756,7 +927,7 @@ impl Browser {
             })];
         }
         if !view.grouped() {
-            return items.into_iter().map(item_row).collect();
+            return items.into_iter().flat_map(item_rows).collect();
         }
         let mut groups: BTreeMap<&'static str, Vec<LibItem>> = BTreeMap::new();
         for item in items {
@@ -777,7 +948,7 @@ impl Browser {
                 open,
             });
             if open {
-                rows.extend(items.into_iter().map(item_row));
+                rows.extend(items.into_iter().flat_map(&item_rows));
             }
         }
         rows
@@ -971,11 +1142,20 @@ impl Browser {
             }
             return match &p.row {
                 BRow::Group { .. } => Some(BrowserHit::Group(i)),
-                BRow::Item { .. } => {
+                BRow::Item { presets, .. } => {
+                    if self.fav_rect(r).contains(x, y) {
+                        Some(BrowserHit::Fav(i))
+                    } else if presets.is_some() && self.disclose_rect(r).contains(x, y) {
+                        Some(BrowserHit::Disclose(i))
+                    } else {
+                        Some(BrowserHit::Item(i))
+                    }
+                }
+                BRow::Preset { .. } => {
                     if self.fav_rect(r).contains(x, y) {
                         Some(BrowserHit::Fav(i))
                     } else {
-                        Some(BrowserHit::Item(i))
+                        Some(BrowserHit::Preset(i))
                     }
                 }
                 BRow::Dir { .. } => Some(BrowserHit::Dir(i)),
@@ -1077,6 +1257,11 @@ impl Browser {
         )
     }
 
+    /// The arrow before a built-in device's icon that shows its presets (BRW-017).
+    pub fn disclose_rect(&self, row: Rect) -> Rect {
+        Rect::new(row.x + Space::X1.px(), row.y, 14.0 + Space::X2.px(), row.h)
+    }
+
     /// The play button and the waveform of an audition row.
     pub fn audition_parts(&self, row: Rect, depth: usize) -> (Rect, Rect) {
         let x = row.x + Self::indent(depth) + Layout::ICON_SIZE + Space::X2.px();
@@ -1113,7 +1298,10 @@ impl Browser {
             BrowserHit::LocAdd => l.add.map(mid),
             BrowserHit::Crumb(i) => l.crumbs.get(i).map(|(_, r)| mid(*r)),
             BrowserHit::Group(i) | BrowserHit::Dir(i) | BrowserHit::File(i) => row(i).map(mid),
-            BrowserHit::Item(i) => row(i).map(|r| (r.x + r.w / 3.0, r.y + r.h / 2.0)),
+            BrowserHit::Item(i) | BrowserHit::Preset(i) => {
+                row(i).map(|r| (r.x + r.w / 3.0, r.y + r.h / 2.0))
+            }
+            BrowserHit::Disclose(i) => row(i).map(|r| mid(self.disclose_rect(r))),
             BrowserHit::Fav(i) => row(i).map(|r| mid(self.fav_rect(r))),
             BrowserHit::Audition => l.rows.iter().find_map(|p| match p.row {
                 BRow::Audition { depth, .. } => {
@@ -1162,11 +1350,25 @@ impl Browser {
             BrowserHit::Item(i) => {
                 if let Some(BRow::Item { item, .. }) = row(i) {
                     self.selected_item = Some(item.name);
+                    self.selected_preset = None;
                 }
             }
-            BrowserHit::Fav(i) => {
+            BrowserHit::Fav(i) => match row(i) {
+                Some(BRow::Item { item, .. }) => self.toggle_favourite(item.name),
+                Some(BRow::Preset { device, name, .. }) => {
+                    self.toggle_favourite(&preset_key(device, &name))
+                }
+                _ => {}
+            },
+            BrowserHit::Disclose(i) => {
                 if let Some(BRow::Item { item, .. }) = row(i) {
-                    self.toggle_favourite(item.name);
+                    self.toggle_device(item.name);
+                }
+            }
+            BrowserHit::Preset(i) => {
+                if let Some(BRow::Preset { device, name, .. }) = row(i) {
+                    self.selected_preset = Some((device, name));
+                    self.selected_item = None;
                 }
             }
             BrowserHit::Dir(i) => {
@@ -1451,6 +1653,16 @@ fn paint_panel(
     });
 }
 
+/// The favourite's star at the right end of a row.
+fn paint_star(pen: &mut Pen, star: Rect, fav: bool, hot: bool) {
+    let c = pen.c;
+    pen.icon(
+        if fav { "star-fill" } else { "star" },
+        icon_box(star),
+        if fav || hot { c.ink_strong } else { c.ink },
+    );
+}
+
 fn paint_row(
     pen: &mut Pen,
     browser: &Browser,
@@ -1465,7 +1677,7 @@ fn paint_row(
     let inner = Rect::new(r.x + Space::X1.px(), r.y, r.w - Space::X1.px() * 2.0, r.h);
     let row_hot = matches!(
         hover,
-        Some(BrowserHit::Item(j) | BrowserHit::Group(j) | BrowserHit::Dir(j) | BrowserHit::File(j) | BrowserHit::Fav(j) | BrowserHit::Pool(j) | BrowserHit::PoolCount(j))
+        Some(BrowserHit::Item(j) | BrowserHit::Group(j) | BrowserHit::Dir(j) | BrowserHit::File(j) | BrowserHit::Fav(j) | BrowserHit::Pool(j) | BrowserHit::PoolCount(j) | BrowserHit::Disclose(j) | BrowserHit::Preset(j))
             if j == i
     );
     let icon_at = |x: f32| Rect::new(x, r.y + (r.h - 14.0) / 2.0, 14.0, 14.0);
@@ -1522,11 +1734,29 @@ fn paint_row(
             vendor_text,
             fav,
             selected,
+            presets,
         } => {
             if *selected {
                 pen.round(inner, c.sel, Radius::S);
             } else if row_hot {
                 pen.round(inner, c.hover, Radius::S);
+            }
+            if let Some(open) = presets {
+                let d = browser.disclose_rect(r);
+                let s = 12.0;
+                pen.icon(
+                    if *open {
+                        "chevron-down"
+                    } else {
+                        "chevron-right"
+                    },
+                    Rect::new(d.x + (d.w - s) / 2.0, r.y + (r.h - s) / 2.0, s, s),
+                    if hover == Some(BrowserHit::Disclose(i)) {
+                        c.ink_strong
+                    } else {
+                        c.ink
+                    },
+                );
             }
             let x = r.x + pad + 14.0 + Space::X2.px();
             pen.icon(item.icon, icon_at(x), c.ink_strong);
@@ -1561,17 +1791,35 @@ fn paint_row(
                 // The plugin is being loaded: the spinner takes the star's place.
                 pen.icon_turned("spinner", icon_box(star), c.ink_strong, browser.spin);
             } else {
-                let star_hot = hover == Some(BrowserHit::Fav(i));
-                pen.icon(
-                    if *fav { "star-fill" } else { "star" },
-                    icon_box(star),
-                    if *fav || star_hot {
-                        c.ink_strong
-                    } else {
-                        c.ink
-                    },
-                );
+                paint_star(pen, star, *fav, hover == Some(BrowserHit::Fav(i)));
             }
+        }
+        BRow::Preset {
+            name,
+            fav,
+            selected,
+            ..
+        } => {
+            if *selected {
+                pen.round(inner, c.sel, Radius::S);
+            } else if row_hot {
+                pen.round(inner, c.hover, Radius::S);
+            }
+            // Under its device's name, with no icon of its own.
+            let name_x = r.x + pad + (14.0 + Space::X2.px()) * 2.0;
+            let star = browser.fav_rect(r);
+            let name_r = Rect::new(name_x, r.y, star.x - name_x, r.h);
+            pen.mask(name_r, |pen| {
+                pen.text(
+                    name,
+                    FontSize::Small,
+                    Weight::Regular,
+                    pen.c.ink_strong,
+                    name_r,
+                    Align::Left,
+                );
+            });
+            paint_star(pen, star, *fav, hover == Some(BrowserHit::Fav(i)));
         }
         BRow::Dir {
             name, depth, open, ..
@@ -1804,6 +2052,7 @@ mod tests {
             .map(|r| match r {
                 BRow::Group { name, count, .. } => format!("[{name} {count}]"),
                 BRow::Item { item, .. } => item.name.to_string(),
+                BRow::Preset { name, .. } => format!("  {name}"),
                 BRow::Dir { name, .. } => format!("{name}/"),
                 BRow::File { name, .. } => name.clone(),
                 BRow::Audition { .. } => "<audition>".to_string(),

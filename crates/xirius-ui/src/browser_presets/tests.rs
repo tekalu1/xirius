@@ -1,0 +1,450 @@
+//! BRW-017: the presets under the built-in devices in the browser, pressed as the window
+//! presses them (no OS input) on the sample song, its preset folder the tests' own.
+
+use std::sync::Arc;
+
+use serde_json::json;
+use xirius_plugins::Catalog;
+
+use super::*;
+use crate::instrument::Pick;
+use crate::instrument::menu::{Menu, SHOW};
+use crate::studio::Hit;
+
+/// The sample song with the browser on the effects and the factory presets read.
+fn studio() -> (Studio, Geometry) {
+    let mut s = Studio::sample();
+    s.mixer.catalog = Some(Arc::new(Catalog::default()));
+    s.browser.press_rail(RailTab::Effects);
+    assert_eq!(s.browser.tab, RailTab::Effects);
+    s.refresh_presets();
+    let g = s.geometry(1600.0, 1000.0);
+    (s, g)
+}
+
+fn track(s: &Studio, name: &str) -> TrackId {
+    crate::arrange::probe::track(s, name)
+}
+
+fn rows(s: &Studio, g: &Geometry) -> Vec<(usize, BRow)> {
+    let l = s.browser.layout(g.panel);
+    l.rows.into_iter().map(|p| p.row).enumerate().collect()
+}
+
+/// The row of the device `name`.
+fn device(s: &Studio, g: &Geometry, name: &str) -> (usize, Option<bool>) {
+    rows(s, g)
+        .into_iter()
+        .find_map(|(i, r)| match r {
+            BRow::Item { item, presets, .. } if item.name == name => Some((i, presets)),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("{name} is in the list"))
+}
+
+/// The preset rows under the device `uid`, in order.
+fn presets_under(s: &Studio, g: &Geometry, uid: &str) -> Vec<String> {
+    rows(s, g)
+        .into_iter()
+        .filter_map(|(_, r)| match r {
+            BRow::Preset { device, name, .. } if device == uid => Some(name),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The row of a preset and its middle on screen.
+fn preset(s: &Studio, g: &Geometry, name: &str) -> (Hit, f32, f32) {
+    let i = rows(s, g)
+        .into_iter()
+        .find_map(|(i, r)| matches!(&r, BRow::Preset { name: n, .. } if n == name).then_some(i))
+        .unwrap_or_else(|| panic!("{name} is in the list"));
+    let l = s.browser.layout(g.panel);
+    let (x, y) = s
+        .browser
+        .center_of(&l, BrowserHit::Preset(i))
+        .expect("on screen");
+    assert_eq!(s.browser.hit(&l, x, y), Some(BrowserHit::Preset(i)));
+    (Hit::Browser(BrowserHit::Preset(i)), x, y)
+}
+
+/// A press on the device's arrow, where it is drawn.
+fn disclose(s: &mut Studio, g: &Geometry, name: &str) {
+    let (i, _) = device(s, g, name);
+    let l = s.browser.layout(g.panel);
+    let (x, y) = s
+        .browser
+        .center_of(&l, BrowserHit::Disclose(i))
+        .expect("on screen");
+    let hit = s.hit(g, x, y);
+    assert_eq!(hit, Hit::Browser(BrowserHit::Disclose(i)));
+    s.press(g, hit);
+}
+
+/// A press and release on a preset row (`clicks`: 2 for the double click's second press).
+fn click(s: &mut Studio, g: &Geometry, name: &str, clicks: usize) {
+    let (hit, x, y) = preset(s, g, name);
+    s.mixer.browser_fx_focus = false;
+    s.press(g, hit);
+    assert!(s.lib_grab(g, hit, x, y, clicks));
+    s.lib_up(g, x, y);
+}
+
+/// The middle of a track's row in the lanes.
+fn lane(s: &Studio, g: &Geometry, t: TrackId) -> (f32, f32) {
+    let row = s.tree().row_of(RowKind::Track(t)).expect("a row");
+    let y = g.column.y + row.y - s.scroll.1 + row.h / 2.0;
+    (g.lanes.x + g.lanes.w / 2.0, y)
+}
+
+/// The built-in effects `uid` on the track, with the preset each keeps.
+fn devices(s: &Studio, t: TrackId, uid: &str) -> Vec<Option<String>> {
+    s.project().tracks[&t]
+        .inserts
+        .iter()
+        .filter(|x| x.builtin().is_some_and(|d| d.uid == uid))
+        .map(|x| x.preset.clone())
+        .collect()
+}
+
+fn uid(name: &str) -> &'static str {
+    xirius_params::find(name).unwrap().uid
+}
+
+/// Presses the cell of the open menu's row `label`.
+fn choose(s: &mut Studio, g: &Geometry, label: &str) -> bool {
+    let layout = s.popup.as_ref().expect("a menu is open").layout(g.size);
+    let cell = layout
+        .cells
+        .iter()
+        .find(|c| c.text == label)
+        .unwrap_or_else(|| panic!("no cell {label}"));
+    let hit = s.hit(
+        g,
+        cell.rect.x + cell.rect.w / 2.0,
+        cell.rect.y + cell.rect.h / 2.0,
+    );
+    s.press(g, hit)
+}
+
+fn menu_labels(s: &Studio) -> Vec<String> {
+    s.context_rows().iter().map(|r| r.label.clone()).collect()
+}
+
+#[test]
+fn a_device_shows_its_presets_under_it_when_its_arrow_is_pressed() {
+    let (mut s, g) = studio();
+    let reverb = uid("Reverb");
+    assert_eq!(device(&s, &g, "Reverb").1, Some(false), "closed at first");
+    assert!(presets_under(&s, &g, reverb).is_empty());
+    disclose(&mut s, &g, "Reverb");
+    assert_eq!(device(&s, &g, "Reverb").1, Some(true));
+    let mut factory = vec!["ホール", "ボーカルのプレート", "小さい部屋"];
+    factory.sort_unstable();
+    let mut shown = presets_under(&s, &g, reverb);
+    shown.sort_unstable();
+    assert_eq!(shown, factory, "the files, not Default");
+    // The rows follow the device's row.
+    let (i, _) = device(&s, &g, "Reverb");
+    assert!(matches!(rows(&s, &g)[i + 1].1, BRow::Preset { .. }));
+    // A press on the row selects the device, as before; it does not open or close it.
+    let l = s.browser.layout(g.panel);
+    let (x, y) = s.browser.center_of(&l, BrowserHit::Item(i)).unwrap();
+    assert_eq!(s.hit(&g, x, y), Hit::Browser(BrowserHit::Item(i)));
+    disclose(&mut s, &g, "Reverb");
+    assert!(presets_under(&s, &g, reverb).is_empty());
+}
+
+#[test]
+fn a_device_with_only_its_default_has_no_arrow() {
+    let (mut s, g) = studio();
+    s.browser.press_rail(RailTab::Instruments);
+    assert_eq!(device(&s, &g, "Sampler").1, None);
+    assert_eq!(device(&s, &g, "Drum Kit").1, None);
+}
+
+#[test]
+fn a_search_shows_the_presets_it_finds_under_their_devices() {
+    let (mut s, g) = studio();
+    s.browser.search = "ホール".into();
+    let shown: Vec<String> = rows(&s, &g)
+        .into_iter()
+        .filter_map(|(_, r)| match r {
+            BRow::Item { item, .. } => Some(item.name.to_string()),
+            BRow::Preset { name, .. } => Some(format!("  {name}")),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(shown, ["Reverb", "  ホール"]);
+    // The case of the letters does not count, as in the list menus.
+    s.browser.search = "REV".into();
+    assert_eq!(device(&s, &g, "Reverb").1, Some(false), "found by its name");
+    s.browser.search.clear();
+    assert_eq!(
+        device(&s, &g, "Reverb").1,
+        Some(false),
+        "not opened by the search"
+    );
+}
+
+#[test]
+fn a_preset_is_a_favourite_of_its_own() {
+    let (mut s, g) = studio();
+    disclose(&mut s, &g, "Delay");
+    let (Hit::Browser(BrowserHit::Preset(i)), _, _) = preset(&s, &g, "スラップバック")
+    else {
+        unreachable!()
+    };
+    let l = s.browser.layout(g.panel);
+    let r = s.browser.row_rect(&l, &l.rows[i]);
+    let star = s.browser.fav_rect(r);
+    let hit = s.hit(&g, star.x + star.w / 2.0, star.y + star.h / 2.0);
+    assert_eq!(hit, Hit::Browser(BrowserHit::Fav(i)));
+    s.press(&g, hit);
+    let key = crate::browser::preset_key(uid("Delay"), "スラップバック");
+    assert!(s.browser.favourites.contains(&key));
+    assert!(!s.browser.favourites.contains("Delay"));
+    // お気に入り lists the device with it.
+    s.browser.set_view(crate::browser::View::Favourites);
+    assert!(rows(&s, &g).iter().any(
+        |(_, r)| matches!(r, BRow::Preset { name, fav: true, .. } if name == "スラップバック")
+    ));
+}
+
+#[test]
+fn enter_loads_the_chosen_effect_preset_on_the_chosen_track() {
+    let (mut s, g) = studio();
+    let keys = track(&s, "Keys");
+    s.select_row(Some(RowKind::Track(keys)));
+    disclose(&mut s, &g, "Reverb");
+    click(&mut s, &g, "ホール", 1);
+    assert_eq!(
+        s.browser.selected_preset,
+        Some((uid("Reverb"), "ホール".to_string()))
+    );
+    assert_eq!(s.browser.selected_item, None);
+    assert!(
+        devices(&s, keys, uid("Reverb")).is_empty(),
+        "a click only chooses"
+    );
+    let steps = s.song().steps();
+    assert!(s.pick_typed(&g, "enter", None));
+    assert_eq!(
+        devices(&s, keys, uid("Reverb")),
+        [Some("ホール".to_string())]
+    );
+    // Again: the track's Reverb takes it, no second one.
+    click(&mut s, &g, "小さい部屋", 1);
+    assert!(s.pick_typed(&g, "enter", None));
+    assert_eq!(
+        devices(&s, keys, uid("Reverb")),
+        [Some("小さい部屋".to_string())]
+    );
+    assert!(s.song().steps() > steps);
+}
+
+#[test]
+fn with_no_track_chosen_an_effect_preset_goes_on_the_master() {
+    let (mut s, g) = studio();
+    s.select_row(None);
+    disclose(&mut s, &g, "Limiter");
+    click(&mut s, &g, "マスターの仕上げ", 2);
+    assert_eq!(
+        devices(&s, TrackId::MASTER, uid("Limiter")),
+        [Some("マスターの仕上げ".to_string())]
+    );
+}
+
+#[test]
+fn a_preset_dropped_on_a_track_loads_there() {
+    let (mut s, g) = studio();
+    let bass = track(&s, "Bass");
+    disclose(&mut s, &g, "Compressor");
+    let (hit, x, y) = preset(&s, &g, "ドラムをまとめる");
+    let at = lane(&s, &g, bass);
+    assert_eq!(s.preset_drop_at(&g, at.0, at.1, true), Drop::Replace(bass));
+    s.press(&g, hit);
+    assert!(s.lib_grab(&g, hit, x, y, 1));
+    assert!(s.lib_move(at.0, at.1));
+    assert!(s.lib_up(&g, at.0, at.1));
+    assert_eq!(
+        devices(&s, bass, uid("Compressor")),
+        [Some("ドラムをまとめる".to_string())]
+    );
+    assert_eq!(s.selected_row, Some(RowKind::Track(bass)));
+    assert!(s.browser.drag.is_none());
+    // Off the tracks it does nothing.
+    let (hit, x, y) = preset(&s, &g, "並列で太く");
+    s.press(&g, hit);
+    assert!(s.lib_grab(&g, hit, x, y, 1));
+    let off = (g.panel.x + 10.0, g.panel.bottom() - 4.0);
+    assert!(s.lib_move(off.0, off.1));
+    assert_eq!(s.preset_drop_at(&g, off.0, off.1, true), Drop::Nothing);
+    assert!(s.lib_up(&g, off.0, off.1));
+    assert_eq!(
+        devices(&s, bass, uid("Compressor")),
+        [Some("ドラムをまとめる".to_string())]
+    );
+}
+
+#[test]
+fn an_instrument_preset_loads_on_the_chosen_instrument_track_or_a_new_one() {
+    let (mut s, g) = studio();
+    let keys = track(&s, "Keys");
+    assert!(s.set_instrument(keys, &Pick::built_in("Sampler")));
+    let id = crate::instrument::current(&s.project().tracks[&keys])
+        .unwrap()
+        .id;
+    assert!(s.save_preset(id, "柔らかい鍵盤", false));
+    s.refresh_presets();
+    s.browser.press_rail(RailTab::Instruments);
+    assert_eq!(device(&s, &g, "Sampler").1, Some(false));
+    disclose(&mut s, &g, "Sampler");
+    assert_eq!(presets_under(&s, &g, uid("Sampler")), ["柔らかい鍵盤"]);
+    // On the chosen instrument track.
+    s.select_row(Some(RowKind::Track(keys)));
+    click(&mut s, &g, "柔らかい鍵盤", 2);
+    let plugin = crate::instrument::current(&s.project().tracks[&keys])
+        .cloned()
+        .unwrap();
+    assert_eq!(plugin.preset.as_deref(), Some("柔らかい鍵盤"));
+    // With none chosen, on a new track.
+    s.select_row(None);
+    let before = s.project().tracks.len();
+    click(&mut s, &g, "柔らかい鍵盤", 2);
+    assert_eq!(s.project().tracks.len(), before + 1);
+    let Some(RowKind::Track(t)) = s.selected_row else {
+        panic!("the new track is chosen")
+    };
+    let plugin = crate::instrument::current(&s.project().tracks[&t])
+        .cloned()
+        .unwrap();
+    assert_eq!(plugin.name, "Sampler");
+    assert_eq!(plugin.preset.as_deref(), Some("柔らかい鍵盤"));
+}
+
+#[test]
+fn show_in_browser_chooses_the_presets_row_and_brings_it_into_view() {
+    let (mut s, g) = studio();
+    let keys = track(&s, "Keys");
+    assert!(s.run_command(
+        "plugin.add",
+        json!({ "track": keys.to_string(), "name": "Reverb" }),
+    ));
+    let id = s.project().tracks[&keys]
+        .inserts
+        .iter()
+        .find(|x| x.name == "Reverb")
+        .unwrap()
+        .id;
+    assert!(s.load_preset(id, "ボーカルのプレート"));
+    // The browser was elsewhere, searching, scrolled, the group folded.
+    s.browser.press_rail(RailTab::Files);
+    s.browser.search = "xyz".into();
+    s.browser.scroll = 400.0;
+    s.inst_menu_pick(Menu::Preset(keys, id), SHOW);
+    assert!(s.browser.open);
+    assert_eq!(s.browser.tab, RailTab::Effects);
+    assert!(s.browser.search.is_empty());
+    assert_eq!(
+        s.browser.selected_preset,
+        Some((uid("Reverb"), "ボーカルのプレート".to_string()))
+    );
+    assert!(s.mixer.browser_fx_focus, "Enter loads it again");
+    s.resized(&g);
+    assert!(!s.browser.reveal);
+    let l = s.browser.layout(g.panel);
+    let p = l
+        .rows
+        .iter()
+        .find(|p| matches!(&p.row, BRow::Preset { selected: true, .. }))
+        .expect("the row");
+    let r = s.browser.row_rect(&l, p);
+    assert!(r.y >= l.list.y && r.bottom() <= l.list.bottom(), "{r:?}");
+    // Default chooses the device's row.
+    assert!(s.load_preset(id, crate::instrument::window::DEFAULT));
+    s.inst_menu_pick(Menu::Preset(keys, id), SHOW);
+    assert_eq!(s.browser.selected_item, Some("Reverb"));
+    assert_eq!(s.browser.selected_preset, None);
+}
+
+#[test]
+fn the_window_menus_show_in_browser_row_is_live() {
+    let (mut s, _) = studio();
+    let keys = track(&s, "Keys");
+    assert!(s.run_command(
+        "plugin.add",
+        json!({ "track": keys.to_string(), "name": "EQ" }),
+    ));
+    let id = s.project().tracks[&keys]
+        .inserts
+        .iter()
+        .find(|x| x.name == "EQ")
+        .unwrap()
+        .id;
+    let (rows, _) = s.inst_menu_view(Menu::Preset(keys, id));
+    let row = rows.iter().find(|r| r.label == "ブラウザーに表示").unwrap();
+    assert_eq!(row.to, SHOW);
+}
+
+#[test]
+fn the_factory_presets_come_back_from_the_browsers_menus() {
+    let (mut s, g) = studio();
+    let delay = uid("Delay");
+    disclose(&mut s, &g, "Delay");
+    let before = presets_under(&s, &g, delay);
+    assert!(s.run_command(
+        "preset.remove",
+        json!({ "device": delay, "preset": "スラップバック" }),
+    ));
+    s.refresh_presets();
+    assert!(!presets_under(&s, &g, delay).contains(&"スラップバック".to_string()));
+    // A preset row's menu has it, for its device.
+    let (_, x, y) = preset(&s, &g, "4 分のピンポン");
+    assert!(s.lib_context(&g, x, y));
+    let labels = menu_labels(&s);
+    assert_eq!(labels[0], "読み込む");
+    assert!(labels.contains(&"お気に入り".to_string()));
+    assert!(choose(&mut s, &g, "工場出荷のプリセットを読み込み直す"));
+    s.refresh_presets();
+    assert_eq!(presets_under(&s, &g, delay), before);
+    // The blank of the list has it for every device.
+    let l = s.browser.layout(g.panel);
+    assert!(s.lib_context(&g, l.list.x + 20.0, l.list.bottom() - 6.0));
+    assert!(menu_labels(&s).contains(&"工場出荷のプリセットを読み込み直す".to_string()));
+}
+
+#[test]
+fn a_preset_rows_menu_loads_it() {
+    let (mut s, g) = studio();
+    let keys = track(&s, "Keys");
+    s.select_row(Some(RowKind::Track(keys)));
+    disclose(&mut s, &g, "EQ");
+    let (_, x, y) = preset(&s, &g, "電話の声");
+    assert!(s.lib_context(&g, x, y));
+    assert!(choose(&mut s, &g, "読み込む"));
+    assert_eq!(devices(&s, keys, uid("EQ")), [Some("電話の声".to_string())]);
+}
+
+#[test]
+fn a_screen_reader_hears_the_arrow_and_the_presets() {
+    let (mut s, g) = studio();
+    let find = |s: &Studio, label: &str| {
+        crate::a11y::marks(s, &g)
+            .into_iter()
+            .find(|m| m.node.label() == Some(label))
+    };
+    let arrow = find(&s, "Reverb のプリセット").expect("the arrow");
+    assert_eq!(arrow.node.role(), gpui::accesskit::Role::Button);
+    assert_eq!(arrow.node.is_expanded(), Some(false));
+    disclose(&mut s, &g, "Reverb");
+    let arrow = find(&s, "Reverb のプリセット").unwrap();
+    assert_eq!(arrow.node.is_expanded(), Some(true));
+    let row = find(&s, "Reverb のプリセット ホール").expect("the row");
+    assert_eq!(row.node.role(), gpui::accesskit::Role::ListItem);
+    assert_eq!(row.node.is_selected(), Some(false));
+    // Its press chooses it, as the pointer's does.
+    assert!(crate::a11y::press(&mut s, &g, row.press.unwrap()));
+    let row = find(&s, "Reverb のプリセット ホール").unwrap();
+    assert_eq!(row.node.is_selected(), Some(true));
+}
