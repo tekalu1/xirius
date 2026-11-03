@@ -1832,10 +1832,18 @@ impl Studio {
         let raw = self.project();
         // A window whose track went (a delete, an undo) closes: a pinned one kept every other
         // track's out until a restart.
-        if self.channel.as_ref().is_some_and(|w| !raw.tracks.contains_key(&w.track)) {
+        if self
+            .channel
+            .as_ref()
+            .is_some_and(|w| !raw.tracks.contains_key(&w.track))
+        {
             self.channel = None;
         }
-        if self.macro_pad.as_ref().is_some_and(|w| !raw.tracks.contains_key(&w.track)) {
+        if self
+            .macro_pad
+            .as_ref()
+            .is_some_and(|w| !raw.tracks.contains_key(&w.track))
+        {
             self.macro_pad = None;
         }
         if !self.instruments.open.is_empty() {
