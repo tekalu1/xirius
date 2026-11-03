@@ -12,7 +12,7 @@ impl Search {
     pub fn of(items: &[Item]) -> Option<Search> {
         (items
             .iter()
-            .filter(|i| !matches!(i.run, Run::Back | Run::Gap) && i.swatch.is_none())
+            .filter(|i| !matches!(i.run, Run::Back | Run::Gap | Run::Title) && i.swatch.is_none())
             .count()
             > 10)
             .then(|| Search {

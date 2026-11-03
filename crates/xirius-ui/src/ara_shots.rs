@@ -58,7 +58,7 @@ pub const SHOTS: &[Shot] = &[
         name: "ara07-crashed",
         acts: &[laid(7)],
     },
-    // A press on that badge: the clip's menu, with the restart first.
+    // A press on that badge: the plugin's small menu (its name, 編集 dim, 再起動, 外す).
     Shot {
         name: "ara08-restart",
         acts: &[laid(8)],
@@ -67,6 +67,12 @@ pub const SHOTS: &[Shot] = &[
     Shot {
         name: "ara09-failed",
         acts: &[laid(9)],
+    },
+    // Analysing in a clip too narrow for the percent: the ring alone, inside the clip, and the
+    // name cut first.
+    Shot {
+        name: "ara10-narrow",
+        acts: &[laid(10)],
     },
 ];
 
@@ -203,16 +209,27 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             let (x, y) = s.center_of(g, Hit::Ara(t, c)).expect("the badge");
             let hit = s.hit(g, x, y);
             s.press(g, hit);
-            assert_eq!(
-                labels(s).first().map(String::as_str),
-                Some(crate::clip_ara::RESTART)
-            );
+            assert_eq!(labels(s), [NAME, "編集", "再起動", "外す"]);
         }
-        _ => {
+        9 => {
             closed(s);
             let mut failed = report(c, Phase::Waiting, 0.0);
             failed.failed = Some("プラグインを読み込めません".into());
             s.ara.fake = Some(vec![failed]);
+        }
+        _ => {
+            closed(s);
+            s.ara.fake = Some(vec![report(c, Phase::Analysing, 0.42)]);
+            let row = *s.tree().row_of(crate::tree::RowKind::Track(t)).unwrap();
+            let p = s.project();
+            let clip = p.tracks[&t].clips[0].clone();
+            let w = s.clip_rect(g, &row, &clip).w;
+            s.beat_w *= 34.0 / w;
+            let r = s.clip_rect(g, &row, &clip);
+            let badge = s.ara_badge(c).unwrap();
+            let at = s.ara_badge_rect(&p.tracks[&t], &clip, r, &badge);
+            assert_eq!(at.w, crate::clip_ara::BOX_W);
+            assert!(at.x >= r.x && at.right() <= r.right(), "{at:?} {r:?}");
         }
     }
 }
@@ -225,7 +242,7 @@ mod tests {
     fn every_stage_plays_without_a_window() {
         let mut s = Studio::sample();
         let g = s.geometry(1440.0, 900.0);
-        for n in 0..=9 {
+        for n in 0..=10 {
             play(&mut s, &g, n);
         }
         // The stand-in is the only plugin the list shows.

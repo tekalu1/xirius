@@ -126,7 +126,7 @@ fn report(s: &Studio) -> Option<Report> {
 fn badge(s: &Studio) -> String {
     match clip(s).and_then(|c| s.ara_badge(c)) {
         None => "none".into(),
-        Some(Badge::Busy(n)) => format!("busy:{n}"),
+        Some(Badge::Busy(n)) => format!("busy:{}", n.map_or(String::new(), |n| n.to_string())),
         Some(Badge::Ready) => "ready".into(),
         Some(Badge::Crashed) => "crashed".into(),
         Some(Badge::Failed(why)) => format!("failed:{why}"),

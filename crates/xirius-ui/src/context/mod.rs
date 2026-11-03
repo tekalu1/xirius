@@ -67,6 +67,8 @@ pub enum Run {
     Do(Act),
     /// Back to the menu above.
     Back,
+    /// The menu's small heading (the plugin's name over the menu of its badge, PLG-055).
+    Title,
     /// A command that takes a name: the menu turns into a name box (command, its
     /// arguments, the argument the name goes to, the name it starts with).
     Ask(&'static str, Value, &'static str, String),
@@ -198,6 +200,11 @@ impl Item {
         Item::new("", Run::Gap)
     }
 
+    /// A small heading that does nothing.
+    pub fn title(label: &str) -> Item {
+        Item::new(label, Run::Title).enabled(false)
+    }
+
     /// The first row of a menu one level down.
     pub fn back() -> Item {
         Item::new("戻る", Run::Back)
@@ -301,6 +308,8 @@ pub struct Row {
     pub on: bool,
     pub sub: bool,
     pub gap: bool,
+    /// A small heading, not a row to choose.
+    pub title: bool,
     pub swatch: Option<usize>,
     pub mark: Option<usize>,
     pub reason: String,
@@ -338,6 +347,7 @@ impl State {
                 on: i.on,
                 sub: matches!(i.run, Run::Sub(_)),
                 gap: matches!(i.run, Run::Gap),
+                title: matches!(i.run, Run::Title),
                 swatch: i.swatch,
                 mark: i.mark,
                 field: match &i.run {
@@ -413,6 +423,11 @@ pub fn cells(rows: &[Row], w: f32) -> Vec<Cell> {
             continue;
         }
         let r = Rect::new(pad, y, w - pad * 2.0, Layout::MENU_ROW_H);
+        if row.title {
+            cells.push(Cell::new(r, Look::Label).text(row.label.clone()));
+            y += Layout::MENU_ROW_H;
+            continue;
+        }
         if let Some(field) = &row.field {
             let mut row_cells = fields::cells(r, i, field, row.enabled);
             if !row.enabled {
@@ -648,6 +663,7 @@ impl Studio {
     fn context_run(&mut self, g: &Geometry, item: Item) -> bool {
         match item.run {
             Run::Gap
+            | Run::Title
             | Run::Sub(_)
             | Run::Back
             | Run::Ask(..)

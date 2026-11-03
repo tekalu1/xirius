@@ -331,6 +331,7 @@ fn ctrl_m_on_clips_some_of_which_have_it_says_the_rest_are_left() {
     let (mut s, g) = studio();
     let (t, c) = vocal(&s);
     attach(&mut s, c);
+    s.ara.fake = Some(vec![report(c, Phase::Ready, 1.0)]);
     let drums = track(&s, "Drums");
     let d = s.project().tracks[&drums].clips[0].id;
     s.arrange.clips = [(t, c), (drums, d)].into_iter().collect();
@@ -349,6 +350,7 @@ fn an_attached_clip_edits_and_detaches_by_the_plugins_name() {
     let (mut s, g) = studio();
     let (t, c) = vocal(&s);
     attach(&mut s, c);
+    s.ara.fake = Some(vec![report(c, Phase::Ready, 1.0)]);
     processing(&mut s, &g);
     let edit = format!("{NAME}で編集");
     let detach = format!("{NAME}を外す");
@@ -400,12 +402,17 @@ fn the_badge_follows_the_plugin_and_says_it() {
     assert_eq!(s.ara_badge(c), None);
     attach(&mut s, c);
     s.ara.fake = Some(Vec::new());
-    // Not read yet: analysing from 0.
-    assert_eq!(s.ara_badge(c), Some(Badge::Busy(0)));
+    // Not read yet: being opened, the ring without a percent.
+    assert_eq!(s.ara_badge(c), Some(Badge::Busy(None)));
+    assert_eq!(Badge::Busy(None).said(), "解析中");
     s.ara.fake = Some(vec![report(c, Phase::Analysing, 0.42)]);
-    assert_eq!(s.ara_badge(c), Some(Badge::Busy(42)));
+    assert_eq!(s.ara_badge(c), Some(Badge::Busy(Some(42))));
     assert!(s.poll_ara(), "a turning ring keeps the frames coming");
-    assert_eq!(Badge::Busy(42).said(), "解析中 42%");
+    assert_eq!(Badge::Busy(Some(42)).said(), "解析中 42%");
+    // Analysed and being rendered: the ring, not a 100% that stays.
+    s.ara.fake = Some(vec![report(c, Phase::Rendering, 1.0)]);
+    assert_eq!(s.ara_badge(c), Some(Badge::Busy(None)));
+    assert!(s.poll_ara());
     s.ara.fake = Some(vec![report(c, Phase::Ready, 1.0)]);
     assert_eq!(s.ara_badge(c), Some(Badge::Ready));
     assert!(!s.poll_ara());
@@ -417,8 +424,14 @@ fn the_badge_follows_the_plugin_and_says_it() {
     assert_eq!(Badge::Crashed.said(), "停止");
     let mut failed = report(c, Phase::Waiting, 0.0);
     failed.failed = Some("読み込めません".into());
-    s.ara.fake = Some(vec![failed]);
+    s.ara.fake = Some(vec![failed.clone()]);
     assert_eq!(s.ara_badge(c), Some(Badge::Failed("読み込めません".into())));
+    // Down and cannot be opened: down, whose menu restarts it.
+    let mut both = failed.clone();
+    both.crashed = Some("stopped".into());
+    s.ara.fake = Some(vec![both]);
+    assert_eq!(s.ara_badge(c), Some(Badge::Crashed));
+    s.ara.fake = Some(vec![failed]);
     // A screen reader hears it as a button, with the reason.
     let marks = crate::a11y::marks(&s, &g);
     let mark = marks
@@ -444,6 +457,18 @@ fn the_badge_follows_the_plugin_and_says_it() {
         )
         .unwrap();
     assert_eq!(s.ara_badge(c), Some(Badge::Failed(MISSING.into())));
+}
+
+#[test]
+fn without_the_host_the_badge_never_says_done() {
+    let (mut s, _) = studio();
+    let (_, c) = vocal(&s);
+    attach(&mut s, c);
+    assert!(s.transport.host().is_none() && s.ara.fake.is_none());
+    // No report: nothing opens the document, and the clip plays its own sound.
+    assert_eq!(s.ara_badge(c), Some(Badge::Failed(NO_HOST.into())));
+    assert_eq!(s.ara_tip(c), Some(format!("{NAME}: {NO_HOST}")));
+    assert!(!s.poll_ara());
 }
 
 #[test]
@@ -474,6 +499,27 @@ fn the_badge_sits_after_the_name_and_stays_when_the_name_is_cut() {
         at.x >= narrow.x && at.right() <= narrow.right(),
         "{at:?} {narrow:?}"
     );
+    // Analysing in a wide clip: the ring and its percent.
+    let busy = Badge::Busy(Some(100));
+    assert!(busy.width() > BOX_W);
+    let at = s.ara_badge_rect(tr, clip, r, &busy);
+    assert_eq!(at.w, busy.width());
+    // In a narrow one the percent goes and the ring stays, inside the clip.
+    let at = s.ara_badge_rect(tr, clip, narrow, &busy);
+    assert_eq!(at.w, BOX_W);
+    assert!(
+        at.x >= narrow.x && at.right() <= narrow.right(),
+        "{at:?} {narrow:?}"
+    );
+    // Narrower than the ring: the box is cut at the clip's end, never past it.
+    let thin = Rect::new(r.x, r.y, BOX_W / 2.0, r.h);
+    for badge in [busy, Badge::Ready, Badge::Crashed] {
+        let at = s.ara_badge_rect(tr, clip, thin, &badge);
+        assert!(
+            at.x >= thin.x && at.right() <= thin.right() + 0.01,
+            "{badge:?} {at:?} {thin:?}"
+        );
+    }
 }
 
 #[test]
@@ -499,22 +545,50 @@ fn a_press_on_the_badge_opens_explains_or_offers_the_restart() {
         s.toast_shown().map(|t| t.text.as_str()),
         Some("読み込めません")
     );
-    // Went down: only the colour says so; the press opens the clip's menu with the restart
-    // first, and the restart brings the plugin back.
+    // Went down: only the colour says so; the press opens the plugin's small menu, not the
+    // clip's, and the restart brings the plugin back.
     let mut down = report(c, Phase::Ready, 1.0);
     down.crashed = Some("stopped".into());
-    s.ara.fake = Some(vec![down]);
+    s.ara.fake = Some(vec![down.clone()]);
     s.toast = None;
     s.poll_ara();
     assert!(s.toast_shown().is_none() && s.popup.is_none());
     let hit = s.hit(&g, x, y);
     s.press(&g, hit);
-    assert_eq!(labels(&s).first().map(String::as_str), Some(RESTART));
+    assert_eq!(labels(&s), [NAME, "編集", "再起動", "外す"]);
+    let rows = s.context_rows();
+    assert!(rows[0].title && !rows[0].enabled);
+    let edit = row(&s, "編集");
+    assert!(!edit.enabled);
+    assert_eq!(edit.reason, DOWN);
+    assert!(row(&s, "再起動").enabled && row(&s, "外す").enabled);
+    // 「編集」 and the name do nothing.
+    choose(&mut s, &g, "編集");
+    choose(&mut s, &g, NAME);
     assert_eq!(s.ara.opened.len(), 1);
+    // Nor do the clip's 「〈名前〉で編集」 or Ctrl+M (the double click is the same opening).
+    processing(&mut s, &g);
+    let edit = row(&s, &format!("{NAME}で編集"));
+    assert!(!edit.enabled);
+    assert_eq!(edit.reason, DOWN);
+    s.popup = None;
+    s.mapped_key(&g, "m", None, Mods::ctrl());
+    assert_eq!(s.error.take().as_deref(), Some(DOWN));
+    assert_eq!(s.ara.opened.len(), 1);
+    assert!(!s.open_ara_editor_for(&[c]));
+    // 「再起動」 brings it back.
+    let hit = s.hit(&g, x, y);
+    s.press(&g, hit);
     let before = s.health.restarts;
-    choose(&mut s, &g, RESTART);
+    choose(&mut s, &g, "再起動");
     assert_eq!(s.health.restarts, before + 1);
     assert_eq!(s.ara_badge(c), Some(Badge::Ready));
+    // 「外す」 takes the plugin off the clip.
+    s.ara.fake = Some(vec![down]);
+    let hit = s.hit(&g, x, y);
+    s.press(&g, hit);
+    choose(&mut s, &g, "外す");
+    assert_eq!(s.ara_badge(c), None, "{:?}", s.error);
     // The menu of a clip whose plugin runs has no restart.
     processing(&mut s, &g);
     s.popup = None;

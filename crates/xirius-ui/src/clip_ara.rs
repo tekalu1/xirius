@@ -6,11 +6,12 @@
 //!   plugins; picking one attaches it, even when there is only one. A clip with changed tempo,
 //!   speed, pitch or direction, or on a frozen track, has the row dim with its reason.
 //! - An attached clip has 「〈名前〉で編集」 and 「〈名前〉を外す」 (Ctrl+Alt+M) there instead, and
-//!   a badge after its name: a turning ring and the plugin's percent while it analyses, the
-//!   plugin's mark when done, the same mark in the warning colour when the plugin went down,
-//!   and the mark struck through when it cannot be opened.
-//! - A plugin that went down says so only by the colour (PLG-055): a press on the badge opens
-//!   the clip's menu, whose first row restarts the plugins that stopped.
+//!   a badge after its name: a turning ring and the plugin's percent while it analyses (the
+//!   ring alone while it renders, or when the clip is too narrow), the plugin's mark when done,
+//!   the same mark in the warning colour when the plugin went down, and the mark struck through
+//!   when it cannot be opened.
+//! - A plugin that went down says so only by the colour (PLG-055): a press on the badge opens a
+//!   small menu of the plugin's name, 「編集」 (dim while it is down), 「再起動」 and 「外す」.
 //! - A press on the badge, a double click on the clip or 「〈名前〉で編集」 opens the plugin's
 //!   window, one per plugin; when it closes, the plugin's edits are taken into the song.
 
@@ -35,6 +36,10 @@ pub const GAP: f32 = 2.0;
 pub const ADD: &str = "ARA プラグインを追加…";
 pub const MISSING: &str = "プラグインが見つかりません";
 pub const RESTART: &str = "プラグインを再起動";
+/// Why 「編集」 is dim while the plugin is down.
+pub const DOWN: &str = "プラグインが停止しています";
+/// Why nothing is analysed without the audio device: the plugins run in its host.
+pub const NO_HOST: &str = "音声の装置が開いていないため、プラグインを開けません";
 const NOT_ANALYSED: &str = "解析できませんでした";
 // design-lint: allow(guidance) 開けない理由のエラー。いつ開けるかを言わないと次が分からない
 const NOT_READY: &str = "プラグインの準備ができていません。解析が始まってから開いてください";
@@ -59,8 +64,9 @@ pub struct AraUi {
 /// What the badge after an attached clip's name shows.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Badge {
-    /// Analysing: the plugin's progress over its clips, in percent.
-    Busy(u8),
+    /// Analysing: the plugin's progress over its clips, in percent, when it has one (not while
+    /// it renders or opens).
+    Busy(Option<u8>),
     Ready,
     /// The plugin went down (PLG-055).
     Crashed,
@@ -72,7 +78,8 @@ impl Badge {
     /// What a screen reader says of it.
     pub fn said(&self) -> String {
         match self {
-            Badge::Busy(n) => format!("解析中 {n}%"),
+            Badge::Busy(Some(n)) => format!("解析中 {n}%"),
+            Badge::Busy(None) => "解析中".into(),
             Badge::Ready => "済み".into(),
             Badge::Crashed => "停止".into(),
             Badge::Failed(_) => "開けません".into(),
@@ -86,10 +93,10 @@ impl Badge {
         }
     }
 
-    /// The width of its box; a busy badge has its percent after the ring.
+    /// The width of its box when there is room; a busy badge has its percent after the ring.
     pub fn width(&self) -> f32 {
         match self {
-            Badge::Busy(n) => {
+            Badge::Busy(Some(n)) => {
                 BOX_W + crate::fonts::measure(&format!("{n}%"), FontSize::Micro, Weight::Semibold)
             }
             _ => BOX_W,
@@ -152,15 +159,21 @@ impl Studio {
             return Some(Badge::Failed(MISSING.into()));
         }
         let Some(r) = self.ara_report(&a.plugin) else {
-            // Not read yet: the document is being opened.
+            // Not read yet: the document is being opened. Without the host nothing opens it,
+            // and the clip plays its own sound: never 「済み」 without a report.
             let live = self.ara.fake.is_some() || self.transport.host().is_some();
-            return Some(if live { Badge::Busy(0) } else { Badge::Ready });
+            return Some(if live {
+                Badge::Busy(None)
+            } else {
+                Badge::Failed(NO_HOST.into())
+            });
         };
-        if let Some(why) = &r.failed {
-            return Some(Badge::Failed(why.clone()));
-        }
+        // Down before cannot be opened: a restart may open it again.
         if r.crashed.is_some() {
             return Some(Badge::Crashed);
+        }
+        if let Some(why) = &r.failed {
+            return Some(Badge::Failed(why.clone()));
         }
         Some(
             match r
@@ -172,13 +185,16 @@ impl Studio {
                 Some(Phase::Ready) => Badge::Ready,
                 Some(Phase::Failed) => Badge::Failed(NOT_ANALYSED.into()),
                 Some(Phase::Crashed) => Badge::Crashed,
-                _ => Badge::Busy(percent(r.progress)),
+                // Analysed, being rendered: the percent would stay at 100.
+                Some(Phase::Rendering) => Badge::Busy(None),
+                _ => Badge::Busy(Some(percent(r.progress))),
             },
         )
     }
 
     /// Where the badge of `clip` (at `r`) sits: right after its name, before the marks, and at
-    /// the name's start when the clip is too narrow for the name.
+    /// the name's start when the clip is too narrow for the name. It stays inside the clip: a
+    /// busy badge without the room drops its percent, and the box is cut at the clip's end.
     pub fn ara_badge_rect(&self, track: &Track, clip: &Clip, r: Rect, badge: &Badge) -> Rect {
         let pad = Space::X1.px();
         let mut name_x = r.x + pad;
@@ -192,9 +208,15 @@ impl Studio {
         } else {
             crate::clip_marks::marks_left(&marks, r, name_w, ara_reserve()) - 2.0
         };
-        let w = badge.width();
-        let x = (name_x + name_w + GAP).min(end - w).max(name_x);
-        Rect::new(x, r.y, w, BOX_H)
+        let end = end.min(r.right());
+        let full = badge.width();
+        let w = if end - name_x >= full { full } else { BOX_W };
+        let x = (name_x + name_w + GAP)
+            .min(end - w)
+            .max(name_x)
+            .min(r.right() - w)
+            .max(r.x);
+        Rect::new(x, r.y, w.min(r.right() - x), BOX_H)
     }
 
     /// The badge's box of an attached clip on screen, by its track and id.
@@ -432,9 +454,17 @@ impl Studio {
         };
         let plugin = a.plugin.clone();
         let name = self.ara_name(*first).unwrap_or_else(|| plugin.clone());
-        if let Some(Badge::Failed(why)) = self.ara_badge(*first) {
-            self.ara_tell(why);
-            return false;
+        match self.ara_badge(*first) {
+            Some(Badge::Failed(why)) => {
+                self.ara_tell(why);
+                return false;
+            }
+            // Its document is gone with the plugin: restart it first.
+            Some(Badge::Crashed) => {
+                self.error = Some(DOWN.into());
+                return false;
+            }
+            _ => {}
         }
         let place = self.editor_placement();
         let Some(host) = self.transport.host() else {
@@ -465,7 +495,7 @@ impl Studio {
     }
 
     /// A press on the badge of `clip`: its window, why it cannot be opened, or (the plugin went
-    /// down) the clip's menu, whose first row restarts it.
+    /// down) the small menu of the plugin.
     pub(crate) fn ara_badge_press(&mut self, g: &Geometry, track: TrackId, clip: ClipId) -> bool {
         match self.ara_badge(clip) {
             None => false,
@@ -473,7 +503,10 @@ impl Studio {
                 let Some(at) = self.ara_badge_at(g, track, clip) else {
                     return false;
                 };
-                self.clip_context(g, track, clip, at.x, at.bottom())
+                self.select_clip_here(track, clip);
+                let items = self.ara_down_menu(track, clip);
+                self.open_context(items, at.x, at.bottom());
+                true
             }
             Some(Badge::Failed(why)) => {
                 self.select_clip_here(track, clip);
@@ -485,6 +518,35 @@ impl Studio {
                 self.open_ara_editor_for(&[clip])
             }
         }
+    }
+
+    /// The menu of the badge of a plugin that went down (PLG-055): its name, 「編集」 (dim),
+    /// 「再起動」 and 「外す」.
+    pub(crate) fn ara_down_menu(&self, track: TrackId, clip: ClipId) -> Vec<crate::context::Item> {
+        use crate::context::{Act, Item};
+        let name = self.ara_name(clip).unwrap_or_default();
+        let frozen = self
+            .project()
+            .tracks
+            .get(&track)
+            .is_some_and(|t| t.frozen.is_some());
+        let edit = Item::act("編集", "", Act::AraAttach(vec![clip.to_string()]));
+        vec![
+            Item::title(&name),
+            Item {
+                reason: DOWN.into(),
+                ..edit.enabled(false)
+            },
+            Item::act("再起動", "", Act::RestartPlugins),
+            self.ctx_session(
+                "外す",
+                "clip.ara.detach",
+                "clip.ara.detach",
+                json!({ "ids": [clip.to_string()] }),
+                !frozen,
+                crate::toast::FROZEN,
+            ),
+        ]
     }
 
     /// The rows at the end of 「処理」 for the clips `ids`: attach, or edit and detach.
@@ -511,12 +573,19 @@ impl Studio {
             .filter(|c| p.ara.clips.contains_key(c))
             .map(ToString::to_string)
             .collect();
+        let down = clips
+            .iter()
+            .any(|c| self.ara_badge(*c) == Some(Badge::Crashed));
+        let edit = Item::act(
+            &format!("{name}で編集"),
+            &self.menu_key("clip.ara.attach"),
+            Act::AraAttach(with.clone()),
+        );
         vec![
-            Item::act(
-                &format!("{name}で編集"),
-                &self.menu_key("clip.ara.attach"),
-                Act::AraAttach(with.clone()),
-            ),
+            Item {
+                reason: if down { DOWN.into() } else { String::new() },
+                ..edit.enabled(!down)
+            },
             self.ctx_session(
                 &format!("{name}を外す"),
                 "clip.ara.detach",
@@ -544,7 +613,8 @@ impl Studio {
         let badge = self.ara_badge(clip)?;
         let name = self.ara_name(clip)?;
         Some(match badge {
-            Badge::Busy(n) => format!("{name}: 解析中 {n}%"),
+            Badge::Busy(Some(n)) => format!("{name}: 解析中 {n}%"),
+            Badge::Busy(None) => format!("{name}: 解析中"),
             Badge::Ready => format!("{name}で編集"),
             Badge::Crashed => format!("{name}: 停止"),
             Badge::Failed(why) => format!("{name}: {why}"),
@@ -554,10 +624,11 @@ impl Studio {
 
 /// The room the marks leave the badge: its widest (a busy badge at 100%) and its gap.
 pub fn ara_reserve() -> f32 {
-    Badge::Busy(100).width() + GAP
+    Badge::Busy(Some(100)).width() + GAP
 }
 
-/// Draws the badge in its box `at`, lit under the pointer.
+/// Draws the badge in its box `at`, lit under the pointer; a busy badge has its percent when the
+/// box has the room for it.
 pub fn paint_badge(pen: &mut Pen, badge: &Badge, at: Rect, hot: bool) {
     let c = pen.c;
     if hot {
@@ -576,6 +647,9 @@ pub fn paint_badge(pen: &mut Pen, badge: &Badge, at: Rect, hot: bool) {
         Badge::Busy(n) => {
             let centre = (at.x + BOX_W / 2.0, at.y + BOX_H / 2.0);
             crate::clip_marks::spinner(pen, centre);
+            let Some(n) = n.filter(|_| at.w + 0.5 >= badge.width()) else {
+                return;
+            };
             let text = format!("{n}%");
             pen.text(
                 &text,
