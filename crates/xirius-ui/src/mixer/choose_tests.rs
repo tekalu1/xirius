@@ -344,6 +344,9 @@ fn esc_while_a_knob_is_awaited_ends_the_wait_first() {
     // a part waits for a knob (as `midimap.learn` leaves it with an input open)
     let target = format!("track.volume:{t}");
     s.live_midi.assign.learning = Some(xirius_prefs::midimap::Target::parse(&target).unwrap());
-    assert!(!key(&mut s, &g, "escape", false), "the keymap's Esc ends it");
+    assert!(
+        !key(&mut s, &g, "escape", false),
+        "the keymap's Esc ends it"
+    );
     assert_eq!(s.mixer.chosen, Some((t, Pick::Plugin(eq))));
 }
