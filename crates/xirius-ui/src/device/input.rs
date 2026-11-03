@@ -224,8 +224,8 @@ impl Studio {
                     self.device_set(w.plugin, k, v);
                 }
             }
-            Look::Knob if clicks >= 2 => self.device_type(w.plugin, k, spec, now),
-            Look::Knob => {
+            Look::Knob | Look::Field if clicks >= 2 => self.device_type(w.plugin, k, spec, now),
+            Look::Knob | Look::Field => {
                 self.instruments.grab = Some(Grab::Knob {
                     plugin: w.plugin,
                     k,
@@ -494,6 +494,27 @@ impl Studio {
         y: f32,
     ) {
         let spec = &def.params[k];
+        if def.uid == "delay" {
+            let Some((track, _, values)) = self.device(w.plugin) else {
+                return;
+            };
+            let held = ["division", "feel"]
+                .iter()
+                .any(|id| self.param_locked(track, w.plugin, id));
+            let items = super::delay::beats_menu(def, &values)
+                .iter()
+                .map(|row| match row {
+                    Some(c) => {
+                        let args = set_args(def, w.plugin, &c.set);
+                        let item = self.ctx_as(&c.label, "plugin.param.set", args);
+                        crate::auto_lock::gate(item.on(c.on), held)
+                    }
+                    None => Item::gap(),
+                })
+                .collect();
+            self.open_context(items, x, y);
+            return;
+        }
         let Some(band) = super::eq::band_of(def, k) else {
             return;
         };
@@ -529,21 +550,7 @@ impl Studio {
             .resets()
             .into_iter()
             .any(|k| self.param_locked(w.track, w.plugin, def.params[k].id));
-        let set_args = |set: &[(usize, f64)]| {
-            let mut args = json!({ "id": w.plugin.to_string() });
-            if let Some(((k, v), rest)) = set.split_first() {
-                args["param"] = json!(def.params[*k].id);
-                args["value"] = json!(v);
-                if !rest.is_empty() {
-                    args["also"] = json!(
-                        rest.iter()
-                            .map(|(k, v)| json!({ "param": def.params[*k].id, "value": v }))
-                            .collect::<Vec<_>>()
-                    );
-                }
-            }
-            args
-        };
+        let set_args = |set: &[(usize, f64)]| set_args(def, w.plugin, set);
         let mut items = Vec::new();
         for row in &pt.menu {
             let item = match row {
@@ -734,4 +741,22 @@ impl Studio {
         self.open_context(items, x, y);
         true
     }
+}
+
+/// What `plugin.param.set` takes to set the parameters `set` (index, value
+/// 0..1) of `plugin` in one step: the first, then the rest as `also`.
+fn set_args(def: &BuiltinDef, plugin: PluginId, set: &[(usize, f64)]) -> serde_json::Value {
+    let mut args = json!({ "id": plugin.to_string() });
+    if let Some(((k, v), rest)) = set.split_first() {
+        args["param"] = json!(def.params[*k].id);
+        args["value"] = json!(v);
+        if !rest.is_empty() {
+            args["also"] = json!(
+                rest.iter()
+                    .map(|(k, v)| json!({ "param": def.params[*k].id, "value": v }))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+    args
 }

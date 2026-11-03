@@ -762,7 +762,7 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                     });
                     n
                 }
-                Look::Knob | Look::Segments => {
+                Look::Knob | Look::Segments | Look::Field => {
                     let mut n = accesskit::Node::new(accesskit::Role::Slider);
                     n.set_min_numeric_value(0.0);
                     n.set_max_numeric_value(100.0);
@@ -776,7 +776,15 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 ("compressor", Some(own)) => own,
                 _ => control::name(def, spec),
             });
-            node.set_value(control::text(spec, v));
+            // The Delay's Beats box says its note and feel (UI-329).
+            node.set_value(match (def.uid, slot.look) {
+                ("delay", Look::Menu) => {
+                    let mut values = now.clone();
+                    values[slot.k] = v;
+                    control::menu_text(def, slot.k, &values)
+                }
+                _ => control::text(spec, v),
+            });
             node.set_bounds(bounds(slot.hit(def)));
             out.push(Mark {
                 key: format!("device-{}-{}", w.plugin, spec.id),

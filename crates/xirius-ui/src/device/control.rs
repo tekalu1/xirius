@@ -50,6 +50,8 @@ pub enum Look {
     /// A choice that says its value and opens a menu of the others (a
     /// band's type).
     Menu,
+    /// A value in a box, typed or dragged like a knob (the Delay's time).
+    Field,
 }
 
 pub fn look(spec: &ParamSpec) -> Look {
@@ -468,6 +470,75 @@ pub fn paint_choice(pen: &mut Pen, r: Rect, label: &str, hot: bool, focused: boo
         );
     });
     if focused {
+        pen.outline(r, c.ring, Radius::S, 2.0);
+    }
+}
+
+/// What a choice's menu button says: a band's type, the Delay's beats
+/// (`1/8 D`). `values` are the device's (0..1).
+pub fn menu_text(def: &BuiltinDef, k: usize, values: &[f64]) -> String {
+    if def.uid == "delay" {
+        return super::delay::beats_text(def, values);
+    }
+    let spec = &def.params[k];
+    let v = values.get(k).copied().unwrap_or(spec.default_norm());
+    super::eq::band_of(def, k).map_or(String::new(), |b| {
+        xirius_params::EQ_BANDS[b]
+            .type_of(spec.to_plain(v))
+            .label()
+            .to_string()
+    })
+}
+
+/// A choice's box that opens its menu (the Delay's beats): its label in the
+/// middle, a chevron at the right.
+pub fn paint_box(pen: &mut Pen, r: Rect, label: &str, hot: bool, focused: bool) {
+    let c = pen.c;
+    pen.round(r, if hot { c.surface_1 } else { c.surface_3 }, Radius::S);
+    let chevron = Rect::new(r.right() - 20.0, r.y + (r.h - 12.0) / 2.0, 12.0, 12.0);
+    let t = Rect::new(r.x + 6.0, r.y, (r.w - 28.0).max(0.0), r.h);
+    pen.mask(t, |pen| {
+        pen.text(
+            label,
+            FontSize::Caption,
+            Weight::Regular,
+            c.ink_strong,
+            t,
+            Align::Center,
+        );
+    });
+    pen.icon("chevron-down", chevron, c.ink);
+    if focused {
+        pen.outline(r, c.ring, Radius::S, 2.0);
+    }
+}
+
+/// A value's box (the Delay's time): the value in the middle, or what is
+/// being typed in it with its ring.
+pub fn paint_field(
+    pen: &mut Pen,
+    r: Rect,
+    text: &str,
+    entry: Option<&Field>,
+    hot: bool,
+    focused: bool,
+) {
+    let c = pen.c;
+    pen.round(r, if hot { c.surface_1 } else { c.surface_3 }, Radius::S);
+    let shown = entry.map_or_else(|| text.to_string(), |f| f.text());
+    pen.mask(r, |pen| {
+        pen.text(
+            &shown,
+            FontSize::Caption,
+            Weight::Regular,
+            c.ink_strong,
+            r,
+            Align::Center,
+        );
+    });
+    if entry.is_some() {
+        pen.outline(r, c.ring, Radius::S, 1.0);
+    } else if focused {
         pen.outline(r, c.ring, Radius::S, 2.0);
     }
 }

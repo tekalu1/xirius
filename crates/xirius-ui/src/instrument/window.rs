@@ -23,6 +23,7 @@ use xirius_params::{BuiltinDef, ParamSpec};
 use super::menu::Menu;
 use crate::context::{Act, Item};
 use crate::device::control::{self, KnobView, Look};
+use crate::device::delay;
 use crate::device::dynamics::{self, Dynamics};
 use crate::device::eq;
 use crate::device::graph::{self, Point};
@@ -271,6 +272,8 @@ pub struct Windows {
     pub(crate) meters: HashMap<PluginId, Meter>,
     /// Each open dynamics device's levels and their history (UI-327).
     pub(crate) dynamics: HashMap<PluginId, Dynamics>,
+    /// Each open Delay's onsets: its repeats light from the last (UI-329).
+    pub(crate) echoes: HashMap<PluginId, delay::Echo>,
     /// The devices whose probes write for a window, so a closed one stops.
     watched: Vec<PluginId>,
     /// The preset each plug-in was last set to: the tag keeps its name and
@@ -553,6 +556,7 @@ impl Windows {
         self.analysers.retain(|id, _| open.contains(id));
         self.meters.retain(|id, _| open.contains(id));
         self.dynamics.retain(|id, _| open.contains(id));
+        self.echoes.retain(|id, _| open.contains(id));
         if self.hot.is_some_and(|(id, _)| !open.contains(&id)) {
             self.hot = None;
         }
@@ -601,6 +605,10 @@ impl Windows {
                 let d = self.dynamics.entry(id).or_default();
                 d.feed((input.map(|v| v * pre), out), probe.gr_db(), now, span);
                 moving |= d.moving();
+            }
+            if live(p, &w).is_some_and(|(_, _, d)| d.uid == "delay") {
+                let e = self.echoes.entry(id).or_default();
+                moving |= e.feed(probe.onsets(), now);
             }
             let a = self.analysers.entry(id).or_default();
             if a.feed(&probe, rate) {
@@ -1166,11 +1174,26 @@ fn paint_window(
                 }),
                 rate,
                 dynamics: ins.dynamics.get(&plugin.id),
+                tempo: studio.tempo_target().1,
+                echo: ins
+                    .echoes
+                    .get(&plugin.id)
+                    .and_then(|e| e.since(std::time::Instant::now())),
             };
             graph::paint(pen, def, n, plane, &shown, &view);
         }
         if let Some(button) = ins.spectrum_of(&body, plugin.id) {
             eq::paint_spectrum(pen, button, ins.tap(plugin.id), hot == Some(Part::Spectrum));
+        }
+        if let Some(at) = body.tempo {
+            pen.text(
+                &format!("{:.0} BPM", studio.tempo_target().1),
+                FontSize::Caption,
+                Weight::Regular,
+                c.ink,
+                at,
+                Align::Center,
+            );
         }
         for name in &body.names {
             let ink = if name.strong { c.ink_strong } else { c.ink };
@@ -1249,11 +1272,25 @@ fn paint_window(
                 Look::Toggle => control::paint_toggle(pen, hit, name, v >= 0.5, focused),
                 Look::Dot => control::paint_dot(pen, hit, spec.to_plain(v) >= 0.5, over, focused),
                 Look::Menu => {
-                    let label = eq::band_of(def, k).map_or("", |b| {
-                        xirius_params::EQ_BANDS[b].type_of(spec.to_plain(v)).label()
-                    });
-                    control::paint_choice(pen, hit, label, over, focused);
+                    let mut values = shown.clone();
+                    if let Some(x) = values.get_mut(k) {
+                        *x = v;
+                    }
+                    let label = control::menu_text(def, k, &values);
+                    if def.uid == "delay" {
+                        control::paint_box(pen, hit, &label, over, focused);
+                    } else {
+                        control::paint_choice(pen, hit, &label, over, focused);
+                    }
                 }
+                Look::Field => control::paint_field(
+                    pen,
+                    hit,
+                    &control::text(spec, v),
+                    entry.filter(|e| e.k == k).map(|e| &e.field),
+                    over,
+                    focused,
+                ),
             }
             let mark = match slot.look {
                 Look::Knob => control::dial_rect(slot.cell, slot.dial),

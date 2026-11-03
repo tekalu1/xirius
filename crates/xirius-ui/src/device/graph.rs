@@ -111,7 +111,9 @@ impl Drive {
     /// The parameter's value (0..1) once the point has moved `d` px from
     /// where `start` (0..1) put it, on the parameter's own steps.
     pub fn moved(&self, spec: &ParamSpec, start: f64, d: f32) -> f64 {
-        let at = self.axis.px(spec.to_plain(start)) + d;
+        // A start off the axis (none on a log axis) moves from its end.
+        let (lo, hi) = (self.axis.a.min(self.axis.b), self.axis.a.max(self.axis.b));
+        let at = self.axis.px(spec.to_plain(start)).clamp(lo, hi) + d;
         control::snap(spec, spec.to_norm(self.axis.value(at)))
     }
 }
@@ -194,6 +196,8 @@ pub fn points(def: &BuiltinDef, n: usize, r: Rect, values: &[f64]) -> Vec<Point>
         ("eq", 0) => super::eq::points(def, r, values),
         ("compressor", 0) => super::compressor::points(def, r, values),
         ("limiter", 0) => super::limiter::points(def, r, values),
+        ("delay", 0) => super::delay::points(def, r, values),
+        ("delay", 1) => super::delay::band_points(def, r, values),
         _ => Vec::new(),
     }
 }
@@ -218,6 +222,11 @@ pub struct View<'a> {
     pub rate: f64,
     /// What a dynamics device heard (UI-327): its levels and their history.
     pub dynamics: Option<&'a super::dynamics::Dynamics>,
+    /// The tempo at the playhead (bpm; 0 when not known).
+    pub tempo: f64,
+    /// Seconds since a Delay last heard an onset, while its repeats light
+    /// (UI-329).
+    pub echo: Option<f64>,
 }
 
 /// Paints a device's `n`th graph on its plane `r`, then its points.
@@ -239,6 +248,14 @@ pub fn paint(pen: &mut Pen, def: &BuiltinDef, n: usize, r: Rect, values: &[f64],
         ("limiter", 0) => {
             super::limiter::paint_history(pen, def, r, values, view);
             super::limiter::points(def, r, values)
+        }
+        ("delay", 0) => {
+            super::delay::paint_taps(pen, def, r, values, view);
+            super::delay::points(def, r, values)
+        }
+        ("delay", 1) => {
+            super::delay::paint_band(pen, def, r, values);
+            super::delay::band_points(def, r, values)
         }
         _ => {
             pen.round(r, pen.c.surface_2, Radius::S);

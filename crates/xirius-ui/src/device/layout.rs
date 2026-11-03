@@ -50,7 +50,7 @@ impl Slot {
                 control::toggle_w(control::name(def, spec)),
                 control::TOGGLE_H,
             ),
-            Look::Dot | Look::Menu => c,
+            Look::Dot | Look::Menu | Look::Field => c,
         }
     }
 
@@ -101,6 +101,8 @@ pub struct Body {
     pub meters: Vec<Rect>,
     /// A dynamics device's In, GR and Out columns (UI-327).
     pub levels: Vec<super::dynamics::Level>,
+    /// Where a synced device says the tempo (UI-329).
+    pub tempo: Option<Rect>,
 }
 
 impl Body {
@@ -129,6 +131,7 @@ impl Body {
             spectrum: self.spectrum.map(m),
             meters: self.meters.into_iter().map(m).collect(),
             levels: self.levels.into_iter().map(|l| l.at(dx, dy)).collect(),
+            tempo: self.tempo.map(m),
             ..self
         }
     }
@@ -165,6 +168,7 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
         "eq" => super::eq::body(def, s),
         "compressor" => super::compressor::body(def, s),
         "limiter" => super::limiter::body(def, s),
+        "delay" => super::delay::body(def, s),
         _ => rows(def),
     }
 }
@@ -175,6 +179,7 @@ pub fn natural_w(def: &BuiltinDef) -> f32 {
         "eq" => super::eq::NATURAL_W,
         "compressor" => super::compressor::NATURAL_W,
         "limiter" => super::limiter::NATURAL_W,
+        "delay" => super::delay::NATURAL_W,
         _ => rows(def).w,
     }
 }
@@ -245,6 +250,10 @@ mod tests {
             if def.uid == "eq" {
                 // Its bands' knobs follow their types; each band has its own.
                 assert!(b.slots.len() <= def.params.len());
+            } else if def.uid == "delay" {
+                // Time or Beats (Feel goes with Beats), and the band's cuts
+                // and the taps' feedback are points.
+                assert!(b.slots.len() < def.params.len());
             } else {
                 assert_eq!(b.slots.len(), def.params.len(), "{}", def.uid);
             }

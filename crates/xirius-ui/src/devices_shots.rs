@@ -4,7 +4,7 @@
 use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
 
-use crate::device::{compressor, dynamics, eq, layout, limiter};
+use crate::device::{compressor, delay, dynamics, eq, layout, limiter};
 use crate::instrument::window::Part;
 use crate::shot::{Act, Play, Shot};
 use crate::studio::{Geometry, Studio};
@@ -16,6 +16,10 @@ const fn eq_stage(n: u8) -> Act {
 
 const fn cmp_stage(n: u8) -> Act {
     Act::Stage(Play::Laid(play_compressor), n)
+}
+
+const fn del_stage(n: u8) -> Act {
+    Act::Stage(Play::Laid(play_delay), n)
 }
 
 const fn lim_stage(n: u8) -> Act {
@@ -32,6 +36,21 @@ pub const SHOTS: &[Shot] = &[
     Shot {
         name: "cmp02-narrow",
         acts: &[Act::Reset, cmp_stage(0), cmp_stage(1)],
+    },
+    // The Delay as it opens: synced at 1/8 dotted, its repeats and the Color band.
+    Shot {
+        name: "del01-wide",
+        acts: &[Act::Reset, del_stage(0)],
+    },
+    // Narrow: the knobs under the band.
+    Shot {
+        name: "del02-narrow",
+        acts: &[Act::Reset, del_stage(0), del_stage(1)],
+    },
+    // The Beats box's menu.
+    Shot {
+        name: "del03-beats-menu",
+        acts: &[Act::Reset, del_stage(0), del_stage(2)],
     },
     // The EQ as it opens: all six bands, the LMF chosen.
     Shot {
@@ -262,6 +281,28 @@ fn hear_a_mix(s: &mut Studio, id: PluginId) {
     }
 }
 
+fn play_delay(s: &mut Studio, g: &Geometry, n: u8) {
+    let g = &s.geometry(g.size.0, g.size.1);
+    if n == 0 {
+        open_device(s, "Delay");
+        return;
+    }
+    let Some(id) = s.instruments.open.last().map(|w| w.plugin) else {
+        return;
+    };
+    match n {
+        1 => width(s, id, delay::MIN_W + 60.0),
+        2 => {
+            let k = xirius_params::DELAY.param("division").map(|(k, _)| k);
+            if let Some((x, y)) = k.and_then(|k| s.instrument_center(g, id, Part::Knob(k))) {
+                s.instrument_press(g, x, y, 1, Mods::NONE);
+                s.instrument_up();
+            }
+        }
+        _ => {}
+    }
+}
+
 fn play_limiter(s: &mut Studio, g: &Geometry, n: u8) {
     let g = &s.geometry(g.size.0, g.size.1);
     if n == 0 {
@@ -314,6 +355,18 @@ mod tests {
         }
         let id = s.instruments.open[0].plugin;
         assert_eq!(s.instruments.dynamics[&id].history.len(), 160);
+    }
+
+    #[test]
+    fn the_delay_stages_play_without_a_window() {
+        let mut s = Studio::sample();
+        let g = s.geometry(1600.0, 1000.0);
+        for n in 0..3 {
+            assert!(Play::Laid(play_delay).without_window(&mut s, &g, n));
+        }
+        assert_eq!(s.instruments.open.len(), 1);
+        let rows = s.context_rows();
+        assert!(rows.iter().any(|r| r.label == "1/8 D"), "the Beats menu");
     }
 
     #[test]

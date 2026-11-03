@@ -5,6 +5,7 @@
 
 pub mod compressor;
 pub mod control;
+pub mod delay;
 pub mod dynamics;
 pub mod eq;
 pub mod graph;
@@ -14,6 +15,8 @@ pub mod limiter;
 
 #[cfg(test)]
 mod compressor_tests;
+#[cfg(test)]
+mod delay_tests;
 #[cfg(test)]
 mod eq_tests;
 #[cfg(test)]

@@ -54,6 +54,14 @@ fn plain(s: &Studio, t: TrackId, id: &str) -> f64 {
     spec.to_plain(values(&x)[k])
 }
 
+/// Sync off: the Time box shows in place of the Beats box (UI-329).
+fn unsynced(s: &mut Studio, id: PluginId) {
+    assert!(s.run_command(
+        "plugin.param.set",
+        json!({ "id": id.to_string(), "param": "sync", "value": 0.0 }),
+    ));
+}
+
 fn center(s: &Studio, g: &Geometry, id: PluginId, k: usize) -> (f32, f32) {
     s.instrument_center(g, id, Part::Knob(k)).expect("in sight")
 }
@@ -75,6 +83,7 @@ fn type_in(s: &mut Studio, g: &Geometry, id: PluginId, k: usize, text: &str) {
 #[test]
 fn ui_324_a_typed_value_goes_in_on_enter_and_escape_keeps_the_old_one() {
     let (mut s, g, t, id) = delay();
+    unsynced(&mut s, id);
     let (time, _) = value(&s, t, "time");
     let before = s.song().steps();
     type_in(&mut s, &g, id, time, "250");
@@ -99,10 +108,10 @@ fn ui_324_a_typed_value_goes_in_on_enter_and_escape_keeps_the_old_one() {
 #[test]
 fn ui_324_typed_values_read_kilo_percent_fractions_and_choices() {
     let (mut s, g, t, id) = delay();
+    unsynced(&mut s, id);
     let cases = [
-        ("high_cut", "2k", 2000.0),
         ("feedback", "50%", 50.0),
-        ("division", "1/8", 2.0),
+        ("mix", "４０", 40.0),
         ("time", "0.5s", 500.0),
     ];
     for (param, text, want) in cases {
@@ -112,6 +121,12 @@ fn ui_324_typed_values_read_kilo_percent_fractions_and_choices() {
         let got = plain(&s, t, param);
         assert!((got - want).abs() < 0.5, "{param} {text}: {got}");
     }
+    // The cuts and the beats are points and a menu now: what they would
+    // read, typed.
+    let def = fx(&s, t).builtin().unwrap();
+    let typed = |p: &str, text: &str| def.param(p).unwrap().1.typed(text);
+    assert_eq!(typed("high_cut", "2k"), Some(2000.0));
+    assert_eq!(typed("division", "1/8"), Some(2.0));
 }
 
 #[test]
@@ -170,31 +185,45 @@ fn ui_324_alt_press_and_delete_put_the_default_back() {
 }
 
 #[test]
-fn ui_324_a_choice_of_three_is_segments_and_on_off_is_a_button() {
+fn ui_324_on_off_is_a_button_and_the_beats_a_box_with_its_menu() {
+    use crate::device::control::Look;
     let (mut s, g, t, id) = delay();
     let def = fx(&s, t).builtin().unwrap();
-    let r = s.instruments.rect(0, g.size);
-    let slots = s.instruments.slots(r, &fx(&s, t), def);
-    let look = |p: &str| slots[def.param(p).unwrap().0].look;
-    use crate::device::control::Look;
-    assert_eq!(look("feel"), Look::Segments);
-    assert_eq!(look("sync"), Look::Toggle);
-    assert_eq!(look("division"), Look::Knob, "six notes are a knob");
+    let look = |s: &Studio, p: &str| {
+        let r = s.instruments.rect(0, g.size);
+        let k = def.param(p).unwrap().0;
+        s.instruments
+            .slots(r, &fx(s, t), def)
+            .iter()
+            .find(|x| x.k == k)
+            .map(|x| x.look)
+    };
+    assert_eq!(look(&s, "sync"), Some(Look::Toggle));
+    assert_eq!(look(&s, "ping_pong"), Some(Look::Toggle));
+    assert_eq!(look(&s, "division"), Some(Look::Menu));
+    assert_eq!(look(&s, "time"), None, "the Beats box stands for it");
 
-    // A press on the last segment chooses it, in one step.
-    let (feel, _) = value(&s, t, "feel");
-    let hit = slots[feel].hit(def);
+    // A press on the Beats box opens its menu; a row goes in, in one step.
+    let (division, _) = value(&s, t, "division");
+    click(&mut s, &g, id, division, 1, Mods::NONE);
+    let at = s
+        .context_rows()
+        .iter()
+        .position(|r| r.label == "1/4 T")
+        .expect("the row");
     let before = s.song().steps();
-    assert!(s.instrument_press(&g, hit.right() - 3.0, hit.y + hit.h / 2.0, 1, Mods::NONE));
-    s.instrument_up();
-    assert_eq!(value(&s, t, "feel").1, 1.0);
+    assert!(s.context_pick(&g, at));
     assert_eq!(s.song().steps(), before + 1);
+    assert_eq!(plain(&s, t, "division"), 3.0);
+    assert_eq!(plain(&s, t, "feel"), 2.0);
 
-    // The button flips with one press, and back.
+    // The button flips with one press, and back; off, the Time box shows.
     let (sync, on) = value(&s, t, "sync");
     assert_eq!(on, 1.0);
     click(&mut s, &g, id, sync, 1, Mods::NONE);
     assert_eq!(value(&s, t, "sync").1, 0.0);
+    assert_eq!(look(&s, "time"), Some(Look::Field));
+    assert_eq!(look(&s, "division"), None);
     assert!(s.field_keys(&g, "space", None, Mods::NONE));
     assert_eq!(value(&s, t, "sync").1, 1.0);
 }
@@ -295,7 +324,8 @@ fn ui_324_a_learnt_knob_moves_the_parameter_once_still() {
 
 #[test]
 fn ui_324_every_control_reads_its_name_and_value() {
-    let (s, g, t, id) = delay();
+    let (mut s, g, t, id) = delay();
+    unsynced(&mut s, id);
     let marks = crate::a11y::marks(&s, &g);
     let of = |p: &str| {
         marks
@@ -310,10 +340,12 @@ fn ui_324_every_control_reads_its_name_and_value() {
     let sync = of("sync");
     assert_eq!(sync.node.role(), accesskit::Role::Button);
     assert_eq!(sync.node.label(), Some("Sync"));
-    assert_eq!(sync.node.toggled(), Some(accesskit::Toggled::True));
-    assert_eq!(of("feel").node.role(), accesskit::Role::Slider);
+    assert_eq!(sync.node.toggled(), Some(accesskit::Toggled::False));
+    assert_eq!(of("feedback").node.role(), accesskit::Role::Slider);
+    // Each knob, box and button reads, and each point on the planes.
     let def = fx(&s, t).builtin().unwrap();
-    for spec in def.params {
-        of(spec.id);
+    let r = s.instruments.rect(0, g.size);
+    for slot in s.instruments.slots(r, &fx(&s, t), def) {
+        of(def.params[slot.k].id);
     }
 }
