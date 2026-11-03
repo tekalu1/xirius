@@ -99,6 +99,8 @@ pub struct Body {
     pub spectrum: Option<Rect>,
     /// The device's meters (its output's, its gain reduction's).
     pub meters: Vec<Rect>,
+    /// A dynamics device's In, GR and Out columns (UI-327).
+    pub levels: Vec<super::dynamics::Level>,
 }
 
 impl Body {
@@ -126,6 +128,7 @@ impl Body {
                 .collect(),
             spectrum: self.spectrum.map(m),
             meters: self.meters.into_iter().map(m).collect(),
+            levels: self.levels.into_iter().map(|l| l.at(dx, dy)).collect(),
             ..self
         }
     }
@@ -160,6 +163,7 @@ fn columns(n: usize) -> usize {
 pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
     match def.uid {
         "eq" => super::eq::body(def, s),
+        "compressor" => super::compressor::body(def, s),
         _ => rows(def),
     }
 }
@@ -168,6 +172,7 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
 pub fn natural_w(def: &BuiltinDef) -> f32 {
     match def.uid {
         "eq" => super::eq::NATURAL_W,
+        "compressor" => super::compressor::NATURAL_W,
         _ => rows(def).w,
     }
 }

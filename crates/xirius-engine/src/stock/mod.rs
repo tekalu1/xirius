@@ -26,6 +26,7 @@ use std::sync::Arc;
 
 pub use bank::StockHandle;
 use bank::{ParamBank, Params};
+pub use compressor::reduction;
 pub use probe::{Probe, Tap, VoiceStage, VoiceView};
 use xirius_params::BuiltinDef;
 

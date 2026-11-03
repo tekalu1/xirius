@@ -23,6 +23,7 @@ use xirius_params::{BuiltinDef, ParamSpec};
 use super::menu::Menu;
 use crate::context::{Act, Item};
 use crate::device::control::{self, KnobView, Look};
+use crate::device::dynamics::{self, Dynamics};
 use crate::device::eq;
 use crate::device::graph::{self, Point};
 use crate::device::layout::{self, Body, Slot};
@@ -192,6 +193,9 @@ pub enum Part {
     Tab(usize),
     /// The button choosing what an EQ's analyser shows.
     Spectrum,
+    /// The readout under a dynamics device's `i`th meter: a press clears
+    /// the most it shows (UI-327).
+    Readout(usize),
     Body,
 }
 
@@ -265,6 +269,8 @@ pub struct Windows {
     pub(crate) analysers: HashMap<PluginId, Analyser>,
     /// Each open window's output meter (ENG-072).
     pub(crate) meters: HashMap<PluginId, Meter>,
+    /// Each open dynamics device's levels and their history (UI-327).
+    pub(crate) dynamics: HashMap<PluginId, Dynamics>,
     /// The devices whose probes write for a window, so a closed one stops.
     watched: Vec<PluginId>,
     /// The preset each plug-in was last set to: the tag keeps its name and
@@ -344,7 +350,17 @@ impl Windows {
     /// The body of the window whose frame is `r`, on the screen, for the
     /// values it shows and the band chosen.
     pub(crate) fn body(&self, r: Rect, plugin: &Plugin, def: &BuiltinDef) -> Body {
-        body_of(r, def, &self.shown(plugin), self.band(plugin.id))
+        let mut b = body_of(r, def, &self.shown(plugin), self.band(plugin.id));
+        // The Compressor's Gain drives its key while a sidechain feeds it,
+        // else its input (PLG-071).
+        if def.uid == "compressor"
+            && let Some((k, _)) = def.param("gain")
+            && let Some(slot) = b.slots.iter_mut().find(|s| s.k == k)
+        {
+            let side = plugin.sidechain.as_ref().is_some_and(|s| s.on);
+            slot.label = Some(if side { "Side Gain" } else { "Input Gain" });
+        }
+        b
     }
 
     /// The controls of the window whose frame is `r`, on the screen.
@@ -405,6 +421,7 @@ impl Windows {
             Part::Graph(n) => body().graphs.get(n).copied().unwrap_or_default(),
             Part::Tab(t) => body().tabs.get(t).map(|t| t.r).unwrap_or_default(),
             Part::Spectrum => self.spectrum_of(&body(), plugin.id).unwrap_or_default(),
+            Part::Readout(i) => body().levels.get(i).map(|l| l.readout).unwrap_or_default(),
             // The empty rest under the controls (a press in a gap is Body
             // too; the strip is where a point of it always is).
             Part::Body => Rect::new(r.x, r.bottom() - layout::PAD, r.w, layout::PAD),
@@ -495,6 +512,12 @@ impl Windows {
                         .map(Part::Tab)
                 })
                 .or_else(|| {
+                    b.levels
+                        .iter()
+                        .position(|l| l.readout.contains(x, y))
+                        .map(Part::Readout)
+                })
+                .or_else(|| {
                     planes
                         .iter()
                         .position(|g| g.contains(x, y))
@@ -529,6 +552,7 @@ impl Windows {
         self.chosen.retain(|id, _| open.contains(id));
         self.analysers.retain(|id, _| open.contains(id));
         self.meters.retain(|id, _| open.contains(id));
+        self.dynamics.retain(|id, _| open.contains(id));
         if self.hot.is_some_and(|(id, _)| !open.contains(&id)) {
             self.hot = None;
         }
@@ -539,6 +563,49 @@ impl Windows {
         if self.entry.as_ref().is_some_and(|e| !self.is_open(e.plugin)) {
             self.entry = None;
         }
+    }
+
+    /// One frame of the probes `probe_of` finds: see [`Studio::poll_probes`].
+    pub(crate) fn poll_with(
+        &mut self,
+        p: &Project,
+        rate: f64,
+        now: std::time::Instant,
+        probe_of: impl Fn(PluginId) -> Option<std::sync::Arc<xirius_engine::stock::Probe>>,
+    ) -> bool {
+        let open: Vec<PluginId> = self.open.iter().map(|w| w.plugin).collect();
+        for id in self.watched.iter().filter(|id| !open.contains(id)) {
+            if let Some(probe) = probe_of(*id) {
+                probe.watch(false);
+            }
+        }
+        self.watched.clear();
+        let mut moving = false;
+        for w in self.open.clone() {
+            let id = w.plugin;
+            let Some(probe) = probe_of(id) else {
+                continue;
+            };
+            probe.watch(true);
+            self.watched.push(id);
+            let (input, out) = probe.take_peaks();
+            let m = self.meters.entry(id).or_default();
+            m.step(xirius_engine::mixer::MeterReading {
+                peak: out,
+                rms: out.map(|v| v * std::f32::consts::FRAC_1_SQRT_2),
+            });
+            moving |= m.level.iter().chain(&m.hold).any(|v| *v > 0.0);
+            if let Some(span) = live(p, &w).and_then(|(_, _, d)| dynamics::span(d)) {
+                let d = self.dynamics.entry(id).or_default();
+                d.feed((input, out), probe.gr_db(), now, span);
+                moving |= d.moving();
+            }
+            let a = self.analysers.entry(id).or_default();
+            if a.feed(&probe, rate) {
+                moving |= a.levels.iter().any(|l| !l.is_empty());
+            }
+        }
+        moving
     }
 
     /// Learns the preset each built-in device's knobs are at as the one its
@@ -782,6 +849,19 @@ impl Studio {
                     .part_rect(r, track, plugin, def, Part::Spectrum);
                 self.spectrum_menu(w.plugin, at);
             }
+            Part::Readout(at) => {
+                let kind = live(&p, &w).and_then(|(_, x0, d)| {
+                    self.instruments
+                        .body(r, x0, d)
+                        .levels
+                        .get(at)
+                        .map(|l| l.kind)
+                });
+                if let (Some(kind), Some(d)) = (kind, self.instruments.dynamics.get_mut(&w.plugin))
+                {
+                    d.clear(dynamics::most_of(kind));
+                }
+            }
             Part::Graph(_) | Part::Body | Part::Sidechain | Part::Channel => {}
         }
         true
@@ -905,11 +985,10 @@ impl Studio {
         true
     }
 
-    /// The pointer over the windows while nothing is held: the part under it,
-    /// for a point to grow. True when that changed.
-    /// One frame of the open windows' probes (ENG-072, ENG-073): their
-    /// output meters move and an EQ's analyser takes what it heard. A
-    /// device whose window closed stops writing. True while a meter still
+    /// One frame of the open windows' probes (ENG-072, ENG-073, UI-327):
+    /// their output meters move, an EQ's analyser takes what it heard and a
+    /// dynamics device its levels. A device whose window closed stops
+    /// writing. True while a meter still
     /// moves or an analyser hears something.
     pub(crate) fn poll_probes(&mut self) -> bool {
         let rate = f64::from(self.project().settings.sample_rate);
@@ -917,34 +996,10 @@ impl Studio {
             return false;
         };
         let plugins = host.plugins();
-        let ins = &mut self.instruments;
-        let open: Vec<PluginId> = ins.open.iter().map(|w| w.plugin).collect();
-        for id in ins.watched.iter().filter(|id| !open.contains(id)) {
-            if let Some(probe) = plugins.stock_probe(*id) {
-                probe.watch(false);
-            }
-        }
-        ins.watched.clear();
-        let mut moving = false;
-        for id in open {
-            let Some(probe) = plugins.stock_probe(id) else {
-                continue;
-            };
-            probe.watch(true);
-            ins.watched.push(id);
-            let (_, out) = probe.take_peaks();
-            let m = ins.meters.entry(id).or_default();
-            m.step(xirius_engine::mixer::MeterReading {
-                peak: out,
-                rms: out.map(|v| v * std::f32::consts::FRAC_1_SQRT_2),
-            });
-            moving |= m.level.iter().chain(&m.hold).any(|v| *v > 0.0);
-            let a = ins.analysers.entry(id).or_default();
-            if a.feed(&probe, rate) {
-                moving |= a.levels.iter().any(|l| !l.is_empty());
-            }
-        }
-        moving
+        let p = self.project();
+        let now = std::time::Instant::now();
+        self.instruments
+            .poll_with(&p, rate, now, |id| plugins.stock_probe(id))
     }
 
     /// Opens the menu of what an EQ's analyser shows under its button `at`.
@@ -1108,6 +1163,7 @@ fn paint_window(
                     [a.levels[0].as_slice(), a.levels[1].as_slice()]
                 }),
                 rate,
+                dynamics: ins.dynamics.get(&plugin.id),
             };
             graph::paint(pen, def, n, plane, &shown, &view);
         }
@@ -1147,6 +1203,15 @@ fn paint_window(
                 tab.r,
                 Align::Center,
             );
+        }
+        if !body.levels.is_empty() {
+            let readout = match hot {
+                Some(Part::Readout(i)) => Some(i),
+                _ => None,
+            };
+            let none = Dynamics::default();
+            let d = ins.dynamics.get(&plugin.id).unwrap_or(&none);
+            dynamics::paint_levels(pen, &body.levels, d, readout);
         }
         let meter = ins.meters.get(&plugin.id).copied().unwrap_or_default();
         for (ch, &m) in body.meters.iter().enumerate() {

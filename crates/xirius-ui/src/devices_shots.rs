@@ -1,10 +1,10 @@
 //! `--script devices`: the windows of the built-in devices (UI-326 to UI-334), each wide and
-//! narrow, with its menus. Run once dark and once with `--light`. Silent; no OS input.
+//! narrow, with its menus, in the order of their names. Run once dark and once with `--light`. Silent; no OS input.
 
 use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
 
-use crate::device::{eq, layout};
+use crate::device::{compressor, dynamics, eq, layout};
 use crate::instrument::window::Part;
 use crate::shot::{Act, Play, Shot};
 use crate::studio::{Geometry, Studio};
@@ -14,7 +14,21 @@ const fn eq_stage(n: u8) -> Act {
     Act::Stage(Play::Laid(play_eq), n)
 }
 
+const fn cmp_stage(n: u8) -> Act {
+    Act::Stage(Play::Laid(play_compressor), n)
+}
+
 pub const SHOTS: &[Shot] = &[
+    // The Compressor as it opens, four seconds of a beat in its history.
+    Shot {
+        name: "cmp01-wide",
+        acts: &[Act::Reset, cmp_stage(0)],
+    },
+    // Narrow: the history under the curve, the knobs in two rows.
+    Shot {
+        name: "cmp02-narrow",
+        acts: &[Act::Reset, cmp_stage(0), cmp_stage(1)],
+    },
     // The EQ as it opens: all six bands, the LMF chosen.
     Shot {
         name: "eq01-wide",
@@ -127,6 +141,56 @@ fn play_eq(s: &mut Studio, g: &Geometry, n: u8) {
     }
 }
 
+/// Four seconds of a beat through the Compressor `id` as it is set: the
+/// shots are silent, so its history is laid in by hand.
+fn hear_a_beat(s: &mut Studio, id: PluginId) {
+    let p = s.project();
+    let Some(x) = p
+        .tracks
+        .values()
+        .flat_map(|t| &t.inserts)
+        .find(|x| x.id == id)
+    else {
+        return;
+    };
+    let Some(def) = x.builtin() else {
+        return;
+    };
+    let knobs = compressor::shape(def, &crate::instrument::window::values(x));
+    let t0 = std::time::Instant::now();
+    let d = s.instruments.dynamics.entry(id).or_default();
+    let steps = (compressor::SPAN.as_millis() / dynamics::STEP.as_millis()) as u32;
+    for i in 0..=steps {
+        // A hit each half second, falling away, over a bed at -30 dB.
+        let beat = (i % 20) as f32;
+        let level = (-6.0 - beat * 1.6).max(-30.0) as f64;
+        let gr = (level - compressor::out_db(level, knobs)) as f32;
+        let lin = |db: f64| 10f32.powf(db as f32 / 20.0);
+        let out = lin(level - f64::from(gr));
+        d.feed(
+            ([lin(level); 2], [out; 2]),
+            gr,
+            t0 + dynamics::STEP * i,
+            compressor::SPAN,
+        );
+    }
+}
+
+fn play_compressor(s: &mut Studio, _: &Geometry, n: u8) {
+    if n == 0 {
+        if let Some(id) = open_device(s, "Compressor") {
+            hear_a_beat(s, id);
+        }
+        return;
+    }
+    let Some(id) = s.instruments.open.last().map(|w| w.plugin) else {
+        return;
+    };
+    if n == 1 {
+        width(s, id, compressor::MIN_W + 40.0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,5 +204,16 @@ mod tests {
         }
         assert_eq!(s.instruments.open.len(), 1);
         assert!(!s.context_rows().is_empty(), "the type menu is open");
+    }
+
+    #[test]
+    fn the_compressor_stages_play_without_a_window() {
+        let mut s = Studio::sample();
+        let g = s.geometry(1600.0, 1000.0);
+        for n in 0..2 {
+            assert!(Play::Laid(play_compressor).without_window(&mut s, &g, n));
+        }
+        let id = s.instruments.open[0].plugin;
+        assert_eq!(s.instruments.dynamics[&id].history.len(), 160);
     }
 }

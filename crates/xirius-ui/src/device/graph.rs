@@ -192,6 +192,7 @@ pub fn point_at(points: &[Point], x: f32, y: f32) -> Option<usize> {
 pub fn points(def: &BuiltinDef, n: usize, r: Rect, values: &[f64]) -> Vec<Point> {
     match (def.uid, n) {
         ("eq", 0) => super::eq::points(def, r, values),
+        ("compressor", 0) => super::compressor::points(def, r, values),
         _ => Vec::new(),
     }
 }
@@ -214,6 +215,8 @@ pub struct View<'a> {
     pub spectrum: [&'a [f32]; 2],
     /// The song's sample rate (0 when not known).
     pub rate: f64,
+    /// What a dynamics device heard (UI-327): its levels and their history.
+    pub dynamics: Option<&'a super::dynamics::Dynamics>,
 }
 
 /// Paints a device's `n`th graph on its plane `r`, then its points.
@@ -223,6 +226,14 @@ pub fn paint(pen: &mut Pen, def: &BuiltinDef, n: usize, r: Rect, values: &[f64],
             super::eq::paint(pen, r, values, view);
             let rate = if view.rate > 0.0 { view.rate } else { 48_000.0 };
             super::eq::points_at(def, r, values, rate)
+        }
+        ("compressor", 0) => {
+            super::compressor::paint_curve(pen, def, r, values, view);
+            super::compressor::points(def, r, values)
+        }
+        ("compressor", 1) => {
+            super::compressor::paint_history(pen, def, r, values, view);
+            Vec::new()
         }
         _ => {
             pen.round(r, pen.c.surface_2, Radius::S);

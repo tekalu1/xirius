@@ -3,12 +3,16 @@
 //! window itself, its title bar and its place on the screen are
 //! `instrument::window`'s.
 
+pub mod compressor;
 pub mod control;
+pub mod dynamics;
 pub mod eq;
 pub mod graph;
 pub mod input;
 pub mod layout;
 
+#[cfg(test)]
+mod compressor_tests;
 #[cfg(test)]
 mod eq_tests;
 #[cfg(test)]

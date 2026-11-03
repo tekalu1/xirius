@@ -730,6 +730,22 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             node.set_bounds(bounds(crate::device::eq::spectrum_rect(at, tap)));
             out.push(mark(format!("device-{}-spectrum", w.plugin), node));
         }
+        if !body.levels.is_empty() {
+            use crate::device::dynamics::{Dynamics, Kind, most_of};
+            let none = Dynamics::default();
+            let d = s.instruments.dynamics.get(&w.plugin).unwrap_or(&none);
+            for (n, l) in body.levels.iter().enumerate() {
+                let mut node = accesskit::Node::new(accesskit::Role::Button);
+                node.set_label(match l.kind {
+                    Kind::In => "Input peak",
+                    Kind::Gr => "Reduction peak",
+                    Kind::Out => "Output peak",
+                });
+                node.set_value(d.readout(most_of(l.kind)));
+                node.set_bounds(bounds(l.readout));
+                out.push(mark(format!("device-{}-readout-{n}", w.plugin), node));
+            }
+        }
         for slot in body.slots {
             let spec = &def.params[slot.k];
             let v = s
@@ -755,7 +771,11 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 }
                 Look::Menu => accesskit::Node::new(accesskit::Role::ComboBox),
             };
-            node.set_label(control::name(def, spec));
+            // The Compressor names its Gain by what it drives (PLG-071).
+            node.set_label(match (def.uid, slot.label) {
+                ("compressor", Some(own)) => own,
+                _ => control::name(def, spec),
+            });
             node.set_value(control::text(spec, v));
             node.set_bounds(bounds(slot.hit(def)));
             out.push(Mark {
