@@ -612,7 +612,12 @@ mod tests {
     fn write_keeps_the_lane_of_a_target_a_macro_moves() {
         use xirius_core::controls::{ControlId, Mapping};
         let (mut p, t) = song(AutoMode::Write);
-        assert!(p.tracks[&t].automation.iter().any(|l| l.target == AutoTarget::Volume));
+        assert!(
+            p.tracks[&t]
+                .automation
+                .iter()
+                .any(|l| l.target == AutoTarget::Volume)
+        );
         std::sync::Arc::make_mut(p.tracks.get_mut(&t).unwrap())
             .controls
             .get_mut(ControlId::Knob(0))
