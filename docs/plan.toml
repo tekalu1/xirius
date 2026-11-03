@@ -8417,3 +8417,12 @@ phase = "v1.1"
 source = "2026-10-22〜24 の確認メモ § 8"
 done_when = "試験で起動した本体をスキャン開始の前後とスキャン中に終了させ、対応する __scan-plugin とその起動したプロセスが期限内にすべて終了することを PID と終了通知で確かめる。残る経路を直し、試験の失敗時にも試験が起動したプロセスだけを回収する"
 note = "spawn.rs は KILL_ON_JOB_CLOSE を設定し、停止状態で生成してから Job に割り当てるが、生成と割り当ての間の本体終了も含む残留報告の検証は未完了。既存の Job の終了処理だけで解消済みとは扱わない。"
+
+[[item]]
+id = "UI-349"
+title = "Windows のアプリアイコンの面を枠いっぱいに広げる"
+area = "UI"
+phase = "v1.1"
+source = "2026-11-03 の利用者の決定"
+done_when = "assets/brand/app-icon-win.svg・app-icon-win-small.svg（面は rect x=32 y=32 width=960 height=960 rx≒214、星は scale≒1.934 で形・色・中央を変えない）を足し、scripts/brand_icons.py が 16・20・24・30・32・36・40・48・60・64・72・80・96・128・256 px（16〜32 は small 版から）を束ねた assets/brand/xirius.ico を作り直す。各大きさで面が枠の約 94%・中央にあることを測り、xirius.icns・app-icon.svg・app-icon-small.svg・既存の png は変えない"
+status = "done"
