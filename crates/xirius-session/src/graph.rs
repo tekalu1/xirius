@@ -713,7 +713,11 @@ mod tests {
             "track.add.instrument",
         ]);
         let (kick, bass, lead) = (ids[0], ids[1], ids[2]);
-        let comp = add(&mut s, "plugin.add", json!({"track": bass.to_string(), "name": "Comp"}));
+        let comp = add(
+            &mut s,
+            "plugin.add",
+            json!({"track": bass.to_string(), "name": "Comp"}),
+        );
         run(
             &mut s,
             "plugin.sidechain.add",
@@ -743,7 +747,11 @@ mod tests {
             "plugin.add",
             json!({"track": t, "name": "Sampler", "kind": "instrument"}),
         );
-        let layer = add(&mut s, "rack.layer.add", json!({"track": t, "name": "Synth", "uid": "synth"}));
+        let layer = add(
+            &mut s,
+            "rack.layer.add",
+            json!({"track": t, "name": "Synth", "uid": "synth"}),
+        );
         let comp = add(&mut s, "plugin.add", json!({"track": t, "name": "Comp"}));
         run(
             &mut s,
@@ -751,9 +759,15 @@ mod tests {
             json!({"id": comp, "from": kick.to_string(), "output": true}),
         );
         let all = Scope::new(s.project(), Select::All);
-        assert!(key_only(s.project(), &all).contains(&kick), "on the channel, a trigger");
+        assert!(
+            key_only(s.project(), &all).contains(&kick),
+            "on the channel, a trigger"
+        );
         run(&mut s, "rack.node.move", json!({"id": comp, "to": layer}));
-        assert!(!key_only(s.project(), &all).contains(&kick), "in a layer, heard");
+        assert!(
+            !key_only(s.project(), &all).contains(&kick),
+            "in a layer, heard"
+        );
     }
 
     #[test]
