@@ -6,7 +6,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use xirius_core::id::{PluginId, SendId, TrackId};
 use xirius_core::model::{KeyMode, MidiOut, Output, Plugin, PluginKind, Project, Track, TrackKind};
-use xirius_core::rack::Rack;
+use xirius_core::rack::{Rack, Source};
 use xirius_engine::Output as EOut;
 
 use crate::rack_row::{self, BranchMix};
@@ -168,6 +168,20 @@ pub fn silenced(p: &Project) -> HashMap<TrackId, bool> {
                 }
             }
         }
+        // A trigger (a key in the output mode) is never heard itself, so soloing what it keys
+        // keeps it: hiding it would stop the ducking the solo is there to hear (MIX-049).
+        let keys = output_keys(p);
+        loop {
+            let more: Vec<TrackId> = keys
+                .iter()
+                .filter(|(from, to)| audible.contains(to) && !audible.contains(from))
+                .map(|(from, _)| *from)
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            audible.extend(more);
+        }
     }
     p.tracks
         .values()
@@ -312,16 +326,36 @@ pub struct Structure {
     pub master_rack: Option<Rack>,
 }
 
+/// Each source a plug-in takes as a key in the output mode, with the channel of that plug-in
+/// (MIX-049). A plug-in inside a layer of a multi-instrument hears no key yet (ENG-075), so a
+/// source it alone names stays a plain channel, heard at the master, rather than going nowhere.
+fn output_keys(p: &Project) -> Vec<(TrackId, TrackId)> {
+    let mut v = Vec::new();
+    for t in p.tracks.values() {
+        let mut layered = HashSet::new();
+        if let Some(Source::Multi { layers, .. }) = t.rack.as_ref().and_then(|r| r.source.as_ref())
+        {
+            for l in layers {
+                rack_row::fx_ids(&l.fx, &mut layered);
+            }
+        }
+        for x in t.inserts.iter().filter(|x| !layered.contains(&x.id.0)) {
+            for s in x.sidechain.iter().flat_map(|sc| &sc.sources) {
+                if matches!(s.mode, KeyMode::Output) {
+                    v.push((s.track, t.id));
+                }
+            }
+        }
+    }
+    v
+}
+
 /// The channels a plug-in takes as a key in the output mode (MIX-049): they are triggers, heard
 /// only through those keys and never at the master. A stem of one of them still hears it.
 fn key_only(p: &Project, scope: &Scope) -> HashSet<TrackId> {
-    p.tracks
-        .values()
-        .flat_map(|t| &t.inserts)
-        .filter_map(|x| x.sidechain.as_ref())
-        .flat_map(|sc| &sc.sources)
-        .filter(|s| matches!(s.mode, KeyMode::Output))
-        .map(|s| s.track)
+    output_keys(p)
+        .into_iter()
+        .map(|(from, _)| from)
         .filter(|&id| scope.includes(id) && scope.target() != Some(id))
         .collect()
 }
@@ -658,6 +692,68 @@ mod tests {
         let m = silenced(s.project());
         // The bus it is keyed by does not get pulled into the solo.
         assert!(!m[&bass_bus] && m[&kick] && m[&kick_bus]);
+    }
+
+    fn add(s: &mut Session, name: &str, args: serde_json::Value) -> String {
+        s.run_value(name, args, &Default::default())
+            .unwrap_or_else(|e| panic!("{name}: {e}"))
+            .data["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    #[test]
+    fn soloing_what_a_trigger_keys_keeps_the_trigger() {
+        // Kick keys Bass's compressor with its output (MIX-049): it is never heard itself, so
+        // a solo on Bass keeps it, and Bass still ducks. Lead, unrelated, goes quiet.
+        let (mut s, ids) = session_with(&[
+            "track.add.instrument",
+            "track.add.instrument",
+            "track.add.instrument",
+        ]);
+        let (kick, bass, lead) = (ids[0], ids[1], ids[2]);
+        let comp = add(&mut s, "plugin.add", json!({"track": bass.to_string(), "name": "Comp"}));
+        run(
+            &mut s,
+            "plugin.sidechain.add",
+            json!({"id": comp, "from": kick.to_string(), "output": true}),
+        );
+        run(&mut s, "track.solo", json!({"ids": [bass.to_string()]}));
+        let m = silenced(s.project());
+        assert!(!m[&bass] && !m[&kick] && m[&lead]);
+        // A send-mode key is heard on its own, so solo hides it as before (ENG-078).
+        run(
+            &mut s,
+            "plugin.sidechain.set",
+            json!({"id": comp, "from": kick.to_string(), "mode": "send"}),
+        );
+        assert!(silenced(s.project())[&kick]);
+    }
+
+    #[test]
+    fn a_trigger_keying_only_a_layer_stays_heard() {
+        // A plug-in inside a layer hears no key yet (ENG-075): Kick, in the output mode, would
+        // go nowhere, so it stays a plain channel heard at the master.
+        let (mut s, ids) = session_with(&["track.add.instrument", "track.add.instrument"]);
+        let (kick, keys) = (ids[0], ids[1]);
+        let t = keys.to_string();
+        run(
+            &mut s,
+            "plugin.add",
+            json!({"track": t, "name": "Sampler", "kind": "instrument"}),
+        );
+        let layer = add(&mut s, "rack.layer.add", json!({"track": t, "name": "Synth", "uid": "synth"}));
+        let comp = add(&mut s, "plugin.add", json!({"track": t, "name": "Comp"}));
+        run(
+            &mut s,
+            "plugin.sidechain.add",
+            json!({"id": comp, "from": kick.to_string(), "output": true}),
+        );
+        let all = Scope::new(s.project(), Select::All);
+        assert!(key_only(s.project(), &all).contains(&kick), "on the channel, a trigger");
+        run(&mut s, "rack.node.move", json!({"id": comp, "to": layer}));
+        assert!(!key_only(s.project(), &all).contains(&kick), "in a layer, heard");
     }
 
     #[test]
