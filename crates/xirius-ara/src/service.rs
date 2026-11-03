@@ -211,6 +211,8 @@ enum Msg {
     /// The song and its number (see [`Shared::synced`]).
     Sync(Song, u64),
     Store(Sender<Option<(Vec<u8>, String)>>),
+    /// [`Msg::Store`] when the plugin changed its document, else `None`.
+    StoreChanged(Sender<Option<(Vec<u8>, String)>>),
     Notes(u64, bool, Sender<Vec<Note>>),
     Probe(Sender<Probe>),
     /// Opens the editor showing these clips, or raises it when it is open.
@@ -406,6 +408,17 @@ impl Service {
         }
         let (tx, rx) = mpsc::channel();
         self.send(Msg::Store(tx)).then_some(rx)
+    }
+
+    /// [`Service::store_later`] only when the plugin changed its document since it was last
+    /// asked; the answer is `None` when it did not. The plugin's thread takes its notifications
+    /// first, so an edit it has not told of yet (they come a turn later) counts too.
+    pub fn store_changed_later(&self) -> Option<Stored> {
+        if self.crashed().is_some() {
+            return None;
+        }
+        let (tx, rx) = mpsc::channel();
+        self.send(Msg::StoreChanged(tx)).then_some(rx)
     }
 
     /// The notes of a clip's source (or of its modification, with the edits).
@@ -861,6 +874,7 @@ impl Slot {
                 }
                 (_, Msg::Sync(..)) => {}
                 (Slot::Open(ara), Msg::Store(tx)) => drop(tx.send(ara.store())),
+                (Slot::Open(ara), Msg::StoreChanged(tx)) => drop(tx.send(ara.store_changed())),
                 (Slot::Open(ara), Msg::Notes(key, of_mod, tx)) => {
                     drop(tx.send(ara.notes(key, of_mod)))
                 }
@@ -889,7 +903,7 @@ impl Slot {
                     answer_edit(shared, tx, Err(why));
                 }
                 (Slot::Failed(_), Msg::Caption(_) | Msg::CloseEditor) => {}
-                (Slot::Failed(_), Msg::Store(tx)) => drop(tx.send(None)),
+                (Slot::Failed(_), Msg::Store(tx) | Msg::StoreChanged(tx)) => drop(tx.send(None)),
                 (Slot::Failed(_), Msg::Notes(_, _, tx)) => drop(tx.send(Vec::new())),
                 (Slot::Failed(_), Msg::Probe(tx)) => drop(tx.send(Probe::default())),
             }
@@ -1292,6 +1306,56 @@ impl Ara {
     /// render is under way.
     fn tick(&mut self) -> bool {
         self.watch_editor();
+        let (dirty, restale) = self.take_notices();
+        self.quiet = self.quiet.saturating_sub(1);
+        let mut changed = dirty || restale;
+        for s in self.sources.values_mut() {
+            if !s.analysed && self.doc.incomplete(s.r, &self.kinds).is_empty() {
+                s.analysed = true;
+                s.progress = 1.0;
+                changed = true;
+            }
+        }
+        // A render that a change made old starts again.
+        for c in self.clips.values_mut() {
+            if c.stale
+                && let Some(p) = c.pass.take()
+                && let Some(i) = c.instance.as_mut()
+            {
+                i.set_transport(false, p.start + p.at as i64);
+                changed = true;
+            }
+        }
+        // One clip at a time, a step per turn, so the messages are answered between.
+        let next = self
+            .clips
+            .iter()
+            .filter(|(_, c)| c.pass.is_some())
+            .map(|(k, _)| *k)
+            .min()
+            .or_else(|| {
+                self.clips
+                    .iter()
+                    .filter(|(_, c)| {
+                        c.stale
+                            && !c.failed
+                            && self.sources.get(&c.spec.source).is_some_and(|s| s.analysed)
+                    })
+                    .map(|(k, _)| *k)
+                    .min()
+            });
+        if let Some(key) = next {
+            changed |= self.render(key);
+        }
+        if changed {
+            self.publish();
+        }
+        self.clips.values().any(|c| c.pass.is_some())
+    }
+
+    /// The plugin's notifications since the last turn: whether its document changed, and
+    /// whether a clip's sound went old.
+    fn take_notices(&mut self) -> (bool, bool) {
         self.doc.notify_model_updates();
         let here = std::thread::current().id();
         let mut dirty = false;
@@ -1342,55 +1406,23 @@ impl Ara {
                 Notice::DocumentData => dirty |= self.quiet == 0,
             }
         }
-        self.quiet = self.quiet.saturating_sub(1);
         if dirty {
             self.shared.dirty.store(true, Ordering::Release);
         }
         lock(&self.shared.requests).extend(self.side.take_requests());
+        (dirty, restale)
+    }
 
-        let mut changed = dirty || restale;
-        for s in self.sources.values_mut() {
-            if !s.analysed && self.doc.incomplete(s.r, &self.kinds).is_empty() {
-                s.analysed = true;
-                s.progress = 1.0;
-                changed = true;
-            }
-        }
-        // A render that a change made old starts again.
-        for c in self.clips.values_mut() {
-            if c.stale
-                && let Some(p) = c.pass.take()
-                && let Some(i) = c.instance.as_mut()
-            {
-                i.set_transport(false, p.start + p.at as i64);
-                changed = true;
-            }
-        }
-        // One clip at a time, a step per turn, so the messages are answered between.
-        let next = self
-            .clips
-            .iter()
-            .filter(|(_, c)| c.pass.is_some())
-            .map(|(k, _)| *k)
-            .min()
-            .or_else(|| {
-                self.clips
-                    .iter()
-                    .filter(|(_, c)| {
-                        c.stale
-                            && !c.failed
-                            && self.sources.get(&c.spec.source).is_some_and(|s| s.analysed)
-                    })
-                    .map(|(k, _)| *k)
-                    .min()
-            });
-        if let Some(key) = next {
-            changed |= self.render(key);
-        }
-        if changed {
+    /// The archive, when the plugin changed its document since it was last asked: its
+    /// notifications are taken first, so an edit made just before is not missed.
+    fn store_changed(&mut self) -> Option<(Vec<u8>, String)> {
+        if self.take_notices().1 {
             self.publish();
         }
-        self.clips.values().any(|c| c.pass.is_some())
+        if !self.shared.dirty.swap(false, Ordering::AcqRel) {
+            return None;
+        }
+        self.store()
     }
 
     /// Starts the clip's render, or goes on with it for a step. Whether the clip's state

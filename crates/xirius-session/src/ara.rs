@@ -25,6 +25,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak, mpsc};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -263,6 +264,9 @@ pub struct Doc {
     stored: Mutex<Option<xirius_core::ara::Archive>>,
     /// The archive asked for and not come yet.
     asked: Mutex<Option<Stored>>,
+    /// The newest archive was asked for while [`Doc::asked`] was on its way: asked again when
+    /// it comes.
+    again: AtomicBool,
 }
 
 impl Doc {
@@ -281,6 +285,7 @@ impl Doc {
             sounds: Mutex::new(HashMap::new()),
             stored: Mutex::new(None),
             asked: Mutex::new(None),
+            again: AtomicBool::new(false),
         });
         lock(docs()).insert(key, Arc::downgrade(&doc));
         doc
@@ -445,10 +450,18 @@ impl Doc {
         Some(data)
     }
 
-    /// Asks the plugin for its archive, without waiting, when it changed its document since it
-    /// was last asked and no answer is on its way.
-    fn ask(&self, asked: &mut Option<Stored>) {
-        if asked.is_none() && self.service.take_dirty() {
+    /// Asks the plugin for its archive, without waiting. Not `fresh`, only when it said it
+    /// changed its document since it was last asked and no answer is on its way. `fresh` (the
+    /// song is written or the clips leave it), when it changed it at all, counting an edit it
+    /// has not told of yet (that comes a turn later): asked again after an answer on its way.
+    fn ask(&self, asked: &mut Option<Stored>, fresh: bool) {
+        if asked.is_some() {
+            if fresh {
+                self.again.store(true, Ordering::Release);
+            }
+        } else if fresh {
+            *asked = self.service.store_changed_later();
+        } else if self.service.take_dirty() {
             *asked = self.service.store_later();
         }
     }
@@ -456,42 +469,45 @@ impl Doc {
     /// Takes the archive asked for when it has come (with `wait`, waiting at most
     /// [`STORE_WAIT`]). Whether it is still on its way.
     fn receive(&self, asked: &mut Option<Stored>, wait: bool) -> bool {
-        let Some(rx) = asked.as_ref() else {
-            return false;
-        };
-        let got = if wait {
-            rx.recv_timeout(STORE_WAIT)
-                .map_err(|e| e == mpsc::RecvTimeoutError::Timeout)
-        } else {
-            rx.try_recv().map_err(|e| e == mpsc::TryRecvError::Empty)
-        };
-        match got {
-            // Still being written: a later call takes it.
-            Err(true) => return true,
-            // The plugin failed or went down: nothing comes.
-            Err(false) | Ok(None) => {}
-            Ok(Some((bytes, id))) => {
-                let a = xirius_ara::Archive::new(&self.plugin, &id, &bytes);
-                *lock(&self.stored) = Some(xirius_core::ara::Archive {
-                    version: a.version,
-                    plugin: a.plugin,
-                    archive_id: a.archive_id,
-                    data: a.data,
-                });
+        while let Some(rx) = asked.as_ref() {
+            let got = if wait {
+                rx.recv_timeout(STORE_WAIT)
+                    .map_err(|e| e == mpsc::RecvTimeoutError::Timeout)
+            } else {
+                rx.try_recv().map_err(|e| e == mpsc::TryRecvError::Empty)
+            };
+            match got {
+                // Still being written: a later call takes it.
+                Err(true) => return true,
+                // The plugin failed or went down, or it did not change: nothing comes.
+                Err(false) | Ok(None) => {}
+                Ok(Some((bytes, id))) => {
+                    let a = xirius_ara::Archive::new(&self.plugin, &id, &bytes);
+                    *lock(&self.stored) = Some(xirius_core::ara::Archive {
+                        version: a.version,
+                        plugin: a.plugin,
+                        archive_id: a.archive_id,
+                        data: a.data,
+                    });
+                }
+            }
+            *asked = None;
+            if self.again.swap(false, Ordering::AcqRel) {
+                *asked = self.service.store_changed_later();
             }
         }
-        *asked = None;
         false
     }
 
     /// The plugin's archive: the one taken last, or the newer one it was asked for when it has
-    /// come. With `wait`, the one asked is waited for, at most [`STORE_WAIT`]; without, an edit
-    /// asks for it and a later call takes it.
+    /// come. With `wait` (`plugin.collect`, the headless pull), the newest is asked for as when
+    /// the song is written, and waited for at most [`STORE_WAIT`]; without, an edit asks for it
+    /// and a later call takes it.
     fn archive(&self, wait: bool) -> Option<xirius_core::ara::Archive> {
         let mut asked = lock(&self.asked);
         // An edit made while the plugin wrote the archive asks again; a few rounds at most.
-        for _ in 0..3 {
-            self.ask(&mut asked);
+        for round in 0..3 {
+            self.ask(&mut asked, wait && round == 0);
             if asked.is_none() || self.receive(&mut asked, wait) {
                 break;
             }
@@ -872,10 +888,11 @@ impl Held {
     }
 
     /// Asks, without waiting, the plugins whose documents changed for their archives, so that
-    /// they are ready when the song is written or left.
+    /// they are ready when the song is written or left: an edit the plugin has not told of yet
+    /// counts too.
     pub fn ask_archives(&self, p: &Project) {
         for d in self.kept(p) {
-            d.ask(&mut lock(&d.asked));
+            d.ask(&mut lock(&d.asked), true);
         }
     }
 

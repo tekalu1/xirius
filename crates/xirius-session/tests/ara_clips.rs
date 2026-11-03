@@ -284,6 +284,24 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     assert_eq!(s.project().ara.archives[PLUGIN], archive);
     fake::slow_store(Duration::ZERO);
 
+    // PLG-036: an edit the plugin has not told of yet (it tells at its next turn) is still in
+    // the archive asked for as the song is written: asked at once, it comes with the edit.
+    for gain in [0.7, 0.5] {
+        fake::edit(&modification, gain);
+        player.ara().ask_archives(s.project());
+        assert!(
+            pending(&player),
+            "the edit before its notice asked for nothing"
+        );
+        until("the archive on its way", || !pending(&player));
+        assert!(take(&mut s, &player), "the edit before its notice was lost");
+    }
+    assert_eq!(s.project().ara.archives[PLUGIN], archive);
+    // Nothing changed since: asked again, nothing is written and the song stays as it is.
+    player.ara().ask_archives(s.project());
+    until("the answer", || !pending(&player));
+    assert!(!take(&mut s, &player));
+
     // PLG-036: moved, the clip keeps its render: no gap while the plugin renders it again.
     run(&mut s, "clip.move", json!({"ids": [a], "to": 960}));
     let p = s.project().clone();
@@ -399,12 +417,10 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     reopened.undo(1).unwrap();
     let p = reopened.project().clone();
     player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
-    until("the render brought back", || through(&player, &p, &a));
-    let v = peak(&mut player, &p);
-    assert!(
-        (v - 0.4).abs() < 1e-3,
-        "the undo lost the plugin's edit: {v}"
-    );
+    // The plugin renders the edit after it wrote the archive.
+    until("the render of the plugin's last edit", || {
+        through(&player, &p, &a) && (peak(&mut player, &p) - 0.4).abs() < 1e-3
+    });
     until("the archive", || take(&mut reopened, &player));
     fake::slow_store(Duration::ZERO);
 
