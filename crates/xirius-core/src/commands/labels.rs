@@ -696,6 +696,7 @@ pub fn argument(name: &str) -> &str {
         "each" => "トラックごと",
         "external" => "音を中に入れない",
         "show" => "表示に戻す",
+        "also" => "同じ手で設定する値",
         "bands" => "帯域",
         "way" => "向き",
         "disk" => "ディスクの名前の変更",
