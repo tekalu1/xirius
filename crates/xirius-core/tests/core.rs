@@ -559,7 +559,7 @@ fn every_history_command_undoes_and_redoes() {
     );
     let ly = id_of(&rig.step(
         "rack.layer.add",
-        json!({"track": lt, "name": "Sampler", "keys": "C1-B3"}),
+        json!({"track": lt, "name": "Sampler", "keys": "C1-B2"}),
     ));
     rig.step(
         "rack.layer.set",

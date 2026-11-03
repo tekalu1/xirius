@@ -125,13 +125,13 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         edit(
             "rack.layer.add",
-            "インストゥルメントトラックにレイヤー（インストゥルメント）を足してマルチインストゥルメントにします（いまの音源はレイヤー 1 になります。--keys は C1-B3 か 36-59、--velocity は 1-127）",
+            "インストゥルメントトラックにレイヤー（インストゥルメント）を足してマルチインストゥルメントにします（いまの音源はレイヤー 1 になります。--keys は C1-B2 か 36-59、--velocity は 1-127）",
             vec![
                 ArgDef::id("track", IdKind::Track, "インストゥルメントトラック").req(),
                 ArgDef::text("name", "インストゥルメントの名前").req(),
                 ArgDef::text("format", "vst3・clap・builtin など").default(json!("builtin")),
                 ArgDef::text("uid", "形式ごとの固有 ID（省略時は名前）"),
-                ArgDef::text("keys", "鍵盤の範囲（C1-B3 か 36-59。省略時は全音域）"),
+                ArgDef::text("keys", "鍵盤の範囲（C1-B2 か 36-59。省略時は全音域）"),
                 ArgDef::text("velocity", "ベロシティの範囲（1-127。省略時は全域）"),
                 ArgDef::int("transpose", "移調（半音）").range(-48.0, 48.0),
                 ArgDef::text(
@@ -146,7 +146,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
             "レイヤーの鍵盤とベロシティの範囲・移調・音量・パン・ミュート・名前を設定します",
             vec![
                 ArgDef::id("id", IdKind::RackNode, "レイヤー").req(),
-                ArgDef::text("keys", "鍵盤の範囲（C1-B3 か 36-59）"),
+                ArgDef::text("keys", "鍵盤の範囲（C1-B2 か 36-59）"),
                 ArgDef::text("velocity", "ベロシティの範囲（1-127）"),
                 ArgDef::int("transpose", "移調（半音）").range(-48.0, 48.0),
                 ArgDef::float("gain", "音量（dB）").range(MIN_DB, MAX_DB),
@@ -616,19 +616,20 @@ fn not_layer(id: NodeId) -> CmdError {
     CmdError::not_found(format!("レイヤー {id} が見つかりません"))
 }
 
-/// A key range: `C1-B3` (60 is C4, as the piano roll names it) or `36-59`; one note is a
+/// A key range: `C1-B2` (60 is C3, as the piano roll names it, UI-335) or `36-59`; one note is a
 /// range of one.
 fn keys_of(s: &str) -> CmdResult<(u8, u8)> {
     let s = s.trim();
-    let bad = || CmdError::invalid(format!("--keys `{s}` を読み取れません（C1-B3 か 36-59）"));
-    // A note name may hold a dash of its own (`C-1`): the range splits at the dash that leaves
+    let bad = || CmdError::invalid(format!("--keys `{s}` を読み取れません（C1-B2 か 36-59）"));
+    let pitch = xirius_params::pitch::parse;
+    // A note name may hold a dash of its own (`C-2`): the range splits at the dash that leaves
     // a pitch on both sides.
-    let (lo, hi) = pitch_of(s)
+    let (lo, hi) = pitch(s)
         .map(|p| (p, p))
         .or_else(|| {
             s.char_indices()
                 .filter(|(_, c)| *c == '-')
-                .find_map(|(i, _)| Some((pitch_of(s[..i].trim())?, pitch_of(s[i + 1..].trim())?)))
+                .find_map(|(i, _)| Some((pitch(&s[..i])?, pitch(&s[i + 1..])?)))
         })
         .ok_or_else(bad)?;
     if lo > hi {
@@ -652,33 +653,6 @@ fn velocity_of(s: &str) -> CmdResult<(u8, u8)> {
         return Err(CmdError::range("--velocity の下限が上限を越えています"));
     }
     Ok((lo, hi))
-}
-
-/// A pitch by number (0..=127) or by name: `C4` is 60, `F#3`, `Db2`, `C-1` is 0.
-fn pitch_of(s: &str) -> Option<u8> {
-    if let Ok(n) = s.parse::<u8>() {
-        return (n <= 127).then_some(n);
-    }
-    let mut chars = s.chars();
-    let base: i32 = match chars.next()?.to_ascii_uppercase() {
-        'C' => 0,
-        'D' => 2,
-        'E' => 4,
-        'F' => 5,
-        'G' => 7,
-        'A' => 9,
-        'B' => 11,
-        _ => return None,
-    };
-    let rest = chars.as_str();
-    let (shift, octave) = match rest.chars().next() {
-        Some('#') | Some('♯') => (1, &rest[rest.chars().next()?.len_utf8()..]),
-        Some('b') | Some('♭') => (-1, &rest[rest.chars().next()?.len_utf8()..]),
-        _ => (0, rest),
-    };
-    let octave: i32 = octave.parse().ok()?;
-    let n = (octave + 1) * 12 + base + shift;
-    u8::try_from(n).ok().filter(|n| *n <= 127)
 }
 
 fn mode_of(s: &str) -> CmdResult<SplitMode> {

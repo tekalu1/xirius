@@ -36,7 +36,7 @@ fn id_of(r: &RunResult) -> String {
         .to_string()
 }
 
-/// An instrument track playing the built-in Sampler, with one E4 through a bar.
+/// An instrument track playing the built-in Sampler, with one E3 (64) through a bar.
 fn voice(s: &mut Session) -> String {
     let t = id_of(&run(s, "track.add.instrument", json!({ "name": "A" })));
     run(
@@ -151,11 +151,11 @@ fn layers_are_summed_and_their_ranges_gain_and_mute_change_the_sound() {
     // Two layers of the same instrument take the note: twice the line.
     assert!(near(level(&s), 2.0 * base, 1e-3), "{} vs {base}", level(&s));
 
-    // E4 (64) is above C1-B3: the second layer stays silent.
+    // E3 (64) is above C1-B2: the second layer stays silent.
     run(
         &mut s,
         "rack.layer.set",
-        json!({ "id": second, "keys": "C1-B3" }),
+        json!({ "id": second, "keys": "C1-B2" }),
     );
     assert!(near(level(&s), base, 1e-3), "{} vs {base}", level(&s));
     // Nor does a soft range take a velocity of 100.
@@ -213,7 +213,7 @@ fn a_layer_value_moves_in_the_running_engine_without_a_new_mix() {
     run(
         &mut s,
         "rack.layer.set",
-        json!({ "id": second, "mute": "off", "keys": "C1-B3" }),
+        json!({ "id": second, "mute": "off", "keys": "C1-B2" }),
     );
     rig.host.sync(s.project());
     let narrowed = rig.level(&s);

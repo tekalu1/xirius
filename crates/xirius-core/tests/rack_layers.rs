@@ -90,7 +90,7 @@ fn adding_a_layer_makes_the_instrument_the_first_layer_of_a_multi() {
     let v = step(
         &mut s,
         "rack.layer.add",
-        json!({ "track": t, "name": "Synth", "uid": "synth", "keys": "C1-B3", "velocity": "1-127", "label": "Low" }),
+        json!({ "track": t, "name": "Synth", "uid": "synth", "keys": "C1-B2", "velocity": "1-127", "label": "Low" }),
     );
     let l = layers(&s, &t);
     assert_eq!(l.len(), 2);
@@ -99,8 +99,8 @@ fn adding_a_layer_makes_the_instrument_the_first_layer_of_a_multi() {
     assert_eq!(l[1].id.to_string(), id(&v));
     assert_eq!(l[1].instrument.to_string(), v["plugin"].as_str().unwrap());
     assert_eq!(l[1].name, "Low");
-    // C1 is 24 and B3 is 59, with C4 at 60 as the piano roll names it.
-    assert_eq!(l[1].keys, (24, 59));
+    // C1 is 36 and B2 is 59, with C3 at 60 as the piano roll names it (UI-335).
+    assert_eq!(l[1].keys, (36, 59));
     let instruments = s.project().tracks[&tid(&t)]
         .inserts
         .iter()
@@ -137,7 +137,7 @@ fn a_layer_is_set_and_removed_in_one_step_each() {
     );
     let l = layers(&s, &t);
     let x = l.iter().find(|l| l.id.to_string() == layer).unwrap();
-    assert_eq!(x.keys, (42, 61));
+    assert_eq!(x.keys, (54, 73));
     assert_eq!(x.velocity, (20, 100));
     assert_eq!(x.transpose, 7);
     assert_eq!((x.gain_db, x.pan, x.mute), (-6.0, 0.5, true));
@@ -170,7 +170,7 @@ fn ranges_that_do_not_read_or_run_backwards_are_refused() {
     for (arg, value) in [
         ("keys", "B3-C1"),
         ("keys", "H2-C3"),
-        ("keys", "A9-B9"),
+        ("keys", "A8-B8"),
         ("velocity", "0-127"),
         ("velocity", "100-20"),
     ] {
@@ -179,11 +179,11 @@ fn ranges_that_do_not_read_or_run_backwards_are_refused() {
         assert_eq!(s.steps().len(), n, "{arg} {value} changed nothing");
     }
     fails(&mut s, "rack.layer.set", json!({ "id": layer }));
-    // C-1 to G9 is the whole keyboard.
+    // C-2 to G8 is the whole keyboard.
     run(
         &mut s,
         "rack.layer.set",
-        json!({ "id": layer, "keys": "C-1-G9" }),
+        json!({ "id": layer, "keys": "C-2-G8" }),
     );
     assert!(layers(&s, &t).iter().any(|l| l.keys == (0, 127)));
 }
