@@ -504,6 +504,24 @@ impl Studio {
                 self.ask_state_open();
                 return true;
             }
+            // The ARA plugins' archives come over the frames, never waited for here (PLG-036).
+            if open.replace
+                && !open.discard_states
+                && open.pull.is_some()
+                && self
+                    .transport
+                    .host()
+                    .is_some_and(|h| h.ara_archives_pending())
+            {
+                if crate::wait::now().saturating_duration_since(open.since)
+                    < xirius_session::ara::STORE_WAIT
+                {
+                    return true;
+                }
+                self.error = Some(crate::saving::ARA_LATE_LEAVING.into());
+                self.ask_state_open();
+                return true;
+            }
             if open.replace
                 && !open.discard_states
                 && let Some(host) = self.transport.host_mut()

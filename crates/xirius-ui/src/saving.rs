@@ -105,6 +105,13 @@ pub fn failure_text(error: &CmdError) -> String {
     }
 }
 
+/// A plain save whose ARA plugin's edit had not come.
+pub(crate) const ARA_LATE: &str =
+    "プラグインの編集がまだ届いていないため、届いた分で保存しました。届くと未保存に戻ります";
+/// Leaving the song while an ARA plugin's edit had not come.
+pub(crate) const ARA_LATE_LEAVING: &str =
+    "プラグインの編集が届きません。未保存の変更が残っています";
+
 impl Studio {
     #[cfg(test)]
     pub(crate) fn wait_for_save(&mut self) {
@@ -595,10 +602,9 @@ impl Studio {
                 return true;
             }
             pull.reconcile(&self.song.project());
-            let error = if !pull.ready() {
-                if crate::wait::now().saturating_duration_since(save.since)
-                    < xirius_session::host::PULL_WAIT
-                {
+            let waited = crate::wait::now().saturating_duration_since(save.since);
+            let mut error = if !pull.ready() {
+                if waited < xirius_session::host::PULL_WAIT {
                     return true;
                 }
                 pull.quarantine();
@@ -606,6 +612,25 @@ impl Studio {
             } else {
                 pull.error()
             };
+            // The ARA plugins' archives come over the frames, never waited for here (PLG-036).
+            // One late is left out of a plain save, which the song goes back to unsaved for when
+            // it comes; leaving the song does not drop it.
+            let mut ara_late = false;
+            if error.is_none()
+                && self
+                    .transport
+                    .host()
+                    .is_some_and(|h| h.ara_archives_pending())
+            {
+                if waited < xirius_session::ara::STORE_WAIT {
+                    return true;
+                }
+                if save.leaving.is_some() || save.close_when_done {
+                    error = Some(ARA_LATE_LEAVING.into());
+                } else {
+                    ara_late = true;
+                }
+            }
             let collected = if let Some(error) = error {
                 Err(CmdError::io(error))
             } else if let Some(host) = self.transport.host_mut() {
@@ -638,6 +663,12 @@ impl Studio {
                 return true;
             }
             self.keep.plugin_state_failed = false;
+            if ara_late {
+                self.toast = Some(Toast {
+                    info: true,
+                    ..Toast::plain(ARA_LATE.into())
+                });
+            }
             save.work = Work::Writing(
                 self.save_worker(
                     save.target.clone(),

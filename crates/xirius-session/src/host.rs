@@ -840,7 +840,8 @@ impl SessionHost {
         self.builder.ara().editing()
     }
 
-    /// Whether an ARA plugin's archive asked for has not come into the song yet.
+    /// Whether an ARA plugin's archive asked for is still on its way, taking in the ones that
+    /// came (a later collect puts them into the song). Never waits.
     pub fn ara_archives_pending(&self) -> bool {
         self.builder.ara().archives_pending()
     }
@@ -1714,19 +1715,32 @@ pub(crate) fn collect_current(
     collect_edits(session, host, opts, edits, wait)
 }
 
+/// [`collect_plugin_states`] with the states of a pull ([`SessionHost::begin_pull_states`]),
+/// for the window writing, opening or leaving the song. It does not wait for the ARA plugins'
+/// archives: the window waits over its frames until [`SessionHost::ara_archives_pending`] is
+/// false (at most [`crate::ara::STORE_WAIT`]), and this puts in the ones that came.
 pub fn collect_pulled_states(
     session: &mut Session,
     host: &mut SessionHost,
     pull: &crate::plugins::StatePull,
     opts: &RunOptions,
 ) -> CmdResult<Collected> {
+    collect_pulled(session, host, pull, opts, false)
+}
+
+fn collect_pulled(
+    session: &mut Session,
+    host: &mut SessionHost,
+    pull: &crate::plugins::StatePull,
+    opts: &RunOptions,
+    wait: bool,
+) -> CmdResult<Collected> {
     let edits = host
         .builder
         .plugins_mut()
         .current_edits(session.project(), Some(pull))
         .map_err(xirius_core::CmdError::io)?;
-    // Written, opened or left: the archives asked for are waited for.
-    collect_edits(session, host, opts, edits, true)
+    collect_edits(session, host, opts, edits, wait)
 }
 
 fn collect_edits(
@@ -1838,7 +1852,8 @@ pub fn pull_plugin_states(
         .plugins_mut()
         .pull_states(wait)
         .map_err(xirius_core::error::CmdError::io)?;
-    collect_pulled_states(session, host, &pull, opts)
+    // No window to keep going: the ARA plugins' archives asked for are waited for.
+    collect_pulled(session, host, &pull, opts, true)
 }
 
 fn find_plugin(p: &Project, id: PluginId) -> Option<&Plugin> {

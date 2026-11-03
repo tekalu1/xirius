@@ -322,16 +322,27 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             wait(s, 30.0, |s| !s.ara.editing.iter().any(|p| p == uid()));
             let closed = !s.ara.editing.iter().any(|p| p == uid());
             // The window's edits come into the song once the plugin wrote its archive
-            // (`take_archives`, at a later frame).
-            wait(s, 10.0, |s| !s.project().ara.archives.is_empty());
-            let archived = s.project().ara.archives.len();
+            // (`take_archives`, at a later frame). The script edits nothing in the plugin's
+            // window (the plugin takes no edit from the host), so whether there is one is the
+            // plugin's: what is checked is that the one asked for comes, and that the song
+            // written keeps it byte for byte through opening it again.
+            let pending = |s: &Studio| s.transport.host().is_some_and(|h| h.ara_archives_pending());
+            wait(s, 10.0, |s| !pending(s));
+            assert!(!pending(s), "the plugin's archive asked for did not come");
             let saved = s.run_command("project.save", json!({}));
             wait(s, 30.0, |s| s.song.is_saved());
+            assert!(s.song.is_saved(), "the song was not written: {:?}", s.error);
+            let archives = s.project().ara.archives.clone();
+            let archived = archives.len();
             let song = dir().join("song");
             let opened = s.run_command("project.open", json!({ "path": song.to_string_lossy() }));
             wait(s, 30.0, |s| clip(s).is_some());
             let back = clip(s).is_some_and(|c| s.project().ara.clips.contains_key(&c));
             let kept = s.project().ara.archives.len();
+            assert!(
+                s.project().ara.archives == archives,
+                "the plugin's archive changed through saving and opening"
+            );
             wait(s, 180.0, |s| badge(s) == "ready");
             eprintln!(
                 "ara-check {shot} closed={closed} archives={archived} saved={saved} opened={opened} attached={back} archives_after={kept} badge={}",

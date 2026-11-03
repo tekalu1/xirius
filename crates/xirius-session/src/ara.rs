@@ -17,8 +17,9 @@
 //!   analysis, at most [`EXPORT_WAIT`] (ENG-025).
 //! - A song keeps each plugin's archive ([`take_archives`], ARC-025, PLG-037). The archive is
 //!   asked for only after the plugin said its document changed, so opening a song and playing it
-//!   leaves it as it was. The window's frames do not wait for it: the plugin's thread writes it
-//!   and a later frame puts it in; writing or leaving the song waits for the one asked.
+//!   leaves it as it was. The window's thread never waits for it: the plugin's thread writes it
+//!   and a later frame puts it in; writing or leaving the song waits over the frames for the
+//!   one asked, at most [`STORE_WAIT`], and otherwise writes the one it has.
 //! - A plugin that faults or hangs ends its own thread only ([`xirius_ara::contain`]); its
 //!   clips play their files and `plugin.status` lists it until `plugin.restart` (PLG-058).
 
@@ -452,6 +453,37 @@ impl Doc {
         }
     }
 
+    /// Takes the archive asked for when it has come (with `wait`, waiting at most
+    /// [`STORE_WAIT`]). Whether it is still on its way.
+    fn receive(&self, asked: &mut Option<Stored>, wait: bool) -> bool {
+        let Some(rx) = asked.as_ref() else {
+            return false;
+        };
+        let got = if wait {
+            rx.recv_timeout(STORE_WAIT)
+                .map_err(|e| e == mpsc::RecvTimeoutError::Timeout)
+        } else {
+            rx.try_recv().map_err(|e| e == mpsc::TryRecvError::Empty)
+        };
+        match got {
+            // Still being written: a later call takes it.
+            Err(true) => return true,
+            // The plugin failed or went down: nothing comes.
+            Err(false) | Ok(None) => {}
+            Ok(Some((bytes, id))) => {
+                let a = xirius_ara::Archive::new(&self.plugin, &id, &bytes);
+                *lock(&self.stored) = Some(xirius_core::ara::Archive {
+                    version: a.version,
+                    plugin: a.plugin,
+                    archive_id: a.archive_id,
+                    data: a.data,
+                });
+            }
+        }
+        *asked = None;
+        false
+    }
+
     /// The plugin's archive: the one taken last, or the newer one it was asked for when it has
     /// come. With `wait`, the one asked is waited for, at most [`STORE_WAIT`]; without, an edit
     /// asks for it and a later call takes it.
@@ -460,33 +492,8 @@ impl Doc {
         // An edit made while the plugin wrote the archive asks again; a few rounds at most.
         for _ in 0..3 {
             self.ask(&mut asked);
-            let Some(rx) = asked.as_ref() else {
+            if asked.is_none() || self.receive(&mut asked, wait) {
                 break;
-            };
-            let got = if wait {
-                rx.recv_timeout(STORE_WAIT)
-                    .map_err(|e| e == mpsc::RecvTimeoutError::Timeout)
-            } else {
-                rx.try_recv().map_err(|e| e == mpsc::TryRecvError::Empty)
-            };
-            match got {
-                // Still being written: a later call takes it.
-                Err(true) => break,
-                // The plugin failed or went down: nothing comes.
-                Err(false) | Ok(None) => {
-                    *asked = None;
-                    break;
-                }
-                Ok(Some((bytes, id))) => {
-                    *asked = None;
-                    let a = xirius_ara::Archive::new(&self.plugin, &id, &bytes);
-                    *lock(&self.stored) = Some(xirius_core::ara::Archive {
-                        version: a.version,
-                        plugin: a.plugin,
-                        archive_id: a.archive_id,
-                        data: a.data,
-                    });
-                }
             }
         }
         drop(asked);
@@ -631,10 +638,13 @@ impl Held {
         lock(&self.docs).get(plugin).cloned()
     }
 
-    /// Lets go of the documents of plugins no clip of `p` uses.
+    /// Lets go of the documents of plugins no clip of `p` uses. One whose archive is still on
+    /// its way is kept until it has come, so that bringing the clips back (an undo) finds the
+    /// plugin's edits in it.
     pub fn release(&self, p: &Project) {
         let used: BTreeSet<&str> = p.ara.clips.values().map(|r| r.plugin.as_str()).collect();
-        lock(&self.docs).retain(|k, _| used.contains(k.as_str()));
+        lock(&self.docs)
+            .retain(|k, d| used.contains(k.as_str()) || d.receive(&mut lock(&d.asked), false));
     }
 
     /// Hands each plugin the song's clips of it, opening the documents not open yet and letting
@@ -869,9 +879,12 @@ impl Held {
         }
     }
 
-    /// Whether an archive asked for has not come yet.
+    /// Takes in the archives asked for that have come, without waiting. Whether one is still
+    /// on its way: writing or leaving the song waits for it over the window's frames.
     pub fn archives_pending(&self) -> bool {
-        lock(&self.docs).values().any(|d| lock(&d.asked).is_some())
+        lock(&self.docs)
+            .values()
+            .fold(false, |on, d| d.receive(&mut lock(&d.asked), false) | on)
     }
 
     /// The archives of the plugins whose documents changed and differ from the song's: those
@@ -892,10 +905,12 @@ impl Held {
 /// without a step of the history (the plugin keeps its own), and only when they differ, so a
 /// song only opened and played is not changed. Whether the song changed.
 ///
-/// Without `wait` (each frame of the window) nothing is waited for: an edit asks the plugin
-/// for its archive, which its thread writes, and a later call puts it in, even after the
-/// plugin's window closed. With `wait` (writing, opening or leaving the song) the archives
-/// asked are waited for, each at most [`STORE_WAIT`].
+/// Without `wait` (each frame of the window, and writing or leaving the song there) nothing is
+/// waited for: an edit asks the plugin for its archive, which its thread writes, and a later
+/// call puts it in, even after the plugin's window closed. The window writes the song once
+/// [`Held::archives_pending`] is false or [`STORE_WAIT`] has passed, with the archives it has.
+/// With `wait` (`plugin.collect`, the headless pull) the archives asked are waited for, each at
+/// most [`STORE_WAIT`].
 pub fn take_archives(
     session: &mut xirius_core::session::Session,
     held: &Held,
