@@ -1317,6 +1317,33 @@ impl Studio {
     }
 
     /// Lets go: a turned knob goes into the song as one step.
+    /// Esc while a press holds something (L-par-3): it lets go and nothing goes into the
+    /// song. A knob or a point sounds its value again, a window goes back to its place and
+    /// size, a note stops.
+    pub(crate) fn instrument_cancel(&mut self) -> bool {
+        let Some(grab) = self.instruments.grab.take() else {
+            return false;
+        };
+        let open = &mut self.instruments.open;
+        match grab {
+            Grab::Note { .. } => {
+                self.window_note_off();
+            }
+            Grab::Move { plugin, from, .. } => {
+                if let Some(w) = open.iter_mut().find(|w| w.plugin == plugin) {
+                    w.at = Some(from);
+                }
+            }
+            Grab::Size { plugin, from, .. } => {
+                if let Some(w) = open.iter_mut().find(|w| w.plugin == plugin) {
+                    w.body = from;
+                }
+            }
+            Grab::Knob { .. } | Grab::Point { .. } => self.device_hear(),
+        }
+        true
+    }
+
     pub fn instrument_up(&mut self) -> bool {
         let Some(grab) = self.instruments.grab.take() else {
             return false;
@@ -1331,6 +1358,8 @@ impl Studio {
             let p = self.project();
             let w = self.instruments.open.iter().find(|w| w.plugin == plugin);
             let Some((_, x, def)) = w.and_then(|w| live(&p, w)) else {
+                // Its window went while it turned: the sound goes back to the song's.
+                self.device_hear();
                 return true;
             };
             let (spec, before) = (&def.params[k], values_of(x, def)[k]);

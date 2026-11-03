@@ -606,6 +606,10 @@ impl Studio {
 
     /// The keys of the control that has them, or of the value being typed.
     pub(crate) fn device_key(&mut self, key: &str, mods: Mods) -> bool {
+        // Esc during a press lets go of what it holds, taking nothing in (L-par-3).
+        if key == "escape" && self.instrument_cancel() {
+            return true;
+        }
         if let Some(e) = &mut self.instruments.entry {
             if !e.field.marked.is_empty() {
                 return true;

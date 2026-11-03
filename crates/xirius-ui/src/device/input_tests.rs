@@ -149,6 +149,25 @@ fn ui_324_one_drag_is_one_param_set_and_one_undo() {
     assert_eq!(value(&s, t, "feedback").1, start);
 }
 
+/// L-par-3: Esc during a drag lets go of the knob: the song keeps its value, no step is
+/// made, and letting the button go after does nothing more.
+#[test]
+fn ui_324_escape_during_a_drag_puts_nothing_in() {
+    let (mut s, g, t, id) = delay();
+    let (k, start) = value(&s, t, "feedback");
+    let before = s.song().steps();
+    let (x, y) = center(&s, &g, id, k);
+    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
+    assert!(s.instrument_moved(&g, x, y - 30.0, false));
+    assert!(s.instruments.turning(id, k).unwrap() > start);
+    assert!(s.field_keys(&g, "escape", None, Mods::NONE));
+    assert!(s.instruments.grab.is_none());
+    assert_eq!(s.instruments.turning(id, k), None);
+    assert!(!s.instrument_up());
+    assert_eq!(s.song().steps(), before);
+    assert_eq!(value(&s, t, "feedback").1, start);
+}
+
 #[test]
 fn ui_324_shift_drags_a_quarter_as_far() {
     let (mut s, g, t, id) = delay();
