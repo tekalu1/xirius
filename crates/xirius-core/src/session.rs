@@ -268,6 +268,10 @@ pub struct SessionState {
     /// What the last copy or cut took (CTX-028); kept outside the history.
     #[serde(skip)]
     pub clipboard: Option<Clipboard>,
+    /// The parameter a hand moved last (`param:<plugin>:<name>`), for learning a macro control
+    /// (MIX-040); kept outside the history.
+    #[serde(skip)]
+    pub touched: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1031,6 +1035,17 @@ impl Session {
         self.run(name, &raw, opts)
     }
 
+    /// A hand moved a parameter (`param:<plugin>:<name>`): a plug-in's own editor, through
+    /// the host (MIX-040). `plugin.param.set` notes its own.
+    pub fn touch(&mut self, target: String) {
+        self.state.touched = Some(target);
+    }
+
+    /// The parameter a hand moved last, for `control.assign.touched`.
+    pub fn touched(&self) -> Option<&str> {
+        self.state.touched.as_deref()
+    }
+
     pub fn run(
         &mut self,
         name: &str,
@@ -1489,8 +1504,15 @@ impl Session {
             author: &opts.author,
             store: self.store.as_ref(),
             clipboard: self.state.clipboard.as_ref(),
+            touched: self.state.touched.as_deref(),
         };
         let mut out = f(&mut work, &ctx, args)?;
+        if !dry
+            && def.name == "plugin.param.set"
+            && let (Ok(id), Ok(param)) = (args.str("id"), args.str("param"))
+        {
+            self.state.touched = Some(format!("param:{id}:{param}"));
+        }
         crate::commands::overlap::apply(&before, &mut work, args)?;
         if def.name != "clip.relink" {
             crate::freeze::check(&before, &work)?;

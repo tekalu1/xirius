@@ -64,7 +64,27 @@ pub(super) fn defs() -> Vec<CommandDef> {
                     .range(0.0, 1.0),
                 ArgDef::float("curve", "曲がり（-1〜1。0 で直線）").range(-1.0, 1.0),
             ],
-            |p, _, a| assign(p, a),
+            |p, _, a| assign(p, a, a.str("target")?),
+        ),
+        edit(
+            "control.assign.touched",
+            "最後に触ったパラメーターをマクロコントロールに割り当てます（学習。プラグインの窓のつまみも拾います）",
+            vec![
+                track(),
+                control(),
+                ArgDef::float("min", "値 0 のときの先の位置（0〜1。省略時は 0）").range(0.0, 1.0),
+                ArgDef::float("max", "値 1 のときの先の位置（0〜1。min より小さくすると逆向き。省略時は 1）")
+                    .range(0.0, 1.0),
+                ArgDef::float("curve", "曲がり（-1〜1。0 で直線）").range(-1.0, 1.0),
+            ],
+            |p, cx, a| {
+                let Some(target) = cx.touched else {
+                    return Err(CmdError::not_found(
+                        "まだパラメーターに触れていません（機器のつまみを動かしてから学習します）",
+                    ));
+                };
+                assign(p, a, target)
+            },
         ),
         edit(
             "control.unassign",
@@ -172,10 +192,10 @@ fn xy_assign(p: &mut Project, a: &Args) -> CmdResult<Output> {
     )))
 }
 
-fn assign(p: &mut Project, a: &Args) -> CmdResult<Output> {
+fn assign(p: &mut Project, a: &Args, target: &str) -> CmdResult<Output> {
     let tid: TrackId = a.id("track")?;
     let id = control_of(a)?;
-    let target = target_of(a.str("target")?)?;
+    let target = target_of(target)?;
     let t = p.track_mut(tid)?;
     let Some(now) = target.current(t) else {
         return Err(CmdError::not_found(format!(

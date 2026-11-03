@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 use serde_json::{Map, Value, json};
 use xirius_core::auto::AutoTarget;
+use xirius_core::controls::ControlId;
 use xirius_core::id::{AnyId, PluginId, TrackId};
 use xirius_core::time::Tick;
 
@@ -205,6 +206,15 @@ impl Studio {
                     return Some(false);
                 };
                 Some(self.pick_insert(g, t))
+            }
+            "control.pick" => {
+                let (Some(t), Some(ControlId::Knob(k))) = (
+                    id::<TrackId>(args, "track"),
+                    id::<ControlId>(args, "control"),
+                ) else {
+                    return Some(false);
+                };
+                Some(self.pick_macro(g, t, k))
             }
             "plugin.insert" => {
                 let (Some(t), Some(item)) = (id::<TrackId>(args, "id"), text(args, "item")) else {

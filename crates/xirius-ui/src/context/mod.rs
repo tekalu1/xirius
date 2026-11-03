@@ -135,6 +135,8 @@ pub enum Act {
     RestartPlugin(PluginId),
     /// Opens the list of effects under a channel's ＋ row.
     PickInsert(TrackId),
+    /// Opens the list of what a track can give its macro knob (MIX-040).
+    PickMacro(TrackId, u8),
     /// Puts an effect used lately (its name or `builtin:` id) at the end of a channel.
     InsertRecent(TrackId, String),
     /// Asks for a preset file to read into an effect (false) or to write it to (true).

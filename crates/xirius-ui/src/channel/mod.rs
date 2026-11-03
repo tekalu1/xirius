@@ -1200,11 +1200,15 @@ impl Studio {
         let Some(t) = self.channel.as_ref().map(|w| w.track) else {
             return false;
         };
-        if let Some(Part::Card(pick) | Part::Dot(pick) | Part::More(pick)) = part_at(&v, x, y) {
-            if let Some(w) = self.channel.as_mut() {
-                w.chosen = Some(pick);
+        match part_at(&v, x, y) {
+            Some(Part::Card(pick) | Part::Dot(pick) | Part::More(pick)) => {
+                if let Some(w) = self.channel.as_mut() {
+                    w.chosen = Some(pick);
+                }
+                self.channel_menu(t, pick, x, y);
             }
-            self.channel_menu(t, pick, x, y);
+            Some(Part::Macro(k)) => self.macro_knob_menu(t, k, x, y),
+            _ => {}
         }
         true
     }

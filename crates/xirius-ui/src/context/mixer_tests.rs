@@ -193,6 +193,7 @@ fn the_fader_resets_to_zero_in_one_step_and_a_typed_value_sets_it() {
             "0 dB に戻す",
             "値を入力…",
             "オートメーションを表示",
+            "マクロコントロールに割り当て",
             "すべてのポイントを削除",
             "MIDI 学習",
             "MIDI 割り当てを解除"
@@ -293,6 +294,7 @@ fn the_knob_resets_to_the_centre() {
             "既定に戻す",
             "値を入力…",
             "オートメーションを表示",
+            "マクロコントロールに割り当て",
             "すべてのポイントを削除",
             "MIDI 学習",
             "MIDI 割り当てを解除"
@@ -347,6 +349,7 @@ fn a_send_resets_its_level_shows_its_bus_and_comes_off_in_one_step() {
             "ミュート",
             "送り先のバスを表示",
             "オートメーションを表示",
+            "マクロコントロールに割り当て",
             "センドを削除"
         ]
     );

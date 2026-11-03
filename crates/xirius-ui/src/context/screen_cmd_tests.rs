@@ -52,6 +52,7 @@ fn on_screen(act: &Act) -> bool {
         | Act::RestartPlugin(_)
         | Act::RestartPlugins
         | Act::PickInsert(_)
+        | Act::PickMacro(..)
         | Act::InsertRecent(..)
         | Act::PresetFile(..)
         | Act::Browse(_)
@@ -102,6 +103,7 @@ fn samples(t: TrackId, p: PluginId, f: FolderId) -> Vec<Act> {
         Act::RestartPlugins,
         Act::AraAttach(vec!["c1".into()]),
         Act::PickInsert(t),
+        Act::PickMacro(t, 2),
         Act::InsertRecent(t, "EQ".into()),
         Act::PresetFile(p, false),
         Act::PresetFile(p, true),

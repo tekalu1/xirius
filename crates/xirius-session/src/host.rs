@@ -1820,6 +1820,28 @@ fn collect_edits(
         }
     }
     out.params.sort_by_key(|p| p.at);
+    // The last knob a hand turned in a plug-in's editor is what a macro control learns
+    // (MIX-040): named as the song keeps the parameter, else by its title.
+    if let Some(last) = out.params.last()
+        && let Some(x) = find_plugin(session.project(), last.plugin)
+    {
+        let named = |k: &str| {
+            k.parse::<u32>().ok() == Some(last.param) || k.eq_ignore_ascii_case(&last.title)
+        };
+        let name = x
+            .params
+            .keys()
+            .find(|k| named(k))
+            .cloned()
+            .unwrap_or_else(|| {
+                if last.title.is_empty() {
+                    last.param.to_string()
+                } else {
+                    last.title.clone()
+                }
+            });
+        session.touch(format!("param:{}:{name}", last.plugin));
+    }
     if !commands.is_empty() {
         for (id, state, params, stamp, origin) in &taken {
             host.builder

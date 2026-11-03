@@ -5,6 +5,7 @@
 use std::str::FromStr;
 
 use serde_json::{Map, Value, json};
+use xirius_core::controls::ControlId;
 use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::CtrlKind;
 
@@ -78,6 +79,10 @@ pub fn act_command(act: &Act) -> (&'static str, Value) {
             },
         ),
         Act::PickInsert(t) => ("plugin.pick", json!({"id": t.to_string()})),
+        Act::PickMacro(t, k) => (
+            "control.pick",
+            json!({"track": t.to_string(), "control": ControlId::Knob(*k).to_string()}),
+        ),
         Act::InsertRecent(t, item) => ("plugin.insert", json!({"id": t.to_string(), "item": item})),
         Act::Browse(b) => match b {
             BrowseAct::UseNew(n) => ("browser.use", json!({"item": n, "into": "new"})),

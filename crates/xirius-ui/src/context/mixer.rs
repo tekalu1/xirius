@@ -13,6 +13,8 @@ use xirius_core::id::{PluginId, SendId, TrackId};
 use xirius_core::model::{Output, Plugin, Project, TrackKind};
 use xirius_prefs::midimap::Target;
 
+use xirius_core::controls::{ControlId, KNOBS};
+
 use super::{Act, Item};
 use crate::arrange::{lane_name, targets_of};
 use crate::instrument::window::is_built_in;
@@ -20,6 +22,9 @@ use crate::mixer::{List, MixerHit, NEW_BUS, row_at, send_choices, send_parts};
 use crate::popup::PopupKind;
 use crate::studio::{Geometry, Studio};
 use crate::tree::RowKind;
+
+/// The row that gives a part to a macro knob (MIX-040).
+pub(crate) const MACRO_ASSIGN: &str = "マクロコントロールに割り当て";
 
 /// What a right press in the mixer landed on.
 enum Spot {
@@ -150,6 +155,32 @@ impl Studio {
             Act::Lane(t, target.to_string()),
         )
         .on(shown)
+    }
+
+    /// Row "マクロコントロールに割り当て ›" for one target of a track (MIX-040): Macro 1–8, on
+    /// for the knob that has it, which takes it back; the others wait while another has it.
+    pub(crate) fn macro_item(&mut self, t: TrackId, target: AutoTarget) -> Item {
+        let p = self.project();
+        let Some(track) = p.tracks.get(&t) else {
+            return Item::sub(MACRO_ASSIGN, Vec::new()).enabled(false);
+        };
+        let owner = track.controls.owner_of(&target);
+        let target = target.to_string();
+        let rows = (0..KNOBS as u8)
+            .map(|k| {
+                let id = ControlId::Knob(k);
+                let label = track.control_label(id);
+                let args =
+                    json!({ "track": t.to_string(), "control": id.to_string(), "target": target });
+                if owner == Some(id) {
+                    self.ctx_as(&label, "control.unassign", args).on(true)
+                } else {
+                    self.ctx_as(&label, "control.assign", args)
+                        .enabled(owner.is_none())
+                }
+            })
+            .collect();
+        Item::sub(MACRO_ASSIGN, rows)
     }
 
     /// Row "すべてのポイントを削除" for one lane: dim while the lane has no points.
@@ -327,6 +358,7 @@ impl Studio {
             ),
             Item::gap(),
             self.lane_item(t, AutoTarget::Volume),
+            self.macro_item(t, AutoTarget::Volume),
             Item::gap(),
             clear,
             Item::gap(),
@@ -389,6 +421,7 @@ impl Studio {
             ),
             Item::gap(),
             self.lane_item(t, AutoTarget::Pan),
+            self.macro_item(t, AutoTarget::Pan),
             Item::gap(),
             clear,
             Item::gap(),
@@ -423,7 +456,8 @@ impl Studio {
                 held,
             ),
             Item::gap(),
-            self.lane_item(t, target),
+            self.lane_item(t, target.clone()),
+            self.macro_item(t, target),
             Item::gap(),
             clear,
         ]
@@ -481,6 +515,7 @@ impl Studio {
             Item::act("送り先のバスを表示", "", Act::ShowStrip(send.to)),
             Item::gap(),
             self.lane_item(t, AutoTarget::Send(s)),
+            self.macro_item(t, AutoTarget::Send(s)),
             Item::gap(),
             remove,
         ]

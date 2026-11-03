@@ -159,7 +159,11 @@ impl Screen {
             }
             return;
         }
-        if s.popup.is_none() && (s.channel_right(&g, x, y) || s.instrument_right(&g, x, y)) {
+        if s.popup.is_none()
+            && (s.macro_right(&g, x, y)
+                || s.channel_right(&g, x, y)
+                || s.instrument_right(&g, x, y))
+        {
             cx.notify();
             return;
         }

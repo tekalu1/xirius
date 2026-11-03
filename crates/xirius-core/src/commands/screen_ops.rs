@@ -21,6 +21,7 @@ pub const NAMES: &[&str] = &[
     "plugin.preset.choose",
     "plugin.preset.file",
     "plugin.pick",
+    "control.pick",
     "plugin.insert",
     "browser.use",
     "browser.fx",
@@ -177,6 +178,14 @@ pub(super) fn defs() -> Vec<CommandDef> {
             "plugin.pick",
             "チャンネルの ＋ の下に、挿すエフェクトの一覧を開きます",
             vec![ArgDef::id("id", IdKind::Track, "トラック").req()],
+        ),
+        screen(
+            "control.pick",
+            "マクロコントロールのつまみの下に、割り当てる先（パラメーター・分岐・音量・パン・センド）の一覧を開きます",
+            vec![
+                ArgDef::id("track", IdKind::Track, "トラック").req(),
+                ArgDef::text("control", "つまみ（k1〜k8）").req(),
+            ],
         ),
         changes(
             "plugin.insert",

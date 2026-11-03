@@ -2476,6 +2476,7 @@ impl Studio {
                 return self.key_source_action(plugin, track, part);
             }
             Action::MacroAxis(t, axis, k) => return self.macro_axis(t, axis, k),
+            Action::MacroTarget(t, k, to) => return self.macro_target(t, k, &to),
             Action::SplitMode(id, word) => return self.split_mode(id, word),
             Action::OpenNoteEdit(kind) => {
                 self.open_note_edit(kind, p.anchor);

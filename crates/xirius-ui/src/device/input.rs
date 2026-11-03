@@ -910,7 +910,9 @@ impl Studio {
         let args = json!({ "id": w.plugin.to_string(), "param": spec.id, "value": default });
         let reset = self.ctx_as("既定に戻す", "plugin.param.set", args);
         let reset = if away { reset } else { reset.enabled(false) };
-        let lane = self.lane_item(track, AutoTarget::Param(w.plugin, spec.id.to_string()));
+        let param = AutoTarget::Param(w.plugin, spec.id.to_string());
+        let lane = self.lane_item(track, param.clone());
+        let to_macro = self.macro_item(track, param);
         let target = Target::Param {
             track: track.to_string(),
             plugin: w.plugin.to_string(),
@@ -920,6 +922,7 @@ impl Studio {
             crate::auto_lock::gate(reset, held),
             Item::gap(),
             lane,
+            to_macro,
             Item::gap(),
         ];
         items.extend(self.midi_rows(target));

@@ -3,6 +3,9 @@
 //! right. The pad moves the two knobs its picks under it choose. Without its pin the window
 //! shows the chosen channel's macros, as a device window does.
 
+pub mod assign;
+#[cfg(test)]
+mod assign_tests;
 pub mod paint;
 #[cfg(test)]
 mod tests;

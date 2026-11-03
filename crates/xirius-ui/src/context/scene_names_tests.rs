@@ -68,6 +68,7 @@ const DIALOG_ACTS: &[&str] = &[
     "ExportLoop",
     "ExportSpan",
     "PickInsert",
+    "PickMacro",
     "PointValue",
     "MidiExport",
 ];

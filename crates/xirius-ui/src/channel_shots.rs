@@ -1,7 +1,8 @@
 //! The channel editor (MIX-042): a vocal's chain with a splitter of three branches, the keys'
 //! three layers, a branch under the pointer and a chosen card, as the mock's s03 shows them; the
 //! keys' ranges under them (MIX-043), as v2's s04 does, with the first layer and then the third
-//! chosen. Then the macro row and the macro window beside the editor (MIX-041), as v3's s06.
+//! chosen. Then the macro row and the macro window beside the editor (MIX-041), as v3's s06,
+//! and a macro knob's menu and its list of targets (MIX-040).
 use crate::{
     mixer::flow::Pick,
     shot::{Act, Play, Shot},
@@ -35,6 +36,14 @@ pub const SHOTS: &[Shot] = &[
     Shot {
         name: "channel06",
         acts: &[Act::Reset, Act::Stage(Play::Laid(setup), 5)],
+    },
+    Shot {
+        name: "channel07",
+        acts: &[Act::Reset, Act::Stage(Play::Laid(setup), 6)],
+    },
+    Shot {
+        name: "channel08",
+        acts: &[Act::Reset, Act::Stage(Play::Laid(setup), 7)],
     },
 ];
 
@@ -142,7 +151,7 @@ fn setup(s: &mut Studio, g: &Geometry, n: u8) {
             }
         }
         // the macro row on, and the macro window to the editor's right with its point at 40 % 70 %
-        5 => {
+        5..=7 => {
             for (k, v) in [0.4, 0.7, 0.25, 0.5, 0.1, 0.8, 0.3, 0.6]
                 .into_iter()
                 .enumerate()
@@ -165,6 +174,20 @@ fn setup(s: &mut Studio, g: &Geometry, n: u8) {
             s.open_macros(vocal);
             if let Some(w) = s.macro_pad.as_mut() {
                 w.at = Some(at);
+            }
+            if n == 5 {
+                return;
+            }
+            // Macro 3 has the volume and Reverb's mix was moved last: its menu, then its list
+            let args = json!({ "track": vocal, "control": "k3", "target": "volume" });
+            s.run_command("control.assign", args);
+            let args = json!({ "id": verb, "param": "mix", "value": 0.35 });
+            s.run_command("plugin.param.set", args);
+            let knob = s.macro_view(g).unwrap().knobs[2];
+            if n == 6 {
+                s.macro_knob_menu(vocal, 2, knob.x + knob.w / 2.0, knob.y + knob.h / 2.0);
+            } else {
+                s.pick_macro(g, vocal, 2);
             }
         }
         _ => {}

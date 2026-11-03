@@ -469,3 +469,47 @@ fn a_macro_target_has_one_owner_and_goes_with_its_plugin() {
         "the branch's map left with the splitter"
     );
 }
+
+#[test]
+fn learning_gives_a_macro_the_parameter_a_hand_moved_last() {
+    use xirius_core::id::TrackId;
+    let (mut s, t, eq, b) = split_song("learn");
+    let tid: TrackId = t.parse().unwrap();
+    let learn = json!({ "track": t, "control": "k3" });
+    let e = commands::run(
+        &mut s,
+        None,
+        "control.assign.touched",
+        learn.as_object().unwrap(),
+        &RunOptions::human(),
+    )
+    .unwrap_err();
+    assert!(e.to_string().contains("触れていません"), "{e}");
+    // a knob of the device: the last one moved is the one learned
+    run(
+        &mut s,
+        "plugin.param.set",
+        json!({ "id": eq, "param": "gain", "value": 3.0 }),
+    );
+    run(
+        &mut s,
+        "plugin.param.set",
+        json!({ "id": eq, "param": "output", "value": -2.0 }),
+    );
+    let steps = s.steps().len();
+    run(&mut s, "control.assign.touched", learn.clone());
+    assert_eq!(s.steps().len(), steps + 1, "one step");
+    let maps = &s.project().tracks[&tid].controls.knobs[2].maps;
+    assert_eq!(maps.len(), 1);
+    assert_eq!(maps[0].target.to_string(), format!("param:{eq}:output"));
+    // a knob moved in the plugin's own window is told to the session the same way
+    s.touch(format!("branch:{}:gain", b[1]));
+    run(&mut s, "control.assign.touched", learn);
+    assert_eq!(
+        s.project().tracks[&tid].controls.knobs[2].maps.len(),
+        2,
+        "learning again adds"
+    );
+    s.undo(1).unwrap();
+    assert_eq!(s.project().tracks[&tid].controls.knobs[2].maps.len(), 1);
+}

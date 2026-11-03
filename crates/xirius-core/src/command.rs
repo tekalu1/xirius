@@ -278,6 +278,8 @@ pub struct EditCtx<'a> {
     pub store: Option<&'a Store>,
     /// What `edit.copy` / `edit.cut` left (the session's clipboard).
     pub clipboard: Option<&'a Clipboard>,
+    /// The parameter a hand moved last (`SessionState::touched`).
+    pub touched: Option<&'a str>,
 }
 
 pub type EditFn = fn(&mut Project, &EditCtx<'_>, &Args) -> CmdResult<Output>;

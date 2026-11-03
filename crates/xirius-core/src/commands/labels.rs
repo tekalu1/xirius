@@ -177,6 +177,7 @@ pub const LABELS: &[(&str, &str)] = &[
     ("plugin.preset.choose", "プリセットを選ぶ"),
     ("plugin.preset.file", "プリセットをファイルで読み書き"),
     ("plugin.pick", "エフェクトを追加…"),
+    ("control.pick", "割り当てを追加…"),
     ("plugin.insert", "最近使ったエフェクトを追加"),
     ("browser.use", "ブラウザーのインストゥルメントを使う"),
     ("browser.fx", "ブラウザーのエフェクトを追加"),
@@ -231,6 +232,10 @@ pub const LABELS: &[(&str, &str)] = &[
     ("control.xy", "X/Y パッドを設定"),
     ("control.xy.assign", "X/Y パッドのマクロを選択"),
     ("control.assign", "マクロコントロールに割り当て"),
+    (
+        "control.assign.touched",
+        "マクロコントロールに学習で割り当て",
+    ),
     ("control.unassign", "マクロコントロールの割り当てを解除"),
     ("control.rename", "マクロコントロール名を変更"),
     ("control.list", "マクロコントロールの一覧"),

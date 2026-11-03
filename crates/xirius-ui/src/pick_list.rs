@@ -633,6 +633,7 @@ pub fn is(kind: PopupKind) -> bool {
             | PopupKind::Send(_)
             | PopupKind::KeySources(_)
             | PopupKind::MacroAxis(..)
+            | PopupKind::MacroTargets(..)
             | PopupKind::SplitMode(..)
             | PopupKind::Input(_)
             | PopupKind::Output(_)
@@ -654,7 +655,8 @@ pub fn width(kind: PopupKind) -> f32 {
         | PopupKind::Instrument(_)
         | PopupKind::Layer(_)
         | PopupKind::Send(_)
-        | PopupKind::AraPlugin => 260.0,
+        | PopupKind::AraPlugin
+        | PopupKind::MacroTargets(..) => 260.0,
         PopupKind::Device(_) => 280.0,
         PopupKind::KeySources(_) => crate::key_sources::WIDTH,
         PopupKind::BrowserView => 168.0,
@@ -907,6 +909,7 @@ impl Studio {
                         .collect(),
                 ))
             }
+            PopupKind::MacroTargets(t, k) => self.macro_targets(t, k),
             PopupKind::SplitMode(t, id) => Some(crate::channel::mode_pick(&self.project(), t, id)),
             PopupKind::Send(t) => {
                 let p = self.project();

@@ -608,6 +608,10 @@ fn every_history_command_undoes_and_redoes() {
         "plugin.param.set",
         json!({"id": eq, "param": "gain", "value": 3.0}),
     );
+    rig.step(
+        "control.assign.touched",
+        json!({"track": kick, "control": "k2"}),
+    );
     rig.step("plugin.state.set", json!({"id": eq, "state": "AAEC"}));
     let vst = id_of(&rig.step(
         "plugin.add",

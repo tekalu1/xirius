@@ -69,6 +69,9 @@ pub enum PopupKind {
     KeySources(PluginId),
     /// The knob an axis of a track's X/Y pad moves (MIX-041): 0 is X, 1 is Y.
     MacroAxis(TrackId, u8),
+    /// What a track can give its macro knob (MIX-040): its parameters, branches, volume, pan
+    /// and sends.
+    MacroTargets(TrackId, u8),
     /// A splitter's mode, from its pill in the channel editor (MIX-042).
     SplitMode(TrackId, xirius_core::id::NodeId),
     AutomationTargets(TrackId, bool),
@@ -200,6 +203,9 @@ pub enum Action {
     KeySource(PluginId, TrackId, crate::key_sources::KeyPart),
     /// `control.xy.assign`: the track, the axis (0 is X) and the knob it takes (MIX-041).
     MacroAxis(TrackId, u8, u8),
+    /// `control.assign` (or `control.unassign` for the knob's own): the track, the knob and the
+    /// target (MIX-040).
+    MacroTarget(TrackId, u8, String),
     /// `rack.split.mode`: the splitter and the mode's word (MIX-042).
     SplitMode(xirius_core::id::NodeId, &'static str),
     /// A part of the field of row `i` at the head of an audio clip's menu.
