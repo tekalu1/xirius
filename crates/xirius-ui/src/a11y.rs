@@ -766,14 +766,14 @@ fn instrument_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
 /// (UI-326).
 fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     use crate::device::control::{self, Look};
-    use crate::instrument::window::{live, values};
+    use crate::instrument::window::{live, values_of};
     let p = s.project();
     let mut out = Vec::new();
     for (i, w) in s.instruments.open.iter().enumerate() {
         let Some((_, x, def)) = live(&p, w) else {
             continue;
         };
-        let now = values(x);
+        let now = values_of(x, def);
         let r = s.instruments.rect(i, g.size);
         let body = s.instruments.body(r, x, def);
         let mark = |key: String, node: accesskit::Node| Mark {
@@ -831,6 +831,35 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             ));
             node.set_bounds(bounds(k.r));
             out.push(mark(format!("device-{}-pad-{}", w.plugin, k.pitch), node));
+        }
+        // A Sampler's and a Drum Kit's zones, banks, layers, M and S, the arrows of the
+        // sample and Browse are Buttons; a chosen one is selected, an M or S on is toggled
+        // (UI-333, UI-334).
+        for (n, spot) in body.spots.iter().enumerate() {
+            use crate::device::layout::Mark as Spot;
+            if !spot.mark.takes() {
+                continue;
+            }
+            let mut node = accesskit::Node::new(accesskit::Role::Button);
+            node.set_label(match spot.mark {
+                Spot::Prev => "Previous sample".to_string(),
+                Spot::Next => "Next sample".to_string(),
+                Spot::Mute(p) => format!("Mute {}", xirius_params::PAD_NAMES[p]),
+                Spot::Solo(p) => format!("Solo {}", xirius_params::PAD_NAMES[p]),
+                Spot::Bank(_) => format!("Bank {}", spot.text),
+                _ => spot.text.clone(),
+            });
+            match spot.mark {
+                Spot::Mute(_) | Spot::Solo(_) => node.set_toggled(if spot.on {
+                    accesskit::Toggled::True
+                } else {
+                    accesskit::Toggled::False
+                }),
+                _ if spot.on => node.set_selected(true),
+                _ => {}
+            }
+            node.set_bounds(bounds(spot.r));
+            out.push(mark(format!("device-{}-spot-{n}", w.plugin), node));
         }
         for slot in body.slots {
             let spec = &def.params[slot.k];

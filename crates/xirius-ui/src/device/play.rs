@@ -3,9 +3,8 @@
 //! pointer leaving it and the window closing end it.
 
 use xirius_design::{FontSize, Radius, Weight};
-use xirius_params::BuiltinDef;
 
-use super::layout::{Body, PAD};
+use super::layout::PAD;
 use crate::draw::{Align, Pen};
 use crate::notes::is_black_key;
 use crate::studio::Rect;
@@ -17,13 +16,12 @@ pub const HIGH: u8 = 84;
 pub const FIRST_PAD: u8 = 36;
 /// The pads of a bank: four rows of four.
 pub const PADS: usize = 16;
-const KEYS_H: f32 = 56.0;
+pub const KEYS_H: f32 = 56.0;
 /// A black key's size, over the line between two white keys.
 const BLACK_W: f32 = 8.0;
 const BLACK_H: f32 = 34.0;
 /// The gap between the pads, and how tall a pad is of its width.
-const GAP: f32 = 4.0;
-const PAD_ASPECT: f32 = 0.86;
+pub const GAP: f32 = 4.0;
 /// A window this narrow or less hides the keys' names.
 const NAMES_W: f32 = 520.0;
 
@@ -65,15 +63,16 @@ pub fn keys(r: Rect) -> Vec<Key> {
     out
 }
 
-/// The pads of a bank across `r`, the first at the bottom left and on to the right.
-pub fn pads(r: Rect) -> Vec<Key> {
+/// The pads of the bank `bank` (A is 0) across `r`, the first at the bottom left and on to
+/// the right. Pad `n` of the kit plays `FIRST_PAD + n`, from 0 again past 127.
+pub fn pads(r: Rect, bank: usize) -> Vec<Key> {
     let w = (r.w - 3.0 * GAP) / 4.0;
     let h = (r.h - 3.0 * GAP) / 4.0;
     (0..PADS)
         .map(|n| {
             let (col, row) = ((n % 4) as f32, (3 - n / 4) as f32);
             Key {
-                pitch: FIRST_PAD + n as u8,
+                pitch: ((usize::from(FIRST_PAD) + bank * PADS + n) % 128) as u8,
                 r: Rect::new(r.x + col * (w + GAP), r.y + row * (h + GAP), w, h),
                 black: false,
             }
@@ -89,28 +88,14 @@ pub fn key_at(keys: &[Key], x: f32, y: f32) -> Option<u8> {
         .map(|k| k.pitch)
 }
 
-/// A pad's name: its bank and number ("A1").
-pub fn pad_name(pitch: u8) -> String {
-    let n = usize::from(pitch.saturating_sub(FIRST_PAD));
-    format!("A{}", n + 1)
+/// The pad a note plays (A1 is 0).
+pub fn pad_of(pitch: u8) -> usize {
+    (usize::from(pitch) + 128 - usize::from(FIRST_PAD)) % 128
 }
 
-/// The body with the Sampler's keyboard or the Drum Kit's pads under its controls.
-pub fn add(def: &BuiltinDef, mut b: Body) -> Body {
-    let inner = b.w - 2.0 * PAD;
-    match def.uid {
-        "sampler" => {
-            b.keys = keys(Rect::new(PAD, b.h, inner, KEYS_H));
-            b.h += KEYS_H + PAD;
-        }
-        "drum-kit" => {
-            let h = ((inner - 3.0 * GAP) * PAD_ASPECT + 3.0 * GAP).round();
-            b.pads = pads(Rect::new(PAD, b.h, inner, h));
-            b.h += h + PAD;
-        }
-        _ => {}
-    }
-    b
+/// A pad's name: its bank and number ("A1", "B5").
+pub fn pad_name(pitch: u8) -> &'static str {
+    xirius_params::PAD_NAMES[pad_of(pitch)]
 }
 
 /// The keyboard, `down` the key held: the white keys' C named while the window is wider
@@ -165,7 +150,7 @@ pub fn paint_pads(pen: &mut Pen, pads: &[Key], down: Option<u8>, hot: Option<u8>
         // Its name at the top left, its note at the top right.
         let text = Rect::new(k.r.x + 6.0, k.r.y + 5.0, k.r.w - 12.0, 14.0);
         pen.text(
-            &pad_name(k.pitch),
+            pad_name(k.pitch),
             FontSize::Micro,
             Weight::Semibold,
             if lit { c.on_fill } else { c.ink_strong },

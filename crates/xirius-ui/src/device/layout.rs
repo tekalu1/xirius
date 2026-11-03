@@ -4,6 +4,7 @@
 //! A device without its own layout has its controls in rows, in the order
 //! `xirius-params` lists them.
 
+use xirius_core::model::Plugin;
 use xirius_design::FontSize;
 use xirius_params::BuiltinDef;
 
@@ -84,6 +85,67 @@ pub struct Tab {
     pub on: bool,
 }
 
+/// What a press on a Sampler's or a Drum Kit's spot does (UI-333, UI-334).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mark {
+    /// The ‹ › beside a sample's name: the file before or after it in its folder.
+    Prev,
+    Next,
+    /// The sample's name (drawn, takes no press).
+    Name,
+    /// A Sampler's zone (by its file) in the strip over the keys.
+    Zone(usize),
+    /// A Drum Kit's bank tab, and a pad's M and S (by its pad).
+    Bank(usize),
+    Mute(usize),
+    Solo(usize),
+    /// A layer of the chosen pad (by its place among the pad's files).
+    Layer(usize),
+    /// The plane a sample is dropped on, and its button opening the files.
+    Drop,
+    Browse,
+    /// The chosen pad's name over its controls, and what a pad says (drawn, take no press).
+    Title,
+    Pad(usize),
+}
+
+impl Mark {
+    /// Does a press on it do something?
+    pub fn takes(self) -> bool {
+        !matches!(self, Mark::Name | Mark::Drop | Mark::Title | Mark::Pad(_))
+    }
+}
+
+/// A part of a Sampler's or a Drum Kit's body that is not a parameter: a zone, a bank, a
+/// layer, the sample's name and its arrows, the drop plane.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Spot {
+    pub r: Rect,
+    pub mark: Mark,
+    pub text: String,
+    /// What it says second (a pad's note, its layers `Vel 3`).
+    pub sub: String,
+    /// Chosen (a zone, a bank, a layer) or on (M, S).
+    pub on: bool,
+    /// A bank with samples has a dot under its letter; a zone's root note.
+    pub dot: bool,
+    pub note: Option<u8>,
+}
+
+impl Spot {
+    pub fn new(r: Rect, mark: Mark, text: impl Into<String>) -> Spot {
+        Spot {
+            r,
+            mark,
+            text: text.into(),
+            sub: String::new(),
+            on: false,
+            dot: false,
+            note: None,
+        }
+    }
+}
+
 /// A device's body: its size, its controls, its graphs' planes (UI-325)
 /// and what else it draws.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -109,6 +171,8 @@ pub struct Body {
     /// A Sampler's keyboard and a Drum Kit's pads (PLG-066).
     pub keys: Vec<Key>,
     pub pads: Vec<Key>,
+    /// A Sampler's and a Drum Kit's other parts (UI-333, UI-334).
+    pub spots: Vec<Spot>,
 }
 
 impl Body {
@@ -147,6 +211,11 @@ impl Body {
                 .pads
                 .into_iter()
                 .map(|k| Key { r: m(k.r), ..k })
+                .collect(),
+            spots: self
+                .spots
+                .into_iter()
+                .map(|s| Spot { r: m(s.r), ..s })
                 .collect(),
             ..self
         }
@@ -204,6 +273,20 @@ impl Body {
         {
             r.y += dy;
         }
+        for k in self.keys.iter_mut().chain(&mut self.pads) {
+            if under(&k.r) {
+                k.r.y += dy;
+            }
+        }
+        for s in &mut self.spots {
+            if under(&s.r) {
+                s.r.y += dy;
+            } else if s.mark == Mark::Drop && row(&s.r) {
+                s.r.h += dy;
+            } else if s.mark == Mark::Browse && row(&s.r) {
+                s.r.y += dy / 2.0;
+            }
+        }
         for l in &mut self.levels {
             if under(&l.name) {
                 *l = l.clone().at(0.0, dy);
@@ -225,12 +308,16 @@ impl Body {
 
 /// What a body is laid out for: its width, the band chosen (a narrow EQ
 /// shows that one's knobs) and the values (0..1) it shows (a band's type
-/// swaps its knobs).
-#[derive(Clone, Copy, Debug)]
+/// swaps its knobs). A Sampler's and a Drum Kit's also follow the plug-in's
+/// files: the zone or pad chosen (`pick`) and the pad's layer (UI-333, UI-334).
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Shape<'a> {
     pub w: f32,
     pub band: usize,
     pub values: &'a [f64],
+    pub plugin: Option<&'a Plugin>,
+    pub pick: usize,
+    pub layer: usize,
 }
 
 impl Shape<'_> {
@@ -256,7 +343,9 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
         "limiter" => super::limiter::body(def, s),
         "delay" => super::delay::body(def, s),
         "reverb" => super::reverb::body(def, s),
-        _ => super::play::add(def, rows(def)),
+        "sampler" => super::sampler::body(def, s),
+        "drum-kit" => super::sampler::kit_body(def, s),
+        _ => rows(def),
     }
 }
 
@@ -268,6 +357,8 @@ pub fn natural_w(def: &BuiltinDef) -> f32 {
         "limiter" => super::limiter::NATURAL_W,
         "delay" => super::delay::NATURAL_W,
         "reverb" => super::reverb::NATURAL_W,
+        "sampler" => super::sampler::NATURAL_W,
+        "drum-kit" => super::sampler::KIT_W,
         _ => rows(def).w,
     }
 }
@@ -280,6 +371,8 @@ pub fn min_w(def: &BuiltinDef) -> f32 {
         "limiter" => super::limiter::MIN_W,
         "delay" => super::delay::MIN_W,
         "reverb" => super::reverb::MIN_W,
+        "sampler" => super::sampler::NATURAL_W,
+        "drum-kit" => super::sampler::KIT_MIN_W,
         _ => rows(def).w,
     }
 }
@@ -287,13 +380,20 @@ pub fn min_w(def: &BuiltinDef) -> f32 {
 /// The size of a device's body at the width `w`, its values at their
 /// defaults (its height follows its width, not its values).
 pub fn size(def: &BuiltinDef, w: f32) -> (f32, f32) {
+    size_of(def, w, None)
+}
+
+/// The size of the body of `plugin`'s device at `w`: a Sampler's and a Drum Kit's
+/// follow their files (UI-333, UI-334).
+pub fn size_of(def: &BuiltinDef, w: f32, plugin: Option<&Plugin>) -> (f32, f32) {
     let values: Vec<f64> = def.params.iter().map(|p| p.default_norm()).collect();
     let b = body(
         def,
         &Shape {
             w,
-            band: 0,
             values: &values,
+            plugin,
+            ..Shape::default()
         },
     );
     (b.w, b.h)
@@ -343,8 +443,8 @@ mod tests {
             let values: Vec<f64> = def.params.iter().map(|p| p.default_norm()).collect();
             let shape = Shape {
                 w: natural_w(def),
-                band: 0,
                 values: &values,
+                ..Shape::default()
             };
             let b = body(def, &shape);
             if def.uid == "eq" {
@@ -357,6 +457,10 @@ mod tests {
             } else if def.uid == "reverb" {
                 // The Color band's ends are points.
                 assert_eq!(b.slots.len(), def.params.len() - 2);
+            } else if matches!(def.uid, "sampler" | "drum-kit") {
+                // With no samples there is nothing to set but the drop plane (UI-333,
+                // UI-334); the tests of `sampler` lay one out with its files.
+                assert!(b.slots.is_empty(), "{}", def.uid);
             } else {
                 assert_eq!(b.slots.len(), def.params.len(), "{}", def.uid);
             }

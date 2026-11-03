@@ -165,13 +165,16 @@ pub fn name(def: &BuiltinDef, spec: &ParamSpec) -> &'static str {
     }
 }
 
-/// The labels of a choice, as its segments say them: the first word
-/// (`12 dB/oct` reads `12`).
+/// The labels of a choice, as its segments say them: a number's first word
+/// (`12 dB/oct` reads `12`), a name whole (`Round Robin`).
 pub fn segment_labels(spec: &ParamSpec) -> Vec<&'static str> {
     match spec.curve {
         Curve::Choice(labels) => labels
             .iter()
-            .map(|l| l.split(' ').next().unwrap_or(l))
+            .map(|l| match l.chars().next() {
+                Some(c) if c.is_ascii_digit() => l.split(' ').next().unwrap_or(l),
+                _ => l,
+            })
             .collect(),
         _ => Vec::new(),
     }
@@ -494,12 +497,20 @@ pub fn menu_text(def: &BuiltinDef, k: usize, values: &[f64]) -> String {
     }
     let spec = &def.params[k];
     let v = values.get(k).copied().unwrap_or(spec.default_norm());
-    super::eq::band_of(def, k).map_or(String::new(), |b| {
-        xirius_params::EQ_BANDS[b]
+    match (
+        super::eq::band_of(def, k).filter(|_| def.uid == "eq"),
+        spec.curve,
+    ) {
+        (Some(b), _) => xirius_params::EQ_BANDS[b]
             .type_of(spec.to_plain(v))
             .label()
-            .to_string()
-    })
+            .to_string(),
+        // Any other choice says its label (a pad's Choke).
+        (None, Curve::Choice(labels)) => labels
+            .get(spec.to_plain(v).round().max(0.0) as usize)
+            .map_or(String::new(), |l| l.to_string()),
+        _ => String::new(),
+    }
 }
 
 /// A choice's box that opens its menu (the Delay's beats): its label in the

@@ -123,9 +123,8 @@ pub fn gain_axis(def: &BuiltinDef, r: Rect) -> Axis {
 
 fn plain(def: &BuiltinDef, values: &[f64], id: &str) -> f64 {
     Shape {
-        w: 0.0,
-        band: 0,
         values,
+        ..Shape::default()
     }
     .plain(def, id)
 }

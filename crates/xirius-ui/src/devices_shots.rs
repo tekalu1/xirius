@@ -137,16 +137,27 @@ pub const SHOTS: &[Shot] = &[
         name: "pin01-pinned-and-next",
         acts: &[Act::Reset, pin_stage(0), pin_stage(1)],
     },
-    // The Sampler's window with its keyboard, C3 held (PLG-066). Its controls stand in rows of
-    // one width, so it has no narrow shot.
+    // The Sampler's window with no sample yet: the drop plane over its keyboard, C3 held
+    // (PLG-066, UI-333). Its narrow form is not built, so it has no narrow shot.
     Shot {
         name: "play01-sampler",
         acts: &[Act::Reset, play_stage(0)],
     },
-    // The Drum Kit's with its pads, A1 held.
+    // The Drum Kit's with no sample: the pads and the drop plane, A1 held (UI-334).
     Shot {
         name: "play02-drum-kit",
         acts: &[Act::Reset, play_stage(1)],
+    },
+    // The Sampler with two zones, the second chosen: its wave, its sample's row, the voice.
+    Shot {
+        name: "play03-sampler-zones",
+        acts: &[Act::Reset, play_stage(2)],
+    },
+    // The Drum Kit with five sounds, A3 chosen (two velocity layers, the second shown) and
+    // A2 muted.
+    Shot {
+        name: "play04-drum-kit-pads",
+        acts: &[Act::Reset, play_stage(3)],
     },
     // The Compressor at a saved preset, a knob moved off it: the tag's mark (UI-332).
     Shot {
@@ -619,11 +630,80 @@ fn play_browser(s: &mut Studio, g: &Geometry, n: u8) {
     }
 }
 
-/// Keys plays the Sampler (stage 0) or the Drum Kit (1); its window opens with a key or a pad
-/// shown held (no note is sent: the player would start on the sample song).
+/// Where the samples of the shots are written (tones made here, nothing of the PC's).
+fn samples_dir() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("xirius-devices-shots-{}", std::process::id()))
+}
+
+/// Writes the sample `name`: a tone at `hz` (with a drop in pitch when `drop`) or a noise
+/// burst (`hz` 0), dying away over `secs`.
+fn write_sample(name: &str, hz: f64, drop: bool, secs: f64) -> std::path::PathBuf {
+    const RATE: u32 = 48_000;
+    let path = samples_dir().join(name);
+    if path.exists() {
+        return path;
+    }
+    let n = (f64::from(RATE) * secs) as usize;
+    let mut seed = 0x2545_f491_u32;
+    let x: Vec<f32> = (0..n)
+        .map(|i| {
+            let t = i as f64 / f64::from(RATE);
+            let env = (-t / (secs / 5.0)).exp();
+            let v = if hz == 0.0 {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                f64::from(seed) / f64::from(u32::MAX) * 2.0 - 1.0
+            } else {
+                let f = if drop {
+                    hz * (1.0 + 2.0 * (-t * 30.0).exp())
+                } else {
+                    hz
+                };
+                (t * f * std::f64::consts::TAU).sin()
+                    + 0.3 * (t * f * 2.0 * std::f64::consts::TAU).sin()
+            };
+            (v * env * 0.8) as f32
+        })
+        .collect();
+    let _ = std::fs::create_dir_all(samples_dir());
+    let _ = xirius_session::export::write_wav(&path, &x, &x, RATE, 16);
+    path
+}
+
+/// Gives `id` the samples `files`.
+fn fill(s: &mut Studio, id: PluginId, files: &[std::path::PathBuf]) {
+    let list: Vec<_> = files
+        .iter()
+        .map(|f| json!({ "file": f.to_string_lossy() }))
+        .collect();
+    s.run_command(
+        "plugin.samples.add",
+        json!({ "id": id.to_string(), "files": list }),
+    );
+}
+
+/// Turns the screen's poll until the peaks of `files` are there to draw, or ten seconds.
+fn wait_peaks(s: &mut Studio, files: &[std::path::PathBuf]) {
+    use std::time::{Duration, Instant};
+    let store = xirius_session::peaks::store_dir(s.song().dir().as_deref());
+    let end = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < end
+        && !files
+            .iter()
+            .all(|f| matches!(crate::wave::look(f, &store), crate::wave::Look::Ready(_)))
+    {
+        s.idle();
+        std::thread::sleep(Duration::from_millis(16));
+    }
+}
+
+/// Keys plays the Sampler (stages 0 and 2) or the Drum Kit (1 and 3); its window opens with a
+/// key or a pad shown held (no note is sent: the player would start on the sample song).
+/// Stages 2 and 3 load samples first.
 fn play_notes(s: &mut Studio, _: &Geometry, n: u8) {
     let t = keys(s);
-    let (name, pitch) = if n == 0 {
+    let (name, pitch) = if n.is_multiple_of(2) {
         ("Sampler", 60)
     } else {
         ("Drum Kit", 36)
@@ -636,12 +716,45 @@ fn play_notes(s: &mut Studio, _: &Geometry, n: u8) {
     let Some(id) = crate::instrument::current(&s.project().tracks[&t]).map(|x| x.id) else {
         return;
     };
+    let files: Vec<_> = match n {
+        2 => vec![
+            write_sample("Keys C3.wav", 130.8, false, 2.0),
+            write_sample("Keys C5.wav", 523.3, false, 1.5),
+        ],
+        3 => vec![
+            write_sample("Kick.wav", 55.0, true, 0.6),
+            write_sample("Snare.wav", 0.0, false, 0.3),
+            write_sample("Tom_v1.wav", 110.0, true, 0.5),
+            write_sample("Tom_v2.wav", 110.0, true, 0.8),
+            write_sample("Hat.wav", 0.0, false, 0.08),
+        ],
+        _ => Vec::new(),
+    };
+    if !files.is_empty() {
+        fill(s, id, &files);
+    }
     s.show_instrument(t, id);
     s.instruments.flash = None;
+    match n {
+        2 => {
+            s.instruments.pick(id, 1, 0);
+        }
+        3 => {
+            s.run_command(
+                "plugin.param.set",
+                json!({ "id": id.to_string(), "param": "A2.mute", "value": 1.0 }),
+            );
+            s.instruments.pick(id, 2, 1);
+        }
+        _ => {}
+    }
+    if !files.is_empty() {
+        wait_peaks(s, &files);
+    }
     s.instruments.note = Some(crate::instrument::window::Held {
         plugin: id,
         track: t,
-        pitch,
+        pitch: if n == 3 { 38 } else { pitch },
         heard: None,
     });
 }

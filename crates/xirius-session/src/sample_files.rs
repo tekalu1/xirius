@@ -65,27 +65,43 @@ pub fn kit_estimate(x: &Plugin, names: &[String], from: usize, layers: bool) -> 
 
 fn load(cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Plan> {
     let x = plugin(cx, args)?;
-    let path = disk_path(args.str("path")?, cx.dir)?;
-    let files = if path.is_dir() {
-        audio_files(&path)?
-    } else if path.is_file() {
-        if !is_audio(&path) {
-            return Err(CmdError::invalid(format!(
-                "音声ファイルではありません: {}",
+    let mut given: Vec<&str> = args.opt_str("path").into_iter().collect();
+    if let Some(list) = args.0.get("paths").and_then(Value::as_array) {
+        for o in list {
+            match o.get("path").and_then(Value::as_str) {
+                Some(p) => given.push(p),
+                None => return Err(CmdError::invalid("paths には [{path}] を指定してください")),
+            }
+        }
+    }
+    given.retain(|p| !p.trim().is_empty());
+    if given.is_empty() {
+        return Err(CmdError::invalid("--path か --paths を指定してください"));
+    }
+    let mut files = Vec::new();
+    for given in &given {
+        let path = disk_path(given, cx.dir)?;
+        if path.is_dir() {
+            files.extend(audio_files(&path)?);
+        } else if path.is_file() {
+            if !is_audio(&path) {
+                return Err(CmdError::invalid(format!(
+                    "音声ファイルではありません: {}",
+                    path.display()
+                )));
+            }
+            files.push(path);
+        } else {
+            return Err(CmdError::not_found(format!(
+                "ファイルが見つかりません: {}",
                 path.display()
             )));
         }
-        vec![path.clone()]
-    } else {
-        return Err(CmdError::not_found(format!(
-            "ファイルが見つかりません: {}",
-            path.display()
-        )));
-    };
+    }
     if files.is_empty() {
         return Err(CmdError::not_found(format!(
             "音声ファイルがありません: {}",
-            path.display()
+            given.join(", ")
         )));
     }
     let names: Vec<String> = files.iter().map(|f| song_path(f, cx.dir)).collect();

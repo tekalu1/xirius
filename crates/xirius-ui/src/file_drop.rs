@@ -50,6 +50,11 @@ impl Studio {
         if self.groove_drop(g, x, y, paths) {
             return true;
         }
+        // On a Sampler's or a Drum Kit's window they are its samples (UI-333, UI-334).
+        if self.window_drop(g, x, y, paths) {
+            self.drop_over = false;
+            return true;
+        }
         self.drop_over = false;
         let at = self.drop_tick(g, x, y);
         // Audio files become audio clips (UI-075).

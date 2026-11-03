@@ -21,14 +21,17 @@ pub(super) fn defs() -> Vec<CommandDef> {
     vec![
         session(
             "plugin.samples.load",
-            "サンプラー・ドラムキットに音声ファイルか、フォルダーの中の音声ファイルを名前の順に読み込みます（plugin.samples.add と同じ置き方。1 回で取り消せます）",
+            "サンプラー・ドラムキットに音声ファイルか、フォルダーの中の音声ファイルを名前の順に読み込みます（plugin.samples.add と同じ置き方。--path と --paths は合わせて 1 回で取り消せます）",
             vec![
                 plugin(),
                 ArgDef::text(
                     "path",
                     "音声ファイルかフォルダー（絶対パスまたは曲のフォルダーからの相対パス）",
-                )
-                .req(),
+                ),
+                ArgDef::objects(
+                    "paths",
+                    "まとめて読み込む音声ファイルかフォルダー [{path}]（画面へまとめてドロップしたもの）",
+                ),
                 ArgDef::text(
                     "pad",
                     "ドラムキットで置き始めるパッド（A1〜H16。省略時は A1 から空いたパッド）",

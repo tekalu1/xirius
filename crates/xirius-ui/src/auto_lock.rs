@@ -197,6 +197,11 @@ mod tests {
         let t = track(&s, "Keys");
         assert!(s.set_instrument(t, &Pick::built_in(DEFAULT)));
         let plugin = current(&s.project().tracks[&t]).cloned().unwrap();
+        // With a sample the Sampler's window shows its knobs (UI-333).
+        assert!(s.run_command(
+            "plugin.samples.add",
+            json!({ "id": plugin.id.to_string(), "file": "Piano C3.wav" }),
+        ));
         assert!(s.press(&g, Hit::Keys(t)));
         assert!(s.instruments.is_open(plugin.id));
         let def = plugin.builtin().expect("built in");

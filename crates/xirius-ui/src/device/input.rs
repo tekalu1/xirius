@@ -17,7 +17,7 @@ use super::control::{self, Look, Step};
 use super::graph::{self, Point};
 use super::layout::{self, Slot};
 use crate::context::Item;
-use crate::instrument::window::{Grab, Part, Win, live, values};
+use crate::instrument::window::{Grab, Part, Win, live, values_of};
 use crate::settings::FieldId;
 use crate::settings::field::Field;
 use crate::studio::{Geometry, Studio};
@@ -65,7 +65,9 @@ impl Studio {
         let p = self.project();
         p.tracks.iter().find_map(|(t, track)| {
             let x = track.inserts.iter().find(|x| x.id == plugin)?;
-            Some((*t, x.builtin()?, values(x)))
+            // A Sampler's zone's, a Drum Kit's pad's parameters follow its window (UI-333).
+            let def = self.instruments.def_of(x)?;
+            Some((*t, def, values_of(x, def)))
         })
     }
 
@@ -629,16 +631,20 @@ impl Studio {
         let now = self.device_value(plugin, k).unwrap_or(spec.default_norm());
         match key {
             "tab" => {
-                let w = self
-                    .instruments
-                    .open
-                    .iter()
-                    .find(|w| w.plugin == plugin)
-                    .map_or_else(|| layout::natural_w(def), |w| w.body.0);
+                let win = self.instruments.win_of(plugin);
+                let w = win.map_or_else(|| layout::natural_w(def), |w| w.body.0);
+                let p = self.project();
+                let x = p
+                    .tracks
+                    .get(&track)
+                    .and_then(|t| t.inserts.iter().find(|x| x.id == plugin));
                 let shape = layout::Shape {
                     w,
                     band: self.instruments.band(plugin),
                     values: &values,
+                    plugin: x,
+                    pick: win.map_or(0, |w| w.pick),
+                    layer: win.map_or(0, |w| w.layer),
                 };
                 let order: Vec<usize> = layout::body(def, &shape)
                     .slots

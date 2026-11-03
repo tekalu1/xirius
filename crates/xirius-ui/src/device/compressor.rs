@@ -180,9 +180,8 @@ pub fn out_axis(r: Rect) -> Axis {
 /// x:1, dB).
 pub fn shape(def: &BuiltinDef, values: &[f64]) -> (f64, f64, f64) {
     let s = Shape {
-        w: 0.0,
-        band: 0,
         values,
+        ..Shape::default()
     };
     (
         s.plain(def, "threshold"),

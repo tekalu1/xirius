@@ -17,6 +17,7 @@ use gpui::{Hsla, PathBuilder, point, px};
 use xirius_core::id::PluginId;
 use xirius_design::{FontSize, Radius, Weight};
 use xirius_params::{BuiltinDef, ParamSpec};
+use xirius_session::peaks::Peaks;
 
 use super::control;
 use crate::draw::{Align, Pen};
@@ -215,6 +216,9 @@ pub fn points(def: &BuiltinDef, n: usize, r: Rect, values: &[f64]) -> Vec<Point>
         ("delay", 1) => super::delay::band_points(def, r, values),
         ("reverb", 0) => super::reverb::points(def, r, values),
         ("reverb", 1) => super::reverb::band_points(def, r, values),
+        ("sampler" | "drum-kit", 0) => super::sampler::wave_points(def, r, values),
+        ("sampler" | "drum-kit", 1) => super::sampler::env_points(def, r, values),
+        ("sampler" | "drum-kit", 2) => super::sampler::filter_points(def, r, values),
         _ => Vec::new(),
     }
 }
@@ -244,6 +248,8 @@ pub struct View<'a> {
     /// Seconds since a Delay or a Reverb last heard an onset, while its
     /// repeats or its reflections light (UI-329, UI-330).
     pub echo: Option<f64>,
+    /// The peaks of the sample a Sampler's or a Drum Kit's wave shows (UI-333, UI-334).
+    pub wave: Option<&'a Peaks>,
 }
 
 /// Paints a device's `n`th graph on its plane `r`, then its points.
@@ -281,6 +287,18 @@ pub fn paint(pen: &mut Pen, def: &BuiltinDef, n: usize, r: Rect, values: &[f64],
         ("reverb", 1) => {
             super::reverb::paint_band(pen, def, r, values);
             super::reverb::band_points(def, r, values)
+        }
+        ("sampler" | "drum-kit", 0) => {
+            super::sampler::paint_wave(pen, def, r, values, view);
+            super::sampler::wave_points(def, r, values)
+        }
+        ("sampler" | "drum-kit", 1) => {
+            super::sampler::paint_env(pen, def, r, values, view);
+            super::sampler::env_points(def, r, values)
+        }
+        ("sampler" | "drum-kit", 2) => {
+            super::sampler::paint_filter(pen, def, r, values, view);
+            super::sampler::filter_points(def, r, values)
         }
         _ => {
             pen.round(r, pen.c.surface_2, Radius::S);

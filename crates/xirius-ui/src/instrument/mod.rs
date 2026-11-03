@@ -18,6 +18,7 @@ pub mod keys;
 pub mod menu;
 pub mod presets;
 pub mod shots;
+mod spots;
 pub mod window;
 
 /// What a built-in instrument's choice starts with; the rest is its name.

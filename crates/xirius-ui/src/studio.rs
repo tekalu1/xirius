@@ -1818,6 +1818,8 @@ impl Studio {
         let raw = self.project();
         if !self.instruments.open.is_empty() {
             self.refresh_presets();
+            // A Sampler's or a Drum Kit's window follows its files (UI-333, UI-334).
+            self.instruments.refit(&raw);
         }
         let project = self.auto_heard(&raw);
         self.transport.sync(&project, self.song.dir());

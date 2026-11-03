@@ -16,6 +16,14 @@ fn studio() -> (Studio, Geometry, TrackId, PluginId) {
     (s, g, t, id)
 }
 
+/// A sample in the Sampler, so that its window shows its knobs (UI-333).
+fn fill(s: &mut Studio, id: PluginId) {
+    assert!(s.run_command(
+        "plugin.samples.add",
+        serde_json::json!({ "id": id.to_string(), "file": "Piano C3.wav" }),
+    ));
+}
+
 fn keys(s: &Studio) -> TrackId {
     s.project()
         .tracks
@@ -103,6 +111,7 @@ fn the_mixer_row_of_a_built_in_instrument_opens_the_same_window() {
 #[test]
 fn a_knob_turns_while_dragged_and_is_one_step_when_let_go() {
     let (mut s, g, t, id) = studio();
+    fill(&mut s, id);
     s.show_instrument(t, id);
     let before = s.song().steps();
     let (cutoff, spec) = plugin(&s, t).builtin().unwrap().param("cutoff").unwrap();
@@ -134,6 +143,7 @@ fn a_knob_turns_while_dragged_and_is_one_step_when_let_go() {
 #[test]
 fn a_stepped_knob_lands_on_its_steps() {
     let (mut s, g, t, id) = studio();
+    fill(&mut s, id);
     s.show_instrument(t, id);
     // The transposition is in whole semitones: a drag lands on one of them.
     let (sound, spec) = plugin(&s, t).builtin().unwrap().param("transpose").unwrap();
@@ -151,6 +161,7 @@ fn a_stepped_knob_lands_on_its_steps() {
 #[test]
 fn a_preset_sets_every_knob_in_one_step() {
     let (mut s, g, t, id) = studio();
+    fill(&mut s, id);
     s.show_instrument(t, id);
     assert_eq!(preset_of(&plugin(&s, t)), Some("Default"));
     nudge(&mut s, &g, id, "cutoff");
@@ -196,7 +207,15 @@ fn the_bar_drags_the_window_and_it_stays_in_reach() {
     assert!(s.instrument_moved(&g, x + 40.0, y + 25.0, false));
     assert!(s.instrument_up());
     let after = s.instruments.rect(0, g.size);
-    assert_eq!((after.x, after.y), (before.x + 40.0, before.y + 25.0));
+    // To within float rounding (the press was at the bar's centre).
+    assert!(
+        (after.x - before.x - 40.0).abs() < 1e-3,
+        "{after:?} {before:?}"
+    );
+    assert!(
+        (after.y - before.y - 25.0).abs() < 1e-3,
+        "{after:?} {before:?}"
+    );
     // Dragged far off, a strip of it stays on the screen.
     let (x, y) = at(&s, &g, id, Part::Head);
     assert!(s.instrument_down(&g, x, y));

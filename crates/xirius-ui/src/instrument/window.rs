@@ -30,6 +30,7 @@ use crate::device::eq;
 use crate::device::graph::{self, Point};
 use crate::device::layout::{self, Body, Slot};
 use crate::device::play;
+use crate::device::sampler;
 use crate::draw::{Align, Pen};
 use crate::mixer::meters::Meter;
 use crate::popup::PopupKind;
@@ -83,6 +84,22 @@ pub fn values(plugin: &Plugin) -> Vec<f64> {
     })
 }
 
+/// The values (0..1) of `def`'s parameters as `plugin` keeps them, else their
+/// defaults: a Sampler's zone's and a Drum Kit's pad's under their keys (UI-333,
+/// UI-334), as [`sampler::scoped`] gives them.
+pub fn values_of(plugin: &Plugin, def: &BuiltinDef) -> Vec<f64> {
+    def.params
+        .iter()
+        .map(|p| {
+            plugin
+                .params
+                .get(p.id)
+                .copied()
+                .unwrap_or_else(|| p.default_norm())
+        })
+        .collect()
+}
+
 /// The preset of the factory set (`Default` among them) the knobs a preset
 /// sets are at, if any. The window's tag reads the files instead
 /// ([`super::presets`]).
@@ -130,6 +147,13 @@ pub struct Win {
     /// The width its first device centred it by: the corner stays put
     /// when a wider or narrower device fills it.
     pub placed_w: f32,
+    /// A Sampler's zone (its file) or a Drum Kit's pad the window shows, and the
+    /// pad's layer (UI-333, UI-334).
+    pub pick: usize,
+    pub layer: usize,
+    /// It had samples when it was last laid out: it takes its size again once its
+    /// files come or all go.
+    pub filled: bool,
 }
 
 /// What a press in a window took hold of.
@@ -225,6 +249,9 @@ pub enum Part {
     /// A key of a Sampler's keyboard and a pad of a Drum Kit, by the note it plays (PLG-066).
     Key(u8),
     Pad(u8),
+    /// A Sampler's or a Drum Kit's part that is not a parameter (UI-333, UI-334): a
+    /// zone, a bank, a layer, a pad's M and S, the ‹ › of a sample, Browse.
+    Spot(usize),
     Body,
 }
 
@@ -345,7 +372,12 @@ pub fn grip(r: Rect) -> Rect {
 /// The body's size of `def` at about `want`: no narrower than the device
 /// goes, no shorter than its controls need at that width (UI-331).
 pub fn fit(def: &BuiltinDef, want: (f32, f32)) -> (f32, f32) {
-    let (w, h) = layout::size(def, want.0.max(layout::min_w(def)));
+    fit_of(def, want, None)
+}
+
+/// [`fit`] for `plugin`: a Sampler's and a Drum Kit's need follows their files.
+pub fn fit_of(def: &BuiltinDef, want: (f32, f32), plugin: Option<&Plugin>) -> (f32, f32) {
+    let (w, h) = layout::size_of(def, want.0.max(layout::min_w(def)), plugin);
     (w, want.1.max(h))
 }
 
@@ -383,13 +415,26 @@ impl Windows {
     /// A device's values (0..1) as its window shows them: a control that is
     /// dragged or swept where it is turning to.
     pub(crate) fn shown(&self, plugin: &Plugin) -> Vec<f64> {
-        let mut v = values(plugin);
+        let mut v = self
+            .def_of(plugin)
+            .map_or_else(Vec::new, |def| values_of(plugin, def));
         for (k, x) in v.iter_mut().enumerate() {
             if let Some(t) = self.turning(plugin.id, k) {
                 *x = t;
             }
         }
         v
+    }
+
+    /// The window of `plugin`, if it is open.
+    pub(crate) fn win_of(&self, id: PluginId) -> Option<&Win> {
+        self.open.iter().find(|w| w.plugin == id)
+    }
+
+    /// The parameters the window of `plugin` shows: a Sampler's zone's, a Drum Kit's
+    /// pad's (UI-333, UI-334), else the device's.
+    pub(crate) fn def_of(&self, plugin: &Plugin) -> Option<&'static BuiltinDef> {
+        sampler::scoped(plugin, self.win_of(plugin.id).map_or(0, |w| w.pick))
     }
 
     /// The band an EQ's window shows (the point chosen on its graph).
@@ -421,7 +466,15 @@ impl Windows {
     /// The body of the window whose frame is `r`, on the screen, for the
     /// values it shows and the band chosen.
     pub(crate) fn body(&self, r: Rect, plugin: &Plugin, def: &BuiltinDef) -> Body {
-        let mut b = body_of(r, def, &self.shown(plugin), self.band(plugin.id));
+        let w = self.win_of(plugin.id);
+        let mut b = body_of(
+            r,
+            def,
+            &self.shown(plugin),
+            self.band(plugin.id),
+            Some(plugin),
+            w.map_or((0, 0), |w| (w.pick, w.layer)),
+        );
         // The Compressor's Gain drives its key while a sidechain feeds it,
         // else its input (PLG-071).
         if def.uid == "compressor"
@@ -496,6 +549,7 @@ impl Windows {
             Part::Readout(i) => body().levels.get(i).map(|l| l.readout).unwrap_or_default(),
             Part::Key(pitch) => key_rect(&body().keys, pitch),
             Part::Pad(pitch) => key_rect(&body().pads, pitch),
+            Part::Spot(n) => body().spots.get(n).map(|s| s.r).unwrap_or_default(),
             // The empty rest under the controls (a press in a gap is Body
             // too; the strip is where a point of it always is).
             Part::Body => Rect::new(r.x, r.bottom() - layout::PAD, r.w, layout::PAD),
@@ -565,12 +619,15 @@ impl Windows {
                 return Some((i, Part::Resize));
             }
             let now = self.shown(plugin);
-            let b = body_of(r, def, &now, self.band(plugin.id));
+            let b = self.body(r, plugin, def);
             if self
                 .spectrum_of(&b, plugin.id)
                 .is_some_and(|s| s.contains(x, y))
             {
                 return Some((i, Part::Spectrum));
+            }
+            if let Some(n) = sampler::spot_at(&b, x, y) {
+                return Some((i, Part::Spot(n)));
             }
             if let Some(pitch) = play::key_at(&b.keys, x, y) {
                 return Some((i, Part::Key(pitch)));
@@ -643,6 +700,7 @@ impl Windows {
     /// Forgets the windows whose plugin is gone or is no longer built in.
     fn prune(&mut self, p: &Project) {
         self.open.retain(|w| live(p, w).is_some());
+        self.refit(p);
         if self.grab.is_some_and(|g| !self.is_open(g.plugin())) {
             self.grab = None;
         }
@@ -662,6 +720,60 @@ impl Windows {
         if self.entry.as_ref().is_some_and(|e| !self.is_open(e.plugin)) {
             self.entry = None;
         }
+    }
+
+    /// A Sampler's or a Drum Kit's window whose files came or all went takes the size
+    /// its body now needs, and its zone or pad comes back to the first (UI-333, UI-334).
+    /// One whose files were taken away keeps to the ones still there.
+    pub(crate) fn refit(&mut self, p: &Project) {
+        for n in 0..self.open.len() {
+            let w = self.open[n];
+            let Some((_, plugin, def)) = live(p, &w) else {
+                continue;
+            };
+            if !sampler::has_files(def) {
+                continue;
+            }
+            let filled = !plugin.samples.is_empty();
+            if filled != w.filled {
+                let body = layout::size_of(def, w.body.0, Some(plugin));
+                self.open[n] = Win {
+                    body,
+                    pick: 0,
+                    layer: 0,
+                    filled,
+                    ..w
+                };
+                if self.focus.is_some_and(|(id, _)| id == w.plugin) {
+                    self.focus = None;
+                }
+                self.chosen.remove(&w.plugin);
+            } else if def.uid == "sampler" && w.pick >= plugin.samples.len().max(1) {
+                self.open[n].pick = plugin.samples.len().saturating_sub(1);
+            }
+        }
+    }
+
+    /// Shows the zone (a Sampler's file) or the pad (a Drum Kit's) `pick` in the window
+    /// of `id`, and its `layer`. What was chosen and focused there was the other one's.
+    pub(crate) fn pick(&mut self, id: PluginId, pick: usize, layer: usize) -> bool {
+        let Some(w) = self.open.iter_mut().find(|w| w.plugin == id) else {
+            return false;
+        };
+        if (w.pick, w.layer) == (pick, layer) {
+            return false;
+        }
+        let moved = w.pick != pick;
+        w.pick = pick;
+        w.layer = layer;
+        if moved {
+            if self.focus.is_some_and(|(at, _)| at == id) {
+                self.focus = None;
+            }
+            self.entry = self.entry.take().filter(|e| e.plugin != id);
+            self.chosen.remove(&id);
+        }
+        true
     }
 
     /// One frame of the probes `probe_of` finds: see [`Studio::poll_probes`].
@@ -741,13 +853,23 @@ fn key_rect(keys: &[play::Key], pitch: u8) -> Rect {
 
 /// The body of the window whose frame is `r`, on the screen, for the values
 /// (0..1) it shows and the band chosen (an EQ's).
-pub(crate) fn body_of(r: Rect, def: &BuiltinDef, now: &[f64], band: usize) -> Body {
+pub(crate) fn body_of(
+    r: Rect,
+    def: &BuiltinDef,
+    now: &[f64],
+    band: usize,
+    plugin: Option<&Plugin>,
+    (pick, layer): (usize, usize),
+) -> Body {
     layout::body(
         def,
         &layout::Shape {
             w: r.w,
             band,
             values: now,
+            plugin,
+            pick,
+            layer,
         },
     )
     .grown(r.h - title_bar::BAR_H)
@@ -762,7 +884,7 @@ pub(crate) fn live<'a>(
 ) -> Option<(&'a Track, &'a Plugin, &'static BuiltinDef)> {
     let track = p.tracks.get(&w.track)?;
     let plugin = track.inserts.iter().find(|x| x.id == w.plugin)?;
-    let def = plugin.builtin()?;
+    let def = sampler::scoped(plugin, w.pick)?;
     Some((track, plugin, def))
 }
 
@@ -805,18 +927,17 @@ impl Studio {
                 ins.raise(i);
             }
             None => {
-                let def = p
+                let plugin = p
                     .tracks
                     .get(&t)
-                    .and_then(|x| x.inserts.iter().find(|x| x.id == id))
-                    .and_then(Plugin::builtin);
-                let Some(def) = def else {
+                    .and_then(|x| x.inserts.iter().find(|x| x.id == id));
+                let Some((plugin, def)) = plugin.and_then(|x| Some((x, x.builtin()?))) else {
                     return;
                 };
                 // The size this kind was last left at, else its own.
                 let body = match ins.sizes.get(def.uid) {
-                    Some(&want) => fit(def, want),
-                    None => layout::size(def, layout::natural_w(def)),
+                    Some(&want) => fit_of(def, want, Some(plugin)),
+                    None => layout::size_of(def, layout::natural_w(def), Some(plugin)),
                 };
                 let win = Win {
                     track: t,
@@ -837,6 +958,9 @@ impl Studio {
                     seat: (0..)
                         .find(|n| !ins.open.iter().any(|w| w.seat == *n && w.at.is_none()))
                         .unwrap_or(0),
+                    pick: 0,
+                    layer: 0,
+                    filled: !plugin.samples.is_empty(),
                 };
                 // The windows are in the order they were last used.
                 match ins.open.iter().rposition(|w| !w.pinned) {
@@ -906,8 +1030,19 @@ impl Studio {
                 }
                 self.instruments.open.remove(i);
             }
-            Part::Key(pitch) | Part::Pad(pitch) => {
+            Part::Key(pitch) => {
                 self.window_note_on(w, pitch);
+            }
+            Part::Pad(pitch) => {
+                // A press on a pad chooses it too (UI-334).
+                if live(&p, &w).is_some_and(|(_, x, _)| !x.samples.is_empty()) {
+                    self.instruments.pick(w.plugin, play::pad_of(pitch), 0);
+                }
+                let w = self.instruments.open[i];
+                self.window_note_on(w, pitch);
+            }
+            Part::Spot(n) => {
+                self.window_spot(i, r, n);
             }
             Part::Head => {
                 self.instruments.grab = Some(Grab::Move {
@@ -1073,7 +1208,7 @@ impl Studio {
                     return false;
                 };
                 let w = self.instruments.open[i];
-                let Some((_, _, def)) = live(&p, &w) else {
+                let Some((_, plugin, def)) = live(&p, &w) else {
                     return false;
                 };
                 // The frame stays where it is: its corner keeps on the screen.
@@ -1082,7 +1217,7 @@ impl Studio {
                     (from.0 + x - pointer.0).min(g.size.0 - r.x),
                     (from.1 + y - pointer.1).min(g.size.1 - r.y - title_bar::BAR_H),
                 );
-                let body = fit(def, want);
+                let body = fit_of(def, want, Some(plugin));
                 if body == w.body {
                     return true;
                 }
@@ -1159,7 +1294,7 @@ impl Studio {
             let Some((_, x, def)) = w.and_then(|w| live(&p, w)) else {
                 return true;
             };
-            let (spec, before) = (&def.params[k], values(x)[k]);
+            let (spec, before) = (&def.params[k], values_of(x, def)[k]);
             if (before - value).abs() > 1e-9 {
                 // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command(
@@ -1400,9 +1535,19 @@ fn paint_window(
         // The body: the chosen band's face, the graphs (UI-325) and what
         // lies on them, the names and tabs, the meters, then the controls,
         // where the device's layout puts them.
-        let now = values(plugin);
+        let now = values_of(plugin, def);
         let ins = &studio.instruments;
         let shown = ins.shown(plugin);
+        // The peaks of the sample a Sampler's or a Drum Kit's wave shows (UI-333, UI-334).
+        let peaks = sampler::wave_file(plugin, w.pick, w.layer).and_then(|file| {
+            let dir = studio.song().dir();
+            let path = crate::wave::source(dir.as_deref(), file)?;
+            let store = xirius_session::peaks::store_dir(dir.as_deref());
+            match crate::wave::look(&path, &store) {
+                crate::wave::Look::Ready(p) => Some(p),
+                _ => None,
+            }
+        });
         let body = ins.body(r, plugin, def);
         let hot = ins.hot.filter(|h| h.0 == plugin.id).map(|h| h.1);
         for &face in &body.faces {
@@ -1438,6 +1583,7 @@ fn paint_window(
                     .echoes
                     .get(&plugin.id)
                     .and_then(|e| e.since(std::time::Instant::now())),
+                wave: peaks.as_deref(),
             };
             graph::paint(pen, def, n, plane, &shown, &view);
         }
@@ -1504,6 +1650,11 @@ fn paint_window(
         };
         play::paint_keys(pen, &body.keys, down);
         play::paint_pads(pen, &body.pads, down, pad);
+        let spot = match hot {
+            Some(Part::Spot(n)) => Some(n),
+            _ => None,
+        };
+        sampler::paint_spots(pen, &body, spot);
         let meter = ins.meters.get(&plugin.id).copied().unwrap_or_default();
         for (ch, &m) in body.meters.iter().enumerate() {
             crate::mixer::paint::meter(pen, m, &meter, ch.min(1));
@@ -1543,7 +1694,7 @@ fn paint_window(
                         *x = v;
                     }
                     let label = control::menu_text(def, k, &values);
-                    if def.uid == "delay" {
+                    if matches!(def.uid, "delay" | "drum-kit") {
                         control::paint_box(pen, hit, &label, over, focused);
                     } else {
                         control::paint_choice(pen, hit, &label, over, focused);

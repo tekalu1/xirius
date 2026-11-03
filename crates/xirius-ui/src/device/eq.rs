@@ -332,8 +332,8 @@ pub fn points(def: &BuiltinDef, r: Rect, values: &[f64]) -> Vec<Point> {
 pub fn points_at(def: &BuiltinDef, r: Rect, values: &[f64], rate: f64) -> Vec<Point> {
     let s = Shape {
         w: r.w,
-        band: 0,
         values,
+        ..Shape::default()
     };
     let fx = freq_axis(r);
     let gy = gain_axis(r);
@@ -629,7 +629,12 @@ mod tests {
     }
 
     fn shape(w: f32, band: usize, values: &[f64]) -> Shape<'_> {
-        Shape { w, band, values }
+        Shape {
+            w,
+            band,
+            values,
+            ..Shape::default()
+        }
     }
 
     #[test]
