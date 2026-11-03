@@ -89,7 +89,7 @@ CLAP のホストは clack（`clack-host`・`clack-extensions` 0.2、MIT OR Apac
 ARA のプラグインは、ホストの ARA の物（曲の音の読み出し）を同じプロセスで受け取る。別プロセスに出すと届かないので、ARA のホスト（段 3）を作るまでも、ARA のプラグインは必ずこのプロセスで動かす。ARA の SDK はまだ取り込まない（LIC-004）。見分けは VST3 のクラスの一覧だけで足りる。
 
 - スキャンは、VST3 の束が分類 `ARA Main Factory Class` のクラスを持つか、音のクラスの副分類に `OnlyARA` があれば、その一覧の行に `ara: true` を付ける（`xirius_plugins::ara`）。一覧のキャッシュは版 2 になる。アプリは起動の後に版の古いキャッシュを見つけると、無いときと同じくスキャンし直す（`CacheFile::is_current`）。
-- CLAP の ARA（ARACLAP）はまだ見分けない（`ara: false`）。
+- CLAP は、プラグインの機能（features）に `ara:supported` か `ara:required` があれば `ara: true` を付ける（ARACLAP、PLG-033）。キャッシュの版は上げないので、それより前のキャッシュにある CLAP は、スキャンし直すまで `ara: false` のまま。
 - 曲が `shared`・`dedicated` を指していても、プレイヤーは ARA のプラグインをこのプロセスで動かし、「（名前）: ARA のプラグインのため、このプロセスで実行します（（指定）の指定）」の警告を出す。曲の指定は書き換えない。
 - プラグインのメニューの「動かす場所」は「アプリ内」だけを選べ、点いているのも「アプリ内」になる。落ちたときの「専用で動かす」も出さない。
 

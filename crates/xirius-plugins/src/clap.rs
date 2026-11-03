@@ -27,12 +27,30 @@ pub(crate) fn probe(bundle: &Path) -> Result<Vec<Entry>, String> {
             category: d.features.join("|"),
             version: d.version.clone(),
             path: bundle.to_path_buf(),
-            // ARA's CLAP binding is not looked for yet (docs/plugin-hosting.md).
-            ara: false,
+            // ARA's CLAP binding (`ARACLAP.h`) has the plugin say so among its features.
+            ara: uses_ara(&d.features),
             requires_process_main: false,
         })
         .collect();
     // As with VST3: the answer is what matters and the process ends without unloading.
     std::mem::forget(b);
     Ok(entries)
+}
+
+/// Whether a CLAP plugin's features say it speaks ARA (`ara:supported`, `ara:required`).
+fn uses_ara(features: &[String]) -> bool {
+    features
+        .iter()
+        .any(|f| f == "ara:supported" || f == "ara:required")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_ara_features_mark_a_clap_plugin() {
+        let f = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert!(super::uses_ara(&f(&["audio-effect", "ara:required"])));
+        assert!(super::uses_ara(&f(&["ara:supported"])));
+        assert!(!super::uses_ara(&f(&["audio-effect", "ara"])));
+    }
 }

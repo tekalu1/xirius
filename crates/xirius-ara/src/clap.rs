@@ -311,7 +311,7 @@ impl ClapInstance {
             };
             contain::call(|| ((*e).bind_to_document_controller)(plugin, dc, known, assigned))
         };
-        let instance = ClapInstance {
+        let mut instance = ClapInstance {
             plugin,
             ext: sys::PlugInExtensionInstance {
                 struct_size: 0,
@@ -333,11 +333,11 @@ impl ClapInstance {
         if ext.is_null() {
             return Err(error("the CLAP plugin did not bind to the document"));
         }
-        // SAFETY: the plugin keeps the instance valid while it lives; copied by value.
-        Ok(ClapInstance {
-            ext: unsafe { *ext },
-            ..instance
-        })
+        // SAFETY: the plugin keeps the instance valid while it lives; copied by value. Set in
+        // place: a copy made with `..instance` would leave `instance` to drop, destroying the
+        // plugin.
+        instance.ext = unsafe { *ext };
+        Ok(instance)
     }
 
     fn stop(&mut self) {
