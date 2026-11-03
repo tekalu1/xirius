@@ -25,6 +25,7 @@ pub mod bounce;
 pub mod build;
 pub mod clap_plugins;
 pub mod cleanup;
+pub mod clip_ara;
 pub mod clip_audio;
 pub mod commands;
 pub mod dawproject;

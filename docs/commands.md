@@ -1047,6 +1047,64 @@ MIDI クリップを作成します（インストゥルメントトラックに
 | `track` | 必須 | `{"type":"string"}` | 配置先のトラック（track の ID） |
 | `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
 
+## `clip.ara.attach`
+
+ARA プラグインに付ける
+
+オーディオクリップを ARA のプラグインで編集できるようにします。--plugin を省くと、曲で使った ARA のプラグインか、ただ 1 つ入っている ARA のプラグインを使います
+
+事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 実行結果の step で確認。アイコン: `arrange`。
+
+キー: arrange: Mod+M (`clip.ara.attach`)。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `ids` | — | `{"items":{"type":"string"},"type":"array"}` | クリップ（clip の ID のリスト） |
+| `plugin` | — | `{"type":"string"}` | プラグインの id（plugin.list の id） |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
+## `clip.ara.attach.apply`
+
+クリップを ARA プラグインに付ける
+
+オーディオクリップを ARA のプラグインに付けます（clip.ara.attach が使います）
+
+事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 1 操作で取り消し可能。アイコン: `arrange`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `ids` | — | `{"items":{"type":"string"},"type":"array"}` | クリップ（clip の ID のリスト） |
+| `name` | — | `{"type":"string"}` | プラグインの名前 |
+| `plugin` | 必須 | `{"type":"string"}` | プラグインの id |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
+## `clip.ara.detach`
+
+ARA プラグインから外す
+
+オーディオクリップを ARA のプラグインから外します。クリップは元の音で鳴ります
+
+事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 1 操作で取り消し可能。アイコン: `arrange`。
+
+キー: arrange: Mod+Alt+M (`clip.ara.detach`)。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `ids` | — | `{"items":{"type":"string"},"type":"array"}` | クリップ（clip の ID のリスト） |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
 ## `clip.bounce`
 
 クリップをバウンス

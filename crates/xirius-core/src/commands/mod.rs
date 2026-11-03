@@ -21,7 +21,7 @@ mod bus_group;
 mod cc;
 mod channel_settings;
 mod clip;
-mod clip_ara;
+pub mod clip_ara;
 mod clip_process;
 mod clipfx;
 mod comp;

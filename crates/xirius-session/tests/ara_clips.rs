@@ -1,0 +1,248 @@
+//! The song's audio clips played through an ARA plugin (EDT-023, PLG-032, PLG-036, PLG-037,
+//! PLG-047, ARC-025, ENG-025), with the stand-in plugin of `xirius_ara::fake` registered as
+//! `fake:ara`. One test: the stand-in's edits are global to the process.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use serde_json::{Map, Value, json};
+use xirius_ara::fake::{self, Config};
+use xirius_ara::service::modification_id;
+use xirius_core::id::ClipId;
+use xirius_core::model::{Clip, Project};
+use xirius_core::session::{RunOptions, RunResult, Session};
+use xirius_plugins::Catalog;
+use xirius_session::build::Builder;
+use xirius_session::commands::{self, shared_registry};
+use xirius_session::export::{self, write_wav};
+use xirius_session::ext::ExtConfig;
+use xirius_session::graph::Select;
+use xirius_session::tempo::TempoMap;
+
+const RATE: u32 = 48_000;
+const PLUGIN: &str = "fake:ara";
+
+struct Dir(PathBuf);
+
+impl Dir {
+    fn new() -> Dir {
+        let p = std::env::temp_dir().join(format!("xirius-ara-clips-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        Dir(p)
+    }
+}
+
+impl Drop for Dir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn session(p: Project) -> Session {
+    let mut s = Session::with_registry(p, shared_registry());
+    commands::attach(
+        &mut s,
+        ExtConfig {
+            catalog: Some(Arc::new(Catalog::default())),
+            ..ExtConfig::default()
+        },
+    );
+    s
+}
+
+fn map(v: Value) -> Map<String, Value> {
+    match v {
+        Value::Object(m) => m,
+        _ => Map::new(),
+    }
+}
+
+fn try_run(s: &mut Session, name: &str, args: Value) -> Result<RunResult, String> {
+    commands::run(s, None, name, &map(args), &RunOptions::human()).map_err(|e| e.message)
+}
+
+fn run(s: &mut Session, name: &str, args: Value) -> RunResult {
+    try_run(s, name, args.clone()).unwrap_or_else(|e| panic!("{name} {args}: {e}"))
+}
+
+fn id_of(r: &RunResult) -> String {
+    r.data["id"]
+        .as_str()
+        .or_else(|| r.data["ids"][0].as_str())
+        .unwrap_or_else(|| panic!("no id in {:?}", r.data))
+        .to_string()
+}
+
+fn until(what: &str, mut f: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !f() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn clip(p: &Project, id: &str) -> Clip {
+    let id: ClipId = id.parse().unwrap();
+    p.clip(id).unwrap().1.clone()
+}
+
+fn live(rate: u32, dir: &Path) -> Builder {
+    let mut b = Builder::new(rate, Some(dir.to_path_buf()));
+    b.set_ara_live(true);
+    b
+}
+
+/// The clip's sound through the plugin, as the builder plays it.
+fn through(b: &Builder, p: &Project, id: &str) -> bool {
+    let c = clip(p, id);
+    let xirius_core::model::ClipBody::Audio { offset, .. } = c.body else {
+        panic!("not audio");
+    };
+    b.ara()
+        .sound(p, &c, offset, &TempoMap::from_project(p), b.rate())
+        .is_some()
+}
+
+/// The loudest sample of the song's first second, rendered by `b`.
+fn peak(b: &mut Builder, p: &Project) -> f32 {
+    let frames = u64::from(b.rate());
+    let out = export::render(b, p, Select::All, 0, frames, 0).unwrap();
+    out.left.iter().fold(0.0f32, |m, v| m.max(v.abs()))
+}
+
+#[test]
+fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
+    xirius_session::ara::register(
+        PLUGIN,
+        "Fake ARA",
+        Arc::new(|| {
+            fake::loader(Config {
+                analysis_ms: 20,
+                ..Config::default()
+            })
+        }),
+    );
+    let dir = Dir::new();
+    let file = dir.0.join("a.wav");
+    write_wav(
+        &file,
+        &vec![0.5; RATE as usize],
+        &vec![0.5; RATE as usize],
+        RATE,
+        32,
+    )
+    .unwrap();
+
+    // EDT-023: attached through the session's command, one step.
+    let mut s = session(Project::new("song"));
+    let t = id_of(&run(&mut s, "track.add.audio", json!({})));
+    let a = id_of(&run(
+        &mut s,
+        "clip.add.audio",
+        json!({"track": t, "at": 0, "length": 1920, "file": "a.wav"}),
+    ));
+    assert!(
+        try_run(
+            &mut s,
+            "clip.ara.attach",
+            json!({"ids": [a], "plugin": "nope"})
+        )
+        .is_err()
+    );
+    let r = run(
+        &mut s,
+        "clip.ara.attach",
+        json!({"ids": [a], "plugin": PLUGIN}),
+    );
+    assert_eq!(r.data["name"], "Fake ARA");
+    let row = s.project().ara.clips[&a.parse::<ClipId>().unwrap()].clone();
+    assert_eq!(
+        (row.plugin.as_str(), row.name.as_str()),
+        (PLUGIN, "Fake ARA")
+    );
+
+    // PLG-032: the clip plays its region, as it is at first.
+    let mut player = live(RATE, &dir.0);
+    let p = s.project().clone();
+    player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
+    until("the analysis", || through(&player, &p, &a));
+    assert!((peak(&mut player, &p) - 0.5).abs() < 1e-3);
+    // ARC-025: nothing changed in the plugin, nothing changes in the song.
+    assert!(!xirius_session::ara::take_archives(&mut s, player.ara()).unwrap());
+
+    // PLG-037: an edit in the plugin is heard and its archive goes into the song, in place.
+    let steps = s.steps().len();
+    fake::edit(&modification_id(a.parse::<ClipId>().unwrap().0), 0.5);
+    until("the archive", || {
+        xirius_session::ara::take_archives(&mut s, player.ara()).unwrap()
+    });
+    assert_eq!(s.steps().len(), steps, "the archive is not a step");
+    let archive = s.project().ara.archives[PLUGIN].clone();
+    assert_eq!(archive.version, xirius_core::ara::ARCHIVE_VERSION);
+    let p = s.project().clone();
+    until("the edited render", || {
+        (peak(&mut player, &p) - 0.25).abs() < 1e-3
+    });
+
+    // PLG-036: moved, the clip keeps its render: no gap while the plugin renders it again.
+    run(&mut s, "clip.move", json!({"ids": [a], "to": 960}));
+    let p = s.project().clone();
+    player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
+    assert!(
+        through(&player, &p, &a),
+        "the moved clip fell back to its file"
+    );
+
+    // ENG-025: an export at the same rate uses the player's document; at another rate, a
+    // document of its own from the player's edits, waited for.
+    let mut export = Builder::new(RATE, Some(dir.0.clone()));
+    assert!((peak(&mut export, &p) - 0.25).abs() < 1e-3);
+    let mut other = Builder::new(44_100, Some(dir.0.clone()));
+    let started = Instant::now();
+    // The file at 44.1 kHz rings a little at its edges.
+    assert!((peak(&mut other, &p) - 0.25).abs() < 0.02);
+    assert!(started.elapsed() < Duration::from_secs(10));
+    drop((export, other));
+
+    // PLG-047: the player at another rate keeps playing the file until the plugin's render at
+    // that rate is there, then plays it.
+    let mut player2 = live(44_100, &dir.0);
+    player2.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
+    until("the render at the new rate", || through(&player2, &p, &a));
+    drop((player, player2));
+
+    // PLG-037: written and opened again, the song gives the plugin its edits back.
+    let saved = serde_json::to_string(s.project()).unwrap();
+    let mut reopened = session(serde_json::from_str(&saved).unwrap());
+    let opened = reopened.project().clone();
+    let mut player = live(RATE, &dir.0);
+    let p = reopened.project().clone();
+    player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
+    until("the restored render", || through(&player, &p, &a));
+    assert!((peak(&mut player, &p) - 0.25).abs() < 1e-3);
+    // ARC-025: opening and playing it leaves it as it was.
+    assert!(!xirius_session::ara::take_archives(&mut reopened, player.ara()).unwrap());
+    assert!(
+        *reopened.project() == opened,
+        "opening and playing changed the song"
+    );
+
+    // A copy plays its own region, cloned with the edits; a second attach takes the same plugin.
+    let b = id_of(&run(&mut reopened, "clip.duplicate", json!({"ids": [a]})));
+    let p = reopened.project().clone();
+    player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
+    until("the copy's render", || through(&player, &p, &b));
+
+    // EDT-023: detached, the clip plays its file.
+    run(&mut reopened, "clip.ara.detach", json!({"ids": [a, b]}));
+    let p = reopened.project().clone();
+    assert!(p.ara.clips.is_empty());
+    assert!((peak(&mut player, &p) - 0.5).abs() < 1e-3);
+    run(&mut reopened, "clip.ara.attach", json!({"ids": [a]}));
+    assert_eq!(
+        reopened.project().ara.clips[&a.parse::<ClipId>().unwrap()].plugin,
+        PLUGIN
+    );
+}

@@ -152,6 +152,8 @@ const TAKE_OFF: &[&str] = &[
     "keymap.unset",
     "mousemap.unset",
     "midimap.unset",
+    // The clip stays; the ARA plugin leaves it (EDT-023, the plan's 付け外し).
+    "clip.ara.detach",
 ];
 
 #[test]
