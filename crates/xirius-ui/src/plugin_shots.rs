@@ -267,7 +267,7 @@ fn report(s: &Studio, shot: &str, window: &Window) {
     let g = crate::screen::geometry(s, window);
     let scale = window.scale_factor();
     for (i, w) in s.instruments.open.iter().enumerate() {
-        let r = s.instruments.rect(i, g.size);
+        let r = s.instruments.frame(i, &g);
         eprintln!(
             "plugin-check {shot} panel={} x={} y={} w={} h={}",
             w.plugin,

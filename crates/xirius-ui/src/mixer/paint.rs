@@ -22,16 +22,26 @@ const SWEEP: f32 = 1.5 * PI;
 
 pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     let started = Instant::now();
-    let body = g.drawer_body;
     let p = studio.project();
     let c = pen.c;
-    pen.fill(body, c.surface_0);
+    pen.fill(g.drawer_body, c.surface_0);
     let hover = match studio.hover {
         Hit::Mixer(h) => Some(h),
         _ => None,
     };
     let view = studio.mixer_view(g);
-    for s in studio.mixer_strips(g) {
+    let (strips, bands) = studio.mixer_row(g);
+    for (t, r) in bands {
+        let shown = if t.is_master() {
+            r
+        } else {
+            let right = r.right().min(view.right());
+            let left = r.x.max(view.x);
+            Rect::new(left, r.y, (right - left).max(0.0), r.h)
+        };
+        pen.mask(shown, |pen| super::dock::paint(pen, studio, t, r));
+    }
+    for s in strips {
         let Some(track) = p.tracks.get(&s.track) else {
             continue;
         };

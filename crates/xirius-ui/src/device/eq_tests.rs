@@ -129,7 +129,7 @@ fn ui_326_a_point_drag_is_one_step_and_each_frame_keeps_up() {
         .expect("the LMF point");
     assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
     let def = fx(&s, t).builtin().unwrap();
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     let plane = s.instruments.body(r, &fx(&s, t), def).graphs[0];
     let mut frames = Vec::new();
     for d in 1..=120 {
@@ -270,7 +270,7 @@ fn ui_326_a_press_in_a_column_or_on_a_tab_chooses_the_band() {
     assert_eq!(s.instruments.band(id), 4);
     // Narrow, one band shows and the tabs choose it.
     resize(&mut s, t, 480.0);
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     let def = fx(&s, t).builtin().unwrap();
     let body = s.instruments.body(r, &fx(&s, t), def);
     assert_eq!(body.tabs.len(), 6);

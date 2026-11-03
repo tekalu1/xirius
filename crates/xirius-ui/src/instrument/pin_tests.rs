@@ -45,10 +45,10 @@ fn press(s: &mut Studio, g: &Geometry, id: PluginId, part: Part) {
 fn ui_323_an_unpinned_window_takes_the_next_device_in_where_it_was() {
     let (mut s, g, t, [eq, comp, _]) = three();
     s.show_instrument(t, eq);
-    let before = s.instruments.rect(0, g.size);
+    let before = s.instruments.frame(0, &g);
     s.show_instrument(t, comp);
     assert_eq!(shown(&s), [comp]);
-    let after = s.instruments.rect(0, g.size);
+    let after = s.instruments.frame(0, &g);
     assert_eq!((after.x, after.y), (before.x, before.y));
     // The EQ's own state went with it.
     assert!(!s.instruments.chosen.contains_key(&eq));
@@ -62,12 +62,12 @@ fn ui_323_a_pinned_window_stays_and_the_next_opens_a_step_on() {
     assert!(s.instruments.open[0].pinned);
     s.show_instrument(t, comp);
     assert_eq!(shown(&s), [eq, comp]);
-    let (a, b) = (s.instruments.rect(0, g.size), s.instruments.rect(1, g.size));
+    let (a, b) = (s.instruments.frame(0, &g), s.instruments.frame(1, &g));
     assert_eq!((b.x - a.x, b.y - a.y), (CASCADE, CASCADE));
     // The Compressor's window is not pinned: the Delay takes its place.
     s.show_instrument(t, delay);
     assert_eq!(shown(&s), [eq, delay]);
-    assert_eq!(s.instruments.rect(1, g.size).y, b.y);
+    assert_eq!(s.instruments.frame(1, &g).y, b.y);
 }
 
 #[test]

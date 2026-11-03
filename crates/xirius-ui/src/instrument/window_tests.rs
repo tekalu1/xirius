@@ -203,7 +203,7 @@ fn the_bar_drags_the_window_and_it_stays_in_reach() {
     let (mut s, g, t, id) = studio();
     s.show_instrument(t, id);
     let (x, y) = at(&s, &g, id, Part::Head);
-    let before = s.instruments.rect(0, g.size);
+    let before = s.instruments.frame(0, &g);
     assert!(s.instrument_down(&g, x, y));
     assert!(s.instrument_moved(&g, x + 40.0, y + 25.0, false));
     assert!(s.instrument_up());
@@ -222,7 +222,7 @@ fn the_bar_drags_the_window_and_it_stays_in_reach() {
     assert!(s.instrument_down(&g, x, y));
     assert!(s.instrument_moved(&g, x + 5000.0, y + 5000.0, false));
     assert!(s.instrument_up());
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     assert!(r.x <= g.size.0 - 80.0 && r.y <= g.size.1 - 30.0);
     // A second window opens a little lower and to the right, on top.
     let drums = s
@@ -481,7 +481,7 @@ fn the_sidechain_seat_is_only_on_the_devices_that_take_a_key() {
             .iter()
             .position(|w| w.plugin == plugin_id)
             .unwrap();
-        let r = s.instruments.rect(i, g.size);
+        let r = s.instruments.frame(i, &g);
         let track = &p.tracks[&t];
         let plugin = track.inserts.iter().find(|x| x.id == plugin_id).unwrap();
         let seat = s.instruments.part_rect(

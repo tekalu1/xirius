@@ -209,7 +209,7 @@ fn ui_324_on_off_is_a_button_and_the_beats_a_box_with_its_menu() {
     let (mut s, g, t, id) = delay();
     let def = fx(&s, t).builtin().unwrap();
     let look = |s: &Studio, p: &str| {
-        let r = s.instruments.rect(0, g.size);
+        let r = s.instruments.frame(0, &g);
         let k = def.param(p).unwrap().0;
         s.instruments
             .slots(r, &fx(s, t), def)
@@ -422,7 +422,7 @@ fn ui_324_every_control_reads_its_name_and_value() {
     assert_eq!(of("feedback").node.role(), accesskit::Role::Slider);
     // Each knob, box and button reads, and each point on the planes.
     let def = fx(&s, t).builtin().unwrap();
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     for slot in s.instruments.slots(r, &fx(&s, t), def) {
         of(def.params[slot.k].id);
     }

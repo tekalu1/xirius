@@ -332,6 +332,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     out.extend(crate::channel::marks(s, g));
     out.extend(crate::macro_pad::marks(s, g));
     out.extend(flow_marks(s, g));
+    out.extend(crate::mixer::dock::marks(s, g));
     out.extend(device_marks(s, g));
     out.extend(audition_mark(s, g));
     out.extend(preset_marks(s, g));
@@ -992,7 +993,7 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             continue;
         };
         let now = values_of(x, def);
-        let r = s.instruments.rect(i, g.size);
+        let r = s.instruments.frame(i, g);
         let body = s.instruments.body(r, x, def);
         let mark = |key: String, node: accesskit::Node| Mark {
             key,

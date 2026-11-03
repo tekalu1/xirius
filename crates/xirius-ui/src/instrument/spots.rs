@@ -86,7 +86,7 @@ impl Studio {
     /// fell elsewhere.
     pub(crate) fn window_drop(&mut self, g: &Geometry, x: f32, y: f32, paths: &[PathBuf]) -> bool {
         let p = self.project();
-        let Some((i, part)) = self.instruments.at(&p, g.size, x, y) else {
+        let Some((i, part)) = self.instruments.at(&p, g, x, y) else {
             return false;
         };
         let w = self.instruments.open[i];

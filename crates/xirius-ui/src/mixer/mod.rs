@@ -10,6 +10,7 @@
 
 pub mod bench;
 pub(crate) mod choose;
+pub(crate) mod dock;
 pub(crate) mod editors;
 pub mod flow;
 pub(crate) mod group;
@@ -566,6 +567,13 @@ pub struct Mixer {
     pub paint_us: Cell<u64>,
     /// The channel a double click on a track's head brought up, and when it did (ms).
     flash: Option<(TrackId, u64)>,
+    /// The band pressed last while the strips are folded: its strip stays open (MIX-046).
+    pub lead: Option<TrackId>,
+    /// The grip between the strips and the face is held: the face's width and the pointer's
+    /// x when it was taken (MIX-046).
+    pub grip_drag: Option<(f32, f32)>,
+    /// The grip was pressed last: ←→ move it (MIX-046).
+    pub grip_focus: bool,
 }
 
 /// How long the channel brought up by `mixer.focus` is lit, and how long it stays at full.
@@ -915,9 +923,16 @@ impl Studio {
         }
     }
 
-    /// How wide `t`'s strip is: [`WIDE_W`] when its button widened it (MIX-045).
-    pub(crate) fn width_of(&self, t: TrackId) -> f32 {
-        if self.mixer.wide.contains(&t) {
+    /// How wide `t`'s strip is: [`WIDE_W`] when its button widened it (MIX-045). While the
+    /// strips are folded (MIX-046), the one in front is [`WIDE_W`] and the others bands.
+    pub(crate) fn width_of(&self, g: &Geometry, t: TrackId) -> f32 {
+        if self.mixer_folded(g) {
+            if self.mixer_lead() == Some(t) {
+                WIDE_W
+            } else {
+                dock::BAND_W
+            }
+        } else if self.mixer.wide.contains(&t) {
             WIDE_W
         } else {
             self.strip_width()
@@ -925,7 +940,7 @@ impl Studio {
     }
 
     /// Where `t`'s strip starts in the scrolled row of channels (0 at the first's left).
-    pub(crate) fn strip_offset(&self, t: TrackId) -> Option<f32> {
+    pub(crate) fn strip_offset(&self, g: &Geometry, t: TrackId) -> Option<f32> {
         let mut x = 0.0;
         for id in strip_order(&self.project())
             .into_iter()
@@ -934,7 +949,7 @@ impl Studio {
             if id == t {
                 return Some(x);
             }
-            x += self.width_of(id) + STRIP_GAP;
+            x += self.width_of(g, id) + STRIP_GAP;
         }
         None
     }
@@ -942,10 +957,10 @@ impl Studio {
     /// The part of the body the channels scroll in: all of it left of the master, which
     /// stays at the right edge (the master is not a channel that scrolls away).
     pub fn mixer_view(&self, g: &Geometry) -> Rect {
-        let body = g.drawer_body;
+        let body = self.mixer_body(g);
         let master = self.project().tracks.contains_key(&TrackId::MASTER);
         let w = if master {
-            body.w - STRIP_GAP - self.width_of(TrackId::MASTER) - MASTER_GAP
+            body.w - STRIP_GAP - self.width_of(g, TrackId::MASTER) - MASTER_GAP
         } else {
             body.w
         };
@@ -956,32 +971,49 @@ impl Studio {
     /// master. A channel at the view's right edge may reach under the master, so the
     /// parts of a channel count only where [`Studio::mixer_view`] holds the point.
     pub fn mixer_strips(&self, g: &Geometry) -> Vec<StripLayout> {
+        self.mixer_row(g).0
+    }
+
+    /// The strips on screen and, while they are folded (MIX-046), the bands.
+    pub(crate) fn mixer_row(&self, g: &Geometry) -> (Vec<StripLayout>, Vec<(TrackId, Rect)>) {
         let p = self.project();
-        let body = g.drawer_body;
+        let body = self.mixer_body(g);
         let view = self.mixer_view(g);
+        let folded = self.mixer_folded(g);
+        let lead = self.mixer_lead();
+        let band = |t: TrackId| folded && lead != Some(t);
+        let mut bands = Vec::new();
         let (top, h) = (
             body.y + STRIP_GAP,
             (body.h - STRIP_GAP * 2.0 - BAR_H - BAR_GAP).max(0.0),
         );
         let rows = Rows::with(&p, self.mixer.look());
-        let mut left = view.x + STRIP_GAP - self.mixer.scroll;
+        let mut left = view.x + STRIP_GAP - self.mixer_scroll(g);
         let mut out: Vec<StripLayout> = strip_order(&p)
             .into_iter()
             .filter(|id| !id.is_master())
             .filter_map(|id| {
-                let width = self.width_of(id);
+                let width = self.width_of(g, id);
                 let x = left;
                 left += width + STRIP_GAP;
                 if x + width <= view.x || x >= view.right() {
                     return None;
                 }
                 let kind = p.tracks.get(&id)?.kind;
+                if band(id) {
+                    bands.push((id, Rect::new(x, top, width, h)));
+                    return None;
+                }
                 Some(StripLayout::sized(id, kind, x, top, h, rows, width))
             })
             .collect();
         if let Some(master) = p.tracks.get(&TrackId::MASTER) {
-            let width = self.width_of(master.id);
+            let width = self.width_of(g, master.id);
             let x = body.right() - STRIP_GAP - width;
+            if band(master.id) {
+                bands.push((master.id, Rect::new(x, top, width, h)));
+                return (out, bands);
+            }
             out.push(StripLayout::sized(
                 master.id,
                 master.kind,
@@ -992,7 +1024,21 @@ impl Studio {
                 width,
             ));
         }
-        out
+        (out, bands)
+    }
+
+    /// How far the channels are scrolled, as far as they go. While they are folded
+    /// (MIX-046), the strip in front stays in sight.
+    pub(crate) fn mixer_scroll(&self, g: &Geometry) -> f32 {
+        let s = self.mixer.scroll.min(self.mixer_max_scroll(g)).max(0.0);
+        if !self.mixer_folded(g) {
+            return s;
+        }
+        let Some(off) = self.mixer_lead().and_then(|t| self.strip_offset(g, t)) else {
+            return s;
+        };
+        let lo = (off + WIDE_W + 2.0 * STRIP_GAP - self.mixer_view(g).w).max(0.0);
+        s.max(lo).min(off)
     }
 
     /// Whether the point is on the strip: a channel only where the view shows it.
@@ -1005,7 +1051,7 @@ impl Studio {
         let all: f32 = strip_order(&self.project())
             .into_iter()
             .filter(|t| !t.is_master())
-            .map(|t| self.width_of(t) + STRIP_GAP)
+            .map(|t| self.width_of(g, t) + STRIP_GAP)
             .sum();
         (STRIP_GAP + all - self.mixer_view(g).w).max(0.0)
     }
@@ -1023,12 +1069,12 @@ impl Studio {
         let view = self.mixer_view(g);
         let groove = Rect::new(
             view.x + STRIP_GAP,
-            g.drawer_body.bottom() - STRIP_GAP - BAR_H,
+            self.mixer_body(g).bottom() - STRIP_GAP - BAR_H,
             (view.w - STRIP_GAP * 2.0).max(0.0),
             BAR_H,
         );
         let len = (groove.w * view.w / (view.w + max)).clamp(BAR_MIN.min(groove.w), groove.w);
-        let x = groove.x + (groove.w - len) * (self.mixer.scroll / max).clamp(0.0, 1.0);
+        let x = groove.x + (groove.w - len) * (self.mixer_scroll(g) / max).clamp(0.0, 1.0);
         Some((groove, Rect::new(x, groove.y, len, BAR_H)))
     }
 
@@ -1083,8 +1129,15 @@ impl Studio {
 
     /// What is under a point of the mixer, or `None` outside its strips.
     pub fn mixer_hit(&self, g: &Geometry, x: f32, y: f32) -> Option<MixerHit> {
-        if !self.mixer_shown() || !g.drawer_body.contains(x, y) {
+        if !self.mixer_shown() || !self.mixer_body(g).contains(x, y) {
             return None;
+        }
+        if let Some((t, _)) = self
+            .mixer_bands(g)
+            .into_iter()
+            .find(|(t, r)| r.contains(x, y) && (t.is_master() || self.mixer_view(g).contains(x, y)))
+        {
+            return Some(MixerHit::Strip(t));
         }
         let p = self.project();
         let s = self
@@ -1148,6 +1201,11 @@ impl Studio {
     /// The rectangle of a part of the mixer on screen.
     pub fn mixer_rect(&self, g: &Geometry, hit: MixerHit) -> Option<Rect> {
         let t = hit.track();
+        if let MixerHit::Strip(_) = hit
+            && let Some((_, r)) = self.mixer_bands(g).into_iter().find(|(x, _)| *x == t)
+        {
+            return Some(r);
+        }
         let s = self.mixer_strips(g).into_iter().find(|s| s.track == t)?;
         let p = self.project();
         let track = p.tracks.get(&t)?;
@@ -1292,6 +1350,9 @@ impl Studio {
         }
         if self.refuse_frozen(hit) {
             return true;
+        }
+        if self.mixer_folded(g) {
+            self.mixer.lead = Some(t);
         }
         match hit {
             MixerHit::Strip(_)
@@ -1620,6 +1681,13 @@ impl Studio {
     /// the window's keys; the window itself is the plugin's). A window the
     /// person closed opens again.
     pub fn open_plugin(&mut self, t: TrackId, id: PluginId) -> bool {
+        // The face in the drawer comes out as a window (MIX-046).
+        if let Some(i) = self.instruments.docked()
+            && self.instruments.open[i].plugin == id
+        {
+            self.show_instrument(t, id);
+            return true;
+        }
         if self.mixer.is_open(id) {
             let shown = self.editor_shown(id);
             self.close_editor(id);
@@ -1836,7 +1904,7 @@ impl Studio {
     /// A wheel turn over the mixer: an insert or send list moves by a row,
     /// anywhere else the strips move sideways.
     pub fn mixer_wheel(&mut self, g: &Geometry, x: f32, y: f32, dx: f32, dy: f32) -> bool {
-        if !self.mixer_shown() || !g.drawer_body.contains(x, y) {
+        if !self.mixer_shown() || !self.mixer_body(g).contains(x, y) {
             return false;
         }
         let p = self.project();

@@ -98,9 +98,11 @@ fn a_press_picks_a_row_and_a_press_on_the_picked_row_opens_it() {
     s.instruments.open.clear();
     click_row(&mut s, &g, t, eq);
     assert_eq!(s.mixer.chosen, Some((t, Pick::Plugin(eq))));
-    assert!(!s.instruments.is_open(eq));
+    // its face shows beside the strips (MIX-046), not as a window
+    assert_eq!(s.docked().map(|i| s.instruments.open[i].plugin), Some(eq));
     click_row(&mut s, &g, t, eq);
     assert!(s.instruments.is_open(eq));
+    assert_eq!(s.docked(), None);
     s.instruments.open.clear();
     // a press elsewhere lets the row go
     let fader = s.mixer_center(&g, MixerHit::Fader(t)).unwrap();
@@ -272,7 +274,7 @@ fn the_widen_button_widens_its_strip_and_the_next_moves_along() {
     assert_eq!(strips[0].rect.w, WIDE_W);
     assert_eq!(strips[1].track, b);
     assert_eq!(strips[1].rect.x, strips[0].rect.x + WIDE_W + STRIP_GAP);
-    assert_eq!(s.strip_offset(b), Some(WIDE_W + STRIP_GAP));
+    assert_eq!(s.strip_offset(&g, b), Some(WIDE_W + STRIP_GAP));
     assert!(s.press(&g, Hit::Mixer(MixerHit::Widen(a))));
     assert_eq!(s.mixer_strips(&g)[0].rect.w, narrow);
 }

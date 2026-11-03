@@ -69,7 +69,7 @@ fn ui_328_it_opens_with_the_meters_beside_the_history_and_narrow_under_it() {
     let (mut s, g, t, _) = lim_window();
     assert_eq!(s.instruments.open[0].body.0, limiter::NATURAL_W);
     let def = fx(&s, t).builtin().unwrap();
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     let b = s.instruments.body(r, &fx(&s, t), def);
     let [hist] = b.graphs[..] else {
         panic!("one plane")
@@ -88,7 +88,7 @@ fn ui_328_it_opens_with_the_meters_beside_the_history_and_narrow_under_it() {
     );
 
     s.instruments.open[0].body = layout::size(def, limiter::MIN_W + 20.0);
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     let b = s.instruments.body(r, &fx(&s, t), def);
     let [hist] = b.graphs[..] else {
         panic!("one plane")
@@ -122,7 +122,7 @@ fn ui_328_the_ceilings_point_offers_the_usual_ceilings() {
     let (s, g, t, id) = lim_window();
     let x = fx(&s, t);
     let def = x.builtin().unwrap();
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     let pts = s.instruments.points_of(r, &x, def, 0);
     let menu: Vec<_> = pts[1].menu.iter().flatten().collect();
     let labels: Vec<_> = menu.iter().map(|c| c.label.as_str()).collect();
@@ -217,7 +217,7 @@ fn ui_328_the_peaks_are_sample_peaks_and_the_input_reads_plus_over_full_scale() 
             .find(|x| x.id == id)
             .cloned()
             .unwrap();
-        let r = s.instruments.rect(0, g.size);
+        let r = s.instruments.frame(0, &g);
         s.instruments.body(r, &x, x.builtin().unwrap())
     };
     let d = &s.instruments.dynamics[&id];

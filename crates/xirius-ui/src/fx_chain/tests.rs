@@ -73,13 +73,15 @@ fn click_opens_and_remove_button_removes_the_insert() {
     s.add_effect(a, 0, &Pick::built_in("EQ"));
     close(&mut s);
     let id = s.project().tracks[&a].inserts[0].id;
-    // the first press picks the row (MIX-045), the second opens it
+    // the first press picks the row (MIX-045) and shows its face beside the
+    // strips (MIX-046), the second opens it as a window
     let at = grab(&mut s, &g, a, id);
     s.fx_up(&g, at.0, at.1, false);
-    assert!(!s.instruments.is_open(id));
+    assert_eq!(s.docked().map(|i| s.instruments.open[i].plugin), Some(id));
     let at = grab(&mut s, &g, a, id);
     s.fx_up(&g, at.0, at.1, false);
     assert!(s.instruments.is_open(id));
+    assert_eq!(s.docked(), None);
     close(&mut s);
     let r = remove_part(s.strip_item(&g, a, id).unwrap());
     assert!(s.chain_down(&g, r.x + 8.0, r.y + 11.0));

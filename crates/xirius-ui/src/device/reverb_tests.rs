@@ -69,7 +69,7 @@ fn ui_330_the_plane_is_over_the_color_band_and_the_six_knobs_wrap_when_narrow() 
     let (mut s, g, t, _) = rev_window();
     assert_eq!(s.instruments.open[0].body.0, reverb::NATURAL_W);
     let def = fx(&s, t).builtin().unwrap();
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     let b = s.instruments.body(r, &fx(&s, t), def);
     let [plane, band] = b.graphs[..] else {
         panic!("two planes")
@@ -92,7 +92,7 @@ fn ui_330_the_plane_is_over_the_color_band_and_the_six_knobs_wrap_when_narrow() 
     }
 
     s.instruments.open[0].body = layout::size(def, reverb::MIN_W);
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     let b = s.instruments.body(r, &fx(&s, t), def);
     let cells: Vec<_> = reverb::KNOBS.iter().map(|id| knob(&b, id)).collect();
     assert_eq!(cells[0].y, cells[2].y);
@@ -106,7 +106,7 @@ fn ui_330_the_points_sit_where_the_engine_puts_the_sound() {
     let (s, g, t, _) = rev_window();
     let x = fx(&s, t);
     let def = x.builtin().unwrap();
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     let plane = s.instruments.body(r, &x, def).graphs[0];
     let pts = s.instruments.points_of(r, &x, def, 0);
     let names: Vec<_> = pts.iter().map(|p| p.name.as_str()).collect();
@@ -199,7 +199,7 @@ fn ui_330_a_drag_on_the_log_scale_lands_where_the_pointer_is() {
     let (mut s, g, t, id) = rev_window();
     let x = fx(&s, t);
     let def = x.builtin().unwrap();
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     let plane = s.instruments.body(r, &x, def).graphs[0];
     let tx = reverb::time_axis(plane);
     drag(&mut s, &g, id, 0, 0, (tx.px(0.050) - tx.px(0.010), 0.0));
@@ -223,7 +223,7 @@ fn ui_330_the_tails_point_offers_the_usual_decays_and_its_wheel_the_damping() {
     let (mut s, g, t, id) = rev_window();
     let x = fx(&s, t);
     let def = x.builtin().unwrap();
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     let pts = s.instruments.points_of(r, &x, def, 0);
     let labels: Vec<_> = pts[1]
         .menu

@@ -237,6 +237,7 @@ impl Studio {
                 };
                 if let Some(next) = next {
                     self.mixer.chosen = Some((t, picks[next]));
+                    self.dock_follow(g);
                     self.reveal_pick(g, t, picks[next]);
                 }
             }
@@ -295,6 +296,7 @@ impl Studio {
                     // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     if self.run_command("plugin.remove", json!({ "ids": [id.to_string()] })) {
                         self.mixer.chosen = next.map(|x| (t, *x));
+                        self.dock_follow(g);
                     }
                 }
                 Pick::Plugin(_) => {}

@@ -154,6 +154,9 @@ pub struct Win {
     /// It had samples when it was last laid out: it takes its size again once its
     /// files come or all go.
     pub filled: bool,
+    /// It is the face at the right of the mixer's drawer (MIX-046), not a
+    /// window: it shows only with the mixer, and the drawer sets its place.
+    pub docked: bool,
 }
 
 /// What a press in a window took hold of.
@@ -355,6 +358,8 @@ pub struct Windows {
     pub(crate) sizes: HashMap<&'static str, (f32, f32)>,
     /// The note a key or a pad sounds (PLG-066).
     pub(crate) note: Option<Held>,
+    /// The width the face in the mixer's drawer was last given (MIX-046).
+    pub(crate) dock_w: Option<f32>,
 }
 
 /// How long an opened window's frame lights.
@@ -386,6 +391,11 @@ pub fn fit_of(def: &BuiltinDef, want: (f32, f32), plugin: Option<&Plugin>) -> (f
 impl Windows {
     pub fn is_open(&self, id: PluginId) -> bool {
         self.open.iter().any(|w| w.plugin == id)
+    }
+
+    /// The face in the mixer's drawer (MIX-046), shown or not.
+    pub fn docked(&self) -> Option<usize> {
+        self.open.iter().position(|w| w.docked)
     }
 
     /// The value a control shows while it is dragged or swept.
@@ -598,6 +608,19 @@ impl Windows {
         }
     }
 
+    /// The `i`th window's frame on the screen `g`. The face in the mixer's
+    /// drawer is where the drawer puts it, and nothing while the drawer shows
+    /// something else (MIX-046); a window is [`Self::rect`].
+    pub fn frame(&self, i: usize, g: &Geometry) -> Rect {
+        if !self.open[i].docked {
+            return self.rect(i, g.size);
+        }
+        if !g.panels.mixer || g.drawer_body.h <= 0.0 {
+            return Rect::default();
+        }
+        self.dock_split(i, g).panel
+    }
+
     /// The `i`th window's frame on a screen of `size`.
     pub fn rect(&self, i: usize, size: (f32, f32)) -> Rect {
         let (w, h) = self.open[i].body;
@@ -616,11 +639,22 @@ impl Windows {
         )
     }
 
-    /// The top window under a point, and the part of it.
-    pub fn at(&self, p: &Project, size: (f32, f32), x: f32, y: f32) -> Option<(usize, Part)> {
-        (0..self.open.len()).rev().find_map(|i| {
-            let r = self.rect(i, size);
-            if !r.contains(x, y) {
+    /// The drawer split for the face `i` in the mixer's drawer (MIX-046).
+    pub(crate) fn dock_split(&self, i: usize, g: &Geometry) -> crate::mixer::dock::Split {
+        let (w, h) = self.open[i].body;
+        crate::mixer::dock::split(g.drawer_body, w, title_bar::BAR_H + h)
+    }
+
+    /// The top window under a point, and the part of it. The face in the
+    /// mixer's drawer is under every window.
+    pub fn at(&self, p: &Project, g: &Geometry, x: f32, y: f32) -> Option<(usize, Part)> {
+        let order = (0..self.open.len())
+            .rev()
+            .filter(|&i| !self.open[i].docked)
+            .chain(self.docked());
+        order.into_iter().find_map(|i| {
+            let r = self.frame(i, g);
+            if r.w <= 0.0 || !r.contains(x, y) {
                 return None;
             }
             let w = self.open[i];
@@ -645,7 +679,7 @@ impl Windows {
                 .map_or(Part::Head, |(_, part)| part);
                 return Some((i, part));
             }
-            if grip(r).contains(x, y) {
+            if !w.docked && grip(r).contains(x, y) {
                 return Some((i, Part::Resize));
             }
             let now = self.shown(plugin);
@@ -916,7 +950,9 @@ fn key_rect(keys: &[play::Key], pitch: u8) -> Rect {
 }
 
 /// The body of the window whose frame is `r`, on the screen, for the values
-/// (0..1) it shows and the band chosen (an EQ's).
+/// (0..1) it shows and the band chosen (an EQ's). A frame too low for the body
+/// at its width (the face in the mixer's drawer, MIX-046) has it narrower, as
+/// wide as fits, in its middle.
 pub(crate) fn body_of(
     r: Rect,
     def: &BuiltinDef,
@@ -925,19 +961,35 @@ pub(crate) fn body_of(
     plugin: Option<&Plugin>,
     (pick, layer): (usize, usize),
 ) -> Body {
-    layout::body(
-        def,
-        &layout::Shape {
-            w: r.w,
-            band,
-            values: now,
-            plugin,
-            pick,
-            layer,
-        },
-    )
-    .grown(r.h - title_bar::BAR_H)
-    .at(r.x, r.y + title_bar::BAR_H)
+    let room = r.h - title_bar::BAR_H;
+    let lay = |w: f32| {
+        layout::body(
+            def,
+            &layout::Shape {
+                w,
+                band,
+                values: now,
+                plugin,
+                pick,
+                layer,
+            },
+        )
+    };
+    let mut b = lay(r.w);
+    if b.h > room + 0.5 {
+        let (mut lo, mut hi) = (layout::min_w(def).min(r.w), r.w);
+        for _ in 0..12 {
+            let mid = (lo + hi) / 2.0;
+            if layout::size_of(def, mid, plugin).1 <= room {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        b = lay(lo.floor());
+    }
+    let dx = ((r.w - b.w) / 2.0).max(0.0).floor();
+    b.grown(room).at(r.x + dx, r.y + title_bar::BAR_H)
 }
 
 /// The track, the plugin and its parameters of a window, while it is still
@@ -986,6 +1038,10 @@ impl Studio {
         let p = self.project();
         self.instruments.prune(&p);
         let ins = &mut self.instruments;
+        // The face in the drawer comes out as a window (MIX-046).
+        if ins.docked().is_some_and(|i| ins.open[i].plugin == id) {
+            ins.open.retain(|w| !w.docked);
+        }
         match ins.open.iter().position(|w| w.plugin == id) {
             Some(i) => {
                 ins.raise(i);
@@ -1014,20 +1070,25 @@ impl Studio {
                         .open
                         .iter()
                         .rev()
-                        .find(|w| w.at.is_none())
+                        .find(|w| w.at.is_none() && !w.docked)
                         .map_or(body.0, |w| w.placed_w),
                     at: None,
                     pinned: false,
                     // The first place in the cascade no window sits at.
                     seat: (0..)
-                        .find(|n| !ins.open.iter().any(|w| w.seat == *n && w.at.is_none()))
+                        .find(|n| {
+                            !ins.open
+                                .iter()
+                                .any(|w| w.seat == *n && w.at.is_none() && !w.docked)
+                        })
                         .unwrap_or(0),
                     pick: 0,
                     layer: 0,
                     filled: !plugin.samples.is_empty(),
+                    docked: false,
                 };
                 // The windows are in the order they were last used.
-                match ins.open.iter().rposition(|w| !w.pinned) {
+                match ins.open.iter().rposition(|w| !w.pinned && !w.docked) {
                     Some(i) => {
                         let old = ins.open[i];
                         ins.open[i] = Win {
@@ -1056,7 +1117,7 @@ impl Studio {
 
     /// Is a window under the point?
     pub(crate) fn over_instrument(&self, g: &Geometry, x: f32, y: f32) -> bool {
-        self.instruments.at(&self.project(), g.size, x, y).is_some()
+        self.instruments.at(&self.project(), g, x, y).is_some()
     }
 
     /// A press: true when it was on a window (nothing under it gets it).
@@ -1076,10 +1137,29 @@ impl Studio {
     ) -> bool {
         self.instruments.prune(&self.project());
         let p = self.project();
-        let Some((i, part)) = self.instruments.at(&p, g.size, x, y) else {
+        let Some((i, part)) = self.instruments.at(&p, g, x, y) else {
             self.device_blur();
             return false;
         };
+        // The face in the mixer's drawer (MIX-046): its pin's place and a
+        // double click on its bar take it out as a window; it does not move.
+        if self.instruments.open[i].docked {
+            let w = self.instruments.open[i];
+            match part {
+                Part::Pin => {
+                    self.show_instrument(w.track, w.plugin);
+                    return true;
+                }
+                Part::Head => {
+                    if clicks >= 2 {
+                        self.show_instrument(w.track, w.plugin);
+                    }
+                    return true;
+                }
+                Part::Resize => return true,
+                _ => {}
+            }
+        }
         if !matches!(part, Part::Knob(_) | Part::Point(..)) {
             self.device_blur();
         }
@@ -1090,7 +1170,7 @@ impl Studio {
         }
         let i = self.instruments.raise(i);
         let w = self.instruments.open[i];
-        let r = self.instruments.rect(i, g.size);
+        let r = self.instruments.frame(i, g);
         match part {
             Part::Close => {
                 if self.instruments.note.is_some_and(|n| n.plugin == w.plugin) {
@@ -1251,14 +1331,14 @@ impl Studio {
         y: f32,
     ) -> Option<(TrackId, PluginId, &'static str, Rect)> {
         let p = self.project();
-        let (i, Part::Knob(k)) = self.instruments.at(&p, g.size, x, y)? else {
+        let (i, Part::Knob(k)) = self.instruments.at(&p, g, x, y)? else {
             return None;
         };
         let w = self.instruments.open[i];
         let (track, plugin, def) = live(&p, &w)?;
         let spec = def.params.get(k)?;
         let r = self.instruments.part_rect(
-            self.instruments.rect(i, g.size),
+            self.instruments.frame(i, g),
             &p,
             track,
             plugin,
@@ -1309,7 +1389,7 @@ impl Studio {
                     return false;
                 };
                 // The frame stays where it is: its corner keeps on the screen.
-                let r = self.instruments.rect(i, g.size);
+                let r = self.instruments.frame(i, g);
                 let want = (
                     (from.0 + x - pointer.0).min(g.size.0 - r.x),
                     (from.1 + y - pointer.1).min(g.size.1 - r.y - title_bar::BAR_H),
@@ -1358,13 +1438,10 @@ impl Studio {
             Some(Grab::Note { plugin, pitch }) => {
                 // Off the key or pad held, its note ends; coming back does not play it again.
                 let p = self.project();
-                let on = self
-                    .instruments
-                    .at(&p, g.size, x, y)
-                    .is_some_and(|(i, part)| {
-                        self.instruments.open[i].plugin == plugin
-                            && matches!(part, Part::Key(k) | Part::Pad(k) if k == pitch)
-                    });
+                let on = self.instruments.at(&p, g, x, y).is_some_and(|(i, part)| {
+                    self.instruments.open[i].plugin == plugin
+                        && matches!(part, Part::Key(k) | Part::Pad(k) if k == pitch)
+                });
                 if !on {
                     self.window_note_off();
                 }
@@ -1547,7 +1624,7 @@ impl Studio {
         let p = self.project();
         let hot = self
             .instruments
-            .at(&p, g.size, x, y)
+            .at(&p, g, x, y)
             .map(|(i, part)| (self.instruments.open[i].plugin, part));
         let changed = hot != self.instruments.hot;
         self.instruments.hot = hot;
@@ -1600,17 +1677,28 @@ impl Studio {
         let i = self.instruments.open.iter().position(|w| w.plugin == id)?;
         let p = self.project();
         let (track, plugin, def) = live(&p, &self.instruments.open[i])?;
-        let r = self.instruments.part_rect(
-            self.instruments.rect(i, g.size),
-            &p,
-            track,
-            plugin,
-            def,
-            part,
-        );
+        let r =
+            self.instruments
+                .part_rect(self.instruments.frame(i, g), &p, track, plugin, def, part);
         let at = (r.x + r.w / 2.0, r.y + r.h / 2.0);
         // Only if nothing covers it.
-        (self.instruments.at(&p, g.size, at.0, at.1) == Some((i, part))).then_some(at)
+        (self.instruments.at(&p, g, at.0, at.1) == Some((i, part))).then_some(at)
+    }
+}
+
+/// The face in the mixer's drawer (MIX-046), under the windows.
+pub fn paint_docked(pen: &mut Pen, studio: &Studio, g: &Geometry) {
+    let p = studio.project();
+    let Some(i) = studio.docked() else {
+        return;
+    };
+    let w = studio.instruments.open[i];
+    let Some((track, plugin, def)) = live(&p, &w) else {
+        return;
+    };
+    let r = studio.instruments.frame(i, g);
+    if r.w > 0.0 {
+        paint_window(pen, studio, r, w, track, plugin, def);
     }
 }
 
@@ -1618,10 +1706,13 @@ impl Studio {
 pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     let p = studio.project();
     for (i, w) in studio.instruments.open.iter().enumerate() {
+        if w.docked {
+            continue;
+        }
         let Some((track, plugin, def)) = live(&p, w) else {
             continue;
         };
-        let r = studio.instruments.rect(i, g.size);
+        let r = studio.instruments.frame(i, g);
         paint_window(pen, studio, r, *w, track, plugin, def);
         // The window a device just opened in: a ring of the focus colour
         // round it that fades out (UI-323), none under reduced motion.
@@ -1643,12 +1734,15 @@ fn paint_window(
 ) {
     let c = pen.c;
     // A floating panel: the soft shadow all round it (UI-007), then its face.
-    let at = Bounds::new(
-        point(px(pen.origin.0 + r.x), px(pen.origin.1 + r.y)),
-        size(px(r.w), px(r.h)),
-    );
-    pen.window
-        .paint_drop_shadows(at, Corners::all(px(Radius::M.px())), &c.float);
+    // The face in the mixer's drawer lies flat in it.
+    if !w.docked {
+        let at = Bounds::new(
+            point(px(pen.origin.0 + r.x), px(pen.origin.1 + r.y)),
+            size(px(r.w), px(r.h)),
+        );
+        pen.window
+            .paint_drop_shadows(at, Corners::all(px(Radius::M.px())), &c.float);
+    }
     pen.round(r, c.paper, Radius::M);
     pen.mask(r, |pen| {
         // The shared title bar (UI-322): the same part on every window.
@@ -1667,6 +1761,7 @@ fn paint_window(
                 preset: &preset,
                 modified,
                 pinned: w.pinned,
+                popout: w.docked,
                 keyed: plugin.sidechain.as_ref().is_some_and(|sc| sc.on),
                 seats: seats(def, &source_of(&studio.project(), plugin)),
             },

@@ -88,7 +88,7 @@ fn setup(s: &mut Studio, g: &Geometry, n: u8) {
     s.show_instrument(bass, comp);
     if n == 4 {
         let p = s.project();
-        let r = s.instruments.rect(0, g.size);
+        let r = s.instruments.frame(0, g);
         let t = &p.tracks[&bass];
         let x = t.inserts.iter().find(|x| x.id == comp).unwrap();
         let anchor = s

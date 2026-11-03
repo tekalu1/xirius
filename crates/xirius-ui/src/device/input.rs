@@ -339,7 +339,7 @@ impl Studio {
         let Some((_, plugin_now, def)) = live(&p, &w) else {
             return false;
         };
-        let r = self.instruments.rect(at, g.size);
+        let r = self.instruments.frame(at, g);
         let Some(point) = self
             .instruments
             .points_of(r, plugin_now, def, n)
@@ -458,7 +458,7 @@ impl Studio {
         fine: bool,
     ) -> bool {
         let p = self.project();
-        let Some((i, part)) = self.instruments.at(&p, g.size, x, y) else {
+        let Some((i, part)) = self.instruments.at(&p, g, x, y) else {
             return false;
         };
         let k = match part {
@@ -488,7 +488,7 @@ impl Studio {
         let p = self.project();
         let w = self.instruments.open.get(i)?;
         let (_, x, def) = live(&p, w)?;
-        let r = self.instruments.rect(i, g.size);
+        let r = self.instruments.frame(i, g);
         let pt = self.instruments.points_of(r, x, def, n).get(at).cloned()?;
         Some((def, pt))
     }
@@ -882,7 +882,7 @@ impl Studio {
     /// its automation lane, MIDI learn). True over any window.
     pub(crate) fn instrument_right(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
         let p = self.project();
-        let Some((i, part)) = self.instruments.at(&p, g.size, x, y) else {
+        let Some((i, part)) = self.instruments.at(&p, g, x, y) else {
             return false;
         };
         let k = match part {

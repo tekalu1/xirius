@@ -281,6 +281,8 @@ pub struct View<'a> {
     pub modified: bool,
     /// The pin is down: the `primary` pair paints it.
     pub pinned: bool,
+    /// The device sits in the mixer's drawer (MIX-046): the pin's place holds 「窓で開く」.
+    pub popout: bool,
     /// The device's sidechain is on: the seat's icon takes the mark's ink.
     pub keyed: bool,
     pub seats: Seats<'a>,
@@ -436,7 +438,9 @@ pub fn paint(pen: &mut Pen, r: Rect, v: &View<'_>) {
     if let Some(b) = bar.channel {
         pen.icon("route", icon_box(b), c.ink);
     }
-    if v.pinned {
+    if v.popout {
+        pen.icon("popout", icon_box(bar.pin), c.ink);
+    } else if v.pinned {
         let (face, ink) = c.primary;
         pen.round(bar.pin, face, Radius::S);
         pen.icon("pin", icon_box(bar.pin), ink);

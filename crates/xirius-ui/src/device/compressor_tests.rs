@@ -91,7 +91,7 @@ fn ui_327_it_opens_wide_with_the_history_beside_the_curve_and_narrow_under_it() 
     let (mut s, g, t, _) = cmp_window();
     assert_eq!(s.instruments.open[0].body.0, compressor::NATURAL_W);
     let def = fx(&s, t).builtin().unwrap();
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     let b = s.instruments.body(r, &fx(&s, t), def);
     let [xfer, hist] = b.graphs[..] else {
         panic!("two planes")
@@ -110,7 +110,7 @@ fn ui_327_it_opens_wide_with_the_history_beside_the_curve_and_narrow_under_it() 
     }
 
     resize(&mut s, t, compressor::MIN_W + 40.0);
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     let b = s.instruments.body(r, &fx(&s, t), def);
     let [xfer, hist] = b.graphs[..] else {
         panic!("two planes")

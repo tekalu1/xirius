@@ -74,7 +74,7 @@ fn ui_329_the_taps_are_over_the_band_with_the_knobs_beside_it_and_narrow_under_i
     let (mut s, g, t, _) = del_window();
     assert_eq!(s.instruments.open[0].body.0, delay::NATURAL_W);
     let def = fx(&s, t).builtin().unwrap();
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     let b = s.instruments.body(r, &fx(&s, t), def);
     let [taps, band] = b.graphs[..] else {
         panic!("two planes")
@@ -93,7 +93,7 @@ fn ui_329_the_taps_are_over_the_band_with_the_knobs_beside_it_and_narrow_under_i
     assert_eq!(b.names[0].text, "Color");
 
     s.instruments.open[0].body = layout::size(def, delay::MIN_W + 20.0);
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     let b = s.instruments.body(r, &fx(&s, t), def);
     let band = b.graphs[1];
     assert!(knob(&b, "feedback").y > band.bottom(), "under it");
@@ -125,7 +125,7 @@ fn ui_329_synced_the_first_repeat_steps_the_note_and_keeps_the_feel() {
     assert_eq!(plain(&s, t, "feel"), 1.0);
     let x = fx(&s, t);
     let def = x.builtin().unwrap();
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     let taps = s.instruments.body(r, &x, def).graphs[0];
     let step = (taps.w - 44.0) / 6.0;
     drag(&mut s, &g, id, 0, 0, (step * 1.2, 0.0));
@@ -138,7 +138,7 @@ fn ui_329_the_beats_box_and_its_point_offer_each_note_straight_dotted_and_triple
     let (mut s, g, t, id) = del_window();
     let x = fx(&s, t);
     let def = x.builtin().unwrap();
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     let pts = s.instruments.points_of(r, &x, def, 0);
     assert_eq!(pts[0].name, "Beats");
     assert_eq!(pts[0].value, "1/8 D");
@@ -175,7 +175,7 @@ fn ui_329_the_cuts_move_at_the_ends_of_one_band() {
     let (lo, hi) = (plain(&s, t, "low_cut"), plain(&s, t, "high_cut"));
     let x = fx(&s, t);
     let def = x.builtin().unwrap();
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     let pts = s.instruments.points_of(r, &x, def, 1);
     let names: Vec<_> = pts.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(names, ["Low Cut", "High Cut"]);

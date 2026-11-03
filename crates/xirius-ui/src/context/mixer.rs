@@ -47,7 +47,7 @@ impl Studio {
     /// mixer's, or is a part that has a menu elsewhere (the instrument, a plugin that
     /// went down).
     pub(super) fn mixer_context(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
-        if !self.mixer_shown() || !g.drawer_body.contains(x, y) {
+        if !self.mixer_shown() || !self.mixer_body(g).contains(x, y) {
             return false;
         }
         let Some(spot) = self.mixer_spot(g, x, y) else {
@@ -748,11 +748,11 @@ impl Studio {
             // The master does not scroll: it is always at the right edge.
             return true;
         }
-        let Some(left) = self.strip_offset(t) else {
+        let Some(left) = self.strip_offset(g, t) else {
             return false;
         };
         // A widened strip is wider than the rest (MIX-045).
-        let w = self.width_of(t) + crate::mixer::STRIP_GAP;
+        let w = self.width_of(g, t) + crate::mixer::STRIP_GAP;
         let view = self.mixer_view(g).w;
         if left < self.mixer.scroll {
             self.mixer.scroll = left;

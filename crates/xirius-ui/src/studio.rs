@@ -1883,7 +1883,8 @@ impl Studio {
         mods: Mods,
     ) -> bool {
         self.inspector_follow(g);
-        self.macro_key(key, mods)
+        self.grip_key(g, key)
+            || self.macro_key(key, mods)
             || self.device_key(key, mods)
             || self.name_key(key, mods)
             || self.bar_key(key, ch, mods)

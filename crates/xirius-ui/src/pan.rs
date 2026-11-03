@@ -32,7 +32,7 @@ impl Studio {
         }
         let area = if self.roll_ctx(g).is_some_and(|c| c.body.contains(x, y)) {
             PanArea::Roll
-        } else if self.mixer_shown() && g.drawer_body.contains(x, y) {
+        } else if self.mixer_shown() && self.mixer_body(g).contains(x, y) {
             PanArea::Mixer
         } else if [g.lanes, g.column, g.ruler, g.section_band, g.tempo]
             .iter()

@@ -237,6 +237,7 @@ impl Screen {
         }
         if studio.zoom_box_move(x, y)
             || studio.mixer_bar_move(&g, x)
+            || studio.grip_move(&g, x)
             || studio.edge_move(&g, y)
             || studio.side_move(&g, x)
             || studio.pan_move(&g, x, y)
@@ -363,6 +364,10 @@ impl Screen {
             cx.notify();
             drop(studio);
             self.files(cx);
+            return;
+        }
+        if studio.grip_down(&g, x, y) {
+            cx.notify();
             return;
         }
         if studio.cpu_down(&g, x, y, ev.click_count as u32) {
@@ -680,7 +685,7 @@ impl Screen {
         }
         let g = geometry(&studio, window);
         let (x, y) = in_body(ev.position);
-        if studio.mixer_bar_up() {
+        if studio.mixer_bar_up() || studio.grip_up() {
             cx.notify();
             return;
         }

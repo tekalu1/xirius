@@ -177,6 +177,7 @@ pub mod midi_out_row;
 pub mod midi_watch;
 pub mod mixer;
 pub mod mixer_copy_shots;
+pub mod mixer_dock_shots;
 pub mod mixer_flow_shots;
 pub mod mixer_order_shots;
 pub mod mixer_sc_shots;
@@ -409,6 +410,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("midi-drum", midi_drum_shots::SHOTS),
     ("mixer", mixer_shots::MIXER),
     ("mixer-copy", mixer_copy_shots::SHOTS),
+    ("mixer-dock", mixer_dock_shots::SHOTS),
     ("mixer-flow", mixer_flow_shots::SHOTS),
     ("mixer-order", mixer_order_shots::SHOTS),
     ("mixer-sc", mixer_sc_shots::SHOTS),
