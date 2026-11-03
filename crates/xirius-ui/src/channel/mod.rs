@@ -738,8 +738,9 @@ impl Studio {
             self.channel = None;
             return false;
         };
+        // the window's ground takes the press: it does not reach what is under it
         let Some(part) = part_at(&v, x, y) else {
-            return false;
+            return true;
         };
         self.error = None;
         let Some(w) = self.channel.as_mut() else {
@@ -1107,6 +1108,18 @@ impl Studio {
     }
 
     /// Lets go: a dragged card moves to its slot, a crossover takes its frequency.
+    /// A release the screen does not hand on (a dialog or the palette has the window): the
+    /// editor's card drag, the mixer's grip and bar are let go without a drop, and a pad held
+    /// in the macro window ends where it was.
+    pub fn let_go_drags(&mut self) {
+        if let Some(w) = self.channel.as_mut() {
+            w.grab = None;
+        }
+        self.macro_up();
+        self.mixer.grip_drag = None;
+        self.mixer.bar_grab = None;
+    }
+
     pub fn channel_up(&mut self, g: &Geometry) -> bool {
         let Some(grab) = self.channel.as_mut().and_then(|w| w.grab.take()) else {
             return false;

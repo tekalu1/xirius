@@ -722,3 +722,53 @@ fn a_reader_hears_each_layers_range_and_its_sides() {
     assert_eq!(find("Piano の下の鍵").value(), Some("C2"));
     assert_eq!(find("Piano のベロシティの上").numeric_value(), Some(100.0));
 }
+
+#[test]
+fn a_pinned_editor_whose_track_goes_closes_and_others_open_again() {
+    let (mut s, _) = studio();
+    let vocal = track(&s, "Vocal");
+    let keys = track(&s, "Keys");
+    s.open_channel(vocal);
+    s.channel.as_mut().unwrap().pinned = true;
+    assert!(s.run_command("track.delete", json!({"ids":[vocal]})));
+    assert!(s.channel.is_none(), "its track went");
+    s.open_channel(keys);
+    assert_eq!(s.channel.as_ref().map(|w| w.track), Some(keys));
+}
+
+#[test]
+fn another_song_closes_the_editor_and_the_mixers_picks() {
+    let (mut s, _) = studio();
+    let (t, sp, ..) = vocal(&mut s);
+    s.open_channel(t);
+    s.mixer.chosen = Some((t, crate::mixer::flow::Pick::Split(sp)));
+    s.new_song_sync();
+    assert!(s.channel.is_none());
+    assert!(s.mixer.chosen.is_none());
+}
+
+#[test]
+fn the_chosen_card_shows_the_plus_before_and_after_it() {
+    let (mut s, g) = studio();
+    let (_, _, [eq, comp, _], b) = vocal(&mut s);
+    let v = s.channel_view(&g).unwrap();
+    let f = &v.flow;
+    let beside = |pick: Pick| -> Vec<(Chain, usize)> {
+        let mut v: Vec<_> = f
+            .gaps
+            .iter()
+            .filter(|gp| f.beside(pick, gp))
+            .map(|gp| (gp.chain, gp.index))
+            .collect();
+        v.sort_by_key(|x| x.1);
+        v.dedup();
+        v
+    };
+    // Comp heads its branch, whose head has no ＋ (the branch's level is there): the one after
+    assert_eq!(beside(Pick::Plugin(comp)), [(Chain::Branch(b[0]), 1)]);
+    let eq_card = card(&v, Pick::Plugin(eq));
+    let (chain, k) = eq_card.chain.unwrap();
+    let eq_gaps = beside(Pick::Plugin(eq));
+    assert!(eq_gaps.contains(&(chain, k)), "{eq_gaps:?}");
+    assert!(eq_gaps.contains(&(chain, k + 1)), "{eq_gaps:?}");
+}

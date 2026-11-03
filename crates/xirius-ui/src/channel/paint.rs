@@ -407,7 +407,9 @@ fn paint_flow(pen: &mut Pen, s: &Studio, w: &ChannelWin, t: &Track, f: &Flow) {
     }
     let pointer = w.pointer;
     for (i, gap) in f.gaps.iter().enumerate() {
-        if w.grab.is_some() || !pointer.is_some_and(|(x, y)| gap.rect.contains(x, y)) {
+        let near = pointer.is_some_and(|(x, y)| gap.rect.contains(x, y))
+            || w.chosen.is_some_and(|pick| f.beside(pick, gap));
+        if w.grab.is_some() || !near {
             continue;
         }
         let lit = w.hot == Some(Part::Gap(i));

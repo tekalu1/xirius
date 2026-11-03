@@ -365,6 +365,19 @@ fn end_of(card: Rect, keys: Vec<Key>) -> End {
 }
 
 impl Flow {
+    /// Is the gap right before or after the card `pick`? Its ＋ shows while that card is
+    /// chosen, as the mock's (and for a touch or the keys, which have no pointer over it).
+    pub fn beside(&self, pick: Pick, gap: &Gap) -> bool {
+        if gap.after == Some(pick) {
+            return true;
+        }
+        self.cards
+            .iter()
+            .find(|c| c.pick == pick)
+            .and_then(|c| c.chain)
+            .is_some_and(|(chain, k)| gap.chain == chain && gap.index == k)
+    }
+
     fn io(&mut self, cx: f32, y: f32, icon: &'static str, text: String) -> Rect {
         let w = pill_w(&text);
         let rect = Rect::new(cx - w / 2.0, y, w, IO_H);

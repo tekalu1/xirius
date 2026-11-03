@@ -1823,6 +1823,14 @@ impl Studio {
         self.roll.scale = self.song.session().state.view.scale;
         self.tree = self.shape_tree();
         let raw = self.project();
+        // A window whose track went (a delete, an undo) closes: a pinned one kept every other
+        // track's out until a restart.
+        if self.channel.as_ref().is_some_and(|w| !raw.tracks.contains_key(&w.track)) {
+            self.channel = None;
+        }
+        if self.macro_pad.as_ref().is_some_and(|w| !raw.tracks.contains_key(&w.track)) {
+            self.macro_pad = None;
+        }
         if !self.instruments.open.is_empty() {
             self.refresh_presets();
             // A Sampler's or a Drum Kit's window follows its files (UI-333, UI-334); the
@@ -2714,6 +2722,15 @@ impl Studio {
         self.playhead = 0;
         self.transport.reset();
         self.mixer.meters.clear();
+        // The windows and picks on the old song's channels go with it: track ids repeat
+        // between songs, so they would land on the new song's.
+        self.channel = None;
+        self.macro_pad = None;
+        self.mixer.chosen = None;
+        self.mixer.key_focus = None;
+        self.mixer.key_drag = None;
+        self.mixer.level_drag = None;
+        self.mixer.insert_after = None;
         if deferred {
             self.keep.sync_open(
                 &self.song.project(),
