@@ -1,10 +1,11 @@
-//! The Sampler (PLG-004): plays the multisamples of [`super::samples`] with 32 voices.
+//! The Sampler (PLG-067): plays the files the song gave it as zones, with 32 voices.
 //!
-//! A note plays the zone nearest its pitch, moved by reading the sample faster or slower
-//! (cubic between frames), through an ADSR (a straight attack, decay and release that fall
-//! exponentially, 60 dB over their time) and a resonant lowpass. The lowpass is left out
-//! while it is wide open. When every voice sounds, the oldest is taken; a note played again
-//! fades its last voice in 5 ms instead of cutting it. No latency.
+//! Each file is a zone: its root note comes from its name, and the keys between two roots are
+//! split at the middle ([`FileSet::layout`]). A note plays its zone moved by reading the file
+//! faster or slower, with the zone's own start, end, loop, reverse and normalize, through the
+//! device's one voice ([`super::voice`]): the envelope, the filter and the amp. Without files
+//! it is silent. When every voice sounds, the oldest is taken; a note played again fades its
+//! last voice in 5 ms instead of cutting it. No latency.
 //!
 //! Controllers (EDT-004): pitch bend moves every voice up to [`BEND_RANGE`] semitones, the
 //! sustain pedal (CC 64) keeps released notes sounding until it comes up, and the modulation
@@ -14,31 +15,28 @@ use std::f64::consts::TAU;
 use std::sync::Arc;
 
 use super::bank::Params;
-use super::dsp::{Glide, Ramp, STEP, Svf, SvfCoefs, db_to_gain};
-use super::files::{FileInbox, FileSet, root_of};
-use super::probe::VoiceStage;
-use super::samples::{Library, library};
+use super::dsp::{Glide, Ramp, STEP, db_to_gain};
+use super::files::{FileInbox, FileSet, Trigger, Voicing};
+use super::voice::{Shape, Stage, Voice, data_of};
 use crate::control::ControlState;
 use crate::processor::{AudioIo, CTRL_PITCH_BEND, NoteEvent, NoteKind, ProcessSetup, Processor};
 
 // The parameters, in the order of `xirius_params::SAMPLER`.
-const SOUND: usize = 0;
-const ATTACK: usize = 1;
-const DECAY: usize = 2;
-const SUSTAIN: usize = 3;
-const RELEASE: usize = 4;
+const ATTACK: usize = 0;
+const DECAY: usize = 1;
+const SUSTAIN: usize = 2;
+const RELEASE: usize = 3;
+const FTYPE: usize = 4;
 const CUTOFF: usize = 5;
 const RESONANCE: usize = 6;
-const VELOCITY: usize = 7;
-const TUNE: usize = 8;
+const DRIVE: usize = 7;
+const TRANSPOSE: usize = 8;
 const FINE: usize = 9;
 const VOLUME: usize = 10;
+const PAN: usize = 11;
+const VELOCITY: usize = 12;
 
 const VOICES: usize = 32;
-/// Where an envelope counts as silent (-80 dB).
-const SILENT: f64 = 1e-4;
-/// How long a voice that gives way takes to fade.
-const FADE_MS: f64 = 5.0;
 /// How far a full pitch bend moves the pitch, in semitones either way.
 pub const BEND_RANGE: f64 = 2.0;
 /// The vibrato of the modulation wheel at its top: how far either way, in semitones, and how fast.
@@ -47,88 +45,15 @@ pub const VIBRATO_HZ: f64 = 5.5;
 const MOD_WHEEL: u8 = 1;
 const SUSTAIN_PEDAL: u8 = 64;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Stage {
-    Idle,
-    Attack,
-    Decay,
-    Release,
-    /// Giving way to a new note.
-    Fade,
-}
-
-/// What a voice reads (ENG-077): a zone of the synthesized library, or a file the song gave
-/// the device. A file takes over once the set has one: the nearest of its roots answers, as
-/// a synthesized zone would (zones and their own ranges arrive with PLG-067).
-#[derive(Clone, Copy)]
-enum Src {
-    Synth {
-        sound: usize,
-        zone: usize,
-    },
-    /// The slot in the [`FileSet`].
-    File {
-        slot: usize,
-    },
-}
-
-#[derive(Clone, Copy)]
-struct Voice {
-    stage: Stage,
-    pitch: u8,
-    src: Src,
-    /// Where it reads in the sample, and how far it moves a frame before tuning.
-    pos: f64,
-    step: f64,
-    gain: f64,
-    env: f64,
-    /// When it started, to find the oldest.
-    born: u64,
-    /// Let go while the sustain pedal was down: it releases when the pedal comes up.
-    held: bool,
-    filter: Svf,
-    /// The right channel's filter of a file voice (the left is `filter`).
-    filter_r: Svf,
-}
-
-impl Voice {
-    fn idle() -> Voice {
-        Voice {
-            stage: Stage::Idle,
-            pitch: 0,
-            src: Src::Synth { sound: 0, zone: 0 },
-            pos: 0.0,
-            step: 1.0,
-            gain: 0.0,
-            env: 0.0,
-            born: 0,
-            held: false,
-            filter: Svf::default(),
-            filter_r: Svf::default(),
-        }
-    }
-}
-
-/// What the envelope does in a frame, worked out once every [`STEP`] frames.
-#[derive(Clone, Copy, Default)]
-struct Rates {
-    attack: f64,
-    decay: f64,
-    sustain: f64,
-    release: f64,
-    fade: f64,
-}
-
 pub struct Sampler {
     params: Params,
     glide: Glide,
     rate: f64,
-    lib: Option<Arc<Library>>,
     voices: [Voice; VOICES],
+    /// The velocity each voice was played at, to work out its level again in a newer set.
+    velocities: [f32; VOICES],
     born: u64,
-    rates: Rates,
-    tune: f64,
-    filter: Option<SvfCoefs>,
+    shape: Shape,
     volume: Ramp,
     /// Frames until the values are stepped again.
     until_step: usize,
@@ -148,14 +73,12 @@ impl Sampler {
             glide: Glide::new(&xirius_params::SAMPLER),
             params,
             rate: 48_000.0,
-            lib: None,
             files_in,
             files: None,
-            voices: [Voice::idle(); VOICES],
+            voices: [Voice::IDLE; VOICES],
+            velocities: [0.0; VOICES],
             born: 0,
-            rates: Rates::default(),
-            tune: 1.0,
-            filter: None,
+            shape: Shape::default(),
             volume: Ramp::new(1.0),
             until_step: 0,
             controls: ControlState::new(),
@@ -179,9 +102,7 @@ impl Sampler {
         } else if number == SUSTAIN_PEDAL && was_down && !self.pedal_down() {
             for v in self.voices.iter_mut().filter(|v| v.held) {
                 v.held = false;
-                if matches!(v.stage, Stage::Attack | Stage::Decay) {
-                    v.stage = Stage::Release;
-                }
+                v.release();
             }
         }
     }
@@ -201,71 +122,51 @@ impl Sampler {
     /// Works out what depends on the values.
     fn update(&mut self) {
         let g = &self.glide;
-        let frames = |ms: f64| (ms * 0.001 * self.rate).max(1.0);
-        // 60 dB over the time.
-        let fall = |ms: f64| 10f64.powf(-3.0 / frames(ms));
-        self.rates = Rates {
-            attack: 1.0 / frames(g.get(ATTACK)),
-            decay: fall(g.get(DECAY)),
+        let voicing = Voicing {
+            attack: g.get(ATTACK),
+            decay: g.get(DECAY),
             sustain: g.get(SUSTAIN) * 0.01,
-            release: fall(g.get(RELEASE)),
-            fade: 1.0 / frames(FADE_MS),
+            release: g.get(RELEASE),
+            ftype: g.index(FTYPE),
+            cutoff: g.get(CUTOFF),
+            resonance: g.get(RESONANCE) * 0.01,
+            drive: g.get(DRIVE) * 0.01,
+            transpose: g.get(TRANSPOSE),
+            fine: g.get(FINE),
+            volume: g.get(VOLUME),
+            pan: g.get(PAN) * 0.01,
+            velocity: g.get(VELOCITY) * 0.01,
         };
-        self.tune = 2f64.powf((g.get(TUNE) + g.get(FINE) * 0.01) / 12.0);
-        let (cutoff, resonance) = (g.get(CUTOFF), g.get(RESONANCE) * 0.01);
-        self.filter = (cutoff < 19_999.0 || resonance > 0.0)
-            .then(|| SvfCoefs::lowpass(cutoff, resonance, self.rate));
-    }
-
-    /// The slot of the file whose root is nearest `pitch` (the higher one on a tie), when the
-    /// device was given files.
-    fn file_zone(&self, pitch: u8) -> Option<usize> {
-        let set = self.files.as_ref()?;
-        let mut best: Option<(usize, i32)> = None;
-        for (i, s) in set.slots.iter().enumerate() {
-            let Some(s) = s else { continue };
-            let d = (i32::from(root_of(&s.name)) - i32::from(pitch)).abs();
-            if best.is_none_or(|(_, b)| d <= b) {
-                best = Some((i, d));
-            }
-        }
-        best.map(|(i, _)| i)
+        self.shape = Shape::new(&voicing, self.rate, false);
     }
 
     fn note_on(&mut self, pitch: u8, velocity: f32) {
-        // Once the song lists files, they are the sound: a pitch none of them takes, or a
-        // slot whose file was not found, stays silent (ENG-077).
-        if self.files.as_ref().is_some_and(|s| !s.slots.is_empty()) {
-            if let Some(slot) = self.file_zone(pitch) {
-                let set = self.files.as_ref().unwrap();
-                let root = root_of(&set.slots[slot].as_ref().unwrap().name);
-                self.start(
-                    pitch,
-                    velocity,
-                    Src::File { slot },
-                    2f64.powf((f64::from(pitch) - f64::from(root)) / 12.0),
-                );
-            }
-            return;
-        }
-        let Some(lib) = &self.lib else {
+        let Some(set) = &self.files else {
             return;
         };
-        let sound = self.glide.index(SOUND).min(lib.sounds.len() - 1);
-        let s = &lib.sounds[sound];
-        let zone = s.zone_for(pitch);
-        let root = s.zones[zone].root;
-        let src = Src::Synth { sound, zone };
-        let step = 2f64.powf((f64::from(pitch) - f64::from(root)) / 12.0) * lib.rate / self.rate;
-        self.start(pitch, velocity, src, step);
-    }
-
-    /// Gives `pitch` a voice for `src` at `step`: an old voice of the same pitch fades, the
-    /// free or oldest slot takes the note.
-    fn start(&mut self, pitch: u8, velocity: f32, src: Src, step: f64) {
+        // The zone whose keys hold the note; a slot whose file was not found stays silent.
+        let Some(zone) = set.zones.iter().find(|z| (z.lo..=z.hi).contains(&pitch)) else {
+            return;
+        };
+        let Some(slot) = set.slots.get(zone.slot).and_then(|s| s.as_ref()) else {
+            return;
+        };
+        let step = 2f64.powf((f64::from(pitch) - f64::from(zone.root)) / 12.0);
+        let level = self.shape.level(velocity);
+        let Some(voice) = Voice::start(
+            zone,
+            slot,
+            pitch,
+            step,
+            level,
+            Trigger::Normal,
+            self.born + 1,
+        ) else {
+            return;
+        };
         for v in &mut self.voices {
             if v.pitch == pitch && !matches!(v.stage, Stage::Idle | Stage::Fade) {
-                v.stage = Stage::Fade;
+                v.fade();
             }
         }
         // A free voice, else the one that is fading, else the oldest.
@@ -281,21 +182,9 @@ impl Sampler {
                 (rank, v.born)
             })
             .unwrap_or(0);
-        let spread = self.glide.get(VELOCITY) * 0.01;
         self.born += 1;
-        self.voices[k] = Voice {
-            stage: Stage::Attack,
-            pitch,
-            src,
-            pos: 0.0,
-            step,
-            gain: f64::from(velocity.clamp(0.0, 1.0)).powf(2.0 * spread),
-            env: 0.0,
-            born: self.born,
-            held: false,
-            filter: Svf::default(),
-            filter_r: Svf::default(),
-        };
+        self.voices[k] = voice;
+        self.velocities[k] = velocity;
     }
 
     fn note_off(&mut self, pitch: u8) {
@@ -305,8 +194,28 @@ impl Sampler {
                 if pedal {
                     v.held = true;
                 } else {
-                    v.stage = Stage::Release;
+                    v.release();
                 }
+            }
+        }
+    }
+
+    /// A newer set keeps the voices whose file is still in their slot (with the zone's new
+    /// cut) and fades the rest, so a held note does not jump into another file's middle.
+    fn take_set(&mut self) {
+        let set = self.files.as_deref();
+        for (k, v) in self.voices.iter_mut().enumerate() {
+            if !v.active() {
+                continue;
+            }
+            let same = set.and_then(|s| {
+                let slot = s.slots.get(v.slot)?.as_ref()?;
+                let zone = s.zones.iter().find(|z| z.slot == v.slot)?;
+                (data_of(slot) == v.data).then_some((zone, slot))
+            });
+            match same {
+                Some((zone, slot)) => v.recut(zone, slot, self.shape.level(self.velocities[k])),
+                None => v.fade(),
             }
         }
     }
@@ -318,113 +227,36 @@ impl Sampler {
         let newest = self
             .voices
             .iter()
-            .filter(|v| v.stage != Stage::Idle)
+            .filter(|v| v.active())
             .max_by_key(|v| v.born);
         probe.set_voice(newest.map(|v| {
-            let stage = match v.stage {
-                Stage::Attack => VoiceStage::Attack,
-                Stage::Decay => VoiceStage::Decay,
-                Stage::Release => VoiceStage::Release,
-                Stage::Idle | Stage::Fade => VoiceStage::Fade,
-            };
-            let (file, source, frames) = match v.src {
-                Src::Synth { sound, zone } => {
-                    let frames = self
-                        .lib
-                        .as_ref()
-                        .and_then(|l| l.sounds.get(sound)?.zones.get(zone))
-                        .map_or(0, |z| z.data.len());
-                    (false, sound, frames)
-                }
-                Src::File { slot } => {
-                    let frames = self
-                        .files
-                        .as_ref()
-                        .and_then(|s| s.slots.get(slot)?.as_ref())
-                        .map_or(0, |s| s.frames());
-                    (true, slot, frames)
-                }
-            };
-            let position = if frames > 0 {
-                v.pos / frames as f64
-            } else {
-                0.0
-            };
-            (v.pitch, stage, file, source, position, v.env)
+            let (stage, position) = v.view();
+            (v.pitch, stage, true, v.slot, position, v.env)
         }));
     }
 
     /// Adds the voices into `[from, to)` of both channels.
     fn render(&mut self, io: &mut AudioIo<'_>, from: usize, to: usize) {
-        let speed = self.tune * self.bend * self.vibrato_step(to - from);
-        let Some(lib) = &self.lib else {
-            return;
-        };
-        let r = self.rates;
+        let speed = self.shape.speed * self.bend * self.vibrato_step(to - from);
         let target = db_to_gain(self.glide.get(VOLUME));
         let (vol, dvol) = self.volume.toward(target, to - from);
-        for v in self.voices.iter_mut().filter(|v| v.stage != Stage::Idle) {
-            let step = v.step * speed;
+        let Some(set) = &self.files else {
+            return;
+        };
+        let shape = self.shape;
+        for v in self.voices.iter_mut().filter(|v| v.active()) {
+            let Some(slot) = set.slots.get(v.slot).and_then(|s| s.as_ref()) else {
+                *v = Voice::IDLE;
+                continue;
+            };
             let mut vol = vol;
             for i in from..to {
-                match v.stage {
-                    Stage::Attack => {
-                        v.env += r.attack;
-                        if v.env >= 1.0 {
-                            v.env = 1.0;
-                            v.stage = Stage::Decay;
-                        }
-                    }
-                    Stage::Decay => v.env = r.sustain + (v.env - r.sustain) * r.decay,
-                    Stage::Release => v.env *= r.release,
-                    Stage::Fade => v.env -= r.fade,
-                    Stage::Idle => break,
-                }
-                if v.env < SILENT && v.stage != Stage::Attack {
-                    *v = Voice::idle();
+                let Some((l, r)) = v.tick(slot, &shape, speed) else {
                     break;
-                }
-                // The frame's pair: a synthesized zone is mono, a file keeps its channels.
-                let (mut xl, mut xr);
-                match v.src {
-                    Src::Synth { sound, zone } => {
-                        let z = &lib.sounds[sound].zones[zone];
-                        if z.done(v.pos) {
-                            *v = Voice::idle();
-                            break;
-                        }
-                        let x = z.read(v.pos);
-                        xl = x;
-                        xr = x;
-                        v.pos = z.wrap(v.pos + step);
-                    }
-                    Src::File { slot } => {
-                        let s = self
-                            .files
-                            .as_ref()
-                            .and_then(|s| s.slots.get(slot))
-                            .and_then(|s| s.as_ref());
-                        let Some(s) = s else {
-                            *v = Voice::idle();
-                            break;
-                        };
-                        if s.done(v.pos) {
-                            *v = Voice::idle();
-                            break;
-                        }
-                        (xl, xr) = s.read(v.pos);
-                        v.pos += step;
-                    }
-                }
-                xl *= v.env * v.gain;
-                xr *= v.env * v.gain;
-                if let Some(c) = &self.filter {
-                    xl = v.filter.lowpass(c, xl);
-                    xr = v.filter_r.lowpass(c, xr);
-                }
+                };
                 vol += dvol;
-                io.left[i] += (xl * vol) as f32;
-                io.right[i] += (xr * vol) as f32;
+                io.left[i] += (l * vol) as f32;
+                io.right[i] += (r * vol) as f32;
             }
         }
     }
@@ -437,9 +269,7 @@ impl Processor for Sampler {
 
     fn prepare(&mut self, setup: &ProcessSetup) {
         self.rate = setup.sample_rate;
-        // Made here (off the audio thread) the first time, then shared.
-        self.lib = Some(library(self.rate));
-        self.voices = [Voice::idle(); VOICES];
+        self.voices = [Voice::IDLE; VOICES];
         self.controls.reset();
         self.bend = 1.0;
         self.vibrato = 0.0;
@@ -454,18 +284,10 @@ impl Processor for Sampler {
         let n = io.frames();
         io.left.fill(0.0);
         io.right.fill(0.0);
-        // A newer set fades the voices playing a file, so a held note does not jump into a
-        // different file's middle.
         if let Some(inbox) = &mut self.files_in
             && inbox.poll(&mut self.files)
         {
-            for v in self
-                .voices
-                .iter_mut()
-                .filter(|v| matches!(v.src, Src::File { .. }))
-            {
-                v.stage = Stage::Fade;
-            }
+            self.take_set();
         }
         let mut at = 0;
         let mut next = 0;
@@ -493,12 +315,7 @@ impl Processor for Sampler {
             at = end;
         }
         let probe = self.params.probe();
-        probe.set_sounding(
-            self.voices
-                .iter()
-                .filter(|v| v.stage != Stage::Idle)
-                .count(),
-        );
+        probe.set_sounding(self.voices.iter().filter(|v| v.active()).count());
         if probe.watching() {
             self.show(io);
         }
@@ -550,20 +367,46 @@ mod tests {
         l
     }
 
-    /// A sound with little but its fundamental (the electric piano, its overtones cut), so
-    /// zero crossings count the pitch.
-    fn plain(h: &super::super::StockHandle) {
-        set_plain(h, "sound", 1.0);
-        set_plain(h, "cutoff", 200.0);
+    /// A Sampler with one long sine at C3 (6 s), its envelope flat.
+    fn tone() -> (Box<dyn Processor>, super::super::StockHandle) {
+        let (p, h) = make("sampler");
+        give(&h, vec![sine_file("tone_C3.wav", hz(60.0), 0.4, 288_000)]);
+        set_plain(&h, "attack", 1.0);
+        set_plain(&h, "sustain", 100.0);
+        (p, h)
+    }
+
+    /// A Sampler with one file of `x` on both channels.
+    fn of(name: &str, x: Vec<f32>) -> (Box<dyn Processor>, super::super::StockHandle) {
+        let (p, h) = make("sampler");
+        set_plain(&h, "attack", 1.0);
+        let data = crate::timeline::AudioData {
+            left: x.clone(),
+            right: x,
+        };
+        give(
+            &h,
+            vec![super::super::files::FileSlot::new(
+                name,
+                std::sync::Arc::new(data),
+            )],
+        );
+        (p, h)
     }
 
     #[test]
     fn a_note_plays_at_its_pitch_from_every_zone() {
         let (mut p, h) = make("sampler");
-        plain(&h);
-        // On a root, and moved the most up and down from one.
-        for pitch in [45u8, 60, 66, 54, 30, 90] {
-            set_plain(&h, "cutoff", (hz(f64::from(pitch)) * 1.5).min(20_000.0));
+        give(
+            &h,
+            vec![
+                sine_file("low_C2.wav", hz(48.0), 0.4, 288_000),
+                sine_file("mid_C3.wav", hz(60.0), 0.4, 288_000),
+                sine_file("high_C5.wav", hz(84.0), 0.4, 288_000),
+            ],
+        );
+        // On a root, and moved up and down from one.
+        for pitch in [48u8, 60, 66, 54, 30, 90] {
             p.prepare(&setup());
             let x = play(p.as_mut(), pitch, 1.0, 40_000, 40_000);
             let f = pitch_of(&x, 4800, 24_000);
@@ -573,10 +416,9 @@ mod tests {
     }
 
     #[test]
-    fn tune_and_fine_move_the_pitch() {
-        let (mut p, h) = make("sampler");
-        plain(&h);
-        set_plain(&h, "tune", -12.0);
+    fn transpose_and_fine_move_the_pitch() {
+        let (mut p, h) = tone();
+        set_plain(&h, "transpose", -12.0);
         set_plain(&h, "fine", 50.0);
         p.prepare(&setup());
         let x = play(p.as_mut(), 69, 1.0, 40_000, 40_000);
@@ -585,113 +427,61 @@ mod tests {
         assert!((1200.0 * (f / want).log2()).abs() < 2.0, "{f} for {want}");
     }
 
-    #[test]
-    fn every_sound_plays() {
-        let (mut p, h) = make("sampler");
-        for sound in 0..xirius_params::SAMPLER_SOUNDS.len() {
-            set_plain(&h, "sound", sound as f64);
-            p.prepare(&setup());
-            let x = play(p.as_mut(), 60, 1.0, 24_000, 48_000);
-            assert!(
-                peak(&x) > 0.2 && peak(&x) <= 0.5 + 1e-3,
-                "{sound}: {}",
-                peak(&x)
-            );
-            assert!(x.iter().all(|v| v.is_finite()));
-        }
-    }
-
     /// A file the song gave the device plays from its next block, pitched from its name's
     /// root note (ENG-077).
     #[test]
     fn a_read_file_plays_pitched_from_its_root() {
-        use crate::stock::files::{FileSet, FileSlot};
         let (mut p, h) = make("sampler");
         set_plain(&h, "attack", 1.0);
-        set_plain(&h, "sustain", 100.0);
-        let data = crate::timeline::AudioData {
-            left: sine(261.63, 0.4, 48_000),
-            right: sine(261.63, 0.4, 48_000),
-        };
-        assert!(h.set_files(FileSet {
-            slots: vec![Some(FileSlot {
-                name: "tone_C3.wav".into(),
-                data: std::sync::Arc::new(data),
-            })],
-        }));
+        give(&h, vec![sine_file("tone_C3.wav", 261.63, 0.4, 48_000)]);
         let x = play(p.as_mut(), 72, 1.0, 40_000, 40_000);
-        // The file holds 19_200 frames; past it the voice is done.
+        // The file holds 24_000 frames at an octave up; past it the voice is done.
         let f = pitch_of(&x, 4_800, 18_000);
         let cents = 1200.0 * (f / 523.26).log2();
         assert!(cents.abs() < 2.0, "{f} Hz, {cents} cents");
+        assert_eq!(peak(&x[24_100..]), 0.0, "it played past the file's end");
     }
 
-    /// An empty slot (a file that was not found) stays silent (ENG-077).
+    /// An empty slot (a file that was not found) stays silent (ENG-077), as does a Sampler
+    /// without files.
     #[test]
     fn a_missing_file_opens_silent() {
-        use crate::stock::files::FileSet;
+        let (mut p, _) = make("sampler");
+        assert_eq!(peak(&play(p.as_mut(), 60, 1.0, 9_600, 9_600)), 0.0);
         let (mut p, h) = make("sampler");
-        assert!(h.set_files(FileSet { slots: vec![None] }));
-        let x = play(p.as_mut(), 60, 1.0, 9_600, 9_600);
-        assert_eq!(peak(&x), 0.0);
+        assert!(h.set_files(vec![None]));
+        assert_eq!(peak(&play(p.as_mut(), 60, 1.0, 9_600, 9_600)), 0.0);
     }
 
     /// A newer set replaces the one that plays, and the old one is handed back to be freed
     /// off the audio thread (ENG-077).
     #[test]
     fn a_newer_set_replaces_the_sound_while_playing() {
-        use crate::stock::files::{FileSet, FileSlot};
         let (mut p, h) = make("sampler");
         set_plain(&h, "attack", 1.0);
-        set_plain(&h, "sustain", 100.0);
-        let mk = |hz: f64| FileSet {
-            slots: vec![Some(FileSlot {
-                name: "tone.wav".into(),
-                data: std::sync::Arc::new(crate::timeline::AudioData {
-                    left: sine(hz, 0.4, 48_000),
-                    right: sine(hz, 0.4, 48_000),
-                }),
-            })],
-        };
-        assert!(h.set_files(mk(220.0)));
-        assert!(h.set_files(mk(440.0)));
+        give(&h, vec![sine_file("tone.wav", 220.0, 0.4, 48_000)]);
+        give(&h, vec![sine_file("tone.wav", 440.0, 0.4, 48_000)]);
         let x = play(p.as_mut(), 60, 1.0, 40_000, 40_000);
         let f = pitch_of(&x, 4_800, 18_000);
         assert!((f - 440.0).abs() < 2.0, "{f}");
 
-        // A set arriving while a note sounds fades the voice rather than jumping into the
-        // other file's middle (ENG-077).
+        // Another file arriving while a note sounds fades the voice rather than jumping into
+        // its middle; the same file with a new cut keeps playing (PLG-067).
         let (mut p, h) = make("sampler");
         set_plain(&h, "attack", 1.0);
-        set_plain(&h, "sustain", 100.0);
-        assert!(h.set_files(mk(440.0)));
-        let mut l = vec![0.0f32; 4_800];
-        let mut r = vec![0.0f32; 4_800];
-        p.as_mut().process(
-            &mut crate::processor::AudioIo {
-                left: &mut l,
-                right: &mut r,
-                key: None,
-            },
-            &[crate::processor::NoteEvent {
-                offset: 0,
-                kind: crate::processor::NoteKind::On {
-                    pitch: 60,
-                    velocity: 1.0,
-                },
-            }],
+        give(&h, vec![sine_file("tone.wav", 440.0, 0.4, 96_000)]);
+        let block = |p: &mut dyn Processor, notes: &[(usize, crate::processor::NoteKind)]| {
+            let silence = vec![0.0; 4_800];
+            render(p, &silence, &silence, notes).0
+        };
+        block(p.as_mut(), &[(0, on(60, 1.0))]);
+        assert!(h.set("file1.end", 0.9));
+        assert!(
+            peak(&block(p.as_mut(), &[])) > 0.3,
+            "a new cut cut the note"
         );
-        assert!(h.set_files(mk(220.0)));
-        let mut l = vec![0.0f32; 24_000];
-        let mut r = vec![0.0f32; 24_000];
-        p.as_mut().process(
-            &mut crate::processor::AudioIo {
-                left: &mut l,
-                right: &mut r,
-                key: None,
-            },
-            &[],
-        );
+        give(&h, vec![sine_file("tone.wav", 220.0, 0.4, 96_000)]);
+        let l = block(p.as_mut(), &[]);
         assert_eq!(
             peak(&l[2_000..]),
             0.0,
@@ -701,9 +491,7 @@ mod tests {
 
     #[test]
     fn the_envelope_follows_the_adsr() {
-        let (mut p, h) = make("sampler");
-        // The organ holds its level, so what changes is the envelope.
-        set_plain(&h, "sound", 5.0);
+        let (mut p, h) = tone();
         set_plain(&h, "attack", 100.0);
         set_plain(&h, "decay", 200.0);
         set_plain(&h, "sustain", 50.0);
@@ -711,7 +499,7 @@ mod tests {
         p.prepare(&setup());
         let x = play(p.as_mut(), 60, 1.0, 48_000, 72_000);
         let level = |ms: f64| rms(&x[10 + (ms * 48.0) as usize..][..960]);
-        // What the organ gives at full level.
+        // What the file gives at full level.
         set_plain(&h, "attack", 1.0);
         set_plain(&h, "sustain", 100.0);
         p.prepare(&setup());
@@ -736,60 +524,145 @@ mod tests {
 
     #[test]
     fn velocity_sets_the_level_as_far_as_asked() {
-        let (mut p, h) = make("sampler");
+        let (mut p, h) = tone();
         let level = |p: &mut dyn Processor, v: f32| {
             p.prepare(&setup());
             rms(&play(p, 60, v, 9_600, 9_600))
         };
         set_plain(&h, "velocity", 100.0);
-        p.prepare(&setup());
         // Full spread: the square of the velocity.
         let r = level(p.as_mut(), 0.5) / level(p.as_mut(), 1.0);
         assert!((r - 0.25).abs() < 0.005, "{r}");
         set_plain(&h, "velocity", 0.0);
-        p.prepare(&setup());
         let r = level(p.as_mut(), 0.5) / level(p.as_mut(), 1.0);
         assert!((r - 1.0).abs() < 1e-6, "{r}");
     }
 
+    /// The filter: a lowpass darkens, a highpass thins, a bandpass keeps its middle
+    /// (PLG-067).
     #[test]
-    fn the_cutoff_darkens_the_sound() {
-        let (mut p, h) = make("sampler");
-        set_plain(&h, "sound", 2.0);
-        p.prepare(&setup());
-        let open = play(p.as_mut(), 72, 1.0, 24_000, 24_000);
-        set_plain(&h, "cutoff", 400.0);
-        p.prepare(&setup());
-        let dark = play(p.as_mut(), 72, 1.0, 24_000, 24_000);
+    fn the_filter_takes_what_its_type_asks() {
+        // A low and a high tone in one file.
+        let lo = sine(200.0, 0.3, 96_000);
+        let hi = sine(5_000.0, 0.3, 96_000);
+        let both: Vec<f32> = lo.iter().zip(&hi).map(|(a, b)| a + b).collect();
+        let (mut p, h) = of("two_C3.wav", both);
         // The highs: what changes from one frame to the next.
         let highs = |x: &[f32]| rms(&x.windows(2).map(|w| w[1] - w[0]).collect::<Vec<_>>());
+        let take = |p: &mut dyn Processor| {
+            p.prepare(&setup());
+            play(p, 60, 1.0, 24_000, 24_000)
+        };
+        let open = take(p.as_mut());
+        set_plain(&h, "cutoff", 400.0);
+        let dark = take(p.as_mut());
+        assert!(highs(&dark) < highs(&open) * 0.1, "lowpass");
+        set_plain(&h, "ftype", 2.0);
+        set_plain(&h, "cutoff", 2_000.0);
+        let thin = take(p.as_mut());
         assert!(
-            highs(&dark) < highs(&open) * 0.3,
-            "{} vs {}",
-            highs(&dark),
-            highs(&open)
+            rms(&thin) < rms(&open) * 0.8 && highs(&thin) > highs(&open) * 0.8,
+            "highpass"
         );
+        set_plain(&h, "ftype", 1.0);
+        set_plain(&h, "cutoff", 1_000.0);
+        let mid = take(p.as_mut());
+        assert!(rms(&mid) < rms(&open) * 0.5, "bandpass");
+        assert!(mid.iter().chain(&thin).all(|v| v.is_finite()));
+    }
+
+    /// A zone's Start and End cut its file, Reverse plays it backwards, and Normalize lifts
+    /// its loudest sample to full scale (PLG-067).
+    #[test]
+    fn a_zones_cut_shapes_what_it_plays() {
+        // A second of a quiet tone, then a second of silence.
+        let mut x = sine(440.0, 0.1, 48_000);
+        x.extend(std::iter::repeat_n(0.0, 48_000));
+        let (mut p, h) = of("half_A3.wav", x);
+        let take = |p: &mut dyn Processor| {
+            p.prepare(&setup());
+            play(p, 69, 1.0, 96_000, 96_000)
+        };
+        let whole = take(p.as_mut());
+        assert!(rms(&whole[1_000..47_000]) > 0.05);
+        assert_eq!(peak(&whole[48_100..]), 0.0);
+        // From the middle: only the silence plays.
+        assert!(h.set("file1.start", 0.5));
+        assert_eq!(peak(&take(p.as_mut())), 0.0);
+        // To a quarter: it ends there.
+        assert!(h.set("file1.start", 0.0));
+        assert!(h.set("file1.end", 0.25));
+        let cut = take(p.as_mut());
+        assert!(rms(&cut[1_000..23_000]) > 0.05);
+        assert_eq!(peak(&cut[24_100..]), 0.0);
+        // Backwards: the silence first, then the tone.
+        assert!(h.set("file1.end", 1.0));
+        assert!(h.set("file1.reverse", 1.0));
+        let back = take(p.as_mut());
+        assert_eq!(peak(&back[..47_900]), 0.0);
+        assert!(rms(&back[49_000..95_000]) > 0.05);
+        // Normalized: the tone at full scale.
+        assert!(h.set("file1.reverse", 0.0));
+        assert!(h.set("file1.normalize", 1.0));
+        let loud = take(p.as_mut());
+        let r = peak(&loud[1_000..47_000]) / peak(&whole[1_000..47_000]);
+        assert!((r - 10.0).abs() < 0.2, "{r}");
+    }
+
+    /// A looped zone plays round its loop while the key is down, the seam crossfaded
+    /// (PLG-067).
+    #[test]
+    fn a_looped_zone_sounds_while_the_key_is_down() {
+        let (mut p, h) = tone();
+        give(&h, vec![sine_file("tone_C3.wav", hz(60.0), 0.4, 24_000)]);
+        assert!(h.set("file1.loop", 1.0));
+        p.prepare(&setup());
+        let x = play(p.as_mut(), 60, 1.0, 96_000, 120_000);
+        // Half a second of file, held two seconds: still at its level near the end.
+        let level = rms(&x[86_000..95_000]);
+        assert!(level > 0.2, "{level}");
+        assert!(x.iter().all(|v| v.is_finite()));
+        let jump = x[2_000..95_000]
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0f32, f32::max);
+        // A sine at C3 moves at most 0.4 · 2π · 262 / 48000 a frame; the seam a little more.
+        assert!(jump < 0.03, "{jump}");
+        // Let go, it releases and ends.
+        assert_eq!(peak(&x[96_010 + 20_000..]), 0.0);
     }
 
     #[test]
     fn a_chord_takes_a_voice_a_note_and_more_notes_take_the_oldest() {
+        use super::super::files::{FileSet, channel};
         let bank = std::sync::Arc::new(super::super::bank::ParamBank::new(&xirius_params::SAMPLER));
-        let mut p = super::Sampler::new(super::super::bank::Params::new(bank), None);
+        let (mut out, inbox) = channel();
+        let mut p = super::Sampler::new(super::super::bank::Params::new(bank), Some(inbox));
+        let slots = vec![Some(sine_file("tone_C3.wav", 261.63, 0.2, 48_000))];
+        assert!(out.set(FileSet::layout(
+            &xirius_params::SAMPLER,
+            &std::collections::BTreeMap::new(),
+            slots
+        )));
         p.prepare(&setup());
         let silence = vec![0.0; 9_600];
         let notes: Vec<_> = (0..40).map(|k| (k * 10, on(30 + k as u8, 0.8))).collect();
         let (l, _) = render(&mut p, &silence, &silence, &notes);
         assert!(l.iter().all(|v| v.is_finite()));
         // The 32 newest notes sound; the first 8 gave way.
-        let mut playing: Vec<u8> = p.voices.iter().map(|v| v.pitch).collect();
+        let mut playing: Vec<u8> = p
+            .voices
+            .iter()
+            .filter(|v| v.active())
+            .map(|v| v.pitch)
+            .collect();
         playing.sort();
         assert_eq!(playing, (38..70).collect::<Vec<u8>>());
     }
 
     #[test]
     fn a_note_played_again_does_not_click() {
-        let (mut p, h) = make("sampler");
-        set_plain(&h, "sound", 5.0);
+        let (mut p, _) = tone();
         p.prepare(&setup());
         let silence = vec![0.0; 9_600];
         let notes = [(10, on(60, 1.0)), (4_000, on(60, 1.0))];
@@ -821,9 +694,7 @@ mod tests {
 
     #[test]
     fn pitch_bend_moves_a_held_note_two_semitones_either_way_and_back() {
-        let (mut p, h) = make("sampler");
-        plain(&h);
-        set_plain(&h, "cutoff", 1_000.0);
+        let (mut p, _) = tone();
         p.prepare(&setup());
         let silence = vec![0.0; 96_000];
         let notes = [
@@ -842,9 +713,7 @@ mod tests {
 
     #[test]
     fn the_sustain_pedal_keeps_a_released_note_sounding_until_it_comes_up() {
-        let (mut p, h) = make("sampler");
-        // The organ holds its level, so only the pedal keeps it.
-        set_plain(&h, "sound", 5.0);
+        let (mut p, h) = tone();
         set_plain(&h, "release", 100.0);
         p.prepare(&setup());
         let silence = vec![0.0; 72_000];
@@ -871,9 +740,7 @@ mod tests {
 
     #[test]
     fn the_modulation_wheel_adds_vibrato() {
-        let (mut p, h) = make("sampler");
-        plain(&h);
-        set_plain(&h, "cutoff", 1_000.0);
+        let (mut p, _) = tone();
         // The pitch over windows a tenth of the vibrato's cycle.
         let spread = |p: &mut dyn Processor, wheel: i32| {
             p.prepare(&setup());
@@ -897,16 +764,17 @@ mod tests {
 
     #[test]
     fn silence_without_notes() {
-        let (mut p, h) = make("sampler");
+        let (mut p, h) = tone();
         set_plain(&h, "resonance", 100.0);
         set_plain(&h, "cutoff", 1000.0);
+        set_plain(&h, "drive", 100.0);
         assert_silent(p.as_mut());
     }
 
     /// PLG-066: a note played and let go leaves no voice of the Sampler sounding.
     #[test]
     fn a_note_let_go_leaves_no_voice_sounding() {
-        let (mut p, h) = make("sampler");
+        let (mut p, h) = tone();
         let held = vec![0.0; 4_800];
         render(p.as_mut(), &held, &held, &[(0, on(60, 0.8))]);
         assert!(h.probe().sounding() > 0);

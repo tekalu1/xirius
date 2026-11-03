@@ -113,6 +113,9 @@ pub static EQ: BuiltinDef = BuiltinDef {
     uid: "eq",
     name: "EQ",
     kind: Kind::Effect,
+    retired: &[],
+    per_file: &[],
+    per_pad: &[],
     params: &[
         toggle("low_cut_on", "ローカット", false),
         hz("low_cut_freq", "ローカットの周波数", 20.0, 1000.0, 80.0),
@@ -183,6 +186,9 @@ pub static COMPRESSOR: BuiltinDef = BuiltinDef {
     uid: "compressor",
     name: "Compressor",
     kind: Kind::Effect,
+    retired: &[],
+    per_file: &[],
+    per_pad: &[],
     params: &[
         db("threshold", "スレッショルド", -60.0, 0.0, -18.0),
         spec("ratio", "レシオ", Unit::Ratio, 1.0, 20.0, 4.0, Curve::Log),
@@ -220,6 +226,9 @@ pub static DELAY: BuiltinDef = BuiltinDef {
     uid: "delay",
     name: "Delay",
     kind: Kind::Effect,
+    retired: &[],
+    per_file: &[],
+    per_pad: &[],
     params: &[
         toggle("sync", "テンポに合わせる", true),
         ms("time", "時間", 1.0, 2000.0, 375.0),
@@ -237,6 +246,9 @@ pub static REVERB: BuiltinDef = BuiltinDef {
     uid: "reverb",
     name: "Reverb",
     kind: Kind::Effect,
+    retired: &[],
+    per_file: &[],
+    per_pad: &[],
     params: &[
         pct("size", "広さ", 100.0, 50.0),
         spec(
@@ -269,6 +281,9 @@ pub static LIMITER: BuiltinDef = BuiltinDef {
     uid: "limiter",
     name: "Limiter",
     kind: Kind::Effect,
+    retired: &[],
+    per_file: &[],
+    per_pad: &[],
     params: &[
         db("input", "入力ゲイン", 0.0, 24.0, 0.0),
         db("ceiling", "上限", -24.0, 0.0, -0.3),
@@ -276,71 +291,168 @@ pub static LIMITER: BuiltinDef = BuiltinDef {
     ],
 };
 
-/// The sounds the Sampler has (made when it is prepared; see the engine's `stock::samples`).
-pub const SAMPLER_SOUNDS: &[&str] = &[
-    "ピアノ",
-    "エレピ",
-    "ストリングス",
-    "ベース",
-    "プラック",
-    "オルガン",
-];
+/// The Sampler's and the Drum Kit's sound, the same knobs in both (PLG-067, PLG-068): the
+/// envelope, the filter and the amp. The Sampler has one set for the device, the Drum Kit one
+/// per pad.
+macro_rules! voice {
+    () => {
+        [
+            ms("attack", "アタック", 1.0, 5000.0, 2.0),
+            ms("decay", "ディケイ", 1.0, 10_000.0, 1000.0),
+            pct("sustain", "サステイン", 100.0, 100.0),
+            ms("release", "リリース", 1.0, 10_000.0, 300.0),
+            choice("ftype", "フィルターの型", FILTER_TYPES, 0),
+            hz("cutoff", "カットオフ", 20.0, 20_000.0, 20_000.0),
+            pct("resonance", "レゾナンス", 100.0, 0.0),
+            pct("drive", "ドライブ", 100.0, 0.0),
+            semis("transpose", "トランスポーズ", 48.0),
+            spec(
+                "fine",
+                "微調整",
+                Unit::Cents,
+                -100.0,
+                100.0,
+                0.0,
+                Curve::Linear,
+            ),
+            db("volume", "ボリューム", -48.0, 12.0, 0.0),
+            spec("pan", "パン", Unit::Pan, -100.0, 100.0, 0.0, Curve::Linear),
+            pct("velocity", "ベロシティの効き", 100.0, 80.0),
+        ]
+    };
+}
+
+/// Where a sample plays from and how (PLG-067): a Sampler zone's own, a Drum Kit pad's.
+/// Start, End and the loop are shares of the file's length.
+macro_rules! sample {
+    () => {
+        [
+            pct("start", "開始", 100.0, 0.0),
+            pct("end", "終わり", 100.0, 100.0),
+            toggle("loop", "ループ", false),
+            pct("loop_start", "ループの開始", 100.0, 35.0),
+            pct("loop_end", "ループの終わり", 100.0, 85.0),
+            pct("xfade", "クロスフェード", 100.0, 10.0),
+            toggle("reverse", "逆再生", false),
+            toggle("normalize", "ノーマライズ", false),
+        ]
+    };
+}
+
+/// The filter's types: low pass, band pass, high pass.
+pub const FILTER_TYPES: &[&str] = &["LP", "BP", "HP"];
+
+const VOICE: [ParamSpec; 13] = voice!();
+const SAMPLE: [ParamSpec; 8] = sample!();
 
 pub static SAMPLER: BuiltinDef = BuiltinDef {
     uid: "sampler",
     name: "Sampler",
     kind: Kind::Instrument,
-    params: &[
-        choice("sound", "音色", SAMPLER_SOUNDS, 0),
-        ms("attack", "アタック", 1.0, 5000.0, 2.0),
-        ms("decay", "ディケイ", 1.0, 10_000.0, 1000.0),
-        pct("sustain", "サステイン", 100.0, 100.0),
-        ms("release", "リリース", 1.0, 10_000.0, 300.0),
-        hz("cutoff", "カットオフ", 20.0, 20_000.0, 20_000.0),
-        pct("resonance", "レゾナンス", 100.0, 0.0),
-        pct("velocity", "ベロシティの効き", 100.0, 80.0),
-        semis("tune", "ピッチ", 24.0),
-        spec(
-            "fine",
-            "微調整",
-            Unit::Cents,
-            -100.0,
-            100.0,
-            0.0,
-            Curve::Linear,
-        ),
-        db("volume", "ボリューム", -48.0, 12.0, 0.0),
-    ],
+    params: &VOICE,
+    // The synthesized sounds and the pitch in semitones of before PLG-067: a song that kept
+    // them opens without a word (`tune` is `transpose` now, over a wider range).
+    retired: &["sound", "tune"],
+    per_file: &SAMPLE,
+    per_pad: &[],
 };
 
-/// The Drum Kit's kits.
-pub const KITS: &[&str] = &["スタンダード", "エレクトロ"];
+/// The pads' names, bank by bank: A1..A16, B1..B16, .. H16. Pad `i` plays note 36 + i.
+pub const PAD_NAMES: [&str; PADS] = [
+    "A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10", "A11", "A12", "A13", "A14", "A15",
+    "A16", "B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B10", "B11", "B12", "B13", "B14",
+    "B15", "B16", "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10", "C11", "C12", "C13",
+    "C14", "C15", "C16", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11", "D12",
+    "D13", "D14", "D15", "D16", "E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9", "E10", "E11",
+    "E12", "E13", "E14", "E15", "E16", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10",
+    "F11", "F12", "F13", "F14", "F15", "F16", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8", "G9",
+    "G10", "G11", "G12", "G13", "G14", "G15", "G16", "H1", "H2", "H3", "H4", "H5", "H6", "H7",
+    "H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16",
+];
+
+/// How many pads a Drum Kit has: 8 banks of 16.
+pub const PADS: usize = 128;
+
+/// How a pad picks among its layers.
+pub const LAYER_MODES: &[&str] = &["Velocity", "Round Robin", "Random", "Stack"];
+/// How a pad plays a note: One Shot plays the whole envelope whatever the note-off, Loop
+/// loops the sample while the note is held, Normal is a Sampler's key, Toggle starts on one
+/// note and stops on the next.
+pub const TRIGGERS: &[&str] = &["One Shot", "Loop", "Normal", "Toggle"];
+/// The choke groups: a pad stops the others of its group (Self: only itself again).
+pub const CHOKES: [&str; 34] = [
+    "None", "Self", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
+    "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30",
+    "31", "32",
+];
+
+const PAD: [ParamSpec; 26] = {
+    let v: [ParamSpec; 13] = voice!();
+    let s: [ParamSpec; 8] = sample!();
+    [
+        v[0],
+        v[1],
+        v[2],
+        v[3],
+        v[4],
+        v[5],
+        v[6],
+        v[7],
+        v[8],
+        v[9],
+        v[10],
+        v[11],
+        v[12],
+        s[0],
+        s[1],
+        s[2],
+        s[3],
+        s[4],
+        s[5],
+        s[6],
+        s[7],
+        choice("layer_mode", "レイヤーの選び方", LAYER_MODES, 0),
+        choice("trigger", "トリガー", TRIGGERS, 0),
+        choice("choke", "チョーク", &CHOKES, 0),
+        toggle("mute", "ミュート", false),
+        toggle("solo", "ソロ", false),
+    ]
+};
+
+/// A Drum Kit's file: the pad it is on, and the top velocity of its layer there.
+const KIT_FILE: [ParamSpec; 2] = [
+    choice("pad", "パッド", &PAD_NAMES, 0),
+    spec(
+        "top",
+        "レイヤーの上端",
+        Unit::None,
+        1.0,
+        127.0,
+        127.0,
+        Curve::Int,
+    ),
+];
 
 pub static DRUM_KIT: BuiltinDef = BuiltinDef {
     uid: "drum-kit",
     name: "Drum Kit",
     kind: Kind::Instrument,
-    params: &[
-        choice("kit", "キット", KITS, 0),
-        db("volume", "ボリューム", -48.0, 12.0, 0.0),
-        semis("tune", "ピッチ", 12.0),
-        spec(
-            "decay",
-            "余韻",
-            Unit::Percent,
-            25.0,
-            400.0,
-            100.0,
-            Curve::Log,
-        ),
-        pct("velocity", "ベロシティの効き", 100.0, 100.0),
-        db("kick", "キック", -24.0, 12.0, 0.0),
-        db("snare", "スネア", -24.0, 12.0, 0.0),
-        db("hats", "ハイハット", -24.0, 12.0, 0.0),
-        db("toms", "タム", -24.0, 12.0, 0.0),
-        db("cymbals", "シンバル", -24.0, 12.0, 0.0),
-        db("percussion", "パーカッション", -24.0, 12.0, 0.0),
+    params: &[db("volume", "ボリューム", -48.0, 12.0, 0.0)],
+    // The synthesized kits and their knobs of before PLG-068.
+    retired: &[
+        "kit",
+        "tune",
+        "decay",
+        "velocity",
+        "kick",
+        "snare",
+        "hats",
+        "toms",
+        "cymbals",
+        "percussion",
     ],
+    per_file: &KIT_FILE,
+    per_pad: &PAD,
 };
 
 /// Instruments first, then effects, in the order the browser lists them.

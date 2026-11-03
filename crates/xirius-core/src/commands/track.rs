@@ -524,7 +524,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         read(
             "plugin.param.list",
-            "プラグインのパラメーターを一覧表示します（内蔵プラグインは範囲・単位・既定・今の値つき）",
+            "プラグインのパラメーターを一覧表示します（内蔵プラグインは範囲・単位・既定・今の値つき。サンプルとパッドの値は、設定したものだけ file1.start・A1.decay の形で続きます）",
             vec![ArgDef::id("id", IdKind::Plugin, "プラグイン").req()],
             |p, _, _, a| {
                 let id: PluginId = a.id("id")?;
@@ -535,22 +535,28 @@ pub(super) fn defs() -> Vec<CommandDef> {
                     .iter()
                     .find(|x| x.id == id)
                     .expect("found");
+                let row = |key: &str, s: &xirius_params::ParamSpec| {
+                    let norm = x
+                        .params
+                        .get(key)
+                        .copied()
+                        .unwrap_or_else(|| s.default_norm());
+                    let mut row = spec_json(s);
+                    row["id"] = json!(key);
+                    row["value"] = json!(norm);
+                    row["plain"] = json!(s.to_plain(norm));
+                    row["text"] = json!(s.text(s.to_plain(norm)));
+                    row
+                };
                 let rows: Vec<Value> = match x.builtin() {
                     Some(def) => def
                         .params
                         .iter()
-                        .map(|s| {
-                            let norm = x
-                                .params
-                                .get(s.id)
-                                .copied()
-                                .unwrap_or_else(|| s.default_norm());
-                            let mut row = spec_json(s);
-                            row["value"] = json!(norm);
-                            row["plain"] = json!(s.to_plain(norm));
-                            row["text"] = json!(s.text(s.to_plain(norm)));
-                            row
-                        })
+                        .map(|s| row(s.id, s))
+                        .chain(x.params.keys().filter_map(|k| {
+                            let r = builtin_key(x, k)?;
+                            (r.scope != xirius_params::Scope::Device).then(|| row(&r.key, r.spec))
+                        }))
                         .collect(),
                     None => x
                         .params
@@ -580,6 +586,8 @@ pub(super) fn defs() -> Vec<CommandDef> {
                                 xirius_params::Kind::Effect => "effect",
                             },
                             "params": d.params.iter().map(spec_json).collect::<Vec<_>>(),
+                            "per_file": d.per_file.iter().map(spec_json).collect::<Vec<_>>(),
+                            "per_pad": d.per_pad.iter().map(spec_json).collect::<Vec<_>>(),
                         })
                     })
                     .collect();
@@ -1404,7 +1412,15 @@ fn set_param(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
         .iter_mut()
         .find(|x| x.id == id)
         .expect("found");
-    let spec = x.builtin().and_then(|d| d.param(&name)).map(|(_, s)| s);
+    let found = builtin_key(x, &name);
+    if found.is_none() && x.builtin().and_then(|d| d.resolve(&name)).is_some() {
+        return Err(CmdError::not_found(format!(
+            "{} に {name} はありません（サンプルは {} 個）",
+            x.name,
+            x.samples.len()
+        )));
+    }
+    let spec = found.as_ref().map(|r| r.spec);
     let also = also_params(x, a)?;
     let mut plain_value: Option<f64> = None;
     let value = match (a.opt_f64("value"), a.opt_str("plain")) {
@@ -1443,11 +1459,12 @@ fn set_param(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
             return Err(CmdError::invalid("--value か --plain を指定してください"));
         }
     };
-    match spec {
-        Some(s) => {
-            x.params.insert(s.id.to_string(), value);
+    match found {
+        Some(r) => {
+            let s = r.spec;
+            x.params.insert(r.key.clone(), value);
             for (id, v) in &also {
-                x.params.insert(id.to_string(), *v);
+                x.params.insert(id.clone(), *v);
             }
             // `--plain 0.25` on a 0〜100 % parameter is the value in the unit (0.25 %) and
             // stays so, but a person who meant the 0〜1 fraction needs to hear which flag
@@ -1462,9 +1479,9 @@ fn set_param(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
             let message = match hint {
                 Some(hint) => format!(
                     "{id} の {}（{}）を {text} に設定しました。{hint}",
-                    s.label, s.id
+                    s.label, r.key
                 ),
-                None => format!("{id} の {}（{}）を {text} に設定しました", s.label, s.id),
+                None => format!("{id} の {}（{}）を {text} に設定しました", s.label, r.key),
             };
             Ok(match hint {
                 Some(hint) => Output::with(message, json!({ "warnings": [hint] })),
@@ -1483,9 +1500,20 @@ fn set_param(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
     }
 }
 
+/// What `name` is on the built-in `x`: one of its parameters, a value of one of its sample
+/// files (`file2.start`, only for a file it has) or of a pad (`A1.decay`), as the song keeps
+/// it.
+pub(crate) fn builtin_key(x: &Plugin, name: &str) -> Option<xirius_params::Resolved> {
+    let r = x.builtin()?.resolve(name)?;
+    match r.scope {
+        xirius_params::Scope::File(i) if i >= x.samples.len() => None,
+        _ => Some(r),
+    }
+}
+
 /// The other parameters `plugin.param.set` sets in the same step (`--also`), as the
-/// built-in's ids and 0..1 values: a point dragged on a device's graph moves two (UI-325).
-fn also_params(x: &Plugin, a: &Args) -> CmdResult<Vec<(&'static str, f64)>> {
+/// built-in's keys and 0..1 values: a point dragged on a device's graph moves two (UI-325).
+fn also_params(x: &Plugin, a: &Args) -> CmdResult<Vec<(String, f64)>> {
     let list = match a.0.get("also") {
         None | Some(Value::Null) => return Ok(Vec::new()),
         Some(Value::Array(list)) => list,
@@ -1495,21 +1523,20 @@ fn also_params(x: &Plugin, a: &Args) -> CmdResult<Vec<(&'static str, f64)>> {
             ));
         }
     };
-    let def = x.builtin();
     list.iter()
         .map(|o| {
             let name = o.get("param").and_then(Value::as_str).unwrap_or_default();
-            let Some((_, s)) = def.and_then(|d| d.param(name)) else {
+            let Some(r) = builtin_key(x, name) else {
                 return Err(CmdError::invalid(format!(
                     "also の {name} は {} のパラメーターではありません",
                     x.name
                 )));
             };
             match o.get("value").and_then(Value::as_f64) {
-                Some(v) if (0.0..=1.0).contains(&v) => Ok((s.id, v)),
+                Some(v) if (0.0..=1.0).contains(&v) => Ok((r.key, v)),
                 _ => Err(CmdError::range(format!(
                     "also の {} の value は 0〜1 で指定してください",
-                    s.id
+                    r.key
                 ))),
             }
         })

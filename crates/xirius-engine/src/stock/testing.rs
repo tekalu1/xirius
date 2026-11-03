@@ -118,3 +118,18 @@ pub fn on(pitch: u8, velocity: f32) -> NoteKind {
 pub fn off(pitch: u8) -> NoteKind {
     NoteKind::Off { pitch }
 }
+
+/// A file of a sine at `hz` for `frames`, both channels at `amp`, named `name` (its root note
+/// comes from it).
+pub fn sine_file(name: &str, hz: f64, amp: f64, frames: usize) -> super::files::FileSlot {
+    let data = crate::timeline::AudioData {
+        left: sine(hz, amp, frames),
+        right: sine(hz, amp, frames),
+    };
+    super::files::FileSlot::new(name, std::sync::Arc::new(data))
+}
+
+/// Gives a Sampler or a Drum Kit `files`, in order.
+pub fn give(h: &StockHandle, files: Vec<super::files::FileSlot>) {
+    assert!(h.set_files(files.into_iter().map(Some).collect()));
+}

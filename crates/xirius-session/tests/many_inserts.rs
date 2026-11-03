@@ -29,10 +29,28 @@ fn sixty_four_effects_render_the_note_offline() {
         .as_str()
         .unwrap()
         .to_owned();
-    run(
+    let sampler = run(
         &mut s,
         "plugin.add",
         json!({"track":t,"name":"Sampler","kind":"instrument"}),
+    )["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // The Sampler sounds only with a file (PLG-067).
+    let tmp = tempfile::Builder::new()
+        .prefix("xirius-inserts-")
+        .tempdir()
+        .unwrap();
+    let x: Vec<f32> = (0..24_000)
+        .map(|i| (i as f32 * 440.0 * std::f32::consts::TAU / 48_000.0).sin() * 0.5)
+        .collect();
+    let file = tmp.path().join("tone_C4.wav");
+    xirius_session::export::write_wav(&file, &x, &x, 48_000, 16).unwrap();
+    run(
+        &mut s,
+        "plugin.samples.add",
+        json!({"id":sampler,"file":file.display().to_string()}),
     );
     let c = run(&mut s, "clip.add.midi", json!({"track":t,"at":0,"bars":1}))["id"]
         .as_str()

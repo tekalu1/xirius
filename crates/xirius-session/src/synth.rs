@@ -1,6 +1,7 @@
-//! Placeholder instruments: stand-ins for the Sampler and the Drum Kit until real sample playback
-//! exists. They make a clearly audible, deterministic sound from note events so the session layer
-//! can be heard and tested end to end. Fixed voice count, no allocation while processing.
+//! Placeholder instruments: what plays a track whose instrument cannot be loaded, or that has
+//! none (the Sampler and the Drum Kit are silent without files). They make a clearly audible,
+//! deterministic sound from note events so the session layer can be heard and tested end to
+//! end. Fixed voice count, no allocation while processing.
 
 use std::f64::consts::TAU;
 

@@ -66,6 +66,7 @@ mod receipts;
 mod record;
 mod ripple;
 mod roll_view;
+pub mod samples;
 pub mod screen_ops;
 mod select;
 mod send_menu;
@@ -89,6 +90,7 @@ pub fn all() -> Vec<CommandDef> {
     v.extend(track::defs());
     v.extend(send_menu::defs());
     v.extend(sidechain::defs());
+    v.extend(samples::defs());
     v.extend(insert::defs());
     v.extend(group::defs());
     v.extend(preset::defs());

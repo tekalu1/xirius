@@ -1810,6 +1810,7 @@ impl Extension for SessionExt {
             || name == CLEANUP
             || import::NAMES.contains(&name)
             || crate::midi_import::NAMES.contains(&name)
+            || crate::sample_files::NAMES.contains(&name)
             || crate::clip_audio::NAMES.contains(&name)
             || crate::bounce::NAMES.contains(&name)
             || crate::clip_ara::NAMES.contains(&name)
@@ -1922,6 +1923,11 @@ impl Extension for SessionExt {
             }
             n if crate::midi_import::NAMES.contains(&n) => {
                 let plan = crate::midi_import::run(cx, args, dry)?;
+                self.pending.extend(plan.edits);
+                Ok(plan.output)
+            }
+            n if crate::sample_files::NAMES.contains(&n) => {
+                let plan = crate::sample_files::run(cx, n, args, dry)?;
                 self.pending.extend(plan.edits);
                 Ok(plan.output)
             }

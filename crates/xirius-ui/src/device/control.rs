@@ -108,17 +108,13 @@ pub fn name(def: &BuiltinDef, spec: &ParamSpec) -> &'static str {
         ("delay", "division") => "Beats",
         ("delay", "ping_pong") => "Ping-Pong",
         ("reverb", "predelay") => "Pre-delay",
-        ("sampler", "resonance") => "Res",
-        ("sampler", "tune") => "Transpose",
-        ("sampler", "fine") => "Tune",
-        ("drum-kit", "hats") => "Hi-Hat",
-        ("drum-kit", "percussion") => "Perc",
         _ => "",
     };
     if !own.is_empty() {
         return own;
     }
-    match spec.id {
+    // A sample file's or a pad's value is shown by its own id (`file2.start` is Start).
+    match xirius_params::bare_id(spec.id) {
         "output" => "Output",
         "threshold" => "Threshold",
         "ratio" => "Ratio",
@@ -139,16 +135,32 @@ pub fn name(def: &BuiltinDef, spec: &ParamSpec) -> &'static str {
         "early" => "Early",
         "width" => "Width",
         "ceiling" => "Ceiling",
-        "sound" => "Sound",
+        "ftype" => "Type",
         "cutoff" => "Cutoff",
-        "velocity" => "Velocity",
+        "resonance" => "Res",
+        "drive" => "Drive",
+        "transpose" => "Transpose",
+        "fine" => "Tune",
+        "pan" => "Pan",
+        "velocity" => "Vel",
+        // The voice's level in the Amp (the Sampler's, a pad's); the Drum Kit's own is Volume.
+        "volume" if def.uid == "sampler" || spec.id.contains('.') => "Gain",
         "volume" => "Volume",
-        "kit" => "Kit",
-        "tune" => "Tune",
-        "kick" => "Kick",
-        "snare" => "Snare",
-        "toms" => "Toms",
-        "cymbals" => "Cymbals",
+        "start" => "Start",
+        "end" => "End",
+        "loop" => "Loop",
+        "loop_start" => "Loop Start",
+        "loop_end" => "Loop End",
+        "xfade" => "X-Fade",
+        "reverse" => "Reverse",
+        "normalize" => "Normalize",
+        "layer_mode" => "Layers",
+        "trigger" => "Trigger",
+        "choke" => "Choke",
+        "mute" => "Mute",
+        "solo" => "Solo",
+        "pad" => "Pad",
+        "top" => "Top",
         _ => spec.label,
     }
 }

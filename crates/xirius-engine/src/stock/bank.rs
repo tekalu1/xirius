@@ -4,12 +4,13 @@
 //! audio thread only reads the values again after a change. Nothing here locks or allocates
 //! after [`ParamBank::new`].
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-use xirius_params::{BuiltinDef, MAX_PARAMS};
+use xirius_params::{BuiltinDef, MAX_PARAMS, Scope};
 
-use super::files::{FileOutbox, FileSet};
+use super::files::{FileOutbox, FileSet, FileSlot};
 use super::probe::Probe;
 use crate::rt_lock::Mutex;
 
@@ -87,14 +88,40 @@ impl ParamBank {
 pub struct StockHandle {
     bank: Arc<ParamBank>,
     /// The channel a file-taking built-in got; `None` for one that does not read files.
-    files: Option<Arc<Mutex<FileOutbox>>>,
+    files: Option<Arc<Mutex<Files>>>,
+}
+
+/// What a file-taking built-in's handle keeps to lay its files out again when a file's or a
+/// pad's value moves, without reading them again (PLG-067, PLG-068).
+struct Files {
+    out: FileOutbox,
+    slots: Vec<Option<FileSlot>>,
+    /// The values kept per file and per pad (0..1), under the keys the song keeps them by.
+    scoped: BTreeMap<String, f64>,
+    /// The last layout did not get through (the ring was full): the next change sends it.
+    pending: bool,
+}
+
+impl Files {
+    fn send(&mut self, def: &'static BuiltinDef) -> bool {
+        let set = FileSet::layout(def, &self.scoped, self.slots.clone());
+        self.pending = !self.out.set(set);
+        !self.pending
+    }
 }
 
 impl StockHandle {
     pub(crate) fn new(bank: Arc<ParamBank>, files: Option<FileOutbox>) -> StockHandle {
         StockHandle {
             bank,
-            files: files.map(|f| Arc::new(Mutex::new(f))),
+            files: files.map(|out| {
+                Arc::new(Mutex::new(Files {
+                    out,
+                    slots: Vec::new(),
+                    scoped: BTreeMap::new(),
+                    pending: false,
+                }))
+            }),
         }
     }
 
@@ -107,43 +134,85 @@ impl StockHandle {
         self.bank.probe().clone()
     }
 
-    /// Sets parameter `id` to `value` (0..1). False when there is no such parameter.
-    pub fn set(&self, id: &str, value: f64) -> bool {
-        match self.bank.def().param(id) {
-            Some((i, _)) => {
-                self.bank.set_norm(i, value);
-                true
-            }
-            None => false,
-        }
+    fn files(&self) -> Option<std::sync::MutexGuard<'_, Files>> {
+        self.files
+            .as_ref()
+            .map(|f| f.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
-    /// The 0..1 value of parameter `id`.
+    /// Sets parameter `id` to `value` (0..1): one of the device's, or a file's or a pad's
+    /// (`file2.start`, `A1.decay`), which lays the files out again. False when there is no
+    /// such parameter.
+    pub fn set(&self, id: &str, value: f64) -> bool {
+        let def = self.bank.def();
+        if let Some((i, _)) = def.param(id) {
+            self.bank.set_norm(i, value);
+            return true;
+        }
+        let Some(r) = def.resolve(id) else {
+            return false;
+        };
+        let Some(mut files) = self.files() else {
+            return false;
+        };
+        files.scoped.insert(r.key, value.clamp(0.0, 1.0));
+        files.send(def);
+        true
+    }
+
+    /// The 0..1 value of parameter `id` (a file's or a pad's too).
     pub fn get(&self, id: &str) -> Option<f64> {
-        self.bank
-            .def()
-            .param(id)
-            .map(|(i, _)| f64::from(self.bank.norm(i)))
+        let def = self.bank.def();
+        if let Some((i, _)) = def.param(id) {
+            return Some(f64::from(self.bank.norm(i)));
+        }
+        let r = def.resolve(id).filter(|r| r.scope != Scope::Device)?;
+        let files = self.files()?;
+        if let Scope::File(i) = r.scope
+            && r.spec.id == "pad"
+        {
+            let pad = def.file_pad(&files.scoped, i);
+            return Some(r.spec.to_norm(pad as f64));
+        }
+        Some(
+            files
+                .scoped
+                .get(&r.key)
+                .copied()
+                .unwrap_or_else(|| r.spec.default_norm()),
+        )
     }
 
     /// Sets every parameter from a song's values, and the ones it does not name to their
-    /// defaults. Returns the keys that are not parameters of this built-in.
+    /// defaults; a file's and a pad's values lay the files out again when they moved.
+    /// Returns the keys this built-in has no parameter for (the ones it no longer has are
+    /// dropped without a word).
     pub fn set_all<'a>(
         &self,
         values: impl IntoIterator<Item = (&'a String, &'a f64)>,
     ) -> Vec<String> {
         let def = self.bank.def();
         let mut given = [None; MAX_PARAMS];
+        let mut scoped = BTreeMap::new();
         let mut unknown = Vec::new();
         for (k, v) in values {
-            match def.param(k) {
-                Some((i, _)) => given[i] = Some(*v),
-                None => unknown.push(k.clone()),
+            if let Some((i, _)) = def.param(k) {
+                given[i] = Some(*v);
+            } else if let Some(r) = def.resolve(k).filter(|_| self.files.is_some()) {
+                scoped.insert(r.key, v.clamp(0.0, 1.0));
+            } else if !def.is_retired(k) {
+                unknown.push(k.clone());
             }
         }
         for (i, p) in def.params.iter().enumerate() {
             self.bank
                 .set_norm(i, given[i].unwrap_or_else(|| p.default_norm()));
+        }
+        if let Some(mut files) = self.files()
+            && (files.scoped != scoped || files.pending)
+        {
+            files.scoped = scoped;
+            files.send(def);
         }
         unknown
     }
@@ -158,20 +227,23 @@ impl StockHandle {
         self.files.is_some()
     }
 
-    /// Hands the device the newest set of read files, played from its next block. `false`
-    /// when this built-in takes no files or the ring is full.
-    pub fn set_files(&self, set: FileSet) -> bool {
-        let Some(files) = &self.files else {
+    /// Hands the device the newest read files, in the order the song lists them, laid out
+    /// with the files' and pads' values; played from its next block. `false` when this
+    /// built-in takes no files or the ring is full.
+    pub fn set_files(&self, slots: Vec<Option<FileSlot>>) -> bool {
+        let def = self.bank.def();
+        let Some(mut files) = self.files() else {
             return false;
         };
-        files.lock().unwrap_or_else(|e| e.into_inner()).set(set)
+        files.slots = slots;
+        files.send(def)
     }
 
     /// Frees the sets the audio thread handed back. Called inside `set_files`; on its own
     /// when a device is closed so nothing lingers.
     pub fn reclaim_files(&self) {
-        if let Some(files) = &self.files {
-            files.lock().unwrap_or_else(|e| e.into_inner()).reclaim();
+        if let Some(mut files) = self.files() {
+            files.out.reclaim();
         }
     }
 }

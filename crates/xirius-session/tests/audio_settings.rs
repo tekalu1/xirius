@@ -328,11 +328,23 @@ fn physical_output_routes_only_to_the_selected_pair() {
         )
         .unwrap();
     let t = made.data["id"].as_str().unwrap().parse().unwrap();
-    let (mut host, mut audio, _) = SessionHost::start(s.project(), HostConfig::default()).unwrap();
     let tmp = tempfile::Builder::new()
         .prefix("xirius-saved-output-")
         .tempdir()
         .unwrap();
+    // The Sampler sounds only with a file (PLG-067).
+    let tone: Vec<f32> = (0..48_000)
+        .map(|i| (i as f32 * 440.0 * std::f32::consts::TAU / 48_000.0).sin() * 0.5)
+        .collect();
+    let file = tmp.path().join("tone_C4.wav");
+    xirius_session::export::write_wav(&file, &tone, &tone, 48_000, 16).unwrap();
+    s.run_value(
+        "plugin.samples.add",
+        json!({"id": made.data["plugin"], "file": file.display().to_string()}),
+        &RunOptions::human(),
+    )
+    .unwrap();
+    let (mut host, mut audio, _) = SessionHost::start(s.project(), HostConfig::default()).unwrap();
     let dir = tmp.path().join("prefs");
     xirius_session::io_store::write(
         &dir,

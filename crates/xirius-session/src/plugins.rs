@@ -1960,14 +1960,15 @@ impl PluginLoader {
         }
     }
 
-    /// Reads the files `x` lists into a [`FileSet`] at the mix's rate, off the audio thread.
-    /// A file that cannot be read is an empty slot and is named in `warnings`.
+    /// Reads the files `x` lists into slots at the mix's rate, off the audio thread; the
+    /// handle lays them out with the device's values. A file that cannot be read is an empty
+    /// slot and is named in `warnings`.
     fn load_set(
         &mut self,
         x: &Plugin,
         warnings: &mut Vec<String>,
-    ) -> xirius_engine::stock::files::FileSet {
-        use xirius_engine::stock::files::{FileSet, FileSlot};
+    ) -> Vec<Option<xirius_engine::stock::files::FileSlot>> {
+        use xirius_engine::stock::files::FileSlot;
         let mut slots = Vec::with_capacity(x.samples.len());
         for name in &x.samples {
             let path = self.resolve(name);
@@ -1976,14 +1977,14 @@ impl PluginLoader {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| name.clone());
             match self.wavs.load(&path, self.rate) {
-                Ok(data) => slots.push(Some(FileSlot { name: leaf, data })),
+                Ok(data) => slots.push(Some(FileSlot::new(leaf, data))),
                 Err(e) => {
                     warnings.push(e);
                     slots.push(None);
                 }
             }
         }
-        FileSet { slots }
+        slots
     }
 
     /// Warnings `apply` left while it moved a built-in's files (the missing ones).
@@ -2047,6 +2048,10 @@ impl PluginLoader {
     pub fn apply(&mut self, x: &Plugin) -> bool {
         if let Some(s) = self.stock.get_mut(&x.id) {
             if crate::host::on_window_thread() && s.applied.samples != x.samples {
+                return false;
+            }
+            // The last file gone, the stand-in plays again: a new mix.
+            if x.samples.is_empty() && !s.applied.samples.is_empty() {
                 return false;
             }
             // Only the values and the files move; another built-in or format takes a new
@@ -3180,7 +3185,6 @@ mod tests {
     /// it again once the device polls (ENG-077).
     #[test]
     fn a_full_ring_leaves_the_new_files_pending_until_the_device_polls() {
-        use xirius_engine::stock::files::FileSet;
         use xirius_engine::{AudioIo, RenderMode};
         let tmp = tempfile::Builder::new()
             .prefix("xirius-plugin-samples-")
@@ -3208,7 +3212,7 @@ mod tests {
         // Fill the inbox ring (QUEUE is 8; one set is already in it from `stock`).
         let h = loader.stock.get(&x.id).unwrap().handle.clone();
         for _ in 0..8 {
-            if !h.set_files(FileSet::default()) {
+            if !h.set_files(Vec::new()) {
                 break;
             }
         }

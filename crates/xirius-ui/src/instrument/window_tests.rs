@@ -135,8 +135,8 @@ fn a_knob_turns_while_dragged_and_is_one_step_when_let_go() {
 fn a_stepped_knob_lands_on_its_steps() {
     let (mut s, g, t, id) = studio();
     s.show_instrument(t, id);
-    // 音色 is a choice of six: a drag lands on one of them.
-    let (sound, spec) = plugin(&s, t).builtin().unwrap().param("sound").unwrap();
+    // The transposition is in whole semitones: a drag lands on one of them.
+    let (sound, spec) = plugin(&s, t).builtin().unwrap().param("transpose").unwrap();
     let (x, y) = at(&s, &g, id, Part::Knob(sound));
     assert!(s.instrument_down(&g, x, y));
     assert!(s.instrument_moved(&g, x, y - 40.0, false));
@@ -145,7 +145,7 @@ fn a_stepped_knob_lands_on_its_steps() {
     let plain = spec.to_plain(now);
     assert_eq!(plain, plain.round());
     assert!(plain >= 1.0, "{plain}");
-    assert_eq!(text(spec, now), spec.choices()[plain as usize]);
+    assert_eq!(text(spec, now), spec.text(plain));
 }
 
 #[test]
@@ -327,7 +327,7 @@ fn added(s: &Studio, t: TrackId, name: &str) -> PluginId {
 fn the_bars_parts_are_in_sight_at_1280_and_360() {
     // UI-322: every seat of the shared bar sits inside the window at both
     // screen sizes, a press on it landing on its part. The Sampler's window
-    // is narrower than the bar's narrow width: ‹ › hide and the name cuts.
+    // is wider than the bar's narrow width: ‹ › show.
     let (mut s, _, t, id) = studio();
     s.show_instrument(t, id);
     for w in [1280.0, 360.0] {
@@ -345,13 +345,13 @@ fn the_bars_parts_are_in_sight_at_1280_and_360() {
                 "{part:?} at {w}"
             );
         }
-        // No ‹ › and no side-chain seat on a window this narrow.
+        // ‹ ›, and no side-chain seat on an instrument.
         assert!(
-            s.instrument_center(&g, id, Part::PrevPreset).is_none(),
+            s.instrument_center(&g, id, Part::PrevPreset).is_some(),
             "at {w}"
         );
         assert!(
-            s.instrument_center(&g, id, Part::NextPreset).is_none(),
+            s.instrument_center(&g, id, Part::NextPreset).is_some(),
             "at {w}"
         );
         assert!(

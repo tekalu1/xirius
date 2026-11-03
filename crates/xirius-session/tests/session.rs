@@ -609,10 +609,10 @@ fn a_fixed_song_exports_a_fixed_wav() {
     assert_eq!(std::fs::read(&out).unwrap(), std::fs::read(&again).unwrap());
 }
 
-// The lead and the bass are played by the built-in Sampler's piano (PLG-004), which starts
-// louder and fades, where the placeholder held a sine: a lower RMS and a higher peak.
-const EXPECT_RMS: f64 = 0.107_587;
-const EXPECT_PEAK: f64 = 0.782_016;
+// The lead and the bass have no instrument, so the placeholder tone plays them: the Sampler
+// stands in no more, as it sounds only with a file (PLG-067).
+const EXPECT_RMS: f64 = 0.216_358;
+const EXPECT_PEAK: f64 = 0.624_381;
 
 #[test]
 fn the_export_format_follows_the_song_settings_and_the_options() {

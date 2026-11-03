@@ -17,10 +17,10 @@ mod limiter;
 pub mod probe;
 pub mod reverb;
 mod sampler;
-mod samples;
 #[cfg(test)]
 #[allow(dead_code)]
 mod testing;
+mod voice;
 
 use std::sync::Arc;
 

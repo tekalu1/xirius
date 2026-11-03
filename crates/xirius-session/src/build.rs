@@ -883,6 +883,13 @@ impl Builder {
                     stand_in(flavor_of(x))
                 }
             },
+            // A Sampler or a Drum Kit with no files plays the stand-in, so a new instrument
+            // track sounds before it has any (PLG-067, PLG-068).
+            Some(x)
+                if x.samples.is_empty() && x.builtin().is_some_and(|d| !d.per_file.is_empty()) =>
+            {
+                stand_in(flavor_of(x))
+            }
             Some(x) if x.builtin().is_some_and(|d| d.kind == Kind::Instrument) => {
                 match self.plugins.stock(x) {
                     Some((p, w)) => {
@@ -1131,17 +1138,11 @@ fn is_drums(x: &Plugin) -> bool {
     hit(&x.name) || hit(&x.uid)
 }
 
-/// The instrument that plays a track whose own cannot: the built-in Sampler or Drum Kit, or the
-/// placeholder while the engine has no processor for it.
+/// The instrument that plays a track whose own cannot, or that has none: the placeholder, a
+/// tone or drum hits. It also plays for a Sampler or a Drum Kit until it has a file, as they
+/// play only the files a song gives them (PLG-067, PLG-068).
 fn stand_in(flavor: Flavor) -> Box<dyn Processor> {
-    let key = match flavor {
-        Flavor::Tone => "sampler",
-        Flavor::Drums => "drum-kit",
-    };
-    match xirius_engine::stock::create(key) {
-        Some((p, _)) => p,
-        None => Box::new(PlaceholderSynth::new(flavor)),
-    }
+    Box::new(PlaceholderSynth::new(flavor))
 }
 
 fn flavor_of(x: &Plugin) -> Flavor {

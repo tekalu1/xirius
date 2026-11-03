@@ -609,6 +609,19 @@ fn every_history_command_undoes_and_redoes() {
         json!({"instrument": "Sampler", "arm": true,
                "notes": [{"at": 0, "pitch": 60, "length": 480}]}),
     );
+    // the files of a Sampler and a Drum Kit (PLG-067, PLG-068)
+    rig.step(
+        "plugin.samples.add",
+        json!({"id": played.data["plugin"], "files": [{"file": "a_C3.wav"}, {"file": "b_C4.wav"}]}),
+    );
+    rig.step(
+        "plugin.samples.set",
+        json!({"id": played.data["plugin"], "index": 2, "file": "c_C4.wav"}),
+    );
+    rig.step(
+        "plugin.samples.remove",
+        json!({"id": played.data["plugin"], "index": 1}),
+    );
     rig.step(
         "plugin.preset.load",
         json!({"id": played.data["plugin"], "preset": "Bright",

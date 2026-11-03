@@ -67,6 +67,7 @@ pub mod read_jobs;
 pub mod recent;
 pub mod record;
 pub mod reveal;
+pub mod sample_files;
 pub mod samples;
 pub mod smf;
 pub mod starting;

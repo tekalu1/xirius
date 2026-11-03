@@ -162,6 +162,8 @@ const TAKE_OFF: &[&str] = &[
     "midimap.unset",
     // The clip stays; the ARA plugin leaves it (EDT-023, the plan's 付け外し).
     "clip.ara.detach",
+    // The file stays on the disk: only the device stops reading it.
+    "plugin.samples.remove",
 ];
 
 #[test]

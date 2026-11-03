@@ -16,8 +16,8 @@ pub mod eq;
 pub mod pitch;
 
 pub use catalog::{
-    BUILTINS, COMPRESSOR, DELAY, DIVISIONS, DRUM_KIT, EQ, FEELS, KITS, LIMITER, REVERB, SAMPLER,
-    SAMPLER_SOUNDS, SLOPES,
+    BUILTINS, CHOKES, COMPRESSOR, DELAY, DIVISIONS, DRUM_KIT, EQ, FEELS, FILTER_TYPES, LAYER_MODES,
+    LIMITER, PAD_NAMES, PADS, REVERB, SAMPLER, SLOPES, TRIGGERS,
 };
 pub use eq::{BandType, EQ_BANDS, EqBand};
 
@@ -34,6 +34,8 @@ pub enum Unit {
     Ratio,
     Semitones,
     Cents,
+    /// Left to right, -100..100, shown as `L50`, `C`, `R50`.
+    Pan,
 }
 
 impl Unit {
@@ -49,6 +51,7 @@ impl Unit {
             Unit::Ratio => ":1",
             Unit::Semitones => "st",
             Unit::Cents => "cent",
+            Unit::Pan => "",
         }
     }
 }
@@ -200,6 +203,7 @@ impl ParamSpec {
             _ => {}
         }
         match self.unit {
+            Unit::None if self.curve == Curve::Int => format!("{v:.0}"),
             Unit::None => format!("{v:.2}"),
             Unit::Db => format!("{v:.1} dB"),
             Unit::Hz if v >= 10_000.0 => format!("{:.1} kHz", v / 1000.0),
@@ -214,6 +218,7 @@ impl ParamSpec {
             Unit::Ratio => format!("{v:.1}:1"),
             Unit::Semitones => format!("{v:+.0} st"),
             Unit::Cents => format!("{v:+.0} cent"),
+            Unit::Pan => pan_text(v),
         }
     }
 
@@ -224,6 +229,9 @@ impl ParamSpec {
         let (lo, hi) = self.range();
         if let Ok(v) = t.parse::<f64>() {
             return (v.is_finite() && v >= lo && v <= hi).then_some(v);
+        }
+        if self.unit == Unit::Pan {
+            return pan_parse(t).filter(|v| *v >= lo && *v <= hi);
         }
         match self.curve {
             Curve::Choice(labels) => labels
@@ -270,6 +278,9 @@ impl ParamSpec {
             }
             _ => {}
         }
+        if self.unit == Unit::Pan {
+            return pan_parse(&t).and_then(clamp);
+        }
         let lower = t.to_lowercase();
         if matches!(lower.as_str(), "off" | "オフ") {
             return match self.off {
@@ -308,6 +319,33 @@ impl ParamSpec {
     }
 }
 
+/// A pan as it reads: `C` in the middle, else the side and how far (`L50`, `R100`).
+fn pan_text(v: f64) -> String {
+    let n = v.abs().round();
+    if n < 1.0 {
+        "C".to_string()
+    } else if v < 0.0 {
+        format!("L{n:.0}")
+    } else {
+        format!("R{n:.0}")
+    }
+}
+
+/// `C`, `L50`, `r 20` or a plain number (left below 0).
+fn pan_parse(t: &str) -> Option<f64> {
+    let t = t.trim().to_ascii_uppercase();
+    if t == "C" {
+        return Some(0.0);
+    }
+    if let Some(rest) = t.strip_prefix('L') {
+        return rest.trim().parse::<f64>().ok().map(|v| -v.abs());
+    }
+    if let Some(rest) = t.strip_prefix('R') {
+        return rest.trim().parse::<f64>().ok().map(f64::abs);
+    }
+    t.parse::<f64>().ok().filter(|v| v.is_finite())
+}
+
 /// A full-width digit, sign or mark as the half-width one (what an IME types).
 fn halfwidth(c: char) -> char {
     match c {
@@ -334,6 +372,55 @@ pub struct BuiltinDef {
     pub name: &'static str,
     pub kind: Kind,
     pub params: &'static [ParamSpec],
+    /// Ids a song from before may still keep: they are dropped without a warning.
+    pub retired: &'static [&'static str],
+    /// What each of the device's sample files has (PLG-067): kept as `file<n>.<id>`, `n`
+    /// counting the plugin's `samples` from 1.
+    pub per_file: &'static [ParamSpec],
+    /// What each pad has (PLG-068): kept as `<pad>.<id>`, the pad named as [`PAD_NAMES`].
+    pub per_pad: &'static [ParamSpec],
+}
+
+/// Whose value a key is ([`BuiltinDef::resolve`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Scope {
+    /// The device's own: one of `params`.
+    Device,
+    /// A sample file's, by its index (from 0) in the plugin's `samples`.
+    File(usize),
+    /// A pad's, 0..[`PADS`].
+    Pad(usize),
+}
+
+/// A key of a built-in's values, read ([`BuiltinDef::resolve`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Resolved {
+    /// The key as a song keeps it (`attack`, `file2.start`, `A1.decay`).
+    pub key: String,
+    pub scope: Scope,
+    pub spec: &'static ParamSpec,
+}
+
+/// The key a sample file's value is kept under: `file<n>.<id>` (`n` from 1).
+pub fn file_key(index: usize, id: &str) -> String {
+    format!("file{}.{id}", index + 1)
+}
+
+/// The key a pad's value is kept under: `A1.decay`.
+pub fn pad_key(pad: usize, id: &str) -> String {
+    format!("{}.{id}", PAD_NAMES[pad % PADS])
+}
+
+/// The pad a name like `A1` or `h16` means.
+pub fn pad_of(name: &str) -> Option<usize> {
+    PAD_NAMES
+        .iter()
+        .position(|p| p.eq_ignore_ascii_case(name.trim()))
+}
+
+/// A key's own id, without the file or pad it is of (`file2.start` is `start`).
+pub fn bare_id(key: &str) -> &str {
+    key.rsplit_once('.').map_or(key, |(_, id)| id)
 }
 
 impl BuiltinDef {
@@ -348,6 +435,102 @@ impl BuiltinDef {
     /// Every parameter's id and default as a 0..1 value, in order.
     pub fn defaults(&self) -> impl Iterator<Item = (&'static str, f64)> + '_ {
         self.params.iter().map(|p| (p.id, p.default_norm()))
+    }
+
+    /// What a key names: one of the device's parameters (`attack`), a sample file's value
+    /// (`file2.start`) or a pad's (`A1.decay`). Letter case is ignored; the key comes back as
+    /// the song keeps it.
+    pub fn resolve(&self, key: &str) -> Option<Resolved> {
+        if let Some((_, spec)) = self.param(key) {
+            return Some(Resolved {
+                key: spec.id.to_string(),
+                scope: Scope::Device,
+                spec,
+            });
+        }
+        let (head, id) = key.trim().split_once('.')?;
+        let find =
+            |specs: &'static [ParamSpec]| specs.iter().find(|p| p.id.eq_ignore_ascii_case(id));
+        let file = head
+            .get(..4)
+            .filter(|h| h.eq_ignore_ascii_case("file"))
+            .and_then(|_| head[4..].parse::<usize>().ok())
+            .filter(|n| *n >= 1);
+        if let Some(n) = file {
+            let spec = find(self.per_file)?;
+            return Some(Resolved {
+                key: file_key(n - 1, spec.id),
+                scope: Scope::File(n - 1),
+                spec,
+            });
+        }
+        let pad = pad_of(head)?;
+        let spec = find(self.per_pad)?;
+        Some(Resolved {
+            key: pad_key(pad, spec.id),
+            scope: Scope::Pad(pad),
+            spec,
+        })
+    }
+
+    /// The pad the Drum Kit's file `i` (from 0) is a layer of: what `file<n>.pad` says, else
+    /// the `i`th pad, so files given without one fill the pads in order. 0 on a device
+    /// without pads.
+    pub fn file_pad(&self, values: &std::collections::BTreeMap<String, f64>, i: usize) -> usize {
+        let Some(spec) = self.per_file.iter().find(|p| p.id == "pad") else {
+            return 0;
+        };
+        values
+            .get(&file_key(i, "pad"))
+            .map_or(i, |v| spec.to_plain(*v).round().max(0.0) as usize)
+            .min(PADS - 1)
+    }
+
+    /// Whether a key is one the device no longer has ([`Self::retired`]).
+    pub fn is_retired(&self, key: &str) -> bool {
+        self.retired.iter().any(|r| r.eq_ignore_ascii_case(key))
+    }
+
+    /// The device's parameters followed by a file's or a pad's, under the keys the song keeps
+    /// them by (`file2.start`): what a window shows while that zone or pad is chosen. Made
+    /// once for each and kept, so it lives as long as the program.
+    pub fn view(&'static self, scope: Scope) -> &'static BuiltinDef {
+        type Views = Vec<(&'static str, Scope, &'static BuiltinDef)>;
+        static VIEWS: std::sync::Mutex<Views> = std::sync::Mutex::new(Vec::new());
+        let extra = match scope {
+            Scope::Device => return self,
+            Scope::File(_) => self.per_file,
+            Scope::Pad(_) => self.per_pad,
+        };
+        if extra.is_empty() {
+            return self;
+        }
+        let mut views = VIEWS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((_, _, d)) = views.iter().find(|(u, s, _)| *u == self.uid && *s == scope) {
+            return d;
+        }
+        let key = |id: &str| match scope {
+            Scope::File(i) => file_key(i, id),
+            Scope::Pad(p) => pad_key(p, id),
+            Scope::Device => id.to_string(),
+        };
+        let params: Vec<ParamSpec> = self
+            .params
+            .iter()
+            .copied()
+            .chain(extra.iter().map(|p| ParamSpec {
+                id: Box::leak(key(p.id).into_boxed_str()),
+                ..*p
+            }))
+            .collect();
+        let d: &'static BuiltinDef = Box::leak(Box::new(BuiltinDef {
+            params: Box::leak(params.into_boxed_slice()),
+            ..*self
+        }));
+        views.push((self.uid, scope, d));
+        d
     }
 }
 
@@ -810,5 +993,72 @@ mod tests {
         assert_eq!(on.typed("オフ"), Some(0.0));
         assert_eq!(gain.typed("loud"), None);
         assert_eq!(gain.typed(""), None);
+    }
+
+    #[test]
+    fn a_files_and_a_pads_values_resolve_to_the_keys_a_song_keeps() {
+        let r = SAMPLER.resolve("FILE2.Start").unwrap();
+        assert_eq!((r.key.as_str(), r.scope), ("file2.start", Scope::File(1)));
+        assert_eq!(r.spec.id, "start");
+        let r = DRUM_KIT.resolve("h16.decay").unwrap();
+        assert_eq!((r.key.as_str(), r.scope), ("H16.decay", Scope::Pad(127)));
+        let r = DRUM_KIT.resolve("file1.pad").unwrap();
+        assert_eq!(r.scope, Scope::File(0));
+        assert_eq!(SAMPLER.resolve("attack").unwrap().scope, Scope::Device);
+        // No pads on a Sampler, no file 0, no such id.
+        assert!(SAMPLER.resolve("A1.decay").is_none());
+        assert!(SAMPLER.resolve("file0.start").is_none());
+        assert!(DRUM_KIT.resolve("A1.nothing").is_none());
+        assert!(DRUM_KIT.resolve("I1.decay").is_none());
+        assert!(EQ.resolve("file1.start").is_none());
+        assert!(SAMPLER.is_retired("sound") && DRUM_KIT.is_retired("kick"));
+        assert_eq!(bare_id("A1.decay"), "decay");
+    }
+
+    #[test]
+    fn a_view_puts_a_files_or_a_pads_values_after_the_devices() {
+        let v = SAMPLER.view(Scope::File(2));
+        assert_eq!(
+            v.params.len(),
+            SAMPLER.params.len() + SAMPLER.per_file.len()
+        );
+        assert_eq!(v.params[SAMPLER.params.len()].id, "file3.start");
+        assert!(std::ptr::eq(v, SAMPLER.view(Scope::File(2))));
+        let v = DRUM_KIT.view(Scope::Pad(17));
+        assert_eq!(v.param("B2.trigger").unwrap().1.choices(), TRIGGERS);
+        assert!(v.params.len() <= MAX_PARAMS);
+        assert!(std::ptr::eq(EQ.view(Scope::Pad(0)), &EQ));
+    }
+
+    #[test]
+    fn the_scoped_values_are_well_formed() {
+        for d in BUILTINS {
+            for p in d.per_file.iter().chain(d.per_pad) {
+                let (lo, hi) = p.range();
+                assert!(lo < hi && (lo..=hi).contains(&p.default), "{}", p.id);
+                assert!(d.param(p.id).is_none() || p.id == "volume", "{}", p.id);
+            }
+            assert!(d.params.len() + d.per_file.len().max(d.per_pad.len()) <= MAX_PARAMS);
+        }
+        assert_eq!(PAD_NAMES[0], "A1");
+        assert_eq!(PAD_NAMES[127], "H16");
+        assert_eq!(pad_of("b3"), Some(18));
+        assert_eq!(pad_key(18, "decay"), "B3.decay");
+        assert_eq!(file_key(0, "pad"), "file1.pad");
+    }
+
+    #[test]
+    fn a_pan_reads_as_a_side_and_how_far() {
+        let pan = SAMPLER.param("pan").unwrap().1;
+        assert_eq!(pan.text(0.0), "C");
+        assert_eq!(pan.text(-50.0), "L50");
+        assert_eq!(pan.text(100.0), "R100");
+        assert_eq!(pan.typed("L50"), Some(-50.0));
+        assert_eq!(pan.typed("r 20"), Some(20.0));
+        assert_eq!(pan.typed("c"), Some(0.0));
+        assert_eq!(pan.typed("-30"), Some(-30.0));
+        assert_eq!(pan.parse("R10"), Some(10.0));
+        let top = DRUM_KIT.resolve("file1.top").unwrap().spec;
+        assert_eq!(top.text(64.0), "64");
     }
 }

@@ -468,7 +468,8 @@ impl Noise {
     }
 }
 
-/// A topology-preserving state-variable lowpass (resonance 0..1).
+/// A topology-preserving state-variable filter (resonance 0..1): lowpass, and the bandpass
+/// (unity at its centre) and highpass of the same state.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Svf {
     ic1: f64,
@@ -480,6 +481,7 @@ pub struct SvfCoefs {
     a1: f64,
     a2: f64,
     a3: f64,
+    k: f64,
 }
 
 impl SvfCoefs {
@@ -490,11 +492,13 @@ impl SvfCoefs {
         let a1 = 1.0 / (1.0 + g * (g + k));
         let a2 = g * a1;
         let a3 = g * a2;
-        SvfCoefs { a1, a2, a3 }
+        SvfCoefs { a1, a2, a3, k }
     }
 }
 
 impl Svf {
+    pub const ZERO: Svf = Svf { ic1: 0.0, ic2: 0.0 };
+
     #[inline]
     pub fn lowpass(&mut self, c: &SvfCoefs, x: f64) -> f64 {
         let v3 = x - self.ic2;
@@ -503,6 +507,17 @@ impl Svf {
         self.ic1 = flush(2.0 * v1 - self.ic1);
         self.ic2 = flush(2.0 * v2 - self.ic2);
         v2
+    }
+
+    /// The lowpass, bandpass and highpass of `x` (one step of the filter).
+    #[inline]
+    pub fn tick(&mut self, c: &SvfCoefs, x: f64) -> (f64, f64, f64) {
+        let v3 = x - self.ic2;
+        let v1 = c.a1 * self.ic1 + c.a2 * v3;
+        let v2 = self.ic2 + c.a2 * self.ic1 + c.a3 * v3;
+        self.ic1 = flush(2.0 * v1 - self.ic1);
+        self.ic2 = flush(2.0 * v2 - self.ic2);
+        (v2, c.k * v1, x - c.k * v1 - v2)
     }
 
     pub fn reset(&mut self) {

@@ -1,587 +1,38 @@
-//! The Drum Kit (PLG-005): drums made as they are hit, from the recipes below (no samples).
+//! The Drum Kit (PLG-068): 128 pads (banks A to H of 16) that play the files the song gave
+//! it, each through its own voice of the Sampler's ([`super::voice`]).
 //!
-//! A hit is up to two oscillators whose pitch falls from where it starts (the skin), noise
-//! through a low cut and a high cut (snares, claps, shakers), and six square waves at the
-//! uneven ratios of an analogue drum machine through a low cut (hats and cymbals). Each part
-//! fades 60 dB over its time. Notes follow the General MIDI drum map; the two kits are a
-//! standard kit and an electronic one in the manner of an analogue drum machine. A closed or
-//! pedal hat stops an open one. Tune and decay apply to the hits that start after they move;
-//! the volume and the group levels move what plays. No latency.
+//! A pad's files are its layers ([`FileSet::layout`]): the hit's velocity picks one, or they
+//! take turns, or one is picked at random, or all play at once, as the pad's layer mode asks.
+//! The pad's trigger says what its key does after the hit: a one shot plays to its end, a
+//! loop or a normal pad sounds while the key is down, a toggle starts on one press and lets
+//! go on the next. A pad that chokes itself cuts its last hit when hit again; pads in the
+//! same choke group cut each other. A muted pad is silent; while any pad is soloed, only the
+//! soloed ones sound. Without files it is silent. No latency.
 //!
-//! Controllers (EDT-004) leave it alone: a hit plays out whatever the key or the sustain pedal
-//! does after it, and a General MIDI kit does not bend or take vibrato.
-
-use std::f64::consts::{FRAC_1_SQRT_2, PI, TAU};
+//! Notes: C1 (36) is pad A1 and each key up is the next pad, round the 128 keys.
+//!
+//! Controllers (EDT-004) leave it alone: pads do not bend or take vibrato.
 
 use std::sync::Arc;
 
+use xirius_params::PADS;
+
 use super::bank::Params;
-use super::dsp::{Biquad, Coefs, Glide, Noise, Ramp, STEP, db_to_gain};
-use super::files::{FileInbox, FileSet};
+use super::dsp::{Glide, Ramp, STEP, db_to_gain};
+use super::files::{FileInbox, FileSet, LayerMode, Trigger};
+use super::voice::{Shape, Stage, Voice, data_of};
 use crate::processor::{AudioIo, NoteEvent, NoteKind, ProcessSetup, Processor};
 
 // The parameters, in the order of `xirius_params::DRUM_KIT`.
-const KIT: usize = 0;
-const VOLUME: usize = 1;
-const TUNE: usize = 2;
-const DECAY: usize = 3;
-const VELOCITY: usize = 4;
-/// The group levels follow in the order of the groups.
-const GROUP_LEVELS: usize = 5;
+const VOLUME: usize = 0;
 
-// The groups.
-const KICK: usize = 0;
-const SNARE: usize = 1;
-const HATS: usize = 2;
-const TOMS: usize = 3;
-const CYMBALS: usize = 4;
-const PERCUSSION: usize = 5;
-const GROUPS: usize = 6;
-
-/// The note of the first pad: a file in slot `i` answers note `PAD_BASE + i` until the banks
-/// and pads of PLG-068 arrive (ENG-077).
+/// The key of pad A1.
 const PAD_BASE: u8 = 36;
-const VOICES: usize = 24;
-const SILENT: f64 = 1e-4;
-const FADE_MS: f64 = 5.0;
-/// The level of a hit at full velocity before the volume.
-const LEVEL: f64 = 0.8;
-/// The ratios of an analogue drum machine's metal (its six squares, in Hz at a scale of 1).
-const METAL_HZ: [f64; 6] = [205.3, 304.4, 369.6, 522.7, 540.0, 800.0];
+const VOICES: usize = 32;
 
-/// The notes the kits play (General MIDI): the tests go through all of them.
-#[cfg(test)]
-const NOTES: [u8; 34] = [
-    35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 59,
-    60, 61, 62, 63, 64, 69, 70, 75, 76, 77,
-];
-
-/// An oscillator: its pitch falls from `from` to `to` with a time constant of `sweep` ms.
-#[derive(Clone, Copy, Debug)]
-struct Osc {
-    from: f64,
-    to: f64,
-    sweep: f64,
-    decay: f64,
-    level: f64,
-    square: bool,
-}
-
-/// Noise through a low cut and a high cut; a clap is a few quick bursts first.
-#[derive(Clone, Copy, Debug)]
-struct Hiss {
-    low_cut: f64,
-    high_cut: f64,
-    decay: f64,
-    level: f64,
-    bursts: u32,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct Metal {
-    scale: f64,
-    low_cut: f64,
-    decay: f64,
-    level: f64,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct Hit {
-    group: usize,
-    /// -1 (left) to 1 (right), as the drummer sits seen from the front.
-    pan: f64,
-    oscs: [Option<Osc>; 2],
-    hiss: Option<Hiss>,
-    metal: Option<Metal>,
-}
-
-const fn sine(from: f64, to: f64, sweep: f64, decay: f64, level: f64) -> Option<Osc> {
-    Some(Osc {
-        from,
-        to,
-        sweep,
-        decay,
-        level,
-        square: false,
-    })
-}
-
-const fn square(hz: f64, decay: f64, level: f64) -> Option<Osc> {
-    Some(Osc {
-        from: hz,
-        to: hz,
-        sweep: 1.0,
-        decay,
-        level,
-        square: true,
-    })
-}
-
-const fn hiss(low_cut: f64, high_cut: f64, decay: f64, level: f64) -> Option<Hiss> {
-    Some(Hiss {
-        low_cut,
-        high_cut,
-        decay,
-        level,
-        bursts: 0,
-    })
-}
-
-const fn metal(scale: f64, low_cut: f64, decay: f64, level: f64) -> Option<Metal> {
-    Some(Metal {
-        scale,
-        low_cut,
-        decay,
-        level,
-    })
-}
-
-const fn hit(
-    group: usize,
-    pan: f64,
-    oscs: [Option<Osc>; 2],
-    hiss: Option<Hiss>,
-    metal: Option<Metal>,
-) -> Option<Hit> {
-    Some(Hit {
-        group,
-        pan,
-        oscs,
-        hiss,
-        metal,
-    })
-}
-
-const TOM_HZ: [(u8, f64, f64); 6] = [
-    (41, 82.0, -0.5),
-    (43, 98.0, -0.3),
-    (45, 117.0, -0.1),
-    (47, 139.0, 0.1),
-    (48, 165.0, 0.3),
-    (50, 196.0, 0.5),
-];
-
-/// What `note` is in `kit` (0 standard, 1 electronic), or nothing.
-fn recipe(kit: usize, note: u8) -> Option<Hit> {
-    let electro = kit == 1;
-    if let Some(&(_, hz, pan)) = TOM_HZ.iter().find(|t| t.0 == note) {
-        return if electro {
-            hit(
-                TOMS,
-                pan,
-                [sine(hz * 1.3, hz, 15.0, 450.0, 0.9), None],
-                None,
-                None,
-            )
-        } else {
-            hit(
-                TOMS,
-                pan,
-                [
-                    sine(hz * 1.6, hz, 40.0, 380.0, 0.8),
-                    sine(hz * 2.4, hz * 1.5, 30.0, 120.0, 0.2),
-                ],
-                hiss(60.0, 4000.0, 40.0, 0.15),
-                None,
-            )
-        };
-    }
-    match (note, electro) {
-        // Kicks.
-        (35 | 36, false) => {
-            let low = if note == 35 { 45.0 } else { 52.0 };
-            hit(
-                KICK,
-                0.0,
-                [sine(low * 3.0, low, 30.0, 380.0, 1.0), None],
-                hiss(20.0, 3000.0, 6.0, 0.35),
-                None,
-            )
-        }
-        (35 | 36, true) => {
-            let low = if note == 35 { 42.0 } else { 48.0 };
-            hit(
-                KICK,
-                0.0,
-                [sine(low * 2.6, low, 18.0, 900.0, 1.0), None],
-                hiss(20.0, 2000.0, 3.0, 0.2),
-                None,
-            )
-        }
-        // Snares, the side stick and the clap.
-        (37, _) => hit(
-            SNARE,
-            -0.1,
-            [
-                sine(1700.0, 1600.0, 5.0, 25.0, 0.5),
-                sine(820.0, 800.0, 5.0, 40.0, 0.4),
-            ],
-            hiss(2500.0, 9000.0, 25.0, 0.3),
-            None,
-        ),
-        (38 | 40, false) => {
-            let lift = if note == 40 { 1.1 } else { 1.0 };
-            hit(
-                SNARE,
-                -0.1,
-                [
-                    sine(260.0 * lift, 190.0 * lift, 12.0, 140.0, 0.55),
-                    sine(340.0 * lift, 330.0 * lift, 8.0, 70.0, 0.25),
-                ],
-                hiss(1200.0 * lift, 10_000.0, 200.0, 0.6),
-                None,
-            )
-        }
-        (38 | 40, true) => {
-            let lift = if note == 40 { 1.1 } else { 1.0 };
-            hit(
-                SNARE,
-                -0.1,
-                [
-                    sine(240.0 * lift, 180.0 * lift, 8.0, 110.0, 0.6),
-                    sine(330.0 * lift, 330.0 * lift, 1.0, 80.0, 0.35),
-                ],
-                hiss(1800.0 * lift, 8000.0, 160.0, 0.45),
-                None,
-            )
-        }
-        (39, _) => hit(
-            SNARE,
-            0.0,
-            [None, None],
-            Some(Hiss {
-                low_cut: 900.0,
-                high_cut: 3000.0,
-                decay: if electro { 260.0 } else { 180.0 },
-                level: 0.9,
-                bursts: if electro { 4 } else { 3 },
-            }),
-            None,
-        ),
-        // Hats: closed, pedal, open.
-        (42, false) => hit(
-            HATS,
-            0.4,
-            [None, None],
-            hiss(7000.0, 16_000.0, 45.0, 0.25),
-            metal(1.0, 7000.0, 60.0, 1.5),
-        ),
-        (44, false) => hit(
-            HATS,
-            0.4,
-            [None, None],
-            hiss(6000.0, 14_000.0, 30.0, 0.2),
-            metal(1.0, 6000.0, 40.0, 1.2),
-        ),
-        (46, false) => hit(
-            HATS,
-            0.4,
-            [None, None],
-            hiss(7000.0, 16_000.0, 700.0, 0.2),
-            metal(1.0, 7000.0, 900.0, 1.35),
-        ),
-        (42, true) => hit(HATS, 0.3, [None, None], None, metal(1.0, 8000.0, 45.0, 2.4)),
-        (44, true) => hit(HATS, 0.3, [None, None], None, metal(1.0, 7000.0, 30.0, 2.0)),
-        (46, true) => hit(
-            HATS,
-            0.3,
-            [None, None],
-            None,
-            metal(1.0, 8000.0, 600.0, 2.2),
-        ),
-        // Cymbals: crashes, the ride and its bell, the china and the splash.
-        (49 | 57 | 52 | 55, _) => {
-            let (scale, decay, pan) = match note {
-                49 => (1.0, 1600.0, -0.6),
-                57 => (1.12, 1800.0, 0.6),
-                52 => (0.9, 1300.0, 0.7),
-                _ => (1.3, 500.0, -0.4),
-            };
-            let decay = if electro { decay * 0.8 } else { decay };
-            hit(
-                CYMBALS,
-                pan,
-                [None, None],
-                hiss(5000.0, 16_000.0, decay * 0.8, 0.3),
-                metal(scale, 4000.0, decay, 0.45),
-            )
-        }
-        (51 | 59, _) => hit(
-            CYMBALS,
-            0.7,
-            [sine(4200.0, 4200.0, 1.0, 800.0, 0.06), None],
-            hiss(6000.0, 14_000.0, 900.0, 0.08),
-            metal(1.5, 5000.0, 1800.0, 0.7),
-        ),
-        (53, _) => hit(
-            CYMBALS,
-            0.7,
-            [
-                sine(1180.0, 1180.0, 1.0, 900.0, 0.35),
-                sine(1770.0, 1770.0, 1.0, 600.0, 0.2),
-            ],
-            None,
-            metal(1.5, 3000.0, 700.0, 0.3),
-        ),
-        // Percussion.
-        (54, _) => hit(
-            PERCUSSION,
-            0.5,
-            [None, None],
-            Some(Hiss {
-                low_cut: 6000.0,
-                high_cut: 15_000.0,
-                decay: 140.0,
-                level: 0.35,
-                bursts: 2,
-            }),
-            metal(2.2, 7000.0, 160.0, 0.35),
-        ),
-        (56, _) => hit(
-            PERCUSSION,
-            0.3,
-            [square(540.0, 280.0, 0.25), square(800.0, 280.0, 0.25)],
-            None,
-            None,
-        ),
-        (60 | 61, _) => {
-            let hz = if note == 60 { 420.0 } else { 300.0 };
-            hit(
-                PERCUSSION,
-                -0.3,
-                [sine(hz * 1.15, hz, 8.0, 120.0, 0.6), None],
-                hiss(1500.0, 6000.0, 15.0, 0.1),
-                None,
-            )
-        }
-        (62..=64, _) => {
-            let hz = match note {
-                62 => 330.0,
-                63 => 300.0,
-                _ => 210.0,
-            };
-            let decay = if note == 62 { 60.0 } else { 220.0 };
-            hit(
-                PERCUSSION,
-                0.3,
-                [sine(hz * 1.2, hz, 10.0, decay, 0.6), None],
-                hiss(1000.0, 5000.0, 12.0, 0.12),
-                None,
-            )
-        }
-        (69 | 70, _) => hit(
-            PERCUSSION,
-            0.4,
-            [None, None],
-            hiss(5000.0, 14_000.0, if note == 69 { 70.0 } else { 45.0 }, 0.45),
-            None,
-        ),
-        (75, _) => hit(
-            PERCUSSION,
-            0.2,
-            [sine(2500.0, 2500.0, 1.0, 45.0, 0.5), None],
-            None,
-            None,
-        ),
-        (76 | 77, _) => {
-            let hz = if note == 76 { 1050.0 } else { 800.0 };
-            hit(
-                PERCUSSION,
-                0.2,
-                [sine(hz * 1.05, hz, 3.0, 50.0, 0.5), None],
-                hiss(800.0, 4000.0, 8.0, 0.1),
-                None,
-            )
-        }
-        _ => None,
-    }
-}
-
-/// What an oscillator does while a hit sounds.
-#[derive(Clone, Copy, Debug, Default)]
-struct OscState {
-    on: bool,
-    square: bool,
-    phase: f64,
-    /// The pitch above where it settles, in cycles a frame, and its fall.
-    lift: f64,
-    lift_k: f64,
-    settle: f64,
-    env: f64,
-    env_k: f64,
-}
-
-/// A pad's file as it plays (ENG-077): where in it, and how far it moves a frame.
-#[derive(Clone, Copy, Debug)]
-struct PadPlay {
-    slot: usize,
-    pos: f64,
-    step: f64,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct Voice {
-    on: bool,
-    note: u8,
-    group: usize,
-    born: u64,
-    age: u32,
-    left: f64,
-    right: f64,
-    fade: f64,
-    fading: bool,
-    /// The file the pad plays, when the hit is one (`oscs`/`hiss`/`metal` stay off then).
-    pad: Option<PadPlay>,
-    oscs: [OscState; 2],
-    noise: Noise,
-    hiss_on: bool,
-    hiss_env: f64,
-    hiss_k: f64,
-    burst_k: f64,
-    burst_len: u32,
-    bursts_end: u32,
-    hiss_filters: [Biquad; 2],
-    hiss_coefs: [Coefs; 2],
-    metal_on: bool,
-    metal_phase: [f64; 6],
-    metal_step: [f64; 6],
-    metal_env: f64,
-    metal_k: f64,
-    metal_filters: [Biquad; 2],
-    metal_coefs: Coefs,
-}
-
-impl Voice {
-    fn idle() -> Voice {
-        Voice {
-            on: false,
-            note: 0,
-            group: 0,
-            born: 0,
-            age: 0,
-            left: 0.0,
-            right: 0.0,
-            fade: 1.0,
-            fading: false,
-            pad: None,
-            oscs: [OscState::default(); 2],
-            noise: Noise::new(1),
-            hiss_on: false,
-            hiss_env: 0.0,
-            hiss_k: 0.0,
-            burst_k: 0.0,
-            burst_len: 1,
-            bursts_end: 0,
-            hiss_filters: [Biquad::default(); 2],
-            hiss_coefs: [Coefs::THROUGH; 2],
-            metal_on: false,
-            metal_phase: [0.0; 6],
-            metal_step: [0.0; 6],
-            metal_env: 0.0,
-            metal_k: 0.0,
-            metal_filters: [Biquad::default(); 2],
-            metal_coefs: Coefs::THROUGH,
-        }
-    }
-
-    /// One frame of the hit (before its level and pan); `None` once it has died away.
-    /// A pad's file keeps its two channels; a made hit is the same on both.
-    #[inline]
-    fn tick(&mut self, fade_step: f64, files: Option<&FileSet>) -> Option<(f64, f64)> {
-        if let Some(pad) = &mut self.pad {
-            let slot = files
-                .and_then(|f| f.slots.get(pad.slot))
-                .and_then(|s| s.as_ref());
-            let x = if slot.is_some_and(|s| !s.done(pad.pos)) {
-                slot.map(|s| s.read(pad.pos))
-            } else {
-                None
-            };
-            pad.pos += pad.step;
-            let mut out = match x {
-                Some((l, r)) => (l, r),
-                None => (0.0, 0.0),
-            };
-            let mut alive = x.is_some();
-            if self.fading {
-                self.fade -= fade_step;
-                alive &= self.fade > 0.0;
-                out = (out.0 * self.fade.max(0.0), out.1 * self.fade.max(0.0));
-            }
-            self.age = self.age.saturating_add(1);
-            return alive.then_some(out);
-        }
-        let mut x = 0.0;
-        let mut alive = false;
-        for o in self.oscs.iter_mut().filter(|o| o.on) {
-            let dt = o.settle + o.lift;
-            let wave = if o.square {
-                square_wave(o.phase, dt)
-            } else {
-                (TAU * o.phase).sin()
-            };
-            x += wave * o.env;
-            o.phase = (o.phase + dt).fract();
-            o.lift *= o.lift_k;
-            o.env *= o.env_k;
-            alive |= o.env >= SILENT;
-        }
-        if self.hiss_on {
-            if self.age < self.bursts_end {
-                self.hiss_env = if self.age.is_multiple_of(self.burst_len) {
-                    1.0
-                } else {
-                    self.hiss_env * self.burst_k
-                };
-            } else if self.age == self.bursts_end {
-                self.hiss_env = 1.0;
-            } else {
-                self.hiss_env *= self.hiss_k;
-            }
-            let [lo, hi] = &mut self.hiss_filters;
-            let [lc, hc] = &self.hiss_coefs;
-            let n = hi.tick(hc, lo.tick(lc, self.noise.sample()));
-            x += n * self.hiss_env;
-            alive |= self.hiss_env >= SILENT || self.age < self.bursts_end;
-        }
-        if self.metal_on {
-            let mut m = 0.0;
-            for (p, dt) in self.metal_phase.iter_mut().zip(self.metal_step) {
-                m += square_wave(*p, dt);
-                *p = (*p + dt).fract();
-            }
-            let [a, b] = &mut self.metal_filters;
-            let m = b.tick(&self.metal_coefs, a.tick(&self.metal_coefs, m / 6.0));
-            x += m * self.metal_env;
-            self.metal_env *= self.metal_k;
-            alive |= self.metal_env >= SILENT;
-        }
-        if self.fading {
-            self.fade -= fade_step;
-            alive &= self.fade > 0.0;
-            x *= self.fade.max(0.0);
-        }
-        self.age = self.age.saturating_add(1);
-        alive.then_some((x, x))
-    }
-}
-
-/// A square wave with its steps smoothed over a frame (polyBLEP), so it does not alias much.
-#[inline]
-fn square_wave(phase: f64, dt: f64) -> f64 {
-    let blep = |t: f64| {
-        if t < dt {
-            let t = t / dt;
-            t + t - t * t - 1.0
-        } else if t > 1.0 - dt {
-            let t = (t - 1.0) / dt;
-            t * t + t + t + 1.0
-        } else {
-            0.0
-        }
-    };
-    let v = if phase < 0.5 { 1.0 } else { -1.0 };
-    v + blep(phase) - blep((phase + 0.5).fract())
+/// The pad a key plays.
+fn pad_of(pitch: u8) -> usize {
+    (usize::from(pitch) + PADS - usize::from(PAD_BASE)) % PADS
 }
 
 pub struct DrumKit {
@@ -589,14 +40,19 @@ pub struct DrumKit {
     glide: Glide,
     rate: f64,
     voices: [Voice; VOICES],
+    /// The velocity each voice was hit at, to work out its level again in a newer set.
+    velocities: [f32; VOICES],
     born: u64,
-    levels: [Ramp; GROUPS],
-    /// The level a pad's file plays at (the kit's volume only; the groups do not color it).
-    file_level: Ramp,
-    /// The channel the files the song gave the device arrive on, and the newest set.
+    /// Each pad's voicing at the rate, worked out when a set arrives.
+    shapes: [Shape; PADS],
+    /// The next layer of each pad that plays its layers in turn.
+    turns: [u8; PADS],
+    /// Picks the layer of a pad that plays one at random.
+    seed: u32,
+    volume: Ramp,
+    until_step: usize,
     files_in: Option<FileInbox>,
     files: Option<Arc<FileSet>>,
-    until_step: usize,
 }
 
 impl DrumKit {
@@ -605,145 +61,202 @@ impl DrumKit {
             glide: Glide::new(&xirius_params::DRUM_KIT),
             params,
             rate: 48_000.0,
-            voices: [Voice::idle(); VOICES],
+            voices: [Voice::IDLE; VOICES],
+            velocities: [0.0; VOICES],
             born: 0,
-            levels: [Ramp::new(LEVEL); GROUPS],
-            file_level: Ramp::new(LEVEL),
+            shapes: [Shape::default(); PADS],
+            turns: [0; PADS],
+            seed: 0x9E37_79B9,
+            volume: Ramp::new(1.0),
+            until_step: 0,
             files_in,
             files: None,
-            until_step: 0,
         }
     }
 
-    fn level(&self, group: usize) -> f64 {
-        LEVEL * db_to_gain(self.glide.get(VOLUME) + self.glide.get(GROUP_LEVELS + group))
-    }
-
-    /// What a pad's file plays at.
-    fn file_level(&self) -> f64 {
-        LEVEL * db_to_gain(self.glide.get(VOLUME))
-    }
-
-    /// Takes a voice for the file of `slot`: it keeps its channels (the pad's pan does not
-    /// apply), moves at the tune's pitch and sounds out to its end (one shot).
-    fn pad_on(&mut self, note: u8, slot: usize, velocity: f32) {
-        let k = (0..VOICES)
-            .min_by_key(|&k| (self.voices[k].on, self.voices[k].born))
-            .unwrap_or(0);
-        let spread = self.glide.get(VELOCITY) * 0.01;
-        let gain = f64::from(velocity.clamp(0.0, 1.0)).powf(2.0 * spread);
-        self.born += 1;
-        let mut v = Voice::idle();
-        v.on = true;
-        v.note = note;
-        v.born = self.born;
-        v.left = gain;
-        v.right = gain;
-        v.pad = Some(PadPlay {
-            slot,
-            pos: 0.0,
-            step: 2f64.powf(self.glide.get(TUNE) / 12.0),
-        });
-        self.voices[k] = v;
-    }
-
-    fn note_on(&mut self, note: u8, velocity: f32) {
-        // Once the song lists files, they are the sound (ENG-077): a pad whose file was not
-        // found, and a note no slot answers, stay silent rather than fall back to a made hit.
-        if self.files.as_ref().is_some_and(|s| !s.slots.is_empty()) {
-            if let Some(i) = note.checked_sub(PAD_BASE).map(usize::from)
-                && let Some(Some(_)) = self.files.as_ref().unwrap().slots.get(i)
-            {
-                self.pad_on(note, i, velocity);
-            }
-            return;
-        }
-        let kit = self.glide.index(KIT);
-        let Some(hit) = recipe(kit, note) else {
+    /// Works out each pad's voicing at the rate.
+    fn shape_pads(&mut self) {
+        let Some(set) = &self.files else {
             return;
         };
-        let probe = self.params.probe();
-        if probe.watching() {
-            probe.add_hit(hit.group);
+        for (shape, pad) in self.shapes.iter_mut().zip(&set.pads) {
+            *shape = Shape::new(&pad.voicing, self.rate, true);
         }
-        // A closed or pedal hat stops an open one.
-        if matches!(note, 42 | 44) {
-            for v in self.voices.iter_mut().filter(|v| v.on && v.note == 46) {
-                v.fading = true;
-            }
-        }
-        let k = (0..VOICES)
-            .min_by_key(|&k| (self.voices[k].on, self.voices[k].born))
-            .unwrap_or(0);
-        let rate = self.rate;
-        let pitch = 2f64.powf(self.glide.get(TUNE) / 12.0);
-        let stretch = self.glide.get(DECAY) * 0.01;
-        let frames = |ms: f64| (ms * 0.001 * rate).max(1.0);
-        let fall = |ms: f64| 10f64.powf(-3.0 / frames(ms * stretch));
-        let spread = self.glide.get(VELOCITY) * 0.01;
-        let gain = f64::from(velocity.clamp(0.0, 1.0)).powf(2.0 * spread);
-        let angle = (hit.pan.clamp(-1.0, 1.0) + 1.0) * PI / 4.0;
-        self.born += 1;
-        let mut v = Voice::idle();
-        v.on = true;
-        v.note = note;
-        v.group = hit.group;
-        v.born = self.born;
-        v.left = gain * angle.cos() * std::f64::consts::SQRT_2;
-        v.right = gain * angle.sin() * std::f64::consts::SQRT_2;
-        v.noise = Noise::new(0x9E37_79B9 ^ (self.born as u32).wrapping_mul(2_654_435_761));
-        for (state, osc) in v.oscs.iter_mut().zip(hit.oscs) {
-            let Some(o) = osc else { continue };
-            *state = OscState {
-                on: true,
-                square: o.square,
-                phase: 0.0,
-                lift: (o.from - o.to) * pitch / rate,
-                lift_k: (-1.0 / frames(o.sweep)).exp(),
-                settle: o.to * pitch / rate,
-                env: o.level,
-                env_k: fall(o.decay),
-            };
-        }
-        if let Some(h) = hit.hiss {
-            v.hiss_on = true;
-            v.hiss_k = fall(h.decay);
-            v.burst_len = frames(10.0) as u32;
-            v.burst_k = 10f64.powf(-3.0 / frames(12.0));
-            v.bursts_end = h.bursts * v.burst_len;
-            // The level goes into the high cut, so the envelope (and each burst) starts at 1.
-            v.hiss_coefs = [
-                Coefs::highpass(h.low_cut * pitch, FRAC_1_SQRT_2, rate),
-                scale_coefs(
-                    Coefs::lowpass(h.high_cut * pitch, FRAC_1_SQRT_2, rate),
-                    h.level,
-                ),
-            ];
-        }
-        if let Some(m) = hit.metal {
-            v.metal_on = true;
-            v.metal_env = m.level;
-            v.metal_k = fall(m.decay);
-            for (step, hz) in v.metal_step.iter_mut().zip(METAL_HZ) {
-                *step = hz * m.scale * pitch / rate;
-            }
-            // Each square starts somewhere else, so the six do not step together.
-            for (k, p) in v.metal_phase.iter_mut().enumerate() {
-                *p = (k as f64 * 0.37).fract();
-            }
-            v.metal_coefs = Coefs::highpass(m.low_cut * pitch, FRAC_1_SQRT_2, rate);
-        }
-        self.voices[k] = v;
     }
-}
 
-/// The filter with its output scaled by `gain`.
-fn scale_coefs(c: Coefs, gain: f64) -> Coefs {
-    Coefs {
-        b0: c.b0 * gain,
-        b1: c.b1 * gain,
-        b2: c.b2 * gain,
-        ..c
+    fn random(&mut self) -> u32 {
+        // xorshift32
+        let mut x = self.seed;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.seed = x;
+        x
+    }
+
+    /// Takes a voice for a new hit: a free one, else the one that is fading, else the oldest.
+    fn take_voice(&self) -> usize {
+        (0..VOICES)
+            .min_by_key(|&k| {
+                let v = &self.voices[k];
+                let rank = match v.stage {
+                    Stage::Idle => 0,
+                    Stage::Fade => 1,
+                    Stage::Release => 2,
+                    _ => 3,
+                };
+                (rank, v.born)
+            })
+            .unwrap_or(0)
+    }
+
+    fn note_on(&mut self, pitch: u8, velocity: f32) {
+        let Some(set) = self.files.clone() else {
+            return;
+        };
+        let p = pad_of(pitch);
+        let Some(pad) = set.pads.get(p) else {
+            return;
+        };
+        if pad.count == 0 || pad.mute || (set.soloed && !pad.solo) {
+            return;
+        }
+        if pad.trigger == Trigger::Toggle {
+            // The second press lets the first go.
+            let mut sounding = false;
+            for v in self.voices.iter_mut().filter(|v| v.pad == p) {
+                if matches!(v.stage, Stage::Attack | Stage::Decay) {
+                    v.release();
+                    sounding = true;
+                }
+            }
+            if sounding {
+                return;
+            }
+        }
+        // Choke: the pad's own last hit, or every pad of its group.
+        if pad.choke > 0 {
+            for v in self.voices.iter_mut().filter(|v| v.active()) {
+                let same = match pad.choke {
+                    1 => v.pad == p,
+                    group => set.pads[v.pad].choke == group,
+                };
+                if same {
+                    v.fade();
+                }
+            }
+        }
+        let layers = &set.zones[pad.first..pad.first + pad.count];
+        let at = (velocity.clamp(0.0, 1.0) * 127.0).round() as u8;
+        let (from, to) = match pad.layer_mode {
+            LayerMode::Velocity => {
+                let k = layers
+                    .iter()
+                    .position(|z| (z.lo..=z.hi).contains(&at))
+                    .unwrap_or(layers.len() - 1);
+                (k, k + 1)
+            }
+            LayerMode::RoundRobin => {
+                let k = usize::from(self.turns[p]) % layers.len();
+                self.turns[p] = ((k + 1) % layers.len()) as u8;
+                (k, k + 1)
+            }
+            LayerMode::Random => {
+                let k = self.random() as usize % layers.len();
+                (k, k + 1)
+            }
+            LayerMode::Stack => (0, layers.len()),
+        };
+        let level = self.shapes[p].level(velocity);
+        if self.params.probe().watching() {
+            self.params.probe().add_hit(p);
+        }
+        for zone in &layers[from..to] {
+            let Some(slot) = set.slots.get(zone.slot).and_then(|s| s.as_ref()) else {
+                continue;
+            };
+            let Some(voice) =
+                Voice::start(zone, slot, pitch, 1.0, level, pad.trigger, self.born + 1)
+            else {
+                continue;
+            };
+            let k = self.take_voice();
+            self.born += 1;
+            self.voices[k] = voice;
+            self.velocities[k] = velocity;
+        }
+    }
+
+    fn note_off(&mut self, pitch: u8) {
+        let p = pad_of(pitch);
+        for v in self.voices.iter_mut().filter(|v| v.pad == p && v.active()) {
+            if matches!(v.trigger, Trigger::Loop | Trigger::Normal) {
+                v.release();
+            }
+        }
+    }
+
+    /// A newer set keeps the voices whose file is still in their slot (with the pad's new
+    /// cut and voicing) and fades the rest.
+    fn take_set(&mut self) {
+        self.shape_pads();
+        let set = self.files.as_deref();
+        for (k, v) in self.voices.iter_mut().enumerate() {
+            if !v.active() {
+                continue;
+            }
+            let same = set.and_then(|s| {
+                let slot = s.slots.get(v.slot)?.as_ref()?;
+                let zone = s.zones.iter().find(|z| z.slot == v.slot)?;
+                (data_of(slot) == v.data && zone.pad == v.pad).then_some((zone, slot))
+            });
+            match same {
+                Some((zone, slot)) => {
+                    v.recut(zone, slot, self.shapes[v.pad].level(self.velocities[k]));
+                }
+                None => v.fade(),
+            }
+        }
+    }
+
+    /// Hands the window the block's output peaks and the newest voice (ENG-072).
+    fn show(&self, io: &AudioIo<'_>) {
+        let probe = self.params.probe();
+        probe.note_output(io.left, io.right);
+        let newest = self
+            .voices
+            .iter()
+            .filter(|v| v.active())
+            .max_by_key(|v| v.born);
+        probe.set_voice(newest.map(|v| {
+            let (stage, position) = v.view();
+            (v.pitch, stage, true, v.slot, position, v.env)
+        }));
+    }
+
+    /// Adds the voices into `[from, to)` of both channels.
+    fn render(&mut self, io: &mut AudioIo<'_>, from: usize, to: usize) {
+        let target = db_to_gain(self.glide.get(VOLUME));
+        let (vol, dvol) = self.volume.toward(target, to - from);
+        let Some(set) = &self.files else {
+            return;
+        };
+        for v in self.voices.iter_mut().filter(|v| v.active()) {
+            let Some(slot) = set.slots.get(v.slot).and_then(|s| s.as_ref()) else {
+                *v = Voice::IDLE;
+                continue;
+            };
+            let shape = self.shapes[v.pad];
+            let mut vol = vol;
+            for i in from..to {
+                let Some((l, r)) = v.tick(slot, &shape, shape.speed) else {
+                    break;
+                };
+                vol += dvol;
+                io.left[i] += (l * vol) as f32;
+                io.right[i] += (r * vol) as f32;
+            }
+        }
     }
 }
 
@@ -754,14 +267,12 @@ impl Processor for DrumKit {
 
     fn prepare(&mut self, setup: &ProcessSetup) {
         self.rate = setup.sample_rate;
-        self.voices = [Voice::idle(); VOICES];
+        self.voices = [Voice::IDLE; VOICES];
+        self.turns = [0; PADS];
         self.params.refresh();
         self.glide.prepare(&self.params, self.rate);
-        for g in 0..GROUPS {
-            let level = self.level(g);
-            self.levels[g].set(level);
-        }
-        self.file_level.set(self.file_level());
+        self.shape_pads();
+        self.volume.set(db_to_gain(self.glide.get(VOLUME)));
         self.until_step = STEP;
     }
 
@@ -769,22 +280,19 @@ impl Processor for DrumKit {
         let n = io.frames();
         io.left.fill(0.0);
         io.right.fill(0.0);
-        // A newer set fades the voices playing a file, so a playing pad does not jump into a
-        // different file's middle.
         if let Some(inbox) = &mut self.files_in
             && inbox.poll(&mut self.files)
         {
-            for v in self.voices.iter_mut().filter(|v| v.on && v.pad.is_some()) {
-                v.fading = true;
-            }
+            self.take_set();
         }
-        let fade_step = 1.0 / (FADE_MS * 0.001 * self.rate);
         let mut at = 0;
         let mut next = 0;
         while at < n {
             while next < events.len() && events[next].offset as usize <= at {
-                if let NoteKind::On { pitch, velocity } = events[next].kind {
-                    self.note_on(pitch, velocity);
+                match events[next].kind {
+                    NoteKind::On { pitch, velocity } => self.note_on(pitch, velocity),
+                    NoteKind::Off { pitch } => self.note_off(pitch),
+                    NoteKind::Control { .. } => {}
                 }
                 next += 1;
             }
@@ -796,39 +304,14 @@ impl Processor for DrumKit {
             if let Some(e) = events.get(next) {
                 end = end.min(e.offset as usize);
             }
-            let len = end - at;
-            let mut ramps = [(0.0, 0.0); GROUPS];
-            for (g, r) in ramps.iter_mut().enumerate() {
-                let level = self.level(g);
-                *r = self.levels[g].toward(level, len);
-            }
-            let file_ramp = {
-                let level = self.file_level();
-                self.file_level.toward(level, len)
-            };
-            for v in self.voices.iter_mut().filter(|v| v.on) {
-                let (mut level, step) = if v.pad.is_some() {
-                    file_ramp
-                } else {
-                    ramps[v.group]
-                };
-                for i in at..end {
-                    let Some((xl, xr)) = v.tick(fade_step, self.files.as_deref()) else {
-                        v.on = false;
-                        break;
-                    };
-                    level += step;
-                    io.left[i] += (xl * level * v.left) as f32;
-                    io.right[i] += (xr * level * v.right) as f32;
-                }
-            }
-            self.until_step -= len;
+            self.render(io, at, end);
+            self.until_step -= end - at;
             at = end;
         }
         let probe = self.params.probe();
-        probe.set_sounding(self.voices.iter().filter(|v| v.on).count());
+        probe.set_sounding(self.voices.iter().filter(|v| v.active()).count());
         if probe.watching() {
-            probe.note_output(io.left, io.right);
+            self.show(io);
         }
     }
 }
@@ -836,278 +319,220 @@ impl Processor for DrumKit {
 #[cfg(test)]
 mod tests {
     use super::super::testing::*;
-    use super::*;
+    use crate::processor::Processor;
 
-    fn hit_once(
-        p: &mut dyn Processor,
-        note: u8,
-        velocity: f32,
-        frames: usize,
-    ) -> (Vec<f32>, Vec<f32>) {
-        p.prepare(&setup());
-        let silence = vec![0.0; frames];
-        render(
-            p,
-            &silence,
-            &silence,
-            &[(0, on(note, velocity)), (100, off(note))],
-        )
-    }
-
-    fn mono(l: &[f32], r: &[f32]) -> Vec<f32> {
-        l.iter().zip(r).map(|(a, b)| a + b).collect()
-    }
-
-    /// When the level (in 5 ms windows) first falls 40 dB below its loudest.
-    fn ring_time(x: &[f32]) -> f64 {
-        let w = 240;
-        let levels: Vec<f64> = x.chunks(w).map(rms).collect();
-        let top = levels.iter().cloned().fold(0.0, f64::max);
-        let k = levels.iter().rposition(|l| *l > top * 0.01).unwrap();
-        (k + 1) as f64 * w as f64 / RATE
-    }
-
-    /// The pitch in `x[from..from + len]` by upward zero crossings.
-    fn pitch_of(x: &[f32], from: usize, len: usize) -> f64 {
-        let x = &x[from..from + len];
-        let ups: Vec<f64> = (1..x.len())
-            .filter(|&i| x[i - 1] < 0.0 && x[i] >= 0.0)
-            .map(|i| (i - 1) as f64 + f64::from(-x[i - 1] / (x[i] - x[i - 1])))
-            .collect();
-        (ups.len() - 1) as f64 * RATE / (ups[ups.len() - 1] - ups[0])
-    }
-
-    #[test]
-    fn every_note_of_both_kits_sounds_and_dies_away() {
-        let (mut p, h) = make("drum-kit");
-        for kit in 0..2 {
-            set_plain(&h, "kit", kit as f64);
-            for note in NOTES {
-                let (l, r) = hit_once(p.as_mut(), note, 1.0, 4 * RATE as usize);
-                let peak = peak(&l).max(peak(&r));
-                assert!((0.05..1.5).contains(&peak), "kit {kit} note {note}: {peak}");
-                assert!(l.iter().chain(&r).all(|v| v.is_finite()));
-                let tail = &l[l.len() - 4800..];
-                assert!(
-                    tail.iter().all(|v| *v == 0.0),
-                    "kit {kit} note {note} rings on"
-                );
-            }
+    /// A Drum Kit with `files` (a name and a level each, a 200 ms tone at 440 Hz), with the
+    /// pads' values `set` (`A1.trigger`, 0..1).
+    fn kit(
+        files: &[(&str, f64)],
+        set: &[(&str, f64)],
+    ) -> (Box<dyn Processor>, super::super::StockHandle) {
+        let (p, h) = make("drum-kit");
+        for (k, v) in set {
+            assert!(h.set(k, *v), "{k}");
         }
-    }
-
-    #[test]
-    fn a_note_outside_the_map_is_silent() {
-        let (mut p, _) = make("drum-kit");
-        let (l, r) = hit_once(p.as_mut(), 20, 1.0, 9_600);
-        assert_eq!(peak(&l) + peak(&r), 0.0);
-    }
-
-    #[test]
-    fn the_kick_falls_in_pitch() {
-        let (mut p, _) = make("drum-kit");
-        let (l, r) = hit_once(p.as_mut(), 36, 1.0, RATE as usize);
-        let x = mono(&l, &r);
-        let early = pitch_of(&x, 0, 960);
-        let late = pitch_of(&x, 9_600, 9_600);
-        assert!(early > late * 1.5, "{early} then {late}");
-        assert!((late - 52.0).abs() < 2.0, "{late}");
-    }
-
-    #[test]
-    fn tune_moves_the_toms() {
-        let (mut p, h) = make("drum-kit");
-        set_plain(&h, "kit", 1.0);
-        let settled = |p: &mut dyn Processor| {
-            let (l, r) = hit_once(p, 45, 1.0, RATE as usize);
-            pitch_of(&mono(&l, &r), 9_600, 9_600)
-        };
-        let base = settled(p.as_mut());
-        assert!((base - 117.0).abs() < 2.0, "{base}");
-        set_plain(&h, "tune", 7.0);
-        let up = settled(p.as_mut());
-        let cents = 1200.0 * (up / base).log2();
-        assert!((cents - 700.0).abs() < 10.0, "{cents}");
-    }
-
-    #[test]
-    fn decay_stretches_the_ring() {
-        let (mut p, h) = make("drum-kit");
-        let ring = |p: &mut dyn Processor| {
-            let (l, r) = hit_once(p, 41, 1.0, 2 * RATE as usize);
-            ring_time(&mono(&l, &r))
-        };
-        let base = ring(p.as_mut());
-        set_plain(&h, "decay", 200.0);
-        let long = ring(p.as_mut());
-        assert!((long / base - 2.0).abs() < 0.15, "{base} then {long}");
-    }
-
-    #[test]
-    fn the_electronic_kick_rings_longer() {
-        let (mut p, h) = make("drum-kit");
-        let (l, r) = hit_once(p.as_mut(), 36, 1.0, 2 * RATE as usize);
-        let standard = ring_time(&mono(&l, &r));
-        set_plain(&h, "kit", 1.0);
-        let (l, r) = hit_once(p.as_mut(), 36, 1.0, 2 * RATE as usize);
-        let electro = ring_time(&mono(&l, &r));
-        assert!(electro > standard * 1.8, "{standard} vs {electro}");
-    }
-
-    #[test]
-    fn a_closed_hat_stops_the_open_one() {
-        let (mut p, _) = make("drum-kit");
-        let silence = vec![0.0; RATE as usize];
-        let (open, _) = render(p.as_mut(), &silence, &silence, &[(0, on(46, 1.0))]);
-        p.prepare(&setup());
-        let (choked, _) = render(
-            p.as_mut(),
-            &silence,
-            &silence,
-            &[(0, on(46, 1.0)), (4_800, on(42, 1.0))],
+        give(
+            &h,
+            files
+                .iter()
+                .map(|(name, amp)| sine_file(name, 440.0, *amp, 9_600))
+                .collect(),
         );
-        // 150 ms after: the closed hat is gone and the open one would still ring.
-        let at = 4_800 + 7_200;
-        assert!(rms(&open[at..at + 2_400]) > 1e-3);
-        assert!(rms(&choked[at..at + 2_400]) < rms(&open[at..at + 2_400]) * 1e-2);
+        (p, h)
     }
 
-    #[test]
-    fn group_levels_and_the_volume_set_the_level() {
-        let (mut p, h) = make("drum-kit");
-        let level = |p: &mut dyn Processor, note: u8| {
-            let (l, r) = hit_once(p, note, 1.0, 9_600);
-            rms(&mono(&l, &r))
-        };
-        let (snare, kick) = (level(p.as_mut(), 38), level(p.as_mut(), 36));
-        set_plain(&h, "snare", -12.0);
-        // The noise differs from hit to hit, so the snare is a little off exact.
-        assert!((level(p.as_mut(), 38) / snare - db_to_gain(-12.0)).abs() < 0.02);
-        assert!((level(p.as_mut(), 36) / kick - 1.0).abs() < 0.02);
-        set_plain(&h, "volume", -6.0);
-        let k = level(p.as_mut(), 36) / kick;
-        assert!((k - db_to_gain(-6.0)).abs() < 0.01, "{k}");
+    /// The 0..1 value of a pad's choice `index` (`A1.trigger` 3 is Toggle).
+    fn choice(h: &super::super::StockHandle, key: &str, index: f64) -> f64 {
+        let spec = h.def().resolve(key).unwrap().spec;
+        spec.to_norm(index)
     }
 
-    #[test]
-    fn velocity_sets_the_level_as_far_as_asked() {
-        let (mut p, h) = make("drum-kit");
-        let level = |p: &mut dyn Processor, v: f32| {
-            let (l, r) = hit_once(p, 75, v, 4_800);
-            rms(&l) + rms(&r)
-        };
-        let r = level(p.as_mut(), 0.5) / level(p.as_mut(), 1.0);
-        assert!((r - 0.25).abs() < 1e-3, "{r}");
-        set_plain(&h, "velocity", 0.0);
-        let r = level(p.as_mut(), 0.5) / level(p.as_mut(), 1.0);
-        assert!((r - 1.0).abs() < 1e-6, "{r}");
-    }
-
-    #[test]
-    fn the_hats_sit_right_and_the_kick_in_the_middle() {
-        let (mut p, _) = make("drum-kit");
-        let (l, r) = hit_once(p.as_mut(), 42, 1.0, 4_800);
-        assert!(rms(&r) > rms(&l) * 1.3);
-        let (l, r) = hit_once(p.as_mut(), 36, 1.0, 4_800);
+    fn hits(
+        p: &mut dyn Processor,
+        notes: &[(usize, crate::processor::NoteKind)],
+        frames: usize,
+    ) -> Vec<f32> {
+        // Long enough for a 200 ms hit to end, so the next call starts clear.
+        let silence = vec![0.0; frames.max(12_000)];
+        let (l, r) = render(p, &silence, &silence, notes);
         assert_eq!(l, r);
+        l
     }
 
-    /// In file mode a pad whose file was not found, and a note no slot answers, stay silent
-    /// rather than fall back to a made hit (ENG-077).
     #[test]
-    fn a_missing_or_unlisted_pad_stays_silent() {
-        use crate::stock::files::{FileSet, FileSlot};
-        let (mut p, h) = make("drum-kit");
-        assert!(h.set_files(FileSet { slots: vec![None] }));
-        let (l, r) = hit_once(p.as_mut(), 36, 1.0, 4_800);
-        assert!(peak(&l) == 0.0 && peak(&r) == 0.0, "a missing file played");
-        // Slot 0 has a file, but note 40 (slot 4) has none: it does not play a recipe.
-        let data = crate::timeline::AudioData {
-            left: vec![0.5; 480],
-            right: vec![0.5; 480],
-        };
-        assert!(h.set_files(FileSet {
-            slots: vec![Some(FileSlot {
-                name: "kick.wav".into(),
-                data: std::sync::Arc::new(data),
-            })],
-        }));
-        let (l, _) = hit_once(p.as_mut(), 40, 1.0, 4_800);
-        assert_eq!(peak(&l), 0.0, "an unlisted pad played");
+    fn each_file_is_a_pad_from_c1_up() {
+        let (mut p, _) = kit(&[("kick.wav", 0.4), ("snare.wav", 0.2)], &[]);
+        let a1 = hits(p.as_mut(), &[(0, on(36, 1.0))], 24_000);
+        let a2 = hits(p.as_mut(), &[(0, on(37, 1.0))], 24_000);
+        let a3 = hits(p.as_mut(), &[(0, on(38, 1.0))], 24_000);
+        assert!(
+            (peak(&a1) / peak(&a2) - 2.0).abs() < 0.05,
+            "{} {}",
+            peak(&a1),
+            peak(&a2)
+        );
+        assert_eq!(peak(&a3), 0.0, "a pad without a file");
+        // One shot: the key let go at once still plays the whole file.
+        let short = hits(p.as_mut(), &[(0, on(36, 1.0)), (100, off(36))], 24_000);
+        assert!(rms(&short[8_000..9_000]) > 0.1);
+        assert_eq!(peak(&short[9_700..]), 0.0);
     }
 
-    /// A set arriving while a pad plays fades the voice rather than jumping into the other
-    /// file's middle (ENG-077).
+    #[test]
+    fn a_files_pad_value_moves_it() {
+        let (mut p, h) = kit(&[("kick.wav", 0.4)], &[]);
+        assert!(h.set(
+            "file1.pad",
+            h.def().resolve("file1.pad").unwrap().spec.to_norm(17.0)
+        ));
+        assert_eq!(peak(&hits(p.as_mut(), &[(0, on(36, 1.0))], 4_800)), 0.0);
+        // B2 is pad 17, key 53.
+        assert!(peak(&hits(p.as_mut(), &[(0, on(53, 1.0))], 4_800)) > 0.3);
+    }
+
+    #[test]
+    fn velocity_layers_pick_by_how_hard_and_round_robin_takes_turns() {
+        let soft_loud = [("hit_v1.wav", 0.1), ("hit_v2.wav", 0.4)];
+        let top = |h: &super::super::StockHandle| {
+            let spec = h.def().resolve("file1.top").unwrap().spec;
+            spec.to_norm(64.0)
+        };
+        let (mut p, h) = kit(&soft_loud, &[]);
+        let t = top(&h);
+        assert!(h.set("file1.top", t));
+        assert!(h.set("file2.pad", 0.0));
+        set_plain(&h, "volume", 0.0);
+        let at = |p: &mut dyn Processor, v: f32| peak(&hits(p, &[(0, on(36, v))], 4_800));
+        // A1's velocity spread is 80 %: what plays is the layer, scaled by the velocity.
+        let soft = at(p.as_mut(), 0.3);
+        let loud = at(p.as_mut(), 0.9);
+        assert!(loud / soft > 4.0 * 0.8, "{soft} {loud}");
+        // Round robin: one then the other, whatever the velocity.
+        let rr = choice(&h, "A1.layer_mode", 1.0);
+        assert!(h.set("A1.layer_mode", rr));
+        assert!(h.set("A1.velocity", 0.0));
+        let first = at(p.as_mut(), 1.0);
+        let second = at(p.as_mut(), 1.0);
+        let third = at(p.as_mut(), 1.0);
+        assert!(
+            (first - 0.1).abs() < 0.01 && (second - 0.4).abs() < 0.02,
+            "{first} {second}"
+        );
+        assert!((third - first).abs() < 1e-3);
+    }
+
+    #[test]
+    fn triggers_answer_the_key_as_they_say() {
+        // A looping pad sounds while the key is down, then releases.
+        let (mut p, h) = kit(&[("pad.wav", 0.4)], &[]);
+        let lp = choice(&h, "A1.trigger", 1.0);
+        assert!(h.set("A1.trigger", lp));
+        let x = hits(p.as_mut(), &[(0, on(36, 1.0)), (48_000, off(36))], 72_000);
+        assert!(rms(&x[40_000..47_000]) > 0.1, "it stopped looping");
+        assert_eq!(peak(&x[48_000 + 20_000..]), 0.0);
+        // A toggle starts on one press and lets go on the next; its key up does nothing.
+        let tg = choice(&h, "A1.trigger", 3.0);
+        assert!(h.set("A1.trigger", tg));
+        assert!(h.set("A1.loop", 1.0));
+        let x = hits(
+            p.as_mut(),
+            &[(0, on(36, 1.0)), (10, off(36)), (24_000, on(36, 1.0))],
+            48_000,
+        );
+        assert!(rms(&x[20_000..23_000]) > 0.1, "the key up stopped it");
+        assert_eq!(
+            peak(&x[24_000 + 20_000..]),
+            0.0,
+            "the second press did not stop it"
+        );
+    }
+
+    #[test]
+    fn a_choke_cuts_the_pad_or_its_group() {
+        let (mut p, h) = kit(&[("open.wav", 0.4), ("closed.wav", 0.4)], &[]);
+        let lp = choice(&h, "A1.trigger", 1.0);
+        assert!(h.set("A1.trigger", lp));
+        let group = choice(&h, "A1.choke", 2.0);
+        assert!(h.set("A1.choke", group));
+        assert!(h.set("A2.choke", group));
+        // The open hat loops until the closed one in its group cuts it.
+        let x = hits(
+            p.as_mut(),
+            &[(0, on(36, 1.0)), (24_000, on(37, 1.0))],
+            48_000,
+        );
+        assert!(rms(&x[20_000..23_000]) > 0.1);
+        assert_eq!(peak(&x[24_000 + 9_700..]), 0.0, "the open hat kept ringing");
+        // Without the group it keeps going.
+        assert!(h.set("A2.choke", 0.0));
+        let x = hits(
+            p.as_mut(),
+            &[(0, on(36, 1.0)), (24_000, on(37, 1.0))],
+            48_000,
+        );
+        assert!(rms(&x[40_000..47_000]) > 0.1);
+    }
+
+    #[test]
+    fn mute_and_solo_pick_the_pads_that_sound() {
+        let (mut p, h) = kit(&[("a.wav", 0.4), ("b.wav", 0.4)], &[]);
+        let both = [(0, on(36, 1.0)), (0, on(37, 1.0))];
+        let full = peak(&hits(p.as_mut(), &both, 4_800));
+        assert!(h.set("A1.mute", 1.0));
+        let one = peak(&hits(p.as_mut(), &both, 4_800));
+        assert!((one / full - 0.5).abs() < 0.02, "{one} {full}");
+        assert!(h.set("A1.mute", 0.0));
+        assert!(h.set("A2.solo", 1.0));
+        assert_eq!(peak(&hits(p.as_mut(), &[(0, on(36, 1.0))], 4_800)), 0.0);
+        assert!(peak(&hits(p.as_mut(), &[(0, on(37, 1.0))], 4_800)) > 0.3);
+    }
+
+    #[test]
+    fn a_pads_voice_sets_its_level_and_pitch() {
+        let (mut p, h) = kit(&[("a.wav", 0.4)], &[]);
+        let plain = |k: &str, v: f64| h.def().resolve(k).unwrap().spec.to_norm(v);
+        let open = peak(&hits(p.as_mut(), &[(0, on(36, 1.0))], 4_800));
+        assert!(h.set("A1.volume", plain("A1.volume", -6.0)));
+        let quiet = peak(&hits(p.as_mut(), &[(0, on(36, 1.0))], 4_800));
+        assert!((db(quiet / open) + 6.0).abs() < 0.2, "{}", db(quiet / open));
+        // An octave up plays the file in half the time.
+        assert!(h.set("A1.volume", plain("A1.volume", 0.0)));
+        assert!(h.set("A1.transpose", plain("A1.transpose", 12.0)));
+        let up = hits(p.as_mut(), &[(0, on(36, 1.0))], 9_600);
+        assert!(rms(&up[3_000..4_500]) > 0.1);
+        assert_eq!(peak(&up[4_900..]), 0.0);
+    }
+
     #[test]
     fn a_newer_set_fades_the_playing_pad() {
-        use crate::stock::files::{FileSet, FileSlot};
-        let (mut p, h) = make("drum-kit");
-        let flat = |v| FileSet {
-            slots: vec![Some(FileSlot {
-                name: "hit.wav".into(),
-                data: std::sync::Arc::new(crate::timeline::AudioData {
-                    left: vec![v; 48_000],
-                    right: vec![v; 48_000],
-                }),
-            })],
-        };
-        assert!(h.set_files(flat(0.5)));
-        let _ = hit_once(p.as_mut(), 36, 1.0, 4_800);
-        assert!(h.set_files(flat(0.9)));
-        // Render on without preparing again (a prepare would drop the playing voice).
-        let mut l = vec![0.0f32; 24_000];
-        let mut r = vec![0.0f32; 24_000];
-        p.as_mut().process(
-            &mut AudioIo {
-                left: &mut l,
-                right: &mut r,
-                key: None,
-            },
-            &[],
-        );
-        assert_eq!(peak(&l[3_000..]), 0.0, "the pad kept playing past the swap");
+        let (mut p, h) = kit(&[("a.wav", 0.4)], &[]);
+        let short = vec![0.0; 1_000];
+        render(p.as_mut(), &short, &short, &[(0, on(36, 1.0))]);
+        give(&h, vec![sine_file("b.wav", 220.0, 0.4, 9_600)]);
+        let x = hits(p.as_mut(), &[], 4_800);
+        assert_eq!(peak(&x[1_000..]), 0.0);
     }
 
-    /// A file in the first slot plays when the first pad's note hits, once and at its own
-    /// pitch (ENG-077).
     #[test]
-    fn a_pads_file_plays_one_shot_at_its_own_pitch() {
-        use crate::stock::files::{FileSet, FileSlot};
-        let (mut p, h) = make("drum-kit");
-        let frames = 24_000;
-        let data = crate::timeline::AudioData {
-            left: super::super::testing::sine(440.0, 0.5, frames),
-            right: super::super::testing::sine(880.0, 0.25, frames),
-        };
-        assert!(h.set_files(FileSet {
-            slots: vec![Some(FileSlot {
-                name: "hit.wav".into(),
-                data: std::sync::Arc::new(data),
-            })],
-        }));
-        let (l, r) = hit_once(p.as_mut(), 36, 1.0, 48_000);
-        // The file keeps its channels: the right is an octave up, half as loud.
-        let ratio = pitch_of(&r, 0, 20_000) / pitch_of(&l, 0, 20_000);
-        assert!((ratio - 2.0).abs() < 0.01, "{ratio}");
-        // One shot: past the file's end the pad is quiet even though the note stays held.
-        assert!(peak(&l[24_500..]) == 0.0, "the pad plays on");
+    fn a_note_without_files_is_silent() {
+        let (mut p, _) = make("drum-kit");
+        assert_eq!(peak(&hits(p.as_mut(), &[(0, on(36, 1.0))], 4_800)), 0.0);
     }
 
     #[test]
     fn silence_without_notes() {
-        let (mut p, _) = make("drum-kit");
+        let (mut p, _) = kit(&[("a.wav", 0.4)], &[]);
         assert_silent(p.as_mut());
     }
 
-    /// PLG-066: a note played and let go leaves no voice of the Drum Kit sounding.
+    /// PLG-066: a hit leaves no voice of the Drum Kit sounding once it has played out.
     #[test]
     fn a_note_let_go_leaves_no_voice_sounding() {
-        let (mut p, h) = make("drum-kit");
-        let held = vec![0.0; 4_800];
-        render(p.as_mut(), &held, &held, &[(0, on(60, 0.8))]);
+        let (mut p, h) = kit(&[("a.wav", 0.4)], &[]);
+        let short = vec![0.0; 1_000];
+        render(p.as_mut(), &short, &short, &[(0, on(36, 0.8))]);
         assert!(h.probe().sounding() > 0);
-        let after = vec![0.0; 48_000 * 4];
-        render(p.as_mut(), &after, &after, &[(0, off(60))]);
+        hits(p.as_mut(), &[(0, off(36))], 48_000);
         assert_eq!(h.probe().sounding(), 0);
     }
 }

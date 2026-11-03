@@ -1,6 +1,6 @@
 //! What a built-in shows of its sound while its window watches (ENG-072): the gain
 //! reduction, the peaks in and out, the onsets of what goes into a delay or a reverb, the
-//! hits of the Drum Kit and the Sampler's newest voice; and the EQ's samples for the
+//! hits of the Drum Kit's pads and the newest voice of the Sampler or the Drum Kit; and the EQ's samples for the
 //! analyser (ENG-073).
 //!
 //! The audio thread writes only while [`Probe::watching`], into atomics and rings: nothing
@@ -12,8 +12,8 @@ use rtrb::Consumer;
 
 use crate::rt_lock::Mutex;
 
-/// The groups of the Drum Kit, in the order of its group levels.
-pub const HIT_GROUPS: usize = 6;
+/// The pads of the Drum Kit, whose hits are counted.
+pub use xirius_params::PADS as HIT_PADS;
 
 /// `voice[0]` when no voice plays.
 const NO_VOICE: u32 = u32::MAX;
@@ -29,8 +29,8 @@ pub struct Probe {
     peak_out: [AtomicU32; 2],
     /// Onsets counted in the input since the device was made.
     onsets: AtomicU32,
-    /// Hits of each group since the device was made.
-    hits: [AtomicU32; HIT_GROUPS],
+    /// Hits of each pad since the device was made.
+    hits: [AtomicU32; HIT_PADS],
     /// The Sampler's newest voice:
     /// - `[0]`: [`NO_VOICE`], or `pitch << 24 | stage << 16 | source`, where `stage` is a
     ///   [`VoiceStage`] and `source` is a file slot with [`FILE_BIT`] set, or the index of a
@@ -145,9 +145,8 @@ impl Probe {
         self.onsets.load(Ordering::Relaxed)
     }
 
-    /// Hits of each group so far (the Drum Kit's made hits; a pad playing a file has no
-    /// group). They wrap.
-    pub fn hits(&self) -> [u32; HIT_GROUPS] {
+    /// Hits of each pad of the Drum Kit so far. They wrap.
+    pub fn hits(&self) -> [u32; HIT_PADS] {
         self.hits.each_ref().map(|h| h.load(Ordering::Relaxed))
     }
 
@@ -232,8 +231,8 @@ impl Probe {
         self.sounding.store(n as u32, Ordering::Relaxed);
     }
 
-    pub(crate) fn add_hit(&self, group: usize) {
-        if let Some(h) = self.hits.get(group) {
+    pub(crate) fn add_hit(&self, pad: usize) {
+        if let Some(h) = self.hits.get(pad) {
             h.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -524,6 +523,29 @@ mod tests {
         assert!((8.5..9.1).contains(&most_gr), "{most_gr}");
     }
 
+    /// The built-in `key`, with a file to play when it is an instrument.
+    fn made(
+        key: &str,
+    ) -> (
+        Box<dyn crate::processor::Processor>,
+        crate::stock::StockHandle,
+    ) {
+        let (p, h) = make(key);
+        if key == "sampler" {
+            give(&h, vec![sine_file("C3.wav", 440.0, 0.5, RATE as usize)]);
+        } else if key == "drum-kit" {
+            give(
+                &h,
+                vec![
+                    sine_file("C3.wav", 440.0, 0.5, RATE as usize),
+                    sine_file("b.wav", 220.0, 0.5, RATE as usize),
+                    sine_file("c.wav", 330.0, 0.5, RATE as usize),
+                ],
+            );
+        }
+        (p, h)
+    }
+
     /// A built-in, what to play into it and the notes to play.
     type Play = (&'static str, Vec<f32>, Vec<(usize, NoteKind)>);
 
@@ -550,7 +572,7 @@ mod tests {
     #[test]
     fn nothing_is_written_while_not_watched() {
         for (key, x, notes) in every_built_in() {
-            let (mut p, h) = make(key);
+            let (mut p, h) = made(key);
             if key == "limiter" {
                 set_plain(&h, "input", 12.0);
                 p.prepare(&setup());
@@ -560,7 +582,7 @@ mod tests {
             assert_eq!(probe.gr_db(), 0.0, "{key}");
             assert_eq!(probe.take_peaks(), ([0.0; 2], [0.0; 2]), "{key}");
             assert_eq!(probe.onsets(), 0, "{key}");
-            assert_eq!(probe.hits(), [0; HIT_GROUPS], "{key}");
+            assert_eq!(probe.hits(), [0; HIT_PADS], "{key}");
             assert_eq!(probe.voice(), None, "{key}");
             // Watched, the same play writes.
             probe.watch(true);
@@ -570,7 +592,7 @@ mod tests {
             match key {
                 "compressor" | "limiter" => assert!(probe.gr_db() > 0.0, "{key}"),
                 "delay" | "reverb" => assert_eq!(probe.onsets(), 4, "{key}"),
-                "drum-kit" => assert_eq!(probe.hits(), [1, 1, 1, 0, 0, 0]),
+                "drum-kit" => assert_eq!(probe.hits()[..4], [1, 0, 1, 0]),
                 _ => {}
             }
             probe.watch(false);
@@ -583,7 +605,7 @@ mod tests {
 
     #[test]
     fn the_sampler_shows_its_newest_voice() {
-        let (mut p, h) = make("sampler");
+        let (mut p, h) = made("sampler");
         let probe = h.probe();
         probe.watch(true);
         let silence = vec![0.0; RATE as usize / 2];
@@ -594,7 +616,7 @@ mod tests {
             &[(0, on(60, 1.0)), (4_800, on(67, 1.0))],
         );
         let v = probe.voice().expect("a voice plays");
-        assert_eq!((v.pitch, v.file), (67, false));
+        assert_eq!((v.pitch, v.file, v.source), (67, true, 0));
         assert!(v.position > 0.0 && v.position <= 1.0, "{}", v.position);
         assert!(v.env > 0.0, "{}", v.env);
     }
@@ -602,8 +624,8 @@ mod tests {
     #[test]
     fn watching_leaves_the_sound_alone() {
         for (key, x, notes) in every_built_in() {
-            let (mut a, _) = make(key);
-            let (mut b, hb) = make(key);
+            let (mut a, _) = made(key);
+            let (mut b, hb) = made(key);
             hb.probe().watch(true);
             let quiet = render(a.as_mut(), &x, &x, &notes);
             let watched = render(b.as_mut(), &x, &x, &notes);

@@ -430,7 +430,7 @@ fn recording_audio_and_midi_does_not_allocate() {
 #[test]
 fn stock_devices_taking_file_sets_do_not_allocate() {
     use xirius_engine::stock;
-    use xirius_engine::stock::files::{FileSet, FileSlot};
+    use xirius_engine::stock::files::FileSlot;
     let setup = ProcessSetup {
         sample_rate: 48_000.0,
         max_block: 256,
@@ -453,21 +453,19 @@ fn stock_devices_taking_file_sets_do_not_allocate() {
     // with a file each.
     let set = |hz: f64| {
         let n = 4_800;
-        FileSet {
-            slots: vec![Some(FileSlot {
-                name: "tone_C3.wav".into(),
-                data: Arc::new(AudioData {
-                    left: (0..n)
-                        .map(|i| (i as f64 * hz * std::f64::consts::TAU / 48_000.0).sin() as f32)
-                        .collect(),
-                    right: (0..n)
-                        .map(|i| (i as f64 * hz * std::f64::consts::TAU / 48_000.0).sin() as f32)
-                        .collect(),
-                }),
-            })],
-        }
+        vec![Some(FileSlot::new(
+            "tone_C3.wav",
+            Arc::new(AudioData {
+                left: (0..n)
+                    .map(|i| (i as f64 * hz * std::f64::consts::TAU / 48_000.0).sin() as f32)
+                    .collect(),
+                right: (0..n)
+                    .map(|i| (i as f64 * hz * std::f64::consts::TAU / 48_000.0).sin() as f32)
+                    .collect(),
+            }),
+        ))]
     };
-    let sets: Vec<FileSet> = (0..600).map(|i| set(220.0 + i as f64)).collect();
+    let sets: Vec<Vec<Option<FileSlot>>> = (0..600).map(|i| set(220.0 + i as f64)).collect();
     let mut out = vec![0.0f32; 1000 * 2];
     let mut sounded = false;
     control.send(Command::Play).ok().unwrap();

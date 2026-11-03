@@ -30,6 +30,22 @@ fn add(s: &mut Session, args: Value) -> TrackId {
     r.data["id"].as_str().unwrap().parse().unwrap()
 }
 
+/// Gives the track's Sampler a second of a sine to play (it sounds only with a file).
+fn tone(s: &mut Session, t: TrackId, dir: &std::path::Path) {
+    let x: Vec<f32> = (0..48_000)
+        .map(|i| (i as f32 * 440.0 * std::f32::consts::TAU / 48_000.0).sin() * 0.5)
+        .collect();
+    let file = dir.join("tone_C4.wav");
+    xirius_session::export::write_wav(&file, &x, &x, 48_000, 16).unwrap();
+    let id = s.project().tracks[&t].inserts[0].id.to_string();
+    s.run_value(
+        "plugin.samples.add",
+        json!({ "id": id, "file": file.display().to_string() }),
+        &RunOptions::human(),
+    )
+    .unwrap();
+}
+
 fn peak(audio: &mut xirius_engine::AudioEngine, frames: usize) -> f32 {
     let mut out = vec![0.0f32; 480 * 2];
     let mut loudest = 0.0f32;
@@ -44,6 +60,11 @@ fn peak(audio: &mut xirius_engine::AudioEngine, frames: usize) -> f32 {
 fn a_note_played_by_hand_sounds_on_the_tracks_instrument_until_let_go() {
     let mut s = song();
     let t = add(&mut s, json!({ "instrument": "Sampler", "arm": true }));
+    let tmp = tempfile::Builder::new()
+        .prefix("xirius-live-")
+        .tempdir()
+        .unwrap();
+    tone(&mut s, t, tmp.path());
     let (mut host, mut audio, warnings) =
         SessionHost::start(s.project(), HostConfig::default()).unwrap();
     assert!(warnings.is_empty(), "{warnings:?}");

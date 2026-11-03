@@ -24,10 +24,35 @@ fn played(device: &str) -> (Studio, Geometry, TrackId, PluginId) {
         assert!(s.set_instrument(t, &Pick::built_in(device)));
     }
     let id = current(&s.project().tracks[&t]).unwrap().id;
+    give_sample(&mut s, id);
     s.show_instrument(t, id);
     assert!(s.instruments.is_open(id));
     let g = s.geometry(1600.0, 1000.0);
     (s, g, t, id)
+}
+
+thread_local! {
+    /// The test's sample files, kept until the test's thread ends.
+    static FILES: std::cell::RefCell<Vec<tempfile::TempDir>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A tone for the device `id` to play: the Sampler and the Drum Kit sound only with a file
+/// (PLG-067, PLG-068).
+fn give_sample(s: &mut Studio, id: PluginId) {
+    let dir = tempfile::Builder::new()
+        .prefix("xirius-ui-play-")
+        .tempdir()
+        .unwrap();
+    let x: Vec<f32> = (0..48_000)
+        .map(|i| (i as f32 * 262.0 * std::f32::consts::TAU / 48_000.0).sin() * 0.5)
+        .collect();
+    let file = dir.path().join("tone_C3.wav");
+    xirius_session::export::write_wav(&file, &x, &x, 48_000, 16).unwrap();
+    assert!(s.run_command(
+        "plugin.samples.add",
+        serde_json::json!({"id": id, "file": file.display().to_string()})
+    ));
+    FILES.with(|f| f.borrow_mut().push(dir));
 }
 
 /// How many voices of `id` sound, once the engine has played.

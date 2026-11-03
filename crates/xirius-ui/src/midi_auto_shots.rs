@@ -55,18 +55,16 @@ pub(crate) fn setup(s: &mut Studio, name: &str, instrument: &str, pitch: u8) -> 
         let id = crate::instrument::current(&s.project().tracks[&t])
             .unwrap()
             .id;
-        for (param, plain) in [("sound", 2.0), ("release", 50.0)] {
-            let value = xirius_params::find("Sampler")
-                .unwrap()
-                .param(param)
-                .unwrap()
-                .1
-                .to_norm(plain);
-            assert!(s.run_command(
-                "plugin.param.set",
-                json!({"id":id,"param":param,"value":value})
-            ));
-        }
+        let value = xirius_params::find("Sampler")
+            .unwrap()
+            .param("release")
+            .unwrap()
+            .1
+            .to_norm(50.0);
+        assert!(s.run_command(
+            "plugin.param.set",
+            json!({"id":id,"param":"release","value":value})
+        ));
     }
     let opened = Arc::new(AtomicUsize::new(0));
     let count = opened.clone();
