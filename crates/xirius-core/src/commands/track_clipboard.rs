@@ -106,6 +106,9 @@ pub(super) fn put(p: &mut Project, source: &Project, ids: &[TrackId]) -> CmdResu
             if let Some(fx) = snapshot.clip_fx.get(&cl.id) {
                 p.clip_fx.insert(cl.id, fx.clone());
             }
+            if let Some(a) = snapshot.ara.clips.get(&cl.id) {
+                p.ara.clips.insert(cl.id, a.clone());
+            }
         }
     }
     let made: Vec<String> = copies.iter().map(|t| t.id.to_string()).collect();

@@ -674,6 +674,7 @@ pub(super) fn split_one(p: &mut Project, id: ClipId, at: Tick) -> CmdResult<Opti
     p.next_id = next;
     p.original_timing.extend(timing_changes);
     p.fx_split(id, right_id, rel, rel);
+    p.copy_ara(id, right_id);
     Ok(Some(right_id))
 }
 

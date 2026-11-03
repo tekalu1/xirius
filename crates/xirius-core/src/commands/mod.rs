@@ -21,6 +21,7 @@ mod bus_group;
 mod cc;
 mod channel_settings;
 mod clip;
+mod clip_ara;
 mod clip_process;
 mod clipfx;
 mod comp;
@@ -107,6 +108,7 @@ pub fn all() -> Vec<CommandDef> {
     v.extend(edit_scale::defs());
     v.extend(edit_replace::defs());
     v.extend(clip_process::defs());
+    v.extend(clip_ara::defs());
     v.extend(bounce::defs());
     v.extend(freeze::defs());
     v.extend(select::defs());
@@ -379,6 +381,7 @@ pub(crate) fn clone_clip(p: &mut Project, c: &Clip) -> Clip {
         };
     }
     p.copy_fx(c.id, copy.id);
+    p.copy_ara(c.id, copy.id);
     copy
 }
 

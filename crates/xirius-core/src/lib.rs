@@ -1,6 +1,7 @@
 //! Xirius core: the song model, the command registry, the history and the song
 //! file. It knows nothing about the UI or the audio engine.
 
+pub mod ara;
 pub mod auto;
 mod auto_point_push;
 mod auto_write_bounds;

@@ -1037,6 +1037,9 @@ pub struct Project {
     /// Fades, gain envelopes and crossfades of audio clips (see `clipfx`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub clip_fx: BTreeMap<ClipId, crate::clipfx::ClipFx>,
+    /// Audio clips played through an ARA plugin, and the plugins' archives (see `ara`).
+    #[serde(default, skip_serializing_if = "crate::ara::Ara::is_empty")]
+    pub ara: crate::ara::Ara,
 }
 
 impl Project {
@@ -1058,6 +1061,7 @@ impl Project {
             media: Media::default(),
             loop_range: None,
             clip_fx: BTreeMap::new(),
+            ara: crate::ara::Ara::default(),
         };
         p.tracks.insert(
             TrackId::MASTER,

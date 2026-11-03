@@ -957,6 +957,12 @@ fn every_history_command_undoes_and_redoes() {
         json!({"ids":[cut_clip],"start":41200,"end":41680}),
     );
     rig.step("clip.replace", json!({"id":fx_a,"file":"replacement.wav"}));
+    // an ARA plugin on an audio clip (EDT-023)
+    rig.step(
+        "clip.ara.attach.apply",
+        json!({"ids":[fx_a],"plugin":"vst3:ara","name":"ARA"}),
+    );
+    rig.step("clip.ara.detach", json!({"ids":[fx_a]}));
     // tempo, speed and pitch of an audio clip (EDT-007, EDT-016)
     rig.step("clip.stretch", json!({"ids":[fx_a],"follow":"on"}));
     rig.step("clip.tempo.set", json!({"ids":[fx_a],"bpm":96}));

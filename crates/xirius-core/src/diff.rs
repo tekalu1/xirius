@@ -228,7 +228,38 @@ pub fn diff(a: &Project, b: &Project) -> ChangeSet {
         t.id.to_string()
     });
     diff_clip_fx(&mut cs, a, b);
+    diff_ara(&mut cs, a, b);
     cs
+}
+
+/// A clip put through an ARA plugin or taken out is a change of the clip; a plugin's new archive
+/// (its own edits) is a change of its own.
+fn diff_ara(cs: &mut ChangeSet, a: &Project, b: &Project) {
+    if a.ara == b.ara {
+        return;
+    }
+    let ids: std::collections::BTreeSet<_> = a.ara.clips.keys().chain(b.ara.clips.keys()).collect();
+    for id in ids {
+        if a.ara.clips.get(id) == b.ara.clips.get(id) || b.clip(*id).is_err() {
+            continue;
+        }
+        let key = id.to_string();
+        if cs.items.iter().any(|c| c.kind == "clip" && c.id == key) {
+            continue;
+        }
+        cs.push("clip", key, ChangeKind::Changed, Some("ara".into()));
+    }
+    let plugins: std::collections::BTreeSet<_> =
+        a.ara.archives.keys().chain(b.ara.archives.keys()).collect();
+    for k in plugins {
+        let kind = match (a.ara.archives.get(k), b.ara.archives.get(k)) {
+            (x, y) if x == y => continue,
+            (None, Some(_)) => ChangeKind::Added,
+            (Some(_), None) => ChangeKind::Removed,
+            _ => ChangeKind::Changed,
+        };
+        cs.push("ara", k.clone(), kind, None);
+    }
 }
 
 /// Fades, envelopes and crossfades live beside the clips: a change in them is

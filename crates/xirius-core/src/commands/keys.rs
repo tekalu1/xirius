@@ -1221,6 +1221,20 @@ pub const ENTRIES: &[Entry] = &[
     },
     Entry {
         context: "arrange",
+        command: "clip.ara.attach",
+        label: None,
+        keys: &["Mod+M"],
+        cat: Cat::Edit,
+    },
+    Entry {
+        context: "arrange",
+        command: "clip.ara.detach",
+        label: None,
+        keys: &["Mod+Alt+M"],
+        cat: Cat::Edit,
+    },
+    Entry {
+        context: "arrange",
         command: "clip.bounce",
         label: None,
         keys: &["Mod+B"],

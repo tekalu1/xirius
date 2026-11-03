@@ -581,7 +581,7 @@ pub(super) fn delete_time(p: &mut Project, a: Tick, z: Tick) -> CmdResult<()> {
 /// What lies in a stretch of the song, kept relative to its start.
 struct Material {
     len: Tick,
-    clips: Vec<(TrackId, Clip, Option<ClipFx>)>,
+    clips: Vec<(TrackId, Clip, Option<ClipFx>, Option<crate::ara::AraClip>)>,
     lanes: Vec<(TrackId, usize, Vec<AutoPoint>)>,
     tempo: Vec<(Tick, f64, bool)>,
     /// The meter at the start and the changes after it, each with whether it stood on a bar
@@ -600,7 +600,12 @@ fn take_material(p: &Project, a: Tick, z: Tick) -> CmdResult<Material> {
         for c in t.clips.iter().filter(|c| c.start >= a && c.end() <= z) {
             let mut c = c.clone();
             c.start -= a;
-            clips.push((*tid, c.clone(), scratch.clip_fx.get(&c.id).cloned()));
+            clips.push((
+                *tid,
+                c.clone(),
+                scratch.clip_fx.get(&c.id).cloned(),
+                scratch.ara.clips.get(&c.id).cloned(),
+            ));
         }
     }
     for (tid, t) in &p.tracks {
@@ -679,11 +684,18 @@ fn place_material(p: &mut Project, m: &Material, at: Tick) -> CmdResult<()> {
     let meter_z = meter_at(&p.timesig, tm.to_bbt(z).0);
     let old_meters = meter_ticks(p);
     clear_clips(p, at, z)?;
-    for (tid, c, fx) in &m.clips {
+    for (tid, c, fx, ara) in &m.clips {
         let mut copy = clone_clip_fresh(p, c);
         copy.start += at;
         if let Some(fx) = fx {
             p.clip_fx.insert(copy.id, fx.clone());
+        }
+        if let Some(ara) = ara {
+            let row = crate::ara::AraClip {
+                clone_of: Some(c.id),
+                ..ara.clone()
+            };
+            p.ara.clips.insert(copy.id, row);
         }
         p.track_mut(*tid)?.clips.push(copy);
     }
