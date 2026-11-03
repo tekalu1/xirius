@@ -267,7 +267,7 @@ pub struct Doc {
 impl Doc {
     fn start(key: Key, name: String, load: Loader, archive: Option<(Vec<u8>, String)>) -> Arc<Doc> {
         contain();
-        // Every document of the plugin on its one ARA thread (Melodyne keeps to its first).
+        // Every document of the plugin on its one ARA thread (some keep to their first).
         let service =
             Service::start_shared(&key.1, load, archive, Arc::new(crate::processed::bump));
         let doc = Arc::new(Doc {

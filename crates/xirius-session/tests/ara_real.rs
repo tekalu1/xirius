@@ -2,8 +2,8 @@
 //! analysis completes, the clip plays through the plugin, the song written and opened again
 //! gives the plugin its archive back, and detach.
 //!
-//! Needs `XIRIUS_ARA_REAL_PLUGIN` set to the plugin's `.vst3` (Melodyne's, for the table in
-//! `docs/ara-verification.md`) and `--ignored`; without the plugin it fails. The song is made of
+//! Needs `XIRIUS_ARA_REAL_PLUGIN` set to the plugin's `.vst3` (any ARA plugin's; the
+//! results are in `docs/ara-verification.md`) and `--ignored`; without the plugin it fails. The song is made of
 //! tones written into a folder of its own under the temp folder, and opened again at another
 //! rate.
 //!
@@ -211,8 +211,8 @@ fn a_real_plugin_through_the_songs_clips() {
         ..Song::default()
     };
     let begun = Instant::now();
-    // On the plugin's one thread, as the app: Melodyne faults on a second document made on
-    // another thread than its first.
+    // On the plugin's one thread, as the app: a plugin tried faults on a second document made
+    // on another thread than its first.
     let s = Service::start_shared(UID, loader(&path), None, Arc::new(|| {}));
     s.sync(&song);
     until("the plugin's render", || {

@@ -3,8 +3,8 @@
 //!
 //! A [`Service`] is one document on an ARA thread: a thread of its own ([`Service::start`]),
 //! or the plugin's one thread that all its documents in the process share
-//! ([`Service::start_shared`]; Melodyne faults on a second document made on another thread
-//! than its first). Everything the plugin is called with runs there, marked as a call into the
+//! ([`Service::start_shared`]; a plugin tried faults on a second document made on another
+//! thread than its first). Everything the plugin is called with runs there, marked as a call into the
 //! plugin ([`crate::contain`]) and watched by a second thread: a contained fault or a call
 //! that does not come back ends the ARA thread alone, and its documents report themselves
 //! crashed ([`Service::crashed`]). The song's clips then play dry until a service is made
@@ -299,7 +299,7 @@ impl Service {
     }
 
     /// Starts the document on the ARA thread of `key` (the plugin), which every document of
-    /// that plugin in the process shares: plugins (Melodyne among them) keep to the thread
+    /// that plugin in the process shares: plugins (one tried among them) keep to the thread
     /// their first document was made on, and a second document on another thread faults.
     /// The thread stays to the end of the process, or until a fault or a hang ends it; then
     /// its documents are crashed and the next document starts a new thread.

@@ -1,6 +1,6 @@
 //! The ARA 2 host of Xirius (PLG-015, PLG-031 to PLG-037, PLG-047, PLG-058).
 //!
-//! ARA lets a plugin such as Melodyne read a clip's audio, analyse it and play it back edited.
+//! ARA lets a plugin read a clip's audio, analyse it and play it back edited.
 //! The plugin runs in this process (PLG-015): it reads the host's audio from its own threads.
 //!
 //! - [`sys`] is the C API of `third_party/ara_api/ARAInterface.h`, bound by hand.
