@@ -187,6 +187,9 @@ Section "Xirius" Main
   ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
   IntFmt $0 "0x%08X" $0
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "EstimatedSize" "$0"
+  ; UI-349: an overwrite install leaves the shell's icon cache stale, so a pinned or
+  ; Start-menu shortcut keeps drawing the old icon; SHCNE_ASSOCCHANGED makes it reload.
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
   ; UI-282: a silent update asked for Xirius to come back.
   ${If} $XRun == 1
   ${AndIf} ${Silent}
@@ -202,4 +205,6 @@ Section "Uninstall"
   RMDir "$INSTDIR"
   Delete "$SMPROGRAMS\${APP}.lnk"
   DeleteRegKey HKCU "${UNINSTALL_KEY}"
+  ; Same as the install: the dropped shortcut and exe leave the shell's icon cache stale.
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
 SectionEnd

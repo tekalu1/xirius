@@ -8,7 +8,7 @@
 | `lockup.svg` | 星とロゴの横組 |
 | `app-icon.svg` | アプリのアイコン（48 px 以上） |
 | `app-icon-small.svg` | アプリのアイコン（16・32 px。先を太らせた版） |
-| `app-icon-win.svg` / `app-icon-win-small.svg` | Windows 用のアプリのアイコン（面を枠いっぱいに広げた版） |
+| `app-icon-win.svg` / `app-icon-win-small.svg` | Windows 用のアプリのアイコン（面を枠いっぱいに広げた版。`-small` は 16〜32 px） |
 | `png/` | `app-icon` の 16〜1024 px |
 | `xirius.ico` / `xirius.icns` | Windows / macOS のアイコン（`xirius.ico` は `app-icon-win*.svg` から `scripts/brand_icons.py` で作り、`xirius-ui.exe` に組み込む。`packaging/windows/version_info.rs`） |
 
