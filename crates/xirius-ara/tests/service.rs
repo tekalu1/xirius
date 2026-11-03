@@ -307,6 +307,29 @@ fn a_new_sample_rate_keeps_the_sound() {
     no_violations();
 }
 
+/// ENG-025: an export waits for the analysis.
+#[test]
+fn waiting_for_idle_ends_after_the_analysis() {
+    let audio = tone(48000.0, 2.0, 0.5);
+    let s = start(
+        Config {
+            analysis_ms: 300,
+            ..Config::default()
+        },
+        None,
+    );
+    s.sync(&song(vec![
+        clip(2501, "h.wav", &audio, 0.0, 0.0, 2.0),
+        clip(2502, "i.wav", &audio, 3.0, 0.0, 2.0),
+    ]));
+    let begun = Instant::now();
+    assert!(s.wait_idle(begun + WAIT));
+    assert!(begun.elapsed() >= Duration::from_millis(100));
+    assert!(s.states().values().all(|c| c.phase == Phase::Ready));
+    drop(s);
+    no_violations();
+}
+
 /// Clips that go away are taken down in ARA's order; the rest keep playing.
 #[test]
 fn removing_a_clip_keeps_the_others() {
