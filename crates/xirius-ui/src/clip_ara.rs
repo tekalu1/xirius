@@ -21,6 +21,7 @@ use xirius_core::id::{ClipId, TrackId};
 use xirius_core::model::{Clip, Track};
 use xirius_design::{FontSize, Radius, Space, Weight};
 use xirius_session::ara::{Phase, Report};
+use xirius_session::output::OutputMode;
 
 use crate::draw::{Align, Pen};
 use crate::popup::{Action, PopupKind};
@@ -159,13 +160,13 @@ impl Studio {
             return Some(Badge::Failed(MISSING.into()));
         }
         let Some(r) = self.ara_report(&a.plugin) else {
-            // Not read yet: the document is being opened. Without the host nothing opens it,
-            // and the clip plays its own sound: never 「済み」 without a report.
-            let live = self.ara.fake.is_some() || self.transport.host().is_some();
-            return Some(if live {
-                Badge::Busy(None)
-            } else {
+            // Not read yet: the document is being opened, or opens with the player (the song
+            // is being prepared, or no play wanted the player yet). Never 「済み」 without a
+            // report: the clip plays its own sound.
+            return Some(if self.ara_without_host() {
                 Badge::Failed(NO_HOST.into())
+            } else {
+                Badge::Busy(None)
             });
         };
         // Down before cannot be opened: a restart may open it again.
@@ -190,6 +191,17 @@ impl Studio {
                 _ => Badge::Busy(Some(percent(r.progress))),
             },
         )
+    }
+
+    /// No player will come to open the documents: nothing plays here, the sound device cannot
+    /// be had, or the player did not start. Not while the song is being prepared, nor before a
+    /// play first wants the player.
+    fn ara_without_host(&self) -> bool {
+        let t = &self.transport;
+        self.ara.fake.is_none()
+            && t.host().is_none()
+            && !t.preparing()
+            && (t.mode == OutputMode::None || t.down.is_some() || t.start_failed)
     }
 
     /// Where the badge of `clip` (at `r`) sits: right after its name, before the marks, and at

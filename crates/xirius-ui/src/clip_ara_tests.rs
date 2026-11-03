@@ -472,6 +472,29 @@ fn without_the_host_the_badge_never_says_done() {
 }
 
 #[test]
+fn while_the_song_is_prepared_the_badge_waits_and_does_not_say_it_cannot_open() {
+    let (mut s, _) = studio();
+    let (_, c) = vocal(&s);
+    attach(&mut s, c);
+    s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
+    // Before a play wants the player (a window without the device): not known yet.
+    assert_eq!(s.ara_badge(c), Some(Badge::Busy(None)));
+    // The player did not start, or the device cannot be had: no player will open it.
+    s.transport.start_failed = true;
+    assert_eq!(s.ara_badge(c), Some(Badge::Failed(NO_HOST.into())));
+    s.transport.start_failed = false;
+    s.transport.go_down_for_test("busy");
+    assert_eq!(s.ara_badge(c), Some(Badge::Failed(NO_HOST.into())));
+    s.transport.down = None;
+    // Right after the song opened: the player is being started behind the card.
+    let p = s.project();
+    assert!(s.transport.begin_start(&p, s.song.dir()));
+    assert!(s.transport.preparing() && s.transport.host().is_none());
+    assert_eq!(s.ara_badge(c), Some(Badge::Busy(None)));
+    assert_eq!(s.ara_tip(c), Some(format!("{NAME}: 解析中")));
+}
+
+#[test]
 fn the_badge_sits_after_the_name_and_stays_when_the_name_is_cut() {
     let (mut s, g) = studio();
     let (t, c) = vocal(&s);

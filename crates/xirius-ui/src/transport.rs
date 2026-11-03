@@ -193,6 +193,8 @@ pub struct Transport {
     /// The input device cannot be had now (it would not open, or stopped by itself): the
     /// output plays on, and the input is opened again every [`REOPEN`] while a track is armed.
     pub input_down: Option<Down>,
+    /// The last player started a little at a time did not start; the next start clears it.
+    pub(crate) start_failed: bool,
 }
 
 impl Transport {
@@ -238,6 +240,7 @@ impl Transport {
             starting: None,
             not_ready: Vec::new(),
             input_down: None,
+            start_failed: false,
         }
     }
 
@@ -343,6 +346,7 @@ impl Transport {
         {
             return false;
         }
+        self.start_failed = false;
         if self.mode == OutputMode::Device || self.windowed {
             match prepared::Start::new(self, p, dir) {
                 Ok(start) => {
@@ -376,9 +380,18 @@ impl Transport {
     /// sound device) once everything is open. `None` when none is being started, or it was for
     /// another folder.
     pub(crate) fn step_start(&mut self, p: &Project, dir: Option<PathBuf>) -> Option<StartStep> {
-        if self.prepared_start.is_some() {
-            return self.step_prepared(dir);
+        let step = if self.prepared_start.is_some() {
+            self.step_prepared(dir)
+        } else {
+            self.step_starting(p, dir)
+        };
+        if let Some(StartStep::Done(started)) = &step {
+            self.start_failed = started.is_err();
         }
+        step
+    }
+
+    fn step_starting(&mut self, p: &Project, dir: Option<PathBuf>) -> Option<StartStep> {
         let (s, d) = self.starting.as_mut()?;
         if *d != dir {
             self.starting = None;
@@ -642,6 +655,11 @@ impl Transport {
             said,
             due: Instant::now() + REOPEN,
         });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn go_down_for_test(&mut self, said: &str) {
+        self.went_down(said.into());
     }
 
     /// Whether the player's device stopped by itself; then the player goes (the position
