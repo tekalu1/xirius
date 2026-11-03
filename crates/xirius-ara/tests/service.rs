@@ -229,6 +229,56 @@ fn moving_a_region_keeps_its_sound() {
     no_violations();
 }
 
+/// PLG-037 and ARC-025: the plugin's edits come back after saving and opening, a cloned
+/// modification keeps them, and opening alone is not a change.
+#[test]
+fn edits_survive_saving_and_opening_and_a_clone_keeps_them() {
+    let audio = tone(48000.0, 1.0, 0.5);
+    let a = clip(3701, "f.wav", &audio, 0.0, 0.0, 1.0);
+    let s = start(Config::default(), None);
+    s.sync(&song(vec![a.clone()]));
+    let full = peak(&ready(&s, 3701).left);
+    fake::edit(&modification_id(3701), 0.5);
+    until("the edit", || s.take_dirty());
+    until("the edited render", || {
+        s.state(3701)
+            .and_then(|c| c.rendered)
+            .is_some_and(|r| (peak(&r.left) - full * 0.5).abs() < 1e-4)
+    });
+    let (bytes, id) = s.store(WAIT).unwrap();
+    assert_eq!(id, fake::ARCHIVE_ID);
+    drop(s);
+
+    let s = start(Config::default(), Some((bytes.clone(), id.clone())));
+    // Before any clip, the archive is kept as it was given.
+    assert_eq!(s.store(WAIT).unwrap(), (bytes, id));
+    s.sync(&song(vec![a.clone()]));
+    until("the restored render", || {
+        s.state(3701)
+            .filter(|c| c.phase == Phase::Ready)
+            .and_then(|c| c.rendered)
+            .is_some_and(|r| (peak(&r.left) - full * 0.5).abs() < 1e-4)
+    });
+    // Duplicating the clip clones its modification with the edit.
+    let mut b = clip(3702, "f.wav", &audio, 2.0, 0.0, 1.0);
+    b.clone_of = Some(3701);
+    s.sync(&song(vec![a, b]));
+    until("the clone's render", || {
+        [3701, 3702].iter().all(|k| {
+            s.state(*k)
+                .filter(|c| c.phase == Phase::Ready)
+                .and_then(|c| c.rendered)
+                .is_some_and(|r| (peak(&r.left) - full * 0.5).abs() < 1e-4)
+        })
+    });
+    let volume = peak(&audio.channels[0]) * 0.5;
+    assert!((s.notes(3702, true, WAIT)[0].volume - volume).abs() < 1e-4);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(!s.take_dirty(), "opening the song made it look changed");
+    drop(s);
+    no_violations();
+}
+
 /// Clips that go away are taken down in ARA's order; the rest keep playing.
 #[test]
 fn removing_a_clip_keeps_the_others() {
