@@ -162,6 +162,43 @@ fn external_reads_preserve_settings_pick_search_and_inline_rename_composition() 
 }
 
 #[test]
+fn external_reads_preserve_a_value_typed_in_a_device_knob() {
+    use crate::{instrument::window::Part, tools::Mods};
+    let (_root, mut s) = setup();
+    let g = s.geometry(1600.0, 1000.0);
+    assert!(s.run_command("track.add.audio", json!({})));
+    let t = *s.project().tracks.keys().next().unwrap();
+    assert!(s.run_command(
+        "plugin.add",
+        json!({ "track": t.to_string(), "name": "Delay" }),
+    ));
+    let fx = s.project().tracks[&t].inserts[0].clone();
+    let (k, _) = fx.builtin().unwrap().param("feedback").unwrap();
+    s.show_instrument(t, fx.id);
+    let (x, y) = s.instrument_center(&g, fx.id, Part::Knob(k)).unwrap();
+    for clicks in [1, 2] {
+        assert!(s.instrument_press(&g, x, y, clicks, Mods::NONE));
+        s.instrument_up();
+    }
+    assert_eq!(s.ime_target(), Some(crate::interaction::ImeTarget::Device));
+    s.ime_replace(None, "held", false);
+    s.ime_replace(None, "未確定", true);
+    let before = s.ime_field().cloned().unwrap();
+    assert_eq!(before.marked, "未確定");
+    s.bind_window_io();
+    let call = request(&mut s, "track.list", json!({}), RunOptions::human());
+    assert!(call.join().unwrap().is_err());
+    assert!(s.saving.is_none());
+    assert_eq!(s.ime_field().cloned().unwrap(), before);
+    s.instruments.entry = None;
+    s.instruments.open.clear();
+    assert!(!s.human_interaction_active());
+    let retry = request(&mut s, "track.list", json!({}), RunOptions::human());
+    finish(&mut s);
+    retry.join().unwrap().unwrap();
+}
+
+#[test]
 fn external_reads_preserve_palette_search_forms_and_menu_composition() {
     use crate::tools::Mods;
     for target in 0..4 {

@@ -137,6 +137,14 @@ fn a_new_text_owner_requires_an_interaction_review() {
         // The start screen's search: its words, once typed, are someone's work (UI-350).
         ("home.rs:Home.pick", "self.ime_target().is_some()"),
         (
+            "device/control.rs:KnobView.entry",
+            "self.instruments.entry.is_some()",
+        ),
+        (
+            "device/input.rs:Entry.field",
+            "self.instruments.entry.is_some()",
+        ),
+        (
             "inspector.rs:Inspector.field",
             "self.inspector.field.is_some()",
         ),
