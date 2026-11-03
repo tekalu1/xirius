@@ -131,6 +131,33 @@ fn a_clip_plays_through_its_region() {
     no_violations();
 }
 
+/// PLG-034: the analysis reads on the plugin's threads with two readers at once, and the
+/// plugin's notices reach the host on its own thread only.
+#[test]
+fn analysis_reads_on_other_threads_and_notices_stay_on_the_model_thread() {
+    let audio = tone(48000.0, 3.0, 0.5);
+    let s = start(
+        Config {
+            analysis_ms: 100,
+            ..Config::default()
+        },
+        None,
+    );
+    s.sync(&song(vec![clip(3401, "c.wav", &audio, 0.0, 0.0, 3.0)]));
+    ready(&s, 3401);
+    let p = s.probe(WAIT).unwrap();
+    assert!(
+        p.most_readers >= 2,
+        "most readers at once: {}",
+        p.most_readers
+    );
+    assert!(p.reads > 0 && p.reads == p.reads_off_thread);
+    assert!(p.notices > 0);
+    assert_eq!(p.notices_off_thread, 0);
+    drop(s);
+    no_violations();
+}
+
 /// Clips that go away are taken down in ARA's order; the rest keep playing.
 #[test]
 fn removing_a_clip_keeps_the_others() {
