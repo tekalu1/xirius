@@ -192,6 +192,22 @@ impl Pen<'_> {
         self.window.paint_quad(quad);
     }
 
+    /// A ring `width` wide just outside `r`, whose corners are `radius` round: its corners
+    /// share their centres with `r`'s, so it hugs the box all the way round.
+    pub fn ring_outside(&mut self, r: Rect, color: Hsla, radius: Radius, width: f32) {
+        let o = Rect::new(
+            r.x - width,
+            r.y - width,
+            r.w + 2.0 * width,
+            r.h + 2.0 * width,
+        );
+        let mut quad = gpui::outline(bounds(self.origin, o), color, gpui::BorderStyle::default());
+        let inner = radius.px().min((r.w.min(r.h) / 2.0).max(0.0));
+        quad.corner_radii = Corners::all(px(inner + width));
+        quad.border_widths = gpui::Edges::all(px(width));
+        self.window.paint_quad(quad);
+    }
+
     pub fn shape(&mut self, r: Rect, color: Hsla, radius: Radius, round: Round) {
         let mut quad = fill(bounds(self.origin, r), color);
         // A corner radius larger than half the box would bulge the quad.

@@ -1528,13 +1528,7 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
         // round it that fades out (UI-323), none under reduced motion.
         let lit = studio.instruments.lit(w.plugin, std::time::Instant::now());
         if lit > 0.0 && studio.motion.enabled.get() {
-            let ring = Rect::new(
-                r.x - FLASH_W,
-                r.y - FLASH_W,
-                r.w + 2.0 * FLASH_W,
-                r.h + 2.0 * FLASH_W,
-            );
-            pen.outline(ring, pen.c.ring.opacity(lit), Radius::M, FLASH_W);
+            pen.ring_outside(r, pen.c.ring.opacity(lit), Radius::M, FLASH_W);
         }
     }
 }
