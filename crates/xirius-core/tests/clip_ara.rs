@@ -33,11 +33,17 @@ fn audio(s: &mut Session) -> String {
 }
 
 fn attach(s: &mut Session, id: &str) {
-    run(
+    let r = run(
         s,
         "clip.ara.attach.apply",
         json!({"ids": [id], "plugin": "vst3:m", "name": "M"}),
     );
+    // The window plugs clips in through this step, so it says what it did.
+    assert_eq!(r.message, "クリップ 1 件を ARA のプラグイン M に付けました");
+}
+
+fn refused(s: &mut Session, name: &str, args: Value) -> String {
+    try_run(s, name, args).map(|_| ()).unwrap_err().message
 }
 
 fn cid(id: &str) -> ClipId {
@@ -64,33 +70,84 @@ fn attach_and_detach_are_one_step_each() {
 }
 
 #[test]
-fn only_a_plain_audio_clip_is_attached() {
+fn only_a_plain_audio_clip_is_attached_and_each_reason_is_its_own() {
     let mut s = Session::new("ara");
+    let apply = |id: &str| json!({"ids": [id], "plugin": "vst3:m"});
+    let cases = [
+        (
+            "clip.tempo.set",
+            json!({"bpm": 90.0}),
+            "テンポが変更されています",
+        ),
+        (
+            "clip.speed.set",
+            json!({"percent": 150.0}),
+            "速さが変更されています",
+        ),
+        (
+            "clip.transpose",
+            json!({"semis": 2}),
+            "ピッチが変更されています",
+        ),
+        (
+            "clip.tune",
+            json!({"cents": -10}),
+            "ピッチが変更されています",
+        ),
+    ];
+    for (name, mut args, said) in cases {
+        let a = audio(&mut s);
+        args["ids"] = json!([a]);
+        run(&mut s, name, args);
+        let e = refused(&mut s, "clip.ara.attach.apply", apply(&a));
+        assert_eq!(e, format!("クリップ {a}: {said}"), "{name}");
+    }
     let a = audio(&mut s);
-    run(&mut s, "clip.tempo.set", json!({"ids": [a], "bpm": 90.0}));
-    assert!(
-        try_run(
-            &mut s,
-            "clip.ara.attach.apply",
-            json!({"ids": [a], "plugin": "vst3:m"}),
-        )
-        .is_err()
+    run(
+        &mut s,
+        "clip.reverse.apply",
+        json!({"clips": [{"id": a, "reverse": true, "offset": 0}]}),
     );
+    let e = refused(&mut s, "clip.ara.attach.apply", apply(&a));
+    assert_eq!(e, format!("クリップ {a}: 逆再生が有効です"));
+
     let t = id_of(&run(&mut s, "track.add.instrument", json!({})));
     let m = id_of(&run(
         &mut s,
         "clip.add.midi",
         json!({"track": t, "at": 0, "length": 1920}),
     ));
-    assert!(
-        try_run(
-            &mut s,
-            "clip.ara.attach.apply",
-            json!({"ids": [m], "plugin": "vst3:m"}),
-        )
-        .is_err()
-    );
+    let e = refused(&mut s, "clip.ara.attach.apply", apply(&m));
+    assert_eq!(e, format!("クリップ {m}: 音声クリップを選択してください"));
     assert!(s.project().ara.is_empty());
+}
+
+#[test]
+fn a_frozen_tracks_clips_are_neither_attached_nor_detached() {
+    let mut s = Session::new("ara");
+    let a = audio(&mut s);
+    let t = s.project().clip(cid(&a)).unwrap().0.id.to_string();
+    let b = id_of(&run(
+        &mut s,
+        "clip.add.audio",
+        json!({"track": t, "at": 7680, "length": 1920, "file": "b.wav"}),
+    ));
+    attach(&mut s, &a);
+    run(
+        &mut s,
+        "track.freeze.apply",
+        json!({"tracks": [{"id": t, "file": "frozen.wav", "start": 0}]}),
+    );
+    let frozen = "フリーズ中のトラックは編集できません";
+    let e = refused(
+        &mut s,
+        "clip.ara.attach.apply",
+        json!({"ids": [b], "plugin": "vst3:m"}),
+    );
+    assert_eq!(e, format!("クリップ {b}: {frozen}"));
+    let e = refused(&mut s, "clip.ara.detach", json!({"ids": [a]}));
+    assert_eq!(e, format!("クリップ {a}: {frozen}"));
+    assert_eq!(s.project().ara.clips.len(), 1);
 }
 
 #[test]

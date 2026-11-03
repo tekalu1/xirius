@@ -15,6 +15,7 @@
 //!   window, one per plugin; when it closes, the plugin's edits are taken into the song.
 
 use serde_json::{Map, Value, json};
+use xirius_core::commands::clip_ara::{Unfit, unfit_all};
 use xirius_core::id::{ClipId, TrackId};
 use xirius_core::model::{Clip, Track};
 use xirius_design::{FontSize, Radius, Space, Weight};
@@ -32,7 +33,6 @@ const ICON: f32 = 12.0;
 /// Between the name and the badge.
 pub const GAP: f32 = 2.0;
 pub const ADD: &str = "ARA プラグインを追加…";
-pub const CANNOT_ATTACH: &str = "テンポ・速さ・ピッチ・逆再生を変えたクリップには付けられません";
 pub const MISSING: &str = "プラグインが見つかりません";
 pub const RESTART: &str = "プラグインを再起動";
 const NOT_ANALYSED: &str = "解析できませんでした";
@@ -286,20 +286,20 @@ impl Studio {
                 .map(|(_, c)| *c)
                 .filter(|c| p.ara.clips.get(c).is_some_and(|a| a.plugin == plugin))
                 .collect();
-            return self.open_ara_editor_for(&clips);
-        }
-        if targets
-            .iter()
-            .any(|(t, _)| p.tracks.get(t).is_some_and(|t| t.frozen.is_some()))
-        {
-            self.error = Some(crate::toast::FROZEN.into());
-            return false;
-        }
-        for (_, c) in &targets {
-            if let Err(e) = xirius_core::commands::clip_ara::attachable(&p, *c) {
-                self.error = Some(e.to_string());
-                return false;
+            // Some of the clips have the plugin: its window shows those, and says the rest
+            // are left as they are (L4).
+            let rest = targets.len() - clips.len();
+            let opened = self.open_ara_editor_for(&clips);
+            if opened && rest > 0 {
+                self.ara_tell(format!("ほかのクリップ {rest} 件は窓に出していません"));
             }
+            return opened;
+        }
+        // The menu's reason, word for word (EDT-023).
+        let clips: Vec<ClipId> = targets.iter().map(|(_, c)| *c).collect();
+        if let Some(why) = unfit_all(&p, &clips) {
+            self.error = Some(why.said().into());
+            return false;
         }
         self.ara.pick = targets.iter().map(|(_, c)| *c).collect();
         let (t, c) = targets[0];
@@ -494,16 +494,7 @@ impl Studio {
         let clips: Vec<ClipId> = ids.iter().filter_map(|i| i.parse().ok()).collect();
         let attached = clips.iter().find(|c| p.ara.clips.contains_key(c)).copied();
         let Some(one) = attached else {
-            let reason = if frozen {
-                crate::toast::FROZEN
-            } else if clips
-                .iter()
-                .any(|c| xirius_core::commands::clip_ara::attachable(&p, *c).is_err())
-            {
-                CANNOT_ATTACH
-            } else {
-                ""
-            };
+            let reason = unfit_all(&p, &clips).map_or("", Unfit::said);
             let row = Item::act(
                 ADD,
                 &self.menu_key("clip.ara.attach"),

@@ -7,6 +7,7 @@
 use super::*;
 use crate::ara::AraClip;
 use crate::id::IdKind;
+use crate::model::AudioProcess;
 
 pub(super) fn defs() -> Vec<CommandDef> {
     vec![
@@ -35,6 +36,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 for id in &ids {
                     attachable(p, *id)?;
                 }
+                let n = ids.len();
                 for id in ids {
                     let keep = p.ara.clips.get(&id).filter(|r| r.plugin == plugin);
                     let clone_of = keep.and_then(|r| r.clone_of);
@@ -47,8 +49,10 @@ pub(super) fn defs() -> Vec<CommandDef> {
                         },
                     );
                 }
-                // clip.ara.attach has said what it did.
-                Ok(Output::msg(""))
+                // Said here too: the window plugs a clip in through this edit (L3).
+                Ok(Output::msg(format!(
+                    "クリップ {n} 件を ARA のプラグイン {name} に付けました"
+                )))
             },
         ),
         edit(
@@ -58,7 +62,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
             |p, _, a| {
                 let ids = a.require_ids::<ClipId>("クリップ")?;
                 for id in &ids {
-                    p.clip(*id)?;
+                    unfrozen(p, *id)?;
                 }
                 let n = ids
                     .iter()
@@ -77,17 +81,82 @@ pub(super) fn defs() -> Vec<CommandDef> {
     ]
 }
 
-/// An audio clip that plays its file as it is: ARA reads the file, so tempo, speed, pitch and
-/// direction of the clip's own are not for it.
-pub fn attachable(p: &Project, id: ClipId) -> CmdResult<()> {
-    let (_, c) = p.clip(id)?;
-    match &c.body {
-        ClipBody::Audio { process, .. } if process.is_plain() => Ok(()),
-        ClipBody::Audio { .. } => Err(CmdError::conflict(format!(
-            "クリップ {id} はテンポ・速さ・ピッチ・逆再生を変えてあります。戻してから付けてください"
-        ))),
-        ClipBody::Midi { .. } => Err(CmdError::invalid(format!(
-            "クリップ {id} は MIDI のクリップです。ARA のプラグインに付けられるのはオーディオのクリップだけです"
-        ))),
+/// Why the clips cannot take an ARA plugin, said the same in the menu, by Ctrl+M and here.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Unfit {
+    /// MIDI, or audio and MIDI together.
+    NotAudio,
+    Frozen,
+    Tempo,
+    Speed,
+    Pitch,
+    Reverse,
+}
+
+impl Unfit {
+    pub fn said(self) -> &'static str {
+        match self {
+            Unfit::NotAudio => "音声クリップを選択してください",
+            Unfit::Frozen => "フリーズ中のトラックは編集できません",
+            Unfit::Tempo => "テンポが変更されています",
+            Unfit::Speed => "速さが変更されています",
+            Unfit::Pitch => "ピッチが変更されています",
+            Unfit::Reverse => "逆再生が有効です",
+        }
     }
+
+    fn error(self, id: ClipId) -> CmdError {
+        let text = format!("クリップ {id}: {}", self.said());
+        match self {
+            Unfit::NotAudio => CmdError::invalid(text),
+            _ => CmdError::conflict(text),
+        }
+    }
+}
+
+/// The first reason one clip cannot take an ARA plugin. ARA reads the file, so only an audio
+/// clip that plays its file as it is can: tempo, speed, pitch and direction of the clip's own
+/// are not for it. A frozen track's clips do not change.
+pub fn unfit(p: &Project, id: ClipId) -> CmdResult<Option<Unfit>> {
+    let (t, c) = p.clip(id)?;
+    let ClipBody::Audio { process, .. } = &c.body else {
+        return Ok(Some(Unfit::NotAudio));
+    };
+    Ok(if t.frozen.is_some() {
+        Some(Unfit::Frozen)
+    } else if process.tempo.is_some() || process.follow {
+        Some(Unfit::Tempo)
+    } else if process.speed != AudioProcess::default().speed {
+        Some(Unfit::Speed)
+    } else if process.semis != 0 || process.cents != 0 {
+        Some(Unfit::Pitch)
+    } else if process.reverse {
+        Some(Unfit::Reverse)
+    } else {
+        debug_assert!(process.is_plain());
+        None
+    })
+}
+
+/// The reason for a selection: MIDI in it first, then the order of [`Unfit`].
+pub fn unfit_all(p: &Project, ids: &[ClipId]) -> Option<Unfit> {
+    ids.iter()
+        .filter_map(|id| unfit(p, *id).ok().flatten())
+        .min_by_key(|u| *u as u8)
+}
+
+pub fn attachable(p: &Project, id: ClipId) -> CmdResult<()> {
+    match unfit(p, id)? {
+        Some(u) => Err(u.error(id)),
+        None => Ok(()),
+    }
+}
+
+/// A frozen track's clips stay as they are, plugged in or not.
+fn unfrozen(p: &Project, id: ClipId) -> CmdResult<()> {
+    let (t, _) = p.clip(id)?;
+    if t.frozen.is_some() {
+        return Err(Unfit::Frozen.error(id));
+    }
+    Ok(())
 }

@@ -295,8 +295,9 @@ impl Studio {
             if !one {
                 items.push(self.ctx_cmd("clip.fade.cross", by_ids()));
             }
-            items.push(self.process_rows(got));
         }
+        // Shown for any clips, so that the ARA row says why MIDI cannot take it (EDT-023).
+        items.push(self.process_rows(got, audio));
         items.push(self.bounce_rows(got));
         items.push(Item::gap());
 
@@ -320,8 +321,9 @@ impl Studio {
         items
     }
 
-    /// 処理: what reads the sound of the audio clips and changes how they play (EDT-016).
-    fn process_rows(&self, got: &Picked) -> Item {
+    /// 処理: what reads the sound of the audio clips and changes how they play (EDT-016). For
+    /// MIDI it opens to its dim ARA row, which says why.
+    fn process_rows(&self, got: &Picked, audio: bool) -> Item {
         let (enabled, reason) = unfrozen(got);
         let row = |s: &Studio, name: &'static str| {
             let label = s.song.registry().label(name).unwrap_or(name).to_string();
@@ -334,18 +336,22 @@ impl Studio {
                 reason,
             )
         };
-        let mut rows = vec![
-            row(self, "clip.normalize"),
-            row(self, "clip.reverse"),
-            row(self, "clip.tempo.detect"),
-            Item::gap(),
-        ];
+        let mut rows = Vec::new();
+        if audio {
+            rows = vec![
+                row(self, "clip.normalize"),
+                row(self, "clip.reverse"),
+                row(self, "clip.tempo.detect"),
+                Item::gap(),
+            ];
+        }
         // The ARA plugin ends the list (EDT-023).
         rows.extend(self.ara_rows(&got.ids, got.frozen > 0));
-        Item {
+        let sub = Item {
             reason: reason.to_string(),
             ..Item::sub("処理", rows)
-        }
+        };
+        if audio { sub } else { sub.enabled(true) }
     }
 
     /// バウンス: the clips, or the range the range tool chose (EDT-015, EXP-003).

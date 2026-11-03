@@ -1,6 +1,6 @@
-//! What a frozen track keeps (EXP-004). Its sound is a file rendered from its clips, instrument
-//! and inserts, so an edit that would change any of those is turned away until the track is
-//! unfrozen. The fader, the pan, the sends, the name and the color still change.
+//! What a frozen track keeps (EXP-004). Its sound is a file rendered from its clips, instrument,
+//! inserts and ARA plugins, so an edit that would change any of those is turned away until the
+//! track is unfrozen. The fader, the pan, the sends, the name and the color still change.
 
 use crate::auto::AutoTarget;
 use crate::error::{CmdError, CmdResult};
@@ -43,6 +43,13 @@ fn same_source(before: &Project, old: &Track, after: &Project, new: &Track) -> b
             .map(|c| p.clip_fx.get(&c.id).cloned())
             .collect::<Vec<_>>()
     };
+    // An ARA plugin plugged in or taken out changes the sound too (EDT-023).
+    let ara = |p: &Project, t: &Track| {
+        t.clips
+            .iter()
+            .map(|c| p.ara.clips.get(&c.id).cloned())
+            .collect::<Vec<_>>()
+    };
     old.clips == new.clips
         && old.inserts == new.inserts
         && old.rack == new.rack
@@ -50,4 +57,5 @@ fn same_source(before: &Project, old: &Track, after: &Project, new: &Track) -> b
         && old.midi_out == new.midi_out
         && params(old) == params(new)
         && fx(before, old) == fx(after, new)
+        && ara(before, old) == ara(after, new)
 }

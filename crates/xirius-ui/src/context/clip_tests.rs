@@ -74,6 +74,7 @@ fn a_midi_clip_has_its_own_rows_in_the_order_of_the_mock() {
             "ループ範囲を設定",
             "色",
             "クオンタイズ",
+            "処理",
             "バウンス",
             "選択範囲を書き出す…",
             "MIDI ファイルとして書き出す…",

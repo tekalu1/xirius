@@ -180,43 +180,168 @@ fn processing_ends_with_the_attach_row_and_its_key_opens_the_list() {
     assert_eq!(s.project().ara.clips[&c].plugin, UID);
 }
 
+/// The ARA row of 「処理」 for what is selected, and what Ctrl+M says of it.
+fn why_not(s: &mut Studio, g: &Geometry, x: f32, y: f32) -> (crate::context::Row, Option<String>) {
+    s.popup = None;
+    s.error = None;
+    assert!(s.scene_context(g, x, y));
+    choose(s, g, "処理");
+    let add = row(s, ADD);
+    // A dim row does nothing.
+    choose(s, g, ADD);
+    assert!(!picking(s));
+    s.popup = None;
+    s.mapped_key(g, "m", None, Mods::ctrl());
+    assert!(!picking(s));
+    (add, s.error.take())
+}
+
 #[test]
 fn a_clip_that_cannot_take_it_has_the_row_dim_with_why() {
+    let cases: [(&str, Value, &str); 5] = [
+        (
+            "clip.tempo.set",
+            json!({ "bpm": 90 }),
+            "テンポが変更されています",
+        ),
+        (
+            "clip.speed.set",
+            json!({ "percent": 150 }),
+            "速さが変更されています",
+        ),
+        (
+            "clip.transpose",
+            json!({ "semis": 3 }),
+            "ピッチが変更されています",
+        ),
+        (
+            "clip.tune",
+            json!({ "cents": 20 }),
+            "ピッチが変更されています",
+        ),
+        (
+            "clip.reverse.apply",
+            json!({ "reverse": true, "offset": 0 }),
+            "逆再生が有効です",
+        ),
+    ];
+    for (name, mut args, said) in cases {
+        let (mut s, g) = studio();
+        let (t, c) = vocal(&s);
+        if name == "clip.reverse.apply" {
+            args["id"] = json!(c.to_string());
+            args = json!({ "clips": [args] });
+        } else {
+            args["ids"] = json!([c.to_string()]);
+        }
+        s.song.run(name, args).unwrap();
+        s.select_clip_here(t, c);
+        let (x, y) = clip_mid(&s, &g, "Vocal", 0);
+        let (add, error) = why_not(&mut s, &g, x, y);
+        assert!(!add.enabled, "{name}");
+        assert_eq!(add.reason, said, "{name}");
+        // The key says the menu's words.
+        assert_eq!(error.as_deref(), Some(said), "{name}");
+        // So does the core, for a command sent from elsewhere.
+        let e = s
+            .song
+            .run(
+                "clip.ara.attach.apply",
+                json!({ "ids": [c.to_string()], "plugin": UID }),
+            )
+            .unwrap_err();
+        assert!(e.to_string().contains(said), "{name}: {e}");
+    }
+    // Frozen: the same row, with the freeze's reason, and the core turns it away too; a clip
+    // plugged in before stays plugged in.
     let (mut s, g) = studio();
     let (t, c) = vocal(&s);
-    s.song
-        .run(
-            "clip.speed.set",
-            json!({ "ids": [c.to_string()], "percent": 150 }),
-        )
-        .unwrap();
-    processing(&mut s, &g);
-    let add = row(&s, ADD);
-    assert!(!add.enabled);
-    assert_eq!(add.reason, CANNOT_ATTACH);
-    // A dim row does nothing.
-    choose(&mut s, &g, ADD);
-    assert!(!picking(&s));
-    // Frozen: the same row, with the freeze's reason.
-    let (mut s, g) = studio();
     s.song
         .run(
             "track.freeze.apply",
             json!({ "tracks": [{ "id": t.to_string(), "file": "frozen.wav", "start": 0 }] }),
         )
         .unwrap();
+    // 「処理」 is dim with the freeze's reason, as everything in it is.
     s.popup = None;
     let (x, y) = clip_mid(&s, &g, "Vocal", 0);
     assert!(s.scene_context(&g, x, y));
-    let rows = s.context_rows();
-    let sub = rows.iter().find(|r| r.label == "処理").unwrap();
+    let sub = row(&s, "処理");
     assert!(!sub.enabled);
+    assert_eq!(sub.reason, crate::toast::FROZEN);
     // The key still reaches it, and says why.
     s.popup = None;
     s.select_clip_here(t, c);
     s.mapped_key(&g, "m", None, Mods::ctrl());
     assert!(!picking(&s));
     assert_eq!(s.error.as_deref(), Some(crate::toast::FROZEN));
+    let e = s
+        .song
+        .run(
+            "clip.ara.attach.apply",
+            json!({ "ids": [c.to_string()], "plugin": UID }),
+        )
+        .unwrap_err();
+    assert!(e.to_string().contains(crate::toast::FROZEN), "{e}");
+    // Plugged in before the freeze: it stays plugged in.
+    let (mut s, _) = studio();
+    let (t, c) = vocal(&s);
+    attach(&mut s, c);
+    s.song
+        .run(
+            "track.freeze.apply",
+            json!({ "tracks": [{ "id": t.to_string(), "file": "frozen.wav", "start": 0 }] }),
+        )
+        .unwrap();
+    let e = s
+        .song
+        .run("clip.ara.detach", json!({ "ids": [c.to_string()] }))
+        .unwrap_err();
+    assert!(e.to_string().contains(crate::toast::FROZEN), "{e}");
+    assert!(s.project().ara.clips.contains_key(&c));
+}
+
+#[test]
+fn midi_and_a_mix_have_the_row_dim_and_ask_for_audio() {
+    const AUDIO_ONLY: &str = "音声クリップを選択してください";
+    // A MIDI clip: 「処理」 is there, with only the dim ARA row.
+    let (mut s, g) = studio();
+    let keys = track(&s, "Keys");
+    let k = s.project().tracks[&keys].clips[0].id;
+    s.select_clip_here(keys, k);
+    let (x, y) = clip_mid(&s, &g, "Keys", 0);
+    let (add, error) = why_not(&mut s, &g, x, y);
+    assert!(!add.enabled);
+    assert_eq!(add.reason, AUDIO_ONLY);
+    assert_eq!(error.as_deref(), Some(AUDIO_ONLY));
+    // Audio and MIDI together.
+    let (mut s, g) = studio();
+    let (t, c) = vocal(&s);
+    s.arrange.clips = [(t, c), (keys, k)].into_iter().collect();
+    let (x, y) = clip_mid(&s, &g, "Vocal", 0);
+    let (add, error) = why_not(&mut s, &g, x, y);
+    assert_eq!(s.arrange.clips.len(), 2, "the press kept the selection");
+    assert!(!add.enabled);
+    assert_eq!(add.reason, AUDIO_ONLY);
+    assert_eq!(error.as_deref(), Some(AUDIO_ONLY));
+}
+
+#[test]
+fn ctrl_m_on_clips_some_of_which_have_it_says_the_rest_are_left() {
+    let (mut s, g) = studio();
+    let (t, c) = vocal(&s);
+    attach(&mut s, c);
+    let drums = track(&s, "Drums");
+    let d = s.project().tracks[&drums].clips[0].id;
+    s.arrange.clips = [(t, c), (drums, d)].into_iter().collect();
+    s.mapped_key(&g, "m", None, Mods::ctrl());
+    assert_eq!(s.ara.opened, [(UID.to_string(), vec![c])]);
+    let said = s.toast.as_ref().map(|t| t.text.clone());
+    assert_eq!(
+        said.as_deref(),
+        Some("ほかのクリップ 1 件は窓に出していません")
+    );
+    assert!(!s.project().ara.clips.contains_key(&d));
 }
 
 #[test]
