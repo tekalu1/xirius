@@ -295,7 +295,10 @@ impl Studio {
         if self.popup.as_ref().is_some_and(|p| {
             matches!(
                 p.kind,
-                PopupKind::Insert(_) | PopupKind::Instrument(_) | PopupKind::AraPlugin
+                PopupKind::Insert(_)
+                    | PopupKind::Instrument(_)
+                    | PopupKind::Layer(_)
+                    | PopupKind::AraPlugin
             )
         }) {
             self.refresh_popup();

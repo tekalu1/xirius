@@ -77,8 +77,7 @@ fn click_opens_and_remove_button_removes_the_insert() {
     s.fx_up(&g, at.0, at.1, false);
     assert!(s.instruments.is_open(id));
     close(&mut s);
-    let row = list_row(first_row(&s, &g, a), 0);
-    let r = remove_part(row);
+    let r = remove_part(s.strip_item(&g, a, id).unwrap());
     assert!(s.chain_down(&g, r.x + 8.0, r.y + 11.0));
     assert!(!s.project().tracks[&a].inserts.iter().any(|p| p.id == id));
 }
@@ -163,7 +162,14 @@ fn many_inserts_scroll_without_moving_the_fader() {
         .unwrap();
     assert_eq!(before, after);
     assert!(s.mixer_rect(&g, MixerHit::AddInsert(a)).is_some());
-    assert!(s.mixer.offset(a, List::Inserts) > 60);
+    let strip = s
+        .mixer_strips(&g)
+        .into_iter()
+        .find(|r| r.track == a)
+        .unwrap();
+    let max = s.flow_max(&strip, &s.project().tracks[&a]);
+    assert!(max > 60);
+    assert_eq!(s.mixer.offset(a, List::Flow), max);
 }
 
 #[test]
@@ -269,7 +275,7 @@ fn preset_file_buttons_use_the_target_plugin() {
     close(&mut s);
     s.mixer.set_insert_offset(a, 0);
     let id = s.project().tracks[&a].inserts[0].id;
-    let r = crate::fx_preset::part(list_row(first_row(&s, &g, a), 0));
+    let r = crate::fx_preset::part(s.strip_item(&g, a, id).unwrap());
     assert!(s.chain_down(&g, r.x + 8.0, r.y + 11.0));
     let panel = s.mixer.preset_panel.unwrap();
     assert!(s.chain_down(&g, panel.rect.x + 20.0, panel.rect.y + 38.0));

@@ -259,7 +259,20 @@ impl Pen<'_> {
         r: Rect,
         align: Align,
     ) -> f32 {
-        self.text_with(s, font_size, weight, false, color, r, align)
+        self.text_with(s, font_size, weight, false, false, color, r, align)
+    }
+
+    /// Text with a line through it: a plug-in that is switched off (MIX-044).
+    pub fn struck(
+        &mut self,
+        s: &str,
+        font_size: FontSize,
+        weight: Weight,
+        color: Hsla,
+        r: Rect,
+        align: Align,
+    ) -> f32 {
+        self.text_with(s, font_size, weight, false, true, color, r, align)
     }
 
     /// Text whose digits keep their width (positions, tempo, levels).
@@ -272,7 +285,7 @@ impl Pen<'_> {
         r: Rect,
         align: Align,
     ) -> f32 {
-        self.text_with(s, font_size, weight, true, color, r, align)
+        self.text_with(s, font_size, weight, true, false, color, r, align)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -282,6 +295,7 @@ impl Pen<'_> {
         font_size: FontSize,
         weight: Weight,
         tabular: bool,
+        struck: bool,
         color: Hsla,
         r: Rect,
         align: Align,
@@ -290,10 +304,19 @@ impl Pen<'_> {
             return 0.0;
         }
         let size_px = font_size.px();
+        let mut runs = text_runs(s, weight, tabular, color);
+        if struck {
+            for run in &mut runs {
+                run.strikethrough = Some(gpui::StrikethroughStyle {
+                    thickness: px(1.0),
+                    color: Some(color),
+                });
+            }
+        }
         let line = self.window.text_system().shape_line(
             SharedString::from(s.to_string()),
             px(size_px),
-            &text_runs(s, weight, tabular, color),
+            &runs,
             None,
         );
         let width = f32::from(line.width);
@@ -432,7 +455,6 @@ impl Pen<'_> {
     /// A structure line that turns (UI-321): the routes of the channel editor and the strip.
     /// Straight runs and quarter circles only, as [`StructureLine`] lays them out; both ends
     /// round, in the colour of `state`. `pieces` is in the pen's space and one unbroken line.
-    #[allow(dead_code)] // The channel editor and the strip's routes (MIX-042, PLG-065) draw with it.
     pub(crate) fn structure(&mut self, pieces: &[LinePiece], state: LineState) {
         let (Some(first), Some(last)) = (pieces.first(), pieces.last()) else {
             return;

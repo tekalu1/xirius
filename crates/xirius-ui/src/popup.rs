@@ -63,6 +63,8 @@ pub enum PopupKind {
     Instrument(TrackId),
     /// The ARA plugin for the clips of `Studio::ara.pick` (EDT-023).
     AraPlugin,
+    /// Another instrument for a track that has one: a new layer (MIX-044).
+    Layer(TrackId),
     AutomationTargets(TrackId, bool),
     BrowserView,
     /// The + at the head of the track column.

@@ -130,6 +130,8 @@ pub fn of_hit(hit: Hit) -> Option<(&'static str, &'static str)> {
             MixerHit::Open(..) => ("mixer.open", "insert.open"),
             MixerHit::AddInsert(_) => ("mixer.add_insert", "insert.add"),
             MixerHit::AddInstrument(_) => ("mixer.add_instrument", "instrument.add"),
+            MixerHit::AddLayer(_) => ("mixer.add_layer", "layer.add"),
+            MixerHit::Fold(..) => ("mixer.fold", "split.fold"),
             MixerHit::SendLevel(..) => ("mixer.send_level", "send.level"),
             MixerHit::SendPre(..) => ("mixer.send_pre", "send.prepost"),
             MixerHit::AddSend(_) => ("mixer.add_send", "send.add"),
@@ -228,6 +230,7 @@ pub fn of_cell(kind: &PopupKind, action: &Action) -> &'static str {
         (PopupKind::Send(_), Action::Pick(_)) => "send.pick",
         (PopupKind::Instrument(_), Action::Pick(_)) => "instrument.pick",
         (PopupKind::AraPlugin, Action::Pick(_)) => "ara.pick",
+        (PopupKind::Layer(_), Action::Pick(_)) => "layer.pick",
         _ => of_action(action),
     }
 }
@@ -526,12 +529,19 @@ mod tests {
             Hit::Mixer(MixerHit::Input(track)),
             Hit::Mixer(MixerHit::AddInsert(track)),
             Hit::Mixer(MixerHit::AddInstrument(track)),
+            Hit::Mixer(MixerHit::AddLayer(track)),
             Hit::Mixer(MixerHit::AddSend(track)),
         ];
         openers.dedup();
         for hit in openers {
             let mut s = Studio::sample();
             s.browser.open = true;
+            // a strip's ＋ rows are pressed where its flow shows them (MIX-044)
+            if matches!(hit, Hit::Mixer(_)) {
+                s.drawer_open = true;
+                s.tab = crate::studio::DrawerTab::Mixer;
+                s.drawer_size.mixer = Some(600.0);
+            }
             let g = s.geometry(w, h);
             s.press(&g, hit);
             cells(&s, &g, &mut seen);

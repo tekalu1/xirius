@@ -201,3 +201,65 @@ fn layers_go_only_on_instrument_tracks() {
         .contains("インストゥルメントトラック")
     );
 }
+
+#[test]
+fn an_effect_moves_into_a_layer_and_a_splitter_is_put_there() {
+    let (mut s, t) = song();
+    let v = run(
+        &mut s,
+        "rack.layer.add",
+        json!({ "track": t, "name": "Synth", "uid": "synth" }),
+    );
+    let second = id(&v);
+    let eq = run(&mut s, "plugin.add", json!({ "track": t, "name": "EQ" }))["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    step(&mut s, "rack.node.move", json!({ "id": eq, "to": second }));
+    let l = layers(&s, &t);
+    assert!(l[0].fx.is_empty());
+    assert_eq!(
+        l[1].fx,
+        vec![xirius_core::rack::RackNode::Plugin(eq.parse().unwrap())]
+    );
+    assert!(
+        s.project().tracks[&tid(&t)]
+            .rack
+            .as_ref()
+            .unwrap()
+            .fx
+            .is_empty()
+    );
+    // A splitter after the EQ in that layer, and one at the head of the first layer.
+    step(
+        &mut s,
+        "rack.split.add",
+        json!({ "track": t, "at": format!("after:{eq}") }),
+    );
+    let first = layers(&s, &t)[0].id.to_string();
+    step(
+        &mut s,
+        "rack.split.add",
+        json!({ "track": t, "at": format!("layer:{first}:0") }),
+    );
+    let l = layers(&s, &t);
+    assert!(matches!(
+        l[0].fx[..],
+        [xirius_core::rack::RackNode::Split(_)]
+    ));
+    assert!(matches!(
+        l[1].fx[..],
+        [
+            xirius_core::rack::RackNode::Plugin(_),
+            xirius_core::rack::RackNode::Split(_)
+        ]
+    ));
+    assert!(
+        fails(
+            &mut s,
+            "rack.split.add",
+            json!({ "track": t, "at": "layer:999:0" })
+        )
+        .contains("999")
+    );
+}

@@ -623,6 +623,7 @@ pub fn is(kind: PopupKind) -> bool {
         kind,
         PopupKind::Insert(_)
             | PopupKind::Instrument(_)
+            | PopupKind::Layer(_)
             | PopupKind::Send(_)
             | PopupKind::Input(_)
             | PopupKind::Output(_)
@@ -642,6 +643,7 @@ pub fn width(kind: PopupKind) -> f32 {
     match kind {
         PopupKind::Insert(_)
         | PopupKind::Instrument(_)
+        | PopupKind::Layer(_)
         | PopupKind::Send(_)
         | PopupKind::AraPlugin => 260.0,
         PopupKind::Device(_) => 280.0,
@@ -868,7 +870,7 @@ impl Studio {
     pub(crate) fn pick_view(&mut self, kind: PopupKind) -> Option<PickList> {
         match kind {
             PopupKind::Insert(_) => Some(self.insert_pick()),
-            PopupKind::Instrument(_) => Some(self.instrument_pick()),
+            PopupKind::Instrument(_) | PopupKind::Layer(_) => Some(self.instrument_pick()),
             PopupKind::AraPlugin => Some(self.ara_pick_list()),
             PopupKind::Send(t) => {
                 let p = self.project();

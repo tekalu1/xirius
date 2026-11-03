@@ -446,7 +446,10 @@ fn an_input_the_song_names_stays_in_the_list_when_it_is_gone() {
 
 #[test]
 fn a_frozen_tracks_instrument_and_inserts_are_locked_and_a_press_offers_to_unfreeze() {
-    let (mut s, g) = studio();
+    let (mut s, _) = studio();
+    // the strips' flow shows the instrument and the effect under it
+    s.drawer_size.mixer = Some(600.0);
+    let g = s.geometry(W, H);
     let keys = track(&s, "Keys");
     for (name, kind, uid) in [("Sampler", "instrument", "sampler"), ("EQ", "effect", "eq")] {
         assert!(s.run_command(

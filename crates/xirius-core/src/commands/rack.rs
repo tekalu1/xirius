@@ -40,12 +40,12 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         edit(
             "rack.split.add",
-            "トラックの FX にスプリッターを追加します（--at は track（FX の末尾）・after:<プラグインかスプリッター>・branch:<分岐>:<位置>。分岐は空で作ります）",
+            "トラックの FX にスプリッターを追加します（--at は track（FX の末尾）・after:<プラグインかスプリッター>・branch:<分岐>:<位置>・layer:<レイヤー>:<位置>。分岐は空で作ります）",
             vec![
                 ArgDef::id("track", IdKind::Track, "トラック").req(),
                 ArgDef::text(
                     "at",
-                    "置く所: track・after:<id>・branch:<分岐の id>:<位置>（省略時は track）",
+                    "置く所: track・after:<id>・branch:<分岐の id>:<位置>・layer:<レイヤーの id>:<位置>（省略時は track）",
                 ),
                 ArgDef::choice("mode", MODES, "分け方（省略時は normal）"),
                 ArgDef::int("branches", "分岐の数（2〜5。channel は 2）")
@@ -91,7 +91,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         edit(
             "rack.node.move",
-            "エフェクトかスプリッターを、同じトラックの FX か分岐の中へ移します（--index は 0 から。省略時は末尾）",
+            "エフェクトかスプリッターを、同じトラックの FX・分岐・レイヤーの FX の中へ移します（--index は 0 から。省略時は末尾）",
             vec![
                 ArgDef::id(
                     "id",
@@ -102,7 +102,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 ArgDef::id(
                     "to",
                     IdKind::TrackOrRackNode,
-                    "移す先: 分岐か、そのトラック",
+                    "移す先: 分岐・レイヤーか、そのトラック",
                 )
                 .req(),
                 ArgDef::int("index", "移す先での位置（0 から）").range(0.0, 1e6),
@@ -379,6 +379,7 @@ fn node_move(p: &mut Project, a: &Args) -> CmdResult<Output> {
                 "{name} の外へは移せません（plugin.move を使ってください）"
             )));
         }
+        AnyId::RackNode(l) if layer_fx(r, l).is_some() => (Chain::Layer(l), 0),
         AnyId::RackNode(b) => match branch_depth(r, b) {
             Some(d) => (Chain::Branch(b), d),
             None if matches!(&node, RackNode::Split(s) if node_ids_of(s).contains(&b)) => {
@@ -392,7 +393,7 @@ fn node_move(p: &mut Project, a: &Args) -> CmdResult<Output> {
                 )));
             }
         },
-        _ => return Err(CmdError::invalid("--to は分岐かトラックです")),
+        _ => return Err(CmdError::invalid("--to は分岐・レイヤーかトラックです")),
     };
     if let RackNode::Split(s) = &node
         && depth + height(s) > MAX_SPLIT_DEPTH
@@ -413,11 +414,12 @@ fn node_move(p: &mut Project, a: &Args) -> CmdResult<Output> {
 
 // ---- the rack tree ---------------------------------------------------------------
 
-/// A chain of the rack, by what holds it: the track's fx, or a branch.
+/// A chain of the rack, by what holds it: the track's fx, a branch, or a layer's fx.
 #[derive(Clone, Copy)]
 enum Chain {
     Top,
     Branch(NodeId),
+    Layer(NodeId),
 }
 
 // ---- layers (ENG-075) ---------------------------------------------------------------
@@ -712,6 +714,17 @@ fn chain_mut(r: &mut Rack, c: Chain) -> Option<&mut Vec<RackNode>> {
     match c {
         Chain::Top => Some(&mut r.fx),
         Chain::Branch(b) => find_branch_parent(r, b).map(|(s, i)| &mut s.branches[i].fx),
+        Chain::Layer(l) => layer_fx(r, l),
+    }
+}
+
+/// The fx chain of layer `id` of the rack's multi-instrument.
+fn layer_fx(r: &mut Rack, id: NodeId) -> Option<&mut Vec<RackNode>> {
+    match &mut r.source {
+        Some(Source::Multi { layers, .. }) => {
+            layers.iter_mut().find(|l| l.id == id).map(|l| &mut l.fx)
+        }
+        _ => None,
     }
 }
 
@@ -739,7 +752,18 @@ fn place(r: &mut Rack, at: &str) -> CmdResult<(Chain, usize, usize)> {
             (RackNode::Split(s), AnyId::RackNode(y)) => s.id == y,
             _ => false,
         };
+        let layers: Vec<(NodeId, &[RackNode])> = match &r.source {
+            Some(Source::Multi { layers, .. }) => {
+                layers.iter().map(|l| (l.id, l.fx.as_slice())).collect()
+            }
+            _ => Vec::new(),
+        };
         return locate(&r.fx, &hit, Chain::Top, 0)
+            .or_else(|| {
+                layers
+                    .into_iter()
+                    .find_map(|(l, fx)| locate(fx, &hit, Chain::Layer(l), 0))
+            })
             .map(|(c, i, d)| (c, i + 1, d))
             .ok_or_else(|| CmdError::not_found(format!("FX に {id} がありません")));
     }
@@ -756,13 +780,27 @@ fn place(r: &mut Rack, at: &str) -> CmdResult<(Chain, usize, usize)> {
         };
         return Ok((Chain::Branch(b), i.min(len), d));
     }
+    if let Some(rest) = at.strip_prefix("layer:") {
+        let (l, i) = rest.split_once(':').unwrap_or((rest, ""));
+        let l: NodeId = l.parse().map_err(CmdError::invalid)?;
+        let len = layer_fx(r, l)
+            .map(|c| c.len())
+            .ok_or_else(|| CmdError::not_found(format!("レイヤー {l} が見つかりません")))?;
+        let i = if i.is_empty() {
+            len
+        } else {
+            i.parse::<usize>()
+                .map_err(|_| CmdError::invalid(format!("--at `{at}` の位置を読み取れません")))?
+        };
+        return Ok((Chain::Layer(l), i.min(len), 0));
+    }
     Err(CmdError::invalid(format!(
-        "--at `{at}` を読み取れません（track・after:<id>・branch:<分岐>:<位置>）"
+        "--at `{at}` を読み取れません（track・after:<id>・branch:<分岐>:<位置>・layer:<レイヤー>:<位置>）"
     )))
 }
 
-/// The node `hit` picks in `nodes` (the track's fx only; a layer's chain is not a place a
-/// command names): its chain, index and split depth.
+/// The node `hit` picks in `nodes` (a chain and what it holds): its chain, index and split
+/// depth.
 fn locate(
     nodes: &[RackNode],
     hit: &dyn Fn(&RackNode) -> bool,
@@ -798,7 +836,11 @@ fn branch_depth(r: &Rack, id: NodeId) -> Option<usize> {
             RackNode::Plugin(_) => None,
         })
     }
-    walk(&r.fx, id, 0)
+    let layers = match &r.source {
+        Some(Source::Multi { layers, .. }) => layers.as_slice(),
+        _ => &[],
+    };
+    walk(&r.fx, id, 0).or_else(|| layers.iter().find_map(|l| walk(&l.fx, id, 0)))
 }
 
 fn find_split(r: &mut Rack, id: NodeId) -> Option<&mut Split> {

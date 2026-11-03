@@ -91,9 +91,10 @@ fn a_track_without_an_instrument_lists_them_instead() {
 
 #[test]
 fn the_mixer_row_of_a_built_in_instrument_opens_the_same_window() {
-    let (mut s, g, t, id) = studio();
+    let (mut s, _, t, id) = studio();
     s.drawer_open = true;
     s.tab = DrawerTab::Mixer;
+    let g = s.geometry(1600.0, 1000.0);
     let (x, y) = s
         .mixer_center(&g, MixerHit::Open(t, id))
         .expect("on screen");
@@ -295,7 +296,7 @@ fn the_knobs_are_the_built_in_parameters_in_their_order() {
 
 #[test]
 fn a_built_in_effect_opens_from_the_mixer_and_its_knob_is_undone() {
-    let (mut s, g, t, _) = studio();
+    let (mut s, _, t, _) = studio();
     assert!(s.run_command(
         "plugin.add",
         serde_json::json!({ "track": t.to_string(), "name": "Compressor" }),
@@ -308,6 +309,8 @@ fn a_built_in_effect_opens_from_the_mixer_and_its_knob_is_undone() {
         .clone();
     s.drawer_open = true;
     s.tab = DrawerTab::Mixer;
+    s.drawer_size.mixer = Some(600.0);
+    let g = s.geometry(1600.0, 1000.0);
     let (x, y) = s
         .mixer_center(&g, MixerHit::Open(t, fx.id))
         .expect("on screen");

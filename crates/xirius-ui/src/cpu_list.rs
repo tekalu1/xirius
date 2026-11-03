@@ -518,20 +518,7 @@ impl Studio {
         self.rebuild(g);
         // The list of the strip scrolls so the row is in it, from above or from below
         // (UI-171).
-        let p = self.project();
-        let row = p.tracks.get(&t).and_then(|x| {
-            let k = x.inserts.iter().position(|p| p.id == id)?;
-            Some(k + crate::instrument::gap(x))
-        });
-        let shown = crate::mixer::Rows::of(&p).inserts;
-        if let Some(row) = row {
-            let off = self.mixer.offset(t, crate::mixer::List::Inserts);
-            if row < off {
-                self.mixer.set_insert_offset(t, row);
-            } else if row >= off + shown {
-                self.mixer.set_insert_offset(t, row + 1 - shown);
-            }
-        }
+        self.reveal_in_flow(g, t, id);
         self.perf.picked = Some(id);
         self.perf.ping = Some((id, Instant::now()));
         self.refresh_popup();

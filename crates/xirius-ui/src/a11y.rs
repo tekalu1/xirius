@@ -326,6 +326,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     out.extend(start_marks(s, g));
     out.extend(inspector_marks(s, g));
     out.extend(instrument_marks(s, g));
+    out.extend(flow_marks(s, g));
     out.extend(device_marks(s, g));
     out.extend(audition_mark(s, g));
     out.extend(preset_marks(s, g));
@@ -769,6 +770,57 @@ fn instrument_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             })
         })
         .collect()
+}
+
+/// The parts of a strip's flow that show only an icon (MIX-044): a splitter's chevron is a
+/// Button named 「スプリッター」 that says whether its branches are open, and the ＋ of each
+/// area a Button named for what it adds. Only a part on screen has one.
+fn flow_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
+    use crate::mixer::MixerHit;
+    use crate::mixer::flow::{Area, Kind};
+    use xirius_core::commands::labels::label;
+    let p = s.project();
+    let mut out = Vec::new();
+    for strip in s.mixer_strips(g) {
+        let Some(track) = p.tracks.get(&strip.track) else {
+            continue;
+        };
+        let flow = s.strip_flow(&strip, track);
+        for (l, _) in &flow.rows {
+            let t = strip.track;
+            let (hit, name, open) = match (l.kind, l.area) {
+                (Kind::Split { id, open, .. }, _) => {
+                    (MixerHit::Fold(t, id), "スプリッター", Some(open))
+                }
+                (Kind::Add, Area::Insert) => (MixerHit::AddInsert(t), "plugin.add", None),
+                (Kind::Add, Area::Instrument) if flow.has_instrument() => {
+                    (MixerHit::AddLayer(t), "rack.layer.add", None)
+                }
+                _ => continue,
+            };
+            if s.mixer_center(g, hit).is_none() {
+                continue;
+            }
+            let Some(r) = s.mixer_rect(g, hit) else {
+                continue;
+            };
+            let mut node = accesskit::Node::new(accesskit::Role::Button);
+            node.set_label(label(name).unwrap_or(name));
+            if let Some(open) = open {
+                node.set_expanded(open);
+            }
+            node.set_bounds(bounds(r));
+            out.push(Mark {
+                key: format!("flow-{t}-{hit:?}"),
+                children: Vec::new(),
+                node,
+                fold: None,
+                pick: None,
+                press: Some(crate::studio::Hit::Mixer(hit)),
+            });
+        }
+    }
+    out
 }
 
 /// The controls of the open device windows (UI-324): a knob or a row of

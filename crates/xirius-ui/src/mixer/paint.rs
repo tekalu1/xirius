@@ -135,8 +135,8 @@ fn paint_strip(
     }
 
     // Inserts, then the ＋ row.
-    pen.icon("effects", section_icon(list_row(s.inserts, 0)), c.ink);
-    crate::fx_chain::paint(pen, studio, track, s.inserts, s.rows.inserts);
+    let flow = studio.strip_flow(s, track);
+    super::flow::paint(pen, studio, track, &flow, s.inserts);
 
     // Pan, M, S, arm.
     pen.icon("volume", section_icon(s.level_row()), c.ink);

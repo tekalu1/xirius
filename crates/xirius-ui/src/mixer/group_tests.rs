@@ -24,6 +24,8 @@ fn three() -> (Studio, Geometry, [TrackId; 3]) {
     let mut s = Studio::sample();
     s.drawer_open = true;
     s.tab = DrawerTab::Mixer;
+    // tall enough that the output's menu opens clear of the next strip's fader
+    s.drawer_size.mixer = Some(600.0);
     let g = s.geometry(W, H);
     let ids = [track(&s, "Keys"), track(&s, "Vocal"), track(&s, "Guitar")];
     for (t, db) in ids.iter().zip([-12.0, -6.0, 6.0]) {

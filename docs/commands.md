@@ -5558,7 +5558,7 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 
 ラックの中で移動
 
-エフェクトかスプリッターを、同じトラックの FX か分岐の中へ移します（--index は 0 から。省略時は末尾）
+エフェクトかスプリッターを、同じトラックの FX・分岐・レイヤーの FX の中へ移します（--index は 0 から。省略時は末尾）
 
 事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
 
@@ -5570,7 +5570,7 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 | `id` | 必須 | `{"type":"string"}` | 移すエフェクトかスプリッター（plugin\|rack node の ID） |
 | `index` | — | `{"maximum":1000000.0,"minimum":0.0,"type":"integer"}` | 移す先での位置（0 から） |
 | `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
-| `to` | 必須 | `{"type":"string"}` | 移す先: 分岐か、そのトラック（track\|rack node の ID） |
+| `to` | 必須 | `{"type":"string"}` | 移す先: 分岐・レイヤーか、そのトラック（track\|rack node の ID） |
 | `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
 
 ## `rack.show`
@@ -5591,7 +5591,7 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 
 スプリッターを追加
 
-トラックの FX にスプリッターを追加します（--at は track（FX の末尾）・after:<プラグインかスプリッター>・branch:<分岐>:<位置>。分岐は空で作ります）
+トラックの FX にスプリッターを追加します（--at は track（FX の末尾）・after:<プラグインかスプリッター>・branch:<分岐>:<位置>・layer:<レイヤー>:<位置>。分岐は空で作ります）
 
 事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
 
@@ -5599,7 +5599,7 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 
 | 引数 | 必須 | 型・範囲・既定値 | 内容 |
 |---|---|---|---|
-| `at` | — | `{"type":"string"}` | 置く所: track・after:<id>・branch:<分岐の id>:<位置>（省略時は track） |
+| `at` | — | `{"type":"string"}` | 置く所: track・after:<id>・branch:<分岐の id>:<位置>・layer:<レイヤーの id>:<位置>（省略時は track） |
 | `branches` | — | `{"maximum":5.0,"minimum":2.0,"type":"integer"}` | 分岐の数（2〜5。channel は 2） |
 | `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
 | `mode` | — | `{"enum":["normal","channel","frequency"],"type":"string"}` | 分け方（省略時は normal） |

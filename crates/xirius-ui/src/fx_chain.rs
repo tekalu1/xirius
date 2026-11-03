@@ -261,7 +261,7 @@ impl Studio {
     }
     pub fn fx_target(&self, g: &Geometry, x: f32, y: f32) -> Option<(TrackId, usize)> {
         let p = self.project();
-        let strips = if self.mixer_shown() && g.drawer_body.contains(x, y) {
+        let strips: Vec<_> = if self.mixer_shown() && g.drawer_body.contains(x, y) {
             self.mixer_strips(g)
                 .into_iter()
                 .filter(|s| self.strip_holds(g, s, x, y))
@@ -269,17 +269,18 @@ impl Studio {
         } else {
             Vec::new()
         };
-        for (t, list, rows) in strips
-            .into_iter()
-            .map(|s| (s.track, s.inserts, s.rows.inserts))
-            .chain(p.tracks.keys().filter_map(|t| {
-                g.column
-                    .contains(x, y)
-                    .then(|| self.fx_header_rect(g, *t))
-                    .flatten()
-                    .map(|r| (*t, r, 3))
-            }))
-        {
+        if let Some(s) = strips.iter().find(|s| s.inserts.contains(x, y)) {
+            let track = p.tracks.get(&s.track)?;
+            let flow = self.strip_flow(s, track);
+            return Some((s.track, crate::mixer::flow::drop_index(track, &flow, y)));
+        }
+        for (t, list, rows) in p.tracks.keys().filter_map(|t| {
+            g.column
+                .contains(x, y)
+                .then(|| self.fx_header_rect(g, *t))
+                .flatten()
+                .map(|r| (*t, r, 3usize))
+        }) {
             if list.contains(x, y) {
                 let track = p.tracks.get(&t)?;
                 let i =
@@ -416,18 +417,14 @@ impl Studio {
                 return true;
             }
             Hit::Mixer(MixerHit::Open(t, id)) => {
-                let list = self
-                    .fx_header_rect(g, t)
-                    .filter(|r| r.contains(x, y))
-                    .or_else(|| {
-                        self.mixer_strips(g)
-                            .into_iter()
-                            .find(|s| s.track == t)
-                            .map(|s| s.inserts)
-                    });
-                if let Some(list) = list {
-                    let i = ((y - list.y) / (ROW_H + 2.0)).floor().max(0.0) as usize;
-                    let row = list_row(list, i);
+                let row = match self.fx_header_rect(g, t).filter(|r| r.contains(x, y)) {
+                    Some(list) => {
+                        let i = ((y - list.y) / (ROW_H + 2.0)).floor().max(0.0) as usize;
+                        Some(list_row(list, i))
+                    }
+                    None => self.strip_item(g, t, id),
+                };
+                if let Some(row) = row {
                     let named = self
                         .project()
                         .tracks

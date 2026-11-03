@@ -179,6 +179,26 @@ impl Studio {
         }
     }
 
+    /// A choice picked in the layer list of track `t`: the instrument is added as another
+    /// layer (MIX-044), the one there staying as the first.
+    pub(crate) fn add_layer(&mut self, t: TrackId, to: &str) -> bool {
+        let catalog = self.plugin_catalog();
+        let Some(pick) = resolve(&catalog, to) else {
+            self.error = Some("そのインストゥルメントはすでに削除されています".into());
+            return false;
+        };
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+        self.run_command(
+            "rack.layer.add",
+            json!({
+                "track": t.to_string(),
+                "name": pick.name,
+                "format": pick.format,
+                "uid": pick.uid,
+            }),
+        )
+    }
+
     /// Puts `pick` in as the instrument of `t`, in place of the one it has (one step).
     pub fn set_instrument(&mut self, t: TrackId, pick: &Pick) -> bool {
         // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.

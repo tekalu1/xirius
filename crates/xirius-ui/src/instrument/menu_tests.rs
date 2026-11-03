@@ -16,6 +16,8 @@ fn studio() -> (Studio, Geometry, TrackId, PluginId) {
     let mut s = Studio::sample();
     s.drawer_open = true;
     s.tab = DrawerTab::Mixer;
+    // the strips' flow shows the instrument and an effect under it
+    s.drawer_size.mixer = Some(600.0);
     let g = s.geometry(1600.0, 1000.0);
     let t = keys(&s);
     assert!(s.set_instrument(t, &Pick::built_in(DEFAULT)));

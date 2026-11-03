@@ -91,7 +91,7 @@ impl Studio {
             MixerHit::AddInsert(t) => Spot::AddInsert(t),
             // The instrument row has its own menu; a plugin that went down keeps the one
             // that restarts it.
-            MixerHit::AddInstrument(_) => return None,
+            MixerHit::AddInstrument(_) | MixerHit::AddLayer(_) | MixerHit::Fold(..) => return None,
             MixerHit::Bypass(t, id) | MixerHit::Open(t, id) => {
                 if crate::instrument::is_instrument_of(&p, t, id) || self.health.crashed(id) {
                     return None;
