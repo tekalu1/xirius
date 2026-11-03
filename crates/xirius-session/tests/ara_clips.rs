@@ -424,6 +424,44 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     until("the archive", || take(&mut reopened, &player));
     fake::slow_store(Duration::ZERO);
 
+    // PLG-036: detached after the plugin's last edit, its document is let go of once its last
+    // archive came, and an undo opens it again with that edit, not the song's older archive;
+    // back and forth (redo, undo), the edit stays.
+    fake::edit(&modification, 0.9);
+    run(&mut reopened, "clip.ara.detach", json!({"ids": [a, b]}));
+    let p = reopened.project().clone();
+    player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
+    until("the document let go of", || {
+        player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
+        player.ara().doc(PLUGIN).is_none()
+    });
+    for round in 0..2 {
+        reopened.undo(1).unwrap();
+        let p = reopened.project().clone();
+        player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
+        until("the render brought back", || through(&player, &p, &a));
+        let v = peak(&mut player, &p);
+        assert!(
+            (v - 0.45).abs() < 1e-3,
+            "undo {round} lost the plugin's last edit: {v}"
+        );
+        // The song takes the edit back once, in place, so it is written with it.
+        assert_eq!(take(&mut reopened, &player), round == 0);
+        reopened.redo(1).unwrap();
+        let p = reopened.project().clone();
+        player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
+        until("the document let go of", || {
+            player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
+            player.ara().doc(PLUGIN).is_none()
+        });
+    }
+    reopened.undo(1).unwrap();
+    let p = reopened.project().clone();
+    player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
+    until("the render brought back", || through(&player, &p, &a));
+    assert!((peak(&mut player, &p) - 0.45).abs() < 1e-3);
+    assert!(!take(&mut reopened, &player));
+
     // EDT-023: detached, the clip plays its file.
     run(&mut reopened, "clip.ara.detach", json!({"ids": [a, b]}));
     let p = reopened.project().clone();

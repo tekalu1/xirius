@@ -19,7 +19,9 @@
 //!   asked for only after the plugin said its document changed, so opening a song and playing it
 //!   leaves it as it was. The window's thread never waits for it: the plugin's thread writes it
 //!   and a later frame puts it in; writing or leaving the song waits over the frames for the
-//!   one asked, at most [`STORE_WAIT`], and otherwise writes the one it has.
+//!   one asked, at most [`STORE_WAIT`], and otherwise writes the one it has. A plugin whose
+//!   last clips leave the song is asked for its last edits; its archive is kept aside and an
+//!   undo that brings the clips back opens the plugin from it ([`Held::release`]).
 //! - A plugin that faults or hangs ends its own thread only ([`xirius_ara::contain`]); its
 //!   clips play their files and `plugin.status` lists it until `plugin.restart` (PLG-058).
 
@@ -267,6 +269,8 @@ pub struct Doc {
     /// The newest archive was asked for while [`Doc::asked`] was on its way: asked again when
     /// it comes.
     again: AtomicBool,
+    /// No clip of the song uses it any more, and it was asked for its last edits.
+    leaving: AtomicBool,
 }
 
 impl Doc {
@@ -286,6 +290,7 @@ impl Doc {
             stored: Mutex::new(None),
             asked: Mutex::new(None),
             again: AtomicBool::new(false),
+            leaving: AtomicBool::new(false),
         });
         lock(docs()).insert(key, Arc::downgrade(&doc));
         doc
@@ -587,6 +592,11 @@ fn splice(
 /// factory's before restoring it.
 fn archive_of(p: &Project, plugin: &str) -> Option<(Vec<u8>, String)> {
     let a = p.ara.archives.get(plugin).filter(|a| a.plugin == plugin)?;
+    bytes_of(a)
+}
+
+/// A song's archive as the plugin reads it.
+fn bytes_of(a: &xirius_core::ara::Archive) -> Option<(Vec<u8>, String)> {
     let a = xirius_ara::Archive {
         version: a.version,
         plugin: a.plugin.clone(),
@@ -624,12 +634,17 @@ pub struct Held {
     live: bool,
     /// How long to wait for the analysis, when not live (ENG-025).
     wait: Duration,
+    /// The last archives of the live documents let go of, by plugin: a document opened again
+    /// (an undo brought its clips back) starts from it rather than the song's, so it has the
+    /// plugin's last edits, as if it had stayed open.
+    left: Arc<Mutex<HashMap<String, xirius_core::ara::Archive>>>,
 }
 
 impl Default for Held {
     fn default() -> Held {
         Held {
             docs: Arc::default(),
+            left: Arc::default(),
             live: false,
             wait: EXPORT_WAIT,
         }
@@ -654,13 +669,32 @@ impl Held {
         lock(&self.docs).get(plugin).cloned()
     }
 
-    /// Lets go of the documents of plugins no clip of `p` uses. One whose archive is still on
-    /// its way is kept until it has come, so that bringing the clips back (an undo) finds the
-    /// plugin's edits in it.
+    /// Lets go of the documents of plugins no clip of `p` uses. The player's is first asked for
+    /// its last edits and kept until they have come; its last archive is kept aside
+    /// ([`Held::left`]), so that bringing the clips back (an undo) opens it with the plugin's
+    /// edits.
     pub fn release(&self, p: &Project) {
         let used: BTreeSet<&str> = p.ara.clips.values().map(|r| r.plugin.as_str()).collect();
-        lock(&self.docs)
-            .retain(|k, d| used.contains(k.as_str()) || d.receive(&mut lock(&d.asked), false));
+        lock(&self.docs).retain(|k, d| {
+            if used.contains(k.as_str()) {
+                d.leaving.store(false, Ordering::Release);
+                return true;
+            }
+            if !self.live || d.key.2 != 0 {
+                return false;
+            }
+            let mut asked = lock(&d.asked);
+            if !d.leaving.swap(true, Ordering::AcqRel) {
+                d.ask(&mut asked, true);
+            }
+            if d.receive(&mut asked, false) {
+                return true;
+            }
+            if let Some(a) = lock(&d.stored).clone() {
+                lock(&self.left).insert(k.clone(), a);
+            }
+            false
+        });
     }
 
     /// Hands each plugin the song's clips of it, opening the documents not open yet and letting
@@ -738,6 +772,11 @@ impl Held {
             plugin.to_string(),
             if self.live { 0 } else { rate },
         );
+        let left = if self.live {
+            lock(&self.left).remove(plugin)
+        } else {
+            None
+        };
         if let Some(d) = existing(&key) {
             return Some(d);
         }
@@ -754,11 +793,15 @@ impl Held {
         let live = (!self.live)
             .then(|| existing(&(scope, plugin.to_string(), 0)))
             .flatten();
-        let archive = match live {
-            Some(l) => l.service.store(STORE_WAIT),
-            None => archive_of(p, plugin),
+        let archive = match (live, &left) {
+            (Some(l), _) => l.service.store(STORE_WAIT),
+            (None, Some(a)) => bytes_of(a),
+            (None, None) => archive_of(p, plugin),
         };
-        Some(Doc::start(key, name, load, archive))
+        let doc = Doc::start(key, name, load, archive);
+        // The song takes the plugin's last edits back ([`take_archives`]).
+        *lock(&doc.stored) = left;
+        Some(doc)
     }
 
     /// The clip's sound through its plugin, when it is ready for the clip as it is now.
