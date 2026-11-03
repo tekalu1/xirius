@@ -1507,12 +1507,6 @@ impl Session {
             touched: self.state.touched.as_deref(),
         };
         let mut out = f(&mut work, &ctx, args)?;
-        if !dry
-            && def.name == "plugin.param.set"
-            && let (Ok(id), Ok(param)) = (args.str("id"), args.str("param"))
-        {
-            self.state.touched = Some(format!("param:{id}:{param}"));
-        }
         crate::commands::overlap::apply(&before, &mut work, args)?;
         if def.name != "clip.relink" {
             crate::freeze::check(&before, &work)?;
@@ -1520,14 +1514,29 @@ impl Session {
         work.prune_clip_fx();
         work.prune_ara();
         work.prune_controls();
+        work.prune_branch_lanes();
+        let held = work.hold_owned(&before);
         crate::retime::retime(&before, &mut work);
         let taken = out.clipboard.take();
         work.validate()
             .map_err(|e| CmdError::new(e.code, format!("{}: {}", def.name, e.message)))?;
+        // the last parameter touched is one the edit was let through for
+        if !dry
+            && def.name == "plugin.param.set"
+            && let (Ok(id), Ok(param)) = (args.str("id"), args.str("param"))
+        {
+            self.state.touched = Some(format!("param:{id}:{param}"));
+        }
         let mut changes = diff(&before, &work);
         if changes.is_empty() {
             let mut a = work.clone();
             a.next_id = before.next_id;
+            if a == *before && !held.is_empty() {
+                return Err(CmdError::invalid(format!(
+                    "{} はマクロのつまみが動かしています（つまみの値を変えるか、割り当てを外してください）",
+                    held.join("・")
+                )));
+            }
             if a == *before {
                 let mut r = RunResult::new(def.name, out, changes);
                 if r.message.is_empty() {
@@ -1539,6 +1548,12 @@ impl Session {
             changes.counts.entry("project".into()).or_default().changed += 1;
         }
         let mut result = RunResult::new(def.name, out, changes.clone());
+        if !held.is_empty() {
+            result.message.push_str(&format!(
+                "（{} はマクロのつまみが動かしているため、変えませんでした）",
+                held.join("・")
+            ));
+        }
         if dry {
             return Ok(result);
         }

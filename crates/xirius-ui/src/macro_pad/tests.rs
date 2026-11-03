@@ -177,6 +177,28 @@ fn the_pad_dragged_sets_both_knobs_in_one_step() {
 }
 
 #[test]
+fn a_release_a_dialog_takes_still_lets_the_pad_and_the_grip_go() {
+    let (mut s, g) = studio();
+    let t = track(&s, "Vocal");
+    s.open_macros(t);
+    let v = s.macro_view(&g).unwrap();
+    let undo = s.song().steps();
+    let (x, y) = pad_point(v.pad, (0.2, 0.2));
+    assert!(s.macro_press(&g, x, y));
+    let (x, y) = pad_point(v.pad, (0.6, 0.3));
+    assert!(s.macro_moved(&g, x, y));
+    s.mixer.grip_drag = Some((0.0, 0.0));
+    s.mixer.bar_grab = Some(0.0);
+    s.let_go_drags();
+    assert!(s.macro_pad.as_ref().unwrap().grab.is_none());
+    assert!(s.mixer.grip_drag.is_none() && s.mixer.bar_grab.is_none());
+    // the pad ends where it was, for the track it was pressed for
+    assert_eq!(s.song().steps(), undo + 1);
+    assert!((knob(&s, t, 0) - 0.6).abs() < 1e-9);
+    assert!(!s.macro_moved(&g, x + 20.0, y));
+}
+
+#[test]
 fn the_arrow_keys_move_the_pad_while_it_has_them() {
     let (mut s, g) = studio();
     let t = track(&s, "Vocal");
@@ -291,4 +313,43 @@ fn the_window_takes_presses_over_the_channel_editor() {
     // a press elsewhere takes the keys from the pad
     assert!(!s.macro_press(&g, 2.0, 990.0));
     assert!(!s.macro_pad.as_ref().unwrap().focused);
+}
+
+#[test]
+fn a_pinned_pad_whose_track_goes_closes_and_others_open_again() {
+    let (mut s, _) = studio();
+    let vocal = track(&s, "Vocal");
+    let keys = track(&s, "Keys");
+    s.open_macros(vocal);
+    s.macro_pad.as_mut().unwrap().pinned = true;
+    assert!(s.run_command("track.delete", json!({"ids":[vocal]})));
+    assert!(s.macro_pad.is_none(), "its track went");
+    s.open_macros(keys);
+    assert_eq!(s.macro_pad.as_ref().map(|w| w.track), Some(keys));
+    s.new_song_sync();
+    assert!(s.macro_pad.is_none(), "another song closes it");
+}
+
+#[test]
+fn a_press_on_the_window_stays_in_it_and_one_elsewhere_takes_the_keys() {
+    let (mut s, g) = studio();
+    let t = track(&s, "Vocal");
+    s.open_macros(t);
+    let v = s.macro_view(&g).unwrap();
+    // its ground, between the parts: nothing under the window hears it
+    let (x, y) = (v.r.x + 3.0, v.r.bottom() - 3.0);
+    assert_eq!(part_at(&v, x, y), Some(Part::Body));
+    assert_eq!(s.hit(&g, x, y), crate::studio::Hit::None);
+    assert!(s.macro_press(&g, x, y));
+    press(&mut s, &g, mid(v.pad));
+    assert!(s.macro_pad.as_ref().unwrap().focused);
+    // the screen begins every press with this (`screen.rs`, `pressed`)
+    let away = [
+        (g.lanes.x + 10.0, g.lanes.y + 4.0),
+        (g.lanes.right() - 10.0, g.lanes.bottom() - 4.0),
+    ];
+    let (ax, ay) = away.into_iter().find(|&(x, y)| !v.r.contains(x, y)).unwrap();
+    s.press_keys(&g, ax, ay);
+    assert!(!s.macro_pad.as_ref().unwrap().focused);
+    assert!(!s.macro_key("right", crate::tools::Mods::default()));
 }

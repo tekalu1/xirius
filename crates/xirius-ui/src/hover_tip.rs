@@ -244,10 +244,10 @@ pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry) {
         return;
     }
     // A control its lane holds says why it does not move (UI-063).
-    if let Some(rect) = s.lock_hovered(g) {
+    if let Some((why, rect)) = s.lock_hovered(g) {
         balloon(
             pen,
-            crate::auto_lock::REASON,
+            why,
             rect,
             Rect::new(0.0, 0.0, g.size.0, g.size.1),
         );
@@ -360,8 +360,8 @@ pub(crate) fn pointer_tip(s: &Studio, g: &Geometry) -> Option<(&'static str, Rec
     if s.popup.is_some() {
         return None;
     }
-    if let Some(r) = s.lock_hovered(g) {
-        return Some((crate::auto_lock::REASON, r));
+    if let Some(tip) = s.lock_hovered(g) {
+        return Some(tip);
     }
     if let Some(tip) = roll_control(s, g) {
         return Some(tip);

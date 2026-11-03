@@ -1797,7 +1797,19 @@ fn collect_edits(
         // is opened again, so they follow the edit too.
         let titles = host.builder.plugins().param_titles(e.plugin);
         let mut params = Vec::new();
+        // a parameter a macro control moves stays the control's (MIX-039)
+        let owned = |key: &str| {
+            let target = xirius_core::auto::AutoTarget::Param(e.plugin, key.to_string());
+            session
+                .project()
+                .tracks
+                .values()
+                .any(|t| t.controls.owner_of(&target).is_some())
+        };
         for (key, old) in &x.params {
+            if owned(key) {
+                continue;
+            }
             let last = moves.iter().find(|p| {
                 p.value.is_some()
                     && (key.parse::<u32>().ok() == Some(p.id)

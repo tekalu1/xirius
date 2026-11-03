@@ -30,10 +30,19 @@ pub fn check(before: &Project, after: &Project) -> CmdResult<()> {
 }
 
 fn same_source(before: &Project, old: &Track, after: &Project, new: &Track) -> bool {
+    // the lanes of what was rendered: parameters and branch levels, and a macro control's that
+    // moves either
+    let rendered = |t: &Track, target: &AutoTarget| match target {
+        AutoTarget::Param(..) | AutoTarget::Branch(..) => true,
+        AutoTarget::Control(c) => t.controls.get(*c).maps.iter().any(|m| {
+            matches!(m.target, AutoTarget::Param(..) | AutoTarget::Branch(..))
+        }),
+        _ => false,
+    };
     let params = |t: &Track| {
         t.automation
             .iter()
-            .filter(|l| matches!(l.target, AutoTarget::Param(..)))
+            .filter(|l| rendered(t, &l.target))
             .cloned()
             .collect::<Vec<_>>()
     };

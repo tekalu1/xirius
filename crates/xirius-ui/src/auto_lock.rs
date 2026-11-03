@@ -3,6 +3,9 @@
 //! so a drag, a controller's knob, "0 dB に戻す" and "値を入力…" leave it be. The pointer shows
 //! the "not allowed" sign over it and the tooltip says why. Off plays no lane, and Touch, Latch
 //! and Write take the control to write it, so those move as before.
+//!
+//! A target a macro control moves (MIX-039) is held the same way in every mode: the control
+//! moves it, and a hand on the target itself would part what the song keeps from what plays.
 
 use xirius_core::auto::{AutoMode, AutoTarget};
 use xirius_core::id::{PluginId, TrackId};
@@ -15,18 +18,31 @@ use crate::studio::{Geometry, Hit, Rect, Studio};
 /// Why the control does not move.
 pub const REASON: &str = "オートメーション（Read）のため変更できません";
 
-/// Does the lane of `target` on `track` hold its control?
-pub fn locked(track: &Track, target: &AutoTarget) -> bool {
-    track.auto_mode == AutoMode::Read && crate::auto_mark::present(track, target)
+/// Why a target a macro control moves does not move by hand.
+pub const MACRO_REASON: &str = "マクロのつまみが動かしているため変更できません";
+
+/// What holds the control of `target` on `track`, as the reason it says: its lane in Read,
+/// or a macro control.
+pub fn held(track: &Track, target: &AutoTarget) -> Option<&'static str> {
+    if track.controls.owner_of(target).is_some() {
+        return Some(MACRO_REASON);
+    }
+    (track.auto_mode == AutoMode::Read && crate::auto_mark::present(track, target))
+        .then_some(REASON)
 }
 
-/// `item` greyed out with the reason when `locked`.
-pub fn gate(item: Item, locked: bool) -> Item {
-    if !locked {
+/// Does something hold the control of `target` on `track`?
+pub fn locked(track: &Track, target: &AutoTarget) -> bool {
+    held(track, target).is_some()
+}
+
+/// `item` greyed out with the reason when something holds it.
+pub fn gate(item: Item, held: Option<&'static str>) -> Item {
+    let Some(reason) = held else {
         return item;
-    }
+    };
     Item {
-        reason: REASON.into(),
+        reason: reason.into(),
         ..item.enabled(false)
     }
 }
@@ -34,35 +50,40 @@ pub fn gate(item: Item, locked: bool) -> Item {
 impl Studio {
     /// Is the mixer's fader, pan or send knob `hit` held by its lane?
     pub fn mixer_locked(&self, hit: MixerHit) -> bool {
-        let Some(target) = crate::arrange::write::target_of(hit) else {
-            return false;
-        };
-        self.project()
-            .tracks
-            .get(&hit.track())
-            .is_some_and(|t| locked(t, &target))
+        self.mixer_held(hit).is_some()
+    }
+
+    /// What holds the mixer's `hit`, as its reason.
+    pub fn mixer_held(&self, hit: MixerHit) -> Option<&'static str> {
+        let target = crate::arrange::write::target_of(hit)?;
+        held(self.project().tracks.get(&hit.track())?, &target)
     }
 
     /// Is the knob `param` of the plug-in `plugin` on `track` held by its lane?
     pub fn param_locked(&self, track: TrackId, plugin: PluginId, param: &str) -> bool {
-        let target = AutoTarget::Param(plugin, param.to_string());
-        self.project()
-            .tracks
-            .get(&track)
-            .is_some_and(|t| locked(t, &target))
+        self.param_held(track, plugin, param).is_some()
     }
 
-    /// The held control under the pointer, where its tooltip hangs.
-    pub fn lock_hovered(&self, g: &Geometry) -> Option<Rect> {
+    /// What holds the knob `param` of the plug-in `plugin` on `track`, as its reason.
+    pub fn param_held(&self, track: TrackId, plugin: PluginId, param: &str) -> Option<&'static str> {
+        let target = AutoTarget::Param(plugin, param.to_string());
+        held(self.project().tracks.get(&track)?, &target)
+    }
+
+    /// The held control under the pointer, with why, where its tooltip hangs.
+    pub fn lock_hovered(&self, g: &Geometry) -> Option<(&'static str, Rect)> {
         if self.mixer.drag.is_some() {
             return None;
         }
         let (x, y) = self.input_map.pointer;
         if let Some((track, plugin, param, r)) = self.knob_under(g, x, y) {
-            return self.param_locked(track, plugin, param).then_some(r);
+            return self.param_held(track, plugin, param).map(|why| (why, r));
         }
         match self.hover {
-            Hit::Mixer(m) if self.mixer_locked(m) => self.mixer_rect(g, m),
+            Hit::Mixer(m) => {
+                let why = self.mixer_held(m)?;
+                self.mixer_rect(g, m).map(|r| (why, r))
+            }
             _ => None,
         }
     }
@@ -188,6 +209,46 @@ mod tests {
             assert!(s.drag_end());
         }
         assert!(s.project().tracks[&t].volume_db < before.tracks[&t].volume_db);
+    }
+
+    #[test]
+    fn a_fader_a_macro_moves_does_not_move_in_any_mode_and_says_why() {
+        let mut s = Studio::sample();
+        s.drawer_open = true;
+        s.tab = DrawerTab::Mixer;
+        let g = s.geometry(1600.0, 1000.0);
+        let t = track(&s, "Bass");
+        assert!(s.run_command(
+            "control.assign",
+            json!({ "track": t.to_string(), "control": "k1", "target": "volume" })
+        ));
+        let was = s.project().tracks[&t].volume_db;
+        for mode in ["off", "touch"] {
+            assert!(s.run_command("auto.mode", json!({ "ids": [t.to_string()], "mode": mode })));
+            let steps = s.song.steps();
+            let hit = MixerHit::Fader(t);
+            let (x, y) = s.mixer_center(&g, hit).expect("on screen");
+            hover(&mut s, &g, x, y);
+            assert_eq!(tip(&s, &g), Some(super::MACRO_REASON), "{mode}");
+            assert!(blocked(&s, &g));
+            s.press(&g, Hit::Mixer(hit));
+            assert!(s.drag_begin(&g, Hit::Mixer(hit), y));
+            assert!(s.mixer.drag.is_none());
+            assert!(!s.knob_move(hit, 10));
+            assert!(s.scene_context(&g, x, y));
+            let row = s
+                .context_rows()
+                .into_iter()
+                .find(|r| r.label == "0 dB に戻す")
+                .expect("its reset");
+            assert!(!row.enabled);
+            assert_eq!(row.reason, super::MACRO_REASON);
+            s.popup = None;
+            assert_eq!(s.song.steps(), steps, "{mode}");
+        }
+        assert_eq!(s.project().tracks[&t].volume_db, was);
+        // the knob itself turns
+        assert!(!s.mixer_locked(MixerHit::Control(t, xirius_core::controls::ControlId::Knob(0))));
     }
 
     #[test]

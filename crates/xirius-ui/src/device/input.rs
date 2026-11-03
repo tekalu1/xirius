@@ -511,7 +511,7 @@ impl Studio {
             };
             let held = ["division", "feel"]
                 .iter()
-                .any(|id| self.param_locked(track, w.plugin, id));
+                .find_map(|id| self.param_held(track, w.plugin, id));
             let items = super::delay::beats_menu(def, &values)
                 .iter()
                 .map(|row| match row {
@@ -560,7 +560,7 @@ impl Studio {
         let held = pt
             .resets()
             .into_iter()
-            .any(|k| self.param_locked(w.track, w.plugin, def.params[k].id));
+            .find_map(|k| self.param_held(w.track, w.plugin, def.params[k].id));
         let set_args = |set: &[(usize, f64)]| set_args(def, w.plugin, set);
         let mut items = Vec::new();
         for row in &pt.menu {
@@ -902,7 +902,7 @@ impl Studio {
         };
         self.device_blur();
         self.instruments.focus = Some((w.plugin, k));
-        let held = self.param_locked(track, w.plugin, spec.id);
+        let held = self.param_held(track, w.plugin, spec.id);
         let default = control::snap(spec, spec.default_norm());
         let away = self
             .device_value(w.plugin, k)

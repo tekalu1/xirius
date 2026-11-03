@@ -267,9 +267,31 @@ impl From<Saved> for MacroControls {
             if id.is_button() {
                 c.value = c.value.round();
             }
+            // a hand-edited or older file: a number that is no number takes its default, the
+            // rest is held to its range
+            for map in &mut c.maps {
+                map.from = sane(map.from, 0.0, 0.0, 1.0);
+                map.to = sane(map.to, 1.0, 0.0, 1.0);
+                map.curve = sane(map.curve, 0.0, -1.0, 1.0);
+            }
+        }
+        // one target, one control: a target two controls name stays the first one's
+        let mut owned = Vec::new();
+        for id in ControlId::all() {
+            m.get_mut(id).maps.retain(|map| {
+                let first = !owned.contains(&map.target);
+                if first {
+                    owned.push(map.target.clone());
+                }
+                first
+            });
         }
         m
     }
+}
+
+fn sane(v: f64, or: f64, lo: f64, hi: f64) -> f64 {
+    if v.is_finite() { v.clamp(lo, hi) } else { or }
 }
 
 impl MacroControls {
@@ -456,6 +478,94 @@ impl crate::model::Project {
             }
         }
         n
+    }
+
+    /// Drops every lane of a branch or layer its track no longer has (MIX-039): a splitter,
+    /// branch or layer that went takes its lanes with it, as its macro maps go.
+    pub fn prune_branch_lanes(&mut self) -> usize {
+        let mut n = 0;
+        for t in self.tracks.values_mut() {
+            let dead: Vec<AutoTarget> = t
+                .automation
+                .iter()
+                .filter(|l| matches!(l.target, AutoTarget::Branch(..)) && !l.target.exists_on(t))
+                .map(|l| l.target.clone())
+                .collect();
+            if dead.is_empty() {
+                continue;
+            }
+            n += dead.len();
+            std::sync::Arc::make_mut(t)
+                .automation
+                .retain(|l| !dead.contains(&l.target));
+        }
+        n
+    }
+
+    /// Writes each control's value into what it moves, as a song is read: a song saved with a
+    /// target apart from its control plays the control's value, so it keeps that one too
+    /// (MIX-039). Tracks already so are not touched.
+    pub fn settle_controls(&mut self) {
+        for t in self.tracks.values_mut() {
+            if !t.controls.has_maps() {
+                continue;
+            }
+            let mut heard = (**t).clone();
+            heard.apply_controls();
+            if heard != **t {
+                *t = std::sync::Arc::new(heard);
+            }
+        }
+    }
+
+    /// Puts back what an edit moved of a target a macro control moves (MIX-039): what the
+    /// song keeps and what plays would part, and the next lane or reopen would jump back. An
+    /// edit that changed the controls themselves (`control.*`, a preset) sets both, so it
+    /// stands; so does a target that was already apart and was not touched. Returns what was
+    /// put back, as "Vocal のボリューム（K1）".
+    pub fn hold_owned(&mut self, before: &crate::model::Project) -> Vec<String> {
+        let mut held = Vec::new();
+        for (id, t) in self.tracks.iter_mut() {
+            if !t.controls.has_maps() {
+                continue;
+            }
+            let Some(b) = before.tracks.get(id) else {
+                continue;
+            };
+            if b.controls != t.controls {
+                continue;
+            }
+            let mut put = Vec::new();
+            for (k, c) in t.controls.iter() {
+                for m in &c.maps {
+                    let now = m.target.stored_value(t);
+                    if now == m.target.stored_value(b) {
+                        continue;
+                    }
+                    let mut heard = (**t).clone();
+                    heard.apply_control_at(k, c.value);
+                    if m.target.stored_value(&heard) != now {
+                        put.push((k, m.target.clone()));
+                    }
+                }
+            }
+            if put.is_empty() {
+                continue;
+            }
+            let t = std::sync::Arc::make_mut(t);
+            for (k, target) in put {
+                held.push(format!(
+                    "{} の{}（{}）",
+                    t.name,
+                    target_name(t, &target),
+                    k.to_string().to_uppercase()
+                ));
+                if let Some(v) = target.stored_value(b) {
+                    target.set_on(t, v);
+                }
+            }
+        }
+        held
     }
 }
 

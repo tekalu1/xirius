@@ -349,7 +349,7 @@ impl Studio {
         );
         let now = format!("{:.1}", track.volume_db);
         let clear = self.lane_clear_item(t, AutoTarget::Volume);
-        let held = crate::auto_lock::locked(track, &AutoTarget::Volume);
+        let held = crate::auto_lock::held(track, &AutoTarget::Volume);
         vec![
             crate::auto_lock::gate(reset, held),
             crate::auto_lock::gate(
@@ -412,7 +412,7 @@ impl Studio {
         );
         let now = format!("{:.2}", track.pan);
         let clear = self.lane_clear_item(t, AutoTarget::Pan);
-        let held = crate::auto_lock::locked(track, &AutoTarget::Pan);
+        let held = crate::auto_lock::held(track, &AutoTarget::Pan);
         vec![
             crate::auto_lock::gate(reset, held),
             crate::auto_lock::gate(
@@ -448,7 +448,7 @@ impl Studio {
         let held = p
             .tracks
             .get(&t)
-            .is_some_and(|x| crate::auto_lock::locked(x, &target));
+            .and_then(|x| crate::auto_lock::held(x, &target));
         vec![
             crate::auto_lock::gate(reset, held),
             crate::auto_lock::gate(

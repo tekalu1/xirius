@@ -119,7 +119,15 @@ pub(super) fn put(
                 insert_at(r, c, index + k, n);
             }
             let mut controls = std::mem::take(&mut t.controls);
-            merge(&mut controls, &chain.controls, &name, &mut rows, &mut moved);
+            let laned: Vec<ControlId> = t
+                .automation
+                .iter()
+                .filter_map(|l| match l.target {
+                    AutoTarget::Control(c) => Some(c),
+                    _ => None,
+                })
+                .collect();
+            merge(&mut controls, &chain.controls, &laned, &name, &mut rows, &mut moved);
             t.controls = controls;
             gone_keys = take_off(t, &taken);
             t.inserts.extend(chain.devices);
@@ -148,6 +156,9 @@ pub(super) fn put(
                 xy,
                 ..chain.controls
             };
+            // the old macros' lanes would move the new ones
+            t.automation
+                .retain(|l| !matches!(l.target, AutoTarget::Control(_)));
         }
     }
     settle(p, tid, &gone_keys, &mut rows)?;
@@ -244,6 +255,7 @@ fn same_family(a: ControlId, b: ControlId) -> bool {
 fn merge(
     into: &mut MacroControls,
     from: &MacroControls,
+    laned: &[ControlId],
     name: &str,
     rows: &mut Vec<Adjust>,
     moved: &mut Vec<String>,
@@ -252,10 +264,12 @@ fn merge(
         if c.maps.is_empty() {
             continue;
         }
-        let to = if free(into, id) {
+        // a control with a lane of its own is not free: the lane would move what comes in
+        let open = |into: &MacroControls, x: ControlId| free(into, x) && !laned.contains(&x);
+        let to = if open(into, id) {
             Some(id)
         } else {
-            ControlId::all().find(|x| same_family(*x, id) && free(into, *x))
+            ControlId::all().find(|x| same_family(*x, id) && open(into, *x))
         };
         let Some(to) = to else {
             rows.push(Adjust::new(

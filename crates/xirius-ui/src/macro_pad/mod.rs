@@ -14,6 +14,7 @@ use serde_json::json;
 use xirius_core::controls::{ControlId, KNOBS};
 use xirius_core::id::TrackId;
 use xirius_core::model::{Project, Track};
+use xirius_session::autowrite::Phase;
 
 use crate::mixer::MixerHit;
 use crate::popup::PopupKind;
@@ -95,8 +96,13 @@ pub(crate) enum Grab {
         from: (f32, f32),
         pointer: (f32, f32),
     },
-    /// The pad's point: where it was and where it is now (0..1 across and up).
-    Pad { from: (f64, f64), now: (f64, f64) },
+    /// The pad's point on the track it was pressed for: where it was and where it is now (0..1
+    /// across and up).
+    Pad {
+        track: TrackId,
+        from: (f64, f64),
+        now: (f64, f64),
+    },
 }
 
 /// A part of the window.
@@ -360,12 +366,17 @@ impl Studio {
                 let Some(track) = p.tracks.get(&t) else {
                     return true;
                 };
+                if self.pad_locked(t) {
+                    return true;
+                }
                 let from = self.pad_now(track);
                 let now = pad_values(v.pad, x, y);
                 if let Some(w) = self.macro_pad.as_mut() {
-                    w.grab = Some(Grab::Pad { from, now });
+                    w.grab = Some(Grab::Pad { track: t, from, now });
                 }
-                self.pad_heard(t, now);
+                // as a knob's drag does: while writing, the lanes take the pad's way
+                self.pad_touch(t, Phase::Begin, from);
+                self.pad_to(t, now);
             }
             Part::Pick(axis) => self.open_popup(PopupKind::MacroAxis(t, axis as u8), v.picks[axis]),
             Part::Body => {}
@@ -384,6 +395,38 @@ impl Studio {
             json!({ "track": t.to_string(), "axis": axis, "control": control }),
         );
         true
+    }
+
+    /// A knob of the pad is held by its lane (Read): the pad does not move by hand.
+    fn pad_locked(&self, t: TrackId) -> bool {
+        let p = self.project();
+        let Some(track) = p.tracks.get(&t) else {
+            return true;
+        };
+        track
+            .controls
+            .xy_knobs()
+            .into_iter()
+            .any(|k| self.mixer_locked(MixerHit::Control(t, k)))
+    }
+
+    /// Both knobs of the pad touched as one, for the lanes being written. True when written.
+    fn pad_touch(&mut self, t: TrackId, phase: Phase, (x, y): (f64, f64)) -> bool {
+        let Some(track) = self.project().tracks.get(&t).cloned() else {
+            return false;
+        };
+        let [xk, yk] = track.controls.xy_knobs();
+        let a = self.auto_touch(MixerHit::Control(t, xk), phase, Some(x));
+        let b = self.auto_touch(MixerHit::Control(t, yk), phase, Some(y));
+        a | b
+    }
+
+    /// The point moved with the pad held: the lanes being written take it, else the player
+    /// hears it.
+    fn pad_to(&mut self, t: TrackId, now: (f64, f64)) {
+        if !self.pad_touch(t, Phase::Change, now) {
+            self.pad_heard(t, now);
+        }
     }
 
     /// While the pad is held, the player hears its two knobs where the point is.
@@ -414,7 +457,7 @@ impl Studio {
                     w.at = Some((from.0 + x - pointer.0, from.1 + y - pointer.1));
                 }
             }
-            Grab::Pad { from, now } => {
+            Grab::Pad { track, from, now } => {
                 let Some(v) = self.macro_view(g) else {
                     return false;
                 };
@@ -423,9 +466,13 @@ impl Studio {
                     return true;
                 }
                 if let Some(w) = self.macro_pad.as_mut() {
-                    w.grab = Some(Grab::Pad { from, now: next });
+                    w.grab = Some(Grab::Pad {
+                        track,
+                        from,
+                        now: next,
+                    });
                 }
-                self.pad_heard(v.track, next);
+                self.pad_to(track, next);
             }
         }
         true
@@ -436,9 +483,16 @@ impl Studio {
         let Some(grab) = self.macro_pad.as_mut().and_then(|w| w.grab.take()) else {
             return false;
         };
-        if let Grab::Pad { from, now } = grab
-            && let Some(t) = self.macro_track()
+        // the track it was pressed for, whichever the window shows now
+        if let Grab::Pad {
+            track: t,
+            from,
+            now,
+        } = grab
         {
+            if self.pad_touch(t, Phase::End, now) {
+                return true;
+            }
             if now == from {
                 let p = self.project();
                 self.transport.sync(&p, self.song().dir());
@@ -502,6 +556,9 @@ impl Studio {
         let Some(track) = p.tracks.get(&t) else {
             return false;
         };
+        if self.pad_locked(t) {
+            return true;
+        }
         let (x, y) = self.pad_now(track);
         let to = |v: f64, d: f64| ((v + d).clamp(0.0, 1.0) * 100.0).round() / 100.0;
         let next = (to(x, dx), to(y, dy));

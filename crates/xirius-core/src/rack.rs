@@ -1172,6 +1172,14 @@ impl crate::model::Project {
                 format!("割り当て先が無いため、{n} 件の割り当てを外しました"),
             ));
         }
+        let lanes = self.prune_branch_lanes();
+        if lanes > 0 {
+            rows.push(Adjust::new(
+                AdjustKind::Dropped,
+                "分岐・レイヤーのオートメーション",
+                format!("指す分岐・レイヤーが無いため、{lanes} 本のレーンを外しました"),
+            ));
+        }
         rows
     }
 
