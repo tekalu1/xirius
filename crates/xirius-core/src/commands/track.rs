@@ -1421,7 +1421,7 @@ fn set_param(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
         )));
     }
     let spec = found.as_ref().map(|r| r.spec);
-    let also = also_params(x, a)?;
+    let also = also_params(x, found.as_ref().map(|r| r.key.as_str()), a)?;
     let mut plain_value: Option<f64> = None;
     let value = match (a.opt_f64("value"), a.opt_str("plain")) {
         (Some(v), None) => v,
@@ -1463,8 +1463,8 @@ fn set_param(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
         Some(r) => {
             let s = r.spec;
             x.params.insert(r.key.clone(), value);
-            for (id, v) in &also {
-                x.params.insert(id.clone(), *v);
+            for (r, v) in &also {
+                x.params.insert(r.key.clone(), *v);
             }
             // `--plain 0.25` on a 0〜100 % parameter is the value in the unit (0.25 %) and
             // stays so, but a person who meant the 0〜1 fraction needs to hear which flag
@@ -1476,12 +1476,27 @@ fn set_param(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
                 .clone()
                 .unwrap_or_else(|| s.text(s.to_plain(value)));
             let hint = fraction.map(|_| "0〜1 の割合なら --value を使います");
+            // The values `--also` set in the same step are named with the main one.
+            let more: String = also
+                .iter()
+                .map(|(r, v)| {
+                    format!(
+                        "、{}（{}）を {}",
+                        r.spec.label,
+                        r.key,
+                        r.spec.text(r.spec.to_plain(*v))
+                    )
+                })
+                .collect();
             let message = match hint {
                 Some(hint) => format!(
-                    "{id} の {}（{}）を {text} に設定しました。{hint}",
+                    "{id} の {}（{}）を {text}{more} に設定しました。{hint}",
                     s.label, r.key
                 ),
-                None => format!("{id} の {}（{}）を {text} に設定しました", s.label, r.key),
+                None => format!(
+                    "{id} の {}（{}）を {text}{more} に設定しました",
+                    s.label, r.key
+                ),
             };
             Ok(match hint {
                 Some(hint) => Output::with(message, json!({ "warnings": [hint] })),
@@ -1513,7 +1528,12 @@ pub(crate) fn builtin_key(x: &Plugin, name: &str) -> Option<xirius_params::Resol
 
 /// The other parameters `plugin.param.set` sets in the same step (`--also`), as the
 /// built-in's keys and 0..1 values: a point dragged on a device's graph moves two (UI-325).
-fn also_params(x: &Plugin, a: &Args) -> CmdResult<Vec<(String, f64)>> {
+/// Each once, and none of them the main one (`main`), so no value is set twice in a step.
+fn also_params(
+    x: &Plugin,
+    main: Option<&str>,
+    a: &Args,
+) -> CmdResult<Vec<(xirius_params::Resolved, f64)>> {
     let list = match a.0.get("also") {
         None | Some(Value::Null) => return Ok(Vec::new()),
         Some(Value::Array(list)) => list,
@@ -1523,24 +1543,40 @@ fn also_params(x: &Plugin, a: &Args) -> CmdResult<Vec<(String, f64)>> {
             ));
         }
     };
-    list.iter()
-        .map(|o| {
-            let name = o.get("param").and_then(Value::as_str).unwrap_or_default();
-            let Some(r) = builtin_key(x, name) else {
-                return Err(CmdError::invalid(format!(
-                    "also の {name} は {} のパラメーターではありません",
-                    x.name
-                )));
-            };
-            match o.get("value").and_then(Value::as_f64) {
-                Some(v) if (0.0..=1.0).contains(&v) => Ok((r.key, v)),
-                _ => Err(CmdError::range(format!(
+    if list.is_empty() {
+        return Ok(Vec::new());
+    }
+    if x.builtin().is_none() {
+        return Err(CmdError::invalid(
+            "--also は内蔵プラグインのパラメーターにだけ使えます",
+        ));
+    }
+    let mut out: Vec<(xirius_params::Resolved, f64)> = Vec::new();
+    for o in list {
+        let name = o.get("param").and_then(Value::as_str).unwrap_or_default();
+        let Some(r) = builtin_key(x, name) else {
+            return Err(CmdError::invalid(format!(
+                "also の {name} は {} のパラメーターではありません",
+                x.name
+            )));
+        };
+        if main == Some(r.key.as_str()) || out.iter().any(|(o, _)| o.key == r.key) {
+            return Err(CmdError::invalid(format!(
+                "{} は 1 回だけ指定してください（also と param で重ねられません）",
+                r.key
+            )));
+        }
+        match o.get("value").and_then(Value::as_f64) {
+            Some(v) if (0.0..=1.0).contains(&v) => out.push((r, v)),
+            _ => {
+                return Err(CmdError::range(format!(
                     "also の {} の value は 0〜1 で指定してください",
                     r.key
-                ))),
+                )));
             }
-        })
-        .collect()
+        }
+    }
+    Ok(out)
 }
 
 fn add_plugin(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {

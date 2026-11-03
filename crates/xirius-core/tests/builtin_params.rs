@@ -232,11 +232,17 @@ fn ui_325_a_point_sets_two_parameters_in_one_step() {
         "plugin.add",
         json!({"track": t, "name": "Compressor"}),
     ));
-    run(
+    let done = run(
         &mut s,
         "plugin.param.set",
         json!({"id": comp, "param": "threshold", "value": 0.25,
                "also": [{"param": "knee", "value": 1.0}]}),
+    );
+    assert!(done.message.contains("（threshold）"), "{}", done.message);
+    assert!(
+        done.message.contains("（knee）"),
+        "both named: {}",
+        done.message
     );
     let list = run(&mut s, "plugin.param.list", json!({"id": comp}));
     assert!((row(&list.data, "threshold")["value"].as_f64().unwrap() - 0.25).abs() < 1e-9);
@@ -245,10 +251,14 @@ fn ui_325_a_point_sets_two_parameters_in_one_step() {
     let list = run(&mut s, "plugin.param.list", json!({"id": comp}));
     assert!((row(&list.data, "knee")["value"].as_f64().unwrap() - 1.0).abs() > 1e-6);
     assert!((row(&list.data, "threshold")["value"].as_f64().unwrap() - 0.25).abs() > 1e-6);
-    // A name the built-in lacks, or a value outside 0..1, sets nothing.
+    // A name the built-in lacks, a value outside 0..1, a value twice, or the main one
+    // again, sets nothing.
+    let before = run(&mut s, "plugin.param.list", json!({"id": comp})).data;
     for also in [
         json!([{"param": "nope", "value": 0.5}]),
         json!([{"param": "knee", "value": 2}]),
+        json!([{"param": "knee", "value": 0.2}, {"param": "knee", "value": 0.8}]),
+        json!([{"param": "ratio", "value": 0.5}]),
     ] {
         assert!(
             try_run(
@@ -256,7 +266,26 @@ fn ui_325_a_point_sets_two_parameters_in_one_step() {
                 "plugin.param.set",
                 json!({"id": comp, "param": "ratio", "value": 1.0, "also": also}),
             )
-            .is_err()
+            .is_err(),
+            "{also}"
         );
     }
+    assert_eq!(
+        run(&mut s, "plugin.param.list", json!({"id": comp})).data,
+        before
+    );
+    // On a plugin that is not a built-in, the error says --also is the built-ins'.
+    let other = id_of(&run(
+        &mut s,
+        "plugin.add",
+        json!({"track": t, "name": "Unavailable", "format": "vst3", "uid": "missing-vendor/opaque-id"}),
+    ));
+    let e = try_run(
+        &mut s,
+        "plugin.param.set",
+        json!({"id": other, "param": "0", "value": 0.5,
+               "also": [{"param": "1", "value": 0.5}]}),
+    )
+    .unwrap_err();
+    assert!(format!("{e:?}").contains("内蔵プラグイン"), "{e:?}");
 }
