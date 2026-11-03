@@ -100,7 +100,7 @@ fn take(s: &mut Session, b: &Builder) -> bool {
 /// asks while it writes the song: never waiting.
 fn pending(b: &Builder, p: &Project) -> bool {
     let started = Instant::now();
-    let on = b.ara().archives_pending(p);
+    let on = b.ara().take_arrived(p);
     assert!(
         started.elapsed() < Duration::from_millis(150),
         "a frame waited {:?} for the archive",
@@ -239,7 +239,7 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     let mut waited = false;
     until("the archive written on the plugin's thread", || {
         let changed = take(&mut s, &player);
-        waited |= player.ara().archives_pending(s.project());
+        waited |= player.ara().take_arrived(s.project());
         changed
     });
     assert!(waited, "the archive came in at the frame that asked for it");
@@ -260,13 +260,13 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     fake::edit(&modification, 0.3);
     until("the archive asked for", || {
         player.ara().ask_archives(s.project());
-        player.ara().archives_pending(s.project())
+        player.ara().take_arrived(s.project())
     });
     fake::close_windows();
     until("the editor closed", || player.ara().editing().is_empty());
     // Come or still on its way, the archive asked for goes into the song.
     until("the archive after the close", || take(&mut s, &player));
-    assert!(!player.ara().archives_pending(s.project()));
+    assert!(!player.ara().take_arrived(s.project()));
     let p = s.project().clone();
     until("the render of the edit before the close", || {
         (peak(&mut player, &p) - 0.15).abs() < 1e-3
@@ -277,7 +277,7 @@ fn clips_play_through_the_plugin_and_its_edits_stay_with_the_song() {
     fake::edit(&modification, 0.5);
     until("the archive asked for", || {
         player.ara().ask_archives(s.project());
-        player.ara().archives_pending(s.project())
+        player.ara().take_arrived(s.project())
     });
     until("the archive on its way", || !pending(&player, s.project()));
     assert!(take(&mut s, &player));

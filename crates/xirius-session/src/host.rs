@@ -844,8 +844,8 @@ impl SessionHost {
     /// came (a later collect puts them into the song). Never waits. Only the song's plugins
     /// count: a document no clip uses any more is let go of once its last edits came, and not
     /// waited for.
-    pub fn ara_archives_pending(&self) -> bool {
-        self.builder.ara().archives_pending(&self.song)
+    pub fn take_ara_arrived(&self) -> bool {
+        self.builder.ara().take_arrived(&self.song)
     }
 
     /// Why ARA editors asked for did not open, by plugin, once.
@@ -1719,7 +1719,7 @@ pub(crate) fn collect_current(
 
 /// [`collect_plugin_states`] with the states of a pull ([`SessionHost::begin_pull_states`]),
 /// for the window writing, opening or leaving the song. It does not wait for the ARA plugins'
-/// archives: the window waits over its frames until [`SessionHost::ara_archives_pending`] is
+/// archives: the window waits over its frames until [`SessionHost::take_ara_arrived`] is
 /// false (at most [`crate::ara::STORE_WAIT`]), and this puts in the ones that came.
 pub fn collect_pulled_states(
     session: &mut Session,

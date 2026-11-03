@@ -940,10 +940,11 @@ impl Held {
     }
 
     /// Takes in the archives asked for that have come, without waiting, and lets go of the
-    /// documents no clip of `p` uses once theirs came ([`Held::release`]). Whether one of the
-    /// song's is still on its way: writing or leaving the song waits for it over the window's
-    /// frames. A document let go of is not waited for: its archive is no longer the song's.
-    pub fn archives_pending(&self, p: &Project) -> bool {
+    /// documents no clip of `p` uses once theirs came ([`Held::release`]): it changes what is
+    /// held, and is not a mere question. Whether one of the song's is still on its way: writing
+    /// or leaving the song waits for it over the window's frames, calling this each frame. A
+    /// document let go of is not waited for: its archive is no longer the song's.
+    pub fn take_arrived(&self, p: &Project) -> bool {
         self.release(p);
         self.kept(p)
             .iter()
@@ -971,7 +972,7 @@ impl Held {
 /// Without `wait` (each frame of the window, and writing or leaving the song there) nothing is
 /// waited for: an edit asks the plugin for its archive, which its thread writes, and a later
 /// call puts it in, even after the plugin's window closed. The window writes the song once
-/// [`Held::archives_pending`] is false or [`STORE_WAIT`] has passed, with the archives it has.
+/// [`Held::take_arrived`] says none is on its way or [`STORE_WAIT`] has passed, with the archives it has.
 /// With `wait` (`plugin.collect`, the headless pull) the archives asked are waited for, each at
 /// most [`STORE_WAIT`].
 pub fn take_archives(

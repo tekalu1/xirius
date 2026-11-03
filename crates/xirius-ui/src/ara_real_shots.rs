@@ -334,7 +334,7 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             // window (the plugin takes no edit from the host), so whether there is one is the
             // plugin's: what is checked is that the one asked for comes, and that the song
             // written keeps it byte for byte through opening it again.
-            let pending = |s: &Studio| s.transport.host().is_some_and(|h| h.ara_archives_pending());
+            let pending = |s: &Studio| s.transport.host().is_some_and(|h| h.take_ara_arrived());
             wait(s, 10.0, |s| !pending(s));
             assert!(!pending(s), "the plugin's archive asked for did not come");
             let saved = s.run_command("project.save", json!({}));

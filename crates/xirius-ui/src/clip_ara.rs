@@ -263,7 +263,7 @@ impl Studio {
             self.ara.reports = host.ara_reports();
             let editing = host.ara_editing();
             let errors = host.take_ara_editor_errors();
-            let pending = host.ara_archives_pending();
+            let pending = host.take_ara_arrived();
             let closed = self.ara.editing.iter().any(|p| !editing.contains(p));
             self.ara.editing = editing;
             if closed {

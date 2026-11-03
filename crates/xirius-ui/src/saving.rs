@@ -616,12 +616,7 @@ impl Studio {
             // One late is left out of a plain save, which the song goes back to unsaved for when
             // it comes; leaving the song does not drop it.
             let mut ara_late = false;
-            if error.is_none()
-                && self
-                    .transport
-                    .host()
-                    .is_some_and(|h| h.ara_archives_pending())
-            {
+            if error.is_none() && self.transport.host().is_some_and(|h| h.take_ara_arrived()) {
                 if waited < xirius_session::ara::STORE_WAIT {
                     return true;
                 }

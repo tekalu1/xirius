@@ -508,10 +508,7 @@ impl Studio {
             if open.replace
                 && !open.discard_states
                 && open.pull.is_some()
-                && self
-                    .transport
-                    .host()
-                    .is_some_and(|h| h.ara_archives_pending())
+                && self.transport.host().is_some_and(|h| h.take_ara_arrived())
             {
                 if crate::wait::now().saturating_duration_since(open.since)
                     < xirius_session::ara::STORE_WAIT
