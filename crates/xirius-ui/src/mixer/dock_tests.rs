@@ -285,7 +285,7 @@ fn at_the_least_window_the_face_sits_beside_the_strips_and_folds_them_all() {
     assert!(split.folded && !split.stacked);
     assert!(inside(split.mixer) && inside(split.panel), "{split:?}");
     assert!(split.panel.w >= FOLD_W, "{split:?}");
-    assert_eq!(s.instruments.rect(i, &g), split.panel);
+    assert_eq!(s.instruments.frame(i, &g), split.panel);
     let strips = s.mixer_strips(&g);
     assert_eq!(strips.len(), 1);
     assert_eq!(strips[0].rect.w, WIDE_W);
