@@ -517,6 +517,7 @@ fn every_history_command_undoes_and_redoes() {
     rig.step("plugin.move", json!({"id": comp, "index": 0}));
     rig.step("plugin.copy_to", json!({"id":comp,"track":"master"}));
     rig.step("plugin.duplicate", json!({"id":comp}));
+    rig.step("plugin.rename", json!({"id": comp, "name": "Glue"}));
     rig.step("channel.settings.paste", json!({"ids":[lead],"from":kick}));
     let preset = json!({
         "version": 1, "name": "Keys", "kind": "audio", "volume_db": -3.0, "pan": 0.0,
@@ -552,6 +553,8 @@ fn every_history_command_undoes_and_redoes() {
     rig.step("rack.branch.remove", json!({"id": b0}));
     rig.step("rack.node.move", json!({"id": rb, "to": rt, "index": 1}));
     rig.step("rack.flatten", json!({"track": rt}));
+    let sp2 = id_of(&rig.step("rack.split.add", json!({"track": rt, "branches": 2})));
+    rig.step("rack.split.remove", json!({"id": sp2}));
     let lt = id_of(&rig.step("track.add.instrument", json!({"name": "Layers"})));
     rig.step(
         "plugin.add",
