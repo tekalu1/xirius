@@ -3,22 +3,19 @@
 //! arms it and turns the PC keys into a keyboard (UI-074); 「オーディオを録音」
 //! makes an armed audio track; 「ファイルをドロップ」 says what a drop does.
 //!
-//! Under the entries, the panel of the devices (UI-260, [`rig`]), then the songs opened last
-//! (up to [`SHOWN`]) and the sample song after them (UI-261, start.html § 01): a press opens
-//! one. The column is centred in the body.
+//! Only the three entries, centred (UI-350): the recent songs and the sample are on the start
+//! screen ([`crate::home`]), the test tone in 設定 › オーディオ. With no audio device, one line
+//! 「オーディオデバイスなし」 under the entries opens [`crate::popup::PopupKind::NoDevice`].
 
 use serde_json::json;
-use xirius_design::{FontSize, Radius, Weight};
+use xirius_design::{FontSize, Radius, Space, Weight};
 
 use crate::draw::{Align, Pen};
 use crate::instrument::DEFAULT;
-use crate::keep::RecentSong;
-use crate::popup::ago;
 use crate::studio::{Geometry, Hit, Rect, Studio};
 use crate::tree::RowKind;
 
 pub mod rig;
-pub use rig::{Rig, RigLayout};
 
 /// An entry of the empty screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,17 +51,11 @@ impl Entry {
     }
 }
 
-/// A part of the entrance under the entries (UI-261).
+/// A part of the screen under the entries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
-    /// A row of the recent songs, newest first.
-    Song(usize),
-    /// The sample song's row, after the songs.
-    Sample,
-    /// The device's button on the panel: the list of the devices (UI-260).
-    Device,
-    /// 「テスト音」 on the panel.
-    Tone,
+    /// 「オーディオデバイスなし」, only with no audio device: its menu (UI-350).
+    NoDevice,
 }
 
 /// The mock's sizes: the zone's margin, an entry's width, its circle, the
@@ -75,24 +66,11 @@ const CIRCLE: f32 = 46.0;
 const GAP: f32 = 8.0;
 const LABEL: f32 = 16.0;
 const BETWEEN: f32 = 30.0;
-/// Between the entries and the list under them.
+/// The entries in a window too narrow for them: each narrower, closer together (UI-350).
+const NARROW_WIDTH: f32 = 96.0;
+const NARROW_BETWEEN: f32 = 8.0;
+/// Between the entries and the line under them.
 const STACK: f32 = 20.0;
-/// The list's width at most.
-pub const PANEL: f32 = 560.0;
-/// The list's heading, and the gap under it.
-const HEADING: f32 = 16.0;
-const HEADING_GAP: f32 = 4.0;
-/// A row of the list.
-pub const ROW: f32 = 30.0;
-/// Songs the list shows; the sample comes after them.
-pub const SHOWN: usize = 5;
-/// A row's padding, its icon, and the gap between its parts.
-const ROW_PAD: f32 = 8.0;
-const ROW_ICON: f32 = 16.0;
-const ROW_GAP: f32 = 10.0;
-/// The sample's tag: its height and the padding at its sides.
-const TAG_H: f32 = 16.0;
-const TAG_PAD: f32 = 6.0;
 /// The mark on 「オーディオを録音」 when the device has no inputs: its size and place.
 const BADGE: f32 = 16.0;
 const BADGE_X: f32 = 68.0;
@@ -110,78 +88,104 @@ pub fn zone(g: &Geometry) -> Rect {
     )
 }
 
-/// Where the entrance's parts are: one column, centred in [`zone`].
+/// Where the screen's parts are: the entries in a row, centred in [`zone`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct Layout {
     /// Each entry's whole rect (circle and label) and its circle, in [`Entry::ALL`]'s order.
     pub entries: [(Rect, Rect); 3],
-    /// The heading 「最近の曲」.
-    pub heading: Rect,
-    /// The panel of the devices, between the entries and the list.
-    pub rig: RigLayout,
-    /// The rows: the songs, then the sample.
-    pub rows: Vec<Rect>,
+    /// 「オーディオデバイスなし」 under the entries, with no audio device.
+    pub no_device: Option<Rect>,
 }
 
 impl Layout {
-    /// The column with the panel showing `rig` and `rows` rows in the list.
-    pub fn of(g: &Geometry, rows: usize, rig: &Rig) -> Layout {
+    /// The entries, and the line under them when `no_device`.
+    pub fn of(g: &Geometry, no_device: bool) -> Layout {
         let z = zone(g);
         let n = Entry::ALL.len() as f32;
-        let entries_w = n * WIDTH + (n - 1.0) * BETWEEN;
+        let (mut width, mut between) = (WIDTH, BETWEEN);
+        if n * width + (n - 1.0) * between > z.w {
+            (width, between) = (NARROW_WIDTH, NARROW_BETWEEN);
+        }
+        let entries_w = n * width + (n - 1.0) * between;
         let entries_h = CIRCLE + GAP + LABEL;
-        let w = PANEL.min(z.w);
-        let rig_h = RigLayout::height(rig, w);
-        let list_h = HEADING + HEADING_GAP + rows as f32 * ROW;
-        let h = entries_h + STACK + rig_h + STACK + list_h;
-        let mut y = z.y + ((z.h - h) / 2.0).max(0.0);
+        let line_h = if no_device {
+            STACK + no_device::HEIGHT
+        } else {
+            0.0
+        };
+        let y = z.y + ((z.h - entries_h - line_h) / 2.0).max(0.0);
         let x0 = z.x + (z.w - entries_w) / 2.0;
         let entries = std::array::from_fn(|i| {
-            let x = x0 + i as f32 * (WIDTH + BETWEEN);
-            let circle = Rect::new(x + (WIDTH - CIRCLE) / 2.0, y, CIRCLE, CIRCLE);
-            (Rect::new(x, y, WIDTH, entries_h), circle)
+            let x = x0 + i as f32 * (width + between);
+            let circle = Rect::new(x + (width - CIRCLE) / 2.0, y, CIRCLE, CIRCLE);
+            (Rect::new(x, y, width, entries_h), circle)
         });
-        y += entries_h + STACK;
-        let x = z.x + (z.w - w) / 2.0;
-        let rig = RigLayout::of(rig, x, y, w);
-        y += rig_h + STACK;
-        let heading = Rect::new(x + 4.0, y, w - 4.0, HEADING);
-        y += HEADING + HEADING_GAP;
-        let rows = (0..rows)
-            .map(|i| Rect::new(x, y + i as f32 * ROW, w, ROW))
-            .collect();
-        Layout {
-            entries,
-            heading,
-            rig,
-            rows,
-        }
+        let no_device = no_device.then(|| {
+            let w = no_device::width();
+            Rect::new(
+                z.x + (z.w - w) / 2.0,
+                y + entries_h + STACK,
+                w,
+                no_device::HEIGHT,
+            )
+        });
+        Layout { entries, no_device }
     }
 
     pub fn entry(&self, e: Entry) -> (Rect, Rect) {
         self.entries[Entry::ALL.iter().position(|x| *x == e).unwrap_or(0)]
     }
 
-    /// The row of a part, if it is shown.
+    /// Where a part shows, if it does.
     pub fn row(&self, part: Part) -> Option<Rect> {
         match part {
-            Part::Song(i) => (i + 1 < self.rows.len()).then(|| self.rows[i]),
-            Part::Sample => self.rows.last().copied(),
-            Part::Device | Part::Tone => self.rig.part(part),
+            Part::NoDevice => self.no_device,
         }
     }
 
     /// The part under a point.
     pub fn part_at(&self, x: f32, y: f32) -> Option<Part> {
-        if let Some(part) = self.rig.part_at(x, y) {
-            return Some(part);
+        self.no_device
+            .is_some_and(|r| r.contains(x, y))
+            .then_some(Part::NoDevice)
+    }
+}
+
+/// 「オーディオデバイスなし」: the line on the start screen and the new song's screen that
+/// opens the menu with 「再スキャン」 and 「オーディオの設定…」 (UI-350).
+pub(crate) mod no_device {
+    use super::*;
+    use crate::browser::text_width;
+    use crate::start::rig::NO_DEVICE;
+
+    pub const HEIGHT: f32 = xirius_design::Layout::MENU_ROW_H;
+    const ICON: f32 = xirius_design::Layout::ICON_SIZE;
+
+    /// The line's width: its padding, the mark, and the words.
+    pub fn width() -> f32 {
+        Space::X2.px()
+            + ICON
+            + Space::X2.px()
+            + text_width(NO_DEVICE, FontSize::Small)
+            + Space::X2.px()
+    }
+
+    pub fn paint(pen: &mut Pen, r: Rect, hot: bool) {
+        if hot {
+            pen.round(r, pen.c.hover, Radius::S);
         }
-        let i = self.rows.iter().position(|r| r.contains(x, y))?;
-        Some(if i + 1 == self.rows.len() {
-            Part::Sample
-        } else {
-            Part::Song(i)
-        })
+        let pad = Space::X2.px();
+        let icon = Rect::new(r.x + pad, r.y + (r.h - ICON) / 2.0, ICON, ICON);
+        pen.icon("alert", icon, pen.c.alert);
+        let x = icon.right() + pad;
+        pen.text(
+            NO_DEVICE,
+            FontSize::Small,
+            Weight::Medium,
+            pen.c.ink_alert,
+            Rect::new(x, r.y, (r.right() - x).max(0.0), r.h),
+            Align::Left,
+        );
     }
 }
 
@@ -191,21 +195,9 @@ impl Studio {
         self.project().root.is_empty()
     }
 
-    /// The songs the entrance lists: the last opened, newest first, but not this one.
-    pub fn start_recent(&self) -> Vec<RecentSong> {
-        let here = self.song.record_dir();
-        self.keep
-            .listed()
-            .iter()
-            .filter(|r| Some(&r.dir) != here.as_ref())
-            .take(SHOWN)
-            .cloned()
-            .collect()
-    }
-
-    /// Where the entrance's parts are.
+    /// Where the screen's parts are.
     pub fn start_layout(&self, g: &Geometry) -> Layout {
-        Layout::of(g, self.start_recent().len() + 1, &self.rig())
+        Layout::of(g, !self.has_audio_device())
     }
 
     /// An entry's whole rect (circle and label) and its circle.
@@ -225,7 +217,7 @@ impl Studio {
             .find(|e| l.entry(*e).0.contains(x, y))
     }
 
-    /// The part of the list under a point, on the empty screen.
+    /// The part under the entries under a point, on the empty screen.
     pub fn entrance_at(&self, g: &Geometry, x: f32, y: f32) -> Option<Part> {
         if !self.start_shown() {
             return None;
@@ -241,26 +233,16 @@ impl Studio {
         self.start_layout(g).row(part)
     }
 
-    /// A row of the list: its song (or the sample) in place of this one.
+    /// 「オーディオデバイスなし」: its menu under it.
     pub fn entrance_press(&mut self, g: &Geometry, part: Part) -> bool {
         match part {
-            Part::Song(i) => {
-                let Some(song) = self.start_recent().into_iter().nth(i) else {
-                    return false;
-                };
-                self.start_file_request(crate::studio::FileRequest::Open, &song.dir);
-            }
-            Part::Sample => self.start_leaving(crate::saving::Leave::Sample),
-            Part::Device => {
+            Part::NoDevice => {
                 if let Some(r) = self.entrance_rect(g, part) {
-                    self.open_popup(crate::popup::PopupKind::Device(false), r);
+                    self.open_popup(crate::popup::PopupKind::NoDevice, r);
                 }
-                return true;
+                true
             }
-            Part::Tone => return self.play_test_tone(),
         }
-        self.rebuild(g);
-        true
     }
 
     pub fn start_press(&mut self, g: &Geometry, e: Entry) -> bool {
@@ -359,7 +341,7 @@ impl Studio {
     }
 }
 
-/// The entries in the middle of the empty body, and the list under them.
+/// The entries in the middle of the empty body, and the line under them.
 pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     if !studio.start_shown() {
         return;
@@ -368,9 +350,8 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     if studio.drop_over {
         pen.round(z, pen.c.sel, Radius::S);
     }
-    let songs = studio.start_recent();
-    let rig = studio.rig();
-    let l = Layout::of(g, songs.len() + 1, &rig);
+    let l = studio.start_layout(g);
+    let no_inputs = !studio.device_has_inputs();
     for e in Entry::ALL {
         let (r, circle) = l.entry(e);
         let hot = e.pressable() && studio.hover == Hit::Start(e);
@@ -392,87 +373,19 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
             label,
             Align::Center,
         );
-        if e == Entry::Audio && rig.inputs.is_empty() {
+        if e == Entry::Audio && no_inputs {
             // Nothing to record from: a mark on the entry.
-            let badge = Rect::new(r.x + BADGE_X, r.y + BADGE_Y, BADGE, BADGE);
+            let badge = Rect::new(
+                circle.x + BADGE_X - (WIDTH - CIRCLE) / 2.0,
+                r.y + BADGE_Y,
+                BADGE,
+                BADGE,
+            );
             pen.icon("alert", badge, pen.c.alert);
         }
     }
-    rig::paint(pen, studio, &rig, &l.rig);
-    pen.text(
-        "最近の曲",
-        FontSize::Caption,
-        Weight::Semibold,
-        pen.c.ink_strong,
-        l.heading,
-        Align::Left,
-    );
-    let now = xirius_core::store::now_ms();
-    for (i, r) in l.rows.iter().enumerate() {
-        let (part, name, when) = match songs.get(i) {
-            Some(s) => (Part::Song(i), s.name.as_str(), Some(ago(now, s.at_ms))),
-            None => (Part::Sample, crate::song::SAMPLE_NAME, None),
-        };
-        let hot = studio.hover == Hit::Entrance(part);
-        paint_row(pen, *r, name, when.as_deref(), hot);
-    }
-}
-
-/// A row of the list: the file's icon, the name, the sample's tag, and when it was opened.
-fn paint_row(pen: &mut Pen, r: Rect, name: &str, when: Option<&str>, hot: bool) {
-    if hot {
-        pen.round(r, pen.c.hover, Radius::S);
-    }
-    let icon = Rect::new(
-        r.x + ROW_PAD,
-        r.y + (r.h - ROW_ICON) / 2.0,
-        ROW_ICON,
-        ROW_ICON,
-    );
-    pen.icon("file", icon, pen.c.ink);
-    let mut right = r.right() - ROW_PAD;
-    if let Some(when) = when {
-        let w = pen.measure(when, FontSize::Caption, Weight::Regular);
-        pen.digits(
-            when,
-            FontSize::Caption,
-            Weight::Regular,
-            pen.c.ink,
-            Rect::new(right - w, r.y, w, r.h),
-            Align::Right,
-        );
-        right -= w + ROW_GAP;
-    }
-    let x = icon.right() + ROW_GAP;
-    let place = Rect::new(x, r.y, (right - x).max(0.0), r.h);
-    let name_w = pen
-        .measure(name, FontSize::Small, Weight::Regular)
-        .min(place.w);
-    let ink = pen.c.ink_strong;
-    pen.mask(place, |pen| {
-        pen.text(
-            name,
-            FontSize::Small,
-            Weight::Regular,
-            ink,
-            place,
-            Align::Left,
-        );
-    });
-    if when.is_none() {
-        // The sample's tag after its name.
-        let tag = "サンプル";
-        let w = pen.measure(tag, FontSize::Micro, Weight::Regular) + 2.0 * TAG_PAD;
-        let t = Rect::new(x + name_w + ROW_GAP, r.y + (r.h - TAG_H) / 2.0, w, TAG_H);
-        pen.round(t, pen.c.surface_3, Radius::Clip);
-        pen.text(
-            tag,
-            FontSize::Micro,
-            Weight::Regular,
-            pen.c.ink,
-            t,
-            Align::Center,
-        );
+    if let Some(r) = l.no_device {
+        no_device::paint(pen, r, studio.hover == Hit::Entrance(Part::NoDevice));
     }
 }
 

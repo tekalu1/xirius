@@ -37,6 +37,9 @@ impl Studio {
 
     /// The top bar's boxes: the ripple switch stands only in the arrangement's bar.
     pub(crate) fn bar_layout(&self, width: f32) -> crate::topbar::BarLayout {
+        if self.home_shown() {
+            return crate::topbar::BarLayout::logo_only(width);
+        }
         crate::topbar::BarLayout::of_save(
             width,
             &self.project().name,

@@ -1853,6 +1853,7 @@ impl Studio {
         let toast = self.expire_toast() | self.expire_gain_tip() | self.gain_tip.is_some();
         let settings = self.settings_tick();
         let rig = self.rig_tick();
+        let home = self.home_tick();
         let update = self.poll_update();
         continued
             || view
@@ -1877,6 +1878,7 @@ impl Studio {
             || shaking
             || device
             || rig
+            || home
             || update
     }
 

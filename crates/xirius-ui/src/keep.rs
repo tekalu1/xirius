@@ -43,8 +43,6 @@ pub enum SaveMark {
 
 #[derive(Debug, Default)]
 pub struct Keep {
-    /// Until a startup song is adopted, closing must retain the previous target.
-    preserve_startup_open: bool,
     owner: Option<Arc<crate::recent_worker::Owner>>,
     refresh: RecentReplies,
     applied_revision: u64,
@@ -108,7 +106,6 @@ impl Keep {
     /// The song was opened or made new: what it is now is not an edit.
     pub fn sync(&mut self, project: &Arc<Project>) {
         self.plugin_state_failed = false;
-        self.preserve_startup_open = false;
         self.seen = Some(project.clone());
         self.flash_until = 0;
         self.failed = None;
@@ -117,7 +114,6 @@ impl Keep {
 
     pub(crate) fn sync_open(&mut self, project: &Arc<Project>, dir: Option<PathBuf>, draft: bool) {
         self.plugin_state_failed = false;
-        self.preserve_startup_open = false;
         self.seen = Some(project.clone());
         self.flash_until = 0;
         self.failed = None;
@@ -271,18 +267,12 @@ impl Keep {
 
     /// The window closed on `open`: the next start opens it.
     pub fn closed_with(&self, open: &LastOpen) {
-        if !self.preserve_startup_open {
-            self.queue_recent(crate::recent_worker::Update::Closed(open.clone()));
-        }
+        self.queue_recent(crate::recent_worker::Update::Closed(open.clone()));
     }
 
     /// What the start opens: with no root (a test), the song the studio was made with.
     pub fn last_open(&self) -> Option<LastOpen> {
         self.list().map(|l| l.last_open())
-    }
-
-    pub(crate) fn preserves_startup_open(&self) -> bool {
-        self.preserve_startup_open
     }
 
     /// The newest remembered song whose folder was left locked by a process that is
@@ -390,17 +380,17 @@ impl Studio {
         self.keep.mark(&self.song, xirius_core::store::now_ms())
     }
 
-    /// Starts keeping under `keep`, and opens the song a crash interrupted when there is
-    /// one (PRJ-012); otherwise what the last window closed on (UI-261): an empty song the
-    /// first time, then the song, the sample, or an empty song. Called by the app only; a test
-    /// names its own folder.
+    /// Starts keeping under `keep`: the start screen shows (UI-350), and the song a crash
+    /// interrupted opens straight away when there is one (PRJ-012). Nothing else opens by
+    /// itself. Called by the app only; a test names its own folder.
     pub fn start_keeping(&mut self, keep: Keep) {
         self.keep = keep;
         self.keep.sync_open(&self.song.project(), None, false);
+        self.home = Some(crate::home::Home::default());
+        self.poll_io();
         // Startup discovery, including existence and crash-marker checks, is worker I/O.
         let root = self.keep.root().map(Path::to_path_buf);
         if let Some(root) = root {
-            self.keep.preserve_startup_open = true;
             self.request_open(crate::opening::Request::Startup(root));
         }
     }
@@ -440,9 +430,6 @@ impl Studio {
                 self.leaving_ready = false;
             }
             self.keep.recent_close_ready = false;
-        }
-        if self.song.steps() > 0 {
-            self.keep.preserve_startup_open = false;
         }
         if !self.transport.is_windowed()
             && self.song.record_dir().is_none()
@@ -1422,9 +1409,9 @@ mod tests {
         assert!(s.popup.is_none() && s.start_shown());
     }
 
-    /// A launch of the app on `root`: the sample it is made with, then the keeping.
+    /// A launch of the app on `root`: the empty song it is made with, then the keeping.
     fn launch(root: &Path) -> Studio {
-        let mut s = Studio::sample();
+        let mut s = Studio::new(Song::empty());
         let keep = Keep::at(root.to_path_buf());
         keep.settle_recent();
         s.start_keeping(keep);
@@ -1432,14 +1419,32 @@ mod tests {
         s
     }
 
+    /// The start screen's list, read.
+    fn listed(s: &mut Studio) -> Vec<PathBuf> {
+        s.keep.settle_recent();
+        s.keep.poll_recent();
+        s.home_tick();
+        s.keep.listed().iter().map(|r| r.dir.clone()).collect()
+    }
+
+    /// The start screen's top row, opened as Enter does.
+    fn open_top(s: &mut Studio) {
+        let g = s.geometry(1440.0, 860.0);
+        assert!(s.home_key(&g, "enter", crate::tools::Mods::NONE));
+        s.wait_for_open_for_test();
+    }
+
     #[test]
-    fn the_first_start_is_an_empty_song_and_the_next_opens_what_the_last_closed_on() {
+    fn every_start_shows_the_start_screen_with_the_song_the_last_closed_on_at_the_top() {
         let tmp = scratch("launch");
         let root = tmp.path().to_path_buf();
-        // The first start: nothing written yet, an empty song.
+        // The first start: nothing written yet, the start screen on an empty song.
         let mut s = launch(&root);
         assert_eq!(s.error, None);
-        assert!(s.start_shown() && !s.song.is_sample());
+        assert!(s.home_shown() && !s.song.is_sample());
+        s.request_open(crate::opening::Request::New);
+        s.wait_for_open_for_test();
+        assert!(!s.home_shown());
         add(&mut s, "mine");
         let place = root.join("mine");
         s.finish_file_request_sync(crate::studio::FileRequest::SaveAs, &place);
@@ -1447,39 +1452,36 @@ mod tests {
         s.release_song();
         drop(s);
 
-        // The second: the song the window closed on.
+        // The second (UI-350): the start screen, not the song; the song is the top row.
         let mut s = launch(&root);
         assert_eq!(s.error, None);
+        assert!(s.home_shown());
+        assert_eq!(s.song.record_dir(), None);
+        assert_eq!(listed(&mut s).first(), Some(&place));
+        open_top(&mut s);
         assert_eq!(s.song.record_dir(), Some(place.clone()));
         assert!(s.project().tracks.values().any(|t| t.name == "mine"));
-        // Closed on the sample, the sample comes back.
+        // Closed on the sample: the start screen again.
         s.open_sample_sync();
         assert!(s.song.is_sample());
         s.release_song();
         drop(s);
-        let mut s = launch(&root);
-        assert!(s.song.is_sample());
-        assert_eq!(s.keep.settled_last_open(), Some(LastOpen::Sample));
-        // Closed on a new song, a new song.
-        s.new_song_sync();
-        s.release_song();
-        drop(s);
         let s = launch(&root);
-        assert!(s.start_shown() && !s.song.is_sample());
+        assert!(s.home_shown() && !s.song.is_sample());
         drop(s);
 
-        // A song whose folder is gone: an empty song, and nothing said.
+        // A song whose folder is gone: the start screen, and nothing said.
         let gone = root.join("gone");
         RecentList::in_dir(&root)
             .closed_with(&LastOpen::Song(gone))
             .unwrap();
         let s = launch(&root);
         assert_eq!(s.error, None);
-        assert!(s.start_shown());
+        assert!(s.home_shown());
     }
 
     #[test]
-    fn an_edited_sample_reopens_as_the_draft_it_was_kept_in() {
+    fn an_edited_sample_is_listed_as_the_draft_it_was_kept_in() {
         let tmp = scratch("sample-edit");
         let root = tmp.path().to_path_buf();
         let mut s = launch(&root);
@@ -1488,7 +1490,10 @@ mod tests {
         let draft = s.song.record_dir().expect("kept as a draft");
         s.release_song();
         drop(s);
-        let s = launch(&root);
+        let mut s = launch(&root);
+        assert!(s.home_shown());
+        assert_eq!(listed(&mut s).first(), Some(&draft));
+        open_top(&mut s);
         assert_eq!(s.song.record_dir(), Some(draft));
         assert!(s.project().tracks.values().any(|t| t.name == "added"));
     }

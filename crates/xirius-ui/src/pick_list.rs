@@ -1087,13 +1087,21 @@ impl Studio {
             .as_ref()
             .and_then(|p| p.pick.as_ref())
             .or_else(|| self.settings.as_ref()?.menu.as_ref()?.pick.as_ref())
+            .or_else(|| self.home_typing())
     }
 
     fn pick_typing_mut(&mut self) -> Option<&mut PickList> {
-        if let Some(p) = self.popup.as_mut().and_then(|p| p.pick.as_mut()) {
-            return Some(p);
+        if self.popup.as_ref().is_some_and(|p| p.pick.is_some()) {
+            return self.popup.as_mut()?.pick.as_mut();
         }
-        self.settings.as_mut()?.menu.as_mut()?.pick.as_mut()
+        let settings = self
+            .settings
+            .as_ref()
+            .is_some_and(|u| u.menu.as_ref().is_some_and(|m| m.pick.is_some()));
+        if settings {
+            return self.settings.as_mut()?.menu.as_mut()?.pick.as_mut();
+        }
+        self.home_typing_mut()
     }
 
     /// Text the IME puts in the list's search box (UI-338): what it

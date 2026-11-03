@@ -188,6 +188,9 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     if s.settings.is_some() || s.opening.is_some() || s.sound_preparing() {
         return Vec::new();
     }
+    if s.popup.is_none() && s.home_shown() {
+        return home_marks(s, g);
+    }
     if let Some(p) = &s.popup {
         // The value fields at the head of a clip's menu: a screen reader reads the name, the
         // value and the unit, which the field itself does not draw (UI-311).
@@ -297,6 +300,97 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     out.extend(instrument_marks(s, g));
     out.extend(audition_mark(s, g));
     out.extend(drawer_marks(s, g));
+    out
+}
+
+/// The start screen (UI-350): its three buttons, 「オーディオデバイスなし」, the search box
+/// 「検索」 and the list 「最近の曲」 with its rows, the chosen one selected.
+pub fn home_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
+    use crate::home::{Button, Focus, Spot};
+    use crate::studio::Hit;
+    let (Some(home), Some(l)) = (s.home.as_ref(), s.home_layout(g)) else {
+        return Vec::new();
+    };
+    let mark = |key: String, role, label: String, r, press: Option<Spot>| {
+        let mut node = accesskit::Node::new(role);
+        node.set_label(label);
+        node.set_bounds(bounds(r));
+        Mark {
+            key,
+            children: Vec::new(),
+            node,
+            fold: None,
+            pick: None,
+            press: press.map(Hit::Home),
+        }
+    };
+    let mut out = Vec::new();
+    for b in Button::ALL {
+        let label = match b.keys() {
+            "" => b.label().to_string(),
+            keys => format!("{} {keys}", b.label()),
+        };
+        let mut m = mark(
+            format!("home-{b:?}"),
+            accesskit::Role::Button,
+            label,
+            l.button(b),
+            Some(Spot::Button(b)),
+        );
+        if home.focus == Focus::Button(b) {
+            m.node.set_selected(true);
+        }
+        out.push(m);
+    }
+    if let Some(r) = l.no_device {
+        let mut m = mark(
+            "home-no-device".into(),
+            accesskit::Role::Button,
+            crate::start::rig::NO_DEVICE.into(),
+            r,
+            Some(Spot::Device),
+        );
+        m.node.set_has_popup(accesskit::HasPopup::Menu);
+        out.push(m);
+    }
+    if let Some(r) = l.search {
+        let mut m = mark(
+            "home-search".into(),
+            accesskit::Role::TextInput,
+            "検索".into(),
+            r,
+            Some(Spot::Search),
+        );
+        m.node.set_value(home.pick.query.clone());
+        out.push(m);
+    }
+    let rows = home.pick.nav();
+    let mut list = mark(
+        "home-list".into(),
+        accesskit::Role::List,
+        crate::home::RECENT.into(),
+        l.heading,
+        None,
+    );
+    for (i, r) in &l.rows {
+        let Some(row) = rows.get(*i) else {
+            continue;
+        };
+        let mut label = row.label.clone();
+        if matches!(row.act, Some(crate::popup::Action::OpenSample)) {
+            label = format!("{label} {}", crate::home::SAMPLE_TAG);
+        }
+        let mut item = mark(
+            format!("home-row-{i}"),
+            accesskit::Role::ListItem,
+            label,
+            *r,
+            Some(Spot::Row(*i)),
+        );
+        item.node.set_selected(*i == home.pick.selected);
+        list.children.push(item);
+    }
+    out.push(list);
     out
 }
 
@@ -579,6 +673,10 @@ pub fn fold(s: &mut Studio, track: TrackId) -> bool {
 /// tempo, the meter and the CPU with what they read (the CPU as "N%", UI-301).
 pub fn bottom_bar_nodes(s: &Studio, g: &Geometry) -> Vec<(usize, accesskit::Node)> {
     use crate::studio::Hit;
+    // The start screen has no transport (UI-350).
+    if s.home_shown() {
+        return Vec::new();
+    }
     use crate::topbar::{BarButton, BarLayout};
     let v = s.bar_view();
     let layout = s.bar_layout(g.size.0);

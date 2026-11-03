@@ -187,18 +187,14 @@ pub fn count(n: u64) -> String {
 fn empty() -> xirius_core::model::Project {
     xirius_core::model::Project::new(crate::song::EMPTY_NAME)
 }
+/// What the start opens (UI-350): only the song a crash interrupted (PRJ-012). Without one
+/// the start screen stays; the quiet `Interrupted` says nothing.
 fn startup(root: &Path) -> xirius_core::CmdResult<OpenRequest> {
     let keep = crate::keep::Keep::at(root.to_path_buf());
-    if let Some(r) = keep.crashed() {
-        return Ok(OpenRequest::Song(r.dir));
+    match keep.crashed() {
+        Some(r) => Ok(OpenRequest::Song(r.dir)),
+        None => Err(std::io::Error::from(std::io::ErrorKind::Interrupted).into()),
     }
-    Ok(match keep.last_open() {
-        Some(crate::keep::LastOpen::Song(path)) => OpenRequest::Song(path),
-        Some(crate::keep::LastOpen::Sample) => {
-            OpenRequest::Build(crate::song::Song::sample_project)
-        }
-        _ => OpenRequest::Build(empty),
-    })
 }
 impl Studio {
     #[cfg(test)]
@@ -374,15 +370,12 @@ impl Studio {
                 Arc,
                 atomic::{AtomicBool, Ordering},
             };
-            let last =
-                (!self.keep.preserves_startup_open()).then(|| match self.song.record_dir() {
-                    Some(dir) => crate::keep::LastOpen::Song(dir),
-                    None if self.song.is_sample() => crate::keep::LastOpen::Sample,
-                    None => crate::keep::LastOpen::Empty,
-                });
-            if let Some(last) = last {
-                self.keep.closed_with(&last);
-            }
+            let last = match self.song.record_dir() {
+                Some(dir) => crate::keep::LastOpen::Song(dir),
+                None if self.song.is_sample() => crate::keep::LastOpen::Sample,
+                None => crate::keep::LastOpen::Empty,
+            };
+            self.keep.closed_with(&last);
             let root = self.keep.root().map(Path::to_path_buf);
             let later = self.os_files.then(crate::notice::later_path);
             let done = if let Some(job) = &open.job {

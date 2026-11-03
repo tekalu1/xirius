@@ -76,7 +76,14 @@ fn every_entry_returns_before_worker_io_and_blocks_input_before_the_veil() {
         match entry {
             "new" => s.start_leaving(Leave::New),
             "sample" => s.start_leaving(Leave::Sample),
-            "startup" => s.start_keeping(crate::keep::Keep::at(tmp.path().join("keep"))),
+            // The start opens only the song a crash interrupted (UI-350, PRJ-012).
+            "startup" => {
+                std::fs::write(target.join("session.lock"), u32::MAX.to_string()).unwrap();
+                let keep = crate::keep::Keep::at(tmp.path().join("keep"));
+                keep.remember(&target, "target", false, 1);
+                keep.settle_recent();
+                s.start_keeping(keep);
+            }
             "command" => {
                 assert!(s.run_command("project.open", json!({"path":target})));
             }
@@ -472,8 +479,10 @@ fn esc_during_retirement_has_no_cancel_control_or_cancellation_promise() {
     drop(observe);
 }
 
+/// Without a crash the start opens nothing, not even the song the last window had: the start
+/// screen stays, and nothing is said (UI-350).
 #[test]
-fn closing_an_unadopted_startup_preserves_the_previous_last_open() {
+fn a_startup_without_a_crash_stays_on_the_start_screen() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("song");
     let root = tmp.path().join("keep");
@@ -483,33 +492,14 @@ fn closing_an_unadopted_startup_preserves_the_previous_last_open() {
     let keep = crate::keep::Keep::at(root.clone());
     keep.remember(&path, "song", false, 1);
     keep.closed_with(&crate::keep::LastOpen::Song(path.clone()));
-    let release = Release::new();
-    let gate = release.0.clone();
-    let watch = path.clone();
-    let (tx, entered) = mpsc::channel();
-    let once = AtomicBool::new(false);
-    let observe = xirius_core::io_test::observe(Arc::new(move |op, file| {
-        if op == "read" && file.starts_with(&watch) && !once.swap(true, Ordering::SeqCst) {
-            tx.send(()).unwrap();
-            let held = gate.0.lock().unwrap();
-            drop(gate.1.wait_while(held, |released| !*released).unwrap());
-        }
-        Ok(())
-    }));
     let mut s = Studio::new(Song::empty());
     keep.settle_recent();
     s.start_keeping(crate::keep::Keep::at(root));
-    s.poll_opening();
-    entered.recv_timeout(Duration::from_secs(10)).unwrap();
-    assert!(!s.request_close());
-    s.accept_open_close();
-    release.release();
-    s.wait_open_close(Duration::from_secs(10));
-    assert_eq!(
-        keep.settled_last_open(),
-        Some(crate::keep::LastOpen::Song(path))
-    );
-    drop(observe);
+    finish(&mut s);
+    assert_eq!(s.song.dir(), None);
+    assert!(s.home_shown());
+    assert!(s.error.is_none(), "{:?}", s.error);
+    assert!(s.toast.is_none(), "{:?}", s.toast.as_ref().map(|t| &t.text));
 }
 
 #[test]
@@ -608,32 +598,61 @@ fn zero_reads_are_omitted_only_for_lock_and_writer_waits() {
     finish(&mut s);
 }
 
+/// Cancelling a song's opening from the start screen comes back to it with the same row
+/// chosen; a new song ends the start screen (UI-350).
 #[test]
-fn a_cancelled_startup_preserves_its_target_until_a_song_is_adopted() {
+fn a_cancelled_open_comes_back_to_the_start_screen_with_its_row() {
     let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("song");
     let root = tmp.path().join("keep");
-    let mut seed = Song::empty();
-    seed.save_as(&path).unwrap();
-    drop(seed);
     let keep = crate::keep::Keep::at(root.clone());
-    keep.closed_with(&crate::keep::LastOpen::Song(path.clone()));
-    let mut s = Studio::new(Song::empty());
+    let mut paths = Vec::new();
+    for (i, name) in ["older", "newer"].into_iter().enumerate() {
+        let path = tmp.path().join(name);
+        let mut seed = Song::empty();
+        seed.save_as(&path).unwrap();
+        drop(seed);
+        keep.remember(&path, name, false, 1 + i as u64);
+        paths.push(path);
+    }
     keep.settle_recent();
+    let release = Release::new();
+    let gate = release.0.clone();
+    let watch = paths[0].clone();
+    let (tx, entered) = mpsc::channel();
+    let once = AtomicBool::new(false);
+    let observe = xirius_core::io_test::observe(Arc::new(move |op, file| {
+        if op == "read" && file.starts_with(&watch) && !once.swap(true, Ordering::SeqCst) {
+            tx.send(()).unwrap();
+            let held = gate.0.lock().unwrap();
+            drop(gate.1.wait_while(held, |released| !*released).unwrap());
+        }
+        Ok(())
+    }));
+    let mut s = Studio::new(Song::empty());
     s.start_keeping(crate::keep::Keep::at(root));
-    let g = s.geometry(1200.0, 800.0);
-    s.key(&g, "escape", false, false);
     finish(&mut s);
-    s.keep.closed_with(&crate::keep::LastOpen::Empty);
-    assert_eq!(
-        keep.settled_last_open(),
-        Some(crate::keep::LastOpen::Song(path))
-    );
+    s.keep.poll_recent();
+    s.home_tick();
+    let g = s.geometry(1200.0, 800.0);
+    let none = crate::tools::Mods::default();
+    // The second row (the older song), opened with Enter.
+    assert!(s.home_key(&g, "down", none));
+    assert!(s.home_key(&g, "enter", none));
+    assert!(s.opening.is_some());
+    s.poll_opening();
+    entered.recv_timeout(Duration::from_secs(10)).unwrap();
+    s.key(&g, "escape", false, false);
+    release.release();
+    finish(&mut s);
+    assert_eq!(s.song.dir(), None);
+    assert!(s.home_shown());
+    assert_eq!(s.home.as_ref().unwrap().pick.selected, 1);
+    // A new song ends the screen.
     s.request_open(Request::New);
     finish(&mut s);
-    assert!(!s.keep.preserves_startup_open());
-    s.keep.closed_with(&crate::keep::LastOpen::Empty);
-    assert_eq!(keep.settled_last_open(), Some(crate::keep::LastOpen::Empty));
+    assert!(!s.home_shown());
+    assert!(s.home.is_none());
+    drop(observe);
 }
 
 fn start_mcp(

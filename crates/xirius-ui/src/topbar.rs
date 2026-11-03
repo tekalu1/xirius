@@ -421,6 +421,49 @@ impl BarLayout {
         layout
     }
 
+    /// The start screen's bar (UI-350): only the logo; the rest drags the window.
+    pub fn logo_only(width: f32) -> BarLayout {
+        let full = BarLayout::of(width, "", true);
+        let none = Rect::default();
+        let mut layout = BarLayout {
+            width,
+            logo: full.logo,
+            name: none,
+            saved: none,
+            skip: none,
+            play: none,
+            stop: none,
+            record: none,
+            looped: none,
+            preroll: none,
+            metronome: none,
+            time: none,
+            bpm: none,
+            meter: none,
+            tools: Vec::new(),
+            alt: none,
+            shape: none,
+            grid: none,
+            snap: none,
+            ripple: none,
+            length: none,
+            rec_panel: none,
+            cpu: none,
+            history: none,
+            palette: none,
+            ai: none,
+            export: none,
+            drag: Vec::new(),
+        };
+        layout.drag = layout.drag_spans();
+        layout
+    }
+
+    /// The bar has only the logo (the start screen's).
+    pub fn is_logo_only(&self) -> bool {
+        self.export.w == 0.0
+    }
+
     /// Where the top bar's buttons end up in one line: used to find the gaps.
     fn blocks(&self) -> Vec<(f32, f32)> {
         let logo = self.rect(BarButton::Logo);

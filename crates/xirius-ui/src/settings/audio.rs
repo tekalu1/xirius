@@ -362,7 +362,12 @@ pub fn audio(b: &mut B, ui: &SettingsUi, s: &Settings, x: f32, top: f32, w: f32)
     ry.max(iy)
 }
 
-/// 「出力」: the test tone's button and the output's meter, left over right (UI-260).
+/// The test tone's meters: each side's line, its name's width, and the meter (UI-350).
+const TONE_LINE: f32 = 12.0;
+const TONE_SIDE: f32 = 10.0;
+const TONE_METER: (f32, f32) = (120.0, 6.0);
+
+/// 「出力」: the test tone's button and, while it sounds, the output's meters, L over R.
 fn tone_row(b: &mut B, ui: &SettingsUi, x: f32, y: f32, w: f32) -> f32 {
     use crate::start::rig::TONE;
     let c = b.c;
@@ -394,10 +399,29 @@ fn tone_row(b: &mut B, ui: &SettingsUi, x: f32, y: f32, w: f32) -> f32 {
         Align::Left,
     );
     b.item(br, Do::Tone, None);
-    let mx = br.right() + 10.0;
-    let my = r.y + (r.h - 11.0) / 2.0;
-    for (i, a) in ui.out.iter().enumerate() {
-        paint_meter(b, Rect::new(mx, my + i as f32 * 7.0, 90.0, 4.0), *a);
+    if ui.tone {
+        // Only while it sounds: the left side over the right, each named (UI-350).
+        let lx = br.right() + 10.0;
+        let mx = lx + TONE_SIDE + 6.0;
+        let top = r.y + (r.h - 2.0 * TONE_LINE - 2.0) / 2.0;
+        for (i, (side, a)) in ["L", "R"].into_iter().zip(ui.out).enumerate() {
+            let line = Rect::new(lx, top + i as f32 * (TONE_LINE + 2.0), TONE_SIDE, TONE_LINE);
+            b.text(
+                side,
+                FontSize::Caption,
+                Weight::Medium,
+                c.ink,
+                line,
+                Align::Center,
+            );
+            let m = Rect::new(
+                mx,
+                line.y + (TONE_LINE - TONE_METER.1) / 2.0,
+                TONE_METER.0,
+                TONE_METER.1,
+            );
+            paint_meter(b, m, a);
+        }
     }
     r.bottom()
 }

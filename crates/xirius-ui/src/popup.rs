@@ -93,9 +93,12 @@ pub enum PopupKind {
     Report,
     /// The CPU of the song and of each plugin, the heaviest first (ENG-008).
     Perf,
-    /// The audio devices, from the device panel of the entrance (UI-260); only those with
-    /// inputs when true (opened by 「オーディオを録音」 on a device without inputs).
+    /// The audio devices (UI-260); only those with inputs when true (opened by
+    /// 「オーディオを録音」 on a device without inputs).
     Device(bool),
+    /// Under 「オーディオデバイスなし」 on the start screen and the new song's screen:
+    /// 「再スキャン」 and 「オーディオの設定…」 (UI-350).
+    NoDevice,
     /// What a `.dawproject` could not carry, over the toast that counted it (EXP-006, EXP-007).
     Skipped,
     /// The recordings nothing uses, before they go to the recycle bin (BRW-004), in the middle
@@ -134,6 +137,8 @@ pub enum Action {
     NewSong,
     /// A song of the recent list (PRJ-014): its place in `Popup::recent`.
     OpenRecent(usize),
+    /// The sample song (the start screen's last row, UI-350).
+    OpenSample,
     /// A press on the card shown after a crash (PRJ-012).
     Recovery(crate::recovery_card::Button),
     Save,
@@ -185,6 +190,10 @@ pub enum Action {
     Field(usize, crate::context::fields::FieldAct),
     /// `audio.set` of the device: its name.
     Device(String),
+    /// 「再スキャン」: the audio devices listed again (UI-350).
+    Rescan,
+    /// 「オーディオの設定…」: the settings, on オーディオ (UI-350).
+    AudioSettings,
     /// 「DAWproject を開く…」 of the song menu (EXP-006).
     OpenDawproject,
     /// 「DAWproject として書き出す…」 of the song menu (EXP-007).
@@ -594,6 +603,28 @@ impl PopupLayout {
     }
 }
 
+/// The menu under 「オーディオデバイスなし」 (UI-350).
+fn no_device_cells(w: f32) -> Vec<Cell> {
+    let pad = Layout::POPUP_PAD;
+    [
+        ("再スキャン", "sync", Action::Rescan),
+        ("オーディオの設定…", "gear", Action::AudioSettings),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, (text, icon, action))| {
+        let y = pad + i as f32 * Layout::MENU_ROW_H;
+        Cell::new(
+            Rect::new(pad, y, w - pad * 2.0, Layout::MENU_ROW_H),
+            Look::Row,
+        )
+        .text(text)
+        .icon(icon)
+        .act(action)
+    })
+    .collect()
+}
+
 impl Popup {
     /// The cells and the rectangle, for a body of `size`.
     pub fn layout(&self, size: (f32, f32)) -> PopupLayout {
@@ -602,6 +633,7 @@ impl Popup {
             PopupKind::History => (300.0, self.history_cells(300.0)),
             PopupKind::Grid => (GRID_W, self.grid_cells(GRID_W)),
             PopupKind::Song => (Layout::MENU_W, self.song_cells(Layout::MENU_W)),
+            PopupKind::NoDevice => (Layout::MENU_W, no_device_cells(Layout::MENU_W)),
             PopupKind::Versions => (380.0, self.version_cells(380.0)),
             PopupKind::Color(_) => {
                 let w = pad * 2.0

@@ -1,4 +1,5 @@
-//! The empty song's screen (UI-074), and the recent songs under its entries (UI-261).
+//! The new song's screen (UI-074・UI-350): the three entries, 「オーディオデバイスなし」 with no
+//! device, and the test tone on 設定 › オーディオ › 出力.
 
 use serde_json::json;
 
@@ -37,9 +38,9 @@ fn a_new_song_shows_the_entries_in_the_middle_of_the_body() {
         30.0,
         "the mock's gap between entries"
     );
-    // The column (entries, then the list) is centred up and down too.
+    // The entries (and the line under them, with no device) are centred up and down too.
     let l = s.start_layout(&g);
-    let bottom = l.rows.last().unwrap().bottom();
+    let bottom = l.no_device.map_or(audio.bottom(), |r| r.bottom());
     let (above, below) = (audio.y - z.y, z.bottom() - bottom);
     assert!((above - below).abs() < 0.5, "{above} {below}");
     // The drop entry is a label: it is not a button.
@@ -135,6 +136,11 @@ fn speakers_and_interface() -> (Studio, Geometry) {
     with_devices(&[("Speakers", 0, 2), ("Interface A", 2, 2)])
 }
 
+/// The device in use.
+fn device(s: &Studio) -> String {
+    s.song.io.lock().unwrap().view.device.clone()
+}
+
 /// The audio tracks of the song.
 fn audio_tracks(s: &Studio) -> Vec<std::sync::Arc<xirius_core::model::Track>> {
     s.project()
@@ -181,15 +187,15 @@ fn audio_makes_an_armed_audio_track() {
 fn audio_on_a_device_without_inputs_makes_no_track_and_lists_the_devices_with_inputs() {
     let (mut s, g) = speakers_and_interface();
     // The interface is chosen by itself; the person picked the speakers.
-    assert_eq!(s.rig().device.as_deref(), Some("Interface A"));
+    assert_eq!(device(&s), "Interface A");
     assert!(
         s.song
             .set("audio.set", json!({"key": "device", "value": "Speakers"}))
             .is_ok()
     );
     s.poll_io();
-    assert_eq!(s.rig().device.as_deref(), Some("Speakers"));
-    assert!(s.rig().inputs.is_empty());
+    assert_eq!(device(&s), "Speakers");
+    assert!(!s.device_has_inputs());
 
     assert!(press(&mut s, &g, Entry::Audio));
     assert_eq!(s.error, None);
@@ -213,7 +219,7 @@ fn audio_on_a_device_without_inputs_makes_no_track_and_lists_the_devices_with_in
     choose(&mut s, &g, "Interface A");
     assert_eq!(s.error, None);
     assert!(s.popup.is_none());
-    assert_eq!(s.rig().device.as_deref(), Some("Interface A"));
+    assert_eq!(device(&s), "Interface A");
     let tracks = audio_tracks(&s);
     assert_eq!(tracks.len(), 1);
     assert!(tracks[0].armed);
@@ -252,265 +258,77 @@ fn a_song_with_tracks_has_no_entries() {
     assert!(!s.start_shown());
     let (r, _) = s.entry_rects(&g, Entry::Midi);
     assert!(s.start_at(&g, r.x + 40.0, r.y + 30.0).is_none());
-    let row = s.start_layout(&g).rows[0];
-    assert!(s.entrance_at(&g, row.x + 40.0, row.y + 10.0).is_none());
-    assert!(s.center_of(&g, Hit::Entrance(Part::Sample)).is_none());
+    assert!(s.center_of(&g, Hit::Entrance(Part::NoDevice)).is_none());
 }
 
-/// Presses a row of the list where it shows, as a click does.
-fn press_row(s: &mut Studio, g: &Geometry, part: Part) -> bool {
-    let (x, y) = s.center_of(g, Hit::Entrance(part)).expect("on screen");
-    assert_eq!(s.hit(g, x, y), Hit::Entrance(part));
-    s.press(g, Hit::Entrance(part))
-}
-
+/// Only the three entries, centred: no list, no panel (UI-350).
 #[test]
-fn the_list_under_the_entries_ends_with_the_sample_which_a_press_opens() {
-    let (mut s, g) = empty();
-    let l = s.start_layout(&g);
-    assert_eq!(l.rows.len(), 1, "no songs yet: only the sample");
-    let row = l.rows[0];
-    let z = zone(&g);
-    assert_eq!((row.w, row.h), (PANEL, ROW));
-    assert!((row.x + row.w / 2.0 - (z.x + z.w / 2.0)).abs() < 0.5);
-    let (audio, _) = s.entry_rects(&g, Entry::Audio);
-    assert!(l.heading.y >= audio.bottom() + 20.0, "under the entries");
-    assert!(row.y > l.heading.bottom());
-    assert_eq!(l.row(Part::Song(0)), None);
-
-    assert!(press_row(&mut s, &g, Part::Sample));
-    s.wait_for_open_for_test();
-    assert_eq!(s.error, None);
-    assert!(s.song.is_sample());
-    assert_eq!(s.project().name, crate::song::SAMPLE_NAME);
-    assert!(!s.start_shown(), "the sample has tracks");
-}
-
-/// A studio that keeps its songs in a folder of the test's own.
-fn kept(tag: &str) -> (Studio, Geometry, std::path::PathBuf, tempfile::TempDir) {
-    let tmp = tempfile::Builder::new()
-        .prefix(&format!("xirius-ui-start-{tag}-"))
-        .tempdir()
-        .unwrap();
-    let root = tmp.path().to_path_buf();
-    let mut s = Studio::new(Song::empty());
-    s.keep = crate::keep::Keep::at(root.clone());
-    s.keep.sync(&s.song.project());
-    let g = s.geometry(1440.0, 900.0);
-    (s, g, root, tmp)
-}
-
-#[test]
-fn the_list_shows_the_last_five_songs_newest_first_and_a_press_opens_one() {
-    let (mut s, g, root, _tmp) = kept("recent");
-    let names = ["a", "b", "c", "d", "e", "f"];
-    for name in names {
-        assert!(s.run_command("track.add.audio", json!({ "name": name })));
-        s.finish_file_request_sync(crate::studio::FileRequest::SaveAs, &root.join(name));
-        assert_eq!(s.error, None);
-        s.new_song_sync();
-    }
-    assert!(s.start_shown());
-    s.keep.settle_recent();
-    s.keep.poll_recent();
-    let listed: Vec<_> = s.start_recent().into_iter().map(|r| r.dir).collect();
-    let newest: Vec<_> = ["f", "e", "d", "c", "b"]
-        .iter()
-        .map(|n| root.join(n))
-        .collect();
-    assert_eq!(listed, newest, "five, newest first");
-    let l = s.start_layout(&g);
-    assert_eq!(l.rows.len(), SHOWN + 1, "the sample after the songs");
-    assert_eq!(l.row(Part::Sample), l.rows.last().copied());
-    assert!(l.row(Part::Song(SHOWN)).is_none());
-    for w in l.rows.windows(2) {
-        assert_eq!(w[1].y - w[0].y, ROW);
-    }
-
-    assert!(press_row(&mut s, &g, Part::Song(1)));
-    s.wait_for_open_for_test();
-    assert_eq!(s.error, None);
-    assert_eq!(s.song.record_dir(), Some(root.join("e")));
-    assert!(s.project().tracks.values().any(|t| t.name == "e"));
-    assert!(!s.start_shown());
-}
-
-#[test]
-fn the_panel_of_the_devices_sits_between_the_entries_and_the_list() {
+fn the_new_song_shows_only_the_three_entries() {
     let (s, g) = speakers_and_interface();
     let l = s.start_layout(&g);
-    let (audio, _) = s.entry_rects(&g, Entry::Audio);
-    let r = &l.rig;
+    assert_eq!(l.no_device, None, "a device: no line");
+    assert!(s.center_of(&g, Hit::Entrance(Part::NoDevice)).is_none());
     let z = zone(&g);
-    assert_eq!(r.panel.w, PANEL);
-    assert!((r.panel.x + r.panel.w / 2.0 - (z.x + z.w / 2.0)).abs() < 0.5);
-    assert!(r.panel.y >= audio.bottom() + 20.0, "under the entries");
-    assert!(l.heading.y >= r.panel.bottom() + 20.0, "over the list");
-    // A row each: the output, the inputs, MIDI, the plugins, one under the other.
-    for w in r.icons.windows(2) {
-        assert!(w[1].y > w[0].y);
-    }
-    for part in [r.device, r.tone, r.meter, r.plugins] {
-        assert!(
-            r.panel.x < part.x && part.right() <= r.panel.right(),
-            "{part:?}"
-        );
-        assert!(
-            r.panel.y < part.y && part.bottom() < r.panel.bottom(),
-            "{part:?}"
-        );
-    }
-    assert!(r.device.right() < r.tone.x && r.tone.right() < r.meter.x);
-    assert_eq!(r.inputs.len(), 2, "a chip per input");
-    assert_eq!(r.midi.len(), 1, "the PC keys, with no MIDI port");
-
-    let rig = s.rig();
-    assert_eq!(rig.device.as_deref(), Some("Interface A"));
-    let names: Vec<_> = rig.inputs.iter().map(|(n, _)| n.as_str()).collect();
-    assert_eq!(names, ["In 1", "In 2"]);
-    assert_eq!(rig.midi, vec![(PC_KEYBOARD.to_string(), false)]);
-    assert!(!rig.tone && rig.out == [0.0; 2]);
+    let (audio, _) = s.entry_rects(&g, Entry::Audio);
+    let mid = audio.y + audio.h / 2.0;
+    assert!((mid - (z.y + z.h / 2.0)).abs() < 0.5, "centred up and down");
 }
 
+/// A narrow body draws the entries narrower and closer: 110 / 30 become 96 / 8 (UI-350).
 #[test]
-fn the_panel_shows_the_rate_the_latency_the_midi_light_and_the_plugins() {
-    let (s, _g) = speakers_and_interface();
-    {
-        let mut io = s.song.io.lock().unwrap();
-        io.view.latency = Some(xirius_engine::devices::Latency {
-            rate: 48_000,
-            input: 144,
-            output: 144,
-            conversion: 38,
-        });
-        io.view.ports = vec!["Keystation 49".into()];
-        io.receiving(PC_KEYBOARD, std::time::Instant::now());
-        io.poll(std::time::Instant::now());
-    }
-    let rig = s.rig();
-    assert_eq!(rig.info, "48 kHz · 6.8 ms");
-    assert_eq!(
-        rig.midi,
-        vec![
-            (PC_KEYBOARD.to_string(), true),
-            ("Keystation 49".to_string(), false)
-        ]
-    );
-    assert_eq!(rig.plugins_text(), "プラグイン 0");
-    let scanning = Rig {
-        scanning: Some((12, 40)),
-        ..rig.clone()
+fn a_narrow_body_draws_the_entries_closer() {
+    let s = Studio::new(Song::empty());
+    let mut w = 900.0;
+    let g = loop {
+        let g = s.geometry(w, 700.0);
+        if zone(&g).w < 3.0 * 110.0 + 2.0 * 30.0 {
+            break g;
+        }
+        w -= 10.0;
+        assert!(w > 0.0);
     };
-    assert_eq!(scanning.plugins_text(), "プラグイン 12 / 40");
-    let l = RigLayout::of(&scanning, 0.0, 0.0, PANEL);
-    let bar = l.bar.expect("the scan's bar");
-    assert!(bar.x > l.plugins.right() && bar.right() <= PANEL - 12.0 + 0.5);
-    let failed = Rig {
-        found: 31,
-        failed: 2,
-        ..rig
-    };
-    let l = RigLayout::of(&failed, 0.0, 0.0, PANEL);
-    assert!(l.bar.is_none() && l.bad.is_some());
+    let (audio, _) = s.entry_rects(&g, Entry::Audio);
+    let (midi, circle) = s.entry_rects(&g, Entry::Midi);
+    let (drop, _) = s.entry_rects(&g, Entry::Drop);
+    assert_eq!((midi.w, circle.w), (96.0, 46.0));
+    assert_eq!(midi.x - audio.right(), 8.0);
+    assert_eq!(drop.x - midi.right(), 8.0);
+    let z = zone(&g);
+    let middle = (audio.x + drop.right()) / 2.0;
+    assert!((middle - (z.x + z.w / 2.0)).abs() < 0.5, "centred");
 }
 
+/// No audio device: one line under the entries, whose menu rescans or opens the audio
+/// settings (UI-350).
 #[test]
-fn with_no_device_the_panel_says_so_and_its_list_has_a_row_that_says_so() {
+fn with_no_device_the_new_song_says_so_and_its_menu_rescans_or_opens_the_settings() {
     let (mut s, g) = with_devices(&[]);
-    let rig = s.rig();
-    assert_eq!(rig.device, None);
-    assert!(rig.inputs.is_empty());
-    let l = s.start_layout(&g);
-    assert_eq!(l.rig.tone.w, 0.0, "no tone without a device");
-    assert_eq!(l.row(Part::Tone), None);
-    assert!(press_row(&mut s, &g, Part::Device));
+    assert!(!s.has_audio_device());
+    let line = s.start_layout(&g).no_device.expect("the line");
+    let (audio, _) = s.entry_rects(&g, Entry::Audio);
+    assert!(line.y >= audio.bottom(), "under the entries");
+    let z = zone(&g);
+    assert!((line.x + line.w / 2.0 - (z.x + z.w / 2.0)).abs() < 0.5);
+    let (x, y) = s.center_of(&g, Hit::Entrance(Part::NoDevice)).unwrap();
+    assert_eq!(s.hit(&g, x, y), Hit::Entrance(Part::NoDevice));
+    assert!(s.press(&g, Hit::Entrance(Part::NoDevice)));
     assert_eq!(
         s.popup.as_ref().map(|p| p.kind),
-        Some(crate::popup::PopupKind::Device(false))
-    );
-    assert_eq!(
-        menu_rows(&s, &g),
-        vec![(rig::NO_DEVICE.to_string(), String::new())]
-    );
-}
-
-#[test]
-fn the_device_button_lists_every_device_and_a_choice_is_used() {
-    let (mut s, g) = speakers_and_interface();
-    assert!(press_row(&mut s, &g, Part::Device));
-    let p = s.popup.as_ref().unwrap();
-    assert_eq!(p.kind, crate::popup::PopupKind::Device(false));
-    assert_eq!(p.current(), "Interface A");
-    assert_eq!(
-        menu_rows(&s, &g),
-        vec![
-            ("Speakers".to_string(), "入力 0 · 出力 2".to_string()),
-            ("Interface A".to_string(), "入力 2 · 出力 2".to_string()),
-        ]
+        Some(crate::popup::PopupKind::NoDevice)
     );
     let l = s.popup.as_ref().unwrap().layout(g.size);
-    assert_eq!(l.cells[2].icon, Some("check"), "the one in use");
-    assert_eq!(l.cells[1].icon, Some(crate::popup::BLANK));
-    assert!(l.cells[2].on);
-
-    choose(&mut s, &g, "Speakers");
-    assert_eq!(s.error, None);
+    let texts: Vec<_> = l.cells.iter().map(|c| c.text.as_str()).collect();
+    assert_eq!(texts, ["再スキャン", "オーディオの設定…"]);
+    choose(&mut s, &g, "再スキャン");
     assert!(s.popup.is_none());
-    assert_eq!(s.rig().device.as_deref(), Some("Speakers"));
-    assert!(
-        audio_tracks(&s).is_empty(),
-        "the device button makes no track"
-    );
-    // The entry is marked: nothing to record from.
-    assert!(s.rig().inputs.is_empty());
-}
-
-#[test]
-fn the_test_tone_sounds_left_then_right_at_minus_eighteen_dbfs() {
-    let (mut s, g) = speakers_and_interface();
-    assert!(press_row(&mut s, &g, Part::Tone));
     assert_eq!(s.error, None);
-    assert!(s.rig().tone, "the button is lit while it sounds");
-    let level = 10f32.powf(xirius_engine::tone::LEVEL_DB / 20.0);
-    let within = |a: f32| (20.0 * (a / level).log10()).abs() < 0.2;
-
-    // The panel's meter follows the output.
-    std::thread::sleep(std::time::Duration::from_millis(150));
-    assert!(s.rig_tick(), "moving while it sounds");
-    let [l0, r0] = s.rig_out;
-    assert!(within(l0), "the left first: {l0}");
-    assert_eq!(r0, 0.0);
-
-    // Then the output, polled until the tone is over.
-    let start = std::time::Instant::now();
-    let mut polls = Vec::new();
-    while s.transport.tone_playing() {
-        assert!(start.elapsed().as_secs() < 10, "the tone ends");
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        polls.push(s.transport.take_output_peak());
-    }
-    polls.push(s.transport.take_output_peak());
-    let left = polls.iter().position(|p| within(p[0]));
-    let right = polls.iter().position(|p| within(p[1]));
-    assert!(left.is_some() || l0 > 0.0);
-    let right = right.expect("the right sounds");
-    assert!(left.is_none_or(|l| l < right), "the left before the right");
-    let top = |i: usize| polls.iter().map(|p| p[i]).fold(0f32, f32::max);
-    assert!(within(top(1)), "{}", top(1));
-    assert!(top(0) <= level * 1.03);
-    // One side at a time.
-    assert!(
-        polls.iter().all(|p| p[0] < 1e-3 || p[1] < 1e-3),
-        "{polls:?}"
+    assert!(s.press(&g, Hit::Entrance(Part::NoDevice)));
+    choose(&mut s, &g, "オーディオの設定…");
+    assert!(s.popup.is_none());
+    assert_eq!(
+        s.settings.as_ref().map(|u| u.section),
+        Some(crate::settings::Section::Audio)
     );
-
-    // Over: the button goes out and the meter falls.
-    for _ in 0..200 {
-        s.rig_tick();
-    }
-    assert!(!s.rig().tone);
-    assert_eq!(s.rig_out, [0.0; 2]);
-    assert!(!s.rig_tick());
 }
 
 #[test]
@@ -521,10 +339,14 @@ fn the_settings_audio_page_has_the_test_tone_too() {
     let scene = s.settings_scene(&g);
     assert!(scene.has_text("出力"));
     let p = crate::audioset_shots::item(&s, &g, Do::Tone);
+    // The meters show only while it sounds (UI-350).
+    assert!(!scene.has_text("L") && !scene.has_text("R"));
     assert!(s.settings_press(&g, p.0, p.1));
     assert_eq!(s.error, None);
     assert!(s.rig_tone, "the button is lit while it sounds");
-    assert!(s.settings_scene(&g).has_text(rig::TONE));
+    let scene = s.settings_scene(&g);
+    assert!(scene.has_text(rig::TONE));
+    assert!(scene.has_text("L") && scene.has_text("R"));
 
     // The page's meter follows the output, left first, at about -18 dBFS.
     let level = 10f32.powf(xirius_engine::tone::LEVEL_DB / 20.0);
@@ -534,10 +356,28 @@ fn the_settings_audio_page_has_the_test_tone_too() {
     assert!((20.0 * (l / level).log10()).abs() < 0.2, "{l}");
     assert_eq!(r, 0.0);
     let start = std::time::Instant::now();
+    let mut polls = Vec::new();
     while s.transport.tone_playing() {
         assert!(start.elapsed().as_secs() < 10, "the tone ends");
         std::thread::sleep(std::time::Duration::from_millis(20));
+        polls.push(s.transport.take_output_peak());
     }
+    polls.push(s.transport.take_output_peak());
+    // Then the right, one side at a time.
+    let within = |a: f32| (20.0 * (a / level).log10()).abs() < 0.2;
+    assert!(polls.iter().any(|p| within(p[1])), "the right sounds");
+    assert!(
+        polls.iter().all(|p| p[0] < 1e-3 || p[1] < 1e-3),
+        "{polls:?}"
+    );
+    // Over: the meters go.
+    for _ in 0..200 {
+        s.rig_tick();
+    }
+    assert!(!s.rig_tone);
+    assert_eq!(s.rig_out, [0.0; 2]);
+    let scene = s.settings_scene(&g);
+    assert!(!scene.has_text("L") && !scene.has_text("R"));
 }
 
 #[test]

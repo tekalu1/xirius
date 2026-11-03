@@ -8,6 +8,7 @@
 //! Both mappings match every variant, so a new button cannot be added without being named here.
 
 use crate::browser::BrowserHit;
+use crate::home::{Button, Spot};
 use crate::mixer::MixerHit;
 use crate::popup::{Action, PopupKind};
 use crate::rec_panel::RecPart;
@@ -138,10 +139,16 @@ pub fn of_hit(hit: Hit) -> Option<(&'static str, &'static str)> {
             Entry::Drop => ("start.drop", "start.drop"),
         },
         Hit::Entrance(part) => match part {
-            Part::Song(_) => ("start.recent", "song.open_recent"),
-            Part::Sample => ("start.sample", "song.open_sample"),
-            Part::Device => ("start.device", "audio.devices"),
-            Part::Tone => ("start.tone", "audio.test-tone"),
+            Part::NoDevice => ("start.no_device", "audio.no_device.menu"),
+        },
+        Hit::Home(spot) => match spot {
+            Spot::Button(Button::New) => ("home.new", "song.new"),
+            Spot::Button(Button::Open) => ("home.open", "song.open"),
+            Spot::Button(Button::Dawproject) => ("home.dawproject", "song.open_dawproject"),
+            Spot::Device => ("home.no_device", "audio.no_device.menu"),
+            // Typing there only filters the list.
+            Spot::Search => return None,
+            Spot::Row(_) => ("home.recent", "song.open_recent"),
         },
     };
     Some(m)
@@ -169,7 +176,10 @@ pub fn of_action(action: &Action) -> &'static str {
         Action::OpenDawproject => "song.open_dawproject",
         Action::ExportDawproject => "export.dawproject",
         Action::NewSong => "song.new",
+        Action::Rescan => "audio.rescan",
+        Action::AudioSettings => "settings.open",
         Action::OpenRecent(_) => "song.open_recent",
+        Action::OpenSample => "song.open_sample",
         Action::Recovery(_) => "recovery.choose",
         Action::Save => "song.save",
         Action::SaveAs => "song.save_as",
@@ -263,6 +273,31 @@ pub const APPROVED: &[Approved] = &[
         op: "track.output.menu",
         places: &["head.output", "mixer.output"],
         ground: "トラックの頭（広げたとき）とミキサーの帯の出力: 同上",
+    },
+    Approved {
+        op: "song.new",
+        places: &["home.new", "popup.song"],
+        ground: "開始画面の「新規」と曲のメニューの「新規」: 2026-11-03 の利用者の決定（UI-350）。開始画面は曲を開く前の画面で、曲のメニューと同時には出ない",
+    },
+    Approved {
+        op: "song.open",
+        places: &["home.open", "popup.song"],
+        ground: "開始画面の「開く…」と曲のメニューの「開く…」: 同上",
+    },
+    Approved {
+        op: "song.open_dawproject",
+        places: &["home.dawproject", "popup.song"],
+        ground: "開始画面の「DAWproject を開く…」と曲のメニューの同じ項目: 同上",
+    },
+    Approved {
+        op: "audio.no_device.menu",
+        places: &["home.no_device", "start.no_device"],
+        ground: "開始画面と新しい曲の画面の「オーディオデバイスなし」: 2026-11-03 の利用者の決定（UI-350）。2 つの画面は同時には出ない",
+    },
+    Approved {
+        op: "settings.open",
+        places: &["popup.nodevice", "rail.settings"],
+        ground: "「オーディオデバイスなし」のメニューの「オーディオの設定…」と左の帯の設定: 2026-11-03 の利用者の決定（UI-350）",
     },
 ];
 
@@ -385,6 +420,14 @@ mod tests {
         }
     }
 
+    /// The start screen with one song in its list and the sample.
+    fn home_state() -> Studio {
+        let mut s = Studio::new(Song::empty());
+        s.home = Some(crate::home::Home::default());
+        s.home_tick();
+        s
+    }
+
     fn found() -> Vec<Found> {
         let mut seen = Seen::new();
         let (w, h) = (1600.0, 900.0);
@@ -425,6 +468,8 @@ mod tests {
         states.push(rec);
         // The entrance of the empty song.
         states.push(Studio::new(Song::empty()));
+        // The start screen (UI-350), with a song in its list.
+        states.push(home_state());
         // The arrangement as the editor: its bar has the ▾ of the alternative tool and the
         // ripple switch (EDT-135).
         let mut arrange = Studio::sample();
@@ -491,6 +536,11 @@ mod tests {
         let rg = s.geometry(w, h);
         s.press(&rg, Hit::Rec(crate::rec_panel::RecPart::QuantizeValue));
         cells(&s, &rg, &mut seen);
+        // 「オーディオデバイスなし」's menu, from the start screen (UI-350).
+        let mut s = home_state();
+        let hg = s.geometry(w, h);
+        s.press(&hg, Hit::Home(Spot::Device));
+        cells(&s, &hg, &mut seen);
         // The versions list is opened from the song menu and from the saved chip.
         let mut s = Studio::sample();
         s.press(&g, Hit::Bar(BarButton::Saved));

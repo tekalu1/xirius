@@ -134,6 +134,8 @@ fn a_new_text_owner_requires_an_interaction_review() {
         ("context/mod.rs:State.field", "self.popup.is_some()"),
         ("context/mod.rs:State.search", "self.popup.is_some()"),
         ("context/search.rs:Search.field", "self.popup.is_some()"),
+        // The start screen's search: its words, once typed, are someone's work (UI-350).
+        ("home.rs:Home.pick", "self.ime_target().is_some()"),
         (
             "inspector.rs:Inspector.field",
             "self.inspector.field.is_some()",

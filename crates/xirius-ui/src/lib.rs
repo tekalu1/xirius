@@ -122,6 +122,7 @@ pub mod grid_lines;
 pub mod health;
 pub mod heavy_plugin_shots;
 pub mod history_time_shots;
+pub mod home;
 pub mod hover_tip;
 pub mod idle;
 pub mod import_choice_shots;

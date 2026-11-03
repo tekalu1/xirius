@@ -21,7 +21,6 @@ pub const OVERLAY_AFTER: Duration = Duration::from_millis(200);
 pub const REFLECTING_AFTER: Duration = Duration::from_millis(300);
 /// What the veil's card and the waiting say.
 pub const REFLECTING: &str = "反映中…";
-pub const CANCEL: &str = "中止";
 
 const LINE_H: f32 = 2.0;
 const CARD_W: f32 = 280.0;
@@ -297,31 +296,52 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
             );
         }
         if saving.is_none_or(|save| save.cancellable()) {
-            pen.text(
-                &format!("{CANCEL}  Esc"),
-                FontSize::Small,
-                Weight::Regular,
-                c.ink,
-                Rect::new(
-                    card.x + pad,
-                    card.y + card.h - pad - 20.0,
-                    card.w - pad * 2.0,
-                    20.0,
-                ),
-                Align::Right,
-            );
+            cancel::paint(pen, cancel::rect(card), false);
         }
     }
 }
 
 pub(crate) fn save_cancel_rect(g: &Geometry) -> Rect {
-    let card = crate::saving::card(g, true);
-    Rect::new(
-        card.x + Space::X4.px(),
-        card.y + card.h - Space::X4.px() - 20.0,
-        card.w - Space::X4.px() * 2.0,
-        20.0,
-    )
+    cancel::rect(crate::saving::card(g, true))
+}
+
+/// 「中止 Esc」 on the opening card and the save veil's card (UI-350): as wide as its words,
+/// at the card's bottom right.
+pub(crate) mod cancel {
+    use super::*;
+
+    pub const LABEL: &str = "中止  Esc";
+    const H: f32 = Layout::MENU_ROW_H;
+
+    /// The button's width: the words and their padding.
+    pub fn width() -> f32 {
+        crate::browser::text_width(LABEL, FontSize::Small) + Space::X2.px() * 2.0
+    }
+
+    /// Where the button shows on `card`.
+    pub fn rect(card: Rect) -> Rect {
+        let w = width();
+        Rect::new(
+            card.right() - Space::X4.px() - w,
+            card.bottom() - Space::X3.px() - H,
+            w,
+            H,
+        )
+    }
+
+    pub fn paint(pen: &mut Pen, r: Rect, hot: bool) {
+        if hot {
+            pen.round(r, pen.c.surface_3, Radius::S);
+        }
+        pen.text(
+            LABEL,
+            FontSize::Small,
+            Weight::Regular,
+            pen.c.ink,
+            r,
+            Align::Center,
+        );
+    }
 }
 
 #[cfg(test)]
@@ -330,6 +350,25 @@ mod tests {
 
     fn ms(n: u64) -> Duration {
         Duration::from_millis(n)
+    }
+
+    #[test]
+    fn cancel_is_one_button_as_wide_as_its_words_on_the_opening_and_the_save_cards() {
+        let s = Studio::new(crate::song::Song::empty());
+        let g = s.geometry(1280.0, 720.0);
+        let open = crate::opening_view::cancel_rect(&g);
+        let save = save_cancel_rect(&g);
+        let words = crate::browser::text_width(cancel::LABEL, FontSize::Small);
+        for (b, card) in [
+            (open, crate::opening_view::card(&g)),
+            (save, crate::saving::card(&g, true)),
+        ] {
+            assert_eq!(b.w, words + Space::X2.px() * 2.0, "as wide as the words");
+            assert_eq!(b.h, Layout::MENU_ROW_H);
+            assert_eq!(card.right() - b.right(), Space::X4.px());
+            assert_eq!(card.bottom() - b.bottom(), Space::X3.px());
+        }
+        assert_eq!((open.w, open.h), (save.w, save.h), "the same button");
     }
 
     #[test]

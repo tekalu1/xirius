@@ -34,7 +34,9 @@ impl Studio {
     /// The one policy for MCP handoffs, first drafts and automatic external reloads.
     /// Persistent selection/focus on a track is not an unfinished interaction.
     pub(crate) fn human_interaction_active(&self) -> bool {
-        self.ime_target().is_some()
+        // The start screen's search waits for keys from the start; only what is typed in it
+        // is someone's unfinished work (UI-350).
+        (self.ime_target().is_some() && !self.home_typing_idle())
             || self.browser.typing
             || self.inspector.field.is_some()
             || self.bar_edit.active()

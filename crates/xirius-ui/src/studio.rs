@@ -154,8 +154,10 @@ pub enum Hit {
     PopupBody,
     /// An entry of the empty song's screen (UI-074).
     Start(crate::start::Entry),
-    /// A row of the recent songs under the entries (UI-261).
+    /// 「オーディオデバイスなし」 under the entries (UI-350).
     Entrance(crate::start::Part),
+    /// A part of the start screen (UI-350).
+    Home(crate::home::Spot),
     /// A switch or field of the record panel (REC-007).
     Rec(crate::rec_panel::RecPart),
     /// A part of the toast at the foot of the lanes.
@@ -771,7 +773,9 @@ pub struct Studio {
     /// 音源を準備中: the song's instruments and effects open behind it (ENG-064).
     pub preparing: Option<crate::prepare_card::Card>,
     pub(crate) skip_preparation_once: bool,
-    /// The output's level the device panel shows, left and right, falling (UI-260).
+    /// The start screen, until a song is opened or made (UI-350).
+    pub home: Option<crate::home::Home>,
+    /// The output's level the test tone's meters show, left and right, falling (UI-260).
     pub rig_out: [f32; 2],
     /// The test tone sounds.
     pub rig_tone: bool,
@@ -917,6 +921,7 @@ impl Studio {
             recovery: None,
             preparing: None,
             skip_preparation_once: false,
+            home: None,
             rig_out: [0.0; 2],
             rig_tone: false,
             dawproject: None,
@@ -1178,6 +1183,7 @@ impl Studio {
             Hit::Rail(tab) => Some(mid(browser::rail_button(g.rail, tab))),
             Hit::Start(e) => Some(mid(self.entry_rects(g, e).0)),
             Hit::Entrance(part) => self.entrance_rect(g, part).map(mid),
+            Hit::Home(spot) => self.home_rect(g, spot).map(mid),
             Hit::Rec(part) => self.rec_center(g, part),
             Hit::RailSettings => Some(mid(browser::rail_io_button(g.rail))),
             Hit::Browser(hit) => self.browser.center_of(&self.browser.layout(g.panel), hit),
@@ -1280,6 +1286,10 @@ impl Studio {
         }
         if self.midi_pill(g).is_some_and(|(_, r)| r.contains(x, y)) {
             return Hit::MidiCancel;
+        }
+        // The start screen covers the body; its top bar has only the logo (UI-350).
+        if self.home_shown() && y >= 0.0 {
+            return self.home_at(g, x, y).map_or(Hit::None, Hit::Home);
         }
         if y < 0.0 {
             return self
@@ -1713,6 +1723,7 @@ impl Studio {
             }
             Hit::Start(e) => self.start_press(g, e),
             Hit::Entrance(part) => self.entrance_press(g, part),
+            Hit::Home(spot) => self.home_press(g, spot),
             Hit::Rec(part) => self.rec_press(g, part),
             Hit::Arm(t) => self.track_toggle("track.arm", t),
             Hit::Monitor(t) => self.track_toggle("track.monitor", t),
@@ -2343,6 +2354,11 @@ impl Studio {
                     self.rebuild(g);
                 }
             }
+            Action::OpenSample => {
+                self.popup = None;
+                self.start_leaving(crate::saving::Leave::Sample);
+                self.rebuild(g);
+            }
             Action::Recovery(b) => self.recovery_button(g, b),
             Action::SaveAs => {
                 self.file_request = Some(FileRequest::SaveAs);
@@ -2426,6 +2442,15 @@ impl Studio {
             Action::FolderBus(to) => return self.folder_bus_action(g, to),
             Action::RecQuantize(v) => return self.rec_quantize_action(v),
             Action::Device(name) => return self.device_action(g, name),
+            Action::Rescan => {
+                self.popup = None;
+                self.poll_io();
+                self.rebuild(g);
+            }
+            Action::AudioSettings => {
+                self.popup = None;
+                self.open_settings(crate::settings::Section::Audio);
+            }
             Action::About(act) => return self.about_action(act),
             Action::Ctx(i) => return self.context_pick(g, i),
             Action::CtxSearch => {
@@ -2623,6 +2648,8 @@ impl Studio {
         closing: Result<Option<xirius_session::cleanup::Closed>, String>,
         deferred: bool,
     ) {
+        // A song is open: the start screen is done (UI-350).
+        self.home = None;
         self.drag_drop();
         self.select_row(None);
         self.selected_clip = None;

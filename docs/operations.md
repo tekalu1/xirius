@@ -16,6 +16,11 @@ UI-004: 同じ操作を画面の 2 か所に置かない。この一覧は `crat
 | `track.solo` | `head.solo`, `mixer.solo` | トラックの頭とミキサーの帯の S: 同上 |
 | `track.arm` | `head.arm`, `mixer.arm` | トラックの頭とミキサーの帯の R: 同上 |
 | `track.output.menu` | `head.output`, `mixer.output` | トラックの頭（広げたとき）とミキサーの帯の出力: 同上 |
+| `song.new` | `home.new`, `popup.song` | 開始画面の「新規」と曲のメニューの「新規」: 2026-11-03 の利用者の決定（UI-350）。開始画面は曲を開く前の画面で、曲のメニューと同時には出ない |
+| `song.open` | `home.open`, `popup.song` | 開始画面の「開く…」と曲のメニューの「開く…」: 同上 |
+| `song.open_dawproject` | `home.dawproject`, `popup.song` | 開始画面の「DAWproject を開く…」と曲のメニューの同じ項目: 同上 |
+| `audio.no_device.menu` | `home.no_device`, `start.no_device` | 開始画面と新しい曲の画面の「オーディオデバイスなし」: 2026-11-03 の利用者の決定（UI-350）。2 つの画面は同時には出ない |
+| `settings.open` | `popup.nodevice`, `rail.settings` | 「オーディオデバイスなし」のメニューの「オーディオの設定…」と左の帯の設定: 2026-11-03 の利用者の決定（UI-350） |
 
 ## すべての操作
 
@@ -25,7 +30,8 @@ UI-004: 同じ操作を画面の 2 か所に置かない。この一覧は `crat
 | `about.panel` | `popup.about` |
 | `ai.menu` | `bar.ai` |
 | `ai.panel` | `popup.ai` |
-| `audio.devices` | `start.device` |
+| `audio.no_device.menu` | `home.no_device`, `start.no_device` |
+| `audio.rescan` | `popup.nodevice` |
 | `browser.fav.toggle` | `browser.fav` |
 | `browser.group.fold` | `browser.group` |
 | `browser.item.pick` | `browser.item` |
@@ -76,12 +82,12 @@ UI-004: 同じ操作を画面の 2 か所に置かない。この一覧は `crat
 | `row.select` | `row` |
 | `send.add` | `mixer.add_send` |
 | `send.pick` | `popup.send` |
-| `settings.open` | `rail.settings` |
+| `settings.open` | `popup.nodevice`, `rail.settings` |
 | `song.menu` | `bar.song` |
-| `song.new` | `popup.song` |
-| `song.open` | `popup.song` |
-| `song.open_dawproject` | `popup.song` |
-| `song.open_sample` | `start.sample` |
+| `song.new` | `home.new`, `popup.song` |
+| `song.open` | `home.open`, `popup.song` |
+| `song.open_dawproject` | `home.dawproject`, `popup.song` |
+| `song.open_recent` | `home.recent` |
 | `song.save` | `popup.song` |
 | `song.save_as` | `popup.song` |
 | `start.audio` | `start.audio` |
@@ -130,7 +136,7 @@ UI-004: 同じ操作を画面の 2 か所に置かない。この一覧は `crat
 | `view.zoom.out` | `head.zoom_out` |
 | `view.zoom.wave` | `head.wave_zoom` |
 
-操作 108 件、うち 2 か所にあるもの 8 件（すべて承認済み）。
+操作 109 件、うち 2 か所にあるもの 13 件（すべて承認済み）。
 
 保存（UI-288）: Ctrl+S と曲のメニューは同じ保存を開始する。場所が未定なら別名保存の窓を開く。書き込み中の印は少なくとも 450 ms 保ち、200 ms を超える待ちは幕に載せる。別名保存の幕だけに進捗の棒と「中止 Esc」を置く。保存の警告の札の「別名で保存…」は同じ窓を開き、「もう一度」は同じ保存を再試行する。札を閉じても、保存成功まで警告の印を保つ。
 

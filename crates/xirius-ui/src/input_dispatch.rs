@@ -262,6 +262,12 @@ impl Studio {
         let Some((_, command)) = binding else {
             return false;
         };
+        // The start screen has no song to work on: only its own keys reach it (UI-350).
+        if self.home_shown()
+            && !crate::home::KEYS.contains(&command.split(' ').next().unwrap_or(""))
+        {
+            return false;
+        }
         self.run_binding(g, &command)
     }
 

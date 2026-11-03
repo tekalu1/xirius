@@ -503,7 +503,9 @@ pub fn paint_overlay(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     #[cfg(feature = "loading-probe")]
     let _ui_io = xirius_core::io_test::forbid_ui_io();
     let _cache = crate::opening::PaintScope::enter(studio.input_blocked());
-    crate::start::paint(pen, studio, g);
+    if !studio.home_shown() {
+        crate::start::paint(pen, studio, g);
+    }
     crate::rec_panel::paint(pen, studio, g);
     paint_takes(pen, studio, g);
     paint_playhead(pen, studio, g);
@@ -523,6 +525,7 @@ pub fn paint_overlay(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     crate::fx_preset::paint(pen, studio);
     crate::hover_tip::paint(pen, studio, g);
     crate::gain_tip::paint(pen, studio, g);
+    crate::home::paint(pen, studio, g);
     if let Some(p) = &studio.popup {
         let hover = if let Hit::Item(i) = studio.hover {
             Some(i)

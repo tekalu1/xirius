@@ -11,8 +11,7 @@ pub fn card(g: &Geometry) -> Rect {
     Rect::new((g.size.0 - w) / 2.0, (g.size.1 - 160.0) / 2.0, w, 160.0)
 }
 pub fn cancel_rect(g: &Geometry) -> Rect {
-    let r = card(g);
-    Rect::new(r.right() - 104.0, r.bottom() - 44.0, 88.0, 28.0)
+    crate::wait::cancel::rect(card(g))
 }
 pub fn confirm_card(g: &Geometry) -> Rect {
     let w = 330.0_f32.min((g.size.0 - 24.0).max(0.0));
@@ -178,18 +177,7 @@ pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry) -> bool {
         }
     }
     if open.can_cancel() {
-        let b = cancel_rect(g);
-        if open.cancel_hover {
-            pen.round(b, pen.c.surface_3, Radius::S);
-        }
-        pen.text(
-            "中止  Esc",
-            FontSize::Small,
-            Weight::Regular,
-            pen.c.ink,
-            Rect::new(b.x + 8.0, b.y, b.w - 16.0, b.h),
-            Align::Right,
-        );
+        crate::wait::cancel::paint(pen, cancel_rect(g), open.cancel_hover);
     }
     true
 }

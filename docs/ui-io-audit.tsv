@@ -215,7 +215,7 @@ crates/xirius-ui/src/song.rs	run_value	6
 crates/xirius-ui/src/song/files.rs	read	2
 crates/xirius-ui/src/start.rs	lock	2
 crates/xirius-ui/src/start.rs	run	4
-crates/xirius-ui/src/start/rig.rs	lock	3
+crates/xirius-ui/src/start/rig.rs	lock	2
 crates/xirius-ui/src/start/rig.rs	set	1
 crates/xirius-ui/src/studio.rs	arrange_run	3
 crates/xirius-ui/src/studio.rs	lock	3

@@ -522,6 +522,11 @@ impl Screen {
             cx.notify();
             return;
         }
+        // The start screen's keys (UI-350): Tab, the arrows, Enter, Space, Esc.
+        if studio.home_key(&g, &k.key, m) {
+            cx.notify();
+            return;
+        }
         // Ctrl+V in a list's search box (the settings' too) pastes (UI-338).
         let picking = studio.pick_typing().is_some() && studio.ask_field().is_none();
         if picking && m.ctrl && !m.alt && k.key == "v" {
@@ -1158,7 +1163,10 @@ fn top_bar(studio: Rc<RefCell<Studio>>, window: &Window, c: Rc<Colors>) -> gpui:
                     c: &c,
                     origin: (f32::from(b.origin.x), f32::from(b.origin.y)),
                 };
-                crate::topbar::paint(&mut pen, &layout, &studio.bar_view());
+                // The start screen's bar has only the logo (UI-350).
+                if !layout.is_logo_only() {
+                    crate::topbar::paint(&mut pen, &layout, &studio.bar_view());
+                }
                 if bars_veiled(&studio) {
                     // The veil of the palette covers the bar too (UI-087), as
                     // the settings' and the recovery card's do.
@@ -1208,7 +1216,10 @@ fn bottom_bar(studio: Rc<RefCell<Studio>>, window: &Window, c: Rc<Colors>) -> gp
                         c: &c,
                         origin: (f32::from(b.origin.x), f32::from(b.origin.y)),
                     };
-                    crate::topbar::paint_bottom(&mut pen, &layout, &studio.bar_view());
+                    // The start screen has no bottom bar (UI-350).
+                    if !studio.home_shown() {
+                        crate::topbar::paint_bottom(&mut pen, &layout, &studio.bar_view());
+                    }
                     if bars_veiled(&studio) {
                         let veil = pen.c.veil;
                         pen.fill(
@@ -1344,8 +1355,12 @@ impl EntityInputHandler for Screen {
         );
         if let Some(f) = studio.ime_pick_field() {
             // The search box is the list's first cell (UI-338).
+            let home = studio
+                .home_typing()
+                .and_then(|_| studio.home_layout(&g)?.search);
             let at = match studio.popup.as_ref().filter(|p| p.pick.is_some()) {
                 Some(p) => p.layout(g.size).cells.first()?.rect,
+                None if home.is_some() => home?,
                 None => {
                     studio
                         .settings
@@ -2306,8 +2321,13 @@ pub fn run(opts: Options) {
                     inactive_frame_interval: None,
                     // Shown without taking the focus (SW_SHOWNOACTIVATE).
                     focus: false,
-                    // The body keeps 520 px between the two bars (UI-300).
-                    window_min_size: Some(size(px(960.0), px(600.0))),
+                    // The body keeps 520 px between the two bars (UI-300). A run of shots may
+                    // ask for less, to show a narrow layout (UI-350).
+                    window_min_size: Some(if scripted {
+                        size(px(w.min(960.0)), px(h.min(600.0)))
+                    } else {
+                        size(px(960.0), px(600.0))
+                    }),
                     ..WindowOptions::default()
                 },
                 move |window, cx| {
