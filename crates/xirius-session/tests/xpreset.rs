@@ -1186,6 +1186,43 @@ fn y6_a_newer_factory_set_removes_only_untouched_old_files_and_adds_the_new() {
     assert!(mark["version"].as_u64().unwrap() >= 1, "{mark}");
 }
 
+/// L-pre-6: a mark that is not a record is an old set: the next seeding adds what is
+/// missing, keeps every file there and writes a mark of the current set.
+#[test]
+fn y6_a_mark_that_is_not_a_record_is_an_old_set() {
+    let mut r = rig("y6bad");
+    let ed = eq_dir(&r);
+    std::fs::create_dir_all(&ed).unwrap();
+    let mine = ed.join("ボーカルを明るく.xpreset");
+    let text = json!({
+        "format": "xirius-preset", "version": 1, "kind": "fx", "name": "ボーカルを明るく",
+        "devices": [{ "name": "EQ", "kind": "effect", "format": "builtin", "uid": "eq",
+                      "params": { "low_gain": 0.9 } }],
+    })
+    .to_string();
+    std::fs::write(&mine, &text).unwrap();
+    std::fs::write(r.dir.join(".factory-seeded"), "1767225600000").unwrap();
+    let (t, eq) = eq_track(&mut r);
+    save(&mut r, &t, &eq, "Mine");
+    assert!(
+        ed.join("低域を締める.xpreset").is_file(),
+        "the set's file added"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&mine).unwrap(),
+        text,
+        "kept as it was"
+    );
+    let mark: Value =
+        serde_json::from_str(&std::fs::read_to_string(r.dir.join(".factory-seeded")).unwrap())
+            .unwrap();
+    assert_eq!(
+        mark["version"].as_u64(),
+        Some(u64::from(xirius_params::FACTORY_VERSION)),
+        "{mark}"
+    );
+}
+
 #[test]
 fn y7_listing_writes_nothing() {
     let mut r = rig("y7");

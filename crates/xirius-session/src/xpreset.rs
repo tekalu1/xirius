@@ -361,12 +361,13 @@ fn factory_set() -> Vec<(&'static BuiltinDef, &'static str, Vec<u8>)> {
 }
 
 /// What the mark says: its set's version and the files it records; `None` when there is
-/// none. A mark that is not such a record (the first form held a time only) counts as the
-/// current set, copied with nothing recorded.
+/// none. A mark that is not such a record (broken, or written by hand) counts as the oldest
+/// set with nothing recorded: the next seeding adds what the set has and the folder lacks,
+/// and removes nothing, since no file is known to be the factory's.
 fn mark(dir: &Path) -> Option<(u32, Vec<Value>)> {
     let text = std::fs::read(dir.join(SEED_MARK)).ok()?;
     let Ok(Value::Object(m)) = serde_json::from_slice::<Value>(&text) else {
-        return Some((FACTORY_VERSION, Vec::new()));
+        return Some((0, Vec::new()));
     };
     let version = m.get("version").and_then(Value::as_u64).unwrap_or(0);
     let files = m
