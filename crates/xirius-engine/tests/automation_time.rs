@@ -63,3 +63,52 @@ fn prepared_pdc_offsets_include_bus_arrival_and_survive_a_kept_track() {
     audio.render(&mut [0.0; 128], 2);
     assert_eq!(audio.latency(), 874);
 }
+
+/// AUT-019: the master's stages are as late as the mix reaching it, and the inserts in its
+/// splitter's branches add what is before them in the branch.
+#[test]
+fn the_master_stages_and_its_inner_inserts_include_the_mix_and_the_inserts_before_them() {
+    use xirius_engine::builtin::Gain;
+    use xirius_engine::split::{BranchSpec, SplitProc};
+    let mut track = TrackSpec::new("source", Box::new(Sine::new(220.0, 0.0)));
+    track.inserts = vec![Box::new(Delay::new(100))];
+    let split = SplitProc::new(
+        1,
+        vec![
+            BranchSpec::new(
+                2,
+                vec![
+                    (201, Box::new(Delay::new(7))),
+                    (202, Box::new(Gain::new(1.0))),
+                ],
+            ),
+            BranchSpec::new(3, vec![(301, Box::new(Gain::new(1.0)))]),
+        ],
+    );
+    let plan = Plan::build(
+        MixSpec {
+            tracks: vec![TrackSlot::New(track)],
+            master_inserts: vec![
+                Box::new(Delay::new(40)),
+                Box::new(split),
+                Box::new(Gain::new(1.0)),
+            ],
+            ..Default::default()
+        },
+        SETUP,
+        None,
+    )
+    .unwrap();
+    assert_eq!(plan.latency(), 147);
+    let shape = plan.shape();
+    let master = &shape.automation.master;
+    assert_eq!(master.input, 100);
+    assert_eq!(master.insert(1), 140);
+    assert_eq!(master.insert(2), 147);
+    assert_eq!(master.fader(), 147);
+    let inner = |id| shape.nested.master_delay(&shape.automation, id);
+    assert_eq!(inner(201), Some(140));
+    assert_eq!(inner(202), Some(147));
+    assert_eq!(inner(301), Some(140));
+    assert_eq!(inner(7), None);
+}

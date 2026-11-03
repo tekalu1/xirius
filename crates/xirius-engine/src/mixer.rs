@@ -1294,7 +1294,7 @@ impl Plan {
         }
         let master_lats: Vec<u32> = master_inserts.iter().map(|p| p.latency()).collect();
         let (_, master_arrive) = crate::automation_time::arrivals(&routes, &bus_routes);
-        let (master_key_ins, _d, master_eff) = keys_for(
+        let (master_key_ins, master_d, master_eff) = keys_for(
             NodeId::Master,
             &master_keys,
             &master_places,
@@ -1316,6 +1316,14 @@ impl Plan {
                 .into_iter()
                 .map(Option::unwrap_or_default)
                 .collect(),
+            master: crate::automation_time::Chain {
+                input: master_arrive + master_d.first().copied().unwrap_or(0),
+                inserts: master_lats
+                    .iter()
+                    .enumerate()
+                    .map(|(k, &l)| l + master_d.get(k + 1).copied().unwrap_or(0))
+                    .collect(),
+            },
         };
         let mut plan = Plan {
             pool: None,
@@ -1370,6 +1378,7 @@ impl Plan {
                 .iter()
                 .map(|b| crate::split::Nested::of(&b.inserts))
                 .collect(),
+            master: crate::split::Nested::of(&plan.master.inserts),
         };
         if plan.tracks.len() >= 8 {
             let workers = std::thread::available_parallelism()

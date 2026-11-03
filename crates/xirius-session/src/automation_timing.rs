@@ -10,7 +10,9 @@ use xirius_core::{
     id::{PluginId, TrackId},
     model::{PluginKind, Project},
 };
+use xirius_engine::automation_time::Chain;
 use xirius_engine::mixer::PlanShape;
+use xirius_engine::split::Inner;
 
 /// Every stage evaluates the same song clock, less the audio delay before that stage.
 #[derive(Default)]
@@ -24,53 +26,74 @@ impl Timing {
         self.start = start;
         self
     }
-    pub fn new(p: &Project, graph: &Graph, shape: &PlanShape, loader: &PluginLoader) -> Self {
+    pub fn new<'a>(
+        p: &'a Project,
+        graph: &'a Graph,
+        shape: &'a PlanShape,
+        loader: &PluginLoader,
+    ) -> Self {
         let mut timing = Self::default();
-        for (ids, chains, nested) in [
-            (
-                &graph.tracks,
-                &shape.automation.tracks,
-                &shape.nested.tracks,
-            ),
-            (&graph.buses, &shape.automation.buses, &shape.nested.buses),
-        ] {
-            for (i, (id, chain)) in ids.iter().zip(chains).enumerate() {
-                timing.channels.insert(*id, chain.fader());
-                let Some(t) = p.tracks.get(id) else { continue };
-                for source in t
-                    .inserts
-                    .iter()
-                    .filter(|p| p.kind == PluginKind::Instrument)
-                {
-                    timing.plugins.insert(source.id, 0);
+        let nodes = |ids: &'a [TrackId], chains: &'a [Chain], nested: &'a [Vec<Inner>]| {
+            ids.iter()
+                .zip(chains)
+                .enumerate()
+                .map(move |(i, (id, chain))| {
+                    (id, chain, nested.get(i).map_or(&[][..], Vec::as_slice))
+                })
+        };
+        // The master is as late as the mix reaching it (AUT-019).
+        let master = (
+            &TrackId::MASTER,
+            &shape.automation.master,
+            shape.nested.master.as_slice(),
+        );
+        let all = nodes(
+            &graph.tracks,
+            &shape.automation.tracks,
+            &shape.nested.tracks,
+        )
+        .chain(nodes(
+            &graph.buses,
+            &shape.automation.buses,
+            &shape.nested.buses,
+        ))
+        .chain(std::iter::once(master));
+        for (id, chain, nested) in all {
+            timing.channels.insert(*id, chain.fader());
+            let Some(t) = p.tracks.get(id) else { continue };
+            for source in t
+                .inserts
+                .iter()
+                .filter(|p| p.kind == PluginKind::Instrument)
+            {
+                timing.plugins.insert(source.id, 0);
+            }
+            let retained = t.inserts.iter().filter(|p| {
+                p.kind == PluginKind::Effect
+                    && p.runs()
+                    && ((p.format == "builtin" && p.uid.eq_ignore_ascii_case("gain"))
+                        || loader.is_stock(p.id)
+                        || loader.opened(p.id))
+            });
+            let Some(rack) = &t.rack else {
+                for (index, plugin) in retained.enumerate() {
+                    timing.plugins.insert(plugin.id, chain.insert(index));
                 }
-                let retained = t.inserts.iter().filter(|p| {
-                    p.kind == PluginKind::Effect
-                        && p.runs()
-                        && ((p.format == "builtin" && p.uid.eq_ignore_ascii_case("gain"))
-                            || loader.is_stock(p.id)
-                            || loader.opened(p.id))
-                });
-                let Some(rack) = &t.rack else {
-                    for (index, plugin) in retained.enumerate() {
-                        timing.plugins.insert(plugin.id, chain.insert(index));
-                    }
-                    continue;
-                };
-                // A splitter is one insert of the row; the plug-ins in its branches are as late
-                // as the engine says (ENG-074).
-                let built: Vec<u64> = retained.map(|p| p.id.0).collect();
-                for (index, slot) in layout(rack, &built).iter().enumerate() {
-                    if let Slot::Plugin(id) = slot {
-                        timing.plugins.insert(PluginId(*id), chain.insert(index));
-                    }
+                continue;
+            };
+            // A splitter is one insert of the row; the plug-ins in its branches are as late
+            // as the engine says (ENG-074).
+            let built: Vec<u64> = retained.map(|p| p.id.0).collect();
+            for (index, slot) in layout(rack, &built).iter().enumerate() {
+                if let Slot::Plugin(id) = slot {
+                    timing.plugins.insert(PluginId(*id), chain.insert(index));
                 }
-                for inner in nested.get(i).into_iter().flatten() {
-                    timing.plugins.insert(
-                        PluginId(inner.id),
-                        chain.insert(inner.insert) + inner.offset,
-                    );
-                }
+            }
+            for inner in nested {
+                timing.plugins.insert(
+                    PluginId(inner.id),
+                    chain.insert(inner.insert) + inner.offset,
+                );
             }
         }
         timing

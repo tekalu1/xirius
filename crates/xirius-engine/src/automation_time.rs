@@ -18,6 +18,8 @@ impl Chain {
 pub struct Timing {
     pub tracks: Vec<Chain>,
     pub buses: Vec<Chain>,
+    /// The master's: its input is when the mix reaches it (AUT-019).
+    pub master: Chain,
 }
 
 /// The bus input delays used both by PDC and automation; buses feed later buses.

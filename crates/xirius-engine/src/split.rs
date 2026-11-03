@@ -517,6 +517,8 @@ pub struct Inner {
 pub struct Nested {
     pub tracks: Vec<Vec<Inner>>,
     pub buses: Vec<Vec<Inner>>,
+    /// The master's (AUT-019).
+    pub master: Vec<Inner>,
 }
 
 impl Nested {
@@ -549,6 +551,11 @@ impl Nested {
         id: u64,
     ) -> Option<u32> {
         Self::delay(self.buses.get(bus)?, timing.buses.get(bus)?, id)
+    }
+
+    /// The delay before the inner insert `id` of the master, by `timing` (AUT-019).
+    pub fn master_delay(&self, timing: &crate::automation_time::Timing, id: u64) -> Option<u32> {
+        Self::delay(&self.master, &timing.master, id)
     }
 
     fn delay(list: &[Inner], chain: &crate::automation_time::Chain, id: u64) -> Option<u32> {
