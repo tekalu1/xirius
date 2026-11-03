@@ -535,9 +535,8 @@ fn saving_a_macro_that_moves_a_send_says_the_map_was_left_out() {
         saved.message
     );
     let other = vocal(&mut r);
-    let plain = r
-        .s
-        .run_value(
+    let plain =
+        r.s.run_value(
             "track.preset.save",
             json!({ "track": other, "name": "No macro" }),
             &RunOptions::human(),
