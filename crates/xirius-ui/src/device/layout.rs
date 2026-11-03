@@ -12,6 +12,9 @@ use super::control::{self, DIAL_OUT, Look, NAME_H, VALUE_H};
 use super::play::Key;
 use crate::studio::Rect;
 
+/// How far a Drum Kit's pad's M and S sit above its foot.
+pub const MS_FOOT: f32 = 4.0;
+
 pub const PAD: f32 = 12.0;
 /// A control's cell in the rows: its dial, its value and its name.
 pub const CELL_W: f32 = 92.0;
@@ -227,7 +230,18 @@ impl Body {
     /// moves down with the graph's foot. The controls keep their size.
     pub fn grown(mut self, h: f32) -> Body {
         let dy = h - self.h;
-        let Some(&g) = self.graphs.get(self.main) else {
+        // A Drum Kit's pads are a main graph too (UI-331): their grid takes the height
+        // with the wave beside it, or alone while the kit has no sample.
+        let grid = self.pads.iter().map(|k| k.r).reduce(|a, b| {
+            let (x, y) = (a.x.min(b.x), a.y.min(b.y));
+            Rect::new(
+                x,
+                y,
+                a.right().max(b.right()) - x,
+                a.bottom().max(b.bottom()) - y,
+            )
+        });
+        let Some(g) = self.graphs.get(self.main).copied().or(grid) else {
             return self;
         };
         if dy <= 0.0 {
@@ -299,6 +313,26 @@ impl Body {
                 // Its bars stretch and its readout stays under them.
                 l.bars.iter_mut().for_each(|b| b.h += dy);
                 l.readout.y += dy;
+            }
+        }
+        if let Some(grid) = grid.filter(|r| r.h > 0.0) {
+            // The pads stretch down by `dy` in all; a pad's M and S stay at its foot.
+            let s = (grid.h + dy) / grid.h;
+            let y_of = |y: f32| grid.y + (y - grid.y) * s;
+            for k in &mut self.pads {
+                k.r = Rect::new(k.r.x, y_of(k.r.y), k.r.w, k.r.h * s);
+            }
+            for sp in &mut self.spots {
+                match sp.mark {
+                    Mark::Pad(_) => {
+                        sp.r = Rect::new(sp.r.x, y_of(sp.r.y), sp.r.w, sp.r.h * s);
+                    }
+                    Mark::Mute(_) | Mark::Solo(_) => {
+                        let foot = sp.r.bottom() + MS_FOOT;
+                        sp.r.y += y_of(foot) - foot;
+                    }
+                    _ => {}
+                }
             }
         }
         self.h = h;

@@ -19,7 +19,7 @@ use xirius_params::{BuiltinDef, PADS, Scope, bare_id, pad_key};
 
 use super::control::{self, DIAL_SM, Look, NAME_H, SEG_H, TOGGLE_H, VALUE_H};
 use super::graph::{self, Axis, Drive, Point, View};
-use super::layout::{Body, Mark, Name, PAD, Shape, Slot, Spot};
+use super::layout::{Body, MS_FOOT, Mark, Name, PAD, Shape, Slot, Spot};
 use super::play::{self, HIGH, KEYS_H, LOW};
 use crate::draw::{Align, Pen};
 use crate::studio::Rect;
@@ -439,7 +439,7 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
         b.spots.push(spot);
         if !files.is_empty() {
             let (mw, mh) = MS;
-            let my = k.r.bottom() - mh - 4.0;
+            let my = k.r.bottom() - mh - MS_FOOT;
             let mut m = Spot::new(
                 Rect::new(k.r.right() - 2.0 * mw - 6.0, my, mw, mh),
                 Mark::Mute(p),

@@ -7,7 +7,8 @@ use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::Plugin;
 
-use super::layout::{Body, Mark};
+use super::layout::{self, Body, Mark};
+use super::play;
 use super::sampler::{self, BROWSE_LABEL, DROP_LABEL};
 use crate::browser::RailTab;
 use crate::instrument::window::{Part, values_of};
@@ -213,6 +214,74 @@ fn ui_334_layers_choose_the_wave_and_files_dropped_on_a_pad_go_there() {
     );
     // Off the window, a drop is not the window's.
     assert!(!s.window_drop(&g, 1.0, 1.0, &files));
+}
+
+/// The window `dy` taller than it opened.
+fn taller(s: &mut Studio, dy: f32) {
+    s.instruments.open[0].body.1 += dy;
+}
+
+/// M-ui-6 (UI-331): a taller Sampler gives the height to its wave, the keys move down at
+/// their size, and they are wide enough for their C names.
+#[test]
+fn ui_331_a_taller_sampler_grows_its_wave_and_keeps_the_keys() {
+    let (mut s, g, t, id) = window("Sampler");
+    add(&mut s, id, &["Piano C3.wav"]);
+    let a = body(&s, &g, t);
+    taller(&mut s, 120.0);
+    let b = body(&s, &g, t);
+    assert_eq!(b.graphs[0].h, a.graphs[0].h + 120.0);
+    for (ka, kb) in a.keys.iter().zip(&b.keys) {
+        assert_eq!((kb.r.y, kb.r.w, kb.r.h), (ka.r.y + 120.0, ka.r.w, ka.r.h));
+    }
+    for (sa, sb) in a.slots.iter().zip(&b.slots) {
+        assert_eq!((sb.cell.w, sb.cell.h), (sa.cell.w, sa.cell.h));
+    }
+    let span = b.keys.last().unwrap().r.right() - b.keys[0].r.x;
+    assert!(span + 2.0 * layout::PAD > 520.0, "the C names show: {span}");
+}
+
+/// M-ui-6 (UI-331): a taller Drum Kit gives the height to its pads (and its wave beside
+/// them), empty or not; a pad's M and S stay at its foot and the knobs keep their size.
+#[test]
+fn ui_331_a_taller_drum_kit_grows_its_pads() {
+    for files in [&[][..], &["Kick.wav", "Snare.wav"][..]] {
+        let (mut s, g, t, id) = window("Drum Kit");
+        if !files.is_empty() {
+            add(&mut s, id, files);
+        }
+        let a = body(&s, &g, t);
+        taller(&mut s, 120.0);
+        let b = body(&s, &g, t);
+        let grid = |b: &Body| {
+            let top = b.pads.iter().map(|k| k.r.y).fold(f32::MAX, f32::min);
+            let foot = b.pads.iter().map(|k| k.r.bottom()).fold(0.0, f32::max);
+            (top, foot)
+        };
+        let ((t0, f0), (t1, f1)) = (grid(&a), grid(&b));
+        assert_eq!(t1, t0, "{files:?}");
+        assert!((f1 - (f0 + 120.0)).abs() < 0.01, "{files:?}: {f0} → {f1}");
+        assert!(b.pads[0].r.h > a.pads[0].r.h);
+        for k in &b.pads {
+            let p = play::pad_of(k.pitch);
+            let on = b.spots.iter().find(|x| x.mark == Mark::Pad(p)).unwrap();
+            assert_eq!(on.r, k.r);
+            if let Some(m) = b.spots.iter().find(|x| x.mark == Mark::Mute(p)) {
+                assert!((m.r.bottom() + layout::MS_FOOT - k.r.bottom()).abs() < 0.01);
+            }
+        }
+        for (sa, sb) in a.slots.iter().zip(&b.slots) {
+            assert_eq!((sb.cell.w, sb.cell.h), (sa.cell.w, sa.cell.h), "{files:?}");
+            let on_pad = b.pads.iter().any(|k| {
+                let (r, c) = (k.r, sb.cell);
+                c.x < r.right() && r.x < c.right() && c.y < r.bottom() && r.y < c.bottom()
+            });
+            assert!(!on_pad, "{files:?}: a knob on a pad");
+        }
+        if !files.is_empty() {
+            assert_eq!(b.graphs[0].h, a.graphs[0].h + 120.0);
+        }
+    }
 }
 
 #[test]
