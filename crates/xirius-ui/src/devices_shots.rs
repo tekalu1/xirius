@@ -30,6 +30,10 @@ const fn rev_stage(n: u8) -> Act {
     Act::Stage(Play::Laid(play_reverb), n)
 }
 
+const fn pin_stage(n: u8) -> Act {
+    Act::Stage(Play::Laid(play_pin), n)
+}
+
 pub const SHOTS: &[Shot] = &[
     // The Compressor as it opens, four seconds of a beat in its history.
     Shot {
@@ -91,6 +95,11 @@ pub const SHOTS: &[Shot] = &[
         name: "lim03-ceiling-menu",
         acts: &[Act::Reset, lim_stage(0), lim_stage(2)],
     },
+    // The EQ pinned, the Compressor in a new window a step on (UI-323).
+    Shot {
+        name: "pin01-pinned-and-next",
+        acts: &[Act::Reset, pin_stage(0), pin_stage(1)],
+    },
     // The Reverb as it opens: how its sound dies away, the Color band and the six knobs.
     Shot {
         name: "rev01-wide",
@@ -133,6 +142,8 @@ pub(crate) fn open_device(s: &mut Studio, name: &str) -> Option<PluginId> {
         .rfind(|x| x.name == name)?
         .id;
     s.show_instrument(t, id);
+    // The shots show the window settled, its frame no longer lit (UI-323).
+    s.instruments.flash = None;
     Some(id)
 }
 
@@ -149,6 +160,7 @@ fn width(s: &mut Studio, id: PluginId, w: f32) {
     };
     if let Some(win) = s.instruments.open.iter_mut().find(|w| w.plugin == id) {
         win.body = layout::size(def, w);
+        win.placed_w = w;
     }
 }
 
@@ -350,6 +362,21 @@ fn play_limiter(s: &mut Studio, g: &Geometry, n: u8) {
     }
 }
 
+fn play_pin(s: &mut Studio, g: &Geometry, n: u8) {
+    let g = &s.geometry(g.size.0, g.size.1);
+    match n {
+        0 => {
+            if let Some(id) = open_device(s, "EQ") {
+                press(s, g, id, Part::Pin);
+            }
+        }
+        1 => {
+            open_device(s, "Compressor");
+        }
+        _ => {}
+    }
+}
+
 fn play_reverb(s: &mut Studio, g: &Geometry, n: u8) {
     let g = &s.geometry(g.size.0, g.size.1);
     if n == 0 {
@@ -428,6 +455,17 @@ mod tests {
         let v = crate::instrument::window::values(x)[k];
         assert!((spec.to_plain(v) - 6.0).abs() < 1e-6);
         assert!(!s.context_rows().is_empty(), "the ceiling's menu is open");
+    }
+
+    #[test]
+    fn the_pin_stages_play_without_a_window() {
+        let mut s = Studio::sample();
+        let g = s.geometry(1600.0, 1000.0);
+        for n in 0..2 {
+            assert!(Play::Laid(play_pin).without_window(&mut s, &g, n));
+        }
+        assert_eq!(s.instruments.open.len(), 2);
+        assert!(s.instruments.open[0].pinned && !s.instruments.open[1].pinned);
     }
 
     #[test]

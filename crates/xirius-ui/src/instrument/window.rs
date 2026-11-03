@@ -114,9 +114,16 @@ pub struct Win {
     pub body: (f32, f32),
     /// Where its corner is, once it was dragged; else it sits where new ones go.
     pub at: Option<(f32, f32)>,
-    /// The pin is down. UI-323 decides what an unpinned window does; the seat
-    /// and the look are the shared bar's already (UI-322).
+    /// The pin is down: the window stays when another device opens. An
+    /// unpinned one takes the next device in (UI-323).
     pub pinned: bool,
+    /// Its place in the cascade while it was not dragged: the count of
+    /// windows open when it came, so a window keeps its place when another
+    /// device fills it.
+    pub seat: usize,
+    /// The width its first device centred it by: the corner stays put
+    /// when a wider or narrower device fills it.
+    pub placed_w: f32,
 }
 
 /// What a press in a window took hold of.
@@ -280,7 +287,17 @@ pub struct Windows {
     /// The preset each plug-in was last set to: the tag keeps its name and
     /// marks it while the knobs are off it (UI-332 keeps the list itself).
     base: HashMap<PluginId, &'static str>,
+    /// The window a device last opened in and when: its frame lights a
+    /// moment so the eye finds it (UI-323).
+    pub(crate) flash: Option<(PluginId, std::time::Instant)>,
 }
+
+/// How long an opened window's frame lights.
+pub const FLASH: std::time::Duration = std::time::Duration::from_millis(500);
+/// How wide the ring of an opened window is.
+const FLASH_W: f32 = 3.0;
+/// How far each new window sits from the one before it.
+pub const CASCADE: f32 = 28.0;
 
 impl Windows {
     pub fn is_open(&self, id: PluginId) -> bool {
@@ -449,9 +466,11 @@ impl Windows {
     pub fn rect(&self, i: usize, size: (f32, f32)) -> Rect {
         let (w, h) = self.open[i].body;
         let h = title_bar::BAR_H + h;
-        let (x, y) = self.open[i].at.unwrap_or((
-            size.0 / 2.0 - w / 2.0 + i as f32 * 24.0,
-            64.0 + i as f32 * 24.0,
+        let win = self.open[i];
+        let n = win.seat as f32;
+        let (x, y) = win.at.unwrap_or((
+            size.0 / 2.0 - win.placed_w / 2.0 + n * CASCADE,
+            64.0 + n * CASCADE,
         ));
         Rect::new(
             x.clamp(0.0, (size.0 - KEEP_W).max(0.0)),
@@ -530,6 +549,18 @@ impl Windows {
                 .unwrap_or(Part::Body);
             Some((i, part))
         })
+    }
+
+    /// How lit the frame of `id` is at `now`: 1 as it opens, 0 after
+    /// [`FLASH`].
+    pub fn lit(&self, id: PluginId, now: std::time::Instant) -> f32 {
+        match self.flash {
+            Some((at, since)) if at == id => {
+                let t = now.saturating_duration_since(since).as_secs_f32() / FLASH.as_secs_f32();
+                (1.0 - t.min(1.0)).powi(2)
+            }
+            _ => 0.0,
+        }
     }
 
     /// Brings the `i`th window to the top; returns its new index.
@@ -708,33 +739,65 @@ impl Studio {
         true
     }
 
-    /// Opens the window of a built-in plugin, or brings it to the top.
+    /// Opens the window of a built-in plugin (UI-323): an open one comes to
+    /// the top; else the unpinned window used last takes it in; else, all
+    /// pinned, a new window opens a step on. Its frame lights either way.
     pub(crate) fn show_instrument(&mut self, t: TrackId, id: PluginId) {
-        self.instruments.prune(&self.project());
-        match self.instruments.open.iter().position(|w| w.plugin == id) {
+        let p = self.project();
+        self.instruments.prune(&p);
+        let ins = &mut self.instruments;
+        match ins.open.iter().position(|w| w.plugin == id) {
             Some(i) => {
-                self.instruments.raise(i);
+                ins.raise(i);
             }
             None => {
-                let p = self.project();
                 let def = p
                     .tracks
                     .get(&t)
                     .and_then(|x| x.inserts.iter().find(|x| x.id == id))
                     .and_then(Plugin::builtin);
-                if let Some(def) = def {
-                    let body = layout::size(def, layout::natural_w(def));
-                    self.instruments.open.push(Win {
-                        track: t,
-                        plugin: id,
-                        knobs: def.params.len(),
-                        body,
-                        at: None,
-                        pinned: false,
-                    });
+                let Some(def) = def else {
+                    return;
+                };
+                let body = layout::size(def, layout::natural_w(def));
+                let win = Win {
+                    track: t,
+                    plugin: id,
+                    knobs: def.params.len(),
+                    body,
+                    // Centred as the others were, so it sits a step right
+                    // of them as well as a step down.
+                    placed_w: ins
+                        .open
+                        .iter()
+                        .rev()
+                        .find(|w| w.at.is_none())
+                        .map_or(body.0, |w| w.placed_w),
+                    at: None,
+                    pinned: false,
+                    // The first place in the cascade no window sits at.
+                    seat: (0..)
+                        .find(|n| !ins.open.iter().any(|w| w.seat == *n && w.at.is_none()))
+                        .unwrap_or(0),
+                };
+                // The windows are in the order they were last used.
+                match ins.open.iter().rposition(|w| !w.pinned) {
+                    Some(i) => {
+                        let old = ins.open[i];
+                        ins.open[i] = Win {
+                            at: old.at,
+                            seat: old.seat,
+                            placed_w: old.placed_w,
+                            ..win
+                        };
+                        ins.raise(i);
+                        ins.prune(&p);
+                    }
+                    None => ins.open.push(win),
                 }
             }
         }
+        ins.flash = Some((id, std::time::Instant::now()));
     }
 
     /// Is the track an instrument track?
@@ -1003,14 +1066,20 @@ impl Studio {
     /// moves or an analyser hears something.
     pub(crate) fn poll_probes(&mut self) -> bool {
         let rate = f64::from(self.project().settings.sample_rate);
+        let lit = self.motion.enabled.get()
+            && self
+                .instruments
+                .flash
+                .is_some_and(|(id, _)| self.instruments.lit(id, std::time::Instant::now()) > 0.0);
         let Some(host) = self.transport.host() else {
-            return false;
+            return lit;
         };
         let plugins = host.plugins();
         let p = self.project();
         let now = std::time::Instant::now();
         self.instruments
             .poll_with(&p, rate, now, |id| plugins.stock_probe(id))
+            | lit
     }
 
     /// Opens the menu of what an EQ's analyser shows under its button `at`.
@@ -1093,6 +1162,18 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
         };
         let r = studio.instruments.rect(i, g.size);
         paint_window(pen, studio, r, *w, track, plugin, def);
+        // The window a device just opened in: a ring of the focus colour
+        // round it that fades out (UI-323), none under reduced motion.
+        let lit = studio.instruments.lit(w.plugin, std::time::Instant::now());
+        if lit > 0.0 && studio.motion.enabled.get() {
+            let ring = Rect::new(
+                r.x - FLASH_W,
+                r.y - FLASH_W,
+                r.w + 2.0 * FLASH_W,
+                r.h + 2.0 * FLASH_W,
+            );
+            pen.outline(ring, pen.c.ring.opacity(lit), Radius::M, FLASH_W);
+        }
     }
 }
 

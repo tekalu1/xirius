@@ -214,6 +214,8 @@ mod keys_tests;
 #[cfg(test)]
 mod menu_tests;
 #[cfg(test)]
+mod pin_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod window_tests;

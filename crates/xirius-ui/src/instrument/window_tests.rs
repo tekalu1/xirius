@@ -410,6 +410,8 @@ fn the_sidechain_seat_is_only_on_the_devices_that_take_a_key() {
     ));
     let comp = added(&s, t, "Compressor");
     s.show_instrument(t, id);
+    // Pinned, so the Compressor opens beside it (UI-323).
+    s.instruments.open[0].pinned = true;
     s.show_instrument(t, comp);
     let p = s.project();
     for (plugin_id, takes) in [(comp, true), (id, false)] {
