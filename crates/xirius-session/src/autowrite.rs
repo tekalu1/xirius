@@ -362,8 +362,12 @@ impl Pass {
             if t.auto_mode != AutoMode::Write {
                 continue;
             }
+            // a target a macro control moves is not played from its lane, so its lane is kept
+            // for when the map is let go
             for l in &t.automation {
-                whole.push((*tid, l.target.clone()));
+                if t.controls.owner_of(&l.target).is_none() {
+                    whole.push((*tid, l.target.clone()));
+                }
             }
         }
         for (key, s) in &strokes {
@@ -602,6 +606,24 @@ mod tests {
         let w = pass.finish(9000);
         assert_eq!(w.len(), 1);
         assert_eq!(w[0]["target"].as_str(), Some("control:k1"));
+    }
+
+    #[test]
+    fn write_keeps_the_lane_of_a_target_a_macro_moves() {
+        use xirius_core::controls::{ControlId, Mapping};
+        let (mut p, t) = song(AutoMode::Write);
+        assert!(p.tracks[&t].automation.iter().any(|l| l.target == AutoTarget::Volume));
+        std::sync::Arc::make_mut(p.tracks.get_mut(&t).unwrap())
+            .controls
+            .get_mut(ControlId::Knob(0))
+            .maps
+            .push(Mapping::new(AutoTarget::Volume));
+        let pass = Pass::begin(&p, 0);
+        let w = pass.finish(9000);
+        assert!(
+            w.iter().all(|x| x["target"].as_str() != Some("volume")),
+            "{w:?}"
+        );
     }
 
     #[test]
