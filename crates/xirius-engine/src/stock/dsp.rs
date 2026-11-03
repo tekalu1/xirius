@@ -99,9 +99,19 @@ impl Coefs {
 
     /// A shelf with a slope of 1 (the steepest without a bump).
     pub fn low_shelf(freq: f64, gain_db: f64, rate: f64) -> Coefs {
+        Self::low_shelf_by(freq, gain_db, 1.0, rate)
+    }
+
+    /// A shelf whose Q is `q`: 1/√2 is [`Coefs::low_shelf`]'s, higher bumps at the corner.
+    pub fn low_shelf_q(freq: f64, gain_db: f64, q: f64, rate: f64) -> Coefs {
+        Self::low_shelf_by(freq, gain_db, q_ratio(q), rate)
+    }
+
+    /// A low shelf with `r` times the Q of a slope of 1.
+    fn low_shelf_by(freq: f64, gain_db: f64, r: f64, rate: f64) -> Coefs {
         let (c, s) = Self::w(freq, rate);
         let a = 10f64.powf(gain_db / 40.0);
-        let alpha = s / 2.0 * 2f64.sqrt();
+        let alpha = s / 2.0 * 2f64.sqrt() / r;
         let k = 2.0 * a.sqrt() * alpha;
         Self::norm(
             a * ((a + 1.0) - (a - 1.0) * c + k),
@@ -114,9 +124,19 @@ impl Coefs {
     }
 
     pub fn high_shelf(freq: f64, gain_db: f64, rate: f64) -> Coefs {
+        Self::high_shelf_by(freq, gain_db, 1.0, rate)
+    }
+
+    /// A shelf whose Q is `q`: 1/√2 is [`Coefs::high_shelf`]'s, higher bumps at the corner.
+    pub fn high_shelf_q(freq: f64, gain_db: f64, q: f64, rate: f64) -> Coefs {
+        Self::high_shelf_by(freq, gain_db, q_ratio(q), rate)
+    }
+
+    /// A high shelf with `r` times the Q of a slope of 1.
+    fn high_shelf_by(freq: f64, gain_db: f64, r: f64, rate: f64) -> Coefs {
         let (c, s) = Self::w(freq, rate);
         let a = 10f64.powf(gain_db / 40.0);
-        let alpha = s / 2.0 * 2f64.sqrt();
+        let alpha = s / 2.0 * 2f64.sqrt() / r;
         let k = 2.0 * a.sqrt() * alpha;
         Self::norm(
             a * ((a + 1.0) + (a - 1.0) * c + k),
@@ -126,6 +146,13 @@ impl Coefs {
             2.0 * ((a - 1.0) - (a + 1.0) * c),
             (a + 1.0) - (a - 1.0) * c - k,
         )
+    }
+
+    /// A notch: nothing at `freq`, `q` its width (higher is narrower).
+    pub fn notch(freq: f64, q: f64, rate: f64) -> Coefs {
+        let (c, s) = Self::w(freq, rate);
+        let alpha = s / (2.0 * q);
+        Self::norm(1.0, -2.0 * c, 1.0, 1.0 + alpha, -2.0 * c, 1.0 - alpha)
     }
 
     /// The gain in dB at `freq`, for tests and drawing a curve.
@@ -166,6 +193,14 @@ impl Biquad {
     pub fn reset(&mut self) {
         *self = Biquad::default();
     }
+}
+
+/// `q` over 1/√2 (a slope-1 shelf's Q, a Butterworth pair's): exactly 1 when `q` is 1/√2 as
+/// far as an f32 holds it, so a default Q works out the very filter it did before it had a
+/// knob.
+pub fn q_ratio(q: f64) -> f64 {
+    let r = q * std::f64::consts::SQRT_2;
+    if (r - 1.0).abs() < 1e-6 { 1.0 } else { r }
 }
 
 /// The Q of each section of a Butterworth filter of `order` (2, 4 or 8).

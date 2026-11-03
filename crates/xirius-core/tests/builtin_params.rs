@@ -68,7 +68,7 @@ fn a_new_builtin_holds_every_default_and_lists_them() {
         json!({"track": t, "name": "EQ"}),
     ));
     let r = run(&mut s, "plugin.param.list", json!({"id": eq}));
-    assert_eq!(r.data.as_array().unwrap().len(), 17);
+    assert_eq!(r.data.as_array().unwrap().len(), 37);
     let freq = row(&r.data, "mid1_freq");
     assert_eq!(freq["unit"], "Hz");
     assert!((freq["plain"].as_f64().unwrap() - 400.0).abs() < 1e-6);
@@ -86,7 +86,7 @@ fn a_new_builtin_holds_every_default_and_lists_them() {
         .unwrap();
     assert_eq!(
         x.params.len(),
-        17,
+        37,
         "every parameter can be automated at once"
     );
 

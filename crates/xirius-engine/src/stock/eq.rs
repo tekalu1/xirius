@@ -1,33 +1,182 @@
-//! The EQ (PLG-008): a low cut, a low shelf, two bells, a high shelf, a high cut and an output
-//! gain, in that order. The cuts are Butterworth filters of 12, 24 or 48 dB per octave; the
-//! bells and shelves are those of the Audio EQ Cookbook. Moved values glide, and the filters
-//! are worked out again once every [`STEP`] frames while they do. No latency.
+//! The EQ (PLG-008): six bands and an output gain, in that order. Each band is on or off and
+//! one of the types it takes (PLG-062, [`xirius_params::EQ_BANDS`]): a cut is a Butterworth
+//! filter of 12, 24 or 48 dB per octave, its Q scaling every section's; a bell, a notch and
+//! a shelf are those of the Audio EQ Cookbook. At their defaults the bands are a low cut, a
+//! low shelf, two bells, a high shelf and a high cut, as they were before they had a type.
+//! Moved values glide, and the filters are worked out again once every [`STEP`] frames while
+//! they do. No latency.
+//!
+//! [`band_db`], [`response_db`] and [`Response`] give the curve a panel draws, from the same
+//! coefficients the sound goes through.
+
+use xirius_params::{BandType, EQ, EQ_BANDS, MAX_PARAMS};
 
 use super::bank::Params;
-use super::dsp::{Biquad, Coefs, Glide, Ramp, STEP, butterworth_qs, db_to_gain};
+use super::dsp::{Biquad, Coefs, Glide, Ramp, STEP, butterworth_qs, db_to_gain, q_ratio};
 use crate::processor::{AudioIo, NoteEvent, ProcessSetup, Processor};
 
-// The parameters, in the order of `xirius_params::EQ`.
-const LOW_CUT_ON: usize = 0;
-const LOW_CUT_FREQ: usize = 1;
-const LOW_CUT_SLOPE: usize = 2;
-const LOW_FREQ: usize = 3;
-const LOW_GAIN: usize = 4;
-const MID1_FREQ: usize = 5;
-const MID1_GAIN: usize = 6;
-const MID1_Q: usize = 7;
-const MID2_FREQ: usize = 8;
-const MID2_GAIN: usize = 9;
-const MID2_Q: usize = 10;
-const HIGH_FREQ: usize = 11;
-const HIGH_GAIN: usize = 12;
-const HIGH_CUT_ON: usize = 13;
-const HIGH_CUT_FREQ: usize = 14;
-const HIGH_CUT_SLOPE: usize = 15;
+/// Where a band's parameters are in `xirius_params::EQ`.
+#[derive(Clone, Copy)]
+struct Band {
+    on: usize,
+    kind: usize,
+    freq: usize,
+    gain: usize,
+    q: usize,
+    slope: usize,
+}
+
+/// The six bands, in the order of [`EQ_BANDS`]; a test holds them to the ids there.
+const BANDS: [Band; 6] = [
+    Band {
+        on: 0,
+        kind: 17,
+        freq: 1,
+        gain: 18,
+        q: 19,
+        slope: 2,
+    },
+    Band {
+        on: 20,
+        kind: 21,
+        freq: 3,
+        gain: 4,
+        q: 22,
+        slope: 23,
+    },
+    Band {
+        on: 24,
+        kind: 25,
+        freq: 5,
+        gain: 6,
+        q: 7,
+        slope: 26,
+    },
+    Band {
+        on: 27,
+        kind: 28,
+        freq: 8,
+        gain: 9,
+        q: 10,
+        slope: 29,
+    },
+    Band {
+        on: 30,
+        kind: 31,
+        freq: 11,
+        gain: 12,
+        q: 32,
+        slope: 33,
+    },
+    Band {
+        on: 13,
+        kind: 34,
+        freq: 14,
+        gain: 35,
+        q: 36,
+        slope: 15,
+    },
+];
 const OUTPUT: usize = 16;
 
-/// Sections in a row: four for the low cut, the four bands, four for the high cut.
-const SECTIONS: usize = 12;
+/// Sections a band can take: four for a cut of 48 dB per octave, one for anything else.
+const SLOTS: usize = 4;
+/// Sections in a row, band by band.
+const SECTIONS: usize = BANDS.len() * SLOTS;
+
+/// The sections of band `band` for the plain values `p` (in `EQ` order); none where it
+/// leaves the sound be (off, or a bell or a shelf at 0 dB).
+fn sections(p: &[f64], band: usize, rate: f64) -> [Option<Coefs>; SLOTS] {
+    let b = &BANDS[band];
+    let mut out = [None; SLOTS];
+    if p[b.on] < 0.5 {
+        return out;
+    }
+    let (freq, gain, q) = (p[b.freq], p[b.gain], p[b.q]);
+    match EQ_BANDS[band].type_of(p[b.kind]) {
+        kind @ (BandType::LowCut | BandType::HighCut) => {
+            let r = q_ratio(q);
+            let qs = butterworth_qs(order(p[b.slope].max(0.0).round() as usize));
+            for (k, bq) in qs.iter().enumerate() {
+                out[k] = Some(if kind == BandType::LowCut {
+                    Coefs::highpass(freq, *bq * r, rate)
+                } else {
+                    Coefs::lowpass(freq, *bq * r, rate)
+                });
+            }
+        }
+        BandType::Notch => out[0] = Some(Coefs::notch(freq, q, rate)),
+        _ if gain == 0.0 => {}
+        BandType::LowShelf => out[0] = Some(Coefs::low_shelf_q(freq, gain, q, rate)),
+        BandType::Peaking => out[0] = Some(Coefs::peak(freq, q, gain, rate)),
+        BandType::HighShelf => out[0] = Some(Coefs::high_shelf_q(freq, gain, q, rate)),
+    }
+    out
+}
+
+/// The order of a cut for a slope's index (12, 24, 48 dB per octave).
+fn order(slope: usize) -> usize {
+    match slope {
+        0 => 2,
+        1 => 4,
+        _ => 8,
+    }
+}
+
+/// The EQ's curve for a set of values: what each band and the whole do to a sine.
+#[derive(Clone, Debug)]
+pub struct Response {
+    rate: f64,
+    bands: [[Option<Coefs>; SLOTS]; BANDS.len()],
+    output: f64,
+}
+
+impl Response {
+    /// The curve of `values`: 0..1 values in the order of `xirius_params::EQ` (a song's), the
+    /// missing ones at their defaults.
+    pub fn new(values: &[f64], rate: f64) -> Response {
+        let mut p = [0.0; MAX_PARAMS];
+        for (i, spec) in EQ.params.iter().enumerate() {
+            let norm = values.get(i).copied().unwrap_or(spec.default_norm());
+            p[i] = spec.to_plain(norm);
+        }
+        Response {
+            rate,
+            bands: std::array::from_fn(|b| sections(&p, b, rate)),
+            output: p[OUTPUT],
+        }
+    }
+
+    /// The gain in dB at `freq` of band `band` (0 to 5, low to high) alone: 0 where it is off
+    /// or out of range, minus infinity at a notch's own frequency.
+    pub fn band_db(&self, band: usize, freq: f64) -> f64 {
+        self.bands.get(band).map_or(0.0, |s| {
+            s.iter()
+                .flatten()
+                .map(|c| c.response_db(freq, self.rate))
+                .sum()
+        })
+    }
+
+    /// The gain in dB at `freq` of every band and the output gain.
+    pub fn db(&self, freq: f64) -> f64 {
+        (0..self.bands.len())
+            .map(|b| self.band_db(b, freq))
+            .sum::<f64>()
+            + self.output
+    }
+}
+
+/// The gain in dB at `freq` of band `band` alone ([`Response::band_db`]); `values` are 0..1
+/// in the order of `xirius_params::EQ`.
+pub fn band_db(values: &[f64], band: usize, freq: f64, rate: f64) -> f64 {
+    Response::new(values, rate).band_db(band, freq)
+}
+
+/// The gain in dB at `freq` of the whole EQ, the output gain with it ([`Response::db`]).
+pub fn response_db(values: &[f64], freq: f64, rate: f64) -> f64 {
+    Response::new(values, rate).db(freq)
+}
 
 pub struct Eq {
     params: Params,
@@ -44,7 +193,7 @@ pub struct Eq {
 impl Eq {
     pub fn new(params: Params) -> Eq {
         Eq {
-            glide: Glide::new(&xirius_params::EQ),
+            glide: Glide::new(&EQ),
             params,
             rate: 48_000.0,
             coefs: [Coefs::THROUGH; SECTIONS],
@@ -58,42 +207,9 @@ impl Eq {
     /// Works out every section from the gliding values.
     fn update(&mut self) {
         let g = &self.glide;
-        let rate = self.rate;
         let mut next = [None; SECTIONS];
-        if g.on(LOW_CUT_ON) {
-            let qs = butterworth_qs(order(g.index(LOW_CUT_SLOPE)));
-            for (k, q) in qs.iter().enumerate() {
-                next[k] = Some(Coefs::highpass(g.get(LOW_CUT_FREQ), *q, rate));
-            }
-        }
-        let bands = [
-            (
-                LOW_GAIN,
-                Coefs::low_shelf(g.get(LOW_FREQ), g.get(LOW_GAIN), rate),
-            ),
-            (
-                MID1_GAIN,
-                Coefs::peak(g.get(MID1_FREQ), g.get(MID1_Q), g.get(MID1_GAIN), rate),
-            ),
-            (
-                MID2_GAIN,
-                Coefs::peak(g.get(MID2_FREQ), g.get(MID2_Q), g.get(MID2_GAIN), rate),
-            ),
-            (
-                HIGH_GAIN,
-                Coefs::high_shelf(g.get(HIGH_FREQ), g.get(HIGH_GAIN), rate),
-            ),
-        ];
-        for (k, (gain, c)) in bands.into_iter().enumerate() {
-            if g.get(gain) != 0.0 {
-                next[4 + k] = Some(c);
-            }
-        }
-        if g.on(HIGH_CUT_ON) {
-            let qs = butterworth_qs(order(g.index(HIGH_CUT_SLOPE)));
-            for (k, q) in qs.iter().enumerate() {
-                next[8 + k] = Some(Coefs::lowpass(g.get(HIGH_CUT_FREQ), *q, rate));
-            }
+        for (b, slots) in next.as_chunks_mut::<SLOTS>().0.iter_mut().enumerate() {
+            *slots = sections(&g.cur, b, self.rate);
         }
         for (k, c) in next.into_iter().enumerate() {
             let on = c.is_some();
@@ -107,15 +223,6 @@ impl Eq {
             self.coefs[k] = c.unwrap_or(Coefs::THROUGH);
         }
         self.gain = db_to_gain(g.get(OUTPUT));
-    }
-}
-
-/// The order of a cut for a slope's index (12, 24, 48 dB per octave).
-fn order(slope: usize) -> usize {
-    match slope {
-        0 => 2,
-        1 => 4,
-        _ => 8,
     }
 }
 
@@ -168,7 +275,14 @@ impl Processor for Eq {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::f64::consts::TAU;
+    use std::sync::Arc;
+
+    use super::super::StockHandle;
+    use super::super::bank::{ParamBank, Params};
     use super::super::testing::*;
+    use super::*;
 
     /// The gain in dB of a sine at `freq` through the EQ as `set` leaves it.
     fn gain_at(freq: f64, set: &[(&str, f64)]) -> f64 {
@@ -250,5 +364,426 @@ mod tests {
         set_plain(&h, "low_cut_on", 1.0);
         set_plain(&h, "output", 24.0);
         assert_silent(p.as_mut());
+    }
+
+    #[test]
+    fn the_band_table_is_the_catalogues() {
+        for (b, ids) in BANDS.iter().zip(EQ_BANDS) {
+            let at = |id| EQ.param(id).unwrap().0;
+            assert_eq!(b.on, at(ids.on), "{}", ids.on);
+            assert_eq!(b.kind, at(ids.kind), "{}", ids.kind);
+            assert_eq!(b.freq, at(ids.freq), "{}", ids.freq);
+            assert_eq!(b.gain, at(ids.gain), "{}", ids.gain);
+            assert_eq!(b.q, at(ids.q), "{}", ids.q);
+            assert_eq!(b.slope, at(ids.slope), "{}", ids.slope);
+        }
+        assert_eq!(EQ.param("output").unwrap().0, OUTPUT);
+        assert_eq!(EQ.params.len(), 37);
+    }
+
+    /// The EQ word for word as it was before its bands had a type (PLG-008), the shelves'
+    /// coefficients with it.
+    mod before {
+        use super::super::super::bank::Params;
+        use super::super::super::dsp::{
+            Biquad, Coefs, Glide, Ramp, STEP, butterworth_qs, db_to_gain,
+        };
+        use crate::processor::{AudioIo, NoteEvent, ProcessSetup, Processor};
+
+        const LOW_CUT_ON: usize = 0;
+        const LOW_CUT_FREQ: usize = 1;
+        const LOW_CUT_SLOPE: usize = 2;
+        const LOW_FREQ: usize = 3;
+        const LOW_GAIN: usize = 4;
+        const MID1_FREQ: usize = 5;
+        const MID1_GAIN: usize = 6;
+        const MID1_Q: usize = 7;
+        const MID2_FREQ: usize = 8;
+        const MID2_GAIN: usize = 9;
+        const MID2_Q: usize = 10;
+        const HIGH_FREQ: usize = 11;
+        const HIGH_GAIN: usize = 12;
+        const HIGH_CUT_ON: usize = 13;
+        const HIGH_CUT_FREQ: usize = 14;
+        const HIGH_CUT_SLOPE: usize = 15;
+        const OUTPUT: usize = 16;
+        const SECTIONS: usize = 12;
+
+        fn w(freq: f64, rate: f64) -> (f64, f64) {
+            let w0 = std::f64::consts::TAU * freq.clamp(1.0, rate * 0.49) / rate;
+            (w0.cos(), w0.sin())
+        }
+
+        fn norm(b0: f64, b1: f64, b2: f64, a0: f64, a1: f64, a2: f64) -> Coefs {
+            Coefs {
+                b0: b0 / a0,
+                b1: b1 / a0,
+                b2: b2 / a0,
+                a1: a1 / a0,
+                a2: a2 / a0,
+            }
+        }
+
+        fn low_shelf(freq: f64, gain_db: f64, rate: f64) -> Coefs {
+            let (c, s) = w(freq, rate);
+            let a = 10f64.powf(gain_db / 40.0);
+            let alpha = s / 2.0 * 2f64.sqrt();
+            let k = 2.0 * a.sqrt() * alpha;
+            norm(
+                a * ((a + 1.0) - (a - 1.0) * c + k),
+                2.0 * a * ((a - 1.0) - (a + 1.0) * c),
+                a * ((a + 1.0) - (a - 1.0) * c - k),
+                (a + 1.0) + (a - 1.0) * c + k,
+                -2.0 * ((a - 1.0) + (a + 1.0) * c),
+                (a + 1.0) + (a - 1.0) * c - k,
+            )
+        }
+
+        fn high_shelf(freq: f64, gain_db: f64, rate: f64) -> Coefs {
+            let (c, s) = w(freq, rate);
+            let a = 10f64.powf(gain_db / 40.0);
+            let alpha = s / 2.0 * 2f64.sqrt();
+            let k = 2.0 * a.sqrt() * alpha;
+            norm(
+                a * ((a + 1.0) + (a - 1.0) * c + k),
+                -2.0 * a * ((a - 1.0) + (a + 1.0) * c),
+                a * ((a + 1.0) + (a - 1.0) * c - k),
+                (a + 1.0) - (a - 1.0) * c + k,
+                2.0 * ((a - 1.0) - (a + 1.0) * c),
+                (a + 1.0) - (a - 1.0) * c - k,
+            )
+        }
+
+        pub struct Eq {
+            params: Params,
+            glide: Glide,
+            rate: f64,
+            coefs: [Coefs; SECTIONS],
+            active: [bool; SECTIONS],
+            state: [[Biquad; SECTIONS]; 2],
+            gain: f64,
+            out: Ramp,
+        }
+
+        impl Eq {
+            pub fn new(params: Params) -> Eq {
+                Eq {
+                    glide: Glide::new(&xirius_params::EQ),
+                    params,
+                    rate: 48_000.0,
+                    coefs: [Coefs::THROUGH; SECTIONS],
+                    active: [false; SECTIONS],
+                    state: [[Biquad::default(); SECTIONS]; 2],
+                    gain: 1.0,
+                    out: Ramp::new(1.0),
+                }
+            }
+
+            fn update(&mut self) {
+                let g = &self.glide;
+                let rate = self.rate;
+                let mut next = [None; SECTIONS];
+                if g.on(LOW_CUT_ON) {
+                    let qs = butterworth_qs(order(g.index(LOW_CUT_SLOPE)));
+                    for (k, q) in qs.iter().enumerate() {
+                        next[k] = Some(Coefs::highpass(g.get(LOW_CUT_FREQ), *q, rate));
+                    }
+                }
+                let bands = [
+                    (LOW_GAIN, low_shelf(g.get(LOW_FREQ), g.get(LOW_GAIN), rate)),
+                    (
+                        MID1_GAIN,
+                        Coefs::peak(g.get(MID1_FREQ), g.get(MID1_Q), g.get(MID1_GAIN), rate),
+                    ),
+                    (
+                        MID2_GAIN,
+                        Coefs::peak(g.get(MID2_FREQ), g.get(MID2_Q), g.get(MID2_GAIN), rate),
+                    ),
+                    (
+                        HIGH_GAIN,
+                        high_shelf(g.get(HIGH_FREQ), g.get(HIGH_GAIN), rate),
+                    ),
+                ];
+                for (k, (gain, c)) in bands.into_iter().enumerate() {
+                    if g.get(gain) != 0.0 {
+                        next[4 + k] = Some(c);
+                    }
+                }
+                if g.on(HIGH_CUT_ON) {
+                    let qs = butterworth_qs(order(g.index(HIGH_CUT_SLOPE)));
+                    for (k, q) in qs.iter().enumerate() {
+                        next[8 + k] = Some(Coefs::lowpass(g.get(HIGH_CUT_FREQ), *q, rate));
+                    }
+                }
+                for (k, c) in next.into_iter().enumerate() {
+                    let on = c.is_some();
+                    if on && !self.active[k] {
+                        for ch in &mut self.state {
+                            ch[k].reset();
+                        }
+                    }
+                    self.active[k] = on;
+                    self.coefs[k] = c.unwrap_or(Coefs::THROUGH);
+                }
+                self.gain = db_to_gain(g.get(OUTPUT));
+            }
+        }
+
+        fn order(slope: usize) -> usize {
+            match slope {
+                0 => 2,
+                1 => 4,
+                _ => 8,
+            }
+        }
+
+        impl Processor for Eq {
+            fn name(&self) -> &str {
+                "EQ"
+            }
+
+            fn prepare(&mut self, setup: &ProcessSetup) {
+                self.rate = setup.sample_rate;
+                self.params.refresh();
+                self.glide.prepare(&self.params, self.rate);
+                self.state = [[Biquad::default(); SECTIONS]; 2];
+                self.active = [false; SECTIONS];
+                self.update();
+                self.out.set(self.gain);
+            }
+
+            fn process(&mut self, io: &mut AudioIo<'_>, _events: &[NoteEvent]) {
+                let n = io.frames();
+                let mut at = 0;
+                while at < n {
+                    let len = STEP.min(n - at);
+                    if self.glide.step(&mut self.params) {
+                        self.update();
+                    }
+                    let (g0, dg) = self.out.toward(self.gain, len);
+                    for (ch, buf) in [&mut *io.left, &mut *io.right].into_iter().enumerate() {
+                        let state = &mut self.state[ch];
+                        let mut g = g0;
+                        for s in &mut buf[at..at + len] {
+                            let mut x = f64::from(*s);
+                            let sections = state.iter_mut().zip(&self.coefs).zip(&self.active);
+                            for ((b, c), _) in sections.filter(|(_, on)| **on) {
+                                x = b.tick(c, x);
+                            }
+                            g += dg;
+                            *s = (x * g) as f32;
+                        }
+                    }
+                    at += len;
+                }
+                for ch in &mut self.state {
+                    for b in ch.iter_mut() {
+                        b.flush();
+                    }
+                }
+            }
+        }
+    }
+
+    fn noise(seed: &mut u64) -> f64 {
+        *seed = seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (*seed >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    /// Different on the two channels: two tones and noise.
+    fn program(frames: usize, seed: u64) -> (Vec<f32>, Vec<f32>) {
+        let mut s = seed;
+        let mut side = |ch: f64| -> Vec<f32> {
+            (0..frames)
+                .map(|i| {
+                    let t = i as f64 / RATE;
+                    let tone = (TAU * (90.0 + 40.0 * ch) * t).sin() + (TAU * 3100.0 * t).sin();
+                    (0.3 * tone + 0.3 * (2.0 * noise(&mut s) - 1.0)) as f32
+                })
+                .collect()
+        };
+        (side(0.0), side(1.0))
+    }
+
+    /// Runs today's EQ and the one before on one bank, `knobs` moving the old 17 parameters
+    /// between chunks, and compares every sample's bits.
+    fn against_before(knobs: impl Fn(&ParamBank, &mut u64)) {
+        let bank = Arc::new(ParamBank::new(&EQ));
+        let mut now = Eq::new(Params::new(bank.clone()));
+        let mut was = before::Eq::new(Params::new(bank.clone()));
+        now.prepare(&setup());
+        was.prepare(&setup());
+        let (l, r) = program(RATE as usize * 2, 3);
+        let mut seed = 5;
+        let mut at = 0;
+        while at < l.len() {
+            knobs(&bank, &mut seed);
+            let end = (at + 4_801).min(l.len());
+            let (a, b) = render(&mut now, &l[at..end], &r[at..end], &[]);
+            let (c, d) = render(&mut was, &l[at..end], &r[at..end], &[]);
+            for (j, (x, y)) in a.iter().zip(&c).chain(b.iter().zip(&d)).enumerate() {
+                assert_eq!(x.to_bits(), y.to_bits(), "frame {}", at + j % (end - at));
+            }
+            at = end;
+        }
+    }
+
+    #[test]
+    fn at_the_defaults_it_sounds_as_it_did_to_the_bit() {
+        against_before(|_, _| {});
+    }
+
+    #[test]
+    fn the_old_knobs_anywhere_sound_as_they_did_to_the_bit() {
+        against_before(|bank, seed| {
+            for i in 0..=OUTPUT {
+                let mut v = noise(seed);
+                // A gain at 0 dB now and then, so a band leaves and comes back.
+                if EQ.params[i].unit == xirius_params::Unit::Db && noise(seed) < 0.3 {
+                    v = 0.5;
+                }
+                bank.set_norm(i, v);
+            }
+        });
+    }
+
+    #[test]
+    fn a_song_without_the_new_ids_sounds_as_it_did() {
+        // PLG-062: a song from before the band types holds the old 17 ids alone; the rest
+        // come up at their defaults, and the sound is the old one to the bit.
+        let bank = Arc::new(ParamBank::new(&EQ));
+        let handle = StockHandle::new(bank.clone(), None);
+        for (i, spec) in EQ.params.iter().enumerate().skip(OUTPUT + 1) {
+            let away = if spec.default_norm() < 0.5 { 1.0 } else { 0.0 };
+            bank.set_norm(i, away);
+        }
+        let mut song = BTreeMap::new();
+        let mut seed = 9;
+        for spec in &EQ.params[..=OUTPUT] {
+            song.insert(spec.id.to_string(), noise(&mut seed));
+        }
+        song.insert("low_cut_on".to_string(), 1.0);
+        song.insert("high_cut_on".to_string(), 1.0);
+        assert!(handle.set_all(&song).is_empty());
+        let mut now = Eq::new(Params::new(bank.clone()));
+        let mut was = before::Eq::new(Params::new(bank));
+        now.prepare(&setup());
+        was.prepare(&setup());
+        let (l, r) = program(RATE as usize, 4);
+        let (a, b) = render(&mut now, &l, &r, &[]);
+        let (c, d) = render(&mut was, &l, &r, &[]);
+        for (x, y) in a.iter().zip(&c).chain(b.iter().zip(&d)) {
+            assert_eq!(x.to_bits(), y.to_bits());
+        }
+    }
+
+    /// The defaults with `set` (plain values) over them, as 0..1 values.
+    fn values(set: &[(&str, f64)]) -> Vec<f64> {
+        let mut v: Vec<f64> = EQ.params.iter().map(|p| p.default_norm()).collect();
+        for (id, plain) in set {
+            let (i, spec) = EQ.param(id).unwrap();
+            v[i] = spec.to_norm(*plain);
+        }
+        v
+    }
+
+    #[test]
+    fn the_curve_is_what_the_sound_goes_through() {
+        let set = [
+            ("b2_type", 0.0),
+            ("low_freq", 120.0),
+            ("b2_q", 1.4),
+            ("b2_slope", 0.0),
+            ("mid1_freq", 700.0),
+            ("mid1_gain", -7.0),
+            ("mid1_q", 3.0),
+            ("b4_type", 4.0),
+            ("mid2_freq", 3000.0),
+            ("mid2_gain", 5.0),
+            ("mid2_q", 1.2),
+            ("b5_type", 1.0),
+            ("high_freq", 9000.0),
+            ("b5_q", 4.0),
+            ("high_cut_on", 1.0),
+            ("high_cut_freq", 15_000.0),
+            ("output", -2.0),
+        ];
+        let curve = Response::new(&values(&set), RATE);
+        for f in [60.0, 120.0, 400.0, 700.0, 2000.0, 3000.0, 6000.0, 12_000.0] {
+            let want = curve.db(f);
+            let got = gain_at(f, &set);
+            assert!((got - want).abs() < 0.05, "{f} Hz: {got} against {want}");
+        }
+        assert_eq!(response_db(&values(&set), 700.0, RATE), curve.db(700.0));
+        let alone = band_db(&values(&set), 2, 700.0, RATE);
+        assert!((alone + 7.0).abs() < 1e-6, "{alone}");
+    }
+
+    #[test]
+    fn a_curve_of_the_defaults_is_flat_and_missing_values_are_defaults() {
+        for f in [20.0, 1000.0, 20_000.0] {
+            assert_eq!(response_db(&[], f, RATE), 0.0);
+            assert_eq!(response_db(&values(&[]), f, RATE), 0.0);
+        }
+        let low_cut = values(&[("low_cut_on", 1.0), ("low_cut_freq", 400.0)]);
+        assert!((band_db(&low_cut, 0, 400.0, RATE) + 3.01).abs() < 0.01);
+        assert_eq!(band_db(&low_cut, 1, 400.0, RATE), 0.0);
+        assert_eq!(band_db(&low_cut, 9, 400.0, RATE), 0.0);
+    }
+
+    #[test]
+    fn a_band_off_leaves_the_sound_and_a_cut_ignores_its_gain() {
+        let off = [("b3_on", 0.0), ("mid1_gain", 12.0)];
+        assert!(gain_at(400.0, &off).abs() < 0.01);
+        let flat = std::f64::consts::FRAC_1_SQRT_2;
+        let cut = [
+            ("b3_type", 0.0),
+            ("mid1_freq", 400.0),
+            ("mid1_gain", 12.0),
+            ("mid1_q", flat),
+        ];
+        assert!((gain_at(400.0, &cut) + 3.0).abs() < 0.2);
+        let one = gain_at(200.0, &cut);
+        assert!((-26.0..-22.0).contains(&one), "{one}");
+        // Band 3 as a high cut of 12 dB per octave.
+        let high = [
+            ("b3_type", 5.0),
+            ("mid1_freq", 2000.0),
+            ("mid1_q", flat),
+            ("b3_slope", 0.0),
+        ];
+        let one = gain_at(4000.0, &high);
+        assert!((-14.0..-10.0).contains(&one), "{one}");
+    }
+
+    #[test]
+    fn a_notch_takes_its_frequency_out_whatever_the_gain() {
+        let set = [
+            ("b2_type", 3.0),
+            ("low_freq", 300.0),
+            ("b2_q", 4.0),
+            ("low_gain", 9.0),
+        ];
+        assert!(gain_at(300.0, &set) < -40.0);
+        assert!(gain_at(3000.0, &set).abs() < 0.1);
+        assert!(gain_at(30.0, &set).abs() < 0.1);
+        assert_eq!(band_db(&values(&set), 1, 300.0, RATE), f64::NEG_INFINITY);
+    }
+
+    #[test]
+    fn a_shelf_and_a_cut_bump_at_the_corner_when_their_q_rises() {
+        let flat = values(&[("low_gain", 6.0)]);
+        let peaky = values(&[("low_gain", 6.0), ("b2_q", 3.0)]);
+        let at = |v: &[f64], f: u32| band_db(v, 1, f64::from(f), RATE);
+        assert!(at(&flat, 30) > 5.5 && at(&peaky, 30) > 5.5);
+        // Above the corner a high Q dips under 0 dB; a slope of 1 never does.
+        let dip = (100..2000).map(|f| at(&peaky, f)).fold(0.0, f64::min);
+        let none = (100..2000).map(|f| at(&flat, f)).fold(0.0, f64::min);
+        assert!(dip < -1.0, "{dip}");
+        assert!(none > -1e-6, "{none}");
+        let cut = values(&[("low_cut_on", 1.0), ("low_cut_freq", 400.0), ("b1_q", 4.0)]);
+        assert!(band_db(&cut, 0, 400.0, RATE) > 6.0);
     }
 }

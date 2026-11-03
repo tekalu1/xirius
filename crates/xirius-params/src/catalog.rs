@@ -4,6 +4,7 @@
 //! in, and the index the engine reads them by. Ids are never renamed once a song can hold
 //! them; a new parameter goes at the end of its group.
 
+use crate::eq::{HIGH_TYPE_LABELS, LOW_TYPE_LABELS, MID_TYPE_LABELS};
 use crate::{BuiltinDef, Curve, Kind, Off, ParamSpec, Unit};
 
 const fn spec(
@@ -25,12 +26,21 @@ const fn spec(
         curve,
         off: Off::Never,
         preset: true,
+        factory: true,
     }
 }
 
 /// A knob the built-in presets leave where it is.
 const fn no_preset(p: ParamSpec) -> ParamSpec {
     ParamSpec { preset: false, ..p }
+}
+
+/// A knob added after the factory presets were made: they leave it at its default.
+const fn later(p: ParamSpec) -> ParamSpec {
+    ParamSpec {
+        factory: false,
+        ..p
+    }
 }
 
 /// A cut that is off at or below `at` (the bottom of its range).
@@ -95,6 +105,13 @@ const fn semis(id: &'static str, label: &'static str, range: f64) -> ParamSpec {
 /// The slopes of the EQ's cut filters.
 pub const SLOPES: &[&str] = &["12 dB/oct", "24 dB/oct", "48 dB/oct"];
 
+/// A band's Q. The default of a new one is 1/√2: a slope-1 shelf's, a Butterworth cut's.
+const fn q(id: &'static str, label: &'static str, default: f64) -> ParamSpec {
+    spec(id, label, Unit::None, 0.1, 18.0, default, Curve::Log)
+}
+
+const FLAT_Q: f64 = std::f64::consts::FRAC_1_SQRT_2;
+
 pub static EQ: BuiltinDef = BuiltinDef {
     uid: "eq",
     name: "EQ",
@@ -139,6 +156,29 @@ pub static EQ: BuiltinDef = BuiltinDef {
         ),
         choice("high_cut_slope", "ハイカットの傾き", SLOPES, 1),
         db("output", "出力", -24.0, 24.0, 0.0),
+        // Each band's type, on, Q and slope (PLG-062; `xirius_params::EQ_BANDS`). Their
+        // defaults are the bands above as they were, so a song or a preset from before them
+        // sounds the same.
+        later(choice("b1_type", "ローカットの型", LOW_TYPE_LABELS, 0)),
+        later(db("b1_gain", "ローカットのゲイン", -18.0, 18.0, 0.0)),
+        later(q("b1_q", "ローカットの Q", FLAT_Q)),
+        later(toggle("b2_on", "低域", true)),
+        later(choice("b2_type", "低域の型", LOW_TYPE_LABELS, 1)),
+        later(q("b2_q", "低域の Q", FLAT_Q)),
+        later(choice("b2_slope", "低域の傾き", SLOPES, 1)),
+        later(toggle("b3_on", "中域 1", true)),
+        later(choice("b3_type", "中域 1 の型", MID_TYPE_LABELS, 2)),
+        later(choice("b3_slope", "中域 1 の傾き", SLOPES, 1)),
+        later(toggle("b4_on", "中域 2", true)),
+        later(choice("b4_type", "中域 2 の型", MID_TYPE_LABELS, 2)),
+        later(choice("b4_slope", "中域 2 の傾き", SLOPES, 1)),
+        later(toggle("b5_on", "高域", true)),
+        later(choice("b5_type", "高域の型", HIGH_TYPE_LABELS, 2)),
+        later(q("b5_q", "高域の Q", FLAT_Q)),
+        later(choice("b5_slope", "高域の傾き", SLOPES, 1)),
+        later(choice("b6_type", "ハイカットの型", HIGH_TYPE_LABELS, 3)),
+        later(db("b6_gain", "ハイカットのゲイン", -18.0, 18.0, 0.0)),
+        later(q("b6_q", "ハイカットの Q", FLAT_Q)),
     ],
 };
 

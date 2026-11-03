@@ -12,12 +12,14 @@
 //! The crate has no dependencies, so the project model, the engine and the UI can all read it.
 
 mod catalog;
+pub mod eq;
 pub mod pitch;
 
 pub use catalog::{
     BUILTINS, COMPRESSOR, DELAY, DIVISIONS, DRUM_KIT, EQ, FEELS, KITS, LIMITER, REVERB, SAMPLER,
     SAMPLER_SOUNDS, SLOPES,
 };
+pub use eq::{BandType, EQ_BANDS, EqBand};
 
 /// What a parameter's plain value is measured in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,6 +94,10 @@ pub struct ParamSpec {
     /// are not (PLG-071): a preset leaves them where they are, and a song from before them
     /// still reads the preset it was at.
     pub preset: bool,
+    /// Whether the factory presets move it ([`factory_presets`]) and their files hold it.
+    /// Knobs added after the factory set was made are not: the set keeps its sound and its
+    /// files their bytes, and loading one puts those knobs at their defaults (PLG-062).
+    pub factory: bool,
 }
 
 impl ParamSpec {
@@ -380,9 +386,9 @@ pub const FACTORY_PRESETS: &[(&str, f64)] =
 pub const FACTORY_VERSION: u32 = 1;
 
 /// The factory presets of a built-in: a name and the knob values (0..1) in `def.params`
-/// order. A stepped parameter and one no preset sets ([`ParamSpec::preset`]) keep their
-/// default; the others move `share` of their sweep from the default, alternating the
-/// direction down the panel.
+/// order. A stepped parameter, one no preset sets ([`ParamSpec::preset`]) and one the
+/// factory set leaves out ([`ParamSpec::factory`]) keep their default; the others move
+/// `share` of their sweep from the default, alternating the direction down the panel.
 pub fn factory_presets(def: &BuiltinDef) -> Vec<(&'static str, Vec<f64>)> {
     FACTORY_PRESETS
         .iter()
@@ -397,7 +403,7 @@ fn preset_values(def: &BuiltinDef, share: f64) -> Vec<f64> {
         .enumerate()
         .map(|(i, p)| {
             let d = p.default_norm();
-            if p.steps().is_some() || !p.preset {
+            if p.steps().is_some() || !p.preset || !p.factory {
                 return d;
             }
             let sign = if i % 2 == 1 { -1.0 } else { 1.0 };
@@ -407,7 +413,7 @@ fn preset_values(def: &BuiltinDef, share: f64) -> Vec<f64> {
 }
 
 /// The most parameters a built-in has, for fixed-size tables on the audio thread.
-pub const MAX_PARAMS: usize = 32;
+pub const MAX_PARAMS: usize = 48;
 
 #[cfg(test)]
 mod tests {
@@ -481,6 +487,21 @@ mod tests {
                 assert!((p.to_plain(1.0) - hi).abs() < 1e-9 * hi.abs().max(1.0));
                 assert_eq!(p.to_norm(lo - 1000.0), 0.0);
                 assert_eq!(p.to_norm(hi + 1e9), 1.0);
+            }
+        }
+    }
+
+    #[test]
+    fn the_factory_presets_leave_the_eqs_later_knobs_at_their_defaults() {
+        // PLG-062: the band types, ons, Qs and slopes came after the set; it keeps its sound.
+        let first = EQ.param("b1_type").unwrap().0;
+        assert_eq!(first, 17);
+        for (name, values) in factory_presets(&EQ) {
+            for (i, p) in EQ.params.iter().enumerate() {
+                assert_eq!(p.factory, i < first, "{}", p.id);
+                if i >= first {
+                    assert_eq!(values[i], p.default_norm(), "{name}: {}", p.id);
+                }
             }
         }
     }

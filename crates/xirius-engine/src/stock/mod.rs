@@ -11,7 +11,7 @@ mod compressor;
 mod delay;
 mod drum_kit;
 pub mod dsp;
-mod eq;
+pub mod eq;
 pub mod files;
 mod limiter;
 mod reverb;
