@@ -815,6 +815,23 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 out.push(mark(format!("device-{}-readout-{n}", w.plugin), node));
             }
         }
+        // A Sampler's keys and a Drum Kit's pads are Buttons named by their note (PLG-066).
+        for k in &body.keys {
+            let mut node = accesskit::Node::new(accesskit::Role::Button);
+            node.set_label(crate::roll::pitch_name(k.pitch));
+            node.set_bounds(bounds(k.r));
+            out.push(mark(format!("device-{}-key-{}", w.plugin, k.pitch), node));
+        }
+        for k in &body.pads {
+            let mut node = accesskit::Node::new(accesskit::Role::Button);
+            node.set_label(format!(
+                "{} {}",
+                crate::device::play::pad_name(k.pitch),
+                crate::roll::pitch_name(k.pitch)
+            ));
+            node.set_bounds(bounds(k.r));
+            out.push(mark(format!("device-{}-pad-{}", w.plugin, k.pitch), node));
+        }
         for slot in body.slots {
             let spec = &def.params[slot.k];
             let v = s

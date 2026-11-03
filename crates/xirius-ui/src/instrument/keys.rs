@@ -37,7 +37,7 @@ const OCTAVES: (i8, i8) = (2, 6);
 const OCTAVE: i8 = 4;
 
 /// How hard a key plays (the mock's 100 of 127).
-const VELOCITY: f32 = 100.0 / 127.0;
+pub(crate) const VELOCITY: f32 = 100.0 / 127.0;
 
 /// A played note's velocity with the track's, in the keyboard's 1..=127 (UI-312).
 fn track_velocity(percent: i8, velocity: f32) -> f32 {

@@ -38,7 +38,11 @@ pub struct LiveMidi {
 
 /// The note a played key sounds on `track`: the track's transpose may take it off the keyboard
 /// (then it does not sound), and the track's velocity is applied (UI-312).
-fn heard(p: &xirius_core::model::Project, track: TrackId, kind: NoteKind) -> Option<NoteKind> {
+pub(crate) fn heard(
+    p: &xirius_core::model::Project,
+    track: TrackId,
+    kind: NoteKind,
+) -> Option<NoteKind> {
     let t = p.tracks.get(&track)?;
     match kind {
         NoteKind::On { pitch, velocity } => {
@@ -57,7 +61,12 @@ fn heard(p: &xirius_core::model::Project, track: TrackId, kind: NoteKind) -> Opt
 
 impl Studio {
     /// Plays `kind` on `track`, keeping it for the tests to read (UI-312).
-    fn live_note(&mut self, p: &xirius_core::model::Project, track: TrackId, kind: NoteKind) {
+    pub(crate) fn live_note(
+        &mut self,
+        p: &xirius_core::model::Project,
+        track: TrackId,
+        kind: NoteKind,
+    ) {
         #[cfg(test)]
         self.live_midi.sent.push((track, kind));
         if let Err(e) = self.transport.note(p, self.song.dir(), track, kind) {

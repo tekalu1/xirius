@@ -1241,6 +1241,9 @@ impl Studio {
             }
         }
         if self.instruments.is_open(id) {
+            if self.instruments.note.is_some_and(|n| n.plugin == id) {
+                self.window_note_off();
+            }
             self.instruments.open.retain(|w| w.plugin != id);
             return true;
         }

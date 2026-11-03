@@ -492,7 +492,14 @@ impl Processor for Sampler {
             self.until_step -= end - at;
             at = end;
         }
-        if self.params.probe().watching() {
+        let probe = self.params.probe();
+        probe.set_sounding(
+            self.voices
+                .iter()
+                .filter(|v| v.stage != Stage::Idle)
+                .count(),
+        );
+        if probe.watching() {
             self.show(io);
         }
     }
@@ -894,5 +901,17 @@ mod tests {
         set_plain(&h, "resonance", 100.0);
         set_plain(&h, "cutoff", 1000.0);
         assert_silent(p.as_mut());
+    }
+
+    /// PLG-066: a note played and let go leaves no voice of the Sampler sounding.
+    #[test]
+    fn a_note_let_go_leaves_no_voice_sounding() {
+        let (mut p, h) = make("sampler");
+        let held = vec![0.0; 4_800];
+        render(p.as_mut(), &held, &held, &[(0, on(60, 0.8))]);
+        assert!(h.probe().sounding() > 0);
+        let after = vec![0.0; 48_000 * 4];
+        render(p.as_mut(), &after, &after, &[(0, off(60))]);
+        assert_eq!(h.probe().sounding(), 0);
     }
 }

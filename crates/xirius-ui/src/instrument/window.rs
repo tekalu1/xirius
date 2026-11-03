@@ -18,6 +18,7 @@ use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::{Plugin, PluginKind, Project, Track, TrackKind};
 use xirius_design::{FontSize, Radius, Weight};
+use xirius_engine::NoteKind;
 use xirius_params::{BuiltinDef, ParamSpec};
 
 use super::menu::Menu;
@@ -28,6 +29,7 @@ use crate::device::dynamics::{self, Dynamics};
 use crate::device::eq;
 use crate::device::graph::{self, Point};
 use crate::device::layout::{self, Body, Slot};
+use crate::device::play;
 use crate::draw::{Align, Pen};
 use crate::mixer::meters::Meter;
 use crate::popup::PopupKind;
@@ -163,6 +165,8 @@ pub(crate) enum Grab {
         x: Option<(usize, f64, f64)>,
         y: Option<(usize, f64, f64)>,
     },
+    /// A key or a pad (PLG-066): its note sounds while it is held and the pointer stays on it.
+    Note { plugin: PluginId, pitch: u8 },
 }
 
 impl Grab {
@@ -171,7 +175,8 @@ impl Grab {
             Grab::Move { plugin, .. }
             | Grab::Size { plugin, .. }
             | Grab::Knob { plugin, .. }
-            | Grab::Point { plugin, .. } => plugin,
+            | Grab::Point { plugin, .. }
+            | Grab::Note { plugin, .. } => plugin,
         }
     }
 
@@ -217,7 +222,21 @@ pub enum Part {
     /// The readout under a dynamics device's `i`th meter: a press clears
     /// the most it shows (UI-327).
     Readout(usize),
+    /// A key of a Sampler's keyboard and a pad of a Drum Kit, by the note it plays (PLG-066).
+    Key(u8),
+    Pad(u8),
     Body,
+}
+
+/// The note a window's key or pad sounds (PLG-066).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Held {
+    pub plugin: PluginId,
+    pub track: TrackId,
+    /// The key's own note, as it lights.
+    pub pitch: u8,
+    /// The note sent, after the track's transpose: `None` when that took it off the keyboard.
+    pub heard: Option<u8>,
 }
 
 /// What an EQ's analyser shows and last heard (UI-326, ENG-073).
@@ -305,6 +324,8 @@ pub struct Windows {
     /// The body's size each kind of device was last left at: its next
     /// window opens so (UI-331).
     pub(crate) sizes: HashMap<&'static str, (f32, f32)>,
+    /// The note a key or a pad sounds (PLG-066).
+    pub(crate) note: Option<Held>,
 }
 
 /// How long an opened window's frame lights.
@@ -473,6 +494,8 @@ impl Windows {
             Part::Tab(t) => body().tabs.get(t).map(|t| t.r).unwrap_or_default(),
             Part::Spectrum => self.spectrum_of(&body(), plugin.id).unwrap_or_default(),
             Part::Readout(i) => body().levels.get(i).map(|l| l.readout).unwrap_or_default(),
+            Part::Key(pitch) => key_rect(&body().keys, pitch),
+            Part::Pad(pitch) => key_rect(&body().pads, pitch),
             // The empty rest under the controls (a press in a gap is Body
             // too; the strip is where a point of it always is).
             Part::Body => Rect::new(r.x, r.bottom() - layout::PAD, r.w, layout::PAD),
@@ -548,6 +571,12 @@ impl Windows {
                 .is_some_and(|s| s.contains(x, y))
             {
                 return Some((i, Part::Spectrum));
+            }
+            if let Some(pitch) = play::key_at(&b.keys, x, y) {
+                return Some((i, Part::Key(pitch)));
+            }
+            if let Some(pitch) = play::key_at(&b.pads, x, y) {
+                return Some((i, Part::Pad(pitch)));
             }
             let planes = &b.graphs;
             let point = planes.iter().enumerate().find_map(|(n, &plane)| {
@@ -700,6 +729,14 @@ fn bar(r: Rect, track: &Track, plugin: &Plugin, def: &BuiltinDef) -> title_bar::
     };
     let head = Rect::new(r.x, r.y, r.w, title_bar::BAR_H);
     title_bar::layout(head, track.shown_name(), &plugin.name, seats)
+}
+
+/// Where the key or pad playing `pitch` is.
+fn key_rect(keys: &[play::Key], pitch: u8) -> Rect {
+    keys.iter()
+        .find(|k| k.pitch == pitch)
+        .map(|k| k.r)
+        .unwrap_or_default()
 }
 
 /// The body of the window whose frame is `r`, on the screen, for the values
@@ -864,7 +901,13 @@ impl Studio {
         let r = self.instruments.rect(i, g.size);
         match part {
             Part::Close => {
+                if self.instruments.note.is_some_and(|n| n.plugin == w.plugin) {
+                    self.window_note_off();
+                }
                 self.instruments.open.remove(i);
+            }
+            Part::Key(pitch) | Part::Pad(pitch) => {
+                self.window_note_on(w, pitch);
             }
             Part::Head => {
                 self.instruments.grab = Some(Grab::Move {
@@ -1080,6 +1123,21 @@ impl Studio {
                 true
             }
             Some(Grab::Point { .. }) => self.device_point_moved(g, x, y, fine),
+            Some(Grab::Note { plugin, pitch }) => {
+                // Off the key or pad held, its note ends; coming back does not play it again.
+                let p = self.project();
+                let on = self
+                    .instruments
+                    .at(&p, g.size, x, y)
+                    .is_some_and(|(i, part)| {
+                        self.instruments.open[i].plugin == plugin
+                            && matches!(part, Part::Key(k) | Part::Pad(k) if k == pitch)
+                    });
+                if !on {
+                    self.window_note_off();
+                }
+                true
+            }
             None => false,
         }
     }
@@ -1089,6 +1147,9 @@ impl Studio {
         let Some(grab) = self.instruments.grab.take() else {
             return false;
         };
+        if let Grab::Note { .. } = grab {
+            self.window_note_off();
+        }
         if let Grab::Knob {
             plugin, k, value, ..
         } = grab
@@ -1134,6 +1195,14 @@ impl Studio {
     /// writing. True while a meter still
     /// moves or an analyser hears something.
     pub(crate) fn poll_probes(&mut self) -> bool {
+        // A window that went another way (its device removed) ends the note it played.
+        if self
+            .instruments
+            .note
+            .is_some_and(|n| !self.instruments.is_open(n.plugin))
+        {
+            self.window_note_off();
+        }
         let rate = f64::from(self.project().settings.sample_rate);
         let lit = self.motion.enabled.get()
             && self
@@ -1149,6 +1218,46 @@ impl Studio {
         self.instruments
             .poll_with(&p, rate, now, |id| plugins.stock_probe(id))
             | lit
+    }
+
+    /// A key or a pad of the window `w` was pressed: its note plays on the window's track as
+    /// the track's input would (its transpose and velocity), not recorded (PLG-066).
+    fn window_note_on(&mut self, w: Win, pitch: u8) {
+        self.window_note_off();
+        let p = self.project();
+        let kind = NoteKind::On {
+            pitch,
+            velocity: super::keys::VELOCITY,
+        };
+        let heard = crate::midi_live::heard(&p, w.track, kind);
+        if let Some(kind) = heard {
+            self.live_note(&p, w.track, kind);
+        }
+        self.instruments.note = Some(Held {
+            plugin: w.plugin,
+            track: w.track,
+            pitch,
+            heard: match heard {
+                Some(NoteKind::On { pitch, .. }) => Some(pitch),
+                _ => None,
+            },
+        });
+        self.instruments.grab = Some(Grab::Note {
+            plugin: w.plugin,
+            pitch,
+        });
+    }
+
+    /// Ends the note a window's key or pad sounds; false when none does.
+    pub(crate) fn window_note_off(&mut self) -> bool {
+        let Some(held) = self.instruments.note.take() else {
+            return false;
+        };
+        if let Some(pitch) = held.heard {
+            let p = self.project();
+            self.live_note(&p, held.track, NoteKind::Off { pitch });
+        }
+        true
     }
 
     /// Opens the menu of what an EQ's analyser shows under its button `at`.
@@ -1388,6 +1497,13 @@ fn paint_window(
             let d = ins.dynamics.get(&plugin.id).unwrap_or(&none);
             dynamics::paint_levels(pen, &body.levels, d, readout);
         }
+        let down = ins.note.filter(|n| n.plugin == plugin.id).map(|n| n.pitch);
+        let pad = match hot {
+            Some(Part::Pad(k)) => Some(k),
+            _ => None,
+        };
+        play::paint_keys(pen, &body.keys, down);
+        play::paint_pads(pen, &body.pads, down, pad);
         let meter = ins.meters.get(&plugin.id).copied().unwrap_or_default();
         for (ch, &m) in body.meters.iter().enumerate() {
             crate::mixer::paint::meter(pen, m, &meter, ch.min(1));

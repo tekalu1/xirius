@@ -826,6 +826,7 @@ impl Processor for DrumKit {
             at = end;
         }
         let probe = self.params.probe();
+        probe.set_sounding(self.voices.iter().filter(|v| v.on).count());
         if probe.watching() {
             probe.note_output(io.left, io.right);
         }
@@ -1096,5 +1097,17 @@ mod tests {
     fn silence_without_notes() {
         let (mut p, _) = make("drum-kit");
         assert_silent(p.as_mut());
+    }
+
+    /// PLG-066: a note played and let go leaves no voice of the Drum Kit sounding.
+    #[test]
+    fn a_note_let_go_leaves_no_voice_sounding() {
+        let (mut p, h) = make("drum-kit");
+        let held = vec![0.0; 4_800];
+        render(p.as_mut(), &held, &held, &[(0, on(60, 0.8))]);
+        assert!(h.probe().sounding() > 0);
+        let after = vec![0.0; 48_000 * 4];
+        render(p.as_mut(), &after, &after, &[(0, off(60))]);
+        assert_eq!(h.probe().sounding(), 0);
     }
 }

@@ -46,6 +46,10 @@ const fn size_stage(n: u8) -> Act {
     Act::Stage(Play::Laid(play_size), n)
 }
 
+const fn play_stage(n: u8) -> Act {
+    Act::Stage(Play::Laid(play_notes), n)
+}
+
 pub const SHOTS: &[Shot] = &[
     // The browser's effects with the Reverb's presets open under it, one chosen and a
     // favourite (BRW-017).
@@ -132,6 +136,17 @@ pub const SHOTS: &[Shot] = &[
     Shot {
         name: "pin01-pinned-and-next",
         acts: &[Act::Reset, pin_stage(0), pin_stage(1)],
+    },
+    // The Sampler's window with its keyboard, C3 held (PLG-066). Its controls stand in rows of
+    // one width, so it has no narrow shot.
+    Shot {
+        name: "play01-sampler",
+        acts: &[Act::Reset, play_stage(0)],
+    },
+    // The Drum Kit's with its pads, A1 held.
+    Shot {
+        name: "play02-drum-kit",
+        acts: &[Act::Reset, play_stage(1)],
     },
     // The Compressor at a saved preset, a knob moved off it: the tag's mark (UI-332).
     Shot {
@@ -604,6 +619,33 @@ fn play_browser(s: &mut Studio, g: &Geometry, n: u8) {
     }
 }
 
+/// Keys plays the Sampler (stage 0) or the Drum Kit (1); its window opens with a key or a pad
+/// shown held (no note is sent: the player would start on the sample song).
+fn play_notes(s: &mut Studio, _: &Geometry, n: u8) {
+    let t = keys(s);
+    let (name, pitch) = if n == 0 {
+        ("Sampler", 60)
+    } else {
+        ("Drum Kit", 36)
+    };
+    s.ctx = None;
+    s.popup = None;
+    if !s.set_instrument(t, &crate::instrument::Pick::built_in(name)) {
+        return;
+    }
+    let Some(id) = crate::instrument::current(&s.project().tracks[&t]).map(|x| x.id) else {
+        return;
+    };
+    s.show_instrument(t, id);
+    s.instruments.flash = None;
+    s.instruments.note = Some(crate::instrument::window::Held {
+        plugin: id,
+        track: t,
+        pitch,
+        heard: None,
+    });
+}
+
 fn play_reverb(s: &mut Studio, g: &Geometry, n: u8) {
     let g = &s.geometry(g.size.0, g.size.1);
     if n == 0 {
@@ -741,6 +783,18 @@ mod tests {
                 .is_some_and(|d| d.moved && d.preset.is_some()),
             "a preset is held"
         );
+    }
+
+    #[test]
+    fn the_note_stages_play_without_a_window() {
+        let mut s = Studio::sample();
+        let g = s.geometry(1600.0, 1000.0);
+        assert!(Play::Laid(play_notes).without_window(&mut s, &g, 0));
+        assert_eq!(s.instruments.note.map(|n| n.pitch), Some(60));
+        let mut s = Studio::sample();
+        assert!(Play::Laid(play_notes).without_window(&mut s, &g, 1));
+        assert_eq!(s.instruments.note.map(|n| n.pitch), Some(36));
+        assert_eq!(s.instruments.open.len(), 1);
     }
 
     #[test]

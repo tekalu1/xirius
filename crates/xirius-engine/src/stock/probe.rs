@@ -40,6 +40,9 @@ pub struct Probe {
     ///
     /// The three are written one after the other, so a read can mix two blocks.
     voice: [AtomicU32; 3],
+    /// How many voices of the Sampler or the Drum Kit sound, after the last block (PLG-066).
+    /// Written whether or not a window watches.
+    sounding: AtomicU32,
     /// Which of the EQ's samples go into the rings, as a [`Tap`].
     tap: AtomicU8,
     /// The window's ends of the EQ's rings: the mono input and output.
@@ -98,6 +101,7 @@ impl Probe {
                 AtomicU32::new(0),
                 AtomicU32::new(0),
             ],
+            sounding: AtomicU32::new(0),
             tap: AtomicU8::new(Tap::default() as u8),
             rings: Mutex::new(None),
         }
@@ -163,6 +167,12 @@ impl Probe {
         })
     }
 
+    /// How many voices of the Sampler or the Drum Kit sounded after the last block (0 for
+    /// the other built-ins).
+    pub fn sounding(&self) -> u32 {
+        self.sounding.load(Ordering::Relaxed)
+    }
+
     /// Which samples the EQ hands its analyser while watched.
     pub fn tap(&self) -> Tap {
         Tap::from_bits(self.tap.load(Ordering::Relaxed))
@@ -215,6 +225,11 @@ impl Probe {
         if n > 0 {
             self.onsets.fetch_add(n, Ordering::Relaxed);
         }
+    }
+
+    /// Every block, watched or not.
+    pub(crate) fn set_sounding(&self, n: usize) {
+        self.sounding.store(n as u32, Ordering::Relaxed);
     }
 
     pub(crate) fn add_hit(&self, group: usize) {

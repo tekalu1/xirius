@@ -8,6 +8,7 @@ use xirius_design::FontSize;
 use xirius_params::BuiltinDef;
 
 use super::control::{self, DIAL_OUT, Look, NAME_H, VALUE_H};
+use super::play::Key;
 use crate::studio::Rect;
 
 pub const PAD: f32 = 12.0;
@@ -105,6 +106,9 @@ pub struct Body {
     pub tempo: Option<Rect>,
     /// The graph that grows when the window is taller (UI-331).
     pub main: usize,
+    /// A Sampler's keyboard and a Drum Kit's pads (PLG-066).
+    pub keys: Vec<Key>,
+    pub pads: Vec<Key>,
 }
 
 impl Body {
@@ -134,6 +138,16 @@ impl Body {
             meters: self.meters.into_iter().map(m).collect(),
             levels: self.levels.into_iter().map(|l| l.at(dx, dy)).collect(),
             tempo: self.tempo.map(m),
+            keys: self
+                .keys
+                .into_iter()
+                .map(|k| Key { r: m(k.r), ..k })
+                .collect(),
+            pads: self
+                .pads
+                .into_iter()
+                .map(|k| Key { r: m(k.r), ..k })
+                .collect(),
             ..self
         }
     }
@@ -242,7 +256,7 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
         "limiter" => super::limiter::body(def, s),
         "delay" => super::delay::body(def, s),
         "reverb" => super::reverb::body(def, s),
-        _ => rows(def),
+        _ => super::play::add(def, rows(def)),
     }
 }
 
