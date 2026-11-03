@@ -312,8 +312,23 @@ pub struct Structure {
     pub master_rack: Option<Rack>,
 }
 
+/// The channels a plug-in takes as a key in the output mode (MIX-049): they are triggers, heard
+/// only through those keys and never at the master. A stem of one of them still hears it.
+fn key_only(p: &Project, scope: &Scope) -> HashSet<TrackId> {
+    p.tracks
+        .values()
+        .flat_map(|t| &t.inserts)
+        .filter_map(|x| x.sidechain.as_ref())
+        .flat_map(|sc| &sc.sources)
+        .filter(|s| matches!(s.mode, KeyMode::Output))
+        .map(|s| s.track)
+        .filter(|&id| scope.includes(id) && scope.target() != Some(id))
+        .collect()
+}
+
 impl Structure {
     pub fn of(p: &Project, g: &Graph, scope: &Scope) -> Structure {
+        let key_only = key_only(p, scope);
         let shape = |id: &TrackId| {
             let t = &p.tracks[id];
             let w = wiring(p, g, scope, t);
@@ -325,7 +340,11 @@ impl Structure {
                 } else {
                     Vec::new()
                 },
-                output: w.output,
+                output: if key_only.contains(id) {
+                    EOut::Keys
+                } else {
+                    w.output
+                },
                 sends: w.sends.iter().map(|&(b, pre, _)| (b, pre)).collect(),
                 midi: t.midi_out.clone().filter(|_| {
                     t.kind == TrackKind::Instrument && t.frozen.is_none() && scope.includes(*id)

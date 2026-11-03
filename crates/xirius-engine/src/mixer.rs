@@ -29,6 +29,9 @@ pub const MAX_EVENTS_PER_BLOCK: usize = 256;
 pub enum Output {
     Master,
     Bus(usize),
+    /// Nowhere: the channel is heard only through the sidechain keys it feeds (MIX-049), so
+    /// nothing of it reaches the master or a bus.
+    Keys,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -344,12 +347,13 @@ pub fn compensate(
     master_latency: u32,
 ) -> (Vec<Compensation>, Vec<Compensation>, u32) {
     let (arrive, master) = crate::automation_time::arrivals(tracks, buses);
-    let at = |to: Output| match to {
-        Output::Master => master,
-        Output::Bus(b) => arrive[b],
+    let at = |to: Output, late: u32| match to {
+        Output::Master => master - late,
+        Output::Bus(b) => arrive[b] - late,
+        Output::Keys => 0,
     };
     let delays = |r: &Route, late: u32| Compensation {
-        output: at(r.output) - late,
+        output: at(r.output, late),
         sends: r.sends.iter().map(|&b| arrive[b] - late).collect(),
     };
     let track_delays = tracks.iter().map(|t| delays(t, t.latency)).collect();
@@ -989,7 +993,7 @@ impl Plan {
                         .map(|s| s.bus)
                         .chain(match t.output {
                             Output::Bus(b) => Some(b),
-                            Output::Master => None,
+                            Output::Master | Output::Keys => None,
                         })
                         .find(|&b| b >= bus_count);
                     if let Some(bus) = bad_bus {
@@ -1073,7 +1077,7 @@ impl Plan {
         for (i, mut b) in spec.buses.into_iter().enumerate() {
             let feeds = b.sends.iter().map(|s| s.bus).chain(match b.output {
                 Output::Bus(to) => Some(to),
-                Output::Master => None,
+                Output::Master | Output::Keys => None,
             });
             for to in feeds {
                 if to >= bus_count {
@@ -1794,10 +1798,13 @@ impl Plan {
                     s.level.settle();
                 }
                 let dest = match t.output {
-                    Output::Master => &mut self.master.buf,
-                    Output::Bus(b) => &mut self.buses[b].buf,
+                    Output::Master => Some(&mut self.master.buf),
+                    Output::Bus(b) => Some(&mut self.buses[b].buf),
+                    Output::Keys => None,
                 };
-                delays.output.add(dest, &t.buf, n, &Smoothed::new(1.0));
+                if let Some(dest) = dest {
+                    delays.output.add(dest, &t.buf, n, &Smoothed::new(1.0));
+                }
                 for s in &mut self.key_sends[i] {
                     let src = if s.pre { &self.pre } else { &t.buf };
                     s.delay.add(&mut self.key_acc[s.acc], src, n, &s.level);
@@ -1840,10 +1847,13 @@ impl Plan {
                 b.strip.settle();
                 b.strip.meter.add(&b.buf, n);
                 let dest = match b.output {
-                    Output::Master => &mut self.master.buf,
-                    Output::Bus(to) => &mut later[to - j - 1].buf,
+                    Output::Master => Some(&mut self.master.buf),
+                    Output::Bus(to) => Some(&mut later[to - j - 1].buf),
+                    Output::Keys => None,
                 };
-                delays.output.add(dest, &b.buf, n, &Smoothed::new(1.0));
+                if let Some(dest) = dest {
+                    delays.output.add(dest, &b.buf, n, &Smoothed::new(1.0));
+                }
                 for s in &mut self.key_sends[track_count + j] {
                     let src = if s.pre { &self.pre } else { &b.buf };
                     s.delay.add(&mut self.key_acc[s.acc], src, n, &s.level);

@@ -1263,6 +1263,7 @@ pub fn describe_output(o: EOut) -> String {
     match o {
         EOut::Master => "master".into(),
         EOut::Bus(i) => format!("bus {i}"),
+        EOut::Keys => "keys".into(),
     }
 }
 

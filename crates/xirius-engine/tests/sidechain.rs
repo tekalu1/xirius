@@ -827,3 +827,49 @@ fn a_kick_on_another_track_ducks_the_compressor_on_its_beats() {
     );
     assert!(none.iter().all(|x| (*x - 0.05).abs() < 1e-6));
 }
+
+/// MIX-049: a channel whose output goes nowhere is heard only through the key it feeds — its
+/// post-fader output still keys the insert, lined up as any source, and nothing of it reaches
+/// the master. A bus works the same way.
+#[test]
+fn a_channel_with_no_output_keys_without_being_heard() {
+    for bus in [false, true] {
+        let mut s = ramp_track("s", &[40]);
+        s.gain = 0.5;
+        let mut buses = Vec::new();
+        let from = if bus {
+            s.output = Output::Bus(0);
+            let mut b = BusSpec::new("trigger");
+            b.output = Output::Keys;
+            buses.push(b);
+            KeyFrom::Bus(0)
+        } else {
+            s.output = Output::Keys;
+            KeyFrom::Track(0)
+        };
+        let (r, had_key, _) = keyed_track(
+            "r",
+            KeySpec {
+                insert: 0,
+                plugin: 9,
+                on: true,
+                sources: vec![src(1, from, false, 1.0)],
+            },
+            &[],
+        );
+        let spec = MixSpec {
+            tracks: vec![TrackSlot::New(s), TrackSlot::New(r)],
+            buses,
+            ..MixSpec::default()
+        };
+        let (l, out_r) = render(spec, 4, 256);
+        assert!(had_key.load(Ordering::Relaxed), "bus {bus}");
+        // r waits the source's 40 frames. The left is only r's own signal; the right only the
+        // key (s's 0.5 ramp), with nothing of s added on top.
+        for i in 0..l.len() {
+            let v = i.saturating_sub(40) as f32;
+            assert_eq!(l[i], v, "bus {bus}, left {i}");
+            assert_eq!(out_r[i], v * 0.5, "bus {bus}, right {i}");
+        }
+    }
+}

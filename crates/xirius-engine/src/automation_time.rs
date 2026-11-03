@@ -29,6 +29,7 @@ pub fn arrivals(tracks: &[Route], buses: &[Route]) -> (Vec<u32>, u32) {
     let reach = |to: Output, late: u32, arrive: &mut [u32], master: &mut u32| match to {
         Output::Master => *master = (*master).max(late),
         Output::Bus(b) => arrive[b] = arrive[b].max(late),
+        Output::Keys => {}
     };
     for t in tracks {
         reach(t.output, t.latency, &mut arrive, &mut master);

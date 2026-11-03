@@ -449,3 +449,22 @@ fn swap_trades_the_low_cut_and_the_high_cut_in_one_step() {
     let e = run_err(&mut s, "plugin.sidechain.swap", json!({"id": eq}));
     assert!(e.contains("Low Cut"), "{e}");
 }
+
+/// MIX-049: an output-mode source is signal flow like a send, so the same loops are refused.
+#[test]
+fn a_loop_through_an_output_key_is_refused() {
+    let (mut s, _kick, bass, comp) = song();
+    let music = track(&run(&mut s, "track.add.bus", json!({"name": "Music"}))["id"]);
+    run(
+        &mut s,
+        "track.output.set",
+        json!({"ids": [bass.to_string()], "to": music.to_string()}),
+    );
+    let e = run_err(
+        &mut s,
+        "plugin.sidechain.add",
+        json!({"id": comp.to_string(), "from": music.to_string(), "output": true}),
+    );
+    assert!(e.contains("ループ"), "{e}");
+    assert!(sidechain(s.project(), comp).is_none());
+}
