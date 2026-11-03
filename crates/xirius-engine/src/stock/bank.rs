@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use xirius_params::{BuiltinDef, MAX_PARAMS};
 
 use super::files::{FileOutbox, FileSet};
+use super::probe::Probe;
 use crate::rt_lock::Mutex;
 
 pub struct ParamBank {
@@ -18,6 +19,8 @@ pub struct ParamBank {
     changes: AtomicU32,
     /// Beats per minute as `f64` bits, for what follows the tempo.
     tempo: AtomicU64,
+    /// What the processor shows of its sound while watched (ENG-072).
+    probe: Arc<Probe>,
 }
 
 impl ParamBank {
@@ -27,6 +30,7 @@ impl ParamBank {
             values: std::array::from_fn(|_| AtomicU32::new(0)),
             changes: AtomicU32::new(0),
             tempo: AtomicU64::new(120f64.to_bits()),
+            probe: Arc::new(Probe::new()),
         };
         for (i, p) in def.params.iter().enumerate() {
             bank.values[i].store((p.default_norm() as f32).to_bits(), Ordering::Relaxed);
@@ -36,6 +40,10 @@ impl ParamBank {
 
     pub fn def(&self) -> &'static BuiltinDef {
         self.def
+    }
+
+    pub fn probe(&self) -> &Arc<Probe> {
+        &self.probe
     }
 
     /// The 0..1 value of parameter `i`.
@@ -92,6 +100,11 @@ impl StockHandle {
 
     pub fn def(&self) -> &'static BuiltinDef {
         self.bank.def()
+    }
+
+    /// What the running processor shows of its sound while the window watches (ENG-072).
+    pub fn probe(&self) -> Arc<Probe> {
+        self.bank.probe().clone()
     }
 
     /// Sets parameter `id` to `value` (0..1). False when there is no such parameter.
@@ -211,6 +224,10 @@ impl Params {
 
     pub fn tempo(&self) -> f64 {
         self.tempo
+    }
+
+    pub fn probe(&self) -> &Probe {
+        self.bank.probe()
     }
 }
 

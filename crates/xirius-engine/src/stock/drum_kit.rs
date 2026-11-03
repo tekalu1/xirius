@@ -662,6 +662,10 @@ impl DrumKit {
         let Some(hit) = recipe(kit, note) else {
             return;
         };
+        let probe = self.params.probe();
+        if probe.watching() {
+            probe.add_hit(hit.group);
+        }
         // A closed or pedal hat stops an open one.
         if matches!(note, 42 | 44) {
             for v in self.voices.iter_mut().filter(|v| v.on && v.note == 46) {
@@ -820,6 +824,10 @@ impl Processor for DrumKit {
             }
             self.until_step -= len;
             at = end;
+        }
+        let probe = self.params.probe();
+        if probe.watching() {
+            probe.note_output(io.left, io.right);
         }
     }
 }

@@ -16,6 +16,7 @@ use std::sync::Arc;
 use super::bank::Params;
 use super::dsp::{Glide, Ramp, STEP, Svf, SvfCoefs, db_to_gain};
 use super::files::{FileInbox, FileSet, root_of};
+use super::probe::VoiceStage;
 use super::samples::{Library, library};
 use crate::control::ControlState;
 use crate::processor::{AudioIo, CTRL_PITCH_BEND, NoteEvent, NoteKind, ProcessSetup, Processor};
@@ -310,6 +311,49 @@ impl Sampler {
         }
     }
 
+    /// Hands the window the block's output peaks and the newest voice (ENG-072).
+    fn show(&self, io: &AudioIo<'_>) {
+        let probe = self.params.probe();
+        probe.note_output(io.left, io.right);
+        let newest = self
+            .voices
+            .iter()
+            .filter(|v| v.stage != Stage::Idle)
+            .max_by_key(|v| v.born);
+        probe.set_voice(newest.map(|v| {
+            let stage = match v.stage {
+                Stage::Attack => VoiceStage::Attack,
+                Stage::Decay => VoiceStage::Decay,
+                Stage::Release => VoiceStage::Release,
+                Stage::Idle | Stage::Fade => VoiceStage::Fade,
+            };
+            let (file, source, frames) = match v.src {
+                Src::Synth { sound, zone } => {
+                    let frames = self
+                        .lib
+                        .as_ref()
+                        .and_then(|l| l.sounds.get(sound)?.zones.get(zone))
+                        .map_or(0, |z| z.data.len());
+                    (false, sound, frames)
+                }
+                Src::File { slot } => {
+                    let frames = self
+                        .files
+                        .as_ref()
+                        .and_then(|s| s.slots.get(slot)?.as_ref())
+                        .map_or(0, |s| s.frames());
+                    (true, slot, frames)
+                }
+            };
+            let position = if frames > 0 {
+                v.pos / frames as f64
+            } else {
+                0.0
+            };
+            (v.pitch, stage, file, source, position, v.env)
+        }));
+    }
+
     /// Adds the voices into `[from, to)` of both channels.
     fn render(&mut self, io: &mut AudioIo<'_>, from: usize, to: usize) {
         let speed = self.tune * self.bend * self.vibrato_step(to - from);
@@ -447,6 +491,9 @@ impl Processor for Sampler {
             self.render(io, at, end);
             self.until_step -= end - at;
             at = end;
+        }
+        if self.params.probe().watching() {
+            self.show(io);
         }
     }
 }

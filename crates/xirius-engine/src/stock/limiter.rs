@@ -7,7 +7,7 @@
 //! gain moves with no corner. The lookahead is the latency the mix is told of (PDC).
 
 use super::bank::Params;
-use super::dsp::{Glide, Line, STEP, db_to_gain};
+use super::dsp::{Glide, Line, STEP, db_to_gain, gain_to_db};
 use crate::processor::{AudioIo, NoteEvent, ProcessSetup, Processor};
 
 const INPUT: usize = 0;
@@ -115,6 +115,11 @@ impl Processor for Limiter {
     fn process(&mut self, io: &mut AudioIo<'_>, _events: &[NoteEvent]) {
         let n = io.frames();
         let look = self.look;
+        let watch = self.params.probe().watching();
+        if watch {
+            self.params.probe().note_input(io.left, io.right);
+        }
+        let mut least: f64 = 1.0;
         let mut at = 0;
         while at < n {
             let len = STEP.min(n - at);
@@ -143,6 +148,7 @@ impl Processor for Limiter {
                     self.sum = self.boxcar.iter().sum();
                 }
                 let gain = (self.sum / look as f64).min(1.0);
+                least = least.min(gain);
                 self.delay[0].push(l);
                 self.delay[1].push(r);
                 // What rounding is left is clipped; it is far below what can be heard.
@@ -151,6 +157,11 @@ impl Processor for Limiter {
                 io.right[i] = out(self.delay[1].at(look + 1));
             }
             at += len;
+        }
+        if watch {
+            let probe = self.params.probe();
+            probe.set_gr(-gain_to_db(least.max(1e-9)));
+            probe.note_output(io.left, io.right);
         }
     }
 

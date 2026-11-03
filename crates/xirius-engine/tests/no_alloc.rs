@@ -284,6 +284,10 @@ fn the_builtins_do_not_allocate_while_their_values_move() {
                     assert!(h.set(p.id, v));
                 }
                 h.set_tempo(80.0 + f64::from(i % 90));
+                // Watched by a window most of the time, which reads what it shows (ENG-072).
+                let probe = h.probe();
+                probe.watch(i % 40 < 30);
+                probe.take_peaks();
             }
             let on = i % 15 != 10;
             control

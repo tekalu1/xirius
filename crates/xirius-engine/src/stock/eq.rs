@@ -243,6 +243,10 @@ impl Processor for Eq {
 
     fn process(&mut self, io: &mut AudioIo<'_>, _events: &[NoteEvent]) {
         let n = io.frames();
+        let watch = self.params.probe().watching();
+        if watch {
+            self.params.probe().note_input(io.left, io.right);
+        }
         let mut at = 0;
         while at < n {
             let len = STEP.min(n - at);
@@ -264,6 +268,9 @@ impl Processor for Eq {
                 }
             }
             at += len;
+        }
+        if watch {
+            self.params.probe().note_output(io.left, io.right);
         }
         for ch in &mut self.state {
             for b in ch.iter_mut() {

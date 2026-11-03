@@ -5,6 +5,7 @@
 
 use super::bank::Params;
 use super::dsp::{Biquad, Coefs, Glide, Line, Ramp, STEP, flush, smoothing};
+use super::probe::Onsets;
 use crate::processor::{AudioIo, NoteEvent, ProcessSetup, Processor};
 
 // The parameters, in the order of `xirius_params::DELAY`.
@@ -28,6 +29,8 @@ const FEEL_FACTORS: [f64; 3] = [1.0, 1.5, 2.0 / 3.0];
 
 pub struct Delay {
     params: Params,
+    /// Counts the onsets of the input for the window (ENG-072).
+    onsets: Onsets,
     glide: Glide,
     rate: f64,
     lines: [Line; 2],
@@ -45,6 +48,7 @@ pub struct Delay {
 impl Delay {
     pub fn new(params: Params) -> Delay {
         Delay {
+            onsets: Onsets::new(),
             glide: Glide::new(&xirius_params::DELAY),
             params,
             rate: 48_000.0,
@@ -99,6 +103,7 @@ impl Processor for Delay {
         self.filters = [[Biquad::default(); 2]; 2];
         // About 60 ms to slide to a new time.
         self.slide = smoothing(60.0, self.rate, 1);
+        self.onsets.prepare(self.rate);
         self.params.refresh();
         self.glide.prepare(&self.params, self.rate);
         self.update();
@@ -110,6 +115,11 @@ impl Processor for Delay {
 
     fn process(&mut self, io: &mut AudioIo<'_>, _events: &[NoteEvent]) {
         let n = io.frames();
+        let watch = self.params.probe().watching();
+        if watch {
+            self.params.probe().note_input(io.left, io.right);
+        }
+        self.onsets.note(self.params.probe(), io.left, io.right);
         let mut at = 0;
         while at < n {
             let len = STEP.min(n - at);
@@ -144,6 +154,9 @@ impl Processor for Delay {
                 io.right[i] = (r * d + er * w) as f32;
             }
             at += len;
+        }
+        if watch {
+            self.params.probe().note_output(io.left, io.right);
         }
         for ch in &mut self.filters {
             for b in ch.iter_mut() {

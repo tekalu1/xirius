@@ -7,6 +7,7 @@
 
 use super::bank::Params;
 use super::dsp::{Allpass, Biquad, Coefs, Glide, Line, OnePole, Ramp, STEP, flush, lfo};
+use super::probe::Onsets;
 use crate::processor::{AudioIo, NoteEvent, ProcessSetup, Processor};
 
 // The parameters, in the order of `xirius_params::REVERB`.
@@ -63,6 +64,8 @@ fn scale(size: f64) -> f64 {
 
 pub struct Reverb {
     params: Params,
+    /// Counts the onsets of the input for the window (ENG-072).
+    onsets: Onsets,
     glide: Glide,
     rate: f64,
     low_cut: Coefs,
@@ -89,6 +92,7 @@ pub struct Reverb {
 impl Reverb {
     pub fn new(params: Params) -> Reverb {
         Reverb {
+            onsets: Onsets::new(),
             glide: Glide::new(&xirius_params::REVERB),
             params,
             rate: 48_000.0,
@@ -201,6 +205,7 @@ impl Processor for Reverb {
         let pre = self.frames(LONGEST_PREDELAY_MS + 60.0 * largest).ceil() as usize + 8;
         self.pre = [Line::new(pre), Line::new(pre)];
         self.wander = self.frames(WANDER_MS);
+        self.onsets.prepare(self.rate);
         for i in 0..LINES {
             let len = self.frames(LENGTHS_MS[i] * largest) + self.wander;
             self.lines[i] = Line::new(len.ceil() as usize + 8);
@@ -222,6 +227,11 @@ impl Processor for Reverb {
 
     fn process(&mut self, io: &mut AudioIo<'_>, _events: &[NoteEvent]) {
         let n = io.frames();
+        let watch = self.params.probe().watching();
+        if watch {
+            self.params.probe().note_input(io.left, io.right);
+        }
+        self.onsets.note(self.params.probe(), io.left, io.right);
         let mut at = 0;
         while at < n {
             let len = STEP.min(n - at);
@@ -279,6 +289,9 @@ impl Processor for Reverb {
                 io.right[i] = (x[1] * d + (mid - side) * w) as f32;
             }
             at += len;
+        }
+        if watch {
+            self.params.probe().note_output(io.left, io.right);
         }
         for b in &mut self.cuts {
             b.flush();

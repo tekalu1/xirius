@@ -2026,6 +2026,13 @@ impl PluginLoader {
         self.stock.contains_key(&id)
     }
 
+    /// What the built-in shows of its sound to its window (ENG-072): the window turns it on
+    /// with [`stock::Probe::watch`] while it shows and reads it on its own clock. `None` when
+    /// the plugin is not a built-in.
+    pub fn stock_probe(&self, id: PluginId) -> Option<Arc<stock::Probe>> {
+        self.stock.get(&id).map(|s| s.handle.probe())
+    }
+
     /// The tempo the built-ins play at from now on (the Delay's note lengths).
     pub fn set_tempo(&mut self, bpm: f64) {
         self.tempo = bpm;

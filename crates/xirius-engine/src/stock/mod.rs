@@ -14,6 +14,7 @@ pub mod dsp;
 pub mod eq;
 pub mod files;
 mod limiter;
+pub mod probe;
 mod reverb;
 mod sampler;
 mod samples;
@@ -25,6 +26,7 @@ use std::sync::Arc;
 
 pub use bank::StockHandle;
 use bank::{ParamBank, Params};
+pub use probe::{Probe, VoiceStage, VoiceView};
 use xirius_params::BuiltinDef;
 
 use crate::processor::Processor;

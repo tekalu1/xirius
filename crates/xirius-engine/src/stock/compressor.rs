@@ -180,6 +180,11 @@ impl Processor for Compressor {
         let n = io.frames();
         // A key shorter than the block is not one the engine hands over; read none of it.
         let key = io.key.filter(|(l, r)| l.len() >= n && r.len() >= n);
+        let watch = self.params.probe().watching();
+        if watch {
+            self.params.probe().note_input(io.left, io.right);
+        }
+        let mut most: f64 = 0.0;
         let mut at = 0;
         while at < n {
             let len = STEP.min(n - at);
@@ -222,6 +227,7 @@ impl Processor for Compressor {
                     self.release
                 };
                 self.reduction = want + (self.reduction - want) * a;
+                most = most.max(self.reduction);
                 if listen {
                     io.left[i] = kl as f32;
                     io.right[i] = kr as f32;
@@ -238,6 +244,11 @@ impl Processor for Compressor {
         }
         if self.reduction < 1e-9 {
             self.reduction = 0.0;
+        }
+        if watch {
+            let probe = self.params.probe();
+            probe.set_gr(most);
+            probe.note_output(io.left, io.right);
         }
     }
 }
