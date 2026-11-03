@@ -296,7 +296,8 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
             );
         }
         if saving.is_none_or(|save| save.cancellable()) {
-            cancel::paint(pen, cancel::rect(card), false);
+            let hot = saving.is_some_and(|save| save.cancel_hover);
+            cancel::paint(pen, cancel::rect(card), hot);
         }
     }
 }

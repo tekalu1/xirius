@@ -36,6 +36,8 @@ pub(crate) struct Saving {
     close_when_done: bool,
     stop_take: bool,
     record_error: Option<String>,
+    /// The pointer is over 「中止 Esc」 (it lights as on the opening card).
+    pub(crate) cancel_hover: bool,
 }
 
 struct McpSave {
@@ -334,6 +336,7 @@ impl Studio {
             close_when_done,
             stop_take: false,
             record_error: None,
+            cancel_hover: false,
         });
     }
 
@@ -502,6 +505,7 @@ impl Studio {
             close_when_done,
             stop_take: false,
             record_error: None,
+            cancel_hover: false,
         });
     }
 
@@ -855,6 +859,17 @@ impl Studio {
         true
     }
 
+    /// The pointer moved over the save's veil: true when 「中止 Esc」 lit or went out.
+    pub(crate) fn save_hover(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
+        let Some(save) = self.saving.as_mut() else {
+            return false;
+        };
+        let hot = save.cancellable() && crate::wait::save_cancel_rect(g).contains(x, y);
+        let changed = save.cancel_hover != hot;
+        save.cancel_hover = hot;
+        changed
+    }
+
     pub(crate) fn saving_press(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
         let Some(save) = &self.saving else {
             return false;
@@ -1206,5 +1221,24 @@ mod tests {
         finish(&mut s);
         assert!(!s.leaving_ready);
         assert!(s.update.pending.is_none(), "nothing is installed later");
+    }
+
+    #[test]
+    fn cancel_on_the_save_veil_lights_under_the_pointer_as_on_the_opening_card() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = Studio::new(Song::empty());
+        s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
+        s.save_test_delay = Duration::from_millis(25);
+        let g = s.geometry(1280.0, 720.0);
+        s.start_file_request(FileRequest::SaveAs, &root.path().join("copy"));
+        assert!(s.saving.as_ref().is_some_and(Saving::cancellable));
+        let r = crate::wait::save_cancel_rect(&g);
+        let hot = |s: &Studio| s.saving.as_ref().is_some_and(|x| x.cancel_hover);
+        assert!(s.save_hover(&g, r.x + 1.0, r.y + 1.0));
+        assert!(hot(&s));
+        assert!(!s.save_hover(&g, r.x + 2.0, r.y + 2.0), "still over it");
+        assert!(s.save_hover(&g, 0.0, 0.0));
+        assert!(!hot(&s));
+        finish(&mut s);
     }
 }

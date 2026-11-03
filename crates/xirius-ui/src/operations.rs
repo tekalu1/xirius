@@ -278,22 +278,22 @@ pub const APPROVED: &[Approved] = &[
     Approved {
         op: "song.new",
         places: &["home.new", "popup.song"],
-        ground: "開始画面の「新規」と曲のメニューの「新規」: 2026-11-03 の利用者の決定（UI-350）。開始画面は曲を開く前の画面で、曲のメニューと同時には出ない",
+        ground: "スタート画面の「新規」と曲のメニューの「新規」: 2026-11-03 の利用者の決定（UI-350）。スタート画面は曲を開く前の画面で、曲のメニューと同時には出ない",
     },
     Approved {
         op: "song.open",
         places: &["home.open", "popup.song"],
-        ground: "開始画面の「開く…」と曲のメニューの「開く…」: 同上",
+        ground: "スタート画面の「開く…」と曲のメニューの「開く…」: 同上",
     },
     Approved {
         op: "song.open_dawproject",
         places: &["home.dawproject", "popup.song"],
-        ground: "開始画面の「DAWproject を開く…」と曲のメニューの同じ項目: 同上",
+        ground: "スタート画面の「DAWproject を開く…」と曲のメニューの同じ項目: 同上",
     },
     Approved {
         op: "audio.no_device.menu",
         places: &["home.no_device", "start.no_device"],
-        ground: "開始画面と新しい曲の画面の「オーディオデバイスなし」: 2026-11-03 の利用者の決定（UI-350）。2 つの画面は同時には出ない",
+        ground: "スタート画面と新しい曲の画面の「オーディオデバイスなし」: 2026-11-03 の利用者の決定（UI-350）。2 つの画面は同時には出ない",
     },
     Approved {
         op: "settings.open",

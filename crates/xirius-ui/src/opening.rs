@@ -370,6 +370,8 @@ impl Studio {
                 Arc,
                 atomic::{AtomicBool, Ordering},
             };
+            // Not what the next start opens (the start screen shows, UI-350): `app.recent`
+            // reports it as `open`, the screen the window closed on.
             let last = match self.song.record_dir() {
                 Some(dir) => crate::keep::LastOpen::Song(dir),
                 None if self.song.is_sample() => crate::keep::LastOpen::Sample,

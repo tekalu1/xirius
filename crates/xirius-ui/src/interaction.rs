@@ -35,8 +35,9 @@ impl Studio {
     /// Persistent selection/focus on a track is not an unfinished interaction.
     pub(crate) fn human_interaction_active(&self) -> bool {
         // The start screen's search waits for keys from the start; only what is typed in it
-        // is someone's unfinished work (UI-350).
-        (self.ime_target().is_some() && !self.home_typing_idle())
+        // is someone's unfinished work (UI-350). Any other field the IME writes in is.
+        let idle_search = self.ime_target() == Some(ImeTarget::Pick) && self.home_typing_idle();
+        (self.ime_target().is_some() && !idle_search)
             || self.browser.typing
             || self.inspector.field.is_some()
             || self.bar_edit.active()

@@ -16,10 +16,10 @@ UI-004: 同じ操作を画面の 2 か所に置かない。この一覧は `crat
 | `track.solo` | `head.solo`, `mixer.solo` | トラックの頭とミキサーの帯の S: 同上 |
 | `track.arm` | `head.arm`, `mixer.arm` | トラックの頭とミキサーの帯の R: 同上 |
 | `track.output.menu` | `head.output`, `mixer.output` | トラックの頭（広げたとき）とミキサーの帯の出力: 同上 |
-| `song.new` | `home.new`, `popup.song` | 開始画面の「新規」と曲のメニューの「新規」: 2026-11-03 の利用者の決定（UI-350）。開始画面は曲を開く前の画面で、曲のメニューと同時には出ない |
-| `song.open` | `home.open`, `popup.song` | 開始画面の「開く…」と曲のメニューの「開く…」: 同上 |
-| `song.open_dawproject` | `home.dawproject`, `popup.song` | 開始画面の「DAWproject を開く…」と曲のメニューの同じ項目: 同上 |
-| `audio.no_device.menu` | `home.no_device`, `start.no_device` | 開始画面と新しい曲の画面の「オーディオデバイスなし」: 2026-11-03 の利用者の決定（UI-350）。2 つの画面は同時には出ない |
+| `song.new` | `home.new`, `popup.song` | スタート画面の「新規」と曲のメニューの「新規」: 2026-11-03 の利用者の決定（UI-350）。スタート画面は曲を開く前の画面で、曲のメニューと同時には出ない |
+| `song.open` | `home.open`, `popup.song` | スタート画面の「開く…」と曲のメニューの「開く…」: 同上 |
+| `song.open_dawproject` | `home.dawproject`, `popup.song` | スタート画面の「DAWproject を開く…」と曲のメニューの同じ項目: 同上 |
+| `audio.no_device.menu` | `home.no_device`, `start.no_device` | スタート画面と新しい曲の画面の「オーディオデバイスなし」: 2026-11-03 の利用者の決定（UI-350）。2 つの画面は同時には出ない |
 | `settings.open` | `popup.nodevice`, `rail.settings` | 「オーディオデバイスなし」のメニューの「オーディオの設定…」と左の帯の設定: 2026-11-03 の利用者の決定（UI-350） |
 
 ## すべての操作

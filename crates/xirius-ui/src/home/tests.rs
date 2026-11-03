@@ -210,6 +210,21 @@ fn typing_goes_to_the_search_and_esc_clears_it() {
     assert!(!s.home_key(&g, "escape", NONE));
 }
 
+/// Only the idle search is let off: any other field the IME writes in over the start screen
+/// is someone's work, as everywhere (UI-350 review).
+#[test]
+fn another_field_over_the_idle_start_screen_is_someones_work() {
+    let (mut s, _, _tmp) = kept(&["apple"]);
+    assert!(s.home_typing_idle());
+    assert!(!s.human_interaction_active());
+    s.input_map.name = Some(crate::track_name::Name {
+        track: xirius_core::id::TrackId(1),
+        field: crate::settings::Field::new(crate::settings::FieldId::Search, String::new()),
+    });
+    assert!(s.home_typing_idle(), "the search is still empty");
+    assert!(s.human_interaction_active(), "a name being typed");
+}
+
 #[test]
 fn space_and_enter_press_the_focused_button() {
     let (mut s, g, _tmp) = kept(&[]);
@@ -278,9 +293,14 @@ fn a_narrow_window_stacks_one_column_with_the_buttons_in_a_row_without_their_key
     let open = l.button(Button::Open);
     assert_eq!(new.y, open.y, "in a row");
     assert!(open.x > new.right());
-    let side = Space::X6.px();
+    // Narrow is the body under 520 wide (ui-approved), not the body less its margins
+    // (UI-350 review).
+    assert!(narrow.size.0 < NARROW);
+    let keys = |w: f32| s.home_layout(&s.geometry(w, 720.0)).unwrap().keys;
+    assert!(!keys(NARROW - 1.0));
+    assert!(keys(NARROW), "520 is not under 520");
+    let side = Space::X3.px();
     let content = narrow.size.0 - 2.0 * side;
-    assert!(content < NARROW);
     assert_eq!(l.heading.x, side);
     assert_eq!(l.heading.w, content, "the list at the full width");
     let lowest = l.buttons.iter().map(|r| r.bottom()).fold(0.0, f32::max);
@@ -288,6 +308,183 @@ fn a_narrow_window_stacks_one_column_with_the_buttons_in_a_row_without_their_key
     for b in l.buttons {
         assert!(b.right() <= side + content + 0.5, "{b:?}");
     }
+    // The search fills the heading's row after its words.
+    let search = l.search.expect("songs to search");
+    assert_eq!(search.y + search.h / 2.0, l.heading.y + l.heading.h / 2.0);
+    assert!(search.x > l.heading.x);
+    assert_eq!(search.right(), l.heading.right());
+    for (_, r) in &l.rows {
+        assert!(r.y >= l.heading.bottom(), "{r:?}");
+    }
+}
+
+/// The wide form is the approved mock's: at the top under the bar, the buttons 184 wide and
+/// 32 tall, the search 180 wide at the heading's right, and the rows under the heading
+/// (UI-350 review).
+#[test]
+fn a_wide_window_puts_the_content_at_the_top_as_the_mock_has_it() {
+    let (s, g, _tmp) = kept(&["a", "b"]);
+    let l = s.home_layout(&g).unwrap();
+    let new = l.button(Button::New);
+    assert_eq!(new.y, TOP, "at the top, not in the middle");
+    assert_eq!((new.w, new.h), (LEFT_W, BUTTON_H));
+    let open = l.button(Button::Open);
+    let daw = l.button(Button::Dawproject);
+    assert!(open.y - new.bottom() > daw.y - open.bottom(), "新規 apart");
+    assert_eq!(l.heading.y, TOP);
+    assert!(l.heading.x >= new.right() + Space::X6.px());
+    assert!(l.heading.w <= CONTENT_MAX);
+    let search = l.search.expect("songs to search");
+    assert_eq!(search.w, SEARCH_W);
+    assert_eq!(search.right(), l.heading.right(), "at the heading's right");
+    assert!(search.y >= l.heading.y && search.bottom() <= l.heading.bottom());
+    assert!(!l.cells.iter().any(|c| matches!(c.look, Look::Input)));
+    let (_, first) = l.rows[0];
+    assert!(first.y >= l.heading.bottom(), "the rows under the heading");
+    assert_eq!(first.x, l.heading.x);
+    assert_eq!(first.w, l.heading.w);
+    // The search box is pressed where it is drawn.
+    let (x, y) = (search.x + search.w / 2.0, search.y + search.h / 2.0);
+    assert_eq!(s.hit(&g, x, y), Hit::Home(Spot::Search));
+}
+
+/// The smallest window the app opens (960×600, UI-300) keeps the two columns, and every
+/// part inside the body.
+#[test]
+fn the_smallest_window_keeps_two_columns_inside_the_body() {
+    let (s, _, _tmp) = kept(&["a", "b", "c"]);
+    let g = s.geometry(960.0, 600.0);
+    let l = s.home_layout(&g).unwrap();
+    assert!(l.keys, "the wide form");
+    assert!(l.heading.x > l.button(Button::New).right(), "two columns");
+    let inside =
+        |r: Rect| r.x >= 0.0 && r.y >= 0.0 && r.right() <= g.size.0 && r.bottom() <= g.size.1;
+    for r in l
+        .buttons
+        .iter()
+        .chain([&l.heading])
+        .chain(l.search.iter())
+        .chain(l.rows.iter().map(|(_, r)| r))
+    {
+        assert!(inside(*r), "{r:?} in {:?}", g.size);
+    }
+    assert!(!l.rows.is_empty());
+}
+
+/// The wheel over the list scrolls it, as on any list; elsewhere it does nothing
+/// (UI-350 review).
+#[test]
+fn the_wheel_over_the_list_scrolls_it() {
+    let names: Vec<String> = (0..12).map(|i| format!("s{i:02}")).collect();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    let (mut s, _, _tmp) = kept(&names);
+    // Low enough that the 12 songs and the sample do not all fit.
+    let g = s.geometry(960.0, 360.0);
+    let l = s.home_layout(&g).unwrap();
+    let max = home(&s).pick.max_offset(l.list_size);
+    assert!(max > 0, "more rows than room");
+    let list = l.list();
+    let (x, y) = (list.x + list.w / 2.0, list.y + list.h / 2.0);
+    let new = l.button(Button::New);
+    assert!(
+        !s.home_wheel(&g, new.x + 4.0, new.y + 4.0, -1.0),
+        "not over the list"
+    );
+    assert_eq!(home(&s).pick.offset, 0);
+    assert!(s.home_wheel(&g, x, y, -1.0));
+    assert_eq!(home(&s).pick.offset, 1);
+    for _ in 0..40 {
+        s.home_wheel(&g, x, y, -1.0);
+    }
+    assert_eq!(home(&s).pick.offset, max, "kept to the end");
+    assert!(s.home_wheel(&g, x, y, 1.0));
+    assert_eq!(home(&s).pick.offset, max - 1);
+    // The rows drawn follow the scroll.
+    let l = s.home_layout(&g).unwrap();
+    assert_eq!(l.rows[0].0, max - 1);
+}
+
+/// The start screen lies over an empty song: once that song gains anything (a drop, an
+/// outside edit), the song shows, and undoing back to empty brings the new song's screen,
+/// not the start screen (UI-350 review).
+#[test]
+fn the_start_screen_ends_when_the_song_under_it_changes() {
+    let (mut s, g, _tmp) = kept(&["a"]);
+    assert!(s.home_shown());
+    assert!(s.run_command("track.add.audio", serde_json::json!({"name": "x"})));
+    s.home_tick();
+    assert!(s.home.is_none(), "the song shows");
+    assert!(!s.start_shown());
+    assert!(s.undo(&g));
+    assert!(s.start_shown(), "empty again");
+    s.home_tick();
+    assert!(
+        !s.home_shown(),
+        "the new song's screen, not the start screen"
+    );
+    assert!(s.song.can_redo());
+}
+
+/// The window's own asks keep the keys over the start screen (UI-350 review).
+#[test]
+fn the_windows_asks_keep_the_keys_from_the_start_screen() {
+    let (mut s, g, _tmp) = kept(&["a", "b"]);
+    s.file_request = Some(FileRequest::Open);
+    let at = home(&s).pick.selected;
+    assert!(!s.home_key(&g, "down", NONE));
+    assert!(!s.home_key(&g, "enter", NONE));
+    assert_eq!(home(&s).pick.selected, at);
+    s.file_request = None;
+    assert!(s.home_key(&g, "down", NONE), "back once the dialog is gone");
+}
+
+/// The new song's screen tells a screen reader its entries, the missing input and the
+/// line with no device (UI-350 review).
+#[test]
+fn a_screen_reader_reads_the_new_songs_entries() {
+    let (mut s, g, _tmp) = kept(&["a"]);
+    assert!(s.press(&g, Hit::Home(Spot::Button(Button::New))));
+    s.wait_for_open_for_test();
+    assert!(s.start_shown() && !s.home_shown());
+    use accesskit::Role;
+    let said = |s: &Studio| -> Vec<(Role, String, Option<String>)> {
+        crate::a11y::start_marks(s, &g)
+            .iter()
+            .map(|m| {
+                (
+                    m.node.role(),
+                    m.node.label().unwrap_or_default().to_string(),
+                    m.node.description().map(str::to_string),
+                )
+            })
+            .collect()
+    };
+    // A device with no inputs: the recording entry says so.
+    assert_eq!(
+        said(&s),
+        [
+            (
+                Role::Button,
+                "オーディオを録音".to_string(),
+                Some(crate::input_row::NO_INPUT.to_string())
+            ),
+            (Role::Button, "MIDI を演奏".to_string(), None),
+            (Role::Label, "ファイルをドロップ".to_string(), None),
+        ]
+    );
+    let marks = crate::a11y::start_marks(&s, &g);
+    assert_eq!(marks[0].press, Some(Hit::Start(crate::start::Entry::Audio)));
+    // No device: the line once, and no mark on the entry.
+    with_device(&mut s, false);
+    let marks = said(&s);
+    assert_eq!(marks[0].2, None);
+    assert_eq!(
+        marks.last().unwrap().1,
+        crate::start::rig::NO_DEVICE.to_string()
+    );
+    // Not over the start screen.
+    s.home = Some(Home::default());
+    assert!(crate::a11y::start_marks(&s, &g).is_empty());
 }
 
 #[test]
@@ -337,7 +534,7 @@ fn a_screen_reader_reads_the_buttons_the_search_and_the_list() {
             (Role::Button, "開く… Ctrl+O".to_string()),
             (Role::Button, "DAWproject を開く…".to_string()),
             (Role::Button, "オーディオデバイスなし".to_string()),
-            (Role::TextInput, "検索".to_string()),
+            (Role::TextInput, SEARCH_NAME.to_string()),
             (Role::List, RECENT.to_string()),
         ]
     );

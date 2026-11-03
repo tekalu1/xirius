@@ -196,6 +196,7 @@ fn audio_on_a_device_without_inputs_makes_no_track_and_lists_the_devices_with_in
     s.poll_io();
     assert_eq!(device(&s), "Speakers");
     assert!(!s.device_has_inputs());
+    assert!(s.audio_entry_marked());
 
     assert!(press(&mut s, &g, Entry::Audio));
     assert_eq!(s.error, None);
@@ -298,12 +299,37 @@ fn a_narrow_body_draws_the_entries_closer() {
     assert!((middle - (z.x + z.w / 2.0)).abs() < 0.5, "centred");
 }
 
+/// The switch sits where three entries at 110 / 30 stop fitting, so the smallest window the
+/// app opens (960×600, UI-300) keeps them wide: the narrow form only shows in the shots
+/// (UI-350 review).
+#[test]
+fn the_smallest_window_keeps_the_wide_entries() {
+    let s = Studio::new(Song::empty());
+    let g = s.geometry(960.0, 600.0);
+    assert!(zone(&g).w >= 3.0 * WIDTH + 2.0 * BETWEEN);
+    let (audio, _) = s.entry_rects(&g, Entry::Audio);
+    let (midi, _) = s.entry_rects(&g, Entry::Midi);
+    assert_eq!(midi.w, WIDTH);
+    assert_eq!(midi.x - audio.right(), BETWEEN);
+    // Just under the room the three need, they draw closer.
+    let mut w = 960.0;
+    while zone(&s.geometry(w, 600.0)).w >= 3.0 * WIDTH + 2.0 * BETWEEN {
+        w -= 1.0;
+    }
+    let g = s.geometry(w, 600.0);
+    assert_eq!(s.entry_rects(&g, Entry::Midi).0.w, NARROW_WIDTH);
+    let g = s.geometry(w + 1.0, 600.0);
+    assert_eq!(s.entry_rects(&g, Entry::Midi).0.w, WIDTH);
+}
+
 /// No audio device: one line under the entries, whose menu rescans or opens the audio
 /// settings (UI-350).
 #[test]
 fn with_no_device_the_new_song_says_so_and_its_menu_rescans_or_opens_the_settings() {
     let (mut s, g) = with_devices(&[]);
     assert!(!s.has_audio_device());
+    // Said once: the line, not also the mark on the recording entry.
+    assert!(!s.audio_entry_marked());
     let line = s.start_layout(&g).no_device.expect("the line");
     let (audio, _) = s.entry_rects(&g, Entry::Audio);
     assert!(line.y >= audio.bottom(), "under the entries");

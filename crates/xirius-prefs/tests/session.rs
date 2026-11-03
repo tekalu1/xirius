@@ -723,7 +723,6 @@ const REST: &[(&str, &str, &str)] = &[
     ("global", "Shift+F", "view.fullscreen"),
     ("global", "Mod+Q", "app.quit"),
     ("global", "Mod+W", "project.close"),
-    ("global", "Mod+F4", "app.quit"),
     ("arrange", "Shift+Insert", "marker.add.named"),
     ("arrange", "Shift+Y", "marker.add.named"),
     ("arrange", "Alt+R", "range.from-clips"),

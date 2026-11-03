@@ -1398,7 +1398,7 @@ pub const ENTRIES: &[Entry] = &[
         context: "global",
         command: "app.quit",
         label: None,
-        keys: &["Mod+Q", "Mod+F4"],
+        keys: &["Mod+Q"],
         cat: Cat::View,
     },
     Entry {

@@ -91,6 +91,10 @@ impl Studio {
             }
             return true;
         }
+        // The start screen takes the wheel: the song under it is empty and hidden.
+        if self.home_shown() {
+            return self.home_wheel(g, x, y, notch);
+        }
         if let Some(ctx) = self.roll_ctx(g)
             && ctx.body.contains(x, y)
         {

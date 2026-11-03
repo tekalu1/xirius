@@ -195,6 +195,12 @@ impl Studio {
         self.project().root.is_empty()
     }
 
+    /// The recording entry has its mark: a device with nothing to record from. With no
+    /// device at all the line under the entries says so, once (UI-350).
+    pub fn audio_entry_marked(&self) -> bool {
+        self.has_audio_device() && !self.device_has_inputs()
+    }
+
     /// Where the screen's parts are.
     pub fn start_layout(&self, g: &Geometry) -> Layout {
         Layout::of(g, !self.has_audio_device())
@@ -351,7 +357,7 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
         pen.round(z, pen.c.sel, Radius::S);
     }
     let l = studio.start_layout(g);
-    let no_inputs = !studio.device_has_inputs();
+    let no_inputs = studio.audio_entry_marked();
     for e in Entry::ALL {
         let (r, circle) = l.entry(e);
         let hot = e.pressable() && studio.hover == Hit::Start(e);

@@ -296,6 +296,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             });
         }
     }
+    out.extend(start_marks(s, g));
     out.extend(inspector_marks(s, g));
     out.extend(instrument_marks(s, g));
     out.extend(audition_mark(s, g));
@@ -303,8 +304,70 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     out
 }
 
+/// The new song's screen: the entries that are pressed as Buttons (the one to record says
+/// 「入力なし」 when there is nothing to record from), 「ファイルをドロップ」 as a label, and
+/// 「オーディオデバイスなし」 with its menu when there is no device (UI-350).
+pub fn start_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
+    use crate::start::{Entry, Part};
+    use crate::studio::Hit;
+    if !s.start_shown() || s.home_shown() {
+        return Vec::new();
+    }
+    let l = s.start_layout(g);
+    let mark = |key: &str, role, label: &str, r, press: Option<Hit>| {
+        let mut node = accesskit::Node::new(role);
+        node.set_label(label);
+        node.set_bounds(bounds(r));
+        Mark {
+            key: key.into(),
+            children: Vec::new(),
+            node,
+            fold: None,
+            pick: None,
+            press,
+        }
+    };
+    let mut out = Vec::new();
+    for e in Entry::ALL {
+        let (r, _) = l.entry(e);
+        let mut m = if e.pressable() {
+            mark(
+                &format!("start-{e:?}"),
+                accesskit::Role::Button,
+                e.label(),
+                r,
+                Some(Hit::Start(e)),
+            )
+        } else {
+            mark(
+                &format!("start-{e:?}"),
+                accesskit::Role::Label,
+                e.label(),
+                r,
+                None,
+            )
+        };
+        if e == Entry::Audio && s.audio_entry_marked() {
+            m.node.set_description(crate::input_row::NO_INPUT);
+        }
+        out.push(m);
+    }
+    if let Some(r) = l.no_device {
+        let mut m = mark(
+            "start-no-device",
+            accesskit::Role::Button,
+            crate::start::rig::NO_DEVICE,
+            r,
+            Some(Hit::Entrance(Part::NoDevice)),
+        );
+        m.node.set_has_popup(accesskit::HasPopup::Menu);
+        out.push(m);
+    }
+    out
+}
+
 /// The start screen (UI-350): its three buttons, 「オーディオデバイスなし」, the search box
-/// 「検索」 and the list 「最近の曲」 with its rows, the chosen one selected.
+/// 「最近の曲を検索」 and the list 「最近の曲」 with its rows, the chosen one selected.
 pub fn home_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     use crate::home::{Button, Focus, Spot};
     use crate::studio::Hit;
@@ -357,7 +420,7 @@ pub fn home_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
         let mut m = mark(
             "home-search".into(),
             accesskit::Role::TextInput,
-            "検索".into(),
+            crate::home::SEARCH_NAME.into(),
             r,
             Some(Spot::Search),
         );
@@ -369,7 +432,7 @@ pub fn home_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
         "home-list".into(),
         accesskit::Role::List,
         crate::home::RECENT.into(),
-        l.heading,
+        l.list(),
         None,
     );
     for (i, r) in &l.rows {

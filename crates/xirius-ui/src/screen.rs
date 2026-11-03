@@ -189,11 +189,14 @@ impl Screen {
             }
             return;
         }
-        if studio.saving.is_some() {
-            return;
-        }
         let g = geometry(&studio, window);
         let (x, y) = in_body(ev.position);
+        if studio.saving.is_some() {
+            if studio.save_hover(&g, x, y) {
+                cx.notify();
+            }
+            return;
+        }
         if studio.sound_preparing() {
             if studio.prepare_hover(&g, x, y) {
                 cx.notify();

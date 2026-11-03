@@ -22,15 +22,23 @@ use crate::popup::{Action, Cell, Look};
 use crate::studio::{FileRequest, Geometry, Hit, Rect, Studio};
 use crate::tools::Mods;
 
-/// The content narrower than this: one column, the buttons in a row without their keys.
+/// A window narrower than this: one column, the buttons in a row without their keys.
 pub const NARROW: f32 = 520.0;
+/// The room over the content, under the bar.
+const TOP: f32 = 40.0;
 /// The widest the two columns get.
-const CONTENT_MAX: f32 = 760.0;
+const CONTENT_MAX: f32 = 680.0;
 /// The left column (the buttons).
-const LEFT_W: f32 = L::MENU_W;
-const BUTTON_H: f32 = 36.0;
-/// The heading over the list.
-const HEAD_H: f32 = 22.0;
+const LEFT_W: f32 = 184.0;
+const BUTTON_H: f32 = 32.0;
+/// A button's sides.
+const BUTTON_PAD: f32 = 10.0;
+/// The heading over the list, with the search at its right.
+const HEAD_H: f32 = 28.0;
+const SEARCH_W: f32 = 180.0;
+const SEARCH_H: f32 = 26.0;
+/// The buttons over the list in a narrow window.
+const NARROW_GAP: f32 = 20.0;
 /// The sample's tag.
 const TAG_H: f32 = 16.0;
 const TAG_PAD: f32 = 6.0;
@@ -40,6 +48,10 @@ pub const KEYS: [&str; 4] = ["project.new", "project.open", "view.settings", "ap
 
 pub const SAMPLE_TAG: &str = "サンプル";
 pub const RECENT: &str = "最近の曲";
+/// What the empty search says.
+pub const SEARCH: &str = "検索";
+/// What a screen reader calls the search (the mock's label).
+pub const SEARCH_NAME: &str = "最近の曲を検索";
 /// Two presses on the same row this close together open it.
 const DOUBLE: Duration = Duration::from_millis(500);
 
@@ -211,9 +223,9 @@ pub struct HomeLayout {
     pub keys: bool,
     pub no_device: Option<Rect>,
     pub heading: Rect,
-    /// The list's cells: the search box (with songs to search), then the rows that show.
+    /// The list's cells: the rows that show (or what says nothing matches).
     pub cells: Vec<Cell>,
-    /// The search box.
+    /// The search box at the heading's right (with songs to search).
     pub search: Option<Rect>,
     /// Each row that shows, by its place among the rows the search lets through.
     pub rows: Vec<(usize, Rect)>,
@@ -223,17 +235,22 @@ pub struct HomeLayout {
 
 impl HomeLayout {
     pub fn of(home: &Home, g: &Geometry, no_device: bool) -> HomeLayout {
-        let (side, top) = (Space::X6.px(), Space::X5.px());
+        // At the top under the bar, as the approved mock has it (UI-350).
+        let narrow = g.size.0 < NARROW;
+        let (top, side, bottom) = if narrow {
+            (Space::X4.px(), Space::X3.px(), Space::X4.px())
+        } else {
+            (TOP, Space::X5.px(), Space::X5.px())
+        };
         let z = Rect::new(
             side,
             top,
             (g.size.0 - 2.0 * side).max(0.0),
-            (g.size.1 - 2.0 * top).max(0.0),
+            (g.size.1 - top - bottom).max(0.0),
         );
-        let narrow = z.w < NARROW;
         let w = z.w.min(CONTENT_MAX);
         let x0 = z.x + (z.w - w) / 2.0;
-        let gap = Space::X2.px();
+        let gap = Space::X1.px();
         let line = |x: f32, y: f32| {
             let lw = crate::start::no_device::width();
             Rect::new(x, y, lw, crate::start::no_device::HEIGHT)
@@ -241,9 +258,9 @@ impl HomeLayout {
 
         // The buttons, and the line under them.
         let mut buttons = [Rect::default(); 3];
-        let (left_h, list_x, list_w, list_y0);
+        let (list_x, list_w, list_y0, device_y);
         if narrow {
-            let (mut x, mut y) = (x0, 0.0);
+            let (mut x, mut y) = (x0, z.y);
             for (i, b) in Button::ALL.into_iter().enumerate() {
                 let bw = button_width(b, false);
                 if x > x0 && x + bw > x0 + w {
@@ -254,71 +271,60 @@ impl HomeLayout {
                 x += bw + gap;
             }
             let mut h = y + BUTTON_H;
+            device_y = h + gap;
             if no_device {
-                h += Space::X3.px() + crate::start::no_device::HEIGHT;
+                h = device_y + crate::start::no_device::HEIGHT;
             }
-            left_h = h;
             list_x = x0;
             list_w = w;
-            list_y0 = h + Space::X5.px();
+            list_y0 = h + NARROW_GAP;
         } else {
+            let mut y = z.y;
             for (i, r) in buttons.iter_mut().enumerate() {
-                *r = Rect::new(x0, i as f32 * (BUTTON_H + gap), LEFT_W, BUTTON_H);
+                *r = Rect::new(x0, y, LEFT_W, BUTTON_H);
+                // 新規 stands apart from the other two.
+                y += BUTTON_H + if i == 0 { gap + Space::X2.px() } else { gap };
             }
-            let mut h = 3.0 * BUTTON_H + 2.0 * gap;
-            if no_device {
-                h += Space::X4.px() + crate::start::no_device::HEIGHT;
-            }
-            left_h = h;
+            device_y = buttons[2].bottom() + Space::X3.px();
             list_x = x0 + LEFT_W + Space::X6.px();
             list_w = (x0 + w - list_x).max(0.0);
-            list_y0 = 0.0;
+            list_y0 = z.y;
         }
+        let no_device = no_device.then(|| line(x0, device_y));
 
-        // The list under its heading: as tall as the room left, at most the lists' own most.
+        // The heading with the search at its right, and the list under them: as tall as
+        // the room left, at most the list's own most.
+        let heading = Rect::new(list_x, list_y0, list_w, HEAD_H);
+        let search = home.has_songs().then(|| {
+            let sx = if narrow {
+                list_x + crate::browser::text_width(RECENT, FontSize::Caption) + Space::X3.px()
+            } else {
+                heading.right() - SEARCH_W
+            };
+            let sx = sx.max(list_x);
+            Rect::new(
+                sx,
+                heading.y + (HEAD_H - SEARCH_H) / 2.0,
+                (heading.right() - sx).max(0.0),
+                SEARCH_H,
+            )
+        });
         let pad = L::POPUP_PAD;
         let row_h = L::MENU_ROW_H;
-        let search = home.has_songs();
-        let room = (z.h - list_y0 - HEAD_H - gap).max(row_h);
-        // `cells` pads its box and keeps `MAX_H` and the window's edge: the size it is
-        // measured at gives the room asked for.
-        let list_size = (list_w + 2.0 * pad, room + 12.0 + 2.0 * pad);
-        let body = home.pick.body_h(list_size);
-        let list_h = if search { row_h } else { 0.0 } + body;
-        let right_h = list_y0 + HEAD_H + gap + list_h;
-        let y0 = z.y + ((z.h - left_h.max(right_h)) / 2.0).max(0.0);
-
-        for r in &mut buttons {
-            r.y += y0;
-        }
-        let device_y = if narrow {
-            buttons.iter().map(|r| r.bottom()).fold(0.0, f32::max) + Space::X3.px()
-        } else {
-            buttons[2].bottom() + Space::X4.px()
-        };
-        let no_device = no_device.then(|| line(x0, device_y));
-        let heading = Rect::new(list_x, y0 + list_y0, list_w, HEAD_H);
         let list_top = heading.bottom() + gap;
-        let shift = if search { 0.0 } else { row_h };
-        let mut cells: Vec<Cell> =
-            crate::pick_list::cells(&home.pick, list_w + 2.0 * pad, list_size)
-                .into_iter()
-                .filter(|c| search || !matches!(c.look, Look::Input))
-                .map(|mut c| {
-                    c.rect.x += list_x - pad;
-                    c.rect.y += list_top - pad - shift;
-                    c
-                })
-                .collect();
-        for c in &mut cells {
-            if matches!(c.look, Look::Input) {
-                c.on = home.focus == Focus::Search;
-            }
-        }
-        let search = cells
-            .iter()
-            .find(|c| matches!(c.look, Look::Input))
-            .map(|c| c.rect);
+        let room = (z.bottom() - list_top).max(row_h);
+        // `cells` puts its search box over the rows, pads its box and keeps `MAX_H` and the
+        // window's edge: the size it is measured at gives the rows the room asked for.
+        let list_size = (list_w + 2.0 * pad, room + 12.0 + 2.0 * pad + row_h);
+        let cells: Vec<Cell> = crate::pick_list::cells(&home.pick, list_w + 2.0 * pad, list_size)
+            .into_iter()
+            .filter(|c| !matches!(c.look, Look::Input))
+            .map(|mut c| {
+                c.rect.x += list_x - pad;
+                c.rect.y += list_top - pad - row_h;
+                c
+            })
+            .collect();
         let first = home.pick.offset_at(list_size);
         let rows = cells
             .iter()
@@ -336,6 +342,18 @@ impl HomeLayout {
             rows,
             list_size,
         }
+    }
+
+    /// The list's rows (and what shows when nothing matches): where the wheel scrolls it and
+    /// what a screen reader calls the list.
+    pub fn list(&self) -> Rect {
+        let top = self.heading.bottom();
+        let bottom = self
+            .cells
+            .iter()
+            .map(|c| c.rect.bottom())
+            .fold(top, f32::max);
+        Rect::new(self.heading.x, top, self.heading.w, bottom - top)
     }
 
     pub fn button(&self, b: Button) -> Rect {
@@ -364,7 +382,7 @@ impl HomeLayout {
 
 /// A button's width in a narrow window: its icon and its name, padded.
 fn button_width(b: Button, keys: bool) -> f32 {
-    let pad = Space::X3.px();
+    let pad = BUTTON_PAD;
     let mut w = pad
         + L::ICON_SIZE
         + Space::X2.px()
@@ -412,8 +430,38 @@ impl Studio {
         self.home_layout(g)?.rect(spot)
     }
 
+    /// A wheel turn on the start screen: over the list it scrolls the rows a row a notch.
+    pub(crate) fn home_wheel(&mut self, g: &Geometry, x: f32, y: f32, notch: f32) -> bool {
+        let Some(l) = self.home_layout(g) else {
+            return false;
+        };
+        if notch == 0.0 || !l.list().contains(x, y) {
+            return false;
+        }
+        let Some(home) = self.home.as_mut() else {
+            return false;
+        };
+        // A list that showed its chosen row scrolls on from there.
+        home.pick.settle(l.list_size);
+        let max = home.pick.max_offset(l.list_size);
+        let offset = &mut home.pick.offset;
+        *offset = if notch < 0.0 {
+            (*offset + 1).min(max)
+        } else {
+            offset.saturating_sub(1)
+        };
+        true
+    }
+
     /// Once a frame: the rows follow the keeper's list of recent songs.
     pub(crate) fn home_tick(&mut self) -> bool {
+        // The start screen lies over an empty song. Once that song gains
+        // anything (a drop, an outside edit), the song shows and the start
+        // screen is over: undoing back to empty must not bring it back.
+        if self.home.is_some() && !self.start_shown() {
+            self.home = None;
+            return true;
+        }
         if !self.home_shown() {
             return false;
         }
@@ -495,10 +543,15 @@ impl Studio {
     /// the search. Letters reach the search through the IME (`pick_typing`). Ctrl's keys go
     /// on to the key map (Ctrl+N, Ctrl+O).
     pub(crate) fn home_key(&mut self, g: &Geometry, key: &str, mods: Mods) -> bool {
+        // The window's own asks (the recovery, the unsaved song, a file dialog) keep the keys
+        // whatever order the screen hands them out in.
         if !self.home_shown()
             || self.popup.is_some()
             || self.settings.is_some()
             || self.palette.is_some()
+            || self.recovery.is_some()
+            || self.unsaved.is_some()
+            || self.file_request.is_some()
             || self.input_blocked()
             || mods.ctrl
             || mods.alt
@@ -608,7 +661,7 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
         return;
     };
     let c = pen.c;
-    pen.fill(Rect::new(0.0, 0.0, g.size.0, g.size.1), c.surface_0);
+    pen.fill(Rect::new(0.0, 0.0, g.size.0, g.size.1), c.paper);
     let hover = match studio.hover {
         Hit::Home(spot) => Some(spot),
         _ => None,
@@ -632,6 +685,9 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
         l.heading,
         Align::Left,
     );
+    if let Some(r) = l.search {
+        paint_search(pen, home, r);
+    }
     let rows = home.pick.visible();
     for cell in &l.cells {
         let hot = match cell.look {
@@ -655,7 +711,7 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     if let Some(r) = l.search
         && home.focus == Focus::Search
     {
-        pen.outline(r, c.ring, Radius::S, 2.0);
+        pen.outline(r, c.ring, Radius::Clip, 2.0);
     }
     if home.focus == Focus::List
         && let Some((_, r)) = l.rows.iter().find(|(i, _)| *i == home.pick.selected)
@@ -664,18 +720,73 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     }
 }
 
-/// A button of the left column: 新規 filled, the others on the raised surface.
+/// The search at the heading's right: what is typed, or 「検索」, and the caret while it has
+/// the keys.
+fn paint_search(pen: &mut Pen, home: &Home, r: Rect) {
+    let c = pen.c;
+    pen.round(r, c.surface_2, Radius::Clip);
+    let pad = Space::X2.px();
+    let icon = Rect::new(
+        r.x + pad,
+        r.y + (r.h - L::ICON_SIZE) / 2.0,
+        L::ICON_SIZE,
+        L::ICON_SIZE,
+    );
+    pen.icon("search", icon, c.ink);
+    let tx = icon.right() + Space::X1.px();
+    let text = format!("{}{}", home.pick.query, home.pick.marked);
+    let room = Rect::new(tx, r.y, (r.right() - pad - tx).max(0.0), r.h);
+    let mut w = 0.0;
+    pen.mask(room, |pen| {
+        if text.is_empty() {
+            pen.text(
+                SEARCH,
+                FontSize::Small,
+                Weight::Regular,
+                c.ink_on_toggle,
+                room,
+                Align::Left,
+            );
+        } else {
+            w = pen.text(
+                &text,
+                FontSize::Small,
+                Weight::Regular,
+                c.ink_strong,
+                room,
+                Align::Left,
+            );
+        }
+    });
+    if home.focus == Focus::Search {
+        let caret_h = r.h - 2.0 * Space::X2.px();
+        pen.fill(
+            Rect::new(
+                (tx + w + 1.0).min(room.right()),
+                r.y + (r.h - caret_h) / 2.0,
+                1.5,
+                caret_h,
+            ),
+            c.ink_strong,
+        );
+    }
+}
+
+/// A button of the left column: 新規 filled, the others on the paper until the pointer is
+/// over them.
 fn paint_button(pen: &mut Pen, b: Button, r: Rect, keys: bool, hot: bool) {
     let c = pen.c;
     let primary = b == Button::New;
     let (face, ink, soft) = match (primary, hot) {
-        (true, false) => (c.fill, c.on_fill, c.on_fill),
-        (true, true) => (c.fill_hover, c.on_fill, c.on_fill),
-        (false, false) => (c.surface_3, c.ink_strong, c.ink),
-        (false, true) => (c.thumb, c.ink_strong, c.ink),
+        (true, false) => (Some(c.fill), c.on_fill, c.on_fill),
+        (true, true) => (Some(c.fill_hover), c.on_fill, c.on_fill),
+        (false, false) => (None, c.ink_strong, c.ink),
+        (false, true) => (Some(c.hover), c.ink_strong, c.ink),
     };
-    pen.round(r, face, Radius::S);
-    let pad = Space::X3.px();
+    if let Some(face) = face {
+        pen.round(r, face, Radius::S);
+    }
+    let pad = BUTTON_PAD;
     let icon = Rect::new(
         r.x + pad,
         r.y + (r.h - L::ICON_SIZE) / 2.0,

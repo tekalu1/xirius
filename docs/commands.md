@@ -203,7 +203,7 @@ AI の依頼の状態
 
 履歴: 実行結果の step で確認。アイコン: `prompt`。
 
-キー: global: Mod+Q / Mod+F4 (`app.quit`)。
+キー: global: Mod+Q (`app.quit`)。
 
 | 引数 | 必須 | 型・範囲・既定値 | 内容 |
 |---|---|---|---|
