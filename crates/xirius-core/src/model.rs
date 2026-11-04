@@ -1620,8 +1620,11 @@ impl Project {
     /// `transpose` lane, the values over the wider range (low 4). The lanes and the macro
     /// controls' maps of a hand-written key or of `tune` move with the values, so they do
     /// not go on moving a key nothing reads; where the own key has one already, that one
-    /// stays and the other goes (the fourth review's low 7), as does a second old key that
-    /// comes to the same one (`CUTOFF`, `Cutoff`: the fifth review's low 5).
+    /// stays and the other goes (the fourth review's low 7), as do the other old keys that
+    /// come to the same one (`CUTOFF`, `Cutoff`: the fifth review's low 5). The one that stays
+    /// is the one whose value [`fix_keys`] keeps: a key of other letters before `tune`, then
+    /// the first in the keys' order, so the lane, the map and the value come from one old key
+    /// (the sixth review's low 6).
     pub fn fix_param_keys(&mut self) {
         use crate::auto::AutoTarget;
         let odd = |x: &Plugin| {
@@ -1644,6 +1647,19 @@ impl Project {
                 }
                 _ => None,
             };
+            // Whether another old key that comes to the same one as `old` goes before it.
+            let beaten = |olds: &[&AutoTarget], old: &AutoTarget| {
+                let rank = |t: &AutoTarget| match (t, fix(t)) {
+                    (AutoTarget::Param(_, key), Some((to, re))) => Some((to, re, key.clone())),
+                    _ => None,
+                };
+                let Some((to, re, key)) = rank(old) else {
+                    return false;
+                };
+                olds.iter()
+                    .filter_map(|t| rank(t))
+                    .any(|(t, r, k)| t == to && (r, &k) < (re, &key))
+            };
             if !t.inserts.iter().any(odd)
                 && !t.automation.iter().any(|l| fix(&l.target).is_some())
                 && !t
@@ -1659,11 +1675,13 @@ impl Project {
             }
             let mut lanes: Vec<AutoTarget> =
                 t.automation.iter().map(|l| l.target.clone()).collect();
+            let olds = lanes.clone();
+            let olds: Vec<&AutoTarget> = olds.iter().collect();
             t.automation.retain_mut(|l| {
                 let Some((target, re)) = fix(&l.target) else {
                     return true;
                 };
-                if lanes.contains(&target) {
+                if lanes.contains(&target) || beaten(&olds, &l.target) {
                     return false;
                 }
                 lanes.push(target.clone());
@@ -1680,12 +1698,14 @@ impl Project {
                 .iter()
                 .flat_map(|(_, c)| c.maps.iter().map(|m| m.target.clone()))
                 .collect();
+            let olds = mapped.clone();
+            let olds: Vec<&AutoTarget> = olds.iter().collect();
             for id in crate::controls::ControlId::all() {
                 t.controls.get_mut(id).maps.retain_mut(|m| {
                     let Some((target, re)) = fix(&m.target) else {
                         return true;
                     };
-                    if mapped.contains(&target) {
+                    if mapped.contains(&target) || beaten(&olds, &m.target) {
                         return false;
                     }
                     mapped.push(target.clone());

@@ -696,6 +696,77 @@ fn older_keys_that_differ_in_case_leave_one_lane_and_one_map() {
     assert_eq!(maps, vec![cutoff]);
 }
 
+/// The sixth review's low 6: of older keys that differ in case, the lane and the map that
+/// stay are of the key whose value stays (`CUTOFF` before `Cutoff` in the keys' order),
+/// whichever comes first in the song.
+#[test]
+fn older_keys_that_differ_in_case_leave_the_lane_and_map_of_the_value_kept() {
+    use xirius_core::auto::{AutoLane, AutoPoint, AutoTarget};
+    use xirius_core::controls::{ControlId, Mapping};
+    let tmp = tempfile::Builder::new()
+        .prefix("xirius-samples-")
+        .tempdir()
+        .unwrap();
+    let song = tmp.path().join("song");
+    let lane = |key: &str, value: f64| AutoLane {
+        suspended: false,
+        target: AutoTarget::Param(PluginId(2), key.into()),
+        hidden: false,
+        points: std::sync::Arc::new(vec![AutoPoint {
+            tick: 0,
+            value,
+            curve: 0.0,
+            step: false,
+        }]),
+    };
+    let map = |key: &str, to: f64| Mapping {
+        target: AutoTarget::Param(PluginId(2), key.into()),
+        from: 0.0,
+        to,
+        curve: 0.0,
+    };
+    let mut p = project_with_samples(&[]);
+    {
+        let t = std::sync::Arc::make_mut(p.tracks.get_mut(&TrackId(1)).unwrap());
+        let x = t.inserts.iter_mut().find(|x| x.id == PluginId(2)).unwrap();
+        x.params.insert("Cutoff".into(), 0.6);
+        x.params.insert("CUTOFF".into(), 0.4);
+        t.automation.push(lane("Cutoff", 0.6));
+        t.automation.push(lane("CUTOFF", 0.4));
+        t.controls
+            .get_mut(ControlId::Knob(0))
+            .maps
+            .push(map("Cutoff", 0.6));
+        t.controls
+            .get_mut(ControlId::Knob(1))
+            .maps
+            .push(map("CUTOFF", 0.4));
+    }
+    // The value that stays (the macro writes over it as the song opens).
+    let mut x = p.tracks[&TrackId(1)]
+        .inserts
+        .iter()
+        .find(|x| x.id == PluginId(2))
+        .unwrap()
+        .clone();
+    x.fix_keys();
+    assert_eq!(x.params.get("cutoff"), Some(&0.4));
+    let mut s = Session::from_project(p);
+    run(&mut s, "project.save-as", json!({ "path": text(&song) }));
+    let back = Session::open(&song).unwrap();
+    let t = &back.project().tracks[&TrackId(1)];
+    let cutoff = AutoTarget::Param(PluginId(2), "cutoff".into());
+    let lanes: Vec<_> = t.automation.iter().map(|l| l.target.clone()).collect();
+    assert_eq!(lanes, vec![cutoff.clone()]);
+    assert_eq!(t.automation[0].points[0].value, 0.4, "the lane of Cutoff");
+    let maps: Vec<_> = t
+        .controls
+        .iter()
+        .flat_map(|(_, c)| c.maps.iter().map(|m| (m.target.clone(), m.to)))
+        .collect();
+    assert_eq!(maps, vec![(cutoff, 0.4)], "the map of Cutoff");
+}
+
 /// The fifth review's low 11: files put in with `--replace` keep the Mute and Solo of the pads
 /// they fill, as a drop that replaces does; a pad left empty loses them with its other
 /// values.
