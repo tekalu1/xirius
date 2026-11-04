@@ -698,17 +698,26 @@ fn running(pid: u32) -> Option<bool> {
     const QUERY_LIMITED_INFORMATION: u32 = 0x1000;
     const STILL_ACTIVE: u32 = 259;
     // SAFETY: a handle opened only to read the exit code, closed before returning; none
-    // when the process is gone (or never was).
+    // when the process is gone (or never was), or may not be asked.
     unsafe {
         let h = OpenProcess(QUERY_LIMITED_INFORMATION, 0, pid);
         if h.is_null() {
-            return Some(false);
+            return unopened(std::io::Error::last_os_error().raw_os_error());
         }
         let mut code = 0;
         let read = GetExitCodeProcess(h, &mut code) != 0;
         CloseHandle(h);
         Some(read && code == STILL_ACTIVE)
     }
+}
+
+/// What a process that could not be opened tells, by the error: no such process (87,
+/// `ERROR_INVALID_PARAMETER`) is gone; another (a process that may not be asked) is not
+/// known, so its folder goes by its time (the sixth review's low 5).
+#[cfg(windows)]
+fn unopened(error: Option<i32>) -> Option<bool> {
+    const INVALID_PARAMETER: i32 = 87;
+    (error == Some(INVALID_PARAMETER)).then_some(false)
 }
 
 #[cfg(not(windows))]
@@ -1066,6 +1075,18 @@ mod tests {
         sweep(&prefix, &keep, STALE);
         assert!(!gone.exists(), "an ended run's samples are left");
         let _ = std::fs::remove_dir_all(going);
+    }
+
+    /// The sixth review's low 5: only a process that is not there is gone; one that may not
+    /// be asked (access denied, 5) is not known, and its folder goes by its time.
+    #[cfg(windows)]
+    #[test]
+    fn a_process_that_may_not_be_asked_is_not_taken_for_gone() {
+        assert_eq!(running(std::process::id()), Some(true));
+        assert_eq!(running(3), Some(false), "no process has an odd id");
+        assert_eq!(unopened(Some(87)), Some(false));
+        assert_eq!(unopened(Some(5)), None);
+        assert_eq!(unopened(None), None);
     }
 
     /// Low 26: stages 2 and 3 load their samples (the Sampler's two keys, the Drum Kit's five
