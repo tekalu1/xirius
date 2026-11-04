@@ -505,6 +505,26 @@ fn the_list_with_values_gives_each_chain_to_tell_a_tracks_is_it() {
         json!({ "track": b, "preset": "Wide", "at": "track", "replace": true }),
     );
     assert_eq!(shape(&r.s, &b), wide, "the song's own ids aside");
+    // A plug-in writing its own blob, or a new name, is not a change of what plays.
+    let first = track(&r.s, &b).inserts[0].id.to_string();
+    run(
+        &mut r.s,
+        "plugin.state.set",
+        json!({ "id": first, "state": "AAEC" }),
+    );
+    run(
+        &mut r.s,
+        "plugin.rename",
+        json!({ "id": first, "name": "Mine" }),
+    );
+    assert_eq!(shape(&r.s, &b), wide, "the blob and the name aside");
+    // Its power is.
+    run(
+        &mut r.s,
+        "plugin.bypass",
+        json!({ "ids": [first], "on": true }),
+    );
+    assert_ne!(shape(&r.s, &b), wide, "bypassed");
     // Without the values the list stays as it was.
     let plain = run(&mut r.s, "preset.list", json!({ "kind": "fx-chain" }));
     assert!(plain["presets"][0].get("chain").is_none());

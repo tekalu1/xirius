@@ -328,11 +328,23 @@ impl Chain {
     }
 
     /// The chain as a file keeps it, by ref: the same for two chains whose ids alone differ,
-    /// so a track's chain can be told to be a preset's. The macros count by what they move
-    /// and where they stand, not by their knob or name: a load lands one on a free knob and
-    /// names it after the preset.
+    /// so a track's chain can be told to be a preset's. A device counts by what it is and
+    /// what it plays ([`SHAPE_KEYS`]): not its name, the process it runs in, the device preset
+    /// it was named after, or a plug-in's own blob, which a plug-in may write over by itself
+    /// once loaded (a device's window, too, tells its presets by the knobs). The macros count
+    /// by what they move and where they stand, not by their knob or name: a load lands one on
+    /// a free knob and names it after the preset.
     pub fn shape(&self) -> Value {
         let (devices, rack, controls) = self.to_values(false);
+        let devices: Vec<Value> = devices
+            .into_iter()
+            .map(|mut v| {
+                if let Some(o) = v.as_object_mut() {
+                    o.retain(|k, _| SHAPE_KEYS.contains(&k.as_str()));
+                }
+                v
+            })
+            .collect();
         let macros = controls.as_ref().map(mapped).unwrap_or_default();
         json!({ "devices": devices, "rack": rack, "macros": macros })
     }
@@ -530,6 +542,19 @@ impl Refs {
         v
     }
 }
+
+/// What of a device [`Chain::shape`] keeps: which device, where the rack holds it, whether it
+/// plays, its knobs and its samples.
+const SHAPE_KEYS: [&str; 8] = [
+    "ref",
+    "kind",
+    "format",
+    "uid",
+    "bypass",
+    "deactivated",
+    "params",
+    "samples",
+];
 
 /// The controls of a saved set that have maps (knobs, buttons, pads' axes), as their maps
 /// and values, in one order.

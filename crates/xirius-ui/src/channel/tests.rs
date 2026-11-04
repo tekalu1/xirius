@@ -1211,3 +1211,44 @@ fn a_multi_instruments_default_keeps_its_layers() {
     assert!(x.rack.as_ref().unwrap().fx.is_empty());
     assert_eq!(tag(&s, t), ("Default".into(), false));
 }
+
+/// Review 4 低3: a Default whose steps are refused (a frozen track's chain is locked) leaves
+/// the chain as it was and puts no Default on the tag.
+#[test]
+fn a_refused_default_leaves_the_tag_on_the_chain() {
+    let (mut s, _g) = studio();
+    let (t, _, _, _) = vocal(&mut s);
+    assert!(s.save_chain_preset(t, "声", false));
+    assert!(s.run_command(
+        "track.freeze.apply",
+        json!({ "tracks": [{ "id": t.to_string(), "file": "frozen.wav", "start": 0 }] }),
+    ));
+    let before = s.project().tracks[&t].clone();
+    assert!(!s.load_default_chain(t));
+    let x = &s.project().tracks[&t];
+    assert_eq!(x.inserts, before.inserts);
+    assert_eq!(x.rack, before.rack);
+    assert_eq!(tag(&s, t), ("声".into(), false));
+}
+
+/// Review 4 低2: the tag keeps a track's shape while the track is the same, and takes it again
+/// when the chain changes.
+#[test]
+fn the_tag_takes_the_chain_again_only_when_it_changed() {
+    let (mut s, _g) = studio();
+    let (t, _, [eq, ..], _) = vocal(&mut s);
+    assert!(s.save_chain_preset(t, "声", false));
+    let track = s.project().tracks[&t].clone();
+    assert_eq!(s.chain_presets.tag(&track), ("声".into(), false));
+    assert_eq!(s.chain_presets.tag(&track), ("声".into(), false), "kept");
+    assert!(s.run_command(
+        "plugin.bypass",
+        json!({ "ids": [eq.to_string()], "on": true }),
+    ));
+    assert_eq!(tag(&s, t), ("声".into(), true), "taken again");
+    assert_eq!(
+        s.chain_presets.tag(&track),
+        ("声".into(), false),
+        "the old track's own"
+    );
+}

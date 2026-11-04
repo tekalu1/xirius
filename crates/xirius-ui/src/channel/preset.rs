@@ -16,7 +16,9 @@
 //! shows the names it showed. A tag that names no row sits before the list: its › loads
 //! `Default`.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -58,7 +60,13 @@ pub struct ChainPresets {
     /// The lists by kind, as last read.
     lists: HashMap<&'static str, Vec<Listed>>,
     read_at: Option<Instant>,
+    /// Each track's chain by [`Chain::shape`] as the tag last took it, kept while the track is
+    /// the same: the tag is asked at each paint, the capture reads every knob.
+    shapes: RefCell<HashMap<TrackId, Shape>>,
 }
+
+/// A track as the tag took it, the kind it took it as and its shape.
+type Shape = (Arc<Track>, ChainKind, Option<Value>);
 
 /// The kind of chain the tag of `t` loads and saves.
 pub fn kind_of(t: &Track) -> ChainKind {
@@ -113,10 +121,10 @@ pub fn is_default(t: &Track) -> bool {
 impl ChainPresets {
     /// The tag of `t`: the preset's name and whether the chain moved off it (the module's
     /// order).
-    pub fn tag(&self, t: &Track) -> (String, bool) {
+    pub fn tag(&self, t: &Arc<Track>) -> (String, bool) {
         let kind = kind_of(t);
         let mark = self.marks.get(&t.id).filter(|m| m.kind == kind);
-        let now = shape_of(t, kind);
+        let now = self.shape(t, kind);
         if let Some(m) = mark.filter(|m| m.shape == now) {
             return (m.name.clone(), false);
         }
@@ -135,6 +143,20 @@ impl ChainPresets {
         }
     }
 
+    /// [`shape_of`] `t`, taken again only when the track changed: a change makes a new one.
+    fn shape(&self, t: &Arc<Track>, kind: ChainKind) -> Option<Value> {
+        let mut shapes = self.shapes.borrow_mut();
+        if let Some((was, k, shape)) = shapes.get(&t.id)
+            && Arc::ptr_eq(was, t)
+            && *k == kind
+        {
+            return shape.clone();
+        }
+        let shape = shape_of(t, kind);
+        shapes.insert(t.id, (t.clone(), kind, shape.clone()));
+        shape
+    }
+
     /// The presets of `kind` as last read.
     pub fn list(&self, kind: ChainKind) -> &[Listed] {
         self.lists.get(kind.name()).map_or(&[], Vec::as_slice)
@@ -149,7 +171,7 @@ impl ChainPresets {
 
     /// Whether the ‹ and the › of `t` can step: none past the ends. A tag that names no row
     /// sits before the first, so › loads `Default` (review 3 中5).
-    pub fn steps(&self, t: &Track) -> (bool, bool) {
+    pub fn steps(&self, t: &Arc<Track>) -> (bool, bool) {
         let names = self.names(kind_of(t));
         let (name, _) = self.tag(t);
         match names.iter().position(|n| *n == name) {
@@ -161,6 +183,7 @@ impl ChainPresets {
     /// The song closed: its tracks' ids come again in the next.
     pub fn forget(&mut self) {
         self.marks.clear();
+        self.shapes.get_mut().clear();
     }
 }
 
@@ -250,7 +273,8 @@ impl Studio {
             done &= self.run_command("rack.split.remove", json!({ "id": id.to_string() }));
         }
         self.song.session_mut().end_group();
-        if let Some(track) = self.project().tracks.get(&t) {
+        // A refused step leaves effects on: the tag names what is there, not Default.
+        if done && let Some(track) = self.project().tracks.get(&t) {
             let shape = shape_of(track, kind);
             self.chain_presets.marks.insert(
                 t,
