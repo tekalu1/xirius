@@ -1590,3 +1590,41 @@ fn l2_smp_8_undo_keeps_the_zone_chosen_and_a_wave_drag_is_one_step() {
     assert_eq!(plugin(&s, t).samples.len(), 3);
     assert!(s.instruments.open[0].pick < 3);
 }
+
+/// Low 12: a window another device takes in ends its sweep first, on the zone it turned
+/// (not on the first zone, as the window gone would leave it).
+#[test]
+fn ui_333_a_window_another_device_takes_ends_its_sweep_on_the_zone_turned() {
+    let (mut s, g, t, id) = window("Sampler");
+    add(&mut s, id, &["Pad_C3.wav", "Pad_C4.wav"]);
+    s.instruments.pick(id, 1, 0);
+    let def = s.instruments.def_of(&plugin(&s, t)).unwrap();
+    let k = (0..def.params.len())
+        .find(|&k| {
+            def.params[k].id.starts_with("file2.")
+                && s.instrument_center(&g, id, Part::Knob(k)).is_some()
+        })
+        .expect("a knob of the second zone");
+    let zone = |s: &Studio, n: usize| {
+        let x = plugin(s, t);
+        values_of(&x, sampler::scoped(&x, n).unwrap())
+    };
+    let (first, second) = (zone(&s, 0), zone(&s, 1));
+    let (x, y) = s.instrument_center(&g, id, Part::Knob(k)).unwrap();
+    assert!(s.device_wheel(&g, x, y, 4.0, false));
+    assert!(s.instruments.sweep.is_some());
+    let vocal = s
+        .project()
+        .tracks
+        .values()
+        .find(|t| t.name == "Vocal")
+        .unwrap()
+        .id;
+    assert!(s.run_command("plugin.add", json!({"track": vocal, "name": "EQ"})));
+    let eq = s.project().tracks[&vocal].inserts.last().unwrap().id;
+    s.show_instrument(vocal, eq);
+    assert!(!s.instruments.is_open(id), "the EQ took the window in");
+    assert!(s.instruments.sweep.is_none());
+    assert_eq!(zone(&s, 0), first, "the first zone stays");
+    assert_ne!(zone(&s, 1)[k], second[k], "the turn went to the second");
+}

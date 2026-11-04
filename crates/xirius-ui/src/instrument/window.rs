@@ -1260,6 +1260,18 @@ impl Studio {
     /// the top; else the unpinned window used last takes it in; else, all
     /// pinned, a new window opens a step on. Its frame lights either way.
     pub(crate) fn show_instrument(&mut self, t: TrackId, id: PluginId) {
+        // A sweep on the device whose window this one takes in goes into the song first, on
+        // the zone or the pad the window shows (the window gone, it would go to the first).
+        let ins = &self.instruments;
+        let taken = !ins.open.iter().any(|w| w.plugin == id && !w.docked)
+            && ins
+                .open
+                .iter()
+                .rposition(|w| !w.pinned && !w.docked)
+                .is_some_and(|i| ins.sweep.is_some_and(|s| s.plugin == ins.open[i].plugin));
+        if taken {
+            self.device_sweep_end();
+        }
         let p = self.project();
         self.instruments.prune(&p);
         let ins = &mut self.instruments;
