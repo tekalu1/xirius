@@ -46,7 +46,7 @@ pub struct DrumKit {
     /// Each pad's voicing at the rate, worked out when a set arrives.
     shapes: [Shape; PADS],
     /// The next layer of each pad that plays its layers in turn.
-    turns: [u8; PADS],
+    turns: [u32; PADS],
     /// Picks the layer of a pad that plays one at random.
     seed: u32,
     volume: Ramp,
@@ -157,8 +157,8 @@ impl DrumKit {
                 (k, k + 1)
             }
             LayerMode::RoundRobin => {
-                let k = usize::from(self.turns[p]) % layers.len();
-                self.turns[p] = ((k + 1) % layers.len()) as u8;
+                let k = self.turns[p] as usize % layers.len();
+                self.turns[p] = ((k + 1) % layers.len()) as u32;
                 (k, k + 1)
             }
             LayerMode::Random => {

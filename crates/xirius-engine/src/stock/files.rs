@@ -409,11 +409,14 @@ pub fn channel() -> (FileOutbox, FileInbox) {
 
 impl FileInbox {
     /// Moves `cur` to the newest set; `true` when it changed. A replaced one goes back to be
-    /// freed off this thread; if the way back is full it is leaked instead (as
-    /// `Engine::hand_back` does).
+    /// freed off this thread. While the way back is full the newer sets wait in the queue
+    /// for a later call, so none is leaked (L2-smp-4); one that still finds it full is
+    /// leaked (as `Engine::hand_back` does).
     pub fn poll(&mut self, cur: &mut Option<Arc<FileSet>>) -> bool {
         let mut changed = false;
-        while let Ok(set) = self.rx.pop() {
+        while (cur.is_none() || !self.retired.is_full())
+            && let Ok(set) = self.rx.pop()
+        {
             changed = true;
             if let Some(old) = cur.replace(set)
                 && let Err(rtrb::PushError::Full(old)) = self.retired.push(old)
@@ -642,6 +645,39 @@ mod tests {
         assert_eq!(got.slots[0].as_ref().unwrap().name, "b_E3.wav");
         out.reclaim();
         assert!(out.set(set(&["c_G3.wav"])));
+    }
+
+    /// L2-smp-4: with the way back full, the newer sets wait rather than one being leaked.
+    #[test]
+    fn a_full_way_back_holds_the_newer_sets_in_the_queue() {
+        let (mut out, mut inbox) = channel();
+        let mut cur: Option<Arc<FileSet>> = None;
+        let first = Arc::new(set(&["a_C3.wav"]));
+        let probe = Arc::downgrade(&first);
+        assert!(out.tx.push(first).is_ok());
+        inbox.poll(&mut cur);
+        // The device is not reclaiming: the way back fills.
+        for _ in 0..QUEUE {
+            assert!(out.tx.push(Arc::new(set(&["b_E3.wav"]))).is_ok());
+            inbox.poll(&mut cur);
+        }
+        assert!(inbox.retired.is_full());
+        assert!(out.tx.push(Arc::new(set(&["c_G3.wav"]))).is_ok());
+        assert!(!inbox.poll(&mut cur), "it waits for room");
+        assert_eq!(
+            cur.as_ref().unwrap().slots[0].as_ref().unwrap().name,
+            "b_E3.wav"
+        );
+        out.reclaim();
+        assert!(
+            probe.upgrade().is_none(),
+            "the first set was freed, not leaked"
+        );
+        assert!(inbox.poll(&mut cur));
+        assert_eq!(
+            cur.as_ref().unwrap().slots[0].as_ref().unwrap().name,
+            "c_G3.wav"
+        );
     }
 
     #[test]

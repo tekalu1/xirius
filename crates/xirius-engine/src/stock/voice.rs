@@ -324,8 +324,9 @@ impl Voice {
         let p = self.path;
         if p.looping {
             let len = p.loop_to - p.loop_from;
-            while self.u >= p.loop_to {
-                self.u -= len;
+            // One step, however many times a short loop played fast went round (L2-smp-4).
+            if self.u >= p.loop_to && len > 0.0 {
+                self.u = p.loop_from + (self.u - p.loop_from) % len;
             }
         } else if self.u >= p.to {
             *self = Voice::IDLE;
