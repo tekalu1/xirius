@@ -1853,3 +1853,139 @@ fn y14_a_kits_pads_and_choke_come_back_with_its_preset() {
     }
     let _ = std::fs::remove_dir_all(&song);
 }
+
+/// N3-smp-2: a preset loaded and saved again keeps naming the copy it played, so loading and
+/// saving it over and over leaves one file in the presets' samples, of the name it had.
+#[test]
+fn y15_a_preset_loaded_and_saved_again_makes_no_more_copies() {
+    let mut r = rig("y15");
+    let (mut s, t, song) = sampler_song(&mut r, "y15song", &["Media/Kick.wav"]);
+    let save = |s: &mut Session| {
+        run(
+            s,
+            "preset.save",
+            json!({ "track": t, "kind": "instrument", "name": "Kick", "overwrite": true }),
+        )
+    };
+    save(&mut s);
+    let file = r
+        .dir
+        .join("instrument")
+        .join("sampler")
+        .join("Kick.xpreset");
+    let first = read_json(&file)["devices"][0]["samples"][0].clone();
+    assert_eq!(copies(&r.dir).len(), 1);
+    for _ in 0..3 {
+        let out = run(
+            &mut s,
+            "preset.load",
+            json!({ "track": t, "preset": "Kick" }),
+        );
+        assert!(!out["adjusted"].to_string().contains("rejected"), "{out:?}");
+        // The song plays the copy now; saving names it as it is.
+        assert!(
+            track(&s, &t).inserts[0].samples[0].contains("samples"),
+            "{:?}",
+            track(&s, &t).inserts[0].samples
+        );
+        save(&mut s);
+        assert_eq!(read_json(&file)["devices"][0]["samples"][0], first);
+        assert_eq!(copies(&r.dir).len(), 1, "{:?}", copies(&r.dir));
+    }
+    // A copy that is gone is said by the name the sound had, with no hash.
+    for c in copies(&r.dir) {
+        std::fs::remove_file(r.dir.join("samples").join(c)).unwrap();
+    }
+    std::fs::remove_file(song.join("Media").join("Kick.wav")).unwrap();
+    let out = run(
+        &mut s,
+        "preset.load",
+        json!({ "track": t, "preset": "Kick" }),
+    );
+    assert!(rejected(&out, "Kick.wav"), "{out:?}");
+    assert!(!out["adjusted"].to_string().contains("Kick-"), "{out:?}");
+    drop(s);
+    let _ = std::fs::remove_dir_all(&song);
+}
+
+/// L3-5, L3-7, L3-8: a copy gone is taken back only from a file of its sound (its name's
+/// hash); a name that is not a copy reaches nothing outside the song's folder (a full path,
+/// `..`, a stream); and a lost sample leaves out itself, not a sample of the same name kept
+/// for a song not saved yet.
+#[test]
+fn y16_a_sample_is_looked_for_by_its_sound_and_only_where_it_may_be() {
+    let mut r = rig("y16");
+    let (mut s, t, song) = sampler_song(&mut r, "y16song", &["Media/Kick.wav"]);
+    run(
+        &mut s,
+        "preset.save",
+        json!({ "track": t, "kind": "instrument", "name": "Kick" }),
+    );
+    std::fs::remove_dir_all(r.dir.join("samples")).unwrap();
+    // Another sound of the same name in the song's folder is not it.
+    std::fs::write(song.join("Media").join("Kick.wav"), "RIFF another").unwrap();
+    let out = run(
+        &mut s,
+        "preset.load",
+        json!({ "track": t, "preset": "Kick" }),
+    );
+    assert!(rejected(&out, "Kick.wav"), "{out:?}");
+    assert!(track(&s, &t).inserts[0].samples.is_empty());
+    // Its own sound, moved, is.
+    std::fs::write(song.join("Media").join("Kick.wav"), "RIFF Media/Kick.wav").unwrap();
+    let out = run(
+        &mut s,
+        "preset.load",
+        json!({ "track": t, "preset": "Kick" }),
+    );
+    assert!(!out["adjusted"].to_string().contains("rejected"), "{out:?}");
+    assert_eq!(track(&s, &t).inserts[0].samples, ["Media/Kick.wav"]);
+
+    // A preset that names places off the song's folder.
+    let outside =
+        std::env::temp_dir().join(format!("xirius-xpresets-{}-y16out", std::process::id()));
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("Far.wav"), "RIFF far").unwrap();
+    let file = r
+        .dir
+        .join("instrument")
+        .join("sampler")
+        .join("Kick.xpreset");
+    let mut v = read_json(&file);
+    v["devices"][0]["samples"] = json!([
+        outside.join("Far.wav").to_string_lossy(),
+        "../y16out/Far.wav",
+        "preset:samples/C:Far.wav",
+        "Media/Kick.wav",
+    ]);
+    std::fs::write(&file, serde_json::to_vec(&v).unwrap()).unwrap();
+    let out = run(
+        &mut s,
+        "preset.load",
+        json!({ "track": t, "preset": "Kick" }),
+    );
+    for name in ["Far.wav", "C:Far.wav"] {
+        assert!(rejected(&out, name), "{name}: {out:?}");
+    }
+    assert_eq!(track(&s, &t).inserts[0].samples, ["Media/Kick.wav"]);
+
+    // In a song not saved, a name stays as it is; a lost copy of that name goes alone.
+    let other = id(&run(
+        &mut r.s,
+        "track.add.instrument",
+        json!({ "name": "K" }),
+    ));
+    plugin(&mut r.s, &other, "Sampler");
+    v["devices"][0]["samples"] = json!(["preset:samples/Gone-0123456789abcdef.wav", "Gone.wav"]);
+    std::fs::write(&file, serde_json::to_vec(&v).unwrap()).unwrap();
+    let out = run(
+        &mut r.s,
+        "preset.load",
+        json!({ "track": other, "preset": "Kick" }),
+    );
+    assert!(rejected(&out, "Gone.wav"), "{out:?}");
+    assert_eq!(track(&r.s, &other).inserts[0].samples, ["Gone.wav"]);
+    drop(s);
+    let _ = std::fs::remove_dir_all(&song);
+    let _ = std::fs::remove_dir_all(&outside);
+}

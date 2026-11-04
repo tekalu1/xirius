@@ -462,11 +462,11 @@ fn recorded(r: &Value, kind: PluginKind, device: &str, name: &str) -> bool {
         && r["name"].as_str().is_some_and(|n| fold(n) == fold(name))
 }
 
-/// The file a mark's row names, when it stays inside `dir`.
+/// The file a mark's row names, when it stays inside `dir`: no root, drive, `..` or `:`
+/// (a stream of a file) in it.
 fn under(dir: &Path, rel: &str) -> Option<PathBuf> {
     let r = Path::new(rel);
-    r.components()
-        .all(|c| matches!(c, Component::Normal(_)))
+    (!rel.contains(':') && r.components().all(|c| matches!(c, Component::Normal(_))))
         .then(|| dir.join(r))
 }
 
@@ -678,24 +678,51 @@ const KEPT: &str = "preset:";
 
 /// A copy of the sample `p` in the presets' [`SAMPLES`] folder, as a preset names it. One
 /// file a content: the same sound saved by two presets is one copy, and two sounds of one
-/// name are two.
+/// name are two. A file there already is named as it is (a preset loaded and saved again,
+/// N3-smp-2); a dry run reads no file.
 fn keep_sample(dir: &Path, p: &Path, dry: bool) -> CmdResult<String> {
-    let data = std::fs::read(p).map_err(io)?;
+    let kept = dir.join(SAMPLES).canonicalize().ok();
+    if let (Some(kept), Ok(at)) = (kept, p.canonicalize())
+        && at.parent() == Some(kept.as_path())
+        && let Some(name) = at.file_name()
+    {
+        return Ok(format!("{KEPT}{SAMPLES}/{}", name.to_string_lossy()));
+    }
     let stem = p
         .file_stem()
-        .map(|s| file_name(&s.to_string_lossy()))
+        .map(|s| file_name(bare_stem(&s.to_string_lossy())))
         .unwrap_or_default();
     let ext = p
         .extension()
         .map(|e| format!(".{}", file_name(&e.to_string_lossy())))
         .unwrap_or_default();
+    if dry {
+        return Ok(format!("{KEPT}{SAMPLES}/{stem}{ext}"));
+    }
+    let data = std::fs::read(p).map_err(io)?;
     let name = format!("{stem}-{}{ext}", &sha256_hex(&data)[..16]);
     let to = dir.join(SAMPLES).join(&name);
-    if !dry && std::fs::metadata(&to).map(|m| m.len()).ok() != Some(data.len() as u64) {
+    if std::fs::metadata(&to).map(|m| m.len()).ok() != Some(data.len() as u64) {
         std::fs::create_dir_all(dir.join(SAMPLES)).map_err(io)?;
         atomic_write(&to, &data)?;
     }
     Ok(format!("{KEPT}{SAMPLES}/{name}"))
+}
+
+/// The hash a copy's name took: its last `-<16 hex digits>`.
+fn hash_of(stem: &str) -> Option<&str> {
+    match stem.rsplit_once('-') {
+        Some((_, h)) if h.len() == 16 && h.bytes().all(|b| b.is_ascii_hexdigit()) => Some(h),
+        _ => None,
+    }
+}
+
+/// A file's stem without the hashes copies put on it, however many (N3-smp-2).
+fn bare_stem(mut stem: &str) -> &str {
+    while let Some(h) = hash_of(stem) {
+        stem = &stem[..stem.len() - h.len() - 1];
+    }
+    stem
 }
 
 /// The name a sample had before it was copied: a copy's without the hash its name took.
@@ -705,10 +732,7 @@ fn first_name(s: &str) -> String {
         return name.to_string();
     }
     let (stem, ext) = name.rsplit_once('.').unwrap_or((name, ""));
-    let stem = match stem.rsplit_once('-') {
-        Some((a, h)) if h.len() == 16 && h.bytes().all(|b| b.is_ascii_hexdigit()) => a,
-        _ => stem,
-    };
+    let stem = bare_stem(stem);
     if ext.is_empty() {
         stem.to_string()
     } else {
@@ -730,54 +754,96 @@ enum Sample {
     Lost,
 }
 
-fn find_sample(s: &str, dir: &Path, song: Option<&Path>, near: Option<&Path>) -> Sample {
-    let at = match s.strip_prefix(KEPT) {
-        Some(rel) => under(dir, rel),
-        None => sample_path(s, song),
-    };
-    match at {
-        Some(p) if p.is_file() => return Sample::Here(p),
-        None if !s.starts_with(KEPT) => return Sample::Unplaced,
-        _ => {}
-    }
-    let name = first_name(s);
-    let mut budget = 20_000;
-    let roots = [
-        song.map(|d| (d.to_path_buf(), 4)),
-        near.map(|d| (d.to_path_buf(), 1)),
-        Some((dir.join(SAMPLES), 0)),
-    ];
-    for (root, depth) in roots.into_iter().flatten() {
-        if let Some(p) = find_named(&root, &name, depth, &mut budget) {
-            return Sample::Moved(p);
-        }
-    }
-    Sample::Lost
+/// Where the samples of one preset are looked for when they are not at their place: the
+/// files of the song's folder, the preset's and the presets' samples, listed once for all
+/// of them (L3-6).
+struct Finder<'a> {
+    roots: [Option<(&'a Path, usize)>; 3],
+    files: Option<Vec<(String, PathBuf)>>,
 }
 
-/// A file named `name` (letter case aside) in `root` or its folders `depth` deep, looking at
-/// no more than `budget` entries in all.
-fn find_named(root: &Path, name: &str, depth: usize, budget: &mut usize) -> Option<PathBuf> {
+impl<'a> Finder<'a> {
+    fn new(song: Option<&'a Path>, near: Option<&'a Path>, kept: &'a Path) -> Self {
+        Finder {
+            roots: [song.map(|d| (d, 4)), near.map(|d| (d, 1)), Some((kept, 0))],
+            files: None,
+        }
+    }
+
+    /// Where the preset's sample `s` is.
+    fn find(&mut self, s: &str, dir: &Path, song: Option<&Path>) -> Sample {
+        // A name that is not a copy is one in the song, from its folder. A full path or one
+        // that leaves the folder is looked for by its file's name alone, so a preset from
+        // elsewhere reaches no other place (L3-7).
+        let at = match s.strip_prefix(KEPT) {
+            Some(rel) => under(dir, rel),
+            None => {
+                let rel = s.replace('\\', "/");
+                let clean = under(Path::new(""), &rel).is_some();
+                match song {
+                    Some(d) if clean => under(d, &rel),
+                    None if clean => return Sample::Unplaced,
+                    _ => None,
+                }
+            }
+        };
+        if let Some(p) = at.filter(|p| p.is_file()) {
+            return Sample::Here(p);
+        }
+        let name = first_name(s);
+        // A copy's name holds a hash of its sound: a file of that name with another sound
+        // is not it (L3-5).
+        let leaf = s.rsplit(['/', '\\']).next().unwrap_or(s);
+        let hash = s
+            .strip_prefix(KEPT)
+            .and_then(|_| hash_of(leaf.rsplit_once('.').map_or(leaf, |l| l.0)));
+        let roots = self.roots;
+        let files = self.files.get_or_insert_with(|| {
+            let mut out = Vec::new();
+            let mut budget = 20_000;
+            for (root, depth) in roots.into_iter().flatten() {
+                list_files(root, depth, &mut budget, &mut out);
+            }
+            out
+        });
+        files
+            .iter()
+            .filter(|(n, _)| n.eq_ignore_ascii_case(&name))
+            .find(|(_, p)| {
+                hash.is_none_or(|h| {
+                    std::fs::read(p).is_ok_and(|d| sha256_hex(&d)[..16].eq_ignore_ascii_case(h))
+                })
+            })
+            .map_or(Sample::Lost, |(_, p)| Sample::Moved(p.clone()))
+    }
+}
+
+/// The files in `root` and its folders `depth` deep, by name, adding no more than `budget`
+/// entries in all: a folder's files before its folders', those in their order.
+fn list_files(root: &Path, depth: usize, budget: &mut usize, out: &mut Vec<(String, PathBuf)>) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
     let mut folders = Vec::new();
-    for e in std::fs::read_dir(root).ok()?.flatten() {
+    for e in entries.flatten() {
         if *budget == 0 {
-            return None;
+            return;
         }
         *budget -= 1;
         let p = e.path();
         if p.is_dir() {
             folders.push(p);
-        } else if e.file_name().to_string_lossy().eq_ignore_ascii_case(name) {
-            return Some(p);
+        } else {
+            out.push((e.file_name().to_string_lossy().into_owned(), p));
         }
     }
     if depth == 0 {
-        return None;
+        return;
     }
     folders.sort();
-    folders
-        .iter()
-        .find_map(|f| find_named(f, name, depth - 1, budget))
+    for f in folders {
+        list_files(&f, depth - 1, budget, out);
+    }
 }
 
 /// Runs one of [`NAMES`] on the presets in `dir`; `song` is the open song's folder.
@@ -1324,23 +1390,26 @@ fn load(
     };
     // Each sample is named the way the song names its files, from where it is found
     // (N-smp-1). One found nowhere stays in the list for the edit to take away with its
-    // own values, and is said by its name; one moved is named where it was found.
-    let mut lost: Vec<String> = Vec::new();
+    // own values, and is said by its name and its place in the list (a name kept for a song
+    // not saved yet may be the same, L3-8); one moved is named where it was found.
+    let mut lost: Vec<(usize, String)> = Vec::new();
+    let kept = dir.join(SAMPLES);
+    let mut finder = Finder::new(song, near.as_deref(), &kept);
     if let Some(list) = value
         .pointer_mut("/devices/0/samples")
         .and_then(Value::as_array_mut)
     {
-        for item in list.iter_mut() {
+        for (i, item) in list.iter_mut().enumerate() {
             let Some(s) = item.as_str().map(str::to_string) else {
                 continue;
             };
-            match find_sample(&s, dir, song, near.as_deref()) {
+            match finder.find(&s, dir, song) {
                 Sample::Here(p) | Sample::Moved(p) => *item = json!(song_path(&p, song)),
                 Sample::Unplaced => {}
                 Sample::Lost => {
                     let name = first_name(&s);
                     *item = json!(name);
-                    lost.push(name);
+                    lost.push((i, name));
                 }
             }
         }
@@ -1373,7 +1442,7 @@ fn load(
         }
     }
     let out = if dry {
-        for s in &lost {
+        for (_, s) in &lost {
             rows.push(xirius_core::track_preset::Adjust::new(
                 xirius_core::track_preset::AdjustKind::Rejected,
                 s.as_str(),

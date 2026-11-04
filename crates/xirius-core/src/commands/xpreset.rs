@@ -130,7 +130,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 ),
                 ArgDef::text(
                     "lost",
-                    "見つからないため外したサンプルの名前（JSON の配列。調整の行に出します）",
+                    "見つからないため外したサンプル（JSON の配列。[リストの位置, 名前] か名前。調整の行に出します）",
                 ),
                 at(),
                 replace(),
@@ -153,13 +153,30 @@ fn put(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .collect();
-    let lost: Vec<String> = match a.opt_str("lost").map(str::trim) {
-        Some(t) if !t.is_empty() => serde_json::from_str(t)
-            .map_err(|e| CmdError::invalid(format!("lost を読み込めません: {e}")))?,
+    // Each is `[place in the list, name]`, or a name alone: then every sample of the name.
+    let lost: Vec<(Option<usize>, String)> = match a.opt_str("lost").map(str::trim) {
+        Some(t) if !t.is_empty() => {
+            let items: Vec<Value> = serde_json::from_str(t)
+                .map_err(|e| CmdError::invalid(format!("lost を読み込めません: {e}")))?;
+            items
+                .iter()
+                .map(|v| match v {
+                    Value::String(s) => Ok((None, s.clone())),
+                    Value::Array(a) => match (
+                        a.first().and_then(Value::as_u64),
+                        a.get(1).and_then(Value::as_str),
+                    ) {
+                        (Some(i), Some(s)) => Ok((Some(i as usize), s.to_string())),
+                        _ => Err(CmdError::invalid("lost の項目は [位置, 名前] か名前です")),
+                    },
+                    _ => Err(CmdError::invalid("lost の項目は [位置, 名前] か名前です")),
+                })
+                .collect::<CmdResult<_>>()?
+        }
         _ => Vec::new(),
     };
     let lost_rows = || {
-        lost.iter().map(|s| {
+        lost.iter().map(|(_, s)| {
             Adjust::new(
                 AdjustKind::Rejected,
                 s.as_str(),
@@ -289,7 +306,15 @@ fn put(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
             .find(|x| x.id == plugin)
         && let Some(def) = x.builtin()
     {
-        let gone: Vec<bool> = x.samples.iter().map(|s| lost.contains(s)).collect();
+        let gone: Vec<bool> = x
+            .samples
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                lost.iter()
+                    .any(|(at, name)| at.map_or(name == s, |at| at == i))
+            })
+            .collect();
         super::samples::drop_files(def, x, &gone);
     }
     rows.extend(p.fix_track_rack(tid));
