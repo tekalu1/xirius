@@ -310,7 +310,12 @@ impl Studio {
             return false;
         }
         let (lo, max) = sampler::edge_range(def, x, &files, j);
-        let tops = sampler::tops_with(def, x, &files, j, hi.clamp(lo, max));
+        let hi = hi.clamp(lo, max);
+        // Where it ends already: no step to undo (low 19).
+        if sampler::velocities(def, x, &files).get(j).map(|r| r.1) == Some(hi) {
+            return false;
+        }
+        let tops = sampler::tops_with(def, x, &files, j, hi);
         let Some(((first, value), rest)) = tops.split_first() else {
             return false;
         };

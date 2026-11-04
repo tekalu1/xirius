@@ -494,6 +494,56 @@ fn ui_334_the_edge_between_velocity_layers_drags_and_steps() {
     assert_eq!(s.instruments.edge, None);
 }
 
+/// Low 18, 19 (UI-334): a pad of more than 128 layers draws (the last ones without a width),
+/// and the first edge pulled under the lowest `top` goes nowhere and leaves no step to undo.
+#[test]
+fn ui_334_a_pad_of_130_layers_draws_and_the_first_edge_stops_at_the_least_top() {
+    let (mut s, g, t, id) = window("Drum Kit");
+    let files: Vec<_> = (0..130)
+        .map(|n| json!({ "file": format!("Snare_{n}.wav") }))
+        .collect();
+    assert!(
+        s.run_command(
+            "plugin.samples.add",
+            json!({ "id": id.to_string(), "files": files, "pad": "A1", "layers": true }),
+        ),
+        "{:?}",
+        s.error
+    );
+    assert_eq!(ranges(&s, t, 0).len(), 130);
+    let b = body(&s, &g, t);
+    assert!(b.spots.iter().any(|x| x.mark == Mark::Layer(0)));
+    // Two layers: the first edge as low as it goes, then lower.
+    let (mut s, g, t, id) = window("Drum Kit");
+    add(&mut s, id, &["Snare_a.wav"]);
+    let (_dir, more) = wavs(&["Snare_b.wav"]);
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).expect("A1");
+    s.instruments.drop_layers = true;
+    assert!(s.window_drop(&g, x, y, &more), "{:?}", s.error);
+    let strip: f32 = body(&s, &g, t)
+        .spots
+        .iter()
+        .filter(|x| matches!(x.mark, Mark::Layer(_)))
+        .map(|x| x.r.w + 2.0)
+        .sum();
+    let n = spot(&s, &g, t, Mark::Edge(0));
+    let (x, y) = s.instrument_center(&g, id, Part::Spot(n)).unwrap();
+    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
+    assert!(s.instrument_moved(&g, x - strip, y, false));
+    assert!(s.instrument_up());
+    assert_eq!(ranges(&s, t, 0)[0], (0, 1));
+    let steps = s.song().steps();
+    let n = spot(&s, &g, t, Mark::Edge(0));
+    let (x, y) = s.instrument_center(&g, id, Part::Spot(n)).unwrap();
+    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
+    assert!(s.instrument_moved(&g, x - strip, y, false));
+    s.instrument_up();
+    assert!(s.field_keys(&g, "left", None, Mods::NONE));
+    assert!(!s.layer_edge_set(id, 0, 0));
+    assert_eq!(ranges(&s, t, 0)[0], (0, 1));
+    assert_eq!(s.song().steps(), steps);
+}
+
 /// The window `dy` taller than it opened.
 fn taller(s: &mut Studio, dy: f32) {
     s.instruments.open[0].body.1 += dy;

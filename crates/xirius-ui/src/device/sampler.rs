@@ -243,7 +243,13 @@ pub fn velocities(def: &BuiltinDef, plugin: &Plugin, files: &[usize]) -> Vec<(u8
 /// under the next one's top (UI-334).
 pub fn edge_range(def: &BuiltinDef, plugin: &Plugin, files: &[usize], j: usize) -> (u8, u8) {
     let ranges = velocities(def, plugin, files);
-    let lo = ranges.get(j).map_or(0, |r| r.0);
+    // The first layer's top is no lower than `file<n>.top` goes (low 19).
+    let least = def
+        .per_file
+        .iter()
+        .find(|p| p.id == "top")
+        .map_or(0, |s| s.to_plain(0.0).round() as u8);
+    let lo = ranges.get(j).map_or(0, |r| r.0).max(least);
     let max = ranges.get(j + 1).map_or(127, |r| r.1).saturating_sub(1);
     (lo, max.max(lo))
 }
@@ -742,7 +748,9 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
         .iter()
         .map(|&(lo, hi)| {
             if velocity {
-                f32::from(hi - lo + 1) / 128.0
+                // More than 128 layers leave the last ones no velocity: no width, not an
+                // overflow (low 18).
+                (f32::from(hi) - f32::from(lo) + 1.0).max(0.0) / 128.0
             } else {
                 1.0 / files.len() as f32
             }
