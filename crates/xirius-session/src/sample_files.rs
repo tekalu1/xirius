@@ -141,21 +141,31 @@ fn load(cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Plan> {
     if !skipped.is_empty() {
         data["skipped"] = json!(skipped);
     }
+    // The sounds past H16 do not go in: how many, for the window to say (N4-kit-1).
+    let mut left_out = 0;
     if kit {
         let from = args.opt_str("pad").and_then(xirius_params::pad_of);
         let mut x = x.clone();
         if args.flag("replace") {
             x.samples.clear();
         }
-        let pads = kit_estimate(&x, &names, from, args.flag("layers"));
+        let layers = args.flag("layers");
+        let pads = kit_estimate(&x, &names, from, layers);
         if !pads.is_empty() {
             data["pads"] = json!(pads.iter().map(|p| PAD_NAMES[*p]).collect::<Vec<_>>());
+            let placed: usize = kit_groups(&names, layers)
+                .iter()
+                .take(pads.len())
+                .map(|g| g.files.len())
+                .sum();
+            left_out = names.len() - placed;
+            data["left_out"] = json!(left_out);
         }
     }
     let mut message = format!(
         "{} に {} 個のサンプルを{}",
         x.name,
-        names.len(),
+        names.len() - left_out,
         if dry {
             "読み込みます"
         } else {
@@ -167,6 +177,14 @@ fn load(cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Plan> {
             "（音声ファイルでない {} は飛ばしました）",
             skipped.join("、")
         ));
+    }
+    if left_out > 0 {
+        let not = if dry {
+            "入れません"
+        } else {
+            "入れていません"
+        };
+        message.push_str(&format!("。入りきらない {left_out} 個は{not}"));
     }
     Ok(Plan {
         output: Output::with(message, data),

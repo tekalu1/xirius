@@ -37,6 +37,14 @@ impl Studio {
             self.apply_edit_prefs();
             return;
         }
+        if command == "plugin.samples.load" {
+            // The files past H16 did not go in: said, not as a fault (N4-kit-1).
+            let n = data["left_out"].as_u64().unwrap_or(0);
+            if n > 0 {
+                self.tell(format!("パッドに入りきらない {n} 個は入れていません"));
+            }
+            return;
+        }
         if command == "quantize.program" {
             // The panel shows what the program set.
             self.choose_editor();

@@ -94,7 +94,28 @@ fn a_folder_fills_a_kits_pads_and_steps_go_round_its_files() {
         true,
     );
     assert_eq!(dry["pads"], json!(["A1", "A2", "A3"]));
+    assert_eq!(dry["left_out"], json!(0));
     assert!(leaves(&s).is_empty());
+    // From H16, two of the three pads' sounds do not fit: said in the data and the message
+    // (N4-kit-1).
+    let out = s
+        .run_value(
+            "plugin.samples.load",
+            json!({ "id": "plg_2", "path": path, "pad": "H16" }),
+            &RunOptions {
+                dry_run: true,
+                ..RunOptions::human()
+            },
+        )
+        .unwrap();
+    assert_eq!(out.data["pads"], json!(["H16"]));
+    assert_eq!(out.data["left_out"], json!(3));
+    assert!(
+        out.message
+            .contains("1 個のサンプルを読み込みます。入りきらない 3 個は入れません"),
+        "{}",
+        out.message
+    );
 
     run(
         &mut s,

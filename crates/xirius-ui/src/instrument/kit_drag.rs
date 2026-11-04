@@ -208,7 +208,7 @@ impl Studio {
             };
             had + groups.first().map_or(0, |g| g.files.len())
         };
-        let text = match (shown.first(), shown.last(), groups.first()) {
+        let mut text = match (shown.first(), shown.last(), groups.first()) {
             (Some(a), Some(b), _) if shown.len() > 1 => {
                 format!(
                     "{} pads, {}–{}",
@@ -229,6 +229,11 @@ impl Studio {
             }
             _ => return None,
         };
+        // The sounds past H16 that a drop leaves out (N4-kit-1).
+        let left: usize = groups.iter().skip(pads.len()).map(|g| g.files.len()).sum();
+        if left > 0 {
+            text.push_str(&format!("（{left} 個は入らない）"));
+        }
         Some(Preview {
             plugin: w.plugin,
             pads: shown,

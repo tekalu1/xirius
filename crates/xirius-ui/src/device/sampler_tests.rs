@@ -1517,6 +1517,30 @@ fn n3_kit_2_a_drop_on_a_filled_pad_replaces_it_as_the_preview_said() {
     assert_eq!(s.instruments.open[0].pick, 0);
 }
 
+/// N4-kit-1 (UI-334): files dropped on H14 fill H14 to H16; the chip says how many do not
+/// fit before the drop, and the line at the foot says it after (not as a fault).
+#[test]
+fn n4_kit_1_the_files_past_h16_are_said_on_the_chip_and_after_the_drop() {
+    let (dir, _) = wavs(&["Hit1.wav", "Hit2.wav", "Hit3.wav", "Hit4.wav", "Hit5.wav"]);
+    let folder = [dir.path().to_path_buf()];
+    let (mut s, g, t, id) = window("Drum Kit");
+    add(&mut s, id, &["Kick.wav"]);
+    s.instruments.pick(id, 125, 0);
+    let pitch = ((125 + 36) % 128) as u8;
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(pitch)).expect("H14");
+    assert!(s.window_drag(&g, x, y, &folder, false));
+    let v = s.instruments.preview.clone().expect("a plan");
+    assert_eq!(v.text, "3 pads, H14–H16（2 個は入らない）");
+    assert!(s.drop_files(&g, x, y, &folder), "{:?}", s.error);
+    assert_eq!(s.error, None);
+    assert_eq!(
+        s.notice_text(),
+        Some("パッドに入りきらない 2 個は入れていません")
+    );
+    let k = plugin(&s, t);
+    assert_eq!(k.samples.len(), 4, "{:?}", k.samples);
+}
+
 /// L2-smp-5 (UI-334): an empty pad of a filled kit is its name and the drop plane, as on
 /// the mock: no Choke, modes, layers or voice to write its values.
 #[test]
