@@ -793,13 +793,10 @@ impl Screen {
         if studio.input_blocked() {
             return;
         }
-        studio.instruments.drop_layers = ev.event.modifiers.shift;
         let paths = ev.drag(cx).paths();
-        let named = studio.drag_names(paths);
         let g = geometry(&studio, window);
         let (x, y) = in_body(ev.event.position);
-        let planned = studio.window_drag(&g, x, y, paths, ev.event.modifiers.shift);
-        if studio.drop_hover(true) | named | planned {
+        if studio.files_moved(&g, x, y, paths, ev.event.modifiers.shift) {
             cx.notify();
         }
     }
@@ -821,8 +818,7 @@ impl Screen {
         }
         let g = geometry(&studio, window);
         let (x, y) = in_body(window.mouse_position());
-        studio.instruments.drop_layers = window.modifiers().shift;
-        if studio.drop_files(&g, x, y, paths.paths()) {
+        if studio.files_landed(&g, x, y, paths.paths(), window.modifiers().shift) {
             cx.notify();
         }
     }

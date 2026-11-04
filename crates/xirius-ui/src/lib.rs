@@ -202,6 +202,7 @@ pub mod opening_view;
 pub mod operations;
 pub mod opline;
 pub mod opline_shots;
+pub mod os_shift;
 pub mod other_change;
 pub mod otherproc_shots;
 pub mod overlap2_shots;

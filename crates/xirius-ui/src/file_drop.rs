@@ -47,6 +47,38 @@ impl Studio {
         changed
     }
 
+    /// Files from another app dragged to `(x, y)`, Shift as the event said it: the OS's own
+    /// Shift counts too, as the event of an OS drag has none (N4-kit-2). True when the screen
+    /// changed.
+    pub fn files_moved(
+        &mut self,
+        g: &Geometry,
+        x: f32,
+        y: f32,
+        paths: &[PathBuf],
+        shift: bool,
+    ) -> bool {
+        let shift = crate::os_shift::held(shift);
+        self.instruments.drop_layers = shift;
+        let named = self.drag_names(paths);
+        let planned = self.window_drag(g, x, y, paths, shift);
+        self.drop_hover(true) | named | planned
+    }
+
+    /// Files from another app dropped at `(x, y)`: [`Studio::drop_files`], all of them the
+    /// layers of one pad while Shift is held, as the OS has it (N4-kit-2).
+    pub fn files_landed(
+        &mut self,
+        g: &Geometry,
+        x: f32,
+        y: f32,
+        paths: &[PathBuf],
+        shift: bool,
+    ) -> bool {
+        self.instruments.drop_layers = crate::os_shift::held(shift);
+        self.drop_files(g, x, y, paths)
+    }
+
     /// Files dropped at a point. Each MIDI file makes a track; the last one
     /// made is selected. Other files are refused.
     pub fn drop_files(&mut self, g: &Geometry, x: f32, y: f32, paths: &[PathBuf]) -> bool {

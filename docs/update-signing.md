@@ -162,7 +162,11 @@ python scripts/update_sign.py verify `
    入れ替えまで通ることを、別の利用者（または VM）で確かめます。本物の窓を開く試験
    （`scripts/ci_tests.py` の一覧）も、窓の大きさが決まった PC で流します。本物の ARA の
    プラグインの試験は `python scripts/ci_tests.py --plugins` で流します
-   （`docs/ara-verification.md`）。
+   （`docs/ara-verification.md`）。ほかのアプリからのファイルのドラッグは試験から起こせない
+   ので、手で確かめます。エクスプローラーから音声ファイルを 2 個、Drum Kit の窓の A1 へ
+   ドラッグし、止めたまま Shift を押す・離すとチップが「A1: 2 layers」と「2 pads, A1–A2」に
+   替わること、Shift を押したまま落とすと 2 個が A1 のレイヤーになることを見ます
+   （UI-334。Shift は OS から読む）。
 
 ## 7. 気をつけること
 
