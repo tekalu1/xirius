@@ -16,14 +16,21 @@ pub fn held(seen: bool) -> bool {
 
 /// The tests' Shift, in place of the OS's: they never read the keyboard of the person at
 /// the PC. Let go when it drops, so a test that fails holding it leaves none to the next on
-/// its thread (the fifth review's low 12).
+/// its thread (the fifth review's low 12). It drops back to what it found, so one held
+/// inside another leaves the outer one's (the sixth review's low 6).
 #[cfg(test)]
+#[must_use = "Shift is let go as soon as this drops"]
 pub fn hold() -> Hold {
-    Hold
+    Hold {
+        was: HELD.with(std::cell::Cell::get),
+    }
 }
 
 #[cfg(test)]
-pub struct Hold;
+#[must_use = "Shift is let go as soon as this drops"]
+pub struct Hold {
+    was: bool,
+}
 
 #[cfg(test)]
 impl Hold {
@@ -35,7 +42,7 @@ impl Hold {
 #[cfg(test)]
 impl Drop for Hold {
     fn drop(&mut self) {
-        HELD.with(|h| h.set(false));
+        HELD.with(|h| h.set(self.was));
     }
 }
 
@@ -46,6 +53,12 @@ fn the_tests_shift_lets_go_as_it_drops() {
         let shift = hold();
         shift.set(true);
         assert!(held(false));
+        {
+            let inner = hold();
+            inner.set(false);
+            assert!(!held(false));
+        }
+        assert!(held(false), "the inner one let the outer go");
     }
     assert!(!held(false));
 }
