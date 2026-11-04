@@ -630,9 +630,27 @@ fn play_browser(s: &mut Studio, g: &Geometry, n: u8) {
     }
 }
 
+/// The start of the name of the folder the shots' samples are written to.
+const SAMPLES: &str = "xirius-devices-shots-";
+
 /// Where the samples of the shots are written (tones made here, nothing of the PC's).
 fn samples_dir() -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("xirius-devices-shots-{}", std::process::id()))
+    std::env::temp_dir().join(format!("{SAMPLES}{}", std::process::id()))
+}
+
+/// Takes away the samples' folders an earlier run left (its shots were taken from them, so
+/// they stay until the next run): only the latest run's is ever left (low 26).
+fn sweep_samples() {
+    let mine = samples_dir();
+    let Ok(dirs) = std::fs::read_dir(std::env::temp_dir()) else {
+        return;
+    };
+    for d in dirs.flatten() {
+        let path = d.path();
+        if path != mine && d.file_name().to_string_lossy().starts_with(SAMPLES) {
+            let _ = std::fs::remove_dir_all(path);
+        }
+    }
 }
 
 /// Writes the sample `name`: a tone at `hz` (with a drop in pitch when `drop`) or a noise
@@ -716,6 +734,9 @@ fn play_notes(s: &mut Studio, _: &Geometry, n: u8) {
     let Some(id) = crate::instrument::current(&s.project().tracks[&t]).map(|x| x.id) else {
         return;
     };
+    if n == 0 {
+        sweep_samples();
+    }
     let files: Vec<_> = match n {
         2 => vec![
             write_sample("Keys C3.wav", 130.8, false, 2.0),
@@ -908,6 +929,52 @@ mod tests {
         assert!(Play::Laid(play_notes).without_window(&mut s, &g, 1));
         assert_eq!(s.instruments.note.map(|n| n.pitch), Some(36));
         assert_eq!(s.instruments.open.len(), 1);
+    }
+
+    /// Low 26: stages 2 and 3 load their samples (the Sampler's two keys, the Drum Kit's five
+    /// with the toms layered on A3 and A2 muted), and an earlier run's folder is taken away.
+    #[test]
+    fn the_sample_stages_load_their_files_and_leave_one_folder() {
+        let g = Studio::sample().geometry(1600.0, 1000.0);
+        let stale = std::env::temp_dir().join(format!("{SAMPLES}0"));
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(stale.join("left.wav"), b"").unwrap();
+        let mut s = Studio::sample();
+        assert!(Play::Laid(play_notes).without_window(&mut s, &g, 0));
+        assert!(!stale.exists(), "an earlier run's samples are left");
+        let samples = |s: &Studio| {
+            let t = keys(s);
+            let x = crate::instrument::current(&s.project().tracks[&t])
+                .unwrap()
+                .clone();
+            let names: Vec<String> = x
+                .samples
+                .iter()
+                .map(|f| {
+                    let f = std::path::Path::new(f);
+                    f.file_name().unwrap().to_string_lossy().into_owned()
+                })
+                .collect();
+            (x, names)
+        };
+        let mut s = Studio::sample();
+        assert!(Play::Laid(play_notes).without_window(&mut s, &g, 2));
+        let (x, names) = samples(&s);
+        assert_eq!(x.name, "Sampler");
+        assert_eq!(names, ["Keys C3.wav", "Keys C5.wav"]);
+        assert_eq!(s.instruments.open[0].pick, 1);
+        let mut s = Studio::sample();
+        assert!(Play::Laid(play_notes).without_window(&mut s, &g, 3));
+        let (x, names) = samples(&s);
+        assert_eq!(x.name, "Drum Kit");
+        assert_eq!(names.len(), 5, "{names:?}");
+        assert_eq!(x.params.get("A2.mute"), Some(&1.0));
+        assert_eq!(s.instruments.note.map(|n| n.pitch), Some(38));
+        let w = s.instruments.open[0];
+        assert_eq!((w.pick, w.layer), (2, 1));
+        let dir = samples_dir();
+        assert!(dir.join("Tom_v2.wav").is_file());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
