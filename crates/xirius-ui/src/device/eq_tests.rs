@@ -14,7 +14,6 @@ use crate::instrument::window::{Part, values};
 use crate::studio::{Geometry, Rect, Studio};
 use crate::tools::Mods;
 
-/// The sample song with an EQ on Keys, its window open.
 /// L-ui-1: a curve drawn at one rate is not drawn again at another from the cache.
 #[test]
 fn ui_325_the_curve_is_drawn_again_at_another_rate() {
@@ -30,6 +29,7 @@ fn ui_325_the_curve_is_drawn_again_at_another_rate() {
     assert_eq!(at(48_000.0), at(48_000.0));
 }
 
+/// The sample song with an EQ on Keys, its window open.
 fn eq_window() -> (Studio, Geometry, TrackId, PluginId) {
     let mut s = Studio::sample();
     let g = s.geometry(1600.0, 1000.0);
