@@ -22,7 +22,8 @@ use crate::studio::{Geometry, Hit, Rect, Studio};
 /// The gap the grip sits in, between the strips and the face.
 pub const GRIP_W: f32 = 10.0;
 /// The mark of the grip.
-const GRIP_MARK: (f32, f32) = (3.0, 28.0);
+/// The mark on the grip: the mock's `.handle i`, 4×28 (review 3 低15).
+const GRIP_MARK: (f32, f32) = (4.0, 28.0);
 /// Below this the strips fold (two strips' width).
 pub const FOLD_W: f32 = 240.0;
 /// A folded channel: its name and its meter.
@@ -174,7 +175,7 @@ impl Studio {
         let size = |w: f32| crate::device::layout::size_of(def, w, Some(plugin));
         let natural = size(crate::device::layout::natural_w(def));
         let w = ins.dock_w.unwrap_or(natural.0);
-        // Under the strips it is as tall as at its narrowest, the tallest it gets.
+        // Under the strips it takes the height the face has at its smallest width.
         let tall = size(crate::device::layout::min_w(def)).1;
         let win = Win {
             track: t,
@@ -273,19 +274,31 @@ impl Studio {
 }
 
 /// The grip between the strips and the face.
+/// The mark in the middle of the grip.
+pub(crate) fn grip_mark(grip: Rect) -> Rect {
+    Rect::new(
+        grip.x + (grip.w - GRIP_MARK.0) / 2.0,
+        grip.y + (grip.h - GRIP_MARK.1) / 2.0,
+        GRIP_MARK.0,
+        GRIP_MARK.1,
+    )
+}
+
 pub fn paint_grip(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     let Some(s) = studio.mixer_split(g) else {
         return;
     };
     let c = pen.c;
     let held = studio.mixer.grip_drag.is_some();
-    let mark = Rect::new(
-        s.grip.x + (s.grip.w - GRIP_MARK.0) / 2.0,
-        s.grip.y + (s.grip.h - GRIP_MARK.1) / 2.0,
-        GRIP_MARK.0,
-        GRIP_MARK.1,
-    );
-    pen.round(mark, if held { c.ring } else { c.line[1] }, Radius::Pill);
+    let mark = grip_mark(s.grip);
+    // the mock's `--thumb`, and `--thumbh` while held or holding the keys (`.on`, `:focus-visible`)
+    let lit = held || studio.mixer.grip_focus;
+    let ink = if lit {
+        c.scroll_thumb[0]
+    } else {
+        c.scroll_thumb[1]
+    };
+    pen.round(mark, ink, Radius::Pill);
     if studio.mixer.grip_focus {
         pen.outline(
             Rect::new(mark.x - 2.0, mark.y - 2.0, mark.w + 4.0, mark.h + 4.0),

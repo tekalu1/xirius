@@ -403,3 +403,29 @@ fn the_face_under_another_tab_has_no_keys_and_no_marks() {
     // Tab past the screen's places does not go into it either
     assert!(!s.device_enter(true));
 }
+
+/// Review 3 中3: choosing a row docks its face; that is not someone at work, so the AI's jobs
+/// and the drafts go on. The face taken out as a window is, as any device's window.
+#[test]
+fn a_docked_face_is_no_unfinished_work_and_its_window_is() {
+    let (mut s, g, _, eq) = picked(1600.0);
+    assert_eq!(docked_plugin(&s), Some(eq));
+    assert!(!s.human_interaction_active());
+    s.tab = DrawerTab::Roll;
+    assert!(!s.human_interaction_active(), "under another tab neither");
+    s.tab = DrawerTab::Mixer;
+    press(&mut s, &g, eq, Part::Pin, 1);
+    assert!(s.instruments.is_open(eq));
+    assert!(s.human_interaction_active());
+}
+
+/// Review 3 低15: the grip's mark is the mock's 4×28, in the grip's middle.
+#[test]
+fn the_grips_mark_is_four_by_twenty_eight_in_its_middle() {
+    let (s, g, _, _) = picked(1600.0);
+    let grip = s.mixer_split(&g).unwrap().grip;
+    let mark = grip_mark(grip);
+    assert_eq!((mark.w, mark.h), (4.0, 28.0));
+    assert_eq!(mark.x + mark.w / 2.0, grip.x + grip.w / 2.0);
+    assert_eq!(mark.y + mark.h / 2.0, grip.y + grip.h / 2.0);
+}
