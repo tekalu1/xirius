@@ -745,6 +745,14 @@ impl Screen {
         if studio.input_blocked() {
             return;
         }
+        // Shift pressed or let go over a Drum Kit while files are dragged: what they would
+        // do changes where the pointer is (N3-kit-1).
+        if self.files_dragged {
+            let g = geometry(&studio, window);
+            if studio.drag_shift(&g, ev.modifiers.shift) {
+                cx.notify();
+            }
+        }
         if studio.recovery.is_some() || studio.sound_preparing() {
             return;
         }

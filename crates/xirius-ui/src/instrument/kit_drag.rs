@@ -8,6 +8,7 @@ use xirius_core::commands::samples::{kit_groups, kit_pads, kit_replaced, used_pa
 use xirius_core::id::PluginId;
 use xirius_design::{FontSize, Radius, Weight};
 use xirius_params::{PAD_NAMES, PADS, pad_key};
+use xirius_session::sample_files::audio_files;
 
 use super::window::{Part, live};
 use crate::device::layout::{Body, Mark};
@@ -27,23 +28,47 @@ pub struct Preview {
     pub at: (f32, f32),
 }
 
-/// The paths a drag holds, and which are folders: read once for each drag, not on every
-/// move.
+/// The paths a drag holds and the sounds they are, a folder's in the order the drop reads
+/// them: read once for each drag, not on every move (N3-kit-1). And where the pointer was,
+/// for Shift pressed or let go without a move.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Held {
     paths: Vec<PathBuf>,
-    folders: Vec<bool>,
+    names: Vec<String>,
+    at: Option<(f32, f32)>,
 }
 
 impl Held {
     fn of(&mut self, paths: &[PathBuf]) -> &Held {
         if self.paths != paths {
             self.paths = paths.to_vec();
-            // design-lint: allow(ui-blocking-io) PLG-068 review: one metadata read per path the OS drags in, once for each drag (the moves after it use what was read).
-            self.folders = paths.iter().map(|p| p.is_dir()).collect();
+            self.names = sounds(paths);
         }
         self
     }
+}
+
+/// The sounds `paths` are, as `plugin.samples.load` reads them: a folder's audio files by
+/// name ([`audio_files`]), and each audio file.
+fn sounds(paths: &[PathBuf]) -> Vec<String> {
+    let leaf = |p: &Path| {
+        p.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned()
+    };
+    let mut names = Vec::new();
+    for p in paths {
+        // design-lint: allow(ui-blocking-io) N3-kit-1: one metadata read per path the OS drags in, and a folder's list (the drop's own `audio_files`), once for each drag (the moves after it use what was read).
+        if p.is_dir() {
+            if let Ok(files) = audio_files(p) {
+                names.extend(files.iter().map(|f| leaf(f)));
+            }
+        } else if crate::drop_audio::is_audio(p) {
+            names.push(leaf(p));
+        }
+    }
+    names
 }
 
 /// How a pad picks among its layers, as its tag says it.
@@ -60,13 +85,30 @@ impl Studio {
         paths: &[PathBuf],
         shift: bool,
     ) -> bool {
-        let held = self.instruments.dragged.of(paths).clone();
-        let preview = self.kit_plan(g, x, y, &held, shift);
+        self.instruments.dragged.of(paths);
+        self.instruments.dragged.at = Some((x, y));
+        let held = self.instruments.dragged.clone();
         let drop_on = self.drop_target(g, x, y);
+        let on_layers = drop_on.is_some_and(|d| d.1 == sampler::DropOn::Layers);
+        let preview = self.kit_plan(g, x, y, &held.names, shift || on_layers);
         let changed = self.instruments.preview != preview || self.instruments.drop_on != drop_on;
         self.instruments.preview = preview;
         self.instruments.drop_on = drop_on;
         changed
+    }
+
+    /// Shift pressed or let go while files are dragged: the plan again where the pointer
+    /// is, though it did not move (N3-kit-1). True when that changed.
+    pub fn drag_shift(&mut self, g: &Geometry, shift: bool) -> bool {
+        if self.instruments.drop_layers == shift {
+            return false;
+        }
+        self.instruments.drop_layers = shift;
+        let held = self.instruments.dragged.clone();
+        let Some((x, y)) = held.at else {
+            return false;
+        };
+        self.window_drag(g, x, y, &held.paths, shift)
     }
 
     /// Where files dropped at `(x, y)` on a Sampler's or a Drum Kit's window go, and the
@@ -92,9 +134,17 @@ impl Studio {
         Some((w.plugin, on, at))
     }
 
-    /// What files dropped at `(x, y)` would do to the Drum Kit's window there: the pads
-    /// `plugin.samples.load` would give them. None off one, and when they would not go in.
-    fn kit_plan(&self, g: &Geometry, x: f32, y: f32, held: &Held, shift: bool) -> Option<Preview> {
+    /// What the sounds `names` dropped at `(x, y)` would do to the Drum Kit's window there:
+    /// the pads `plugin.samples.load` would give them, all on the pad chosen as its layers
+    /// with `layers` (Shift, or the layers' bar). None off one, and with no sound.
+    fn kit_plan(
+        &self,
+        g: &Geometry,
+        x: f32,
+        y: f32,
+        names: &[String],
+        layers: bool,
+    ) -> Option<Preview> {
         let p = self.project();
         let (i, part) = self.instruments.at(&p, g.size, x, y)?;
         let w = self.instruments.open[i];
@@ -107,37 +157,14 @@ impl Studio {
             _ => w.pick.min(PADS - 1),
         };
         let used = used_pads(def, plugin);
-        let leaf = |p: &Path| {
-            p.file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned()
-        };
-        // A folder's files are not read until it falls: it starts at the pad.
-        if let Some(n) = held.folders.iter().position(|f| *f) {
-            let name = leaf(&held.paths[n]);
-            let text = format!("{}–: {name}", PAD_NAMES[start]);
-            return Some(Preview {
-                plugin: w.plugin,
-                pads: vec![(start, name, String::new())],
-                text,
-                at: (x, y),
-            });
-        }
         // Only the sounds go in.
-        let names: Vec<String> = held
-            .paths
-            .iter()
-            .filter(|p| crate::drop_audio::is_audio(p))
-            .map(|p| leaf(p))
-            .collect();
         if names.is_empty() {
             return None;
         }
-        let groups = kit_groups(&names, shift);
-        let pads = kit_pads(&used, Some(start), groups.len(), shift);
+        let groups = kit_groups(names, layers);
+        let pads = kit_pads(&used, Some(start), groups.len(), layers);
         // A pad that has files takes the new ones in their place, unless they are its layers.
-        let replaced = kit_replaced(&used, &pads, shift);
+        let replaced = kit_replaced(&used, &pads, layers);
         let mode = def.per_pad.iter().find(|s| s.id == "layer_mode");
         let shown: Vec<(usize, String, String)> = groups
             .iter()
@@ -172,6 +199,15 @@ impl Studio {
                 (pad, first, sub)
             })
             .collect();
+        // As layers, the chip says how many the pad has after it (the mock's `A1: n layers`).
+        let total = |pad: usize| {
+            let had = if replaced.contains(&pad) {
+                0
+            } else {
+                sampler::pad_files(def, plugin, pad).len()
+            };
+            had + groups.first().map_or(0, |g| g.files.len())
+        };
         let text = match (shown.first(), shown.last(), groups.first()) {
             (Some(a), Some(b), _) if shown.len() > 1 => {
                 format!(
@@ -181,8 +217,8 @@ impl Studio {
                     PAD_NAMES[b.0]
                 )
             }
-            (Some(a), _, Some(group)) if group.files.len() > 1 => {
-                format!("{}: {} layers", PAD_NAMES[a.0], group.files.len())
+            (Some(a), _, Some(_)) if total(a.0) > 1 => {
+                format!("{}: {} layers", PAD_NAMES[a.0], total(a.0))
             }
             (Some(a), _, Some(group)) => {
                 format!(

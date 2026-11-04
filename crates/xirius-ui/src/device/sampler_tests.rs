@@ -921,10 +921,10 @@ fn ui_334_a_drag_shows_the_pads_it_fills() {
         !b.spots.iter().any(|x| x.mark == Mark::Mute(0)),
         "A1 shows what it gets, without its M"
     );
-    // Shift: all of them on A1, with its file.
+    // Shift: all of them on A1, with its file; the chip says the layers it has then.
     assert!(s.window_drag(&g, x, y, &files, true));
     let v = s.instruments.preview.clone().unwrap();
-    assert_eq!(v.text, "A1: 3 layers");
+    assert_eq!(v.text, "A1: 4 layers");
     assert_eq!(v.pads, [(0, "Hat".to_string(), "Vel 4".to_string())]);
     let mut b = body(&s, &g, t);
     crate::instrument::kit_drag::ghost(&mut b, &v);
@@ -935,11 +935,10 @@ fn ui_334_a_drag_shows_the_pads_it_fills() {
     // One file: its name.
     assert!(s.window_drag(&g, x, y, &files[..1], false));
     assert_eq!(s.instruments.preview.as_ref().unwrap().text, "A1: Kick");
-    // A folder: from the pad, its name.
+    // A folder: its sounds, as the drop reads them (N3-kit-1).
     assert!(s.window_drag(&g, x, y, &[dir.path().to_path_buf()], false));
     let v = s.instruments.preview.clone().unwrap();
-    let folder = dir.path().file_name().unwrap().to_string_lossy();
-    assert_eq!(v.text, format!("A1–: {folder}"));
+    assert_eq!(v.text, "2 pads, A1–A2");
     // Off the window, and once the drag leaves: nothing.
     assert!(s.window_drag(&g, 1.0, 1.0, &files, false));
     assert!(s.instruments.preview.is_none());
@@ -1153,6 +1152,73 @@ fn l2_smp_5_each_drop_target_does_what_the_mock_does() {
     let k = plugin(&s, t);
     assert_eq!(sampler::pad_files(k.builtin().unwrap(), &k, 0), [0, 1]);
     assert_eq!(s.instruments.open[0].pick, 0);
+}
+
+/// N3-kit-1 (UI-334): the preview is what the drop does. A folder shows its pads, their
+/// range and their banks' dots; the layers' bar adds to the pad chosen, said in its layers;
+/// Shift pressed or let go without a move plans again.
+#[test]
+fn n3_kit_1_the_preview_of_a_folder_the_layers_bar_and_shift_is_the_drop() {
+    let names: Vec<String> = (1..=21).map(|i| format!("Hit{i:02}.wav")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let (dir, _) = wavs(&refs);
+    let folder = [dir.path().to_path_buf()];
+    let (mut s, g, t, id) = window("Drum Kit");
+    add(&mut s, id, &["Kick.wav"]);
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).expect("A1");
+    assert!(s.window_drag(&g, x, y, &folder, false));
+    let v = s.instruments.preview.clone().expect("a plan");
+    assert_eq!(v.text, "21 pads, A1–B5");
+    assert_eq!(v.pads.len(), 21);
+    assert_eq!(v.pads[20].1, "Hit21");
+    let mut b = body(&s, &g, t);
+    crate::instrument::kit_drag::ghost(&mut b, &v);
+    for bank in [0, 1] {
+        assert!(
+            b.spots
+                .iter()
+                .any(|x| x.mark == Mark::Bank(bank) && x.ghost)
+        );
+    }
+    assert!(b.spots.iter().any(|x| x.mark == Mark::Bank(2) && !x.ghost));
+    // Dropped, it does what it showed.
+    assert!(s.drop_files(&g, x, y, &folder), "{:?}", s.error);
+    let k = plugin(&s, t);
+    let def = k.builtin().unwrap();
+    for (pad, name, _) in &v.pads {
+        let f = sampler::pad_files(def, &k, *pad);
+        assert_eq!(f.len(), 1);
+        assert_eq!(&sampler::stem(&k.samples[f[0]]), name);
+    }
+    // Over A1's layers' bar: on A1, as its layers.
+    let (_dir2, two) = wavs(&["Snare.wav", "Clap.wav"]);
+    s.instruments.pick(id, 0, 0);
+    let bar = sampler::layer_bar(&body(&s, &g, t)).expect("A1's layers");
+    let (bx, by) = (bar.right() - 4.0, bar.y + bar.h / 2.0);
+    assert!(s.window_drag(&g, bx, by, &two, false));
+    let v = s.instruments.preview.clone().unwrap();
+    assert_eq!(v.text, "A1: 3 layers");
+    assert_eq!(v.pads.len(), 1);
+    assert_eq!(v.pads[0].0, 0);
+    // Shift held and let go over A2 without a move: one pad, then the pads from it again.
+    let (x2, y2) = s.instrument_center(&g, id, Part::Pad(37)).expect("A2");
+    s.window_drag(&g, x2, y2, &two, false);
+    assert_eq!(
+        s.instruments.preview.as_ref().unwrap().text,
+        "2 pads, A2–A3"
+    );
+    assert!(s.drag_shift(&g, true));
+    assert_eq!(s.instruments.preview.as_ref().unwrap().text, "A2: 3 layers");
+    assert!(!s.drag_shift(&g, true), "no change, no plan");
+    assert!(s.drag_shift(&g, false));
+    assert_eq!(
+        s.instruments.preview.as_ref().unwrap().text,
+        "2 pads, A2–A3"
+    );
+    // Once the drag leaves, Shift plans nothing.
+    s.drop_hover(false);
+    assert!(!s.drag_shift(&g, true));
+    assert!(s.instruments.preview.is_none());
 }
 
 /// N3-kit-2 (UI-334): files dropped on a Drum Kit's pad that has a file fill the pads from it,
