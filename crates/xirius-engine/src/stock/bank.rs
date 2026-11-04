@@ -193,6 +193,41 @@ impl StockHandle {
         values: impl IntoIterator<Item = (&'a String, &'a f64)>,
     ) -> Vec<String> {
         let def = self.bank.def();
+        let (scoped, unknown) = self.take_values(values);
+        if let Some(mut files) = self.files()
+            && (files.scoped != scoped || files.pending)
+        {
+            files.scoped = scoped;
+            files.send(def);
+        }
+        unknown
+    }
+
+    /// [`Self::set_files`] and [`Self::set_all`] at once: the files go laid out with their
+    /// own values, in one place of the ring, so they never sound with the last ones' (the
+    /// sixth review's low 4). `false` as [`Self::set_files`]; the keys as [`Self::set_all`].
+    pub fn set_files_with<'a>(
+        &self,
+        slots: Vec<Option<FileSlot>>,
+        values: impl IntoIterator<Item = (&'a String, &'a f64)>,
+    ) -> (bool, Vec<String>) {
+        let def = self.bank.def();
+        let (scoped, unknown) = self.take_values(values);
+        let Some(mut files) = self.files() else {
+            return (false, unknown);
+        };
+        files.slots = slots;
+        files.scoped = scoped;
+        (files.send(def), unknown)
+    }
+
+    /// Sets the parameters from a song's values (the ones it does not name to their
+    /// defaults); the files' and pads' values and the keys it has no parameter for come back.
+    fn take_values<'a>(
+        &self,
+        values: impl IntoIterator<Item = (&'a String, &'a f64)>,
+    ) -> (BTreeMap<String, f64>, Vec<String>) {
+        let def = self.bank.def();
         let mut given = [None; MAX_PARAMS];
         let mut scoped = BTreeMap::new();
         let mut unknown = Vec::new();
@@ -209,13 +244,7 @@ impl StockHandle {
             self.bank
                 .set_norm(i, given[i].unwrap_or_else(|| p.default_norm()));
         }
-        if let Some(mut files) = self.files()
-            && (files.scoped != scoped || files.pending)
-        {
-            files.scoped = scoped;
-            files.send(def);
-        }
-        unknown
+        (scoped, unknown)
     }
 
     /// The tempo a built-in that follows it plays at (the Delay's note lengths).
