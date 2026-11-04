@@ -683,16 +683,21 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
 /// The file whose wave the window of `plugin` shows: the Sampler's zone's, the Drum Kit's
 /// chosen layer's.
 pub fn wave_file(plugin: &Plugin, pick: usize, layer: usize) -> Option<&str> {
+    let i = wave_slot(plugin, pick, layer)?;
+    plugin.samples.get(i).map(String::as_str)
+}
+
+/// Which of `plugin`'s samples its wave shows: see [`wave_file`].
+pub fn wave_slot(plugin: &Plugin, pick: usize, layer: usize) -> Option<usize> {
     let def = plugin.builtin()?;
     match def.uid {
-        "sampler" => plugin
-            .samples
-            .get(pick.min(plugin.samples.len().saturating_sub(1)))
-            .map(String::as_str),
+        "sampler" => {
+            let n = plugin.samples.len();
+            (n > 0).then(|| pick.min(n - 1))
+        }
         "drum-kit" => {
             let files = pad_files(def, plugin, pick.min(PADS - 1));
-            let i = *files.get(layer.min(files.len().saturating_sub(1)))?;
-            plugin.samples.get(i).map(String::as_str)
+            files.get(layer.min(files.len().saturating_sub(1))).copied()
         }
         _ => None,
     }
@@ -847,6 +852,47 @@ pub fn paint_env(pen: &mut Pen, def: &BuiltinDef, r: Rect, values: &[f64], view:
         graph::area(pen, r, &pts, base, c.surface_3);
         graph::stroke(pen, r, &pts, 2.0, strong);
     });
+    // The voice that sounds: a dot where it is on the envelope.
+    if let Some(at) = view
+        .live
+        .and_then(|l| l.env)
+        .filter(|_| !view.bypassed)
+        .and_then(|v| env_dot(def, r, values, v))
+    {
+        let d = Rect::new(at.0 - 4.0, at.1 - 4.0, 8.0, 8.0);
+        pen.round(d, c.ink_strong, Radius::Pill);
+    }
+}
+
+/// Where a voice at `v` is on the envelope drawn on `r`, as the mock moves it: up the
+/// attack by its level, along the decay and the release by their time, then slowly on along
+/// the sustain while it is held. None once its release has ended.
+pub fn env_dot(def: &BuiltinDef, r: Rect, values: &[f64], v: graph::Env) -> Option<(f32, f32)> {
+    use xirius_engine::stock::VoiceStage;
+    let (e, _) = env_shape(def, r, values)?;
+    let i = inset(r);
+    let y = i.bottom() - i.h * v.level.clamp(0.0, 1.0);
+    let secs = |id: &str| (plain(def, values, id) / 1000.0).max(1e-3) as f32;
+    let x = match v.stage {
+        VoiceStage::Attack => i.x + v.level.clamp(0.0, 1.0) * (e.a.0 - i.x),
+        VoiceStage::Decay => {
+            let d = secs("decay");
+            if v.secs < d {
+                e.a.0 + v.secs / d * (e.d.0 - e.a.0)
+            } else {
+                e.d.0 + (1.0 - (-(v.secs - d) / 0.8).exp()) * (e.hold - e.d.0)
+            }
+        }
+        VoiceStage::Release => {
+            let t = v.secs / secs("release");
+            if t >= 1.0 {
+                return None;
+            }
+            e.hold + t * (e.r.0 - e.hold)
+        }
+        VoiceStage::Fade => return None,
+    };
+    Some((x, y))
 }
 
 /// The filter's level (dB) at `f` for its type, cutoff and resonance, as the engine's
@@ -1068,6 +1114,22 @@ pub fn paint_wave(pen: &mut Pen, def: &BuiltinDef, r: Rect, values: &[f64], view
         }
         for x in [start, end] {
             pen.fill(Rect::new(x - 1.0, r.y, 2.0, r.h), c.ink_strong);
+        }
+        // Where the voice that sounds reads, while it is between Start and End.
+        if let Some(read) = view.live.and_then(|l| l.read).filter(|_| !view.bypassed) {
+            let at = f64::from(read) * 100.0;
+            let (s, e) = (plain(def, values, "start"), plain(def, values, "end"));
+            if (s.min(e) - 0.05..=s.max(e) + 0.05).contains(&at) {
+                // A reversed file reads its cut from End back to Start: the line goes from
+                // Start to End all the same, as on the mock.
+                let shown = if on(def, values, "reverse") {
+                    s + e - at
+                } else {
+                    at
+                };
+                let x = ax.px(shown);
+                pen.fill(Rect::new(x - 1.0, r.y, 2.0, r.h), c.ink_strong);
+            }
         }
     });
 }

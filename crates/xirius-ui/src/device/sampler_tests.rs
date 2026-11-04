@@ -7,6 +7,7 @@ use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::Plugin;
 
+use super::graph;
 use super::layout::{self, Body, Mark};
 use super::play;
 use super::sampler::{self, BROWSE_LABEL, DROP_LABEL};
@@ -866,4 +867,88 @@ fn ui_334_a_drag_shows_the_pads_it_fills() {
     s.window_drag(&g, x, y, &files, false);
     s.drop_hover(false);
     assert!(s.instruments.preview.is_none());
+}
+
+/// UI-333, UI-334: while a voice sounds, a line on the wave shows where it reads the file
+/// shown (between Start and End) and a dot rides the envelope of the pad it plays; another
+/// layer's or pad's voice shows neither, and once it ends nothing does.
+#[test]
+fn ui_333_the_voice_shows_where_it_reads_and_rides_the_envelope() {
+    use xirius_engine::stock::{VoiceStage, VoiceView};
+    let voice = |source: u16, stage: VoiceStage, env: f32| VoiceView {
+        pitch: 60,
+        stage,
+        file: true,
+        source,
+        position: 0.5,
+        env,
+    };
+    let (mut s, _g, t, id) = window("Sampler");
+    add(&mut s, id, &["Piano_C3.wav", "Piano_C4.wav"]);
+    let now = std::time::Instant::now();
+    assert!(
+        s.instruments
+            .hear(id, Some(voice(0, VoiceStage::Attack, 0.5)), now)
+    );
+    let x = plugin(&s, t);
+    let def = s.instruments.def_of(&x).unwrap();
+    let live = s.instruments.live_of(&x, def, 0, Some(0), now).unwrap();
+    assert_eq!(live.read, Some(0.5));
+    let env = live.env.expect("the Sampler's one envelope");
+    // Another zone's wave: no line, the dot all the same.
+    let other = s.instruments.live_of(&x, def, 1, Some(1), now).unwrap();
+    assert!(other.read.is_none() && other.env.is_some());
+    // Up the attack by its level, then along the decay and the release by their time.
+    let values = values_of(&x, def);
+    let r = crate::studio::Rect::new(0.0, 0.0, 300.0, 120.0);
+    let at = |v: graph::Env| sampler::env_dot(def, r, &values, v);
+    let half = at(env).unwrap();
+    let top = at(graph::Env { level: 1.0, ..env }).unwrap();
+    assert!(top.0 > half.0 && top.1 < half.1, "{half:?} {top:?}");
+    let decay = |secs| graph::Env {
+        stage: VoiceStage::Decay,
+        level: 0.8,
+        secs,
+    };
+    let (d0, d1, d2) = (
+        at(decay(0.0)).unwrap(),
+        at(decay(0.05)).unwrap(),
+        at(decay(30.0)).unwrap(),
+    );
+    assert!(d0.0 < d1.0 && d1.0 < d2.0, "{d0:?} {d1:?} {d2:?}");
+    let release = |secs| graph::Env {
+        stage: VoiceStage::Release,
+        level: 0.3,
+        secs,
+    };
+    assert!(at(release(0.0)).unwrap().0 >= d2.0);
+    assert!(at(release(60.0)).is_none(), "the release has ended");
+    // The stage's time runs from when it began, not from each read.
+    let later = now + std::time::Duration::from_millis(200);
+    s.instruments
+        .hear(id, Some(voice(0, VoiceStage::Attack, 0.9)), later);
+    let env = s
+        .instruments
+        .live_of(&x, def, 0, Some(0), later)
+        .unwrap()
+        .env
+        .unwrap();
+    assert!((env.secs - 0.2).abs() < 1e-3);
+    // Ended: nothing.
+    assert!(!s.instruments.hear(id, None, later));
+    assert!(s.instruments.live_of(&x, def, 0, Some(0), later).is_none());
+
+    // A Drum Kit: only the pad it plays shows it, and its layer's wave the line.
+    let (mut s, _g, t, id) = window("Drum Kit");
+    add(&mut s, id, &["Kick.wav", "Snare.wav"]);
+    s.instruments
+        .hear(id, Some(voice(1, VoiceStage::Decay, 0.7)), now);
+    let x = plugin(&s, t);
+    let def = s.instruments.def_of(&x).unwrap();
+    let pad = |pick: usize| {
+        let shown = sampler::wave_slot(&x, pick, 0);
+        s.instruments.live_of(&x, def, pick, shown, now).unwrap()
+    };
+    assert!(pad(1).read.is_some() && pad(1).env.is_some());
+    assert!(pad(0).read.is_none() && pad(0).env.is_none());
 }

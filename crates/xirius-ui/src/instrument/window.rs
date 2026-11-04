@@ -19,6 +19,7 @@ use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::{Plugin, PluginKind, Project, Track, TrackKind};
 use xirius_design::{FontSize, Radius, Weight};
 use xirius_engine::NoteKind;
+use xirius_engine::stock::{VoiceStage, VoiceView};
 use xirius_params::{BuiltinDef, ParamSpec};
 
 use super::menu::Menu;
@@ -361,6 +362,8 @@ pub struct Windows {
     /// Each open Delay's or Reverb's onsets: its repeats or reflections
     /// light from the last (UI-329, UI-330).
     pub(crate) echoes: HashMap<PluginId, delay::Echo>,
+    /// Each open Sampler's or Drum Kit's newest voice while it sounds (UI-333, UI-334).
+    pub(crate) voices: HashMap<PluginId, Sounding>,
     /// The devices whose probes write for a window, so a closed one stops.
     watched: Vec<PluginId>,
     /// The preset files the tags and their lists read (UI-332).
@@ -386,6 +389,14 @@ pub struct Windows {
     /// What files dragged over a Drum Kit would do there (UI-334), and the files.
     pub(crate) preview: Option<super::kit_drag::Preview>,
     pub(crate) dragged: super::kit_drag::Held,
+}
+
+/// A Sampler's or a Drum Kit's newest voice as its window last read it (UI-333, UI-334),
+/// and when its stage began.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Sounding {
+    pub voice: VoiceView,
+    pub since: std::time::Instant,
 }
 
 /// How long a pressed pad stays lit, however short the press (UI-334).
@@ -870,6 +881,7 @@ impl Windows {
         self.meters.retain(|id, _| open.contains(id));
         self.dynamics.retain(|id, _| open.contains(id));
         self.echoes.retain(|id, _| open.contains(id));
+        self.voices.retain(|id, _| open.contains(id));
         if self.hot.is_some_and(|(id, _)| !open.contains(&id)) {
             self.hot = None;
         }
@@ -977,12 +989,65 @@ impl Windows {
                 let e = self.echoes.entry(id).or_default();
                 moving |= e.feed(probe.onsets(), now);
             }
+            if live(p, &w).is_some_and(|(_, _, d)| matches!(d.uid, "sampler" | "drum-kit")) {
+                moving |= self.hear(id, probe.voice(), now);
+            }
             let a = self.analysers.entry(id).or_default();
             if a.feed(&probe, rate) {
                 moving |= a.levels.iter().any(|l| !l.is_empty());
             }
         }
         moving
+    }
+
+    /// What `id`'s probe read of its newest voice at `now`: kept, with when its stage began
+    /// (its dot moves on the envelope by the time since). True while one sounds.
+    pub(crate) fn hear(
+        &mut self,
+        id: PluginId,
+        voice: Option<VoiceView>,
+        now: std::time::Instant,
+    ) -> bool {
+        let Some(v) = voice.filter(|v| v.file && v.stage != VoiceStage::Fade) else {
+            self.voices.remove(&id);
+            return false;
+        };
+        let since = match self.voices.get(&id) {
+            Some(s)
+                if (s.voice.pitch, s.voice.source, s.voice.stage)
+                    == (v.pitch, v.source, v.stage) =>
+            {
+                s.since
+            }
+            _ => now,
+        };
+        self.voices.insert(id, Sounding { voice: v, since });
+        true
+    }
+
+    /// The newest voice of `plugin` as its window shows it on the wave of the file `shown`
+    /// (a slot of its samples) and on the envelope of the pad `pick` (a Drum Kit's), at
+    /// `now`.
+    pub(crate) fn live_of(
+        &self,
+        plugin: &Plugin,
+        def: &BuiltinDef,
+        pick: usize,
+        shown: Option<usize>,
+        now: std::time::Instant,
+    ) -> Option<graph::Live> {
+        let s = self.voices.get(&plugin.id)?;
+        let file = usize::from(s.voice.source);
+        let mine = def.uid != "drum-kit" || sampler::pad_files(def, plugin, pick).contains(&file);
+        let env = mine.then(|| graph::Env {
+            stage: s.voice.stage,
+            level: s.voice.env,
+            secs: now.saturating_duration_since(s.since).as_secs_f32(),
+        });
+        Some(graph::Live {
+            read: (shown == Some(file)).then_some(s.voice.position),
+            env,
+        })
     }
 
     /// The tag's «name ●» (see [`super::presets`]).
@@ -1918,7 +1983,15 @@ fn paint_window(
         let now = values_of(plugin, def);
         let ins = &studio.instruments;
         let shown = ins.shown(plugin);
-        // The peaks of the sample a Sampler's or a Drum Kit's wave shows (UI-333, UI-334).
+        // The peaks of the sample a Sampler's or a Drum Kit's wave shows (UI-333, UI-334),
+        // and where its newest voice is on it and on the envelope.
+        let sounding = ins.live_of(
+            plugin,
+            def,
+            w.pick,
+            sampler::wave_slot(plugin, w.pick, w.layer),
+            std::time::Instant::now(),
+        );
         let peaks = sampler::wave_file(plugin, w.pick, w.layer).and_then(|file| {
             let dir = studio.song().dir();
             let path = crate::wave::source(dir.as_deref(), file)?;
@@ -1967,6 +2040,7 @@ fn paint_window(
                     .get(&plugin.id)
                     .and_then(|e| e.since(std::time::Instant::now())),
                 wave: peaks.as_deref(),
+                live: sounding,
             };
             graph::paint(pen, def, n, plane, &shown, &view);
         }

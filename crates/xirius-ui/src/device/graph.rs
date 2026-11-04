@@ -250,6 +250,28 @@ pub struct View<'a> {
     pub echo: Option<f64>,
     /// The peaks of the sample a Sampler's or a Drum Kit's wave shows (UI-333, UI-334).
     pub wave: Option<&'a Peaks>,
+    /// The newest voice of a Sampler or a Drum Kit while it sounds (UI-333, UI-334).
+    pub live: Option<Live>,
+}
+
+/// Where a Sampler's or a Drum Kit's newest voice is, as the window shows it (UI-333,
+/// UI-334): a line on the wave where it reads, a dot on the envelope.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Live {
+    /// Where it reads the file the wave shows, 0..1 of the file forwards; None when it
+    /// plays another (another zone, another layer).
+    pub read: Option<f32>,
+    /// Its envelope, None when it is not the one the envelope shows (another pad's):
+    pub env: Option<Env>,
+}
+
+/// A voice's place on its envelope: its stage, its level (0..1), and the seconds since the
+/// stage began.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Env {
+    pub stage: xirius_engine::stock::VoiceStage,
+    pub level: f32,
+    pub secs: f32,
 }
 
 /// Paints a device's `n`th graph on its plane `r`, then its points.
