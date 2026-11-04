@@ -247,6 +247,11 @@ pub struct Update {
     asking: Option<std::thread::JoinHandle<Result<Option<update::Release>, String>>>,
     pub check: CheckState,
     channel: Option<bool>,
+    /// The launch's asking (UI-282). The window reads the settings after it starts, so the
+    /// launch may have asked for the other channel; it is asked again for the one now set.
+    launch: Option<update::UpdateCheck>,
+    /// The launch's asking is to be made again once nothing else is asking or downloading.
+    recheck: bool,
     manual: bool,
     manual_pending: bool,
     download_channel: Option<bool>,
@@ -300,6 +305,8 @@ impl Default for Update {
             asking: None,
             check: CheckState::Idle,
             channel: None,
+            launch: None,
+            recheck: false,
             manual: false,
             manual_pending: false,
             download_channel: None,
@@ -1347,6 +1354,8 @@ impl Studio {
         }
         let root = check.root().to_path_buf();
         self.update.root = Some(root.clone());
+        self.update.launch = Some(check.clone());
+        self.update.recheck = false;
         let beta = self.update_beta();
         if self.transport.is_windowed() {
             let enabled = self.update_on();
@@ -1533,7 +1542,9 @@ impl Studio {
             self.update.startup = None;
             match result {
                 Ok(got) if got.beta == beta => {
-                    self.update.notice = got.note;
+                    if got.note.is_some() {
+                        self.update.notice = got.note;
+                    }
                     self.update.ready = got.installer;
                     self.adopt_update_release(got.newer);
                     if self.update.ready.is_some() {
@@ -1544,8 +1555,15 @@ impl Studio {
                         });
                     }
                 }
+                // Asked for the channel set before the settings were read: the installer's
+                // note is kept (it is read once), the rest is asked again for this channel.
+                Ok(got) => {
+                    if got.note.is_some() {
+                        self.update.notice = got.note;
+                    }
+                    self.update.recheck = true;
+                }
                 Err(e) => self.update.notice = Some(e),
-                _ => {}
             }
             changed = true;
         }
@@ -1623,6 +1641,7 @@ impl Studio {
             if self.update.asking.is_none() {
                 self.update.channel = Some(beta);
             }
+            self.update.recheck = true;
             changed = true;
         }
         if self.update.asking.as_ref().is_some_and(|a| a.is_finished())
@@ -1692,6 +1711,22 @@ impl Studio {
         if self.update.manual_pending && !self.update.asking() && !self.update.downloading() {
             self.update.manual_pending = false;
             self.manual_update_check();
+        }
+        if self.update.recheck
+            && self.update.startup.is_none()
+            && !self.update.asking()
+            && !self.update.downloading()
+            && self.update.arm.is_none()
+            && self.update.pending.is_none()
+            && self.update.holding.is_none()
+            && self.update.held.is_none()
+            && let Some(check) = self.update.launch.clone()
+        {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as u64);
+            self.check_for_update(check, now_ms);
+            changed = true;
         }
         // The worker cannot reach the panel's copy: it is brought up to date here.
         let newer = self.newer_release().cloned();
@@ -4151,6 +4186,41 @@ used {} {}
         finish_manual(&mut s);
         assert!(s.newer_release().is_none());
         assert_eq!(s.update.check, CheckState::Idle);
+    }
+
+    /// The window reads the settings after the launch asked: a beta channel set there is asked
+    /// for then, and the waiting beta is offered (UI-282).
+    #[test]
+    fn ui_282_the_launch_asks_again_for_the_channel_the_settings_bring() {
+        let tmp = scratch("launch-channel");
+        let mut s = Studio::sample();
+        s.song.load_settings(tmp.path());
+        let urls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = urls.clone();
+        let fetch: update::Fetch = std::sync::Arc::new(move |url| {
+            seen.lock().unwrap().push(url.to_string());
+            let beta = serde_json::json!({"tag_name":"v99.0.0-beta.1","html_url":"https://github.com/tekalu1/xirius/releases/tag/v99.0.0-beta.1","prerelease":true,"body":"beta"});
+            Ok(if url == update::RELEASES {
+                serde_json::json!([beta]).to_string()
+            } else {
+                serde_json::json!({"tag_name":"v0.0.1","html_url":"https://github.com/tekalu1/xirius/releases/tag/v0.0.1","body":"old"}).to_string()
+            })
+        });
+        s.check_for_update(update::UpdateCheck::in_dir(tmp.path(), fetch), 1);
+        finish_manual(&mut s);
+        assert!(s.newer_release().is_none());
+        s.run_command(
+            "prefs.set",
+            serde_json::json!({"key":update::BETA_PREF,"value":"true"}),
+        );
+        s.poll_update();
+        finish_manual(&mut s);
+        assert!(s.newer_release().is_some_and(|r| r.prerelease));
+        assert_eq!(*urls.lock().unwrap(), [update::LATEST, update::RELEASES]);
+        // Asked once for the channel: another frame does not ask again.
+        s.poll_update();
+        assert!(!s.update.asking());
+        assert_eq!(urls.lock().unwrap().len(), 2);
     }
 
     #[test]
