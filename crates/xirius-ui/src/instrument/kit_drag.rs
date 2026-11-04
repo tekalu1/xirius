@@ -14,6 +14,7 @@ use crate::device::layout::{Body, Mark};
 use crate::device::{play, sampler};
 use crate::draw::{Align, Pen};
 use crate::studio::{Geometry, Rect, Studio};
+use crate::title_bar;
 
 /// What a drop would do to a Drum Kit: the pads it fills, and the chip's words.
 #[derive(Clone, Debug, PartialEq)]
@@ -46,7 +47,7 @@ impl Held {
 }
 
 /// How a pad picks among its layers, as its tag says it.
-const TAGS: [&str; 4] = ["Vel", "RR", "Rand", "Stack"];
+const TAGS: [&str; 4] = ["Vel", "RR", "Rnd", "Stack"];
 
 impl Studio {
     /// Files dragged over the screen at `(x, y)`, Shift held or not: over a Drum Kit's
@@ -61,9 +62,34 @@ impl Studio {
     ) -> bool {
         let held = self.instruments.dragged.of(paths).clone();
         let preview = self.kit_plan(g, x, y, &held, shift);
-        let changed = self.instruments.preview != preview;
+        let drop_on = self.drop_target(g, x, y);
+        let changed = self.instruments.preview != preview || self.instruments.drop_on != drop_on;
         self.instruments.preview = preview;
+        self.instruments.drop_on = drop_on;
         changed
+    }
+
+    /// Where files dropped at `(x, y)` on a Sampler's or a Drum Kit's window go, and the
+    /// place that lights for it: [`sampler::drop_on`].
+    pub(crate) fn drop_target(
+        &self,
+        g: &Geometry,
+        x: f32,
+        y: f32,
+    ) -> Option<(PluginId, sampler::DropOn, Rect)> {
+        let p = self.project();
+        let (i, _) = self.instruments.at(&p, g.size, x, y)?;
+        let w = self.instruments.open[i];
+        let (_, plugin, def) = live(&p, &w)?;
+        if !sampler::has_files(def) {
+            return None;
+        }
+        let r = self.instruments.rect(i, g.size);
+        let body = self.instruments.body(r, plugin, def);
+        let head = title_bar::BAR_H;
+        let inside = Rect::new(r.x + 4.0, r.y + head, r.w - 8.0, r.h - head - 4.0);
+        let (on, at) = sampler::drop_on(&body, def.uid == "drum-kit", inside, x, y)?;
+        Some((w.plugin, on, at))
     }
 
     /// What files dropped at `(x, y)` would do to the Drum Kit's window there: the pads

@@ -327,7 +327,11 @@ pub fn paint(pen: &mut Pen, def: &BuiltinDef, n: usize, r: Rect, values: &[f64],
             points(def, n, r, values)
         }
     };
-    paint_points(pen, r, &pts, view);
+    if matches!(def.uid, "sampler" | "drum-kit") && n == 0 {
+        super::sampler::paint_handles(pen, r, &pts, view);
+    } else {
+        paint_points(pen, r, &pts, view);
+    }
 }
 
 // ------------------------------------------------------------------ curves
@@ -519,7 +523,7 @@ pub fn tip_rect(plane: Rect, at: (f32, f32), w: f32) -> Rect {
 }
 
 /// The value of a point in a box over it.
-fn paint_tip(pen: &mut Pen, plane: Rect, p: &Point) {
+pub(crate) fn paint_tip(pen: &mut Pen, plane: Rect, p: &Point) {
     let c = pen.c;
     let w = pen.measure(&p.value, FontSize::Caption, Weight::Regular) + TIP_PAD.0 * 2.0;
     let r = tip_rect(plane, p.at, w);

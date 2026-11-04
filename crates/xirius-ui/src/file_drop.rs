@@ -33,11 +33,15 @@ impl Studio {
     /// Files dragged over the window: the empty screen lights its zone.
     pub fn drop_hover(&mut self, over: bool) -> bool {
         let changed = self.drop_over != over
-            || (!over && (self.drop_dawproject.is_some() || self.instruments.preview.is_some()));
+            || (!over
+                && (self.drop_dawproject.is_some()
+                    || self.instruments.preview.is_some()
+                    || self.instruments.drop_on.is_some()));
         self.drop_over = over;
         if !over {
             self.drop_dawproject = None;
             self.instruments.preview = None;
+            self.instruments.drop_on = None;
             self.instruments.dragged = Default::default();
         }
         changed

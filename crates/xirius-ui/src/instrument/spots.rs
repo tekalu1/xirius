@@ -364,8 +364,10 @@ impl Studio {
 
     /// Files dropped on a Sampler's or a Drum Kit's window: they are its samples, a
     /// Drum Kit's from the pad they fall on, else from the pad chosen (the empty pads from
-    /// there), and all of them the layers of one pad while Shift is held. False when the
-    /// drop fell elsewhere.
+    /// there), and all of them the layers of one pad while Shift is held or when they fall
+    /// on its layers' bar. A Sampler's take the place of its samples, or join them when
+    /// they fall on the zones' strip (the mock's targets). False when the drop fell
+    /// elsewhere.
     pub(crate) fn window_drop(&mut self, g: &Geometry, x: f32, y: f32, paths: &[PathBuf]) -> bool {
         let p = self.project();
         let Some((i, part)) = self.instruments.at(&p, g, x, y) else {
@@ -384,7 +386,10 @@ impl Studio {
             _ if kit => Some(w.pick),
             _ => None,
         };
-        let layers = kit && std::mem::take(&mut self.instruments.drop_layers);
+        let on = self.drop_target(g, x, y).map(|d| d.1);
+        let shift = std::mem::take(&mut self.instruments.drop_layers);
+        let layers = kit && (shift || on == Some(sampler::DropOn::Layers));
+        let replace = on == Some(sampler::DropOn::Samples);
         let first = live(&p, &w).map_or(0, |(_, x, _)| x.samples.len());
         // A file that is not a sound is passed over and said so, as on the arrangement
         // (N-smp-5); the others go in.
@@ -417,6 +422,9 @@ impl Studio {
         }
         if layers {
             args["layers"] = json!(true);
+        }
+        if replace {
+            args["replace"] = json!(true);
         }
         // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         if !self.run_command("plugin.samples.load", args) {

@@ -49,11 +49,13 @@ const XFADE_DIAL: f32 = 20.0;
 /// The longest a sample's name gets in its row.
 const NAME_MAX: f32 = 260.0;
 const WAVE_H: f32 = 96.0;
+/// The tab of a point of the wave.
+const TAB: (f32, f32) = (12.0, 10.0);
 /// The voice: the names over its planes, the planes, the Amp's width.
 const HEAD_H: f32 = 24.0;
-const PLANE_H: f32 = 112.0;
-const AMP_W: f32 = 186.0;
-const AMP_CELL: f32 = 62.0;
+const PLANE_H: f32 = 120.0;
+const AMP_W: f32 = 174.0;
+const AMP_CELL: f32 = 58.0;
 /// The share of the envelope's plane of what the planes have.
 const ENV_SHARE: f32 = 0.585;
 /// The narrowest the envelope's and the filter's planes go before the Amp goes under them,
@@ -64,7 +66,7 @@ const AMP_ROW: f32 = 620.0;
 /// The narrowest a sample's name gets before its buttons go under it.
 const NAME_MIN: f32 = 80.0;
 /// The zones' strip over the keys.
-const ZONE_H: f32 = 20.0;
+const ZONE_H: f32 = 22.0;
 /// The narrowest a zone is drawn, so one of a single key off the keys can be pressed.
 const ZONE_MIN: f32 = 6.0;
 /// The empty plane a sample is dropped on, and its button.
@@ -72,12 +74,12 @@ const EMPTY_H: f32 = 196.0;
 const BROWSE: (f32, f32) = (96.0, 26.0);
 /// The Drum Kit's left column: the bank tabs, the pads.
 const LEFT_W: f32 = 305.0;
-const BANK_H: f32 = 22.0;
+const BANK_H: f32 = 24.0;
 const PAD_H: f32 = 63.0;
 /// A pad's M and S.
 const MS: (f32, f32) = (16.0, 14.0);
 const CHOKE_W: f32 = 96.0;
-const LAYER_H: f32 = 22.0;
+const LAYER_H: f32 = 24.0;
 /// The narrowest a layer is drawn, so one of a velocity or two can still be pressed
 /// (L2-smp-7); and the width of an edge between two that takes the pointer.
 const LAYER_MIN: f32 = 14.0;
@@ -97,7 +99,7 @@ const AMP: [&str; 5] = ["transpose", "fine", "volume", "pan", "velocity"];
 const SAMPLE_BUTTONS: [&str; 3] = ["loop", "reverse", "normalize"];
 const BANKS: [&str; 8] = ["A", "B", "C", "D", "E", "F", "G", "H"];
 /// What a pad says of its layers, by its Layer Mode.
-const LAYER_TAGS: [&str; 4] = ["Vel", "RR", "Rand", "Stack"];
+const LAYER_TAGS: [&str; 4] = ["Vel", "RR", "Rnd", "Stack"];
 
 /// The definition the window of `plugin` shows: the zone's (`pick`, a file) of a Sampler,
 /// the pad's of a Drum Kit, the device's own while it has no samples.
@@ -148,6 +150,22 @@ fn leaf(file: &str) -> String {
     Path::new(file)
         .file_name()
         .map_or_else(|| file.to_string(), |s| s.to_string_lossy().into_owned())
+}
+
+/// How a Drum Kit's pad picks among its layers: 0 Velocity, 1 Round Robin, 2 Random,
+/// 3 Stack.
+pub fn pad_mode(def: &BuiltinDef, plugin: &Plugin, pad: usize) -> usize {
+    plugin
+        .params
+        .get(&pad_key(pad, "layer_mode"))
+        .and_then(|v| {
+            def.per_pad
+                .iter()
+                .find(|s| s.id == "layer_mode")
+                .map(|s| s.to_plain(*v).round() as usize)
+        })
+        .unwrap_or(0)
+        .min(3)
 }
 
 /// The files (by index) a Drum Kit's pad plays, in their order: its layers.
@@ -599,17 +617,8 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
         if let (Some(&first), Some(x)) = (files.first(), filled) {
             spot.text = stem(&x.samples[first]);
             if files.len() > 1 {
-                let mode = x
-                    .params
-                    .get(&pad_key(p, "layer_mode"))
-                    .and_then(|v| {
-                        def.per_pad
-                            .iter()
-                            .find(|s| s.id == "layer_mode")
-                            .map(|s| s.to_plain(*v).round() as usize)
-                    })
-                    .unwrap_or(0);
-                spot.sub = format!("{} {}", LAYER_TAGS[mode.min(3)], files.len());
+                let mode = pad_mode(def, x, p);
+                spot.sub = format!("{} {}", LAYER_TAGS[mode], files.len());
             }
         }
         b.spots.push(spot);
@@ -659,7 +668,9 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
         title.sub = stem(&x.samples[first]);
     }
     b.spots.push(title);
-    let Some(x) = filled else {
+    // An empty pad, in an empty kit or a filled one, is its name and the plane a sample is
+    // dropped on: no Choke, modes or voice, so choosing one writes none of its values.
+    let Some(x) = filled.filter(|_| !files.is_empty()) else {
         let y = top + ROW_H + GAP;
         let r = Rect::new(rx, y, rw, foot(y, EMPTY_H) - y);
         drop_plane(&mut b, r);
@@ -705,59 +716,57 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
         cx += lw + sw + 16.0;
     }
     y += SEG_H + GAP;
-    if files.is_empty() {
-        drop_plane(&mut b, Rect::new(rx, y, rw, foot(y, EMPTY_H) - y));
-    } else {
-        let layer = s.layer.min(files.len() - 1);
-        b.names.push(name(
-            Rect::new(rx, y + (LAYER_H - NAME_H) / 2.0, 48.0, NAME_H),
-            "Layers",
-        ));
-        let (lx, lw) = (rx + 52.0, rw - 52.0);
-        let velocity = plain(def, s.values, "layer_mode").round() == 0.0;
-        let ranges = velocities(def, x, &files);
-        let shares: Vec<f32> = ranges
-            .iter()
-            .map(|&(lo, hi)| {
-                if velocity {
-                    f32::from(hi - lo + 1) / 128.0
-                } else {
-                    1.0 / files.len() as f32
-                }
-            })
-            .collect();
-        let cells = widths(&shares, lw);
-        let mut at = lx;
-        let mut edges = Vec::new();
-        for (j, &file) in files.iter().enumerate() {
-            let (lo, hi) = ranges[j];
-            let cw = if j + 1 == files.len() {
-                lx + lw - at
+    let layer = s.layer.min(files.len() - 1);
+    b.names.push(name(
+        Rect::new(rx, y + (LAYER_H - NAME_H) / 2.0, 48.0, NAME_H),
+        "Layers",
+    ));
+    let (lx, lw) = (rx + 52.0, rw - 52.0);
+    let velocity = plain(def, s.values, "layer_mode").round() == 0.0;
+    let ranges = velocities(def, x, &files);
+    let shares: Vec<f32> = ranges
+        .iter()
+        .map(|&(lo, hi)| {
+            if velocity {
+                f32::from(hi - lo + 1) / 128.0
             } else {
-                cells[j].round()
-            };
-            let text = if velocity {
-                format!("{lo}–{hi}")
-            } else {
-                stem(&x.samples[file])
-            };
-            let mut spot = Spot::new(Rect::new(at, y, cw - 2.0, LAYER_H), Mark::Layer(j), text);
-            spot.on = j == layer;
-            b.spots.push(spot);
-            at += cw;
-            if velocity && j + 1 < files.len() {
-                // Over the gap between this layer and the next, on top of both.
-                let r = Rect::new(at - 1.0 - EDGE_HIT / 2.0, y, EDGE_HIT, LAYER_H);
-                edges.push(Spot::new(r, Mark::Edge(j), hi.to_string()));
+                1.0 / files.len() as f32
             }
+        })
+        .collect();
+    let cells = widths(&shares, lw);
+    let mut at = lx;
+    let mut edges = Vec::new();
+    for j in 0..files.len() {
+        let (lo, hi) = ranges[j];
+        let cw = if j + 1 == files.len() {
+            lx + lw - at
+        } else {
+            cells[j].round()
+        };
+        // The mock's words: a velocity layer's range while there are two or more, else
+        // its place.
+        let text = if velocity && files.len() > 1 {
+            format!("{lo}–{hi}")
+        } else {
+            (j + 1).to_string()
+        };
+        let mut spot = Spot::new(Rect::new(at, y, cw - 2.0, LAYER_H), Mark::Layer(j), text);
+        spot.on = j == layer;
+        b.spots.push(spot);
+        at += cw;
+        if velocity && j + 1 < files.len() {
+            // Over the gap between this layer and the next, on top of both.
+            let r = Rect::new(at - 1.0 - EDGE_HIT / 2.0, y, EDGE_HIT, LAYER_H);
+            edges.push(Spot::new(r, Mark::Edge(j), hi.to_string()));
         }
-        b.spots.extend(edges);
-        y += LAYER_H + GAP;
-        y += sample_row(def, s.values, &mut b, (rx, y), rw, &x.samples[files[layer]]) + GAP;
-        b.graphs
-            .insert(0, Rect::new(rx, y, rw, foot(y, WAVE_H) - y));
-        b.main = 0;
     }
+    b.spots.extend(edges);
+    y += LAYER_H + GAP;
+    y += sample_row(def, s.values, &mut b, (rx, y), rw, &x.samples[files[layer]]) + GAP;
+    b.graphs
+        .insert(0, Rect::new(rx, y, rw, foot(y, WAVE_H) - y));
+    b.main = 0;
     let top = b.graphs[0].bottom().max(left_foot) + GAP + 4.0;
     let foot = voice(def, &mut b, PAD, top, w - 2.0 * PAD);
     b.h = foot + PAD;
@@ -1109,12 +1118,12 @@ fn share_axis(r: Rect) -> Axis {
     Axis::lin(i.x, i.right(), 0.0, 100.0)
 }
 
-/// The wave's points: Start and End at its top, the loop's ends at its foot while it loops.
+/// The wave's points: Start and End at its top, the loop's ends at its foot while it loops,
+/// each where its tab is drawn ([`paint_handles`]).
 pub fn wave_points(def: &BuiltinDef, r: Rect, values: &[f64]) -> Vec<Point> {
     if r.w <= 0.0 {
         return Vec::new();
     }
-    let i = inset(r);
     let ax = share_axis(r);
     let mut out = Vec::new();
     let mut at = |id: &str, y: f32| {
@@ -1124,13 +1133,59 @@ pub fn wave_points(def: &BuiltinDef, r: Rect, values: &[f64]) -> Vec<Point> {
             out.push(p);
         }
     };
-    at("start", i.y);
-    at("end", i.y);
+    at("start", r.y + TAB.1 / 2.0);
+    at("end", r.y + TAB.1 / 2.0);
     if on(def, values, "loop") {
-        at("loop_start", i.bottom());
-        at("loop_end", i.bottom());
+        at("loop_start", r.bottom() - TAB.1 / 2.0);
+        at("loop_end", r.bottom() - TAB.1 / 2.0);
     }
     out
+}
+
+/// The wave's points as the mock draws them: a 3 px bar down the plane and a tab at its top
+/// (Start, End, in ink) or its foot (the loop's ends, in ink-blue); the one under the
+/// pointer or held in ink-strong, the chosen one's bar in the focus ring's ink while the
+/// keys move it.
+pub fn paint_handles(pen: &mut Pen, plane: Rect, points: &[Point], view: &View) {
+    let c = pen.c;
+    for (i, p) in points.iter().enumerate() {
+        let foot = p.at.1 > plane.y + plane.h / 2.0;
+        let hot = view.hot == Some(i) || (view.held && view.chosen == Some(i));
+        let tone = if view.bypassed {
+            c.scroll_thumb[0]
+        } else if hot {
+            c.ink_strong
+        } else if foot {
+            c.ink_blue
+        } else {
+            c.ink
+        };
+        let bar = if view.focused && view.chosen == Some(i) {
+            c.ring
+        } else {
+            tone
+        };
+        pen.round(
+            Rect::new(p.at.0 - 1.5, plane.y, 3.0, plane.h),
+            bar,
+            Radius::Xs,
+        );
+        // Its tab, TAB (12 × 10).
+        let ty = if foot {
+            plane.bottom() - TAB.1
+        } else {
+            plane.y
+        };
+        pen.round(Rect::new(p.at.0 - 6.0, ty, 12.0, 10.0), tone, Radius::Clip);
+    }
+    let tip = view
+        .hot
+        .filter(|_| view.held)
+        .or(view.hot)
+        .and_then(|i| points.get(i));
+    if let Some(p) = tip {
+        graph::paint_tip(pen, plane, p);
+    }
 }
 
 pub fn paint_wave(pen: &mut Pen, def: &BuiltinDef, r: Rect, values: &[f64], view: &View) {
@@ -1196,9 +1251,6 @@ pub fn paint_wave(pen: &mut Pen, def: &BuiltinDef, r: Rect, values: &[f64], view
                 c.surface_2.opacity(0.6),
             );
         }
-        for x in [start, end] {
-            pen.fill(Rect::new(x - 1.0, r.y, 2.0, r.h), c.ink_strong);
-        }
         // Where the voice that sounds reads, while it is between Start and End.
         if let Some(read) = view.live.and_then(|l| l.read).filter(|_| !view.bypassed) {
             let at = f64::from(read) * 100.0;
@@ -1220,9 +1272,68 @@ pub fn paint_wave(pen: &mut Pen, def: &BuiltinDef, r: Rect, values: &[f64], view
 
 // ------------------------------------------------------------------ the spots
 
+/// The zones' strip over a Sampler's keys, as wide as the keys.
+pub fn zone_strip(body: &Body) -> Option<Rect> {
+    let zone = body
+        .spots
+        .iter()
+        .find(|s| matches!(s.mark, Mark::Zone(_)))?;
+    let (k0, k1) = body.keys.iter().fold((f32::MAX, f32::MIN), |(a, b), k| {
+        (a.min(k.r.x), b.max(k.r.right()))
+    });
+    (k0 < k1).then(|| Rect::new(k0, zone.r.y, k1 - k0, zone.r.h))
+}
+
+/// The bar of a Drum Kit's chosen pad's layers.
+pub fn layer_bar(body: &Body) -> Option<Rect> {
+    let mut layers = body
+        .spots
+        .iter()
+        .filter(|s| matches!(s.mark, Mark::Layer(_)));
+    let first = layers.next()?;
+    let right = layers.next_back().unwrap_or(first).r.right();
+    let r = first.r;
+    Some(Rect::new(r.x, r.y, right - r.x, r.h))
+}
+
+/// Where files dropped on a Sampler's or a Drum Kit's body go (the mock's targets).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DropOn {
+    /// The plane of a window with no samples.
+    Plane,
+    /// The zones' strip: the files are added to the Sampler's.
+    Zones,
+    /// The chosen pad's layers' bar: they are added to its layers.
+    Layers,
+    /// The rest of a Sampler with samples: they take the place of its samples.
+    Samples,
+}
+
+/// What a drop at `(x, y)` on `body`, `inside` the window's content, does there, and the
+/// place that lights while files are held over it. None where a Drum Kit's own plan says
+/// it (its pads, its bank tabs).
+pub fn drop_on(body: &Body, kit: bool, inside: Rect, x: f32, y: f32) -> Option<(DropOn, Rect)> {
+    if let Some(s) = body.spots.iter().find(|s| s.mark == Mark::Drop) {
+        return Some((DropOn::Plane, s.r));
+    }
+    if kit {
+        return layer_bar(body)
+            .filter(|r| r.contains(x, y))
+            .map(|r| (DropOn::Layers, r));
+    }
+    match zone_strip(body) {
+        Some(r) if r.contains(x, y) => Some((DropOn::Zones, r)),
+        _ => Some((DropOn::Samples, inside)),
+    }
+}
+
 /// The spots of a Sampler's or a Drum Kit's body: `hot` the one under the pointer.
 pub fn paint_spots(pen: &mut Pen, body: &Body, hot: Option<usize>) {
     let c = pen.c;
+    // The zones' strip over the keys and the layers' bar: the ground under their faces.
+    for r in [zone_strip(body), layer_bar(body)].into_iter().flatten() {
+        pen.round(r, c.surface_2, Radius::Clip);
+    }
     for (n, s) in body.spots.iter().enumerate() {
         let over = hot == Some(n);
         let r = s.r;
@@ -1262,11 +1373,11 @@ pub fn paint_spots(pen: &mut Pen, body: &Body, hot: Option<usize>) {
                 let face = if s.on {
                     c.fill
                 } else if over {
-                    c.surface_3
+                    c.clip
                 } else {
-                    c.surface_2
+                    c.surface_3
                 };
-                pen.round(r, face, Radius::Xs);
+                pen.round(r, face, Radius::Clip);
                 let ink = if s.on { c.on_fill } else { c.ink };
                 let t = Rect::new(r.x + 6.0, r.y, (r.w - 8.0).max(0.0), r.h);
                 let text = pen.fit(&s.text, FontSize::Micro, Weight::Semibold, t.w);
@@ -1297,7 +1408,7 @@ pub fn paint_spots(pen: &mut Pen, body: &Body, hot: Option<usize>) {
                 };
                 pen.text(
                     &s.text,
-                    FontSize::Small,
+                    FontSize::Caption,
                     Weight::Semibold,
                     ink,
                     r,
@@ -1318,9 +1429,9 @@ pub fn paint_spots(pen: &mut Pen, body: &Body, hot: Option<usize>) {
                     c.mute_on
                 };
                 if s.on {
-                    pen.round(r, on.0, Radius::Xs);
+                    pen.round(r, on.0, Radius::Clip);
                 } else if over {
-                    pen.round(r, c.surface_1, Radius::Xs);
+                    pen.round(r, c.surface_1, Radius::Clip);
                 }
                 let ink = if s.on { on.1 } else { c.ink };
                 pen.text(
@@ -1332,19 +1443,21 @@ pub fn paint_spots(pen: &mut Pen, body: &Body, hot: Option<usize>) {
                     Align::Center,
                 );
             }
+            // The mock's `.dz`: s3, its icon ink-blue, while files are held over it.
             Mark::Drop => {
-                pen.round(r, c.surface_2, Radius::S);
-                let d = 24.0;
+                let face = if s.ghost { c.surface_3 } else { c.surface_2 };
+                pen.round(r, face, Radius::S);
+                let d = 28.0;
                 let cy = r.y + r.h / 2.0;
                 pen.icon(
                     "download",
-                    Rect::new(r.x + (r.w - d) / 2.0, cy - 50.0, d, d),
-                    c.ink,
+                    Rect::new(r.x + (r.w - d) / 2.0, cy - 56.0, d, d),
+                    if s.ghost { c.ink_blue } else { c.ink },
                 );
                 pen.text(
                     &s.text,
-                    FontSize::Body,
-                    Weight::Semibold,
+                    FontSize::Small,
+                    Weight::Regular,
                     c.ink_strong,
                     Rect::new(r.x, cy - 20.0, r.w, 20.0),
                     Align::Center,
@@ -1367,33 +1480,40 @@ pub fn paint_spots(pen: &mut Pen, body: &Body, hot: Option<usize>) {
                     Align::Left,
                 );
             }
+            // The pad's name, its sample's, its note: the mock's `.dk-pn`.
             Mark::Title => {
-                let w = pen.measure(&s.text, FontSize::Title, Weight::Semibold);
+                let w = pen.measure(&s.text, FontSize::Small, Weight::Semibold);
                 pen.text(
                     &s.text,
-                    FontSize::Title,
+                    FontSize::Small,
                     Weight::Semibold,
                     c.ink_strong,
                     Rect::new(r.x, r.y, w + 4.0, r.h),
                     Align::Left,
                 );
-                let mut tail = s.sub.clone();
-                if let Some(n) = s.note {
-                    let note = crate::roll::pitch_name(n);
-                    tail = if tail.is_empty() {
-                        note
-                    } else {
-                        format!("{tail} · {note}")
-                    };
+                let mut x = r.x + w + 8.0;
+                let note = s.note.map(crate::roll::pitch_name).unwrap_or_default();
+                let nw = pen.measure(&note, FontSize::Caption, Weight::Regular);
+                if !s.sub.is_empty() {
+                    let room = (r.right() - x - nw - 8.0).max(0.0);
+                    let sub = pen.fit(&s.sub, FontSize::Small, Weight::Regular, room);
+                    let sw = pen.measure(&sub, FontSize::Small, Weight::Regular);
+                    pen.text(
+                        &sub,
+                        FontSize::Small,
+                        Weight::Regular,
+                        c.ink_strong,
+                        Rect::new(x, r.y, sw + 4.0, r.h),
+                        Align::Left,
+                    );
+                    x += sw + 8.0;
                 }
-                let t = Rect::new(r.x + w + 12.0, r.y, (r.w - w - 12.0).max(0.0), r.h);
-                let tail = pen.fit(&tail, FontSize::Small, Weight::Regular, t.w);
                 pen.text(
-                    &tail,
-                    FontSize::Small,
+                    &note,
+                    FontSize::Caption,
                     Weight::Regular,
                     c.ink,
-                    t,
+                    Rect::new(x, r.y, (r.right() - x).max(0.0), r.h),
                     Align::Left,
                 );
             }
@@ -1401,7 +1521,7 @@ pub fn paint_spots(pen: &mut Pen, body: &Body, hot: Option<usize>) {
         if let (Mark::Zone(_), Some(note)) = (s.mark, s.note.filter(|_| s.dot)) {
             // The root's dot over its key.
             if let Some(k) = body.keys.iter().find(|k| k.pitch == note) {
-                let d = 4.0;
+                let d = 5.0;
                 let dot = Rect::new(k.r.x + k.r.w / 2.0 - d / 2.0, r.bottom() - d - 2.0, d, d);
                 pen.round(
                     dot,

@@ -29,7 +29,7 @@ use crate::device::delay;
 use crate::device::dynamics::{self, Dynamics};
 use crate::device::eq;
 use crate::device::graph::{self, Point};
-use crate::device::layout::{self, Body, Slot};
+use crate::device::layout::{self, Body, Mark, Slot};
 use crate::device::play;
 use crate::device::sampler;
 use crate::draw::{Align, Pen};
@@ -389,7 +389,16 @@ pub struct Windows {
     /// What files dragged over a Drum Kit would do there (UI-334), and the files.
     pub(crate) preview: Option<super::kit_drag::Preview>,
     pub(crate) dragged: super::kit_drag::Held,
+    /// Where files held over a Sampler's or a Drum Kit's window would go, and the place
+    /// that lights for it (the mock's `drop-over`).
+    pub(crate) drop_on: Option<(PluginId, sampler::DropOn, Rect)>,
+    /// A pad pressed on a Drum Kit's window, and when: the window chooses the layer that
+    /// sounded once its probe hears the voice (the mock's `hitPad`).
+    pub(crate) followed: Option<(PluginId, u8, std::time::Instant)>,
 }
+
+/// How long a pad pressed waits for its voice to be heard.
+const FOLLOW: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// A Sampler's or a Drum Kit's newest voice as its window last read it (UI-333, UI-334),
 /// and when its stage began.
@@ -991,6 +1000,9 @@ impl Windows {
             }
             if live(p, &w).is_some_and(|(_, _, d)| matches!(d.uid, "sampler" | "drum-kit")) {
                 moving |= self.hear(id, probe.voice(), now);
+                if let Some((_, x, d)) = live(p, &w) {
+                    self.follow(x, d, now);
+                }
             }
             let a = self.analysers.entry(id).or_default();
             if a.feed(&probe, rate) {
@@ -1023,6 +1035,42 @@ impl Windows {
         };
         self.voices.insert(id, Sounding { voice: v, since });
         true
+    }
+
+    /// A pad pressed on `plugin`'s window, once its voice is heard: the window chooses the
+    /// layer that sounded (by velocity, in turn or at random). A pad that stacks its layers
+    /// keeps the first, as on the mock. True when the layer chosen changed.
+    pub(crate) fn follow(
+        &mut self,
+        plugin: &Plugin,
+        def: &BuiltinDef,
+        now: std::time::Instant,
+    ) -> bool {
+        let Some((_, pitch, at)) = self.followed.filter(|f| f.0 == plugin.id) else {
+            return false;
+        };
+        if now.saturating_duration_since(at) > FOLLOW {
+            self.followed = None;
+            return false;
+        }
+        let Some(source) = self
+            .voices
+            .get(&plugin.id)
+            .filter(|s| s.voice.pitch == pitch)
+            .map(|s| usize::from(s.voice.source))
+        else {
+            return false;
+        };
+        self.followed = None;
+        let pad = play::pad_of(pitch);
+        if sampler::pad_mode(def, plugin, pad) == 3 {
+            return false;
+        }
+        let files = sampler::pad_files(def, plugin, pad);
+        match files.iter().position(|&f| f == source) {
+            Some(layer) => self.pick(plugin.id, pad, layer),
+            None => false,
+        }
     }
 
     /// The newest voice of `plugin` as its window shows it on the wave of the file `shown`
@@ -1358,7 +1406,9 @@ impl Studio {
                 let velocity = pad.map_or(super::keys::VELOCITY, |at| {
                     f32::from(pad_velocity(y - at.y, at.h)) / 127.0
                 });
-                self.instruments.hit = Some((w.plugin, pitch, std::time::Instant::now()));
+                let now = std::time::Instant::now();
+                self.instruments.hit = Some((w.plugin, pitch, now));
+                self.instruments.followed = Some((w.plugin, pitch, now));
                 let w = self.instruments.open[i];
                 self.window_note_on(w, pitch, velocity);
             }
@@ -2005,6 +2055,12 @@ fn paint_window(
         if let Some(preview) = ins.preview.as_ref().filter(|v| v.plugin == plugin.id) {
             super::kit_drag::ghost(&mut body, preview);
         }
+        let drop_on = ins.drop_on.filter(|d| d.0 == plugin.id);
+        if let Some((_, sampler::DropOn::Plane, _)) = drop_on {
+            for s in body.spots.iter_mut().filter(|s| s.mark == Mark::Drop) {
+                s.ghost = true;
+            }
+        }
         let hot = ins.hot.filter(|h| h.0 == plugin.id).map(|h| h.1);
         for &face in &body.faces {
             pen.round(face, c.surface_1, Radius::S);
@@ -2113,6 +2169,14 @@ fn paint_window(
             _ => None,
         };
         sampler::paint_spots(pen, &body, spot);
+        if let Some((_, on, at)) = drop_on.filter(|d| d.1 != sampler::DropOn::Plane) {
+            let radius = if on == sampler::DropOn::Samples {
+                Radius::S
+            } else {
+                Radius::Clip
+            };
+            pen.outline(at, c.ring, radius, 2.0);
+        }
         let meter = ins.meters.get(&plugin.id).copied().unwrap_or_default();
         for (ch, &m) in body.meters.iter().enumerate() {
             crate::mixer::paint::meter(pen, m, &meter, ch.min(1));

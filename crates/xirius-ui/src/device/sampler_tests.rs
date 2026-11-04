@@ -1019,3 +1019,108 @@ fn ui_334_a_narrow_window_stacks_the_pads_and_puts_the_amp_under() {
         }
     }
 }
+
+/// L2-smp-5 (UI-333, UI-334): the mock's drop targets. Files dropped on a Sampler with
+/// samples take their place, on its zones' strip they join them; on a Drum Kit's layers'
+/// bar they are the chosen pad's layers. Each place lights while files are held over it.
+#[test]
+fn l2_smp_5_each_drop_target_does_what_the_mock_does() {
+    let (_dir, two) = wavs(&["Pad_C3.wav", "Pad_C4.wav"]);
+    let (mut s, g, t, id) = window("Sampler");
+    add(&mut s, id, &["Old.wav"]);
+    let strip = sampler::zone_strip(&body(&s, &g, t)).expect("the zones' strip");
+    let (x, y) = (strip.x + 4.0, strip.y + strip.h / 2.0);
+    assert!(s.window_drag(&g, x, y, &two, false));
+    assert_eq!(
+        s.instruments.drop_on.map(|d| (d.1, d.2)),
+        Some((sampler::DropOn::Zones, strip))
+    );
+    assert!(s.window_drop(&g, x, y, &two), "{:?}", s.error);
+    assert_eq!(plugin(&s, t).samples.len(), 3, "they join the one there");
+    // Anywhere else on the window, they take the place of all of them.
+    let b = body(&s, &g, t);
+    let wave = b.graphs[b.main];
+    let (x, y) = (wave.x + wave.w / 2.0, wave.y + wave.h / 2.0);
+    let (_dir2, one) = wavs(&["New.wav"]);
+    assert!(s.window_drag(&g, x, y, &one, false));
+    assert_eq!(
+        s.instruments.drop_on.map(|d| d.1),
+        Some(sampler::DropOn::Samples)
+    );
+    assert!(s.window_drop(&g, x, y, &one), "{:?}", s.error);
+    let x = plugin(&s, t);
+    assert_eq!(x.samples.len(), 1);
+    assert!(x.samples[0].ends_with("New.wav"), "{:?}", x.samples);
+    // The light goes when the drag leaves.
+    assert!(s.drop_hover(false));
+    assert_eq!(s.instruments.drop_on, None);
+
+    let (mut s, g, t, id) = window("Drum Kit");
+    add(&mut s, id, &["Kick.wav"]);
+    let bar = sampler::layer_bar(&body(&s, &g, t)).expect("A1's layers");
+    let (x, y) = (bar.right() - 4.0, bar.y + bar.h / 2.0);
+    let (_dir3, snare) = wavs(&["Snare.wav"]);
+    assert!(s.window_drag(&g, x, y, &snare, false));
+    assert_eq!(
+        s.instruments.drop_on.map(|d| (d.1, d.2)),
+        Some((sampler::DropOn::Layers, bar))
+    );
+    assert!(s.window_drop(&g, x, y, &snare), "{:?}", s.error);
+    let k = plugin(&s, t);
+    assert_eq!(sampler::pad_files(k.builtin().unwrap(), &k, 0), [0, 1]);
+    assert_eq!(s.instruments.open[0].pick, 0);
+}
+
+/// L2-smp-5 (UI-334): an empty pad of a filled kit is its name and the drop plane, as on
+/// the mock: no Choke, modes, layers or voice to write its values.
+#[test]
+fn l2_smp_5_an_empty_pad_of_a_filled_kit_is_its_name_and_the_plane() {
+    let (mut s, g, t, id) = window("Drum Kit");
+    add(&mut s, id, &["Kick.wav"]);
+    assert!(!body(&s, &g, t).slots.is_empty());
+    s.instruments.pick(id, 5, 0);
+    let b = body(&s, &g, t);
+    assert!(b.slots.is_empty(), "{:?}", b.slots.len());
+    assert!(b.spots.iter().any(|x| x.mark == Mark::Drop));
+    assert!(b.spots.iter().any(|x| x.mark == Mark::Title));
+    assert!(!b.spots.iter().any(|x| matches!(x.mark, Mark::Layer(_))));
+}
+
+/// L2-smp-5 (UI-334): a pad pressed in the window chooses the layer that sounded, as on
+/// the mock; a voice heard after the wait does not move it.
+#[test]
+fn l2_smp_5_a_pressed_pad_chooses_the_layer_that_sounded() {
+    use xirius_engine::stock::{VoiceStage, VoiceView};
+    let voice = |source: u16| VoiceView {
+        pitch: 36,
+        stage: VoiceStage::Attack,
+        file: true,
+        source,
+        position: 0.0,
+        env: 0.5,
+    };
+    let (_dir, files) = wavs(&["Snare_a.wav", "Snare_b.wav"]);
+    let (mut s, g, t, id) = window("Drum Kit");
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).expect("A1");
+    s.instruments.drop_layers = true;
+    assert!(s.window_drop(&g, x, y, &files), "{:?}", s.error);
+    assert_eq!(s.instruments.open[0].layer, 0);
+    press(&mut s, &g, id, Part::Pad(36));
+    let now = std::time::Instant::now();
+    s.instruments.hear(id, Some(voice(1)), now);
+    let k = plugin(&s, t);
+    let def = s.instruments.def_of(&k).unwrap();
+    assert!(s.instruments.follow(&k, def, now));
+    assert_eq!(s.instruments.open[0].layer, 1);
+    // Once is all: the next voice of the press does not move it again.
+    s.instruments.hear(id, Some(voice(0)), now);
+    assert!(!s.instruments.follow(&k, def, now));
+    assert_eq!(s.instruments.open[0].layer, 1);
+    // Heard after the wait, it does not.
+    press(&mut s, &g, id, Part::Pad(36));
+    let pressed = s.instruments.open[0].layer;
+    s.instruments.hear(id, Some(voice(1)), now);
+    let late = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    assert!(!s.instruments.follow(&k, def, late));
+    assert_eq!(s.instruments.open[0].layer, pressed);
+}
