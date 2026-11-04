@@ -56,7 +56,7 @@ fn setup(s: &mut Studio, g: &Geometry, n: u8) {
     s.dock_follow(&g);
     if n == 1 {
         // the face pulled wide, past where the strips fold
-        let i = s.instruments.docked().unwrap();
+        let i = s.instruments.dock_slot().unwrap();
         s.instruments.open[i].body.0 = crate::mixer::dock::widest(g.drawer_body);
         s.mixer.lead = Some(vocal);
     }

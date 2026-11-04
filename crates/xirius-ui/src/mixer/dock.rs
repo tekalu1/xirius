@@ -116,7 +116,7 @@ impl Studio {
         if !self.mixer_shown() {
             return None;
         }
-        let i = self.instruments.docked()?;
+        let i = self.instruments.dock_slot()?;
         live(&self.project(), &self.instruments.open[i])?;
         Some(i)
     }
@@ -150,7 +150,7 @@ impl Studio {
             .or_else(|| self.mixer.chosen.map(|(t, _)| t))
             .or_else(|| {
                 self.instruments
-                    .docked()
+                    .dock_slot()
                     .map(|i| self.instruments.open[i].track)
             })
     }
@@ -182,7 +182,7 @@ impl Studio {
         if self.instruments.is_open(id) {
             return;
         }
-        if let Some(i) = self.instruments.docked()
+        if let Some(i) = self.instruments.dock_slot()
             && self
                 .instruments
                 .note
@@ -210,7 +210,7 @@ impl Studio {
             filled: !plugin.samples.is_empty(),
             docked: true,
         };
-        match ins.docked() {
+        match ins.dock_slot() {
             Some(i) => ins.open[i] = win,
             None => ins.open.insert(0, win),
         }

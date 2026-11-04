@@ -1720,7 +1720,7 @@ impl Studio {
     /// person closed opens again.
     pub fn open_plugin(&mut self, t: TrackId, id: PluginId) -> bool {
         // The face in the drawer comes out as a window (MIX-046).
-        if let Some(i) = self.instruments.docked()
+        if let Some(i) = self.instruments.dock_slot()
             && self.instruments.open[i].plugin == id
         {
             self.show_instrument(t, id);

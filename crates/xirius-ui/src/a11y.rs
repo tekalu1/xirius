@@ -1000,6 +1000,10 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
         };
         let now = values_of(x, def);
         let r = s.instruments.frame(i, g);
+        // the face in a drawer that shows something else is not on the screen (MIX-046)
+        if r.w <= 0.0 {
+            continue;
+        }
         let body = s.instruments.body(r, x, def);
         let mark = |key: String, node: accesskit::Node| Mark {
             key,

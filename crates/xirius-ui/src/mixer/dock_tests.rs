@@ -157,7 +157,7 @@ fn the_face_shows_only_with_the_mixer() {
     s.tab = DrawerTab::Roll;
     let roll = s.geometry(1600.0, 1000.0);
     assert_eq!(s.docked(), None);
-    let i = s.instruments.docked().unwrap();
+    let i = s.instruments.dock_slot().unwrap();
     assert_eq!(s.instruments.frame(i, &roll).w, 0.0);
     let (x, y) = (panel.x + panel.w / 2.0, panel.y + panel.h / 2.0);
     assert_eq!(s.instruments.at(&s.project(), &roll, x, y), None);
@@ -167,7 +167,7 @@ fn the_face_shows_only_with_the_mixer() {
     s.tab = DrawerTab::Roll;
     let t = s.instruments.open[i].track;
     assert!(s.open_plugin(t, eq));
-    assert_eq!(s.instruments.docked(), None);
+    assert_eq!(s.instruments.dock_slot(), None);
     assert!(s.instruments.is_open(eq));
 }
 
@@ -383,4 +383,48 @@ fn a_narrow_drawer_has_the_face_under_the_strips_without_the_grip() {
     assert!(marks.iter().all(|m| m.key != "dock-grip"));
     let (x, y) = (split.panel.x + 4.0, split.panel.y - GRIP_W / 2.0);
     assert!(!s.grip_down(&g, x, y));
+}
+
+#[test]
+fn the_face_taken_out_keeps_its_pad_its_layer_and_its_focus() {
+    let (mut s, g, _, eq) = picked(1600.0);
+    let i = s.docked().unwrap();
+    s.instruments.open[i].pick = 3;
+    s.instruments.open[i].layer = 1;
+    s.instruments.focus = Some((eq, 2));
+    press(&mut s, &g, eq, Part::Pin, 1);
+    assert_eq!(s.docked(), None);
+    let w = s.instruments.open.iter().find(|w| w.plugin == eq).unwrap();
+    assert!(!w.docked);
+    assert_eq!((w.pick, w.layer), (3, 1), "the window shows what the face showed");
+    assert_eq!(s.instruments.focus, Some((eq, 2)), "on the same knob of it");
+}
+
+#[test]
+fn the_face_under_another_tab_has_no_keys_and_no_marks() {
+    let (mut s, g, _, eq) = picked(1600.0);
+    let key = format!("device-{eq}-");
+    assert!(
+        crate::a11y::marks(&s, &g)
+            .iter()
+            .flat_map(|m| std::iter::once(m).chain(m.children.iter()))
+            .any(|m| m.key.starts_with(&key)),
+        "the face is read while the mixer shows"
+    );
+    s.instruments.focus = Some((eq, 0));
+    let before = s.project().content_hash();
+    s.tab = DrawerTab::Roll;
+    let roll = s.geometry(1600.0, 1000.0);
+    assert!(
+        !crate::a11y::marks(&s, &roll)
+            .iter()
+            .flat_map(|m| std::iter::once(m).chain(m.children.iter()))
+            .any(|m| m.key.starts_with(&key)),
+        "nor read while it does not"
+    );
+    assert!(!s.device_key("right", Mods::NONE), "the arrows go on");
+    assert_eq!(s.instruments.focus, None);
+    assert_eq!(s.project().content_hash(), before);
+    // Tab past the screen's places does not go into it either
+    assert!(!s.device_enter(true));
 }

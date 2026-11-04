@@ -610,6 +610,19 @@ impl Studio {
         if key == "escape" && self.instrument_cancel() {
             return true;
         }
+        // The face in a drawer that shows something else lets the keys go (MIX-046).
+        if self.docked().is_none()
+            && let Some(i) = self.instruments.dock_slot()
+        {
+            let id = self.instruments.open[i].plugin;
+            let ins = &self.instruments;
+            if ins.focus.is_some_and(|(at, _)| at == id)
+                || ins.entry.as_ref().is_some_and(|e| e.plugin == id)
+            {
+                self.device_blur();
+                return false;
+            }
+        }
         if let Some(e) = &mut self.instruments.entry {
             if !e.field.marked.is_empty() {
                 return true;
@@ -866,6 +879,9 @@ impl Studio {
         let Some(w) = self.instruments.open.last().copied() else {
             return false;
         };
+        if w.docked && self.docked().is_none() {
+            return false;
+        }
         let Some((track, def, values)) = self.device(w.plugin) else {
             return false;
         };

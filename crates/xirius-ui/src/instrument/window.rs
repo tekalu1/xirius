@@ -393,8 +393,9 @@ impl Windows {
         self.open.iter().any(|w| w.plugin == id)
     }
 
-    /// The face in the mixer's drawer (MIX-046), shown or not.
-    pub fn docked(&self) -> Option<usize> {
+    /// The window kept for the face in the mixer's drawer (MIX-046), shown or not: while the
+    /// drawer shows something else it has no frame. `Studio::docked` is the face shown.
+    pub fn dock_slot(&self) -> Option<usize> {
         self.open.iter().position(|w| w.docked)
     }
 
@@ -652,7 +653,7 @@ impl Windows {
         let order = (0..self.open.len())
             .rev()
             .filter(|&i| !self.open[i].docked)
-            .chain(self.docked());
+            .chain(self.dock_slot());
         order.into_iter().find_map(|i| {
             let r = self.frame(i, g);
             if r.w <= 0.0 || !r.contains(x, y) {
@@ -981,7 +982,7 @@ pub(crate) fn body_of(
         let (mut lo, mut hi) = (layout::min_w(def).min(r.w), r.w);
         for _ in 0..12 {
             let mid = (lo + hi) / 2.0;
-            if layout::size_of(def, mid, plugin).1 <= room {
+            if lay(mid).h <= room {
                 lo = mid;
             } else {
                 hi = mid;
@@ -1039,8 +1040,11 @@ impl Studio {
         let p = self.project();
         self.instruments.prune(&p);
         let ins = &mut self.instruments;
-        // The face in the drawer comes out as a window (MIX-046).
-        if ins.docked().is_some_and(|i| ins.open[i].plugin == id) {
+        // The face in the drawer comes out as a window (MIX-046), on the zone or pad and the
+        // layer it showed: the focus and the typed value there stay theirs.
+        let mut shown = (0, 0);
+        if let Some(i) = ins.dock_slot().filter(|&i| ins.open[i].plugin == id) {
+            shown = (ins.open[i].pick, ins.open[i].layer);
             ins.open.retain(|w| !w.docked);
         }
         match ins.open.iter().position(|w| w.plugin == id) {
@@ -1083,8 +1087,8 @@ impl Studio {
                                 .any(|w| w.seat == *n && w.at.is_none() && !w.docked)
                         })
                         .unwrap_or(0),
-                    pick: 0,
-                    layer: 0,
+                    pick: shown.0,
+                    layer: shown.1,
                     filled: !plugin.samples.is_empty(),
                     docked: false,
                 };
