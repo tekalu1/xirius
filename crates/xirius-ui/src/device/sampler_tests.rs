@@ -716,7 +716,10 @@ fn ui_333_the_keys_names_go_by_the_windows_width() {
     let (mut s, g, t, id) = window("Sampler");
     add(&mut s, id, &["Piano_C3.wav"]);
     for (w, named) in [(530.0, true), (521.0, true), (520.0, false)] {
-        s.instruments.open[0].body.0 = w;
+        // As tall as the body at that width, so the frame does not narrow it to fit.
+        let x = plugin(&s, t);
+        let def = s.instruments.def_of(&x).unwrap();
+        s.instruments.open[0].body = layout::size_of(def, w, Some(&x));
         let b = body(&s, &g, t);
         let keys =
             b.keys.first().unwrap().r.x..b.keys.iter().rfind(|k| !k.black).unwrap().r.right();
@@ -975,7 +978,8 @@ fn ui_334_a_pad_and_a_layer_have_their_menus() {
     let def = k.builtin().unwrap();
     assert_eq!(sampler::pad_files(def, &k, 1), [0, 1]);
     assert_eq!(s.song().steps(), steps + 1);
-    // A2 has files: one more goes on it too.
+    // A2 has files: one more goes on it too. The window has grown to show them.
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(37)).expect("A2");
     assert!(s.instrument_right(&g, x, y));
     assert!(live_row(&s, "サンプルを置き換え…"));
     choose(&mut s, &g, "サンプルを足す…");
@@ -984,6 +988,7 @@ fn ui_334_a_pad_and_a_layer_have_their_menus() {
     let k = plugin(&s, t);
     assert_eq!(sampler::pad_files(def, &k, 1), [0, 1, 2]);
     // Its sample put in another's place: the first layer, the pad's files as many.
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(37)).expect("A2");
     assert!(s.instrument_right(&g, x, y));
     choose(&mut s, &g, "サンプルを置き換え…");
     let request = s.file_request.take().unwrap();

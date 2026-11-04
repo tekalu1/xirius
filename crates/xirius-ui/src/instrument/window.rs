@@ -1201,8 +1201,10 @@ pub(crate) fn body_of(
         )
     };
     let mut b = lay(r.w);
-    if b.h > room + 0.5 {
-        let (mut lo, mut hi) = (layout::min_w(def).min(r.w), r.w);
+    // Narrower only when that fits: a Drum Kit's grows taller as it narrows.
+    let least = layout::min_w(def).min(r.w);
+    if b.h > room + 0.5 && lay(least).h <= room {
+        let (mut lo, mut hi) = (least, r.w);
         for _ in 0..12 {
             let mid = (lo + hi) / 2.0;
             if lay(mid).h <= room {
