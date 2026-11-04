@@ -144,7 +144,12 @@ fn a_channel_the_key_would_loop_back_from_shows_the_loop_and_takes_nothing() {
         .unwrap();
     assert!(!row.enabled && row.key.unwrap().looped);
     let layout = s.popup.as_ref().unwrap().layout(g.size);
-    assert!(layout.cells.iter().any(|c| c.spoken == "ループ"));
+    assert!(
+        layout
+            .cells
+            .iter()
+            .any(|c| c.spoken == "ループ（輪になるので選べません）")
+    );
     // the row itself is fainter, and a screen reader hears it cannot be picked
     let drums_row = layout
         .cells
@@ -160,10 +165,19 @@ fn a_channel_the_key_would_loop_back_from_shows_the_loop_and_takes_nothing() {
         })
     }
     let marks = crate::a11y::marks(&s, &g);
-    assert!(find(&marks, "Drums").unwrap().node.is_disabled());
-    let send = &layout.cells[cell(&s, &g, "Drums センド")];
+    // The bridge to the window has no "off": the words say it (review 3 中6).
+    let drums = find(&marks, "Drums（輪になるので選べません）").unwrap();
+    assert!(drums.node.is_disabled());
+    assert!(find(&marks, "Drums").is_none());
+    // a row that can be picked is not said to be off
+    let free = list.groups[0].rows.iter().find(|r| r.enabled).unwrap();
+    assert!(!find(&marks, &free.label).unwrap().node.is_disabled());
+    let send = &layout.cells[cell(&s, &g, "Drums センド（輪になるので選べません）")];
     assert!(!send.live());
-    assert!(!s.press(&g, Hit::Item(cell(&s, &g, "Drums センド"))));
+    assert!(!s.press(
+        &g,
+        Hit::Item(cell(&s, &g, "Drums センド（輪になるので選べません）"))
+    ));
     assert!(sources(&s, comp).is_empty());
 }
 

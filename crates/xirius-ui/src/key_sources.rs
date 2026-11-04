@@ -76,6 +76,8 @@ const VALUE_W: f32 = 36.0;
 const VALUE_GAP: f32 = 5.0;
 const CHIP: f32 = 10.0;
 const LOOP: f32 = 12.0;
+/// Said after a looped row's words: the reader bridge carries no "off" (review 3 中6).
+pub(crate) const LOOPED: &str = "（輪になるので選べません）";
 
 /// The columns of a row `r`: the send box's, the position's and the output box's.
 fn columns(r: Rect) -> (Rect, Rect, Rect) {
@@ -198,14 +200,18 @@ pub fn row_cells(r: Rect, name: &str, key: &KeyRow, cur: bool) -> Vec<Cell> {
     } else if key.looped {
         let mark = Rect::new(extra - LOOP, r.y, LOOP, r.h);
         extra = mark.x;
-        parts.push(Cell::new(mark, Look::Key(KLook::Loop)).spoken("ループ"));
+        parts.push(Cell::new(mark, Look::Key(KLook::Loop)).spoken(format!("ループ{LOOPED}")));
     }
     let check = |col: Rect, on: bool, part: KeyPart, what: &str| {
         let cell = Cell::new(centered(col, CHECK), Look::Key(KLook::Check { on }))
             .on(on)
             .act(act(part))
             .spoken(format!("{name} {what}"));
-        if key.looped { cell.off() } else { cell }
+        if key.looped {
+            cell.spoken(format!("{name} {what}{LOOPED}")).off()
+        } else {
+            cell
+        }
     };
     parts.push(check(send_col, key.send.is_some(), KeyPart::Send, "センド"));
     let pre = key.send.is_some_and(|(pre, _)| pre);
@@ -229,8 +235,13 @@ pub fn row_cells(r: Rect, name: &str, key: &KeyRow, cur: bool) -> Vec<Cell> {
     )
     .text(name)
     .cur(cur);
-    // A row the key would loop back from is fainter and said to be off (sidechain.html).
-    let mut out = vec![if key.looped { row.off() } else { row }];
+    // A row the key would loop back from is fainter and said to be off (sidechain.html). The
+    // window's reader bridge has no word for "off", so the label says it (review 3 中6).
+    let mut out = vec![if key.looped {
+        row.spoken(format!("{name}{LOOPED}")).off()
+    } else {
+        row
+    }];
     out.extend(parts);
     out
 }
@@ -265,7 +276,12 @@ pub fn paint_cell(pen: &mut Pen, cell: &Cell, look: &KLook, hot: bool) {
                 &name,
                 FontSize::Small,
                 Weight::Medium,
-                if cell.enabled { c.ink_strong } else { c.ink },
+                // the mock drops a looped row to the structure line's ink (`--ls`)
+                if cell.enabled {
+                    c.ink_strong
+                } else {
+                    c.line[0]
+                },
                 room,
                 Align::Left,
             );
@@ -275,13 +291,20 @@ pub fn paint_cell(pen: &mut Pen, cell: &Cell, look: &KLook, hot: bool) {
                 pen.round(r, c.fill, Radius::Xs);
                 pen.icon("check", centered(r, Layout::ICON_SIZE - 4.0), c.on_fill);
             } else {
-                let ring = if hot && cell.live() { c.ink } else { c.line[0] };
+                let ring = if !cell.enabled {
+                    // the mock's `opacity: .4` on a box that cannot be pressed
+                    c.line[0].opacity(0.4)
+                } else if hot && cell.live() {
+                    c.ink
+                } else {
+                    c.line[0]
+                };
                 pen.outline(r, ring, Radius::Xs, 1.5);
             }
         }
         KLook::Pre { on } => {
             let ink = if !cell.enabled {
-                c.line[0]
+                c.line[0].opacity(0.4)
             } else if on {
                 pen.round(r, c.surface_3, Radius::Xs);
                 c.ink_strong
@@ -317,7 +340,7 @@ pub fn paint_cell(pen: &mut Pen, cell: &Cell, look: &KLook, hot: bool) {
             );
         }
         KLook::Loop => {
-            pen.icon("loop", centered(r, LOOP), c.ink);
+            pen.icon("loop", centered(r, LOOP), c.line[0]);
         }
     }
 }
