@@ -80,6 +80,9 @@ const PAD_H: f32 = 63.0;
 const MS: (f32, f32) = (16.0, 14.0);
 const CHOKE_W: f32 = 96.0;
 const LAYER_H: f32 = 24.0;
+/// The weight of a zone's and a layer's words: the mock's regular `fs-micro`.
+pub const SPAN_WEIGHT: Weight = Weight::Regular;
+
 /// The narrowest a layer is drawn, so one of a velocity or two can still be pressed
 /// (L2-smp-7); and the width of an edge between two that takes the pointer.
 const LAYER_MIN: f32 = 14.0;
@@ -611,6 +614,7 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
         filled.is_some_and(|x| x.params.get(&pad_key(p, id)).is_some_and(|v| *v >= 0.5))
     };
     let soloed = (0..PADS).any(|p| flag(p, "solo"));
+    let bank = s.bank.unwrap_or(pick / play::PADS).min(BANKS.len() - 1);
     // The bank tabs and the pads.
     let mut y = PAD;
     let tab_w = lw / BANKS.len() as f32;
@@ -620,13 +624,13 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
             Mark::Bank(n),
             *letter,
         );
-        spot.on = pick / play::PADS == n;
+        spot.on = bank == n;
         spot.dot = (0..play::PADS).any(|p| !pad_of(n * play::PADS + p).is_empty());
         b.spots.push(spot);
     }
     y += BANK_H + 6.0;
     let grid = Rect::new(lx, y, lw, 4.0 * pad_h + 3.0 * play::GAP);
-    b.pads = play::pads(grid, pick / play::PADS);
+    b.pads = play::pads(grid, bank);
     for k in &b.pads {
         let p = play::pad_of(k.pitch);
         let files = pad_of(p);
@@ -1424,15 +1428,8 @@ pub fn paint_spots(pen: &mut Pen, body: &Body, hot: Option<usize>) {
                 pen.round(r, face, Radius::Clip);
                 let ink = if s.on { c.on_fill } else { c.ink };
                 let t = Rect::new(r.x + 6.0, r.y, (r.w - 8.0).max(0.0), r.h);
-                let text = pen.fit(&s.text, FontSize::Micro, Weight::Semibold, t.w);
-                pen.text(
-                    &text,
-                    FontSize::Micro,
-                    Weight::Semibold,
-                    ink,
-                    t,
-                    Align::Left,
-                );
+                let text = pen.fit(&s.text, FontSize::Micro, SPAN_WEIGHT, t.w);
+                pen.text(&text, FontSize::Micro, SPAN_WEIGHT, ink, t, Align::Left);
             }
             Mark::Edge(_) => {
                 let line = Rect::new(r.x + r.w / 2.0 - 1.0, r.y + (r.h - 18.0) / 2.0, 2.0, 18.0);

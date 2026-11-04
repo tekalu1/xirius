@@ -293,10 +293,79 @@ fn ui_334_a_pad_chooses_its_controls_and_m_s_banks_set_and_pick() {
         plugin(&s, t).params.get("A1.mute").copied().unwrap_or(0.0),
         0.0
     );
-    // A bank keeps the pad's place: A2 → B2.
+    // A bank shows its pads and leaves the pad chosen (low 20, the mock's).
     press_spot(&mut s, &g, t, id, Mark::Bank(1));
-    assert_eq!(s.instruments.open[0].pick, 17);
-    assert!(body(&s, &g, t).spots[spot(&s, &g, t, Mark::Bank(1))].on);
+    assert_eq!(s.instruments.open[0].pick, 1);
+    let b = body(&s, &g, t);
+    assert!(b.spots[spot(&s, &g, t, Mark::Bank(1))].on);
+    assert!(!b.spots[spot(&s, &g, t, Mark::Bank(0))].on);
+    assert!(
+        b.pads
+            .iter()
+            .all(|k| play::pad_of(k.pitch) / play::PADS == 1)
+    );
+    assert!(title_of(&b).contains("A2"), "{}", title_of(&b));
+    // A pad of that bank is chosen; then the tabs follow it.
+    press(&mut s, &g, id, Part::Pad(36 + 18));
+    assert_eq!(s.instruments.open[0].pick, 18);
+    assert_eq!(s.instruments.open[0].bank, None);
+    press_spot(&mut s, &g, t, id, Mark::Bank(1));
+    assert_eq!(s.instruments.open[0].bank, None, "its own bank");
+}
+
+fn title_of(b: &Body) -> String {
+    b.spots
+        .iter()
+        .find(|x| x.mark == Mark::Title)
+        .map(|x| x.text.clone())
+        .unwrap_or_default()
+}
+
+#[test]
+fn ui_334_an_empty_pad_or_bank_has_nothing_to_take_and_an_empty_kit_chooses_pads() {
+    let (mut s, g, t, id) = window("Drum Kit");
+    // No samples yet: a pad pressed is chosen, and stays when its files come.
+    press(&mut s, &g, id, Part::Pad(38));
+    assert_eq!(s.instruments.open[0].pick, 2);
+    add(&mut s, id, &["Kick.wav"]);
+    assert!(s.instruments.open[0].filled);
+    assert_eq!(s.instruments.open[0].pick, 2);
+    let k = plugin(&s, t);
+    assert_eq!(sampler::pad_files(k.builtin().unwrap(), &k, 0), [0]);
+    // A2 is empty though A1 has a file: it cannot be emptied, its bank can.
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(37)).expect("A2");
+    assert!(s.instrument_right(&g, x, y));
+    assert!(!live_row(&s, "パッドを空にする"));
+    assert!(live_row(&s, "バンクを空にする"));
+    s.popup = None;
+    // B1 of an empty bank: neither.
+    press_spot(&mut s, &g, t, id, Mark::Bank(1));
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(36 + 16)).expect("B1");
+    assert!(s.instrument_right(&g, x, y));
+    assert!(!live_row(&s, "パッドを空にする"));
+    assert!(!live_row(&s, "バンクを空にする"));
+    // The layers' and the zones' words are the mock's regular.
+    assert_eq!(sampler::SPAN_WEIGHT, xirius_design::Weight::Regular);
+}
+
+#[test]
+fn ui_334_an_edge_dragged_parts_the_layers_of_the_pad_chosen_at_the_press() {
+    let (_dir, files) = wavs(&["Snare_a.wav", "Snare_b.wav"]);
+    let (mut s, g, t, id) = window("Drum Kit");
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).expect("A1");
+    s.instruments.drop_layers = true;
+    assert!(s.window_drop(&g, x, y, &files), "{:?}", s.error);
+    assert_eq!(ranges(&s, t, 0), [(0, 63), (64, 127)]);
+    let n = spot(&s, &g, t, Mark::Edge(0));
+    let (x, y) = s.instrument_center(&g, id, Part::Spot(n)).unwrap();
+    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
+    assert!(s.instrument_moved(&g, x + 40.0, y, false));
+    // Another pad chosen while it is held (a note played on it): A1's edge goes in.
+    s.instruments.pick(id, 1, 0);
+    let steps = s.song().steps();
+    assert!(s.instrument_up());
+    assert_eq!(s.song().steps(), steps + 1);
+    assert_ne!(ranges(&s, t, 0), [(0, 63), (64, 127)]);
 }
 
 #[test]
@@ -539,7 +608,7 @@ fn ui_334_a_pad_of_130_layers_draws_and_the_first_edge_stops_at_the_least_top() 
     assert!(s.instrument_moved(&g, x - strip, y, false));
     s.instrument_up();
     assert!(s.field_keys(&g, "left", None, Mods::NONE));
-    assert!(!s.layer_edge_set(id, 0, 0));
+    assert!(!s.layer_edge_set(id, 0, 0, 0));
     assert_eq!(ranges(&s, t, 0)[0], (0, 1));
     assert_eq!(s.song().steps(), steps);
 }

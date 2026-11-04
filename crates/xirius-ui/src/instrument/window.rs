@@ -152,6 +152,9 @@ pub struct Win {
     /// pad's layer (UI-333, UI-334).
     pub pick: usize,
     pub layer: usize,
+    /// The Drum Kit's bank whose pads show while it is not the chosen pad's: a bank
+    /// tab shows its pads and leaves the pad chosen (UI-334, the mock's).
+    pub bank: Option<usize>,
     /// It had samples when it was last laid out: it takes its size again once its
     /// files come or all go.
     pub filled: bool,
@@ -200,6 +203,8 @@ pub(crate) enum Grab {
     /// width (all 128 velocities across it).
     Edge {
         plugin: PluginId,
+        /// The pad whose layers it parts, as it was chosen at the press.
+        pad: usize,
         j: usize,
         from: u8,
         now: u8,
@@ -565,11 +570,15 @@ impl Windows {
         let plugin = match (self.grab, w) {
             (
                 Some(Grab::Edge {
-                    plugin: id, j, now, ..
+                    plugin: id,
+                    pad,
+                    j,
+                    now,
+                    ..
                 }),
                 Some(w),
-            ) if id == plugin.id => {
-                let files = sampler::pad_files(def, plugin, w.pick.min(xirius_params::PADS - 1));
+            ) if id == plugin.id && pad == w.pick.min(xirius_params::PADS - 1) => {
+                let files = sampler::pad_files(def, plugin, pad);
                 let mut x = plugin.clone();
                 x.params
                     .extend(sampler::tops_with(def, plugin, &files, j, now));
@@ -584,7 +593,7 @@ impl Windows {
             &self.shown(plugin),
             self.band(plugin.id),
             Some(plugin),
-            w.map_or((0, 0), |w| (w.pick, w.layer)),
+            w.map_or((0, 0, None), |w| (w.pick, w.layer, w.bank)),
         );
         // The edge held or moved by the keys shows it.
         for s in &mut b.spots {
@@ -904,7 +913,8 @@ impl Windows {
     }
 
     /// A Sampler's or a Drum Kit's window whose files came or all went takes the size
-    /// its body now needs, and its zone or pad comes back to the first (UI-333, UI-334).
+    /// its body now needs, and a Sampler's zone comes back to the first (UI-333); a Drum
+    /// Kit's pad stays, chosen in the empty kit too (UI-334).
     /// One whose files were taken away keeps to the ones still there.
     pub(crate) fn refit(&mut self, p: &Project) {
         for n in 0..self.open.len() {
@@ -918,9 +928,10 @@ impl Windows {
             let filled = !plugin.samples.is_empty();
             if filled != w.filled {
                 let body = layout::size_of(def, w.body.0, Some(plugin));
+                let kit = def.uid == "drum-kit";
                 self.open[n] = Win {
                     body,
-                    pick: 0,
+                    pick: if kit { w.pick } else { 0 },
                     layer: 0,
                     filled,
                     ..w
@@ -948,12 +959,29 @@ impl Windows {
         w.pick = pick;
         w.layer = layer;
         if moved {
+            w.bank = None;
+        }
+        if moved {
             if self.focus.is_some_and(|(at, _)| at == id) {
                 self.focus = None;
             }
             self.entry = self.entry.take().filter(|e| e.plugin != id);
             self.chosen.remove(&id);
         }
+        true
+    }
+
+    /// The Drum Kit's window of `id` shows the pads of the bank `b`; the pad chosen stays
+    /// (UI-334).
+    pub(crate) fn show_bank(&mut self, id: PluginId, b: usize) -> bool {
+        let Some(w) = self.open.iter_mut().find(|w| w.plugin == id) else {
+            return false;
+        };
+        let bank = (b != w.pick / play::PADS).then_some(b);
+        if w.bank == bank {
+            return false;
+        }
+        w.bank = bank;
         true
     }
 
@@ -1155,7 +1183,7 @@ pub(crate) fn body_of(
     now: &[f64],
     band: usize,
     plugin: Option<&Plugin>,
-    (pick, layer): (usize, usize),
+    (pick, layer, bank): (usize, usize, Option<usize>),
 ) -> Body {
     let room = r.h - title_bar::BAR_H;
     let lay = |w: f32| {
@@ -1168,6 +1196,7 @@ pub(crate) fn body_of(
                 plugin,
                 pick,
                 layer,
+                bank,
             },
         )
     };
@@ -1236,9 +1265,9 @@ impl Studio {
         let ins = &mut self.instruments;
         // The face in the drawer comes out as a window (MIX-046), on the zone or pad and the
         // layer it showed: the focus and the typed value there stay theirs.
-        let mut shown = (0, 0);
+        let mut shown = (0, 0, None);
         if let Some(i) = ins.dock_slot().filter(|&i| ins.open[i].plugin == id) {
-            shown = (ins.open[i].pick, ins.open[i].layer);
+            shown = (ins.open[i].pick, ins.open[i].layer, ins.open[i].bank);
             ins.open.retain(|w| !w.docked);
         }
         match ins.open.iter().position(|w| w.plugin == id) {
@@ -1283,6 +1312,7 @@ impl Studio {
                         .unwrap_or(0),
                     pick: shown.0,
                     layer: shown.1,
+                    bank: shown.2,
                     filled: !plugin.samples.is_empty(),
                     docked: false,
                 };
@@ -1393,10 +1423,8 @@ impl Studio {
                 self.window_note_on(w, pitch, super::keys::VELOCITY);
             }
             Part::Pad(pitch) => {
-                // A press on a pad chooses it too (UI-334).
-                if live(&p, &w).is_some_and(|(_, x, _)| !x.samples.is_empty()) {
-                    self.instruments.pick(w.plugin, play::pad_of(pitch), 0);
-                }
+                // A press on a pad chooses it too, in a kit with no samples as well (UI-334).
+                self.instruments.pick(w.plugin, play::pad_of(pitch), 0);
                 // Higher up the pad is harder; it lights a moment however short the press.
                 let pad = live(&p, &w).and_then(|(track, plugin, def)| {
                     let at = self
@@ -1746,6 +1774,7 @@ impl Studio {
         }
         if let Grab::Edge {
             plugin,
+            pad,
             j,
             from,
             now,
@@ -1753,7 +1782,7 @@ impl Studio {
         } = grab
             && now != from
         {
-            self.layer_edge_set(plugin, j, now);
+            self.layer_edge_set(plugin, pad, j, now);
         }
         if let Grab::Size { plugin, .. } = grab {
             // The next window of its kind opens at this size.

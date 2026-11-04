@@ -363,6 +363,8 @@ pub struct Shape<'a> {
     pub plugin: Option<&'a Plugin>,
     pub pick: usize,
     pub layer: usize,
+    /// The Drum Kit's bank shown while it is not the chosen pad's.
+    pub bank: Option<usize>,
 }
 
 impl Shape<'_> {

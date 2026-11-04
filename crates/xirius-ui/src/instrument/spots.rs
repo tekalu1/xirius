@@ -60,8 +60,7 @@ impl Studio {
                 self.instruments.pick(id, file, 0);
             }
             Mark::Bank(b) => {
-                let pad = b * play::PADS + w.pick % play::PADS;
-                self.instruments.pick(id, pad.min(PADS - 1), 0);
+                self.instruments.show_bank(id, b);
             }
             Mark::Layer(j) => {
                 self.instruments.pick(id, w.pick, j);
@@ -81,6 +80,7 @@ impl Studio {
                 self.instruments.edge = Some((id, j));
                 self.instruments.grab = Some(super::window::Grab::Edge {
                     plugin: id,
+                    pad: w.pick.min(PADS - 1),
                     j,
                     from,
                     now: from,
@@ -211,20 +211,32 @@ impl Studio {
             Act::SampleReplace(id, files.first().copied().unwrap_or(0)),
         );
         let bank = &PAD_NAMES[pad][..1];
+        // An empty pad or bank has nothing to take away (the mock's).
+        let first = pad / play::PADS * play::PADS;
+        let bank_filled =
+            (first..first + play::PADS).any(|p| !sampler::pad_files(def, plugin, p).is_empty());
+        let empty_pad = self.ctx_as(
+            "パッドを空にする",
+            "plugin.samples.remove",
+            json!({ "id": id.to_string(), "pad": PAD_NAMES[pad] }),
+        );
+        let empty_bank = self.ctx_as(
+            "バンクを空にする",
+            "plugin.samples.remove",
+            json!({ "id": id.to_string(), "bank": bank }),
+        );
         let items = vec![
             replace.enabled(!files.is_empty()),
             Item::act("サンプルを足す…", "", Act::SampleAdd(id, pad)),
             Item::gap(),
-            self.ctx_as(
-                "パッドを空にする",
-                "plugin.samples.remove",
-                json!({ "id": id.to_string(), "pad": PAD_NAMES[pad] }),
-            ),
-            self.ctx_as(
-                "バンクを空にする",
-                "plugin.samples.remove",
-                json!({ "id": id.to_string(), "bank": bank }),
-            ),
+            Item {
+                enabled: empty_pad.enabled && !files.is_empty(),
+                ..empty_pad
+            },
+            Item {
+                enabled: empty_bank.enabled && bank_filled,
+                ..empty_bank
+            },
         ];
         self.open_context(items, x, y);
     }
@@ -295,6 +307,7 @@ impl Studio {
     pub(crate) fn layer_edge_set(
         &mut self,
         plugin: xirius_core::id::PluginId,
+        pad: usize,
         j: usize,
         hi: u8,
     ) -> bool {
@@ -305,7 +318,7 @@ impl Studio {
         let Some((_, x, def)) = live(&p, &w) else {
             return false;
         };
-        let files = sampler::pad_files(def, x, w.pick.min(PADS - 1));
+        let files = sampler::pad_files(def, x, pad.min(PADS - 1));
         if j + 1 >= files.len() {
             return false;
         }
@@ -362,7 +375,7 @@ impl Studio {
         let to = (i16::from(hi) + by * if shift { 1 } else { 4 })
             .clamp(i16::from(lo), i16::from(max)) as u8;
         if to != hi {
-            self.layer_edge_set(plugin, j, to);
+            self.layer_edge_set(plugin, w.pick, j, to);
         }
         true
     }

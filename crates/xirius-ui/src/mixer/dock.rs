@@ -189,6 +189,7 @@ impl Studio {
             placed_w: natural.0,
             pick: 0,
             layer: 0,
+            bank: None,
             filled: !plugin.samples.is_empty(),
             docked: true,
         };

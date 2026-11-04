@@ -780,6 +780,7 @@ impl Studio {
             plugin: x,
             pick: win.map_or(0, |w| w.pick),
             layer: win.map_or(0, |w| w.layer),
+            bank: win.and_then(|w| w.bank),
         };
         let body = layout::body(def, &shape);
         let shown: Vec<usize> = body.slots.iter().map(|s| s.k).collect();
