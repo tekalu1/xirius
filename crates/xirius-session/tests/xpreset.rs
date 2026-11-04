@@ -1908,9 +1908,10 @@ fn y15_a_preset_loaded_and_saved_again_makes_no_more_copies() {
     let _ = std::fs::remove_dir_all(&song);
 }
 
-/// L3-5, L3-7, L3-8: a copy gone is taken back only from a file of its sound (its name's
-/// hash); a name that is not a copy reaches nothing outside the song's folder (a full path,
-/// `..`, a stream); and a lost sample leaves out itself, not a sample of the same name kept
+/// L3-5, L3-7, L3-8, N4-pre-1: a copy gone is taken back only from a file of its sound (its
+/// name's hash); a name that is not a copy reaches nothing outside the song's folder but a
+/// full path on a drive of this PC (as v1.1.0-beta.3 saved one): not a share's, a device's,
+/// `..` or a stream; and a lost sample leaves out itself, not a sample of the same name kept
 /// for a song not saved yet.
 #[test]
 fn y16_a_sample_is_looked_for_by_its_sound_and_only_where_it_may_be() {
@@ -1945,16 +1946,27 @@ fn y16_a_sample_is_looked_for_by_its_sound_and_only_where_it_may_be() {
     let outside =
         std::env::temp_dir().join(format!("xirius-xpresets-{}-y16out", std::process::id()));
     std::fs::create_dir_all(&outside).unwrap();
-    std::fs::write(outside.join("Far.wav"), "RIFF far").unwrap();
+    for name in ["Far.wav", "Up.wav", "Share.wav", "Device.wav"] {
+        std::fs::write(outside.join(name), format!("RIFF {name}")).unwrap();
+    }
     let file = r
         .dir
         .join("instrument")
         .join("sampler")
         .join("Kick.xpreset");
     let mut v = read_json(&file);
+    let far = outside.join("Far.wav").to_string_lossy().into_owned();
+    let share = format!(
+        r"\\localhost\{}\Share.wav",
+        outside.to_string_lossy().replace(':', "$")
+    );
+    let device = format!(r"\\?\{}", outside.join("Device.wav").to_string_lossy());
     v["devices"][0]["samples"] = json!([
-        outside.join("Far.wav").to_string_lossy(),
-        "../y16out/Far.wav",
+        far,
+        "../y16out/Up.wav",
+        share,
+        device,
+        format!("{far}:hidden"),
         "preset:samples/C:Far.wav",
         "Media/Kick.wav",
     ]);
@@ -1964,10 +1976,34 @@ fn y16_a_sample_is_looked_for_by_its_sound_and_only_where_it_may_be() {
         "preset.load",
         json!({ "track": t, "preset": "Kick" }),
     );
-    for name in ["Far.wav", "C:Far.wav"] {
+    for name in [
+        "Up.wav",
+        "Share.wav",
+        "Device.wav",
+        "Far.wav:hidden",
+        "C:Far.wav",
+    ] {
         assert!(rejected(&out, name), "{name}: {out:?}");
     }
-    assert_eq!(track(&s, &t).inserts[0].samples, ["Media/Kick.wav"]);
+    // The full path on this PC's drive is opened, and the song names it so.
+    assert_eq!(
+        track(&s, &t).inserts[0].samples,
+        [far.as_str(), "Media/Kick.wav"]
+    );
+    // Saved again, it is copied into the presets' samples, as any sample off the song.
+    run(
+        &mut s,
+        "preset.save",
+        json!({ "track": t, "kind": "instrument", "name": "Kick", "overwrite": true }),
+    );
+    let saved = read_json(&file)["devices"][0]["samples"][0].clone();
+    assert!(
+        saved
+            .as_str()
+            .is_some_and(|x| x.starts_with("preset:samples/Far-")),
+        "{saved}"
+    );
+    v = read_json(&file);
 
     // In a song not saved, a name stays as it is; a lost copy of that name goes alone.
     let other = id(&run(

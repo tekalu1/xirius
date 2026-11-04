@@ -772,11 +772,14 @@ impl<'a> Finder<'a> {
 
     /// Where the preset's sample `s` is.
     fn find(&mut self, s: &str, dir: &Path, song: Option<&Path>) -> Sample {
-        // A name that is not a copy is one in the song, from its folder. A full path or one
-        // that leaves the folder is looked for by its file's name alone, so a preset from
-        // elsewhere reaches no other place (L3-7).
+        // A name that is not a copy is one in the song, from its folder. A full path on a
+        // drive of this PC is opened as it is (v1.1.0-beta.3 named a sample off the song so,
+        // N4-pre-1); a share's (`\\…`, which would hand out the user's sign-in), a device's
+        // (`\\?\…`) and one that leaves the folder are looked for by their file's name alone,
+        // so a preset from elsewhere reaches no other place (L3-7).
         let at = match s.strip_prefix(KEPT) {
             Some(rel) => under(dir, rel),
+            None if local_full(s).is_some() => local_full(s),
             None => {
                 let rel = s.replace('\\', "/");
                 let clean = under(Path::new(""), &rel).is_some();
@@ -816,6 +819,24 @@ impl<'a> Finder<'a> {
             })
             .map_or(Sample::Lost, |(_, p)| Sample::Moved(p.clone()))
     }
+}
+
+/// `s` as a full path on a drive of this PC: `C:\…` (`/…` off Windows), not a share's or a
+/// device's, without `..` and without a second `:` (a file's other stream).
+fn local_full(s: &str) -> Option<PathBuf> {
+    let b = s.as_bytes();
+    let drive = if cfg!(windows) {
+        b.len() > 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && matches!(b[2], b'\\' | b'/')
+    } else {
+        b.first() == Some(&b'/') && b.get(1) != Some(&b'/')
+    };
+    let rest = if cfg!(windows) { &s[2..] } else { s };
+    let p = Path::new(s);
+    (drive
+        && !rest.contains(':')
+        && p.is_absolute()
+        && !p.components().any(|c| matches!(c, Component::ParentDir)))
+    .then(|| p.to_path_buf())
 }
 
 /// The files in `root` and its folders `depth` deep, by name, adding no more than `budget`
