@@ -371,25 +371,30 @@ fn ui_334_shift_makes_layers_and_a_drop_off_the_pads_goes_to_the_pad_chosen() {
     let k = plugin(&s, t);
     assert_eq!(sampler::pad_files(k.builtin().unwrap(), &k, 30), [3]);
     assert_eq!(s.instruments.open[0].pick, 30);
-    // A file that is not a sound among them is passed over and named (N-smp-5).
+    // A file that is not a sound among them is passed over and named (N-smp-5); the pad
+    // chosen has a file now, which gives way to it (N3-kit-2).
     let (_dir4, mixed) = wavs(&["Tom.wav", "notes.txt"]);
     s.error = None;
     assert!(s.window_drop(&g, x, y, &mixed), "{:?}", s.error);
     let k = plugin(&s, t);
-    assert_eq!(sampler::pad_files(k.builtin().unwrap(), &k, 31), [4]);
+    assert_eq!(sampler::pad_files(k.builtin().unwrap(), &k, 30), [3]);
+    assert!(k.samples[3].ends_with("Tom.wav"), "{:?}", k.samples);
     assert!(
         s.error.as_deref().is_some_and(|e| e.contains("notes.txt")),
         "{:?}",
         s.error
     );
-    // A1 is full: a drop there goes to the next empty pad, which is chosen.
-    s.instruments.pick(id, 0, 0);
+    // A1 has a file: a drop there takes its place (the mock's), and A1 is chosen.
+    s.instruments.pick(id, 5, 0);
     let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).expect("A1");
     let (_dir3, last) = wavs(&["Rim.wav"]);
     assert!(s.window_drop(&g, x, y, &last), "{:?}", s.error);
     let k = plugin(&s, t);
-    assert_eq!(sampler::pad_files(k.builtin().unwrap(), &k, 1), [5]);
-    assert_eq!(s.instruments.open[0].pick, 1);
+    let a1 = sampler::pad_files(k.builtin().unwrap(), &k, 0);
+    assert_eq!(a1.len(), 1);
+    assert!(k.samples[a1[0]].ends_with("Rim.wav"), "{:?}", k.samples);
+    assert!(!k.samples.iter().any(|f| f == "Kick.wav"));
+    assert_eq!(s.instruments.open[0].pick, 0);
 }
 
 /// The velocities the layers of the Drum Kit's pad `pad` play.
@@ -892,29 +897,29 @@ fn ui_334_a_drag_shows_the_pads_it_fills() {
     let (dir, files) = wavs(&["Kick.wav", "Snare_v1.wav", "Snare_v2.wav", "notes.txt"]);
     let (mut s, g, t, id) = window("Drum Kit");
     add(&mut s, id, &["Hat.wav"]);
-    // Over A1, which has a file: the free pads from it.
+    // Over A1, which has a file: the pads from it, A1 in place of its file (N3-kit-2).
     let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).expect("A1");
     assert!(s.window_drag(&g, x, y, &files, false));
     let v = s.instruments.preview.clone().expect("a plan");
-    assert_eq!(v.text, "2 pads, A2–A3");
+    assert_eq!(v.text, "2 pads, A1–A2");
     assert_eq!(
         v.pads,
         [
-            (1, "Kick".to_string(), String::new()),
-            (2, "Snare_v1".to_string(), "Vel 2".to_string())
+            (0, "Kick".to_string(), String::new()),
+            (1, "Snare_v1".to_string(), "Vel 2".to_string())
         ]
     );
     // The same again changes nothing.
     assert!(!s.window_drag(&g, x, y, &files, false));
     let mut b = body(&s, &g, t);
     crate::instrument::kit_drag::ghost(&mut b, &v);
-    let a2 = b.spots.iter().find(|x| x.mark == Mark::Pad(1)).unwrap();
-    assert!(a2.ghost && a2.text == "Kick");
+    let a1 = b.spots.iter().find(|x| x.mark == Mark::Pad(0)).unwrap();
+    assert!(a1.ghost && a1.text == "Kick");
     assert!(b.spots.iter().any(|x| x.mark == Mark::Bank(0) && x.ghost));
     assert!(b.spots.iter().any(|x| x.mark == Mark::Bank(1) && !x.ghost));
     assert!(
-        b.spots.iter().any(|x| x.mark == Mark::Mute(0)),
-        "A1 keeps its M"
+        !b.spots.iter().any(|x| x.mark == Mark::Mute(0)),
+        "A1 shows what it gets, without its M"
     );
     // Shift: all of them on A1, with its file.
     assert!(s.window_drag(&g, x, y, &files, true));
@@ -929,7 +934,7 @@ fn ui_334_a_drag_shows_the_pads_it_fills() {
     );
     // One file: its name.
     assert!(s.window_drag(&g, x, y, &files[..1], false));
-    assert_eq!(s.instruments.preview.as_ref().unwrap().text, "A2: Kick");
+    assert_eq!(s.instruments.preview.as_ref().unwrap().text, "A1: Kick");
     // A folder: from the pad, its name.
     assert!(s.window_drag(&g, x, y, &[dir.path().to_path_buf()], false));
     let v = s.instruments.preview.clone().unwrap();
@@ -1147,6 +1152,33 @@ fn l2_smp_5_each_drop_target_does_what_the_mock_does() {
     assert_eq!(s.instruments.drop_on, None, "no band is left lit");
     let k = plugin(&s, t);
     assert_eq!(sampler::pad_files(k.builtin().unwrap(), &k, 0), [0, 1]);
+    assert_eq!(s.instruments.open[0].pick, 0);
+}
+
+/// N3-kit-2 (UI-334): files dropped on a Drum Kit's pad that has a file fill the pads from it,
+/// as the preview showed: the pad's file gives way to the first of them, and the pad stays
+/// chosen.
+#[test]
+fn n3_kit_2_a_drop_on_a_filled_pad_replaces_it_as_the_preview_said() {
+    let (_dir, files) = wavs(&["Kick.wav", "Snare.wav"]);
+    let (mut s, g, t, id) = window("Drum Kit");
+    add(&mut s, id, &["Hat.wav", "Ride.wav"]);
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).expect("A1");
+    assert!(s.window_drag(&g, x, y, &files, false));
+    let shown = s.instruments.preview.clone().expect("a plan").pads;
+    assert!(s.drop_files(&g, x, y, &files), "{:?}", s.error);
+    let k = plugin(&s, t);
+    let def = k.builtin().unwrap();
+    let got: Vec<(usize, String)> = shown
+        .iter()
+        .map(|(pad, _, _)| {
+            let f = sampler::pad_files(def, &k, *pad);
+            assert_eq!(f.len(), 1, "{pad}: {:?}", k.samples);
+            (*pad, sampler::stem(&k.samples[f[0]]))
+        })
+        .collect();
+    assert_eq!(got, [(0, "Kick".to_string()), (1, "Snare".to_string())]);
+    assert_eq!(k.samples.len(), 2, "Hat and Ride gave way: {:?}", k.samples);
     assert_eq!(s.instruments.open[0].pick, 0);
 }
 

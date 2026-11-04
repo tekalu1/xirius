@@ -55,15 +55,12 @@ pub fn audio_files(dir: &Path) -> CmdResult<Vec<PathBuf>> {
     Ok(files)
 }
 
-/// What a drop of `path` on the Drum Kit `x` fills: the pads, from `from` (or A1); with
-/// `layers` and a pad, that one. `None` when there are not enough free pads.
-pub fn kit_estimate(
-    x: &Plugin,
-    names: &[String],
-    from: Option<usize>,
-    layers: bool,
-) -> Option<Vec<usize>> {
-    let def = x.builtin()?;
+/// What a drop of `names` on the Drum Kit `x` fills: the pads from `from` up to H16 (or the
+/// free ones from A1); with `layers` and a pad, that one ([`kit_pads`]).
+pub fn kit_estimate(x: &Plugin, names: &[String], from: Option<usize>, layers: bool) -> Vec<usize> {
+    let Some(def) = x.builtin() else {
+        return Vec::new();
+    };
     let groups = kit_groups(names, layers);
     kit_pads(&used_pads(def, x), from, groups.len(), layers)
 }
@@ -150,7 +147,8 @@ fn load(cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Plan> {
         if args.flag("replace") {
             x.samples.clear();
         }
-        if let Some(pads) = kit_estimate(&x, &names, from, args.flag("layers")) {
+        let pads = kit_estimate(&x, &names, from, args.flag("layers"));
+        if !pads.is_empty() {
             data["pads"] = json!(pads.iter().map(|p| PAD_NAMES[*p]).collect::<Vec<_>>());
         }
     }

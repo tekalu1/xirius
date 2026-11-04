@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use xirius_core::commands::samples::{kit_groups, kit_pads, used_pads};
+use xirius_core::commands::samples::{kit_groups, kit_pads, kit_replaced, used_pads};
 use xirius_core::id::PluginId;
 use xirius_design::{FontSize, Radius, Weight};
 use xirius_params::{PAD_NAMES, PADS, pad_key};
@@ -135,15 +135,21 @@ impl Studio {
             return None;
         }
         let groups = kit_groups(&names, shift);
-        let pads = kit_pads(&used, Some(start), groups.len(), shift)?;
+        let pads = kit_pads(&used, Some(start), groups.len(), shift);
+        // A pad that has files takes the new ones in their place, unless they are its layers.
+        let replaced = kit_replaced(&used, &pads, shift);
         let mode = def.per_pad.iter().find(|s| s.id == "layer_mode");
         let shown: Vec<(usize, String, String)> = groups
             .iter()
             .zip(&pads)
             .map(|(group, &pad)| {
-                // A pad that has files keeps its name and how it picks; the new ones add to
-                // its layers.
-                let had = sampler::pad_files(def, plugin, pad);
+                // A pad the files are layers of keeps its name and how it picks; the new ones
+                // add to its layers.
+                let had = if replaced.contains(&pad) {
+                    Vec::new()
+                } else {
+                    sampler::pad_files(def, plugin, pad)
+                };
                 let first = had.first().map_or_else(
                     || sampler::stem(&names[group.files[0]]),
                     |&f| sampler::stem(&plugin.samples[f]),

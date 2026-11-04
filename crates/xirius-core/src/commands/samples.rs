@@ -34,7 +34,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 ),
                 ArgDef::text(
                     "pad",
-                    "ドラムキットで置き始めるパッド（A1〜H16。省略時は A1 から空いたパッド）",
+                    "ドラムキットで置き始めるパッド（A1〜H16。そこから順に置き、ファイルのあるパッドは置き換え、H16 を越えた分は入れない。省略時は A1 から空いたパッド）",
                 ),
                 ArgDef::flag(
                     "layers",
@@ -67,7 +67,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         edit(
             "plugin.samples.add",
-            "サンプラー・ドラムキットにサンプルのファイルを足します。ドラムキットでは、空いたパッドへ名前ごとに 1 つずつ置きます（名前の末尾の _v1・_v2 はベロシティのレイヤー、_rr1・_rr2 はラウンドロビン）",
+            "サンプラー・ドラムキットにサンプルのファイルを足します。ドラムキットでは、名前ごとに 1 つずつパッドへ置きます（名前の末尾の _v1・_v2 はベロシティのレイヤー、_rr1・_rr2 はラウンドロビン）",
             vec![
                 plugin(),
                 ArgDef::text(
@@ -77,7 +77,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 ArgDef::objects("files", "まとめて足すファイル [{file}]"),
                 ArgDef::text(
                     "pad",
-                    "ドラムキットで置き始めるパッド（A1〜H16。省略時は A1 から空いたパッド）",
+                    "ドラムキットで置き始めるパッド（A1〜H16。そこから順に置き、ファイルのあるパッドは置き換え、H16 を越えた分は入れない。省略時は A1 から空いたパッド）",
                 ),
                 ArgDef::flag(
                     "layers",
@@ -202,25 +202,31 @@ pub fn used_pads(def: &BuiltinDef, x: &Plugin) -> [bool; PADS] {
     used
 }
 
-/// The pads `groups` go on, from `from`: the free ones in order. `None` when there are not
-/// enough.
-pub fn free_pads(used: &[bool; PADS], from: usize, groups: usize) -> Option<Vec<usize>> {
-    let pads: Vec<usize> = (from..PADS).filter(|p| !used[*p]).take(groups).collect();
-    (pads.len() == groups).then_some(pads)
-}
-
-/// The pads files go on: with `layers` and a pad given, that pad, whether it has files or
-/// not (they are added to its layers); else the free pads from `start` (A1).
+/// The pads files go on, as the mock fills them (N3-kit-2): with `layers` and a pad given,
+/// that pad, whether it has files or not (they are added to its layers); with a pad, the
+/// pads from it in order, a pad that has files given the new ones in place of its own; with
+/// none (a command that says no pad), the free pads from A1. The groups past H16, or past
+/// the last free pad, do not go in: fewer pads than groups.
 pub fn kit_pads(
     used: &[bool; PADS],
     start: Option<usize>,
     groups: usize,
     layers: bool,
-) -> Option<Vec<usize>> {
+) -> Vec<usize> {
     match start {
-        Some(pad) if layers && groups == 1 => Some(vec![pad]),
-        _ => free_pads(used, start.unwrap_or(0), groups),
+        Some(pad) if layers && groups == 1 => vec![pad.min(PADS - 1)],
+        Some(pad) => (pad..PADS).take(groups).collect(),
+        None => (0..PADS).filter(|p| !used[*p]).take(groups).collect(),
     }
+}
+
+/// The pads of `pads` whose files a drop takes the place of: the ones that have files, but
+/// not the one it adds layers to.
+pub fn kit_replaced(used: &[bool; PADS], pads: &[usize], layers: bool) -> Vec<usize> {
+    if layers && pads.len() == 1 {
+        return Vec::new();
+    }
+    pads.iter().copied().filter(|p| used[*p]).collect()
 }
 
 /// The bank a letter like `A` or `h` means (0 to 7).
@@ -299,11 +305,11 @@ fn add(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
         x.params
             .retain(|k, _| !matches!(scope(def, k), Some(Scope::File(_) | Scope::Pad(_))));
     }
-    let first = x.samples.len();
-    // Values left past the end (a hand-written song's) are not the new files' (L2-smp-2).
-    x.params
-        .retain(|k, _| !matches!(scope(def, k), Some(Scope::File(n)) if n >= first));
     if def.per_pad.is_empty() {
+        let first = x.samples.len();
+        // Values left past the end (a hand-written song's) are not the new files' (L2-smp-2).
+        x.params
+            .retain(|k, _| !matches!(scope(def, k), Some(Scope::File(n)) if n >= first));
         x.samples.extend(names.iter().cloned());
         return Ok(Output::with(
             format!("{} にサンプルを {} 個足しました", x.name, names.len()),
@@ -311,15 +317,28 @@ fn add(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
         ));
     }
     let groups = kit_groups(&names, layers);
-    let used = used_pads(def, x);
-    let Some(pads) = kit_pads(&used, start, groups.len(), layers) else {
-        return Err(CmdError::range(format!(
-            "空いたパッドが足りません（{} パッド必要です）",
-            groups.len()
-        )));
-    };
+    let pads = kit_pads(&used_pads(def, x), start, groups.len(), layers);
+    if pads.is_empty() {
+        return Err(CmdError::range("空いたパッドがありません"));
+    }
+    // A pad the drop falls on that has files takes the new ones in their place, its own
+    // values with them (the mock's `fill`).
+    let replaced = kit_replaced(&used_pads(def, x), &pads, layers);
+    if !replaced.is_empty() {
+        let gone: Vec<bool> = (0..x.samples.len())
+            .map(|i| replaced.contains(&def.file_pad(&x.params, i)))
+            .collect();
+        drop_files(def, x, &gone);
+    }
     // Every file says its pad, so taking one away later leaves the others where they are.
     pin_pads(def, x);
+    let first = x.samples.len();
+    // Values left past the end (a hand-written song's) are not the new files' (L2-smp-2).
+    x.params
+        .retain(|k, _| !matches!(scope(def, k), Some(Scope::File(n)) if n >= first));
+    let used = used_pads(def, x);
+    let placed: usize = groups.iter().take(pads.len()).map(|g| g.files.len()).sum();
+    let left_out = names.len() - placed;
     let pad_spec = spec(def, "pad");
     let mode = def.per_pad.iter().find(|s| s.id == "layer_mode");
     for (g, pad) in groups.iter().zip(&pads) {
@@ -344,18 +363,23 @@ fn add(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
         (Some(a), _) => PAD_NAMES[*a].to_string(),
         _ => String::new(),
     };
+    let mut message = format!(
+        "{} にサンプルを {placed} 個足しました（{} パッド、{span}）",
+        x.name,
+        pads.len()
+    );
+    if left_out > 0 {
+        message.push_str(&format!("。入りきらない {left_out} 個は入れていません"));
+    }
     Ok(Output::with(
-        format!(
-            "{} にサンプルを {} 個足しました（{} パッド、{span}）",
-            x.name,
-            names.len(),
-            pads.len()
-        ),
+        message,
         json!({
             "plugin": id.to_string(),
             "first": first + 1,
-            "count": names.len(),
+            "count": placed,
             "pads": pads.iter().map(|p| PAD_NAMES[*p]).collect::<Vec<_>>(),
+            "replaced": replaced.iter().map(|p| PAD_NAMES[*p]).collect::<Vec<_>>(),
+            "left_out": left_out,
         }),
     ))
 }
@@ -552,10 +576,21 @@ mod tests {
     }
 
     #[test]
-    fn free_pads_skip_the_used_ones() {
+    fn n3_kit_2_a_drop_fills_the_pads_from_its_own_and_stops_at_h16() {
         let mut used = [false; PADS];
         used[1] = true;
-        assert_eq!(free_pads(&used, 0, 3), Some(vec![0, 2, 3]));
-        assert_eq!(free_pads(&used, 126, 3), None);
+        // From a pad: in order, the used one too (it is replaced).
+        assert_eq!(kit_pads(&used, Some(0), 3, false), [0, 1, 2]);
+        assert_eq!(kit_replaced(&used, &[0, 1, 2], false), [1]);
+        // Past H16 they do not go in.
+        assert_eq!(kit_pads(&used, Some(126), 3, false), [126, 127]);
+        // Layers go on the pad, which keeps its files.
+        assert_eq!(kit_pads(&used, Some(1), 1, true), [1]);
+        assert!(kit_replaced(&used, &[1], true).is_empty());
+        // One sound on a pad that has one: it takes its place.
+        assert_eq!(kit_replaced(&used, &[1], false), [1]);
+        // No pad given: the free ones from A1.
+        assert_eq!(kit_pads(&used, None, 3, false), [0, 2, 3]);
+        assert!(kit_pads(&[true; PADS], None, 3, false).is_empty());
     }
 }

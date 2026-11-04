@@ -383,14 +383,13 @@ impl Studio {
         let kit = def.uid == "drum-kit";
         let pad = match part {
             Part::Pad(pitch) if kit => Some(play::pad_of(pitch)),
-            _ if kit => Some(w.pick),
+            _ if kit => Some(w.pick.min(PADS - 1)),
             _ => None,
         };
         let on = self.drop_target(g, x, y).map(|d| d.1);
         let shift = std::mem::take(&mut self.instruments.drop_layers);
         let layers = kit && (shift || on == Some(sampler::DropOn::Layers));
         let replace = on == Some(sampler::DropOn::Samples);
-        let first = live(&p, &w).map_or(0, |(_, x, _)| x.samples.len());
         // A file that is not a sound is passed over and said so, as on the arrangement
         // (N-smp-5); the others go in.
         let (paths, other): (Vec<&PathBuf>, Vec<&PathBuf>) = paths
@@ -433,15 +432,10 @@ impl Studio {
         if refused.is_some() {
             self.error = refused;
         }
-        // The pad the first file went to: the one dropped on, or the next empty one.
-        let p = self.project();
-        if kit
-            && let Some((_, x, _)) = live(&p, &w)
-            && let Some(def) = x.builtin()
-            && first < x.samples.len()
-        {
-            self.instruments
-                .pick(w.plugin, def.file_pad(&x.params, first), 0);
+        // The pad the first file went to: the one dropped on (N3-kit-2: the pads from it
+        // take the files, the ones that had files too).
+        if let Some(pad) = pad {
+            self.instruments.pick(w.plugin, pad.min(PADS - 1), 0);
         }
         true
     }

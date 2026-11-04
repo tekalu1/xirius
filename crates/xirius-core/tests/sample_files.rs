@@ -240,11 +240,11 @@ fn a_kits_files_fill_free_pads_by_name_and_keep_their_pads() {
     );
     assert!(plugin(&s).params.contains_key("A2.choke"));
 
-    // The next ones go on the free pads from the one asked for.
+    // The next ones go on the pads from the one asked for.
     let r = run(
         &mut s,
         "plugin.samples.add",
-        json!({ "id": "plg_2", "pad": "A2",
+        json!({ "id": "plg_2", "pad": "A4",
                 "files": [{ "file": "tom1.wav" }, { "file": "tom2.wav" }] }),
     );
     assert_eq!(r["pads"], json!(["A4", "A5"]));
@@ -393,4 +393,72 @@ fn a_hand_written_key_is_read_as_the_song_keeps_it() {
     let x = back.project().tracks[&TrackId(1)].inserts[0].clone();
     assert_eq!(x.params.get("file1.loop"), Some(&1.0));
     assert!(!x.params.contains_key("FILE01.LOOP"));
+}
+
+/// N3-kit-2: files dropped on a Drum Kit's pad fill the pads from it in order, as the mock
+/// does: a pad that has files gets the new ones in their place (its own values go), and the
+/// ones past H16 do not go in, said so.
+#[test]
+fn n3_kit_2_filled_pads_are_replaced_and_files_past_h16_left_out() {
+    let mut p = project_with_samples(&[]);
+    {
+        let t = std::sync::Arc::make_mut(p.tracks.get_mut(&TrackId(1)).unwrap());
+        let x = &mut t.inserts[0];
+        x.name = "Drum Kit".into();
+        x.uid = "drum-kit".into();
+    }
+    let mut s = Session::from_project(p);
+    let old: Vec<Value> = (1..=8)
+        .map(|i| json!({ "file": format!("old{i}.wav") }))
+        .collect();
+    run(
+        &mut s,
+        "plugin.samples.add",
+        json!({ "id": "plg_2", "pad": "A1", "files": old }),
+    );
+    run(
+        &mut s,
+        "plugin.param.set",
+        json!({ "id": "plg_2", "param": "a2.choke", "plain": "Self" }),
+    );
+    assert!(plugin(&s).params.contains_key("A2.choke"));
+    // 16 on A1 of a kit with 8 pads filled: all 16 go in, the 8 in place of the old.
+    let new: Vec<Value> = (1..=16)
+        .map(|i| json!({ "file": format!("new{i}.wav") }))
+        .collect();
+    let r = run(
+        &mut s,
+        "plugin.samples.add",
+        json!({ "id": "plg_2", "pad": "A1", "files": new }),
+    );
+    assert_eq!(r["count"], json!(16));
+    assert_eq!(r["replaced"].as_array().map(Vec::len), Some(8));
+    assert_eq!(r["left_out"], json!(0));
+    let def = xirius_params::find("drum-kit").unwrap();
+    let x = plugin(&s);
+    assert_eq!(x.samples.len(), 16);
+    assert!(
+        x.samples.iter().all(|f| f.starts_with("new")),
+        "{:?}",
+        x.samples
+    );
+    let mut pads: Vec<usize> = (0..16).map(|i| def.file_pad(&x.params, i)).collect();
+    pads.sort_unstable();
+    assert_eq!(pads, (0..16).collect::<Vec<_>>());
+    assert!(!x.params.contains_key("A2.choke"), "{:?}", x.params);
+    // 5 on H14: H14 to H16 take three, the other two are left out and said so.
+    let five: Vec<Value> = (1..=5)
+        .map(|i| json!({ "file": format!("end{i}.wav") }))
+        .collect();
+    let out = s
+        .run_value(
+            "plugin.samples.add",
+            json!({ "id": "plg_2", "pad": "H14", "files": five }),
+            &RunOptions::human(),
+        )
+        .unwrap();
+    assert_eq!(out.data["pads"], json!(["H14", "H15", "H16"]));
+    assert_eq!(out.data["left_out"], json!(2));
+    assert!(out.message.contains("入りきらない 2 個"), "{}", out.message);
+    assert_eq!(plugin(&s).samples.len(), 19);
 }
