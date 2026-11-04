@@ -141,6 +141,25 @@ pub fn db_to_gain(db: f64) -> f32 {
 /// Mute wins over solo. With any solo on, what stays audible is the soloed channels, what they
 /// feed on the way to the master, and what feeds a soloed bus.
 pub fn silenced(p: &Project) -> HashMap<TrackId, bool> {
+    let (soloed, audible, _) = solo_reach(p);
+    p.tracks
+        .values()
+        .map(|t| {
+            let solo_hides = !soloed.is_empty() && !t.id.is_master() && !audible.contains(&t.id);
+            (t.id, t.mute || solo_hides)
+        })
+        .collect()
+}
+
+/// The triggers a solo keeps only for their keys (MIX-049): their sends stay quiet, as what
+/// they feed is not what the solo hears.
+pub fn keyed_in_solo(p: &Project) -> HashSet<TrackId> {
+    solo_reach(p).2
+}
+
+/// The soloed channels, what stays audible with them, and of those the triggers kept only
+/// for the keys they give what is heard.
+fn solo_reach(p: &Project) -> (Vec<TrackId>, HashSet<TrackId>, HashSet<TrackId>) {
     let soloed: Vec<TrackId> = p
         .tracks
         .values()
@@ -148,6 +167,7 @@ pub fn silenced(p: &Project) -> HashMap<TrackId, bool> {
         .map(|t| t.id)
         .collect();
     let mut audible: HashSet<TrackId> = HashSet::new();
+    let mut keyed: HashSet<TrackId> = HashSet::new();
     if !soloed.is_empty() {
         let mut down: Vec<TrackId> = soloed.clone();
         while let Some(n) = down.pop() {
@@ -180,16 +200,11 @@ pub fn silenced(p: &Project) -> HashMap<TrackId, bool> {
             if more.is_empty() {
                 break;
             }
+            keyed.extend(more.iter().copied());
             audible.extend(more);
         }
     }
-    p.tracks
-        .values()
-        .map(|t| {
-            let solo_hides = !soloed.is_empty() && !t.id.is_master() && !audible.contains(&t.id);
-            (t.id, t.mute || solo_hides)
-        })
-        .collect()
+    (soloed, audible, keyed)
 }
 
 fn reverse_edges(p: &Project) -> HashMap<TrackId, Vec<TrackId>> {
@@ -473,6 +488,12 @@ impl Mix {
         } else {
             silenced(p)
         };
+        // A trigger a solo keeps for its keys is not heard through its sends (MIX-049).
+        let keyed = if scope.is_stem() {
+            HashSet::new()
+        } else {
+            keyed_in_solo(p)
+        };
         // A plug-in's keys as live values, matching what `key_spec` in build
         // keeps (sources that resolve inside the scope).
         let keys_of = |t: &Track| -> Vec<KeyMix> {
@@ -514,7 +535,7 @@ impl Mix {
                 sends: wiring(p, g, scope, t)
                     .sends
                     .iter()
-                    .map(|&(_, _, level)| level)
+                    .map(|&(_, _, level)| if keyed.contains(id) { 0.0 } else { level })
                     .collect(),
                 keys: keys_of(t),
             }
@@ -733,6 +754,47 @@ mod tests {
             json!({"id": comp, "from": kick.to_string(), "mode": "send"}),
         );
         assert!(silenced(s.project())[&kick]);
+    }
+
+    #[test]
+    fn a_trigger_a_solo_keeps_for_its_key_is_not_heard_through_its_sends() {
+        // Kick keys Bass's compressor with its output and sends to Verb, which Bass sends to
+        // as well: soloing Bass keeps Kick for the key, but not Kick's send into Verb.
+        let (mut s, ids) = session_with(&[
+            "track.add.instrument",
+            "track.add.instrument",
+            "track.add.bus",
+        ]);
+        let (kick, bass, verb) = (ids[0], ids[1], ids[2]);
+        let comp = add(
+            &mut s,
+            "plugin.add",
+            json!({"track": bass.to_string(), "name": "Comp"}),
+        );
+        run(
+            &mut s,
+            "plugin.sidechain.add",
+            json!({"id": comp, "from": kick.to_string(), "output": true}),
+        );
+        for from in [kick, bass] {
+            run(
+                &mut s,
+                "send.add",
+                json!({"ids": [from.to_string()], "to": verb.to_string(), "level": -6}),
+            );
+        }
+        let send_of = |s: &Session, id: TrackId| {
+            let p = s.project();
+            let g = Graph::of(p);
+            let mix = Mix::of(p, &g, &Scope::new(p, Select::All));
+            mix.tracks[g.track_index(id).unwrap()].sends[0]
+        };
+        assert!(send_of(&s, kick) > 0.0, "heard without a solo");
+        run(&mut s, "track.solo", json!({"ids": [bass.to_string()]}));
+        let m = silenced(s.project());
+        assert!(!m[&kick] && !m[&bass] && !m[&verb]);
+        assert_eq!(send_of(&s, kick), 0.0, "the trigger's send stays quiet");
+        assert!(send_of(&s, bass) > 0.0, "the soloed track's send is heard");
     }
 
     #[test]
