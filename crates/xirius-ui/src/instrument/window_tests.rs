@@ -1119,3 +1119,33 @@ fn save_as_counts_on_and_refuses_default_and_the_dash_writes_nothing() {
     let save = rows.iter().find(|c| c.label == "上書き保存").unwrap();
     assert!(save.to.starts_with("off:"), "{}", save.to);
 }
+
+/// L-ui-3: a narrow device's window that takes a wide one in takes its
+/// width, not the narrow one's.
+#[test]
+fn a_window_that_takes_a_wider_device_in_takes_its_width() {
+    let (mut s, _g, t, id) = studio();
+    assert!(s.run_command(
+        "plugin.add",
+        serde_json::json!({ "track": t.to_string(), "name": "Limiter" }),
+    ));
+    let lim = added(&s, t, "Limiter");
+    s.show_instrument(t, lim);
+    assert_eq!(s.instruments.open.len(), 1);
+    let narrow = s.instruments.open[0].body.0;
+    s.show_instrument(t, id);
+    assert_eq!(
+        s.instruments.open.len(),
+        1,
+        "the unpinned window took it in"
+    );
+    let w = s.instruments.open[0];
+    assert_eq!(w.plugin, id);
+    let def = plugin(&s, t).builtin().unwrap();
+    assert!(
+        w.body.0 >= crate::device::layout::min_w(def),
+        "{}",
+        w.body.0
+    );
+    assert!(w.body.0 > narrow, "{} > {narrow}", w.body.0);
+}
