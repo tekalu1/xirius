@@ -1215,12 +1215,11 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                     let spec = &def.params[k];
                     let mut v = s.instruments.turning(w.plugin, k).unwrap_or(now[k]);
                     // A reversed loop's end reads as the one it shows as, where it shows
-                    // (low 1), and is known by that one.
-                    let mut known = spec.id;
+                    // (low 1); it is still known by the value it moves, so Reverse does not
+                    // make the reader lose its place (the sixth review's low 3).
                     let axis = match crate::device::sampler::mirror(def, &now, k) {
-                        Some((shown, m)) => {
-                            v = crate::device::sampler::mirrored(spec, v, m);
-                            known = def.params[shown].id;
+                        Some((shown, ends)) => {
+                            v = crate::device::sampler::mirrored(spec, v, ends);
                             control::name(def, &def.params[shown])
                         }
                         None => control::name(def, spec),
@@ -1235,7 +1234,7 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                     numeric(&mut node, spec, v);
                     node.set_bounds(bounds(Rect::new(pt.at.0 - 8.0, pt.at.1 - 8.0, 16.0, 16.0)));
                     out.push(Mark {
-                        key: format!("device-{}-point-{known}", w.plugin),
+                        key: format!("device-{}-point-{}", w.plugin, spec.id),
                         children: Vec::new(),
                         node,
                         fold: None,

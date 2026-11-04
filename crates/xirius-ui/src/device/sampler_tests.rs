@@ -978,7 +978,8 @@ fn ui_333_reversed_the_keys_and_the_reader_turn_the_loops_ends_as_shown() {
         sampler::idx(def, "loop_start").unwrap(),
         sampler::idx(def, "loop_end").unwrap(),
     );
-    // The reader: Loop Start reads 70 (where it is), Loop End 80.
+    // The reader: Loop Start reads 70 (where it is), Loop End 80; each known by the file's
+    // value it moves, as it is forwards (the sixth review's low 3).
     let slider = |s: &Studio, key: &str| {
         let key = format!("device-{id}-point-file1.{key}");
         let marks = crate::a11y::marks(s, &g);
@@ -992,10 +993,10 @@ fn ui_333_reversed_the_keys_and_the_reader_turn_the_loops_ends_as_shown() {
             m.node.bounds().map(|b| b.x0),
         )
     };
-    let (label, value, a) = slider(&s, "loop_start");
+    let (label, value, a) = slider(&s, "loop_end");
     assert_eq!(label.as_deref(), Some("Loop Start"));
     assert_eq!(value.as_deref(), Some("70 %"));
-    let (label, value, b) = slider(&s, "loop_end");
+    let (label, value, b) = slider(&s, "loop_start");
     assert_eq!(label.as_deref(), Some("Loop End"));
     assert_eq!(value.as_deref(), Some("80 %"));
     assert!(a.unwrap() < b.unwrap(), "Loop Start is the left one");
@@ -1016,7 +1017,7 @@ fn ui_333_reversed_the_keys_and_the_reader_turn_the_loops_ends_as_shown() {
         "{:?}",
         file_loop(&s, t)
     );
-    assert_eq!(slider(&s, "loop_start").1.as_deref(), Some("75 %"));
+    assert_eq!(slider(&s, "loop_end").1.as_deref(), Some("75 %"));
     // The wheel over it, up: more, as it reads.
     let (x, y) = s.instrument_center(&g, id, Part::Point(0, 2)).unwrap();
     assert!(s.device_wheel(&g, x, y, 1.0, false));
@@ -1035,6 +1036,12 @@ fn ui_333_reversed_the_keys_and_the_reader_turn_the_loops_ends_as_shown() {
     assert!(s.device_key(&g, "left", Mods::NONE));
     s.device_sweep_end();
     assert!(file_loop(&s, t).0 > 20.0, "{:?}", file_loop(&s, t));
+    // Reverse out: the same two Sliders, each by its own name again.
+    let zone = s.instruments.open[0].pick + 1;
+    let set = json!({"id": id.to_string(), "param": format!("file{zone}.reverse"), "value": 0.0});
+    assert!(s.run_command("plugin.param.set", set), "{:?}", s.error);
+    assert_eq!(slider(&s, "loop_end").0.as_deref(), Some("Loop End"));
+    assert_eq!(slider(&s, "loop_start").0.as_deref(), Some("Loop Start"));
 }
 
 /// Sets the zone's values (plain) by their keys, as a song would.
@@ -1098,10 +1105,10 @@ fn n6_smp_1_a_reversed_loops_end_past_the_cut_shows_where_it_sounds() {
             ((b.x0 + b.x1) / 2.0) as f32,
         )
     };
-    let (value, x) = slider(&s, "loop_start");
+    let (value, x) = slider(&s, "loop_end");
     assert_eq!(value.as_deref(), Some("0 %"));
     assert!((x - left.0).abs() < 0.5, "{x} {left:?}");
-    let (value, x) = slider(&s, "loop_end");
+    let (value, x) = slider(&s, "loop_start");
     assert_eq!(value.as_deref(), Some("35 %"));
     assert!((x - right.0).abs() < 0.5, "{x} {right:?}");
     // Grabbed where it shows; 8 px to the right and the loop already ends sooner than the
