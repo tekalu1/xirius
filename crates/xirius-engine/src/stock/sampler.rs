@@ -418,6 +418,33 @@ mod tests {
         }
     }
 
+    /// N4-smp-1: two files without a note in their names (both C3) split C3's keys, and each
+    /// sounds: the root plays the first, the key above it the second.
+    #[test]
+    fn two_files_of_one_root_both_sound() {
+        let (mut p, h) = make("sampler");
+        set_plain(&h, "attack", 1.0);
+        set_plain(&h, "sustain", 100.0);
+        give(
+            &h,
+            vec![
+                sine_file("kick.wav", hz(60.0), 0.4, 288_000),
+                sine_file("snare.wav", hz(60.0), 0.1, 288_000),
+            ],
+        );
+        let mut level = |pitch| {
+            p.prepare(&setup());
+            peak(&play(p.as_mut(), pitch, 1.0, 20_000, 20_000)[4_800..])
+        };
+        let (kick, snare) = (level(60), level(61));
+        assert!(kick > 0.0 && snare > 0.0, "{kick} {snare}");
+        assert!(
+            kick > snare * 2.0,
+            "C3 plays kick.wav, C#3 snare.wav: {kick} {snare}"
+        );
+        assert!(level(30) > snare * 2.0 && level(100) < kick / 2.0);
+    }
+
     #[test]
     fn transpose_and_fine_move_the_pitch() {
         let (mut p, h) = tone();

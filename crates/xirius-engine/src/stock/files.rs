@@ -231,8 +231,8 @@ impl FileSet {
                 .collect();
             order.sort();
             let mut zones = Vec::with_capacity(order.len());
-            for &(root, slot) in &order {
-                let (lo, hi) = root_keys(&order, root);
+            for (k, &(root, slot)) in order.iter().enumerate() {
+                let (lo, hi) = root_keys(&order, k);
                 let c = cut(&|id| file(slot, id));
                 zones.push(Zone {
                     slot,
@@ -459,15 +459,38 @@ impl FileSlot {
     }
 }
 
-/// The keys a Sampler zone of `root` plays, `order` the zones' roots in rising order: up to
-/// halfway to the next root down and up. Zones of one root share their keys (the first
-/// of them sounds).
-pub fn root_keys(order: &[(u8, usize)], root: u8) -> (u8, u8) {
+/// The keys the Sampler zone `k` of `order` plays, `order` the zones' roots in rising order:
+/// its root's keys run up to halfway to the next root down and up. Two zones of one root
+/// split them at the root (the second from the key above it), as the mock does; three or
+/// more take even shares in turn, so every one of them sounds while there are keys enough.
+pub fn root_keys(order: &[(u8, usize)], k: usize) -> (u8, u8) {
+    let root = order[k].0;
     let below = order.iter().rev().map(|o| o.0).find(|&r| r < root);
     let above = order.iter().map(|o| o.0).find(|&r| r > root);
-    let lo = below.map_or(0, |b| ((u16::from(b) + u16::from(root)) / 2 + 1) as u8);
-    let hi = above.map_or(127, |a| ((u16::from(root) + u16::from(a)) / 2) as u8);
-    (lo.min(hi), hi)
+    let lo = below.map_or(0, |b| (u16::from(b) + u16::from(root)) / 2 + 1);
+    let hi = above.map_or(127, |a| (u16::from(root) + u16::from(a)) / 2);
+    let lo = lo.min(hi);
+    let first = order.iter().position(|o| o.0 == root).unwrap_or(k);
+    let n = order.iter().filter(|o| o.0 == root).count() as u16;
+    let j = (k - first) as u16;
+    let (a, b) = match n {
+        1 => (lo, hi),
+        2 => {
+            let cut = u16::from(root).clamp(lo, hi.saturating_sub(1).max(lo));
+            if j == 0 {
+                (lo, cut)
+            } else {
+                ((cut + 1).min(hi), hi)
+            }
+        }
+        _ => {
+            let size = hi - lo + 1;
+            let a = lo + j * size / n;
+            let b = (lo + (j + 1) * size / n).saturating_sub(1);
+            (a.min(hi), b.max(a).min(hi))
+        }
+    };
+    (a as u8, b as u8)
 }
 
 /// The root note a file's name asks for: the last note-name token it has (`c3`, `F#4`, `Bb2`)
@@ -597,14 +620,26 @@ mod tests {
             .map(|z| (z.slot, z.root, z.lo, z.hi))
             .collect();
         assert_eq!(keys, [(2, 48, 0, 54), (1, 60, 55, 72), (0, 84, 73, 127)]);
-        // Files of one root share its keys, however many there are (the first sounds).
+        // Two files of one root split its keys at the root, as the mock does: names without
+        // a note are both C3, and both sound.
+        let two = FileSet::layout(def, &v, slots(&["kick.wav", "snare.wav"]));
+        let keys: Vec<(usize, u8, u8)> = two.zones.iter().map(|z| (z.slot, z.lo, z.hi)).collect();
+        assert_eq!(keys, [(0, 0, 60), (1, 61, 127)]);
+        // Three or more take even shares of them, none squeezed out.
         let one = FileSet::layout(
             def,
             &v,
             slots(&["a_C3.wav", "b_C3.wav", "c_C3.wav", "d_C4.wav"]),
         );
         let keys: Vec<(usize, u8, u8)> = one.zones.iter().map(|z| (z.slot, z.lo, z.hi)).collect();
-        assert_eq!(keys, [(0, 0, 66), (1, 0, 66), (2, 0, 66), (3, 67, 127)]);
+        assert_eq!(keys, [(0, 0, 21), (1, 22, 43), (2, 44, 66), (3, 67, 127)]);
+        // More files of a root than its keys: the last ones share its top key.
+        let order = [(60, 0), (60, 1), (60, 2), (61, 3)];
+        let keys: Vec<(u8, u8)> = (0..4).map(|k| root_keys(&order, k)).collect();
+        assert_eq!(keys, [(0, 19), (20, 39), (40, 60), (61, 127)]);
+        let order = [(60, 0), (60, 1), (61, 2)];
+        assert_eq!(root_keys(&order, 1), (60, 60));
+        assert_eq!(root_keys(&order, 0), (0, 59));
         let mid = s.zones[1];
         assert!((mid.cut.start - 0.25).abs() < 1e-9 && mid.cut.normalize);
         // Normalize lifts the file's peak (6) to full.

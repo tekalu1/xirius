@@ -130,6 +130,24 @@ fn ui_333_zones_of_one_root_and_off_the_keys_can_each_be_chosen() {
         press_spot(&mut s, &g, t, id, Mark::Zone(f));
         assert_eq!(s.instruments.open[0].pick, f, "zone {f}");
     }
+    // N4-smp-1: the four of C3 split its keys, each its own (all of them sound), and their
+    // places on the keys follow in that order.
+    let files = plugin(&s, t).samples;
+    let c3: Vec<_> = sampler::zones(&files)
+        .into_iter()
+        .filter(|z| z.root == 60)
+        .collect();
+    assert_eq!(c3.len(), 4);
+    for w in c3.windows(2) {
+        assert_eq!(w[0].hi + 1, w[1].lo, "{c3:?}");
+    }
+    let x = |f| {
+        let n = spot(&s, &g, t, Mark::Zone(f));
+        body(&s, &g, t).spots[n].r
+    };
+    for w in c3.windows(2) {
+        assert!(x(w[0].file).right() <= x(w[1].file).x, "{c3:?}");
+    }
 }
 
 /// N3-smp-1 (UI-333): zones that meet at a black key meet on the line that key sits on, each

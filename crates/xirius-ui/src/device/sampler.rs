@@ -202,7 +202,7 @@ pub struct Zone {
 }
 
 /// The Sampler's zones as the engine plays them: by root, each up to halfway to the next;
-/// files of one root share its keys.
+/// files of one root split its keys (N4-smp-1).
 pub fn zones(files: &[String]) -> Vec<Zone> {
     let mut order: Vec<(u8, usize)> = files
         .iter()
@@ -212,8 +212,9 @@ pub fn zones(files: &[String]) -> Vec<Zone> {
     order.sort();
     order
         .iter()
-        .map(|&(root, file)| {
-            let (lo, hi) = root_keys(&order, root);
+        .enumerate()
+        .map(|(k, &(root, file))| {
+            let (lo, hi) = root_keys(&order, k);
             Zone { file, root, lo, hi }
         })
         .collect()
@@ -528,7 +529,7 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
     y = voice(def, &mut b, PAD, y, inner) + GAP;
     let keys = play::keys(Rect::new(PAD, y + ZONE_H + 4.0, inner, KEYS_H));
     // Every zone can be chosen (N-smp-6): its keys' place on the columns of the white keys,
-    // one off the keys a sliver at their edge, and zones of one root side by side in theirs.
+    // one off the keys a sliver at their edge, and zones left the same keys side by side in theirs.
     let mut groups: Vec<(Vec<Zone>, f32, f32)> = Vec::new();
     for z in zones(files) {
         match groups.last_mut() {
