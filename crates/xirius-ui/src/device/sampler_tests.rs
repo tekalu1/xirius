@@ -1148,3 +1148,45 @@ fn l2_smp_5_a_pressed_pad_chooses_the_layer_that_sounded() {
     assert!(!s.instruments.follow(&k, def, late));
     assert_eq!(s.instruments.open[0].layer, pressed);
 }
+
+/// L2-smp-8: undoing the files' coming or going leaves the window on a zone the song has,
+/// and the wave's Start dragged is one step.
+#[test]
+fn l2_smp_8_undo_keeps_the_zone_chosen_and_a_wave_drag_is_one_step() {
+    let (mut s, g, t, id) = window("Sampler");
+    add(&mut s, id, &["Piano_C3.wav"]);
+    add(&mut s, id, &["Piano_C4.wav", "Piano_C5.wav"]);
+    // The wave's Start: a drag of many moves is one step.
+    let (x, y) = s
+        .instrument_center(&g, id, Part::Point(0, 0))
+        .expect("the wave's Start");
+    let steps = s.song().steps();
+    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
+    for d in 1..=20 {
+        s.instrument_moved(&g, x + d as f32 * 2.0, y, false);
+    }
+    assert!(s.instrument_up());
+    assert_eq!(s.song().steps(), steps + 1);
+    let key = format!("file{}.start", s.instruments.open[0].pick + 1);
+    assert!(plain(&s, t, &key) > 0.0, "{key}");
+    s.undo(&g);
+    assert_eq!(plain(&s, t, &key), 0.0, "{key}");
+    press_spot(&mut s, &g, t, id, Mark::Zone(2));
+    assert_eq!(s.instruments.open[0].pick, 2);
+    s.undo(&g);
+    assert_eq!(plugin(&s, t).samples.len(), 1);
+    assert_eq!(s.instruments.open[0].pick, 0);
+    assert!(!body(&s, &g, t).slots.is_empty());
+    s.redo(&g);
+    press_spot(&mut s, &g, t, id, Mark::Zone(2));
+    let remove = json!({ "id": id.to_string(), "index": 2 });
+    assert!(
+        s.run_command("plugin.samples.remove", remove),
+        "{:?}",
+        s.error
+    );
+    assert_eq!(s.instruments.open[0].pick, 1);
+    s.undo(&g);
+    assert_eq!(plugin(&s, t).samples.len(), 3);
+    assert!(s.instruments.open[0].pick < 3);
+}
