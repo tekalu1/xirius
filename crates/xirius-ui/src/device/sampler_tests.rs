@@ -1964,29 +1964,29 @@ fn n4_kit_2_shift_of_an_os_drag_is_read_from_the_os() {
     let (_dir, two) = wavs(&["Snare.wav", "Clap.wav"]);
     let (mut s, g, t, id) = window("Drum Kit");
     let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).expect("A1");
-    crate::os_shift::hold(false);
+    let shift = crate::os_shift::hold();
     assert!(s.files_moved(&g, x, y, &two, false));
     assert_eq!(
         s.instruments.preview.as_ref().unwrap().text,
         "2 pads, A1–A2"
     );
     // Held in the OS, though the move says nothing: the layers of A1.
-    crate::os_shift::hold(true);
+    shift.set(true);
     assert!(s.files_moved(&g, x, y, &two, false));
     assert_eq!(s.instruments.preview.as_ref().unwrap().text, "A1: 2 layers");
     // A stale Shift of the window does not count where the OS says.
     if cfg!(windows) {
-        crate::os_shift::hold(false);
+        shift.set(false);
         assert!(s.files_moved(&g, x, y, &two, true));
         assert_eq!(
             s.instruments.preview.as_ref().unwrap().text,
             "2 pads, A1–A2"
         );
-        crate::os_shift::hold(true);
+        shift.set(true);
     }
     // Dropped while held: both are A1's layers.
     assert!(s.files_landed(&g, x, y, &two, false), "{:?}", s.error);
-    crate::os_shift::hold(false);
+    drop(shift);
     let k = plugin(&s, t);
     assert_eq!(sampler::pad_files(k.builtin().unwrap(), &k, 0), [0, 1]);
     assert!(!s.instruments.drop_layers, "the drop takes the Shift");

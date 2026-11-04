@@ -1210,20 +1210,22 @@ pub(crate) fn body_of(
 /// The width a body of height `h(w)` is laid at in a frame `w` wide and `room` high: its
 /// width when it fits, else as wide as fits from `least` up. Narrower only when that fits (a
 /// Drum Kit's grows taller as it narrows); when even `least` does not, the lower of the two,
-/// to spill the least (low 13 of the fourth review).
+/// to spill the least (low 13 of the fourth review). Half a pixel over still fits, for each
+/// width alike (the fifth review's low 12).
 pub(crate) fn fit_w(w: f32, least: f32, room: f32, h: impl Fn(f32) -> f32) -> f32 {
+    let fits = |h: f32| h <= room + 0.5;
     let full = h(w);
-    if full <= room + 0.5 {
+    if fits(full) {
         return w;
     }
     let narrow = h(least);
-    if narrow > room {
+    if !fits(narrow) {
         return if narrow < full { least } else { w };
     }
     let (mut lo, mut hi) = (least, w);
     for _ in 0..12 {
         let mid = (lo + hi) / 2.0;
-        if h(mid) <= room {
+        if fits(h(mid)) {
             lo = mid;
         } else {
             hi = mid;

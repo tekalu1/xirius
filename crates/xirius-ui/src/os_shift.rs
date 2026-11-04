@@ -15,10 +15,39 @@ pub fn held(seen: bool) -> bool {
 }
 
 /// The tests' Shift, in place of the OS's: they never read the keyboard of the person at
-/// the PC.
+/// the PC. Let go when it drops, so a test that fails holding it leaves none to the next on
+/// its thread (the fifth review's low 12).
 #[cfg(test)]
-pub fn hold(down: bool) {
-    HELD.with(|h| h.set(down));
+pub fn hold() -> Hold {
+    Hold
+}
+
+#[cfg(test)]
+pub struct Hold;
+
+#[cfg(test)]
+impl Hold {
+    pub fn set(&self, down: bool) {
+        HELD.with(|h| h.set(down));
+    }
+}
+
+#[cfg(test)]
+impl Drop for Hold {
+    fn drop(&mut self) {
+        HELD.with(|h| h.set(false));
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn the_tests_shift_lets_go_as_it_drops() {
+    {
+        let shift = hold();
+        shift.set(true);
+        assert!(held(false));
+    }
+    assert!(!held(false));
 }
 
 #[cfg(test)]

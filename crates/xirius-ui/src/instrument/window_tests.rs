@@ -1187,4 +1187,8 @@ fn a_body_that_cannot_fit_spills_the_least() {
     assert!((599.0..=600.0).contains(&w), "{w}");
     // Fits as it is.
     assert_eq!(fit_w(800.0, 400.0, 400.0, |w| w / 2.0), 800.0);
+    // Half a pixel over at the least width fits, as at the full one (the fifth review's low
+    // 12): as wide as fits within that, not the least.
+    let w = fit_w(800.0, 400.0, 100.0, |w| (w - 400.0) / 40.0 + 100.3);
+    assert!((407.0..=408.0).contains(&w), "{w}");
 }
