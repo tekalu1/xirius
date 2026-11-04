@@ -576,6 +576,8 @@ pub struct Mixer {
     pub grip_drag: Option<(f32, f32)>,
     /// The grip was pressed last: ←→ move it (MIX-046).
     pub grip_focus: bool,
+    /// The pointer is over the grip.
+    pub grip_hover: bool,
 }
 
 /// How long the channel brought up by `mixer.focus` is lit, and how long it stays at full.

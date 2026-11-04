@@ -246,7 +246,7 @@ impl Screen {
             cx.notify();
             return;
         }
-        if studio.edge_hover(&g, x, y) | studio.side_hover(&g, x, y) {
+        if studio.edge_hover(&g, x, y) | studio.side_hover(&g, x, y) | studio.grip_hover(&g, x, y) {
             cx.notify();
         }
         if studio.mixer.level_drag.is_some() || studio.mixer.key_drag.is_some() {

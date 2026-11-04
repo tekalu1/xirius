@@ -419,6 +419,38 @@ fn a_docked_face_is_no_unfinished_work_and_its_window_is() {
     assert!(s.human_interaction_active());
 }
 
+/// Review 4 中1: the grip's mark is `ring` while held, as approved; `--thumbh` under the
+/// pointer or holding the keys, `--thumb` at rest.
+#[test]
+fn the_grips_mark_is_ring_while_held_and_lit_under_the_pointer() {
+    use crate::paint::Colors;
+    let (mut s, g, _, _) = picked(1600.0);
+    let grip = s.mixer_split(&g).unwrap().grip;
+    let (x, y) = (grip.x + grip.w / 2.0, grip.y + grip.h / 2.0);
+    for theme in xirius_design::Theme::ALL {
+        let c = Colors::new(theme);
+        assert_eq!(grip_ink(&s, &c), c.scroll_thumb[1], "at rest");
+    }
+    assert!(s.grip_hover(&g, x, y), "the pointer came over it");
+    assert!(!s.grip_hover(&g, x, y), "no change");
+    let c = Colors::new(xirius_design::Theme::ALL[0]);
+    assert_eq!(grip_ink(&s, &c), c.scroll_thumb[0], "under the pointer");
+    assert!(s.grip_down(&g, x, y));
+    for theme in xirius_design::Theme::ALL {
+        let c = Colors::new(theme);
+        assert_eq!(grip_ink(&s, &c), c.ring, "held");
+    }
+    assert!(s.grip_up());
+    assert!(s.grip_hover(&g, grip.x - 40.0, y), "the pointer left it");
+    assert_eq!(
+        grip_ink(&s, &c),
+        c.scroll_thumb[0],
+        "it still holds the keys"
+    );
+    s.mixer.grip_focus = false;
+    assert_eq!(grip_ink(&s, &c), c.scroll_thumb[1], "at rest again");
+}
+
 /// Review 3 低15: the grip's mark is the mock's 4×28, in the grip's middle.
 #[test]
 fn the_grips_mark_is_four_by_twenty_eight_in_its_middle() {

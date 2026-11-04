@@ -2767,6 +2767,7 @@ impl Studio {
         self.mixer.lead = None;
         self.mixer.grip_focus = false;
         self.mixer.grip_drag = None;
+        self.mixer.grip_hover = false;
         // A part waiting for a knob was of the old song: the next knob would land on the
         // new song's part with the same id.
         let assign = &mut self.live_midi.assign;

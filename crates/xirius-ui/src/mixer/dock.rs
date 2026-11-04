@@ -6,7 +6,7 @@
 //! name and meter, and only the strip in front stays, [`super::WIDE_W`] wide; the strips then
 //! take the room every band needs, as far as the face keeps [`FOLD_W`].
 
-use gpui::accesskit;
+use gpui::{Hsla, accesskit};
 use xirius_core::id::TrackId;
 use xirius_design::{FontSize, Radius, Weight};
 
@@ -17,6 +17,7 @@ use super::{MASTER_GAP, MixerHit, STRIP_GAP, WIDE_W};
 use crate::a11y::{Mark, bounds};
 use crate::draw::{Align, Pen};
 use crate::instrument::window::{Win, is_built_in, live};
+use crate::paint::Colors;
 use crate::studio::{Geometry, Hit, Rect, Studio};
 
 /// The gap the grip sits in, between the strips and the face.
@@ -249,6 +250,16 @@ impl Studio {
         self.mixer.grip_drag.take().is_some()
     }
 
+    /// The pointer moved: whether it is over the grip changed.
+    pub fn grip_hover(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
+        let on = self.popup.is_none()
+            && !self.over_float(g, x, y)
+            && self.mixer_split(g).is_some_and(|s| s.grip.contains(x, y));
+        let changed = on != self.mixer.grip_hover;
+        self.mixer.grip_hover = on;
+        changed
+    }
+
     /// ← and → on the grip pressed last move it by [`STEP`].
     pub(crate) fn grip_key(&mut self, g: &Geometry, key: &str) -> bool {
         if !self.mixer.grip_focus || self.docked().is_none() || self.popup.is_some() {
@@ -273,7 +284,6 @@ impl Studio {
     }
 }
 
-/// The grip between the strips and the face.
 /// The mark in the middle of the grip.
 pub(crate) fn grip_mark(grip: Rect) -> Rect {
     Rect::new(
@@ -284,21 +294,28 @@ pub(crate) fn grip_mark(grip: Rect) -> Rect {
     )
 }
 
+/// The mark's colour: `ring` while held (approved 2026-11-04), the mock's `--thumbh` under the
+/// pointer or holding the keys (`:hover`, `:focus-visible`), `--thumb` at rest.
+pub(crate) fn grip_ink(studio: &Studio, c: &Colors) -> Hsla {
+    let m = &studio.mixer;
+    if m.grip_drag.is_some() {
+        c.ring
+    } else if m.grip_hover || m.grip_focus {
+        c.scroll_thumb[0]
+    } else {
+        c.scroll_thumb[1]
+    }
+}
+
+/// The grip between the strips and the face: its mark, and `ring`'s frame round it while it
+/// holds the keys.
 pub fn paint_grip(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     let Some(s) = studio.mixer_split(g) else {
         return;
     };
     let c = pen.c;
-    let held = studio.mixer.grip_drag.is_some();
     let mark = grip_mark(s.grip);
-    // the mock's `--thumb`, and `--thumbh` while held or holding the keys (`.on`, `:focus-visible`)
-    let lit = held || studio.mixer.grip_focus;
-    let ink = if lit {
-        c.scroll_thumb[0]
-    } else {
-        c.scroll_thumb[1]
-    };
-    pen.round(mark, ink, Radius::Pill);
+    pen.round(mark, grip_ink(studio, c), Radius::Pill);
     if studio.mixer.grip_focus {
         pen.outline(
             Rect::new(mark.x - 2.0, mark.y - 2.0, mark.w + 4.0, mark.h + 4.0),
