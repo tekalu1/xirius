@@ -363,6 +363,9 @@ pub struct Windows {
     /// Shift is held over a drop of files: a Drum Kit takes them as the layers of one pad
     /// (UI-334).
     pub(crate) drop_layers: bool,
+    /// The keys left the window by Esc: the next Tab past the screen's last place goes on
+    /// round, not back into it (L2-ui-5).
+    pub(crate) passed: bool,
 }
 
 /// How long an opened window's frame lights.

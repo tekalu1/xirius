@@ -616,7 +616,7 @@ impl Studio {
     }
 
     /// The keys of the control that has them, or of the value being typed.
-    pub(crate) fn device_key(&mut self, key: &str, mods: Mods) -> bool {
+    pub(crate) fn device_key(&mut self, g: &Geometry, key: &str, mods: Mods) -> bool {
         // Esc during a press lets go of what it holds, taking nothing in (L-par-3).
         if key == "escape" && self.instrument_cancel() {
             return true;
@@ -651,7 +651,7 @@ impl Studio {
                 // Tab puts the value in and goes on (M-ui-4).
                 "tab" if !mods.ctrl && !mods.alt => {
                     self.device_commit();
-                    self.device_key(key, mods);
+                    self.device_key(g, key, mods);
                     return true;
                 }
                 _ => {}
@@ -678,17 +678,26 @@ impl Studio {
             "tab" => {
                 let order = self.device_stops(track, plugin, def, &values);
                 let at = order.iter().position(|s| s.k == k).unwrap_or(0);
-                let n = order.len().max(1);
-                let next = if mods.shift { at + n - 1 } else { at + 1 } % n;
                 self.device_sweep_end();
-                match order.get(next) {
+                // Past the window's last control (before its first) the keys go on round
+                // the screen: the window is the stop after its last place (L2-ui-5).
+                let next = if mods.shift {
+                    at.checked_sub(1)
+                } else {
+                    Some(at + 1)
+                };
+                match next.and_then(|i| order.get(i)) {
                     Some(&stop) => self.device_stop(track, plugin, def, stop, !mods.shift),
-                    None => self.instruments.focus = None,
+                    None => {
+                        self.device_blur();
+                        self.focus_round(g, !mods.shift);
+                    }
                 }
                 return true;
             }
             "escape" => {
                 self.device_blur();
+                self.instruments.passed = true;
                 return true;
             }
             _ => {}

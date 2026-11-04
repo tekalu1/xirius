@@ -225,8 +225,8 @@ impl Studio {
         }
     }
 
-    /// The keys go to the next (or the previous) part that is shown.
-    fn focus_step(&mut self, g: &Geometry, forward: bool) -> bool {
+    /// The parts of the window that are shown, in the order Tab goes round them.
+    fn shown_places(&self) -> Vec<Place> {
         let mut shown = vec![Place::Arrange];
         if self.drawer_open {
             shown.push(Place::Dock);
@@ -234,11 +234,19 @@ impl Studio {
         if self.browser.open {
             shown.push(Place::Browser);
         }
+        shown
+    }
+
+    /// The keys go to the next (or the previous) part that is shown.
+    fn focus_step(&mut self, g: &Geometry, forward: bool) -> bool {
+        let shown = self.shown_places();
         let n = shown.len();
         let i = shown.iter().position(|p| *p == self.place()).unwrap_or(0);
-        // Past the last place (before the first), the device window on top (M-ui-4).
+        // Past the last place (before the first), the device window on top (M-ui-4); not
+        // just after Esc gave the keys back from it (L2-ui-5).
         let edge = if forward { i + 1 == n } else { i == 0 };
-        if edge && self.device_enter(forward) {
+        let passed = std::mem::take(&mut self.instruments.passed);
+        if edge && !passed && self.device_enter(forward) {
             return true;
         }
         let to = shown[if forward {
@@ -246,6 +254,23 @@ impl Studio {
         } else {
             (i + n - 1) % n
         }];
+        self.place_set(g, to)
+    }
+
+    /// The keys come out of the device window on round: to the screen's first place going
+    /// on, its last going back (L2-ui-5).
+    pub(crate) fn focus_round(&mut self, g: &Geometry, forward: bool) {
+        let shown = self.shown_places();
+        let to = if forward {
+            shown[0]
+        } else {
+            shown[shown.len() - 1]
+        };
+        self.place_set(g, to);
+    }
+
+    fn place_set(&mut self, g: &Geometry, to: Place) -> bool {
+        self.instruments.passed = false;
         self.input_map.browser_focus = to == Place::Browser;
         self.arrange.focus = to == Place::Arrange;
         if to != Place::Dock {

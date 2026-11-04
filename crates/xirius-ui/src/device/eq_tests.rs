@@ -197,8 +197,8 @@ fn ui_326_a_point_pulled_aslant_is_heard_both_ways() {
 }
 
 /// M-ui-4: Tab goes through every band's point, each chosen as the keys reach it (on to
-/// its first control), and Shift+Tab back the same way; wide (all the bands' columns) and
-/// narrow (the chosen band's only).
+/// its first control), then out of the window, and Shift+Tab back in the same way; wide
+/// (all the bands' columns) and narrow (the chosen band's only).
 #[test]
 fn ui_326_tab_reaches_every_band() {
     for w in [eq::NATURAL_W, 520.0] {
@@ -225,16 +225,20 @@ fn tab_round(w: f32) {
             seen.push(band);
         }
         ahead.push(s.instruments.focus);
-        if s.instruments.focus == start {
+        if s.instruments.focus.is_none() {
             break;
         }
     }
-    assert_eq!(s.instruments.focus, start, "{w}: round in one turn");
+    assert_eq!(s.instruments.focus, None, "{w}: out in one turn");
     seen.sort_unstable();
     assert_eq!(seen, (0..eq::NAMES.len()).collect::<Vec<_>>(), "{w}");
-    // Back the same way.
+    // Back in the same way.
     for want in ahead.iter().rev().skip(1) {
-        assert!(s.field_keys(&g, "tab", None, shift));
+        if s.instruments.focus.is_none() {
+            assert!(s.run_binding(&g, "view.focus --way prev"));
+        } else {
+            assert!(s.field_keys(&g, "tab", None, shift));
+        }
         assert_eq!(s.instruments.focus, *want, "{w}");
     }
 }

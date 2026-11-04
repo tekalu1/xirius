@@ -7,6 +7,7 @@ use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::Plugin;
 
+use crate::context::key_more::Place;
 use crate::instrument::window::{Part, values};
 use crate::studio::{Geometry, Studio};
 use crate::tools::Mods;
@@ -298,7 +299,8 @@ fn ui_324_tab_in_a_typed_value_puts_it_in_and_goes_on() {
 }
 
 /// M-ui-4: Tab past the screen's last place goes into the window on top, and Shift+Tab
-/// before its first, to the window's last control; Esc gives the keys back.
+/// before its first, to the window's last control; Esc gives the keys back, and Tab past
+/// the window's last control (before its first) goes on round the screen (L2-ui-5).
 #[test]
 fn ui_324_tab_from_the_screen_goes_into_the_window_on_top() {
     let (mut s, g, _, id) = delay();
@@ -321,9 +323,29 @@ fn ui_324_tab_from_the_screen_goes_into_the_window_on_top() {
     }
     let last = s.instruments.focus.unwrap();
     assert_ne!(last, first);
-    // From the last, Tab comes round to the first.
+    // From the last, Tab goes out to the screen's first place, and Shift+Tab from there
+    // back in to the last.
     assert!(s.field_keys(&g, "tab", None, Mods::NONE));
-    assert_eq!(s.instruments.focus, Some(first));
+    assert_eq!(s.instruments.focus, None);
+    assert_eq!(s.place(), Place::Arrange);
+    assert!(s.run_binding(&g, "view.focus --way prev"));
+    assert_eq!(s.instruments.focus, Some(last));
+    // Before the first, Shift+Tab goes out to the screen's last place.
+    s.device_blur();
+    assert!(s.device_enter(true));
+    let shift = Mods {
+        shift: true,
+        ..Mods::NONE
+    };
+    assert!(s.field_keys(&g, "tab", None, shift));
+    assert_eq!(s.instruments.focus, None);
+    // Esc gives the keys back where they were: Tab goes on round, not back in.
+    assert!(s.device_enter(true));
+    assert!(s.field_keys(&g, "escape", None, Mods::NONE));
+    let at = s.place();
+    assert!(s.run_binding(&g, "view.focus --way next"));
+    assert_eq!(s.instruments.focus, None, "not back into the window");
+    assert_ne!(s.place(), at);
 }
 
 #[test]
@@ -362,7 +384,7 @@ fn ui_324_the_keys_step_tab_and_go_in_once_still() {
     // Escape lets the keys go back to the rest of the screen.
     assert!(s.field_keys(&g, "escape", None, Mods::NONE));
     assert_eq!(s.instruments.focus, None);
-    assert!(!s.device_key("up", Mods::NONE));
+    assert!(!s.device_key(&g, "up", Mods::NONE));
 }
 
 #[test]
