@@ -529,3 +529,51 @@ fn the_list_with_values_gives_each_chain_to_tell_a_tracks_is_it() {
     let plain = run(&mut r.s, "preset.list", json!({ "kind": "fx-chain" }));
     assert!(plain["presets"][0].get("chain").is_none());
 }
+
+/// The fourth review's low 8: a chain of older keys (a Sampler's `tune`, a hand-written
+/// `CUTOFF`, a knob mapped to `tune`) goes in under the song's, as a device preset does —
+/// the pitch kept over the wider `transpose`.
+#[test]
+fn a_chain_of_older_keys_goes_in_under_the_songs() {
+    let mut r = rig("old-keys");
+    let t = instrument(&mut r.s, "Keys", "Sampler");
+    let sampler = track(&r.s, &t).inserts[0].id;
+    plugin(&mut r.s, &t, "EQ");
+    run(
+        &mut r.s,
+        "control.assign",
+        json!({ "track": t, "control": "k1", "target": format!("param:{sampler}:transpose") }),
+    );
+    run(
+        &mut r.s,
+        "preset.save",
+        json!({ "track": t, "kind": "instrument-fx", "name": "Old Keys" }),
+    );
+    let path = file(&r.dir, "instrument-fx", "Old Keys");
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let params = v["devices"][0]["params"].as_object_mut().unwrap();
+    params.retain(|k, _| k != "transpose" && k != "cutoff");
+    params.insert("tune".into(), json!(0.25));
+    params.insert("CUTOFF".into(), json!(0.4));
+    let body = v.to_string();
+    assert!(body.contains(":transpose\""), "{body}");
+    std::fs::write(&path, body.replace(":transpose\"", ":tune\"")).unwrap();
+    let u = instrument(&mut r.s, "Other", "Drum Kit");
+    run(
+        &mut r.s,
+        "preset.load",
+        json!({ "track": u, "preset": "Old Keys" }),
+    );
+    let x = track(&r.s, &u);
+    let def = xirius_params::find("sampler").unwrap();
+    let plain = |v: f64| def.param("transpose").unwrap().1.to_plain(v);
+    let s = &x.inserts[0];
+    assert_eq!(s.uid, "sampler");
+    assert!(!s.params.contains_key("tune") && !s.params.contains_key("CUTOFF"));
+    assert_eq!(plain(s.params["transpose"]), -12.0);
+    assert_eq!(s.params.get("cutoff"), Some(&0.4));
+    let m = &x.controls.get(ControlId::Knob(0)).maps[0];
+    assert_eq!(m.target, AutoTarget::Param(s.id, "transpose".into()));
+    assert_eq!((plain(m.from), plain(m.to)), (-24.0, 24.0));
+    let _ = std::fs::remove_dir_all(&r.dir);
+}

@@ -166,6 +166,9 @@ pub(super) fn put(
             drop_control_lanes(t, &mut rows);
         }
     }
+    // Its devices' values and maps of older keys under the song's, as a song is read and a
+    // device preset goes in (the fourth review's low 8).
+    p.fix_param_keys();
     settle(p, tid, &gone_keys, &mut rows)?;
     let mut message = format!("プリセット「{name}」を読み込みました");
     for m in &moved {

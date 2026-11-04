@@ -67,7 +67,7 @@ Sampler と Drum Kit は同じ声（`crates/xirius-engine/src/stock/voice.rs`）
 
 - PLG-067・PLG-068 の前の曲は、そのまま開ける。開いただけでは変更あり（dirty）にならない。
 - 前の Sampler の `sound`、前の Drum Kit の `kit`・`tune`・`decay`・`velocity`・`kick`・`snare`・`hats`・`toms`・`cymbals`・`percussion`（合成の音色の値）は、使わなくなったキー（`BuiltinDef::retired`）。曲には書いたまま残り、音にもエラーにも出ない。合成の音色はもう無いので、声の値は既定から始まる。
-  - 前の Sampler の `tune`（±24 半音）はファイルの声にも効いていたので、読むときに同じ半音の `transpose`（±48）へ移す（`transpose` があればそちらを残す）。オートメーションの線も `transpose` の線にし、値を広い幅に直す。プリセットを入れるときも同じ。前の Drum Kit の `tune` は合成のキットの値で、移さない。
+  - 前の Sampler の `tune`（±24 半音）はファイルの声にも効いていたので、読むときに同じ半音の `transpose`（±48）へ移す（`transpose` があればそちらを残す）。オートメーションの線とマクロの割り当ても `transpose` に向け、値と範囲を広い幅に直す（`transpose` の線や割り当てがあればそちらを残す）。手書きのキー（`CUTOFF` ほか）の値・線・割り当ても曲のキーへ移す。プリセットを入れるときも、機器・トラック・チェーン（FX チェーン・楽器と FX・マルチ）のどれでも同じ。前の Drum Kit の `tune` は合成のキットの値で、移さない。
   - プリセットに保存するときは、これらのキーを入れない（読み込むときも触らない）。
 
 ## サンプルが無い間
