@@ -2065,7 +2065,11 @@ impl PluginLoader {
     /// opening it again brings back its default.
     pub fn apply(&mut self, x: &Plugin) -> bool {
         if let Some(s) = self.stock.get_mut(&x.id) {
-            if crate::host::on_window_thread() && s.applied.samples != x.samples {
+            // A set waiting to go is sent again from here, and reading its files is not for
+            // the window's thread either (the fifth review's low 1).
+            if crate::host::on_window_thread()
+                && (s.applied.samples != x.samples || s.waiting.is_some())
+            {
                 return false;
             }
             // The last file gone, the stand-in plays again: a new mix.
@@ -2080,13 +2084,15 @@ impl PluginLoader {
             if same != *x {
                 return false;
             }
-            if s.applied.params != x.params {
-                s.handle.set_all(&x.params);
-            }
+            // The values the handle holds are the waiting set's when one waits.
+            let params = s.waiting.as_ref().unwrap_or(&s.applied).params != x.params;
             // The same files as applied, unless a set a full ring turned away waits to go:
             // that one would be sent with the next poll, so these go in its place (the
             // fourth review's low 9).
             if s.applied.samples == x.samples && s.waiting.is_none() {
+                if params {
+                    s.handle.set_all(&x.params);
+                }
                 s.applied = x.clone();
                 return true;
             }
@@ -2099,6 +2105,12 @@ impl PluginLoader {
             // The ring being full (the device is not polling) keeps `applied` as it was, so
             // the next `apply` or `resend_files` sends the set again.
             let sent = handle.set_files(set);
+            // The values after the files: a layout `set_all` sends takes the handle's files,
+            // and before them it would send the old ones into the ring's last place, turning
+            // these away (the fifth review's low 1).
+            if params {
+                handle.set_all(&x.params);
+            }
             if let Some(s) = self.stock.get_mut(&x.id) {
                 if sent {
                     s.applied = x.clone();
@@ -3341,6 +3353,155 @@ mod tests {
         // Applied again with nothing waiting, it returns early.
         assert!(loader.apply(&x));
         assert!(loader.stock[&x.id].waiting.is_none());
+    }
+
+    /// The fifth review's low 1: undone to the files applied with other values while a set
+    /// waits, the device ends with the files undone to, though the ring has one place left
+    /// (the values' layout used to take it with the files turned away). The two files differ
+    /// in length, so the sound tells which the device holds.
+    #[test]
+    fn undone_with_other_values_the_device_ends_with_the_files_undone_to() {
+        use std::f64::consts::TAU;
+        use xirius_engine::{AudioIo, NoteEvent, NoteKind, RenderMode};
+        let tmp = tempfile::Builder::new()
+            .prefix("xirius-plugin-samples-")
+            .tempdir()
+            .unwrap();
+        let wav = |name: &str, frames: i32| {
+            let mut w = hound::WavWriter::create(
+                tmp.path().join(name),
+                hound::WavSpec {
+                    channels: 2,
+                    sample_rate: 48_000,
+                    bits_per_sample: 32,
+                    sample_format: hound::SampleFormat::Float,
+                },
+            )
+            .unwrap();
+            for i in 0..frames {
+                let v = ((i as f64 * 440.0 * TAU / 48_000.0).sin() * 0.4) as f32;
+                w.write_sample(v).unwrap();
+                w.write_sample(v).unwrap();
+            }
+            w.finalize().unwrap();
+        };
+        wav("short.wav", 480);
+        wav("long.wav", 48_000);
+        let mk = |samples: &str, normalize: Option<f64>| Plugin {
+            id: PluginId(9),
+            name: "Sampler".into(),
+            kind: PluginKind::Instrument,
+            format: "builtin".into(),
+            uid: "sampler".into(),
+            bypass: false,
+            deactivated: false,
+            params: normalize
+                .map(|v| ("file1.normalize".to_string(), v))
+                .into_iter()
+                .collect(),
+            state: None,
+            sidechain: None,
+            preset: None,
+            samples: vec![samples.into()],
+            isolation: PluginIsolation::default(),
+        };
+        let mut loader = PluginLoader::new(None);
+        loader.set_sample_home(Some(tmp.path().to_path_buf()), 48_000);
+        let first = mk("short.wav", None);
+        let (mut p, warnings) = loader.stock(&first).unwrap();
+        assert_eq!(warnings, Vec::<String>::new());
+        p.prepare(&ProcessSetup {
+            sample_rate: 48_000.0,
+            max_block: 512,
+            mode: RenderMode::Realtime,
+        });
+        let block = |p: &mut Box<dyn xirius_engine::Processor>, notes: &[NoteEvent]| {
+            let (mut left, mut right) = ([0.0f32; 512], [0.0f32; 512]);
+            p.process(
+                &mut AudioIo {
+                    left: &mut left,
+                    right: &mut right,
+                    key: None,
+                },
+                notes,
+            );
+            left.iter().any(|v| *v != 0.0)
+        };
+        // The values move with the files kept: applied.
+        let valued = mk("short.wav", Some(1.0));
+        assert!(loader.apply(&valued));
+        assert_eq!(loader.stock[&first.id].applied, valued);
+        // The ring full, the long file waits.
+        let h = loader.stock.get(&first.id).unwrap().handle.clone();
+        while h.set_files(Vec::new()) {}
+        let long = mk("long.wav", Some(1.0));
+        assert!(loader.apply(&long));
+        assert_eq!(loader.stock[&first.id].waiting.as_ref(), Some(&long));
+        // The device takes the ring; seven sets of the long file fill it again but one place.
+        block(&mut p, &[]);
+        let mut w = Vec::new();
+        for _ in 0..7 {
+            assert!(h.set_files(loader.load_set(&long, &mut w)));
+        }
+        // Undone two steps at once: the short file and the first values.
+        assert!(loader.apply(&first));
+        let s = &loader.stock[&first.id];
+        assert_eq!((&s.applied, &s.waiting), (&first, &None));
+        // A note held past the short file's end is silent by then: the short file sounds.
+        let on = NoteEvent {
+            offset: 0,
+            kind: NoteKind::On {
+                pitch: 60,
+                velocity: 1.0,
+            },
+        };
+        assert!(block(&mut p, &[on]), "no sound");
+        let tail: Vec<bool> = (0..4).map(|_| block(&mut p, &[])).collect();
+        assert_eq!(tail, vec![false; 4], "the long file sounds");
+        // The first values follow with the next poll, and the files stay.
+        loader.resend_files();
+        block(&mut p, &[]);
+        assert!(block(&mut p, &[on]), "no sound");
+        let tail: Vec<bool> = (0..4).map(|_| block(&mut p, &[])).collect();
+        assert_eq!(tail, vec![false; 4], "the long file sounds");
+    }
+
+    /// The fifth review's low 1: on the window's thread, a set waiting to go is not read and
+    /// sent from there; the mix that comes instead takes the song's files.
+    #[test]
+    fn on_the_windows_thread_a_waiting_set_takes_a_new_mix() {
+        let tmp = tempfile::Builder::new()
+            .prefix("xirius-plugin-samples-")
+            .tempdir()
+            .unwrap();
+        let mk = |samples: Vec<String>| Plugin {
+            id: PluginId(9),
+            name: "Sampler".into(),
+            kind: PluginKind::Instrument,
+            format: "builtin".into(),
+            uid: "sampler".into(),
+            bypass: false,
+            deactivated: false,
+            params: Default::default(),
+            state: None,
+            sidechain: None,
+            preset: None,
+            samples,
+            isolation: PluginIsolation::default(),
+        };
+        let mut loader = PluginLoader::new(None);
+        loader.set_sample_home(Some(tmp.path().to_path_buf()), 48_000);
+        let x = mk(vec!["a.wav".into()]);
+        let _p = loader.stock(&x).unwrap();
+        let h = loader.stock.get(&x.id).unwrap().handle.clone();
+        while h.set_files(Vec::new()) {}
+        assert!(loader.apply(&mk(vec!["b.wav".into()])));
+        std::thread::scope(|t| {
+            t.spawn(|| {
+                crate::host::mark_window_thread();
+                assert!(!loader.apply(&x), "read on the window's thread");
+            });
+        });
     }
 
     fn edit(id: u32, phase: EditPhase, value: Option<f64>) -> ParamEdit {
