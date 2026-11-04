@@ -466,7 +466,8 @@ fn the_grips_mark_is_four_by_twenty_eight_in_its_middle() {
 }
 
 /// Files held over the Drum Kit's face in the drawer go to it, on the place the face shows
-/// (it is not where a window of it would be), and the face taken out keeps its bank.
+/// (it is not where a window of it would be), and the face taken out keeps its bank. Dropped
+/// there, they land on its pads (the fourth review's low 15).
 #[test]
 fn files_held_over_a_docked_drum_kit_go_to_its_face() {
     let (mut s, g) = studio(1600.0);
@@ -484,6 +485,31 @@ fn files_held_over_a_docked_drum_kit_go_to_its_face() {
     let (id, on, lit) = s.drop_target(&g, x, y).expect("the face takes the files");
     assert_eq!((id, on), (kit, crate::device::sampler::DropOn::Plane));
     assert!(r.contains(lit.x, lit.y) && lit.w > 0.0, "the face lights");
+    let dir = tempfile::tempdir().unwrap();
+    let files: Vec<std::path::PathBuf> = ["Kick.wav", "Snare.wav"]
+        .iter()
+        .map(|n| {
+            let f = dir.path().join(n);
+            std::fs::write(&f, b"").unwrap();
+            f
+        })
+        .collect();
+    let samples = |s: &Studio| -> Vec<String> {
+        s.project().tracks[&t]
+            .inserts
+            .iter()
+            .find(|x| x.id == kit)
+            .unwrap()
+            .samples
+            .clone()
+    };
+    assert!(samples(&s).is_empty());
+    assert!(s.drop_files(&g, x, y, &files), "{:?}", s.error);
+    let got = samples(&s);
+    assert_eq!(got.len(), 2, "{got:?}");
+    assert!(got[0].ends_with("Kick.wav") && got[1].ends_with("Snare.wav"));
+    assert_eq!(s.instruments.drop_on, None, "the light goes with the drop");
+    assert_eq!(s.docked(), Some(i), "the face stays in the drawer");
     s.instruments.open[i].bank = Some(1);
     press(&mut s, &g, kit, Part::Pin, 1);
     let w = s.instruments.open.iter().find(|w| w.plugin == kit).unwrap();
