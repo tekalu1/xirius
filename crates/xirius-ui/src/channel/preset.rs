@@ -8,7 +8,8 @@
 //!
 //! The song keeps no chain preset's name, so the tag names the preset this screen last
 //! loaded onto the track or saved from it while the song is open, and the mark says the
-//! chain moved off what it was then. A track none was loaded on shows [`UNKNOWN`].
+//! chain moved off what it was then. A track none was loaded on shows [`UNKNOWN`]; its › loads
+//! the list's first.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -83,14 +84,14 @@ impl ChainPresets {
         self.lists.get(kind.name()).map_or(&[], Vec::as_slice)
     }
 
-    /// Whether the ‹ and the › of `t` can step: neither while its tag names no preset of the
-    /// list, none past the ends.
+    /// Whether the ‹ and the › of `t` can step: none past the ends. A tag that names no preset
+    /// of the list sits before its first, so › loads that (review 3 中5).
     pub fn steps(&self, t: &Track) -> (bool, bool) {
         let list = self.list(kind_of(t));
         let (name, _) = self.tag(t);
         match list.iter().position(|l| l.name == name) {
             Some(k) => (k > 0, k + 1 < list.len()),
-            None => (false, false),
+            None => (false, !list.is_empty()),
         }
     }
 
@@ -159,10 +160,13 @@ impl Studio {
         };
         let (name, _) = self.chain_presets.tag(track);
         let list = self.chain_presets.list(kind_of(track));
-        let Some(k) = list.iter().position(|l| l.name == name) else {
-            return false;
+        let to = match list.iter().position(|l| l.name == name) {
+            Some(k) if forward => k + 1,
+            Some(k) => k.wrapping_sub(1),
+            // a tag before the list: › goes to its first
+            None if forward => 0,
+            None => return false,
         };
-        let to = if forward { k + 1 } else { k.wrapping_sub(1) };
         let Some(file) = list.get(to).map(|l| l.file.clone()) else {
             return false;
         };

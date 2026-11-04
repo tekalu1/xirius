@@ -969,7 +969,8 @@ fn the_tag_lists_the_chain_presets_and_a_row_loads_one() {
         })
         .collect();
     assert!(keys.contains(&("channel-preset", "プリセット: 広い（変更あり）".into())));
-    assert!(keys.contains(&("channel-preset-prev", "前のプリセット".into())));
+    // 広い is the list's first: its ‹ says it cannot be chosen (review 3 中6)
+    assert!(keys.contains(&("channel-preset-prev", "前のプリセット（選べません）".into())));
     assert!(keys.contains(&("channel-preset-next", "次のプリセット".into())));
 }
 
@@ -978,4 +979,38 @@ fn branch(s: &Studio, t: TrackId) -> NodeId {
         [.., RackNode::Split(x)] => x.branches[1].id,
         other => panic!("{other:?}"),
     }
+}
+
+/// Review 3 中5: a track no chain preset was loaded on (every new track's) steps with › to the
+/// list's first; its ‹ stays dim, there is nothing before.
+#[test]
+fn a_tag_with_no_preset_steps_to_the_lists_first() {
+    let (mut s, g) = studio();
+    let (t, _, _, b) = vocal(&mut s);
+    assert!(s.save_chain_preset(t, "声 A", false));
+    assert!(s.run_command("rack.branch.set", json!({"id":b[1],"gain":-3.0})));
+    assert!(s.save_chain_preset(t, "声 B", false));
+    // another song's tracks: the tag names nothing
+    s.chain_presets.forget();
+    assert_eq!(
+        tag(&s, t),
+        (crate::instrument::presets::UNKNOWN.into(), false)
+    );
+    assert_eq!(steps(&s, t), (false, true));
+    assert!(!s.step_chain_preset(t, false), "nothing before");
+    let v = s.channel_view(&g).unwrap();
+    press(&mut s, &g, mid(v.bar.next.unwrap()));
+    assert_eq!(tag(&s, t), ("声 A".into(), false));
+    assert_eq!(steps(&s, t), (false, true));
+    // Review 3 中6: the dim ‹ says it cannot be chosen, the bridge carries no "off".
+    let label = |key: &str| {
+        marks(&s, &g)[0]
+            .children
+            .iter()
+            .find(|m| m.key == key)
+            .map(|m| m.node.label().unwrap_or_default().to_string())
+            .unwrap()
+    };
+    assert_eq!(label("channel-preset-prev"), "前のプリセット（選べません）");
+    assert_eq!(label("channel-preset-next"), "次のプリセット");
 }

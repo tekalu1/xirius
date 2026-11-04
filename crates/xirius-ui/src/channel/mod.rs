@@ -1446,7 +1446,12 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<crate::a11y::Mark> {
         let Some(r) = r else {
             continue;
         };
-        let mut node = button(name, r);
+        // The reader bridge has no "off": the words say it (review 3 中6).
+        let mut node = if can {
+            button(name, r)
+        } else {
+            button(&format!("{name}（選べません）"), r)
+        };
         if !can {
             node.set_disabled();
         }
