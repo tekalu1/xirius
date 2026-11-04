@@ -1576,6 +1576,40 @@ fn n3_kit_1_the_preview_of_a_folder_the_layers_bar_and_shift_is_the_drop() {
     assert!(s.instruments.preview.is_none());
 }
 
+/// The fourth review's low 16: a folder dragged over the screen is read only once it is over
+/// a Drum Kit, and the drag leaving and coming back does not read it again; the drop reads
+/// it as it is then.
+#[test]
+fn a_folder_held_is_read_only_over_a_drum_kit_and_once() {
+    let (dir, _) = wavs(&["Hit1.wav", "Hit2.wav"]);
+    let folder = [dir.path().to_path_buf()];
+    let (mut s, g, t, id) = window("Drum Kit");
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).expect("A1");
+    s.window_drag(&g, 1.0, 1.0, &folder, false);
+    assert!(!s.instruments.dragged.read(), "read off the kit");
+    assert!(s.window_drag(&g, x, y, &folder, false));
+    assert!(s.instruments.dragged.read());
+    assert_eq!(
+        s.instruments.preview.as_ref().unwrap().text,
+        "2 pads, A1–A2"
+    );
+    std::fs::write(dir.path().join("Hit3.wav"), b"").unwrap();
+    s.drop_hover(false);
+    assert!(s.instruments.preview.is_none());
+    assert!(s.window_drag(&g, x, y, &folder, false));
+    assert_eq!(
+        s.instruments.preview.as_ref().unwrap().text,
+        "2 pads, A1–A2",
+        "coming back reads nothing again"
+    );
+    assert!(s.drop_files(&g, x, y, &folder), "{:?}", s.error);
+    assert_eq!(
+        plugin(&s, t).samples.len(),
+        3,
+        "the drop reads the folder as it is"
+    );
+}
+
 /// N3-kit-2 (UI-334): files dropped on a Drum Kit's pad that has a file fill the pads from it,
 /// as the preview showed: the pad's file gives way to the first of them, and the pad stays
 /// chosen.

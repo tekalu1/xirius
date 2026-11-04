@@ -29,22 +29,38 @@ pub struct Preview {
 }
 
 /// The paths a drag holds and the sounds they are, a folder's in the order the drop reads
-/// them: read once for each drag, not on every move (N3-kit-1). And where the pointer was,
-/// for Shift pressed or let go without a move.
+/// them: read once for each drag, not on every move (N3-kit-1), and only once the pointer
+/// is over a Drum Kit, the one place that shows them; the drag leaving and coming back
+/// reads them no more (the fourth review's low 16). And where the pointer was, for Shift
+/// pressed or let go without a move.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Held {
     paths: Vec<PathBuf>,
-    names: Vec<String>,
+    names: Option<Vec<String>>,
     at: Option<(f32, f32)>,
 }
 
 impl Held {
-    fn of(&mut self, paths: &[PathBuf]) -> &Held {
+    fn of(&mut self, paths: &[PathBuf]) {
         if self.paths != paths {
             self.paths = paths.to_vec();
-            self.names = sounds(paths);
+            self.names = None;
         }
-        self
+    }
+
+    fn names(&mut self) -> &[String] {
+        self.names.get_or_insert_with(|| sounds(&self.paths))
+    }
+
+    /// Whether the sounds of the paths were read.
+    #[cfg(test)]
+    pub(crate) fn read(&self) -> bool {
+        self.names.is_some()
+    }
+
+    /// Lets the pointer go, keeping the paths and what was read of them.
+    pub(crate) fn leave(&mut self) {
+        self.at = None;
     }
 }
 
@@ -87,20 +103,21 @@ impl Studio {
     ) -> bool {
         self.instruments.dragged.of(paths);
         self.instruments.dragged.at = Some((x, y));
-        let held = self.instruments.dragged.clone();
         // What takes the drop before a window does takes the plan too: a `.dawproject` and the
         // quantize panel's groove (low 14 of the fourth review).
-        let first = held
-            .paths
+        let first = paths
             .iter()
             .any(|p| xirius_core::dawproject::is_dawproject(p))
             || self.groove_over(g, x, y);
         let drop_on = self.drop_target(g, x, y).filter(|_| !first);
         let on_layers = drop_on.is_some_and(|d| d.1 == sampler::DropOn::Layers);
-        let preview = if first {
+        let preview = if first || !self.over_kit(g, x, y) {
             None
         } else {
-            self.kit_plan(g, x, y, &held.names, shift || on_layers)
+            let mut held = std::mem::take(&mut self.instruments.dragged);
+            let plan = self.kit_plan(g, x, y, held.names(), shift || on_layers);
+            self.instruments.dragged = held;
+            plan
         };
         let changed = self.instruments.preview != preview || self.instruments.drop_on != drop_on;
         self.instruments.preview = preview;
@@ -115,11 +132,19 @@ impl Studio {
             return false;
         }
         self.instruments.drop_layers = shift;
-        let held = self.instruments.dragged.clone();
-        let Some((x, y)) = held.at else {
+        let Some((x, y)) = self.instruments.dragged.at else {
             return false;
         };
-        self.window_drag(g, x, y, &held.paths, shift)
+        let paths = self.instruments.dragged.paths.clone();
+        self.window_drag(g, x, y, &paths, shift)
+    }
+
+    /// Whether `(x, y)` is on a Drum Kit's window or face.
+    fn over_kit(&self, g: &Geometry, x: f32, y: f32) -> bool {
+        let p = self.project();
+        self.instruments.at(&p, g, x, y).is_some_and(|(i, _)| {
+            live(&p, &self.instruments.open[i]).is_some_and(|(_, _, def)| def.uid == "drum-kit")
+        })
     }
 
     /// Where files dropped at `(x, y)` on a Sampler's or a Drum Kit's window go, and the

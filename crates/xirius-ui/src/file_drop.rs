@@ -42,7 +42,7 @@ impl Studio {
             self.drop_dawproject = None;
             self.instruments.preview = None;
             self.instruments.drop_on = None;
-            self.instruments.dragged = Default::default();
+            self.instruments.dragged.leave();
         }
         changed
     }
