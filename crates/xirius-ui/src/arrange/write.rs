@@ -350,7 +350,10 @@ mod tests {
                 heard.tracks[&t].sends[0].level_db,
                 xirius_core::model::MIN_DB
             );
-            assert_eq!(heard.tracks[&t].sends[0].muted_level, Some(-9.0));
+            // What is heard moves the kept level, as a macro does (MIX-039); the stored
+            // project keeps -9 until the pass is written.
+            assert_eq!(heard.tracks[&t].sends[0].muted_level, Some(value));
+            assert_eq!(s.project().tracks[&t].sends[0].muted_level, Some(-9.0));
             assert!(s.drag_end());
             play_for(&mut s, 100);
             assert_eq!(
