@@ -313,6 +313,48 @@ fn a_gap_adds_the_effect_in_its_place() {
 }
 
 #[test]
+fn a_branch_head_has_a_plus_on_its_line_that_adds_its_first() {
+    let (mut s, g) = studio();
+    let (t, _, [_, comp, _], b) = vocal(&mut s);
+    let v = s.channel_view(&g).unwrap();
+    let col = column(&v, b[0]);
+    let (i, gap) = v
+        .flow
+        .gaps
+        .iter()
+        .enumerate()
+        .find(|(_, gp)| gp.chain == Chain::Branch(b[0]) && gp.index == 0)
+        .map(|(i, gp)| (i, *gp))
+        .expect("the head's ＋");
+    assert_eq!(gap.after, None);
+    // In the head's middle, on the line, clear of the level, its value, M and ×.
+    let (bx, by) = mid(gap.button);
+    assert!(col.head.contains(bx, by));
+    assert!((bx - head_mid(col.head)).abs() < 0.5);
+    let hp = head_parts(&col);
+    for r in [hp.num, hp.level, hp.value, hp.mute]
+        .into_iter()
+        .chain(hp.remove)
+    {
+        assert!(
+            r.right() <= gap.button.x || r.x >= gap.button.right(),
+            "{r:?} {:?}",
+            gap.button
+        );
+    }
+    assert_eq!(part_at(&v, bx, by), Some(Part::Gap(i)));
+    // A touch on the branch's first card shows it; the press opens the list into the head.
+    s.channel.as_mut().unwrap().chosen = Some(Pick::Plugin(comp));
+    assert!(v.flow.beside(Pick::Plugin(comp), &gap));
+    press(&mut s, &g, (bx, by));
+    assert_eq!(s.mixer.insert_into, Some((t, Chain::Branch(b[0]), 0)));
+    assert!(matches!(
+        s.popup.as_ref().map(|p| p.kind),
+        Some(crate::popup::PopupKind::Insert(_))
+    ));
+}
+
+#[test]
 fn a_head_sets_the_level_mutes_and_takes_the_branch_away() {
     let (mut s, g) = studio();
     let (t, sp, _, b) = vocal(&mut s);
@@ -764,8 +806,11 @@ fn the_chosen_card_shows_the_plus_before_and_after_it() {
         v.dedup();
         v
     };
-    // Comp heads its branch, whose head has no ＋ (the branch's level is there): the one after
-    assert_eq!(beside(Pick::Plugin(comp)), [(Chain::Branch(b[0]), 1)]);
+    // Comp heads its branch: the ＋ in the branch's head and the one after it
+    assert_eq!(
+        beside(Pick::Plugin(comp)),
+        [(Chain::Branch(b[0]), 0), (Chain::Branch(b[0]), 1)]
+    );
     let eq_card = card(&v, Pick::Plugin(eq));
     let (chain, k) = eq_card.chain.unwrap();
     let eq_gaps = beside(Pick::Plugin(eq));

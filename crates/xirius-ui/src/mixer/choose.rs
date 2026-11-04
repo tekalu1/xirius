@@ -339,6 +339,11 @@ impl Studio {
                     self.row_mute(t, target.id);
                 }
             }
+            "insert" if m.alt => {
+                if !frozen && !instrument {
+                    self.before_key(g, t, pick);
+                }
+            }
             "insert" => self.after_key(g, t, pick, frozen),
             _ if ch == Some("+") => self.after_key(g, t, pick, frozen),
             "delete" => match pick {
@@ -374,6 +379,39 @@ impl Studio {
             .or_else(|| self.mixer_rect(g, MixerHit::Strip(t)))
             .unwrap_or(Rect::new(0.0, 0.0, 1.0, 1.0));
         self.insert_after(t, pick, anchor);
+    }
+
+    /// Alt+Insert: the list of plug-ins, whose pick goes right before the picked row, in its
+    /// chain. The row heading a branch or a layer's effects adds at its head (MIX-042).
+    fn before_key(&mut self, g: &Geometry, t: TrackId, pick: Pick) {
+        use crate::channel::flow::Chain;
+        let p = self.project();
+        let Some(track) = p.tracks.get(&t) else {
+            return;
+        };
+        let Some((at, k, _)) = flow::spot(track, pick) else {
+            return;
+        };
+        let layer = |n| {
+            crate::channel::keys::layers(track)
+                .iter()
+                .any(|l| l.id == n)
+        };
+        let chain = match at {
+            None => Chain::Top,
+            Some(n) if layer(n) => Chain::Layer(n),
+            Some(n) => Chain::Branch(n),
+        };
+        let anchor = self
+            .mixer_rect(g, MixerHit::After(t, pick))
+            .or_else(|| self.mixer_rect(g, MixerHit::Strip(t)))
+            .unwrap_or(Rect::new(0.0, 0.0, 1.0, 1.0));
+        self.mixer.insert_after = None;
+        self.mixer.insert_into = Some((t, chain, k));
+        self.open_popup(PopupKind::Insert(t), anchor);
+        if self.popup.is_none() {
+            self.mixer.insert_into = None;
+        }
     }
 }
 

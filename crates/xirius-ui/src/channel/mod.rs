@@ -459,6 +459,13 @@ pub fn col_label(col: &Column) -> String {
     }
 }
 
+/// The x of a head's middle, between the level and its value: on the line, as the mock's, where
+/// a branch's ＋ shows. A column too narrow for M and × right of it moves it left.
+pub fn head_mid(h: Rect) -> f32 {
+    let right = HEAD_MID / 2.0 + VALUE_W + HEAD_GAP + MUTE_W + HEAD_GAP + REMOVE + 2.0;
+    (h.x + h.w / 2.0).min(h.right() - right)
+}
+
 pub fn head_parts(col: &Column) -> HeadParts {
     let h = col.head;
     let cy = h.y + h.h / 2.0;
@@ -471,12 +478,15 @@ pub fn head_parts(col: &Column) -> HeadParts {
             ..
         }
     );
-    let left = num_w + HEAD_GAP + LEVEL_W;
-    let right = VALUE_W + HEAD_GAP + MUTE_W + if removable { HEAD_GAP + REMOVE } else { 0.0 };
-    let x = h.x + (h.w - (left + HEAD_MID + right)) / 2.0;
-    let num = Rect::new(x, h.y, num_w, h.h);
-    let level = Rect::new(num.right() + HEAD_GAP, cy - MUTE_H / 2.0, LEVEL_W, MUTE_H);
-    let value = Rect::new(level.right() + HEAD_MID, h.y, VALUE_W, h.h);
+    let cx = head_mid(h);
+    let level = Rect::new(
+        cx - HEAD_MID / 2.0 - LEVEL_W,
+        cy - MUTE_H / 2.0,
+        LEVEL_W,
+        MUTE_H,
+    );
+    let num = Rect::new(level.x - HEAD_GAP - num_w, h.y, num_w, h.h);
+    let value = Rect::new(cx + HEAD_MID / 2.0, h.y, VALUE_W, h.h);
     let mute = Rect::new(value.right() + HEAD_GAP, cy - MUTE_H / 2.0, MUTE_W, MUTE_H);
     let remove =
         removable.then(|| Rect::new(mute.right() + HEAD_GAP, cy - REMOVE / 2.0, REMOVE, REMOVE));

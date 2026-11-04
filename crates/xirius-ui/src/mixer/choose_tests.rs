@@ -419,3 +419,38 @@ fn a_press_on_a_floating_window_keeps_the_name_being_typed() {
     assert!(s.input_map.name.is_none(), "the name field closes");
     assert!(s.project().tracks[&t].name.ends_with("Lead"));
 }
+
+#[test]
+fn alt_insert_adds_before_the_picked_row_and_at_a_branch_head() {
+    let (mut s, g) = studio();
+    let (t, sp, b, [eq, comp, _]) = vocal(&mut s);
+    s.instruments.open.clear();
+    // Comp heads its branch: what is picked goes in first there.
+    s.mixer.chosen = Some((t, Pick::Plugin(comp)));
+    assert!(key(&mut s, &g, "insert", true));
+    assert!(matches!(
+        s.popup.as_ref().map(|p| p.kind),
+        Some(PopupKind::Insert(_))
+    ));
+    assert_eq!(s.mixer.insert_after, None);
+    assert_eq!(
+        s.mixer.insert_into,
+        Some((t, crate::channel::flow::Chain::Branch(b[0]), 0))
+    );
+    s.popup = None;
+    s.mixer_pick(PopupKind::Insert(t), "builtin:eq");
+    let fx = match &s.project().tracks[&t].rack.as_ref().unwrap().fx[..] {
+        [RackNode::Plugin(_), RackNode::Split(x)] if x.id == sp => x.branches[0].fx.clone(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(fx.len(), 2, "{fx:?}");
+    assert_eq!(fx[1], RackNode::Plugin(comp));
+    // On the top chain's first row, before it.
+    s.instruments.open.clear();
+    s.mixer.chosen = Some((t, Pick::Plugin(eq)));
+    assert!(key(&mut s, &g, "insert", true));
+    assert_eq!(
+        s.mixer.insert_into,
+        Some((t, crate::channel::flow::Chain::Top, 0))
+    );
+}

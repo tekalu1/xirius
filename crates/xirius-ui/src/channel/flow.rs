@@ -560,7 +560,8 @@ impl Flow {
                 band,
                 within: inside.clone(),
             });
-            out.extend(self.column(b, ccx, card, col_top, &inside));
+            let head = Rect::new(x, head_y, *bw, HEAD_H);
+            out.extend(self.column(b, (ccx, head), card, col_top, &inside));
             x += bw + COL_GAP;
         }
         if s.mode == SplitMode::Frequency {
@@ -580,8 +581,15 @@ impl Flow {
     }
 
     /// One branch's column under the splitter's `card`: fanned to from it, its chain laid
-    /// from `top`.
-    fn column(&mut self, b: &Branch, cx: f32, card: Rect, top: f32, within: &[Key]) -> Vec<End> {
+    /// from `top`, under its `head`.
+    fn column(
+        &mut self,
+        b: &Branch,
+        (cx, head): (f32, Rect),
+        card: Rect,
+        top: f32,
+        within: &[Key],
+    ) -> Vec<End> {
         let mut inside = within.to_vec();
         inside.push(Key::Node(b.id));
         let fan = End {
@@ -609,7 +617,20 @@ impl Flow {
                 keys: inside,
             }];
         }
-        // A card dragged to the head goes first; there is no ＋ there, the head takes the room.
+        // A card dragged to the head goes first. Its ＋ is in the head's middle, on the line,
+        // between the level and its value: it adds the branch's first (by touch, too).
+        self.gaps.push(Gap {
+            rect: head,
+            button: Rect::new(
+                super::head_mid(head) - GAP_BTN / 2.0,
+                head.y + (head.h - GAP_BTN) / 2.0,
+                GAP_BTN,
+                GAP_BTN,
+            ),
+            chain: Chain::Branch(b.id),
+            index: 0,
+            after: None,
+        });
         self.slots.push(Slot {
             chain: Chain::Branch(b.id),
             index: 0,
