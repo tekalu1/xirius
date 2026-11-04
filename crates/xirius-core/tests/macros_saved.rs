@@ -408,3 +408,38 @@ fn a_refused_param_set_is_not_the_last_one_touched() {
         e.message
     );
 }
+
+/// A plug-in moved to another track takes no macro map along (the map belongs to the track
+/// it left): the map goes, and the message says so instead of dropping it unseen.
+#[test]
+fn moving_a_mapped_plug_in_away_says_its_map_went() {
+    let mut s = Session::new("macros");
+    let t = id_of(&run(&mut s, "track.add.audio", json!({"name": "Vocal"})));
+    let u = id_of(&run(&mut s, "track.add.audio", json!({"name": "Keys"})));
+    let eq = id_of(&run(
+        &mut s,
+        "plugin.add",
+        json!({"track": t, "name": "EQ"}),
+    ));
+    run(
+        &mut s,
+        "control.assign",
+        json!({"track": t, "control": "k1", "target": format!("param:{eq}:gain")}),
+    );
+    let r = run(&mut s, "plugin.move", json!({"id": eq, "track": u}));
+    assert!(
+        r.message.contains("マクロの割り当て 1 件を外しました"),
+        "{}",
+        r.message
+    );
+    let tid: TrackId = t.parse().unwrap();
+    assert!(
+        s.project()
+            .track(tid)
+            .unwrap()
+            .controls
+            .iter()
+            .all(|(_, c)| c.maps.is_empty()),
+        "the map went"
+    );
+}

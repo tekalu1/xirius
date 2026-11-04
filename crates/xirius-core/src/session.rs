@@ -1513,7 +1513,9 @@ impl Session {
         }
         work.prune_clip_fx();
         work.prune_ara();
-        work.prune_controls();
+        // A map whose target went with the edit (a plug-in moved to another track, a send or a
+        // branch taken away) goes too, and the message says so (undo brings it back).
+        let dropped = work.prune_controls();
         work.prune_branch_lanes();
         let held = work.hold_owned(&before);
         crate::retime::retime(&before, &mut work);
@@ -1550,6 +1552,11 @@ impl Session {
             changes.counts.entry("project".into()).or_default().changed += 1;
         }
         let mut result = RunResult::new(def.name, out, changes.clone());
+        if dropped > 0 {
+            result.message.push_str(&format!(
+                "（先が無くなったマクロの割り当て {dropped} 件を外しました）"
+            ));
+        }
         if !held.is_empty() {
             result.message.push_str(&format!(
                 "（{} はマクロのつまみが動かしているため、変えませんでした）",
