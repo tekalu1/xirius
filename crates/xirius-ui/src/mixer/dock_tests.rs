@@ -504,11 +504,27 @@ fn files_held_over_a_docked_drum_kit_go_to_its_face() {
             .clone()
     };
     assert!(samples(&s).is_empty());
+    // Held over the face first, as the OS drags them: the face lights (the fifth review's
+    // low 10).
+    assert!(s.files_moved(&g, x, y, &files, false));
+    assert_eq!(s.instruments.drop_on.map(|d| (d.0, d.1)), Some((kit, on)));
     assert!(s.drop_files(&g, x, y, &files), "{:?}", s.error);
     let got = samples(&s);
     assert_eq!(got.len(), 2, "{got:?}");
     assert!(got[0].ends_with("Kick.wav") && got[1].ends_with("Snare.wav"));
     assert_eq!(s.instruments.drop_on, None, "the light goes with the drop");
+    // Each on its pad from A1.
+    let x = s.project().tracks[&t]
+        .inserts
+        .iter()
+        .find(|x| x.id == kit)
+        .unwrap()
+        .clone();
+    let def = s.instruments.def_of(&x).unwrap();
+    let pads: Vec<_> = (0..3)
+        .map(|p| crate::device::sampler::pad_files(def, &x, p))
+        .collect();
+    assert_eq!(pads, vec![vec![0], vec![1], vec![]]);
     assert_eq!(s.docked(), Some(i), "the face stays in the drawer");
     s.instruments.open[i].bank = Some(1);
     press(&mut s, &g, kit, Part::Pin, 1);
