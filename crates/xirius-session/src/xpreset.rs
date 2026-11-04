@@ -1412,7 +1412,9 @@ fn load(
     // Each sample is named the way the song names its files, from where it is found
     // (N-smp-1). One found nowhere stays in the list for the edit to take away with its
     // own values, and is said by its name and its place in the list (a name kept for a song
-    // not saved yet may be the same, L3-8); one moved is named where it was found.
+    // not saved yet may be the same, L3-8); one moved is named where it was found. The place
+    // counts only the names: the reader leaves out what is not one (the fourth review's
+    // low 17).
     let mut lost: Vec<(usize, String)> = Vec::new();
     let kept = dir.join(SAMPLES);
     let mut finder = Finder::new(song, near.as_deref(), &kept);
@@ -1420,10 +1422,8 @@ fn load(
         .pointer_mut("/devices/0/samples")
         .and_then(Value::as_array_mut)
     {
-        for (i, item) in list.iter_mut().enumerate() {
-            let Some(s) = item.as_str().map(str::to_string) else {
-                continue;
-            };
+        for (i, item) in list.iter_mut().filter(|v| v.is_string()).enumerate() {
+            let s = item.as_str().unwrap_or_default().to_string();
             match finder.find(&s, dir, song) {
                 Sample::Here(p) | Sample::Moved(p) => *item = json!(song_path(&p, song)),
                 Sample::Unplaced => {}

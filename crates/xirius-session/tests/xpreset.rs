@@ -1453,6 +1453,33 @@ fn y11_a_sample_moved_is_found_and_one_gone_is_left_out_with_its_values() {
     let _ = std::fs::remove_dir_all(&song);
 }
 
+/// The fourth review's low 17: in a preset written by hand with a `null` among its samples,
+/// the one found nowhere is the one left out, not the one after it (the reader drops what
+/// is not a name, so the place counts only the names).
+#[test]
+fn y17_a_lost_sample_is_counted_among_the_names_only() {
+    let mut r = rig("y17");
+    let (mut s, t, song) = sampler_song(&mut r, "y17song", &["Media/A.wav", "Media/B.wav"]);
+    run(
+        &mut s,
+        "preset.save",
+        json!({ "track": t, "kind": "instrument", "name": "AB" }),
+    );
+    let file = r.dir.join("instrument").join("sampler").join("AB.xpreset");
+    let mut v = read_json(&file);
+    let names = v["devices"][0]["samples"].as_array().unwrap().clone();
+    v["devices"][0]["samples"] = json!([null, names[0], 7, names[1]]);
+    std::fs::write(&file, serde_json::to_vec(&v).unwrap()).unwrap();
+    // A is gone everywhere: B stays.
+    std::fs::remove_dir_all(r.dir.join("samples")).unwrap();
+    std::fs::remove_file(song.join("Media").join("A.wav")).unwrap();
+    let out = run(&mut s, "preset.load", json!({ "track": t, "preset": "AB" }));
+    assert!(rejected(&out, "A.wav"), "{out:?}");
+    assert_eq!(track(&s, &t).inserts[0].samples, ["Media/B.wav"]);
+    drop(s);
+    let _ = std::fs::remove_dir_all(&song);
+}
+
 /// N-smp-2: an old preset that says nothing of samples leaves the files alone, and with them
 /// the pads they are on and the pads' own values.
 #[test]
