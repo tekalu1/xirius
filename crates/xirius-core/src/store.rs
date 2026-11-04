@@ -477,6 +477,7 @@ impl Store {
         }
         let rows = f.project.fix_racks();
         f.project.settle_controls();
+        f.project.fix_param_keys();
         f.project
             .validate()
             .map_err(|e| Self::corrupt(rel, e.message))?;
@@ -676,6 +677,7 @@ impl Store {
             serde_json::from_value(f.project).map_err(|e| Self::corrupt(&rel, e))?;
         let rows = p.fix_racks();
         p.settle_controls();
+        p.fix_param_keys();
         p.validate().map_err(|e| Self::corrupt(&rel, e.message))?;
         Ok((p, rows))
     }

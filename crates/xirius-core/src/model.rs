@@ -1554,6 +1554,38 @@ impl Project {
         Ok(())
     }
 
+    /// A built-in's values under the keys the song keeps them by, as a song is read: a
+    /// hand-written `FILE01.START` or `a1.choke` is `file1.start` or `A1.choke`, so what
+    /// reads the song by its keys (the samples' layout, the pads, `plugin.param.list`) finds
+    /// it once (L2-smp-3). When both are there, the song's own key wins.
+    pub fn fix_param_keys(&mut self) {
+        let odd = |x: &Plugin| -> Vec<(String, String)> {
+            let Some(def) = x.builtin() else {
+                return Vec::new();
+            };
+            x.params
+                .keys()
+                .filter_map(|k| {
+                    def.resolve(k)
+                        .filter(|r| r.key != *k)
+                        .map(|r| (k.clone(), r.key))
+                })
+                .collect()
+        };
+        for t in self.tracks.values_mut() {
+            if t.inserts.iter().all(|x| odd(x).is_empty()) {
+                continue;
+            }
+            for x in &mut Arc::make_mut(t).inserts {
+                for (k, key) in odd(x) {
+                    if let Some(v) = x.params.remove(&k) {
+                        x.params.entry(key).or_insert(v);
+                    }
+                }
+            }
+        }
+    }
+
     // ---- invariants --------------------------------------------------------
 
     /// The rules every command must leave intact. Cheap enough to run after

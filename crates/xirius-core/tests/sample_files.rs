@@ -363,3 +363,34 @@ fn a_devices_files_and_their_values_survive_a_save() {
     assert_eq!(x.params.get("file1.loop"), Some(&1.0));
     assert!(!back.is_dirty());
 }
+
+/// L2-smp-3: a hand-written key the device knows by another spelling (`FILE01.LOOP`) is read
+/// under the key the song keeps it by, so the zone loops and the value is listed once.
+#[test]
+fn a_hand_written_key_is_read_as_the_song_keeps_it() {
+    let tmp = tempfile::Builder::new()
+        .prefix("xirius-samples-")
+        .tempdir()
+        .unwrap();
+    let song = tmp.path().join("song");
+    let mut s = Session::from_project(project_with_samples(&[]));
+    run(
+        &mut s,
+        "plugin.samples.add",
+        json!({ "id": "plg_2", "file": "gone/a_C3.wav" }),
+    );
+    run(
+        &mut s,
+        "plugin.param.set",
+        json!({ "id": "plg_2", "param": "file1.loop", "plain": "on" }),
+    );
+    run(&mut s, "project.save-as", json!({ "path": text(&song) }));
+    let file = song.join("project.json");
+    let body = fs::read_to_string(&file).unwrap();
+    assert!(body.contains("\"file1.loop\""), "{body}");
+    fs::write(&file, body.replace("\"file1.loop\"", "\"FILE01.LOOP\"")).unwrap();
+    let back = Session::open(&song).unwrap();
+    let x = back.project().tracks[&TrackId(1)].inserts[0].clone();
+    assert_eq!(x.params.get("file1.loop"), Some(&1.0));
+    assert!(!x.params.contains_key("FILE01.LOOP"));
+}
