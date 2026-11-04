@@ -506,6 +506,35 @@ fn voice(def: &BuiltinDef, b: &mut Body, x: f32, y: f32, w: f32) -> f32 {
     (ky + kh).max(ay + HEAD_H + lines * kh)
 }
 
+/// Lays the zones' groups (the zones of the same keys, their left and right) side by side:
+/// one over the last pushes it on, each at least [`ZONE_MIN`] a zone so the zones within it
+/// do not overlap (the fifth review's low 7), and those pushed past `right` pack back to
+/// the left (low 19).
+pub(crate) fn spread<T>(groups: &mut [(Vec<T>, f32, f32)], right: f32) {
+    let least = |g: &(Vec<T>, f32, f32)| ZONE_MIN * g.0.len().max(1) as f32;
+    for k in 1..groups.len() {
+        let (prev_x0, prev_x1) = (groups[k - 1].1, groups[k - 1].2);
+        if groups[k].1 < prev_x1 {
+            groups[k - 1].2 = groups[k].1.max(prev_x0 + least(&groups[k - 1]));
+            groups[k].1 = groups[k].1.max(groups[k - 1].2);
+        }
+        let min = least(&groups[k]);
+        groups[k].2 = groups[k].2.max(groups[k].1 + min);
+    }
+    if let Some(g) = groups.first_mut() {
+        g.2 = g.2.max(g.1 + least(g));
+    }
+    let mut edge = right;
+    for g in groups.iter_mut().rev() {
+        if g.2 <= edge {
+            break;
+        }
+        g.2 = edge;
+        g.1 = g.1.min(edge - least(g));
+        edge = g.1;
+    }
+}
+
 /// The Sampler's body for its files (`s.plugin`) and the zone chosen (`s.pick`).
 pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
     let w = s.w.max(MIN_W);
@@ -540,28 +569,11 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
             }
         }
     }
-    for k in 1..groups.len() {
-        let (prev_x0, prev_x1) = (groups[k - 1].1, groups[k - 1].2);
-        if groups[k].1 < prev_x1 {
-            groups[k - 1].2 = groups[k].1.max(prev_x0 + ZONE_MIN);
-            groups[k].1 = groups[k].1.max(groups[k - 1].2);
-            groups[k].2 = groups[k].2.max(groups[k].1 + ZONE_MIN);
-        }
-    }
-    // Pushed past the keys' right, the zones there pack back to the left (low 19).
     let right = keys
         .iter()
         .rfind(|k| !k.black)
-        .map_or(inner, |k| k.r.right());
-    let mut edge = right;
-    for g in groups.iter_mut().rev() {
-        if g.2 <= edge {
-            break;
-        }
-        g.2 = edge;
-        g.1 = g.1.min(edge - ZONE_MIN);
-        edge = g.1;
-    }
+        .map_or(PAD + inner, |k| k.r.right());
+    spread(&mut groups, right);
     let placed = groups.into_iter().flat_map(|(g, x0, x1)| {
         let share = (x1 - x0) / g.len() as f32;
         g.into_iter().enumerate().map(move |(j, z)| {

@@ -772,6 +772,38 @@ fn zones_past_the_keys_right_pack_back_and_the_last_keeps_its_width() {
     }
 }
 
+/// The fifth review's low 7 (UI-333): three zones of the keys below the shown ones share a
+/// strip at least 6 px each, so none overlaps the next as it is drawn 4 px wide; packed
+/// back from the right, a group keeps that width too.
+#[test]
+fn zones_of_the_same_keys_off_the_keys_do_not_overlap() {
+    let check = |groups: &[(Vec<()>, f32, f32)]| {
+        let mut spans = Vec::new();
+        for (g, x0, x1) in groups {
+            let share = (x1 - x0) / g.len() as f32;
+            for j in 0..g.len() {
+                let at = x0 + share * j as f32;
+                spans.push((at, at + (share - sampler::ZONE_GAP).max(4.0)));
+            }
+        }
+        for w in spans.windows(2) {
+            assert!(w[0].1 <= w[1].0 + 0.01, "{spans:?}");
+        }
+        spans
+    };
+    let mut groups = vec![(vec![(); 3], 12.0, 18.0), (vec![()], 14.0, 40.0)];
+    sampler::spread(&mut groups, 400.0);
+    let spans = check(&groups);
+    assert_eq!(spans[0].0, 12.0);
+    assert!((groups[0].2 - 30.0).abs() < 0.01, "{groups:?}");
+    // At the keys' right: packed back, the three keep their 18 px.
+    let mut groups = vec![(vec![()], 300.0, 380.0), (vec![(); 3], 394.0, 400.0)];
+    sampler::spread(&mut groups, 400.0);
+    check(&groups);
+    assert!((groups[1].1 - 382.0).abs() < 0.01, "{groups:?}");
+    assert_eq!(groups[0].2, 380.0, "{groups:?}");
+}
+
 /// Low 1 and low 4 (UI-333): reversed, the loop's span and its ends lie where the wave shows
 /// the file's loop, so the line of the voice that sounds loops within it, and an end drags
 /// along the wave; the span is 2 px in from the top and the foot.
