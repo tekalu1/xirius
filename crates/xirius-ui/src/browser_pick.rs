@@ -181,6 +181,9 @@ impl Studio {
                     self.set_media_folder(folder);
                 }
             }
+            FileRequest::Sample(..) | FileRequest::PadSamples(..) => {
+                self.samples_picked(request, paths);
+            }
             _ => {}
         }
     }

@@ -176,6 +176,8 @@ pub const LABELS: &[(&str, &str)] = &[
     ("view.export", "書き出しの画面を開く"),
     ("plugin.preset.choose", "プリセットを選ぶ"),
     ("plugin.preset.file", "プリセットをファイルで読み書き"),
+    ("plugin.samples.pick", "サンプルのファイルを選択"),
+    ("plugin.samples.reveal", "サンプルをブラウザーで表示"),
     ("plugin.pick", "エフェクトを追加…"),
     ("control.pick", "割り当てを追加…"),
     ("plugin.insert", "最近使ったエフェクトを追加"),

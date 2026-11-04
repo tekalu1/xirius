@@ -847,6 +847,8 @@ impl Screen {
                 | FileRequest::Locate(_)
                 | FileRequest::LocateFolder
                 | FileRequest::MediaFolder
+                | FileRequest::Sample(..)
+                | FileRequest::PadSamples(..)
         ) {
             return self.pick(request, cx);
         }
@@ -978,9 +980,17 @@ impl Screen {
 
     /// Asks the OS's file window for audio files or for a folder (UI-017, BRW-005).
     fn pick(&mut self, request: FileRequest, cx: &mut Context<Self>) {
-        let files = matches!(request, FileRequest::Audio | FileRequest::Locate(_));
+        let files = matches!(
+            request,
+            FileRequest::Audio
+                | FileRequest::Locate(_)
+                | FileRequest::Sample(..)
+                | FileRequest::PadSamples(..)
+        );
         let prompt = match request {
             FileRequest::Audio => "取り込む",
+            FileRequest::Sample(..) => "置き換える",
+            FileRequest::PadSamples(..) => "パッドに足す",
             FileRequest::Locate(_) => "場所を指定",
             FileRequest::LocateFolder => "探すフォルダー",
             FileRequest::MediaFolder => "置き場所を選ぶ",
@@ -990,7 +1000,7 @@ impl Screen {
         let picker = cx.prompt_for_paths(gpui::PathPromptOptions {
             files,
             directories: !files,
-            multiple: request == FileRequest::Audio,
+            multiple: matches!(request, FileRequest::Audio | FileRequest::PadSamples(..)),
             prompt: Some(prompt.into()),
         });
         cx.spawn(async move |this, cx| {

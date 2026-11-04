@@ -38,9 +38,14 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 ),
                 ArgDef::flag(
                     "layers",
-                    "ドラムキットで、全部を 1 つのパッドのレイヤーにする",
+                    "ドラムキットで、全部を 1 つのパッドのレイヤーにする（--pad があればそのパッドへ足す）",
                 ),
                 ArgDef::flag("replace", "今のサンプルを外してから読み込む"),
+                ArgDef::int(
+                    "index",
+                    "このサンプル（1 から）を、読み込んだ 1 つ目のファイルに差し替える（値はそのまま）",
+                )
+                .range(1.0, 100_000.0),
             ],
             Risk::Write,
             false,
@@ -76,7 +81,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 ),
                 ArgDef::flag(
                     "layers",
-                    "ドラムキットで、全部を 1 つのパッドのレイヤーにする",
+                    "ドラムキットで、全部を 1 つのパッドのレイヤーにする（--pad があればそのパッドへ足す）",
                 ),
                 ArgDef::flag("replace", "今のサンプルを外してから足す"),
             ],
@@ -100,13 +105,17 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         destroy(
             "plugin.samples.remove",
-            "サンプルを外します（--index・--pad・--all のいずれか 1 つ）",
+            "サンプルを外します（--index・--pad・--bank・--all のいずれか 1 つ）",
             vec![
                 plugin(),
                 ArgDef::int("index", "外すサンプル（1 から）").range(1.0, 100_000.0),
                 ArgDef::text(
                     "pad",
                     "ドラムキットで、このパッドのサンプルを全部外す（A1〜H16）",
+                ),
+                ArgDef::text(
+                    "bank",
+                    "ドラムキットで、このバンクの 16 パッドのサンプルを全部外す（A〜H）",
                 ),
                 ArgDef::flag("all", "全部外す"),
             ],
@@ -200,6 +209,33 @@ pub fn free_pads(used: &[bool; PADS], from: usize, groups: usize) -> Option<Vec<
     (pads.len() == groups).then_some(pads)
 }
 
+/// The pads files go on: with `layers` and a pad given, that pad, whether it has files or
+/// not (they are added to its layers); else the free pads from `start` (A1).
+pub fn kit_pads(
+    used: &[bool; PADS],
+    start: Option<usize>,
+    groups: usize,
+    layers: bool,
+) -> Option<Vec<usize>> {
+    match start {
+        Some(pad) if layers && groups == 1 => Some(vec![pad]),
+        _ => free_pads(used, start.unwrap_or(0), groups),
+    }
+}
+
+/// The bank a letter like `A` or `h` means (0 to 7).
+fn bank_of(name: &str) -> Option<usize> {
+    let mut chars = name.trim().chars();
+    let (Some(c), None) = (chars.next(), chars.next()) else {
+        return None;
+    };
+    let b = (c.to_ascii_uppercase() as usize).checked_sub('A' as usize)?;
+    (b < PADS / BANK).then_some(b)
+}
+
+/// The pads of a bank.
+const BANK: usize = 16;
+
 /// The device a sample command works on: a built-in that has sample files.
 fn device(p: &mut Project, id: PluginId) -> CmdResult<(&mut Plugin, &'static BuiltinDef)> {
     let tid = p
@@ -271,7 +307,7 @@ fn add(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
     }
     let groups = kit_groups(&names, layers);
     let used = used_pads(def, x);
-    let Some(pads) = free_pads(&used, start.unwrap_or(0), groups.len()) else {
+    let Some(pads) = kit_pads(&used, start, groups.len(), layers) else {
         return Err(CmdError::range(format!(
             "空いたパッドが足りません（{} パッド必要です）",
             groups.len()
@@ -288,7 +324,8 @@ fn add(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
             x.params
                 .insert(file_key(n, "pad"), pad_spec.to_norm(*pad as f64));
         }
-        if let Some(m) = mode {
+        // A pad that had files keeps how it picks among them.
+        if let Some(m) = mode.filter(|_| !used[*pad]) {
             let k = pad_key(*pad, m.id);
             if g.round_robin {
                 x.params.insert(k, m.to_norm(1.0));
@@ -344,20 +381,32 @@ fn remove(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
     let id: PluginId = a.id("id")?;
     let index = a.opt_i64("index").map(|i| i as usize);
     let pad = pad_arg(a)?;
+    let bank = a
+        .opt_str("bank")
+        .map(|s| {
+            bank_of(s).ok_or_else(|| {
+                CmdError::invalid(format!("バンクは A〜H で指定してください（`{s}`）"))
+            })
+        })
+        .transpose()?;
     let all = a.flag("all");
-    if usize::from(index.is_some()) + usize::from(pad.is_some()) + usize::from(all) != 1 {
+    let given = [index.is_some(), pad.is_some(), bank.is_some(), all];
+    if given.iter().filter(|g| **g).count() != 1 {
         return Err(CmdError::invalid(
-            "--index・--pad・--all のいずれか 1 つを指定してください",
+            "--index・--pad・--bank・--all のいずれか 1 つを指定してください",
         ));
     }
     let (x, def) = device(p, id)?;
-    if pad.is_some() && def.per_pad.is_empty() {
-        return Err(CmdError::invalid("--pad はドラムキットにだけ使えます"));
+    if (pad.is_some() || bank.is_some()) && def.per_pad.is_empty() {
+        return Err(CmdError::invalid(
+            "--pad と --bank はドラムキットにだけ使えます",
+        ));
     }
     let gone: Vec<bool> = (0..x.samples.len())
-        .map(|i| match (index, pad) {
-            (Some(n), _) => i + 1 == n,
-            (_, Some(p)) => def.file_pad(&x.params, i) == p,
+        .map(|i| match (index, pad, bank) {
+            (Some(n), _, _) => i + 1 == n,
+            (_, Some(p), _) => def.file_pad(&x.params, i) == p,
+            (_, _, Some(b)) => def.file_pad(&x.params, i) / BANK == b,
             _ => true,
         })
         .collect();

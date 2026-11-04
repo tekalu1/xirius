@@ -193,6 +193,28 @@ impl Studio {
                 });
                 Some(true)
             }
+            "plugin.samples.pick" => {
+                let Some(p) = id::<PluginId>(args, "id") else {
+                    return Some(false);
+                };
+                let index = args.get("index").and_then(Value::as_u64);
+                let pad = text(args, "pad").and_then(xirius_params::pad_of);
+                self.file_request = Some(match (index, pad) {
+                    (Some(n), None) if n >= 1 => FileRequest::Sample(p, n as usize - 1),
+                    (None, Some(pad)) => FileRequest::PadSamples(p, pad),
+                    _ => return Some(false),
+                });
+                Some(true)
+            }
+            "plugin.samples.reveal" => {
+                let (Some(p), Some(n)) = (
+                    id::<PluginId>(args, "id"),
+                    args.get("index").and_then(Value::as_u64),
+                ) else {
+                    return Some(false);
+                };
+                Some(n >= 1 && self.reveal_sample(p, n as usize - 1))
+            }
             "plugin.restart" => {
                 match id::<PluginId>(args, "id") {
                     Some(p) => self.restart_plugin(p),

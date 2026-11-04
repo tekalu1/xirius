@@ -55,6 +55,9 @@ fn on_screen(act: &Act) -> bool {
         | Act::PickMacro(..)
         | Act::InsertRecent(..)
         | Act::PresetFile(..)
+        | Act::SampleReplace(..)
+        | Act::SampleAdd(..)
+        | Act::SampleShow(..)
         | Act::Browse(_)
         | Act::MidiLearn(_)
         | Act::MidiLearnCancel
@@ -107,6 +110,9 @@ fn samples(t: TrackId, p: PluginId, f: FolderId) -> Vec<Act> {
         Act::InsertRecent(t, "EQ".into()),
         Act::PresetFile(p, false),
         Act::PresetFile(p, true),
+        Act::SampleReplace(p, 0),
+        Act::SampleAdd(p, 3),
+        Act::SampleShow(p, 1),
         Act::Browse(BrowseAct::UseNew("Sampler")),
         Act::Browse(BrowseAct::UseHere("Sampler")),
         Act::Browse(BrowseAct::Favourite("Sampler", true)),

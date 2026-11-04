@@ -141,6 +141,13 @@ pub enum Act {
     InsertRecent(TrackId, String),
     /// Asks for a preset file to read into an effect (false) or to write it to (true).
     PresetFile(PluginId, bool),
+    /// Asks for an audio file in place of a Sampler's or a Drum Kit's sample (from 0)
+    /// (UI-333).
+    SampleReplace(PluginId, usize),
+    /// Asks for audio files to add to a Drum Kit's pad as its layers (UI-334).
+    SampleAdd(PluginId, usize),
+    /// Shows a sample's file (from 0) in the browser's Files tab (UI-333).
+    SampleShow(PluginId, usize),
     /// A row of the browser's menus.
     Browse(browser::BrowseAct),
     /// A row of the menu of an export.

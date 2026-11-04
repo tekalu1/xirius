@@ -18,7 +18,7 @@ use xirius_engine::stock::files::root_of;
 use xirius_params::{BuiltinDef, PADS, Scope, bare_id, pad_key};
 
 use super::control::{self, DIAL_SM, Look, NAME_H, SEG_H, TOGGLE_H, VALUE_H};
-use super::graph::{self, Axis, Drive, Point, View};
+use super::graph::{self, Axis, Choice, Drive, Point, View};
 use super::layout::{Body, MS_FOOT, Mark, Name, PAD, Shape, Slot, Spot};
 use super::play::{self, HIGH, KEYS_H, LOW};
 use crate::draw::{Align, Pen};
@@ -903,6 +903,35 @@ pub fn filter_points(def: &BuiltinDef, r: Rect, values: &[f64]) -> Vec<Point> {
         ),
     });
     p.wheel = Some(kr);
+    // Its type, then open: no filter at all (UI-333).
+    if let Some(kt) = idx(def, "ftype") {
+        let n = xirius_params::FILTER_TYPES.len();
+        let now = plain(def, values, "ftype").round() as usize;
+        p.menu = xirius_params::FILTER_TYPES
+            .iter()
+            .enumerate()
+            .map(|(t, label)| {
+                Some(Choice {
+                    label: label.to_string(),
+                    set: vec![(kt, super::eq::choice(n, t))],
+                    on: t == now,
+                })
+            })
+            .collect();
+        p.menu.push(None);
+        let open = |k: usize| {
+            (
+                k,
+                control::snap(&def.params[k], def.params[k].default_norm()),
+            )
+        };
+        p.menu.push(Some(Choice {
+            label: "フィルターを開く（かけない）".to_string(),
+            set: vec![(kt, 0.0), open(kc), open(kr)],
+            on: false,
+        }));
+        p.rest = vec![kt];
+    }
     vec![p]
 }
 

@@ -831,6 +831,11 @@ pub enum FileRequest {
     LocateFolder,
     /// The folder the song records and bounces into, for its settings form (BRW-004).
     MediaFolder,
+    /// One audio file in place of a Sampler's or a Drum Kit's sample (its place, from 0),
+    /// its values kept (UI-333).
+    Sample(xirius_core::id::PluginId, usize),
+    /// Audio files added to a Drum Kit's pad as its layers (UI-334).
+    PadSamples(xirius_core::id::PluginId, usize),
 }
 
 /// Quarter notes per pixel row in the roll: the roll shows this many px per beat.
@@ -2636,6 +2641,8 @@ impl Studio {
                 | FileRequest::Locate(_)
                 | FileRequest::LocateFolder
                 | FileRequest::MediaFolder
+                | FileRequest::Sample(..)
+                | FileRequest::PadSamples(..)
         ) {
             return self.finish_picked(request, &[path.to_path_buf()]);
         }
@@ -2684,7 +2691,9 @@ impl Studio {
             | FileRequest::ExportDawproject
             | FileRequest::Locate(_)
             | FileRequest::LocateFolder
-            | FileRequest::MediaFolder => Ok(()),
+            | FileRequest::MediaFolder
+            | FileRequest::Sample(..)
+            | FileRequest::PadSamples(..) => Ok(()),
         };
         if let Err(e) = result {
             self.error = Some(e);

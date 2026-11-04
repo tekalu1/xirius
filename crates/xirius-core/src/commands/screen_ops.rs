@@ -20,6 +20,8 @@ pub const NAMES: &[&str] = &[
     "view.export",
     "plugin.preset.choose",
     "plugin.preset.file",
+    "plugin.samples.pick",
+    "plugin.samples.reveal",
     "plugin.pick",
     "control.pick",
     "plugin.insert",
@@ -172,6 +174,25 @@ pub(super) fn defs() -> Vec<CommandDef> {
             vec![
                 ArgDef::id("id", IdKind::Plugin, "プラグイン").req(),
                 ArgDef::flag("save", "ファイルへ書き出す"),
+            ],
+        ),
+        changes(
+            "plugin.samples.pick",
+            "サンプラー・ドラムキットに読み込む音声ファイルを選ぶ窓を開きます（--index でそのサンプルを置き換え、--pad でそのパッドのレイヤーに足す）",
+            vec![
+                ArgDef::id("id", IdKind::Plugin, "サンプラーかドラムキット").req(),
+                ArgDef::int("index", "置き換えるサンプル（1 から）").range(1.0, 100_000.0),
+                ArgDef::text("pad", "ドラムキットで、レイヤーを足すパッド（A1〜H16）"),
+            ],
+        ),
+        screen(
+            "plugin.samples.reveal",
+            "サンプルのファイルを、ブラウザーのファイルのタブで見せます（そのフォルダーを開いて選ぶ）",
+            vec![
+                ArgDef::id("id", IdKind::Plugin, "サンプラーかドラムキット").req(),
+                ArgDef::int("index", "見せるサンプル（1 から）")
+                    .req()
+                    .range(1.0, 100_000.0),
             ],
         ),
         screen(

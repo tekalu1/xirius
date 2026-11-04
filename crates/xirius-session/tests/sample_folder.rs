@@ -152,4 +152,47 @@ fn a_folder_fills_a_kits_pads_and_steps_go_round_its_files() {
     );
     assert_eq!(out["skipped"], json!(["notes.txt"]));
     assert_eq!(leaves(&s), ["kick_v1.wav", "snare.wav"]);
+
+    // UI-334: --index puts the file in that sample's place, its values as they were.
+    run(
+        &mut s,
+        "plugin.param.set",
+        json!({ "id": "plg_2", "param": "file2.start", "value": 0.25 }),
+        false,
+    );
+    let hat = dir.join("hat.wav").display().to_string();
+    let dry = run(
+        &mut s,
+        "plugin.samples.load",
+        json!({ "id": "plg_2", "path": hat, "index": 2 }),
+        true,
+    );
+    assert_eq!(dry["index"], json!(2));
+    assert_eq!(leaves(&s), ["kick_v1.wav", "snare.wav"]);
+    run(
+        &mut s,
+        "plugin.samples.load",
+        json!({ "id": "plg_2", "path": hat, "index": 2 }),
+        false,
+    );
+    assert_eq!(leaves(&s), ["kick_v1.wav", "hat.wav"]);
+    let x = &s.project().tracks[&TrackId(1)].inserts[0];
+    assert_eq!(x.params.get("file2.start"), Some(&0.25));
+    assert!(
+        s.run_value(
+            "plugin.samples.load",
+            json!({ "id": "plg_2", "path": hat, "index": 3 }),
+            &RunOptions::human()
+        )
+        .is_err()
+    );
+    // --layers with --pad: on that pad, though it has a file.
+    let out = run(
+        &mut s,
+        "plugin.samples.load",
+        json!({ "id": "plg_2", "paths": [{ "path": hat }], "pad": "A1", "layers": true }),
+        false,
+    );
+    assert_eq!(out["pads"], json!(["A1"]));
+    assert_eq!(leaves(&s).len(), 3);
 }

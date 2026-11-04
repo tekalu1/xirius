@@ -738,6 +738,46 @@ impl Browser {
         };
     }
 
+    /// The tab whose folder holds the file `path` (the deepest one, the song's first when
+    /// two are as deep) and the folders under it down to the file's.
+    fn tab_of(&self, path: &Path) -> Option<(usize, Vec<String>)> {
+        let dir = path.parent()?;
+        self.locations()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, l)| {
+                let root = l.path.as_ref()?;
+                let rest = dir.strip_prefix(root).ok()?;
+                Some((i, root.components().count(), rest))
+            })
+            .max_by_key(|(i, depth, _)| (*depth, std::cmp::Reverse(*i)))
+            .map(|(i, _, rest)| {
+                let parts = rest
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                    .collect();
+                (i, parts)
+            })
+    }
+
+    /// Can [`Browser::show_file`] show the file `path`: is it under a tab's folder?
+    pub(crate) fn holds_file(&self, path: &Path) -> bool {
+        self.tab_of(path).is_some()
+    }
+
+    /// The file `path` in the list (UI-333): its tab, its folder shown, it selected (not
+    /// played) and scrolled to. False when no tab's folder holds it.
+    pub(crate) fn show_file(&mut self, path: &Path) -> bool {
+        let Some((i, parts)) = self.tab_of(path) else {
+            return false;
+        };
+        self.set_location(i);
+        self.path = parts;
+        self.selected_file = Some(path.to_string_lossy().into_owned());
+        self.reveal = true;
+        true
+    }
+
     /// The folder `key` (a folder row's) becomes the one the list shows.
     pub fn enter_dir(&mut self, key: &str) {
         self.pool_heading = None;

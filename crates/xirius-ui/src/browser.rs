@@ -829,7 +829,9 @@ impl Browser {
         let Some(p) = l.rows.iter().find(|p| {
             matches!(
                 p.row,
-                BRow::Item { selected: true, .. } | BRow::Preset { selected: true, .. }
+                BRow::Item { selected: true, .. }
+                    | BRow::Preset { selected: true, .. }
+                    | BRow::File { selected: true, .. }
             )
         }) else {
             return;

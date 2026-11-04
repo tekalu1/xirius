@@ -525,3 +525,217 @@ fn ui_333_the_spots_read_as_buttons() {
     find("Next sample");
     let _ = t;
 }
+
+/// The labels of the menu open, gaps left out.
+fn menu(s: &Studio) -> Vec<String> {
+    s.context_rows()
+        .into_iter()
+        .filter(|r| !r.gap)
+        .map(|r| r.label)
+        .collect()
+}
+
+/// Whether the menu's row `label` can be chosen.
+fn live_row(s: &Studio, label: &str) -> bool {
+    s.context_rows()
+        .iter()
+        .find(|r| r.label == label)
+        .unwrap_or_else(|| panic!("no row {label}: {:?}", menu(s)))
+        .enabled
+}
+
+/// Chooses the menu's row `label`.
+fn choose(s: &mut Studio, g: &Geometry, label: &str) {
+    let at = s
+        .context_rows()
+        .iter()
+        .position(|r| r.label == label)
+        .unwrap_or_else(|| panic!("no row {label}: {:?}", menu(s)));
+    s.context_pick(g, at);
+}
+
+/// A right press on the spot `mark`.
+fn right_spot(s: &mut Studio, g: &Geometry, t: TrackId, id: PluginId, mark: Mark) {
+    let n = spot(s, g, t, mark);
+    let (x, y) = s.instrument_center(g, id, Part::Spot(n)).expect("in sight");
+    assert!(s.instrument_right(g, x, y));
+}
+
+/// UI-333: the sample's name opens its menu: another file in its place (the zone's values
+/// as they were), shown in the browser when a tab holds it, the zone or all of them taken
+/// away; a zone's right press chooses it and takes it away.
+#[test]
+fn ui_333_the_sample_name_and_a_zone_have_their_menus() {
+    let (dir, files) = wavs(&["Kick.wav", "Snare.wav", "Clap.wav"]);
+    let (mut s, g, t, id) = window("Sampler");
+    let paths: Vec<_> = files[..2]
+        .iter()
+        .map(|f| json!({ "path": f.to_string_lossy() }))
+        .collect();
+    assert!(
+        s.run_command(
+            "plugin.samples.load",
+            json!({ "id": id.to_string(), "paths": paths }),
+        ),
+        "{:?}",
+        s.error
+    );
+    press_spot(&mut s, &g, t, id, Mark::Name);
+    assert_eq!(
+        menu(&s),
+        [
+            "サンプルを置き換え…",
+            "ブラウザーで表示",
+            "このゾーンを外す",
+            "すべてのサンプルを外す"
+        ]
+    );
+    assert!(!live_row(&s, "ブラウザーで表示"), "no tab holds it");
+    // Another file in the zone's place: one step, the zone's start as it was.
+    let w = s.instruments.open[0];
+    let key = format!("file{}.start", w.pick + 1);
+    let set = json!({ "id": id.to_string(), "param": key, "value": 0.25 });
+    assert!(s.run_command("plugin.param.set", set), "{:?}", s.error);
+    let start = |s: &Studio| plugin(s, t).params.get(&key).copied();
+    let before = (s.song().steps(), start(&s));
+    assert_eq!(before.1, Some(0.25));
+    choose(&mut s, &g, "サンプルを置き換え…");
+    let request = s.file_request.take().expect("the OS's window");
+    assert_eq!(request, crate::studio::FileRequest::Sample(id, w.pick));
+    s.finish_file_request(request, &files[2]);
+    let x = plugin(&s, t);
+    assert_eq!(x.samples.len(), 2);
+    assert!(x.samples[w.pick].ends_with("Clap.wav"), "{:?}", x.samples);
+    assert_eq!((s.song().steps(), start(&s)), (before.0 + 1, before.1));
+    // A tab that holds it: the browser's Files show it chosen.
+    s.browser.add_place_fixture(dir.path()).unwrap();
+    s.browser.set_location(0);
+    press_spot(&mut s, &g, t, id, Mark::Name);
+    assert!(live_row(&s, "ブラウザーで表示"));
+    choose(&mut s, &g, "ブラウザーで表示");
+    assert!(s.browser.open && s.browser.tab == RailTab::Files);
+    assert_eq!(
+        s.browser.selected_file.as_deref(),
+        Some(files[2].to_string_lossy().as_ref())
+    );
+    // A zone's right press chooses it; its one row takes it away.
+    let other = 1 - w.pick;
+    right_spot(&mut s, &g, t, id, Mark::Zone(other));
+    assert_eq!(s.instruments.open[0].pick, other);
+    assert_eq!(menu(&s), ["このゾーンを外す"]);
+    choose(&mut s, &g, "このゾーンを外す");
+    assert_eq!(plugin(&s, t).samples.len(), 1);
+    // All of them.
+    press_spot(&mut s, &g, t, id, Mark::Name);
+    choose(&mut s, &g, "すべてのサンプルを外す");
+    assert!(plugin(&s, t).samples.is_empty());
+}
+
+/// UI-334: a pad's right press chooses it; its menu puts another file in place of its
+/// sample (not on an empty pad), adds files as its layers (on a pad that has some too),
+/// empties it or its bank. A layer's takes it away while the pad has another.
+#[test]
+fn ui_334_a_pad_and_a_layer_have_their_menus() {
+    let (_dir, files) = wavs(&["Kick.wav", "Snare_a.wav", "Snare_b.wav", "Hat.wav"]);
+    let (mut s, g, t, id) = window("Drum Kit");
+    // A2, empty: chosen, nothing to put a file in place of.
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(37)).expect("A2");
+    assert!(s.instrument_right(&g, x, y));
+    assert_eq!(s.instruments.open[0].pick, 1);
+    assert_eq!(
+        menu(&s),
+        [
+            "サンプルを置き換え…",
+            "サンプルを足す…",
+            "パッドを空にする",
+            "バンクを空にする"
+        ]
+    );
+    assert!(!live_row(&s, "サンプルを置き換え…"));
+    assert!(!live_row(&s, "パッドを空にする"));
+    // Two files added: the layers of A2, in one step.
+    choose(&mut s, &g, "サンプルを足す…");
+    let request = s.file_request.take().expect("the OS's window");
+    assert_eq!(request, crate::studio::FileRequest::PadSamples(id, 1));
+    let steps = s.song().steps();
+    s.finish_picked(request, &files[1..3]);
+    let k = plugin(&s, t);
+    let def = k.builtin().unwrap();
+    assert_eq!(sampler::pad_files(def, &k, 1), [0, 1]);
+    assert_eq!(s.song().steps(), steps + 1);
+    // A2 has files: one more goes on it too.
+    assert!(s.instrument_right(&g, x, y));
+    assert!(live_row(&s, "サンプルを置き換え…"));
+    choose(&mut s, &g, "サンプルを足す…");
+    let request = s.file_request.take().unwrap();
+    s.finish_picked(request, &files[3..]);
+    let k = plugin(&s, t);
+    assert_eq!(sampler::pad_files(def, &k, 1), [0, 1, 2]);
+    // Its sample put in another's place: the first layer, the pad's files as many.
+    assert!(s.instrument_right(&g, x, y));
+    choose(&mut s, &g, "サンプルを置き換え…");
+    let request = s.file_request.take().unwrap();
+    assert_eq!(request, crate::studio::FileRequest::Sample(id, 0));
+    s.finish_file_request(request, &files[0]);
+    let k = plugin(&s, t);
+    assert!(k.samples[0].ends_with("Kick.wav"), "{:?}", k.samples);
+    assert_eq!(sampler::pad_files(def, &k, 1), [0, 1, 2]);
+    // A layer's right press does not choose it; it takes it away.
+    right_spot(&mut s, &g, t, id, Mark::Layer(2));
+    assert_eq!(s.instruments.open[0].layer, 0);
+    assert_eq!(menu(&s), ["このレイヤーを外す"]);
+    assert!(live_row(&s, "このレイヤーを外す"));
+    choose(&mut s, &g, "このレイヤーを外す");
+    let k = plugin(&s, t);
+    assert_eq!(sampler::pad_files(def, &k, 1), [0, 1]);
+    // The name's menu, a Drum Kit's: its layer, not the zone or all.
+    press_spot(&mut s, &g, t, id, Mark::Name);
+    assert_eq!(
+        menu(&s),
+        [
+            "サンプルを置き換え…",
+            "ブラウザーで表示",
+            "このレイヤーを外す"
+        ]
+    );
+    // B1 has a file too; A's bank emptied leaves it.
+    let b1 = json!({
+        "id": id.to_string(),
+        "paths": [{ "path": files[3].to_string_lossy() }],
+        "pad": "B1",
+    });
+    assert!(s.run_command("plugin.samples.load", b1), "{:?}", s.error);
+    assert!(s.instrument_right(&g, x, y));
+    choose(&mut s, &g, "バンクを空にする");
+    let k = plugin(&s, t);
+    assert_eq!(k.samples.len(), 1);
+    assert_eq!(def.file_pad(&k.params, 0), 16);
+    // The one layer left on a pad cannot be taken away alone.
+    s.instruments.pick(id, 16, 0);
+    right_spot(&mut s, &g, t, id, Mark::Layer(0));
+    assert!(!live_row(&s, "このレイヤーを外す"));
+}
+
+/// UI-333: the filter's point's menu: its type, and open (no filter), which stands for
+/// 「既定に戻す」.
+#[test]
+fn ui_333_the_filter_point_chooses_its_type_and_opens() {
+    let (mut s, g, t, id) = window("Sampler");
+    add(&mut s, id, &["Kick.wav"]);
+    let (x, y) = s
+        .instrument_center(&g, id, Part::Point(2, 0))
+        .expect("the filter");
+    assert!(s.instrument_right(&g, x, y));
+    let rows = menu(&s);
+    assert_eq!(
+        &rows[..4],
+        ["LP", "BP", "HP", "フィルターを開く（かけない）"]
+    );
+    assert!(!rows.iter().any(|r| r == "既定に戻す"), "{rows:?}");
+    choose(&mut s, &g, "HP");
+    assert_eq!(plain(&s, t, "ftype"), 2.0);
+    assert!(s.instrument_right(&g, x, y));
+    choose(&mut s, &g, "フィルターを開く（かけない）");
+    assert_eq!(plain(&s, t, "ftype"), 0.0);
+    assert_eq!(plain(&s, t, "cutoff"), 20_000.0);
+}

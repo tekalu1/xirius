@@ -67,6 +67,18 @@ pub fn act_command(act: &Act) -> (&'static str, Value) {
             "plugin.preset.file",
             json!({"id": id.to_string(), "save": save}),
         ),
+        Act::SampleReplace(id, file) => (
+            "plugin.samples.pick",
+            json!({"id": id.to_string(), "index": file + 1}),
+        ),
+        Act::SampleAdd(id, pad) => (
+            "plugin.samples.pick",
+            json!({"id": id.to_string(), "pad": xirius_params::PAD_NAMES[pad % xirius_params::PADS]}),
+        ),
+        Act::SampleShow(id, file) => (
+            "plugin.samples.reveal",
+            json!({"id": id.to_string(), "index": file + 1}),
+        ),
         Act::RestartPlugin(id) => ("plugin.restart", json!({"id": id.to_string()})),
         Act::RestartPlugins => ("plugin.restart", json!({})),
         Act::AraAttach(ids) => ("clip.ara.attach", json!({ "ids": ids })),

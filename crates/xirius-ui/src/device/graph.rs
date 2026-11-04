@@ -183,8 +183,8 @@ impl Point {
     /// The parameters its menu puts back to their defaults: those it moves
     /// and the rest.
     pub fn resets(&self) -> Vec<usize> {
-        let mut all: Vec<usize> = self.params().collect();
-        for &k in &self.rest {
+        let mut all = Vec::new();
+        for k in self.params().chain(self.rest.iter().copied()) {
             if !all.contains(&k) {
                 all.push(k);
             }

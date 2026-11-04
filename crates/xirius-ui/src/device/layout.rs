@@ -118,7 +118,7 @@ pub enum Mark {
 impl Mark {
     /// Does a press on it do something?
     pub fn takes(self) -> bool {
-        !matches!(self, Mark::Name | Mark::Drop | Mark::Title | Mark::Pad(_))
+        !matches!(self, Mark::Drop | Mark::Title | Mark::Pad(_))
     }
 }
 

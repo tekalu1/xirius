@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
-use xirius_core::commands::samples::{free_pads, kit_groups, used_pads};
+use xirius_core::commands::samples::{kit_groups, kit_pads, used_pads};
 use xirius_core::id::PluginId;
 use xirius_core::model::Plugin;
 use xirius_core::{Args, CmdError, CmdResult, ExtContext, Output};
@@ -55,12 +55,17 @@ pub fn audio_files(dir: &Path) -> CmdResult<Vec<PathBuf>> {
     Ok(files)
 }
 
-/// What a drop of `path` on the Drum Kit `x` fills: the pads, from `from` (or A1). `None`
-/// when there are not enough free pads.
-pub fn kit_estimate(x: &Plugin, names: &[String], from: usize, layers: bool) -> Option<Vec<usize>> {
+/// What a drop of `path` on the Drum Kit `x` fills: the pads, from `from` (or A1); with
+/// `layers` and a pad, that one. `None` when there are not enough free pads.
+pub fn kit_estimate(
+    x: &Plugin,
+    names: &[String],
+    from: Option<usize>,
+    layers: bool,
+) -> Option<Vec<usize>> {
     let def = x.builtin()?;
     let groups = kit_groups(names, layers);
-    free_pads(&used_pads(def, x), from, groups.len())
+    kit_pads(&used_pads(def, x), from, groups.len(), layers)
 }
 
 fn load(cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Plan> {
@@ -115,6 +120,9 @@ fn load(cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Plan> {
         )));
     }
     let names: Vec<String> = files.iter().map(|f| song_path(f, cx.dir)).collect();
+    if let Some(index) = args.opt_i64("index").map(|i| i as usize) {
+        return replace_one(x, index, &names[0], dry);
+    }
     let mut add = Map::new();
     add.insert("id".into(), json!(x.id.to_string()));
     add.insert(
@@ -137,10 +145,7 @@ fn load(cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Plan> {
         data["skipped"] = json!(skipped);
     }
     if kit {
-        let from = args
-            .opt_str("pad")
-            .and_then(xirius_params::pad_of)
-            .unwrap_or(0);
+        let from = args.opt_str("pad").and_then(xirius_params::pad_of);
         let mut x = x.clone();
         if args.flag("replace") {
             x.samples.clear();
@@ -171,6 +176,36 @@ fn load(cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Plan> {
             Vec::new()
         } else {
             vec![("plugin.samples.add".into(), add)]
+        },
+    })
+}
+
+/// `plugin.samples.load` with `index`: that sample becomes the file `name`, its values as
+/// they were (the window's 「サンプルを置き換え…」).
+fn replace_one(x: &Plugin, index: usize, name: &str, dry: bool) -> CmdResult<Plan> {
+    if index == 0 || index > x.samples.len() {
+        return Err(CmdError::not_found(format!(
+            "{} にサンプル {index} はありません（{} 個）",
+            x.name,
+            x.samples.len()
+        )));
+    }
+    let mut set = Map::new();
+    set.insert("id".into(), json!(x.id.to_string()));
+    set.insert("index".into(), json!(index));
+    set.insert("file".into(), json!(name));
+    let shown = Path::new(name)
+        .file_name()
+        .map_or_else(|| name.to_string(), |n| n.to_string_lossy().into_owned());
+    Ok(Plan {
+        output: Output::with(
+            format!("{} のサンプル {index} を {shown} にしました", x.name),
+            json!({ "plugin": x.id.to_string(), "index": index, "file": name }),
+        ),
+        edits: if dry || x.samples[index - 1] == name {
+            Vec::new()
+        } else {
+            vec![("plugin.samples.set".into(), set)]
         },
     })
 }

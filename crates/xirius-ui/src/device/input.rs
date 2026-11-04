@@ -604,11 +604,16 @@ impl Studio {
                 )
             })
             .collect();
-        if !items.is_empty() {
-            items.push(Item::gap());
+        // A row that already puts all of it back (a filter opened) stands for the defaults.
+        let same =
+            |set: &[(usize, f64)]| set.len() == back.len() && back.iter().all(|b| set.contains(b));
+        if !pt.menu.iter().flatten().any(|c| same(&c.set)) {
+            if !items.is_empty() {
+                items.push(Item::gap());
+            }
+            let reset = self.ctx_as("既定に戻す", "plugin.param.set", set_args(&back));
+            items.push(crate::auto_lock::gate(reset, held));
         }
-        let reset = self.ctx_as("既定に戻す", "plugin.param.set", set_args(&back));
-        items.push(crate::auto_lock::gate(reset, held));
         self.open_context(items, x, y);
     }
 
@@ -951,6 +956,15 @@ impl Studio {
             Part::Knob(k) => k,
             Part::Point(n, at) => {
                 self.point_menu(g, i, (n, at), x, y);
+                return true;
+            }
+            Part::Spot(n) => {
+                let r = self.instruments.rect(i, g.size);
+                self.spot_menu(i, r, n, x, y);
+                return true;
+            }
+            Part::Pad(pitch) => {
+                self.pad_menu(i, crate::device::play::pad_of(pitch), x, y);
                 return true;
             }
             _ => return true,

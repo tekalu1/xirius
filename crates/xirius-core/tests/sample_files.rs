@@ -240,14 +240,24 @@ fn a_kits_files_fill_free_pads_by_name_and_keep_their_pads() {
     );
     assert!(plugin(&s).params.contains_key("A2.choke"));
 
-    // The next ones go on the free pads from the one asked for; --layers makes one pad.
+    // The next ones go on the free pads from the one asked for.
     let r = run(
         &mut s,
         "plugin.samples.add",
-        json!({ "id": "plg_2", "pad": "A2", "layers": true,
+        json!({ "id": "plg_2", "pad": "A2",
                 "files": [{ "file": "tom1.wav" }, { "file": "tom2.wav" }] }),
     );
-    assert_eq!(r["pads"], json!(["A4"]));
+    assert_eq!(r["pads"], json!(["A4", "A5"]));
+    // --layers with a pad: on it, though it has files; how it picks among them stays.
+    let r = run(
+        &mut s,
+        "plugin.samples.add",
+        json!({ "id": "plg_2", "pad": "A3", "layers": true,
+                "files": [{ "file": "hat_rr3.wav" }] }),
+    );
+    assert_eq!(r["pads"], json!(["A3"]));
+    let x = plugin(&s);
+    assert_eq!(x.params.get("A3.layer_mode"), Some(&(1.0 / 3.0)));
     // Taking a pad's files away leaves the others on their pads.
     run(
         &mut s,
@@ -255,10 +265,34 @@ fn a_kits_files_fill_free_pads_by_name_and_keep_their_pads() {
         json!({ "id": "plg_2", "pad": "A1" }),
     );
     let x = plugin(&s);
-    let pads: Vec<usize> = (0..x.samples.len())
+    let mut pads: Vec<usize> = (0..x.samples.len())
         .map(|i| def.file_pad(&x.params, i))
         .collect();
-    assert_eq!(pads, [1, 2, 2, 3, 3]);
+    pads.sort_unstable();
+    assert_eq!(pads, [1, 2, 2, 2, 3, 4]);
+    // A bank's 16 pads at once; the others stay.
+    run(
+        &mut s,
+        "plugin.samples.add",
+        json!({ "id": "plg_2", "pad": "B1", "files": [{ "file": "crash.wav" }] }),
+    );
+    run(
+        &mut s,
+        "plugin.samples.remove",
+        json!({ "id": "plg_2", "bank": "a" }),
+    );
+    let x = plugin(&s);
+    assert_eq!(x.samples, ["crash.wav"]);
+    assert_eq!(def.file_pad(&x.params, 0), 16);
+    for bad in [
+        json!({ "id": "plg_2", "bank": "Z" }),
+        json!({ "id": "plg_2", "bank": "B", "pad": "B1" }),
+    ] {
+        assert!(
+            s.run_value("plugin.samples.remove", bad, &RunOptions::human())
+                .is_err()
+        );
+    }
     assert!(
         s.run_value(
             "plugin.samples.add",
