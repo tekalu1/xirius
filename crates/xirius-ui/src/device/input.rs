@@ -854,9 +854,20 @@ impl Studio {
                 if self.param_locked(track, plugin, spec.id) {
                     return false;
                 }
-                self.device_sweep_end();
-                let v = control::snap(spec, (at / 100.0).clamp(0.0, 1.0));
-                return self.device_set(plugin, k, v);
+                // A sweep of this control waiting to go in is overtaken: one step, to the
+                // value set (L2-ui-3); another control's goes in as its own.
+                match self.instruments.sweep {
+                    Some(s) if (s.plugin, s.k) == (plugin, k) => self.instruments.sweep = None,
+                    _ => {
+                        self.device_sweep_end();
+                    }
+                }
+                let v = control::snap(spec, spec.to_norm(at));
+                if !self.device_set(plugin, k, v) {
+                    // Back where the song has it: what was heard of the sweep goes.
+                    self.device_hear();
+                }
+                return true;
             }
         };
         self.device_turn(plugin, k, |spec, v| {

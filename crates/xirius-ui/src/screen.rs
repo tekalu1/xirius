@@ -1793,6 +1793,9 @@ fn mark(m: crate::a11y::Mark, studio: Rc<RefCell<Studio>>) -> gpui::Stateful<gpu
     if let Some(v) = n.max_numeric_value() {
         el = el.aria_max_numeric_value(v);
     }
+    if let Some(v) = n.numeric_value_step() {
+        el = el.aria_numeric_value_step(v);
+    }
     // A device's Slider steps and takes a value from a screen reader (M-ui-2).
     if let Some((plugin, k)) = m.turn {
         use crate::a11y::Turn;

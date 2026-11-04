@@ -313,31 +313,67 @@ fn ui_326_the_dot_switches_a_band_and_the_type_menu_sets_its_type() {
     assert_eq!(s.song().steps(), before + 2);
 }
 
-/// M-ui-2: every band's point is a Slider reading all it moves, its gain and Q its children;
-/// a screen reader's increment steps it as the arrow keys do, a value set puts it in at once,
-/// and the knobs take the same.
+/// M-ui-2, L2-ui-3: a band's point with no knob on show is a Slider reading all it moves,
+/// named by its value; no value is two Sliders, and each Slider has its own place. A Slider
+/// reads in its own units with its step; a screen reader's increment steps it as the arrow
+/// keys do, a value set puts it in at once, and the knobs take the same.
 #[test]
 fn ui_325_the_points_are_sliders_a_screen_reader_turns() {
     use crate::a11y::Turn;
     let (mut s, g, t, id) = eq_window();
+    let once = |marks: &[crate::a11y::Mark]| {
+        let mut turns: Vec<_> = marks.iter().filter_map(|m| m.turn).collect();
+        let n = turns.len();
+        turns.sort_unstable_by_key(|t| t.1);
+        turns.dedup();
+        assert_eq!(turns.len(), n, "a value is one Slider");
+        let mine = format!("device-{id}-");
+        assert!(
+            (marks.iter())
+                .filter(|m| m.key.starts_with(&mine))
+                .all(|m| m.children.is_empty())
+        );
+    };
+    once(&crate::a11y::marks(&s, &g));
+    // Narrow, the bands not chosen have only their points.
+    resize(&mut s, t, 520.0);
     let marks = crate::a11y::marks(&s, &g);
+    once(&marks);
     let points: Vec<_> = marks
         .iter()
-        .filter(|m| m.key.starts_with(&format!("device-{id}-point-0-")))
+        .filter(|m| m.key.starts_with(&format!("device-{id}-point-")))
         .collect();
-    assert_eq!(points.len(), eq::NAMES.len(), "a mark for every band");
-    let lmf = points[2];
-    assert_eq!(lmf.node.role(), accesskit::Role::Slider);
-    assert!(lmf.node.label().unwrap().starts_with("LMF"));
-    assert!(lmf.node.value().unwrap().contains("Hz"));
-    assert_eq!(lmf.turn, Some((id, k_of(&s, t, "mid1_freq"))));
-    let kids: Vec<_> = lmf.children.iter().filter_map(|m| m.turn).collect();
-    assert!(kids.contains(&(id, k_of(&s, t, "mid1_gain"))));
-    assert!(
-        lmf.children
-            .iter()
-            .all(|m| m.node.role() == accesskit::Role::Slider)
+    assert_eq!(
+        points.len(),
+        eq::NAMES.len() - 1,
+        "a mark for every other band"
     );
+    let lmf = points
+        .iter()
+        .find(|m| m.key == format!("device-{id}-point-mid2_freq"))
+        .expect("named by its value");
+    assert_eq!(lmf.node.role(), accesskit::Role::Slider);
+    assert!(lmf.node.value().unwrap().contains("Hz"));
+    assert_eq!(lmf.turn, Some((id, k_of(&s, t, "mid2_freq"))));
+    let mut places: Vec<_> = points
+        .iter()
+        .map(|m| {
+            let b = m.node.bounds().unwrap();
+            ((b.x0 * 10.0) as i64, (b.y0 * 10.0) as i64)
+        })
+        .collect();
+    places.sort_unstable();
+    places.dedup();
+    assert_eq!(places.len(), points.len(), "each its own place");
+    // In Hz, from the least to the most, with a step.
+    let def = fx(&s, t).builtin().unwrap();
+    let (_, spec) = def.param("mid2_freq").unwrap();
+    assert_eq!(lmf.node.min_numeric_value(), Some(spec.range().0));
+    assert_eq!(lmf.node.max_numeric_value(), Some(spec.range().1));
+    let hz = lmf.node.numeric_value().unwrap();
+    assert!((hz - plain(&s, t, "mid2_freq")).abs() < 1e-6, "{hz}");
+    assert!(lmf.node.numeric_value_step().unwrap() > 0.0);
+    resize(&mut s, t, eq::NATURAL_W);
 
     // An increment steps as the arrow does, and goes in once still.
     let (k, f0) = (k_of(&s, t, "mid1_freq"), plain(&s, t, "mid1_freq"));
@@ -349,18 +385,30 @@ fn ui_325_the_points_are_sliders_a_screen_reader_turns() {
     assert!(crate::a11y::turn(&mut s, id, k, Turn::Down));
     assert!(s.device_sweep_end());
     assert!((plain(&s, t, "mid1_freq") - f0).abs() < 1e-6 * f0.max(1.0) + 0.5);
-    // A value set: at once, in one step.
+    // A value set, in dB: at once, in one step.
     let gain = k_of(&s, t, "mid1_gain");
-    assert!(crate::a11y::turn(&mut s, id, gain, Turn::To(100.0)));
+    assert!(crate::a11y::turn(&mut s, id, gain, Turn::To(6.0)));
     assert_eq!(s.song().steps(), before + 3);
-    assert_eq!(values(&fx(&s, t))[gain], 1.0);
+    assert!((plain(&s, t, "mid1_gain") - 6.0).abs() < 0.01);
     let marks = crate::a11y::marks(&s, &g);
     let knob = marks
         .iter()
         .find(|m| m.key == format!("device-{id}-mid1_gain"))
         .unwrap();
     assert_eq!(knob.turn, Some((id, gain)));
-    assert_eq!(knob.node.numeric_value(), Some(100.0));
+    assert!((knob.node.numeric_value().unwrap() - 6.0).abs() < 0.01);
+    // A value set while a sweep of it waits: one step, to the value set.
+    let before = s.song().steps();
+    assert!(crate::a11y::turn(&mut s, id, gain, Turn::Up));
+    assert!(crate::a11y::turn(&mut s, id, gain, Turn::To(-3.0)));
+    assert!(s.instruments.sweep.is_none());
+    assert_eq!(s.song().steps(), before + 1);
+    assert!((plain(&s, t, "mid1_gain") + 3.0).abs() < 0.01);
+    // And back to where the song has it: no step, and the sweep is not heard.
+    assert!(crate::a11y::turn(&mut s, id, gain, Turn::Up));
+    assert!(crate::a11y::turn(&mut s, id, gain, Turn::To(-3.0)));
+    assert_eq!(s.song().steps(), before + 1);
+    assert_eq!(heard(&s, t, "mid1_gain"), plain(&s, t, "mid1_gain"));
     let on = marks
         .iter()
         .find(|m| m.key == format!("device-{id}-b3_on"))

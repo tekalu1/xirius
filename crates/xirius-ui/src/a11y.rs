@@ -1126,47 +1126,26 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             node.set_bounds(bounds(spot.r));
             out.push(mark(format!("device-{}-spot-{n}", w.plugin), node));
         }
-        // A graph's point is a Slider of the first value it moves, reading all of them; the
-        // others are its children (UI-325, M-ui-2).
+        // A graph's point is a Slider of the first value it moves that no knob on show
+        // has, reading all of them: one Slider a value, each with its own place, named by the
+        // value, not by where it comes in the list (UI-325, L2-ui-3).
+        let knobs: Vec<usize> = body.slots.iter().map(|s| s.k).collect();
         for n in 0..body.graphs.len() {
-            for (i, pt) in s.instruments.points_of(r, x, def, n).iter().enumerate() {
-                let ks: Vec<usize> = pt.params().collect();
-                let Some(&first) = ks.first() else {
+            for pt in s.instruments.points_of(r, x, def, n) {
+                let Some(first) = pt.params().find(|k| !knobs.contains(k)) else {
                     continue;
                 };
-                let at = Rect::new(pt.at.0 - 8.0, pt.at.1 - 8.0, 16.0, 16.0);
-                let slider = |k: usize, label: String, value: String| {
-                    let v = s.instruments.turning(w.plugin, k).unwrap_or(now[k]);
-                    let mut node = accesskit::Node::new(accesskit::Role::Slider);
-                    node.set_label(label);
-                    node.set_value(value);
-                    node.set_min_numeric_value(0.0);
-                    node.set_max_numeric_value(100.0);
-                    node.set_numeric_value((v * 100.0).round());
-                    node.set_bounds(bounds(at));
-                    node
-                };
-                let children = ks[1..]
-                    .iter()
-                    .map(|&k| {
-                        let spec = &def.params[k];
-                        let v = s.instruments.turning(w.plugin, k).unwrap_or(now[k]);
-                        let label = format!("{} {}", pt.label, control::name(def, spec));
-                        Mark {
-                            key: format!("device-{}-point-{n}-{i}-{}", w.plugin, spec.id),
-                            children: Vec::new(),
-                            node: slider(k, label, control::text(spec, v)),
-                            fold: None,
-                            pick: None,
-                            press: None,
-                            turn: Some((w.plugin, k)),
-                        }
-                    })
-                    .collect();
+                let spec = &def.params[first];
+                let v = s.instruments.turning(w.plugin, first).unwrap_or(now[first]);
+                let mut node = accesskit::Node::new(accesskit::Role::Slider);
+                node.set_label(pt.name.clone());
+                node.set_value(pt.value.clone());
+                numeric(&mut node, spec, v);
+                node.set_bounds(bounds(Rect::new(pt.at.0 - 8.0, pt.at.1 - 8.0, 16.0, 16.0)));
                 out.push(Mark {
-                    key: format!("device-{}-point-{n}-{i}", w.plugin),
-                    children,
-                    node: slider(first, pt.name.clone(), pt.value.clone()),
+                    key: format!("device-{}-point-{}", w.plugin, spec.id),
+                    children: Vec::new(),
+                    node,
                     fold: None,
                     pick: None,
                     press: None,
@@ -1192,9 +1171,7 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 }
                 Look::Knob | Look::Segments | Look::Field => {
                     let mut n = accesskit::Node::new(accesskit::Role::Slider);
-                    n.set_min_numeric_value(0.0);
-                    n.set_max_numeric_value(100.0);
-                    n.set_numeric_value((v * 100.0).round());
+                    numeric(&mut n, spec, v);
                     n
                 }
                 Look::Menu => accesskit::Node::new(accesskit::Role::ComboBox),
@@ -1229,6 +1206,23 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     out
 }
 
+/// A device's Slider reads in its own units (Hz, dB), from its least to its most, and steps
+/// as an arrow key does from where it is (L2-ui-3).
+fn numeric(node: &mut accesskit::Node, spec: &xirius_params::ParamSpec, v: f64) {
+    use crate::device::control;
+    let (lo, hi) = spec.range();
+    let at = spec.to_plain(v);
+    let up = spec.to_plain(control::step(spec, v, 1.0, control::Step::Small));
+    let down = spec.to_plain(control::step(spec, v, -1.0, control::Step::Small));
+    let step = (up - at).max(at - down);
+    node.set_min_numeric_value(lo);
+    node.set_max_numeric_value(hi);
+    node.set_numeric_value(at);
+    if step > 0.0 {
+        node.set_numeric_value_step(step);
+    }
+}
+
 /// A screen reader turns a device's control `k`: a step up or down as the arrow keys make
 /// it, or to a value as if typed in (M-ui-2).
 pub fn turn(s: &mut Studio, plugin: PluginId, k: usize, way: Turn) -> bool {
@@ -1240,7 +1234,7 @@ pub fn turn(s: &mut Studio, plugin: PluginId, k: usize, way: Turn) -> bool {
 pub enum Turn {
     Up,
     Down,
-    /// To this many hundredths of its travel.
+    /// To this value in its own units (Hz, dB), as the Slider reads.
     To(f64),
 }
 
