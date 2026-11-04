@@ -540,11 +540,11 @@ mod tests {
             ("sound".into(), 0.5),
             ("TUNE".into(), 0.75),
             ("attack".into(), 0.25),
-            ("file0.start".into(), 0.1),
+            ("file1.start".into(), 0.1),
         ]);
         let p = DevicePreset::capture(&x, "Keys", None);
         let keys: Vec<_> = p.device.params.keys().cloned().collect();
-        assert_eq!(keys, ["attack", "file0.start"]);
+        assert_eq!(keys, ["attack", "file1.start"]);
     }
 
     #[test]
