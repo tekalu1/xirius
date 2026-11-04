@@ -208,6 +208,17 @@ pub fn point_at(points: &[Point], x: f32, y: f32) -> Option<usize> {
 /// The points of a device's `n`th graph, whose plane is `r` on the screen,
 /// for its values (0..1). Each device with a graph says what they are.
 pub fn points(def: &BuiltinDef, n: usize, r: Rect, values: &[f64]) -> Vec<Point> {
+    points_turned(def, n, r, values, None)
+}
+
+/// [`points`] as drawn while a Sampler's or a Drum Kit's cut turns over (`turn`, [`View::turn`]).
+pub fn points_turned(
+    def: &BuiltinDef,
+    n: usize,
+    r: Rect,
+    values: &[f64],
+    turn: Option<f64>,
+) -> Vec<Point> {
     match (def.uid, n) {
         ("eq", 0) => super::eq::points(def, r, values),
         ("compressor", 0) => super::compressor::points(def, r, values),
@@ -216,7 +227,7 @@ pub fn points(def: &BuiltinDef, n: usize, r: Rect, values: &[f64]) -> Vec<Point>
         ("delay", 1) => super::delay::band_points(def, r, values),
         ("reverb", 0) => super::reverb::points(def, r, values),
         ("reverb", 1) => super::reverb::band_points(def, r, values),
-        ("sampler" | "drum-kit", 0) => super::sampler::wave_points(def, r, values),
+        ("sampler" | "drum-kit", 0) => super::sampler::wave_points_turned(def, r, values, turn),
         ("sampler" | "drum-kit", 1) => super::sampler::env_points(def, r, values),
         ("sampler" | "drum-kit", 2) => super::sampler::filter_points(def, r, values),
         _ => Vec::new(),

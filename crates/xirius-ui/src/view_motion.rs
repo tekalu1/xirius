@@ -61,6 +61,10 @@ impl ViewMotion {
         }
         step.sample(now)
     }
+    /// Forgets the values whose key is `gone`: one asked for again starts where it is.
+    pub fn forget(&self, gone: impl Fn(&str) -> bool) {
+        self.values.borrow_mut().retain(|k, _| !gone(k));
+    }
     pub fn moving(&self) -> bool {
         let now = Instant::now();
         self.enabled.get()

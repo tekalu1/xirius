@@ -400,6 +400,10 @@ pub struct Windows {
     /// A pad pressed on a Drum Kit's window, and when: the window chooses the layer that
     /// sounded once its probe hears the voice (the mock's `hitPad`).
     pub(crate) followed: Option<(PluginId, u8, std::time::Instant)>,
+    /// How far each window's cut was turned over when it was last drawn ([`turn_of`]): its
+    /// loop's ends are taken where they were drawn while Reverse turns it (the sixth
+    /// review's low 2).
+    pub(crate) turns: std::cell::RefCell<HashMap<PluginId, f64>>,
 }
 
 /// How long a pad pressed waits for its voice to be heard.
@@ -631,7 +635,20 @@ impl Windows {
         self.body(r, plugin, def)
             .graphs
             .get(n)
-            .map_or_else(Vec::new, |&g| graph::points(def, n, g, &now))
+            .map_or_else(Vec::new, |&g| self.points_in(def, n, g, &now, plugin.id))
+    }
+
+    /// The points of the `n`th graph `plane` of `id`'s window, where they were last drawn.
+    fn points_in(
+        &self,
+        def: &BuiltinDef,
+        n: usize,
+        plane: Rect,
+        values: &[f64],
+        id: PluginId,
+    ) -> Vec<Point> {
+        let turn = self.turns.borrow().get(&id).copied();
+        graph::points_turned(def, n, plane, values, turn)
     }
 
     /// The analyser's button of an EQ's window whose body is `b`.
@@ -792,7 +809,7 @@ impl Windows {
             }
             let planes = &b.graphs;
             let point = planes.iter().enumerate().find_map(|(n, &plane)| {
-                graph::point_at(&graph::points(def, n, plane, &now), x, y)
+                graph::point_at(&self.points_in(def, n, plane, &now, plugin.id), x, y)
                     .map(|at| Part::Point(n, at))
             });
             let part = point
@@ -1436,6 +1453,7 @@ impl Studio {
                     self.window_note_off();
                 }
                 self.instruments.open.remove(i);
+                forget_turns(self);
             }
             Part::Key(pitch) => {
                 // A Sampler's key chooses the zone that plays it (UI-333).
@@ -2012,7 +2030,7 @@ pub(crate) fn turn_of(
 ) -> Option<f32> {
     matches!(def.uid, "sampler" | "drum-kit").then(|| {
         studio.motion.value(
-            &format!("turn-{}-{}-{}", w.plugin, w.pick, w.layer),
+            &turn_key(w),
             if sampler::reversed(def, shown) {
                 1.0
             } else {
@@ -2023,6 +2041,23 @@ pub(crate) fn turn_of(
             now,
         )
     })
+}
+
+/// Forgets how far the cuts of windows no longer open were turned over (the sixth review's
+/// low 2): one opened again, or a device of another song with the same id, starts where its
+/// values are, not turning over what changed while it was shut.
+pub(crate) fn forget_turns(studio: &Studio) {
+    let open = &studio.instruments.open;
+    let keys: Vec<String> = open.iter().map(turn_key).collect();
+    studio
+        .motion
+        .forget(|k| k.starts_with("turn-") && !keys.iter().any(|o| o == k));
+    let mut turns = studio.instruments.turns.borrow_mut();
+    turns.retain(|id, _| open.iter().any(|w| w.plugin == *id));
+}
+
+fn turn_key(w: &Win) -> String {
+    format!("turn-{}-{}-{}", w.plugin, w.pick, w.layer)
 }
 
 /// The face in the mixer's drawer (MIX-046), under the windows.
@@ -2043,6 +2078,7 @@ pub fn paint_docked(pen: &mut Pen, studio: &Studio, g: &Geometry) {
 
 /// The open windows, the last on top.
 pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
+    forget_turns(studio);
     let p = studio.project();
     for (i, w) in studio.instruments.open.iter().enumerate() {
         if w.docked {
@@ -2150,6 +2186,10 @@ fn paint_window(
         }
         let analyser = ins.analysers.get(&plugin.id);
         let rate = f64::from(studio.project().settings.sample_rate);
+        let turn = turn_of(studio, def, &w, &shown, std::time::Instant::now());
+        if let Some(t) = turn {
+            ins.turns.borrow_mut().insert(plugin.id, f64::from(t));
+        }
         for (n, &plane) in body.graphs.iter().enumerate() {
             let chosen = ins.chosen.get(&plugin.id).filter(|c| c.0 == n).map(|c| c.1);
             let focused = ins.focus.is_some_and(|(id, k)| {
@@ -2180,7 +2220,7 @@ fn paint_window(
                     .and_then(|e| e.since(std::time::Instant::now())),
                 wave: peaks.as_deref(),
                 live: sounding,
-                turn: turn_of(studio, def, &w, &shown, std::time::Instant::now()),
+                turn,
             };
             graph::paint(pen, def, n, plane, &shown, &view);
         }

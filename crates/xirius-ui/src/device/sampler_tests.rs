@@ -1170,6 +1170,68 @@ fn n6_smp_1_a_loops_end_past_the_cut_stays_on_the_wave_as_it_turns() {
     assert_eq!(seen.last(), Some(&1.0));
 }
 
+/// The sixth review's low 2 (UI-333): a window shut while Reverse changed opens where its
+/// values are, not turning over; and while the cut turns, its loop's ends are taken where
+/// they were drawn.
+#[test]
+fn ui_333_a_window_opened_again_does_not_turn_over_what_changed_while_it_was_shut() {
+    use std::time::{Duration, Instant};
+    let (mut s, g, t, id) = reversed_loop();
+    s.motion.enabled.set(true);
+    let turn = |s: &Studio, at: Instant| {
+        let x = plugin(s, t);
+        let def = s.instruments.def_of(&x).unwrap();
+        let w = s.instruments.open[0];
+        let shown = s.instruments.shown(&x);
+        crate::instrument::window::turn_of(s, def, &w, &shown, at).unwrap()
+    };
+    let reversed = |s: &Studio| {
+        let x = plugin(s, t);
+        sampler::reversed(s.instruments.def_of(&x).unwrap(), &s.instruments.shown(&x))
+    };
+    let t0 = Instant::now();
+    assert_eq!(turn(&s, t0), 1.0);
+    // Shut by its close button, Reverse goes out (as undo puts it), and it opens again.
+    let (x, y) = s.instrument_center(&g, id, Part::Close).unwrap();
+    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
+    s.instrument_up();
+    assert!(!s.instruments.is_open(id));
+    assert!(s.undo(&g));
+    s.show_instrument(t, id);
+    assert!(!reversed(&s));
+    assert_eq!(
+        turn(&s, t0 + Duration::from_millis(10)),
+        0.0,
+        "as it is, at once"
+    );
+    // Turning, its loop's left end is grabbed where it was drawn.
+    assert!(s.redo(&g));
+    assert!(reversed(&s));
+    s.instruments.turns.borrow_mut().insert(id, 0.25);
+    let x0 = plugin(&s, t);
+    let def = s.instruments.def_of(&x0).unwrap();
+    let v = s.instruments.shown(&x0);
+    let r = s.instruments.frame(0, &g);
+    let plane = s.instruments.body(r, &x0, def).graphs[0];
+    let drawn = sampler::wave_points_turned(def, plane, &v, Some(0.25));
+    let at = s.instrument_center(&g, id, Part::Point(0, 2)).unwrap();
+    assert!(
+        (at.0 - drawn[2].at.0).abs() < 0.5,
+        "{at:?} {:?}",
+        drawn[2].at
+    );
+    let done = sampler::wave_points(def, plane, &v);
+    assert!(
+        (at.0 - done[2].at.0).abs() > graph::POINT,
+        "it moves as it turns"
+    );
+    let before = file_loop(&s, t);
+    assert!(s.instrument_press(&g, at.0, at.1, 1, Mods::NONE));
+    s.instrument_moved(&g, at.0 + 8.0, at.1, false);
+    assert!(s.instrument_up());
+    assert_ne!(file_loop(&s, t), before, "grabbed");
+}
+
 /// The 2026-11-04 decision (UI-333): Reverse turns the cut over in a moment, the wave, the
 /// loop's span and its ends going through between, Start and End staying; not at all under
 /// reduced motion.
