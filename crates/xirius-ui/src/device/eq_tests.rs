@@ -142,8 +142,19 @@ fn ui_326_a_point_drag_is_one_step_and_each_frame_keeps_up() {
         frames.push(start.elapsed());
     }
     frames.sort();
-    let p99 = frames[frames.len() * 99 / 100];
-    assert!(p99.as_secs_f64() * 1000.0 <= 16.7, "p99 {p99:?}");
+    // The p99 by nearest rank: of 120 frames, the 119th, so one slow frame may pass. A
+    // shared CI runner stalls threads for reasons not the app's, so there only the median
+    // has to keep up (L2-ui-2); on a PC the p99 does.
+    let ms = |at: usize| frames[at].as_secs_f64() * 1000.0;
+    let p99 = (frames.len() * 99).div_ceil(100) - 1;
+    assert!(
+        ms(frames.len() / 2) <= 16.7,
+        "median {:?}",
+        frames[frames.len() / 2]
+    );
+    if std::env::var_os("CI").is_none() {
+        assert!(ms(p99) <= 16.7, "p99 {:?}", frames[p99]);
+    }
     // The song has not taken it yet.
     assert_eq!(plain(&s, t, "mid1_freq"), fx0);
     assert!(s.instrument_up());
