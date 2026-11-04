@@ -292,7 +292,7 @@ impl Studio {
                         Some((b.to_string(), k.parse::<u32>().ok()?.checked_add(1)?))
                     })
                     .unwrap_or_else(|| (n.clone(), 2));
-                (from..)
+                (from..=u32::MAX)
                     .map(|k| format!("{base} {k}"))
                     .find(|c| self.preset_named(id, c).is_none())
                     .unwrap_or(n)

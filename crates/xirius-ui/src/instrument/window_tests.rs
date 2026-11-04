@@ -925,13 +925,14 @@ fn save_as_asks_for_the_name() {
     );
 }
 
-/// Low 15 of the third review: the next name after `X 4294967295` does not overflow; `Bass
-/// 9` goes on to `Bass 10`.
+/// Low 15 of the third review: the next name after `X 4294967295` does not overflow, nor the
+/// one after `X 4294967294` (low 11 of the fourth); `Bass 9` goes on to `Bass 10`.
 #[test]
 fn save_as_names_past_the_last_number_do_not_overflow() {
     let (mut s, g, t, _) = studio();
     let id = compressor(&mut s, t);
     for (name, next) in [
+        ("X 4294967294", "X 4294967295"),
         ("X 4294967295", "X 4294967295 2"),
         ("Bass 9", "Bass 10"),
         ("TR-808", "TR-808 2"),
