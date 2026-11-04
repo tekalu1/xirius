@@ -90,9 +90,9 @@ impl Studio {
 
     /// The mirror a reversed Sampler's loop's end `k` shows in (low 1): the wheel, the keys,
     /// a value typed and a screen reader move what it shows, the way it moves on the wave.
-    fn device_mirror(&self, plugin: PluginId, k: usize) -> Option<f64> {
+    fn device_mirror(&self, plugin: PluginId, k: usize) -> Option<(f64, f64)> {
         let (_, def, values) = self.device(plugin)?;
-        sampler::mirror(def, &values, k).map(|(_, m)| m)
+        sampler::mirror(def, &values, k).map(|(_, ends)| ends)
     }
 
     /// [`Self::device_turn`] of what the control shows: a mirrored loop's end turns its
@@ -205,7 +205,7 @@ impl Studio {
         match spec.typed(&e.field.text()) {
             Some(plain) => {
                 let plain = match self.device_mirror(e.plugin, e.k) {
-                    Some(m) => m - plain,
+                    Some(ends) => sampler::flip(plain, ends),
                     None => plain,
                 };
                 let v = control::snap(spec, spec.to_norm(plain));
@@ -937,7 +937,9 @@ impl Studio {
                         self.device_sweep_end();
                     }
                 }
-                let at = self.device_mirror(plugin, k).map_or(at, |m| m - at);
+                let at = self
+                    .device_mirror(plugin, k)
+                    .map_or(at, |ends| sampler::flip(at, ends));
                 let v = control::snap(spec, spec.to_norm(at));
                 if !self.device_set(plugin, k, v) {
                     // Back where the song has it: what was heard of the sweep goes.

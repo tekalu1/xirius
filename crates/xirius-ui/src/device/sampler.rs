@@ -1230,14 +1230,22 @@ pub fn wave_points_turned(
         // Reversed, the voice plays the loop's ends mirrored about Start + End: the left one
         // is where the loop starts as it is heard. It is Loop Start, reads where it is on the
         // wave and grows to the right; what it moves is Loop End (low 1, N5-smp-1). Its axis
-        // does not hang on where it is, so a drag out of the cut goes on the same way.
-        Some((_, m)) => {
-            let axis = Axis::lin(ax.a, ax.b, m, m - 100.0);
+        // does not hang on where it is, so a drag out of the cut goes on the same way. An end
+        // past the cut is held to it, as the voice holds it, so it shows, reads and is
+        // grabbed where it sounds, on the wave; its drag starts from that edge (N6-smp-1).
+        Some((_, ends)) => {
+            let (a, b) = (ax.px(ends.0), ax.px(ends.1));
+            let axis = if b - a >= 1.0 {
+                Axis::lin(a, b, ends.1, ends.0)
+            } else {
+                let m = ends.0 + ends.1;
+                Axis::lin(ax.a, ax.b, m, m - 100.0)
+            };
             for (shown, k) in [(ls, le), (le, ls)] {
                 let x = ax.px(loop_at(value(k), cut));
                 let mut p = point(def, values, shown, (x, foot), "");
                 let spec = &def.params[shown];
-                p.value = control::text(spec, spec.to_norm(m - value(k)));
+                p.value = control::text(spec, spec.to_norm(flip(value(k), ends)));
                 p.x = Some(Drive { k, axis });
                 p.wheel = Some(k);
                 out.push(p);
@@ -1256,8 +1264,8 @@ pub fn wave_points_turned(
 
 /// While a reversed cut loops (low 1), the voice plays the loop's ends mirrored about
 /// Start + End, and the wave shows them so: the loop's end `k` shows as the other one, at
-/// `m − v` (plain). `Some((the one it shows as, m))` then.
-pub fn mirror(def: &BuiltinDef, values: &[f64], k: usize) -> Option<(usize, f64)> {
+/// [`flip`]. `Some((the one it shows as, the cut's ends (plain)))` then.
+pub fn mirror(def: &BuiltinDef, values: &[f64], k: usize) -> Option<(usize, (f64, f64))> {
     if !matches!(def.uid, "sampler" | "drum-kit") || !on(def, values, "loop") {
         return None;
     }
@@ -1270,7 +1278,13 @@ pub fn mirror(def: &BuiltinDef, values: &[f64], k: usize) -> Option<(usize, f64)
     } else {
         return None;
     };
-    (t >= 0.5).then_some((shown, (s + e) * 100.0))
+    (t >= 0.5).then_some((shown, (s * 100.0, e * 100.0)))
+}
+
+/// Where a loop's end at `p` (plain) shows in a reversed cut `ends` ([`mirror`]), and back:
+/// held to the cut, as the voice holds it, then mirrored about Start + End (N6-smp-1).
+pub fn flip(p: f64, ends: (f64, f64)) -> f64 {
+    ends.0 + ends.1 - p.clamp(ends.0, ends.1)
 }
 
 /// Whether the cut plays backwards.
@@ -1278,15 +1292,17 @@ pub fn reversed(def: &BuiltinDef, values: &[f64]) -> bool {
     on(def, values, "reverse")
 }
 
-/// The value (0..1) of `spec` at `v` as it shows mirrored about `m` ([`mirror`]), and back.
-pub fn mirrored(spec: &xirius_params::ParamSpec, v: f64, m: f64) -> f64 {
-    control::snap(spec, spec.to_norm(m - spec.to_plain(v)))
+/// The value (0..1) of `spec` at `v` as it shows in the reversed cut `ends` ([`flip`]), and
+/// back.
+pub fn mirrored(spec: &xirius_params::ParamSpec, v: f64, ends: (f64, f64)) -> f64 {
+    control::snap(spec, spec.to_norm(flip(spec.to_plain(v), ends)))
 }
 
 /// Where a loop's end at `v` shows while the cut `s..e` (plain) is turned `t` (0 forwards,
-/// 1 reversed): mirrored about Start + End wherever it is, as the voice plays it.
+/// 1 reversed): where it is forwards, [`flip`]ped reversed, as the voice plays it. Between,
+/// it goes straight from the one to the other, so it stays on the wave (N6-smp-1).
 pub fn loop_at(v: f64, (s, e, t): (f64, f64, f64)) -> f64 {
-    v + t * (s + e - 2.0 * v)
+    (1.0 - t) * v + t * flip(v, (s, e))
 }
 
 /// The loop's span on the wave while it loops: 2 px in from the top and the foot (the

@@ -915,9 +915,9 @@ fn file_loop(s: &Studio, t: TrackId) -> (f64, f64) {
 
 /// N5-smp-1 and the 2026-11-04 decision (UI-333): reversed, the loop's left end follows the
 /// pointer and reads more to the right; drawn out of the cut it goes on the same way, never
-/// back and forth.
+/// back and forth, and stops at the cut's edge, where the voice holds it (N6-smp-1).
 #[test]
-fn n5_smp_1_a_reversed_loops_end_follows_the_pointer_out_of_the_cut() {
+fn n5_smp_1_a_reversed_loops_end_follows_the_pointer_to_the_cuts_edge() {
     let (mut s, g, t, id) = reversed_loop();
     let (x, y) = s
         .instrument_center(&g, id, Part::Point(0, 2))
@@ -932,7 +932,7 @@ fn n5_smp_1_a_reversed_loops_end_follows_the_pointer_out_of_the_cut() {
         let end = file_loop(&s, t).1;
         assert!(end >= last, "back and forth at {d}: {last} → {end}");
         last = end;
-        if end < 100.0 {
+        if end < 90.0 {
             // Under the pointer while there is room for it.
             let (at, _) = s
                 .instrument_center(&g, id, Part::Point(0, 2))
@@ -943,8 +943,11 @@ fn n5_smp_1_a_reversed_loops_end_follows_the_pointer_out_of_the_cut() {
     }
     assert!(s.instrument_up());
     assert!(followed > 20, "{followed}");
-    // Well out of the cut (it is heard from 10 % of the wave on).
-    assert!(last > 90.0, "{last}");
+    // At the cut's end (it is heard from 10 % of the wave on), and shown there, on the wave.
+    assert_eq!(last, 90.0);
+    let cut = s.instrument_center(&g, id, Part::Point(0, 0)).unwrap().0;
+    let at = s.instrument_center(&g, id, Part::Point(0, 2)).unwrap().0;
+    assert!((at - cut).abs() < 0.5, "{at} {cut}");
     assert_eq!(file_loop(&s, t).0, 20.0);
 }
 
@@ -1011,11 +1014,144 @@ fn ui_333_reversed_the_keys_and_the_reader_turn_the_loops_ends_as_shown() {
     assert!(file_loop(&s, t).1 < before);
     assert!(s.device_key(&g, "home", Mods::NONE));
     s.device_sweep_end();
-    assert_eq!(file_loop(&s, t).1, 100.0, "reads 0, at the wave's left");
+    assert_eq!(file_loop(&s, t).1, 90.0, "reads 10, at the cut's left");
     s.instruments.focus = Some((id, ls));
     assert!(s.device_key(&g, "left", Mods::NONE));
     s.device_sweep_end();
     assert!(file_loop(&s, t).0 > 20.0, "{:?}", file_loop(&s, t));
+}
+
+/// Sets the zone's values (plain) by their keys, as a song would.
+fn set_zone(s: &mut Studio, t: TrackId, id: PluginId, values: &[(&str, f64)]) {
+    let zone = s.instruments.open[0].pick + 1;
+    for &(key, plain) in values {
+        let x = plugin(s, t);
+        let def = s.instruments.def_of(&x).unwrap();
+        let k = sampler::idx(def, key).unwrap();
+        let set = json!({
+            "id": id.to_string(),
+            "param": format!("file{zone}.{key}"),
+            "value": def.params[k].to_norm(plain),
+        });
+        assert!(s.run_command("plugin.param.set", set), "{:?}", s.error);
+    }
+}
+
+/// N6-smp-1 (UI-333): a reversed loop whose end is past the cut (End 70, Loop 35–85) is
+/// heard looping 35–70 backwards, at 0–35 on the turned wave: its ends show there, on the
+/// wave, are grabbed there, read there, and a drag starts from where they show.
+#[test]
+fn n6_smp_1_a_reversed_loops_end_past_the_cut_shows_where_it_sounds() {
+    let (mut s, g, t, id) = window("Sampler");
+    add(&mut s, id, &["C3.wav"]);
+    set_zone(
+        &mut s,
+        t,
+        id,
+        &[
+            ("start", 0.0),
+            ("end", 70.0),
+            ("loop", 1.0),
+            ("loop_start", 35.0),
+            ("loop_end", 85.0),
+            ("reverse", 1.0),
+        ],
+    );
+    let at = |s: &Studio, n: usize| s.instrument_center(&g, id, Part::Point(0, n)).unwrap();
+    let (cut_a, cut_b) = (at(&s, 0).0, at(&s, 1).0);
+    let (left, right) = (at(&s, 2), at(&s, 3));
+    // On the wave, in the cut: the left one at its left edge (70 turned), the right one
+    // at 35.
+    assert!((left.0 - cut_a).abs() < 0.5, "{left:?} {cut_a}");
+    assert!(cut_a < right.0 && right.0 < cut_b, "{right:?}");
+    assert!(
+        (right.0 - (cut_a + (cut_b - cut_a) / 2.0)).abs() < 1.0,
+        "{right:?}"
+    );
+    // The reader: what each reads where it is, and where it is.
+    let slider = |s: &Studio, key: &str| {
+        let key = format!("device-{id}-point-file1.{key}");
+        let marks = crate::a11y::marks(s, &g);
+        let m = marks
+            .iter()
+            .find(|m| m.key == key)
+            .unwrap_or_else(|| panic!("{key}"));
+        let b = m.node.bounds().unwrap();
+        (
+            m.node.value().map(str::to_string),
+            ((b.x0 + b.x1) / 2.0) as f32,
+        )
+    };
+    let (value, x) = slider(&s, "loop_start");
+    assert_eq!(value.as_deref(), Some("0 %"));
+    assert!((x - left.0).abs() < 0.5, "{x} {left:?}");
+    let (value, x) = slider(&s, "loop_end");
+    assert_eq!(value.as_deref(), Some("35 %"));
+    assert!((x - right.0).abs() < 0.5, "{x} {right:?}");
+    // Grabbed where it shows; 8 px to the right and the loop already ends sooner than the
+    // cut does, as heard.
+    assert!(s.instrument_press(&g, left.0, left.1, 1, Mods::NONE));
+    s.instrument_moved(&g, left.0 + 8.0, left.1, false);
+    let end = file_loop(&s, t).1;
+    assert!(end < 70.0 && end > 60.0, "{end}");
+    let now = at(&s, 2).0;
+    assert!((now - (left.0 + 8.0)).abs() < 2.0, "{now} {left:?}");
+    assert!(s.instrument_up());
+}
+
+/// N6-smp-1 (UI-333): as Reverse turns the cut over, a loop's end past the cut goes from
+/// where it is to where it is heard, never off the wave; the loop's span, too.
+#[test]
+fn n6_smp_1_a_loops_end_past_the_cut_stays_on_the_wave_as_it_turns() {
+    use std::time::{Duration, Instant};
+    let (mut s, _g, t, id) = window("Sampler");
+    add(&mut s, id, &["C3.wav"]);
+    s.motion.enabled.set(true);
+    set_zone(
+        &mut s,
+        t,
+        id,
+        &[
+            ("start", 0.0),
+            ("end", 70.0),
+            ("loop", 1.0),
+            ("loop_start", 35.0),
+            ("loop_end", 85.0),
+        ],
+    );
+    let t0 = Instant::now();
+    {
+        let x = plugin(&s, t);
+        let def = s.instruments.def_of(&x).unwrap();
+        let w = s.instruments.open[0];
+        let v = s.instruments.shown(&x);
+        let turn = crate::instrument::window::turn_of(&s, def, &w, &v, t0);
+        assert_eq!(turn, Some(0.0), "forwards as it opened");
+    }
+    set_zone(&mut s, t, id, &[("reverse", 1.0)]);
+    let x = plugin(&s, t);
+    let def = s.instruments.def_of(&x).unwrap();
+    let w = s.instruments.open[0];
+    let v = s.instruments.shown(&x);
+    let r = Rect::new(0.0, 0.0, 400.0, 100.0);
+    let mut seen = Vec::new();
+    for ms in (0..=300).step_by(10) {
+        let turn =
+            crate::instrument::window::turn_of(&s, def, &w, &v, t0 + Duration::from_millis(ms))
+                .unwrap();
+        seen.push(turn);
+        let points = sampler::wave_points_turned(def, r, &v, Some(f64::from(turn)));
+        for p in &points[2..] {
+            assert!(r.x <= p.at.0 && p.at.0 <= r.right(), "{ms} ms: {:?}", p.at);
+        }
+        let band = sampler::loop_band_turned(def, r, &v, Some(f64::from(turn))).unwrap();
+        assert!(
+            r.x <= band.x && band.right() <= r.right(),
+            "{ms} ms: {band:?}"
+        );
+    }
+    assert!(seen.iter().any(|t| 0.0 < *t && *t < 1.0), "{seen:?}");
+    assert_eq!(seen.last(), Some(&1.0));
 }
 
 /// The 2026-11-04 decision (UI-333): Reverse turns the cut over in a moment, the wave, the
