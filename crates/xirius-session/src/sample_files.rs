@@ -78,17 +78,21 @@ fn load(cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Plan> {
     if given.is_empty() {
         return Err(CmdError::invalid("--path か --paths を指定してください"));
     }
+    // A file that is not audio among others is passed over and said so: the rest go in
+    // (N-smp-5).
     let mut files = Vec::new();
+    let mut skipped = Vec::new();
     for given in &given {
         let path = disk_path(given, cx.dir)?;
         if path.is_dir() {
             files.extend(audio_files(&path)?);
         } else if path.is_file() {
             if !is_audio(&path) {
-                return Err(CmdError::invalid(format!(
-                    "音声ファイルではありません: {}",
-                    path.display()
-                )));
+                skipped.push(
+                    path.file_name()
+                        .map_or_else(|| given.to_string(), |n| n.to_string_lossy().into_owned()),
+                );
+                continue;
             }
             files.push(path);
         } else {
@@ -97,6 +101,12 @@ fn load(cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Plan> {
                 path.display()
             )));
         }
+    }
+    if files.is_empty() && !skipped.is_empty() {
+        return Err(CmdError::invalid(format!(
+            "音声ファイルではありません: {}",
+            skipped.join(", ")
+        )));
     }
     if files.is_empty() {
         return Err(CmdError::not_found(format!(
@@ -123,6 +133,9 @@ fn load(cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Plan> {
     }
     let kit = x.builtin().is_some_and(|d| !d.per_pad.is_empty());
     let mut data = json!({ "plugin": x.id.to_string(), "count": names.len() });
+    if !skipped.is_empty() {
+        data["skipped"] = json!(skipped);
+    }
     if kit {
         let from = args
             .opt_str("pad")
@@ -136,7 +149,7 @@ fn load(cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Plan> {
             data["pads"] = json!(pads.iter().map(|p| PAD_NAMES[*p]).collect::<Vec<_>>());
         }
     }
-    let message = format!(
+    let mut message = format!(
         "{} に {} 個のサンプルを{}",
         x.name,
         names.len(),
@@ -146,6 +159,12 @@ fn load(cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Plan> {
             "読み込みました"
         }
     );
+    if !skipped.is_empty() {
+        message.push_str(&format!(
+            "（音声ファイルでない {} は飛ばしました）",
+            skipped.join("、")
+        ));
+    }
     Ok(Plan {
         output: Output::with(message, data),
         edits: if dry {

@@ -105,6 +105,25 @@ impl Studio {
         };
         let layers = kit && std::mem::take(&mut self.instruments.drop_layers);
         let first = live(&p, &w).map_or(0, |(_, x, _)| x.samples.len());
+        // A file that is not a sound is passed over and said so, as on the arrangement
+        // (N-smp-5); the others go in.
+        let (paths, other): (Vec<&PathBuf>, Vec<&PathBuf>) = paths
+            .iter()
+            .partition(|p| p.is_dir() || crate::drop_audio::is_audio(p));
+        let refused = (!other.is_empty()).then(|| {
+            let names: Vec<_> = other
+                .iter()
+                .map(|p| p.file_name().unwrap_or_default().to_string_lossy())
+                .collect();
+            format!(
+                "「{}」は読み込めません（音声ファイルに対応しています）",
+                names.join("」「")
+            )
+        });
+        if paths.is_empty() {
+            self.error = refused;
+            return true;
+        }
         // All of them in one load: one step, and the layers of a pad stay together.
         let list: Vec<_> = paths
             .iter()
@@ -120,6 +139,9 @@ impl Studio {
         // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         if !self.run_command("plugin.samples.load", args) {
             return true;
+        }
+        if refused.is_some() {
+            self.error = refused;
         }
         // The pad the first file went to: the one dropped on, or the next empty one.
         let p = self.project();

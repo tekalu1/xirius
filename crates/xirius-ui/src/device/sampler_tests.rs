@@ -255,13 +255,24 @@ fn ui_334_shift_makes_layers_and_a_drop_off_the_pads_goes_to_the_pad_chosen() {
     let k = plugin(&s, t);
     assert_eq!(sampler::pad_files(k.builtin().unwrap(), &k, 30), [3]);
     assert_eq!(s.instruments.open[0].pick, 30);
+    // A file that is not a sound among them is passed over and named (N-smp-5).
+    let (_dir4, mixed) = wavs(&["Tom.wav", "notes.txt"]);
+    s.error = None;
+    assert!(s.window_drop(&g, x, y, &mixed), "{:?}", s.error);
+    let k = plugin(&s, t);
+    assert_eq!(sampler::pad_files(k.builtin().unwrap(), &k, 31), [4]);
+    assert!(
+        s.error.as_deref().is_some_and(|e| e.contains("notes.txt")),
+        "{:?}",
+        s.error
+    );
     // A1 is full: a drop there goes to the next empty pad, which is chosen.
     s.instruments.pick(id, 0, 0);
     let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).expect("A1");
     let (_dir3, last) = wavs(&["Rim.wav"]);
     assert!(s.window_drop(&g, x, y, &last), "{:?}", s.error);
     let k = plugin(&s, t);
-    assert_eq!(sampler::pad_files(k.builtin().unwrap(), &k, 1), [4]);
+    assert_eq!(sampler::pad_files(k.builtin().unwrap(), &k, 1), [5]);
     assert_eq!(s.instruments.open[0].pick, 1);
 }
 

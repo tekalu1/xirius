@@ -138,4 +138,18 @@ fn a_folder_fills_a_kits_pads_and_steps_go_round_its_files() {
         )
         .unwrap_err();
     assert!(format!("{e:?}").contains("音声ファイル"), "{e:?}");
+
+    // N-smp-5: among sounds it is passed over and named; the sounds go in.
+    let list: Vec<Value> = ["kick_v1.wav", "notes.txt", "snare.wav"]
+        .iter()
+        .map(|n| json!({ "path": dir.join(n).display().to_string() }))
+        .collect();
+    let out = run(
+        &mut s,
+        "plugin.samples.load",
+        json!({ "id": "plg_2", "paths": list }),
+        false,
+    );
+    assert_eq!(out["skipped"], json!(["notes.txt"]));
+    assert_eq!(leaves(&s), ["kick_v1.wav", "snare.wav"]);
 }
