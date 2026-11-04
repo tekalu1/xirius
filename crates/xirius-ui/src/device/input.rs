@@ -100,10 +100,11 @@ impl Studio {
             return false;
         }
         // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
-        self.run_command(
+        let done = self.run_command(
             "plugin.param.set",
             json!({ "id": plugin.to_string(), "param": spec.id, "value": value }),
         );
+        self.device_unheard(done);
         true
     }
 
@@ -131,8 +132,18 @@ impl Studio {
             args["also"] = json!(also);
         }
         // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
-        self.run_command("plugin.param.set", args);
+        let done = self.run_command("plugin.param.set", args);
+        self.device_unheard(done);
         true
+    }
+
+    /// A turn the song did not take (`done` false: a save or a macro holds the input, or
+    /// the command failed) leaves the sound at the song's value, as the screen shows: the
+    /// value heard while it turned goes (N-ui-1). The grab and the sweep are gone already.
+    fn device_unheard(&mut self, done: bool) {
+        if !done {
+            self.device_hear();
+        }
     }
 
     /// The player hears what the devices' windows are turning (a drag, a sweep) while the

@@ -447,3 +447,31 @@ fn ui_324_every_control_reads_its_name_and_value() {
         of(def.params[slot.k].id);
     }
 }
+
+/// A release whose command can't go in (N-ui-1): the song keeps its value, the drag is let go
+/// and what is heard is the song's again, not the dragged value.
+#[test]
+fn ui_324_a_release_that_cannot_go_in_lets_the_sound_go_back() {
+    let (mut s, g, t, id) = delay();
+    let (k, start) = value(&s, t, "feedback");
+    let before = s.song().steps();
+    let (x, y) = center(&s, &g, id, k);
+    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
+    assert!(s.instrument_moved(&g, x, y - 30.0, false));
+    assert!(s.instruments.turning(id, k).unwrap() > start);
+    s.transport.finishing_take = true;
+    assert!(s.input_blocked());
+    assert!(s.instrument_up());
+    s.transport.finishing_take = false;
+    assert!(s.instruments.grab.is_none());
+    assert_eq!(s.instruments.turning(id, k), None);
+    assert_eq!(s.song().steps(), before);
+    assert_eq!(value(&s, t, "feedback").1, start);
+    let heard = s.auto_heard(&s.project());
+    let x = heard.tracks[&t]
+        .inserts
+        .iter()
+        .find(|x| x.id == id)
+        .unwrap();
+    assert_eq!(values(x)[k], start);
+}

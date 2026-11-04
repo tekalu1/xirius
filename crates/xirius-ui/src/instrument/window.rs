@@ -1502,13 +1502,9 @@ impl Studio {
                 self.device_hear();
                 return true;
             };
-            let (spec, before) = (&def.params[k], values_of(x, def)[k]);
+            let before = values_of(x, def)[k];
             if (before - value).abs() > 1e-9 {
-                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
-                self.run_command(
-                    "plugin.param.set",
-                    json!({ "id": plugin.to_string(), "param": spec.id, "value": value }),
-                );
+                self.device_set(plugin, k, value);
             }
         }
         if let Grab::Size { plugin, .. } = grab {
@@ -1521,6 +1517,11 @@ impl Studio {
             }
         }
         if let Grab::Point { plugin, x, y, .. } = grab {
+            if !self.instruments.open.iter().any(|w| w.plugin == plugin) {
+                // Its window went while it moved: the sound goes back to the song's (L2-ui-4).
+                self.device_hear();
+                return true;
+            }
             // Both of a point's values go in as one step.
             let moved: Vec<(usize, f64)> = [x, y]
                 .into_iter()
