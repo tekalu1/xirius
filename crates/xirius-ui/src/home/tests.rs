@@ -632,3 +632,16 @@ fn closing_from_the_song_menu_asks_first_when_the_plugin_state_was_not_kept() {
     assert!(s.home_shown());
     assert!(s.project().root.is_empty());
 }
+
+/// Review 3 低8: the start screen covers the mixer, so under it the mixer is not painted; it
+/// paints again once a song is open.
+#[test]
+fn the_mixer_is_not_painted_under_the_start_screen() {
+    let (mut s, _g, _tmp) = kept(&[]);
+    s.drawer_open = true;
+    s.tab = crate::studio::DrawerTab::Mixer;
+    assert!(s.mixer_shown() && s.home_shown());
+    assert!(!s.mixer_painted());
+    s.home = None;
+    assert!(s.mixer_painted());
+}

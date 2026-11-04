@@ -417,6 +417,12 @@ impl Studio {
         self.home.is_some() && self.start_shown()
     }
 
+    /// The mixer, its grip and its docked faces paint: the start screen covers them all, so
+    /// under it they are not painted (review 3 低8).
+    pub fn mixer_painted(&self) -> bool {
+        self.mixer_shown() && !self.home_shown()
+    }
+
     pub fn home_layout(&self, g: &Geometry) -> Option<HomeLayout> {
         let home = self.home.as_ref().filter(|_| self.start_shown())?;
         Some(HomeLayout::of(home, g, !self.has_audio_device()))

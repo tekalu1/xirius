@@ -593,7 +593,7 @@ pub fn paint_overlay(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     crate::track_name::paint(pen, studio, g);
     crate::zoom_input::paint(pen, studio);
     crate::ai::overlay(pen, studio, g);
-    if studio.mixer_shown() {
+    if studio.mixer_painted() {
         crate::mixer::paint::paint(pen, studio, g);
         crate::mixer::dock::paint_grip(pen, studio, g);
         crate::instrument::window::paint_docked(pen, studio, g);
