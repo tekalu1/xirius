@@ -267,7 +267,7 @@ fn plg_066_the_keys_and_the_pads_read_their_notes() {
         .node
         .clone();
     assert_eq!(pad.role(), accesskit::Role::Button);
-    assert_eq!(pad.label(), Some("A1 C1"));
+    assert_eq!(pad.label(), Some("A1 C1, tone_C3"));
 }
 
 /// L2-ui-4: a pad held while the song closes ends its note before the song goes, not only

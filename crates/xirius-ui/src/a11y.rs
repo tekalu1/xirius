@@ -1087,13 +1087,24 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             node.set_bounds(bounds(k.r));
             out.push(mark(format!("device-{}-key-{}", w.plugin, k.pitch), node));
         }
+        // A pad says its sample too, and the chosen one is selected (L2-smp-6).
         for k in &body.pads {
+            use crate::device::layout::Mark as Spot;
+            let p = crate::device::play::pad_of(k.pitch);
+            let spot = body.spots.iter().find(|s| s.mark == Spot::Pad(p));
             let mut node = accesskit::Node::new(accesskit::Role::Button);
-            node.set_label(format!(
+            let mut label = format!(
                 "{} {}",
                 crate::device::play::pad_name(k.pitch),
                 crate::roll::pitch_name(k.pitch)
-            ));
+            );
+            if let Some(s) = spot.filter(|s| !s.text.is_empty()) {
+                label = format!("{label}, {}", s.text);
+            }
+            node.set_label(label);
+            if spot.is_some_and(|s| s.on) {
+                node.set_selected(true);
+            }
             node.set_bounds(bounds(k.r));
             out.push(mark(format!("device-{}-pad-{}", w.plugin, k.pitch), node));
         }
@@ -1102,6 +1113,21 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
         // (UI-333, UI-334).
         for (n, spot) in body.spots.iter().enumerate() {
             use crate::device::layout::Mark as Spot;
+            // The chosen pad's title: its name, sample and note, read as text (L2-smp-6).
+            if spot.mark == Spot::Title {
+                let mut node = accesskit::Node::new(accesskit::Role::Label);
+                let mut label = spot.text.clone();
+                if !spot.sub.is_empty() {
+                    label = format!("{label}, {}", spot.sub);
+                }
+                if let Some(note) = spot.note {
+                    label = format!("{label}, {}", crate::roll::pitch_name(note));
+                }
+                node.set_label(label);
+                node.set_bounds(bounds(spot.r));
+                out.push(mark(format!("device-{}-title", w.plugin), node));
+                continue;
+            }
             if !spot.mark.takes() {
                 continue;
             }
@@ -1113,6 +1139,11 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 Spot::Solo(p) => format!("Solo {}", xirius_params::PAD_NAMES[p]),
                 Spot::Bank(_) => format!("Bank {}", spot.text),
                 Spot::Edge(j) => format!("Layer {} top {}", j + 1, spot.text),
+                Spot::Layer(_) => format!("Layer {}", spot.text),
+                Spot::Zone(_) => match spot.note {
+                    Some(note) => format!("{}, root {}", spot.text, crate::roll::pitch_name(note)),
+                    None => spot.text.clone(),
+                },
                 _ => spot.text.clone(),
             });
             match spot.mark {

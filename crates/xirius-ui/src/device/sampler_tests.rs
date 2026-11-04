@@ -524,7 +524,31 @@ fn ui_333_the_spots_read_as_buttons() {
     assert_eq!(find("Bank A").node.is_selected(), Some(true));
     find("Previous sample");
     find("Next sample");
+    // L2-smp-6: the pad says its sample and is selected; the chosen pad's title reads.
+    assert_eq!(find("A1 C1, Kick").node.is_selected(), Some(true));
+    assert_eq!(find("A2 C#1").node.is_selected(), None);
+    assert_eq!(find("A1, Kick, C1").node.role(), accesskit::Role::Label);
     let _ = t;
+}
+
+/// L2-smp-6: a zone says its root, and a layer says it is one.
+#[test]
+fn l2_smp_6_zones_say_their_root_and_layers_say_layer() {
+    let (mut s, g, _t, id) = window("Sampler");
+    add(&mut s, id, &["Piano_C3.wav", "Piano_C4.wav"]);
+    let marks = crate::a11y::marks(&s, &g);
+    let labels: Vec<_> = marks.iter().filter_map(|m| m.node.label()).collect();
+    assert!(labels.contains(&"Piano_C3, root C3"), "{labels:?}");
+    assert!(labels.contains(&"Piano_C4, root C4"), "{labels:?}");
+    let (_dir, files) = wavs(&["Snare_a.wav", "Snare_b.wav"]);
+    let (mut s, g, _t, id) = window("Drum Kit");
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).expect("A1");
+    s.instruments.drop_layers = true;
+    assert!(s.window_drop(&g, x, y, &files), "{:?}", s.error);
+    let marks = crate::a11y::marks(&s, &g);
+    let labels: Vec<_> = marks.iter().filter_map(|m| m.node.label()).collect();
+    assert!(labels.contains(&"Layer 0–63"), "{labels:?}");
+    assert!(labels.contains(&"Layer 64–127"), "{labels:?}");
 }
 
 /// The labels of the menu open, gaps left out.
