@@ -784,6 +784,15 @@ impl Windows {
         if self.grab.is_some_and(|g| !self.is_open(g.plugin())) {
             self.grab = None;
         }
+        // A sweep of a device that went has nothing to go into (L2-ui-1).
+        let gone = |id| {
+            !p.tracks
+                .values()
+                .any(|t| t.inserts.iter().any(|x| x.id == id))
+        };
+        if self.sweep.is_some_and(|s| gone(s.plugin)) {
+            self.sweep = None;
+        }
         let open: Vec<PluginId> = self.open.iter().map(|w| w.plugin).collect();
         self.chosen.retain(|id, _| open.contains(id));
         self.analysers.retain(|id, _| open.contains(id));

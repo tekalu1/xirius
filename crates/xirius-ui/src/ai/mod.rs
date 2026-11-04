@@ -490,6 +490,9 @@ impl Studio {
             })));
             return;
         }
+        // A device's knob still turning is its own step before what comes from outside: an
+        // undo takes it back, not the step before it (L2-par-1).
+        self.device_sweep_end();
         if matches!(
             job.command.as_str(),
             "project.open" | "version.open" | "project.new"

@@ -480,6 +480,8 @@ impl Studio {
         mcp: Option<McpSave>,
         command: Option<SaveCommand>,
     ) {
+        // A device's knob still turning is saved with the song, Save As too (N-par-1).
+        self.device_sweep_end();
         let close_when_done = self.keep.save_started();
         self.leaving_ready = false;
         if close_when_done {

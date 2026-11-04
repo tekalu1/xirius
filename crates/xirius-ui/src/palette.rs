@@ -876,7 +876,10 @@ impl Studio {
         let take = self.transport.take.is_some();
         match scope {
             Scope::Global => match name {
-                "history.undo" => self.song.can_undo() || self.job_undoable(),
+                "history.undo" => {
+                    // A knob still turning is a step already (L2-par-1).
+                    self.song.can_undo() || self.job_undoable() || self.instruments.sweep.is_some()
+                }
                 "history.redo" => self.song.can_redo(),
                 "edit.copy" | "edit.cut" => self.has_selection(g),
                 "edit.paste" => self.song.session().state.clipboard.is_some(),

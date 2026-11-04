@@ -1739,6 +1739,9 @@ impl Studio {
             if self.instruments.note.is_some_and(|n| n.plugin == id) {
                 self.window_note_off();
             }
+            // Its pad's knob still turning goes in while the window still says which pad
+            // (L2-ui-1).
+            self.device_sweep_end();
             self.instruments.open.retain(|w| w.plugin != id);
             return true;
         }

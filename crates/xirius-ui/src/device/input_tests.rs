@@ -475,3 +475,34 @@ fn ui_324_a_release_that_cannot_go_in_lets_the_sound_go_back() {
         .unwrap();
     assert_eq!(values(x)[k], start);
 }
+
+/// A knob turned by the wheel and the song left at once (N-par-1): the turn goes into the song
+/// being left as its own step, whichever way it is left.
+#[test]
+fn ui_324_a_wheel_turn_goes_in_before_another_song_opens() {
+    let (mut s, g, t, id) = delay();
+    let (k, start) = value(&s, t, "mix");
+    let (x, y) = center(&s, &g, id, k);
+    let before = s.song().steps();
+    assert!(s.device_wheel(&g, x, y, 1.0, false));
+    assert!(s.request_open(crate::opening::Request::New));
+    assert!(s.instruments.sweep.is_none());
+    assert_eq!(s.song().steps(), before + 1);
+    assert!(value(&s, t, "mix").1 > start);
+}
+
+/// A pad's knob turned by the wheel and its window closed from the mixer at once (L2-ui-1):
+/// the turn goes into the device it was turned on.
+#[test]
+fn ui_324_a_wheel_turn_goes_in_when_the_mixer_closes_the_window() {
+    let (mut s, g, t, id) = delay();
+    let (k, start) = value(&s, t, "mix");
+    let (x, y) = center(&s, &g, id, k);
+    let before = s.song().steps();
+    assert!(s.device_wheel(&g, x, y, 1.0, false));
+    assert!(s.open_plugin(t, id));
+    assert!(!s.instruments.is_open(id));
+    assert!(s.instruments.sweep.is_none());
+    assert_eq!(s.song().steps(), before + 1);
+    assert!(value(&s, t, "mix").1 > start);
+}
