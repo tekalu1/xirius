@@ -298,7 +298,16 @@ fn add(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
             "--pad と --layers はドラムキットにだけ使えます",
         ));
     }
+    // A pad the new files fill keeps its Mute and Solo, as one a drop replaces does (the
+    // fifth review's low 11).
+    let mut hand = Vec::new();
     if a.flag("replace") {
+        if !def.per_pad.is_empty() {
+            hand = (0..PADS)
+                .flat_map(|pad| ["mute", "solo"].map(|id| (pad, pad_key(pad, id))))
+                .filter_map(|(pad, k)| x.params.get(&k).map(|v| (pad, k, *v)))
+                .collect();
+        }
         // The pads' own values go with their files: a file dropped there later does not
         // sound with the old Choke or Trigger (L2-smp-2).
         x.samples.clear();
@@ -365,6 +374,12 @@ fn add(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
             }
         }
     }
+    let filled = &pads[..groups.len().min(pads.len())];
+    x.params.extend(
+        hand.into_iter()
+            .filter(|(pad, _, _)| filled.contains(pad))
+            .map(|(_, k, v)| (k, v)),
+    );
     let span = match (pads.first(), pads.last()) {
         (Some(a), Some(b)) if a != b => format!("{}–{}", PAD_NAMES[*a], PAD_NAMES[*b]),
         (Some(a), _) => PAD_NAMES[*a].to_string(),

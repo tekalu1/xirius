@@ -695,3 +695,51 @@ fn older_keys_that_differ_in_case_leave_one_lane_and_one_map() {
         .collect();
     assert_eq!(maps, vec![cutoff]);
 }
+
+/// The fifth review's low 11: files put in with `--replace` keep the Mute and Solo of the pads
+/// they fill, as a drop that replaces does; a pad left empty loses them with its other
+/// values.
+#[test]
+fn replaced_with_the_flag_the_pads_filled_keep_their_mute_and_solo() {
+    let mut p = project_with_samples(&[]);
+    {
+        let t = std::sync::Arc::make_mut(p.tracks.get_mut(&TrackId(1)).unwrap());
+        let x = &mut t.inserts[0];
+        x.name = "Drum Kit".into();
+        x.uid = "drum-kit".into();
+    }
+    let mut s = Session::from_project(p);
+    let old: Vec<Value> = (1..=4)
+        .map(|i| json!({ "file": format!("old{i}.wav") }))
+        .collect();
+    run(
+        &mut s,
+        "plugin.samples.add",
+        json!({ "id": "plg_2", "files": old }),
+    );
+    run(
+        &mut s,
+        "plugin.param.set",
+        json!({ "id": "plg_2", "param": "a1.choke", "plain": "Self" }),
+    );
+    for key in ["a2.mute", "a4.solo"] {
+        run(
+            &mut s,
+            "plugin.param.set",
+            json!({ "id": "plg_2", "param": key, "plain": 1 }),
+        );
+    }
+    let new: Vec<Value> = (1..=2)
+        .map(|i| json!({ "file": format!("new{i}.wav") }))
+        .collect();
+    run(
+        &mut s,
+        "plugin.samples.add",
+        json!({ "id": "plg_2", "files": new, "replace": true }),
+    );
+    let x = plugin(&s);
+    assert_eq!(x.samples, ["new1.wav", "new2.wav"]);
+    assert_eq!(x.params.get("A2.mute"), Some(&1.0), "{:?}", x.params);
+    assert!(!x.params.contains_key("A4.solo"), "{:?}", x.params);
+    assert!(!x.params.contains_key("A1.choke"), "{:?}", x.params);
+}
