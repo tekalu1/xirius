@@ -186,11 +186,12 @@ impl DevicePreset {
 
 /// Whether a preset of the plug-in `x`'s device holds its parameter `id`: every one but a
 /// built-in's knobs no preset sets ([`xirius_params::ParamSpec::preset`]; the Compressor's
-/// sidechain, PLG-071). A preset is not saved with those, and loading one leaves them be.
+/// sidechain, PLG-071), and the keys it no longer has that an old song kept
+/// ([`xirius_params::BuiltinDef::retired`], L2-smp-1). A preset is not saved with those, and
+/// loading one leaves them be.
 pub fn holds(x: &Plugin, id: &str) -> bool {
     x.builtin()
-        .and_then(|def| def.param(id))
-        .is_none_or(|(_, p)| p.preset)
+        .is_none_or(|def| !def.is_retired(id) && def.param(id).is_none_or(|(_, p)| p.preset))
 }
 
 /// Whether the plug-in `x` is the device `format`/`uid` of a preset name: the same uid, or
@@ -526,6 +527,24 @@ mod tests {
         assert_eq!(back.device.params["gain"], 0.5);
         assert_eq!(back.device.state.as_deref(), Some("QUJD"));
         assert_eq!(back.device.samples, Some(vec!["kick.wav".to_string()]));
+    }
+
+    /// L2-smp-1: an old song's retired keys (`sound`, `tune`) are not saved in a preset; a
+    /// zone's values and the knobs are.
+    #[test]
+    fn a_preset_leaves_out_the_keys_a_device_retired() {
+        let mut x = plugin("builtin", "sampler");
+        x.kind = PluginKind::Instrument;
+        x.name = "Sampler".into();
+        x.params = BTreeMap::from([
+            ("sound".into(), 0.5),
+            ("TUNE".into(), 0.75),
+            ("attack".into(), 0.25),
+            ("file0.start".into(), 0.1),
+        ]);
+        let p = DevicePreset::capture(&x, "Keys", None);
+        let keys: Vec<_> = p.device.params.keys().cloned().collect();
+        assert_eq!(keys, ["attack", "file0.start"]);
     }
 
     #[test]
