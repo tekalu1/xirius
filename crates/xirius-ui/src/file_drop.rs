@@ -49,7 +49,8 @@ impl Studio {
 
     /// Files from another app dragged to `(x, y)`, Shift as the event said it: the OS's own
     /// Shift counts too, as the event of an OS drag has none (N4-kit-2). True when the screen
-    /// changed.
+    /// changed. While input is held, nothing is planned and what was lit goes (low 20 of the
+    /// fourth review).
     pub fn files_moved(
         &mut self,
         g: &Geometry,
@@ -58,6 +59,9 @@ impl Studio {
         paths: &[PathBuf],
         shift: bool,
     ) -> bool {
+        if self.input_blocked() {
+            return self.drop_hover(false);
+        }
         let shift = crate::os_shift::held(shift);
         self.instruments.drop_layers = shift;
         let named = self.drag_names(paths);

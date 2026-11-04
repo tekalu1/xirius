@@ -790,9 +790,6 @@ impl Screen {
     ) {
         self.files_dragged = true;
         let mut studio = self.studio.borrow_mut();
-        if studio.input_blocked() {
-            return;
-        }
         let paths = ev.drag(cx).paths();
         let g = geometry(&studio, window);
         let (x, y) = in_body(ev.event.position);

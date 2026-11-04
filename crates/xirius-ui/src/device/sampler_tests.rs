@@ -1576,6 +1576,26 @@ fn n4_kit_2_shift_of_an_os_drag_is_read_from_the_os() {
     assert!(!s.instruments.drop_layers, "the drop takes the Shift");
 }
 
+/// Low 20 of the fourth review: input held in the middle of a drag (a question on the song)
+/// puts out the plan and the light at the next move, not only when the drag leaves.
+#[test]
+fn a_drag_held_by_a_question_puts_its_plan_out() {
+    let (_dir, two) = wavs(&["Snare.wav", "Clap.wav"]);
+    let (mut s, g, _, id) = window("Drum Kit");
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).expect("A1");
+    assert!(s.files_moved(&g, x, y, &two, false));
+    assert!(s.instruments.preview.is_some());
+    s.ask_unsaved(crate::unsaved::Pending::Close);
+    assert!(s.input_blocked());
+    assert!(s.files_moved(&g, x, y, &two, false));
+    assert!(s.instruments.preview.is_none());
+    assert!(s.instruments.drop_on.is_none());
+    assert!(
+        !s.files_moved(&g, x, y, &two, false),
+        "nothing more to put out"
+    );
+}
+
 /// L2-smp-5 (UI-334): an empty pad of a filled kit is its name and the drop plane, as on
 /// the mock: no Choke, modes, layers or voice to write its values.
 #[test]
