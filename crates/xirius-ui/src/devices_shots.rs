@@ -159,6 +159,12 @@ pub const SHOTS: &[Shot] = &[
         name: "play04-drum-kit-pads",
         acts: &[Act::Reset, play_stage(3)],
     },
+    // The same two zones, the second cut 10..90 looping 20..30 of its file and reversed: the
+    // wave, the cut and the loop turned over, the loop's band where it is heard (UI-333).
+    Shot {
+        name: "play05-sampler-reversed",
+        acts: &[Act::Reset, play_stage(4)],
+    },
     // The Compressor at a saved preset, a knob moved off it: the tag's mark (UI-332).
     Shot {
         name: "pre01-tag-marked",
@@ -795,7 +801,7 @@ fn play_notes(s: &mut Studio, _: &Geometry, n: u8) {
         sweep_samples();
     }
     let files: Vec<_> = match n {
-        2 => vec![
+        2 | 4 => vec![
             write_sample("Keys C3.wav", 130.8, false, 2.0),
             write_sample("Keys C5.wav", 523.3, false, 1.5),
         ],
@@ -817,6 +823,10 @@ fn play_notes(s: &mut Studio, _: &Geometry, n: u8) {
         2 => {
             s.instruments.pick(id, 1, 0);
         }
+        4 => {
+            s.instruments.pick(id, 1, 0);
+            reverse_loop(s, t, id);
+        }
         3 => {
             s.run_command(
                 "plugin.param.set",
@@ -835,6 +845,34 @@ fn play_notes(s: &mut Studio, _: &Geometry, n: u8) {
         pitch: if n == 3 { 38 } else { pitch },
         heard: None,
     });
+}
+
+/// The Sampler's second zone cut 10..90, looping 20..30 of its file, reversed.
+fn reverse_loop(s: &mut Studio, t: TrackId, id: PluginId) {
+    for (key, plain) in [
+        ("start", 10.0),
+        ("end", 90.0),
+        ("loop", 1.0),
+        ("loop_start", 20.0),
+        ("loop_end", 30.0),
+        ("reverse", 1.0),
+    ] {
+        let p = s.project();
+        let Some(x) = crate::instrument::current(&p.tracks[&t]).filter(|x| x.id == id) else {
+            return;
+        };
+        let Some(def) = s.instruments.def_of(x) else {
+            return;
+        };
+        let Some(k) = crate::device::sampler::idx(def, key) else {
+            return;
+        };
+        let value = def.params[k].to_norm(plain);
+        s.run_command(
+            "plugin.param.set",
+            json!({ "id": id.to_string(), "param": format!("file2.{key}"), "value": value }),
+        );
+    }
 }
 
 fn play_reverb(s: &mut Studio, g: &Geometry, n: u8) {
@@ -1065,6 +1103,15 @@ mod tests {
         assert_eq!(s.instruments.note.map(|n| n.pitch), Some(38));
         let w = s.instruments.open[0];
         assert_eq!((w.pick, w.layer), (2, 1));
+        let mut s = Studio::sample();
+        assert!(Play::Laid(play_notes).without_window(&mut s, &g, 4));
+        let (x, names) = samples(&s);
+        assert_eq!(names, ["Keys C3.wav", "Keys C5.wav"]);
+        assert_eq!(s.instruments.open[0].pick, 1);
+        let def = s.instruments.def_of(&x).unwrap();
+        let shown = s.instruments.shown(&x);
+        assert!(crate::device::sampler::reversed(def, &shown));
+        assert_eq!(x.params.get("file2.loop"), Some(&1.0));
         let dir = samples_dir();
         assert!(dir.join("Tom_v2.wav").is_file());
         std::fs::remove_dir_all(&dir).unwrap();
