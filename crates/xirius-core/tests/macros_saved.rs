@@ -548,3 +548,49 @@ fn a_changed_control_lets_only_its_own_targets_stand() {
         "K1 changed, so it stands"
     );
 }
+
+/// A point that sets two parameters, one of them held by a macro: the free one moves, the held
+/// one stays, and the message names both as set but then says which one was kept.
+#[test]
+fn a_two_parameter_point_keeps_the_one_a_macro_holds() {
+    let mut s = Session::new("macros");
+    let t = id_of(&run(&mut s, "track.add.audio", json!({"name": "Vocal"})));
+    let comp = id_of(&run(
+        &mut s,
+        "plugin.add",
+        json!({"track": t, "name": "Compressor"}),
+    ));
+    run(
+        &mut s,
+        "control.assign",
+        json!({"track": t, "control": "k1", "target": format!("param:{comp}:knee")}),
+    );
+    let value = |s: &mut Session, param: &str| {
+        let list = run(s, "plugin.param.list", json!({"id": comp}));
+        list.data
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == param)
+            .unwrap()["value"]
+            .as_f64()
+            .unwrap()
+    };
+    let knee = value(&mut s, "knee");
+    let r = run(
+        &mut s,
+        "plugin.param.set",
+        json!({"id": comp, "param": "threshold", "value": 0.25,
+               "also": [{"param": "knee", "value": 1.0}]}),
+    );
+    assert!((value(&mut s, "threshold") - 0.25).abs() < 1e-9);
+    assert_eq!(value(&mut s, "knee"), knee, "the macro keeps the knee");
+    assert!(r.message.contains("ただし"), "{}", r.message);
+    assert!(r.message.contains("K1"), "{}", r.message);
+    assert_eq!(
+        r.data["held"].as_array().map(Vec::len),
+        Some(1),
+        "{:?}",
+        r.data
+    );
+}

@@ -1258,7 +1258,7 @@ impl Session {
         if !held.is_empty() {
             let names: Vec<&str> = held.iter().filter_map(Value::as_str).collect();
             msg.push_str(&format!(
-                "（{} はマクロのつまみが動かしているため、変えませんでした）",
+                "（ただし、{} はマクロのつまみが動かしているため、変えませんでした）",
                 names.join("・")
             ));
             data["held"] = Value::Array(held);

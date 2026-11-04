@@ -1559,7 +1559,7 @@ impl Session {
         }
         if !held.is_empty() {
             result.message.push_str(&format!(
-                "（{} はマクロのつまみが動かしているため、変えませんでした）",
+                "（ただし、{} はマクロのつまみが動かしているため、変えませんでした）",
                 held.join("・")
             ));
             // the AI reads `data`, not the message
