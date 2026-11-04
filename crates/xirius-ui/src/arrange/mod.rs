@@ -921,9 +921,9 @@ impl Studio {
             .iter()
             .any(|r| r.contains(x, y));
         if in_arrange {
-            self.arrange.focus = true;
+            // through `focus_arrange`, so the mixer lets go of the keys (review 3 低9)
             self.arrange.heads = g.column.contains(x, y);
-            self.choose_editor();
+            self.focus_arrange(true);
         }
     }
 

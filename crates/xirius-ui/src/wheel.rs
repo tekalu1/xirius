@@ -313,7 +313,11 @@ mod tests {
                     + crate::arrange::lane_value_y(&AutoTarget::Volume, value(&s)),
             )
         };
+        // a key bar in the mixer had the arrows: moving the point lets go of them
+        s.mixer.key_focus = Some((t, "snd_1".parse().unwrap()));
         assert!(s.window_wheel(&g, at, SIDEWAYS, 0.0, Mods::alt_shift(), false));
         assert!(value(&s) > -12.0, "{}", value(&s));
+        assert_eq!(s.mixer.key_focus, None, "review 3 低9");
+        assert!(s.arrange.focus);
     }
 }

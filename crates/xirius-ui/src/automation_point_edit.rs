@@ -49,9 +49,8 @@ impl Studio {
         // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         if self.arrange_run("auto.points.move", json!({"track":track, "target":target.to_string(), "ticks":tick.to_string(), "value-by":f64::from(steps) * increment})).is_some() {
             self.arrange.points.select(track, &target, tick, false);
-            self.arrange.focus = true;
             self.input_map.browser_focus = false;
-            self.choose_editor();
+            self.focus_arrange(true);
             self.arrange.touched();
         }
         true

@@ -438,6 +438,49 @@ const PART_KEYS: &[(&str, &str, &str)] = &[
         "↑ ↓・Enter",
         "行を選び、送り元に入れる・外す（量・pre・出力はキーからは変えない）",
     ),
+    // review 3 低16: the mixer's picked row and its Alt+Insert
+    ("ミキサーで選んだ行（MIX-045）", "↑ ↓", "上・下の行を選ぶ"),
+    (
+        "ミキサーで選んだ行（MIX-045）",
+        "Alt+↑ ↓",
+        "行を同じ並びの中で上・下へ動かす",
+    ),
+    (
+        "ミキサーで選んだ行（MIX-045）",
+        "Alt+← →",
+        "行の音量を 1 dB 動かす",
+    ),
+    (
+        "ミキサーで選んだ行（MIX-045）",
+        "Enter",
+        "プラグインの画面を開く（スプリッターは畳む・開く）",
+    ),
+    (
+        "ミキサーで選んだ行（MIX-045）",
+        "Space",
+        "プラグインのバイパスを切り替える",
+    ),
+    (
+        "ミキサーで選んだ行（MIX-045）",
+        "M",
+        "行のミュートを切り替える",
+    ),
+    (
+        "ミキサーで選んだ行（MIX-045）",
+        "Insert・+",
+        "行の後ろに足すプラグインの一覧を開く",
+    ),
+    (
+        "ミキサーで選んだ行（MIX-042）",
+        "Alt+Insert",
+        "行の前に足すプラグインの一覧を開く（分岐やレイヤーの頭の行では、その先頭に足す）",
+    ),
+    (
+        "ミキサーで選んだ行（MIX-045）",
+        "Delete",
+        "プラグインを外し、次の行を選ぶ（スプリッターはキーでは外さない）",
+    ),
+    ("ミキサーで選んだ行（MIX-045）", "Esc", "行の選びを外す"),
 ];
 
 #[cfg(test)]
@@ -713,5 +756,26 @@ mod tests {
             on_disk, text,
             "docs/operations.md is out of date: XIRIUS_WRITE_OPERATIONS=1 cargo test -p xirius-ui operations"
         );
+    }
+
+    /// Review 3 低16: the shortcut guide lists the mixer's picked row and its Alt+Insert, which
+    /// have no place on the screen for the scan to find.
+    #[test]
+    fn the_guide_has_the_mixers_row_keys_and_alt_insert() {
+        let doc = document(&[]);
+        for keys in [
+            "Alt+Insert",
+            "Insert・+",
+            "Space",
+            "Delete",
+            "Alt+← →",
+            "Alt+↑ ↓",
+        ] {
+            assert!(
+                doc.contains("| ミキサーで選んだ行（MIX-04")
+                    && doc.contains(&format!("| {keys} |")),
+                "{keys}"
+            );
+        }
     }
 }
