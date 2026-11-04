@@ -16,6 +16,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::auto::AutoTarget;
 use crate::id::{NodeId, PluginId};
 use crate::model::{MAX_DB, MIN_DB, PluginKind, Track, TrackKind};
 use crate::track_preset::{Adjust, AdjustKind};
@@ -1129,15 +1130,37 @@ impl crate::model::Project {
             let name = t.name.clone();
             let t = std::sync::Arc::make_mut(t);
             let mut reused = 0usize;
+            let mut renamed: HashMap<NodeId, NodeId> = HashMap::new();
             if let Some(r) = &mut t.rack {
                 r.each_node_id_mut(&mut |id| {
                     if !seen_ids.insert(id.0) {
+                        renamed.entry(*id).or_insert(NodeId(next));
                         *id = NodeId(next);
                         seen_ids.insert(next);
                         next += 1;
                         reused += 1;
                     }
                 });
+                // An id another node of this track kept still names that one.
+                for kept in r.node_ids() {
+                    renamed.remove(&kept);
+                }
+            }
+            // The track's maps and lanes follow a branch or layer to its new id (L3).
+            let follow = |target: &AutoTarget| match target {
+                AutoTarget::Branch(id, part) => {
+                    renamed.get(id).map(|to| AutoTarget::Branch(*to, *part))
+                }
+                _ => None,
+            };
+            if !renamed.is_empty() {
+                t.controls
+                    .retarget(|target| Some(follow(target).unwrap_or_else(|| target.clone())));
+                for lane in &mut t.automation {
+                    if let Some(to) = follow(&lane.target) {
+                        lane.target = to;
+                    }
+                }
             }
             if reused > 0 {
                 rows.push(Adjust::new(

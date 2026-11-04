@@ -443,3 +443,65 @@ fn moving_a_mapped_plug_in_away_says_its_map_went() {
         "the map went"
     );
 }
+
+/// A track whose rack reuses another track's node ids gets new ones on load, and its maps and
+/// lanes on a branch follow the branch to its new id.
+#[test]
+fn a_renumbered_branch_keeps_its_maps_and_lanes() {
+    use xirius_core::auto::{AutoTarget, BranchPart};
+    use xirius_core::id::NodeId;
+    let mut s = Session::new("macros");
+    let mut tracks = Vec::new();
+    for name in ["A", "B"] {
+        let t = id_of(&run(&mut s, "track.add.audio", json!({"name": name})));
+        run(&mut s, "plugin.add", json!({"track": t, "name": "EQ"}));
+        run(&mut s, "rack.split.add", json!({"track": t}));
+        tracks.push(t.parse::<TrackId>().unwrap());
+    }
+    let (a, b) = (tracks[0], tracks[1]);
+    let ids = |p: &xirius_core::model::Project, t: TrackId| {
+        p.track(t).unwrap().rack.as_ref().unwrap().node_ids()
+    };
+    let p0 = s.project().clone();
+    let (a_ids, b_ids) = (ids(&p0, a), ids(&p0, b));
+    assert_eq!(a_ids.len(), b_ids.len());
+    let branch = *b_ids.last().unwrap();
+    run(
+        &mut s,
+        "control.assign",
+        json!({"track": b.to_string(), "control": "k1", "target": format!("branch:{branch}:gain")}),
+    );
+    run(
+        &mut s,
+        "auto.lane.add",
+        json!({"track": b.to_string(), "target": format!("branch:{branch}:gain")}),
+    );
+    // B's rack takes A's ids, as a file pasted together by hand might.
+    let mut p = s.project().clone();
+    let to = |id: &NodeId| a_ids[b_ids.iter().position(|x| x == id).unwrap()];
+    {
+        let t = std::sync::Arc::make_mut(p.tracks.get_mut(&b).unwrap());
+        t.rack
+            .as_mut()
+            .unwrap()
+            .each_node_id_mut(&mut |id| *id = to(id));
+        let swap = |target: &AutoTarget| match target {
+            AutoTarget::Branch(id, part) => AutoTarget::Branch(to(id), *part),
+            other => other.clone(),
+        };
+        t.controls.retarget(|target| Some(swap(target)));
+        for lane in &mut t.automation {
+            lane.target = swap(&lane.target);
+        }
+    }
+    p.fix_racks();
+    let now = *ids(&p, b).last().unwrap();
+    assert!(!a_ids.contains(&now), "B's branch has an id of its own");
+    let t = p.track(b).unwrap();
+    let want = AutoTarget::Branch(now, BranchPart::Gain);
+    assert_eq!(t.controls.get(ControlId::Knob(0)).maps[0].target, want);
+    assert!(
+        t.automation.iter().any(|l| l.target == want),
+        "the lane followed"
+    );
+}
