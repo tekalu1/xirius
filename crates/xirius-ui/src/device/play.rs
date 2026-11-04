@@ -22,8 +22,14 @@ const BLACK_W: f32 = 8.0;
 const BLACK_H: f32 = 34.0;
 /// The gap between the pads.
 pub const GAP: f32 = 4.0;
-/// Keys this wide or narrower hide their names (the mock's 520 of the body's content).
+/// A body this wide or narrower hides the keys' names (the mock's 520 of the window's
+/// content, not of the keys' frame within it: low 23).
 const NAMES_W: f32 = 520.0;
+
+/// Whether the keys of a body `w` wide show the white keys' C named.
+pub fn key_names(w: f32) -> bool {
+    w > NAMES_W
+}
 
 /// A key or a pad: the note it plays and where it is.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -98,9 +104,8 @@ pub fn pad_name(pitch: u8) -> &'static str {
     xirius_params::PAD_NAMES[pad_of(pitch)]
 }
 
-/// The keyboard, `down` the key held: the white keys' C named while the keys are wider
-/// than [`NAMES_W`].
-pub fn paint_keys(pen: &mut Pen, keys: &[Key], down: Option<u8>) {
+/// The keyboard, `down` the key held: the white keys' C named while `names` ([`key_names`]).
+pub fn paint_keys(pen: &mut Pen, keys: &[Key], down: Option<u8>, names: bool) {
     let (Some(first), Some(last)) = (keys.first(), keys.iter().rfind(|k| !k.black)) else {
         return;
     };
@@ -112,7 +117,6 @@ pub fn paint_keys(pen: &mut Pen, keys: &[Key], down: Option<u8>) {
         first.r.h + 1.0,
     );
     pen.round(frame, c.key_black, Radius::Clip);
-    let names = frame.w > NAMES_W;
     for k in keys {
         let lit = down == Some(k.pitch);
         let face = match (lit, k.black) {

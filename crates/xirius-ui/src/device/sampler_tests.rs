@@ -577,6 +577,23 @@ fn ui_333_reversed_the_play_line_stands_over_what_it_reads() {
     assert_eq!(sampler::wave_column(0, cols, (0.0, 1.0, true)), cols - 1);
 }
 
+/// Low 23 (UI-333): the keys' names go once the window's content is 520 or narrower, as on
+/// the mock, not once the keys' frame within it (16 narrower) is.
+#[test]
+fn ui_333_the_keys_names_go_by_the_windows_width() {
+    let (mut s, g, t, id) = window("Sampler");
+    add(&mut s, id, &["Piano_C3.wav"]);
+    for (w, named) in [(530.0, true), (521.0, true), (520.0, false)] {
+        s.instruments.open[0].body.0 = w;
+        let b = body(&s, &g, t);
+        let keys =
+            b.keys.first().unwrap().r.x..b.keys.iter().rfind(|k| !k.black).unwrap().r.right();
+        assert!(keys.end - keys.start < 520.0, "{w}");
+        assert_eq!(b.w, w);
+        assert_eq!(play::key_names(b.w), named, "{w}");
+    }
+}
+
 /// The window `dy` taller than it opened.
 fn taller(s: &mut Studio, dy: f32) {
     s.instruments.open[0].body.1 += dy;

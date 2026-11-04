@@ -2162,7 +2162,7 @@ fn paint_window(
             Some(Part::Pad(k)) => Some(k),
             _ => None,
         };
-        play::paint_keys(pen, &body.keys, down);
+        play::paint_keys(pen, &body.keys, down, play::key_names(body.w));
         let lit = ins.lit_pads(plugin.id, std::time::Instant::now());
         play::paint_pads(pen, &body.pads, &body.spots, &lit, pad);
         let spot = match hot {
