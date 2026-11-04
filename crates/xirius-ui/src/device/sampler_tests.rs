@@ -792,16 +792,32 @@ fn zones_of_the_same_keys_off_the_keys_do_not_overlap() {
         spans
     };
     let mut groups = vec![(vec![(); 3], 12.0, 18.0), (vec![()], 14.0, 40.0)];
-    sampler::spread(&mut groups, 400.0);
+    sampler::spread(&mut groups, (0.0, 400.0));
     let spans = check(&groups);
     assert_eq!(spans[0].0, 12.0);
     assert!((groups[0].2 - 30.0).abs() < 0.01, "{groups:?}");
     // At the keys' right: packed back, the three keep their 18 px.
     let mut groups = vec![(vec![()], 300.0, 380.0), (vec![(); 3], 394.0, 400.0)];
-    sampler::spread(&mut groups, 400.0);
+    sampler::spread(&mut groups, (0.0, 400.0));
     check(&groups);
     assert!((groups[1].1 - 382.0).abs() < 0.01, "{groups:?}");
     assert_eq!(groups[0].2, 380.0, "{groups:?}");
+    // The sixth review's low 1: three zones on one white key (17 px) and the next key's zone
+    // starting at its right edge: the first takes its 18 px before the next is laid.
+    let mut groups = vec![(vec![(); 3], 100.0, 117.0), (vec![()], 117.0, 134.0)];
+    sampler::spread(&mut groups, (0.0, 400.0));
+    check(&groups);
+    assert_eq!((groups[0].1, groups[0].2), (100.0, 118.0), "{groups:?}");
+    assert_eq!(groups[1].1, 118.0, "{groups:?}");
+    // Too many to fit: packed back no further than the keys' left edge.
+    let mut groups: Vec<(Vec<()>, f32, f32)> = (0..10)
+        .map(|i| (vec![(); 3], 20.0 + i as f32 * 4.0, 24.0 + i as f32 * 4.0))
+        .collect();
+    sampler::spread(&mut groups, (20.0, 120.0));
+    assert!(
+        groups.iter().all(|g| g.1 >= 20.0 && g.2 <= 120.0),
+        "{groups:?}"
+    );
 }
 
 /// Low 1 and low 4 (UI-333): reversed, the loop's span and its ends lie where the wave shows

@@ -508,10 +508,14 @@ fn voice(def: &BuiltinDef, b: &mut Body, x: f32, y: f32, w: f32) -> f32 {
 
 /// Lays the zones' groups (the zones of the same keys, their left and right) side by side:
 /// one over the last pushes it on, each at least [`ZONE_MIN`] a zone so the zones within it
-/// do not overlap (the fifth review's low 7), and those pushed past `right` pack back to
-/// the left (low 19).
-pub(crate) fn spread<T>(groups: &mut [(Vec<T>, f32, f32)], right: f32) {
+/// do not overlap (the fifth review's low 7; the first, too, before the next is laid by it:
+/// the sixth review's low 1), and those pushed past `right` pack back to the left (low 19),
+/// no further than `left`, the keys' left edge.
+pub(crate) fn spread<T>(groups: &mut [(Vec<T>, f32, f32)], (left, right): (f32, f32)) {
     let least = |g: &(Vec<T>, f32, f32)| ZONE_MIN * g.0.len().max(1) as f32;
+    if let Some(g) = groups.first_mut() {
+        g.2 = g.2.max(g.1 + least(g));
+    }
     for k in 1..groups.len() {
         let (prev_x0, prev_x1) = (groups[k - 1].1, groups[k - 1].2);
         if groups[k].1 < prev_x1 {
@@ -521,16 +525,13 @@ pub(crate) fn spread<T>(groups: &mut [(Vec<T>, f32, f32)], right: f32) {
         let min = least(&groups[k]);
         groups[k].2 = groups[k].2.max(groups[k].1 + min);
     }
-    if let Some(g) = groups.first_mut() {
-        g.2 = g.2.max(g.1 + least(g));
-    }
     let mut edge = right;
     for g in groups.iter_mut().rev() {
         if g.2 <= edge {
             break;
         }
         g.2 = edge;
-        g.1 = g.1.min(edge - least(g));
+        g.1 = g.1.min(edge - least(g)).max(left.min(edge));
         edge = g.1;
     }
 }
@@ -573,7 +574,8 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
         .iter()
         .rfind(|k| !k.black)
         .map_or(PAD + inner, |k| k.r.right());
-    spread(&mut groups, right);
+    let left = keys.iter().find(|k| !k.black).map_or(PAD, |k| k.r.x);
+    spread(&mut groups, (left, right));
     let placed = groups.into_iter().flat_map(|(g, x0, x1)| {
         let share = (x1 - x0) / g.len() as f32;
         g.into_iter().enumerate().map(move |(j, z)| {
