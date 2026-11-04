@@ -284,6 +284,10 @@ fn a_kits_files_fill_free_pads_by_name_and_keep_their_pads() {
     let x = plugin(&s);
     assert_eq!(x.samples, ["crash.wav"]);
     assert_eq!(def.file_pad(&x.params, 0), 16);
+    // L2-smp-2: the pads whose files went lost their own values, so a file dropped there
+    // later does not sound with the old Choke.
+    assert!(!x.params.contains_key("A2.choke"), "{:?}", x.params);
+    assert!(!x.params.contains_key("A3.layer_mode"), "{:?}", x.params);
     for bad in [
         json!({ "id": "plg_2", "bank": "Z" }),
         json!({ "id": "plg_2", "bank": "B", "pad": "B1" }),
@@ -301,6 +305,37 @@ fn a_kits_files_fill_free_pads_by_name_and_keep_their_pads() {
         )
         .is_err()
     );
+}
+
+/// L2-smp-2: values left past the files' end are not a new file's, and --replace takes the
+/// pads' own values with their files.
+#[test]
+fn new_files_do_not_take_old_values() {
+    let mut p = project_with_samples(&["a.wav".to_string()]);
+    {
+        let t = std::sync::Arc::make_mut(p.tracks.get_mut(&TrackId(1)).unwrap());
+        let x = &mut t.inserts[0];
+        x.name = "Drum Kit".into();
+        x.uid = "drum-kit".into();
+        x.params.insert("file1.pad".into(), 0.0);
+        x.params.insert("file2.top".into(), 0.5);
+        x.params.insert("A1.choke".into(), 1.0);
+    }
+    let mut s = Session::from_project(p);
+    run(
+        &mut s,
+        "plugin.samples.add",
+        json!({ "id": "plg_2", "file": "b.wav" }),
+    );
+    assert!(!plugin(&s).params.contains_key("file2.top"));
+    run(
+        &mut s,
+        "plugin.samples.add",
+        json!({ "id": "plg_2", "file": "c.wav", "replace": true }),
+    );
+    let x = plugin(&s);
+    assert_eq!(x.samples, ["c.wav"]);
+    assert!(!x.params.contains_key("A1.choke"), "{:?}", x.params);
 }
 
 #[test]

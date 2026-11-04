@@ -293,11 +293,16 @@ fn add(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
         ));
     }
     if a.flag("replace") {
+        // The pads' own values go with their files: a file dropped there later does not
+        // sound with the old Choke or Trigger (L2-smp-2).
         x.samples.clear();
         x.params
-            .retain(|k, _| !matches!(scope(def, k), Some(Scope::File(_))));
+            .retain(|k, _| !matches!(scope(def, k), Some(Scope::File(_) | Scope::Pad(_))));
     }
     let first = x.samples.len();
+    // Values left past the end (a hand-written song's) are not the new files' (L2-smp-2).
+    x.params
+        .retain(|k, _| !matches!(scope(def, k), Some(Scope::File(n)) if n >= first));
     if def.per_pad.is_empty() {
         x.samples.extend(names.iter().cloned());
         return Ok(Output::with(
@@ -425,9 +430,11 @@ fn remove(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
 }
 
 /// Takes the files `gone` says away from the device `x`: the later files' values move down
-/// with them, and a Drum Kit's files stay on their pads.
+/// with them, and a Drum Kit's files stay on their pads. A pad left with no file loses its
+/// own values (L2-smp-2).
 pub fn drop_files(def: &BuiltinDef, x: &mut Plugin, gone: &[bool]) {
     pin_pads(def, x);
+    let before = used_pads(def, x);
     // Where each kept file goes: its values move down with it.
     let mut to = vec![None; gone.len()];
     let mut next = 0;
@@ -435,6 +442,12 @@ pub fn drop_files(def: &BuiltinDef, x: &mut Plugin, gone: &[bool]) {
         if !g {
             to[i] = Some(next);
             next += 1;
+        }
+    }
+    let mut kept = [false; PADS];
+    for (i, g) in gone.iter().enumerate() {
+        if !g {
+            kept[def.file_pad(&x.params, i)] = true;
         }
     }
     let mut params = BTreeMap::new();
@@ -446,6 +459,7 @@ pub fn drop_files(def: &BuiltinDef, x: &mut Plugin, gone: &[bool]) {
                         params.insert(file_key(*n, r.spec.id), v);
                     }
                 }
+                Scope::Pad(pad) if before[pad] && !kept[pad] => {}
                 _ => {
                     params.insert(k, v);
                 }
