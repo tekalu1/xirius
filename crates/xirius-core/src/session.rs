@@ -272,6 +272,10 @@ pub struct SessionState {
     /// (MIX-040); kept outside the history.
     #[serde(skip)]
     pub touched: Option<String>,
+    /// The switches and lists of the running VST3 and CLAP plug-ins, which an edit of their
+    /// lanes puts on steps as it does the built-in ones'; kept outside the history.
+    #[serde(skip)]
+    pub param_steps: crate::auto::ParamSteps,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1517,8 +1521,8 @@ impl Session {
         // branch taken away) goes too, and the message says so (undo brings it back).
         let dropped = work.prune_controls();
         work.prune_branch_lanes();
-        // a switch's lane holds only on or off, however the edit wrote it
-        work.snap_lanes();
+        // a switch's lane the edit wrote holds only on or off, however it was written
+        work.snap_edited_lanes(&before, &self.state.param_steps);
         // the main parameter of a `plugin.param.set`, as the edit left it: a macro holding it
         // puts it back, one holding only an `also` does not (review 3 低2)
         let main_param = |p: &Project| -> Option<Option<f64>> {

@@ -1129,3 +1129,73 @@ fn a_midi_transpose_goes_out_in_the_notes_and_comes_back_as_zero() {
     let pitches: Vec<u8> = clip.notes().iter().map(|n| n.pitch).collect();
     assert_eq!(pitches, [62, 66, 69]);
 }
+
+#[test]
+fn a_cut_switched_by_a_lane_comes_in_as_a_stair() {
+    let xml = r##"<?xml version="1.0" encoding="UTF-8"?>
+<Project version="1.0">
+  <Application name="Other" version="1"/>
+  <Structure>
+    <Track contentType="audio" id="a" name="Vox">
+      <Channel role="regular" id="ac" destination="mc">
+        <Devices>
+          <Equalizer deviceName="EQ" deviceRole="audioFX" id="eq">
+            <Band type="highPass" order="2">
+              <Freq unit="hertz" value="80" id="lf"/>
+              <Enabled value="true" id="lc"/>
+            </Band>
+            <Band type="lowPass" order="4">
+              <Freq unit="hertz" value="1000" id="hf"/>
+              <Enabled value="true" id="hc"/>
+            </Band>
+          </Equalizer>
+        </Devices>
+      </Channel>
+    </Track>
+    <Track contentType="audio notes" id="m" name="Master">
+      <Channel role="master" id="mc"/>
+    </Track>
+  </Structure>
+  <Arrangement>
+    <Lanes timeUnit="beats">
+      <Lanes track="a">
+        <Points><Target parameter="hc"/>
+          <RealPoint time="0" value="1"/>
+          <RealPoint time="4" value="0"/>
+        </Points>
+        <Points><Target parameter="lc"/>
+          <BoolPoint time="0" value="true"/>
+          <BoolPoint time="4" value="false"/>
+        </Points>
+      </Lanes>
+    </Lanes>
+  </Arrangement>
+</Project>"##;
+    let dir = tempfile::tempdir().unwrap();
+    let got = import_from(xml, "Cut", &mut |_| None, dir.path()).unwrap();
+    let vox = track(&got.project, "Vox");
+    let eq = vox.inserts[0].id;
+    let lane = |key: &str| {
+        vox.automation
+            .iter()
+            .find(|l| l.target == AutoTarget::Param(eq, key.into()))
+            .unwrap_or_else(|| panic!("a lane for {key}"))
+    };
+    // a line from on to off: on up to where it crossed the middle, then off
+    let hc = lane("high_cut_on");
+    assert!(hc.snapped_on(vox));
+    assert!(
+        hc.points
+            .iter()
+            .all(|x| x.step && (x.value == 0.0 || x.value == 1.0))
+    );
+    let at = |l: &AutoLane, tick: f64| l.value_at(tick).unwrap();
+    assert_eq!(at(hc, 1900.0), 1.0);
+    assert_eq!(at(hc, 1940.0), 0.0);
+    assert_eq!(at(hc, 3840.0), 0.0);
+    // a bool holds up to the next point
+    let lc = lane("low_cut_on");
+    assert!(lc.snapped_on(vox));
+    assert_eq!(at(lc, 3839.0), 1.0);
+    assert_eq!(at(lc, 3840.0), 0.0);
+}

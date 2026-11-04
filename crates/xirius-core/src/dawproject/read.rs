@@ -130,8 +130,13 @@ fn read_project(
     };
     r.read(root)?;
     let Reader {
-        p, skips, media, ..
+        mut p,
+        skips,
+        media,
+        ..
     } = r;
+    // a line on a switch's lane becomes the stair it played as, as a song read from a file does
+    p.snap_lanes();
     p.validate()
         .map_err(|e| format!("DAWproject から曲を作れません: {e}"))?;
     Ok(Imported {
@@ -996,6 +1001,11 @@ impl Reader<'_> {
                     }
                     if let Some(flag) = flag {
                         x.params.insert(flag.into(), if on { 1.0 } else { 0.0 });
+                        // a lane may switch the cut on and off (AUT-016)
+                        if let Some(id) = kid(band, "Enabled").and_then(|e| e.attribute("id")) {
+                            self.params
+                                .insert(id.into(), Param::Builtin(tid, pid, flag, 1.0));
+                        }
                     }
                     if let Some(slope) = slope {
                         let order = band.attribute("order").and_then(|o| o.parse::<u32>().ok());
@@ -1708,7 +1718,10 @@ impl Reader<'_> {
             };
             let (lo, hi) = at.range();
             let mut p = AutoPoint::new(self.tick(fr, time).max(0), v.clamp(lo, hi));
-            p.step = at.stepped() || pt.attribute("interpolation") == Some("hold");
+            // a bool has no values between: it holds up to the next point
+            p.step = at.stepped()
+                || pt.tag_name().name() == "BoolPoint"
+                || pt.attribute("interpolation") == Some("hold");
             match out.last() {
                 Some(last) if last.tick >= p.tick => p.tick = last.tick + 1,
                 _ => {}

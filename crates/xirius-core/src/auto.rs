@@ -5,6 +5,7 @@
 //! the parameter's number), so the song file reads plainly. The lane's drawn
 //! height goes through `to_norm` / `from_norm`.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -142,31 +143,48 @@ impl AutoTarget {
         }
     }
 
-    /// How many values a point may hold on this channel, when the target has steps: a
-    /// switch (2) or a built-in parameter with steps (a choice, a whole number). The
-    /// points of such a lane sit on the steps and hold up to the next one (a stair).
-    pub fn steps_on(&self, t: &Track) -> Option<u32> {
+    /// How many values a point may hold on this channel, when the values between have no
+    /// meaning: a switch (on or off) or a list of choices. The points of such a lane sit on
+    /// the steps and hold up to the next one (a stair). A whole number (a transpose in
+    /// semitones) is not one: its lane glides through the numbers between, and the
+    /// parameter takes the nearest as it plays. A VST3 or CLAP parameter has steps when the
+    /// running plug-in says so (`ext`, [`ParamSteps`]).
+    pub fn steps_with(&self, t: &Track, ext: &ParamSteps) -> Option<u32> {
         match self {
-            AutoTarget::Param(p, name) => t
-                .inserts
-                .iter()
-                .find(|x| x.id == *p)?
-                .builtin()?
-                .resolve(name)?
-                .spec
-                .steps()
-                .filter(|n| *n >= 2),
+            AutoTarget::Param(p, name) => {
+                let plugin = t.inserts.iter().find(|x| x.id == *p)?;
+                match plugin.builtin() {
+                    Some(def) => match def.resolve(name)?.spec.curve {
+                        xirius_params::Curve::Toggle => Some(2),
+                        xirius_params::Curve::Choice(labels) if labels.len() >= 2 => {
+                            Some(labels.len() as u32)
+                        }
+                        _ => None,
+                    },
+                    None => ext.of(*p, name),
+                }
+            }
             t if t.stepped() => Some(2),
             _ => None,
         }
     }
 
+    /// [`AutoTarget::steps_with`] for the built-in devices and Mute alone.
+    pub fn steps_on(&self, t: &Track) -> Option<u32> {
+        self.steps_with(t, &ParamSteps::default())
+    }
+
     /// `v` on the nearest step of this channel's target; as it is when the target glides.
-    pub fn snap_on(&self, t: &Track, v: f64) -> f64 {
-        match self.steps_on(t) {
+    pub fn snap_with(&self, t: &Track, ext: &ParamSteps, v: f64) -> f64 {
+        match self.steps_with(t, ext) {
             Some(n) => snap(self.range(), n, v),
             None => v,
         }
+    }
+
+    /// [`AutoTarget::snap_with`] for the built-in devices and Mute alone.
+    pub fn snap_on(&self, t: &Track, v: f64) -> f64 {
+        self.snap_with(t, &ParamSteps::default(), v)
     }
 
     /// A level in dB that moves along the fader's feel.
@@ -505,8 +523,8 @@ impl AutoLane {
     }
 
     /// Are the points on the steps of the target on `t`, as stairs (or does it glide)?
-    pub fn snapped_on(&self, t: &Track) -> bool {
-        let Some(n) = self.target.steps_on(t) else {
+    pub fn snapped_with(&self, t: &Track, ext: &ParamSteps) -> bool {
+        let Some(n) = self.target.steps_with(t, ext) else {
             return true;
         };
         let range = self.target.range();
@@ -517,46 +535,191 @@ impl AutoLane {
             .all(|x| (!hold || (x.step && x.curve == 0.0)) && snap(range, n, x.value) == x.value)
     }
 
-    /// Puts each point on a step of the lane's target on `t` and makes it hold up to the
-    /// next (a stair), when the target has steps: a switch draws and plays only on or off.
-    /// `false` when the points were so already (the lane is not touched then).
-    pub fn snap_on(&mut self, t: &Track) -> bool {
-        if self.snapped_on(t) {
+    /// Makes the lane of a target with steps a stair on `t`: each point on a step, holding up
+    /// to the next. Where a line between two points crossed from one step to another, a point
+    /// goes at the first tick past the crossing, so the lane plays as it did (the parameter
+    /// took the nearest step all along): a song saved before, or a lane written as a line,
+    /// sounds the same to the tick. `false` when the lane was a stair already (it is not
+    /// touched then).
+    pub fn snap_with(&mut self, t: &Track, ext: &ParamSteps) -> bool {
+        if self.snapped_with(t, ext) {
             return false;
         }
-        let Some(n) = self.target.steps_on(t) else {
+        let Some(n) = self.target.steps_with(t, ext) else {
             return false;
         };
         let range = self.target.range();
-        let hold = !self.target.stepped();
-        for x in Arc::make_mut(&mut self.points) {
-            x.value = snap(range, n, x.value);
-            if hold {
-                x.step = true;
-                x.curve = 0.0;
+        let level = |v: f64| snap(range, n, v);
+        if self.target.stepped() {
+            for x in Arc::make_mut(&mut self.points) {
+                x.value = level(x.value);
+            }
+            return true;
+        }
+        let pts = &*self.points;
+        let mut out = Vec::with_capacity(pts.len());
+        for (i, a) in pts.iter().enumerate() {
+            out.push(AutoPoint {
+                value: level(a.value),
+                curve: 0.0,
+                step: true,
+                ..*a
+            });
+            let Some(b) = pts.get(i + 1).filter(|_| !a.step) else {
+                continue;
+            };
+            let at = |tick: Tick| {
+                let f = (tick - a.tick) as f64 / (b.tick - a.tick) as f64;
+                level(a.value + (b.value - a.value) * bend(f, a.curve))
+            };
+            // the line runs one way, so each step it reaches starts at one tick
+            let (mut from, mut now) = (a.tick, level(a.value));
+            while level(b.value) != now {
+                let (mut lo, mut hi) = (from, b.tick);
+                while hi - lo > 1 {
+                    let mid = lo + (hi - lo) / 2;
+                    if at(mid) == now {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                if hi >= b.tick {
+                    break;
+                }
+                now = at(hi);
+                from = hi;
+                out.push(AutoPoint {
+                    step: true,
+                    ..AutoPoint::new(hi, now)
+                });
             }
         }
+        self.points = Arc::new(out);
         true
+    }
+
+    /// [`AutoLane::snapped_with`] for the built-in devices and Mute alone.
+    pub fn snapped_on(&self, t: &Track) -> bool {
+        self.snapped_with(t, &ParamSteps::default())
+    }
+
+    /// [`AutoLane::snap_with`] for the built-in devices and Mute alone.
+    pub fn snap_on(&mut self, t: &Track) -> bool {
+        self.snap_with(t, &ParamSteps::default())
     }
 }
 
 impl crate::model::Project {
-    /// Puts the points of every lane whose target has steps on those steps, as stairs
-    /// ([`AutoLane::snap_on`]): after each edit, and as a song is read (a song saved before
-    /// had values between the steps of a switch). Returns how many lanes it changed.
+    /// Makes every lane of a target with steps a stair ([`AutoLane::snap_with`]) as a song
+    /// comes in: read from a file (a song saved before had lines between the steps of a
+    /// switch) or from a DAWproject. Only the built-in devices: what a VST3 or CLAP plug-in
+    /// has is not known until it runs. Returns how many lanes it changed.
     pub fn snap_lanes(&mut self) -> usize {
+        self.snap_lanes_where(&ParamSteps::default(), |_, _| true)
+    }
+
+    /// [`Project::snap_lanes`] for the lanes an edit wrote (those whose points are not the
+    /// ones in `before`), knowing the steps of the running plug-ins: an edit leaves the lanes
+    /// it did not touch as they are, so its undo holds only its own change.
+    pub fn snap_edited_lanes(&mut self, before: &crate::model::Project, ext: &ParamSteps) -> usize {
+        self.snap_lanes_where(ext, |t, l| {
+            !before.tracks.get(&t.id).is_some_and(|b| {
+                b.automation
+                    .iter()
+                    .any(|x| x.target == l.target && Arc::ptr_eq(&x.points, &l.points))
+            })
+        })
+    }
+
+    fn snap_lanes_where(
+        &mut self,
+        ext: &ParamSteps,
+        mut pick: impl FnMut(&Track, &AutoLane) -> bool,
+    ) -> usize {
         let mut n = 0;
         for t in self.tracks.values_mut() {
-            if t.automation.iter().all(|l| l.snapped_on(t)) {
+            if t.automation
+                .iter()
+                .all(|l| l.snapped_with(t, ext) || !pick(t, l))
+            {
                 continue;
             }
             let t = Arc::make_mut(t);
             let owner = t.clone();
             for l in &mut t.automation {
-                n += usize::from(l.snap_on(&owner));
+                if pick(&owner, l) {
+                    n += usize::from(l.snap_with(&owner, ext));
+                }
             }
         }
         n
+    }
+}
+
+/// What only a running VST3 or CLAP plug-in can tell of its parameters: how many values each
+/// switch or list of choices takes, by plug-in, parameter id and title. A parameter it does
+/// not name glides (one the plug-in does not say has steps, or whose steps it tells in a way
+/// that cannot be trusted).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ParamSteps(Arc<HashMap<PluginId, Vec<(u32, String, u32)>>>);
+
+impl ParamSteps {
+    pub fn new(map: HashMap<PluginId, Vec<(u32, String, u32)>>) -> ParamSteps {
+        ParamSteps(Arc::new(map))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.values().all(Vec::is_empty)
+    }
+
+    /// The values of a parameter named as a lane names it: by its id, else by its title.
+    pub fn of(&self, plugin: PluginId, key: &str) -> Option<u32> {
+        let list = self.0.get(&plugin)?;
+        let by_id = key
+            .parse::<u32>()
+            .ok()
+            .and_then(|id| list.iter().find(|(x, _, _)| *x == id));
+        by_id
+            .or_else(|| {
+                list.iter()
+                    .find(|(_, title, _)| title.eq_ignore_ascii_case(key))
+            })
+            .map(|(_, _, n)| *n)
+            .filter(|n| *n >= 2)
+    }
+}
+
+/// The most choices a plug-in's list is taken to have; past it the count is not trusted and
+/// the parameter glides.
+pub const MAX_LIST: u32 = 128;
+
+/// How many values a VST3 parameter takes when it is a switch or a list: a step count of 1
+/// (two values), or the list flag with a step count a list can have. A larger whole number
+/// without the flag, a continuous parameter (0), a count that is not one, or one past
+/// [`MAX_LIST`] glides.
+pub fn vst3_steps(step_count: i32, is_list: bool) -> Option<u32> {
+    match step_count {
+        1 => Some(2),
+        n if is_list && n > 1 && n < MAX_LIST as i32 => Some(n as u32 + 1),
+        _ => None,
+    }
+}
+
+/// [`vst3_steps`] for a CLAP parameter: stepped with two values, or an enum of a list's size
+/// (its range a whole number of steps).
+pub fn clap_steps(stepped: bool, is_enum: bool, min: f64, max: f64) -> Option<u32> {
+    if !stepped || !min.is_finite() || !max.is_finite() || max <= min {
+        return None;
+    }
+    let count = (max - min).round();
+    if (max - min - count).abs() > 1e-9 {
+        return None;
+    }
+    match count as i64 {
+        1 => Some(2),
+        n if is_enum && n > 1 && n < i64::from(MAX_LIST) => Some(n as u32 + 1),
+        _ => None,
     }
 }
 
