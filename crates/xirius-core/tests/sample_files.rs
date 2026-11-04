@@ -524,3 +524,65 @@ fn an_old_tune_is_transpose_and_a_preset_of_old_keys_reads_as_the_song_keeps_the
     assert_eq!(plain("transpose", x.params["transpose"]), -12.0);
     assert_eq!(x.params.get("cutoff"), Some(&0.5));
 }
+
+/// The fourth review's low 7: a lane under a hand-written key (`CUTOFF`) and a macro control
+/// mapped to an old `tune` move with the values when the song opens, the map's range over
+/// the wider `transpose`; a `tune` lane beside a `transpose` one gives way to it.
+#[test]
+fn lanes_and_macro_maps_of_older_keys_open_under_the_songs_keys() {
+    use xirius_core::auto::{AutoLane, AutoPoint, AutoTarget};
+    use xirius_core::controls::{ControlId, Mapping};
+    let tmp = tempfile::Builder::new()
+        .prefix("xirius-samples-")
+        .tempdir()
+        .unwrap();
+    let song = tmp.path().join("song");
+    let lane = |key: &str, value: f64| AutoLane {
+        suspended: false,
+        target: AutoTarget::Param(PluginId(2), key.into()),
+        hidden: false,
+        points: std::sync::Arc::new(vec![AutoPoint {
+            tick: 0,
+            value,
+            curve: 0.0,
+            step: false,
+        }]),
+    };
+    let mut p = project_with_samples(&[]);
+    {
+        let t = std::sync::Arc::make_mut(p.tracks.get_mut(&TrackId(1)).unwrap());
+        t.automation.push(lane("CUTOFF", 0.4));
+        t.automation.push(lane("transpose", 0.6));
+        t.automation.push(lane("tune", 0.25));
+        t.controls.get_mut(ControlId::Knob(0)).maps.push(Mapping {
+            target: AutoTarget::Param(PluginId(2), "tune".into()),
+            from: 0.25,
+            to: 0.75,
+            curve: 0.0,
+        });
+    }
+    let mut s = Session::from_project(p);
+    run(&mut s, "project.save-as", json!({ "path": text(&song) }));
+    let back = Session::open(&song).unwrap();
+    let def = xirius_params::find("sampler").unwrap();
+    let plain = |id: &str, v: f64| def.param(id).unwrap().1.to_plain(v);
+    let t = &back.project().tracks[&TrackId(1)];
+    let keys: Vec<(String, f64)> = t
+        .automation
+        .iter()
+        .map(|l| match &l.target {
+            AutoTarget::Param(_, k) => (k.clone(), l.points[0].value),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        keys,
+        vec![("cutoff".to_string(), 0.4), ("transpose".to_string(), 0.6)]
+    );
+    let m = &t.controls.get(ControlId::Knob(0)).maps[0];
+    assert_eq!(m.target, AutoTarget::Param(PluginId(2), "transpose".into()));
+    assert_eq!(
+        (plain("transpose", m.from), plain("transpose", m.to)),
+        (-12.0, 12.0)
+    );
+}
