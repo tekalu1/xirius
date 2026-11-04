@@ -511,6 +511,9 @@ impl Studio {
     /// The song is about to be replaced (another opened, a new one made, the window
     /// closed): the list remembers it, a draft by its folder.
     pub(crate) fn keep_leaving(&mut self) {
+        // A note a device's window holds ends while its song is still the one playing
+        // (L2-ui-4), not only by the transport's reset after.
+        self.window_note_off();
         // What the plugins hold now goes into the song before it is let go of (PLG-057).
         if !self.leaving_ready {
             self.pull_plugins();

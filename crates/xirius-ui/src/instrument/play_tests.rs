@@ -269,3 +269,16 @@ fn plg_066_the_keys_and_the_pads_read_their_notes() {
     assert_eq!(pad.role(), accesskit::Role::Button);
     assert_eq!(pad.label(), Some("A1 C1"));
 }
+
+/// L2-ui-4: a pad held while the song closes ends its note before the song goes, not only
+/// by the transport's reset.
+#[test]
+fn plg_066_a_pad_held_ends_when_the_song_closes() {
+    let (mut s, g, t, id) = played("Drum Kit");
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).unwrap();
+    assert!(s.instrument_down(&g, x, y));
+    wait_sounding(&mut s, id, |n| n > 0);
+    s.keep_leaving();
+    assert_eq!(last_sent(&s), Some((t, NoteKind::Off { pitch: 36 })));
+    assert_eq!(s.instruments.note, None);
+}
