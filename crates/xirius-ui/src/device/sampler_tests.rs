@@ -461,7 +461,7 @@ fn ui_331_a_taller_sampler_grows_its_wave_and_keeps_the_keys() {
         assert_eq!((sb.cell.w, sb.cell.h), (sa.cell.w, sa.cell.h));
     }
     let span = b.keys.last().unwrap().r.right() - b.keys[0].r.x;
-    assert!(span + 2.0 * layout::PAD > 520.0, "the C names show: {span}");
+    assert!(span > 520.0, "the C names show: {span}");
 }
 
 /// M-ui-6 (UI-331): a taller Drum Kit gives the height to its pads (and its wave beside
@@ -951,4 +951,71 @@ fn ui_333_the_voice_shows_where_it_reads_and_rides_the_envelope() {
     };
     assert!(pad(1).read.is_some() && pad(1).env.is_some());
     assert!(pad(0).read.is_none() && pad(0).env.is_none());
+}
+
+/// The narrow form (the mock's 520): a Drum Kit's pads centred over the pad's editor and
+/// the voice under it; the Amp under the Env and the Filter, its knobs in one row; nothing
+/// past the window's edges, the controls over no pad; and taller, the wave grows, not the
+/// pads.
+#[test]
+fn ui_334_a_narrow_window_stacks_the_pads_and_puts_the_amp_under() {
+    for (name, files) in [
+        ("Drum Kit", &["Kick.wav", "Snare.wav"][..]),
+        ("Sampler", &["Piano C3.wav"][..]),
+    ] {
+        let (mut s, _g, t, id) = window(name);
+        add(&mut s, id, files);
+        let x = plugin(&s, t);
+        let def = s.instruments.def_of(&x).unwrap();
+        assert_eq!(layout::min_w(def), sampler::MIN_W);
+        let values = values_of(&x, def);
+        let shape = layout::Shape {
+            w: 300.0,
+            values: &values,
+            plugin: Some(&x),
+            ..layout::Shape::default()
+        };
+        let b = layout::body(def, &shape);
+        assert_eq!(b.w, sampler::MIN_W, "{name}");
+        let inside = |r: crate::studio::Rect| r.x >= 0.0 && r.right() <= b.w + 0.01;
+        for sl in &b.slots {
+            assert!(inside(sl.cell), "{name}: {:?}", sl.cell);
+            assert!(
+                !b.pads.iter().any(|k| k.r.y < sl.cell.bottom()
+                    && sl.cell.y < k.r.bottom()
+                    && k.r.x < sl.cell.right()
+                    && sl.cell.x < k.r.right()),
+                "{name}: a knob on a pad"
+            );
+        }
+        for sp in &b.spots {
+            assert!(inside(sp.r), "{name}: {:?} {:?}", sp.mark, sp.r);
+        }
+        let cell = |id: &str| {
+            let k = sampler::idx(def, id).unwrap();
+            b.slots.iter().find(|x| x.k == k).unwrap().cell
+        };
+        let attack = cell("attack");
+        let amp: Vec<_> = ["transpose", "fine", "volume", "pan", "velocity"]
+            .iter()
+            .map(|id| cell(id))
+            .collect();
+        assert!(
+            amp.iter().all(|r| r.y == amp[0].y && r.y > attack.bottom()),
+            "{name}"
+        );
+        assert!(b.h >= amp[0].bottom(), "{name}");
+        if name == "Drum Kit" {
+            let foot = b.pads.iter().map(|k| k.r.bottom()).fold(0.0, f32::max);
+            let left = b.pads.iter().map(|k| k.r.x).fold(f32::MAX, f32::min);
+            let right = b.pads.iter().map(|k| k.r.right()).fold(0.0, f32::max);
+            assert!(((left + right) / 2.0 - b.w / 2.0).abs() < 1.0);
+            assert!(right - left <= 340.0);
+            let title = b.spots.iter().find(|x| x.mark == Mark::Title).unwrap();
+            assert!(title.r.y > foot && b.graphs[0].y > foot);
+            let grown = b.clone().grown(b.h + 100.0);
+            assert_eq!(grown.pads, b.pads, "the pads keep their size");
+            assert_eq!(grown.graphs[0].h, b.graphs[0].h + 100.0);
+        }
+    }
 }

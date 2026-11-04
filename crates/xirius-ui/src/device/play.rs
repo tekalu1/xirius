@@ -4,7 +4,7 @@
 
 use xirius_design::{FontSize, Radius, Weight};
 
-use super::layout::{Mark, PAD, Spot};
+use super::layout::{Mark, Spot};
 use crate::draw::{Align, Pen};
 use crate::notes::is_black_key;
 use crate::studio::Rect;
@@ -20,9 +20,9 @@ pub const KEYS_H: f32 = 56.0;
 /// A black key's size, over the line between two white keys.
 const BLACK_W: f32 = 8.0;
 const BLACK_H: f32 = 34.0;
-/// The gap between the pads, and how tall a pad is of its width.
+/// The gap between the pads.
 pub const GAP: f32 = 4.0;
-/// A window this narrow or less hides the keys' names.
+/// Keys this wide or narrower hide their names (the mock's 520 of the body's content).
 const NAMES_W: f32 = 520.0;
 
 /// A key or a pad: the note it plays and where it is.
@@ -98,7 +98,7 @@ pub fn pad_name(pitch: u8) -> &'static str {
     xirius_params::PAD_NAMES[pad_of(pitch)]
 }
 
-/// The keyboard, `down` the key held: the white keys' C named while the window is wider
+/// The keyboard, `down` the key held: the white keys' C named while the keys are wider
 /// than [`NAMES_W`].
 pub fn paint_keys(pen: &mut Pen, keys: &[Key], down: Option<u8>) {
     let (Some(first), Some(last)) = (keys.first(), keys.iter().rfind(|k| !k.black)) else {
@@ -112,7 +112,7 @@ pub fn paint_keys(pen: &mut Pen, keys: &[Key], down: Option<u8>) {
         first.r.h + 1.0,
     );
     pen.round(frame, c.key_black, Radius::Clip);
-    let names = frame.w + 2.0 * PAD > NAMES_W;
+    let names = frame.w > NAMES_W;
     for k in keys {
         let lit = down == Some(k.pitch);
         let face = match (lit, k.black) {

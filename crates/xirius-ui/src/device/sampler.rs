@@ -28,11 +28,17 @@ use crate::studio::Rect;
 pub const DROP_LABEL: &str = "Drop samples here";
 pub const BROWSE_LABEL: &str = "Browse";
 
-/// The width the Sampler's window opens at, and the narrowest it goes.
+/// The width the Sampler's window opens at.
 pub const NATURAL_W: f32 = 780.0;
 /// The Drum Kit's.
 pub const KIT_W: f32 = 905.0;
-pub const KIT_MIN_W: f32 = KIT_W;
+/// The narrowest both go: the mock's narrow form.
+pub const MIN_W: f32 = 520.0;
+/// The Drum Kit at this content width or narrower stacks its pads over the pad's editor.
+const KIT_STACK: f32 = 700.0;
+/// The pads' column then, at its widest; and a pad's height for its width.
+const STACK_W: f32 = 340.0;
+const PAD_ASPECT: f32 = 0.86;
 const GAP: f32 = 8.0;
 /// A row of the sample: its name and its buttons.
 const ROW_H: f32 = 26.0;
@@ -50,6 +56,13 @@ const AMP_W: f32 = 186.0;
 const AMP_CELL: f32 = 62.0;
 /// The share of the envelope's plane of what the planes have.
 const ENV_SHARE: f32 = 0.585;
+/// The narrowest the envelope's and the filter's planes go before the Amp goes under them,
+/// and the content width at which the Amp takes the whole width, its knobs in one row.
+const ENV_MIN: f32 = 260.0;
+const FILTER_MIN: f32 = 200.0;
+const AMP_ROW: f32 = 620.0;
+/// The narrowest a sample's name gets before its buttons go under it.
+const NAME_MIN: f32 = 80.0;
 /// The zones' strip over the keys.
 const ZONE_H: f32 = 20.0;
 /// The narrowest a zone is drawn, so one of a single key off the keys can be pressed.
@@ -308,11 +321,35 @@ fn drop_plane(b: &mut Body, r: Rect) {
 }
 
 /// The sample's row at `(x, y)`, `w` wide: ‹ its name › at the left, its buttons at the
-/// right, the loop's X-Fade after Loop while it is on (UI-333).
-fn sample_row(def: &BuiltinDef, values: &[f64], b: &mut Body, at: (f32, f32), w: f32, file: &str) {
+/// right, the loop's X-Fade after Loop while it is on (UI-333). Where the name does not
+/// fit beside them, the buttons go on a second line. Its height.
+fn sample_row(
+    def: &BuiltinDef,
+    values: &[f64],
+    b: &mut Body,
+    at: (f32, f32),
+    w: f32,
+    file: &str,
+) -> f32 {
     let (x, y) = at;
     let text = stem(file);
-    let name_w = (control::label_w(&text) + 32.0).clamp(80.0, NAME_MAX);
+    let xfade = idx(def, "xfade").filter(|_| on(def, values, "loop"));
+    let buttons: f32 = SAMPLE_BUTTONS
+        .iter()
+        .filter_map(|id| idx(def, id))
+        .map(|k| control::toggle_w(control::name(def, &def.params[k])) + 6.0)
+        .sum::<f32>()
+        + xfade.map_or(0.0, |k| {
+            control::row_knob_w(control::name(def, &def.params[k])) + 6.0
+        });
+    let arrows = 2.0 * ARROW_W + 6.0;
+    let room = w - buttons - arrows;
+    let wrap = room < NAME_MIN;
+    let fit = if wrap { w - arrows } else { room };
+    let name_w = (control::label_w(&text) + 32.0)
+        .clamp(NAME_MIN, NAME_MAX)
+        .min(fit);
+    let by = if wrap { y + ROW_H + 4.0 } else { y };
     let ay = y + (ROW_H - ARROW_W) / 2.0;
     b.spots.push(Spot::new(
         Rect::new(x, ay, ARROW_W, ARROW_W),
@@ -333,8 +370,7 @@ fn sample_row(def: &BuiltinDef, values: &[f64], b: &mut Body, at: (f32, f32), w:
     for id in SAMPLE_BUTTONS.iter().rev() {
         let Some(k) = idx(def, id) else { continue };
         if *id == "loop"
-            && on(def, values, "loop")
-            && let Some(xf) = idx(def, "xfade")
+            && let Some(xf) = xfade
         {
             let cw = control::row_knob_w(control::name(def, &def.params[xf]));
             right -= cw;
@@ -342,7 +378,7 @@ fn sample_row(def: &BuiltinDef, values: &[f64], b: &mut Body, at: (f32, f32), w:
                 k: xf,
                 look: Look::Knob,
                 dial: XFADE_DIAL,
-                cell: Rect::new(right, y + (ROW_H - XFADE_DIAL) / 2.0, cw, XFADE_DIAL),
+                cell: Rect::new(right, by + (ROW_H - XFADE_DIAL) / 2.0, cw, XFADE_DIAL),
                 label: None,
                 dim: false,
             });
@@ -354,29 +390,46 @@ fn sample_row(def: &BuiltinDef, values: &[f64], b: &mut Body, at: (f32, f32), w:
             k,
             look: Look::Toggle,
             dial: TOGGLE_H,
-            cell: Rect::new(right, y, tw, TOGGLE_H),
+            cell: Rect::new(right, by, tw, TOGGLE_H),
             label: None,
             dim: false,
         });
         right -= 6.0;
     }
+    by + ROW_H - y
 }
 
 /// The voice at `(x, y)`, `w` wide: the envelope's and the filter's names and planes, their
-/// knobs under them, the Amp's six at the right. Its foot.
+/// knobs under them, the Amp's knobs at the right. Narrower than the three, the Amp goes
+/// under the planes (they share the width 3 : 2 from their narrowest), and at [`AMP_ROW`]
+/// or narrower it takes the whole width, its knobs in one row (the mock's). Its foot.
 fn voice(def: &BuiltinDef, b: &mut Body, x: f32, y: f32, w: f32) -> f32 {
-    let avail = w - AMP_W - 2.0 * GAP;
-    let env_w = (avail * ENV_SHARE).floor();
-    let filter_w = avail - env_w;
+    let under = w < ENV_MIN + FILTER_MIN + AMP_W + 2.0 * GAP;
+    let planes = if under {
+        w - GAP
+    } else {
+        w - AMP_W - 2.0 * GAP
+    };
+    let env_w = if under {
+        (ENV_MIN + (planes - ENV_MIN - FILTER_MIN).max(0.0) * 0.6).floor()
+    } else {
+        (planes * ENV_SHARE).floor()
+    };
     let env = Rect::new(x, y + HEAD_H, env_w, PLANE_H);
-    let filter = Rect::new(env.right() + GAP, y + HEAD_H, filter_w, PLANE_H);
-    let ax = x + w - AMP_W;
+    let filter = Rect::new(env.right() + GAP, y + HEAD_H, planes - env_w, PLANE_H);
+    let ky = env.bottom() + 4.0;
+    let kh = cell_h(DIAL_SM);
+    let (ax, ay) = if under {
+        (x, ky + kh + GAP)
+    } else {
+        (x + w - AMP_W, y)
+    };
     b.names
         .push(name(Rect::new(env.x, y + 4.0, 60.0, NAME_H), "Env"));
     b.names
         .push(name(Rect::new(filter.x, y + 4.0, 60.0, NAME_H), "Filter"));
     b.names
-        .push(name(Rect::new(ax, y + 4.0, 60.0, NAME_H), "Amp"));
+        .push(name(Rect::new(ax, ay + 4.0, 60.0, NAME_H), "Amp"));
     if let Some(k) = idx(def, "ftype") {
         let sw = control::segments_w(&def.params[k]);
         b.slots.push(Slot {
@@ -390,8 +443,6 @@ fn voice(def: &BuiltinDef, b: &mut Body, x: f32, y: f32, w: f32) -> f32 {
     }
     b.graphs.push(env);
     b.graphs.push(filter);
-    let ky = env.bottom() + 4.0;
-    let kh = cell_h(DIAL_SM);
     let row = |b: &mut Body, ids: &[(&str, Option<&'static str>)], r: Rect| {
         let cw = r.w / ids.len() as f32;
         for (i, (id, label)) in ids.iter().enumerate() {
@@ -408,17 +459,24 @@ fn voice(def: &BuiltinDef, b: &mut Body, x: f32, y: f32, w: f32) -> f32 {
     let filter_ids: Vec<(&str, Option<&'static str>)> =
         FILTER.iter().map(|id| (*id, None)).collect();
     row(b, &filter_ids, filter);
+    let in_row = under && w <= AMP_ROW;
     for (i, id) in AMP.iter().enumerate() {
-        let (col, line) = ((i % 3) as f32, (i / 3) as f32);
-        let cell = Rect::new(ax + col * AMP_CELL, y + HEAD_H + line * kh, AMP_CELL, kh);
+        let cell = if in_row {
+            let cw = w / AMP.len() as f32;
+            Rect::new(x + i as f32 * cw, ay + HEAD_H, cw, kh)
+        } else {
+            let (col, line) = ((i % 3) as f32, (i / 3) as f32);
+            Rect::new(ax + col * AMP_CELL, ay + HEAD_H + line * kh, AMP_CELL, kh)
+        };
         b.slots.extend(slot(def, id, Look::Knob, DIAL_SM, cell));
     }
-    ky + kh
+    let lines = if in_row { 1.0 } else { 2.0 };
+    (ky + kh).max(ay + HEAD_H + lines * kh)
 }
 
 /// The Sampler's body for its files (`s.plugin`) and the zone chosen (`s.pick`).
 pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
-    let w = s.w.max(NATURAL_W);
+    let w = s.w.max(MIN_W);
     let inner = w - 2.0 * PAD;
     let mut b = Body {
         w,
@@ -432,8 +490,7 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
     }
     let pick = s.pick.min(files.len() - 1);
     let mut y = PAD;
-    sample_row(def, s.values, &mut b, (PAD, y), inner, &files[pick]);
-    y += ROW_H + GAP;
+    y += sample_row(def, s.values, &mut b, (PAD, y), inner, &files[pick]) + GAP;
     b.graphs.push(Rect::new(PAD, y, inner, WAVE_H));
     b.main = 0;
     y += WAVE_H + GAP;
@@ -487,9 +544,24 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
     b
 }
 
-/// The Drum Kit's body for its files and the pad chosen (`s.pick`) and its layer (`s.layer`).
+/// The Drum Kit's body for its files and the pad chosen (`s.pick`) and its layer (`s.layer`):
+/// the banks and the pads at the left, the chosen pad's editor beside them, the voice under
+/// both; at [`KIT_STACK`] or narrower, the pads centred over the editor (the mock's).
 pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
-    let w = s.w.max(KIT_W);
+    let w = s.w.max(MIN_W);
+    let inner = w - 2.0 * PAD;
+    let stack = inner <= KIT_STACK;
+    let (lx, lw) = if stack {
+        let lw = inner.min(STACK_W);
+        (PAD + ((inner - lw) / 2.0).floor(), lw)
+    } else {
+        (PAD, LEFT_W)
+    };
+    let pad_h = if stack {
+        ((lw - 3.0 * play::GAP) / 4.0 * PAD_ASPECT).round()
+    } else {
+        PAD_H
+    };
     let mut b = Body {
         w,
         ..Body::default()
@@ -503,10 +575,10 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
     let soloed = (0..PADS).any(|p| flag(p, "solo"));
     // The bank tabs and the pads.
     let mut y = PAD;
-    let tab_w = LEFT_W / BANKS.len() as f32;
+    let tab_w = lw / BANKS.len() as f32;
     for (n, letter) in BANKS.iter().enumerate() {
         let mut spot = Spot::new(
-            Rect::new(PAD + n as f32 * tab_w, y, tab_w - 2.0, BANK_H),
+            Rect::new(lx + n as f32 * tab_w, y, tab_w - 2.0, BANK_H),
             Mark::Bank(n),
             *letter,
         );
@@ -515,7 +587,7 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
         b.spots.push(spot);
     }
     y += BANK_H + 6.0;
-    let grid = Rect::new(PAD, y, LEFT_W, 4.0 * PAD_H + 3.0 * play::GAP);
+    let grid = Rect::new(lx, y, lw, 4.0 * pad_h + 3.0 * play::GAP);
     b.pads = play::pads(grid, pick / play::PADS);
     for k in &b.pads {
         let p = play::pad_of(k.pitch);
@@ -561,12 +633,24 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
         }
     }
     let left_foot = grid.bottom();
-    // The chosen pad.
-    let rx = PAD + LEFT_W + 16.0;
+    // The chosen pad: beside the pads, its planes down to their foot; or under them, its
+    // planes at their own heights.
+    let (rx, top) = if stack {
+        (PAD, left_foot + 12.0)
+    } else {
+        (PAD + LEFT_W + 16.0, PAD)
+    };
     let rw = w - rx - PAD;
+    let foot = |y: f32, h: f32| {
+        if stack {
+            y + h
+        } else {
+            left_foot.max(y + 60.0)
+        }
+    };
     let files = pad_of(pick);
     let mut title = Spot::new(
-        Rect::new(rx, PAD, rw - CHOKE_W - 56.0, ROW_H),
+        Rect::new(rx, top, rw - CHOKE_W - 56.0, ROW_H),
         Mark::Title,
         xirius_params::PAD_NAMES[pick],
     );
@@ -576,13 +660,14 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
     }
     b.spots.push(title);
     let Some(x) = filled else {
-        let y = PAD + ROW_H + GAP;
-        drop_plane(&mut b, Rect::new(rx, y, rw, left_foot - y));
-        b.h = left_foot + PAD;
+        let y = top + ROW_H + GAP;
+        let r = Rect::new(rx, y, rw, foot(y, EMPTY_H) - y);
+        drop_plane(&mut b, r);
+        b.h = r.bottom() + PAD;
         return b;
     };
     b.names.push(name(
-        Rect::new(rx + rw - CHOKE_W - 48.0, PAD + 6.0, 44.0, NAME_H),
+        Rect::new(rx + rw - CHOKE_W - 48.0, top + 6.0, 44.0, NAME_H),
         "Choke",
     ));
     b.slots.extend(slot(
@@ -590,10 +675,10 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
         "choke",
         Look::Menu,
         ROW_H,
-        Rect::new(rx + rw - CHOKE_W, PAD, CHOKE_W, ROW_H),
+        Rect::new(rx + rw - CHOKE_W, top, CHOKE_W, ROW_H),
     ));
     // Layer Mode and Trigger, the second under the first when they do not fit.
-    let mut y = PAD + ROW_H + GAP;
+    let mut y = top + ROW_H + GAP;
     let mut cx = rx;
     for (id, label, lw) in [
         ("layer_mode", "Layer Mode", 74.0),
@@ -621,7 +706,7 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
     }
     y += SEG_H + GAP;
     if files.is_empty() {
-        drop_plane(&mut b, Rect::new(rx, y, rw, left_foot - y));
+        drop_plane(&mut b, Rect::new(rx, y, rw, foot(y, EMPTY_H) - y));
     } else {
         let layer = s.layer.min(files.len() - 1);
         b.names.push(name(
@@ -668,10 +753,9 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
         }
         b.spots.extend(edges);
         y += LAYER_H + GAP;
-        sample_row(def, s.values, &mut b, (rx, y), rw, &x.samples[files[layer]]);
-        y += ROW_H + GAP;
+        y += sample_row(def, s.values, &mut b, (rx, y), rw, &x.samples[files[layer]]) + GAP;
         b.graphs
-            .insert(0, Rect::new(rx, y, rw, (left_foot - y).max(60.0)));
+            .insert(0, Rect::new(rx, y, rw, foot(y, WAVE_H) - y));
         b.main = 0;
     }
     let top = b.graphs[0].bottom().max(left_foot) + GAP + 4.0;

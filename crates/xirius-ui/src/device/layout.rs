@@ -241,7 +241,7 @@ impl Body {
     pub fn grown(mut self, h: f32) -> Body {
         let dy = h - self.h;
         // A Drum Kit's pads are a main graph too (UI-331): their grid takes the height
-        // with the wave beside it, or alone while the kit has no sample.
+        // with the wave or the drop plane beside it.
         let grid = self.pads.iter().map(|k| k.r).reduce(|a, b| {
             let (x, y) = (a.x.min(b.x), a.y.min(b.y));
             Rect::new(
@@ -325,8 +325,9 @@ impl Body {
                 l.readout.y += dy;
             }
         }
-        if let Some(grid) = grid.filter(|r| r.h > 0.0) {
-            // The pads stretch down by `dy` in all; a pad's M and S stay at its foot.
+        // Beside the main graph (not over it, as in a narrow Drum Kit), the pads stretch
+        // down by `dy` in all; a pad's M and S stay at its foot.
+        if let Some(grid) = grid.filter(|r| r.h > 0.0 && r.y < g.bottom() && g.y < r.bottom()) {
             let s = (grid.h + dy) / grid.h;
             let y_of = |y: f32| grid.y + (y - grid.y) * s;
             for k in &mut self.pads {
@@ -415,8 +416,7 @@ pub fn min_w(def: &BuiltinDef) -> f32 {
         "limiter" => super::limiter::MIN_W,
         "delay" => super::delay::MIN_W,
         "reverb" => super::reverb::MIN_W,
-        "sampler" => super::sampler::NATURAL_W,
-        "drum-kit" => super::sampler::KIT_MIN_W,
+        "sampler" | "drum-kit" => super::sampler::MIN_W,
         _ => rows(def).w,
     }
 }
