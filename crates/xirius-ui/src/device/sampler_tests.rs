@@ -1071,11 +1071,15 @@ fn l2_smp_5_each_drop_target_does_what_the_mock_does() {
         s.instruments.drop_on.map(|d| d.1),
         Some(sampler::DropOn::Samples)
     );
-    assert!(s.window_drop(&g, x, y, &one), "{:?}", s.error);
-    let x = plugin(&s, t);
-    assert_eq!(x.samples.len(), 1);
-    assert!(x.samples[0].ends_with("New.wav"), "{:?}", x.samples);
-    // The light goes when the drag leaves.
+    // The drop alone takes the light away: the screen calls nothing else after it.
+    assert!(s.drop_files(&g, x, y, &one), "{:?}", s.error);
+    assert_eq!(s.instruments.drop_on, None);
+    assert!(s.instruments.preview.is_none());
+    let p = plugin(&s, t);
+    assert_eq!(p.samples.len(), 1);
+    assert!(p.samples[0].ends_with("New.wav"), "{:?}", p.samples);
+    // The light goes too when the drag leaves.
+    assert!(s.window_drag(&g, x, y, &one, false));
     assert!(s.drop_hover(false));
     assert_eq!(s.instruments.drop_on, None);
 
@@ -1089,7 +1093,8 @@ fn l2_smp_5_each_drop_target_does_what_the_mock_does() {
         s.instruments.drop_on.map(|d| (d.1, d.2)),
         Some((sampler::DropOn::Layers, bar))
     );
-    assert!(s.window_drop(&g, x, y, &snare), "{:?}", s.error);
+    assert!(s.drop_files(&g, x, y, &snare), "{:?}", s.error);
+    assert_eq!(s.instruments.drop_on, None, "no band is left lit");
     let k = plugin(&s, t);
     assert_eq!(sampler::pad_files(k.builtin().unwrap(), &k, 0), [0, 1]);
     assert_eq!(s.instruments.open[0].pick, 0);

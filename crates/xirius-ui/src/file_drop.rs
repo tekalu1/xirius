@@ -50,7 +50,9 @@ impl Studio {
     /// Files dropped at a point. Each MIDI file makes a track; the last one
     /// made is selected. Other files are refused.
     pub fn drop_files(&mut self, g: &Geometry, x: f32, y: f32, paths: &[PathBuf]) -> bool {
+        // Whatever takes them, the light of the drag goes with the drop.
         self.instruments.preview = None;
+        self.instruments.drop_on = None;
         self.instruments.dragged = Default::default();
         // A `.dawproject` opens as a new song (EXP-006), wherever it falls.
         if self.drop_dawproject_file(paths) {

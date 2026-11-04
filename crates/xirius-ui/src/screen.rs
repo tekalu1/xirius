@@ -806,6 +806,9 @@ impl Screen {
         self.files_dragged = false;
         let mut studio = self.studio.borrow_mut();
         if studio.input_blocked() {
+            if studio.drop_hover(false) {
+                cx.notify();
+            }
             return;
         }
         let g = geometry(&studio, window);
