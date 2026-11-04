@@ -1,4 +1,3 @@
-crates/xirius-ui/src/about.rs	eprintln	1
 crates/xirius-ui/src/about.rs	join	3
 crates/xirius-ui/src/about.rs	lock	4
 crates/xirius-ui/src/about.rs	metadata	1
@@ -163,10 +162,9 @@ crates/xirius-ui/src/name_drag.rs	arrange_run	2
 crates/xirius-ui/src/note_edit_panel.rs	run_command	1
 crates/xirius-ui/src/notice.rs	arrange_run	1
 crates/xirius-ui/src/notice.rs	exists	2
-crates/xirius-ui/src/notice.rs	std :: fs :: create_dir_all	2
 crates/xirius-ui/src/notice.rs	std :: fs :: read_to_string	2
 crates/xirius-ui/src/notice.rs	std :: fs :: remove_file	3
-crates/xirius-ui/src/notice.rs	std :: fs :: write	3
+crates/xirius-ui/src/notice.rs	std :: fs :: write	1
 crates/xirius-ui/src/opening.rs	recv_timeout	1
 crates/xirius-ui/src/other_change.rs	disk_changed	2
 crates/xirius-ui/src/other_change.rs	eprintln	1

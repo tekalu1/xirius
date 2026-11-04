@@ -2494,4 +2494,21 @@ pub fn run(opts: Options) {
     // A file still auditioned is let go while its threads run: left to the end of the process,
     // its output would wait for a thread the OS has already ended, and the exit would abort.
     crate::audition::close();
+    end_process();
+}
+
+/// Ends the process once the window's run is over and the close's cleanup has finished (UI-282).
+/// The DLLs' own ends are skipped: a graphics driver's end was seen to spin for good on a lock
+/// of a thread the exit had already stopped, and the process never went. The installer of an
+/// update waits for Xirius to go, and the stop that would end it ([`xirius_session::update::leave_within`]) is
+/// one of the threads the exit stops. What is open closes with the process (the crash record's
+/// pair, marked to go on close, among it). The standard error has no buffer, and the standard
+/// output's is written at each line's end.
+fn end_process() {
+    #[cfg(windows)]
+    // SAFETY: ends this process; nothing runs after it.
+    unsafe {
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
+        TerminateProcess(GetCurrentProcess(), 0);
+    }
 }
