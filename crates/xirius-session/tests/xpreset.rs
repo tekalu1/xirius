@@ -2052,3 +2052,44 @@ fn y16_a_sample_is_looked_for_by_its_sound_and_only_where_it_may_be() {
     let _ = std::fs::remove_dir_all(&song);
     let _ = std::fs::remove_dir_all(&outside);
 }
+
+/// The fourth review's low 18: a sample of the user's whose own name ends in a dash and 16
+/// hex digits keeps them in its copy's name, so the copy gone is looked for by that name; a
+/// copy's hash comes off only a file in a `samples` folder.
+#[test]
+fn y18_a_users_name_that_looks_hashed_keeps_its_ending() {
+    let mut r = rig("y18");
+    let own = "Media/Kick-0123456789abcdef.wav";
+    let (mut s, t, song) = sampler_song(&mut r, "y18song", &[own]);
+    run(
+        &mut s,
+        "preset.save",
+        json!({ "track": t, "kind": "instrument", "name": "Kick" }),
+    );
+    let file = r
+        .dir
+        .join("instrument")
+        .join("sampler")
+        .join("Kick.xpreset");
+    let named = read_json(&file)["devices"][0]["samples"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        named.starts_with("preset:samples/Kick-0123456789abcdef-"),
+        "{named}"
+    );
+    // A copy gone is said by the user's own name, ending and all.
+    for c in copies(&r.dir) {
+        std::fs::remove_file(r.dir.join("samples").join(c)).unwrap();
+    }
+    std::fs::remove_file(song.join(own)).unwrap();
+    let out = run(
+        &mut s,
+        "preset.load",
+        json!({ "track": t, "preset": "Kick" }),
+    );
+    assert!(rejected(&out, "Kick-0123456789abcdef.wav"), "{out:?}");
+    drop(s);
+    let _ = std::fs::remove_dir_all(&song);
+}

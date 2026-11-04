@@ -679,7 +679,9 @@ const KEPT: &str = "preset:";
 /// A copy of the sample `p` in the presets' [`SAMPLES`] folder, as a preset names it. One
 /// file a content: the same sound saved by two presets is one copy, and two sounds of one
 /// name are two. A file there already is named as it is (a preset loaded and saved again,
-/// N3-smp-2); a dry run reads no file.
+/// N3-smp-2). The hashes copies put on a name come off only a file in a `samples` folder (a
+/// song's or the presets' copies), not off a name of the user's own (the fourth review's low
+/// 18). A dry run reads no file: the name it makes is in no answer.
 fn keep_sample(dir: &Path, p: &Path, dry: bool) -> CmdResult<String> {
     let kept = dir.join(SAMPLES).canonicalize().ok();
     if let (Some(kept), Ok(at)) = (kept, p.canonicalize())
@@ -688,9 +690,16 @@ fn keep_sample(dir: &Path, p: &Path, dry: bool) -> CmdResult<String> {
     {
         return Ok(format!("{KEPT}{SAMPLES}/{}", name.to_string_lossy()));
     }
+    let copied = p
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|d| d.eq_ignore_ascii_case(SAMPLES));
     let stem = p
         .file_stem()
-        .map(|s| file_name(bare_stem(&s.to_string_lossy())))
+        .map(|s| {
+            let s = s.to_string_lossy();
+            file_name(if copied { bare_stem(&s) } else { &s })
+        })
         .unwrap_or_default();
     let ext = p
         .extension()
@@ -725,14 +734,15 @@ fn bare_stem(mut stem: &str) -> &str {
     stem
 }
 
-/// The name a sample had before it was copied: a copy's without the hash its name took.
+/// The name a sample had before it was copied: a copy's without the one hash its name took
+/// (one of the user's own ending in a hash keeps it, the fourth review's low 18).
 fn first_name(s: &str) -> String {
     let name = s.rsplit(['/', '\\']).next().unwrap_or(s);
     if !s.starts_with(KEPT) {
         return name.to_string();
     }
     let (stem, ext) = name.rsplit_once('.').unwrap_or((name, ""));
-    let stem = bare_stem(stem);
+    let stem = hash_of(stem).map_or(stem, |h| &stem[..stem.len() - h.len() - 1]);
     if ext.is_empty() {
         stem.to_string()
     } else {
