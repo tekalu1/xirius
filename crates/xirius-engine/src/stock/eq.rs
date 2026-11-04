@@ -246,6 +246,9 @@ pub struct Eq {
     old_state: [[Biquad; SECTIONS]; 2],
     fade: [usize; BANDS.len()],
     fade_len: usize,
+    /// Bands whose shape changed again during their fade: they keep the filter they fade
+    /// into until it ends, then fade on (L2-dsp-1).
+    waiting: [bool; BANDS.len()],
     gain: f64,
     out: Ramp,
     /// The audio thread's ends of the analyser's rings (ENG-073): the mono input and output.
@@ -274,6 +277,7 @@ impl Eq {
             old_state: [[Biquad::default(); SECTIONS]; 2],
             fade: [0; BANDS.len()],
             fade_len: 1,
+            waiting: [false; BANDS.len()],
             gain: 1.0,
             out: Ramp::new(1.0),
         }
@@ -288,11 +292,22 @@ impl Eq {
             *slots = sections(&g.cur, b, self.rate);
             let now = shape(&g.cur, b);
             if now == self.shapes[b] {
+                self.waiting[b] = false;
                 continue;
             }
+            if fade && self.fade[b] > 0 {
+                // A change again before the fade ends waits for it: what is heard is part
+                // the old filter, part the new, and fading out of either would jump.
+                for (k, slot) in slots.iter_mut().enumerate() {
+                    let i = b * SLOTS + k;
+                    *slot = self.active[i].then_some(self.coefs[i]);
+                }
+                self.waiting[b] = true;
+                continue;
+            }
+            self.waiting[b] = false;
             self.shapes[b] = now;
             if fade {
-                // A change again before the fade ends fades out of the newer filter.
                 let r = b * SLOTS..(b + 1) * SLOTS;
                 self.old_coefs[r.clone()].copy_from_slice(&self.coefs[r.clone()]);
                 self.old_active[r.clone()].copy_from_slice(&self.active[r.clone()]);
@@ -331,6 +346,7 @@ impl Processor for Eq {
         self.state = [[Biquad::default(); SECTIONS]; 2];
         self.active = [false; SECTIONS];
         self.fade = [0; BANDS.len()];
+        self.waiting = [false; BANDS.len()];
         self.fade_len = ((FADE_SECONDS * self.rate).round() as usize).max(1);
         self.update(false);
         self.out.set(self.gain);
@@ -350,7 +366,8 @@ impl Processor for Eq {
         let mut at = 0;
         while at < n {
             let len = STEP.min(n - at);
-            if self.glide.step(&mut self.params) {
+            let due = (self.waiting.iter().zip(&self.fade)).any(|(w, f)| *w && *f == 0);
+            if self.glide.step(&mut self.params) || due {
                 self.update(true);
             }
             let (g0, dg) = self.out.toward(self.gain, len);
@@ -957,6 +974,30 @@ mod tests {
         }
         let before = roughness(&out);
         assert!(before > 2.0 * calm, "{before}");
+    }
+
+    /// L2-dsp-1: a band switched again and again inside its fade goes over with no jump.
+    #[test]
+    fn a_band_switched_again_inside_its_fade_does_not_jump() {
+        let (mut p, h) = make("eq");
+        for (id, v) in [("mid1_freq", 1000.0), ("mid1_gain", 12.0), ("mid1_q", 1.0)] {
+            set_plain(&h, id, v);
+        }
+        // Every 3 ms: three changes inside each 10 ms fade.
+        let input = sine(1000.0, 0.25, 144 * 64);
+        let mut out = Vec::new();
+        for (chunk, v) in input.chunks(144).zip([2.0, 0.0, 5.0, 3.0].iter().cycle()) {
+            set_plain(&h, "b3_type", *v);
+            out.extend(render(p.as_mut(), chunk, chunk, &[]).0);
+        }
+        let r = roughness(&out);
+        assert!(r < 0.03, "{r}");
+        // The last change is not lost: the bell (+12 dB) is heard once the fades end.
+        set_plain(&h, "b3_type", 2.0);
+        render(p.as_mut(), &input[..4800], &input[..4800], &[]);
+        let a = render(p.as_mut(), &input[..960], &input[..960], &[]).0;
+        let peak = a.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+        assert!(peak > 0.9, "{peak}");
     }
 
     #[test]
