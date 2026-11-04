@@ -1797,7 +1797,9 @@ fn collect_edits(
         // is opened again, so they follow the edit too.
         let titles = host.builder.plugins().param_titles(e.plugin);
         let mut params = Vec::new();
-        // a parameter a macro control moves stays the control's (MIX-039)
+        // A parameter a macro control moves stays the control's (MIX-039): the value the hand
+        // moved it to is what the plugin plays now, so the control's is sent back to it.
+        let mut heard = Vec::new();
         let owned = |key: &str| {
             let target = xirius_core::auto::AutoTarget::Param(e.plugin, key.to_string());
             session
@@ -1807,9 +1809,6 @@ fn collect_edits(
                 .any(|t| t.controls.owner_of(&target).is_some())
         };
         for (key, old) in &x.params {
-            if owned(key) {
-                continue;
-            }
             let last = moves.iter().find(|p| {
                 p.value.is_some()
                     && (key.parse::<u32>().ok() == Some(p.id)
@@ -1817,17 +1816,21 @@ fn collect_edits(
                             .iter()
                             .any(|(id, t)| *id == p.id && t.eq_ignore_ascii_case(key)))
             });
-            if let Some(v) = last.and_then(|p| p.value)
-                && v != *old
-            {
-                commands.push(json!({
-                    "command": "plugin.param.set",
-                    "args": { "id": e.plugin.to_string(), "param": key, "value": v },
-                }));
-                params.push((key.clone(), v));
+            let Some(v) = last.and_then(|p| p.value).filter(|v| v != old) else {
+                continue;
+            };
+            if owned(key) {
+                heard.push((key.clone(), v));
+                continue;
             }
+            commands.push(json!({
+                "command": "plugin.param.set",
+                "args": { "id": e.plugin.to_string(), "param": key, "value": v },
+            }));
+            params.push((key.clone(), v));
         }
-        if commands.len() != before {
+        if commands.len() != before || !heard.is_empty() {
+            params.extend(heard);
             taken.push((e.plugin, state, params, e.stamp, e.origin));
         }
     }
@@ -1854,18 +1857,19 @@ fn collect_edits(
             });
         session.touch(format!("param:{}:{name}", last.plugin));
     }
+    for (id, state, params, stamp, origin) in &taken {
+        host.builder
+            .plugins_mut()
+            .taken(*id, Some(state.clone()), params, *stamp, *origin);
+    }
     if !commands.is_empty() {
-        for (id, state, params, stamp, origin) in &taken {
-            host.builder
-                .plugins_mut()
-                .taken(*id, Some(state.clone()), params, *stamp, *origin);
-        }
         let mut args = Map::new();
         args.insert("commands".into(), Value::Array(commands));
         args.insert("title".into(), json!("プラグインの編集を反映"));
-        let r = session.run("ai.batch", &args, opts)?;
+        out.result = Some(session.run("ai.batch", &args, opts)?);
+    }
+    if !taken.is_empty() {
         host.sync(session.project());
-        out.result = Some(r);
     }
     // The ARA plugins' edits: their archives, in place and only when changed (ARC-025).
     if crate::ara::take_archives(session, host.builder.ara(), wait)? {
