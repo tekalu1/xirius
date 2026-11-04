@@ -124,12 +124,14 @@ crates/xirius-ui/src/input_follow.rs	lock	1
 crates/xirius-ui/src/inspector.rs	arrange_run	1
 crates/xirius-ui/src/instrument/keys.rs	lock	2
 crates/xirius-ui/src/instrument/keys.rs	seek	1
+crates/xirius-ui/src/instrument/kit_drag.rs	is_dir	1
 crates/xirius-ui/src/instrument/menu.rs	arrange_run	1
 crates/xirius-ui/src/instrument/mod.rs	run_command	3
 crates/xirius-ui/src/instrument/presets.rs	run	1
 crates/xirius-ui/src/instrument/presets.rs	run_command	1
-crates/xirius-ui/src/instrument/spots.rs	run_command	3
-crates/xirius-ui/src/instrument/window.rs	run_command	5
+crates/xirius-ui/src/instrument/spots.rs	is_dir	1
+crates/xirius-ui/src/instrument/spots.rs	run_command	5
+crates/xirius-ui/src/instrument/window.rs	run_command	4
 crates/xirius-ui/src/keep.rs	std :: fs :: remove_dir_all	1
 crates/xirius-ui/src/key_rows.rs	arrange_run	1
 crates/xirius-ui/src/key_rows.rs	seek	1

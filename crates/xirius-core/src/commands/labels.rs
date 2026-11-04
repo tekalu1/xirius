@@ -685,6 +685,7 @@ pub fn argument(name: &str) -> &str {
         "background" | "async" => "バックグラウンド",
         "overwrite" | "replace" => "置き換え",
         "pad" => "パッド",
+        "bank" => "バンク",
         "all" => "すべて",
         "layers" => "レイヤーにまとめる",
         "clear" | "remove" => "削除",
