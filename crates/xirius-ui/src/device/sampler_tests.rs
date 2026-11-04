@@ -544,6 +544,39 @@ fn ui_334_a_pad_of_130_layers_draws_and_the_first_edge_stops_at_the_least_top() 
     assert_eq!(s.song().steps(), steps);
 }
 
+/// Low 1 (UI-333): reversed, the line stands where the wave draws what the voice reads,
+/// wherever Start and End are, and goes from Start to End; out of the cut the file draws as
+/// it is.
+#[test]
+fn ui_333_reversed_the_play_line_stands_over_what_it_reads() {
+    let cols = 400;
+    for cut in [
+        (0.1, 0.4, true),
+        (0.25, 0.9, true),
+        (0.0, 1.0, true),
+        (0.3, 0.6, false),
+    ] {
+        let mut last = None;
+        for k in [0.9, 0.5, 0.1] {
+            let p = cut.0 + (cut.1 - cut.0) * k;
+            let x = sampler::wave_at(p, cut);
+            let m = sampler::wave_column((x * cols as f64) as usize, cols, cut);
+            assert!(
+                (m as f64 / cols as f64 - p).abs() < 2.0 / cols as f64,
+                "{cut:?} {p}"
+            );
+            if cut.2 {
+                // End back to Start in the file is Start to End on the wave.
+                assert!(last.is_none_or(|l| x > l), "{cut:?} {p}");
+            }
+            last = Some(x);
+        }
+    }
+    assert_eq!(sampler::wave_column(20, cols, (0.1, 0.4, true)), 20);
+    assert_eq!(sampler::wave_column(300, cols, (0.1, 0.4, true)), 300);
+    assert_eq!(sampler::wave_column(0, cols, (0.0, 1.0, true)), cols - 1);
+}
+
 /// The window `dy` taller than it opened.
 fn taller(s: &mut Studio, dy: f32) {
     s.instruments.open[0].body.1 += dy;

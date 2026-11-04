@@ -1243,12 +1243,12 @@ pub fn paint_wave(pen: &mut Pen, def: &BuiltinDef, r: Rect, values: &[f64], view
                 let cols = i.w.max(1.0) as usize;
                 let per = p.frames as f64 / cols as f64;
                 let level = p.level_for(per);
-                let reverse = on(def, values, "reverse");
+                let cut = cut_of(def, values);
                 let half = i.h / 2.0;
                 let mut top = Vec::with_capacity(cols);
                 let mut bottom = Vec::with_capacity(cols);
                 for n in 0..cols {
-                    let m = if reverse { cols - 1 - n } else { n };
+                    let m = wave_column(n, cols, cut);
                     let (a, b) = (m as f64 * per, (m + 1) as f64 * per);
                     let pk = p.reduce(level, a, b).unwrap_or_default();
                     let x = i.x + n as f32 - r.x;
@@ -1278,18 +1278,40 @@ pub fn paint_wave(pen: &mut Pen, def: &BuiltinDef, r: Rect, values: &[f64], view
             let at = f64::from(read) * 100.0;
             let (s, e) = (plain(def, values, "start"), plain(def, values, "end"));
             if (s.min(e) - 0.05..=s.max(e) + 0.05).contains(&at) {
-                // A reversed file reads its cut from End back to Start: the line goes from
-                // Start to End all the same, as on the mock.
-                let shown = if on(def, values, "reverse") {
-                    s + e - at
-                } else {
-                    at
-                };
-                let x = ax.px(shown);
+                // A reversed file reads its cut from End back to Start: the cut shows
+                // backwards in its place, and the line goes from Start to End over it, as on
+                // the mock.
+                let x = ax.px(wave_at(at / 100.0, cut_of(def, values)) * 100.0);
                 pen.fill(Rect::new(x - 1.0, r.y, 2.0, r.h), c.ink_strong);
             }
         }
     });
+}
+
+/// Start and End as shares of the file, and whether it plays backwards.
+fn cut_of(def: &BuiltinDef, values: &[f64]) -> (f64, f64, bool) {
+    let (s, e) = (plain(def, values, "start"), plain(def, values, "end"));
+    (
+        s.min(e) / 100.0,
+        s.max(e) / 100.0,
+        on(def, values, "reverse"),
+    )
+}
+
+/// Where along the wave the file's share `p` shows, and the other way: reversed, the cut
+/// between Start and End shows backwards in its place, the rest as it is (low 1).
+pub fn wave_at(p: f64, (s, e, reverse): (f64, f64, bool)) -> f64 {
+    if reverse && (s..=e).contains(&p) {
+        s + e - p
+    } else {
+        p
+    }
+}
+
+/// The column of the file the `n`th of `cols` columns of the wave draws.
+pub fn wave_column(n: usize, cols: usize, cut: (f64, f64, bool)) -> usize {
+    let at = wave_at((n as f64 + 0.5) / cols as f64, cut);
+    ((at * cols as f64) as usize).min(cols.saturating_sub(1))
 }
 
 // ------------------------------------------------------------------ the spots
