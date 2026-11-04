@@ -336,7 +336,11 @@ fn apply(x: &mut Plugin, dev: &PresetDevice, name: &str) {
     };
     let stays =
         |x: &Plugin, k: &str| !xpreset::holds(x, k) || (dev.samples.is_none() && laid_out(x, k));
+    // A preset of older keys (`FILE01.START`, the Sampler's `tune`) under the song's (low 9).
     let mut params = dev.params.clone();
+    if let Some(def) = x.builtin() {
+        crate::model::fix_keys(def, &mut params);
+    }
     params.retain(|k, _| !stays(x, k));
     params.extend(
         x.params
@@ -422,6 +426,7 @@ fn plugin_of(dev: &PresetDevice, name: &str, id: PluginId) -> Plugin {
         sidechain: None,
         preset: Some(name.to_string()),
     };
+    x.fix_keys();
     x.params = std::mem::take(&mut x.params)
         .into_iter()
         .filter(|(k, _)| xpreset::holds(&x, k))

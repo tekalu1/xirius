@@ -462,3 +462,65 @@ fn n3_kit_2_filled_pads_are_replaced_and_files_past_h16_left_out() {
     assert!(out.message.contains("入りきらない 2 個"), "{}", out.message);
     assert_eq!(plugin(&s).samples.len(), 19);
 }
+
+/// Low 4, 9: an old Sampler's `tune` (±24 semitones, for every voice, before PLG-067) opens
+/// as its `transpose` (±48) at the same pitch, its lane too; a preset of older keys
+/// (`tune`, `CUTOFF`) goes in under the song's.
+#[test]
+fn an_old_tune_is_transpose_and_a_preset_of_old_keys_reads_as_the_song_keeps_them() {
+    use xirius_core::auto::{AutoLane, AutoPoint, AutoTarget};
+    let tmp = tempfile::Builder::new()
+        .prefix("xirius-samples-")
+        .tempdir()
+        .unwrap();
+    let song = tmp.path().join("song");
+    let mut p = project_with_samples(&[]);
+    {
+        let t = std::sync::Arc::make_mut(p.tracks.get_mut(&TrackId(1)).unwrap());
+        t.inserts[0].params.insert("tune".into(), 0.75);
+        t.automation.push(AutoLane {
+            suspended: false,
+            target: AutoTarget::Param(PluginId(2), "tune".into()),
+            hidden: false,
+            points: std::sync::Arc::new(vec![AutoPoint {
+                tick: 0,
+                value: 0.25,
+                curve: 0.0,
+                step: false,
+            }]),
+        });
+    }
+    let mut s = Session::from_project(p);
+    run(&mut s, "project.save-as", json!({ "path": text(&song) }));
+    let body = fs::read_to_string(song.join("project.json")).unwrap();
+    assert!(body.contains("\"tune\""), "{body}");
+    let back = Session::open(&song).unwrap();
+    let def = xirius_params::find("sampler").unwrap();
+    let plain = |id: &str, v: f64| def.param(id).unwrap().1.to_plain(v);
+    let x = back.project().tracks[&TrackId(1)].inserts[0].clone();
+    assert!(!x.params.contains_key("tune"));
+    assert_eq!(plain("transpose", x.params["transpose"]), 12.0);
+    let lane = &back.project().tracks[&TrackId(1)].automation[0];
+    assert_eq!(
+        lane.target,
+        AutoTarget::Param(PluginId(2), "transpose".into())
+    );
+    assert_eq!(plain("transpose", lane.points[0].value), -12.0);
+    // A preset of older keys.
+    let mut s = Session::from_project(project_with_samples(&[]));
+    let preset = json!({
+        "format": "xirius-preset", "version": 1, "kind": "instrument", "name": "Old",
+        "devices": [{"name": "Sampler", "kind": "instrument", "format": "builtin",
+                     "uid": "sampler", "params": {"tune": 0.25, "CUTOFF": 0.5}}]
+    })
+    .to_string();
+    run(
+        &mut s,
+        "preset.put",
+        json!({ "track": TrackId(1).to_string(), "preset": preset }),
+    );
+    let x = plugin(&s);
+    assert!(!x.params.contains_key("tune") && !x.params.contains_key("CUTOFF"));
+    assert_eq!(plain("transpose", x.params["transpose"]), -12.0);
+    assert_eq!(x.params.get("cutoff"), Some(&0.5));
+}

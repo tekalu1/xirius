@@ -206,6 +206,54 @@ impl Plugin {
         }
         xirius_params::find(&self.uid).or_else(|| xirius_params::find(&self.name))
     }
+
+    /// Its values under the keys the song keeps them by ([`fix_keys`]); whether an old
+    /// `tune` went into `transpose`.
+    pub fn fix_keys(&mut self) -> bool {
+        self.builtin()
+            .is_some_and(|def| fix_keys(def, &mut self.params))
+    }
+}
+
+/// A built-in's values under the keys the song keeps them by: a hand-written `FILE01.START`
+/// or `a1.choke` is `file1.start` or `A1.choke` (L2-smp-3), the own key winning when both
+/// are there; the Sampler's `tune` of before PLG-067 (±24 semitones, for every voice) is its
+/// `transpose` (±48), so an old song or preset plays at the pitch it did (low 4). Whether
+/// a `tune` went.
+pub fn fix_keys(def: &xirius_params::BuiltinDef, params: &mut BTreeMap<String, f64>) -> bool {
+    let odd: Vec<(String, String)> = params
+        .keys()
+        .filter_map(|k| {
+            def.resolve(k)
+                .filter(|r| r.key != *k)
+                .map(|r| (k.clone(), r.key))
+        })
+        .collect();
+    for (k, key) in odd {
+        if let Some(v) = params.remove(&k) {
+            params.entry(key).or_insert(v);
+        }
+    }
+    let Some(tune) = params
+        .keys()
+        .find(|k| k.eq_ignore_ascii_case("tune"))
+        .filter(|_| def.uid == "sampler")
+        .cloned()
+    else {
+        return false;
+    };
+    if let Some(v) = params.remove(&tune) {
+        params
+            .entry("transpose".to_string())
+            .or_insert_with(|| retuned(v));
+    }
+    true
+}
+
+/// The Sampler's old `tune`, normalized over ±24 semitones, as its `transpose` over ±48.
+pub fn retuned(norm: f64) -> f64 {
+    let semis = (norm.clamp(0.0, 1.0) * 48.0 - 24.0).round();
+    (semis + 48.0) / 96.0
 }
 
 /// Which process a plugin runs in (PLG-022). The engine's own process is the default; a
@@ -1554,32 +1602,36 @@ impl Project {
         Ok(())
     }
 
-    /// A built-in's values under the keys the song keeps them by, as a song is read: a
-    /// hand-written `FILE01.START` or `a1.choke` is `file1.start` or `A1.choke`, so what
-    /// reads the song by its keys (the samples' layout, the pads, `plugin.param.list`) finds
-    /// it once (L2-smp-3). When both are there, the song's own key wins.
+    /// A built-in's values under the keys the song keeps them by, as a song is read
+    /// ([`fix_keys`]), so what reads the song by its keys (the samples' layout, the pads,
+    /// `plugin.param.list`) finds it once (L2-smp-3). An old Sampler's `tune` lane is its
+    /// `transpose` lane, the values over the wider range (low 4).
     pub fn fix_param_keys(&mut self) {
-        let odd = |x: &Plugin| -> Vec<(String, String)> {
-            let Some(def) = x.builtin() else {
-                return Vec::new();
-            };
-            x.params
-                .keys()
-                .filter_map(|k| {
-                    def.resolve(k)
-                        .filter(|r| r.key != *k)
-                        .map(|r| (k.clone(), r.key))
-                })
-                .collect()
+        let odd = |x: &Plugin| {
+            x.builtin().is_some_and(|def| {
+                let mut params = x.params.clone();
+                fix_keys(def, &mut params);
+                params != x.params
+            })
         };
         for t in self.tracks.values_mut() {
-            if t.inserts.iter().all(|x| odd(x).is_empty()) {
+            if !t.inserts.iter().any(odd) {
                 continue;
             }
-            for x in &mut Arc::make_mut(t).inserts {
-                for (k, key) in odd(x) {
-                    if let Some(v) = x.params.remove(&k) {
-                        x.params.entry(key).or_insert(v);
+            let t = Arc::make_mut(t);
+            let moved: Vec<PluginId> = t
+                .inserts
+                .iter_mut()
+                .filter_map(|x| x.fix_keys().then_some(x.id))
+                .collect();
+            for l in &mut t.automation {
+                if let crate::auto::AutoTarget::Param(id, key) = &mut l.target
+                    && moved.contains(id)
+                    && key.eq_ignore_ascii_case("tune")
+                {
+                    *key = "transpose".to_string();
+                    for p in Arc::make_mut(&mut l.points) {
+                        p.value = retuned(p.value);
                     }
                 }
             }

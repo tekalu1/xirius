@@ -351,7 +351,8 @@ pub static SAMPLER: BuiltinDef = BuiltinDef {
     kind: Kind::Instrument,
     params: &VOICE,
     // The synthesized sounds and the pitch in semitones of before PLG-067: a song that kept
-    // them opens without a word (`tune` is `transpose` now, over a wider range).
+    // them opens without a word, its `tune` as `transpose` over the wider range
+    // (`xirius_core::model::fix_keys`).
     retired: &["sound", "tune"],
     per_file: &SAMPLE,
     per_pad: &[],

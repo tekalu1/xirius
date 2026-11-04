@@ -294,6 +294,8 @@ fn apply_to(
         )),
         _ => {}
     }
+    // Its devices' values of older keys under the song's, as a song is read (low 9).
+    p.fix_param_keys();
     p.fix_track_rack(id);
     let t = p.track_mut(id)?;
     t.volume_db = preset.volume_db;
