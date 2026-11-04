@@ -458,3 +458,30 @@ fn a_version_1_preset_still_reads_without_a_row() {
     assert_eq!(names(&s, &a), ["Reverb"]);
     assert!(track(&s, &a).rack.is_none());
 }
+
+/// A preset puts its own macros in: the lanes of the track's old macros go, and each one says
+/// so in a row.
+#[test]
+fn a_macro_lane_a_preset_takes_off_has_a_row() {
+    let Song { mut s, a, b, .. } = song();
+    run(
+        &mut s,
+        "control.assign",
+        json!({ "track": b, "control": "k1", "target": "pan" }),
+    );
+    run(
+        &mut s,
+        "auto.lane.add",
+        json!({ "track": b, "target": "control:k1" }),
+    );
+    let preset = preset_of(&s, &a, "Vocal");
+    let out = put(&mut s, &[&b], &preset);
+    let rows = out["adjusted"].as_array().unwrap();
+    assert!(
+        rows.iter()
+            .any(|r| r["kind"] == json!("dropped")
+                && r["what"].as_str().unwrap().contains("Macro 1")),
+        "{rows:?}"
+    );
+    assert!(track(&s, &b).automation.is_empty(), "the lane went");
+}

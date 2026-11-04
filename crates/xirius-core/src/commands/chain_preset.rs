@@ -163,9 +163,7 @@ pub(super) fn put(
                 xy,
                 ..chain.controls
             };
-            // the old macros' lanes would move the new ones
-            t.automation
-                .retain(|l| !matches!(l.target, AutoTarget::Control(_)));
+            drop_control_lanes(t, &mut rows);
         }
     }
     settle(p, tid, &gone_keys, &mut rows)?;
@@ -299,6 +297,22 @@ fn merge(
             ));
         }
     }
+}
+
+/// Takes off the lanes of the track's macro controls, as a preset puts its own controls in
+/// their place (the old lanes would move the new ones), with a row for each.
+pub(super) fn drop_control_lanes(t: &mut Track, rows: &mut Vec<Adjust>) {
+    for l in &t.automation {
+        if let AutoTarget::Control(c) = l.target {
+            rows.push(Adjust::new(
+                AdjustKind::Dropped,
+                format!("{} のオートメーション", c.default_name()),
+                "マクロのコントロールがプリセットのものに替わったため、外しました",
+            ));
+        }
+    }
+    t.automation
+        .retain(|l| !matches!(l.target, AutoTarget::Control(_)));
 }
 
 /// Whether an effect device preset goes in as a chain of one: it was given a place.

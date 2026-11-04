@@ -381,9 +381,7 @@ fn put_rack(
         page,
         ..chain.controls
     };
-    // the old macros' lanes would move the new ones
-    t.automation
-        .retain(|l| !matches!(l.target, AutoTarget::Control(_)));
+    super::chain_preset::drop_control_lanes(t, rows);
     super::chain_preset::settle(p, id, &keys, rows)
 }
 
