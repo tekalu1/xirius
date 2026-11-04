@@ -161,7 +161,7 @@ impl Studio {
 
     /// Whether `(x, y)` is on a Drum Kit's window or face.
     fn over_kit(&self, g: &Geometry, x: f32, y: f32) -> bool {
-        let p = self.project();
+        let p = self.auto_shown();
         self.instruments.at(&p, g, x, y).is_some_and(|(i, _)| {
             live(&p, &self.instruments.open[i]).is_some_and(|(_, _, def)| def.uid == "drum-kit")
         })
@@ -175,7 +175,7 @@ impl Studio {
         x: f32,
         y: f32,
     ) -> Option<(PluginId, sampler::DropOn, Rect)> {
-        let p = self.project();
+        let p = self.auto_shown();
         let (i, _) = self.instruments.at(&p, g, x, y)?;
         let w = self.instruments.open[i];
         let (_, plugin, def) = live(&p, &w)?;
@@ -201,7 +201,7 @@ impl Studio {
         names: &[String],
         layers: bool,
     ) -> Option<Preview> {
-        let p = self.project();
+        let p = self.auto_shown();
         let (i, part) = self.instruments.at(&p, g, x, y)?;
         let w = self.instruments.open[i];
         let (_, plugin, def) = live(&p, &w)?;

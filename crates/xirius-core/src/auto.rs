@@ -541,8 +541,9 @@ impl AutoLane {
     /// to the next. Where a line between two points crossed from one step to another, a point
     /// goes at the first tick past the crossing, so the lane plays as it did (the parameter
     /// took the nearest step all along): a song saved before, or a lane written as a line,
-    /// sounds the same to the tick. `false` when the lane was a stair already (it is not
-    /// touched then).
+    /// sounds the same to the tick. A VST3 list of more than two choices is left as lines:
+    /// a plug-in may take the step below or the nearest, so no stair is sure to sound the
+    /// same (a switch is, either way). `false` when the lane was not touched.
     pub fn snap_with(&mut self, t: &Track, ext: &ParamSteps) -> bool {
         self.snap_as(t, ext, true)
     }
@@ -561,6 +562,13 @@ impl AutoLane {
         let Some(n) = self.target.steps_with(t, ext) else {
             return false;
         };
+        // a VST3 list takes a choice from a value its own way (the SDK the step below, others
+        // the nearest): its lane still lines plays as the plug-in maps it, so it stays lines
+        let vst3 = matches!(&self.target, AutoTarget::Param(p, _)
+            if t.inserts.iter().any(|x| x.id == *p && x.format == "vst3"));
+        if cross && n > 2 && vst3 {
+            return false;
+        }
         let range = self.target.range();
         let level = |v: f64| snap(range, n, v);
         if self.target.stepped() {
@@ -645,7 +653,8 @@ impl crate::model::Project {
     /// it did not touch as they are, so its undo holds only its own change. A lane that was a
     /// stair (or new) keeps the points the edit put, each on its step
     /// ([`AutoLane::snap_points_with`]); one that was still lines (a plug-in's lane from before
-    /// its steps were known) becomes the stair it played as.
+    /// its steps were known) becomes the stair it played as, but for a VST3 list, which stays
+    /// lines ([`AutoLane::snap_with`]).
     pub fn snap_edited_lanes(&mut self, before: &crate::model::Project, ext: &ParamSteps) -> usize {
         self.snap_lanes_where(ext, |t, l| {
             let was = before.tracks.get(&t.id).and_then(|b| {

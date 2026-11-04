@@ -596,3 +596,116 @@ fn a_switch_pasted_on_a_lane_that_glides_takes_its_lines() {
     assert_eq!(values(&l), vec![(1920, 0.0), (2880, 1.0)]);
     assert!(stairs(&l));
 }
+
+/// [`song`] with a VST3 plug-in in place of the EQ (its id kept), and the steps it tells.
+fn vst3_song() -> (Session, String, String, ParamSteps) {
+    let (s, t, eq, _) = song();
+    let mut p = s.project().clone();
+    let tid: TrackId = t.parse().unwrap();
+    let pid: PluginId = eq.parse().unwrap();
+    {
+        let track = std::sync::Arc::make_mut(p.tracks.get_mut(&tid).unwrap());
+        let x = track.inserts.iter_mut().find(|x| x.id == pid).unwrap();
+        x.format = "vst3".into();
+        x.uid = "0123456789ABCDEF0123456789ABCDEF".into();
+        x.name = "Plug".into();
+    }
+    let steps = ParamSteps::new(
+        [(
+            pid,
+            vec![
+                (7, "Bypass".to_string(), 2),
+                (9, "Mode".to_string(), 4),
+                (10, "Shape".to_string(), 3),
+            ],
+        )]
+        .into(),
+    );
+    (Session::from_project(p), t, eq, steps)
+}
+
+#[test]
+fn a_plug_ins_switch_pasted_on_a_lane_that_glides_takes_its_lines() {
+    let (mut s, t, eq, steps) = vst3_song();
+    s.state.param_steps = steps;
+    let bypass = format!("param:{eq}:7");
+    let other = format!("param:{eq}:8");
+    let mode = format!("param:{eq}:9");
+    for (at, v) in [(0, 0.0), (960, 1.0)] {
+        run(
+            &mut s,
+            "auto.point.add",
+            json!({"track": t, "target": bypass, "at": at, "value": v}),
+        );
+    }
+    assert!(stairs(&lane(&s, &t, &bypass)));
+    run(
+        &mut s,
+        "edit.copy",
+        json!({"track": t, "target": bypass, "ticks": "0,960"}),
+    );
+    // the plug-in tells it has no steps: a line
+    run(
+        &mut s,
+        "edit.paste",
+        json!({"track": t, "target": other, "at": 1920}),
+    );
+    let l = lane(&s, &t, &other);
+    assert_eq!(values(&l), vec![(1920, 0.0), (2880, 1.0)]);
+    assert!(l.points.iter().all(|p| !p.step));
+    // a list it tells: a stair
+    run(
+        &mut s,
+        "edit.paste",
+        json!({"track": t, "target": mode, "at": 1920}),
+    );
+    let l = lane(&s, &t, &mode);
+    assert_eq!(values(&l), vec![(1920, 0.0), (2880, 1.0)]);
+    assert!(stairs(&l));
+}
+
+#[test]
+fn a_vst3_list_still_lines_stays_lines_and_a_switch_becomes_its_stair() {
+    let (mut s, t, eq, steps) = vst3_song();
+    let bypass = format!("param:{eq}:7");
+    let mode = format!("param:{eq}:9");
+    let shape = format!("param:{eq}:10");
+    // written before the plug-in told its steps: lines
+    for (target, at, v) in [
+        (&bypass, 0, 0.0),
+        (&bypass, 960, 1.0),
+        (&mode, 0, 0.0),
+        (&mode, 960, 1.0),
+    ] {
+        run(
+            &mut s,
+            "auto.point.add",
+            json!({"track": t, "target": target, "at": at, "value": v}),
+        );
+    }
+    let old = (*lane(&s, &t, &mode).points).clone();
+    s.state.param_steps = steps;
+    for (target, v) in [(&bypass, 0.0), (&mode, 0.4), (&shape, 0.4)] {
+        run(
+            &mut s,
+            "auto.point.add",
+            json!({"track": t, "target": target, "at": 1920, "value": v}),
+        );
+    }
+    // the plug-in maps the list's lines itself (the step below or the nearest): they stay
+    let l = lane(&s, &t, &mode);
+    assert_eq!(l.points[..2], old[..]);
+    assert_eq!(values(&l), vec![(0, 0.0), (960, 1.0), (1920, 0.4)]);
+    assert!(l.points.iter().all(|p| !p.step));
+    // a switch is the same either way: the stair it played as, with its crossing
+    let l = lane(&s, &t, &bypass);
+    assert_eq!(
+        values(&l),
+        vec![(0, 0.0), (480, 1.0), (960, 1.0), (1441, 0.0), (1920, 0.0)]
+    );
+    assert!(stairs(&l));
+    // a new lane of a list puts its points on the steps
+    let l = lane(&s, &t, &shape);
+    assert_eq!(values(&l), vec![(1920, 0.5)]);
+    assert!(stairs(&l));
+}

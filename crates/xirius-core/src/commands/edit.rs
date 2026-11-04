@@ -775,8 +775,10 @@ fn put(
             let unhold = to != *target
                 && p.tracks
                     .get(track)
-                    .is_some_and(|t| target.steps_on(t).is_some() && !target.stepped())
-                && p.tracks.get(&tid).is_none_or(|t| to.steps_on(t).is_none());
+                    .is_some_and(|t| target.steps_with(t, cx.steps).is_some() && !target.stepped())
+                && p.tracks
+                    .get(&tid)
+                    .is_none_or(|t| to.steps_with(t, cx.steps).is_none());
             let mut fresh = Vec::new();
             let mut left_out = 0;
             for q in points {

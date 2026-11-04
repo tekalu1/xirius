@@ -664,3 +664,36 @@ fn a_press_and_a_grab_start_from_the_lanes_value_the_window_draws() {
     assert!(s.instrument_up());
     assert!((value(&s, t, "feedback").1 - 0.7).abs() < 5e-4);
 }
+
+/// AUT-016 (review 2 中-1): a switch a lane turns lays the window out for the pointer as it
+/// does for the eye. The song keeps the Delay's sync off (the Time box), its lane turns it on
+/// (the Beats box): a press where the Beats box is drawn opens its menu.
+#[test]
+fn a_switch_a_lane_turns_lays_out_the_window_a_press_lands_in() {
+    let (mut s, g, t, id) = delay();
+    unsynced(&mut s, id);
+    let (time, _) = value(&s, t, "time");
+    let (division, _) = value(&s, t, "division");
+    assert!(s.instrument_center(&g, id, Part::Knob(time)).is_some());
+    assert!(s.run_command(
+        "auto.point.add",
+        json!({ "track": t.to_string(), "target": format!("param:{id}:sync"), "at": 0, "value": 1.0 })
+    ));
+    s.playhead = 0;
+    assert_eq!(value(&s, t, "sync").1, 0.0, "the song keeps it off");
+
+    // the Beats box is where the window draws it; the song's own layout has no Beats box
+    let (x, y) = center(&s, &g, id, division);
+    assert!(s.instrument_center(&g, id, Part::Knob(time)).is_none());
+    assert_ne!(
+        s.instruments.at(&s.project(), &g, x, y).map(|h| h.1),
+        Some(Part::Knob(division))
+    );
+    assert_eq!(s.knob_under(&g, x, y).map(|k| k.2), Some("division"));
+
+    // a press there opens the Beats box's menu, and the time the song keeps is left be
+    let kept = value(&s, t, "time").1;
+    click(&mut s, &g, id, division, 1, Mods::NONE);
+    assert!(s.context_rows().iter().any(|r| r.label == "1/4 T"));
+    assert_eq!(value(&s, t, "time").1, kept);
+}

@@ -51,13 +51,12 @@ pub(crate) fn id(s: &Studio) -> PluginId {
 
 /// The `xirius-plugin-host` the plugins run in, built when the test run did not: `cargo test -p
 /// xirius-ui` builds this package's executables only, and without the host a plugin never loads.
+/// It is built even when one is there: a host from an older build speaks an older protocol, and
+/// every plugin of the run would fail to open (cargo does nothing when it is up to date).
 #[cfg(test)]
 pub(crate) fn require_plugin_host() {
     static BUILT: std::sync::Once = std::sync::Once::new();
     BUILT.call_once(|| {
-        if xirius_engine::server::find_host().is_some() {
-            return;
-        }
         let mut build = std::process::Command::new(
             std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()),
         );

@@ -754,7 +754,8 @@ impl Windows {
     }
 
     /// The top window under a point, and the part of it. The face in the
-    /// mixer's drawer is under every window.
+    /// mixer's drawer is under every window. `p` is the song as the windows draw
+    /// it ([`Studio::auto_shown`]): a switch a lane turns lays them out (AUT-016).
     pub fn at(&self, p: &Project, g: &Geometry, x: f32, y: f32) -> Option<(usize, Part)> {
         let order = (0..self.open.len())
             .rev()
@@ -1392,7 +1393,7 @@ impl Studio {
 
     /// Is a window under the point?
     pub(crate) fn over_instrument(&self, g: &Geometry, x: f32, y: f32) -> bool {
-        self.instruments.at(&self.project(), g, x, y).is_some()
+        self.instruments.at(&self.auto_shown(), g, x, y).is_some()
     }
 
     /// A press: true when it was on a window (nothing under it gets it).
@@ -1411,7 +1412,7 @@ impl Studio {
         mods: crate::tools::Mods,
     ) -> bool {
         self.instruments.prune(&self.project());
-        let p = self.project();
+        let p = self.auto_shown();
         let Some((i, part)) = self.instruments.at(&p, g, x, y) else {
             self.device_blur();
             return false;
@@ -1629,7 +1630,7 @@ impl Studio {
         x: f32,
         y: f32,
     ) -> Option<(TrackId, PluginId, &'static str, Rect)> {
-        let p = self.project();
+        let p = self.auto_shown();
         let (i, Part::Knob(k)) = self.instruments.at(&p, g, x, y)? else {
             return None;
         };
@@ -1753,7 +1754,7 @@ impl Studio {
             }
             Some(Grab::Note { plugin, pitch }) => {
                 // Off the key or pad held, its note ends; coming back does not play it again.
-                let p = self.project();
+                let p = self.auto_shown();
                 let on = self.instruments.at(&p, g, x, y).is_some_and(|(i, part)| {
                     self.instruments.open[i].plugin == plugin
                         && matches!(part, Part::Key(k) | Part::Pad(k) if k == pitch)
@@ -1954,7 +1955,7 @@ impl Studio {
         if self.instruments.grab.is_some() {
             return false;
         }
-        let p = self.project();
+        let p = self.auto_shown();
         let hot = self
             .instruments
             .at(&p, g, x, y)
@@ -2008,7 +2009,7 @@ impl Studio {
     /// The centre of a part of the window of `id`, for the tests.
     pub fn instrument_center(&self, g: &Geometry, id: PluginId, part: Part) -> Option<(f32, f32)> {
         let i = self.instruments.open.iter().position(|w| w.plugin == id)?;
-        let p = self.project();
+        let p = self.auto_shown();
         let (track, plugin, def) = live(&p, &self.instruments.open[i])?;
         let r =
             self.instruments

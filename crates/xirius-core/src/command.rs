@@ -280,6 +280,8 @@ pub struct EditCtx<'a> {
     pub clipboard: Option<&'a Clipboard>,
     /// The parameter a hand moved last (`SessionState::touched`).
     pub touched: Option<&'a str>,
+    /// The steps the running plug-ins tell (`SessionState::param_steps`, AUT-016).
+    pub steps: &'a crate::auto::ParamSteps,
 }
 
 pub type EditFn = fn(&mut Project, &EditCtx<'_>, &Args) -> CmdResult<Output>;

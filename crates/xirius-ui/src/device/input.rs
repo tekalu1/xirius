@@ -374,7 +374,7 @@ impl Studio {
         else {
             return false;
         };
-        let p = self.project();
+        let p = self.auto_shown();
         let Some(at) = self
             .instruments
             .open
@@ -518,7 +518,7 @@ impl Studio {
         notches: f64,
         fine: bool,
     ) -> bool {
-        let p = self.project();
+        let p = self.auto_shown();
         let Some((i, part)) = self.instruments.at(&p, g, x, y) else {
             return false;
         };
@@ -546,7 +546,7 @@ impl Studio {
         n: usize,
         at: usize,
     ) -> Option<(&'static BuiltinDef, Point)> {
-        let p = self.project();
+        let p = self.auto_shown();
         let w = self.instruments.open.get(i)?;
         let (_, x, def) = live(&p, w)?;
         let r = self.instruments.frame(i, g);
@@ -831,7 +831,7 @@ impl Studio {
         values: &[f64],
     ) -> Vec<Stop> {
         let win = self.instruments.win_of(plugin);
-        let p = self.project();
+        let p = self.auto_shown();
         let x = p
             .tracks
             .get(&track)
@@ -1015,7 +1015,7 @@ impl Studio {
     /// A right press on a window: on a control, its menu (back to the default,
     /// its automation lane, MIDI learn). True over any window.
     pub(crate) fn instrument_right(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
-        let p = self.project();
+        let p = self.auto_shown();
         let Some((i, part)) = self.instruments.at(&p, g, x, y) else {
             return false;
         };

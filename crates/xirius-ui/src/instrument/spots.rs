@@ -34,7 +34,7 @@ fn shown_file(def: &BuiltinDef, plugin: &Plugin, w: &Win) -> Option<usize> {
 impl Studio {
     /// A press on the `n`th spot of the `i`th window, whose frame is `r`, at `x`.
     pub(crate) fn window_spot(&mut self, i: usize, r: Rect, n: usize, x: f32) {
-        let p = self.project();
+        let p = self.auto_shown();
         let w = self.instruments.open[i];
         let Some((_, plugin, def)) = live(&p, &w) else {
             return;
@@ -159,7 +159,7 @@ impl Studio {
     /// A right press on the `n`th spot of the `i`th window, whose frame is `r`: a zone's
     /// menu (it is chosen), a layer's (it is not), the sample name's (UI-333, UI-334).
     pub(crate) fn spot_menu(&mut self, i: usize, r: Rect, n: usize, x: f32, y: f32) {
-        let p = self.project();
+        let p = self.auto_shown();
         let w = self.instruments.open[i];
         let Some((_, plugin, def)) = live(&p, &w) else {
             return;
@@ -416,7 +416,7 @@ impl Studio {
     /// they fall on the zones' strip (the mock's targets). False when the drop fell
     /// elsewhere.
     pub(crate) fn window_drop(&mut self, g: &Geometry, x: f32, y: f32, paths: &[PathBuf]) -> bool {
-        let p = self.project();
+        let p = self.auto_shown();
         let Some((i, part)) = self.instruments.at(&p, g, x, y) else {
             return false;
         };

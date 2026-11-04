@@ -1012,7 +1012,7 @@ fn key_source_mark(
 fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     use crate::device::control::{self, Look};
     use crate::instrument::window::{Part, live, source_of, values_of};
-    let p = s.project();
+    let p = s.auto_shown();
     let mut out = Vec::new();
     for (i, w) in s.instruments.open.iter().enumerate() {
         let Some((track, x, def)) = live(&p, w) else {

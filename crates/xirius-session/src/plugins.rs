@@ -2616,14 +2616,16 @@ impl PluginLoader {
 
     /// A plugin's parameter id → the values of each switch or list of choices, as the host
     /// reported when it opened (AUT-016). A parameter that glides is not in it, nor is any of a
-    /// CLAP plugin playing in this process (its parameters are not read here).
+    /// CLAP plugin playing in this process (its parameters are not read here): one set to
+    /// `inprocess` (the default), an ARA plugin, every plugin when the mix runs them all here,
+    /// or one set to a host process when `xirius-plugin-host` is not found.
+    /// Its lanes glide as before, and the plugin takes the value it gets.
     pub fn param_steps(&self, id: PluginId) -> Vec<(u32, u32)> {
         if let Some(l) = self.playing_local(id) {
             return l.steps.clone();
         }
         self.playing_remote(id)
-            .and_then(|r| r.link.opened())
-            .map(|o| o.steps)
+            .map(|r| r.link.opened_steps())
             .unwrap_or_default()
     }
 

@@ -1509,6 +1509,7 @@ impl Session {
             store: self.store.as_ref(),
             clipboard: self.state.clipboard.as_ref(),
             touched: self.state.touched.as_deref(),
+            steps: &self.state.param_steps,
         };
         let mut out = f(&mut work, &ctx, args)?;
         crate::commands::overlap::apply(&before, &mut work, args)?;

@@ -475,6 +475,17 @@ impl PluginLink {
         self.lock().heard.opened.clone()
     }
 
+    /// The steps of the parameters as last opened (AUT-016), without copying the rest of
+    /// [`Opened`]: the screen reads them every frame.
+    pub fn opened_steps(&self) -> Vec<(u32, u32)> {
+        self.lock()
+            .heard
+            .opened
+            .as_ref()
+            .map(|o| o.steps.clone())
+            .unwrap_or_default()
+    }
+
     /// The names the plugin gives its keys, as last reported (EDT-134).
     pub fn note_names(&self) -> Vec<(u8, String)> {
         self.lock()
