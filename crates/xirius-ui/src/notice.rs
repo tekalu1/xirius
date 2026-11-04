@@ -72,12 +72,9 @@ pub fn leave(path: &Path, n: usize) -> std::io::Result<()> {
         return Ok(());
     }
     let before = read(path);
-    if let Some(dir) = path.parent() {
-        // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
-        std::fs::create_dir_all(dir)?;
-    }
-    // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
-    std::fs::write(path, (before + n).to_string())
+    // Written whole or not at all: a Xirius ended half way (UI-282) leaves the count before.
+    xirius_core::store::atomic_write(path, (before + n).to_string().as_bytes())
+        .map_err(|e| std::io::Error::other(e.to_string()))
 }
 
 /// Where a closed window keeps the song folders whose cleanup it stopped, for the next one.
@@ -96,13 +93,10 @@ pub fn leave_later(path: &Path, dirs: &[PathBuf]) -> std::io::Result<()> {
             all.push(d.clone());
         }
     }
-    if let Some(dir) = path.parent() {
-        // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
-        std::fs::create_dir_all(dir)?;
-    }
     let text: String = all.iter().map(|d| format!("{}\n", d.display())).collect();
-    // design-lint: allow(ui-blocking-io) PRJ-031: worker-only helper; UI callers submit/poll and never call this boundary directly.
-    std::fs::write(path, text)
+    // As above: the folders kept before stay when Xirius ends half way.
+    xirius_core::store::atomic_write(path, text.as_bytes())
+        .map_err(|e| std::io::Error::other(e.to_string()))
 }
 
 /// The folders kept in `path`, once: the file goes (none when it cannot).

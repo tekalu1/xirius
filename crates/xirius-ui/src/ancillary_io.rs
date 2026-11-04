@@ -20,6 +20,15 @@ impl<T> Ticket<T> {
     pub(crate) fn poll(&self) -> Option<Result<T, String>> {
         self.result.try_lock().ok()?.take()
     }
+    /// A ticket whose work never ends, for a test of what waits too long.
+    #[cfg(test)]
+    pub(crate) fn never() -> Ticket<T> {
+        Ticket {
+            result: Default::default(),
+            cancelled: Default::default(),
+            detached: true,
+        }
+    }
     fn detach(mut self) {
         self.detached = true;
     }
@@ -133,30 +142,32 @@ pub(crate) struct ViewRead {
 
 impl crate::studio::Studio {
     /// After the last window closes, keep the executor pumping while the FIFO
-    /// finishes or defers cleanup. The installer of an update is started before the window
-    /// goes ([`crate::studio::Studio::request_close`]); one still waiting here (a window
-    /// closed some other way) is started first.
+    /// finishes or defers cleanup. The installer of an update is started right before the
+    /// window goes ([`crate::studio::Studio::commit_close`]); one still waiting here (a window
+    /// the OS closed without asking) is checked and started first.
     pub(crate) fn finish_window_io(&mut self) -> Result<(), String> {
         let close = self.open_closing.take();
         let tidies = std::mem::take(&mut self.tidying);
         let install = self.update.pending.take();
+        self.update.holding = None;
+        self.update.held = None;
         let installer = self.update.ready.clone();
         let key = self.update.key.clone();
         let root = self.update.root.clone();
         let spawn = self.update.spawn.clone();
-        let leave = self.update.leave.clone();
+        let launched = self.update.launched.clone();
         dispatch(move || {
-            if let Some(install) = install
-                && let Err(e) = crate::about::launch_installer(
+            if let Some(install) = install {
+                match crate::about::launch_installer(
                     &install,
                     installer.as_ref(),
                     &key,
                     root.as_deref(),
                     &spawn,
-                    &*leave,
-                )
-            {
-                eprintln!("注意: {e}");
+                ) {
+                    Ok(()) => launched.store(true, std::sync::atomic::Ordering::SeqCst),
+                    Err(e) => eprintln!("注意: {e}"),
+                }
             }
             let until = std::time::Instant::now() + crate::tidy::CLOSE_WAIT;
             let n = close.map_or(0, |c| c.wait(crate::tidy::CLOSE_WAIT))

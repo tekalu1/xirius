@@ -221,7 +221,8 @@ impl Studio {
             || self.saving.is_some()
             || self.sound_preparing()
             || self.unsaved.is_some()
-            || self.update.launching()
+            || self.update.preparing()
+            || self.update.launched()
     }
     pub(crate) fn request_open_file(&mut self, request: FileRequest, path: &Path) -> bool {
         self.request_open(Request::File(request, path.to_path_buf()))
@@ -348,16 +349,24 @@ impl Studio {
             self.fail_macro("マクロの操作を中止しました".into());
         }
     }
+    /// 「戻る」 to the question whether to close while a song opens: the window stays, and an
+    /// update that waited for the close is called off (UI-282).
+    pub(crate) fn keep_open_window(&mut self) {
+        if let Some(open) = &mut self.opening {
+            open.confirm_close = false;
+        }
+        self.drop_update_install("更新を取りやめました".into());
+    }
     pub(crate) fn opening_key(&mut self, key: &str) -> bool {
         let Some(open) = &mut self.opening else {
             return false;
         };
         if open.confirm_close {
             match key {
-                "escape" => open.confirm_close = false,
+                "escape" => self.keep_open_window(),
                 "tab" | "left" | "right" => open.close_focus = !open.close_focus,
                 "enter" if open.close_focus => self.accept_open_close(),
-                "enter" => open.confirm_close = false,
+                "enter" => self.keep_open_window(),
                 _ => {}
             }
         } else if key == "escape" {
@@ -455,7 +464,7 @@ impl Studio {
         if open.confirm_close {
             let (back, close) = crate::opening_view::close_buttons(g);
             if back.contains(x, y) {
-                self.opening.as_mut().unwrap().confirm_close = false;
+                self.keep_open_window();
             } else if close.contains(x, y) {
                 self.accept_open_close();
             }

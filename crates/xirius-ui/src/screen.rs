@@ -37,6 +37,9 @@ use crate::tools::Mods;
 
 pub const WINDOW_TITLE: &str = "Xirius";
 
+/// How long the end of the last window waits for the song a callback still holds (UI-282).
+const CLOSED_BORROW_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Wheel "lines" are this many pixels (only for real mouse wheels).
 const LINE_PX: f32 = 20.0;
 /// One notch of the wheel zooms by one step.
@@ -1571,11 +1574,11 @@ impl Render for Screen {
             if !studio.input_blocked() {
                 studio.run_asked(&g);
             }
-            match studio.window_ask.take() {
+            match studio.take_window_ask() {
                 Some(crate::context::key_more::WindowAsk::Fullscreen) => {
                     window.toggle_fullscreen();
                 }
-                Some(crate::context::key_more::WindowAsk::Quit) if studio.request_close() => {
+                Some(crate::context::key_more::WindowAsk::Quit) if studio.close_now() => {
                     window.defer(cx, |window, _| window.remove_window());
                 }
                 Some(crate::context::key_more::WindowAsk::Quit) | None => {}
@@ -2316,29 +2319,32 @@ pub fn run(opts: Options) {
             let closing = (!scripted).then(|| studio.clone());
             cx.on_window_closed(move |cx, _| {
                 if cx.windows().is_empty() {
-                    let mut recent_since = std::time::Instant::now();
-                    if let Some(studio) = &closing {
-                        match studio.try_borrow_mut() {
-                            Ok(mut s) => {
-                                recent_since = s.keep.recent_close_since().unwrap_or(recent_since);
-                                // This song's cleanup joins those of the songs closed
-                                // before (REC-026), and its folder is let go: a close is
-                                // not a crash.
-                                if let Err(e) = s.close_window_song() {
-                                    crate::ancillary_io::log!("注意: {e}");
-                                }
-                                if let Err(e) = s.finish_window_io() {
-                                    crate::ancillary_io::log!("注意: {e}");
-                                }
-                            }
-                            Err(_) => {
-                                crate::ancillary_io::log!("注意: 更新の予約を読めませんでした")
-                            }
-                        }
-                    }
+                    let closing = closing.clone();
                     // Keep the process alive while accepted browser snapshots are saved.
                     // The foreground executor continues pumping; no UI thread joins I/O.
                     cx.spawn(async move |cx| {
+                        // The song may be held by a callback still running (UI-282): its
+                        // cleanup waits for it rather than being left out.
+                        let mut exit = None;
+                        if let Some(studio) = &closing {
+                            let until = std::time::Instant::now() + CLOSED_BORROW_WAIT;
+                            loop {
+                                if let Ok(mut s) = studio.try_borrow_mut() {
+                                    exit = Some(s.after_window_closed());
+                                    break;
+                                }
+                                if std::time::Instant::now() >= until {
+                                    crate::ancillary_io::log!(
+                                        "注意: 曲の後始末を始められませんでした"
+                                    );
+                                    break;
+                                }
+                                cx.background_executor().timer(crate::health::POLL).await;
+                            }
+                        }
+                        let recent_since = exit
+                            .as_ref()
+                            .map_or_else(std::time::Instant::now, |e| e.recent_since);
                         let mut recent_done = false;
                         loop {
                             if !recent_done
@@ -2362,6 +2368,9 @@ pub fn run(opts: Options) {
                                 }
                                 cx.update(|cx| {
                                     if cx.windows().is_empty() {
+                                        if let Some(exit) = &exit {
+                                            exit.quitting();
+                                        }
                                         cx.quit();
                                     }
                                 });
@@ -2386,6 +2395,7 @@ pub fn run(opts: Options) {
                 crate::ai::serve::start_window(&mut s)
             };
             let parked = opts.place == Place::Parked;
+            let knock = studio.borrow().close_knock.clone();
             let handle = cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -2415,20 +2425,15 @@ pub fn run(opts: Options) {
                     ..WindowOptions::default()
                 },
                 move |window, cx| {
-                    let close_studio = studio.clone();
                     // Called from the OS's close message (the caption's ×, Alt+F4, the
                     // taskbar), outside drawing and where a panic cannot unwind: it must not
                     // ask for the view being drawn (`request_animation_frame` does, UI-282),
-                    // nor borrow a song another callback holds. A close that has to wait asks
-                    // for a frame that sees it through.
+                    // nor borrow a song another callback holds. It only knocks; the next
+                    // frame closes the way 「終了」 does, and the window goes from there.
                     window.on_window_should_close(cx, move |window, _| {
-                        let ready = close_studio
-                            .try_borrow_mut()
-                            .is_ok_and(|mut s| s.request_close());
-                        if !ready {
-                            window.refresh();
-                        }
-                        ready
+                        knock.set(true);
+                        window.refresh();
+                        false
                     });
                     if scripted || parked {
                         let first = run.clone();

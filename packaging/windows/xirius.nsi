@@ -7,8 +7,9 @@
 ;
 ; /S installs without a window. A running Xirius is waited for (60 s when silent) and the
 ; install stops when it does not close, so an update can start this and quit itself. Xirius
-; ends within 20 s of starting it (UI-282, LEAVE_WAIT); the rest is for its helper programs
-; and a slow disk.
+; starts this as the last step of its window's close and ends once it has tidied up (UI-282:
+; what is left of it is ended EXIT_WAIT, 10 s, after that); the rest is for its helper
+; programs and a slow disk.
 ; /XRUN (with /S) starts Xirius again when the install ends (UI-282: 「更新して再起動」).
 ;
 ; Made by scripts/release.py, which stages the files and writes the two lists it includes:
@@ -143,10 +144,14 @@ FunctionEnd
 !insertmacro WAIT_CLOSED "un."
 
 ; /XRUN: put the old Xirius back and leave the note the next start reads (UI-282). A manual
-; install writes nothing.
+; install writes nothing. A Xirius still running is not started a second time.
 Function UpdateFailed
   ${If} $XRun == 1
-    Exec '"$INSTDIR\xirius-ui.exe"'
+    StrCpy $0 ""
+    !insertmacro IN_USE "xirius-ui.exe"
+    ${If} $0 == ""
+      Exec '"$INSTDIR\xirius-ui.exe"'
+    ${EndIf}
     CreateDirectory "$LOCALAPPDATA\Xirius\keep"
     FileOpen $3 "$LOCALAPPDATA\Xirius\keep\update-failed.txt" w
     FileClose $3

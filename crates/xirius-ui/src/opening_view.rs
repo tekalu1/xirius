@@ -266,11 +266,7 @@ pub(crate) fn accessible(s: Rc<RefCell<Studio>>, g: &Geometry) -> impl IntoEleme
                     match action {
                         1 => s.accept_open_close(),
                         2 => s.cancel_opening(),
-                        _ => {
-                            if let Some(o) = &mut s.opening {
-                                o.confirm_close = false;
-                            }
-                        }
+                        _ => s.keep_open_window(),
                     }
                     window.refresh();
                 }),

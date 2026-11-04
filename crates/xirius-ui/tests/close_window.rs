@@ -3,8 +3,9 @@
 //! asking for a frame there used to panic inside the window procedure, where a panic cannot
 //! unwind: the process ended before anything after the window (the installer of an update
 //! among it) could run. Only messages to the window itself are sent; nothing takes the focus.
-//! The close is sent once the song has had time to open: a close during the opening asks
-//! first, by design.
+//! The window starts on the start screen (UI-350). A close that comes while the start still
+//! looks for a song to reopen asks first, by design, and the window stays: the close is sent
+//! again until the process ends, with no fixed wait for the start.
 #![cfg(windows)]
 
 use std::process::{Child, Command, Stdio};
@@ -37,7 +38,7 @@ fn windows_of(pid: u32) -> Vec<HWND> {
     found.1
 }
 
-/// The parked window on the sample song, everything it writes kept in a temp folder.
+/// The parked window, everything it writes kept in a temp folder.
 fn launch() -> (Child, tempfile::TempDir) {
     let tmp = tempfile::Builder::new()
         .prefix("xirius-close-")
@@ -83,18 +84,21 @@ fn close_once_or_twice(twice: bool) {
         }
         std::thread::sleep(Duration::from_millis(50));
     };
-    // The sample song opens in a few seconds (a debug build, other builds alongside).
-    std::thread::sleep(Duration::from_secs(10));
-    unsafe { PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0)) }.unwrap();
-    if twice {
-        // A second × while the first close still waits for the save.
-        std::thread::sleep(Duration::from_millis(30));
-        let _ = unsafe { PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0)) };
-    }
     let limit = Instant::now() + Duration::from_secs(60);
+    let mut next_close = Instant::now();
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break status;
+        }
+        if Instant::now() >= next_close {
+            // The window may be gone already: a failed post is the close under way.
+            let _ = unsafe { PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0)) };
+            if twice {
+                // A second × while the first close still waits for the save.
+                std::thread::sleep(Duration::from_millis(30));
+                let _ = unsafe { PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0)) };
+            }
+            next_close = Instant::now() + Duration::from_secs(5);
         }
         if Instant::now() > limit {
             let _ = child.kill();

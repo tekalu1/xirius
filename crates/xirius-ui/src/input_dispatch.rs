@@ -313,7 +313,10 @@ impl Studio {
         }
         if self.opening.is_some() {
             if name == "app.quit" {
-                self.request_close();
+                // It asks first; a close that may go on goes through the frame (UI-282).
+                if self.request_close() {
+                    self.window_ask = Some(crate::context::key_more::WindowAsk::Quit);
+                }
             } else if matches!(
                 name.as_str(),
                 "project.open" | "project.new" | "project.close" | "version.open"

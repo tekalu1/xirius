@@ -693,6 +693,13 @@ impl Installer {
 
     /// The same check with a given key (a test makes its own).
     pub fn verify_with(&self, key_hex: &str) -> Result<(), String> {
+        self.hold_with(key_hex).map(drop)
+    }
+
+    /// The same check, keeping the installer open so that nothing can replace or remove it
+    /// until it is started (UI-282): the file is read through the handle that stays open, and
+    /// others may only read it (the OS reads it to start it).
+    pub fn hold_with(&self, key_hex: &str) -> Result<Held, String> {
         verify_signature(&self.manifest_bytes, &self.signature, key_hex)?;
         let manifest: Manifest = serde_json::from_slice(&self.manifest_bytes)
             .map_err(|_| "manifest を読み取れません".to_string())?;
@@ -711,13 +718,29 @@ impl Installer {
         if !expected.eq_ignore_ascii_case(&manifest.sha256) {
             return Err(BAD_SUM.into());
         }
-        let bytes =
-            std::fs::read(&self.path).map_err(|e| format!("インストーラーを読めません: {e}"))?;
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // FILE_SHARE_READ only: no one writes, renames or removes it while it is held.
+            options.share_mode(0x0000_0001);
+        }
+        let read = |e: std::io::Error| format!("インストーラーを読めません: {e}");
+        let mut file = options.open(&self.path).map_err(read)?;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut file, &mut bytes).map_err(read)?;
         if !sha256_hex(&bytes).eq_ignore_ascii_case(&manifest.sha256) {
             return Err(BAD_SUM.into());
         }
-        Ok(())
+        Ok(Held { _file: file })
     }
+}
+
+/// A checked installer, held open until it is started (UI-282).
+#[derive(Debug)]
+pub struct Held {
+    _file: std::fs::File,
 }
 
 /// Downloads `release`'s manifest, signature, sums and installer under `root`, checks them all
@@ -1436,9 +1459,11 @@ pub struct Install {
 
 /// Starts the installer without waiting for it; Xirius leaves while the installer waits for it.
 ///
-/// On Windows the installer inherits no handle of this window, and leaves a job this window
-/// may be in (a terminal's or a launcher's, which kills what is in it when it closes), so the
-/// end of Xirius does not take the installer with it (UI-282).
+/// On Windows the installer inherits no handle of this window and none of its folders (it
+/// starts in the temporary folder), and leaves a job this window may be in (a terminal's or a
+/// launcher's, which kills what is in it when it closes), so the end of Xirius does not take
+/// the installer with it (UI-282). A job that neither lets it leave nor lets it outlive Xirius
+/// is refused: the installer would be killed half way.
 #[cfg(windows)]
 pub fn spawn_detached(install: &Install) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
@@ -1454,10 +1479,13 @@ pub fn spawn_detached(install: &Install) -> Result<(), String> {
         .encode_wide()
         .chain(Some(0))
         .collect();
-    let mut line = command_line(&install.program.to_string_lossy(), &install.args)
-        .encode_utf16()
+    let mut line = command_line(install.program.as_os_str(), &install.args);
+    line.push(0);
+    let dir: Vec<u16> = std::env::temp_dir()
+        .as_os_str()
+        .encode_wide()
         .chain(Some(0))
-        .collect::<Vec<u16>>();
+        .collect();
     let flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT;
     // A job that does not allow leaving refuses the first try; then the installer stays in it.
     for flags in [flags | CREATE_BREAKAWAY_FROM_JOB, flags] {
@@ -1475,7 +1503,7 @@ pub fn spawn_detached(install: &Install) -> Result<(), String> {
                 0,
                 flags,
                 std::ptr::null(),
-                std::ptr::null(),
+                dir.as_ptr(),
                 &startup,
                 &mut info,
             );
@@ -1486,6 +1514,9 @@ pub fn spawn_detached(install: &Install) -> Result<(), String> {
             }
             let error = GetLastError();
             if error == ERROR_ACCESS_DENIED && flags & CREATE_BREAKAWAY_FROM_JOB != 0 {
+                if job_kills_on_close() {
+                    return Err(KILLING_JOB.into());
+                }
                 continue;
             }
             return Err(format!(
@@ -1497,13 +1528,54 @@ pub fn spawn_detached(install: &Install) -> Result<(), String> {
     Err("インストーラーを起動できません".into())
 }
 
-/// The command line of a program and its arguments, quoted as `CommandLineToArgvW` reads it.
+/// Why the installer is not started from a job that would kill it with Xirius (UI-282).
+pub const KILLING_JOB: &str = "Xirius を起動したプログラムが、Xirius と一緒にインストーラーも終わらせる設定です。スタートメニューから Xirius を起動し直して、もう一度更新してください";
+
+/// Does the job this process is in (the nearest, when they nest) kill what is in it when it
+/// closes? A process in no job is in none that does.
+#[cfg(windows)]
+pub fn job_kills_on_close() -> bool {
+    use windows_sys::Win32::System::JobObjects::{
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JobObjectExtendedLimitInformation, QueryInformationJobObject,
+    };
+
+    // SAFETY: the structure is ours, zeroed and sized; a null job is this process's own.
+    unsafe {
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        QueryInformationJobObject(
+            std::ptr::null_mut(),
+            JobObjectExtendedLimitInformation,
+            &mut limits as *mut _ as *mut _,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            std::ptr::null_mut(),
+        ) != 0
+            && limits.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE != 0
+    }
+}
+
+/// The command line of a program and its arguments, as `CommandLineToArgvW` reads it back. The
+/// program's path goes in as it is (no lossy conversion).
+#[cfg(windows)]
+fn command_line(program: &std::ffi::OsStr, args: &[String]) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+
+    let mut line = vec![u16::from(b'"')];
+    line.extend(program.encode_wide());
+    line.push(u16::from(b'"'));
+    line.extend(quoted_args(args).encode_utf16());
+    line
+}
+
+/// The arguments, each after a space and quoted when it has to be. NSIS's `/D=` (the install
+/// folder) is not one of them: it must come last and unquoted, which this quoting does not
+/// keep.
 #[cfg_attr(not(windows), allow(dead_code))]
-fn command_line(program: &str, args: &[String]) -> String {
-    let mut line = format!("\"{program}\"");
+fn quoted_args(args: &[String]) -> String {
+    let mut line = String::new();
     for arg in args {
         line.push(' ');
-        if !arg.is_empty() && !arg.contains([' ', '\t', '"']) {
+        if !arg.is_empty() && !arg.contains([' ', '\t', '\n', '\x0b', '"']) {
             line.push_str(arg);
             continue;
         }
@@ -1531,10 +1603,13 @@ fn command_line(program: &str, args: &[String]) -> String {
     line
 }
 
-/// Ends this process `after` from now if it is still running (UI-282). Once the installer is
-/// started, Xirius must be gone before the installer stops waiting for it (30 s); a plugin or
-/// a cleanup that hangs on the way out must not keep the update from going in. The song was
-/// saved before the installer was started.
+/// The exit code of a Xirius ended by [`leave_within`]: not a normal end.
+pub const LEAVE_CODE: u32 = 3;
+
+/// Ends this process `after` from now if it is still running (UI-282). Called only once the
+/// window has closed, the installer has started and the cleanup of the close has finished: the
+/// last of Xirius (a plugin's thread, the end of the audio) must not outlast the installer's
+/// wait for it (60 s). Ends with [`LEAVE_CODE`].
 pub fn leave_within(after: Duration) {
     let _ = std::thread::Builder::new()
         .name("update leave".into())
@@ -1545,9 +1620,9 @@ pub fn leave_within(after: Duration) {
             // SAFETY: ends this process; nothing runs after it.
             unsafe {
                 use windows_sys::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
-                TerminateProcess(GetCurrentProcess(), 0);
+                TerminateProcess(GetCurrentProcess(), LEAVE_CODE);
             }
-            std::process::exit(0);
+            std::process::exit(LEAVE_CODE as i32);
         });
 }
 
@@ -1585,14 +1660,160 @@ mod tests {
     #[test]
     fn the_command_line_quotes_what_needs_it() {
         let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(quoted_args(&args(&["/S", "/XRUN"])), " /S /XRUN");
         assert_eq!(
-            command_line(r"C:\a b\setup.exe", &args(&["/S", "/XRUN"])),
+            quoted_args(&args(&[r"C:\a b\", "", "say \"hi\"", "a\nb", "a\u{b}b"])),
+            " \"C:\\a b\\\\\" \"\" \"say \\\"hi\\\"\" \"a\nb\" \"a\u{b}b\""
+        );
+        #[cfg(windows)]
+        assert_eq!(
+            String::from_utf16(&command_line(
+                std::ffi::OsStr::new(r"C:\a b\setup.exe"),
+                &args(&["/S", "/XRUN"])
+            ))
+            .unwrap(),
             r#""C:\a b\setup.exe" /S /XRUN"#
         );
-        assert_eq!(
-            command_line("x.exe", &args(&[r"/D=C:\a b\", "", "say \"hi\""])),
-            r#""x.exe" "/D=C:\a b\\" "" "say \"hi\"""#
+    }
+
+    /// UI-282: a path that is not valid UTF-16 (a lone surrogate) reaches the command line as
+    /// it is.
+    #[cfg(windows)]
+    #[test]
+    fn the_program_path_is_not_changed_on_the_way() {
+        use std::os::windows::ffi::OsStringExt;
+
+        let path = std::ffi::OsString::from_wide(&[u16::from(b'a'), 0xD800, u16::from(b'b')]);
+        assert_eq!(command_line(&path, &[]), [34, 97, 0xD800, 98, 34]);
+    }
+
+    /// UI-282: a checked installer that is held cannot be replaced or removed until it is let
+    /// go; it can still be read (the OS reads it to start it).
+    #[test]
+    fn a_held_installer_cannot_be_swapped() {
+        use ed25519_dalek::Signer;
+
+        let tmp = scratch("held");
+        let body = b"the installer";
+        let version = "9.9.9";
+        let name = setup_name(version);
+        let manifest = format!(
+            "{{\"version\":\"{version}\",\"file\":\"{name}\",\"sha256\":\"{}\",\"channel\":\"stable\",\"min_version\":\"1.0.0\"}}\n",
+            sha256_hex(body)
         );
+        let key = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let hex = |b: &[u8]| b.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let path = tmp.path().join(&name);
+        std::fs::write(&path, body).unwrap();
+        let installer = Installer {
+            path: path.clone(),
+            version: version.into(),
+            manifest: serde_json::from_str(&manifest).unwrap(),
+            signature: hex(&key.sign(manifest.as_bytes()).to_bytes()),
+            manifest_bytes: manifest.into_bytes(),
+            sums: format!("{}  {name}\n", sha256_hex(body)),
+        };
+        let public = hex(&key.verifying_key().to_bytes());
+        let held = installer.hold_with(&public).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), body);
+        if cfg!(windows) {
+            assert!(std::fs::write(&path, b"another").is_err());
+            assert!(std::fs::remove_file(&path).is_err());
+            assert!(std::fs::rename(&path, tmp.path().join("moved")).is_err());
+        }
+        drop(held);
+        std::fs::write(&path, b"another").unwrap();
+        assert_eq!(installer.hold_with(&public).unwrap_err(), BAD_SUM);
+    }
+
+    /// The process the test below puts in a job of its own: once it is in, it starts a program
+    /// the way the installer is started and writes down how it went. Alone it does nothing.
+    #[cfg(windows)]
+    #[test]
+    fn ui_282_job_child() {
+        let Some(out) = std::env::var_os("XIRIUS_JOB_TEST") else {
+            return;
+        };
+        let out = PathBuf::from(out);
+        let go = out.with_extension("go");
+        let end = std::time::Instant::now() + Duration::from_secs(30);
+        while !go.exists() {
+            assert!(std::time::Instant::now() < end);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let system = std::env::var_os("SystemRoot").unwrap();
+        let started = spawn_detached(&Install {
+            program: PathBuf::from(system).join(r"System32\cmd.exe"),
+            args: vec!["/c".into(), "exit".into()],
+        });
+        std::fs::write(&out, started.err().unwrap_or_else(|| "ok".into())).unwrap();
+    }
+
+    /// UI-282: from a job that lets nothing leave and kills what is in it when it closes, the
+    /// installer is not started (it would die with Xirius, half way); the window says so. From
+    /// one that lets nothing leave but kills nothing, it starts there.
+    #[cfg(windows)]
+    #[test]
+    fn a_job_that_would_kill_the_installer_is_refused() {
+        use std::os::windows::io::AsRawHandle;
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+            SetInformationJobObject,
+        };
+
+        let tmp = scratch("job");
+        for (kills, expected) in [(true, KILLING_JOB), (false, "ok")] {
+            // SAFETY: the job is ours, its limits a zeroed structure of the right size; its
+            // handle is closed below.
+            let job = unsafe {
+                let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+                assert!(!job.is_null());
+                let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                if kills {
+                    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                }
+                assert_ne!(
+                    SetInformationJobObject(
+                        job,
+                        JobObjectExtendedLimitInformation,
+                        &limits as *const _ as *const _,
+                        std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                    ),
+                    0
+                );
+                job
+            };
+            let out = tmp.path().join(format!("kills-{kills}.txt"));
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "update::tests::ui_282_job_child", "--nocapture"])
+                .env("XIRIUS_JOB_TEST", &out)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()
+                .unwrap();
+            // SAFETY: the job and the child are ours.
+            unsafe {
+                assert_ne!(AssignProcessToJobObject(job, child.as_raw_handle() as _), 0);
+            }
+            std::fs::write(out.with_extension("go"), b"").unwrap();
+            let end = std::time::Instant::now() + Duration::from_secs(60);
+            while child.try_wait().unwrap().is_none() {
+                assert!(std::time::Instant::now() < end, "the child hung");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            // SAFETY: the job handle is ours.
+            unsafe { CloseHandle(job) };
+            assert_eq!(
+                std::fs::read_to_string(&out).unwrap(),
+                expected,
+                "kills: {kills}"
+            );
+        }
     }
 
     const ANSWER: &str = r#"{

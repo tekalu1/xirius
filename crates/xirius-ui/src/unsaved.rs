@@ -37,7 +37,7 @@ impl Studio {
                 }
             }
             Pending::Close if proceed => self.close_without_plugin_state(),
-            Pending::Close => {}
+            Pending::Close => self.drop_update_install("更新を取りやめました".into()),
         }
     }
     pub(crate) fn unsaved_key(&mut self, key: &str) -> bool {

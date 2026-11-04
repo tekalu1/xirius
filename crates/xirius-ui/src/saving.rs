@@ -228,6 +228,11 @@ impl Studio {
                 "録音テイクの配置が終わっていないため、まだ閉じられません".into(),
                 None,
             );
+            if matches!(leave, Leave::Close) {
+                self.drop_update_install(
+                    "録音テイクの配置が終わっていないため、更新を取りやめました".into(),
+                );
+            }
             return;
         }
         if self.keep.plugin_state_failed {
@@ -602,7 +607,7 @@ impl Studio {
                     mcp.job
                         .answer(Err(CmdError::conflict("保存を中止しました")));
                 }
-                self.update.pending = None;
+                self.drop_update_install("保存を中止したため、更新を取りやめました".into());
                 return true;
             }
             pull.reconcile(&self.song.project());
@@ -655,9 +660,12 @@ impl Studio {
                 }
                 self.save_failed(&error);
                 self.error = Some(error.to_string());
-                self.update.pending = None;
+                // A close asks whether to go on without the plugins' state; the update waits
+                // for the answer (UI-282).
                 if matches!(save.leaving, Some(Leave::Close)) || save.close_when_done {
                     self.ask_unsaved(crate::unsaved::Pending::Close);
+                } else {
+                    self.drop_update_install(format!("更新を取りやめました: {error}"));
                 }
                 return true;
             }
@@ -755,7 +763,7 @@ impl Studio {
                     Err(e) => self.save_failed(&e),
                 }
                 if save.close_when_done {
-                    self.request_close();
+                    self.window_ask = Some(crate::context::key_more::WindowAsk::Quit);
                 }
                 return true;
             }
@@ -778,7 +786,7 @@ impl Studio {
                 Ok(None) => {}
             }
             if save.close_when_done {
-                self.request_close();
+                self.window_ask = Some(crate::context::key_more::WindowAsk::Quit);
             }
             if let Some(error) = save.record_error {
                 self.error = Some(error);
@@ -790,17 +798,21 @@ impl Studio {
             Err(error) if error.io_kind == Some(std::io::ErrorKind::Interrupted) => {
                 // The save was cancelled: the close is not going on, so the update is not
                 // waiting for it any more (UI-282).
-                self.update.pending = None;
+                self.drop_update_install("保存を中止したため、更新を取りやめました".into());
             }
             Err(error) => {
                 self.save_failed(&error);
                 // UI-282: the close was stopped, so nothing is put in later.
-                self.update.pending = None;
+                self.drop_update_install(format!(
+                    "保存できなかったため、更新を取りやめました: {error}"
+                ));
             }
             Ok(()) => {
                 if let Some(leave) = save.leaving {
                     if !failures.is_empty() {
-                        self.update.pending = None;
+                        self.drop_update_install(
+                            "保存できなかったため、更新を取りやめました".into(),
+                        );
                         return true;
                     }
                     self.finish_leaving(leave);
@@ -911,9 +923,10 @@ impl Studio {
     }
 
     /// May the window close now? Once nothing holds it, the installer an update waits for is
-    /// started first, while the window is still there (UI-282).
+    /// checked once more, while the window is still there (UI-282); it is started only by
+    /// [`Studio::commit_close`], right before the window goes.
     pub(crate) fn request_close(&mut self) -> bool {
-        self.close_ready() && self.start_pending_install()
+        self.close_ready() && self.prepare_install()
     }
 
     fn close_ready(&mut self) -> bool {
@@ -936,6 +949,7 @@ impl Studio {
                     return false;
                 }
                 Some(Err(e)) => {
+                    self.drop_update_install(format!("更新を取りやめました: {e}"));
                     self.error = Some(e);
                     return false;
                 }

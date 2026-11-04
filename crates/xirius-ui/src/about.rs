@@ -194,33 +194,36 @@ pub enum CheckState {
     Failed(String),
 }
 
-/// How long Xirius may take to end once the installer is started (UI-282). The installer waits
-/// 30 s for it (60 s in the ones made after 1.1.0-beta.3, `xirius.nsi`) and gives up; the
-/// window's own cleanup waits at most [`crate::tidy::CLOSE_WAIT`].
-pub(crate) const LEAVE_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+/// How long whatever is left of Xirius may take to end, once the window has closed for an
+/// update and the cleanup of the close has finished (UI-282). The installer waits 60 s for it
+/// (`xirius.nsi`; 30 s in the ones made up to 1.1.0-beta.3).
+pub(crate) const EXIT_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// Checks the installer once more and starts it (UI-282): a file replaced since it was checked
-/// is not run. When it cannot be started, the note the next start reads is left
-/// ([`update::FAILED`]). Once it runs, Xirius ends within [`LEAVE_WAIT`] (`leave`). Runs on
-/// the application-files worker, or inline only where there is no window.
+/// How long the window waits for the installer to be checked before it closes for an update
+/// (UI-282); after that the update is called off and the window stays.
+pub(crate) const PREPARE_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Said while the installer is checked, before the window closes for an update (UI-282).
+pub(crate) const PREPARING: &str = "更新の準備をしています…";
+
+/// Checks the installer once more and starts it (UI-282), for a window that closed without
+/// the last step of [`crate::studio::Studio::commit_close`] (the OS closed it without asking):
+/// a file replaced since it was checked is not run. When it cannot be started, the note the
+/// next start reads is left ([`update::FAILED`]). Runs on the application-files worker.
 pub(crate) fn launch_installer(
     install: &update::Install,
     installer: Option<&update::Installer>,
     key: &str,
     root: Option<&std::path::Path>,
     spawn: &update::Spawn,
-    leave: &(dyn Fn() + Send + Sync),
 ) -> Result<(), String> {
     let started = installer
         .ok_or_else(|| "インストーラーがありません".to_string())
-        // design-lint: allow(ui-blocking-io) PRJ-031 review: worker-only (start_pending_install submits it; finish_window_io dispatches it); inline only without a window.
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: worker-only (finish_window_io dispatches it).
         .and_then(|i| i.verify_with(key))
         .and_then(|()| spawn(install));
     match started {
-        Ok(()) => {
-            leave();
-            Ok(())
-        }
+        Ok(()) => Ok(()),
         Err(e) => {
             if let Some(root) = root {
                 // design-lint: allow(ui-blocking-io) PRJ-031 review: worker-only, as the check above.
@@ -261,10 +264,17 @@ pub struct Update {
     pub location: Option<update::Location>,
     /// The installer to start once the close is decided.
     pub pending: Option<update::Install>,
-    /// The installer being checked and started, once the close is decided (UI-282).
-    launch: Option<crate::ancillary_io::Ticket<()>>,
-    /// The installer was started: the window closes, and ends within [`LEAVE_WAIT`].
-    pub launched: bool,
+    /// The installer being checked before the window closes, and since when (UI-282).
+    pub(crate) holding: Option<(
+        crate::ancillary_io::Ticket<update::Held>,
+        std::time::Instant,
+    )>,
+    /// The installer, checked and held open until it is started (UI-282).
+    pub(crate) held: Option<update::Held>,
+    /// The installer was started: the window goes, and what is left of Xirius ends within
+    /// [`EXIT_WAIT`] of the end of the close's cleanup. Shared with the cleanup's worker, which
+    /// starts an installer the window could not.
+    pub launched: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Why an update could not be put in (the other programs running, a failed check, the
     /// note the installer left). Shown in the panel (UI-282).
     pub notice: Option<String>,
@@ -308,18 +318,38 @@ impl Default for Update {
                     }
                 }),
             pending: None,
-            launch: None,
-            launched: false,
+            holding: None,
+            held: None,
+            launched: Default::default(),
             notice: None,
             spawn: std::sync::Arc::new(update::spawn_detached),
             leave: if cfg!(test) {
                 std::sync::Arc::new(|| {})
             } else {
-                std::sync::Arc::new(|| update::leave_within(LEAVE_WAIT))
+                std::sync::Arc::new(|| update::leave_within(EXIT_WAIT))
             },
             fetch: update::curl(),
             download: update::curl_download(),
             key: update::UPDATE_KEY.to_string(),
+        }
+    }
+}
+
+/// What the end of Xirius still needs once its window has closed (UI-282).
+pub(crate) struct AfterClose {
+    /// When the close of the song began; the wait for its cleanup counts from there.
+    pub recent_since: std::time::Instant,
+    launched: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    leave: std::sync::Arc<dyn Fn() + Send + Sync>,
+}
+
+impl AfterClose {
+    /// Right before Xirius quits, once the close's cleanup is done: when an installer was
+    /// started and waits for Xirius to end, what is left of it (a plugin's thread, the end of
+    /// the audio) may not keep it waiting; it ends within [`EXIT_WAIT`].
+    pub(crate) fn quitting(&self) {
+        if self.launched.load(std::sync::atomic::Ordering::SeqCst) {
+            (self.leave)();
         }
     }
 }
@@ -334,9 +364,14 @@ impl Update {
         self.job.is_some()
     }
 
-    /// Is the installer being checked and started, on the way out?
-    pub fn launching(&self) -> bool {
-        self.launch.is_some()
+    /// Is the installer being checked, before the window closes for an update?
+    pub fn preparing(&self) -> bool {
+        self.holding.is_some()
+    }
+
+    /// Was the installer started? Then the window is going.
+    pub fn launched(&self) -> bool {
+        self.launched.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// What the download is doing now.
@@ -1534,21 +1569,32 @@ impl Studio {
             }
             changed = true;
         }
-        if let Some(result) = self
+        if let Some((result, since)) = self
             .update
-            .launch
+            .holding
             .as_ref()
-            .and_then(crate::ancillary_io::Ticket::poll)
+            .map(|(job, since)| (job.poll(), *since))
         {
-            self.update.launch = None;
             match result {
-                Ok(()) => self.update.launched = true,
-                Err(e) => crate::ancillary_io::log!("注意: {e}"),
+                Some(Ok(held)) => {
+                    self.update.holding = None;
+                    self.update.held = Some(held);
+                    // The window is asked to close again; now it may.
+                    self.window_ask = Some(crate::context::key_more::WindowAsk::Quit);
+                    changed = true;
+                }
+                Some(Err(e)) => {
+                    self.drop_update_install(format!("更新を取りやめました: {e}"));
+                    changed = true;
+                }
+                None if since.elapsed() >= PREPARE_WAIT => {
+                    self.drop_update_install(
+                        "更新の準備に時間がかかりすぎたため、更新を取りやめました".into(),
+                    );
+                    changed = true;
+                }
+                None => {}
             }
-            // The close goes on either way: the song is saved, and an installer that did not
-            // start is told at the next start.
-            self.window_ask = Some(crate::context::key_more::WindowAsk::Quit);
-            changed = true;
         }
         if let Some(result) = self
             .update
@@ -1795,51 +1841,133 @@ impl Studio {
         Ok(())
     }
 
-    /// Starts the waiting installer once the close is decided (UI-282): the song is saved and
-    /// nothing holds the close any more, but the window and the song are still there. A plugin
-    /// that falls over or a cleanup that hangs while they are torn down then cannot keep the
-    /// update from going in. It is checked once more at this last moment. False while it is
-    /// being checked and started; the window is asked to close again once it is.
-    pub(crate) fn start_pending_install(&mut self) -> bool {
-        if self.update.launch.is_some() {
+    /// Before the window may close for an update (UI-282), its installer is checked once more
+    /// (the song's save may have taken a while) and held open, so that what is started is what
+    /// was checked. The window stays meanwhile, with nothing done to the song
+    /// ([`Studio::input_blocked`]), for at most [`PREPARE_WAIT`]; a check that fails or takes
+    /// longer calls the update off and says why, and the window stays. Nothing is started
+    /// here: [`Studio::commit_close`] does, once nothing can stop the close any more. False
+    /// while it is checked; the window is asked to close again once it is.
+    pub(crate) fn prepare_install(&mut self) -> bool {
+        if self.update.pending.is_none() || self.update.held.is_some() {
+            return true;
+        }
+        if self.update.holding.is_some() {
             return false;
         }
+        let Some(installer) = self.update.ready.clone() else {
+            self.drop_update_install("インストーラーがないため、更新を取りやめました".into());
+            return false;
+        };
+        let key = self.update.key.clone();
+        if self.transport.is_windowed() {
+            match crate::ancillary_io::submit(move || installer.hold_with(&key)) {
+                Ok(job) => {
+                    self.update.holding = Some((job, std::time::Instant::now()));
+                    self.toast = Some(crate::toast::Toast {
+                        busy: true,
+                        ..crate::toast::Toast::plain(PREPARING.into())
+                    });
+                }
+                Err(e) => self.drop_update_install(format!("更新を取りやめました: {e}")),
+            }
+            return false;
+        }
+        match installer.hold_with(&key) {
+            Ok(held) => {
+                self.update.held = Some(held);
+                true
+            }
+            Err(e) => {
+                self.drop_update_install(format!("更新を取りやめました: {e}"));
+                false
+            }
+        }
+    }
+
+    /// The last step before the window goes (UI-282): the close is decided and nothing can
+    /// stop it any more, so the installer an update waits for is started now, from the file
+    /// checked and held by [`Studio::prepare_install`]. It waits for Xirius to end. When it
+    /// cannot be started, the window stays and says why.
+    pub(crate) fn commit_close(&mut self) -> bool {
         let Some(install) = self.update.pending.take() else {
             return true;
         };
-        let installer = self.update.ready.clone();
-        let key = self.update.key.clone();
-        let root = self.update.root.clone();
-        let spawn = self.update.spawn.clone();
-        let leave = self.update.leave.clone();
-        let work = move || {
-            launch_installer(
-                &install,
-                installer.as_ref(),
-                &key,
-                root.as_deref(),
-                &spawn,
-                &*leave,
-            )
-        };
-        if self.transport.is_windowed() {
-            match crate::ancillary_io::submit(work) {
-                Ok(job) => {
-                    self.update.launch = Some(job);
-                    return false;
-                }
-                Err(e) => {
-                    crate::ancillary_io::log!("注意: {e}");
-                    return true;
-                }
+        let held = self.update.held.take();
+        let started = (self.update.spawn)(&install);
+        drop(held);
+        match started {
+            Ok(()) => {
+                self.update
+                    .launched
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                true
+            }
+            Err(e) => {
+                self.update.notice = Some(e.clone());
+                self.warn(format!("更新を取りやめました: {e}"), None);
+                false
             }
         }
-        match work() {
-            Ok(()) => self.update.launched = true,
-            // design-lint: allow(ui-blocking-io) PRJ-031 review: synchronous offline adapter; window mode starts the installer on the application-files worker above.
-            Err(e) => eprintln!("注意: {e}"),
+    }
+
+    /// The window's close went through every step: saved, checked and the installer started
+    /// (UI-282). Only the window's frame calls it, right before the window goes.
+    pub(crate) fn close_now(&mut self) -> bool {
+        self.request_close() && self.commit_close()
+    }
+
+    /// The window's ask for this frame. A close the OS asked for (the caption's ×, Alt+F4, the
+    /// taskbar: [`Studio::close_knock`]) goes the way of 「終了」, from the frame (UI-282).
+    pub(crate) fn take_window_ask(&mut self) -> Option<crate::context::key_more::WindowAsk> {
+        use crate::context::key_more::WindowAsk;
+        let ask = self.window_ask.take();
+        if !self.close_knock.take() {
+            return ask;
         }
-        true
+        if let Some(other) = ask.filter(|a| *a != WindowAsk::Quit) {
+            self.window_ask = Some(other);
+        }
+        Some(WindowAsk::Quit)
+    }
+
+    /// The close that was to put the update in stopped (a save cancelled or failed, a
+    /// question answered 「戻る」, the installer not checked in time): nothing is put in later,
+    /// and the person is told why (UI-282).
+    pub(crate) fn drop_update_install(&mut self, why: String) {
+        self.update.holding = None;
+        self.update.held = None;
+        if self.update.pending.take().is_none() {
+            return;
+        }
+        self.update.notice = Some(why.clone());
+        // A failure already said (a save's, with its buttons) stays; the panel says this one.
+        if self.toast.as_ref().is_none_or(|t| !t.alert) {
+            self.warn(why, None);
+        }
+    }
+
+    /// What is left once the last window has closed (UI-282): the song's cleanup and the
+    /// application files are handed to their workers; an installer the window could not start
+    /// (the OS closed it without asking) is started there.
+    pub(crate) fn after_window_closed(&mut self) -> AfterClose {
+        let recent_since = self
+            .keep
+            .recent_close_since()
+            .unwrap_or_else(std::time::Instant::now);
+        // This song's cleanup joins those of the songs closed before (REC-026), and its folder
+        // is let go: a close is not a crash.
+        if let Err(e) = self.close_window_song() {
+            crate::ancillary_io::log!("注意: {e}");
+        }
+        if let Err(e) = self.finish_window_io() {
+            crate::ancillary_io::log!("注意: {e}");
+        }
+        AfterClose {
+            recent_since,
+            launched: self.update.launched.clone(),
+            leave: self.update.leave.clone(),
+        }
     }
 
     /// The logo, in body coordinates (the palette opens the panel under it too).
@@ -3286,63 +3414,89 @@ used {} {}
         }
     }
 
-    /// UI-282: the installer is checked once more at the last moment (the song's save may take
-    /// a while); a file replaced in between is not started, and the next start says so. Either
-    /// way the close goes on.
+    /// UI-282: before the window closes, the installer is checked once more (the song's save
+    /// may take a while) and held, but nothing is started: only the last step of the close
+    /// starts it, once nothing can stop the close. A file replaced after the download is not
+    /// started; the window stays and says why, and leaves no note for a next start.
     #[test]
-    fn the_installer_is_checked_again_when_the_window_closes() {
+    fn the_installer_is_started_only_once_the_close_is_decided() {
         let tmp = scratch("recheck");
         let mut s = Studio::sample();
         s.song.load_settings(tmp.path());
         let started = Started::default();
         let path = started.arm(&mut s, tmp.path());
 
-        // Intact: it starts, and Xirius is told to end soon.
-        assert!(s.start_pending_install());
+        // Intact: checked and held, not started yet.
+        assert!(s.prepare_install());
+        assert_eq!(
+            started.count(),
+            0,
+            "nothing is started before the close is decided"
+        );
+        assert!(s.update.held.is_some());
+        assert!(s.commit_close());
         assert_eq!(started.count(), 1);
-        assert_eq!(started.leaves(), 1);
-        assert!(s.update.launched);
-        assert!(s.update.pending.is_none());
+        assert!(s.update.launched());
+        assert_eq!(started.leaves(), 0, "Xirius is not ended while it closes");
+        assert!(s.update.pending.is_none() && s.update.held.is_none());
         // Nothing waits any more: a second ask closes at once and starts nothing.
-        assert!(s.start_pending_install());
+        assert!(s.prepare_install() && s.commit_close());
         assert_eq!(started.count(), 1);
 
-        // Replaced after it was checked: it is not started, and the note is left.
-        s.update.launched = false;
+        // Replaced after it was checked: it is not started, and the window stays.
+        s.update
+            .launched
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         s.update.pending = Some(update::Install {
             program: path.clone(),
             args: vec!["/S".into(), "/XRUN".into()],
         });
         std::fs::write(&path, b"another installer").unwrap();
-        assert!(s.start_pending_install());
+        assert!(!s.prepare_install(), "the window stays");
         assert_eq!(started.count(), 1);
-        assert_eq!(started.leaves(), 1, "nothing to end for");
-        assert!(!s.update.launched);
-        assert!(tmp.path().join(update::FAILED).is_file());
+        assert!(!s.update.launched());
+        assert!(s.update.pending.is_none(), "nothing is put in later");
+        assert!(
+            s.update
+                .notice
+                .as_deref()
+                .is_some_and(|n| n.contains(update::BAD_SUM))
+        );
+        assert!(!tmp.path().join(update::FAILED).exists());
     }
 
-    /// UI-282: an installer the OS will not start leaves the note too, and Xirius is not told
-    /// to end early.
+    /// UI-282: an installer the OS will not start keeps the window (with its song) open and
+    /// says why; Xirius is not ended, and no note is left for a next start.
     #[test]
-    fn an_installer_that_does_not_start_leaves_the_note() {
+    fn an_installer_that_does_not_start_keeps_the_window() {
         let tmp = scratch("nostart");
         let mut s = Studio::sample();
         s.song.load_settings(tmp.path());
         let started = Started::default();
         started.arm(&mut s, tmp.path());
         s.update.spawn = std::sync::Arc::new(|_| Err("起動できません".into()));
-        assert!(s.start_pending_install());
-        assert!(!s.update.launched);
+        assert!(s.prepare_install());
+        assert!(!s.commit_close(), "the window stays");
+        assert!(!s.update.launched());
+        assert!(s.update.pending.is_none() && s.update.held.is_none());
+        assert!(
+            s.update
+                .notice
+                .as_deref()
+                .is_some_and(|n| n.contains("起動できません"))
+        );
+        assert!(s.toast.as_ref().is_some_and(|t| t.alert));
+        assert!(!tmp.path().join(update::FAILED).exists());
+        // The next ask closes the window the plain way.
+        assert!(s.prepare_install() && s.commit_close());
         assert_eq!(started.leaves(), 0);
-        assert!(tmp.path().join(update::FAILED).is_file());
     }
 
-    /// UI-282: in the window, the installer is checked and started on the application-files
-    /// worker, and the window may only close once it has started: until then the close waits
-    /// (an X pressed meanwhile closes nothing), and the window is asked to close again once it
-    /// has. The song and the window are torn down only after.
+    /// UI-282: in the window, the installer is checked on the application-files worker while
+    /// the window waits (an × pressed meanwhile starts nothing and closes nothing), and the
+    /// window is asked to close again once it is.
     #[test]
-    fn in_the_window_the_close_waits_for_the_installer_to_start() {
+    fn in_the_window_the_close_waits_for_the_check() {
         let tmp = scratch("order");
         let mut s = Studio::sample();
         s.song.load_settings(tmp.path());
@@ -3350,27 +3504,203 @@ used {} {}
         let started = Started::default();
         started.arm(&mut s, tmp.path());
 
-        assert!(!s.start_pending_install(), "the close waits for the start");
-        assert!(s.update.launching());
+        assert!(!s.prepare_install(), "the close waits for the check");
+        assert!(s.update.preparing());
         assert!(s.input_blocked(), "nothing is done to the song meanwhile");
-        // A second ask (the caption's ×) neither starts it twice nor closes.
-        assert!(!s.start_pending_install());
+        assert!(
+            s.toast
+                .as_ref()
+                .is_some_and(|t| t.busy && t.text == PREPARING)
+        );
+        // A second ask (the caption's ×) neither checks it twice nor closes.
+        assert!(!s.prepare_install());
         let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while s.update.launching() {
+        while s.update.preparing() {
             assert!(std::time::Instant::now() < end);
             s.poll_update();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        assert_eq!(started.count(), 1);
-        assert_eq!(started.leaves(), 1);
-        assert!(s.update.launched);
+        assert_eq!(started.count(), 0);
+        assert!(s.update.held.is_some());
         assert_eq!(
             s.window_ask,
             Some(crate::context::key_more::WindowAsk::Quit),
             "the window is asked to close again"
         );
-        assert!(s.start_pending_install(), "now it may close");
+        assert!(s.prepare_install(), "now it may close");
+        assert!(s.commit_close());
         assert_eq!(started.count(), 1);
+    }
+
+    /// UI-282: a check that does not come back in time calls the update off; the window stays
+    /// and can be used again.
+    #[test]
+    fn a_check_that_takes_too_long_calls_the_update_off() {
+        let tmp = scratch("late");
+        let mut s = Studio::sample();
+        s.song.load_settings(tmp.path());
+        s.transport.bind_window();
+        let started = Started::default();
+        started.arm(&mut s, tmp.path());
+        let now = std::time::Instant::now();
+        s.update.holding = Some((crate::ancillary_io::Ticket::never(), now));
+        assert!(s.input_blocked());
+        s.poll_update();
+        assert!(s.update.preparing(), "it waits a while");
+        let Some(long_ago) = now.checked_sub(PREPARE_WAIT + std::time::Duration::from_secs(1))
+        else {
+            return;
+        };
+        s.update.holding = Some((crate::ancillary_io::Ticket::never(), long_ago));
+        s.poll_update();
+        assert!(!s.update.preparing());
+        assert!(!s.input_blocked(), "the window can be used again");
+        assert!(s.update.pending.is_none());
+        assert!(
+            s.update
+                .notice
+                .as_deref()
+                .is_some_and(|n| n.contains("時間がかかりすぎた"))
+        );
+        assert_eq!(s.window_ask, None, "the window stays");
+        assert_eq!(started.count(), 0);
+    }
+
+    /// UI-282: 「戻る」 to the question a close asks (the plugins' state could not be read)
+    /// keeps the window, and the update that waited for the close is called off.
+    #[test]
+    fn a_close_answered_back_calls_the_update_off() {
+        let tmp = scratch("back");
+        let mut s = Studio::new(crate::song::Song::empty());
+        s.song.save_as(&tmp.path().join("song")).unwrap();
+        s.transport.bind_window();
+        let started = Started::default();
+        started.arm(&mut s, tmp.path());
+        s.keep.plugin_state_failed = true;
+        s.window_ask = Some(crate::context::key_more::WindowAsk::Quit);
+        assert_eq!(
+            s.take_window_ask(),
+            Some(crate::context::key_more::WindowAsk::Quit)
+        );
+        assert!(!s.close_now());
+        assert!(s.unsaved.is_some(), "the close asks");
+        assert!(
+            s.update.pending.is_some(),
+            "the update waits for the answer"
+        );
+        s.answer_unsaved(false);
+        assert!(s.update.pending.is_none());
+        assert!(s.update.notice.is_some());
+        assert_eq!(started.count(), 0);
+    }
+
+    /// How a test closes the window of a song with unsaved changes and an update waiting.
+    #[derive(Clone, Copy, Debug)]
+    enum Way {
+        /// The caption's × (or Alt+F4) with the update already waiting for the close.
+        Caption,
+        /// 「更新して再起動」 in the panel.
+        Button,
+    }
+
+    /// UI-282: the window's close for an update, as it runs in use: the frames poll, the OS's
+    /// close only knocks, the song is saved, the installer is checked, and it is started at the
+    /// last step, once. The cleanup after the window starts nothing more, and only then is
+    /// what is left of Xirius told to end.
+    #[test]
+    fn ui_282_a_window_closes_for_an_update_as_in_use() {
+        use crate::context::key_more::WindowAsk;
+
+        for way in [Way::Caption, Way::Button] {
+            let tmp = scratch("in-use");
+            let root = tmp.path();
+            let mut s = Studio::new(crate::song::Song::empty());
+            s.song.save_as(&root.join("song")).unwrap();
+            s.run_command("track.add.audio", serde_json::json!({"name":"pending"}));
+            s.transport.bind_window();
+            let started = Started::default();
+            started.arm(&mut s, root);
+            match way {
+                Way::Caption => s.close_knock.set(true),
+                Way::Button => {
+                    s.update.pending = None;
+                    let installer = s.update.ready.clone().unwrap();
+                    s.update.newer = Some(release_of(&installer));
+                    let app = root.join("app");
+                    s.update.location = Some(update::Location {
+                        exe_dir: app.clone(),
+                        install_dir: app,
+                    });
+                    s.update.progress.lock().unwrap().phase = update::Phase::Ready;
+                    // The panel's button, pressed as the person does.
+                    let g = s.geometry(1600.0, 900.0);
+                    s.press(&g, Hit::Bar(BarButton::Logo));
+                    let now = cells_of(&s, &g)
+                        .iter()
+                        .position(|c| c.action == Some(Action::About(Act::UpdateNow)))
+                        .expect("「更新して再起動」");
+                    assert!(s.press(&g, Hit::Item(now)));
+                    assert_eq!(s.update.notice, None);
+                }
+            }
+            let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            let mut knocked = false;
+            loop {
+                assert!(
+                    std::time::Instant::now() < end,
+                    "{way:?}: the window did not close"
+                );
+                s.idle();
+                s.poll_saving();
+                if s.update.preparing() && !knocked {
+                    // An × pressed while it waits starts nothing twice.
+                    s.close_knock.set(true);
+                    knocked = true;
+                }
+                if s.take_window_ask() == Some(WindowAsk::Quit) && s.close_now() {
+                    break;
+                }
+                assert_eq!(
+                    started.count(),
+                    0,
+                    "{way:?}: started before the close was decided"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            assert!(knocked, "{way:?}: the installer was checked in the window");
+            assert_eq!(started.count(), 1, "{way:?}");
+            assert!(s.update.launched());
+            assert_eq!(s.update.notice, None);
+            let exit = s.after_window_closed();
+            assert_eq!(
+                started.leaves(),
+                0,
+                "{way:?}: not ended before the cleanup is done"
+            );
+            exit.quitting();
+            assert_eq!(started.leaves(), 1, "{way:?}");
+            assert_eq!(
+                started.count(),
+                1,
+                "{way:?}: the cleanup starts nothing more"
+            );
+            assert!(!root.join(update::FAILED).exists());
+        }
+    }
+
+    /// UI-282: a close the OS asks for only knocks; the frame turns it into 「終了」, and an
+    /// ask for the full screen made in the same frame is kept for the next.
+    #[test]
+    fn the_caption_close_knocks_and_the_frame_closes() {
+        use crate::context::key_more::WindowAsk;
+
+        let mut s = Studio::sample();
+        assert_eq!(s.take_window_ask(), None);
+        s.close_knock.set(true);
+        s.window_ask = Some(WindowAsk::Fullscreen);
+        assert_eq!(s.take_window_ask(), Some(WindowAsk::Quit));
+        assert_eq!(s.take_window_ask(), Some(WindowAsk::Fullscreen));
+        assert_eq!(s.take_window_ask(), None);
     }
 
     /// The process a test runs as Xirius closing for an update (UI-282): it saves, closes the
@@ -3408,9 +3738,13 @@ used {} {}
         let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
         s.window_ask = Some(crate::context::key_more::WindowAsk::Quit);
         loop {
-            assert!(std::time::Instant::now() < end, "the window did not close");
-            if s.window_ask.take() == Some(crate::context::key_more::WindowAsk::Quit)
-                && s.request_close()
+            assert!(
+                std::time::Instant::now() < end,
+                "the window did not close: {:?}",
+                s.update.notice
+            );
+            if s.take_window_ask() == Some(crate::context::key_more::WindowAsk::Quit)
+                && s.close_now()
             {
                 break;
             }
@@ -3418,7 +3752,7 @@ used {} {}
             s.poll_saving();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        assert!(s.update.launched, "started before the window goes");
+        assert!(s.update.launched(), "started before the window goes");
         std::fs::write(root.join("closing"), b"").unwrap();
         // A plugin falls over while the song is torn down (with no unwinding and no report box).
         // SAFETY: ends this process; nothing runs after it.
@@ -3465,6 +3799,12 @@ used {} {}
             JobObjectExtendedLimitInformation, SetInformationJobObject,
         };
 
+        // From a job that lets nothing leave and kills what is in it, the installer is refused
+        // (`update::KILLING_JOB`, tested in xirius-session); there is nothing to see here.
+        if !may_leave_jobs() && update::job_kills_on_close() {
+            eprintln!("この試験の環境では、インストーラーは起動を断られます（KILLING_JOB）");
+            return;
+        }
         let tmp = scratch("outlives");
         let root = tmp.path();
         // A job this test runs in that lets nothing leave would keep the installer in ours as

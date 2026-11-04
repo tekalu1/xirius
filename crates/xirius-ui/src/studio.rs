@@ -672,6 +672,9 @@ pub struct Studio {
     pub side_size: crate::side_edge::SideSize,
     /// Reads the OS's "less motion" while the app runs (UI-055); a script keeps none.
     pub motion_watch: Option<crate::motion_watch::MotionWatch>,
+    /// The OS asked the window to close (the caption's ×, Alt+F4, the taskbar); the next frame
+    /// closes the way 「終了」 does (UI-282).
+    pub(crate) close_knock: std::rc::Rc<std::cell::Cell<bool>>,
     /// The view held by the middle button (EDT-068).
     pub pan: Option<crate::pan::Pan>,
     /// The press on the ruler that a drag turns into a zoom (KEY-016).
@@ -876,6 +879,7 @@ impl Studio {
             drawer_size: Default::default(),
             side_size: Default::default(),
             motion_watch: None,
+            close_knock: Default::default(),
             pan: None,
             ruler_grab: None,
             scroll: (0.0, 0.0),
