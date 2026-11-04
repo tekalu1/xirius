@@ -1043,6 +1043,7 @@ fn ui_333_the_voice_shows_where_it_reads_and_rides_the_envelope() {
         source,
         position: 0.5,
         env,
+        born: 1,
     };
     let (mut s, _g, t, id) = window("Sampler");
     add(&mut s, id, &["Piano_C3.wav", "Piano_C4.wav"]);
@@ -1095,6 +1096,19 @@ fn ui_333_the_voice_shows_where_it_reads_and_rides_the_envelope() {
         .env
         .unwrap();
     assert!((env.secs - 0.2).abs() < 1e-3);
+    // The same key again, read in the same stage: another voice, its time from now (low 22).
+    let again = VoiceView {
+        born: 2,
+        ..voice(0, VoiceStage::Attack, 0.1)
+    };
+    s.instruments.hear(id, Some(again), later);
+    let env = s
+        .instruments
+        .live_of(&x, def, 0, Some(0), later)
+        .unwrap()
+        .env
+        .unwrap();
+    assert_eq!(env.secs, 0.0);
     // Ended: nothing.
     assert!(!s.instruments.hear(id, None, later));
     assert!(s.instruments.live_of(&x, def, 0, Some(0), later).is_none());
@@ -1358,6 +1372,7 @@ fn l2_smp_5_a_pressed_pad_chooses_the_layer_that_sounded() {
         source,
         position: 0.0,
         env: 0.5,
+        born: 1,
     };
     let (_dir, files) = wavs(&["Snare_a.wav", "Snare_b.wav"]);
     let (mut s, g, t, id) = window("Drum Kit");

@@ -1025,9 +1025,10 @@ impl Windows {
             return false;
         };
         let since = match self.voices.get(&id) {
+            // The same key played again is another voice: its dot starts over (low 22).
             Some(s)
-                if (s.voice.pitch, s.voice.source, s.voice.stage)
-                    == (v.pitch, v.source, v.stage) =>
+                if (s.voice.pitch, s.voice.source, s.voice.stage, s.voice.born)
+                    == (v.pitch, v.source, v.stage, v.born) =>
             {
                 s.since
             }

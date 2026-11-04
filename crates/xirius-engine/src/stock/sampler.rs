@@ -229,10 +229,13 @@ impl Sampler {
             .iter()
             .filter(|v| v.active())
             .max_by_key(|v| v.born);
-        probe.set_voice(newest.map(|v| {
-            let (stage, position) = v.view();
-            (v.pitch, stage, true, v.slot, position, v.env)
-        }));
+        probe.set_voice(
+            newest.map(|v| {
+                let (stage, position) = v.view();
+                (v.pitch, stage, true, v.slot, position, v.env)
+            }),
+            newest.map_or(0, |v| v.born),
+        );
     }
 
     /// Adds the voices into `[from, to)` of both channels.

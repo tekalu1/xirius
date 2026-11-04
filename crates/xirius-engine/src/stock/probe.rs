@@ -42,7 +42,7 @@ pub struct Probe {
     /// - `[2]`: its envelope, 0..1, as `f32` bits.
     ///
     /// The three are written one after the other, so a read can mix two blocks.
-    voice: [AtomicU32; 3],
+    voice: [AtomicU32; 4],
     /// How many voices of the Sampler or the Drum Kit sound, after the last block (PLG-066).
     /// Written whether or not a window watches.
     sounding: AtomicU32,
@@ -108,6 +108,7 @@ impl Probe {
             hits: std::array::from_fn(|_| AtomicU32::new(0)),
             voice: [
                 AtomicU32::new(NO_VOICE),
+                AtomicU32::new(0),
                 AtomicU32::new(0),
                 AtomicU32::new(0),
             ],
@@ -176,6 +177,7 @@ impl Probe {
             source: (head & (FILE_BIT - 1)) as u16,
             position: f32::from_bits(self.voice[1].load(Ordering::Relaxed)),
             env: f32::from_bits(self.voice[2].load(Ordering::Relaxed)),
+            born: self.voice[3].load(Ordering::Relaxed),
         })
     }
 
@@ -296,8 +298,13 @@ impl Probe {
         }
     }
 
-    /// `position` is 0..1 of the source; `source` is kept to 15 bits.
-    pub(crate) fn set_voice(&self, playing: Option<(u8, VoiceStage, bool, usize, f64, f64)>) {
+    /// `position` is 0..1 of the source; `source` is kept to 15 bits; `born` is the voice's
+    /// count of notes (kept to 32 bits).
+    pub(crate) fn set_voice(
+        &self,
+        playing: Option<(u8, VoiceStage, bool, usize, f64, f64)>,
+        born: u64,
+    ) {
         let Some((pitch, stage, file, source, position, env)) = playing else {
             self.voice[0].store(NO_VOICE, Ordering::Relaxed);
             return;
@@ -308,6 +315,7 @@ impl Probe {
             Ordering::Relaxed,
         );
         self.voice[2].store((env.clamp(0.0, 1.0) as f32).to_bits(), Ordering::Relaxed);
+        self.voice[3].store(born as u32, Ordering::Relaxed);
         let head = u32::from(pitch) << 24 | u32::from(stage as u8) << 16 | source;
         self.voice[0].store(head, Ordering::Relaxed);
     }
@@ -359,6 +367,9 @@ pub struct VoiceView {
     pub position: f32,
     /// Its envelope, 0..1.
     pub env: f32,
+    /// Which note it is: each new voice is born one later (it wraps), so the same key
+    /// played again is another voice.
+    pub born: u32,
 }
 
 /// Counts onsets: a fast follower (instant rise, 20 ms fall) that rises 6 dB over a slow one
@@ -469,21 +480,24 @@ mod tests {
     fn a_voice_comes_back_as_it_was_packed() {
         let p = Probe::new();
         assert_eq!(p.voice(), None);
-        p.set_voice(Some((64, VoiceStage::Release, true, 3, 0.25, 0.5)));
+        p.set_voice(Some((64, VoiceStage::Release, true, 3, 0.25, 0.5)), 9);
         let v = p.voice().unwrap();
         assert_eq!(
             (v.pitch, v.stage, v.file, v.source),
             (64, VoiceStage::Release, true, 3)
         );
-        assert_eq!((v.position, v.env), (0.25, 0.5));
-        p.set_voice(Some((127, VoiceStage::Attack, false, 7, 2.0, -1.0)));
+        assert_eq!((v.position, v.env, v.born), (0.25, 0.5, 9));
+        p.set_voice(
+            Some((127, VoiceStage::Attack, false, 7, 2.0, -1.0)),
+            u64::from(u32::MAX) + 2,
+        );
         let v = p.voice().unwrap();
         assert_eq!(
             (v.pitch, v.stage, v.file, v.source),
             (127, VoiceStage::Attack, false, 7)
         );
-        assert_eq!((v.position, v.env), (1.0, 0.0));
-        p.set_voice(None);
+        assert_eq!((v.position, v.env, v.born), (1.0, 0.0, 1));
+        p.set_voice(None, 0);
         assert_eq!(p.voice(), None);
     }
 
@@ -493,7 +507,7 @@ mod tests {
         p.watch(true);
         p.set_gr(6.0);
         p.note_output(&[0.5], &[0.5]);
-        p.set_voice(Some((60, VoiceStage::Decay, false, 0, 0.1, 0.8)));
+        p.set_voice(Some((60, VoiceStage::Decay, false, 0, 0.1, 0.8)), 1);
         p.watch(false);
         p.watch(true);
         assert_eq!(p.gr_db(), 0.0);
