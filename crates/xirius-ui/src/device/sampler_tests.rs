@@ -341,6 +341,103 @@ fn ui_334_shift_makes_layers_and_a_drop_off_the_pads_goes_to_the_pad_chosen() {
     assert_eq!(s.instruments.open[0].pick, 1);
 }
 
+/// The velocities the layers of the Drum Kit's pad `pad` play.
+fn ranges(s: &Studio, t: TrackId, pad: usize) -> Vec<(u8, u8)> {
+    let k = plugin(s, t);
+    let def = k.builtin().unwrap();
+    sampler::velocities(def, &k, &sampler::pad_files(def, &k, pad))
+}
+
+/// UI-334, L2-smp-7: the edge between two velocity layers drags where the first ends (a
+/// quarter as fast with Shift), in one step and no further than the layers around it; once
+/// pressed, ← and → move it by 4 (1 with Shift); Esc while it is held takes nothing in. A
+/// layer of a velocity or two is still wide enough to press.
+#[test]
+fn ui_334_the_edge_between_velocity_layers_drags_and_steps() {
+    let (_dir, files) = wavs(&["Snare_a.wav", "Snare_b.wav", "Snare_c.wav"]);
+    let (mut s, g, t, id) = window("Drum Kit");
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).expect("A1");
+    s.instruments.drop_layers = true;
+    assert!(s.window_drop(&g, x, y, &files), "{:?}", s.error);
+    assert_eq!(ranges(&s, t, 0), [(0, 42), (43, 84), (85, 127)]);
+    let b = body(&s, &g, t);
+    assert!(b.spots.iter().any(|x| x.mark == Mark::Edge(1)));
+    assert!(
+        !b.spots.iter().any(|x| x.mark == Mark::Edge(2)),
+        "none after the last"
+    );
+    let strip: f32 = b
+        .spots
+        .iter()
+        .filter(|x| matches!(x.mark, Mark::Layer(_)))
+        .map(|x| x.r.w + 2.0)
+        .sum();
+    // A drag of ten velocities: one step, and the screen follows it before.
+    let n = spot(&s, &g, t, Mark::Edge(0));
+    let (x, y) = s.instrument_center(&g, id, Part::Spot(n)).unwrap();
+    let steps = s.song().steps();
+    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
+    let dx = strip / 128.0 * 10.0;
+    assert!(s.instrument_moved(&g, x + dx, y, false));
+    assert_eq!(s.song().steps(), steps);
+    let shown = body(&s, &g, t);
+    let at = |b: &Body, m: Mark| b.spots.iter().find(|x| x.mark == m).unwrap().r.x;
+    assert!(at(&shown, Mark::Edge(0)) > at(&b, Mark::Edge(0)) + dx / 2.0);
+    assert!(s.instrument_up());
+    assert_eq!(s.song().steps(), steps + 1);
+    assert_eq!(ranges(&s, t, 0), [(0, 52), (53, 84), (85, 127)]);
+    // With Shift, a quarter as far.
+    let n = spot(&s, &g, t, Mark::Edge(0));
+    let (x, y) = s.instrument_center(&g, id, Part::Spot(n)).unwrap();
+    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
+    assert!(s.instrument_moved(&g, x + dx * 4.0, y, true));
+    assert!(s.instrument_up());
+    assert_eq!(ranges(&s, t, 0)[0], (0, 62));
+    // No further than one under the next layer's top.
+    let n = spot(&s, &g, t, Mark::Edge(0));
+    let (x, y) = s.instrument_center(&g, id, Part::Spot(n)).unwrap();
+    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
+    assert!(s.instrument_moved(&g, x + strip, y, false));
+    assert!(s.instrument_up());
+    assert_eq!(ranges(&s, t, 0), [(0, 83), (84, 84), (85, 127)]);
+    // The layer of one velocity can still be pressed.
+    let one = body(&s, &g, t);
+    let r = one
+        .spots
+        .iter()
+        .find(|x| x.mark == Mark::Layer(1))
+        .unwrap()
+        .r;
+    assert!(r.w >= 10.0, "{}", r.w);
+    press_spot(&mut s, &g, t, id, Mark::Layer(1));
+    assert_eq!(s.instruments.open[0].layer, 1);
+    // Pressed, ← and → move it.
+    press_spot(&mut s, &g, t, id, Mark::Edge(0));
+    assert!(s.instrument_up());
+    let steps = s.song().steps();
+    assert!(s.field_keys(&g, "left", None, Mods::NONE));
+    assert_eq!(ranges(&s, t, 0)[0], (0, 79));
+    let shift = Mods {
+        shift: true,
+        ..Mods::NONE
+    };
+    assert!(s.field_keys(&g, "left", None, shift));
+    assert_eq!(ranges(&s, t, 0)[0], (0, 78));
+    assert_eq!(s.song().steps(), steps + 2);
+    // Esc while it is held: nothing goes in.
+    let n = spot(&s, &g, t, Mark::Edge(1));
+    let (x, y) = s.instrument_center(&g, id, Part::Spot(n)).unwrap();
+    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
+    assert!(s.instrument_moved(&g, x - dx, y, false));
+    assert!(s.field_keys(&g, "escape", None, Mods::NONE));
+    assert!(!s.instrument_up());
+    assert_eq!(s.song().steps(), steps + 2);
+    assert_eq!(ranges(&s, t, 0)[1], (79, 84));
+    // Another press lets the keys go.
+    press_spot(&mut s, &g, t, id, Mark::Layer(0));
+    assert_eq!(s.instruments.edge, None);
+}
+
 /// The window `dy` taller than it opened.
 fn taller(s: &mut Studio, dy: f32) {
     s.instruments.open[0].body.1 += dy;

@@ -194,6 +194,18 @@ pub(crate) enum Grab {
     },
     /// A key or a pad (PLG-066): its note sounds while it is held and the pointer stays on it.
     Note { plugin: PluginId, pitch: u8 },
+    /// The edge after the `j`th velocity layer of the chosen pad (UI-334): where it ended
+    /// when it was taken and now, how far it may go, where the pointer was and the strip's
+    /// width (all 128 velocities across it).
+    Edge {
+        plugin: PluginId,
+        j: usize,
+        from: u8,
+        now: u8,
+        range: (u8, u8),
+        x: f32,
+        w: f32,
+    },
 }
 
 impl Grab {
@@ -203,7 +215,8 @@ impl Grab {
             | Grab::Size { plugin, .. }
             | Grab::Knob { plugin, .. }
             | Grab::Point { plugin, .. }
-            | Grab::Note { plugin, .. } => plugin,
+            | Grab::Note { plugin, .. }
+            | Grab::Edge { plugin, .. } => plugin,
         }
     }
 
@@ -326,6 +339,8 @@ pub struct Windows {
     pub(crate) grab: Option<Grab>,
     /// The control the keys move (UI-324): its plug-in and its parameter.
     pub focus: Option<(PluginId, usize)>,
+    /// The edge between two velocity layers that ← and → move, once pressed (UI-334).
+    pub edge: Option<(PluginId, usize)>,
     /// The value being typed in a knob.
     pub entry: Option<crate::device::input::Entry>,
     /// A control the wheel or a controller's knob is turning (one step once
@@ -511,6 +526,24 @@ impl Windows {
     /// values it shows and the band chosen.
     pub(crate) fn body(&self, r: Rect, plugin: &Plugin, def: &BuiltinDef) -> Body {
         let w = self.win_of(plugin.id);
+        // A layer's edge dragged shows where it goes before the song takes it.
+        let moved;
+        let plugin = match (self.grab, w) {
+            (
+                Some(Grab::Edge {
+                    plugin: id, j, now, ..
+                }),
+                Some(w),
+            ) if id == plugin.id => {
+                let files = sampler::pad_files(def, plugin, w.pick.min(xirius_params::PADS - 1));
+                let mut x = plugin.clone();
+                x.params
+                    .extend(sampler::tops_with(def, plugin, &files, j, now));
+                moved = x;
+                &moved
+            }
+            _ => plugin,
+        };
         let mut b = body_of(
             r,
             def,
@@ -519,6 +552,13 @@ impl Windows {
             Some(plugin),
             w.map_or((0, 0), |w| (w.pick, w.layer)),
         );
+        // The edge held or moved by the keys shows it.
+        for s in &mut b.spots {
+            if let layout::Mark::Edge(j) = s.mark {
+                let held = matches!(self.grab, Some(Grab::Edge { plugin: id, j: at, .. }) if id == plugin.id && at == j);
+                s.on = held || self.edge == Some((plugin.id, j));
+            }
+        }
         // The Compressor's Gain drives its key while a sidechain feeds it,
         // else its input (PLG-071).
         if def.uid == "compressor"
@@ -1183,6 +1223,7 @@ impl Studio {
         if !matches!(part, Part::Knob(_) | Part::Point(..)) {
             self.device_blur();
         }
+        self.instruments.edge = None;
         self.error = None;
         // A device window pressed comes over the channel editor.
         if let Some(c) = self.channel.as_mut() {
@@ -1210,7 +1251,7 @@ impl Studio {
                 self.window_note_on(w, pitch);
             }
             Part::Spot(n) => {
-                self.window_spot(i, r, n);
+                self.window_spot(i, r, n, x);
             }
             Part::Head => {
                 self.instruments.grab = Some(Grab::Move {
@@ -1455,6 +1496,23 @@ impl Studio {
                 true
             }
             Some(Grab::Point { .. }) => self.device_point_moved(g, x, y, fine),
+            Some(Grab::Edge {
+                from,
+                range,
+                x: x0,
+                w,
+                ..
+            }) => {
+                // All 128 velocities across the strip; a quarter as fast with Shift.
+                let by = (x - x0) / w.max(1.0) * 128.0 * if fine { 0.25 } else { 1.0 };
+                let to = (f32::from(from) + by)
+                    .round()
+                    .clamp(f32::from(range.0), f32::from(range.1)) as u8;
+                if let Some(Grab::Edge { now, .. }) = &mut self.instruments.grab {
+                    *now = to;
+                }
+                true
+            }
             Some(Grab::Note { plugin, pitch }) => {
                 // Off the key or pad held, its note ends; coming back does not play it again.
                 let p = self.project();
@@ -1495,6 +1553,7 @@ impl Studio {
                 }
             }
             Grab::Knob { .. } | Grab::Point { .. } => self.device_hear(),
+            Grab::Edge { .. } => {}
         }
         true
     }
@@ -1521,6 +1580,17 @@ impl Studio {
             if (before - value).abs() > 1e-9 {
                 self.device_set(plugin, k, value);
             }
+        }
+        if let Grab::Edge {
+            plugin,
+            j,
+            from,
+            now,
+            ..
+        } = grab
+            && now != from
+        {
+            self.layer_edge_set(plugin, j, now);
         }
         if let Grab::Size { plugin, .. } = grab {
             // The next window of its kind opens at this size.

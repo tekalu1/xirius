@@ -1112,6 +1112,7 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 Spot::Mute(p) => format!("Mute {}", xirius_params::PAD_NAMES[p]),
                 Spot::Solo(p) => format!("Solo {}", xirius_params::PAD_NAMES[p]),
                 Spot::Bank(_) => format!("Bank {}", spot.text),
+                Spot::Edge(j) => format!("Layer {} top {}", j + 1, spot.text),
                 _ => spot.text.clone(),
             });
             match spot.mark {

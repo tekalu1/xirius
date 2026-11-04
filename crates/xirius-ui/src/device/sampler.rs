@@ -65,6 +65,10 @@ const PAD_H: f32 = 63.0;
 const MS: (f32, f32) = (16.0, 14.0);
 const CHOKE_W: f32 = 96.0;
 const LAYER_H: f32 = 22.0;
+/// The narrowest a layer is drawn, so one of a velocity or two can still be pressed
+/// (L2-smp-7); and the width of an edge between two that takes the pointer.
+const LAYER_MIN: f32 = 14.0;
+const EDGE_HIT: f32 = 10.0;
 /// How far in from its plane a graph draws.
 const INSET: f32 = 12.0;
 /// The voice's knobs.
@@ -210,6 +214,60 @@ pub fn velocities(def: &BuiltinDef, plugin: &Plugin, files: &[usize]) -> Vec<(u8
             let out = (lo, hi);
             lo = hi.saturating_add(1).min(127);
             out
+        })
+        .collect()
+}
+
+/// Where the `j`th of a pad's velocity layers may end: from its lowest velocity to one
+/// under the next one's top (UI-334).
+pub fn edge_range(def: &BuiltinDef, plugin: &Plugin, files: &[usize], j: usize) -> (u8, u8) {
+    let ranges = velocities(def, plugin, files);
+    let lo = ranges.get(j).map_or(0, |r| r.0);
+    let max = ranges.get(j + 1).map_or(127, |r| r.1).saturating_sub(1);
+    (lo, max.max(lo))
+}
+
+/// The tops (`file<n>.top`, 0..1) that make the `j`th of a pad's velocity layers end at
+/// `hi` and keep the others where they play: all of them, so they rise as the engine reads
+/// them (UI-334).
+pub fn tops_with(
+    def: &BuiltinDef,
+    plugin: &Plugin,
+    files: &[usize],
+    j: usize,
+    hi: u8,
+) -> Vec<(String, f64)> {
+    let Some(spec) = def.per_file.iter().find(|p| p.id == "top") else {
+        return Vec::new();
+    };
+    velocities(def, plugin, files)
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let top = if i == j { hi } else { r.1 };
+            (
+                xirius_params::file_key(files[i], "top"),
+                spec.to_norm(f64::from(top)),
+            )
+        })
+        .collect()
+}
+
+/// The widths of `shares` (each from 0 to 1) across `w`: each at least [`LAYER_MIN`], what
+/// that takes coming off the wider ones (L2-smp-7).
+fn widths(shares: &[f32], w: f32) -> Vec<f32> {
+    let raw: Vec<f32> = shares.iter().map(|s| s * w).collect();
+    let short: f32 = raw.iter().map(|r| (LAYER_MIN - r).max(0.0)).sum();
+    let spare: f32 = raw.iter().map(|r| (r - LAYER_MIN).max(0.0)).sum();
+    raw.iter()
+        .map(|&r| {
+            if r <= LAYER_MIN {
+                LAYER_MIN
+            } else if spare > 0.0 {
+                r - (r - LAYER_MIN) / spare * short.min(spare)
+            } else {
+                r
+            }
         })
         .collect()
 }
@@ -570,18 +628,25 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
         let (lx, lw) = (rx + 52.0, rw - 52.0);
         let velocity = plain(def, s.values, "layer_mode").round() == 0.0;
         let ranges = velocities(def, x, &files);
+        let shares: Vec<f32> = ranges
+            .iter()
+            .map(|&(lo, hi)| {
+                if velocity {
+                    f32::from(hi - lo + 1) / 128.0
+                } else {
+                    1.0 / files.len() as f32
+                }
+            })
+            .collect();
+        let cells = widths(&shares, lw);
         let mut at = lx;
+        let mut edges = Vec::new();
         for (j, &file) in files.iter().enumerate() {
             let (lo, hi) = ranges[j];
-            let share = if velocity {
-                f32::from(hi - lo + 1) / 128.0
-            } else {
-                1.0 / files.len() as f32
-            };
             let cw = if j + 1 == files.len() {
                 lx + lw - at
             } else {
-                (lw * share).round()
+                cells[j].round()
             };
             let text = if velocity {
                 format!("{lo}–{hi}")
@@ -592,7 +657,13 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
             spot.on = j == layer;
             b.spots.push(spot);
             at += cw;
+            if velocity && j + 1 < files.len() {
+                // Over the gap between this layer and the next, on top of both.
+                let r = Rect::new(at - 1.0 - EDGE_HIT / 2.0, y, EDGE_HIT, LAYER_H);
+                edges.push(Spot::new(r, Mark::Edge(j), hi.to_string()));
+            }
         }
+        b.spots.extend(edges);
         y += LAYER_H + GAP;
         sample_row(def, s.values, &mut b, (rx, y), rw, &x.samples[files[layer]]);
         y += ROW_H + GAP;
@@ -1029,6 +1100,11 @@ pub fn paint_spots(pen: &mut Pen, body: &Body, hot: Option<usize>) {
                     t,
                     Align::Left,
                 );
+            }
+            Mark::Edge(_) => {
+                let line = Rect::new(r.x + r.w / 2.0 - 1.0, r.y + (r.h - 18.0) / 2.0, 2.0, 18.0);
+                let ink = if over || s.on { c.ring } else { c.ink_strong };
+                pen.round(line, ink, Radius::Xs);
             }
             Mark::Bank(_) => {
                 let face = if s.on {

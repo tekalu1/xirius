@@ -14,14 +14,15 @@ use crate::device::{play, sampler};
 use crate::studio::{Geometry, Rect, Studio};
 
 impl Studio {
-    /// A press on the `n`th spot of the `i`th window, whose frame is `r`.
-    pub(crate) fn window_spot(&mut self, i: usize, r: Rect, n: usize) {
+    /// A press on the `n`th spot of the `i`th window, whose frame is `r`, at `x`.
+    pub(crate) fn window_spot(&mut self, i: usize, r: Rect, n: usize, x: f32) {
         let p = self.project();
         let w = self.instruments.open[i];
         let Some((_, plugin, def)) = live(&p, &w) else {
             return;
         };
-        let Some(spot) = self.instruments.body(r, plugin, def).spots.get(n).cloned() else {
+        let body = self.instruments.body(r, plugin, def);
+        let Some(spot) = body.spots.get(n).cloned() else {
             return;
         };
         let id = w.plugin;
@@ -56,6 +57,29 @@ impl Studio {
             Mark::Layer(j) => {
                 self.instruments.pick(id, w.pick, j);
             }
+            Mark::Edge(j) => {
+                // The strip the layers share: all 128 velocities across it.
+                let (lo, hi) = body
+                    .spots
+                    .iter()
+                    .filter(|s| matches!(s.mark, Mark::Layer(_)))
+                    .fold((f32::MAX, f32::MIN), |(a, b), s| {
+                        (a.min(s.r.x), b.max(s.r.right()))
+                    });
+                let files = sampler::pad_files(def, plugin, w.pick.min(PADS - 1));
+                let range = sampler::edge_range(def, plugin, &files, j);
+                let from = sampler::velocities(def, plugin, &files)[j].1;
+                self.instruments.edge = Some((id, j));
+                self.instruments.grab = Some(super::window::Grab::Edge {
+                    plugin: id,
+                    j,
+                    from,
+                    now: from,
+                    range,
+                    x,
+                    w: hi - lo + 2.0,
+                });
+            }
             Mark::Mute(pad) | Mark::Solo(pad) => {
                 let key = pad_key(
                     pad,
@@ -79,6 +103,78 @@ impl Studio {
             }
             Mark::Name | Mark::Drop | Mark::Title | Mark::Pad(_) => {}
         }
+    }
+
+    /// The `j`th velocity layer of the chosen pad of `plugin`'s window ends at `hi`: one
+    /// step, the pad's tops all set so they rise (UI-334).
+    pub(crate) fn layer_edge_set(
+        &mut self,
+        plugin: xirius_core::id::PluginId,
+        j: usize,
+        hi: u8,
+    ) -> bool {
+        let p = self.project();
+        let Some(w) = self.instruments.win_of(plugin).copied() else {
+            return false;
+        };
+        let Some((_, x, def)) = live(&p, &w) else {
+            return false;
+        };
+        let files = sampler::pad_files(def, x, w.pick.min(PADS - 1));
+        if j + 1 >= files.len() {
+            return false;
+        }
+        let (lo, max) = sampler::edge_range(def, x, &files, j);
+        let tops = sampler::tops_with(def, x, &files, j, hi.clamp(lo, max));
+        let Some(((first, value), rest)) = tops.split_first() else {
+            return false;
+        };
+        let also: Vec<_> = rest
+            .iter()
+            .map(|(k, v)| json!({ "param": k, "value": v }))
+            .collect();
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+        self.run_command(
+            "plugin.param.set",
+            json!({ "id": plugin.to_string(), "param": first, "value": value, "also": also }),
+        )
+    }
+
+    /// ← and → on the edge pressed last (UI-334): four velocities a press, one with Shift.
+    pub(crate) fn layer_edge_key(&mut self, key: &str, shift: bool) -> bool {
+        let Some((plugin, j)) = self.instruments.edge else {
+            return false;
+        };
+        let by: i16 = match key {
+            "left" => -1,
+            "right" => 1,
+            "escape" => {
+                self.instruments.edge = None;
+                return true;
+            }
+            _ => return false,
+        };
+        let p = self.project();
+        let Some(w) = self.instruments.win_of(plugin).copied() else {
+            self.instruments.edge = None;
+            return false;
+        };
+        let Some((_, x, def)) = live(&p, &w) else {
+            self.instruments.edge = None;
+            return false;
+        };
+        let files = sampler::pad_files(def, x, w.pick.min(PADS - 1));
+        let Some(&(_, hi)) = sampler::velocities(def, x, &files).get(j) else {
+            self.instruments.edge = None;
+            return false;
+        };
+        let (lo, max) = sampler::edge_range(def, x, &files, j);
+        let to = (i16::from(hi) + by * if shift { 1 } else { 4 })
+            .clamp(i16::from(lo), i16::from(max)) as u8;
+        if to != hi {
+            self.layer_edge_set(plugin, j, to);
+        }
+        true
     }
 
     /// Files dropped on a Sampler's or a Drum Kit's window: they are its samples, a

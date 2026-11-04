@@ -104,6 +104,9 @@ pub enum Mark {
     Solo(usize),
     /// A layer of the chosen pad (by its place among the pad's files).
     Layer(usize),
+    /// The edge between a pad's `j`th velocity layer and the next: dragged, or moved by
+    /// ← and → once pressed, it sets where the `j`th ends (UI-334).
+    Edge(usize),
     /// The plane a sample is dropped on, and its button opening the files.
     Drop,
     Browse,

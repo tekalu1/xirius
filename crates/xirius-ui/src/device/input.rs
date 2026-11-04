@@ -163,6 +163,7 @@ impl Studio {
         self.device_commit();
         self.device_sweep_end();
         self.instruments.focus = None;
+        self.instruments.edge = None;
     }
 
     /// What is typed goes into the song when it reads as a value; else the
@@ -668,6 +669,9 @@ impl Studio {
             }
             return true;
         }
+        if !mods.ctrl && !mods.alt && self.layer_edge_key(key, mods.shift) {
+            return true;
+        }
         let Some((plugin, k)) = self.instruments.focus else {
             return false;
         };
@@ -896,6 +900,7 @@ impl Studio {
         ahead: bool,
     ) {
         self.instruments.focus = Some((plugin, stop.k));
+        self.instruments.edge = None;
         let Some(at) = stop.point else {
             return;
         };
