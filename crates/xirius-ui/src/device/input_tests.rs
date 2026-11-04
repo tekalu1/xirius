@@ -538,3 +538,27 @@ fn ui_324_a_wheel_turn_goes_in_when_the_mixer_closes_the_window() {
     assert_eq!(s.song().steps(), before + 1);
     assert!(value(&s, t, "mix").1 > start);
 }
+
+/// A knob turned by the wheel while a question holds the song (low 17): leaving and Ctrl+Z
+/// leave the turn where it is; it goes in once the song is free.
+#[test]
+fn ui_324_a_wheel_turn_waits_while_the_song_is_held() {
+    let (mut s, g, t, id) = delay();
+    let (k, start) = value(&s, t, "mix");
+    let (x, y) = center(&s, &g, id, k);
+    let before = s.song().steps();
+    assert!(s.device_wheel(&g, x, y, 1.0, false));
+    s.ask_unsaved(crate::unsaved::Pending::Close);
+    assert!(s.input_blocked());
+    s.start_leaving(crate::saving::Leave::Close);
+    assert!(s.instruments.sweep.is_some());
+    assert_eq!(s.song().steps(), before);
+    assert!(!s.automation_history(false));
+    assert!(s.instruments.sweep.is_some());
+    assert_eq!(s.song().steps(), before);
+    s.answer_unsaved(false);
+    assert!(!s.input_blocked());
+    assert!(s.device_sweep_end());
+    assert_eq!(s.song().steps(), before + 1);
+    assert!(value(&s, t, "mix").1 > start);
+}

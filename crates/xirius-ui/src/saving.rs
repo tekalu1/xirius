@@ -206,8 +206,11 @@ impl Studio {
     }
 
     pub(crate) fn start_leaving(&mut self, leave: Leave) {
-        // A device's knob still turning belongs to the song being left (M-par-1).
-        self.device_sweep_end();
+        // A device's knob still turning belongs to the song being left (M-par-1); not while
+        // a save, an open or a question holds the song (low 17).
+        if !self.input_blocked() {
+            self.device_sweep_end();
+        }
         match &leave {
             Leave::File(request, path) => {
                 self.request_open_file(request.clone(), path);

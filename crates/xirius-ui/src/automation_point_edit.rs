@@ -58,6 +58,10 @@ impl Studio {
 
     pub(crate) fn automation_history(&mut self, redo: bool) -> bool {
         self.drag_drop();
+        // Nothing moves while a save, an open or a question holds the song (low 17).
+        if self.input_blocked() {
+            return false;
+        }
         // A device's knob turned by the wheel or keys a moment ago is a step of its own first
         // (M-par-1): Ctrl+Z then takes it back, not the step before it.
         if self.device_sweep_end() {
@@ -97,9 +101,6 @@ impl Studio {
                 ))
             });
         if self.transport.is_windowed() {
-            if self.input_blocked() {
-                return false;
-            }
             let can = if redo {
                 self.song.can_redo()
             } else {
