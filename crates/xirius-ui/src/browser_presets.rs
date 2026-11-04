@@ -15,7 +15,6 @@ use xirius_params::Kind;
 
 use crate::browser::{BRow, BrowserHit, RailTab};
 use crate::browser_inst::{Drop, LibDrag};
-use crate::instrument::current;
 use crate::instrument::window::DEFAULT;
 use crate::studio::{Geometry, Studio};
 use crate::tree::RowKind;
@@ -42,14 +41,20 @@ impl Studio {
         self.browser.presets = by_device;
     }
 
-    /// The built-in device `uid` on track `t`: an instrument track's instrument, else the
-    /// last of the track's effects that is it.
+    /// The built-in device `uid` on track `t`: the track's instrument that is it (a multi's
+    /// layer too, as `preset.load` finds it), else the last of the track's effects that is
+    /// it.
     fn device_on(&self, t: TrackId, uid: &str) -> Option<PluginId> {
         let p = self.project();
         let track = p.tracks.get(&t)?;
         let is = |x: &&xirius_core::model::Plugin| x.builtin().is_some_and(|d| d.uid == uid);
         match xirius_params::find(uid)?.kind {
-            Kind::Instrument => current(track).filter(is).map(|x| x.id),
+            Kind::Instrument => track
+                .inserts
+                .iter()
+                .filter(|x| x.kind == xirius_core::model::PluginKind::Instrument)
+                .find(is)
+                .map(|x| x.id),
             Kind::Effect => track.inserts.iter().rev().find(is).map(|x| x.id),
         }
     }

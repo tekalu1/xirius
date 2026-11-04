@@ -559,11 +559,19 @@ fn device_key(device: &str, catalog: &Catalog, entries: &[Entry]) -> String {
 
 /// The entries named `name` (letter case aside), narrowed by `device` (a canonical uid).
 fn find_in<'e>(entries: &'e [Entry], name: &str, device: Option<&str>) -> Vec<&'e Entry> {
-    entries
+    let found: Vec<&Entry> = entries
         .iter()
         .filter(|e| fold(&e.name) == fold(name))
         .filter(|e| device.is_none_or(|d| e.device() == d))
-        .collect()
+        .collect();
+    // Files whose names differ only in letter case: the one named as typed, when one is
+    // (as the window picks it, L2-pre-3).
+    let exact: Vec<&Entry> = found.iter().copied().filter(|e| e.name == name).collect();
+    if found.len() > 1 && exact.len() == 1 {
+        exact
+    } else {
+        found
+    }
 }
 
 /// The error for a name more than one file holds: on one device, the files to pick from by
@@ -1597,4 +1605,32 @@ fn restore(
         Output::with(message, json!({ "added": added, "skipped": skipped })),
         Vec::new(),
     ))
+}
+
+#[cfg(test)]
+mod find_tests {
+    use super::*;
+
+    fn entry(name: &str) -> Entry {
+        Entry {
+            path: PathBuf::from(format!("{name}.xpreset")),
+            value: Value::Null,
+            name: name.to_string(),
+            kind: PluginKind::Instrument,
+            device_uid: "sampler".into(),
+            device_name: "Sampler".into(),
+            device_format: "builtin".into(),
+            saved_at: None,
+        }
+    }
+
+    #[test]
+    fn names_that_differ_only_in_case_pick_the_one_typed() {
+        let entries = [entry("Bass"), entry("bass")];
+        let found = find_in(&entries, "bass", None);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "bass");
+        // Typed in a third way, both stay and the caller asks which.
+        assert_eq!(find_in(&entries, "BASS", None).len(), 2);
+    }
 }
