@@ -15,6 +15,7 @@ use crate::popup::Choice;
 use crate::studio::{Rect, Studio};
 
 pub mod keys;
+pub mod kit_drag;
 pub mod menu;
 pub mod presets;
 pub mod shots;

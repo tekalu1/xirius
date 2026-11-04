@@ -381,6 +381,20 @@ pub struct Windows {
     /// The keys left the window by Esc: the next Tab past the screen's last place goes on
     /// round, not back into it (L2-ui-5).
     pub(crate) passed: bool,
+    /// The pad last pressed and when: it stays lit [`HIT`] after a short press (UI-334).
+    pub(crate) hit: Option<(PluginId, u8, std::time::Instant)>,
+    /// What files dragged over a Drum Kit would do there (UI-334), and the files.
+    pub(crate) preview: Option<super::kit_drag::Preview>,
+    pub(crate) dragged: super::kit_drag::Held,
+}
+
+/// How long a pressed pad stays lit, however short the press (UI-334).
+pub const HIT: std::time::Duration = std::time::Duration::from_millis(120);
+
+/// The velocity of a press `y` down a pad `h` tall (UI-334): 127 at its top, 1 at its foot.
+pub fn pad_velocity(y: f32, h: f32) -> u8 {
+    let up = 1.0 - (y / h.max(1.0)).clamp(0.0, 1.0);
+    ((up * 126.0).round() + 1.0).clamp(1.0, 127.0) as u8
 }
 
 /// How long an opened window's frame lights.
@@ -800,6 +814,17 @@ impl Windows {
             }
             _ => 0.0,
         }
+    }
+
+    /// The pads of `id` lit at `now`: the one held, and the one pressed in the last
+    /// [`HIT`] (UI-334).
+    pub fn lit_pads(&self, id: PluginId, now: std::time::Instant) -> Vec<u8> {
+        let held = self.note.filter(|n| n.plugin == id).map(|n| n.pitch);
+        let hit = self
+            .hit
+            .filter(|&(at, _, since)| at == id && now.saturating_duration_since(since) < HIT)
+            .map(|h| h.1);
+        held.into_iter().chain(hit).collect()
     }
 
     /// Brings the `i`th window to the top; returns its new index.
@@ -1240,15 +1265,37 @@ impl Studio {
                 self.instruments.open.remove(i);
             }
             Part::Key(pitch) => {
-                self.window_note_on(w, pitch);
+                // A Sampler's key chooses the zone that plays it (UI-333).
+                if let Some((_, x, def)) = live(&p, &w)
+                    && def.uid == "sampler"
+                    && let Some(z) = sampler::zones(&x.samples)
+                        .into_iter()
+                        .find(|z| (z.lo..=z.hi).contains(&pitch))
+                    && z.file != w.pick
+                {
+                    self.instruments.pick(w.plugin, z.file, 0);
+                }
+                let w = self.instruments.open[i];
+                self.window_note_on(w, pitch, super::keys::VELOCITY);
             }
             Part::Pad(pitch) => {
                 // A press on a pad chooses it too (UI-334).
                 if live(&p, &w).is_some_and(|(_, x, _)| !x.samples.is_empty()) {
                     self.instruments.pick(w.plugin, play::pad_of(pitch), 0);
                 }
+                // Higher up the pad is harder; it lights a moment however short the press.
+                let pad = live(&p, &w).and_then(|(track, plugin, def)| {
+                    let at = self
+                        .instruments
+                        .part_rect(r, track, plugin, def, Part::Pad(pitch));
+                    (at.h > 0.0).then_some(at)
+                });
+                let velocity = pad.map_or(super::keys::VELOCITY, |at| {
+                    f32::from(pad_velocity(y - at.y, at.h)) / 127.0
+                });
+                self.instruments.hit = Some((w.plugin, pitch, std::time::Instant::now()));
                 let w = self.instruments.open[i];
-                self.window_note_on(w, pitch);
+                self.window_note_on(w, pitch, velocity);
             }
             Part::Spot(n) => {
                 self.window_spot(i, r, n, x);
@@ -1633,17 +1680,23 @@ impl Studio {
             self.window_note_off();
         }
         let rate = f64::from(self.project().settings.sample_rate);
+        let now = std::time::Instant::now();
         let lit = self.motion.enabled.get()
             && self
                 .instruments
                 .flash
-                .is_some_and(|(id, _)| self.instruments.lit(id, std::time::Instant::now()) > 0.0);
+                .is_some_and(|(id, _)| self.instruments.lit(id, now) > 0.0);
+        // A pressed pad's light goes out by itself.
+        let lit = lit
+            || self
+                .instruments
+                .hit
+                .is_some_and(|(_, _, since)| now.saturating_duration_since(since) < HIT);
         let Some(host) = self.transport.host() else {
             return lit;
         };
         let plugins = host.plugins();
         let p = self.project();
-        let now = std::time::Instant::now();
         let shown = self
             .instruments
             .poll_with(&p, rate, now, |id| plugins.stock_probe(id));
@@ -1658,13 +1711,10 @@ impl Studio {
 
     /// A key or a pad of the window `w` was pressed: its note plays on the window's track as
     /// the track's input would (its transpose and velocity), not recorded (PLG-066).
-    fn window_note_on(&mut self, w: Win, pitch: u8) {
+    fn window_note_on(&mut self, w: Win, pitch: u8, velocity: f32) {
         self.window_note_off();
         let p = self.project();
-        let kind = NoteKind::On {
-            pitch,
-            velocity: super::keys::VELOCITY,
-        };
+        let kind = NoteKind::On { pitch, velocity };
         let heard = crate::midi_live::heard(&p, w.track, kind);
         if let Some(kind) = heard {
             self.live_note(&p, w.track, kind);
@@ -1812,6 +1862,9 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
             pen.ring_outside(r, pen.c.ring.opacity(lit), Radius::M, FLASH_W);
         }
     }
+    if let Some(preview) = &studio.instruments.preview {
+        super::kit_drag::paint_chip(pen, preview);
+    }
 }
 
 fn paint_window(
@@ -1875,7 +1928,10 @@ fn paint_window(
                 _ => None,
             }
         });
-        let body = ins.body(r, plugin, def);
+        let mut body = ins.body(r, plugin, def);
+        if let Some(preview) = ins.preview.as_ref().filter(|v| v.plugin == plugin.id) {
+            super::kit_drag::ghost(&mut body, preview);
+        }
         let hot = ins.hot.filter(|h| h.0 == plugin.id).map(|h| h.1);
         for &face in &body.faces {
             pen.round(face, c.surface_1, Radius::S);
@@ -1976,7 +2032,8 @@ fn paint_window(
             _ => None,
         };
         play::paint_keys(pen, &body.keys, down);
-        play::paint_pads(pen, &body.pads, down, pad);
+        let lit = ins.lit_pads(plugin.id, std::time::Instant::now());
+        play::paint_pads(pen, &body.pads, &body.spots, &lit, pad);
         let spot = match hot {
             Some(Part::Spot(n)) => Some(n),
             _ => None,

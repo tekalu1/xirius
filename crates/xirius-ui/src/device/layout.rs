@@ -133,9 +133,14 @@ pub struct Spot {
     pub sub: String,
     /// Chosen (a zone, a bank, a layer) or on (M, S).
     pub on: bool,
-    /// A bank with samples has a dot under its letter; a zone's root note.
+    /// A bank with samples has a dot under its letter; a zone's root note; a pad that has
+    /// files.
     pub dot: bool,
     pub note: Option<u8>,
+    /// A pad that does not sound: muted, or another pad soloed (UI-334).
+    pub dim: bool,
+    /// A pad or a bank files dragged over would fill (UI-334).
+    pub ghost: bool,
 }
 
 impl Spot {
@@ -148,6 +153,8 @@ impl Spot {
             on: false,
             dot: false,
             note: None,
+            dim: false,
+            ghost: false,
         }
     }
 }

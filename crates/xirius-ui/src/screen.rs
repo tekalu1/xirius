@@ -777,7 +777,7 @@ impl Screen {
     fn files_over(
         &mut self,
         ev: &DragMoveEvent<ExternalPaths>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.files_dragged = true;
@@ -786,8 +786,12 @@ impl Screen {
             return;
         }
         studio.instruments.drop_layers = ev.event.modifiers.shift;
-        let named = studio.drag_names(ev.drag(cx).paths());
-        if studio.drop_hover(true) | named {
+        let paths = ev.drag(cx).paths();
+        let named = studio.drag_names(paths);
+        let g = geometry(&studio, window);
+        let (x, y) = in_body(ev.event.position);
+        let planned = studio.window_drag(&g, x, y, paths, ev.event.modifiers.shift);
+        if studio.drop_hover(true) | named | planned {
             cx.notify();
         }
     }

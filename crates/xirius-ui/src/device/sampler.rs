@@ -500,6 +500,7 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
     let flag = |p: usize, id: &str| {
         filled.is_some_and(|x| x.params.get(&pad_key(p, id)).is_some_and(|v| *v >= 0.5))
     };
+    let soloed = (0..PADS).any(|p| flag(p, "solo"));
     // The bank tabs and the pads.
     let mut y = PAD;
     let tab_w = LEFT_W / BANKS.len() as f32;
@@ -521,6 +522,8 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
         let files = pad_of(p);
         let mut spot = Spot::new(k.r, Mark::Pad(p), "");
         spot.on = p == pick;
+        spot.dot = !files.is_empty();
+        spot.dim = !files.is_empty() && (flag(p, "mute") || (soloed && !flag(p, "solo")));
         if let (Some(&first), Some(x)) = (files.first(), filled) {
             spot.text = stem(&x.samples[first]);
             if files.len() > 1 {
@@ -1136,15 +1139,16 @@ pub fn paint_spots(pen: &mut Pen, body: &Body, hot: Option<usize>) {
                 pen.round(line, ink, Radius::Xs);
             }
             Mark::Bank(_) => {
-                let face = if s.on {
-                    c.surface_1
-                } else if over {
-                    c.surface_3
+                if s.on || over {
+                    pen.round(r, c.surface_3, Radius::S);
+                }
+                let ink = if s.ghost {
+                    c.ink_blue
+                } else if s.on {
+                    c.ink_strong
                 } else {
-                    c.surface_2
+                    c.ink
                 };
-                pen.round(r, face, Radius::S);
-                let ink = if s.on { c.ink_strong } else { c.ink };
                 pen.text(
                     &s.text,
                     FontSize::Small,
@@ -1155,48 +1159,24 @@ pub fn paint_spots(pen: &mut Pen, body: &Body, hot: Option<usize>) {
                 );
                 if s.dot {
                     let d = 4.0;
-                    let dot = Rect::new(r.x + (r.w - d) / 2.0, r.bottom() - d - 2.0, d, d);
+                    let dot = Rect::new(r.x + (r.w - d) / 2.0, r.bottom() - d - 3.0, d, d);
                     pen.round(dot, c.ink_blue, Radius::Pill);
                 }
             }
-            Mark::Pad(_) => {
-                if s.on {
-                    pen.outline(r, c.ring, Radius::S, 2.0);
-                }
-                if !s.text.is_empty() {
-                    let t = Rect::new(r.x + 6.0, r.y + r.h / 2.0 - 8.0, r.w - 12.0, 14.0);
-                    let text = pen.fit(&s.text, FontSize::Micro, Weight::Semibold, t.w);
-                    pen.text(
-                        &text,
-                        FontSize::Micro,
-                        Weight::Semibold,
-                        c.ink_strong,
-                        t,
-                        Align::Left,
-                    );
-                }
-                if !s.sub.is_empty() {
-                    let t = Rect::new(r.x + 6.0, r.bottom() - 18.0, r.w / 2.0, 14.0);
-                    pen.text(
-                        &s.sub,
-                        FontSize::Micro,
-                        Weight::Regular,
-                        c.ink,
-                        t,
-                        Align::Left,
-                    );
-                }
-            }
+            // A pad's face and words are the pads' own (`play::paint_pads`).
+            Mark::Pad(_) => {}
             Mark::Mute(_) | Mark::Solo(_) => {
-                let face = if s.on {
-                    c.fill
-                } else if over {
-                    c.surface_1
+                let on = if matches!(s.mark, Mark::Solo(_)) {
+                    c.solo_on
                 } else {
-                    c.surface_2
+                    c.mute_on
                 };
-                pen.round(r, face, Radius::Xs);
-                let ink = if s.on { c.on_fill } else { c.ink };
+                if s.on {
+                    pen.round(r, on.0, Radius::Xs);
+                } else if over {
+                    pen.round(r, c.surface_1, Radius::Xs);
+                }
+                let ink = if s.on { on.1 } else { c.ink };
                 pen.text(
                     &s.text,
                     FontSize::Micro,

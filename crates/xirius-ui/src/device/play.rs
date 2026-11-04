@@ -4,7 +4,7 @@
 
 use xirius_design::{FontSize, Radius, Weight};
 
-use super::layout::PAD;
+use super::layout::{Mark, PAD, Spot};
 use crate::draw::{Align, Pen};
 use crate::notes::is_black_key;
 use crate::studio::Rect;
@@ -135,25 +135,50 @@ pub fn paint_keys(pen: &mut Pen, keys: &[Key], down: Option<u8>) {
 }
 
 /// The pads: `down` the one held, `hot` the one under the pointer.
-pub fn paint_pads(pen: &mut Pen, pads: &[Key], down: Option<u8>, hot: Option<u8>) {
+pub fn paint_pads(pen: &mut Pen, pads: &[Key], spots: &[Spot], lit: &[u8], hot: Option<u8>) {
     let c = pen.c;
+    let none = Spot::new(Rect::default(), Mark::Pad(0), "");
     for k in pads {
-        let lit = down == Some(k.pitch);
-        let face = if lit {
-            c.fill
-        } else if hot == Some(k.pitch) {
-            c.clip
-        } else {
-            c.surface_3
+        let s = spots
+            .iter()
+            .find(|s| s.mark == Mark::Pad(pad_of(k.pitch)))
+            .unwrap_or(&none);
+        let lit = lit.contains(&k.pitch);
+        let over = hot == Some(k.pitch);
+        // A pad that has files is lighter than an empty one; a press lights it a moment.
+        let face = match (lit, s.ghost, s.dot) {
+            (true, _, _) => c.fill,
+            (_, true, _) => c.surface_1,
+            (_, _, true) if over => c.clip,
+            (_, _, true) => c.surface_3,
+            _ if over => c.surface_3,
+            _ => c.surface_2,
         };
         pen.round(k.r, face, Radius::S);
+        if s.ghost {
+            pen.outline(k.r, c.ring, Radius::S, 2.0);
+        } else if s.on {
+            pen.outline(k.r, c.ink_blue, Radius::S, 2.0);
+        }
+        // What does not sound is fainter: its name and its sample's, in the ink of what is
+        // off (no ink is see-through).
+        let strong = if lit {
+            c.on_fill
+        } else if s.ghost {
+            c.ink_blue
+        } else if s.dim {
+            c.scroll_thumb[0]
+        } else {
+            c.ink_strong
+        };
+        let soft = if lit { c.on_fill } else { c.ink };
         // Its name at the top left, its note at the top right.
         let text = Rect::new(k.r.x + 6.0, k.r.y + 5.0, k.r.w - 12.0, 14.0);
         pen.text(
             pad_name(k.pitch),
             FontSize::Micro,
             Weight::Semibold,
-            if lit { c.on_fill } else { c.ink_strong },
+            strong,
             text,
             Align::Left,
         );
@@ -161,9 +186,34 @@ pub fn paint_pads(pen: &mut Pen, pads: &[Key], down: Option<u8>, hot: Option<u8>
             &crate::roll::pitch_name(k.pitch),
             FontSize::Micro,
             Weight::Regular,
-            if lit { c.on_fill } else { c.ink },
+            soft,
             text,
             Align::Right,
         );
+        let r = k.r;
+        if !s.text.is_empty() {
+            let t = Rect::new(r.x + 6.0, r.y + r.h / 2.0 - 8.0, r.w - 12.0, 14.0);
+            let name = pen.fit(&s.text, FontSize::Micro, Weight::Semibold, t.w);
+            pen.text(
+                &name,
+                FontSize::Micro,
+                Weight::Semibold,
+                strong,
+                t,
+                Align::Left,
+            );
+        }
+        if !s.sub.is_empty() {
+            let t = Rect::new(r.x + 6.0, r.bottom() - 18.0, r.w / 2.0, 14.0);
+            let ink = if s.ghost && !lit { c.ink_blue } else { soft };
+            pen.text(
+                &s.sub,
+                FontSize::Micro,
+                Weight::Regular,
+                ink,
+                t,
+                Align::Left,
+            );
+        }
     }
 }

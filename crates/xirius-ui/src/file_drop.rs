@@ -32,10 +32,13 @@ impl Studio {
 
     /// Files dragged over the window: the empty screen lights its zone.
     pub fn drop_hover(&mut self, over: bool) -> bool {
-        let changed = self.drop_over != over || (!over && self.drop_dawproject.is_some());
+        let changed = self.drop_over != over
+            || (!over && (self.drop_dawproject.is_some() || self.instruments.preview.is_some()));
         self.drop_over = over;
         if !over {
             self.drop_dawproject = None;
+            self.instruments.preview = None;
+            self.instruments.dragged = Default::default();
         }
         changed
     }
@@ -43,6 +46,8 @@ impl Studio {
     /// Files dropped at a point. Each MIDI file makes a track; the last one
     /// made is selected. Other files are refused.
     pub fn drop_files(&mut self, g: &Geometry, x: f32, y: f32, paths: &[PathBuf]) -> bool {
+        self.instruments.preview = None;
+        self.instruments.dragged = Default::default();
         // A `.dawproject` opens as a new song (EXP-006), wherever it falls.
         if self.drop_dawproject_file(paths) {
             return true;

@@ -739,3 +739,131 @@ fn ui_333_the_filter_point_chooses_its_type_and_opens() {
     assert_eq!(plain(&s, t, "ftype"), 0.0);
     assert_eq!(plain(&s, t, "cutoff"), 20_000.0);
 }
+
+/// UI-334: a pad's state as the mock draws it: one with files apart from an empty one, a
+/// muted one and the others while one is soloed fainter; a press higher up the pad is
+/// harder, and the pad stays lit a moment after a short one.
+#[test]
+fn ui_334_pads_show_files_mute_and_solo_and_a_press_lights_them() {
+    let (mut s, g, t, id) = window("Drum Kit");
+    add(&mut s, id, &["Kick.wav", "Snare.wav", "Hat.wav"]);
+    let pad = |s: &Studio, p: usize| {
+        body(s, &g, t)
+            .spots
+            .into_iter()
+            .find(|x| x.mark == Mark::Pad(p))
+            .unwrap()
+    };
+    assert!(pad(&s, 0).dot && !pad(&s, 3).dot, "files, and none");
+    assert!(!pad(&s, 0).dim);
+    // Muted: fainter. Another soloed: all but it fainter, empty pads as they were.
+    press_spot(&mut s, &g, t, id, Mark::Mute(1));
+    assert!(pad(&s, 1).dim && !pad(&s, 0).dim);
+    press_spot(&mut s, &g, t, id, Mark::Solo(2));
+    assert!(pad(&s, 0).dim && pad(&s, 1).dim && !pad(&s, 2).dim && !pad(&s, 3).dim);
+    // Higher up is harder: 127 at the top, 1 at the foot.
+    assert_eq!(crate::instrument::window::pad_velocity(0.0, 60.0), 127);
+    assert_eq!(crate::instrument::window::pad_velocity(60.0, 60.0), 1);
+    assert_eq!(crate::instrument::window::pad_velocity(30.0, 60.0), 64);
+    let r = body_rect(&s, &g, t, 37);
+    let velocity = |s: &Studio| match s.live_midi.sent.last() {
+        Some((_, xirius_engine::NoteKind::On { velocity, .. })) => *velocity,
+        other => panic!("{other:?}"),
+    };
+    assert!(s.instrument_press(&g, r.x + r.w / 2.0, r.y + 4.0, 1, Mods::NONE));
+    let high = velocity(&s);
+    s.instrument_up();
+    assert!(s.instrument_press(&g, r.x + r.w / 2.0, r.bottom() - 4.0, 1, Mods::NONE));
+    let low = velocity(&s);
+    assert!(high > 4.0 * low, "{high} {low}");
+    // Let go at once, it is still lit; a moment on, not.
+    s.instrument_up();
+    let now = std::time::Instant::now();
+    assert_eq!(s.instruments.lit_pads(id, now), [37]);
+    let later = now + crate::instrument::window::HIT;
+    assert!(s.instruments.lit_pads(id, later).is_empty());
+}
+
+/// Where the pad playing `pitch` is in the window.
+fn body_rect(s: &Studio, g: &Geometry, t: TrackId, pitch: u8) -> crate::studio::Rect {
+    body(s, g, t)
+        .pads
+        .iter()
+        .find(|k| k.pitch == pitch)
+        .unwrap()
+        .r
+}
+
+/// UI-333: a Sampler's key chooses the zone that plays it.
+#[test]
+fn ui_333_a_key_chooses_the_zone_that_plays_it() {
+    let (mut s, g, _t, id) = window("Sampler");
+    add(&mut s, id, &["Piano_C3.wav", "Piano_C4.wav"]);
+    let low = s.instruments.open[0].pick;
+    press(&mut s, &g, id, Part::Key(72));
+    s.instrument_up();
+    let high = s.instruments.open[0].pick;
+    assert_ne!(low, high);
+    press(&mut s, &g, id, Part::Key(60));
+    s.instrument_up();
+    assert_eq!(s.instruments.open[0].pick, low);
+}
+
+/// UI-334: files dragged over a Drum Kit show, before they fall, the pads they fill (their
+/// names and layers, no M and S) and their banks; the chip says it in a word. Shift makes
+/// one pad; off the window, nothing.
+#[test]
+fn ui_334_a_drag_shows_the_pads_it_fills() {
+    let (dir, files) = wavs(&["Kick.wav", "Snare_v1.wav", "Snare_v2.wav", "notes.txt"]);
+    let (mut s, g, t, id) = window("Drum Kit");
+    add(&mut s, id, &["Hat.wav"]);
+    // Over A1, which has a file: the free pads from it.
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).expect("A1");
+    assert!(s.window_drag(&g, x, y, &files, false));
+    let v = s.instruments.preview.clone().expect("a plan");
+    assert_eq!(v.text, "2 pads, A2–A3");
+    assert_eq!(
+        v.pads,
+        [
+            (1, "Kick".to_string(), String::new()),
+            (2, "Snare_v1".to_string(), "Vel 2".to_string())
+        ]
+    );
+    // The same again changes nothing.
+    assert!(!s.window_drag(&g, x, y, &files, false));
+    let mut b = body(&s, &g, t);
+    crate::instrument::kit_drag::ghost(&mut b, &v);
+    let a2 = b.spots.iter().find(|x| x.mark == Mark::Pad(1)).unwrap();
+    assert!(a2.ghost && a2.text == "Kick");
+    assert!(b.spots.iter().any(|x| x.mark == Mark::Bank(0) && x.ghost));
+    assert!(b.spots.iter().any(|x| x.mark == Mark::Bank(1) && !x.ghost));
+    assert!(
+        b.spots.iter().any(|x| x.mark == Mark::Mute(0)),
+        "A1 keeps its M"
+    );
+    // Shift: all of them on A1, with its file.
+    assert!(s.window_drag(&g, x, y, &files, true));
+    let v = s.instruments.preview.clone().unwrap();
+    assert_eq!(v.text, "A1: 3 layers");
+    assert_eq!(v.pads, [(0, "Hat".to_string(), "Vel 4".to_string())]);
+    let mut b = body(&s, &g, t);
+    crate::instrument::kit_drag::ghost(&mut b, &v);
+    assert!(
+        !b.spots.iter().any(|x| x.mark == Mark::Mute(0)),
+        "no M on it"
+    );
+    // One file: its name.
+    assert!(s.window_drag(&g, x, y, &files[..1], false));
+    assert_eq!(s.instruments.preview.as_ref().unwrap().text, "A2: Kick");
+    // A folder: from the pad, its name.
+    assert!(s.window_drag(&g, x, y, &[dir.path().to_path_buf()], false));
+    let v = s.instruments.preview.clone().unwrap();
+    let folder = dir.path().file_name().unwrap().to_string_lossy();
+    assert_eq!(v.text, format!("A1–: {folder}"));
+    // Off the window, and once the drag leaves: nothing.
+    assert!(s.window_drag(&g, 1.0, 1.0, &files, false));
+    assert!(s.instruments.preview.is_none());
+    s.window_drag(&g, x, y, &files, false);
+    s.drop_hover(false);
+    assert!(s.instruments.preview.is_none());
+}
