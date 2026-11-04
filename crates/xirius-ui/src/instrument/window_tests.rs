@@ -925,6 +925,27 @@ fn save_as_asks_for_the_name() {
     );
 }
 
+/// Low 15 of the third review: the next name after `X 4294967295` does not overflow; `Bass
+/// 9` goes on to `Bass 10`.
+#[test]
+fn save_as_names_past_the_last_number_do_not_overflow() {
+    let (mut s, g, t, _) = studio();
+    let id = compressor(&mut s, t);
+    for (name, next) in [
+        ("X 4294967295", "X 4294967295 2"),
+        ("Bass 9", "Bass 10"),
+        ("TR-808", "TR-808 2"),
+    ] {
+        nudge(&mut s, &g, id, "threshold");
+        assert!(s.save_preset(id, name, false), "{:?}", s.error);
+        preset_rows(&mut s, &g, id);
+        s.inst_menu_pick(Menu::Preset(t, id), super::menu::SAVE_AS);
+        assert_eq!(s.ask_field().map(|f| f.text()), Some(next.to_string()));
+        s.ask_key("escape");
+        assert!(!s.context_open());
+    }
+}
+
 /// 名前を付けて保存… with a name the device has asks once more (上書きして保存…); Enter on
 /// that writes over the file, Escape writes nothing.
 #[test]

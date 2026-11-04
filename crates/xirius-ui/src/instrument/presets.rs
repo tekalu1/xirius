@@ -288,7 +288,9 @@ impl Studio {
             .map(|n| {
                 let (base, from) = n
                     .rsplit_once(' ')
-                    .and_then(|(b, k)| Some((b.to_string(), k.parse::<u32>().ok()? + 1)))
+                    .and_then(|(b, k)| {
+                        Some((b.to_string(), k.parse::<u32>().ok()?.checked_add(1)?))
+                    })
                     .unwrap_or_else(|| (n.clone(), 2));
                 (from..)
                     .map(|k| format!("{base} {k}"))
