@@ -125,6 +125,7 @@ crates/xirius-ui/src/inspector.rs	arrange_run	1
 crates/xirius-ui/src/instrument/keys.rs	lock	2
 crates/xirius-ui/src/instrument/keys.rs	seek	1
 crates/xirius-ui/src/instrument/kit_drag.rs	is_dir	1
+crates/xirius-ui/src/instrument/kit_drag.rs	std :: fs :: metadata	1
 crates/xirius-ui/src/instrument/menu.rs	arrange_run	1
 crates/xirius-ui/src/instrument/mod.rs	run_command	3
 crates/xirius-ui/src/instrument/presets.rs	run	1
