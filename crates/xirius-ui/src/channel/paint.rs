@@ -53,18 +53,6 @@ pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry, over: bool) {
     }
 }
 
-/// A layer's name: its instrument's.
-fn layer_name(t: &Track, index: usize) -> String {
-    let layers = keys::layers(t);
-    let Some(l) = layers.get(index) else {
-        return String::new();
-    };
-    t.inserts
-        .iter()
-        .find(|p| p.id == l.instrument)
-        .map_or_else(|| format!("レイヤー {}", index + 1), |p| p.name.clone())
-}
-
 /// The key range figure: the chosen layer's header, the boxes over the map and the keyboard.
 fn paint_keys(pen: &mut Pen, w: &ChannelWin, t: &Track, k: &keys::Keys) {
     let c = pen.c;
@@ -78,21 +66,40 @@ fn paint_keys(pen: &mut Pen, w: &ChannelWin, t: &Track, k: &keys::Keys) {
         // design-lint: allow(exception-family) 層の色の印（層はトラックの色の族で見分ける。v2 s04 の鍵域の図）
         pen.round(chip, c.tracks[b.index % c.tracks.len()], Radius::Clip);
         x += super::CHIP + 6.0;
-        let name = layer_name(t, b.index);
-        x += pen.text(
+        let name = keys::layer_name(t, b.index);
+        let name_w = pen.text(
             &name,
             FontSize::Body,
             Weight::Semibold,
             c.ink_strong,
             Rect::new(x, h.y, 200.0, h.h),
             Align::Left,
-        ) + 16.0;
-        let transpose = keys::layers(t)
-            .get(b.index)
-            .map_or(0, |l| l.transpose)
-            .to_string();
+        );
+        // Transpose: its label, then the field it is dragged up and down in.
+        if let Some((f, v)) = k.transpose {
+            pen.text(
+                "Transpose",
+                FontSize::Small,
+                Weight::Regular,
+                c.ink,
+                Rect::new(f.x - keys::LABEL_GAP - 120.0, h.y, 120.0, h.h),
+                Align::Right,
+            );
+            pen.round(f, c.well, Radius::Clip);
+            let inner = Rect::new(f.x + keys::FIELD_PAD, f.y, f.w - 2.0 * keys::FIELD_PAD, f.h);
+            pen.text(
+                &keys::transpose_text(v),
+                FontSize::Small,
+                Weight::Regular,
+                c.ink_strong,
+                inner,
+                Align::Right,
+            );
+            x = f.right() + keys::ITEM_GAP;
+        } else {
+            x += name_w + keys::ITEM_GAP;
+        }
         for (label, value) in [
-            ("Transpose", transpose),
             ("Range", keys::keys_text(b.ranges.0)),
             ("Velocity", keys::velocity_text(b.ranges.1)),
         ] {
@@ -165,7 +172,7 @@ fn paint_keys(pen: &mut Pen, w: &ChannelWin, t: &Track, k: &keys::Keys) {
                     pen.round(chip, c.tracks[b.index % c.tracks.len()], Radius::Clip);
                     x += 12.0;
                     x += pen.text(
-                        &layer_name(t, b.index),
+                        &keys::layer_name(t, b.index),
                         FontSize::Small,
                         Weight::Semibold,
                         c.ink_strong,

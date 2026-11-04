@@ -7,6 +7,9 @@ use xirius_core::model::Track;
 use xirius_core::rack::{Layer, RackNode, Source};
 use xirius_params::pitch;
 
+use xirius_design::FontSize;
+
+use crate::draw::estimated_text_width;
 use crate::mixer::flow::Pick;
 use crate::studio::Rect;
 
@@ -24,6 +27,15 @@ pub const GRIP_T: f32 = 4.0;
 const REACH: f32 = 5.0;
 /// A black key's height in the keyboard.
 pub const BLACK_H: f32 = 40.0;
+/// The Transpose field (the mock's `.field`): its height, least width and inset, the gap after
+/// a label and between the header's items, and how far a drag goes for a semitone.
+pub const FIELD_H: f32 = 22.0;
+pub const FIELD_W: f32 = 40.0;
+pub const FIELD_PAD: f32 = 6.0;
+pub const LABEL_GAP: f32 = 6.0;
+pub const ITEM_GAP: f32 = 16.0;
+pub const SEMITONE: f32 = 8.0;
+pub const TRANSPOSE: i8 = 48;
 
 /// A side of a layer's box.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,6 +93,34 @@ pub struct Keys {
     pub boxes: Vec<LayerBox>,
     /// The layer the header names and whose box has the handles.
     pub chosen: usize,
+    /// The chosen layer's Transpose field and what it shows (while dragged, the value held).
+    pub transpose: Option<(Rect, i8)>,
+}
+
+/// A layer's name: its instrument's.
+pub fn layer_name(t: &Track, index: usize) -> String {
+    let Some(l) = layers(t).get(index) else {
+        return String::new();
+    };
+    t.inserts
+        .iter()
+        .find(|p| p.id == l.instrument)
+        .map_or_else(|| format!("レイヤー {}", index + 1), |p| p.name.clone())
+}
+
+/// A transpose as the field shows it: a sign before a rise.
+pub fn transpose_text(v: i8) -> String {
+    if v > 0 {
+        format!("+{v}")
+    } else {
+        v.to_string()
+    }
+}
+
+/// The transpose a drag from `y0` to `y` makes of `from`: a semitone each `SEMITONE` up.
+pub fn transposed(from: i8, y0: f32, y: f32) -> i8 {
+    let steps = ((y0 - y) / SEMITONE).round() as i32;
+    (i32::from(from) + steps).clamp(-i32::from(TRANSPOSE), i32::from(TRANSPOSE)) as i8
 }
 
 /// The layers of a multi-instrument track; none for any other.
@@ -154,7 +194,15 @@ pub fn box_rect(map: Rect, span: Span, ((lo, hi), (soft, loud)): Ranges) -> Rect
 
 /// The figure in `panel` for the track's layers; `held` is a layer being dragged and its
 /// ranges now.
-pub fn layout(t: &Track, panel: Rect, chosen: usize, held: Option<(NodeId, Ranges)>) -> Keys {
+/// `held` is a layer's ranges while a side of it is dragged; `turning`, its transpose while its
+/// field is.
+pub fn layout(
+    t: &Track,
+    panel: Rect,
+    chosen: usize,
+    held: Option<(NodeId, Ranges)>,
+    turning: Option<(NodeId, i8)>,
+) -> Keys {
     let inner = Rect::new(
         panel.x + PAD,
         panel.y,
@@ -180,6 +228,23 @@ pub fn layout(t: &Track, panel: Rect, chosen: usize, held: Option<(NodeId, Range
             }
         })
         .collect();
+    // The header: chip, name, then "Transpose" and its field.
+    let transpose = layers(t).get(chosen).map(|l| {
+        let v = turning
+            .filter(|(id, _)| *id == l.id)
+            .map_or(l.transpose, |(_, v)| v);
+        let x = head.x
+            + super::CHIP
+            + 6.0
+            + estimated_text_width(&layer_name(t, chosen), FontSize::Body)
+            + ITEM_GAP
+            + estimated_text_width("Transpose", FontSize::Small)
+            + LABEL_GAP;
+        let w = (estimated_text_width(&transpose_text(v), FontSize::Small) + 2.0 * FIELD_PAD)
+            .max(FIELD_W);
+        let y = head.y + (head.h - FIELD_H) / 2.0;
+        (Rect::new(x, y, w, FIELD_H), v)
+    });
     Keys {
         panel,
         head,
@@ -188,6 +253,7 @@ pub fn layout(t: &Track, panel: Rect, chosen: usize, held: Option<(NodeId, Range
         span,
         boxes,
         chosen,
+        transpose,
     }
 }
 

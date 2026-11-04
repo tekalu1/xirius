@@ -687,6 +687,58 @@ fn a_side_dragged_sets_the_layer_in_one_step() {
 }
 
 #[test]
+fn the_transpose_field_is_dragged_up_and_down_and_sets_it_in_one_step() {
+    let (mut s, g) = studio();
+    let (t, layers) = multi(&mut s);
+    let k = s.channel_view(&g).unwrap().keys.unwrap();
+    let (f, v) = k.transpose.expect("the field");
+    assert_eq!(v, 0);
+    // In the header, right of the name, clear of the map; the mock's 22 high and 40 wide.
+    assert!(k.head.contains(f.x, f.y) && f.right() <= k.head.right());
+    assert_eq!((f.h, f.w), (keys::FIELD_H, keys::FIELD_W));
+    let (x, y) = mid(f);
+    assert_eq!(
+        part_at(&s.channel_view(&g).unwrap(), x, y),
+        Some(Part::Transpose(layers[0].id))
+    );
+    assert!(s.channel_press(&g, x, y, 1));
+    s.channel_moved(&g, x, y - 8.0);
+    s.channel_moved(&g, x, y - 17.0);
+    // It shows what it will be; the layer does not change until it is let go.
+    let held = s.channel_view(&g).unwrap().keys.unwrap();
+    assert_eq!(held.transpose.map(|(_, v)| v), Some(2));
+    assert_eq!(keys::layers(&s.project().tracks[&t])[0].transpose, 0);
+    s.channel_up(&g);
+    assert_eq!(keys::layers(&s.project().tracks[&t])[0].transpose, 2);
+    // A reader hears it as a slider of -48 to 48.
+    let m = marks(&s, &g);
+    let node = m[0]
+        .children
+        .iter()
+        .find(|m| m.node.label() == Some("Piano の Transpose"))
+        .map(|m| m.node.clone())
+        .expect("the slider");
+    assert_eq!(node.role(), gpui::accesskit::Role::Slider);
+    assert_eq!(node.value(), Some("+2"));
+    assert_eq!(
+        (node.min_numeric_value(), node.max_numeric_value()),
+        (Some(-48.0), Some(48.0))
+    );
+    // Far down stops at -48, in one step that one undo takes back.
+    assert!(s.channel_press(&g, x, y, 1));
+    s.channel_moved(&g, x, y + 2000.0);
+    s.channel_up(&g);
+    assert_eq!(keys::layers(&s.project().tracks[&t])[0].transpose, -48);
+    s.undo(&g);
+    assert_eq!(keys::layers(&s.project().tracks[&t])[0].transpose, 2);
+    // A press let go where it was changes nothing.
+    assert!(s.channel_press(&g, x, y, 1));
+    s.channel_moved(&g, x, y - 3.0);
+    s.channel_up(&g);
+    assert_eq!(keys::layers(&s.project().tracks[&t])[0].transpose, 2);
+}
+
+#[test]
 fn a_side_does_not_pass_the_other() {
     let map = Rect::new(0.0, 0.0, 128.0, 127.0);
     let from = ((40, 50), (20, 90));

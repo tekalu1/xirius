@@ -128,6 +128,8 @@ pub enum Part {
     /// A layer's box in the key range figure, and one of its sides.
     Range(NodeId),
     Side(NodeId, keys::Edge),
+    /// The chosen layer's Transpose field.
+    Transpose(NodeId),
     /// A knob of the macro row, and the row's button that opens the macro window.
     Macro(u8),
     MacroOut,
@@ -162,6 +164,13 @@ pub(crate) enum Grab {
         edge: keys::Edge,
         from: keys::Ranges,
         now: keys::Ranges,
+    },
+    /// A layer's Transpose field: where the press was, its transpose then and now.
+    Transpose {
+        layer: NodeId,
+        y0: f32,
+        from: i8,
+        now: i8,
     },
 }
 
@@ -348,8 +357,12 @@ pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
             Some(Grab::Side { layer, now, .. }) => Some((*layer, *now)),
             _ => None,
         };
+        let turning = match &w.grab {
+            Some(Grab::Transpose { layer, now, .. }) => Some((*layer, *now)),
+            _ => None,
+        };
         let panel = Rect::new(r.x, body.bottom(), r.w, panel_h);
-        keys::layout(t, panel, keys::chosen_layer(t, w.chosen), held)
+        keys::layout(t, panel, keys::chosen_layer(t, w.chosen), held, turning)
     });
     let (sx, sy) = clamp_scroll(w.scroll, &probe, body);
     // A flow narrower than the window sits in its middle; a wider one shows from its left.
@@ -559,6 +572,12 @@ pub fn part_at(v: &View, x: f32, y: f32) -> Option<Part> {
     if let Some(k) = &v.keys
         && k.panel.contains(x, y)
     {
+        if let Some((f, _)) = k.transpose
+            && f.contains(x, y)
+            && let Some(b) = k.boxes.get(k.chosen)
+        {
+            return Some(Part::Transpose(b.id));
+        }
         return Some(match keys::hit(k, x, y) {
             Some((id, Some(e))) => Part::Side(id, e),
             Some((id, None)) => Part::Range(id),
@@ -898,6 +917,22 @@ impl Studio {
                     });
                 }
             }
+            Part::Transpose(id) => {
+                let p = self.project();
+                let from = p
+                    .tracks
+                    .get(&t)
+                    .and_then(|t| keys::layers(t).iter().find(|l| l.id == id))
+                    .map(|l| l.transpose);
+                if let (Some(from), Some(w)) = (from, self.channel.as_mut()) {
+                    w.grab = Some(Grab::Transpose {
+                        layer: id,
+                        y0: y,
+                        from,
+                        now: from,
+                    });
+                }
+            }
             Part::Macro(i) => {
                 self.control_drag(t, xirius_core::controls::ControlId::Knob(i), y);
             }
@@ -1099,6 +1134,18 @@ impl Studio {
                     });
                 }
             }
+            Grab::Transpose {
+                layer, y0, from, ..
+            } => {
+                if let Some(w) = self.channel.as_mut() {
+                    w.grab = Some(Grab::Transpose {
+                        layer,
+                        y0,
+                        from,
+                        now: keys::transposed(from, y0, y),
+                    });
+                }
+            }
             Grab::Cross {
                 split, i, x0, from, ..
             } => {
@@ -1185,6 +1232,16 @@ impl Studio {
                 }
                 // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command("rack.layer.set", args);
+            }
+            // One step when it is let go, as the mock's.
+            Grab::Transpose {
+                layer, from, now, ..
+            } if from != now => {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+                self.run_command(
+                    "rack.layer.set",
+                    json!({ "id": layer.to_string(), "transpose": now }),
+                );
             }
             _ => {}
         }
@@ -1435,10 +1492,19 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<crate::a11y::Mark> {
     }
     if let Some(k) = &v.keys {
         for b in &k.boxes {
-            let name = keys::layers(t)
-                .get(b.index)
-                .and_then(|l| t.inserts.iter().find(|p| p.id == l.instrument))
-                .map_or_else(|| format!("レイヤー {}", b.index + 1), |p| p.name.clone());
+            let name = keys::layer_name(t, b.index);
+            if b.index == k.chosen
+                && let Some((f, v)) = k.transpose
+            {
+                let mut node = accesskit::Node::new(accesskit::Role::Slider);
+                node.set_label(format!("{name} の Transpose"));
+                node.set_bounds(bounds(f));
+                node.set_min_numeric_value(-f64::from(keys::TRANSPOSE));
+                node.set_max_numeric_value(f64::from(keys::TRANSPOSE));
+                node.set_numeric_value(f64::from(v));
+                node.set_value(keys::transpose_text(v));
+                children.push(mark(format!("channel-transpose-{}", b.id), node));
+            }
             let mut node = button(&format!("{name} の範囲"), b.rect);
             node.set_value(format!(
                 "{} · {}",
