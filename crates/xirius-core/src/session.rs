@@ -1517,7 +1517,23 @@ impl Session {
         // branch taken away) goes too, and the message says so (undo brings it back).
         let dropped = work.prune_controls();
         work.prune_branch_lanes();
+        // the main parameter of a `plugin.param.set`, as the edit left it: a macro holding it
+        // puts it back, one holding only an `also` does not (review 3 低2)
+        let main_param = |p: &Project| -> Option<Option<f64>> {
+            if def.name != "plugin.param.set" {
+                return None;
+            }
+            let id: crate::id::PluginId = args.str("id").ok()?.parse().ok()?;
+            let target = crate::auto::AutoTarget::Param(id, args.str("param").ok()?.to_string());
+            let t = p
+                .tracks
+                .values()
+                .find(|t| t.inserts.iter().any(|x| x.id == id))?;
+            Some(target.stored_value(t))
+        };
+        let main_before = main_param(&work);
         let held = work.hold_owned(&before);
+        let main_kept = main_param(&work) == main_before;
         crate::retime::retime(&before, &mut work);
         let taken = out.clipboard.take();
         work.validate()
@@ -1526,7 +1542,7 @@ impl Session {
         // holds (that edit is refused below, or kept back from it)
         if !dry
             && def.name == "plugin.param.set"
-            && held.is_empty()
+            && main_kept
             && let (Ok(id), Ok(param)) = (args.str("id"), args.str("param"))
         {
             self.state.touched = Some(format!("param:{id}:{param}"));

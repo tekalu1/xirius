@@ -593,4 +593,49 @@ fn a_two_parameter_point_keeps_the_one_a_macro_holds() {
         "{:?}",
         r.data
     );
+    // Review 3 低2: the main parameter went through, so it is the last one touched
+    run(
+        &mut s,
+        "control.assign.touched",
+        json!({"track": t, "control": "k2"}),
+    );
+    let tid: TrackId = t.parse().unwrap();
+    let track = s.project().track(tid).unwrap();
+    let k2 = track.controls.iter().find(|(k, _)| k.to_string() == "k2");
+    let targets: Vec<String> = k2
+        .unwrap()
+        .1
+        .maps
+        .iter()
+        .map(|m| m.target.to_string())
+        .collect();
+    assert_eq!(targets, [format!("param:{comp}:threshold")]);
+}
+
+/// Review 3 中2: a muted send assigned to a macro sets the knob where the kept level is, so
+/// unmuting brings the level back instead of silence.
+#[test]
+fn a_send_assigned_while_muted_comes_back_at_its_level() {
+    let mut s = Session::new("Muted");
+    let t = id_of(&run(&mut s, "track.add.audio", json!({"name": "Vocal"})));
+    let fx = id_of(&run(&mut s, "track.add.bus", json!({"name": "FX"})));
+    run(
+        &mut s,
+        "send.add",
+        json!({"ids": [t], "to": fx, "level": -6}),
+    );
+    let tid: TrackId = t.parse().unwrap();
+    let send = s.project().track(tid).unwrap().sends[0].id.to_string();
+    run(&mut s, "send.mute", json!({"id": send, "on": true}));
+    run(
+        &mut s,
+        "control.assign",
+        json!({"track": t, "control": "k1", "target": format!("send:{send}")}),
+    );
+    let kept = &s.project().track(tid).unwrap().sends[0];
+    assert_eq!(kept.level_db, xirius_core::model::MIN_DB, "still silent");
+    assert!((kept.muted_level.unwrap() + 6.0).abs() < 1e-3, "{kept:?}");
+    run(&mut s, "send.mute", json!({"id": send, "off": true}));
+    let back = &s.project().track(tid).unwrap().sends[0];
+    assert!((back.level_db + 6.0).abs() < 1e-3, "{back:?}");
 }

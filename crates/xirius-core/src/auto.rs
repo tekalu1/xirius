@@ -190,7 +190,12 @@ impl AutoTarget {
             AutoTarget::Volume => Some(t.volume_db),
             AutoTarget::Pan => Some(t.pan),
             AutoTarget::Mute => Some(if t.mute { 1.0 } else { 0.0 }),
-            AutoTarget::Send(s) => t.sends.iter().find(|x| x.id == *s).map(|x| x.level_db),
+            // A muted send's level is the one kept aside, where `set_on` writes it.
+            AutoTarget::Send(s) => t
+                .sends
+                .iter()
+                .find(|x| x.id == *s)
+                .map(|x| x.muted_level.unwrap_or(x.level_db)),
             AutoTarget::Param(p, name) => t.inserts.iter().find(|x| x.id == *p).map(|x| {
                 x.params.get(name).copied().unwrap_or_else(|| {
                     // an untouched builtin parameter sits at its default
@@ -256,11 +261,6 @@ impl AutoTarget {
     /// A muted send keeps the level it returns to when unmuted.
     pub fn stored_value(&self, t: &Track) -> Option<f64> {
         match self {
-            AutoTarget::Send(s) => t
-                .sends
-                .iter()
-                .find(|x| x.id == *s)
-                .map(|x| x.muted_level.unwrap_or(x.level_db)),
             AutoTarget::Param(p, name) => t
                 .inserts
                 .iter()
