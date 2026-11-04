@@ -1179,48 +1179,124 @@ fn share_axis(r: Rect) -> Axis {
 /// The wave's points: Start and End at its top, the loop's ends at its foot while it loops,
 /// each where its tab is drawn ([`paint_handles`]).
 pub fn wave_points(def: &BuiltinDef, r: Rect, values: &[f64]) -> Vec<Point> {
+    wave_points_turned(def, r, values, None)
+}
+
+/// [`wave_points`] while the cut turns over (`turn`, [`View::turn`]): the loop's ends move
+/// with the wave; what they are and what they move stay what the values say.
+pub fn wave_points_turned(
+    def: &BuiltinDef,
+    r: Rect,
+    values: &[f64],
+    turn: Option<f64>,
+) -> Vec<Point> {
     if r.w <= 0.0 {
         return Vec::new();
     }
     let ax = share_axis(r);
-    let cut = cut_of(def, values);
-    let mut out = Vec::new();
-    let mut at = |id: &str, y: f32, shown: bool| {
-        if let Some(k) = idx(def, id) {
-            let v = plain(def, values, id);
-            // A loop's end within a reversed cut shows where the wave shows it, and moves
-            // along the wave the other way (low 1).
-            let axis = match cut {
-                (s, e, true) if shown && (s..=e).contains(&(v / 100.0)) => {
-                    let m = (s + e) * 100.0;
-                    Axis::lin(ax.a, ax.b, m, m - 100.0)
-                }
-                _ => ax,
-            };
-            let mut p = point(def, values, k, (axis.px(v), y), "");
-            p.x = Some(Drive { k, axis });
-            out.push(p);
-        }
+    let value = |k: usize| {
+        let spec = &def.params[k];
+        spec.to_plain(values.get(k).copied().unwrap_or(spec.default_norm()))
     };
-    at("start", r.y + TAB.1 / 2.0, false);
-    at("end", r.y + TAB.1 / 2.0, false);
-    if on(def, values, "loop") {
-        at("loop_start", r.bottom() - TAB.1 / 2.0, true);
-        at("loop_end", r.bottom() - TAB.1 / 2.0, true);
+    let mut out = Vec::new();
+    let top = r.y + TAB.1 / 2.0;
+    for k in ["start", "end"].into_iter().filter_map(|id| idx(def, id)) {
+        let mut p = point(def, values, k, (ax.px(value(k)), top), "");
+        p.x = Some(Drive { k, axis: ax });
+        out.push(p);
+    }
+    let (Some(ls), Some(le)) = (idx(def, "loop_start"), idx(def, "loop_end")) else {
+        return out;
+    };
+    if !on(def, values, "loop") {
+        return out;
+    }
+    let foot = r.bottom() - TAB.1 / 2.0;
+    let (s, e, now) = cut_of(def, values);
+    let cut = (s * 100.0, e * 100.0, turn.unwrap_or(now));
+    match mirror(def, values, ls) {
+        // Reversed, the voice plays the loop's ends mirrored about Start + End: the left one
+        // is where the loop starts as it is heard. It is Loop Start, reads where it is on the
+        // wave and grows to the right; what it moves is Loop End (low 1, N5-smp-1). Its axis
+        // does not hang on where it is, so a drag out of the cut goes on the same way.
+        Some((_, m)) => {
+            let axis = Axis::lin(ax.a, ax.b, m, m - 100.0);
+            for (shown, k) in [(ls, le), (le, ls)] {
+                let x = ax.px(loop_at(value(k), cut));
+                let mut p = point(def, values, shown, (x, foot), "");
+                let spec = &def.params[shown];
+                p.value = control::text(spec, spec.to_norm(m - value(k)));
+                p.x = Some(Drive { k, axis });
+                p.wheel = Some(k);
+                out.push(p);
+            }
+        }
+        None => {
+            for k in [ls, le] {
+                let mut p = point(def, values, k, (ax.px(loop_at(value(k), cut)), foot), "");
+                p.x = Some(Drive { k, axis: ax });
+                out.push(p);
+            }
+        }
     }
     out
 }
 
+/// While a reversed cut loops (low 1), the voice plays the loop's ends mirrored about
+/// Start + End, and the wave shows them so: the loop's end `k` shows as the other one, at
+/// `m − v` (plain). `Some((the one it shows as, m))` then.
+pub fn mirror(def: &BuiltinDef, values: &[f64], k: usize) -> Option<(usize, f64)> {
+    if !matches!(def.uid, "sampler" | "drum-kit") || !on(def, values, "loop") {
+        return None;
+    }
+    let (s, e, t) = cut_of(def, values);
+    let (ls, le) = (idx(def, "loop_start")?, idx(def, "loop_end")?);
+    let shown = if k == ls {
+        le
+    } else if k == le {
+        ls
+    } else {
+        return None;
+    };
+    (t >= 0.5).then_some((shown, (s + e) * 100.0))
+}
+
+/// Whether the cut plays backwards.
+pub fn reversed(def: &BuiltinDef, values: &[f64]) -> bool {
+    on(def, values, "reverse")
+}
+
+/// The value (0..1) of `spec` at `v` as it shows mirrored about `m` ([`mirror`]), and back.
+pub fn mirrored(spec: &xirius_params::ParamSpec, v: f64, m: f64) -> f64 {
+    control::snap(spec, spec.to_norm(m - spec.to_plain(v)))
+}
+
+/// Where a loop's end at `v` shows while the cut `s..e` (plain) is turned `t` (0 forwards,
+/// 1 reversed): mirrored about Start + End wherever it is, as the voice plays it.
+pub fn loop_at(v: f64, (s, e, t): (f64, f64, f64)) -> f64 {
+    v + t * (s + e - 2.0 * v)
+}
+
 /// The loop's span on the wave while it loops: 2 px in from the top and the foot (the
-/// mock's), and where the wave shows it, so a reversed cut's loop lies where the voice that
+/// mock's), between where its ends show, so a reversed cut's loop lies where the voice that
 /// sounds loops (low 1).
 pub fn loop_band(def: &BuiltinDef, r: Rect, values: &[f64]) -> Option<Rect> {
+    loop_band_turned(def, r, values, None)
+}
+
+pub fn loop_band_turned(
+    def: &BuiltinDef,
+    r: Rect,
+    values: &[f64],
+    turn: Option<f64>,
+) -> Option<Rect> {
     if !on(def, values, "loop") {
         return None;
     }
     let ax = share_axis(r);
-    let cut = cut_of(def, values);
-    let x = |id: &str| ax.px(wave_at(plain(def, values, id) / 100.0, cut) * 100.0);
+    let (s, e, t) = cut_of(def, values);
+    let cut = (s * 100.0, e * 100.0, turn.unwrap_or(t));
+    let x = |id: &str| ax.px(loop_at(plain(def, values, id), cut));
     let (a, b) = (x("loop_start"), x("loop_end"));
     let (a, b) = (a.min(b), a.max(b));
     (b > a).then(|| Rect::new(a, r.y + 2.0, b - a, (r.h - 4.0).max(0.0)))
@@ -1235,9 +1311,9 @@ pub fn paint_handles(pen: &mut Pen, plane: Rect, points: &[Point], view: &View) 
     for (i, p) in points.iter().enumerate() {
         let foot = p.at.1 > plane.y + plane.h / 2.0;
         let hot = view.hot == Some(i) || (view.held && view.chosen == Some(i));
-        let tone = if view.bypassed {
-            c.scroll_thumb[0]
-        } else if hot {
+        // The same while the device is off: the mock dims only its graphs' lines, and the
+        // wave's ink would hide them (low 6).
+        let tone = if hot {
             c.ink_strong
         } else if foot {
             c.ink_blue
@@ -1293,6 +1369,7 @@ pub fn wave_inks(c: &crate::paint::Colors) -> WaveInks {
 }
 
 pub fn paint_wave(pen: &mut Pen, def: &BuiltinDef, r: Rect, values: &[f64], view: &View) {
+    let turn = view.turn.map(f64::from);
     if r.w <= 0.0 {
         return;
     }
@@ -1307,7 +1384,7 @@ pub fn paint_wave(pen: &mut Pen, def: &BuiltinDef, r: Rect, values: &[f64], view
         ax.px(plain(def, values, "end")),
     );
     pen.mask(r, |pen| {
-        if let Some(band) = loop_band(def, r, values) {
+        if let Some(band) = loop_band_turned(def, r, values, turn) {
             pen.round(band, inks.span, Radius::Clip);
         }
         match view.wave {
@@ -1315,14 +1392,15 @@ pub fn paint_wave(pen: &mut Pen, def: &BuiltinDef, r: Rect, values: &[f64], view
                 let cols = i.w.max(1.0) as usize;
                 let per = p.frames as f64 / cols as f64;
                 let level = p.level_for(per);
-                let cut = cut_of(def, values);
+                let (s, e, now) = cut_of(def, values);
+                let cut = (s, e, turn.unwrap_or(now));
                 let half = i.h / 2.0;
                 let mut top = Vec::with_capacity(cols);
                 let mut bottom = Vec::with_capacity(cols);
                 for n in 0..cols {
-                    let m = wave_column(n, cols, cut);
-                    let (a, b) = (m as f64 * per, (m + 1) as f64 * per);
-                    let pk = p.reduce(level, a, b).unwrap_or_default();
+                    let pk = wave_column(n, cols, cut)
+                        .and_then(|m| p.reduce(level, m as f64 * per, (m + 1) as f64 * per))
+                        .unwrap_or_default();
                     let x = i.x + n as f32 - r.x;
                     top.push((x, mid - half * f32::from(pk.max) / 127.0));
                     bottom.push((x, mid - half * f32::from(pk.min) / 127.0));
@@ -1347,37 +1425,55 @@ pub fn paint_wave(pen: &mut Pen, def: &BuiltinDef, r: Rect, values: &[f64], view
                 // A reversed file reads its cut from End back to Start: the cut shows
                 // backwards in its place, and the line goes from Start to End over it, as on
                 // the mock.
-                let x = ax.px(wave_at(at / 100.0, cut_of(def, values)) * 100.0);
+                let (s, e, now) = cut_of(def, values);
+                let x = ax.px(wave_at(at / 100.0, (s, e, turn.unwrap_or(now))) * 100.0);
                 pen.fill(Rect::new(x - 1.0, r.y, 2.0, r.h), c.ink_strong);
             }
         }
     });
 }
 
-/// Start and End as shares of the file, and whether it plays backwards.
-fn cut_of(def: &BuiltinDef, values: &[f64]) -> (f64, f64, bool) {
+/// Start and End as shares of the file, and how far the cut is turned: 1 while it plays
+/// backwards, else 0.
+fn cut_of(def: &BuiltinDef, values: &[f64]) -> (f64, f64, f64) {
     let (s, e) = (plain(def, values, "start"), plain(def, values, "end"));
     (
         s.min(e) / 100.0,
         s.max(e) / 100.0,
-        on(def, values, "reverse"),
+        if on(def, values, "reverse") { 1.0 } else { 0.0 },
     )
 }
 
-/// Where along the wave the file's share `p` shows, and the other way: reversed, the cut
-/// between Start and End shows backwards in its place, the rest as it is (low 1).
-pub fn wave_at(p: f64, (s, e, reverse): (f64, f64, bool)) -> f64 {
-    if reverse && (s..=e).contains(&p) {
-        s + e - p
+/// Where along the wave the file's share `p` shows while the cut `s..e` is turned `t`:
+/// reversed (1), the cut shows backwards in its place, the rest as it is (low 1); between,
+/// the cut is turning over about its middle, so Reverse does not make it jump.
+pub fn wave_at(p: f64, (s, e, t): (f64, f64, f64)) -> f64 {
+    if (s..=e).contains(&p) {
+        p + t * (s + e - 2.0 * p)
     } else {
         p
     }
 }
 
-/// The column of the file the `n`th of `cols` columns of the wave draws.
-pub fn wave_column(n: usize, cols: usize, cut: (f64, f64, bool)) -> usize {
-    let at = wave_at((n as f64 + 0.5) / cols as f64, cut);
-    ((at * cols as f64) as usize).min(cols.saturating_sub(1))
+/// The column of the file the `n`th of `cols` columns of the wave draws: none where the cut,
+/// turning over, does not reach.
+pub fn wave_column(n: usize, cols: usize, (s, e, t): (f64, f64, f64)) -> Option<usize> {
+    let x = (n as f64 + 0.5) / cols as f64;
+    let at = if (s..=e).contains(&x) {
+        // [`wave_at`] the other way.
+        let d = 1.0 - 2.0 * t;
+        if d.abs() < 1e-9 {
+            return None;
+        }
+        let p = (x - t * (s + e)) / d;
+        if !(s - 1e-9..=e + 1e-9).contains(&p) {
+            return None;
+        }
+        p.clamp(s, e)
+    } else {
+        x
+    };
+    Some(((at * cols as f64) as usize).min(cols.saturating_sub(1)))
 }
 
 // ------------------------------------------------------------------ the spots

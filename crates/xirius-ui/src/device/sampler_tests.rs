@@ -679,30 +679,33 @@ fn ui_334_a_pad_of_130_layers_draws_and_the_first_edge_stops_at_the_least_top() 
 fn ui_333_reversed_the_play_line_stands_over_what_it_reads() {
     let cols = 400;
     for cut in [
-        (0.1, 0.4, true),
-        (0.25, 0.9, true),
-        (0.0, 1.0, true),
-        (0.3, 0.6, false),
+        (0.1, 0.4, 1.0),
+        (0.25, 0.9, 1.0),
+        (0.0, 1.0, 1.0),
+        (0.3, 0.6, 0.0),
     ] {
         let mut last = None;
         for k in [0.9, 0.5, 0.1] {
             let p = cut.0 + (cut.1 - cut.0) * k;
             let x = sampler::wave_at(p, cut);
-            let m = sampler::wave_column((x * cols as f64) as usize, cols, cut);
+            let m = sampler::wave_column((x * cols as f64) as usize, cols, cut).unwrap();
             assert!(
                 (m as f64 / cols as f64 - p).abs() < 2.0 / cols as f64,
                 "{cut:?} {p}"
             );
-            if cut.2 {
+            if cut.2 > 0.5 {
                 // End back to Start in the file is Start to End on the wave.
                 assert!(last.is_none_or(|l| x > l), "{cut:?} {p}");
             }
             last = Some(x);
         }
     }
-    assert_eq!(sampler::wave_column(20, cols, (0.1, 0.4, true)), 20);
-    assert_eq!(sampler::wave_column(300, cols, (0.1, 0.4, true)), 300);
-    assert_eq!(sampler::wave_column(0, cols, (0.0, 1.0, true)), cols - 1);
+    assert_eq!(sampler::wave_column(20, cols, (0.1, 0.4, 1.0)), Some(20));
+    assert_eq!(sampler::wave_column(300, cols, (0.1, 0.4, 1.0)), Some(300));
+    assert_eq!(
+        sampler::wave_column(0, cols, (0.0, 1.0, 1.0)),
+        Some(cols - 1)
+    );
 }
 
 #[test]
@@ -796,16 +799,259 @@ fn reversed_the_loops_span_and_ends_lie_where_the_voice_loops() {
     // 20..30 of the file, reversed in 10..90, shows at 70..80.
     let band = sampler::loop_band(def, r, &reversed).unwrap();
     assert!((band.x - shown.x).abs() < 0.01 && (band.w - shown.w).abs() < 0.01);
+    // The left end is where the loop starts as it is heard: Loop Start, reading where it is
+    // on the wave (70); what it moves is the file's Loop End (2026-11-04).
     let ends = sampler::wave_points(def, r, &reversed);
     let (start, end) = (&ends[2], &ends[3]);
-    assert!((start.at.0 - shown.right()).abs() < 0.01, "{:?}", start.at);
-    assert!((end.at.0 - shown.x).abs() < 0.01, "{:?}", end.at);
-    // Dragged right along the wave, the loop's start goes back in the file.
-    let k = sampler::idx(def, "loop_start").unwrap();
-    let to = start.x.unwrap().moved(&def.params[k], reversed[k], 20.0);
-    assert!(def.params[k].to_plain(to) < 20.0, "{to}");
+    assert_eq!(
+        (start.name.as_str(), end.name.as_str()),
+        ("Loop Start", "Loop End")
+    );
+    assert!((start.at.0 - shown.x).abs() < 0.01, "{:?}", start.at);
+    assert!((end.at.0 - shown.right()).abs() < 0.01, "{:?}", end.at);
+    assert_eq!((start.value.as_str(), end.value.as_str()), ("70 %", "80 %"));
+    let (ls, le) = (
+        sampler::idx(def, "loop_start").unwrap(),
+        sampler::idx(def, "loop_end").unwrap(),
+    );
+    let drive = start.x.unwrap();
+    assert_eq!((drive.k, start.wheel), (le, Some(le)));
+    // Dragged right, it stays under the pointer and reads more (the file's loop ends sooner);
+    // the right one dragged left the same.
+    let moved = |i: usize, d: f32| {
+        let p = &ends[i];
+        let k = p.x.unwrap().k;
+        let mut v = reversed.clone();
+        v[k] = p.x.unwrap().moved(&def.params[k], reversed[k], d);
+        let q = sampler::wave_points(def, r, &v).swap_remove(i);
+        assert!(
+            (q.at.0 - (p.at.0 + d)).abs() < 0.5,
+            "{i}: {:?} {:?}",
+            p.at,
+            q.at
+        );
+        (q.value, def.params[k].to_plain(v[k]))
+    };
+    let (shown, file) = moved(2, 20.0);
+    assert!(shown.as_str() > "70 %" && file < 30.0, "{shown} {file}");
+    assert_eq!(end.x.unwrap().k, ls);
+    let (shown, file) = moved(3, -20.0);
+    assert!(shown.as_str() < "80 %" && file > 20.0, "{shown} {file}");
     // Off, there is no span.
     assert!(sampler::loop_band(def, r, &values(&cut[..2])).is_none());
+}
+
+/// A Sampler in its window, its zone's cut 10..90 looping 20..30 of the file, reversed: the
+/// loop is heard, and shown, at 70..80.
+fn reversed_loop() -> (Studio, Geometry, TrackId, PluginId) {
+    let (mut s, g, t, id) = window("Sampler");
+    add(&mut s, id, &["C3.wav"]);
+    let zone = s.instruments.open[0].pick + 1;
+    for (key, plain) in [
+        ("start", 10.0),
+        ("end", 90.0),
+        ("loop", 1.0),
+        ("loop_start", 20.0),
+        ("loop_end", 30.0),
+        ("reverse", 1.0),
+    ] {
+        let x = plugin(&s, t);
+        let def = s.instruments.def_of(&x).unwrap();
+        let k = sampler::idx(def, key).unwrap();
+        let set = json!({
+            "id": id.to_string(),
+            "param": format!("file{zone}.{key}"),
+            "value": def.params[k].to_norm(plain),
+        });
+        assert!(s.run_command("plugin.param.set", set), "{:?}", s.error);
+    }
+    (s, g, t, id)
+}
+
+/// The zone's loop's ends in the file (plain), start and end, as the window shows them
+/// (while they are turned, too).
+fn file_loop(s: &Studio, t: TrackId) -> (f64, f64) {
+    let x = plugin(s, t);
+    let def = s.instruments.def_of(&x).unwrap();
+    let v = s.instruments.shown(&x);
+    let at = |key: &str| {
+        let k = sampler::idx(def, key).unwrap();
+        def.params[k].to_plain(v[k])
+    };
+    (at("loop_start"), at("loop_end"))
+}
+
+/// N5-smp-1 and the 2026-11-04 decision (UI-333): reversed, the loop's left end follows the
+/// pointer and reads more to the right; drawn out of the cut it goes on the same way, never
+/// back and forth.
+#[test]
+fn n5_smp_1_a_reversed_loops_end_follows_the_pointer_out_of_the_cut() {
+    let (mut s, g, t, id) = reversed_loop();
+    let (x, y) = s
+        .instrument_center(&g, id, Part::Point(0, 2))
+        .expect("the loop's left end");
+    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
+    // To the left, past Start (10 % of the wave) to the window's edge.
+    let mut last = file_loop(&s, t).1;
+    let mut followed = 0;
+    for d in 1..=60 {
+        let to = x - d as f32 * 8.0;
+        s.instrument_moved(&g, to, y, false);
+        let end = file_loop(&s, t).1;
+        assert!(end >= last, "back and forth at {d}: {last} → {end}");
+        last = end;
+        if end < 100.0 {
+            // Under the pointer while there is room for it.
+            let (at, _) = s
+                .instrument_center(&g, id, Part::Point(0, 2))
+                .expect("in sight");
+            assert!((at - to).abs() < 2.0, "{d}: {at} vs {to}");
+            followed += 1;
+        }
+    }
+    assert!(s.instrument_up());
+    assert!(followed > 20, "{followed}");
+    // Well out of the cut (it is heard from 10 % of the wave on).
+    assert!(last > 90.0, "{last}");
+    assert_eq!(file_loop(&s, t).0, 20.0);
+}
+
+/// The 2026-11-04 decision (UI-333): reversed, the wheel, the keys and a screen reader move
+/// the loop's left end as the screen shows it, and it reads as Loop Start where it is.
+#[test]
+fn ui_333_reversed_the_keys_and_the_reader_turn_the_loops_ends_as_shown() {
+    let (mut s, g, t, id) = reversed_loop();
+    let x = plugin(&s, t);
+    let def = s.instruments.def_of(&x).unwrap();
+    let (ls, le) = (
+        sampler::idx(def, "loop_start").unwrap(),
+        sampler::idx(def, "loop_end").unwrap(),
+    );
+    // The reader: Loop Start reads 70 (where it is), Loop End 80.
+    let slider = |s: &Studio, key: &str| {
+        let key = format!("device-{id}-point-file1.{key}");
+        let marks = crate::a11y::marks(s, &g);
+        let m = marks
+            .iter()
+            .find(|m| m.key == key)
+            .unwrap_or_else(|| panic!("{key}"));
+        (
+            m.node.label().map(str::to_string),
+            m.node.value().map(str::to_string),
+            m.node.bounds().map(|b| b.x0),
+        )
+    };
+    let (label, value, a) = slider(&s, "loop_start");
+    assert_eq!(label.as_deref(), Some("Loop Start"));
+    assert_eq!(value.as_deref(), Some("70 %"));
+    let (label, value, b) = slider(&s, "loop_end");
+    assert_eq!(label.as_deref(), Some("Loop End"));
+    assert_eq!(value.as_deref(), Some("80 %"));
+    assert!(a.unwrap() < b.unwrap(), "Loop Start is the left one");
+    // Up, as the reader turns it: it reads more, the file's loop ends sooner.
+    assert!(crate::a11y::turn(&mut s, id, le, crate::a11y::Turn::Up));
+    s.device_sweep_end();
+    assert!(file_loop(&s, t).1 < 30.0, "{:?}", file_loop(&s, t));
+    // To a value, as it reads.
+    assert!(crate::a11y::turn(
+        &mut s,
+        id,
+        le,
+        crate::a11y::Turn::To(75.0)
+    ));
+    s.device_sweep_end();
+    assert!(
+        (file_loop(&s, t).1 - 25.0).abs() < 0.01,
+        "{:?}",
+        file_loop(&s, t)
+    );
+    assert_eq!(slider(&s, "loop_start").1.as_deref(), Some("75 %"));
+    // The wheel over it, up: more, as it reads.
+    let (x, y) = s.instrument_center(&g, id, Part::Point(0, 2)).unwrap();
+    assert!(s.device_wheel(&g, x, y, 1.0, false));
+    s.device_sweep_end();
+    assert!(file_loop(&s, t).1 < 25.0, "{:?}", file_loop(&s, t));
+    // The keys: right is more, Home its left end; the right end's too.
+    s.instruments.focus = Some((id, le));
+    let before = file_loop(&s, t).1;
+    assert!(s.device_key(&g, "right", Mods::NONE));
+    s.device_sweep_end();
+    assert!(file_loop(&s, t).1 < before);
+    assert!(s.device_key(&g, "home", Mods::NONE));
+    s.device_sweep_end();
+    assert_eq!(file_loop(&s, t).1, 100.0, "reads 0, at the wave's left");
+    s.instruments.focus = Some((id, ls));
+    assert!(s.device_key(&g, "left", Mods::NONE));
+    s.device_sweep_end();
+    assert!(file_loop(&s, t).0 > 20.0, "{:?}", file_loop(&s, t));
+}
+
+/// The 2026-11-04 decision (UI-333): Reverse turns the cut over in a moment, the wave, the
+/// loop's span and its ends going through between, Start and End staying; not at all under
+/// reduced motion.
+#[test]
+fn ui_333_reverse_turns_the_cut_over_in_a_moment() {
+    use std::time::{Duration, Instant};
+    let (mut s, _g, t, id) = reversed_loop();
+    s.motion.enabled.set(true);
+    let set = |s: &mut Studio, on: f64| {
+        let zone = s.instruments.open[0].pick + 1;
+        let set = json!({
+            "id": id.to_string(),
+            "param": format!("file{zone}.reverse"),
+            "value": on,
+        });
+        assert!(s.run_command("plugin.param.set", set), "{:?}", s.error);
+    };
+    let turn = |s: &Studio, at: Instant| {
+        let x = plugin(s, t);
+        let def = s.instruments.def_of(&x).unwrap();
+        let w = s.instruments.open[0];
+        let shown = s.instruments.shown(&x);
+        crate::instrument::window::turn_of(s, def, &w, &shown, at).unwrap()
+    };
+    let t0 = Instant::now();
+    assert_eq!(turn(&s, t0), 1.0, "as it opened");
+    set(&mut s, 0.0);
+    assert_eq!(turn(&s, t0), 1.0, "it starts where it was");
+    let mid = turn(&s, t0 + Duration::from_millis(100));
+    assert!(0.0 < mid && mid < 1.0, "{mid}");
+    assert_eq!(turn(&s, t0 + Duration::from_millis(300)), 0.0);
+    // Reduced motion: at once.
+    s.ai.motion = xirius_design::Motion::new(true);
+    set(&mut s, 1.0);
+    assert_eq!(turn(&s, t0 + Duration::from_millis(301)), 1.0);
+    // Drawn between: the span and the loop's ends between where they were and where they
+    // go, Start and End where they are, and the cut's wave narrowed about its middle.
+    let x = plugin(&s, t);
+    let def = s.instruments.def_of(&x).unwrap();
+    let v = s.instruments.shown(&x);
+    let r = Rect::new(0.0, 0.0, 400.0, 100.0);
+    let band = |turn| sampler::loop_band_turned(def, r, &v, Some(turn)).unwrap();
+    let (forward, back, half) = (band(0.0), band(1.0), band(0.25));
+    assert!(forward.x < back.x, "{forward:?} {back:?}");
+    assert!(forward.x < half.x && half.x < back.x, "{half:?}");
+    // Narrowed with the cut's wave as it turns over.
+    assert!((half.w - forward.w / 2.0).abs() < 0.01, "{half:?}");
+    let points = |turn| sampler::wave_points_turned(def, r, &v, Some(turn));
+    let (a, b) = (points(1.0), points(0.25));
+    for i in 0..2 {
+        assert_eq!(a[i].at, b[i].at, "Start and End stay");
+    }
+    let ends = [b[2].at.0, b[3].at.0];
+    assert!(
+        ends.iter()
+            .all(|x| (x - half.x).abs() < 0.01 || (x - half.right()).abs() < 0.01)
+    );
+    let cols = 400;
+    let cut = (0.1, 0.9, 0.25);
+    assert_eq!(sampler::wave_column(60, cols, cut), None, "the cut narrows");
+    assert!(sampler::wave_column(200, cols, cut).is_some());
+    assert_eq!(
+        sampler::wave_column(20, cols, cut),
+        Some(20),
+        "the rest as it is"
+    );
 }
 
 /// Low 23, the fourth review's low 2 (UI-333): the keys' names go once the window's content

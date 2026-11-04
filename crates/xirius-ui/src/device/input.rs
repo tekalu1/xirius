@@ -16,6 +16,7 @@ use xirius_prefs::midimap::Target;
 use super::control::{self, Look, Step};
 use super::graph::{self, Point};
 use super::layout::{self, Slot};
+use super::sampler;
 use crate::context::Item;
 use crate::instrument::window::{Grab, Part, Win, live, values_of};
 use crate::settings::FieldId;
@@ -85,6 +86,29 @@ impl Studio {
         self.instruments
             .turning(plugin, k)
             .or_else(|| self.device(plugin)?.2.get(k).copied())
+    }
+
+    /// The mirror a reversed Sampler's loop's end `k` shows in (low 1): the wheel, the keys,
+    /// a value typed and a screen reader move what it shows, the way it moves on the wave.
+    fn device_mirror(&self, plugin: PluginId, k: usize) -> Option<f64> {
+        let (_, def, values) = self.device(plugin)?;
+        sampler::mirror(def, &values, k).map(|(_, m)| m)
+    }
+
+    /// [`Self::device_turn`] of what the control shows: a mirrored loop's end turns its
+    /// mirror ([`Self::device_mirror`]).
+    fn device_turn_shown(
+        &mut self,
+        plugin: PluginId,
+        k: usize,
+        to: impl FnOnce(&ParamSpec, f64) -> f64,
+    ) -> bool {
+        match self.device_mirror(plugin, k) {
+            Some(m) => self.device_turn(plugin, k, |spec, v| {
+                sampler::mirrored(spec, to(spec, sampler::mirrored(spec, v, m)), m)
+            }),
+            None => self.device_turn(plugin, k, to),
+        }
     }
 
     /// The control `k` of `plugin` goes to `value` in the song (one step);
@@ -180,6 +204,10 @@ impl Studio {
         };
         match spec.typed(&e.field.text()) {
             Some(plain) => {
+                let plain = match self.device_mirror(e.plugin, e.k) {
+                    Some(m) => m - plain,
+                    None => plain,
+                };
                 let v = control::snap(spec, spec.to_norm(plain));
                 self.device_set(e.plugin, e.k, v)
             }
@@ -383,6 +411,10 @@ impl Studio {
     /// Opens the field a knob's value is typed in.
     fn device_type(&mut self, plugin: PluginId, k: usize, spec: &ParamSpec, now: f64) {
         self.instruments.grab = None;
+        let now = match self.device_mirror(plugin, k) {
+            Some(m) => sampler::mirrored(spec, now, m),
+            None => now,
+        };
         self.instruments.entry = Some(Entry {
             plugin,
             k,
@@ -493,7 +525,7 @@ impl Studio {
             _ => return true,
         };
         let plugin = self.instruments.open[i].plugin;
-        self.device_turn(plugin, k, |spec, v| control::wheel(spec, v, notches, fine));
+        self.device_turn_shown(plugin, k, |spec, v| control::wheel(spec, v, notches, fine));
         true
     }
 
@@ -745,12 +777,20 @@ impl Studio {
             _ => None,
         };
         if let Some((dir, by)) = by {
-            self.device_turn(plugin, k, |spec, v| control::step(spec, v, dir, by));
+            self.device_turn_shown(plugin, k, |spec, v| control::step(spec, v, dir, by));
             return true;
         }
+        let ends = (control::snap(spec, 0.0), control::snap(spec, 1.0));
+        let ends = match self.device_mirror(plugin, k) {
+            Some(m) => (
+                sampler::mirrored(spec, ends.0, m),
+                sampler::mirrored(spec, ends.1, m),
+            ),
+            None => ends,
+        };
         let to = match key {
-            "home" => control::snap(spec, 0.0),
-            "end" => control::snap(spec, 1.0),
+            "home" => ends.0,
+            "end" => ends.1,
             "delete" | "backspace" => control::snap(spec, spec.default_norm()),
             "enter" => match control::look(spec) {
                 Look::Toggle => 1.0 - now.round(),
@@ -897,6 +937,7 @@ impl Studio {
                         self.device_sweep_end();
                     }
                 }
+                let at = self.device_mirror(plugin, k).map_or(at, |m| m - at);
                 let v = control::snap(spec, spec.to_norm(at));
                 if !self.device_set(plugin, k, v) {
                     // Back where the song has it: what was heard of the sweep goes.
@@ -905,7 +946,7 @@ impl Studio {
                 return true;
             }
         };
-        self.device_turn(plugin, k, |spec, v| {
+        self.device_turn_shown(plugin, k, |spec, v| {
             control::step(spec, v, dir, Step::Small)
         })
     }

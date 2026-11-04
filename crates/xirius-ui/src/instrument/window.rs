@@ -1999,6 +1999,30 @@ impl Studio {
     }
 }
 
+/// How far a Sampler's or a Drum Kit's cut is turned over at `now` (0 forward, 1 reversed):
+/// Reverse turns it over in a moment, not at once (low 1); at once under reduced motion.
+pub(crate) fn turn_of(
+    studio: &Studio,
+    def: &BuiltinDef,
+    w: &Win,
+    shown: &[f64],
+    now: std::time::Instant,
+) -> Option<f32> {
+    matches!(def.uid, "sampler" | "drum-kit").then(|| {
+        studio.motion.value(
+            &format!("turn-{}-{}-{}", w.plugin, w.pick, w.layer),
+            if sampler::reversed(def, shown) {
+                1.0
+            } else {
+                0.0
+            },
+            xirius_design::Duration::Base,
+            studio.ai.motion,
+            now,
+        )
+    })
+}
+
 /// The face in the mixer's drawer (MIX-046), under the windows.
 pub fn paint_docked(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     let p = studio.project();
@@ -2154,6 +2178,7 @@ fn paint_window(
                     .and_then(|e| e.since(std::time::Instant::now())),
                 wave: peaks.as_deref(),
                 live: sounding,
+                turn: turn_of(studio, def, &w, &shown, std::time::Instant::now()),
             };
             graph::paint(pen, def, n, plane, &shown, &view);
         }

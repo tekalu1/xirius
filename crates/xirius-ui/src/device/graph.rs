@@ -252,6 +252,9 @@ pub struct View<'a> {
     pub wave: Option<&'a Peaks>,
     /// The newest voice of a Sampler or a Drum Kit while it sounds (UI-333, UI-334).
     pub live: Option<Live>,
+    /// How far a Sampler's or a Drum Kit's cut is turned over while Reverse turns it (0
+    /// forwards, 1 reversed); None: as its values say.
+    pub turn: Option<f32>,
 }
 
 /// Where a Sampler's or a Drum Kit's newest voice is, as the window shows it (UI-333,
@@ -312,7 +315,7 @@ pub fn paint(pen: &mut Pen, def: &BuiltinDef, n: usize, r: Rect, values: &[f64],
         }
         ("sampler" | "drum-kit", 0) => {
             super::sampler::paint_wave(pen, def, r, values, view);
-            super::sampler::wave_points(def, r, values)
+            super::sampler::wave_points_turned(def, r, values, view.turn.map(f64::from))
         }
         ("sampler" | "drum-kit", 1) => {
             super::sampler::paint_env(pen, def, r, values, view);
