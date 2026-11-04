@@ -17,6 +17,9 @@ use crate::studio::Rect;
 
 /// How often the history takes a sample.
 pub const STEP: Duration = Duration::from_millis(25);
+/// More steps than this between two frames is a pause of the frames (the
+/// window drew nothing while it was quiet), not a slow frame.
+const PAUSE: u32 = 10;
 /// The bottom of the history's and the transfer curve's scale, in dB.
 pub const FLOOR: f64 = -60.0;
 /// The reduction the meter and the history's line span, in dB.
@@ -95,8 +98,17 @@ impl Dynamics {
         }
         let cap = (span.as_micros() / STEP.as_micros()) as usize;
         if let Some(s) = self.pending.take() {
-            for _ in 0..(steps as usize).min(cap) {
-                self.history.push_back(s);
+            let n = (steps as usize).min(cap);
+            // After a pause the gathered sample is the newest step; the steps
+            // before it show quiet, not a flat block of that sample (L-ui-4).
+            let quiet = Sample {
+                input: FLOOR as f32,
+                output: FLOOR as f32,
+                gr: 0.0,
+            };
+            for k in 0..n {
+                let paused = steps > PAUSE && k + 1 < n;
+                self.history.push_back(if paused { quiet } else { s });
             }
         }
         while self.history.len() > cap {

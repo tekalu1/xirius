@@ -169,6 +169,14 @@ fn ui_327_the_history_keeps_four_seconds_and_the_readouts_their_most() {
     );
     assert_eq!(d.history.len(), cap);
     assert!(d.over());
+    // The frames paused: the gap is quiet and only the newest step is loud.
+    let loud_ones = d.history.iter().filter(|s| s.output > -59.0).count();
+    assert_eq!(loud_ones, 1);
+    assert!(d.history.back().unwrap().output > 0.0);
+    // A slow frame of a few steps fills them with what it gathered.
+    let t1 = t0 + Duration::from_secs(60);
+    d.feed(loud, 6.0, t1 + STEP * 3, SPAN);
+    assert!(d.history.iter().rev().take(3).all(|s| s.gr == 6.0));
     d.clear(2);
     assert_eq!(d.readout(2), "-\u{221e}");
     assert!(!d.over());
