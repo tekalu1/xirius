@@ -643,14 +643,16 @@ fn samples_dir() -> std::path::PathBuf {
 const STALE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
 /// Takes away the samples' folders an earlier run left (its shots were taken from them, so
-/// they stay until the next run) (low 26): only those untouched for [`STALE`], so a run going
-/// on in another worktree keeps its own (the fourth review's low 5).
+/// they stay until the next run) (low 26): only those whose run has ended, so a run going on
+/// in another worktree keeps its own (the fourth review's low 5). A folder's time moves only
+/// as files come and go in it, so the run is told by the process its name gives (the fifth
+/// review's low 9); [`STALE`] is for where that cannot be asked.
 fn sweep_samples() {
     sweep(SAMPLES, &samples_dir(), STALE);
 }
 
-/// Takes away the folders right under the temp folder named from `prefix`, but `keep` and
-/// those changed within `age`.
+/// Takes away the folders right under the temp folder named from `prefix`, but `keep`, those
+/// named for a process still running, and others changed within `age`.
 fn sweep(prefix: &str, keep: &std::path::Path, age: std::time::Duration) {
     let Ok(dirs) = std::fs::read_dir(std::env::temp_dir()) else {
         return;
@@ -663,10 +665,49 @@ fn sweep(prefix: &str, keep: &std::path::Path, age: std::time::Duration) {
             .ok()
             .and_then(|t| t.elapsed().ok())
             .is_some_and(|e| e >= age);
-        if path != keep && old && d.file_name().to_string_lossy().starts_with(prefix) {
+        let name = d.file_name().to_string_lossy().into_owned();
+        let Some(rest) = name.strip_prefix(prefix) else {
+            continue;
+        };
+        let ended = match rest.parse::<u32>().ok().and_then(running) {
+            Some(on) => !on,
+            None => old,
+        };
+        if path != keep && ended {
             let _ = std::fs::remove_dir_all(path);
         }
     }
+}
+
+/// Whether the process `pid` is running; `None` where that cannot be asked.
+#[cfg(windows)]
+fn running(pid: u32) -> Option<bool> {
+    use std::ffi::c_void;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
+        fn GetExitCodeProcess(process: *mut c_void, code: *mut u32) -> i32;
+        fn CloseHandle(handle: *mut c_void) -> i32;
+    }
+    const QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const STILL_ACTIVE: u32 = 259;
+    // SAFETY: a handle opened only to read the exit code, closed before returning; none
+    // when the process is gone (or never was).
+    unsafe {
+        let h = OpenProcess(QUERY_LIMITED_INFORMATION, 0, pid);
+        if h.is_null() {
+            return Some(false);
+        }
+        let mut code = 0;
+        let read = GetExitCodeProcess(h, &mut code) != 0;
+        CloseHandle(h);
+        Some(read && code == STILL_ACTIVE)
+    }
+}
+
+#[cfg(not(windows))]
+fn running(_pid: u32) -> Option<bool> {
+    None
 }
 
 /// Writes the sample `name`: a tone at `hz` (with a drop in pitch when `drop`) or a noise
@@ -965,6 +1006,28 @@ mod tests {
         assert!(!other.exists(), "an ended run's samples are left");
         assert!(mine.exists());
         let _ = std::fs::remove_dir_all(mine);
+    }
+
+    /// The fifth review's low 9: a samples' folder named for a run still going stays, however
+    /// long untouched; one named for a process that is gone goes, though touched just now
+    /// (no process has an odd id on Windows).
+    #[cfg(windows)]
+    #[test]
+    fn a_runs_samples_stay_while_its_process_runs() {
+        let prefix = format!("xirius-devices-pid-{}-", std::process::id());
+        let dir = |n: String| {
+            let d = std::env::temp_dir().join(format!("{prefix}{n}"));
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("left.wav"), b"").unwrap();
+            d
+        };
+        let keep = std::env::temp_dir().join(format!("{prefix}none"));
+        let (going, gone) = (dir(std::process::id().to_string()), dir("3".into()));
+        sweep(&prefix, &keep, std::time::Duration::ZERO);
+        assert!(going.exists(), "a run going on lost its samples");
+        sweep(&prefix, &keep, STALE);
+        assert!(!gone.exists(), "an ended run's samples are left");
+        let _ = std::fs::remove_dir_all(going);
     }
 
     /// Low 26: stages 2 and 3 load their samples (the Sampler's two keys, the Drum Kit's five
