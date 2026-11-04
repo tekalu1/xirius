@@ -243,9 +243,6 @@ impl Studio {
             self.warn("録音・保存・書き出しの途中は曲を開けません".into(), None);
             return false;
         }
-        // A device's knob still turning belongs to the song being left, on every way out
-        // (N-par-1).
-        self.device_sweep_end();
         let is_startup = matches!(&request, Request::Startup(_));
         let replace = !matches!(&request, Request::Core(OpenRequest::CopyVersion { .. }));
         let (request, sample) = match request {
@@ -279,6 +276,11 @@ impl Studio {
         if let Err(e) = &closing {
             self.warn(e.clone(), None);
             return false;
+        }
+        // A device's knob still turning belongs to the song being left, on every way out
+        // (N-par-1); not when the open is refused, nor when a version's copy leaves it open.
+        if replace {
+            self.device_sweep_end();
         }
         if let OpenRequest::Song(path) = &request {
             self.stop_tidy(path);

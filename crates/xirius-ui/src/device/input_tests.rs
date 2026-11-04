@@ -523,6 +523,28 @@ fn ui_324_a_wheel_turn_goes_in_before_another_song_opens() {
     assert!(value(&s, t, "mix").1 > start);
 }
 
+/// Low 12 of the fourth review: a version's copy leaves the song open, so a knob still turning
+/// keeps turning in it; the open does not end the turn.
+#[test]
+fn ui_324_a_versions_copy_leaves_the_wheel_turn_running() {
+    let (mut s, g, t, id) = delay();
+    let (k, _) = value(&s, t, "mix");
+    let (x, y) = center(&s, &g, id, k);
+    let before = s.song().steps();
+    assert!(s.device_wheel(&g, x, y, 1.0, false));
+    let tmp = tempfile::tempdir().unwrap();
+    let copy = xirius_core::session::opening::OpenRequest::CopyVersion {
+        id: "missing".into(),
+        destination: tmp.path().join("copy"),
+    };
+    s.request_open(crate::opening::Request::Core(copy));
+    assert!(s.instruments.sweep.is_some());
+    assert_eq!(s.song().steps(), before);
+    s.wait_for_open_for_test();
+    assert!(s.device_sweep_end());
+    assert_eq!(s.song().steps(), before + 1);
+}
+
 /// A pad's knob turned by the wheel and its window closed from the mixer at once (L2-ui-1):
 /// the turn goes into the device it was turned on.
 #[test]
