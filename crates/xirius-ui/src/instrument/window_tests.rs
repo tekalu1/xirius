@@ -1171,3 +1171,20 @@ fn a_window_that_takes_a_wider_device_in_takes_its_width() {
     );
     assert!(w.body.0 > narrow, "{} > {narrow}", w.body.0);
 }
+
+/// Low 13 of the fourth review: a body that does not fit even at its least width is laid at
+/// the lower of its least and its full width; one that fits narrower is as wide as fits, and
+/// one that grows taller as it narrows keeps its width.
+#[test]
+fn a_body_that_cannot_fit_spills_the_least() {
+    use super::window::fit_w;
+    // Lower as it narrows, never low enough: the least width.
+    assert_eq!(fit_w(800.0, 400.0, 100.0, |w| w / 2.0), 400.0);
+    // Taller as it narrows: the full width.
+    assert_eq!(fit_w(800.0, 400.0, 100.0, |w| 1000.0 - w), 800.0);
+    // Fits from 600 down: as wide as fits.
+    let w = fit_w(800.0, 400.0, 300.0, |w| w / 2.0);
+    assert!((599.0..=600.0).contains(&w), "{w}");
+    // Fits as it is.
+    assert_eq!(fit_w(800.0, 400.0, 400.0, |w| w / 2.0), 800.0);
+}

@@ -1200,23 +1200,36 @@ pub(crate) fn body_of(
             },
         )
     };
-    let mut b = lay(r.w);
-    // Narrower only when that fits: a Drum Kit's grows taller as it narrows.
     let least = layout::min_w(def).min(r.w);
-    if b.h > room + 0.5 && lay(least).h <= room {
-        let (mut lo, mut hi) = (least, r.w);
-        for _ in 0..12 {
-            let mid = (lo + hi) / 2.0;
-            if lay(mid).h <= room {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
-        }
-        b = lay(lo.floor());
-    }
+    let w = fit_w(r.w, least, room, |w| lay(w).h);
+    let b = lay(w);
     let dx = ((r.w - b.w) / 2.0).max(0.0).floor();
     b.grown(room).at(r.x + dx, r.y + title_bar::BAR_H)
+}
+
+/// The width a body of height `h(w)` is laid at in a frame `w` wide and `room` high: its
+/// width when it fits, else as wide as fits from `least` up. Narrower only when that fits (a
+/// Drum Kit's grows taller as it narrows); when even `least` does not, the lower of the two,
+/// to spill the least (low 13 of the fourth review).
+pub(crate) fn fit_w(w: f32, least: f32, room: f32, h: impl Fn(f32) -> f32) -> f32 {
+    let full = h(w);
+    if full <= room + 0.5 {
+        return w;
+    }
+    let narrow = h(least);
+    if narrow > room {
+        return if narrow < full { least } else { w };
+    }
+    let (mut lo, mut hi) = (least, w);
+    for _ in 0..12 {
+        let mid = (lo + hi) / 2.0;
+        if h(mid) <= room {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    lo.floor()
 }
 
 /// The track, the plugin and its parameters of a window, while it is still
