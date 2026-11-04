@@ -2083,9 +2083,11 @@ impl PluginLoader {
             if s.applied.params != x.params {
                 s.handle.set_all(&x.params);
             }
-            if s.applied.samples == x.samples {
+            // The same files as applied, unless a set a full ring turned away waits to go:
+            // that one would be sent with the next poll, so these go in its place (the
+            // fourth review's low 9).
+            if s.applied.samples == x.samples && s.waiting.is_none() {
                 s.applied = x.clone();
-                s.waiting = None;
                 return true;
             }
             // A new set of files reaches the running device without a new mix (ENG-077).
@@ -3270,6 +3272,75 @@ mod tests {
         assert!(loader.stock[&x.id].waiting.is_none());
         assert!(loader.apply(&x2));
         assert_eq!(loader.stock[&x.id].applied.samples, vec!["b.wav"]);
+    }
+
+    /// The fourth review's low 9: a set turned away by a full ring, then undone back to the
+    /// files applied, sends those files with the next poll, not the set turned away.
+    #[test]
+    fn undone_back_to_the_applied_files_a_set_turned_away_does_not_go() {
+        use xirius_engine::{AudioIo, RenderMode};
+        let tmp = tempfile::Builder::new()
+            .prefix("xirius-plugin-samples-")
+            .tempdir()
+            .unwrap();
+        let mk = |samples: Vec<String>| Plugin {
+            id: PluginId(9),
+            name: "Sampler".into(),
+            kind: PluginKind::Instrument,
+            format: "builtin".into(),
+            uid: "sampler".into(),
+            bypass: false,
+            deactivated: false,
+            params: Default::default(),
+            state: None,
+            sidechain: None,
+            preset: None,
+            samples,
+            isolation: PluginIsolation::default(),
+        };
+        let mut loader = PluginLoader::new(None);
+        loader.set_sample_home(Some(tmp.path().to_path_buf()), 48_000);
+        let x = mk(vec!["a.wav".into()]);
+        let (mut p, _) = loader.stock(&x).unwrap();
+        let h = loader.stock.get(&x.id).unwrap().handle.clone();
+        for _ in 0..8 {
+            if !h.set_files(Vec::new()) {
+                break;
+            }
+        }
+        let x2 = mk(vec!["b.wav".into()]);
+        assert!(loader.apply(&x2));
+        assert_eq!(
+            loader.stock[&x.id].waiting.as_ref().map(|w| &w.samples),
+            Some(&x2.samples)
+        );
+        // Undone: A waits to go in B's place, though A is what was applied.
+        assert!(loader.apply(&x));
+        assert_eq!(
+            loader.stock[&x.id].waiting.as_ref().map(|w| &w.samples),
+            Some(&x.samples),
+            "B would go with the next poll"
+        );
+        p.prepare(&ProcessSetup {
+            sample_rate: 48_000.0,
+            max_block: 512,
+            mode: RenderMode::Realtime,
+        });
+        let (mut left, mut right) = ([0.0f32; 16], [0.0f32; 16]);
+        p.process(
+            &mut AudioIo {
+                left: &mut left,
+                right: &mut right,
+                key: None,
+            },
+            &[],
+        );
+        loader.resend_files();
+        assert_eq!(loader.stock[&x.id].applied.samples, vec!["a.wav"]);
+        assert!(loader.stock[&x.id].waiting.is_none());
+        // Applied again with nothing waiting, it returns early.
+        assert!(loader.apply(&x));
+        assert!(loader.stock[&x.id].waiting.is_none());
     }
 
     fn edit(id: u32, phase: EditPhase, value: Option<f64>) -> ParamEdit {
