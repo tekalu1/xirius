@@ -381,7 +381,17 @@ fn ui_324_the_keys_step_tab_and_go_in_once_still() {
     assert_ne!(s.instruments.focus, Some((id, k)));
     assert!(s.field_keys(&g, "tab", None, shift));
     assert_eq!(s.instruments.focus, Some((id, k)));
-    // Escape lets the keys go back to the rest of the screen.
+    // Esc while a sweep waits takes it back, nothing in (L2-ui-6); then lets the keys go
+    // back to the rest of the screen.
+    let had = value(&s, t, "feedback").1;
+    let steps = s.song().steps();
+    assert!(s.field_keys(&g, "up", None, Mods::NONE));
+    assert!(s.field_keys(&g, "escape", None, Mods::NONE));
+    assert!(s.instruments.sweep.is_none());
+    assert_eq!(s.instruments.focus, Some((id, k)));
+    assert_eq!(s.song().steps(), steps);
+    assert_eq!(value(&s, t, "feedback").1, had);
+    assert_eq!(s.device_value(id, k), Some(had));
     assert!(s.field_keys(&g, "escape", None, Mods::NONE));
     assert_eq!(s.instruments.focus, None);
     assert!(!s.device_key(&g, "up", Mods::NONE));

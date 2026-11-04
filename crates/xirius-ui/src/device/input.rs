@@ -450,6 +450,15 @@ impl Studio {
         }
     }
 
+    /// A sweep not yet in the song goes: what was heard of it goes back to the song's.
+    fn device_sweep_cancel(&mut self) -> bool {
+        if self.instruments.sweep.take().is_none() {
+            return false;
+        }
+        self.device_hear();
+        true
+    }
+
     /// A sweep that has been still a moment goes into the song.
     pub(crate) fn device_quiet(&mut self) -> bool {
         match self.instruments.sweep {
@@ -617,8 +626,9 @@ impl Studio {
 
     /// The keys of the control that has them, or of the value being typed.
     pub(crate) fn device_key(&mut self, g: &Geometry, key: &str, mods: Mods) -> bool {
-        // Esc during a press lets go of what it holds, taking nothing in (L-par-3).
-        if key == "escape" && self.instrument_cancel() {
+        // Esc during a press lets go of what it holds, taking nothing in (L-par-3); and
+        // during a sweep of the wheel or the keys not yet in, it goes (L2-ui-6).
+        if key == "escape" && (self.instrument_cancel() || self.device_sweep_cancel()) {
             return true;
         }
         // The face in a drawer that shows something else lets the keys go (MIX-046).
