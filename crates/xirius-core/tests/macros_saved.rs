@@ -365,7 +365,11 @@ fn a_muted_send_a_macro_moves_stays_muted_when_the_song_opens() {
 
     let s = Session::open(&dir).unwrap();
     let back = &s.project().track(tid).unwrap().sends[0];
-    assert_eq!(back.level_db, xirius_core::model::MIN_DB, "opening keeps it silent");
+    assert_eq!(
+        back.level_db,
+        xirius_core::model::MIN_DB,
+        "opening keeps it silent"
+    );
     assert_eq!(back.muted_level, Some(level));
     assert!(!s.is_dirty(), "opening alone is no edit");
 }

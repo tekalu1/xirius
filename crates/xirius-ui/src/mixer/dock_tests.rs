@@ -367,7 +367,11 @@ fn the_face_taken_out_keeps_its_pad_its_layer_and_its_focus() {
     assert_eq!(s.docked(), None);
     let w = s.instruments.open.iter().find(|w| w.plugin == eq).unwrap();
     assert!(!w.docked);
-    assert_eq!((w.pick, w.layer), (3, 1), "the window shows what the face showed");
+    assert_eq!(
+        (w.pick, w.layer),
+        (3, 1),
+        "the window shows what the face showed"
+    );
     assert_eq!(s.instruments.focus, Some((eq, 2)), "on the same knob of it");
 }
 
