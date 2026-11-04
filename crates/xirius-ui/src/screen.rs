@@ -1823,22 +1823,29 @@ fn mark(m: crate::a11y::Mark, studio: Rc<RefCell<Studio>>) -> gpui::Stateful<gpu
     }
     // A device's Slider steps and takes a value from a screen reader (M-ui-2).
     if let Some((plugin, k)) = m.turn {
-        use crate::a11y::Turn;
-        use gpui::accesskit::{Action, ActionData};
+        use gpui::accesskit::Action;
         for action in [Action::Increment, Action::Decrement, Action::SetValue] {
             let studio = studio.clone();
             el = el.on_a11y_action(action, move |data, window, _| {
-                let way = match (action, data) {
-                    (Action::Increment, _) => Turn::Up,
-                    (Action::Decrement, _) => Turn::Down,
-                    (_, Some(ActionData::NumericValue(v))) => Turn::To(*v),
-                    (_, Some(ActionData::Value(v))) => match v.trim().parse() {
-                        Ok(v) => Turn::To(v),
-                        Err(_) => return,
-                    },
-                    _ => return,
+                let Some(way) = slider_turn(action, data) else {
+                    return;
                 };
                 if crate::a11y::turn(&mut studio.borrow_mut(), plugin, k, way) {
+                    window.refresh();
+                }
+            });
+        }
+    }
+    // A layer's edge steps and takes a velocity from a screen reader (low 3).
+    if let Some((plugin, j)) = m.edge {
+        use gpui::accesskit::Action;
+        for action in [Action::Increment, Action::Decrement, Action::SetValue] {
+            let studio = studio.clone();
+            el = el.on_a11y_action(action, move |data, window, _| {
+                let Some(way) = slider_turn(action, data) else {
+                    return;
+                };
+                if crate::a11y::edge(&mut studio.borrow_mut(), plugin, j, way) {
                     window.refresh();
                 }
             });
@@ -2541,4 +2548,20 @@ fn end_process() {
         use windows_sys::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
         TerminateProcess(GetCurrentProcess(), 0);
     }
+}
+
+/// What a screen reader's increment, decrement or value set on a Slider asks for.
+fn slider_turn(
+    action: gpui::accesskit::Action,
+    data: Option<&gpui::accesskit::ActionData>,
+) -> Option<crate::a11y::Turn> {
+    use crate::a11y::Turn;
+    use gpui::accesskit::{Action, ActionData};
+    Some(match (action, data) {
+        (Action::Increment, _) => Turn::Up,
+        (Action::Decrement, _) => Turn::Down,
+        (_, Some(ActionData::NumericValue(v))) => Turn::To(*v),
+        (_, Some(ActionData::Value(v))) => Turn::To(v.trim().parse().ok()?),
+        _ => return None,
+    })
 }

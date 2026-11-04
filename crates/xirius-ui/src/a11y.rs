@@ -172,6 +172,9 @@ pub struct Mark {
     /// The device's control a screen reader's increment, decrement and value set turn
     /// (UI-325, M-ui-2).
     pub turn: Option<(PluginId, usize)>,
+    /// The velocity layer's edge of the chosen pad a screen reader's increment, decrement
+    /// and value set move (low 3).
+    pub edge: Option<(PluginId, usize)>,
 }
 
 pub(crate) fn bounds(r: Rect) -> accesskit::Rect {
@@ -218,6 +221,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                         pick: None,
                         press: None,
                         turn: None,
+                        edge: None,
                     }
                 })
                 .collect();
@@ -244,6 +248,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                         pick: None,
                         press: None,
                         turn: None,
+                        edge: None,
                     });
                 }
                 // 「一致する…はありません」 as a status (UI-320).
@@ -259,6 +264,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                         pick: None,
                         press: None,
                         turn: None,
+                        edge: None,
                     });
                 }
                 if let crate::popup::Look::Key(look) = c.look {
@@ -324,6 +330,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 pick: None,
                 press: None,
                 turn: None,
+                edge: None,
             });
         }
     }
@@ -515,6 +522,7 @@ pub fn drawer_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             pick: None,
             press,
             turn: None,
+            edge: None,
         }
     };
     let mut out = Vec::new();
@@ -645,6 +653,7 @@ fn audition_mark(s: &Studio, g: &Geometry) -> Option<Mark> {
             crate::browser::BrowserHit::Audition,
         )),
         turn: None,
+        edge: None,
     })
 }
 
@@ -712,6 +721,7 @@ fn preset_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             pick: None,
             press: Some(crate::studio::Hit::Browser(press)),
             turn: None,
+            edge: None,
         });
     }
     out
@@ -745,6 +755,7 @@ fn inspector_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 pick: None,
                 press: None,
                 turn: None,
+                edge: None,
             }
         })
         .collect()
@@ -776,6 +787,7 @@ fn instrument_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 pick: Some(strip.track),
                 press: None,
                 turn: None,
+                edge: None,
             })
         })
         .collect()
@@ -1016,6 +1028,7 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             pick: None,
             press: None,
             turn: None,
+            edge: None,
         };
         // The sidechain's seat (UI-336): its on button, and the button that lists the sources
         // (expanded while the list is open).
@@ -1131,6 +1144,32 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             if !spot.mark.takes() {
                 continue;
             }
+            // A layer's edge is a Slider of the velocity its layer ends at (low 3).
+            if let Spot::Edge(j) = spot.mark {
+                let files = crate::device::sampler::pad_files(
+                    def,
+                    x,
+                    w.pick.min(crate::device::play::PADS - 1),
+                );
+                let Some(&(_, hi)) = crate::device::sampler::velocities(def, x, &files).get(j)
+                else {
+                    continue;
+                };
+                let (lo, max) = crate::device::sampler::edge_range(def, x, &files, j);
+                let mut node = accesskit::Node::new(accesskit::Role::Slider);
+                node.set_label(format!("Layer {} top", j + 1));
+                node.set_value(spot.text.clone());
+                node.set_numeric_value(f64::from(hi));
+                node.set_min_numeric_value(f64::from(lo));
+                node.set_max_numeric_value(f64::from(max));
+                node.set_numeric_value_step(1.0);
+                node.set_bounds(bounds(spot.r));
+                out.push(Mark {
+                    edge: Some((w.plugin, j)),
+                    ..mark(format!("device-{}-spot-{n}", w.plugin), node)
+                });
+                continue;
+            }
             let mut node = accesskit::Node::new(accesskit::Role::Button);
             node.set_label(match spot.mark {
                 Spot::Prev => "Previous sample".to_string(),
@@ -1138,7 +1177,6 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 Spot::Mute(p) => format!("Mute {}", xirius_params::PAD_NAMES[p]),
                 Spot::Solo(p) => format!("Solo {}", xirius_params::PAD_NAMES[p]),
                 Spot::Bank(_) => format!("Bank {}", spot.text),
-                Spot::Edge(j) => format!("Layer {} top {}", j + 1, spot.text),
                 Spot::Layer(_) => format!("Layer {}", spot.text),
                 Spot::Zone(_) => match spot.note {
                     Some(note) => format!("{}, root {}", spot.text, crate::roll::pitch_name(note)),
@@ -1189,6 +1227,7 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                         pick: None,
                         press: None,
                         turn: Some((w.plugin, k)),
+                        edge: None,
                     });
                 }
             }
@@ -1240,6 +1279,7 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 pick: None,
                 press: None,
                 turn: turns.then_some((w.plugin, slot.k)),
+                edge: None,
             });
         }
     }
@@ -1267,6 +1307,12 @@ fn numeric(node: &mut accesskit::Node, spec: &xirius_params::ParamSpec, v: f64) 
 /// it, or to a value as if typed in (M-ui-2).
 pub fn turn(s: &mut Studio, plugin: PluginId, k: usize, way: Turn) -> bool {
     s.device_a11y_turn(plugin, k, way)
+}
+
+/// A screen reader's turn of a velocity layer's edge (low 3): as the arrow keys move it, or to
+/// the velocity it sets, in one step.
+pub fn edge(s: &mut Studio, plugin: PluginId, j: usize, way: Turn) -> bool {
+    s.layer_edge_turn(plugin, j, way)
 }
 
 /// What a screen reader does to a Slider.

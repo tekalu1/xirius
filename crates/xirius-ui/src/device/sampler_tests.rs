@@ -369,6 +369,46 @@ fn ui_334_an_edge_dragged_parts_the_layers_of_the_pad_chosen_at_the_press() {
     assert_ne!(ranges(&s, t, 0), [(0, 63), (64, 127)]);
 }
 
+/// Low 3: a layer's edge is a Slider of the velocity its layer ends at, with its range; a
+/// screen reader's increment moves it one velocity and a value set puts it there, each one
+/// step.
+#[test]
+fn ui_334_a_screen_reader_moves_a_layers_edge_as_a_slider() {
+    use crate::a11y::Turn;
+    let (_dir, files) = wavs(&["Snare_a.wav", "Snare_b.wav"]);
+    let (mut s, g, t, id) = window("Drum Kit");
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).expect("A1");
+    s.instruments.drop_layers = true;
+    assert!(s.window_drop(&g, x, y, &files), "{:?}", s.error);
+    assert_eq!(ranges(&s, t, 0), [(0, 63), (64, 127)]);
+    let n = spot(&s, &g, t, Mark::Edge(0));
+    let marks = crate::a11y::marks(&s, &g);
+    let edge = marks
+        .iter()
+        .find(|m| m.key == format!("device-{id}-spot-{n}"))
+        .expect("the edge's mark");
+    assert_eq!(edge.node.role(), accesskit::Role::Slider);
+    assert_eq!(edge.node.label(), Some("Layer 1 top"));
+    assert_eq!(edge.node.value(), Some("63"));
+    assert_eq!(edge.node.numeric_value(), Some(63.0));
+    assert_eq!(edge.node.min_numeric_value(), Some(1.0));
+    assert_eq!(edge.node.max_numeric_value(), Some(126.0));
+    assert_eq!(edge.node.numeric_value_step(), Some(1.0));
+    assert_eq!(edge.edge, Some((id, 0)));
+    assert_eq!(edge.turn, None);
+    let steps = s.song().steps();
+    assert!(crate::a11y::edge(&mut s, id, 0, Turn::Up));
+    assert_eq!(ranges(&s, t, 0), [(0, 64), (65, 127)]);
+    assert!(crate::a11y::edge(&mut s, id, 0, Turn::To(100.0)));
+    assert_eq!(ranges(&s, t, 0), [(0, 100), (101, 127)]);
+    assert_eq!(s.song().steps(), steps + 2);
+    // Where it is already, or past its range: no step, or held at the end.
+    assert!(!crate::a11y::edge(&mut s, id, 0, Turn::To(100.0)));
+    assert!(crate::a11y::edge(&mut s, id, 0, Turn::To(500.0)));
+    assert_eq!(ranges(&s, t, 0), [(0, 126), (127, 127)]);
+    assert!(!crate::a11y::edge(&mut s, id, 0, Turn::To(f64::NAN)));
+}
+
 #[test]
 fn ui_334_layers_choose_the_wave_and_files_dropped_on_a_pad_go_there() {
     let dir = tempfile::tempdir().unwrap();

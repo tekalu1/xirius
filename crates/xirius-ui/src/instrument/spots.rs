@@ -343,6 +343,35 @@ impl Studio {
         )
     }
 
+    /// A screen reader's turn of layer `j`'s edge on the chosen pad (low 3): one velocity an
+    /// increment or a decrement, or to the velocity set; one step, none where it ends already.
+    pub(crate) fn layer_edge_turn(
+        &mut self,
+        plugin: PluginId,
+        j: usize,
+        way: crate::a11y::Turn,
+    ) -> bool {
+        use crate::a11y::Turn;
+        let p = self.project();
+        let Some(w) = self.instruments.win_of(plugin).copied() else {
+            return false;
+        };
+        let Some((_, x, def)) = live(&p, &w) else {
+            return false;
+        };
+        let files = sampler::pad_files(def, x, w.pick.min(PADS - 1));
+        let Some(&(_, hi)) = sampler::velocities(def, x, &files).get(j) else {
+            return false;
+        };
+        let to = match way {
+            Turn::Up => f64::from(hi) + 1.0,
+            Turn::Down => f64::from(hi) - 1.0,
+            Turn::To(v) if v.is_finite() => v.round(),
+            Turn::To(_) => return false,
+        };
+        self.layer_edge_set(plugin, w.pick, j, to.clamp(0.0, 127.0) as u8)
+    }
+
     /// ← and → on the edge pressed last (UI-334): four velocities a press, one with Shift.
     pub(crate) fn layer_edge_key(&mut self, key: &str, shift: bool) -> bool {
         let Some((plugin, j)) = self.instruments.edge else {
