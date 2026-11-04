@@ -256,14 +256,14 @@ fn a_window_whose_device_went_takes_no_pointer() {
     s.show_instrument(t, id);
     let r = s.instruments.rect(0, g.size);
     let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
-    assert!(s.instruments.at(&s.project(), g.size, x, y).is_some());
+    assert!(s.instruments.at(&s.project(), &g, x, y).is_some());
     let w = s.instruments.open[0];
     assert!(s.remove_instrument(t));
     // As between a change from elsewhere and the next look at the windows.
     if s.instruments.open.is_empty() {
         s.instruments.open.push(w);
     }
-    assert_eq!(s.instruments.at(&s.project(), g.size, x, y), None);
+    assert_eq!(s.instruments.at(&s.project(), &g, x, y), None);
 }
 
 #[test]
