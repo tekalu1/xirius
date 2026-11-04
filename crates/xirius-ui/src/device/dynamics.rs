@@ -66,6 +66,9 @@ impl Dynamics {
     /// (`[left, right]`, linear) and the reduction (dB). The history keeps
     /// `span` of samples.
     pub fn feed(&mut self, peaks: ([f32; 2], [f32; 2]), gr: f32, now: Instant, span: Duration) {
+        // Frames stop coming only once nothing moves: a gap after a frame that still moved
+        // is a stall, not a pause (low 14).
+        let was_still = !self.moving();
         let (input, output) = peaks;
         let reading = |p: [f32; 2]| MeterReading {
             peak: p,
@@ -100,14 +103,15 @@ impl Dynamics {
         if let Some(s) = self.pending.take() {
             let n = (steps as usize).min(cap);
             // After a pause the gathered sample is the newest step; the steps
-            // before it show quiet, not a flat block of that sample (L-ui-4).
+            // before it show quiet, not a flat block of that sample (L-ui-4). After a
+            // stall they show what it gathered.
             let quiet = Sample {
                 input: FLOOR as f32,
                 output: FLOOR as f32,
                 gr: 0.0,
             };
             for k in 0..n {
-                let paused = steps > PAUSE && k + 1 < n;
+                let paused = was_still && steps > PAUSE && k + 1 < n;
                 self.history.push_back(if paused { quiet } else { s });
             }
         }

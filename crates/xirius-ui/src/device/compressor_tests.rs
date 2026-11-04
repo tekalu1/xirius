@@ -160,7 +160,23 @@ fn ui_327_the_history_keeps_four_seconds_and_the_readouts_their_most() {
     assert_eq!(d.readout(1), "-6.0");
     assert_eq!(d.readout(2), "-0.9");
     assert!(!d.over());
-    // A long gap fills the history at once, not past its span.
+    // A long gap while the meters still moved is a stall: what came in fills it, no
+    // further than its span (low 14).
+    let t1 = t0 + Duration::from_secs(30);
+    d.feed(loud, 6.0, t1, SPAN);
+    assert_eq!(d.history.len(), cap);
+    assert!(d.history.iter().all(|s| s.gr == 6.0));
+    // Quiet until nothing moves, then a long gap: the frames paused, the gap is quiet and
+    // only the newest step is loud.
+    let mut at = t1;
+    for _ in 0..1000 {
+        if !d.moving() {
+            break;
+        }
+        at += STEP;
+        d.feed(([0.0; 2], [0.0; 2]), 0.0, at, SPAN);
+    }
+    assert!(!d.moving());
     d.feed(
         ([1.2, 0.0], [1.5, 0.0]),
         0.0,
@@ -169,7 +185,6 @@ fn ui_327_the_history_keeps_four_seconds_and_the_readouts_their_most() {
     );
     assert_eq!(d.history.len(), cap);
     assert!(d.over());
-    // The frames paused: the gap is quiet and only the newest step is loud.
     let loud_ones = d.history.iter().filter(|s| s.output > -59.0).count();
     assert_eq!(loud_ones, 1);
     assert!(d.history.back().unwrap().output > 0.0);
