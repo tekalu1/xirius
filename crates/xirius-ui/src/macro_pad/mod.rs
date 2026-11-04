@@ -595,6 +595,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<crate::a11y::Mark> {
         pick: None,
         press: None,
         turn: None,
+        edge: None,
     };
     let button = |name: &str, r: Rect| {
         let mut node = accesskit::Node::new(accesskit::Role::Button);
@@ -656,6 +657,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<crate::a11y::Mark> {
         pick: None,
         press: None,
         turn: None,
+        edge: None,
     }]
 }
 

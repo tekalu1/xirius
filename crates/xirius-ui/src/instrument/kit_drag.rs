@@ -120,13 +120,13 @@ impl Studio {
         y: f32,
     ) -> Option<(PluginId, sampler::DropOn, Rect)> {
         let p = self.project();
-        let (i, _) = self.instruments.at(&p, g.size, x, y)?;
+        let (i, _) = self.instruments.at(&p, g, x, y)?;
         let w = self.instruments.open[i];
         let (_, plugin, def) = live(&p, &w)?;
         if !sampler::has_files(def) {
             return None;
         }
-        let r = self.instruments.rect(i, g.size);
+        let r = self.instruments.frame(i, g);
         let body = self.instruments.body(r, plugin, def);
         let head = title_bar::BAR_H;
         let inside = Rect::new(r.x + 4.0, r.y + head, r.w - 8.0, r.h - head - 4.0);
@@ -146,7 +146,7 @@ impl Studio {
         layers: bool,
     ) -> Option<Preview> {
         let p = self.project();
-        let (i, part) = self.instruments.at(&p, g.size, x, y)?;
+        let (i, part) = self.instruments.at(&p, g, x, y)?;
         let w = self.instruments.open[i];
         let (_, plugin, def) = live(&p, &w)?;
         if def.uid != "drum-kit" {

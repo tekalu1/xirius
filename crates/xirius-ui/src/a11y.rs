@@ -304,6 +304,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                     pick: None,
                     press: Some(Hit::Ara(t, clip.id)),
                     turn: None,
+                    edge: None,
                 });
             }
             let Some(n) = crate::draw::takes_under(&stacks, clip) else {
@@ -370,6 +371,7 @@ pub fn start_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             pick: None,
             press,
             turn: None,
+            edge: None,
         }
     };
     let mut out = Vec::new();
@@ -431,6 +433,7 @@ pub fn home_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             pick: None,
             press: press.map(Hit::Home),
             turn: None,
+            edge: None,
         }
     };
     let mut out = Vec::new();
@@ -930,6 +933,7 @@ fn flow_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 pick: None,
                 press: Some(crate::studio::Hit::Mixer(hit)),
                 turn: None,
+                edge: None,
             });
         }
     }
@@ -996,6 +1000,7 @@ fn key_source_mark(
         pick: None,
         press: c.live().then_some(crate::studio::Hit::Item(i)),
         turn: None,
+        edge: None,
     })
 }
 

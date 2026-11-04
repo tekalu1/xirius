@@ -397,7 +397,10 @@ fn the_face_under_another_tab_has_no_keys_and_no_marks() {
             .any(|m| m.key.starts_with(&key)),
         "nor read while it does not"
     );
-    assert!(!s.device_key("right", Mods::NONE), "the arrows go on");
+    assert!(
+        !s.device_key(&roll, "right", Mods::NONE),
+        "the arrows go on"
+    );
     assert_eq!(s.instruments.focus, None);
     assert_eq!(s.project().content_hash(), before);
     // Tab past the screen's places does not go into it either
@@ -460,4 +463,30 @@ fn the_grips_mark_is_four_by_twenty_eight_in_its_middle() {
     assert_eq!((mark.w, mark.h), (4.0, 28.0));
     assert_eq!(mark.x + mark.w / 2.0, grip.x + grip.w / 2.0);
     assert_eq!(mark.y + mark.h / 2.0, grip.y + grip.h / 2.0);
+}
+
+/// Files held over the Drum Kit's face in the drawer go to it, on the place the face shows
+/// (it is not where a window of it would be), and the face taken out keeps its bank.
+#[test]
+fn files_held_over_a_docked_drum_kit_go_to_its_face() {
+    let (mut s, g) = studio(1600.0);
+    let t = track(&s, "Vocal");
+    let kit = add(&mut s, t, "Drum Kit");
+    click_row(&mut s, &g, t, kit);
+    let i = s.docked().expect("the kit's face");
+    let r = s.instruments.frame(i, &g);
+    let head = crate::title_bar::BAR_H;
+    let (x, y) = (r.x + r.w / 2.0, r.y + head + (r.h - head) / 2.0);
+    assert!(
+        !s.instruments.rect(i, g.size).contains(x, y),
+        "a window of it would be elsewhere"
+    );
+    let (id, on, lit) = s.drop_target(&g, x, y).expect("the face takes the files");
+    assert_eq!((id, on), (kit, crate::device::sampler::DropOn::Plane));
+    assert!(r.contains(lit.x, lit.y) && lit.w > 0.0, "the face lights");
+    s.instruments.open[i].bank = Some(1);
+    press(&mut s, &g, kit, Part::Pin, 1);
+    let w = s.instruments.open.iter().find(|w| w.plugin == kit).unwrap();
+    assert!(!w.docked);
+    assert_eq!(w.bank, Some(1), "the window shows the bank the face showed");
 }

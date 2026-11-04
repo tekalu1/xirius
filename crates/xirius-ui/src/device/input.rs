@@ -960,7 +960,7 @@ impl Studio {
                 return true;
             }
             Part::Spot(n) => {
-                let r = self.instruments.rect(i, g.size);
+                let r = self.instruments.frame(i, g);
                 self.spot_menu(i, r, n, x, y);
                 return true;
             }

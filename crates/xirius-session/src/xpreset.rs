@@ -1690,6 +1690,7 @@ mod find_tests {
             device_name: "Sampler".into(),
             device_format: "builtin".into(),
             saved_at: None,
+            chain: None,
         }
     }
 

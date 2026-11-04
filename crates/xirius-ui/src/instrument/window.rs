@@ -1427,9 +1427,9 @@ impl Studio {
                 self.instruments.pick(w.plugin, play::pad_of(pitch), 0);
                 // Higher up the pad is harder; it lights a moment however short the press.
                 let pad = live(&p, &w).and_then(|(track, plugin, def)| {
-                    let at = self
-                        .instruments
-                        .part_rect(r, track, plugin, def, Part::Pad(pitch));
+                    let at =
+                        self.instruments
+                            .part_rect(r, &p, track, plugin, def, Part::Pad(pitch));
                     (at.h > 0.0).then_some(at)
                 });
                 let velocity = pad.map_or(super::keys::VELOCITY, |at| {

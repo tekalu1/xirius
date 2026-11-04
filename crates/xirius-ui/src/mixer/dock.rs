@@ -401,6 +401,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
         pick: None,
         press,
         turn: None,
+        edge: None,
     };
     let mut grip = accesskit::Node::new(accesskit::Role::Splitter);
     grip.set_label(GRIP_LABEL);
