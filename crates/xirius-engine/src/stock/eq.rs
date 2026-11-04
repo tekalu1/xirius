@@ -1075,9 +1075,9 @@ mod tests {
         let long = vec![0.25f32; 5000];
         render(p.as_mut(), &long, &long, &[]);
         probe.take_samples(&mut input, &mut output);
-        // The input's ring is new, and a full ring drops the rest until it is read (M-dsp-3):
-        // what was gathered and what it held are before a seam, so the take starts over.
-        assert_eq!((input.len(), output.len()), (0, 0));
+        // A full ring drops the rest until it is read (M-dsp-3): the take keeps the whole run
+        // it held, from before the gap, and what was gathered before goes (N-dsp-1).
+        assert_eq!((input.len(), output.len()), (RING, RING));
         let fresh: Vec<f32> = (0..700).map(|i| i as f32 / 700.0).collect();
         render(p.as_mut(), &fresh, &fresh, &[]);
         probe.take_samples(&mut input, &mut output);
@@ -1099,6 +1099,25 @@ mod tests {
         render(p.as_mut(), &long[..200], &long[..200], &[]);
         probe.take_samples(&mut input, &mut output);
         assert_eq!((input.len(), output.len()), (200, 0));
+    }
+
+    /// N-dsp-1: a ring that fills before every take (192 kHz, or a slow frame) still gives
+    /// a whole window each time, of one run with no seam in it.
+    #[test]
+    fn a_ring_that_fills_before_every_take_gives_a_whole_window() {
+        let (mut p, h) = make("eq");
+        let probe = h.probe();
+        probe.watch(true);
+        let mut output = Vec::new();
+        let mut at = 0.0f32;
+        for _ in 0..4 {
+            let ramp: Vec<f32> = (0..5000).map(|i| at + i as f32).collect();
+            at += 5000.0;
+            render(p.as_mut(), &ramp, &ramp, &[]);
+            probe.take_samples(&mut Vec::new(), &mut output);
+            assert_eq!(output.len(), RING);
+            assert!(output.windows(2).all(|w| w[1] - w[0] == 1.0), "one run");
+        }
     }
 
     #[test]

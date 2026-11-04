@@ -54,6 +54,9 @@ pub struct Probe {
     /// turned on again, [`DROPPED`] when it was full and dropped some. The next take starts
     /// over after it.
     seam: [AtomicU8; 2],
+    /// What the window gathered from each ring ends before a gap (the ring's run before it
+    /// dropped some): the next samples start over. The window's side only.
+    behind: [AtomicBool; 2],
 }
 
 /// What the EQ hands its analyser: its input, its output, both or neither.
@@ -112,6 +115,7 @@ impl Probe {
             tap: AtomicU8::new(Tap::default() as u8),
             rings: Mutex::new(None),
             seam: [AtomicU8::new(0), AtomicU8::new(0)],
+            behind: [AtomicBool::new(false), AtomicBool::new(false)],
         }
     }
 
@@ -218,28 +222,32 @@ impl Probe {
 
     /// Appends the samples the EQ handed over since the last call: the mono (L+R)/2 of its
     /// input and of its output, as [`Probe::tap`] picks. A ring holds 2048. What comes while
-    /// it is full is dropped; the take after that clears its `Vec` and what the ring held
-    /// (all from before the gap), and the one after a new watch or tap clears the `Vec`: what
-    /// the window gathers never spans a seam. False for a built-in with no rings (all but the
-    /// EQ). Locks: the window's side only.
+    /// it is full is dropped; the take after that keeps only what the ring held (one whole
+    /// run, from before the gap), and the samples after the gap start over. The take after a
+    /// new watch or tap clears the `Vec`. What the window gathers never spans a seam, and a
+    /// ring that fills between takes (a high sample rate, a slow frame) still gives a whole
+    /// window (N-dsp-1). False for a built-in with no rings (all but the EQ). Locks: the
+    /// window's side only.
     pub fn take_samples(&self, input: &mut Vec<f32>, output: &mut Vec<f32>) -> bool {
         let mut rings = self.rings.lock().unwrap_or_else(|e| e.into_inner());
         let Some((i, o)) = rings.as_mut() else {
             return false;
         };
-        for ((ring, to), seam) in [(i, input), (o, output)].into_iter().zip(&self.seam) {
+        let rings = [(i, input), (o, output)].into_iter();
+        for (((ring, to), seam), behind) in rings.zip(&self.seam).zip(&self.behind) {
             // The seam first: one the audio thread marks after this is read next time.
             let cut = seam.swap(0, Ordering::AcqRel);
-            if cut != 0 {
+            let n = ring.slots();
+            let fresh = cut == FRESH || (n > 0 && behind.load(Ordering::Relaxed));
+            if cut != 0 || fresh {
                 to.clear();
             }
-            let n = ring.slots();
+            behind.store(
+                cut == DROPPED || (behind.load(Ordering::Relaxed) && n == 0),
+                Ordering::Relaxed,
+            );
             if let Ok(chunk) = ring.read_chunk(n) {
-                if cut == DROPPED {
-                    chunk.commit_all();
-                } else {
-                    to.extend(chunk);
-                }
+                to.extend(chunk);
             }
         }
         true
