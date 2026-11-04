@@ -396,8 +396,9 @@ fn a_hand_written_key_is_read_as_the_song_keeps_it() {
 }
 
 /// N3-kit-2: files dropped on a Drum Kit's pad fill the pads from it in order, as the mock
-/// does: a pad that has files gets the new ones in their place (its own values go), and the
-/// ones past H16 do not go in, said so.
+/// does: a pad that has files gets the new ones in their place (its own values go, but its
+/// Mute and Solo stay: the fourth review's low 21), and the ones past H16 do not go in, said
+/// so.
 #[test]
 fn n3_kit_2_filled_pads_are_replaced_and_files_past_h16_left_out() {
     let mut p = project_with_samples(&[]);
@@ -421,7 +422,21 @@ fn n3_kit_2_filled_pads_are_replaced_and_files_past_h16_left_out() {
         "plugin.param.set",
         json!({ "id": "plg_2", "param": "a2.choke", "plain": "Self" }),
     );
+    for key in ["a3.mute", "a4.solo"] {
+        run(
+            &mut s,
+            "plugin.param.set",
+            json!({ "id": "plg_2", "param": key, "plain": 1 }),
+        );
+    }
     assert!(plugin(&s).params.contains_key("A2.choke"));
+    let held = |x: &Plugin| {
+        (
+            x.params.get("A3.mute").copied(),
+            x.params.get("A4.solo").copied(),
+        )
+    };
+    assert_eq!(held(&plugin(&s)), (Some(1.0), Some(1.0)));
     // 16 on A1 of a kit with 8 pads filled: all 16 go in, the 8 in place of the old.
     let new: Vec<Value> = (1..=16)
         .map(|i| json!({ "file": format!("new{i}.wav") }))
@@ -446,6 +461,7 @@ fn n3_kit_2_filled_pads_are_replaced_and_files_past_h16_left_out() {
     pads.sort_unstable();
     assert_eq!(pads, (0..16).collect::<Vec<_>>());
     assert!(!x.params.contains_key("A2.choke"), "{:?}", x.params);
+    assert_eq!(held(&x), (Some(1.0), Some(1.0)), "{:?}", x.params);
     // 5 on H14: H14 to H16 take three, the other two are left out and said so.
     let five: Vec<Value> = (1..=5)
         .map(|i| json!({ "file": format!("end{i}.wav") }))

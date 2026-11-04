@@ -322,13 +322,20 @@ fn add(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
         return Err(CmdError::range("空いたパッドがありません"));
     }
     // A pad the drop falls on that has files takes the new ones in their place, its own
-    // values with them (the mock's `fill`).
+    // values with them (the mock's `fill`). Its Mute and Solo are the hand's say over the
+    // pad, not its sound's, and stay (the fourth review's low 21).
     let replaced = kit_replaced(&used_pads(def, x), &pads, layers);
     if !replaced.is_empty() {
+        let held: Vec<(String, f64)> = replaced
+            .iter()
+            .flat_map(|pad| ["mute", "solo"].map(|id| pad_key(*pad, id)))
+            .filter_map(|k| x.params.get(&k).map(|v| (k, *v)))
+            .collect();
         let gone: Vec<bool> = (0..x.samples.len())
             .map(|i| replaced.contains(&def.file_pad(&x.params, i)))
             .collect();
         drop_files(def, x, &gone);
+        x.params.extend(held);
     }
     // Every file says its pad, so taking one away later leaves the others where they are.
     pin_pads(def, x);
