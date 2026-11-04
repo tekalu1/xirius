@@ -2053,6 +2053,54 @@ fn y16_a_sample_is_looked_for_by_its_sound_and_only_where_it_may_be() {
     let _ = std::fs::remove_dir_all(&outside);
 }
 
+/// The fifth review's N5-pre-1: a preset naming a song's sample by a name whose first
+/// letters are not ASCII (`キック.wav`, `1キック.wav`, `♪.wav`) or of one letter is read, not
+/// cut inside a character (which panicked and failed the preset every time).
+#[test]
+fn n5_pre_1_a_preset_names_its_samples_in_any_letters() {
+    let mut r = rig("n5pre");
+    let names = ["キック.wav", "1キック.wav", "♪.wav", "a"];
+    let (mut s, t, song) = sampler_song(&mut r, "n5presong", &names);
+    run(
+        &mut s,
+        "preset.save",
+        json!({ "track": t, "kind": "instrument", "name": "Kana" }),
+    );
+    let file = r
+        .dir
+        .join("instrument")
+        .join("sampler")
+        .join("Kana.xpreset");
+    let mut v = read_json(&file);
+    // Named as the song names them, from its folder (as v1.1.0-beta.3 saved them).
+    v["devices"][0]["samples"] = json!(names);
+    std::fs::write(&file, serde_json::to_vec(&v).unwrap()).unwrap();
+    let out = run(
+        &mut s,
+        "preset.load",
+        json!({ "track": t, "preset": "Kana" }),
+    );
+    assert!(!out["adjusted"].to_string().contains("rejected"), "{out:?}");
+    assert_eq!(track(&s, &t).inserts[0].samples, names);
+
+    // In a song not saved, the names stay as they are.
+    let other = id(&run(
+        &mut r.s,
+        "track.add.instrument",
+        json!({ "name": "K" }),
+    ));
+    plugin(&mut r.s, &other, "Sampler");
+    let out = run(
+        &mut r.s,
+        "preset.load",
+        json!({ "track": other, "preset": "Kana" }),
+    );
+    assert!(out.get("error").is_none(), "{out:?}");
+    assert_eq!(track(&r.s, &other).inserts[0].samples, names);
+    drop(s);
+    let _ = std::fs::remove_dir_all(&song);
+}
+
 /// The fourth review's low 18: a sample of the user's whose own name ends in a dash and 16
 /// hex digits keeps them in its copy's name, so the copy gone is looked for by that name; a
 /// copy's hash comes off only a file in a `samples` folder.

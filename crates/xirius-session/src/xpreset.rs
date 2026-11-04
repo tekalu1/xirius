@@ -789,16 +789,18 @@ impl<'a> Finder<'a> {
         // so a preset from elsewhere reaches no other place (L3-7).
         let at = match s.strip_prefix(KEPT) {
             Some(rel) => under(dir, rel),
-            None if local_full(s).is_some() => local_full(s),
-            None => {
-                let rel = s.replace('\\', "/");
-                let clean = under(Path::new(""), &rel).is_some();
-                match song {
-                    Some(d) if clean => under(d, &rel),
-                    None if clean => return Sample::Unplaced,
-                    _ => None,
+            None => match local_full(s) {
+                Some(p) => Some(p),
+                None => {
+                    let rel = s.replace('\\', "/");
+                    let clean = under(Path::new(""), &rel).is_some();
+                    match song {
+                        Some(d) if clean => under(d, &rel),
+                        None if clean => return Sample::Unplaced,
+                        _ => None,
+                    }
                 }
-            }
+            },
         };
         if let Some(p) = at.filter(|p| p.is_file()) {
             return Sample::Here(p);
@@ -840,10 +842,14 @@ fn local_full(s: &str) -> Option<PathBuf> {
     } else {
         b.first() == Some(&b'/') && b.get(1) != Some(&b'/')
     };
+    if !drive {
+        return None;
+    }
+    // Past the drive's `C:`, which `drive` found to be ASCII, so a name of any letters is cut
+    // on a character's edge (N5-pre-1).
     let rest = if cfg!(windows) { &s[2..] } else { s };
     let p = Path::new(s);
-    (drive
-        && !rest.contains(':')
+    (!rest.contains(':')
         && p.is_absolute()
         && !p.components().any(|c| matches!(c, Component::ParentDir)))
     .then(|| p.to_path_buf())
