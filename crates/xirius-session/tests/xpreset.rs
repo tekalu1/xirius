@@ -2103,7 +2103,7 @@ fn n5_pre_1_a_preset_names_its_samples_in_any_letters() {
 
 /// The fourth review's low 18: a sample of the user's whose own name ends in a dash and 16
 /// hex digits keeps them in its copy's name, so the copy gone is looked for by that name; a
-/// copy's hash comes off only a file in a `samples` folder.
+/// copy's hash comes off only where it is its sound's (y19).
 #[test]
 fn y18_a_users_name_that_looks_hashed_keeps_its_ending() {
     let mut r = rig("y18");
@@ -2138,6 +2138,41 @@ fn y18_a_users_name_that_looks_hashed_keeps_its_ending() {
         json!({ "track": t, "preset": "Kick" }),
     );
     assert!(rejected(&out, "Kick-0123456789abcdef.wav"), "{out:?}");
+    drop(s);
+    let _ = std::fs::remove_dir_all(&song);
+}
+
+/// The fifth review's low 3: a preset's copy gathered into a song (`Media/Kick-<hash>.wav`) and
+/// saved in a preset again is the same copy, not one more hash on its name, wherever it is;
+/// a name in a folder the user calls `Samples` keeps an ending that is not its sound's hash.
+#[test]
+fn y19_a_copys_hash_comes_off_by_its_sound_not_by_its_folder() {
+    let sound = "RIFF kick";
+    let h = &sha256_hex(sound.as_bytes())[..16];
+    let gathered = format!("Media/Kick-{h}.wav");
+    let twice = format!("Media/Samples/Snare-{h}-{h}.wav");
+    let own = "Media/Samples/Hat-0123456789abcdef.wav";
+    let mut r = rig("y19");
+    let (mut s, t, song) = sampler_song(&mut r, "y19song", &[&gathered, &twice, own]);
+    for f in [&gathered, &twice] {
+        std::fs::write(song.join(f), sound).unwrap();
+    }
+    run(
+        &mut s,
+        "preset.save",
+        json!({ "track": t, "kind": "instrument", "name": "Kit" }),
+    );
+    let file = r.dir.join("instrument").join("sampler").join("Kit.xpreset");
+    let named = read_json(&file)["devices"][0]["samples"].clone();
+    assert_eq!(named[0], format!("preset:samples/Kick-{h}.wav"), "{named}");
+    assert_eq!(named[1], format!("preset:samples/Snare-{h}.wav"), "{named}");
+    assert!(
+        named[2]
+            .as_str()
+            .unwrap()
+            .starts_with("preset:samples/Hat-0123456789abcdef-"),
+        "{named}"
+    );
     drop(s);
     let _ = std::fs::remove_dir_all(&song);
 }

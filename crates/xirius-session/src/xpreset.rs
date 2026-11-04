@@ -690,26 +690,20 @@ fn keep_sample(dir: &Path, p: &Path, dry: bool) -> CmdResult<String> {
     {
         return Ok(format!("{KEPT}{SAMPLES}/{}", name.to_string_lossy()));
     }
-    let copied = p
-        .parent()
-        .and_then(Path::file_name)
-        .is_some_and(|d| d.eq_ignore_ascii_case(SAMPLES));
     let stem = p
         .file_stem()
-        .map(|s| {
-            let s = s.to_string_lossy();
-            file_name(if copied { bare_stem(&s) } else { &s })
-        })
+        .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
     let ext = p
         .extension()
         .map(|e| format!(".{}", file_name(&e.to_string_lossy())))
         .unwrap_or_default();
     if dry {
-        return Ok(format!("{KEPT}{SAMPLES}/{stem}{ext}"));
+        return Ok(format!("{KEPT}{SAMPLES}/{}{ext}", file_name(&stem)));
     }
     let data = std::fs::read(p).map_err(io)?;
-    let name = format!("{stem}-{}{ext}", &sha256_hex(&data)[..16]);
+    let hash = &sha256_hex(&data)[..16];
+    let name = format!("{}-{hash}{ext}", file_name(bare_stem(&stem, hash)));
     let to = dir.join(SAMPLES).join(&name);
     if std::fs::metadata(&to).map(|m| m.len()).ok() != Some(data.len() as u64) {
         std::fs::create_dir_all(dir.join(SAMPLES)).map_err(io)?;
@@ -726,10 +720,12 @@ fn hash_of(stem: &str) -> Option<&str> {
     }
 }
 
-/// A file's stem without the hashes copies put on it, however many (N3-smp-2).
-fn bare_stem(mut stem: &str) -> &str {
-    while let Some(h) = hash_of(stem) {
-        stem = &stem[..stem.len() - h.len() - 1];
+/// A file's stem without the hashes copies put on it, however many (N3-smp-2): its sound's,
+/// `hash`, wherever the file is (a copy gathered into a song's `Media`), and no other (a name
+/// of the user's that ends like one, the fifth review's low 3).
+fn bare_stem<'a>(mut stem: &'a str, hash: &str) -> &'a str {
+    while hash_of(stem).is_some_and(|h| h.eq_ignore_ascii_case(hash)) {
+        stem = &stem[..stem.len() - hash.len() - 1];
     }
     stem
 }
