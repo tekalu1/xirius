@@ -334,7 +334,6 @@ impl Screen {
         {
             studio.mixer.coarse_next = Some(crate::pointer_os::from_touch());
         }
-        studio.press_keys(&g, x, y);
         if studio.prepare_press(&g, x, y)
             || studio.recovery_press(&g, x, y)
             || studio.toast_press(&g, x, y)
@@ -364,6 +363,9 @@ impl Screen {
             self.files(cx);
             return;
         }
+        // A press past the dialogs, the settings and the palette takes the keys from what had
+        // them.
+        studio.press_keys(&g, x, y);
         // The windows that float over the screen take a press before what is under them.
         if studio.popup.is_none()
             && (studio.macro_press(&g, x, y)

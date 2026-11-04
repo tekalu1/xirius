@@ -1906,9 +1906,10 @@ impl Studio {
         mods: Mods,
     ) -> bool {
         self.inspector_follow(g);
-        // Esc while waiting for a controller's knob ends the wait first (OPS-007), not a row's
-        // or the pad's hold on the keys.
-        if key == "escape" && self.live_midi.assign.learning.is_some() {
+        // Esc while waiting for a controller's knob, or while its clash asks, ends the wait first
+        // (OPS-007), not a row's or the pad's hold on the keys.
+        let assign = &self.live_midi.assign;
+        if key == "escape" && (assign.learning.is_some() || assign.clash.is_some()) {
             return false;
         }
         self.name_key(key, mods)
@@ -2751,6 +2752,9 @@ impl Studio {
         self.mixer.key_drag = None;
         self.mixer.level_drag = None;
         self.mixer.insert_after = None;
+        self.mixer.insert_into = None;
+        self.mixer.wide.clear();
+        self.mixer.folded.clear();
         if deferred {
             self.keep.sync_open(
                 &self.song.project(),

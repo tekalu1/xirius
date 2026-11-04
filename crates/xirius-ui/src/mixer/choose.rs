@@ -59,6 +59,10 @@ impl Studio {
     /// A press takes the keys from what had them, unless it lands on it: the picked row, a
     /// key send's bar, the pad, a device's control (UI-324).
     pub fn press_keys(&mut self, g: &Geometry, x: f32, y: f32) {
+        // a press off the name being typed keeps the name, wherever it lands
+        if self.input_map.name.is_some() && !self.name_rect(g).is_some_and(|r| r.contains(x, y)) {
+            self.name_key("enter", Mods::NONE);
+        }
         self.chosen_press(g, x, y);
         if self.popup.is_some() {
             return;
@@ -74,6 +78,13 @@ impl Studio {
         if !self.over_instrument(g, x, y) {
             self.device_blur();
         }
+    }
+
+    /// The keys move to another part (F6, the palette, a menu of the arrangement): the picked
+    /// row and the key send's bar let them go.
+    pub(crate) fn mixer_let_go_keys(&mut self) {
+        self.mixer.chosen = None;
+        self.mixer.key_focus = None;
     }
 
     /// Is one of the windows that float over the screen under the point?

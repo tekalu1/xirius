@@ -84,6 +84,9 @@ impl Studio {
     /// The keys go to the arrangement (`true`) or the roll; the top bar's tools follow them.
     pub(crate) fn focus_arrange(&mut self, on: bool) {
         self.arrange.focus = on;
+        if on {
+            self.mixer_let_go_keys();
+        }
         self.choose_editor();
     }
 

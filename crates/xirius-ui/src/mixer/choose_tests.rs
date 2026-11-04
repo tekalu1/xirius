@@ -349,4 +349,73 @@ fn esc_while_a_knob_is_awaited_ends_the_wait_first() {
         "the keymap's Esc ends it"
     );
     assert_eq!(s.mixer.chosen, Some((t, Pick::Plugin(eq))));
+    // and while the knob's clash asks which part keeps it
+    let target = xirius_prefs::midimap::Target::parse(&target).unwrap();
+    s.live_midi.assign.learning = None;
+    s.live_midi.assign.clash = Some(crate::midi_assign::Clash {
+        port: None,
+        message: xirius_prefs::midimap::Message::of([0xB0, 7, 64]).unwrap(),
+        holder: target.clone(),
+        target,
+        holder_port: None,
+    });
+    assert!(
+        !s.field_keys(&g, "escape", None, Mods::NONE),
+        "the keymap's Esc ends it"
+    );
+    assert_eq!(s.mixer.chosen, Some((t, Pick::Plugin(eq))));
+}
+
+#[test]
+fn moving_the_keys_to_the_arrangement_by_keyboard_lets_the_row_go() {
+    let (mut s, g) = studio();
+    let t = track(&s, "Guitar");
+    let eq = add(&mut s, t, "EQ");
+    s.instruments.open.clear();
+    click_row(&mut s, &g, t, eq);
+    assert_eq!(s.mixer.chosen, Some((t, Pick::Plugin(eq))));
+    // F6 from the dock to the next part (the browser or the arrangement)
+    s.arrange.focus = false;
+    assert_eq!(s.place(), crate::context::key_more::Place::Dock);
+    assert!(s.run_binding(&g, "view.focus --way next"));
+    assert_ne!(s.place(), crate::context::key_more::Place::Dock);
+    assert_eq!(s.mixer.chosen, None);
+    for k in ["space", "delete", "enter", "m", "insert", "down"] {
+        assert!(!key(&mut s, &g, k, false), "{k} goes on to the keymap");
+    }
+    assert!(!s.project().tracks[&t].inserts[0].bypass);
+    assert_eq!(names(&s, t), ["EQ"]);
+
+    // the palette (or a menu of the arrangement) sending the keys there does the same
+    click_row(&mut s, &g, t, eq);
+    assert!(s.mixer.chosen.is_some());
+    s.focus_arrange(true);
+    assert_eq!(s.mixer.chosen, None);
+}
+
+#[test]
+fn a_press_on_a_floating_window_keeps_the_name_being_typed() {
+    let mut s = Studio::sample();
+    let g = s.geometry(1440.0, 860.0);
+    s.resized(&g);
+    let crate::tree::RowKind::Track(t) = s.selected_row.unwrap() else {
+        panic!("track");
+    };
+    let row = s.tree().row_of(crate::tree::RowKind::Track(t)).unwrap();
+    let parts = crate::studio::RowParts::of(row);
+    let (x, y) = (
+        g.column.x + parts.name_x + 3.0,
+        g.column.y + row.y - s.scroll.1 + crate::studio::RowParts::LINE_1_Y + 3.0,
+    );
+    assert!(s.name_press(&g, x, y, 2));
+    let field = &mut s.input_map.name.as_mut().unwrap().field;
+    field.replace_text(None, "Lead");
+    s.open_macros(t);
+    let v = s.macro_view(&g).unwrap();
+    let (x, y) = (v.r.x + v.r.w / 2.0, v.r.y + v.r.h / 2.0);
+    assert!(s.over_float(&g, x, y));
+    // the screen begins every press past the dialogs with this (`screen.rs`, `pressed`)
+    s.press_keys(&g, x, y);
+    assert!(s.input_map.name.is_none(), "the name field closes");
+    assert!(s.project().tracks[&t].name.ends_with("Lead"));
 }

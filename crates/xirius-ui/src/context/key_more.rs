@@ -248,6 +248,9 @@ impl Studio {
         }];
         self.input_map.browser_focus = to == Place::Browser;
         self.arrange.focus = to == Place::Arrange;
+        if to != Place::Dock {
+            self.mixer_let_go_keys();
+        }
         self.browser.typing = false;
         self.rebuild(g);
         true
