@@ -297,6 +297,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                     fold: None,
                     pick: None,
                     press: Some(Hit::Ara(t, clip.id)),
+                    turn: None,
                 });
             }
             let Some(n) = crate::draw::takes_under(&stacks, clip) else {
@@ -361,6 +362,7 @@ pub fn start_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             fold: None,
             pick: None,
             press,
+            turn: None,
         }
     };
     let mut out = Vec::new();
@@ -421,6 +423,7 @@ pub fn home_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             fold: None,
             pick: None,
             press: press.map(Hit::Home),
+            turn: None,
         }
     };
     let mut out = Vec::new();
