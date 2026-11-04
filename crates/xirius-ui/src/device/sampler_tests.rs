@@ -105,6 +105,32 @@ fn ui_333_an_empty_sampler_is_the_drop_plane_and_browse_opens_the_files() {
     assert_eq!(s.browser.tab, RailTab::Files);
 }
 
+/// N-smp-6 (UI-333): files of one root (no note in their names) and a zone off the keys can
+/// each be chosen.
+#[test]
+fn ui_333_zones_of_one_root_and_off_the_keys_can_each_be_chosen() {
+    let (mut s, g, t, id) = window("Sampler");
+    add(
+        &mut s,
+        id,
+        &[
+            "Kick.wav",
+            "Snare.wav",
+            "Hat.wav",
+            "Clap.wav",
+            "Sub C0.wav",
+            "Bell C8.wav",
+        ],
+    );
+    for f in 0..6 {
+        let n = spot(&s, &g, t, Mark::Zone(f));
+        let r = body(&s, &g, t).spots[n].r;
+        assert!(r.w >= 4.0, "{f}: {r:?}");
+        press_spot(&mut s, &g, t, id, Mark::Zone(f));
+        assert_eq!(s.instruments.open[0].pick, f, "zone {f}");
+    }
+}
+
 #[test]
 fn ui_333_the_zones_choose_whose_sample_the_knobs_set_in_one_step() {
     let (mut s, g, t, id) = window("Sampler");

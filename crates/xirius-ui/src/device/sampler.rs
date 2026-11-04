@@ -50,6 +50,8 @@ const AMP_CELL: f32 = 62.0;
 const ENV_SHARE: f32 = 0.585;
 /// The zones' strip over the keys.
 const ZONE_H: f32 = 20.0;
+/// The narrowest a zone is drawn, so one of a single key off the keys can be pressed.
+const ZONE_MIN: f32 = 6.0;
 /// The empty plane a sample is dropped on, and its button.
 const EMPTY_H: f32 = 196.0;
 const BROWSE: (f32, f32) = (96.0, 26.0);
@@ -364,13 +366,34 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
             .find(|k| k.pitch == p.clamp(LOW, HIGH))
             .map(|k| (k.r.x, k.r.right(), k.r.x + k.r.w / 2.0))
     };
+    // Every zone can be chosen (N-smp-6): one off the keys sits at their edge, and zones
+    // that fall on one place (files of one root) share it side by side.
+    let mut placed: Vec<(Zone, f32, f32)> = Vec::new();
     for z in zones(files) {
-        if z.hi < LOW || z.lo > HIGH {
-            continue;
-        }
         let (Some((x0, _, _)), Some((_, x1, _))) = (span(z.lo), span(z.hi)) else {
             continue;
         };
+        placed.push((z, x0, x1.max(x0 + ZONE_MIN)));
+    }
+    let mut k = 0;
+    while k < placed.len() {
+        let (mut x0, mut x1) = (placed[k].1, placed[k].2);
+        let mut n = k + 1;
+        while n < placed.len() && placed[n].1 < x1 - 1.0 {
+            x0 = x0.min(placed[n].1);
+            x1 = x1.max(placed[n].2);
+            n += 1;
+        }
+        if n - k > 1 {
+            let share = (x1 - x0) / (n - k) as f32;
+            for (j, p) in placed[k..n].iter_mut().enumerate() {
+                p.1 = x0 + share * j as f32;
+                p.2 = p.1 + share;
+            }
+        }
+        k = n;
+    }
+    for (z, x0, x1) in placed {
         let mut spot = Spot::new(
             Rect::new(x0, y, (x1 - x0 - 1.0).max(4.0), ZONE_H),
             Mark::Zone(z.file),
