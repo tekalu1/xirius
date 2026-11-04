@@ -1520,9 +1520,11 @@ impl Session {
         let taken = out.clipboard.take();
         work.validate()
             .map_err(|e| CmdError::new(e.code, format!("{}: {}", def.name, e.message)))?;
-        // the last parameter touched is one the edit was let through for
+        // the last parameter touched is one the edit was let through for: not one a macro
+        // holds (that edit is refused below, or kept back from it)
         if !dry
             && def.name == "plugin.param.set"
+            && held.is_empty()
             && let (Ok(id), Ok(param)) = (args.str("id"), args.str("param"))
         {
             self.state.touched = Some(format!("param:{id}:{param}"));

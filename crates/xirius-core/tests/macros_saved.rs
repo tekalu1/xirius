@@ -373,3 +373,38 @@ fn a_muted_send_a_macro_moves_stays_muted_when_the_song_opens() {
     assert_eq!(back.muted_level, Some(level));
     assert!(!s.is_dirty(), "opening alone is no edit");
 }
+
+/// A `plugin.param.set` refused because a macro holds the parameter does not make it the
+/// last one touched (learn takes only what an edit was let through for).
+#[test]
+fn a_refused_param_set_is_not_the_last_one_touched() {
+    let mut s = Session::new("macros");
+    let t = id_of(&run(&mut s, "track.add.audio", json!({"name": "Vocal"})));
+    let eq = id_of(&run(
+        &mut s,
+        "plugin.add",
+        json!({"track": t, "name": "EQ"}),
+    ));
+    run(
+        &mut s,
+        "control.assign",
+        json!({"track": t, "control": "k1", "target": format!("param:{eq}:gain")}),
+    );
+    try_run(
+        &mut s,
+        "plugin.param.set",
+        json!({"id": eq, "param": "gain", "value": 0.9}),
+    )
+    .expect_err("held by the macro");
+    let e = try_run(
+        &mut s,
+        "control.assign.touched",
+        json!({"track": t, "control": "k2"}),
+    )
+    .expect_err("nothing was touched");
+    assert!(
+        e.message.contains("まだパラメーターに触れていません"),
+        "{}",
+        e.message
+    );
+}
