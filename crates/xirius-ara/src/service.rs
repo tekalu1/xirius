@@ -476,6 +476,12 @@ impl Service {
         })
     }
 
+    /// As if the plugin told it changed its document: the next [`Service::store_changed_later`]
+    /// writes its archive. For a script that cannot edit in the plugin's window.
+    pub fn mark_changed(&self) {
+        self.shared.dirty.store(true, Ordering::Release);
+    }
+
     /// Whether the plugin changed its document since the last call (an edit in its window).
     pub fn take_dirty(&self) -> bool {
         self.shared.dirty.swap(false, Ordering::AcqRel)

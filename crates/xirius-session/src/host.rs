@@ -848,6 +848,13 @@ impl SessionHost {
         self.builder.ara().take_arrived(&self.song)
     }
 
+    /// As if each ARA plugin of the song told it changed its document: the song written next
+    /// has their archives. For the real-plugin script, which edits nothing in the plugin's
+    /// window.
+    pub fn mark_ara_changed(&self) {
+        self.builder.ara().mark_changed(&self.song);
+    }
+
     /// Why ARA editors asked for did not open, by plugin, once.
     pub fn take_ara_editor_errors(&self) -> Vec<(String, String)> {
         self.builder.ara().take_editor_errors()

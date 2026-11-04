@@ -331,17 +331,26 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             let closed = !s.ara.editing.iter().any(|p| p == uid());
             // The window's edits come into the song once the plugin wrote its archive
             // (`take_archives`, at a later frame). The script edits nothing in the plugin's
-            // window (the plugin takes no edit from the host), so whether there is one is the
-            // plugin's: what is checked is that the one asked for comes, and that the song
-            // written keeps it byte for byte through opening it again.
+            // window (the plugin takes no edit from the host), so it stands in for the
+            // plugin's notice that its document changed: the save asks for the archive, waits
+            // for it, and writes it, and the song keeps it byte for byte through opening it
+            // again.
             let pending = |s: &Studio| s.transport.host().is_some_and(|h| h.take_ara_arrived());
             wait(s, 10.0, |s| !pending(s));
             assert!(!pending(s), "the plugin's archive asked for did not come");
+            if let Some(h) = s.transport.host() {
+                h.mark_ara_changed();
+            }
             let saved = s.run_command("project.save", json!({}));
             wait(s, 30.0, |s| s.song.is_saved());
             assert!(s.song.is_saved(), "the song was not written: {:?}", s.error);
             let archives = s.project().ara.archives.clone();
             let archived = archives.len();
+            // Empty and empty would compare equal: the plugin's archive must be in the song.
+            assert!(
+                archives.contains_key(uid()),
+                "the song was written without the plugin's archive ({archived} archives)"
+            );
             let song = dir().join("song");
             let opened = s.run_command("project.open", json!({ "path": song.to_string_lossy() }));
             wait(s, 30.0, |s| clip(s).is_some());

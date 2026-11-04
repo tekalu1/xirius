@@ -930,6 +930,15 @@ impl Held {
             .collect()
     }
 
+    /// As if each plugin of `p` told it changed its document ([`Service::mark_changed`]): the
+    /// song written next has their archives. For the real-plugin script, which edits nothing
+    /// in the plugin's window.
+    pub fn mark_changed(&self, p: &Project) {
+        for d in self.kept(p) {
+            d.service.mark_changed();
+        }
+    }
+
     /// Asks, without waiting, the plugins whose documents changed for their archives, so that
     /// they are ready when the song is written or left: an edit the plugin has not told of yet
     /// counts too.
