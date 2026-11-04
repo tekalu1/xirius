@@ -129,3 +129,64 @@ fn a_turn_coalesces_queued_states_while_the_first_disk_write_is_held() {
     session.undo(1).unwrap();
     assert_eq!(session.project().clip(clip).unwrap().1.transpose(), 0);
 }
+
+/// An edit whose step could not be written (UI-288), then a save once the disk takes writes
+/// again: the song opens with the edit, as it was saved, not at the last step the disk had.
+#[test]
+fn a_save_after_a_failed_history_write_opens_with_the_edit() {
+    for background in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("song");
+        let mut session = Session::create(&dir, Project::new("behind")).unwrap();
+        run(&mut session, "track.add.audio", json!({"name":"Before"}));
+        session.write_in_background(background);
+        let history = dir.join("history");
+        let deny = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let denied = deny.clone();
+        let _observe = crate::io_test::observe(Arc::new(move |op, path| {
+            if op == "write" && path.starts_with(&history) && denied.load(Ordering::SeqCst) {
+                return Err(std::io::ErrorKind::PermissionDenied.into());
+            }
+            Ok(())
+        }));
+        let _ = session.run_value(
+            "track.add.audio",
+            json!({"name":"Kept"}),
+            &RunOptions::human(),
+        );
+        session.flush_writes();
+        let _ = session.take_write_errors();
+        deny.store(false, Ordering::SeqCst);
+        session.save().unwrap();
+        drop(_observe);
+        drop(session);
+        let mut session = Session::open(&dir).unwrap();
+        let names = |s: &Session| {
+            s.project()
+                .tracks
+                .values()
+                .map(|t| t.name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            names(&session).contains(&"Kept".to_string()),
+            "{background}"
+        );
+        assert!(!session.is_dirty(), "{background}");
+        // The step itself is on the disk, not a reload of the saved song put after the old end.
+        assert_eq!(
+            session.steps().last().unwrap().command,
+            "track.add.audio",
+            "{background}"
+        );
+        session.undo(1).unwrap();
+        assert!(
+            !names(&session).contains(&"Kept".to_string()),
+            "{background}"
+        );
+        assert!(
+            names(&session).contains(&"Before".to_string()),
+            "{background}"
+        );
+    }
+}

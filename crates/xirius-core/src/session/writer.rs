@@ -16,6 +16,7 @@ mod tests;
 
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -165,6 +166,9 @@ struct Shared {
     pending: Mutex<usize>,
     done: Condvar,
     errors: Mutex<Errors>,
+    /// A write failed since the history was last written whole: the disk may lack a state or
+    /// the index naming it, and the next save writes them again (UI-288).
+    behind: AtomicBool,
     /// Waited before each job: a slow disk for the tests.
     delay: Mutex<Duration>,
 }
@@ -185,6 +189,7 @@ impl Shared {
     }
 
     fn failed(&self, message: crate::error::CmdError) {
+        self.behind.store(true, Ordering::Release);
         let mut e = self.errors.lock().unwrap_or_else(PoisonError::into_inner);
         if e.kept.last() == Some(&message) {
             return;
@@ -286,13 +291,22 @@ impl Writer {
                 Err(mpsc::SendError(job)) => {
                     // The thread is gone: write here.
                     self.shared.finish_one();
-                    self.shared.wait_delay();
-                    return run(job);
+                    return self.run_here(job);
                 }
             }
         }
+        self.run_here(job)
+    }
+
+    /// A job written on the spot: its error goes back to the caller, and the next save
+    /// writes the history again.
+    fn run_here(&self, job: Job) -> CmdResult<()> {
         self.shared.wait_delay();
-        run(job)
+        let done = run(job);
+        if done.is_err() {
+            self.mark_behind();
+        }
+        done
     }
 
     pub(super) fn pending(&self) -> bool {
@@ -351,6 +365,15 @@ impl Writer {
             e.more = 0;
         }
         out
+    }
+
+    /// Whether a write failed since the last call (the history on the disk may be behind).
+    pub(super) fn take_behind(&self) -> bool {
+        self.shared.behind.swap(false, Ordering::AcqRel)
+    }
+
+    pub(super) fn mark_behind(&self) {
+        self.shared.behind.store(true, Ordering::Release);
     }
 
     pub(super) fn set_delay(&self, d: Duration) {

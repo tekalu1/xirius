@@ -2002,6 +2002,7 @@ impl Session {
         self.check_available()?;
         let store = self.store.clone().ok_or_else(no_store)?;
         self.writer.flush();
+        self.rewrite_history(&store)?;
         store.write_project(&self.current)?;
         self.set_disk_hash(store.project_hash()?);
         store.write_view(&self.state.view)?;
@@ -2010,6 +2011,30 @@ impl Session {
         self.prune_blobs(store);
         self.saved = Some(self.current.clone());
         Ok(())
+    }
+
+    /// After a write of the history failed (UI-288), a save writes it again first: the states
+    /// the disk lacks that memory still has, then the index. Without them the song would open
+    /// at the last step the disk had, without the edits made since, though they were saved.
+    fn rewrite_history(&mut self, store: &Store) -> CmdResult<()> {
+        if !self.writer.take_behind() {
+            return Ok(());
+        }
+        let written = (|| {
+            for (i, state) in self.hist.states.iter().enumerate() {
+                let abs = self.hist.first + i as u64;
+                if let Some(p) = state
+                    && (abs == self.hist.cursor || !store.has_state(abs))
+                {
+                    store.write_state(abs, p)?;
+                }
+            }
+            store.write_index(&self.hist.index())
+        })();
+        if written.is_err() {
+            self.writer.mark_behind();
+        }
+        written
     }
 
     /// After a save: the blobs the history no longer points to go, on the writer's thread
@@ -2030,6 +2055,7 @@ impl Session {
     fn save_over(&mut self) -> CmdResult<Overwrite> {
         let store = self.store.clone().ok_or_else(no_store)?;
         self.writer.flush();
+        self.rewrite_history(&store)?;
         let expected = self.expected_on_disk()?;
         let done = store.overwrite_project(&self.current, &expected)?;
         self.set_disk_hash(Some(done.after.clone()));
