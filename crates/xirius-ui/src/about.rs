@@ -3629,6 +3629,62 @@ used {} {}
         assert_eq!(started.count(), 0);
     }
 
+    /// UI-282: a song whose record could not be written (保存できません) is not closed over
+    /// for an update: the close asks, 「戻る」 keeps the window with the edit and calls the
+    /// update off, and only 「保存せずに進む」 lets it go on.
+    #[test]
+    fn ui_282_a_song_that_could_not_be_written_is_not_closed_for_an_update() {
+        use crate::context::key_more::WindowAsk;
+
+        for proceed in [false, true] {
+            let tmp = scratch("unwritten");
+            let mut s = Studio::new(crate::song::Song::empty());
+            s.song.save_as(&tmp.path().join("song")).unwrap();
+            s.run_command("track.add.audio", serde_json::json!({"name":"kept"}));
+            s.transport.bind_window();
+            let started = Started::default();
+            started.arm(&mut s, tmp.path());
+            s.keep.failed = Some("保存できません".into());
+            s.window_ask = Some(WindowAsk::Quit);
+            assert_eq!(s.take_window_ask(), Some(WindowAsk::Quit));
+            assert!(!s.close_now(), "the window stays");
+            assert!(s.unsaved.is_some(), "the close asks");
+            assert!(!s.keep.plugin_state_failed, "not the plugins' question");
+            assert!(
+                s.update.pending.is_some(),
+                "the update waits for the answer"
+            );
+            assert_eq!(started.count(), 0);
+            s.answer_unsaved(proceed);
+            if !proceed {
+                assert!(s.update.pending.is_none());
+                assert!(s.update.notice.is_some());
+                assert_eq!(s.window_ask, None, "the window stays");
+                assert!(
+                    s.project().tracks.values().any(|t| t.name == "kept"),
+                    "with the edit"
+                );
+                assert_eq!(started.count(), 0);
+                continue;
+            }
+            let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            loop {
+                assert!(
+                    std::time::Instant::now() < end,
+                    "the person said to go on, and the window did not close"
+                );
+                s.idle();
+                s.poll_saving();
+                if s.take_window_ask() == Some(WindowAsk::Quit) && s.close_now() {
+                    break;
+                }
+                assert_eq!(started.count(), 0);
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            assert_eq!(started.count(), 1);
+        }
+    }
+
     /// How a test closes the window of a song with unsaved changes and an update waiting.
     #[derive(Clone, Copy, Debug)]
     enum Way {

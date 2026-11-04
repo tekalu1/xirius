@@ -239,6 +239,12 @@ impl Studio {
             self.ask_unsaved(crate::unsaved::Pending::Close);
             return;
         }
+        // A song whose record could not be written (UI-288) loses its edits when it closes:
+        // only the person can say so, and an update waits for the answer (UI-282).
+        if self.keep.failed.is_some() && matches!(leave, Leave::Close) {
+            self.ask_unsaved(crate::unsaved::Pending::CloseUnwritten);
+            return;
+        }
         if self.transport.host().is_some() {
             self.launch_save(None, Some(leave));
             return;

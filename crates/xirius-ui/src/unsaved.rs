@@ -8,6 +8,8 @@ use xirius_design::{Layout, Radius};
 pub(crate) enum Pending {
     Open(Box<crate::opening::Opening>),
     Close,
+    /// The song's own record could not be written (UI-288): closing loses the edits since.
+    CloseUnwritten,
 }
 pub(crate) struct Question {
     pending: Pending,
@@ -18,7 +20,9 @@ pub const PROCEED: &str = "保存せずに進む";
 
 impl Studio {
     pub(crate) fn ask_unsaved(&mut self, pending: Pending) {
-        self.keep.plugin_state_failed = true;
+        if !matches!(pending, Pending::CloseUnwritten) {
+            self.keep.plugin_state_failed = true;
+        }
         self.unsaved = Some(Question {
             pending,
             proceed_focus: false,
@@ -36,8 +40,12 @@ impl Studio {
                     self.abandon_state_open(*open);
                 }
             }
-            Pending::Close if proceed => self.close_without_plugin_state(),
-            Pending::Close => self.drop_update_install("更新を取りやめました".into()),
+            Pending::Close | Pending::CloseUnwritten if proceed => {
+                self.close_without_plugin_state()
+            }
+            Pending::Close | Pending::CloseUnwritten => {
+                self.drop_update_install("更新を取りやめました".into())
+            }
         }
     }
     pub(crate) fn unsaved_key(&mut self, key: &str) -> bool {
@@ -97,7 +105,10 @@ pub(crate) fn paint(pen: &mut Pen, s: &Studio, g: &Geometry) -> bool {
             Rect::new(r.x + 16.0, r.y + 48.0, r.w - 32.0, 24.0),
             Look::Label,
         )
-        .text("プラグインの状態を保存できません"),
+        .text(match q.pending {
+            Pending::CloseUnwritten => "曲の変更を保存できません",
+            _ => "プラグインの状態を保存できません",
+        }),
         Cell::new(back, Look::Button).text("戻る"),
         Cell::new(proceed, Look::Danger).text(PROCEED),
     ];
