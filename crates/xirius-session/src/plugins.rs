@@ -2052,6 +2052,12 @@ impl PluginLoader {
         self.stock.get(&id).map(|s| s.handle.probe())
     }
 
+    /// The 0..1 value a running built-in plays parameter `key` at now (what its lanes and
+    /// edits last gave it). `None` when the plugin is not a running built-in.
+    pub fn stock_value(&self, id: PluginId, key: &str) -> Option<f64> {
+        self.stock.get(&id)?.handle.get(key)
+    }
+
     /// The tempo the built-ins play at from now on (the Delay's note lengths).
     pub fn set_tempo(&mut self, bpm: f64) {
         self.tempo = bpm;

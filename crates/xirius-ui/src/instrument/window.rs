@@ -2062,7 +2062,7 @@ fn turn_key(w: &Win) -> String {
 
 /// The face in the mixer's drawer (MIX-046), under the windows.
 pub fn paint_docked(pen: &mut Pen, studio: &Studio, g: &Geometry) {
-    let p = studio.project();
+    let p = studio.auto_shown();
     let Some(i) = studio.docked() else {
         return;
     };
@@ -2079,7 +2079,7 @@ pub fn paint_docked(pen: &mut Pen, studio: &Studio, g: &Geometry) {
 /// The open windows, the last on top.
 pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     forget_turns(studio);
-    let p = studio.project();
+    let p = studio.auto_shown();
     for (i, w) in studio.instruments.open.iter().enumerate() {
         if w.docked {
             continue;

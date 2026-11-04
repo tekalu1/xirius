@@ -133,6 +133,16 @@ impl Studio {
         heard
     }
 
+    /// The song as the devices' windows show it: the lanes' values at the playhead, as the
+    /// mixer's faders show theirs (a band's switch follows its lane).
+    pub(crate) fn auto_shown(&self) -> std::sync::Arc<Project> {
+        let p = self.project();
+        match xirius_session::automation::song_at(&p, self.playhead as f64) {
+            std::borrow::Cow::Owned(heard) => std::sync::Arc::new(heard),
+            std::borrow::Cow::Borrowed(_) => p.clone(),
+        }
+    }
+
     fn auto_advance(&mut self, at: Tick) {
         let range = self
             .transport
@@ -273,6 +283,48 @@ mod tests {
             .iter()
             .find(|l| l.target == AutoTarget::Volume)
             .cloned()
+    }
+
+    /// AUT-016: a lane of a band's switch sets the band as the song plays, and a seek while
+    /// stopped sets it to the lane's value there.
+    #[test]
+    fn a_switch_lane_sets_the_band_while_playing_and_at_a_seek_while_stopped() {
+        let (mut s, _, t) = studio("Keys", "read");
+        assert!(s.run_command(
+            "plugin.add",
+            json!({ "track": t.to_string(), "name": "EQ" })
+        ));
+        let eq = s.project().tracks[&t]
+            .inserts
+            .iter()
+            .find(|x| x.name == "EQ")
+            .unwrap()
+            .id;
+        let target = format!("param:{eq}:high_cut_on");
+        for (at, v) in [(0, 0.9), (16 * 3840, 0.2)] {
+            assert!(s.run_command(
+                "auto.point.add",
+                json!({ "track": t.to_string(), "target": target, "at": at, "value": v }),
+            ));
+        }
+        let live = move |s: &Studio| {
+            s.transport
+                .host()
+                .and_then(|h| h.plugins().stock_value(eq, "high_cut_on"))
+        };
+        s.seek(0);
+        assert!(s.toggle_play(), "{:?}", s.error);
+        tick_until(&mut s, "the song plays", |s| s.transport.is_live());
+        tick_until(&mut s, "the band is on", |s| live(s) == Some(1.0));
+        assert!(s.playhead < 16 * 3840, "{}", s.playhead);
+        s.stop_transport();
+        tick_until(&mut s, "the song stops", |s| !s.transport.playing);
+        s.seek(20 * 3840);
+        tick_until(&mut s, "the seek turns the band off", |s| {
+            live(s) == Some(0.0)
+        });
+        s.seek(3840);
+        tick_until(&mut s, "and back on", |s| live(s) == Some(1.0));
     }
 
     /// Drags the fader down by `dy` points in steps, playing between them.

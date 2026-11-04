@@ -59,7 +59,13 @@ impl Studio {
             json!({ "track": track.to_string(), "target": target.to_string(),
                     "ticks": ticks, "curve": curve, "step": step })
         };
-        let line = !target.stepped();
+        // a switch's points are stairs, as a mute's are
+        let line = !target.stepped()
+            && self
+                .project()
+                .tracks
+                .get(&track)
+                .is_none_or(|t| target.steps_on(t).is_none());
         let shapes = vec![
             self.ctx_as("直線", "auto.point.shape", args(0.0, false))
                 .on(line && !pt.step && pt.curve == 0.0),
@@ -118,7 +124,11 @@ impl Studio {
             "auto.point.add",
             json!({ "track": tid, "target": tgt, "at": at, "value": value }),
         );
-        let seg = line.and_then(|i| l.points.get(i).copied().map(|pt| (i, pt)));
+        // a switch's line is a stair and has no other shape
+        let stairs = target.steps_on(t).is_some();
+        let seg = line
+            .filter(|_| !stairs)
+            .and_then(|i| l.points.get(i).copied().map(|pt| (i, pt)));
         let shape = match seg {
             Some((index, pt)) => {
                 let args = |curve: f64, step: bool| {
@@ -226,6 +236,6 @@ impl Studio {
             - ((y - self.lane_top(g, &row, i) - Arrange::LANE_PAD)
                 / (LANE_H - Arrange::LANE_PAD * 2.0))
                 .clamp(0.0, 1.0);
-        Some(lane_value(target, f64::from(n)))
+        Some(self.lane_snap(track, target, lane_value(target, f64::from(n))))
     }
 }

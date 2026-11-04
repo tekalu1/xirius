@@ -479,6 +479,7 @@ impl Store {
         // The keys first, so the macro controls set the song's keys (the fifth review's low 4).
         f.project.fix_param_keys();
         f.project.settle_controls();
+        f.project.snap_lanes();
         f.project
             .validate()
             .map_err(|e| Self::corrupt(rel, e.message))?;
@@ -679,6 +680,7 @@ impl Store {
         let rows = p.fix_racks();
         p.fix_param_keys();
         p.settle_controls();
+        p.snap_lanes();
         p.validate().map_err(|e| Self::corrupt(&rel, e.message))?;
         Ok((p, rows))
     }

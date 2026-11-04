@@ -70,11 +70,11 @@ impl Studio {
     /// The value a window y stands for in `place`.
     fn stroke_value(&self, g: &Geometry, place: &Place, y: f32) -> f64 {
         match place {
-            Place::Lane { target, top, .. } => {
+            Place::Lane { track, target, top } => {
                 let n = 1.0
                     - ((y - top - Arrange::LANE_PAD) / (LANE_H - Arrange::LANE_PAD * 2.0))
                         .clamp(0.0, 1.0);
-                lane_value(target, f64::from(n))
+                self.lane_snap(*track, target, lane_value(target, f64::from(n)))
             }
             Place::Tempo => self.tempo_at_y(g, y),
         }
@@ -195,6 +195,21 @@ impl Studio {
                      }| (tick, value, step),
                 )
                 .collect()
+        };
+        // a switch's lane takes the drawn line as a stair on its steps, as `auto.draw` keeps it
+        let path: Vec<(Tick, f64, bool)> = match &place {
+            Place::Lane { track, target, .. }
+                if self
+                    .project()
+                    .tracks
+                    .get(track)
+                    .is_some_and(|t| target.steps_on(t).is_some() && !target.stepped()) =>
+            {
+                path.into_iter()
+                    .map(|(t, v, _)| (t, self.lane_snap(*track, target, v), true))
+                    .collect()
+            }
+            _ => path,
         };
         let (command, tip) = match &place {
             Place::Lane { track, target, .. } => {

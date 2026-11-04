@@ -1517,6 +1517,8 @@ impl Session {
         // branch taken away) goes too, and the message says so (undo brings it back).
         let dropped = work.prune_controls();
         work.prune_branch_lanes();
+        // a switch's lane holds only on or off, however the edit wrote it
+        work.snap_lanes();
         // the main parameter of a `plugin.param.set`, as the edit left it: a macro holding it
         // puts it back, one holding only an `also` does not (review 3 低2)
         let main_param = |p: &Project| -> Option<Option<f64>> {

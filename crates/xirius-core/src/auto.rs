@@ -142,6 +142,33 @@ impl AutoTarget {
         }
     }
 
+    /// How many values a point may hold on this channel, when the target has steps: a
+    /// switch (2) or a built-in parameter with steps (a choice, a whole number). The
+    /// points of such a lane sit on the steps and hold up to the next one (a stair).
+    pub fn steps_on(&self, t: &Track) -> Option<u32> {
+        match self {
+            AutoTarget::Param(p, name) => t
+                .inserts
+                .iter()
+                .find(|x| x.id == *p)?
+                .builtin()?
+                .resolve(name)?
+                .spec
+                .steps()
+                .filter(|n| *n >= 2),
+            t if t.stepped() => Some(2),
+            _ => None,
+        }
+    }
+
+    /// `v` on the nearest step of this channel's target; as it is when the target glides.
+    pub fn snap_on(&self, t: &Track, v: f64) -> f64 {
+        match self.steps_on(t) {
+            Some(n) => snap(self.range(), n, v),
+            None => v,
+        }
+    }
+
     /// A level in dB that moves along the fader's feel.
     pub fn is_level(&self) -> bool {
         matches!(
@@ -476,6 +503,71 @@ impl AutoLane {
         v.sort_by_key(|x| x.tick);
         v.dedup_by_key(|x| x.tick);
     }
+
+    /// Are the points on the steps of the target on `t`, as stairs (or does it glide)?
+    pub fn snapped_on(&self, t: &Track) -> bool {
+        let Some(n) = self.target.steps_on(t) else {
+            return true;
+        };
+        let range = self.target.range();
+        // Mute and the like hold by their kind already; a parameter holds by its points
+        let hold = !self.target.stepped();
+        self.points
+            .iter()
+            .all(|x| (!hold || (x.step && x.curve == 0.0)) && snap(range, n, x.value) == x.value)
+    }
+
+    /// Puts each point on a step of the lane's target on `t` and makes it hold up to the
+    /// next (a stair), when the target has steps: a switch draws and plays only on or off.
+    /// `false` when the points were so already (the lane is not touched then).
+    pub fn snap_on(&mut self, t: &Track) -> bool {
+        if self.snapped_on(t) {
+            return false;
+        }
+        let Some(n) = self.target.steps_on(t) else {
+            return false;
+        };
+        let range = self.target.range();
+        let hold = !self.target.stepped();
+        for x in Arc::make_mut(&mut self.points) {
+            x.value = snap(range, n, x.value);
+            if hold {
+                x.step = true;
+                x.curve = 0.0;
+            }
+        }
+        true
+    }
+}
+
+impl crate::model::Project {
+    /// Puts the points of every lane whose target has steps on those steps, as stairs
+    /// ([`AutoLane::snap_on`]): after each edit, and as a song is read (a song saved before
+    /// had values between the steps of a switch). Returns how many lanes it changed.
+    pub fn snap_lanes(&mut self) -> usize {
+        let mut n = 0;
+        for t in self.tracks.values_mut() {
+            if t.automation.iter().all(|l| l.snapped_on(t)) {
+                continue;
+            }
+            let t = Arc::make_mut(t);
+            let owner = t.clone();
+            for l in &mut t.automation {
+                n += usize::from(l.snap_on(&owner));
+            }
+        }
+        n
+    }
+}
+
+/// `v` on the nearest of `n` evenly spaced steps from `lo` to `hi`.
+pub fn snap((lo, hi): (f64, f64), n: u32, v: f64) -> f64 {
+    if n < 2 || hi <= lo {
+        return v;
+    }
+    let last = f64::from(n - 1);
+    let k = ((v.clamp(lo, hi) - lo) / (hi - lo) * last).round();
+    lo + (hi - lo) * k / last
 }
 
 /// Shapes the 0..1 fraction of a segment by its curve (-1..1).

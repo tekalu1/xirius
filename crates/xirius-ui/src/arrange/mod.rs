@@ -1149,7 +1149,7 @@ impl Studio {
                     - ((y - self.lane_top(g, &row, i) - Arrange::LANE_PAD)
                         / (LANE_H - Arrange::LANE_PAD * 2.0))
                         .clamp(0.0, 1.0);
-                let value = lane_value(target, f64::from(n));
+                let value = self.lane_snap(track, target, lane_value(target, f64::from(n)));
                 let at = self.snap_tick(tick, mods.shift);
                 // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 let added = self.arrange_run(
@@ -2475,6 +2475,15 @@ impl Studio {
         })
     }
 
+    /// `v` on the nearest step when the lane's target on `t` has steps (a switch holds only
+    /// on or off); as it is otherwise.
+    pub(crate) fn lane_snap(&self, t: TrackId, target: &AutoTarget, v: f64) -> f64 {
+        match self.project().tracks.get(&t) {
+            Some(track) => target.snap_on(track, v),
+            None => v,
+        }
+    }
+
     fn lane_of(&self, t: TrackId, target: &AutoTarget) -> Option<AutoLane> {
         self.project()
             .tracks
@@ -2506,7 +2515,7 @@ impl Studio {
         let value = if move_y {
             let n = lane_norm(target, pt.value)
                 - f64::from(dy * fine / (LANE_H - Arrange::LANE_PAD * 2.0));
-            lane_value(target, n)
+            self.lane_snap(t, target, lane_value(target, n))
         } else {
             pt.value
         };

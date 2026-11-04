@@ -1667,3 +1667,119 @@ fn a_click_on_empty_space_moves_the_playhead_only_with_the_setting() {
     click!(s, g, (s.tick_x(&g, 10 * BAR), y), none());
     assert_eq!(s.playhead, 12 * BAR);
 }
+
+/// AUT-016: in a lane of a band's switch, a click of the pencil, a dragged point and a drawn
+/// line land on off or on, the line shown as stairs while drawing; the device window shows
+/// the lane's value at the playhead.
+#[test]
+fn a_switch_lane_takes_only_off_and_on_from_the_pencil_a_drag_and_a_line() {
+    let (mut s, g) = studio();
+    let bass = two_lanes(&mut s, &g, "Bass");
+    let tid = bass.to_string();
+    s.arrange_run("plugin.add", json!({ "track": tid, "name": "EQ" }));
+    let eq = s.project().tracks[&bass]
+        .inserts
+        .iter()
+        .find(|x| x.name == "EQ")
+        .unwrap()
+        .id;
+    let target = AutoTarget::Param(eq, "high_cut_on".into());
+    for (at, v) in [(4 * BAR, 0.3), (8 * BAR, 0.8)] {
+        s.arrange_run(
+            "auto.point.add",
+            json!({ "track": tid, "target": target.to_string(), "at": at, "value": v }),
+        );
+    }
+    let points = |s: &Studio| {
+        s.project().tracks[&bass]
+            .automation
+            .iter()
+            .find(|l| l.target == target)
+            .unwrap()
+            .points
+            .iter()
+            .map(|p| (p.tick, p.value, p.step))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(points(&s), vec![(4 * BAR, 0.0, true), (8 * BAR, 1.0, true)]);
+    let lane = s
+        .arrange
+        .lanes_of(&s.project().tracks[&bass])
+        .iter()
+        .position(|l| l.target == target)
+        .expect("the lane shows");
+    let row = *s.tree().row_of(RowKind::Track(bass)).unwrap();
+    let top = s.lane_top(&g, &row, lane);
+    let y = |v: f64| top + lane_value_y(&target, v);
+
+    // the pencil between the steps
+    s.tool = Tool::Draw;
+    click!(s, g, (s.tick_x(&g, 6 * BAR), y(0.6)), none());
+    click!(s, g, (s.tick_x(&g, 7 * BAR), y(0.4)), none());
+    assert_eq!(
+        points(&s),
+        vec![
+            (4 * BAR, 0.0, true),
+            (6 * BAR, 1.0, true),
+            (7 * BAR, 0.0, true),
+            (8 * BAR, 1.0, true)
+        ]
+    );
+
+    // a point dragged most of the way down, but not all of it
+    s.tool = Tool::Select;
+    let (x, py) = point_xy(&s, &g, bass, lane, 1);
+    assert!((py - y(1.0)).abs() < 0.5);
+    drag!(s, g, (x, py), (x, y(0.3)), none());
+    assert_eq!(points(&s)[1], (6 * BAR, 0.0, true));
+
+    // a line drawn down across the lane: stairs while drawing and when laid
+    s.tool = Tool::Draw;
+    draw_shape(&mut s, "line");
+    let (x0, x1) = (s.tick_x(&g, 9 * BAR), s.tick_x(&g, 11 * BAR));
+    hold!(s, g, (x0, y(0.9)), (x1, y(0.1)), none());
+    let plan = s.plan(&g, s.arrange.drag.as_ref().unwrap()).unwrap();
+    let Preview::Stroke(line) = &plan.preview else {
+        panic!("{:?}", plan.preview)
+    };
+    assert!(
+        line.iter()
+            .all(|p| (p.1 - y(0.0)).abs() < 0.5 || (p.1 - y(1.0)).abs() < 0.5),
+        "{line:?}"
+    );
+    let flat = line
+        .windows(2)
+        .filter(|w| (w[0].1 - w[1].1).abs() < 0.5)
+        .count();
+    let steep = line
+        .windows(2)
+        .filter(|w| (w[0].0 - w[1].0).abs() < 0.5)
+        .count();
+    assert!(flat > 0 && steep > 0, "a stair: {line:?}");
+    s.arrange_up(&g, x1, y(0.1), none());
+    let drawn: Vec<_> = points(&s)
+        .into_iter()
+        .filter(|p| p.0 >= 9 * BAR && p.0 <= 11 * BAR)
+        .collect();
+    assert!(drawn.len() >= 2, "{drawn:?}");
+    assert!(
+        drawn.iter().all(|p| (p.1 == 0.0 || p.1 == 1.0) && p.2),
+        "{drawn:?}"
+    );
+
+    // the device window reads the lane at the playhead, not the value set in the window
+    let shown = |s: &Studio| {
+        s.auto_shown().tracks[&bass]
+            .inserts
+            .iter()
+            .find(|x| x.id == eq)
+            .unwrap()
+            .params
+            .get("high_cut_on")
+            .copied()
+    };
+    s.playhead = 8 * BAR + 100;
+    assert_eq!(shown(&s), Some(1.0));
+    s.playhead = 5 * BAR;
+    assert_eq!(shown(&s), Some(0.0));
+}

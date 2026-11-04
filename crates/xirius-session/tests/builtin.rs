@@ -353,3 +353,85 @@ fn inserts_leave_the_audio_file_as_it_was() {
         modified
     );
 }
+
+/// AUT-016: a lane of a band's switch turns the band off in the sound. The points are written
+/// between on and off; the lane holds on through the first bar and off through the second,
+/// offline and as the engine plays it.
+#[test]
+fn a_lane_turns_an_eq_band_off_in_the_sound() {
+    let mut s = song("band");
+    let t = voice(&mut s, 96, 2.0);
+    let eq = add(&mut s, &t, "EQ");
+    let flat = render(&s);
+    set(&mut s, &eq, "high_cut_freq", "1000");
+    set(&mut s, &eq, "high_cut_slope", "48 dB/oct");
+    let target = format!("param:{eq}:high_cut_on");
+    for (at, v) in [(0, 0.8), (3840, 0.3)] {
+        run(
+            &mut s,
+            "auto.point.add",
+            json!({ "track": t, "target": target, "at": at, "value": v }),
+        );
+    }
+    let split = flat.0.len() / 2;
+    let skip = 9600;
+    let halves = |l: &[f32], r: &[f32]| {
+        let end = l.len().min(flat.0.len());
+        let ratio = |a: std::ops::Range<usize>| {
+            rms(&l[a.clone()], &r[a.clone()]) / rms(&flat.0[a.clone()], &flat.1[a])
+        };
+        (ratio(skip..split), ratio(split + skip..end))
+    };
+    let (l, r) = render(&s);
+    let (first, second) = halves(&l, &r);
+    assert!(first < 0.05, "the band cuts the first bar: {first}");
+    assert!(near(second, 1.0, 0.01), "and leaves the second: {second}");
+
+    let mut rig = Rig::new(&s);
+    rig.host.stop();
+    rig.pull(24000);
+    rig.host.seek_frame(0);
+    rig.host.play();
+    let (mut l, mut r) = (Vec::new(), Vec::new());
+    while l.len() < flat.0.len() {
+        rig.host.poll();
+        let (a, b) = rig.pull(480);
+        l.extend(a);
+        r.extend(b);
+    }
+    rig.host.stop();
+    let (first, second) = halves(&l, &r);
+    assert!(first < 0.05, "played, the band cuts the first bar: {first}");
+    assert!(near(second, 1.0, 0.01), "and leaves the second: {second}");
+}
+
+/// AUT-016: stopped, a seek sets a switch to the lane's value there.
+#[test]
+fn a_seek_while_stopped_sets_a_switch_from_its_lane() {
+    let mut s = song("seek");
+    let t = voice(&mut s, 72, 2.0);
+    let eq = add(&mut s, &t, "EQ");
+    let target = format!("param:{eq}:high_cut_on");
+    for (at, v) in [(0, 0.2), (3840, 0.9)] {
+        run(
+            &mut s,
+            "auto.point.add",
+            json!({ "track": t, "target": target, "at": at, "value": v }),
+        );
+    }
+    let mut rig = Rig::new(&s);
+    let id = eq.parse().unwrap();
+    let p = s.project();
+    let rate = f64::from(p.settings.sample_rate);
+    let map = TempoMap::from_project(p);
+    for (tick, want) in [(4800, 1.0), (960, 0.0), (3839, 0.0), (3840, 1.0)] {
+        rig.host.seek_frame(map.frame_at(tick, rate));
+        rig.host.poll();
+        rig.pull(480);
+        assert_eq!(
+            rig.host.plugins().stock_value(id, "high_cut_on"),
+            Some(want),
+            "at {tick}"
+        );
+    }
+}
