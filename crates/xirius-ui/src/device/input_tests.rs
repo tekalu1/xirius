@@ -562,3 +562,40 @@ fn ui_324_a_wheel_turn_waits_while_the_song_is_held() {
     assert_eq!(s.song().steps(), before + 1);
     assert!(value(&s, t, "mix").1 > start);
 }
+
+/// Low 13: a menu opened during a sweep closes on the first Esc, as the screen sends it; the
+/// next takes the sweep back. A value being typed takes the first Esc too.
+#[test]
+fn ui_324_esc_closes_a_menu_or_a_field_before_it_takes_a_sweep_back() {
+    let (mut s, g, t, id) = delay();
+    let (k, _) = value(&s, t, "feedback");
+    let had = value(&s, t, "feedback").1;
+    click(&mut s, &g, id, k, 1, Mods::NONE);
+    assert!(s.field_keys(&g, "up", None, Mods::NONE));
+    assert!(s.instruments.sweep.is_some());
+    s.open_popup(
+        crate::popup::PopupKind::History,
+        crate::studio::Rect::default(),
+    );
+    assert!(s.popup.is_some());
+    let esc = |s: &mut Studio| {
+        s.field_keys(&g, "escape", None, Mods::NONE) || s.key(&g, "escape", false, false)
+    };
+    assert!(esc(&mut s));
+    assert!(s.popup.is_none(), "the menu goes first");
+    assert!(s.instruments.sweep.is_some(), "the sweep waits");
+    assert!(esc(&mut s));
+    assert!(s.instruments.sweep.is_none());
+    assert_eq!(value(&s, t, "feedback").1, had);
+    // A value being typed closes before the sweep goes.
+    click(&mut s, &g, id, k, 1, Mods::NONE);
+    assert!(s.field_keys(&g, "up", None, Mods::NONE));
+    assert!(s.field_keys(&g, "enter", None, Mods::NONE));
+    assert!(s.instruments.entry.is_some());
+    assert!(esc(&mut s));
+    assert!(s.instruments.entry.is_none(), "the field goes first");
+    assert!(s.instruments.sweep.is_some(), "the sweep waits");
+    assert!(esc(&mut s));
+    assert!(s.instruments.sweep.is_none());
+    assert_eq!(value(&s, t, "feedback").1, had);
+}

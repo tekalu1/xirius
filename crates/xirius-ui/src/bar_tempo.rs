@@ -51,6 +51,11 @@ impl BarEdit {
         self.focus || self.drag.is_some() || self.typing.is_some()
     }
 
+    /// A tempo is being typed.
+    pub(crate) fn is_typing(&self) -> bool {
+        self.typing.is_some()
+    }
+
     /// Gives the readout the arrow keys.
     pub fn focus_tempo(&mut self) {
         self.focus = true;

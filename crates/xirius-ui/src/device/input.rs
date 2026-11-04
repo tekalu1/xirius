@@ -632,9 +632,24 @@ impl Studio {
 
     /// The keys of the control that has them, or of the value being typed.
     pub(crate) fn device_key(&mut self, g: &Geometry, key: &str, mods: Mods) -> bool {
-        // Esc during a press lets go of what it holds, taking nothing in (L-par-3); and
-        // during a sweep of the wheel or the keys not yet in, it goes (L2-ui-6).
-        if key == "escape" && (self.instrument_cancel() || self.device_sweep_cancel()) {
+        // Esc during a press lets go of what it holds, taking nothing in (L-par-3).
+        if key == "escape" && self.instrument_cancel() {
+            return true;
+        }
+        // A menu or another field open takes Esc before a sweep does (theirs are further on);
+        // a value typed here, below.
+        let other = self.popup.is_some()
+            || self
+                .ime_target()
+                .is_some_and(|t| t != crate::interaction::ImeTarget::Device)
+            || self.bar_edit.is_typing()
+            || self.inspector.field.is_some()
+            || self.field_typing().is_some();
+        if key == "escape" && other {
+            return false;
+        }
+        // During a sweep of the wheel or the keys not yet in, it goes (L2-ui-6).
+        if key == "escape" && self.instruments.entry.is_none() && self.device_sweep_cancel() {
             return true;
         }
         // The face in a drawer that shows something else lets the keys go (MIX-046).
