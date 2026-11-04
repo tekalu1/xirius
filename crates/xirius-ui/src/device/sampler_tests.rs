@@ -170,6 +170,45 @@ fn ui_333_the_zones_choose_whose_sample_the_knobs_set_in_one_step() {
     assert_eq!(plain(&s, t, "file2.start"), 0.0);
 }
 
+/// UI-333: the loop's X-Fade is a small knob after Loop, there only while Loop is on, in
+/// the Sampler and in the Drum Kit.
+#[test]
+fn ui_333_x_fade_follows_loop_while_it_is_on() {
+    for (name, of) in [("Sampler", "file1"), ("Drum Kit", "A1")] {
+        let (mut s, g, t, id) = window(name);
+        add(&mut s, id, &["Pad C3.wav"]);
+        let slot_of = |s: &Studio, id: &str| {
+            let x = plugin(s, t);
+            let def = s.instruments.def_of(&x).unwrap();
+            let k = def.param(id).map(|(k, _)| k);
+            body(s, &g, t).slots.into_iter().find(|x| Some(x.k) == k)
+        };
+        assert!(
+            slot_of(&s, &format!("{of}.xfade")).is_none(),
+            "{name}: not while off"
+        );
+        let lp = slot_of(&s, &format!("{of}.loop")).expect("Loop");
+        press(&mut s, &g, id, Part::Knob(lp.k));
+        assert!(plain(&s, t, &format!("{of}.loop")) >= 0.5, "{name}");
+        let xf = slot_of(&s, &format!("{of}.xfade")).expect("X-Fade while on");
+        let lp = slot_of(&s, &format!("{of}.loop")).unwrap();
+        let rv = slot_of(&s, &format!("{of}.reverse")).unwrap();
+        assert_eq!(xf.dial, 20.0);
+        assert!(
+            xf.cell.x >= lp.cell.right() && xf.cell.right() <= rv.cell.x,
+            "{name}"
+        );
+        // It turns as a knob does: one step.
+        let steps = s.song().steps();
+        assert!(s.device_set(id, xf.k, 0.5));
+        assert_eq!(s.song().steps(), steps + 1);
+        assert!(
+            (plain(&s, t, &format!("{of}.xfade")) - 50.0).abs() < 1e-6,
+            "{name}"
+        );
+    }
+}
+
 #[test]
 fn ui_334_a_pad_chooses_its_controls_and_m_s_banks_set_and_pick() {
     let (mut s, g, t, id) = window("Drum Kit");

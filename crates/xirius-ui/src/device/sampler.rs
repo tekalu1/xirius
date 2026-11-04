@@ -38,6 +38,8 @@ const GAP: f32 = 8.0;
 const ROW_H: f32 = 26.0;
 /// The ‹ › beside a sample's name.
 const ARROW_W: f32 = 24.0;
+/// The loop's X-Fade: a small knob in the sample's row, its name before it, its value after.
+const XFADE_DIAL: f32 = 20.0;
 /// The longest a sample's name gets in its row.
 const NAME_MAX: f32 = 260.0;
 const WAVE_H: f32 = 96.0;
@@ -247,8 +249,10 @@ fn drop_plane(b: &mut Body, r: Rect) {
     b.main = 0;
 }
 
-/// The sample's row at `(x, y)`, `w` wide: ‹ its name › at the left, its buttons at the right.
-fn sample_row(def: &BuiltinDef, b: &mut Body, x: f32, y: f32, w: f32, file: &str) {
+/// The sample's row at `(x, y)`, `w` wide: ‹ its name › at the left, its buttons at the
+/// right, the loop's X-Fade after Loop while it is on (UI-333).
+fn sample_row(def: &BuiltinDef, values: &[f64], b: &mut Body, at: (f32, f32), w: f32, file: &str) {
+    let (x, y) = at;
     let text = stem(file);
     let name_w = (control::label_w(&text) + 32.0).clamp(80.0, NAME_MAX);
     let ay = y + (ROW_H - ARROW_W) / 2.0;
@@ -270,6 +274,22 @@ fn sample_row(def: &BuiltinDef, b: &mut Body, x: f32, y: f32, w: f32, file: &str
     let mut right = x + w;
     for id in SAMPLE_BUTTONS.iter().rev() {
         let Some(k) = idx(def, id) else { continue };
+        if *id == "loop"
+            && on(def, values, "loop")
+            && let Some(xf) = idx(def, "xfade")
+        {
+            let cw = control::row_knob_w(control::name(def, &def.params[xf]));
+            right -= cw;
+            b.slots.push(Slot {
+                k: xf,
+                look: Look::Knob,
+                dial: XFADE_DIAL,
+                cell: Rect::new(right, y + (ROW_H - XFADE_DIAL) / 2.0, cw, XFADE_DIAL),
+                label: None,
+                dim: false,
+            });
+            right -= 6.0;
+        }
         let tw = control::toggle_w(control::name(def, &def.params[k]));
         right -= tw;
         b.slots.push(Slot {
@@ -354,7 +374,7 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
     }
     let pick = s.pick.min(files.len() - 1);
     let mut y = PAD;
-    sample_row(def, &mut b, PAD, y, inner, &files[pick]);
+    sample_row(def, s.values, &mut b, (PAD, y), inner, &files[pick]);
     y += ROW_H + GAP;
     b.graphs.push(Rect::new(PAD, y, inner, WAVE_H));
     b.main = 0;
@@ -574,7 +594,7 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
             at += cw;
         }
         y += LAYER_H + GAP;
-        sample_row(def, &mut b, rx, y, rw, &x.samples[files[layer]]);
+        sample_row(def, s.values, &mut b, (rx, y), rw, &x.samples[files[layer]]);
         y += ROW_H + GAP;
         b.graphs
             .insert(0, Rect::new(rx, y, rw, (left_foot - y).max(60.0)));

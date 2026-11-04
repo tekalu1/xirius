@@ -327,12 +327,37 @@ pub struct KnobView<'a> {
 
 /// The dial of a knob in its cell: centred at the top.
 pub fn dial_rect(cell: Rect, dial: f32) -> Rect {
+    if is_row(cell, dial) {
+        return Rect::new(
+            cell.right() - ROW_VALUE_W - ROW_GAP - dial,
+            cell.y,
+            dial,
+            dial,
+        );
+    }
     Rect::new(cell.x + (cell.w - dial) / 2.0, cell.y, dial, dial)
 }
 
-/// The line a knob's value reads on, under its dial.
+/// The line a knob's value reads on, under its dial (after it, in a row).
 pub fn value_rect(cell: Rect, dial: f32) -> Rect {
+    if is_row(cell, dial) {
+        return Rect::new(cell.right() - ROW_VALUE_W, cell.y, ROW_VALUE_W, cell.h);
+    }
     Rect::new(cell.x, cell.y + dial + 2.0, cell.w, VALUE_H)
+}
+
+/// A knob in a row (the sample's X-Fade): a cell no taller than its dial, its name before
+/// it and its value after (UI-333).
+fn is_row(cell: Rect, dial: f32) -> bool {
+    cell.h < dial + VALUE_H
+}
+
+const ROW_GAP: f32 = 4.0;
+const ROW_VALUE_W: f32 = 36.0;
+
+/// The width a knob in a row wants for its name.
+pub fn row_knob_w(name: &str) -> f32 {
+    label_w(name) + ROW_GAP + 20.0 + ROW_GAP + ROW_VALUE_W
 }
 
 pub fn paint_knob(pen: &mut Pen, cell: Rect, k: &KnobView) {
@@ -344,6 +369,7 @@ pub fn paint_knob(pen: &mut Pen, cell: Rect, k: &KnobView) {
         pen.outline(ring, c.ring, Radius::Pill, 2.0);
     }
     let value = value_rect(cell, k.dial);
+    let row = is_row(cell, k.dial);
     match k.entry {
         Some(field) => paint_entry(pen, value, field),
         None => {
@@ -353,9 +379,21 @@ pub fn paint_knob(pen: &mut Pen, cell: Rect, k: &KnobView) {
                 Weight::Regular,
                 if k.dim { c.ink } else { c.ink_strong },
                 value,
-                Align::Center,
+                if row { Align::Left } else { Align::Center },
             );
         }
+    }
+    if row {
+        let label = Rect::new(cell.x, cell.y, dial.x - ROW_GAP - cell.x, cell.h);
+        pen.text(
+            k.name,
+            FontSize::Micro,
+            Weight::Regular,
+            c.ink,
+            label,
+            Align::Right,
+        );
+        return;
     }
     paint_name(pen, cell, k.dial, k.name);
 }
