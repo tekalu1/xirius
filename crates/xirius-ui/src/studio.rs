@@ -2764,6 +2764,15 @@ impl Studio {
         self.mixer.insert_into = None;
         self.mixer.wide.clear();
         self.mixer.folded.clear();
+        self.mixer.lead = None;
+        self.mixer.grip_focus = false;
+        self.mixer.grip_drag = None;
+        // A part waiting for a knob was of the old song: the next knob would land on the
+        // new song's part with the same id.
+        let assign = &mut self.live_midi.assign;
+        assign.learning = None;
+        assign.clash = None;
+        assign.ask = false;
         if deferred {
             self.keep.sync_open(
                 &self.song.project(),
