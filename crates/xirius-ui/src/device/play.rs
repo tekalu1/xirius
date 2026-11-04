@@ -4,7 +4,7 @@
 
 use xirius_design::{FontSize, Radius, Weight};
 
-use super::layout::{Mark, Spot};
+use super::layout::{Mark, PAD, Spot};
 use crate::draw::{Align, Pen};
 use crate::notes::is_black_key;
 use crate::studio::Rect;
@@ -22,13 +22,14 @@ const BLACK_W: f32 = 8.0;
 const BLACK_H: f32 = 34.0;
 /// The gap between the pads.
 pub const GAP: f32 = 4.0;
-/// A body this wide or narrower hides the keys' names (the mock's 520 of the window's
-/// content, not of the keys' frame within it: low 23).
+/// A body whose content (less its padding) is this wide or narrower hides the keys' names:
+/// the mock's `@container spb (max-width: 520px)` on `.sp-body`, whose width is its content's.
 const NAMES_W: f32 = 520.0;
 
-/// Whether the keys of a body `w` wide show the white keys' C named.
+/// Whether the keys of a body `w` wide show the white keys' C named: by the body's content,
+/// as the rest of the narrow shape is (the fourth review's low 2).
 pub fn key_names(w: f32) -> bool {
-    w > NAMES_W
+    w - 2.0 * PAD > NAMES_W
 }
 
 /// A key or a pad: the note it plays and where it is.

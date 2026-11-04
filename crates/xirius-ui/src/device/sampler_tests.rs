@@ -808,19 +808,26 @@ fn reversed_the_loops_span_and_ends_lie_where_the_voice_loops() {
     assert!(sampler::loop_band(def, r, &values(&cut[..2])).is_none());
 }
 
+/// Low 23, the fourth review's low 2 (UI-333): the keys' names go once the window's content
+/// is 520 or narrower, as on the mock.
 #[test]
 fn ui_333_the_keys_names_go_by_the_windows_width() {
     let (mut s, g, t, id) = window("Sampler");
     add(&mut s, id, &["Piano_C3.wav"]);
-    for (w, named) in [(530.0, true), (521.0, true), (520.0, false)] {
+    // By the content, the body less its padding on each side (the mock's container), as the
+    // rest of the narrow shape is.
+    let content = 520.0 + 2.0 * layout::PAD;
+    for (w, named) in [
+        (content + 40.0, true),
+        (content + 1.0, true),
+        (content, false),
+        (520.0, false),
+    ] {
         // As tall as the body at that width, so the frame does not narrow it to fit.
         let x = plugin(&s, t);
         let def = s.instruments.def_of(&x).unwrap();
         s.instruments.open[0].body = layout::size_of(def, w, Some(&x));
         let b = body(&s, &g, t);
-        let keys =
-            b.keys.first().unwrap().r.x..b.keys.iter().rfind(|k| !k.black).unwrap().r.right();
-        assert!(keys.end - keys.start < 520.0, "{w}");
         assert_eq!(b.w, w);
         assert_eq!(play::key_names(b.w), named, "{w}");
     }
