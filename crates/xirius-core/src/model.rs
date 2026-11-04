@@ -1620,7 +1620,8 @@ impl Project {
     /// `transpose` lane, the values over the wider range (low 4). The lanes and the macro
     /// controls' maps of a hand-written key or of `tune` move with the values, so they do
     /// not go on moving a key nothing reads; where the own key has one already, that one
-    /// stays and the other goes (the fourth review's low 7).
+    /// stays and the other goes (the fourth review's low 7), as does a second old key that
+    /// comes to the same one (`CUTOFF`, `Cutoff`: the fifth review's low 5).
     pub fn fix_param_keys(&mut self) {
         use crate::auto::AutoTarget;
         let odd = |x: &Plugin| {
@@ -1656,7 +1657,8 @@ impl Project {
             for x in &mut t.inserts {
                 x.fix_keys();
             }
-            let lanes: Vec<AutoTarget> = t.automation.iter().map(|l| l.target.clone()).collect();
+            let mut lanes: Vec<AutoTarget> =
+                t.automation.iter().map(|l| l.target.clone()).collect();
             t.automation.retain_mut(|l| {
                 let Some((target, re)) = fix(&l.target) else {
                     return true;
@@ -1664,6 +1666,7 @@ impl Project {
                 if lanes.contains(&target) {
                     return false;
                 }
+                lanes.push(target.clone());
                 l.target = target;
                 if re {
                     for p in Arc::make_mut(&mut l.points) {
@@ -1672,7 +1675,7 @@ impl Project {
                 }
                 true
             });
-            let mapped: Vec<AutoTarget> = t
+            let mut mapped: Vec<AutoTarget> = t
                 .controls
                 .iter()
                 .flat_map(|(_, c)| c.maps.iter().map(|m| m.target.clone()))
@@ -1685,6 +1688,7 @@ impl Project {
                     if mapped.contains(&target) {
                         return false;
                     }
+                    mapped.push(target.clone());
                     m.target = target;
                     if re {
                         (m.from, m.to) = (retuned(m.from), retuned(m.to));

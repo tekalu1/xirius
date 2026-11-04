@@ -476,8 +476,9 @@ impl Store {
             return Err(Self::corrupt(rel, "新しい形式"));
         }
         let rows = f.project.fix_racks();
-        f.project.settle_controls();
+        // The keys first, so the macro controls set the song's keys (the fifth review's low 4).
         f.project.fix_param_keys();
+        f.project.settle_controls();
         f.project
             .validate()
             .map_err(|e| Self::corrupt(rel, e.message))?;
@@ -676,8 +677,8 @@ impl Store {
         let mut p: Project =
             serde_json::from_value(f.project).map_err(|e| Self::corrupt(&rel, e))?;
         let rows = p.fix_racks();
-        p.settle_controls();
         p.fix_param_keys();
+        p.settle_controls();
         p.validate().map_err(|e| Self::corrupt(&rel, e.message))?;
         Ok((p, rows))
     }

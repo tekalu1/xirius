@@ -602,3 +602,96 @@ fn lanes_and_macro_maps_of_older_keys_open_under_the_songs_keys() {
         (-12.0, 12.0)
     );
 }
+
+/// The fifth review's low 4: a macro control mapped to a hand-written key (`CUTOFF`) sets the
+/// song's key when the song opens, not the old one that is then dropped beside it.
+#[test]
+fn a_macro_on_an_older_key_sets_the_songs_key_when_the_song_opens() {
+    use xirius_core::auto::AutoTarget;
+    use xirius_core::controls::{ControlId, Mapping};
+    let tmp = tempfile::Builder::new()
+        .prefix("xirius-samples-")
+        .tempdir()
+        .unwrap();
+    let song = tmp.path().join("song");
+    let mut p = project_with_samples(&[]);
+    {
+        let t = std::sync::Arc::make_mut(p.tracks.get_mut(&TrackId(1)).unwrap());
+        t.inserts[0].params.insert("cutoff".into(), 0.9);
+        let knob = t.controls.get_mut(ControlId::Knob(0));
+        knob.value = 0.5;
+        knob.maps.push(Mapping {
+            target: AutoTarget::Param(PluginId(2), "CUTOFF".into()),
+            from: 0.0,
+            to: 0.4,
+            curve: 0.0,
+        });
+    }
+    let mut s = Session::from_project(p);
+    run(&mut s, "project.save-as", json!({ "path": text(&song) }));
+    let back = Session::open(&song).unwrap();
+    let t = &back.project().tracks[&TrackId(1)];
+    let m = &t.controls.get(ControlId::Knob(0)).maps[0];
+    assert_eq!(m.target, AutoTarget::Param(PluginId(2), "cutoff".into()));
+    let x = &t.inserts[0];
+    assert!((x.params["cutoff"] - 0.2).abs() < 1e-9, "{:?}", x.params);
+    assert!(!x.params.contains_key("CUTOFF"), "{:?}", x.params);
+}
+
+/// The fifth review's low 5: two older keys that differ only in case (`CUTOFF`, `Cutoff`)
+/// leave one lane and one macro's map on the song's key, not two.
+#[test]
+fn older_keys_that_differ_in_case_leave_one_lane_and_one_map() {
+    use xirius_core::auto::{AutoLane, AutoPoint, AutoTarget};
+    use xirius_core::controls::{ControlId, Mapping};
+    let tmp = tempfile::Builder::new()
+        .prefix("xirius-samples-")
+        .tempdir()
+        .unwrap();
+    let song = tmp.path().join("song");
+    let lane = |key: &str, value: f64| AutoLane {
+        suspended: false,
+        target: AutoTarget::Param(PluginId(2), key.into()),
+        hidden: false,
+        points: std::sync::Arc::new(vec![AutoPoint {
+            tick: 0,
+            value,
+            curve: 0.0,
+            step: false,
+        }]),
+    };
+    let map = |key: &str| Mapping {
+        target: AutoTarget::Param(PluginId(2), key.into()),
+        from: 0.0,
+        to: 1.0,
+        curve: 0.0,
+    };
+    let mut p = project_with_samples(&[]);
+    {
+        let t = std::sync::Arc::make_mut(p.tracks.get_mut(&TrackId(1)).unwrap());
+        t.automation.push(lane("CUTOFF", 0.4));
+        t.automation.push(lane("Cutoff", 0.6));
+        t.controls
+            .get_mut(ControlId::Knob(0))
+            .maps
+            .push(map("CUTOFF"));
+        t.controls
+            .get_mut(ControlId::Knob(1))
+            .maps
+            .push(map("Cutoff"));
+    }
+    let mut s = Session::from_project(p);
+    run(&mut s, "project.save-as", json!({ "path": text(&song) }));
+    let back = Session::open(&song).unwrap();
+    let t = &back.project().tracks[&TrackId(1)];
+    let cutoff = AutoTarget::Param(PluginId(2), "cutoff".into());
+    let lanes: Vec<_> = t.automation.iter().map(|l| l.target.clone()).collect();
+    assert_eq!(lanes, vec![cutoff.clone()], "the first stays");
+    assert_eq!(t.automation[0].points[0].value, 0.4);
+    let maps: Vec<_> = t
+        .controls
+        .iter()
+        .flat_map(|(_, c)| c.maps.iter().map(|m| m.target.clone()))
+        .collect();
+    assert_eq!(maps, vec![cutoff]);
+}
