@@ -388,8 +388,56 @@ pub fn document(found: &[Found]) -> String {
     ));
     out.push_str("\n保存（UI-288）: Ctrl+S と曲のメニューは同じ保存を開始する。場所が未定なら別名保存の窓を開く。書き込み中の印は少なくとも 450 ms 保ち、200 ms を超える待ちは幕に載せる。別名保存の幕だけに進捗の棒と「中止 Esc」を置く。保存の警告の札の「別名で保存…」は同じ窓を開き、「もう一度」は同じ保存を再試行する。札を閉じても、保存成功まで警告の印を保つ。\n");
     out.push_str("\nほかのアプリの変更（UI-289）: 札の「元に戻す」は Ctrl+Z（`history.undo`）と同じ操作で、「読み込む」は札だけにある。読み込みは履歴の 1 段「ほかのアプリの変更」として入り、元に戻す・やり直しで行き来する。\n");
+    out.push_str(
+        "
+## 押した部品のキー
+
+押してキーを持った部品が受けるキー。ほかの所を押すと、キーは手放す。
+
+| 部品 | キー | 働き |
+| --- | --- | --- |
+",
+    );
+    for (part, keys, what) in PART_KEYS {
+        out.push_str(&format!(
+            "| {part} | {keys} | {what} |
+"
+        ));
+    }
     out
 }
+
+/// The keys a pressed part takes while it has them (L18 of the routing review): they have no
+/// place on the screen, so the scan does not find them.
+const PART_KEYS: &[(&str, &str, &str)] = &[
+    (
+        "マクロのパッド（MIX-039）",
+        "← → ↓ ↑",
+        "X・Y を 0.01 動かす（Shift で 0.1）",
+    ),
+    ("マクロのパッド（MIX-039）", "Esc", "キーを手放す"),
+    (
+        "ミキサーと寄せた面の間のグリップ（MIX-046）",
+        "← →",
+        "← で面を 16 px 広げ、→ で狭める",
+    ),
+    (
+        "ミキサーと寄せた面の間のグリップ（MIX-046）",
+        "Esc",
+        "キーを手放す",
+    ),
+    (
+        "キーの送りの棒（MIX-047）",
+        "← →",
+        "送る量を 1 dB 動かす（Shift で 0.2 dB）",
+    ),
+    ("キーの送りの棒（MIX-047）", "Esc", "キーを手放す"),
+    (
+        "キーの送り元の一覧（UI-336）",
+        "↑ ↓・Enter",
+        "行を選び、送り元に入れる・外す（量・pre・出力はキーからは変えない）",
+    ),
+];
 
 #[cfg(test)]
 mod tests {
