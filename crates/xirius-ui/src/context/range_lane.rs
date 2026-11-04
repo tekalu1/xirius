@@ -64,6 +64,15 @@ impl Studio {
             (LANE_STEP, LANE_STEP * 2.0, "%")
         };
         let shown = |v: f64| if tempo { v } else { v * 100.0 };
+        // a switch's lane is a stair and takes no line or curve, as its points' menu has none
+        let stairs = match &frame {
+            Act::RangeFrame(Some((track, target)), ..) => self
+                .project()
+                .tracks
+                .get(track)
+                .is_some_and(|t| target.steps_with(t, self.param_steps()).is_some()),
+            _ => false,
+        };
         let mut items = vec![self.ctx_as(
             "範囲を直線にする",
             "range.shape",
@@ -75,6 +84,9 @@ impl Studio {
                 "range.shape",
                 with(place, json!({ "shape": "curve" })),
             ));
+        }
+        for item in items.iter_mut().filter(|_| stairs) {
+            item.enabled = false;
         }
         items.push(self.ctx_as(
             "範囲を平らにする",

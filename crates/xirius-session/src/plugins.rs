@@ -440,6 +440,14 @@ impl<T> Drop for OnThread<T> {
     }
 }
 
+/// The values of each switch or list of choices among a VST3 plugin's parameters (AUT-016).
+fn vst3_param_steps(params: &[xirius_vst3::ParamInfo]) -> Vec<(u32, u32)> {
+    params
+        .iter()
+        .filter_map(|p| Some((p.id, xirius_params::vst3_steps(p.step_count, p.is_list())?)))
+        .collect()
+}
+
 /// A plugin running in this process: its UI-thread side, kept so that its editor is the
 /// instance that plays and what the editor moves is heard and reaches the song.
 struct Local {
@@ -453,6 +461,8 @@ struct Local {
     generation: u64,
     /// Parameter id → title.
     titles: Vec<(u32, String)>,
+    /// Parameter id → the values of a switch or a list of choices (AUT-016).
+    steps: Vec<(u32, u32)>,
     /// The names the plugin gives its keys, read again with each state it takes or reports.
     note_names: Vec<(u8, String)>,
     /// When to read the state after an edit settled.
@@ -884,6 +894,7 @@ impl PluginLoader {
                     applied: local.applied.clone(),
                     generation: local.generation,
                     titles: local.titles.clone(),
+                    steps: local.steps.clone(),
                     note_names: local.note_names.clone(),
                     capture: None,
                 },
@@ -1692,6 +1703,7 @@ impl PluginLoader {
                     setup.mode == xirius_engine::RenderMode::Offline,
                 )
                 .map_err(|e| e.to_string())?;
+            let steps = vst3_param_steps(&opened.params);
             let titles: Vec<_> = opened.params.into_iter().map(|p| (p.id, p.title)).collect();
             self.senders.insert(x.id, opened.sender);
             self.generation += 1;
@@ -1715,6 +1727,7 @@ impl PluginLoader {
                     applied: x.clone(),
                     generation: self.generation,
                     titles,
+                    steps,
                     note_names: opened.note_names,
                     capture: None,
                 },
@@ -1772,11 +1785,9 @@ impl PluginLoader {
         plugin.handler().take_gestures();
         plugin.handler().take_restart_flags();
         self.generation += 1;
-        let titles = plugin
-            .params()
-            .into_iter()
-            .map(|p| (p.id, p.title))
-            .collect();
+        let params = plugin.params();
+        let steps = vst3_param_steps(&params);
+        let titles = params.into_iter().map(|p| (p.id, p.title)).collect();
         let note_names = plugin.note_names();
         self.locals.insert(
             x.id,
@@ -1792,6 +1803,7 @@ impl PluginLoader {
                 applied: x.clone(),
                 generation: self.generation,
                 titles,
+                steps,
                 note_names,
                 capture: None,
             },
@@ -2599,6 +2611,19 @@ impl PluginLoader {
         self.playing_remote(id)
             .and_then(|r| r.link.opened())
             .map(|o| o.params)
+            .unwrap_or_default()
+    }
+
+    /// A plugin's parameter id → the values of each switch or list of choices, as the host
+    /// reported when it opened (AUT-016). A parameter that glides is not in it, nor is any of a
+    /// CLAP plugin playing in this process (its parameters are not read here).
+    pub fn param_steps(&self, id: PluginId) -> Vec<(u32, u32)> {
+        if let Some(l) = self.playing_local(id) {
+            return l.steps.clone();
+        }
+        self.playing_remote(id)
+            .and_then(|r| r.link.opened())
+            .map(|o| o.steps)
             .unwrap_or_default()
     }
 

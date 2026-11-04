@@ -9,6 +9,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
+pub use xirius_params::{MAX_LIST, clap_steps, vst3_steps};
+
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::controls::ControlId;
@@ -542,6 +544,17 @@ impl AutoLane {
     /// sounds the same to the tick. `false` when the lane was a stair already (it is not
     /// touched then).
     pub fn snap_with(&mut self, t: &Track, ext: &ParamSteps) -> bool {
+        self.snap_as(t, ext, true)
+    }
+
+    /// [`AutoLane::snap_with`] for a lane that was a stair before an edit wrote it: each point
+    /// goes on its step and holds, with no point at a crossing (a point added on a stair is a
+    /// step of it, not the end of a line).
+    pub fn snap_points_with(&mut self, t: &Track, ext: &ParamSteps) -> bool {
+        self.snap_as(t, ext, false)
+    }
+
+    fn snap_as(&mut self, t: &Track, ext: &ParamSteps, cross: bool) -> bool {
         if self.snapped_with(t, ext) {
             return false;
         }
@@ -553,6 +566,14 @@ impl AutoLane {
         if self.target.stepped() {
             for x in Arc::make_mut(&mut self.points) {
                 x.value = level(x.value);
+            }
+            return true;
+        }
+        if !cross {
+            for x in Arc::make_mut(&mut self.points) {
+                x.value = level(x.value);
+                x.step = true;
+                x.curve = 0.0;
             }
             return true;
         }
@@ -616,40 +637,49 @@ impl crate::model::Project {
     /// switch) or from a DAWproject. Only the built-in devices: what a VST3 or CLAP plug-in
     /// has is not known until it runs. Returns how many lanes it changed.
     pub fn snap_lanes(&mut self) -> usize {
-        self.snap_lanes_where(&ParamSteps::default(), |_, _| true)
+        self.snap_lanes_where(&ParamSteps::default(), |_, _| Some(true))
     }
 
     /// [`Project::snap_lanes`] for the lanes an edit wrote (those whose points are not the
     /// ones in `before`), knowing the steps of the running plug-ins: an edit leaves the lanes
-    /// it did not touch as they are, so its undo holds only its own change.
+    /// it did not touch as they are, so its undo holds only its own change. A lane that was a
+    /// stair (or new) keeps the points the edit put, each on its step
+    /// ([`AutoLane::snap_points_with`]); one that was still lines (a plug-in's lane from before
+    /// its steps were known) becomes the stair it played as.
     pub fn snap_edited_lanes(&mut self, before: &crate::model::Project, ext: &ParamSteps) -> usize {
         self.snap_lanes_where(ext, |t, l| {
-            !before.tracks.get(&t.id).is_some_and(|b| {
+            let was = before.tracks.get(&t.id).and_then(|b| {
                 b.automation
                     .iter()
-                    .any(|x| x.target == l.target && Arc::ptr_eq(&x.points, &l.points))
-            })
+                    .find(|x| x.target == l.target)
+                    .map(|x| (b, x))
+            });
+            match was {
+                Some((_, x)) if Arc::ptr_eq(&x.points, &l.points) => None,
+                Some((b, x)) => Some(!x.snapped_with(b, ext)),
+                None => Some(false),
+            }
         })
     }
 
     fn snap_lanes_where(
         &mut self,
         ext: &ParamSteps,
-        mut pick: impl FnMut(&Track, &AutoLane) -> bool,
+        mut pick: impl FnMut(&Track, &AutoLane) -> Option<bool>,
     ) -> usize {
         let mut n = 0;
         for t in self.tracks.values_mut() {
             if t.automation
                 .iter()
-                .all(|l| l.snapped_with(t, ext) || !pick(t, l))
+                .all(|l| l.snapped_with(t, ext) || pick(t, l).is_none())
             {
                 continue;
             }
             let t = Arc::make_mut(t);
             let owner = t.clone();
             for l in &mut t.automation {
-                if pick(&owner, l) {
-                    n += usize::from(l.snap_with(&owner, ext));
+                if let Some(cross) = pick(&owner, l) {
+                    n += usize::from(l.snap_as(&owner, ext, cross));
                 }
             }
         }
@@ -662,15 +692,28 @@ impl crate::model::Project {
 /// not name glides (one the plug-in does not say has steps, or whose steps it tells in a way
 /// that cannot be trusted).
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct ParamSteps(Arc<HashMap<PluginId, Vec<(u32, String, u32)>>>);
+pub struct ParamSteps(Arc<HashMap<PluginId, StepList>>);
+
+/// One plugin's parameters with steps: (id, title, values).
+pub type StepList = Vec<(u32, String, u32)>;
 
 impl ParamSteps {
-    pub fn new(map: HashMap<PluginId, Vec<(u32, String, u32)>>) -> ParamSteps {
+    pub fn new(map: HashMap<PluginId, StepList>) -> ParamSteps {
         ParamSteps(Arc::new(map))
     }
 
     pub fn is_empty(&self) -> bool {
         self.0.values().all(Vec::is_empty)
+    }
+
+    /// How many plugins it knows steps of.
+    pub fn plugins(&self) -> usize {
+        self.0.values().filter(|l| !l.is_empty()).count()
+    }
+
+    /// What is known of one plugin: (id, title, values) of each parameter with steps.
+    pub fn list(&self, plugin: PluginId) -> &[(u32, String, u32)] {
+        self.0.get(&plugin).map_or(&[], Vec::as_slice)
     }
 
     /// The values of a parameter named as a lane names it: by its id, else by its title.
@@ -687,39 +730,6 @@ impl ParamSteps {
             })
             .map(|(_, _, n)| *n)
             .filter(|n| *n >= 2)
-    }
-}
-
-/// The most choices a plug-in's list is taken to have; past it the count is not trusted and
-/// the parameter glides.
-pub const MAX_LIST: u32 = 128;
-
-/// How many values a VST3 parameter takes when it is a switch or a list: a step count of 1
-/// (two values), or the list flag with a step count a list can have. A larger whole number
-/// without the flag, a continuous parameter (0), a count that is not one, or one past
-/// [`MAX_LIST`] glides.
-pub fn vst3_steps(step_count: i32, is_list: bool) -> Option<u32> {
-    match step_count {
-        1 => Some(2),
-        n if is_list && n > 1 && n < MAX_LIST as i32 => Some(n as u32 + 1),
-        _ => None,
-    }
-}
-
-/// [`vst3_steps`] for a CLAP parameter: stepped with two values, or an enum of a list's size
-/// (its range a whole number of steps).
-pub fn clap_steps(stepped: bool, is_enum: bool, min: f64, max: f64) -> Option<u32> {
-    if !stepped || !min.is_finite() || !max.is_finite() || max <= min {
-        return None;
-    }
-    let count = (max - min).round();
-    if (max - min - count).abs() > 1e-9 {
-        return None;
-    }
-    match count as i64 {
-        1 => Some(2),
-        n if is_enum && n > 1 && n < i64::from(MAX_LIST) => Some(n as u32 + 1),
-        _ => None,
     }
 }
 

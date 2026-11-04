@@ -62,6 +62,10 @@ impl ParamInfo {
         self.flags & ParamInfoFlags::IS_STEPPED.bits() != 0
     }
 
+    pub fn is_enum(&self) -> bool {
+        self.flags & ParamInfoFlags::IS_ENUM.bits() != 0
+    }
+
     pub fn is_hidden(&self) -> bool {
         self.flags & ParamInfoFlags::IS_HIDDEN.bits() != 0
     }

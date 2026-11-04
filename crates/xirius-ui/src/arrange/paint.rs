@@ -280,7 +280,7 @@ pub fn lanes(
             dashed(pen, &line, color);
             continue;
         }
-        let lane = with_preview(lane, track, pv.as_ref());
+        let lane = with_preview(lane, track, studio.param_steps(), pv.as_ref());
         let line = lane_line(studio, g, &lane, track, y);
         polyline(pen, &line, color);
         for (index, p) in lane.points.iter().enumerate() {
@@ -308,7 +308,12 @@ pub fn lanes(
 }
 
 /// The lane as it would be if the drag in progress were let go.
-fn with_preview(lane: &AutoLane, track: &Track, pv: Option<&Preview>) -> AutoLane {
+pub(super) fn with_preview(
+    lane: &AutoLane,
+    track: &Track,
+    steps: &xirius_core::auto::ParamSteps,
+    pv: Option<&Preview>,
+) -> AutoLane {
     let mut lane = lane.clone();
     match pv {
         Some(Preview::Point {
@@ -343,6 +348,8 @@ fn with_preview(lane: &AutoLane, track: &Track, pv: Option<&Preview>) -> AutoLan
                 xirius_core::commands::moved_lane(&lane, *from, *to, *how, fallback)
             {
                 lane = moved;
+                // a switch's stretch lands on its steps, as the edit puts it
+                lane.snap_with(track, steps);
             }
         }
         _ => {}

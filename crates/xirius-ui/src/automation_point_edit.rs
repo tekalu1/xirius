@@ -40,10 +40,16 @@ impl Studio {
         let Some(point) = lane.points.get(index) else {
             return false;
         };
-        let increment = match target {
-            AutoTarget::Volume | AutoTarget::Send(_) => 0.1,
-            AutoTarget::Mute => 1.0,
-            _ => 0.01,
+        // a lane with steps moves a step at a time (a switch from off to on)
+        let increment = match target.steps_with(&p.tracks[&track], self.param_steps()) {
+            Some(n) => {
+                let (lo, hi) = target.range();
+                (hi - lo) / f64::from(n - 1)
+            }
+            None => match target {
+                AutoTarget::Volume | AutoTarget::Send(_) => 0.1,
+                _ => 0.01,
+            },
         };
         let tick = point.tick;
         // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.

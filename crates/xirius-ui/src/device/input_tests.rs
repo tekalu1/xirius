@@ -621,3 +621,46 @@ fn ui_324_esc_closes_a_menu_or_a_field_before_it_takes_a_sweep_back() {
     assert!(s.instruments.sweep.is_none());
     assert_eq!(value(&s, t, "feedback").1, had);
 }
+
+/// AUT-016 (the review's medium 3): where a lane plays (Touch), a press on a button and a
+/// grab of a knob start from what the window draws, the lane's value at the playhead, not
+/// from the value the song keeps under it.
+#[test]
+fn a_press_and_a_grab_start_from_the_lanes_value_the_window_draws() {
+    let (mut s, g, t, id) = delay();
+    assert!(s.run_command(
+        "auto.mode",
+        json!({ "ids": [t.to_string()], "mode": "touch" })
+    ));
+    let (pp, kept) = value(&s, t, "ping_pong");
+    let (fb, fb_kept) = value(&s, t, "feedback");
+    let lane = |p: &str, v: f64| json!({ "track": t.to_string(), "target": format!("param:{id}:{p}"), "at": 0, "value": v });
+    assert!(s.run_command("auto.point.add", lane("ping_pong", 1.0 - kept)));
+    assert!(s.run_command("auto.point.add", lane("feedback", 0.5)));
+    s.playhead = 0;
+    assert_ne!(fb_kept, 0.5);
+    assert_eq!(
+        s.device_value(id, pp),
+        Some(1.0 - kept),
+        "it shows the lane's"
+    );
+    assert_eq!(s.device_value(id, fb), Some(0.5));
+
+    // the button shows the lane's value; a press asks for the other one, which the song
+    // keeps already: nothing goes in (before, it flipped the kept value to the shown one)
+    let steps = s.song().steps();
+    click(&mut s, &g, id, pp, 1, Mods::NONE);
+    assert_eq!(value(&s, t, "ping_pong").1, kept);
+    assert_eq!(s.song().steps(), steps);
+
+    // the knob moves on from the lane's value: no jump to the kept one
+    let (x, y) = center(&s, &g, id, fb);
+    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
+    for dy in 1..=30 {
+        assert!(s.instrument_moved(&g, x, y - dy as f32, false));
+    }
+    let turned = s.instruments.turning(id, fb).unwrap();
+    assert!((turned - 0.7).abs() < 5e-4, "{turned}");
+    assert!(s.instrument_up());
+    assert!((value(&s, t, "feedback").1 - 0.7).abs() < 5e-4);
+}

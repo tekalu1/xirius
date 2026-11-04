@@ -105,6 +105,15 @@ pub struct ParamInfo {
     pub flags: i32,
 }
 
+impl ParamInfo {
+    /// `ParameterInfo::kIsList`: the steps are choices.
+    pub const IS_LIST: i32 = 1 << 3;
+
+    pub fn is_list(&self) -> bool {
+        self.flags & Self::IS_LIST != 0
+    }
+}
+
 /// Saved state: the component's and the controller's streams, as the SDK keeps them apart.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PluginState {

@@ -124,6 +124,25 @@ impl Loaded {
         }
     }
 
+    /// The values each switch or list of choices takes, by parameter id (AUT-016).
+    pub fn param_steps(&self) -> Vec<(u32, u32)> {
+        match self {
+            Loaded::Vst3(p) => p
+                .params()
+                .into_iter()
+                .filter_map(|p| Some((p.id, xirius_params::vst3_steps(p.step_count, p.is_list())?)))
+                .collect(),
+            Loaded::Clap(p) => p
+                .params()
+                .iter()
+                .filter_map(|p| {
+                    let n = xirius_params::clap_steps(p.is_stepped(), p.is_enum(), p.min, p.max)?;
+                    Some((p.id, n))
+                })
+                .collect(),
+        }
+    }
+
     /// A parameter by numeric id, else by title (case-insensitive), as the song names it.
     pub fn resolve(&self, key: &str) -> Option<u32> {
         let params = self.params();

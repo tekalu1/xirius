@@ -65,7 +65,7 @@ impl Studio {
                 .project()
                 .tracks
                 .get(&track)
-                .is_none_or(|t| target.steps_on(t).is_none());
+                .is_none_or(|t| target.steps_with(t, self.param_steps()).is_none());
         let shapes = vec![
             self.ctx_as("直線", "auto.point.shape", args(0.0, false))
                 .on(line && !pt.step && pt.curve == 0.0),
@@ -125,7 +125,7 @@ impl Studio {
             json!({ "track": tid, "target": tgt, "at": at, "value": value }),
         );
         // a switch's line is a stair and has no other shape
-        let stairs = target.steps_on(t).is_some();
+        let stairs = target.steps_with(t, self.param_steps()).is_some();
         let seg = line
             .filter(|_| !stairs)
             .and_then(|i| l.points.get(i).copied().map(|pt| (i, pt)));

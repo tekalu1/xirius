@@ -81,11 +81,19 @@ impl Studio {
         })
     }
 
-    /// The value the control `k` of `plugin` shows: while it turns, where it is.
+    /// The value the control `k` of `plugin` shows: while it turns, where it is; else where
+    /// its lane has it at the playhead ([`Studio::auto_shown`]), so a press or a grab starts
+    /// from what the window draws (AUT-016).
     pub(crate) fn device_value(&self, plugin: PluginId, k: usize) -> Option<f64> {
-        self.instruments
-            .turning(plugin, k)
-            .or_else(|| self.device(plugin)?.2.get(k).copied())
+        self.instruments.turning(plugin, k).or_else(|| {
+            let p = self.auto_shown();
+            let x = p
+                .tracks
+                .values()
+                .find_map(|t| t.inserts.iter().find(|x| x.id == plugin))?;
+            let def = self.instruments.def_of(x)?;
+            values_of(x, def).get(k).copied()
+        })
     }
 
     /// The mirror a reversed Sampler's loop's end `k` shows in (low 1): the wheel, the keys,

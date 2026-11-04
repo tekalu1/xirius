@@ -770,6 +770,13 @@ fn put(
                 target.clone()
             };
             let (lo, hi) = to.range();
+            // a switch's points hold only because it has no values between: on a lane that
+            // glides they take its lines (AUT-016)
+            let unhold = to != *target
+                && p.tracks
+                    .get(track)
+                    .is_some_and(|t| target.steps_on(t).is_some() && !target.stepped())
+                && p.tracks.get(&tid).is_none_or(|t| to.steps_on(t).is_none());
             let mut fresh = Vec::new();
             let mut left_out = 0;
             for q in points {
@@ -785,6 +792,7 @@ fn put(
                 fresh.push(AutoPoint {
                     tick: q.tick + shift,
                     value: v.clamp(lo, hi),
+                    step: q.step && !unhold,
                     ..*q
                 });
             }

@@ -12,7 +12,7 @@ use xirius_vst3::{Caption, PluginState};
 
 /// The version of these messages and of the shared memory's layout together. Bump it with
 /// any change to either.
-pub const PROTOCOL: u32 = 10;
+pub const PROTOCOL: u32 = 11;
 /// Starts the encoded [`FromHost::Hello`], so a stray first message is not taken for one.
 const HELLO_MAGIC: u32 = u32::from_le_bytes(*b"XPHH");
 
@@ -172,6 +172,9 @@ pub struct Opened {
     pub latency: u32,
     /// Every parameter's id and title.
     pub params: Vec<(u32, String)>,
+    /// The values each switch or list of choices takes, by parameter id (AUT-016); a
+    /// parameter that glides is not in it.
+    pub steps: Vec<(u32, u32)>,
     pub warnings: Vec<String>,
     /// The names the plugin gives its keys, by key (EDT-134). Empty when it names none.
     pub note_names: Vec<(u8, String)>,
@@ -496,6 +499,10 @@ impl FromHost {
                         for (id, title) in &r.params {
                             o.u32(*id).str(title);
                         }
+                        o.u32(r.steps.len() as u32);
+                        for (id, n) in &r.steps {
+                            o.u32(*id).u32(*n);
+                        }
                         o.u32(r.warnings.len() as u32);
                         for w in &r.warnings {
                             o.str(w);
@@ -602,6 +609,7 @@ impl FromHost {
                         name: i.str()?,
                         latency: i.u32()?,
                         params: i.list(|i| Ok((i.u32()?, i.str()?)))?,
+                        steps: i.list(|i| Ok((i.u32()?, i.u32()?)))?,
                         warnings: i.list(In::str)?,
                         note_names: i.list(|i| Ok((i.u8()?, i.str()?)))?,
                     }),
@@ -784,7 +792,8 @@ mod tests {
                 result: Ok(Opened {
                     name: "Gain".into(),
                     latency: 64,
-                    params: vec![(1, "Gain".into())],
+                    params: vec![(1, "Gain".into()), (2, "Mode".into())],
+                    steps: vec![(2, 3)],
                     warnings: vec!["w".into()],
                     note_names: vec![(36, "Kick".into())],
                 }),

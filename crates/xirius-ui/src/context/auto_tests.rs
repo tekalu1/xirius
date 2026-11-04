@@ -350,3 +350,38 @@ fn a_range_over_the_tempo_row_has_the_shape_rows_but_no_curve() {
     assert!(choose(&mut s, &g, "範囲を平らにする"));
     assert_eq!(steps(&s), n + 1);
 }
+
+#[test]
+fn a_range_over_a_switch_lane_has_no_line_or_curve() {
+    let (mut s, g) = studio();
+    let t = two_lanes(&mut s, &g, "Bass");
+    let tid = t.to_string();
+    s.arrange_run(
+        "plugin.add",
+        serde_json::json!({ "track": tid, "name": "EQ" }),
+    );
+    let eq = s.project().tracks[&t]
+        .inserts
+        .iter()
+        .find(|x| x.name == "EQ")
+        .unwrap()
+        .id;
+    let target = AutoTarget::Param(eq, "high_cut_on".into());
+    let bar = super::tests::BAR;
+    for (at, v) in [(bar, 0.0), (3 * bar, 1.0)] {
+        s.arrange_run(
+            "auto.point.add",
+            serde_json::json!({ "track": tid, "target": target.to_string(), "at": at, "value": v }),
+        );
+    }
+    s.arrange.range = Some((bar, 3 * bar));
+    assert!(s.lane_range_context(t, target, (100.0, 100.0)));
+    // a switch's lane is a stair, as its points' menu says
+    assert!(!enabled(&s, "範囲を直線にする"));
+    assert!(!enabled(&s, "範囲をカーブにする"));
+    assert!(enabled(&s, "範囲を平らにする"));
+    // a lane that glides keeps them
+    assert!(s.lane_range_context(t, AutoTarget::Volume, (100.0, 100.0)));
+    assert!(enabled(&s, "範囲を直線にする"));
+    assert!(enabled(&s, "範囲をカーブにする"));
+}

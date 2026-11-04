@@ -14,12 +14,14 @@
 mod catalog;
 pub mod eq;
 pub mod pitch;
+mod steps;
 
 pub use catalog::{
     BUILTINS, CHOKES, COMPRESSOR, DELAY, DIVISIONS, DRUM_KIT, EQ, FEELS, FILTER_TYPES, LAYER_MODES,
     LIMITER, PAD_NAMES, PADS, REVERB, SAMPLER, SLOPES, TRIGGERS,
 };
 pub use eq::{BandType, EQ_BANDS, EqBand};
+pub use steps::{MAX_LIST, clap_steps, vst3_steps};
 
 /// What a parameter's plain value is measured in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -199,11 +199,9 @@ impl Studio {
         // a switch's lane takes the drawn line as a stair on its steps, as `auto.draw` keeps it
         let path: Vec<(Tick, f64, bool)> = match &place {
             Place::Lane { track, target, .. }
-                if self
-                    .project()
-                    .tracks
-                    .get(track)
-                    .is_some_and(|t| target.steps_on(t).is_some() && !target.stepped()) =>
+                if self.project().tracks.get(track).is_some_and(|t| {
+                    target.steps_with(t, self.param_steps()).is_some() && !target.stepped()
+                }) =>
             {
                 path.into_iter()
                     .map(|(t, v, _)| (t, self.lane_snap(*track, target, v), true))

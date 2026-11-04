@@ -557,3 +557,42 @@ fn the_steps_a_plug_in_tells_are_trusted_only_as_a_switch_or_a_list() {
     assert_eq!(clap_steps(true, true, 0.0, f64::INFINITY), None);
     assert_eq!(clap_steps(true, true, 1.0, 1.0), None);
 }
+
+#[test]
+fn a_switch_pasted_on_a_lane_that_glides_takes_its_lines() {
+    let (mut s, t, eq, _) = song();
+    let on = format!("param:{eq}:b2_on");
+    let freq = format!("param:{eq}:high_cut_freq");
+    let band = format!("param:{eq}:b3_on");
+    for (at, v) in [(0, 0.0), (960, 1.0)] {
+        run(
+            &mut s,
+            "auto.point.add",
+            json!({"track": t, "target": on, "at": at, "value": v}),
+        );
+    }
+    assert!(stairs(&lane(&s, &t, &on)));
+    run(
+        &mut s,
+        "edit.copy",
+        json!({"track": t, "target": on, "ticks": "0,960"}),
+    );
+    // on a lane that glides, the points draw a line between them
+    run(
+        &mut s,
+        "edit.paste",
+        json!({"track": t, "target": freq, "at": 1920}),
+    );
+    let l = lane(&s, &t, &freq);
+    assert_eq!(values(&l), vec![(1920, 0.0), (2880, 1.0)]);
+    assert!(l.points.iter().all(|p| !p.step));
+    // on another switch, they stay a stair
+    run(
+        &mut s,
+        "edit.paste",
+        json!({"track": t, "target": band, "at": 1920}),
+    );
+    let l = lane(&s, &t, &band);
+    assert_eq!(values(&l), vec![(1920, 0.0), (2880, 1.0)]);
+    assert!(stairs(&l));
+}

@@ -2479,7 +2479,7 @@ impl Studio {
     /// on or off); as it is otherwise.
     pub(crate) fn lane_snap(&self, t: TrackId, target: &AutoTarget, v: f64) -> f64 {
         match self.project().tracks.get(&t) {
-            Some(track) => target.snap_on(track, v),
+            Some(track) => target.snap_with(track, self.param_steps(), v),
             None => v,
         }
     }

@@ -1783,3 +1783,70 @@ fn a_switch_lane_takes_only_off_and_on_from_the_pencil_a_drag_and_a_line() {
     s.playhead = 5 * BAR;
     assert_eq!(shown(&s), Some(0.0));
 }
+
+#[test]
+fn a_switch_lane_moves_a_step_by_the_wheel_and_its_range_previews_as_a_stair() {
+    let (mut s, g) = studio();
+    let bass = two_lanes(&mut s, &g, "Bass");
+    let tid = bass.to_string();
+    s.arrange_run("plugin.add", json!({ "track": tid, "name": "EQ" }));
+    let eq = s.project().tracks[&bass]
+        .inserts
+        .iter()
+        .find(|x| x.name == "EQ")
+        .unwrap()
+        .id;
+    let target = AutoTarget::Param(eq, "high_cut_on".into());
+    for (at, v) in [(4 * BAR, 0.0), (8 * BAR, 1.0)] {
+        s.arrange_run(
+            "auto.point.add",
+            json!({ "track": tid, "target": target.to_string(), "at": at, "value": v }),
+        );
+    }
+    let lane_of = |s: &Studio| {
+        s.project().tracks[&bass]
+            .automation
+            .iter()
+            .find(|l| l.target == target)
+            .unwrap()
+            .clone()
+    };
+    let lane = s
+        .arrange
+        .lanes_of(&s.project().tracks[&bass])
+        .iter()
+        .position(|l| l.target == target)
+        .expect("the lane shows");
+
+    // the wheel over a point: off to on in one notch, not a hundredth snapped back
+    let (x, y) = point_xy(&s, &g, bass, lane, 0);
+    let n = steps(&s);
+    assert!(s.automation_point_wheel(&g, x, y, 1.0));
+    assert_eq!(lane_of(&s).points[0].value, 1.0);
+    assert_eq!(steps(&s), n + 1);
+    let (x, y) = point_xy(&s, &g, bass, lane, 0);
+    assert!(s.automation_point_wheel(&g, x, y, -1.0));
+    assert_eq!(lane_of(&s).points[0].value, 0.0);
+
+    // a range scaled on it shows the stair it lands as, not a line between the steps
+    let track = s.project().tracks[&bass].clone();
+    let pv = Preview::RangeMove {
+        place: Some((bass, target.clone())),
+        from: 4 * BAR,
+        to: 8 * BAR + 1,
+        how: xirius_core::commands::RangeMove::Transform {
+            scale: 0.6,
+            tilt: 0.0,
+        },
+    };
+    let shown = paint::with_preview(&lane_of(&s), &track, s.param_steps(), Some(&pv));
+    assert!(shown.points.iter().all(|p| p.step && p.curve == 0.0));
+    assert!(
+        shown
+            .points
+            .iter()
+            .all(|p| p.value == 0.0 || p.value == 1.0),
+        "{:?}",
+        shown.points
+    );
+}

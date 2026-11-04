@@ -767,6 +767,7 @@ impl Host {
             name,
             latency,
             params: plugin.params(),
+            steps: plugin.param_steps(),
             warnings,
             note_names: note_names.clone(),
         };

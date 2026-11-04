@@ -8,7 +8,7 @@ use crate::{
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use xirius_core::{
-    auto::AutoTarget,
+    auto::{AutoTarget, ParamSteps},
     id::{PluginId, TrackId},
     model::{Project, Track},
 };
@@ -173,6 +173,59 @@ impl Studio {
             list.current = current.unwrap_or_default();
         }
         self.refresh_popup();
+    }
+
+    /// What the running VST3 and CLAP plugins tell of their switches and lists (AUT-016),
+    /// for the session to put the lanes it edits on their steps as it does a built-in
+    /// device's. Once a frame: the titles are read again only when a plugin's steps change.
+    pub(crate) fn sync_param_steps(&mut self) {
+        let Some(host) = self.transport.host() else {
+            return;
+        };
+        let p = self.project();
+        let known = &self.song.session().state.param_steps;
+        let mut now = Vec::new();
+        let mut same = true;
+        for t in p.tracks.values() {
+            for x in t.inserts.iter().filter(|x| x.builtin().is_none()) {
+                let steps = host.plugins().param_steps(x.id);
+                if steps.is_empty() {
+                    continue;
+                }
+                let had = known.list(x.id);
+                same &= had.len() == steps.len()
+                    && had
+                        .iter()
+                        .zip(&steps)
+                        .all(|(a, b)| a.0 == b.0 && a.2 == b.1);
+                now.push((x.id, steps));
+            }
+        }
+        let count = now.iter().map(|(id, _)| id).collect::<HashSet<_>>().len();
+        if same && count == known.plugins() {
+            return;
+        }
+        let map = now
+            .into_iter()
+            .map(|(id, steps)| {
+                let titles = host.plugins().param_titles(id);
+                let title = |n: u32| {
+                    titles
+                        .iter()
+                        .find(|(x, _)| *x == n)
+                        .map(|(_, t)| t.clone())
+                        .unwrap_or_default()
+                };
+                let list = steps.into_iter().map(|(n, v)| (n, title(n), v)).collect();
+                (id, list)
+            })
+            .collect();
+        self.song.session_mut().state.param_steps = ParamSteps::new(map);
+    }
+
+    /// The steps of the running plugins' parameters, as [`Studio::sync_param_steps`] last read.
+    pub(crate) fn param_steps(&self) -> &ParamSteps {
+        &self.song.session().state.param_steps
     }
 
     pub(crate) fn auto_target_choices(&self, track: TrackId, from: Option<&str>) -> Vec<Choice> {

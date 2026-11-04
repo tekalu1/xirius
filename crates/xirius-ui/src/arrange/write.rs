@@ -134,9 +134,14 @@ impl Studio {
     }
 
     /// The song as the devices' windows show it: the lanes' values at the playhead, as the
-    /// mixer's faders show theirs (a band's switch follows its lane).
+    /// mixer's faders show theirs (a band's switch follows its lane), and what a pass is
+    /// writing (a latched value) as it is heard.
     pub(crate) fn auto_shown(&self) -> std::sync::Arc<Project> {
         let p = self.project();
+        let p = match self.arrange.writing.as_ref().and_then(|w| w.pass.heard(&p)) {
+            Some(heard) => std::sync::Arc::new(heard),
+            None => p,
+        };
         match xirius_session::automation::song_at(&p, self.playhead as f64) {
             std::borrow::Cow::Owned(heard) => std::sync::Arc::new(heard),
             std::borrow::Cow::Borrowed(_) => p.clone(),
@@ -550,6 +555,38 @@ mod tests {
                 );
             }
         }
+    }
+    /// AUT-016 (the review's medium 3): after a Latch lets go, the windows show the value
+    /// it latched, as it is heard, not the one the song keeps under the pass.
+    #[test]
+    fn a_latched_value_shows_as_it_is_heard() {
+        use super::{Pass, Phase, Writing};
+        let mut s = Studio::sample();
+        let t = s
+            .project()
+            .tracks
+            .values()
+            .find(|t| !t.id.is_master())
+            .unwrap()
+            .id;
+        assert!(s.run_command("auto.mode", json!({"ids":[t.to_string()],"mode":"latch"})));
+        let kept = s.project().tracks[&t].volume_db;
+        assert_ne!(kept, -12.0);
+        s.arrange.writing = Some(Writing {
+            pass: Pass::begin(&s.project(), 0),
+            last: 0,
+        });
+        s.transport.playing = true;
+        assert!(s.auto_touch(MixerHit::Fader(t), Phase::Begin, Some(-6.0)));
+        s.playhead = 960;
+        assert!(s.auto_touch(MixerHit::Fader(t), Phase::Change, Some(-12.0)));
+        s.playhead = 1920;
+        assert!(s.auto_touch(MixerHit::Fader(t), Phase::End, Some(-12.0)));
+        s.playhead = 2880;
+        assert_eq!(s.project().tracks[&t].volume_db, kept);
+        assert_eq!(s.auto_shown().tracks[&t].volume_db, -12.0);
+        s.transport.playing = false;
+        s.auto_settle();
     }
     #[test]
     fn mixed_read_and_writing_selection_keeps_the_writers_base_value() {

@@ -1864,6 +1864,7 @@ impl Studio {
             self.transport.loss.receive(&data, &self.project(), rate);
         }
         self.auto_settle();
+        self.sync_param_steps();
         let levels = self.transport.take_levels();
         let meters = self.mixer.meters.feed(&levels);
         let inputs = self.watch_inputs();
