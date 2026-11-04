@@ -221,6 +221,7 @@ impl Studio {
             || self.saving.is_some()
             || self.sound_preparing()
             || self.unsaved.is_some()
+            || self.update.launching()
     }
     pub(crate) fn request_open_file(&mut self, request: FileRequest, path: &Path) -> bool {
         self.request_open(Request::File(request, path.to_path_buf()))

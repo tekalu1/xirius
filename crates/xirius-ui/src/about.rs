@@ -194,6 +194,43 @@ pub enum CheckState {
     Failed(String),
 }
 
+/// How long Xirius may take to end once the installer is started (UI-282). The installer waits
+/// 30 s for it (60 s in the ones made after 1.1.0-beta.3, `xirius.nsi`) and gives up; the
+/// window's own cleanup waits at most [`crate::tidy::CLOSE_WAIT`].
+pub(crate) const LEAVE_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Checks the installer once more and starts it (UI-282): a file replaced since it was checked
+/// is not run. When it cannot be started, the note the next start reads is left
+/// ([`update::FAILED`]). Once it runs, Xirius ends within [`LEAVE_WAIT`] (`leave`). Runs on
+/// the application-files worker, or inline only where there is no window.
+pub(crate) fn launch_installer(
+    install: &update::Install,
+    installer: Option<&update::Installer>,
+    key: &str,
+    root: Option<&std::path::Path>,
+    spawn: &update::Spawn,
+    leave: &(dyn Fn() + Send + Sync),
+) -> Result<(), String> {
+    let started = installer
+        .ok_or_else(|| "インストーラーがありません".to_string())
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: worker-only (start_pending_install submits it; finish_window_io dispatches it); inline only without a window.
+        .and_then(|i| i.verify_with(key))
+        .and_then(|()| spawn(install));
+    match started {
+        Ok(()) => {
+            leave();
+            Ok(())
+        }
+        Err(e) => {
+            if let Some(root) = root {
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: worker-only, as the check above.
+                let _ = std::fs::write(root.join(update::FAILED), b"");
+            }
+            Err(e)
+        }
+    }
+}
+
 /// The asking for a newer version at launch (UI-262), and getting it into place (UI-282).
 pub struct Update {
     encoder: Option<crate::ancillary_io::Ticket<View>>,
@@ -222,13 +259,19 @@ pub struct Update {
     pub ready: Option<update::Installer>,
     /// Where this build may install an update (the per-user NSIS folder).
     pub location: Option<update::Location>,
-    /// The installer to start once the window is closed.
+    /// The installer to start once the close is decided.
     pub pending: Option<update::Install>,
+    /// The installer being checked and started, once the close is decided (UI-282).
+    launch: Option<crate::ancillary_io::Ticket<()>>,
+    /// The installer was started: the window closes, and ends within [`LEAVE_WAIT`].
+    pub launched: bool,
     /// Why an update could not be put in (the other programs running, a failed check, the
     /// note the installer left). Shown in the panel (UI-282).
     pub notice: Option<String>,
     /// How the installer is started; tests put their own in.
     pub spawn: update::Spawn,
+    /// What makes Xirius end once the installer is started; tests put their own in.
+    pub leave: std::sync::Arc<dyn Fn() + Send + Sync>,
     /// How GitHub is read and files are downloaded; tests put their own in.
     pub fetch: update::Fetch,
     pub download: update::Download,
@@ -265,8 +308,15 @@ impl Default for Update {
                     }
                 }),
             pending: None,
+            launch: None,
+            launched: false,
             notice: None,
             spawn: std::sync::Arc::new(update::spawn_detached),
+            leave: if cfg!(test) {
+                std::sync::Arc::new(|| {})
+            } else {
+                std::sync::Arc::new(|| update::leave_within(LEAVE_WAIT))
+            },
             fetch: update::curl(),
             download: update::curl_download(),
             key: update::UPDATE_KEY.to_string(),
@@ -282,6 +332,11 @@ impl Update {
     /// Is the installer being downloaded or checked?
     pub fn downloading(&self) -> bool {
         self.job.is_some()
+    }
+
+    /// Is the installer being checked and started, on the way out?
+    pub fn launching(&self) -> bool {
+        self.launch.is_some()
     }
 
     /// What the download is doing now.
@@ -1481,6 +1536,22 @@ impl Studio {
         }
         if let Some(result) = self
             .update
+            .launch
+            .as_ref()
+            .and_then(crate::ancillary_io::Ticket::poll)
+        {
+            self.update.launch = None;
+            match result {
+                Ok(()) => self.update.launched = true,
+                Err(e) => crate::ancillary_io::log!("注意: {e}"),
+            }
+            // The close goes on either way: the song is saved, and an installer that did not
+            // start is told at the next start.
+            self.window_ask = Some(crate::context::key_more::WindowAsk::Quit);
+            changed = true;
+        }
+        if let Some(result) = self
+            .update
             .crashes
             .as_ref()
             .and_then(crate::ancillary_io::Ticket::poll)
@@ -1724,24 +1795,51 @@ impl Studio {
         Ok(())
     }
 
-    /// The installer to start once the window has closed (UI-282). It is checked once more
-    /// here, at the last moment before it is started; a file replaced while the song was being
-    /// saved is not run, and the next start says so.
-    #[cfg(test)]
-    pub(crate) fn take_pending_install(&mut self) -> Option<update::Install> {
-        let install = self.update.pending.take()?;
-        let problem = match &self.update.ready {
-            Some(installer) => installer.verify_with(&self.update.key).err(),
-            None => Some("インストーラーがありません".to_string()),
-        };
-        if let Some(e) = problem {
-            if let Some(root) = &self.update.root {
-                let _ = std::fs::write(root.join(update::FAILED), b"");
-            }
-            eprintln!("注意: {e}");
-            return None;
+    /// Starts the waiting installer once the close is decided (UI-282): the song is saved and
+    /// nothing holds the close any more, but the window and the song are still there. A plugin
+    /// that falls over or a cleanup that hangs while they are torn down then cannot keep the
+    /// update from going in. It is checked once more at this last moment. False while it is
+    /// being checked and started; the window is asked to close again once it is.
+    pub(crate) fn start_pending_install(&mut self) -> bool {
+        if self.update.launch.is_some() {
+            return false;
         }
-        Some(install)
+        let Some(install) = self.update.pending.take() else {
+            return true;
+        };
+        let installer = self.update.ready.clone();
+        let key = self.update.key.clone();
+        let root = self.update.root.clone();
+        let spawn = self.update.spawn.clone();
+        let leave = self.update.leave.clone();
+        let work = move || {
+            launch_installer(
+                &install,
+                installer.as_ref(),
+                &key,
+                root.as_deref(),
+                &spawn,
+                &*leave,
+            )
+        };
+        if self.transport.is_windowed() {
+            match crate::ancillary_io::submit(work) {
+                Ok(job) => {
+                    self.update.launch = Some(job);
+                    return false;
+                }
+                Err(e) => {
+                    crate::ancillary_io::log!("注意: {e}");
+                    return true;
+                }
+            }
+        }
+        match work() {
+            Ok(()) => self.update.launched = true,
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: synchronous offline adapter; window mode starts the installer on the application-files worker above.
+            Err(e) => eprintln!("注意: {e}"),
+        }
+        true
     }
 
     /// The logo, in body coordinates (the palette opens the panel under it too).
@@ -3106,15 +3204,10 @@ used {} {}
         );
     }
 
-    /// UI-282: the installer is checked once more at the last moment (the song's save may take
-    /// a while); a file replaced in between is not started, and the next start says so.
-    #[test]
-    fn the_installer_is_checked_again_when_the_window_closes() {
+    /// A checked installer in `root`'s download folder, and the key it is signed with (UI-282).
+    pub(crate) fn signed_installer(root: &std::path::Path) -> (update::Installer, String) {
         use ed25519_dalek::Signer;
 
-        let tmp = scratch("recheck");
-        let mut s = Studio::sample();
-        s.song.load_settings(tmp.path());
         let body: &'static [u8] = b"the installer";
         let version = newer_version();
         let name = update::setup_name(version);
@@ -3137,38 +3230,377 @@ used {} {}
             .map(|b| format!("{b:02x}"))
             .collect::<String>();
         let sums = format!("{}  {name}\n", update::sha256_hex(body));
-        let path = tmp
-            .path()
-            .join(update::DOWNLOAD_DIR)
-            .join(version)
-            .join(&name);
+        let path = root.join(update::DOWNLOAD_DIR).join(version).join(&name);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, body).unwrap();
-        s.update.key = public;
-        s.update.root = Some(tmp.path().to_path_buf());
-        s.update.ready = Some(update::Installer {
+        let installer = update::Installer {
             version: version.into(),
-            path: path.clone(),
+            path,
             manifest: serde_json::from_slice(&manifest_bytes).unwrap(),
             manifest_bytes,
             signature,
             sums,
-        });
-        s.update.pending = Some(update::Install {
-            program: path.clone(),
-            args: vec!["/S".into(), "/XRUN".into()],
-        });
+        };
+        (installer, public)
+    }
 
-        // Intact: it starts.
-        assert!(s.take_pending_install().is_some());
+    /// What a test's installer was asked to do: the programs started, and the times Xirius was
+    /// told to end soon (UI-282).
+    #[derive(Clone, Default)]
+    pub(crate) struct Started {
+        pub(crate) programs: std::sync::Arc<std::sync::Mutex<Vec<update::Install>>>,
+        pub(crate) leaves: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl Started {
+        /// Puts a checked installer in `root`, waiting for the close, with this record in place
+        /// of starting it.
+        pub(crate) fn arm(&self, s: &mut Studio, root: &std::path::Path) -> std::path::PathBuf {
+            let (installer, key) = signed_installer(root);
+            let path = installer.path.clone();
+            s.update.key = key;
+            s.update.root = Some(root.to_path_buf());
+            s.update.ready = Some(installer);
+            s.update.pending = Some(update::Install {
+                program: path.clone(),
+                args: vec!["/S".into(), "/XRUN".into()],
+            });
+            let programs = self.programs.clone();
+            s.update.spawn = std::sync::Arc::new(move |install| {
+                programs.lock().unwrap().push(install.clone());
+                Ok(())
+            });
+            let leaves = self.leaves.clone();
+            s.update.leave = std::sync::Arc::new(move || {
+                leaves.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            });
+            path
+        }
+
+        pub(crate) fn count(&self) -> usize {
+            self.programs.lock().unwrap().len()
+        }
+
+        pub(crate) fn leaves(&self) -> usize {
+            self.leaves.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    /// UI-282: the installer is checked once more at the last moment (the song's save may take
+    /// a while); a file replaced in between is not started, and the next start says so. Either
+    /// way the close goes on.
+    #[test]
+    fn the_installer_is_checked_again_when_the_window_closes() {
+        let tmp = scratch("recheck");
+        let mut s = Studio::sample();
+        s.song.load_settings(tmp.path());
+        let started = Started::default();
+        let path = started.arm(&mut s, tmp.path());
+
+        // Intact: it starts, and Xirius is told to end soon.
+        assert!(s.start_pending_install());
+        assert_eq!(started.count(), 1);
+        assert_eq!(started.leaves(), 1);
+        assert!(s.update.launched);
+        assert!(s.update.pending.is_none());
+        // Nothing waits any more: a second ask closes at once and starts nothing.
+        assert!(s.start_pending_install());
+        assert_eq!(started.count(), 1);
+
         // Replaced after it was checked: it is not started, and the note is left.
+        s.update.launched = false;
         s.update.pending = Some(update::Install {
             program: path.clone(),
             args: vec!["/S".into(), "/XRUN".into()],
         });
         std::fs::write(&path, b"another installer").unwrap();
-        assert!(s.take_pending_install().is_none());
+        assert!(s.start_pending_install());
+        assert_eq!(started.count(), 1);
+        assert_eq!(started.leaves(), 1, "nothing to end for");
+        assert!(!s.update.launched);
         assert!(tmp.path().join(update::FAILED).is_file());
+    }
+
+    /// UI-282: an installer the OS will not start leaves the note too, and Xirius is not told
+    /// to end early.
+    #[test]
+    fn an_installer_that_does_not_start_leaves_the_note() {
+        let tmp = scratch("nostart");
+        let mut s = Studio::sample();
+        s.song.load_settings(tmp.path());
+        let started = Started::default();
+        started.arm(&mut s, tmp.path());
+        s.update.spawn = std::sync::Arc::new(|_| Err("起動できません".into()));
+        assert!(s.start_pending_install());
+        assert!(!s.update.launched);
+        assert_eq!(started.leaves(), 0);
+        assert!(tmp.path().join(update::FAILED).is_file());
+    }
+
+    /// UI-282: in the window, the installer is checked and started on the application-files
+    /// worker, and the window may only close once it has started: until then the close waits
+    /// (an X pressed meanwhile closes nothing), and the window is asked to close again once it
+    /// has. The song and the window are torn down only after.
+    #[test]
+    fn in_the_window_the_close_waits_for_the_installer_to_start() {
+        let tmp = scratch("order");
+        let mut s = Studio::sample();
+        s.song.load_settings(tmp.path());
+        s.transport.bind_window();
+        let started = Started::default();
+        started.arm(&mut s, tmp.path());
+
+        assert!(!s.start_pending_install(), "the close waits for the start");
+        assert!(s.update.launching());
+        assert!(s.input_blocked(), "nothing is done to the song meanwhile");
+        // A second ask (the caption's ×) neither starts it twice nor closes.
+        assert!(!s.start_pending_install());
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while s.update.launching() {
+            assert!(std::time::Instant::now() < end);
+            s.poll_update();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(started.count(), 1);
+        assert_eq!(started.leaves(), 1);
+        assert!(s.update.launched);
+        assert_eq!(
+            s.window_ask,
+            Some(crate::context::key_more::WindowAsk::Quit),
+            "the window is asked to close again"
+        );
+        assert!(s.start_pending_install(), "now it may close");
+        assert_eq!(started.count(), 1);
+    }
+
+    /// The process a test runs as Xirius closing for an update (UI-282): it saves, closes the
+    /// way the window does, starting the real installer program, and then falls over the way
+    /// a plugin may while the song is torn down. Run by the test below; alone it does nothing.
+    #[cfg(windows)]
+    #[test]
+    fn ui_282_closing_child() {
+        let Some(root) = std::env::var_os("XIRIUS_UPDATE_CLOSE_TEST") else {
+            return;
+        };
+        if std::env::var_os("XIRIUS_UPDATE_CLOSE_ROLE").is_some_and(|r| r == "installer") {
+            return;
+        }
+        let root = std::path::PathBuf::from(root);
+        let mut s = Studio::new(crate::song::Song::empty());
+        s.song.save_as(&root.join("song")).unwrap();
+        s.run_command("track.add.audio", serde_json::json!({"name":"pending"}));
+        let started = Started::default();
+        started.arm(&mut s, &root);
+        // The installer: this test program again, as the test below's other half.
+        s.update.pending = Some(update::Install {
+            program: std::env::current_exe().unwrap(),
+            args: vec![
+                "--exact".into(),
+                "about::tests::ui_282_installer_child".into(),
+                "--nocapture".into(),
+            ],
+        });
+        s.update.spawn = std::sync::Arc::new(update::spawn_detached);
+        // SAFETY: set before the installer is started, from the only thread that reads it.
+        unsafe { std::env::set_var("XIRIUS_UPDATE_CLOSE_ROLE", "installer") };
+        s.transport.bind_window();
+        // As the window does: each ask to close, then the polls of the frames between.
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        s.window_ask = Some(crate::context::key_more::WindowAsk::Quit);
+        loop {
+            assert!(std::time::Instant::now() < end, "the window did not close");
+            if s.window_ask.take() == Some(crate::context::key_more::WindowAsk::Quit)
+                && s.request_close()
+            {
+                break;
+            }
+            s.idle();
+            s.poll_saving();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(s.update.launched, "started before the window goes");
+        std::fs::write(root.join("closing"), b"").unwrap();
+        // A plugin falls over while the song is torn down (with no unwinding and no report box).
+        // SAFETY: ends this process; nothing runs after it.
+        unsafe {
+            use windows_sys::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
+            TerminateProcess(GetCurrentProcess(), 0xC000_0005);
+        }
+    }
+
+    /// The installer the child above starts: it waits for Xirius to be gone, as the real one
+    /// does, and then puts its mark down.
+    #[cfg(windows)]
+    #[test]
+    fn ui_282_installer_child() {
+        let Some(root) = std::env::var_os("XIRIUS_UPDATE_CLOSE_TEST") else {
+            return;
+        };
+        if std::env::var_os("XIRIUS_UPDATE_CLOSE_ROLE").is_none_or(|r| r != "installer") {
+            return;
+        }
+        let root = std::path::PathBuf::from(root);
+        std::fs::write(root.join("installer started"), b"").unwrap();
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while !root.join("go").exists() {
+            assert!(std::time::Instant::now() < end);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        std::fs::write(root.join("installed"), b"").unwrap();
+    }
+
+    /// UI-282: the installer of 「更新して再起動」 is started while the window is still there, and
+    /// it outlives whatever happens to Xirius after: a crash while the song is torn down, and
+    /// the end of a job Xirius was started in (a terminal's or a launcher's that kills what is
+    /// in it when it closes).
+    #[cfg(windows)]
+    #[test]
+    fn an_installer_started_on_the_way_out_outlives_a_crash_and_the_job() {
+        use std::os::windows::io::AsRawHandle;
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_BREAKAWAY_OK,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JobObjectExtendedLimitInformation, SetInformationJobObject,
+        };
+
+        let tmp = scratch("outlives");
+        let root = tmp.path();
+        // A job this test runs in that lets nothing leave would keep the installer in ours as
+        // well; then only the crash is tried.
+        // SAFETY: the job is ours, its limits are a zeroed structure of the right size, and
+        // its handle is closed below.
+        let job = may_leave_jobs().then(|| unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            assert!(!job.is_null());
+            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            limits.BasicLimitInformation.LimitFlags =
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+            assert_ne!(
+                SetInformationJobObject(
+                    job,
+                    JobObjectExtendedLimitInformation,
+                    &limits as *const _ as *const _,
+                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                ),
+                0
+            );
+            job
+        });
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const CREATE_SUSPENDED: u32 = 0x0000_0004;
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "about::tests::ui_282_closing_child",
+                "--nocapture",
+            ])
+            .env("XIRIUS_UPDATE_CLOSE_TEST", root)
+            .env_remove("XIRIUS_UPDATE_CLOSE_ROLE")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED)
+            .spawn()
+            .unwrap();
+        if let Some(job) = job {
+            // SAFETY: the job and the child are ours; the child is suspended, so it is in the
+            // job before it runs.
+            unsafe {
+                assert_ne!(AssignProcessToJobObject(job, child.as_raw_handle() as _), 0);
+            }
+        }
+        resume(&child);
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            assert!(std::time::Instant::now() < end, "the closing child hung");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        assert!(!status.success(), "it fell over, as asked");
+        assert!(
+            root.join("closing").is_file(),
+            "it fell over after the close"
+        );
+        // The job ends at once: everything still in it is killed.
+        if let Some(job) = job {
+            // SAFETY: the job handle is ours.
+            unsafe { CloseHandle(job) };
+        }
+        std::fs::write(root.join("go"), b"").unwrap();
+        while !root.join("installed").is_file() {
+            assert!(
+                std::time::Instant::now() < end,
+                "the installer did not outlive Xirius"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    /// May a process this test starts leave the job the test runs in (or is there none)?
+    #[cfg(windows)]
+    fn may_leave_jobs() -> bool {
+        use windows_sys::Win32::System::JobObjects::{
+            IsProcessInJob, JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+            QueryInformationJobObject,
+        };
+        use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+        // SAFETY: the structures are ours, zeroed and sized; a null job is this process's own.
+        unsafe {
+            let mut in_job = 0;
+            if IsProcessInJob(GetCurrentProcess(), std::ptr::null_mut(), &mut in_job) == 0 {
+                return false;
+            }
+            if in_job == 0 {
+                return true;
+            }
+            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            QueryInformationJobObject(
+                std::ptr::null_mut(),
+                JobObjectExtendedLimitInformation,
+                &mut limits as *mut _ as *mut _,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                std::ptr::null_mut(),
+            ) != 0
+                && limits.BasicLimitInformation.LimitFlags
+                    & (JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK)
+                    != 0
+        }
+    }
+
+    /// Resumes the first thread of a process started suspended.
+    #[cfg(windows)]
+    fn resume(child: &std::process::Child) {
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+        };
+        use windows_sys::Win32::System::Threading::{
+            OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
+        };
+
+        // SAFETY: the snapshot and the thread handles are ours and closed; the entry is sized.
+        unsafe {
+            let snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+            assert_ne!(snap, INVALID_HANDLE_VALUE);
+            let mut entry: THREADENTRY32 = std::mem::zeroed();
+            entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+            let mut more = Thread32First(snap, &mut entry) != 0;
+            while more {
+                if entry.th32OwnerProcessID == child.id() {
+                    let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID);
+                    assert!(!thread.is_null());
+                    ResumeThread(thread);
+                    CloseHandle(thread);
+                }
+                more = Thread32Next(snap, &mut entry) != 0;
+            }
+            CloseHandle(snap);
+        }
     }
 
     /// UI-282: with the placeholder key or outside the per-user folder, the button only opens

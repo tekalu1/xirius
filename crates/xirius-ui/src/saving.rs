@@ -910,7 +910,13 @@ impl Studio {
         true
     }
 
+    /// May the window close now? Once nothing holds it, the installer an update waits for is
+    /// started first, while the window is still there (UI-282).
     pub(crate) fn request_close(&mut self) -> bool {
+        self.close_ready() && self.start_pending_install()
+    }
+
+    fn close_ready(&mut self) -> bool {
         if self.unsaved.is_some() {
             return false;
         }

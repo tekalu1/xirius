@@ -5,8 +5,10 @@
 ; uninstall entry to HKCU. The songs and settings (%LOCALAPPDATA%\Xirius, %APPDATA%\Xirius) are
 ; not the installer's and stay when it uninstalls.
 ;
-; /S installs without a window. A running Xirius is waited for (30 s when silent) and the
-; install stops when it does not close, so an update can start this and quit itself.
+; /S installs without a window. A running Xirius is waited for (60 s when silent) and the
+; install stops when it does not close, so an update can start this and quit itself. Xirius
+; ends within 20 s of starting it (UI-282, LEAVE_WAIT); the rest is for its helper programs
+; and a slow disk.
 ; /XRUN (with /S) starts Xirius again when the install ends (UI-282: 「更新して再起動」).
 ;
 ; Made by scripts/release.py, which stages the files and writes the two lists it includes:
@@ -116,7 +118,7 @@ Function ${UN}WaitClosed
       Return
     ${EndIf}
     ${If} ${Silent}
-    ${AndIf} $2 < 60
+    ${AndIf} $2 < 120
       Sleep 500
       IntOp $2 $2 + 1
       ${Continue}

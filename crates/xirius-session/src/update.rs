@@ -1435,6 +1435,124 @@ pub struct Install {
 }
 
 /// Starts the installer without waiting for it; Xirius leaves while the installer waits for it.
+///
+/// On Windows the installer inherits no handle of this window, and leaves a job this window
+/// may be in (a terminal's or a launcher's, which kills what is in it when it closes), so the
+/// end of Xirius does not take the installer with it (UI-282).
+#[cfg(windows)]
+pub fn spawn_detached(install: &Install) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED, GetLastError};
+    use windows_sys::Win32::System::Threading::{
+        CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW,
+        CREATE_UNICODE_ENVIRONMENT, CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW,
+    };
+
+    let program: Vec<u16> = install
+        .program
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let mut line = command_line(&install.program.to_string_lossy(), &install.args)
+        .encode_utf16()
+        .chain(Some(0))
+        .collect::<Vec<u16>>();
+    let flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT;
+    // A job that does not allow leaving refuses the first try; then the installer stays in it.
+    for flags in [flags | CREATE_BREAKAWAY_FROM_JOB, flags] {
+        // SAFETY: the strings end in 0 and live through the call; the structures are ours,
+        // zeroed and sized; both handles it gives back are closed.
+        unsafe {
+            let mut startup: STARTUPINFOW = std::mem::zeroed();
+            startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+            let mut info: PROCESS_INFORMATION = std::mem::zeroed();
+            let ok = CreateProcessW(
+                program.as_ptr(),
+                line.as_mut_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                flags,
+                std::ptr::null(),
+                std::ptr::null(),
+                &startup,
+                &mut info,
+            );
+            if ok != 0 {
+                CloseHandle(info.hThread);
+                CloseHandle(info.hProcess);
+                return Ok(());
+            }
+            let error = GetLastError();
+            if error == ERROR_ACCESS_DENIED && flags & CREATE_BREAKAWAY_FROM_JOB != 0 {
+                continue;
+            }
+            return Err(format!(
+                "インストーラーを起動できません: {}",
+                std::io::Error::from_raw_os_error(error as i32)
+            ));
+        }
+    }
+    Err("インストーラーを起動できません".into())
+}
+
+/// The command line of a program and its arguments, quoted as `CommandLineToArgvW` reads it.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn command_line(program: &str, args: &[String]) -> String {
+    let mut line = format!("\"{program}\"");
+    for arg in args {
+        line.push(' ');
+        if !arg.is_empty() && !arg.contains([' ', '\t', '"']) {
+            line.push_str(arg);
+            continue;
+        }
+        line.push('"');
+        let mut slashes = 0;
+        for c in arg.chars() {
+            match c {
+                '\\' => slashes += 1,
+                '"' => {
+                    line.extend(std::iter::repeat_n('\\', slashes * 2 + 1));
+                    slashes = 0;
+                }
+                _ => {
+                    line.extend(std::iter::repeat_n('\\', slashes));
+                    slashes = 0;
+                }
+            }
+            if c != '\\' {
+                line.push(c);
+            }
+        }
+        line.extend(std::iter::repeat_n('\\', slashes * 2));
+        line.push('"');
+    }
+    line
+}
+
+/// Ends this process `after` from now if it is still running (UI-282). Once the installer is
+/// started, Xirius must be gone before the installer stops waiting for it (30 s); a plugin or
+/// a cleanup that hangs on the way out must not keep the update from going in. The song was
+/// saved before the installer was started.
+pub fn leave_within(after: Duration) {
+    let _ = std::thread::Builder::new()
+        .name("update leave".into())
+        .spawn(move || {
+            std::thread::sleep(after);
+            eprintln!("注意: 終了が遅いので、更新のために終わります");
+            #[cfg(windows)]
+            // SAFETY: ends this process; nothing runs after it.
+            unsafe {
+                use windows_sys::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
+                TerminateProcess(GetCurrentProcess(), 0);
+            }
+            std::process::exit(0);
+        });
+}
+
+/// Starts the installer without waiting for it; Xirius leaves while the installer waits for it.
+#[cfg(not(windows))]
 pub fn spawn_detached(install: &Install) -> Result<(), String> {
     let mut c = std::process::Command::new(&install.program);
     c.args(&install.args)
@@ -1462,6 +1580,20 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+
+    /// UI-282: the installer's command line reads back as the same arguments.
+    #[test]
+    fn the_command_line_quotes_what_needs_it() {
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            command_line(r"C:\a b\setup.exe", &args(&["/S", "/XRUN"])),
+            r#""C:\a b\setup.exe" /S /XRUN"#
+        );
+        assert_eq!(
+            command_line("x.exe", &args(&[r"/D=C:\a b\", "", "say \"hi\""])),
+            r#""x.exe" "/D=C:\a b\\" "" "say \"hi\"""#
+        );
+    }
 
     const ANSWER: &str = r#"{
         "tag_name": "v1.0.1",

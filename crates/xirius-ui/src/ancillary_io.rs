@@ -133,7 +133,9 @@ pub(crate) struct ViewRead {
 
 impl crate::studio::Studio {
     /// After the last window closes, keep the executor pumping while the FIFO
-    /// checks/launches an installer and finishes or defers cleanup.
+    /// finishes or defers cleanup. The installer of an update is started before the window
+    /// goes ([`crate::studio::Studio::request_close`]); one still waiting here (a window
+    /// closed some other way) is started first.
     pub(crate) fn finish_window_io(&mut self) -> Result<(), String> {
         let close = self.open_closing.take();
         let tidies = std::mem::take(&mut self.tidying);
@@ -142,24 +144,19 @@ impl crate::studio::Studio {
         let key = self.update.key.clone();
         let root = self.update.root.clone();
         let spawn = self.update.spawn.clone();
+        let leave = self.update.leave.clone();
         dispatch(move || {
-            if let Some(install) = install {
-                let checked = installer
-                    .ok_or_else(|| "インストーラーがありません".to_string())
-                    .and_then(|i| i.verify_with(&key));
-                match checked {
-                    Ok(()) => {
-                        if let Err(e) = spawn(&install) {
-                            eprintln!("注意: {e}");
-                        }
-                    }
-                    Err(e) => {
-                        if let Some(root) = root {
-                            let _ = std::fs::write(root.join(xirius_session::update::FAILED), b"");
-                        }
-                        eprintln!("注意: {e}");
-                    }
-                }
+            if let Some(install) = install
+                && let Err(e) = crate::about::launch_installer(
+                    &install,
+                    installer.as_ref(),
+                    &key,
+                    root.as_deref(),
+                    &spawn,
+                    &*leave,
+                )
+            {
+                eprintln!("注意: {e}");
             }
             let until = std::time::Instant::now() + crate::tidy::CLOSE_WAIT;
             let n = close.map_or(0, |c| c.wait(crate::tidy::CLOSE_WAIT))

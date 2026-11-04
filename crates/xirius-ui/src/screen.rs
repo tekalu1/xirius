@@ -2416,10 +2416,17 @@ pub fn run(opts: Options) {
                 },
                 move |window, cx| {
                     let close_studio = studio.clone();
+                    // Called from the OS's close message (the caption's ×, Alt+F4, the
+                    // taskbar), outside drawing and where a panic cannot unwind: it must not
+                    // ask for the view being drawn (`request_animation_frame` does, UI-282),
+                    // nor borrow a song another callback holds. A close that has to wait asks
+                    // for a frame that sees it through.
                     window.on_window_should_close(cx, move |window, _| {
-                        let ready = close_studio.borrow_mut().request_close();
+                        let ready = close_studio
+                            .try_borrow_mut()
+                            .is_ok_and(|mut s| s.request_close());
                         if !ready {
-                            window.request_animation_frame();
+                            window.refresh();
                         }
                         ready
                     });

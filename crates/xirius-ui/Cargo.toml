@@ -91,7 +91,14 @@ xirius-ara = { path = "../xirius-ara" }
 # The tests read the version information back as Explorer does (LIC-022), and walk the
 # parked window's UI Automation tree (UI-026, tests/uia_window.rs).
 [target.'cfg(windows)'.dev-dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_LibraryLoader"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+] }
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Com",
