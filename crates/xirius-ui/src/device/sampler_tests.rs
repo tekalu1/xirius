@@ -216,6 +216,55 @@ fn ui_334_layers_choose_the_wave_and_files_dropped_on_a_pad_go_there() {
     assert!(!s.window_drop(&g, 1.0, 1.0, &files));
 }
 
+/// Empty files named `names` in a folder of their own.
+fn wavs(names: &[&str]) -> (tempfile::TempDir, Vec<PathBuf>) {
+    let dir = tempfile::tempdir().unwrap();
+    let files = names
+        .iter()
+        .map(|n| {
+            let f = dir.path().join(n);
+            std::fs::write(&f, b"").unwrap();
+            f
+        })
+        .collect();
+    (dir, files)
+}
+
+/// N-smp-3, N-smp-4 (UI-334): with Shift the files dropped are the layers of one pad, and a
+/// drop off the pads goes to the pad chosen (an empty one), which stays chosen.
+#[test]
+fn ui_334_shift_makes_layers_and_a_drop_off_the_pads_goes_to_the_pad_chosen() {
+    let (_dir, files) = wavs(&["Snare_a.wav", "Snare_b.wav"]);
+    let (mut s, g, t, id) = window("Drum Kit");
+    add(&mut s, id, &["Kick.wav"]);
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(41)).expect("A6");
+    s.instruments.drop_layers = true;
+    assert!(s.window_drop(&g, x, y, &files), "{:?}", s.error);
+    let k = plugin(&s, t);
+    let def = k.builtin().unwrap();
+    assert_eq!(sampler::pad_files(def, &k, 5), [1, 2]);
+    assert!(sampler::pad_files(def, &k, 6).is_empty());
+    // Taken once: the next drop without Shift spreads.
+    assert!(!s.instruments.drop_layers);
+    // B7 chosen and empty: a drop on its surface fills it.
+    let (_dir2, more) = wavs(&["Clap.wav"]);
+    s.instruments.pick(id, 30, 0);
+    let r = body(&s, &g, t).spots[spot(&s, &g, t, Mark::Drop)].r;
+    let (x, y) = (r.x + r.w / 2.0, r.y + 12.0);
+    assert!(s.window_drop(&g, x, y, &more), "{:?}", s.error);
+    let k = plugin(&s, t);
+    assert_eq!(sampler::pad_files(k.builtin().unwrap(), &k, 30), [3]);
+    assert_eq!(s.instruments.open[0].pick, 30);
+    // A1 is full: a drop there goes to the next empty pad, which is chosen.
+    s.instruments.pick(id, 0, 0);
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).expect("A1");
+    let (_dir3, last) = wavs(&["Rim.wav"]);
+    assert!(s.window_drop(&g, x, y, &last), "{:?}", s.error);
+    let k = plugin(&s, t);
+    assert_eq!(sampler::pad_files(k.builtin().unwrap(), &k, 1), [4]);
+    assert_eq!(s.instruments.open[0].pick, 1);
+}
+
 /// The window `dy` taller than it opened.
 fn taller(s: &mut Studio, dy: f32) {
     s.instruments.open[0].body.1 += dy;

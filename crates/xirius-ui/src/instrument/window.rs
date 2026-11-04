@@ -360,6 +360,9 @@ pub struct Windows {
     pub(crate) note: Option<Held>,
     /// The width the face in the mixer's drawer was last given (MIX-046).
     pub(crate) dock_w: Option<f32>,
+    /// Shift is held over a drop of files: a Drum Kit takes them as the layers of one pad
+    /// (UI-334).
+    pub(crate) drop_layers: bool,
 }
 
 /// How long an opened window's frame lights.

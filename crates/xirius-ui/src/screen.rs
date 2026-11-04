@@ -785,6 +785,7 @@ impl Screen {
         if studio.input_blocked() {
             return;
         }
+        studio.instruments.drop_layers = ev.event.modifiers.shift;
         let named = studio.drag_names(ev.drag(cx).paths());
         if studio.drop_hover(true) | named {
             cx.notify();
@@ -805,6 +806,7 @@ impl Screen {
         }
         let g = geometry(&studio, window);
         let (x, y) = in_body(window.mouse_position());
+        studio.instruments.drop_layers = window.modifiers().shift;
         if studio.drop_files(&g, x, y, paths.paths()) {
             cx.notify();
         }

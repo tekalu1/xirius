@@ -82,8 +82,9 @@ impl Studio {
     }
 
     /// Files dropped on a Sampler's or a Drum Kit's window: they are its samples, a
-    /// Drum Kit's from the pad they fall on (else the empty pads). False when the drop
-    /// fell elsewhere.
+    /// Drum Kit's from the pad they fall on, else from the pad chosen (the empty pads from
+    /// there), and all of them the layers of one pad while Shift is held. False when the
+    /// drop fell elsewhere.
     pub(crate) fn window_drop(&mut self, g: &Geometry, x: f32, y: f32, paths: &[PathBuf]) -> bool {
         let p = self.project();
         let Some((i, part)) = self.instruments.at(&p, g, x, y) else {
@@ -96,10 +97,14 @@ impl Studio {
         if !sampler::has_files(def) {
             return false;
         }
+        let kit = def.uid == "drum-kit";
         let pad = match part {
-            Part::Pad(pitch) if def.uid == "drum-kit" => Some(play::pad_of(pitch)),
+            Part::Pad(pitch) if kit => Some(play::pad_of(pitch)),
+            _ if kit => Some(w.pick),
             _ => None,
         };
+        let layers = kit && std::mem::take(&mut self.instruments.drop_layers);
+        let first = live(&p, &w).map_or(0, |(_, x, _)| x.samples.len());
         // All of them in one load: one step, and the layers of a pad stay together.
         let list: Vec<_> = paths
             .iter()
@@ -109,12 +114,22 @@ impl Studio {
         if let Some(pad) = pad {
             args["pad"] = json!(PAD_NAMES[pad]);
         }
+        if layers {
+            args["layers"] = json!(true);
+        }
         // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         if !self.run_command("plugin.samples.load", args) {
             return true;
         }
-        if let Some(pad) = pad {
-            self.instruments.pick(w.plugin, pad, 0);
+        // The pad the first file went to: the one dropped on, or the next empty one.
+        let p = self.project();
+        if kit
+            && let Some((_, x, _)) = live(&p, &w)
+            && let Some(def) = x.builtin()
+            && first < x.samples.len()
+        {
+            self.instruments
+                .pick(w.plugin, def.file_pad(&x.params, first), 0);
         }
         true
     }
