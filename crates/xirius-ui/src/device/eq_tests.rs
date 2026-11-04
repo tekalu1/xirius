@@ -354,18 +354,6 @@ fn ui_325_the_points_are_sliders_a_screen_reader_turns() {
         .iter()
         .filter(|m| m.key.starts_with(&format!("device-{id}-point-")))
         .collect();
-    assert_eq!(
-        points.len(),
-        eq::NAMES.len() - 1,
-        "a mark for every other band"
-    );
-    let lmf = points
-        .iter()
-        .find(|m| m.key == format!("device-{id}-point-mid2_freq"))
-        .expect("named by its value");
-    assert_eq!(lmf.node.role(), accesskit::Role::Slider);
-    assert!(lmf.node.value().unwrap().contains("Hz"));
-    assert_eq!(lmf.turn, Some((id, k_of(&s, t, "mid2_freq"))));
     let mut places: Vec<_> = points
         .iter()
         .map(|m| {
@@ -375,7 +363,42 @@ fn ui_325_the_points_are_sliders_a_screen_reader_turns() {
         .collect();
     places.sort_unstable();
     places.dedup();
-    assert_eq!(places.len(), points.len(), "each its own place");
+    assert_eq!(
+        places.len(),
+        eq::NAMES.len() - 1,
+        "every other band's point"
+    );
+    let of = |p: &str| {
+        points
+            .iter()
+            .find(|m| m.key == format!("device-{id}-point-{p}"))
+            .unwrap_or_else(|| panic!("no Slider for {p}"))
+    };
+    let lmf = of("mid2_freq");
+    assert_eq!(lmf.node.role(), accesskit::Role::Slider);
+    assert!(lmf.node.value().unwrap().contains("Hz"));
+    assert_eq!(lmf.turn, Some((id, k_of(&s, t, "mid2_freq"))));
+    // Its gain and its Q are Sliders of their own on the same point, each reading itself
+    // (low 16).
+    let (gain, q) = (of("mid2_gain"), of("mid2_q"));
+    assert_eq!(gain.turn, Some((id, k_of(&s, t, "mid2_gain"))));
+    assert!(
+        gain.node.value().unwrap().contains("dB"),
+        "{:?}",
+        gain.node.value()
+    );
+    assert!(!lmf.node.value().unwrap().contains("dB"));
+    assert_eq!(q.turn, Some((id, k_of(&s, t, "mid2_q"))));
+    assert_eq!(gain.node.bounds(), lmf.node.bounds());
+    let labels = [lmf, gain, q].map(|m| m.node.label().unwrap().to_string());
+    assert!(
+        labels.iter().all(|l| l.starts_with(&labels[0][..3])),
+        "{labels:?}"
+    );
+    assert!(
+        labels[0] != labels[1] && labels[1] != labels[2],
+        "{labels:?}"
+    );
     // In Hz, from the least to the most, with a step.
     let def = fx(&s, t).builtin().unwrap();
     let (_, spec) = def.param("mid2_freq").unwrap();
@@ -457,4 +480,40 @@ fn ui_326_the_tabs_the_spectrum_and_the_head_read_their_names() {
     assert_eq!(tab.role(), accesskit::Role::Tab);
     assert_eq!(tab.label(), Some("LMF"));
     assert_eq!(tab.is_selected(), Some(true));
+}
+
+/// Low 16: a point's Slider is named by the value it turns and reads that value alone (a
+/// point is not named by one value and read by another); no two share a key.
+#[test]
+fn ui_325_a_points_slider_says_the_value_it_turns() {
+    let (mut s, g, t, id) = eq_window();
+    resize(&mut s, t, 520.0);
+    let x = fx(&s, t);
+    let def = x.builtin().unwrap();
+    let now = values(&x);
+    let marks = crate::a11y::marks(&s, &g);
+    let points: Vec<_> = marks
+        .iter()
+        .filter(|m| m.key.starts_with(&format!("device-{id}-point-")))
+        .collect();
+    assert!(!points.is_empty());
+    let mut keys: Vec<_> = points.iter().map(|m| m.key.clone()).collect();
+    keys.sort_unstable();
+    keys.dedup();
+    assert_eq!(keys.len(), points.len());
+    for m in points {
+        let (_, k) = m.turn.unwrap();
+        let spec = &def.params[k];
+        assert_eq!(m.key, format!("device-{id}-point-{}", spec.id));
+        let label = m.node.label().unwrap();
+        assert!(
+            label.ends_with(super::control::name(def, spec)),
+            "{label} turns {}",
+            spec.id
+        );
+        assert_eq!(
+            m.node.value(),
+            Some(super::control::text(spec, now[k]).as_str())
+        );
+    }
 }

@@ -1158,31 +1158,39 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             node.set_bounds(bounds(spot.r));
             out.push(mark(format!("device-{}-spot-{n}", w.plugin), node));
         }
-        // A graph's point is a Slider of the first value it moves that no knob on show
-        // has, reading all of them: one Slider a value, each with its own place, named by the
-        // value, not by where it comes in the list (UI-325, L2-ui-3).
-        let knobs: Vec<usize> = body.slots.iter().map(|s| s.k).collect();
+        // A graph's point is a Slider for each value it moves that no knob on show has: one
+        // Slider a value, named by the point and the value and reading that value alone, keyed
+        // by the value, not by where it comes in the list (UI-325, L2-ui-3, low 16).
+        let mut taken: Vec<usize> = body.slots.iter().map(|s| s.k).collect();
         for n in 0..body.graphs.len() {
             for pt in s.instruments.points_of(r, x, def, n) {
-                let Some(first) = pt.params().find(|k| !knobs.contains(k)) else {
-                    continue;
-                };
-                let spec = &def.params[first];
-                let v = s.instruments.turning(w.plugin, first).unwrap_or(now[first]);
-                let mut node = accesskit::Node::new(accesskit::Role::Slider);
-                node.set_label(pt.name.clone());
-                node.set_value(pt.value.clone());
-                numeric(&mut node, spec, v);
-                node.set_bounds(bounds(Rect::new(pt.at.0 - 8.0, pt.at.1 - 8.0, 16.0, 16.0)));
-                out.push(Mark {
-                    key: format!("device-{}-point-{}", w.plugin, spec.id),
-                    children: Vec::new(),
-                    node,
-                    fold: None,
-                    pick: None,
-                    press: None,
-                    turn: Some((w.plugin, first)),
-                });
+                for k in pt.params().collect::<Vec<_>>() {
+                    if taken.contains(&k) {
+                        continue;
+                    }
+                    taken.push(k);
+                    let spec = &def.params[k];
+                    let v = s.instruments.turning(w.plugin, k).unwrap_or(now[k]);
+                    let axis = control::name(def, spec);
+                    let mut node = accesskit::Node::new(accesskit::Role::Slider);
+                    node.set_label(if pt.name == axis {
+                        axis.to_string()
+                    } else {
+                        format!("{} {axis}", pt.name)
+                    });
+                    node.set_value(control::text(spec, v));
+                    numeric(&mut node, spec, v);
+                    node.set_bounds(bounds(Rect::new(pt.at.0 - 8.0, pt.at.1 - 8.0, 16.0, 16.0)));
+                    out.push(Mark {
+                        key: format!("device-{}-point-{}", w.plugin, spec.id),
+                        children: Vec::new(),
+                        node,
+                        fold: None,
+                        pick: None,
+                        press: None,
+                        turn: Some((w.plugin, k)),
+                    });
+                }
             }
         }
         for slot in body.slots {
