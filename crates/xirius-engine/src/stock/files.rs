@@ -18,7 +18,7 @@ use crate::timeline::AudioData;
 /// The sets waiting or handed back, at most. An update that finds the ring full is dropped
 /// (the caller can send it again); a set the audio thread cannot hand back is leaked, the
 /// lesser harm next to freeing it there.
-const QUEUE: usize = 8;
+pub(crate) const QUEUE: usize = 8;
 
 /// A file read for a device: the name it was listed under (a Sampler zone's root note comes
 /// from it), its sound, both channels at the mix's rate, and its loudest sample (what
@@ -375,6 +375,13 @@ impl FileOutbox {
     /// tests that want the ring empty.
     pub fn reclaim(&mut self) {
         while self.retired.pop().is_ok() {}
+    }
+
+    /// Puts `set` in the queue without freeing what came back first: what a set pushed
+    /// while the audio thread is retiring others meets.
+    #[cfg(test)]
+    pub(crate) fn push_raw(&mut self, set: FileSet) -> bool {
+        self.tx.push(Arc::new(set)).is_ok()
     }
 }
 

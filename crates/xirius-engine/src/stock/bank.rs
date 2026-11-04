@@ -242,13 +242,16 @@ impl StockHandle {
 
     /// Sends again the layout a full ring turned away, once the device has polled (L2-smp-4):
     /// without it the last change waits for the next one. `true` when nothing is left
-    /// waiting.
+    /// waiting. It frees the sets handed back each time, too: while the way back is full
+    /// the device leaves the newest set in the queue, and without a change to free them it
+    /// would wait there (the fourth review's low 10).
     pub fn resend_files(&self) -> bool {
         let def = self.bank.def();
-        match self.files() {
-            Some(mut files) if files.pending => files.send(def),
-            _ => true,
-        }
+        let Some(mut files) = self.files() else {
+            return true;
+        };
+        files.out.reclaim();
+        !files.pending || files.send(def)
     }
 
     /// Frees the sets the audio thread handed back. Called inside `set_files`; on its own
@@ -319,6 +322,27 @@ impl Params {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    /// The fourth review's low 10: the newest set left in the queue while the way back was
+    /// full goes in with the next poll of the session, though nothing changes.
+    #[test]
+    fn a_set_held_by_a_full_way_back_goes_in_with_the_next_resend() {
+        use super::super::files::{QUEUE, channel};
+        let def = &xirius_params::SAMPLER;
+        let (out, mut inbox) = channel();
+        let h = StockHandle::new(Arc::new(ParamBank::new(def)), Some(out));
+        let set = || FileSet::layout(def, &BTreeMap::new(), Vec::new());
+        let mut cur = None;
+        // The audio thread takes sets while the session frees none: the way back fills.
+        for _ in 0..=QUEUE {
+            assert!(h.files().unwrap().out.push_raw(set()));
+            inbox.poll(&mut cur);
+        }
+        assert!(h.files().unwrap().out.push_raw(set()));
+        assert!(!inbox.poll(&mut cur), "the newest waits for room");
+        assert!(h.resend_files(), "nothing was turned away");
+        assert!(inbox.poll(&mut cur), "it went in");
+    }
 
     #[test]
     fn a_new_bank_holds_the_defaults() {
