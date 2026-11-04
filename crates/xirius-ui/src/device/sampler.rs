@@ -88,12 +88,12 @@ pub const SPAN_WEIGHT: Weight = Weight::Regular;
 pub const ZONE_GAP: f32 = 2.0;
 
 /// Where a zone's or a layer's words go in it: a zone's 4 px in from each side (the mock's
-/// `padding: 0 4px`), a layer's 6 from the left.
+/// `padding: 0 4px`), a layer's 6 (`padding: 0 6px`).
 pub fn span_text(s: &Spot) -> Rect {
     let r = s.r;
     match s.mark {
         Mark::Zone(_) => Rect::new(r.x + 4.0, r.y, (r.w - 8.0).max(0.0), r.h),
-        _ => Rect::new(r.x + 6.0, r.y, (r.w - 8.0).max(0.0), r.h),
+        _ => Rect::new(r.x + 6.0, r.y, (r.w - 12.0).max(0.0), r.h),
     }
 }
 
@@ -548,6 +548,20 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
             groups[k].2 = groups[k].2.max(groups[k].1 + ZONE_MIN);
         }
     }
+    // Pushed past the keys' right, the zones there pack back to the left (low 19).
+    let right = keys
+        .iter()
+        .rfind(|k| !k.black)
+        .map_or(inner, |k| k.r.right());
+    let mut edge = right;
+    for g in groups.iter_mut().rev() {
+        if g.2 <= edge {
+            break;
+        }
+        g.2 = edge;
+        g.1 = g.1.min(edge - ZONE_MIN);
+        edge = g.1;
+    }
     let placed = groups.into_iter().flat_map(|(g, x0, x1)| {
         let share = (x1 - x0) / g.len() as f32;
         g.into_iter().enumerate().map(move |(j, z)| {
@@ -556,8 +570,11 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
         })
     });
     for (z, x0, x1) in placed {
+        // The gap parts a zone from the next: one at the keys' right keeps its width (the
+        // mock's).
+        let gap = if x1 >= right - 0.5 { 0.0 } else { ZONE_GAP };
         let mut spot = Spot::new(
-            Rect::new(x0, y, (x1 - x0 - ZONE_GAP).max(4.0), ZONE_H),
+            Rect::new(x0, y, (x1 - x0 - gap).max(4.0), ZONE_H),
             Mark::Zone(z.file),
             stem(&files[z.file]),
         );
@@ -1166,21 +1183,47 @@ pub fn wave_points(def: &BuiltinDef, r: Rect, values: &[f64]) -> Vec<Point> {
         return Vec::new();
     }
     let ax = share_axis(r);
+    let cut = cut_of(def, values);
     let mut out = Vec::new();
-    let mut at = |id: &str, y: f32| {
+    let mut at = |id: &str, y: f32, shown: bool| {
         if let Some(k) = idx(def, id) {
-            let mut p = point(def, values, k, (ax.px(plain(def, values, id)), y), "");
-            p.x = Some(Drive { k, axis: ax });
+            let v = plain(def, values, id);
+            // A loop's end within a reversed cut shows where the wave shows it, and moves
+            // along the wave the other way (low 1).
+            let axis = match cut {
+                (s, e, true) if shown && (s..=e).contains(&(v / 100.0)) => {
+                    let m = (s + e) * 100.0;
+                    Axis::lin(ax.a, ax.b, m, m - 100.0)
+                }
+                _ => ax,
+            };
+            let mut p = point(def, values, k, (axis.px(v), y), "");
+            p.x = Some(Drive { k, axis });
             out.push(p);
         }
     };
-    at("start", r.y + TAB.1 / 2.0);
-    at("end", r.y + TAB.1 / 2.0);
+    at("start", r.y + TAB.1 / 2.0, false);
+    at("end", r.y + TAB.1 / 2.0, false);
     if on(def, values, "loop") {
-        at("loop_start", r.bottom() - TAB.1 / 2.0);
-        at("loop_end", r.bottom() - TAB.1 / 2.0);
+        at("loop_start", r.bottom() - TAB.1 / 2.0, true);
+        at("loop_end", r.bottom() - TAB.1 / 2.0, true);
     }
     out
+}
+
+/// The loop's span on the wave while it loops: 2 px in from the top and the foot (the
+/// mock's), and where the wave shows it, so a reversed cut's loop lies where the voice that
+/// sounds loops (low 1).
+pub fn loop_band(def: &BuiltinDef, r: Rect, values: &[f64]) -> Option<Rect> {
+    if !on(def, values, "loop") {
+        return None;
+    }
+    let ax = share_axis(r);
+    let cut = cut_of(def, values);
+    let x = |id: &str| ax.px(wave_at(plain(def, values, id) / 100.0, cut) * 100.0);
+    let (a, b) = (x("loop_start"), x("loop_end"));
+    let (a, b) = (a.min(b), a.max(b));
+    (b > a).then(|| Rect::new(a, r.y + 2.0, b - a, (r.h - 4.0).max(0.0)))
 }
 
 /// The wave's points as the mock draws them: a 3 px bar down the plane and a tab at its top
@@ -1230,8 +1273,8 @@ pub fn paint_handles(pen: &mut Pen, plane: Rect, points: &[Point], view: &View) 
 }
 
 /// The colours of a Sampler's wave, the mock's: the ground s2, the wave thumb-hover (no
-/// ink made see-through; thumb while it is off), the loop's span s3 and what does not play
-/// under s0 at .72 (low 21).
+/// ink made see-through, and the same while it is off: the mock dims only the lines of its
+/// graphs), the loop's span s3 and what does not play under s0 at .72 (low 21, low 3).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WaveInks {
     pub ground: Hsla,
@@ -1240,10 +1283,10 @@ pub struct WaveInks {
     pub outside: Hsla,
 }
 
-pub fn wave_inks(c: &crate::paint::Colors, bypassed: bool) -> WaveInks {
+pub fn wave_inks(c: &crate::paint::Colors) -> WaveInks {
     WaveInks {
         ground: c.surface_2,
-        wave: c.scroll_thumb[usize::from(bypassed)],
+        wave: c.scroll_thumb[0],
         span: c.surface_3,
         outside: c.surface_0.opacity(0.72),
     }
@@ -1254,7 +1297,7 @@ pub fn paint_wave(pen: &mut Pen, def: &BuiltinDef, r: Rect, values: &[f64], view
         return;
     }
     let c = pen.c;
-    let inks = wave_inks(c, view.bypassed);
+    let inks = wave_inks(c);
     pen.round(r, inks.ground, Radius::S);
     let i = inset(r);
     let ax = share_axis(r);
@@ -1264,14 +1307,8 @@ pub fn paint_wave(pen: &mut Pen, def: &BuiltinDef, r: Rect, values: &[f64], view
         ax.px(plain(def, values, "end")),
     );
     pen.mask(r, |pen| {
-        if on(def, values, "loop") {
-            let (a, b) = (
-                ax.px(plain(def, values, "loop_start")),
-                ax.px(plain(def, values, "loop_end")),
-            );
-            if b > a {
-                pen.round(Rect::new(a, r.y, b - a, r.h), inks.span, Radius::Clip);
-            }
+        if let Some(band) = loop_band(def, r, values) {
+            pen.round(band, inks.span, Radius::Clip);
         }
         match view.wave {
             Some(p) if p.frames > 0 => {

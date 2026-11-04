@@ -14,7 +14,7 @@ use super::sampler::{self, BROWSE_LABEL, DROP_LABEL};
 use crate::browser::RailTab;
 use crate::instrument::window::{Part, values_of};
 use crate::instrument::{Pick, current};
-use crate::studio::{Geometry, Studio};
+use crate::studio::{Geometry, Rect, Studio};
 use crate::tools::Mods;
 
 /// The sample song with Keys playing the built-in `name`, its window open.
@@ -195,7 +195,7 @@ fn n3_smp_1_zones_that_meet_at_a_black_key_meet_on_its_line() {
     let (first, last) = (b.keys[0].r, b.keys.iter().rfind(|k| !k.black).unwrap().r);
     assert!((sub.x - first.x).abs() < 0.01 && sub.w < 8.0, "{sub:?}");
     assert!(
-        (bell.right() + sampler::ZONE_GAP - last.right()).abs() < 0.01 && bell.w < 8.0,
+        (bell.right() - last.right()).abs() < 0.01 && bell.w < 8.0,
         "{bell:?}"
     );
     assert!(sub.right() <= low.x && low.right() <= high.x && high.right() <= bell.x);
@@ -705,19 +705,17 @@ fn ui_333_reversed_the_play_line_stands_over_what_it_reads() {
     assert_eq!(sampler::wave_column(0, cols, (0.0, 1.0, true)), cols - 1);
 }
 
-/// Low 23 (UI-333): the keys' names go once the window's content is 520 or narrower, as on
-/// the mock, not once the keys' frame within it (16 narrower) is.
 #[test]
 fn ui_333_the_wave_and_the_zones_wear_the_mocks_colours() {
     for theme in [xirius_design::Theme::Dark, xirius_design::Theme::Light] {
         let c = crate::paint::Colors::new(theme);
-        let on = sampler::wave_inks(&c, false);
+        // The same while the device is off (low 3): the mock dims only its graphs' lines.
+        let on = sampler::wave_inks(&c);
         assert_eq!(on.ground, c.surface_2);
         assert_eq!(on.wave, c.scroll_thumb[0], "thumb-hover, not ink at .5");
         assert_eq!(on.wave.a, 1.0);
         assert_eq!(on.span, c.surface_3);
         assert_eq!(on.outside, c.surface_0.opacity(0.72));
-        assert_eq!(sampler::wave_inks(&c, true).wave, c.scroll_thumb[1]);
     }
     // A zone is 2 px short of its keys (n3_smp_1 measures it), its words 4 px in from each
     // side.
@@ -727,6 +725,87 @@ fn ui_333_the_wave_and_the_zones_wear_the_mocks_colours() {
     let a = body(&s, &g, t).spots[spot(&s, &g, t, Mark::Zone(0))].clone();
     let words = sampler::span_text(&a);
     assert_eq!((words.x - a.r.x, a.r.right() - words.right()), (4.0, 4.0));
+    // A layer's words 6 in from each side (low 4).
+    let layer = layout::Spot::new(Rect::new(10.0, 0.0, 100.0, 24.0), Mark::Layer(0), "");
+    let words = sampler::span_text(&layer);
+    assert_eq!((words.x - 10.0, 110.0 - words.right()), (6.0, 6.0));
+}
+
+/// Low 19 and low 4 (UI-333): zones pushed past the keys' right pack back to the left, side
+/// by side within the keys, and the one at the right keeps its width.
+#[test]
+fn zones_past_the_keys_right_pack_back_and_the_last_keeps_its_width() {
+    let (mut s, g, t, id) = window("Sampler");
+    let files = ["A C7.wav", "B D7.wav", "C E7.wav", "D F7.wav", "E G7.wav"];
+    add(&mut s, id, &files);
+    let b = body(&s, &g, t);
+    let (left, right) = (
+        b.keys[0].r.x,
+        b.keys.iter().rfind(|k| !k.black).unwrap().r.right(),
+    );
+    let zones: Vec<Rect> = (0..files.len())
+        .map(|f| b.spots[spot(&s, &g, t, Mark::Zone(f))].r)
+        .collect();
+    for z in &zones {
+        assert!(
+            z.x >= left && z.right() <= right + 0.01,
+            "{z:?} past {right}"
+        );
+    }
+    for w in zones.windows(2) {
+        assert!(
+            (w[0].right() + sampler::ZONE_GAP - w[1].x).abs() < 0.01,
+            "{zones:?}"
+        );
+    }
+    assert!((zones[4].right() - right).abs() < 0.01, "{zones:?}");
+    // Each is chosen where it is seen.
+    for (f, r) in zones.iter().enumerate() {
+        let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+        assert_eq!(
+            sampler::spot_at(&b, x, y).map(|n| b.spots[n].mark),
+            Some(Mark::Zone(f))
+        );
+    }
+}
+
+/// Low 1 and low 4 (UI-333): reversed, the loop's span and its ends lie where the wave shows
+/// the file's loop, so the line of the voice that sounds loops within it, and an end drags
+/// along the wave; the span is 2 px in from the top and the foot.
+#[test]
+fn reversed_the_loops_span_and_ends_lie_where_the_voice_loops() {
+    let (mut s, _, t, id) = window("Sampler");
+    add(&mut s, id, &["C3.wav"]);
+    let x = plugin(&s, t);
+    let def = s.instruments.def_of(&x).unwrap();
+    let values = |set: &[(&str, f64)]| {
+        let mut v: Vec<f64> = def.params.iter().map(|p| p.default_norm()).collect();
+        for (key, plain) in set {
+            let k = sampler::idx(def, key).unwrap();
+            v[k] = def.params[k].to_norm(*plain);
+        }
+        v
+    };
+    let cut = [("start", 10.0), ("end", 90.0), ("loop", 1.0)];
+    let with = |more: &[(&str, f64)]| values(&[&cut[..], more].concat());
+    let r = Rect::new(0.0, 0.0, 400.0, 100.0);
+    let forward = with(&[("loop_start", 70.0), ("loop_end", 80.0)]);
+    let reversed = with(&[("loop_start", 20.0), ("loop_end", 30.0), ("reverse", 1.0)]);
+    let shown = sampler::loop_band(def, r, &forward).unwrap();
+    assert_eq!((shown.y, shown.h), (2.0, 96.0));
+    // 20..30 of the file, reversed in 10..90, shows at 70..80.
+    let band = sampler::loop_band(def, r, &reversed).unwrap();
+    assert!((band.x - shown.x).abs() < 0.01 && (band.w - shown.w).abs() < 0.01);
+    let ends = sampler::wave_points(def, r, &reversed);
+    let (start, end) = (&ends[2], &ends[3]);
+    assert!((start.at.0 - shown.right()).abs() < 0.01, "{:?}", start.at);
+    assert!((end.at.0 - shown.x).abs() < 0.01, "{:?}", end.at);
+    // Dragged right along the wave, the loop's start goes back in the file.
+    let k = sampler::idx(def, "loop_start").unwrap();
+    let to = start.x.unwrap().moved(&def.params[k], reversed[k], 20.0);
+    assert!(def.params[k].to_plain(to) < 20.0, "{to}");
+    // Off, there is no span.
+    assert!(sampler::loop_band(def, r, &values(&cut[..2])).is_none());
 }
 
 #[test]
