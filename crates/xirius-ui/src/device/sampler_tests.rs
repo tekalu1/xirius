@@ -1823,8 +1823,10 @@ fn n3_kit_1_the_preview_of_a_folder_the_layers_bar_and_shift_is_the_drop() {
 }
 
 /// The fourth review's low 16: a folder dragged over the screen is read only once it is over
-/// a Drum Kit, and the drag leaving and coming back does not read it again; the drop reads
-/// it as it is then.
+/// a Drum Kit, and the drag leaving and coming back does not read it again while its list is
+/// the same; the drop reads it as it is then. The fifth review's low 2: a folder whose list
+/// changed while the drag was away (or a drag that ended outside the window, dragged again)
+/// is read again.
 #[test]
 fn a_folder_held_is_read_only_over_a_drum_kit_and_once() {
     let (dir, _) = wavs(&["Hit1.wav", "Hit2.wav"]);
@@ -1839,7 +1841,6 @@ fn a_folder_held_is_read_only_over_a_drum_kit_and_once() {
         s.instruments.preview.as_ref().unwrap().text,
         "2 pads, A1–A2"
     );
-    std::fs::write(dir.path().join("Hit3.wav"), b"").unwrap();
     s.drop_hover(false);
     assert!(s.instruments.preview.is_none());
     assert!(s.window_drag(&g, x, y, &folder, false));
@@ -1848,10 +1849,27 @@ fn a_folder_held_is_read_only_over_a_drum_kit_and_once() {
         "2 pads, A1–A2",
         "coming back reads nothing again"
     );
+    // Over the kit, a file comes into the folder: the drag stays, nothing is read.
+    std::fs::write(dir.path().join("Hit3.wav"), b"").unwrap();
+    s.window_drag(&g, x, y, &folder, false);
+    s.window_drag(&g, x + 1.0, y, &folder, false);
+    assert_eq!(
+        s.instruments.preview.as_ref().unwrap().text,
+        "2 pads, A1–A2"
+    );
+    // The drag ends outside the window; the same folder dragged again shows what it holds.
+    s.drop_hover(false);
+    assert!(s.window_drag(&g, x, y, &folder, false));
+    assert_eq!(
+        s.instruments.preview.as_ref().unwrap().text,
+        "3 pads, A1–A3",
+        "read again"
+    );
+    std::fs::write(dir.path().join("Hit4.wav"), b"").unwrap();
     assert!(s.drop_files(&g, x, y, &folder), "{:?}", s.error);
     assert_eq!(
         plugin(&s, t).samples.len(),
-        3,
+        4,
         "the drop reads the folder as it is"
     );
 }

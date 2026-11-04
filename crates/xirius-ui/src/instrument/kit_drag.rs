@@ -31,12 +31,17 @@ pub struct Preview {
 /// The paths a drag holds and the sounds they are, a folder's in the order the drop reads
 /// them: read once for each drag, not on every move (N3-kit-1), and only once the pointer
 /// is over a Drum Kit, the one place that shows them; the drag leaving and coming back
-/// reads them no more (the fourth review's low 16). And where the pointer was, for Shift
+/// reads them no more (the fourth review's low 16), unless a folder's list changed since
+/// (the fifth review's low 2: a drag that ended outside the window leaves them here, and the
+/// next drag of the same folder may hold more). And where the pointer was, for Shift
 /// pressed or let go without a move.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Held {
     paths: Vec<PathBuf>,
     names: Option<Vec<String>>,
+    /// When each path last changed as it was read (a folder's time moves as files come
+    /// and go).
+    stamps: Vec<Option<std::time::SystemTime>>,
     at: Option<(f32, f32)>,
 }
 
@@ -45,10 +50,16 @@ impl Held {
         if self.paths != paths {
             self.paths = paths.to_vec();
             self.names = None;
+        } else if self.at.is_none() && self.names.is_some() && stamps(paths) != self.stamps {
+            // Come into the window again: what was read is stale.
+            self.names = None;
         }
     }
 
     fn names(&mut self) -> &[String] {
+        if self.names.is_none() {
+            self.stamps = stamps(&self.paths);
+        }
         self.names.get_or_insert_with(|| sounds(&self.paths))
     }
 
@@ -85,6 +96,15 @@ fn sounds(paths: &[PathBuf]) -> Vec<String> {
         }
     }
     names
+}
+
+/// When each of `paths` last changed.
+fn stamps(paths: &[PathBuf]) -> Vec<Option<std::time::SystemTime>> {
+    paths
+        .iter()
+        // design-lint: allow(ui-blocking-io) the fifth review's low 2: one metadata read per path the OS drags in, as the drag comes into the window again after the paths were read.
+        .map(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
+        .collect()
 }
 
 /// How a pad picks among its layers, as its tag says it.
