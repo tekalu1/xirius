@@ -146,13 +146,14 @@ fn n3_smp_1_zones_that_meet_at_a_black_key_meet_on_its_line() {
     let zone = |f: usize| b.spots[spot(&s, &g, t, Mark::Zone(f))].r;
     let (a, m, c) = (zone(0), zone(1), zone(2));
     // B1's zone ends at C2's right; D2's runs from C#2's line to D#2's; F2's starts at E2.
-    assert!((a.right() + 1.0 - key(48).right()).abs() < 0.01, "{a:?}");
+    let gap = sampler::ZONE_GAP;
+    assert!((a.right() + gap - key(48).right()).abs() < 0.01, "{a:?}");
     assert!((m.x - line(49)).abs() < 0.01, "{m:?}");
-    assert!((m.right() + 1.0 - line(51)).abs() < 0.01, "{m:?}");
+    assert!((m.right() + gap - line(51)).abs() < 0.01, "{m:?}");
     assert!((c.x - key(52).x).abs() < 0.01, "{c:?}");
     // Side by side, not over each other, and the middle one as wide as one white key.
     assert!(a.right() <= m.x && m.right() <= c.x, "{a:?} {m:?} {c:?}");
-    assert!((m.w + 1.0 - (line(51) - line(49))).abs() < 0.01);
+    assert!((m.w + gap - (line(51) - line(49))).abs() < 0.01);
     assert!(c.w > 2.0 * m.w, "F2 plays up to C5: {c:?}");
     // Each is chosen where it is seen.
     for (f, r) in [(0, a), (1, m), (2, c)] {
@@ -176,7 +177,7 @@ fn n3_smp_1_zones_that_meet_at_a_black_key_meet_on_its_line() {
     let (first, last) = (b.keys[0].r, b.keys.iter().rfind(|k| !k.black).unwrap().r);
     assert!((sub.x - first.x).abs() < 0.01 && sub.w < 8.0, "{sub:?}");
     assert!(
-        (bell.right() + 1.0 - last.right()).abs() < 0.01 && bell.w < 8.0,
+        (bell.right() + sampler::ZONE_GAP - last.right()).abs() < 0.01 && bell.w < 8.0,
         "{bell:?}"
     );
     assert!(sub.right() <= low.x && low.right() <= high.x && high.right() <= bell.x);
@@ -648,6 +649,28 @@ fn ui_333_reversed_the_play_line_stands_over_what_it_reads() {
 
 /// Low 23 (UI-333): the keys' names go once the window's content is 520 or narrower, as on
 /// the mock, not once the keys' frame within it (16 narrower) is.
+#[test]
+fn ui_333_the_wave_and_the_zones_wear_the_mocks_colours() {
+    for theme in [xirius_design::Theme::Dark, xirius_design::Theme::Light] {
+        let c = crate::paint::Colors::new(theme);
+        let on = sampler::wave_inks(&c, false);
+        assert_eq!(on.ground, c.surface_2);
+        assert_eq!(on.wave, c.scroll_thumb[0], "thumb-hover, not ink at .5");
+        assert_eq!(on.wave.a, 1.0);
+        assert_eq!(on.span, c.surface_3);
+        assert_eq!(on.outside, c.surface_0.opacity(0.72));
+        assert_eq!(sampler::wave_inks(&c, true).wave, c.scroll_thumb[1]);
+    }
+    // A zone is 2 px short of its keys (n3_smp_1 measures it), its words 4 px in from each
+    // side.
+    assert_eq!(sampler::ZONE_GAP, 2.0);
+    let (mut s, g, t, id) = window("Sampler");
+    add(&mut s, id, &["C3.wav"]);
+    let a = body(&s, &g, t).spots[spot(&s, &g, t, Mark::Zone(0))].clone();
+    let words = sampler::span_text(&a);
+    assert_eq!((words.x - a.r.x, a.r.right() - words.right()), (4.0, 4.0));
+}
+
 #[test]
 fn ui_333_the_keys_names_go_by_the_windows_width() {
     let (mut s, g, t, id) = window("Sampler");

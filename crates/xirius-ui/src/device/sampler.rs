@@ -12,6 +12,7 @@
 
 use std::path::Path;
 
+use gpui::Hsla;
 use xirius_core::model::Plugin;
 use xirius_design::{FontSize, Radius, Weight};
 use xirius_engine::stock::files::{root_keys, root_of};
@@ -82,6 +83,19 @@ const CHOKE_W: f32 = 96.0;
 const LAYER_H: f32 = 24.0;
 /// The weight of a zone's and a layer's words: the mock's regular `fs-micro`.
 pub const SPAN_WEIGHT: Weight = Weight::Regular;
+
+/// What parts one zone from the next: the mock's 2 px (low 21).
+pub const ZONE_GAP: f32 = 2.0;
+
+/// Where a zone's or a layer's words go in it: a zone's 4 px in from each side (the mock's
+/// `padding: 0 4px`), a layer's 6 from the left.
+pub fn span_text(s: &Spot) -> Rect {
+    let r = s.r;
+    match s.mark {
+        Mark::Zone(_) => Rect::new(r.x + 4.0, r.y, (r.w - 8.0).max(0.0), r.h),
+        _ => Rect::new(r.x + 6.0, r.y, (r.w - 8.0).max(0.0), r.h),
+    }
+}
 
 /// The narrowest a layer is drawn, so one of a velocity or two can still be pressed
 /// (L2-smp-7); and the width of an edge between two that takes the pointer.
@@ -542,7 +556,7 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
     });
     for (z, x0, x1) in placed {
         let mut spot = Spot::new(
-            Rect::new(x0, y, (x1 - x0 - 1.0).max(4.0), ZONE_H),
+            Rect::new(x0, y, (x1 - x0 - ZONE_GAP).max(4.0), ZONE_H),
             Mark::Zone(z.file),
             stem(&files[z.file]),
         );
@@ -1214,20 +1228,36 @@ pub fn paint_handles(pen: &mut Pen, plane: Rect, points: &[Point], view: &View) 
     }
 }
 
+/// The colours of a Sampler's wave, the mock's: the ground s2, the wave thumb-hover (no
+/// ink made see-through; thumb while it is off), the loop's span s3 and what does not play
+/// under s0 at .72 (low 21).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WaveInks {
+    pub ground: Hsla,
+    pub wave: Hsla,
+    pub span: Hsla,
+    pub outside: Hsla,
+}
+
+pub fn wave_inks(c: &crate::paint::Colors, bypassed: bool) -> WaveInks {
+    WaveInks {
+        ground: c.surface_2,
+        wave: c.scroll_thumb[usize::from(bypassed)],
+        span: c.surface_3,
+        outside: c.surface_0.opacity(0.72),
+    }
+}
+
 pub fn paint_wave(pen: &mut Pen, def: &BuiltinDef, r: Rect, values: &[f64], view: &View) {
     if r.w <= 0.0 {
         return;
     }
     let c = pen.c;
-    pen.round(r, c.surface_2, Radius::S);
+    let inks = wave_inks(c, view.bypassed);
+    pen.round(r, inks.ground, Radius::S);
     let i = inset(r);
     let ax = share_axis(r);
     let mid = i.y + i.h / 2.0 - r.y;
-    let ink = if view.bypassed {
-        c.scroll_thumb[0]
-    } else {
-        c.ink
-    };
     let (start, end) = (
         ax.px(plain(def, values, "start")),
         ax.px(plain(def, values, "end")),
@@ -1239,7 +1269,7 @@ pub fn paint_wave(pen: &mut Pen, def: &BuiltinDef, r: Rect, values: &[f64], view
                 ax.px(plain(def, values, "loop_end")),
             );
             if b > a {
-                pen.fill(Rect::new(a, r.y, b - a, r.h), c.clip);
+                pen.round(Rect::new(a, r.y, b - a, r.h), inks.span, Radius::Clip);
             }
         }
         match view.wave {
@@ -1259,23 +1289,17 @@ pub fn paint_wave(pen: &mut Pen, def: &BuiltinDef, r: Rect, values: &[f64], view
                     top.push((x, mid - half * f32::from(pk.max) / 127.0));
                     bottom.push((x, mid - half * f32::from(pk.min) / 127.0));
                 }
-                graph::area(pen, r, &top, mid, ink.opacity(0.5));
-                graph::area(pen, r, &bottom, mid, ink.opacity(0.5));
+                graph::area(pen, r, &top, mid, inks.wave);
+                graph::area(pen, r, &bottom, mid, inks.wave);
             }
-            _ => pen.fill(Rect::new(i.x, r.y + mid, i.w, 1.0), ink.opacity(0.5)),
+            _ => pen.fill(Rect::new(i.x, r.y + mid, i.w, 1.0), inks.wave),
         }
         // What does not play is dim.
         if start > i.x {
-            pen.fill(
-                Rect::new(r.x, r.y, start - r.x, r.h),
-                c.surface_2.opacity(0.6),
-            );
+            pen.fill(Rect::new(r.x, r.y, start - r.x, r.h), inks.outside);
         }
         if end < i.right() {
-            pen.fill(
-                Rect::new(end, r.y, r.right() - end, r.h),
-                c.surface_2.opacity(0.6),
-            );
+            pen.fill(Rect::new(end, r.y, r.right() - end, r.h), inks.outside);
         }
         // Where the voice that sounds reads, while it is between Start and End.
         if let Some(read) = view.live.and_then(|l| l.read).filter(|_| !view.bypassed) {
@@ -1427,7 +1451,7 @@ pub fn paint_spots(pen: &mut Pen, body: &Body, hot: Option<usize>) {
                 };
                 pen.round(r, face, Radius::Clip);
                 let ink = if s.on { c.on_fill } else { c.ink };
-                let t = Rect::new(r.x + 6.0, r.y, (r.w - 8.0).max(0.0), r.h);
+                let t = span_text(s);
                 let text = pen.fit(&s.text, FontSize::Micro, SPAN_WEIGHT, t.w);
                 pen.text(&text, FontSize::Micro, SPAN_WEIGHT, ink, t, Align::Left);
             }
