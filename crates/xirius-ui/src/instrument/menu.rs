@@ -43,6 +43,8 @@ pub enum Menu {
     Row(TrackId, PluginId),
     /// The parameters to show a lane of (the row's オートメーションを表示).
     Params(TrackId, PluginId),
+    /// The chain presets of a track (the channel editor's tag, MIX-042).
+    Chain(TrackId),
 }
 
 /// A row's icon and its key, from what it does.
@@ -169,6 +171,8 @@ pub fn view(p: &Project, presets: &Presets, menu: Menu) -> (Vec<Choice>, String)
             ];
             (rows, String::new())
         }
+        // The studio keeps the chain presets' list ([`Studio::chain_menu_view`]).
+        Menu::Chain(_) => (Vec::new(), String::new()),
         Menu::Params(t, id) => {
             let names = plugin_of(p, t, id).map(params).unwrap_or_default();
             if names.is_empty() {
@@ -188,13 +192,29 @@ pub fn view(p: &Project, presets: &Presets, menu: Menu) -> (Vec<Choice>, String)
 impl Studio {
     pub(crate) fn open_inst_menu(&mut self, menu: Menu, anchor: Rect) {
         self.instruments.menu_at = Some(anchor);
-        if matches!(menu, Menu::Preset(..)) {
-            self.refresh_presets();
+        match menu {
+            Menu::Preset(..) => {
+                self.refresh_presets();
+            }
+            Menu::Chain(t) => {
+                if let Some(kind) = self
+                    .project()
+                    .tracks
+                    .get(&t)
+                    .map(|x| crate::channel::preset::kind_of(x))
+                {
+                    self.read_chain_presets(kind);
+                }
+            }
+            _ => {}
         }
         self.open_popup(PopupKind::InstMenu(menu), anchor);
     }
 
     pub(crate) fn inst_menu_view(&self, menu: Menu) -> (Vec<Choice>, String) {
+        if let Menu::Chain(t) = menu {
+            return self.chain_menu_view(t);
+        }
         view(&self.project(), &self.instruments.presets, menu)
     }
 
@@ -234,6 +254,7 @@ impl Studio {
             Menu::Params(t, id) => {
                 self.show_param_lane(t, id, to);
             }
+            Menu::Chain(t) => self.chain_menu_pick(t, to),
         }
     }
 

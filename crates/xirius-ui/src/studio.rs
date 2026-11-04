@@ -770,6 +770,8 @@ pub struct Studio {
     pub instruments: crate::instrument::window::Windows,
     /// The open channel editor (MIX-042).
     pub channel: Option<crate::channel::ChannelWin>,
+    /// The channel editor's chain preset tags (MIX-042).
+    pub chain_presets: crate::channel::preset::ChainPresets,
     /// The open macro window (MIX-041).
     pub macro_pad: Option<crate::macro_pad::MacroWin>,
     /// The right-click menu that is open (CTX-001).
@@ -931,6 +933,7 @@ impl Studio {
             live_midi: Default::default(),
             instruments: crate::instrument::window::Windows::default(),
             channel: None,
+            chain_presets: Default::default(),
             macro_pad: None,
             ctx: None,
             pc_keys: crate::instrument::keys::PcKeys::default(),
@@ -2736,6 +2739,7 @@ impl Studio {
         self.selected_clip = None;
         // The devices' windows were of the song that closed (M-par-2).
         self.instruments.forget_song();
+        self.chain_presets.forget();
         self.collapsed.clear();
         self.tall.clear();
         self.arrange = crate::arrange::Arrange::default();

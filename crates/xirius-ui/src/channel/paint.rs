@@ -42,7 +42,24 @@ pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry, over: bool) {
     };
     let c = pen.c;
     pen.floating(v.r, c.paper, Radius::M);
-    title_bar::paint_plain(pen, v.bar_rect(), &v.name, w.pinned);
+    let (preset, modified) = s.chain_presets.tag(t);
+    title_bar::paint(
+        pen,
+        v.bar_rect(),
+        &title_bar::View {
+            track: &v.name,
+            device: "",
+            icon: "route",
+            powered: true,
+            preset: &preset,
+            modified,
+            steps: s.chain_presets.steps(t),
+            pinned: w.pinned,
+            popout: false,
+            keyed: false,
+            seats: title_bar::Seats::default(),
+        },
+    );
     paint_tools(pen, w, &v);
     if let Some(m) = &v.macros {
         paint_macros(pen, s, w, t, m);

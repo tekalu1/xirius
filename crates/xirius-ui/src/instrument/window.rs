@@ -1765,6 +1765,7 @@ fn paint_window(
                 powered: plugin.runs(),
                 preset: &preset,
                 modified,
+                steps: (true, true),
                 pinned: w.pinned,
                 popout: w.docked,
                 keyed: plugin.sidechain.as_ref().is_some_and(|sc| sc.on),

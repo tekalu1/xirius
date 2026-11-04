@@ -869,3 +869,113 @@ fn the_chosen_card_shows_the_plus_before_and_after_it() {
     assert!(eq_gaps.contains(&(chain, k)), "{eq_gaps:?}");
     assert!(eq_gaps.contains(&(chain, k + 1)), "{eq_gaps:?}");
 }
+
+fn tag(s: &Studio, t: TrackId) -> (String, bool) {
+    s.chain_presets.tag(&s.project().tracks[&t])
+}
+
+fn steps(s: &Studio, t: TrackId) -> (bool, bool) {
+    s.chain_presets.steps(&s.project().tracks[&t])
+}
+
+/// The bar's tag names the chain preset saved or loaded last, marks a change, and its ‹ ›
+/// load the neighbours and stop at the list's ends (MIX-042).
+#[test]
+fn the_bar_steps_the_chain_presets_and_marks_a_change() {
+    let (mut s, g) = studio();
+    let (t, _, _, b) = vocal(&mut s);
+    assert_eq!(
+        tag(&s, t),
+        (crate::instrument::presets::UNKNOWN.into(), false)
+    );
+    assert_eq!(steps(&s, t), (false, false), "no name to step from");
+
+    assert!(s.save_chain_preset(t, "声 A", false));
+    assert_eq!(tag(&s, t), ("声 A".into(), false));
+    assert!(s.run_command("rack.branch.set", json!({"id":b[1],"gain":-3.0})));
+    assert_eq!(tag(&s, t), ("声 A".into(), true), "the chain moved off it");
+    assert!(s.save_chain_preset(t, "声 B", false));
+    assert_eq!(tag(&s, t), ("声 B".into(), false));
+    assert_eq!(steps(&s, t), (true, false), "the list's last");
+
+    let v = s.channel_view(&g).unwrap();
+    press(&mut s, &g, mid(v.bar.prev.unwrap()));
+    assert_eq!(tag(&s, t), ("声 A".into(), false));
+    assert_eq!(steps(&s, t), (false, true), "the list's first");
+    let gain = |s: &Studio| match &s.project().tracks[&t].rack.as_ref().unwrap().fx[..] {
+        [.., RackNode::Split(x)] => x.branches[1].gain_db,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(gain(&s), -6.0, "A's branch level");
+    // The ‹ at the first does nothing.
+    assert!(!s.step_chain_preset(t, false));
+    let v = s.channel_view(&g).unwrap();
+    press(&mut s, &g, mid(v.bar.next.unwrap()));
+    assert_eq!(tag(&s, t), ("声 B".into(), false));
+    assert_eq!(gain(&s), -3.0, "B's branch level");
+}
+
+/// The tag opens the list: a row loads that preset, 上書き保存 waits for a change, and the
+/// reader hears the tag and the ‹ › as the mock names them.
+#[test]
+fn the_tag_lists_the_chain_presets_and_a_row_loads_one() {
+    use crate::instrument::menu::Menu;
+    let (mut s, g) = studio();
+    let (t, _, _, b) = vocal(&mut s);
+    assert!(s.save_chain_preset(t, "広い", false));
+    assert!(s.run_command("rack.branch.set", json!({"id":b[1],"gain":-12.0})));
+    assert!(s.save_chain_preset(t, "狭い", false));
+
+    let v = s.channel_view(&g).unwrap();
+    press(&mut s, &g, mid(v.bar.tag));
+    let popup = s.popup.clone().expect("the list is open");
+    assert_eq!(
+        popup.kind,
+        crate::popup::PopupKind::InstMenu(Menu::Chain(t))
+    );
+    let (rows, now) = s.inst_menu_view(Menu::Chain(t));
+    let labels: Vec<_> = rows
+        .iter()
+        .map(|r| (r.label.as_str(), r.to.as_str()))
+        .collect();
+    assert!(labels.contains(&("広い", "load:広い")));
+    assert!(labels.contains(&("狭い", "load:狭い")));
+    assert!(
+        labels.contains(&("上書き保存", "off:@save")),
+        "nothing changed"
+    );
+    assert!(labels.contains(&("ブラウザーに表示", "off:@show")));
+    assert_eq!(now, "load:狭い");
+
+    s.popup = None;
+    s.inst_menu_pick(Menu::Chain(t), "load:広い");
+    assert_eq!(tag(&s, t), ("広い".into(), false));
+    assert!(s.run_command("rack.branch.set", json!({"id": branch(&s, t), "gain":-1.0})));
+    let (rows, _) = s.inst_menu_view(Menu::Chain(t));
+    assert!(
+        rows.iter()
+            .any(|r| r.label == "上書き保存" && r.to == "@save")
+    );
+
+    let marks = marks(&s, &g);
+    let keys: Vec<_> = marks[0]
+        .children
+        .iter()
+        .map(|m| {
+            (
+                m.key.as_str(),
+                m.node.label().unwrap_or_default().to_string(),
+            )
+        })
+        .collect();
+    assert!(keys.contains(&("channel-preset", "プリセット: 広い（変更あり）".into())));
+    assert!(keys.contains(&("channel-preset-prev", "前のプリセット".into())));
+    assert!(keys.contains(&("channel-preset-next", "次のプリセット".into())));
+}
+
+fn branch(s: &Studio, t: TrackId) -> NodeId {
+    match &s.project().tracks[&t].rack.as_ref().unwrap().fx[..] {
+        [.., RackNode::Split(x)] => x.branches[1].id,
+        other => panic!("{other:?}"),
+    }
+}

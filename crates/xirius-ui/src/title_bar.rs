@@ -3,7 +3,8 @@
 //! draggable empty stretch, the side-chain seat (UI-336), the channel editor's
 //! button, the pin and the close, in this order on one surface. The built-in
 //! devices' windows carry it; the channel editor's and the external
-//! plug-ins' share it when they come (MIX-042, UI-337).
+//! plug-ins' share it when they come (UI-337). The channel editor's carries it with the
+//! track's name alone and the tag of the track's chain presets (MIX-042, PLG-065).
 
 use gpui::Hsla;
 use xirius_design::{FontSize, Layout, Radius, Space, Weight};
@@ -147,6 +148,8 @@ pub fn takes_sidechain(def: &BuiltinDef) -> bool {
 /// name group's width. The buttons never give; the group does before the
 /// name, the empty stretch last but never below its smallest width. The
 /// name keeps room for the device alone while the group keeps its smallest.
+/// An empty `device` names the track alone, as the device leads (the channel
+/// editor's bar).
 pub fn layout(r: Rect, track: &str, device: &str, seats: Seats<'_>) -> Bar {
     let narrow = r.w < NARROW;
     let cy = r.y + (r.h - BTN) / 2.0;
@@ -206,16 +209,21 @@ pub fn layout(r: Rect, track: &str, device: &str, seats: Seats<'_>) -> Bar {
     let room = if narrow { NAME_ROOM_NARROW } else { NAME_ROOM } + seat_room;
     let lead = NAME_L + ICON + NAME_GAP;
     let budget = (rx - x - 2.0 * GAP - GROUP_ML - space_min - group_min).max(0.0);
-    let device_w = estimated_text_width(device, FontSize::Body) * SEMIBOLD_RUN;
+    let alone = device.is_empty();
+    let lead_name = if alone { track } else { device };
+    let device_w = estimated_text_width(lead_name, FontSize::Body) * SEMIBOLD_RUN;
     let cap = (r.w - room)
         .max((lead + device_w + NAME_R).min(budget))
         .max(0.0);
-    let content = lead
-        + estimated_text_width(track, FontSize::Body)
-        + 2.0 * SEP_PAD
-        + estimated_text_width("›", FontSize::Body)
-        + device_w
-        + NAME_R;
+    let content = if alone {
+        lead + device_w + NAME_R
+    } else {
+        lead + estimated_text_width(track, FontSize::Body)
+            + 2.0 * SEP_PAD
+            + estimated_text_width("›", FontSize::Body)
+            + device_w
+            + NAME_R
+    };
     let name = Rect::new(x, cy, content.min(cap), BTN);
     let name_text = Rect::new(name.x + lead, cy, (name.w - lead - NAME_R).max(0.0), BTN);
     x = name.right() + GAP + GROUP_ML;
@@ -268,7 +276,7 @@ pub fn layout(r: Rect, track: &str, device: &str, seats: Seats<'_>) -> Bar {
 
 /// What a bar paints with, behind the same [`layout`]'s seats.
 pub struct View<'a> {
-    /// The «track › device» of the name group.
+    /// The «track › device» of the name group; an empty device shows the track alone.
     pub track: &'a str,
     pub device: &'a str,
     /// The kind icon before it ("piano" an instrument, "ins" an effect,
@@ -279,6 +287,9 @@ pub struct View<'a> {
     /// The tag's preset name and the changed mark after it.
     pub preset: &'a str,
     pub modified: bool,
+    /// The ‹ and the › can step: one that cannot is faint (the channel editor's at the
+    /// list's ends; a device's go round the list).
+    pub steps: (bool, bool),
     /// The pin is down: the `primary` pair paints it.
     pub pinned: bool,
     /// The device sits in the mixer's drawer (MIX-046): the pin's place holds 「窓で開く」.
@@ -311,6 +322,18 @@ pub fn paint(pen: &mut Pen, r: Rect, v: &View<'_>) {
         // The device's name holds out longest: the track cuts first, then
         // goes with the › and the device alone cuts last.
         let t = bar.name_text;
+        if v.device.is_empty() {
+            let shown = pen.fit(v.track, FontSize::Body, Weight::Semibold, t.w);
+            pen.text(
+                &shown,
+                FontSize::Body,
+                Weight::Semibold,
+                ink.device,
+                t,
+                Align::Left,
+            );
+            return;
+        }
         let sep_w = pen.measure("›", FontSize::Body, Weight::Regular);
         let track_w = pen.measure(v.track, FontSize::Body, Weight::Regular);
         let track_min = v.track.chars().next().map_or(0.0, |ch| {
@@ -371,11 +394,13 @@ pub fn paint(pen: &mut Pen, r: Rect, v: &View<'_>) {
 
     // ‹ › and the tag: a filled face of s2, the preset's name and the mark
     // when the values moved off it.
+    // A step that cannot go is faint, as the mock's disabled button.
+    let step_ink = |on: bool| if on { c.ink } else { c.ink.opacity(0.4) };
     if let Some(b) = bar.prev {
-        pen.icon("chevron-left", icon_box(b), c.ink);
+        pen.icon("chevron-left", icon_box(b), step_ink(v.steps.0));
     }
     if let Some(b) = bar.next {
-        pen.icon("chevron-right", icon_box(b), c.ink);
+        pen.icon("chevron-right", icon_box(b), step_ink(v.steps.1));
     }
     pen.round(bar.tag, c.surface_2, Radius::S);
     if let Some(chev) = bar.chevron {
@@ -450,10 +475,8 @@ pub fn paint(pen: &mut Pen, r: Rect, v: &View<'_>) {
     pen.icon("close", icon_box(bar.close), c.ink);
 }
 
-/// The channel editor's bar (MIX-042): the route icon and the track's name, the empty
-/// stretch, the pin and the close. No power, no preset (PLG-065 brings its tag). The macro
-/// window's (MIX-041) is the same with «track › Macro Controls» and the channel editor's
-/// button before the pin.
+/// The macro window's bar (MIX-041): the icon and «track › Macro Controls», the empty
+/// stretch, the channel editor's button, the pin and the close. No power, no preset.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlainBar {
     pub name: Rect,
@@ -462,10 +485,6 @@ pub struct PlainBar {
     pub channel: Option<Rect>,
     pub pin: Rect,
     pub close: Rect,
-}
-
-pub fn plain_layout(r: Rect, track: &str) -> PlainBar {
-    plain_layout_of(r, track, None)
 }
 
 /// The plain bar with `device` after the track's name, and then the channel editor's button.
@@ -503,10 +522,6 @@ pub fn plain_layout_of(r: Rect, track: &str, device: Option<&str>) -> PlainBar {
         pin,
         close,
     }
-}
-
-pub fn paint_plain(pen: &mut Pen, r: Rect, track: &str, pinned: bool) {
-    paint_plain_of(pen, r, "route", track, None, pinned);
 }
 
 /// The plain bar of [`plain_layout_of`]: «track › device» as a device's bar says it.

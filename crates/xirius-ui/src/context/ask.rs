@@ -220,7 +220,8 @@ impl Studio {
     }
 
     /// The rename of a browser tab (`ui.place.rename`) and 名前を付けて保存… of a device's
-    /// preset (`ui.preset.save`, which asks before it writes over a file).
+    /// preset (`ui.preset.save`) or a track's chain (`ui.chain.save`), which ask before they
+    /// write over a file.
     fn ask_own(&mut self, name: &str, args: &Value) {
         match name {
             "place.rename" => {
@@ -240,6 +241,15 @@ impl Studio {
                     return;
                 };
                 self.save_preset_named(id, to, args["over"].as_str());
+            }
+            "chain.save" => {
+                let (Some(t), Some(to)) = (
+                    args["track"].as_str().and_then(|s| s.parse().ok()),
+                    args["name"].as_str(),
+                ) else {
+                    return;
+                };
+                self.save_chain_preset_named(t, to, args["over"].as_str());
             }
             _ => {}
         }

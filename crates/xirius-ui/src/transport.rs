@@ -1760,11 +1760,16 @@ impl Studio {
         if crate::audio_job::NAMES.contains(&command) {
             return self.job_start(command, args);
         }
+        // The chain presets' tag reads what a `preset.*` was given (MIX-042).
+        let preset = command.starts_with("preset.").then(|| args.clone());
         // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         match self.song.run(command, args) {
             Ok(data) => {
                 self.error = None;
                 self.after_edit();
+                if let Some(args) = &preset {
+                    self.chain_preset_ran(command, args, &data);
+                }
                 self.after_command(command, &data);
                 true
             }
@@ -1880,7 +1885,10 @@ impl Studio {
         let editors = self.poll_editors();
         let ai = self.ai_moving();
         let said = self.say_driver_notice();
-        let device = self.poll_device() | self.poll_probes() | self.poll_presets();
+        let device = self.poll_device()
+            | self.poll_probes()
+            | self.poll_presets()
+            | self.poll_chain_presets();
         self.expire_notice();
         let shaking = self
             .record_shake

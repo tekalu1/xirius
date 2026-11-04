@@ -8,6 +8,7 @@
 pub mod flow;
 pub mod keys;
 pub mod paint;
+pub mod preset;
 #[cfg(test)]
 mod tests;
 
@@ -22,7 +23,7 @@ use crate::draw::estimated_text_width;
 use crate::mixer::flow::Pick;
 use crate::popup::PopupKind;
 use crate::studio::{Geometry, Rect, Studio};
-use crate::title_bar::{self, BAR_H, PlainBar};
+use crate::title_bar::{self, BAR_H, Bar};
 use flow::{CardKind, Chain, ColKind, Column, Flow, Key, Slot};
 
 /// A row of the toolbar.
@@ -110,6 +111,10 @@ pub enum Part {
     Head,
     Pin,
     Close,
+    /// The bar's preset tag (its list) and its ‹ › (MIX-042).
+    Preset,
+    PrevPreset,
+    NextPreset,
     Tool(Tool),
     Card(Pick),
     /// A device's power.
@@ -217,7 +222,7 @@ impl ChannelWin {
 pub struct View {
     pub r: Rect,
     pub name: String,
-    pub bar: PlainBar,
+    pub bar: Bar,
     pub tools: Vec<(Tool, Rect)>,
     /// The toolbar's band.
     pub toolbar: Rect,
@@ -340,7 +345,12 @@ pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
         height,
     );
     let name = t.shown_name().to_string();
-    let bar = title_bar::plain_layout(Rect::new(r.x, r.y, r.w, BAR_H), &name);
+    let bar = title_bar::layout(
+        Rect::new(r.x, r.y, r.w, BAR_H),
+        &name,
+        "",
+        title_bar::Seats::default(),
+    );
     let (tools, _) = tools_of(r, instrument);
     let toolbar = Rect::new(r.x, r.y + BAR_H, r.w, tool_h);
     let macros = w
@@ -545,6 +555,15 @@ pub fn part_at(v: &View, x: f32, y: f32) -> Option<Part> {
         }
         if v.bar.close.contains(x, y) {
             return Some(Part::Close);
+        }
+        if v.bar.prev.is_some_and(|b| b.contains(x, y)) {
+            return Some(Part::PrevPreset);
+        }
+        if v.bar.next.is_some_and(|b| b.contains(x, y)) {
+            return Some(Part::NextPreset);
+        }
+        if v.bar.tag.contains(x, y) {
+            return Some(Part::Preset);
         }
         return Some(Part::Head);
     }
@@ -780,6 +799,10 @@ impl Studio {
         match part {
             Part::Close => self.channel = None,
             Part::Pin => w.pinned = !w.pinned,
+            Part::Preset => self.open_inst_menu(crate::instrument::menu::Menu::Chain(t), v.bar.tag),
+            Part::PrevPreset | Part::NextPreset => {
+                self.step_chain_preset(t, part == Part::NextPreset);
+            }
             Part::Head => {
                 w.grab = Some(Grab::Move {
                     from: (v.r.x, v.r.y),
@@ -1367,6 +1390,7 @@ fn col_who(t: &xirius_core::model::Track, f: &Flow, col: &Column) -> String {
 }
 
 /// The channel editor as a reader meets it: a group named 「チャンネルエディター <track>」 with
+/// the bar's preset tag and its ‹ › (dim at the list's ends),
 /// its toolbar's buttons, a Button for each card (a device's with its power as a toggle, a
 /// splitter's with its mode) and, for each branch and layer, a Slider of its level in dB, a
 /// toggle Button for its mute and a Button that takes it away.
@@ -1406,6 +1430,28 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<crate::a11y::Mark> {
         });
     };
     let mut children = Vec::new();
+    // The bar's preset tag and its ‹ › (MIX-042), named as the mock's.
+    let (preset, modified) = s.chain_presets.tag(t);
+    let (back, on) = s.chain_presets.steps(t);
+    let tag = format!(
+        "プリセット: {preset}{}",
+        if modified { "（変更あり）" } else { "" }
+    );
+    let steps = [
+        ("channel-preset-prev", "前のプリセット", v.bar.prev, back),
+        ("channel-preset", tag.as_str(), Some(v.bar.tag), true),
+        ("channel-preset-next", "次のプリセット", v.bar.next, on),
+    ];
+    for (key, name, r, can) in steps {
+        let Some(r) = r else {
+            continue;
+        };
+        let mut node = button(name, r);
+        if !can {
+            node.set_disabled();
+        }
+        children.push(mark(key.into(), node));
+    }
     for (tool, r) in &v.tools {
         let mut node = button(tool.label(), *r);
         if *tool == Tool::Macros {

@@ -101,6 +101,10 @@ impl Studio {
     ) {
         self.error = None;
         self.after_edit();
+        if name.starts_with("preset.") {
+            let args = serde_json::Value::Object(raw.clone());
+            self.chain_preset_ran(name, &args, &result.data);
+        }
         if name.starts_with("file.")
             || name.starts_with("history.")
             || name.starts_with("version.")
