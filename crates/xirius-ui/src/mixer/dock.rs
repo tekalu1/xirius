@@ -4,8 +4,7 @@
 //! takes it out as a window. The grip sets the face's width, ←→ move it by [`STEP`]. When the
 //! strips have less than [`FOLD_W`], the other channels fold to bands of [`BAND_W`] with their
 //! name and meter, and only the strip in front stays, [`super::WIDE_W`] wide; the strips then
-//! take the room every band needs, as far as the face keeps [`FOLD_W`]. A drawer too
-//! narrow for both side by side has the face under the strips, without the grip.
+//! take the room every band needs, as far as the face keeps [`FOLD_W`].
 
 use gpui::accesskit;
 use xirius_core::id::TrackId;
@@ -32,11 +31,6 @@ pub const BAND_W: f32 = 40.0;
 pub const STEP: f32 = 16.0;
 /// The least the folded strips keep: the strip in front and a band each side.
 pub const FOLDED_MIN: f32 = WIDE_W + 2.0 * BAND_W + 4.0 * STRIP_GAP;
-/// Narrower than this, the face goes under the strips: the folded strips, the grip and a
-/// face as wide as the fold do not fit side by side.
-pub const STACK_W: f32 = FOLDED_MIN + GRIP_W + FOLD_W;
-/// Under the strips, the face takes at most this share of the drawer's height.
-const STACK_SHARE: f32 = 0.5;
 /// The grip's name for a screen reader.
 pub const GRIP_LABEL: &str = "ミキサーと機器の面の境目";
 /// The face's 「窓で開く」.
@@ -50,8 +44,6 @@ pub struct Split {
     pub panel: Rect,
     /// The strips fold to bands.
     pub folded: bool,
-    /// The face is under the strips, and there is no grip.
-    pub stacked: bool,
 }
 
 /// How wide `strips` strips (the master's with them) are folded: the one in front, a band
@@ -62,21 +54,10 @@ pub fn folded_w(strips: usize) -> f32 {
     (WIDE_W + others * (BAND_W + STRIP_GAP) + 2.0 * STRIP_GAP + MASTER_GAP).max(FOLDED_MIN)
 }
 
-/// The drawer's body `body` split for a face that wants to be `want` wide and, under the
-/// strips, `tall` high; folded, the strips take `fold` ([`folded_w`]) as far as the face
-/// keeps [`FOLD_W`].
-pub fn split(body: Rect, want: f32, tall: f32, fold: f32) -> Split {
-    if body.w < STACK_W {
-        let h = tall.min(body.h * STACK_SHARE).max(0.0);
-        let mixer = Rect::new(body.x, body.y, body.w, (body.h - h - GRIP_W).max(0.0));
-        return Split {
-            mixer,
-            grip: Rect::new(body.x, mixer.bottom(), 0.0, 0.0),
-            panel: Rect::new(body.x, body.bottom() - h, body.w, h),
-            folded: body.w < FOLD_W,
-            stacked: true,
-        };
-    }
+/// The drawer's body `body` split for a face that wants to be `want` wide; folded, the strips
+/// take `fold` ([`folded_w`]) as far as the face keeps [`FOLD_W`]. The face is always at the
+/// strips' right, also in the narrowest drawer (2026-11-04).
+pub fn split(body: Rect, want: f32, fold: f32) -> Split {
     let room = (body.w - GRIP_W).max(0.0);
     let want = want.min(room);
     let open = room - want;
@@ -100,7 +81,6 @@ pub fn split(body: Rect, want: f32, tall: f32, fold: f32) -> Split {
         grip,
         panel,
         folded,
-        stacked: false,
     }
 }
 
@@ -294,7 +274,7 @@ impl Studio {
 
 /// The grip between the strips and the face.
 pub fn paint_grip(pen: &mut Pen, studio: &Studio, g: &Geometry) {
-    let Some(s) = studio.mixer_split(g).filter(|s| !s.stacked) else {
+    let Some(s) = studio.mixer_split(g) else {
         return;
     };
     let c = pen.c;
@@ -305,7 +285,7 @@ pub fn paint_grip(pen: &mut Pen, studio: &Studio, g: &Geometry) {
         GRIP_MARK.0,
         GRIP_MARK.1,
     );
-    pen.round(mark, if held { c.line[2] } else { c.line[1] }, Radius::Pill);
+    pen.round(mark, if held { c.ring } else { c.line[1] }, Radius::Pill);
     if studio.mixer.grip_focus {
         pen.outline(
             Rect::new(mark.x - 2.0, mark.y - 2.0, mark.w + 4.0, mark.h + 4.0),
@@ -391,13 +371,11 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
         press,
         turn: None,
     };
-    if !split.stacked {
-        let mut grip = accesskit::Node::new(accesskit::Role::Splitter);
-        grip.set_label(GRIP_LABEL);
-        grip.set_numeric_value(f64::from(split.panel.w.round()));
-        grip.set_bounds(bounds(split.grip));
-        out.push(mark("dock-grip".into(), grip, None));
-    }
+    let mut grip = accesskit::Node::new(accesskit::Role::Splitter);
+    grip.set_label(GRIP_LABEL);
+    grip.set_numeric_value(f64::from(split.panel.w.round()));
+    grip.set_bounds(bounds(split.grip));
+    out.push(mark("dock-grip".into(), grip, None));
     if let Some(i) = s.docked() {
         use crate::instrument::window::Part;
         let w = s.instruments.open[i];

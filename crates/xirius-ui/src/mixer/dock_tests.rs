@@ -257,7 +257,7 @@ fn at_the_least_window_the_face_sits_beside_the_strips_and_folds_them_all() {
     let (w, h) = crate::studio::WINDOW_MIN;
     let g = s.geometry(w, h);
     let body = g.drawer_body;
-    assert!(body.h > 0.0 && body.w >= STACK_W, "{body:?}");
+    assert!(body.h > 0.0 && body.w > 0.0, "{body:?}");
     // a channel with no instrument area, so the row is in sight in the short drawer
     let t = s
         .mixer_strips(&g)
@@ -274,7 +274,6 @@ fn at_the_least_window_the_face_sits_beside_the_strips_and_folds_them_all() {
             && r.bottom() <= body.bottom() + 0.5
     };
     let split = s.mixer_split(&g).unwrap();
-    assert!(!split.stacked);
     assert!(inside(split.mixer) && inside(split.panel), "{split:?}");
     assert!(split.grip.w == GRIP_W && split.grip.x >= split.mixer.right());
 
@@ -282,7 +281,7 @@ fn at_the_least_window_the_face_sits_beside_the_strips_and_folds_them_all() {
     s.instruments.dock_w = None;
     s.instruments.open[i].body.0 = widest(body);
     let split = s.mixer_split(&g).unwrap();
-    assert!(split.folded && !split.stacked);
+    assert!(split.folded);
     assert!(inside(split.mixer) && inside(split.panel), "{split:?}");
     assert!(split.panel.w >= FOLD_W, "{split:?}");
     assert_eq!(s.instruments.frame(i, &g), split.panel);
@@ -355,34 +354,6 @@ fn the_face_the_grip_and_the_bands_have_names() {
     }
     assert_ne!(s.mixer_lead(), None);
     assert_eq!(s.mixer_lead(), Some(t));
-}
-
-#[test]
-fn a_narrow_drawer_has_the_face_under_the_strips_without_the_grip() {
-    let (mut s, g, t, eq) = picked(380.0);
-    let split = s.mixer_split(&g).unwrap();
-    let body = g.drawer_body;
-    assert!(body.w < STACK_W);
-    assert!(split.stacked && !split.folded);
-    assert_eq!((split.mixer.x, split.mixer.w), (body.x, body.w));
-    assert_eq!((split.panel.x, split.panel.w), (body.x, body.w));
-    assert_eq!(split.panel.bottom(), body.bottom());
-    assert!(split.mixer.bottom() < split.panel.y);
-    assert!(split.panel.h <= body.h * 0.5);
-    assert!(s.mixer_strips(&g).iter().any(|x| x.track == t));
-    assert!(
-        s.mixer_strips(&g)
-            .iter()
-            .all(|x| x.rect.bottom() <= split.panel.y)
-    );
-    // the face is the device's, with its bar; there is no grip to press or name
-    let i = s.docked().unwrap();
-    assert_eq!(s.instruments.frame(i, &g), split.panel);
-    assert!(s.instrument_center(&g, eq, Part::Pin).is_some());
-    let marks = crate::a11y::marks(&s, &g);
-    assert!(marks.iter().all(|m| m.key != "dock-grip"));
-    let (x, y) = (split.panel.x + 4.0, split.panel.y - GRIP_W / 2.0);
-    assert!(!s.grip_down(&g, x, y));
 }
 
 #[test]
