@@ -638,16 +638,32 @@ fn samples_dir() -> std::path::PathBuf {
     std::env::temp_dir().join(format!("{SAMPLES}{}", std::process::id()))
 }
 
+/// How long a samples' folder goes untouched before it is taken for an ended run's: a run
+/// writes its samples at its start and is over in minutes.
+const STALE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
 /// Takes away the samples' folders an earlier run left (its shots were taken from them, so
-/// they stay until the next run): only the latest run's is ever left (low 26).
+/// they stay until the next run) (low 26): only those untouched for [`STALE`], so a run going
+/// on in another worktree keeps its own (the fourth review's low 5).
 fn sweep_samples() {
-    let mine = samples_dir();
+    sweep(SAMPLES, &samples_dir(), STALE);
+}
+
+/// Takes away the folders right under the temp folder named from `prefix`, but `keep` and
+/// those changed within `age`.
+fn sweep(prefix: &str, keep: &std::path::Path, age: std::time::Duration) {
     let Ok(dirs) = std::fs::read_dir(std::env::temp_dir()) else {
         return;
     };
     for d in dirs.flatten() {
         let path = d.path();
-        if path != mine && d.file_name().to_string_lossy().starts_with(SAMPLES) {
+        let old = d
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|e| e >= age);
+        if path != keep && old && d.file_name().to_string_lossy().starts_with(prefix) {
             let _ = std::fs::remove_dir_all(path);
         }
     }
@@ -931,17 +947,31 @@ mod tests {
         assert_eq!(s.instruments.open.len(), 1);
     }
 
+    /// The fourth review's low 5: a samples' folder touched within [`STALE`] may be another
+    /// worktree's run going on, and stays; one older, and never this run's, goes.
+    #[test]
+    fn an_ended_runs_samples_go_and_a_running_ones_stay() {
+        let prefix = format!("xirius-devices-sweep-{}-", std::process::id());
+        let dir = |n: &str| {
+            let d = std::env::temp_dir().join(format!("{prefix}{n}"));
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("left.wav"), b"").unwrap();
+            d
+        };
+        let (mine, other) = (dir("mine"), dir("other"));
+        sweep(&prefix, &mine, STALE);
+        assert!(other.exists(), "a run going on elsewhere lost its samples");
+        sweep(&prefix, &mine, std::time::Duration::ZERO);
+        assert!(!other.exists(), "an ended run's samples are left");
+        assert!(mine.exists());
+        let _ = std::fs::remove_dir_all(mine);
+    }
+
     /// Low 26: stages 2 and 3 load their samples (the Sampler's two keys, the Drum Kit's five
-    /// with the toms layered on A3 and A2 muted), and an earlier run's folder is taken away.
+    /// with the toms layered on A3 and A2 muted).
     #[test]
     fn the_sample_stages_load_their_files_and_leave_one_folder() {
         let g = Studio::sample().geometry(1600.0, 1000.0);
-        let stale = std::env::temp_dir().join(format!("{SAMPLES}0"));
-        std::fs::create_dir_all(&stale).unwrap();
-        std::fs::write(stale.join("left.wav"), b"").unwrap();
-        let mut s = Studio::sample();
-        assert!(Play::Laid(play_notes).without_window(&mut s, &g, 0));
-        assert!(!stale.exists(), "an earlier run's samples are left");
         let samples = |s: &Studio| {
             let t = keys(s);
             let x = crate::instrument::current(&s.project().tracks[&t])
