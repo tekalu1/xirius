@@ -733,7 +733,10 @@ impl Installer {
         if !sha256_hex(&bytes).eq_ignore_ascii_case(&manifest.sha256) {
             return Err(BAD_SUM.into());
         }
-        Ok(Held { _file: file })
+        Ok(Held {
+            _file: file,
+            path: self.path.clone(),
+        })
     }
 }
 
@@ -741,6 +744,14 @@ impl Installer {
 #[derive(Debug)]
 pub struct Held {
     _file: std::fs::File,
+    path: PathBuf,
+}
+
+impl Held {
+    /// Is `program` the file that was checked and is held?
+    pub fn is(&self, program: &Path) -> bool {
+        self.path == program
+    }
 }
 
 /// Downloads `release`'s manifest, signature, sums and installer under `root`, checks them all
@@ -1609,7 +1620,7 @@ pub const LEAVE_CODE: u32 = 3;
 /// Ends this process `after` from now if it is still running (UI-282). Called only once the
 /// window has closed, the installer has started and the cleanup of the close has finished: the
 /// last of Xirius (a plugin's thread, the end of the audio) must not outlast the installer's
-/// wait for it (60 s). Ends with [`LEAVE_CODE`].
+/// wait for it (120 s). Ends with [`LEAVE_CODE`].
 pub fn leave_within(after: Duration) {
     let _ = std::thread::Builder::new()
         .name("update leave".into())

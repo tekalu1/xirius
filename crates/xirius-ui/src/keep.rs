@@ -198,6 +198,15 @@ impl Keep {
         closing
     }
 
+    /// The close the recent list was told of stopped and the window stays (UI-282): the next
+    /// close tells it again.
+    pub(crate) fn close_called_off(&mut self) {
+        self.closing_recent = None;
+        self.recent_close_ready = false;
+        self.recent_close_project = None;
+        self.recent_close_open = None;
+    }
+
     pub(crate) fn recent_close_since(&self) -> Option<std::time::Instant> {
         self.closing_recent
     }
@@ -983,6 +992,35 @@ mod tests {
             }
             drop(observation);
         }
+    }
+
+    /// UI-282 review: a close called off after the recent list was told of it (the update's
+    /// installer could not be checked) tells it again the next time: the window may have been
+    /// used in between.
+    #[test]
+    fn a_close_called_off_tells_the_recent_list_again() {
+        use std::time::{Duration, Instant};
+
+        let (mut s, _root, _tmp) = kept("calledoff");
+        add(&mut s, "first");
+        let end = Instant::now() + Duration::from_secs(15);
+        while !s.request_close() {
+            assert!(Instant::now() < end, "the close did not get ready");
+            s.wait_for_save();
+            s.keep.settle_recent();
+            s.poll_recent_close();
+        }
+        assert!(s.keep.recent_close_ready);
+        s.drop_update_install("更新を取りやめました".into());
+        assert!(!s.leaving_ready);
+        assert!(!s.keep.recent_close_ready);
+        assert!(s.keep.closing_recent.is_none());
+        assert!(s.keep.recent_close_project.is_none() && s.keep.recent_close_open.is_none());
+        assert!(!s.request_close(), "the next close gets ready again");
+        assert!(
+            s.keep.closing_recent.is_some(),
+            "and tells the recent list again"
+        );
     }
 
     #[test]

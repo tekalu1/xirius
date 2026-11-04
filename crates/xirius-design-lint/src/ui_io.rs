@@ -393,6 +393,7 @@ impl<'ast> Visit<'ast> for Scanner {
                 | "seek"
                 | "wait_while"
                 | "verify_with"
+                | "hold_with"
                 | "at_launch"
                 | "ask_ui"
                 | "stored"

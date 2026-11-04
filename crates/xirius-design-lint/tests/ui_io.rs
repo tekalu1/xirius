@@ -41,6 +41,7 @@ fn new_file_process_wait_and_lock_boundaries_require_review() {
         "use xirius_session::places as locations; fn tick() { locations::load(path); }",
         "use xirius_session::places::load as browser; fn tick() { browser(path); }",
         "fn tick() { installer.verify_with(key); check.stored(); cleanup::unused(p,dir,own); }",
+        "fn tick() { installer.hold_with(key); }",
         "use fake::Job; fn tick() { Job::spawn(\"reader\", || std::fs::read(\"fixture\")); }",
         "fn tick() { fake::Job::spawn(\"reader\", || std::fs::read(\"fixture\")); }",
         "fn tick() { fake::ancillary_io::submit(|| std::fs::read(\"fixture\")); }",

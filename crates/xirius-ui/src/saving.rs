@@ -34,6 +34,9 @@ pub(crate) struct Saving {
     leaving: Option<Leave>,
     draft: Option<PathBuf>,
     close_when_done: bool,
+    /// The person said the song's unwritten changes may be lost (UI-282: 「保存せずに進む」 on
+    /// a song whose record could not be written): writes that fail again do not stop the close.
+    lose_unwritten: bool,
     stop_take: bool,
     record_error: Option<String>,
     /// The pointer is over 「中止 Esc」 (it lights as on the opening card).
@@ -356,6 +359,7 @@ impl Studio {
             leaving: None,
             draft: None,
             close_when_done,
+            lose_unwritten: false,
             stop_take: false,
             record_error: None,
             cancel_hover: false,
@@ -459,10 +463,13 @@ impl Studio {
         }
     }
 
-    pub(crate) fn close_without_plugin_state(&mut self) {
+    pub(crate) fn close_without_plugin_state(&mut self, lose_unwritten: bool) {
         self.leaving_ready = true;
         self.keep_leaving();
         self.launch_save_with_capture(None, Some(Leave::Close), false, None, None);
+        if let Some(save) = &mut self.saving {
+            save.lose_unwritten = lose_unwritten;
+        }
     }
 
     fn launch_save_with_capture(
@@ -525,6 +532,7 @@ impl Studio {
             leaving,
             draft,
             close_when_done,
+            lose_unwritten: false,
             stop_take: false,
             record_error: None,
             cancel_hover: false,
@@ -815,7 +823,7 @@ impl Studio {
             }
             Ok(()) => {
                 if let Some(leave) = save.leaving {
-                    if !failures.is_empty() {
+                    if !failures.is_empty() && !save.lose_unwritten {
                         self.drop_update_install(
                             "保存できなかったため、更新を取りやめました".into(),
                         );

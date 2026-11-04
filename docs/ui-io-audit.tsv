@@ -1,3 +1,4 @@
+crates/xirius-ui/src/about.rs	hold_with	2
 crates/xirius-ui/src/about.rs	join	3
 crates/xirius-ui/src/about.rs	lock	4
 crates/xirius-ui/src/about.rs	metadata	1
@@ -6,7 +7,7 @@ crates/xirius-ui/src/about.rs	std :: fs :: write	2
 crates/xirius-ui/src/about.rs	stored	1
 crates/xirius-ui/src/about.rs	update :: ready_installer	1
 crates/xirius-ui/src/about.rs	update :: take_failure	1
-crates/xirius-ui/src/about.rs	verify_with	2
+crates/xirius-ui/src/about.rs	verify_with	1
 crates/xirius-ui/src/ai/mod.rs	ai_run	1
 crates/xirius-ui/src/ai/mod.rs	run	1
 crates/xirius-ui/src/ai/mod.rs	xirius_mcp :: persist :: run_and_persist	1

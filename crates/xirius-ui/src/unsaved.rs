@@ -40,9 +40,8 @@ impl Studio {
                     self.abandon_state_open(*open);
                 }
             }
-            Pending::Close | Pending::CloseUnwritten if proceed => {
-                self.close_without_plugin_state()
-            }
+            Pending::Close if proceed => self.close_without_plugin_state(false),
+            Pending::CloseUnwritten if proceed => self.close_without_plugin_state(true),
             Pending::Close | Pending::CloseUnwritten => {
                 self.drop_update_install("更新を取りやめました".into())
             }

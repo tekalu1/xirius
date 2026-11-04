@@ -24,7 +24,7 @@ bootstrap だけに限る。窓を作った後は完了を poll する。
 | About・更新確認・クラッシュ記録・license | application FIFO。ダウンロードは既存の worker | 既存の画面に完成した値だけ反映する。検証が済むまで終了・インストールを予約しない |
 | ファイル・URL を OS で開く | application FIFO または `os` の desktop worker | 受付。OS プロセスの生成失敗は worker が記録する |
 | cleanup の繰り越し・終了通知 | application FIFO | 繰り越し一覧は UI の受領後に該当行だけ acknowledgement する |
-| 閉じると決まった時の更新の installer（UI-282） | application FIFO の `launch_installer` | installer の再検証・起動が済むまで閉じず、その間の入力を止める。起動できなければ印を書く。窓の無い時だけその場で行う |
+| 閉じると決まった時の更新の installer（UI-282） | application FIFO の `hold_with`・`launch_installer` | installer の再検証と保持が済むまで閉じず、その間の入力を止める。起動は保持したその file だけ。起動できなければ印を書く。窓の無い時だけその場で行う |
 | 最後の窓の終了処理 | application FIFO | executor は停止せず、installer 再検証・起動、cleanup の待ち・通知書込の完了を確認する |
 | MCP の起動 | `start_window` の所有者 worker | readiness の完了だけ受け取り、サーバーを Screen に保持する |
 | OS の motion 設定の再取得 | `MotionWatch` の worker | 前回の値と完了 |

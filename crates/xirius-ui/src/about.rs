@@ -195,7 +195,7 @@ pub enum CheckState {
 }
 
 /// How long whatever is left of Xirius may take to end, once the window has closed for an
-/// update and the cleanup of the close has finished (UI-282). The installer waits 60 s for it
+/// update and the cleanup of the close has finished (UI-282). The installer waits 120 s for it
 /// (`xirius.nsi`; 30 s in the ones made up to 1.1.0-beta.3).
 pub(crate) const EXIT_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -220,8 +220,17 @@ pub(crate) fn launch_installer(
     let started = installer
         .ok_or_else(|| "インストーラーがありません".to_string())
         // design-lint: allow(ui-blocking-io) PRJ-031 review: worker-only (finish_window_io dispatches it).
-        .and_then(|i| i.verify_with(key))
-        .and_then(|()| spawn(install));
+        .and_then(|i| i.hold_with(key))
+        .and_then(|held| {
+            // Held until it is started, as from the window (UI-282).
+            let started = if held.is(&install.program) {
+                spawn(install)
+            } else {
+                Err("確かめたインストーラーと違うため、起動しませんでした".into())
+            };
+            drop(held);
+            started
+        });
     match started {
         Ok(()) => Ok(()),
         Err(e) => {
@@ -1908,6 +1917,7 @@ impl Studio {
             }
             return false;
         }
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: synchronous offline adapter; window mode checks it on the application-files worker above.
         match installer.hold_with(&key) {
             Ok(held) => {
                 self.update.held = Some(held);
@@ -1929,7 +1939,11 @@ impl Studio {
             return true;
         };
         let held = self.update.held.take();
-        let started = (self.update.spawn)(&install);
+        // Only the file checked and held is started.
+        let started = match &held {
+            Some(h) if h.is(&install.program) => (self.update.spawn)(&install),
+            _ => Err("確かめたインストーラーと違うため、起動しませんでした".into()),
+        };
         drop(held);
         match started {
             Ok(()) => {
@@ -1939,11 +1953,20 @@ impl Studio {
                 true
             }
             Err(e) => {
+                self.close_called_off();
                 self.update.notice = Some(e.clone());
                 self.warn(format!("更新を取りやめました: {e}"), None);
                 false
             }
         }
+    }
+
+    /// The close stopped and the window stays (UI-282): what it got ready (the plugins' state
+    /// taken into the song, the recent list told) is of that moment, and the window can be used
+    /// again before the next close, so that close gets it all ready again.
+    fn close_called_off(&mut self) {
+        self.leaving_ready = false;
+        self.keep.close_called_off();
     }
 
     /// The window's close went through every step: saved, checked and the installer started
@@ -1972,6 +1995,7 @@ impl Studio {
     pub(crate) fn drop_update_install(&mut self, why: String) {
         self.update.holding = None;
         self.update.held = None;
+        self.close_called_off();
         if self.update.pending.take().is_none() {
             return;
         }
@@ -3683,6 +3707,149 @@ used {} {}
             }
             assert_eq!(started.count(), 1);
         }
+    }
+
+    /// UI-282 review: 「保存せずに進む」 to a song whose record could not be written goes on
+    /// though the record still cannot be written when the window closes: the person chose to
+    /// lose those edits, so the update is not called off for them.
+    #[test]
+    fn ui_282_going_on_without_the_record_closes_though_its_write_still_fails() {
+        use crate::context::key_more::WindowAsk;
+
+        let tmp = scratch("unwritable");
+        let dir = tmp.path().join("song");
+        let mut s = Studio::new(crate::song::Song::empty());
+        s.song.save_as(&dir).unwrap();
+        let denied = dir.clone();
+        let _observe = xirius_core::io_test::observe(std::sync::Arc::new(move |op, path| {
+            if op == "write" && path.starts_with(&denied) {
+                return Err(std::io::ErrorKind::PermissionDenied.into());
+            }
+            Ok(())
+        }));
+        s.run_command("track.add.audio", serde_json::json!({"name":"lost"}));
+        s.transport.bind_window();
+        let started = Started::default();
+        started.arm(&mut s, tmp.path());
+        s.keep.failed = Some("保存できません".into());
+        s.window_ask = Some(WindowAsk::Quit);
+        assert_eq!(s.take_window_ask(), Some(WindowAsk::Quit));
+        assert!(!s.close_now());
+        assert!(s.unsaved.is_some(), "the close asks");
+        s.answer_unsaved(true);
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            assert!(
+                std::time::Instant::now() < end,
+                "the person said to go on, and the window did not close"
+            );
+            assert!(
+                s.update.pending.is_some(),
+                "the update was called off: {:?}",
+                s.update.notice
+            );
+            s.idle();
+            s.poll_saving();
+            s.poll_update();
+            if s.take_window_ask() == Some(WindowAsk::Quit) && s.close_now() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(started.count(), 1);
+    }
+
+    /// UI-282 review: a close for an update that stops after the song was made ready (here the
+    /// installer's check takes too long) leaves the window to be used again, so the next close
+    /// takes the plugins' state into the song and saves it again rather than go on with what
+    /// the stopped one had got ready.
+    #[test]
+    fn ui_282_a_close_called_off_gets_the_song_ready_again_the_next_time() {
+        use crate::context::key_more::WindowAsk;
+
+        let tmp = scratch("again");
+        let mut s = Studio::new(crate::song::Song::empty());
+        s.song.save_as(&tmp.path().join("song")).unwrap();
+        s.run_command("track.add.audio", serde_json::json!({"name":"first"}));
+        s.save_test_delay = std::time::Duration::from_millis(10);
+        s.transport.bind_window();
+        let started = Started::default();
+        started.arm(&mut s, tmp.path());
+        s.window_ask = Some(WindowAsk::Quit);
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !s.update.preparing() {
+            assert!(
+                std::time::Instant::now() < end,
+                "the close did not get ready"
+            );
+            s.idle();
+            s.poll_saving();
+            if s.take_window_ask() == Some(WindowAsk::Quit) {
+                assert!(!s.close_now(), "the close waits for the check");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(s.leaving_ready, "the song was made ready for the close");
+        let Some(long_ago) =
+            std::time::Instant::now().checked_sub(PREPARE_WAIT + std::time::Duration::from_secs(1))
+        else {
+            return;
+        };
+        s.update.holding = Some((crate::ancillary_io::Ticket::never(), long_ago));
+        s.poll_update();
+        assert!(s.update.pending.is_none(), "the update is called off");
+        assert!(
+            !s.leaving_ready,
+            "what the stopped close got ready is not kept"
+        );
+
+        // The window is used, and closed again: the song is made ready once more.
+        assert!(s.saving.is_none());
+        assert!(!s.close_now(), "the close saves first");
+        assert!(
+            s.saving.is_some(),
+            "the next close takes the song's state again"
+        );
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            assert!(std::time::Instant::now() < end, "the window did not close");
+            s.idle();
+            s.poll_saving();
+            if s.take_window_ask() == Some(WindowAsk::Quit) && s.close_now() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(started.count(), 0, "nothing is installed");
+    }
+
+    /// UI-282 review: the last step of the close starts only the very file that was checked
+    /// and held. Another file asked for at that moment is not started, the window stays, and
+    /// the next close gets the song ready again.
+    #[test]
+    fn ui_282_only_the_held_installer_is_started() {
+        let tmp = scratch("other");
+        let mut s = Studio::sample();
+        s.song.load_settings(tmp.path());
+        let started = Started::default();
+        started.arm(&mut s, tmp.path());
+        assert!(s.prepare_install());
+        assert!(s.update.held.is_some());
+        s.leaving_ready = true;
+        if let Some(install) = &mut s.update.pending {
+            install.program = tmp.path().join("another.exe");
+        }
+        assert!(!s.commit_close(), "the window stays");
+        assert_eq!(started.count(), 0);
+        assert!(!s.update.launched());
+        assert!(s.update.pending.is_none() && s.update.held.is_none());
+        assert!(!s.leaving_ready);
+        assert!(
+            s.update
+                .notice
+                .as_deref()
+                .is_some_and(|n| n.contains("確かめたインストーラーと違う"))
+        );
     }
 
     /// How a test closes the window of a song with unsaved changes and an update waiting.

@@ -2013,9 +2013,10 @@ impl Session {
         Ok(())
     }
 
-    /// After a write of the history failed (UI-288), a save writes it again first: the states
-    /// the disk lacks that memory still has, then the index. Without them the song would open
-    /// at the last step the disk had, without the edits made since, though they were saved.
+    /// After a write of the history failed (UI-288), a save writes it again: every state memory
+    /// still has (a step undone and edited again has a file of the old state under the same
+    /// number), then the index. Without them the song would open at the last step the disk had,
+    /// without the edits made since, though they were saved.
     fn rewrite_history(&mut self, store: &Store) -> CmdResult<()> {
         if !self.writer.take_behind() {
             return Ok(());
@@ -2023,9 +2024,7 @@ impl Session {
         let written = (|| {
             for (i, state) in self.hist.states.iter().enumerate() {
                 let abs = self.hist.first + i as u64;
-                if let Some(p) = state
-                    && (abs == self.hist.cursor || !store.has_state(abs))
-                {
+                if let Some(p) = state {
                     store.write_state(abs, p)?;
                 }
             }
@@ -2055,9 +2054,10 @@ impl Session {
     fn save_over(&mut self) -> CmdResult<Overwrite> {
         let store = self.store.clone().ok_or_else(no_store)?;
         self.writer.flush();
-        self.rewrite_history(&store)?;
         let expected = self.expected_on_disk()?;
         let done = store.overwrite_project(&self.current, &expected)?;
+        // After the check: a song changed on the disk keeps its history as it was.
+        self.rewrite_history(&store)?;
         self.set_disk_hash(Some(done.after.clone()));
         store.write_view(&self.state.view)?;
         self.saved_step = self.hist.cursor;

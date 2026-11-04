@@ -5,7 +5,7 @@
 ; uninstall entry to HKCU. The songs and settings (%LOCALAPPDATA%\Xirius, %APPDATA%\Xirius) are
 ; not the installer's and stay when it uninstalls.
 ;
-; /S installs without a window. A running Xirius is waited for (60 s when silent) and the
+; /S installs without a window. A running Xirius is waited for (120 s when silent) and the
 ; install stops when it does not close, so an update can start this and quit itself. Xirius
 ; starts this as the last step of its window's close and ends once it has tidied up (UI-282:
 ; what is left of it is ended EXIT_WAIT, 10 s, after that); the rest is for its helper
@@ -119,7 +119,7 @@ Function ${UN}WaitClosed
       Return
     ${EndIf}
     ${If} ${Silent}
-    ${AndIf} $2 < 120
+    ${AndIf} $2 < 240
       Sleep 500
       IntOp $2 $2 + 1
       ${Continue}

@@ -190,3 +190,63 @@ fn a_save_after_a_failed_history_write_opens_with_the_edit() {
         );
     }
 }
+
+/// UI-282 review: a step undone and edited again has, on the disk, a file of the old state
+/// under the same number. When the write of the new one failed, the save after it puts the new
+/// one there, so an undo back to that step after reopening gives the edit, not the old state.
+#[test]
+fn a_save_after_a_failed_write_of_an_edit_over_an_undo_keeps_that_edit() {
+    for background in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("song");
+        let mut session = Session::create(&dir, Project::new("again")).unwrap();
+        run(&mut session, "track.add.audio", json!({"name":"Before"}));
+        run(&mut session, "track.add.audio", json!({"name":"Undone"}));
+        session.write_in_background(background);
+        session.flush_writes();
+        session.undo(1).unwrap();
+        let history = dir.join("history");
+        let deny = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let denied = deny.clone();
+        let _observe = crate::io_test::observe(Arc::new(move |op, path| {
+            if op == "write" && path.starts_with(&history) && denied.load(Ordering::SeqCst) {
+                return Err(std::io::ErrorKind::PermissionDenied.into());
+            }
+            Ok(())
+        }));
+        let _ = session.run_value(
+            "track.add.audio",
+            json!({"name":"Redone"}),
+            &RunOptions::human(),
+        );
+        session.flush_writes();
+        let _ = session.take_write_errors();
+        deny.store(false, Ordering::SeqCst);
+        run(&mut session, "track.add.audio", json!({"name":"After"}));
+        session.save().unwrap();
+        drop(_observe);
+        drop(session);
+        let mut session = Session::open(&dir).unwrap();
+        let names = |s: &Session| {
+            s.project()
+                .tracks
+                .values()
+                .map(|t| t.name.clone())
+                .collect::<Vec<_>>()
+        };
+        session.undo(1).unwrap();
+        let back = names(&session);
+        assert!(
+            back.contains(&"Redone".to_string()),
+            "{background} {back:?}"
+        );
+        assert!(
+            !back.contains(&"Undone".to_string()),
+            "{background} {back:?}"
+        );
+        assert!(
+            !back.contains(&"After".to_string()),
+            "{background} {back:?}"
+        );
+    }
+}
