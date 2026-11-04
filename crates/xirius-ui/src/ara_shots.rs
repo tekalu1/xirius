@@ -131,6 +131,16 @@ fn labels(s: &Studio) -> Vec<String> {
         .collect()
 }
 
+/// Runs a command as a step of the ARA scripts, and fails the script when the window refuses
+/// it or it fails: `run_command` is true when the window took the command, and a failure is
+/// left in `error` (PLG-036).
+pub(crate) fn run_ok(s: &mut Studio, command: &str, args: serde_json::Value) {
+    s.error = None;
+    let taken = s.run_command(command, args);
+    assert!(taken, "{command} was refused: {:?}", s.error);
+    assert_eq!(s.error, None, "{command} failed");
+}
+
 fn closed(s: &mut Studio) {
     s.popup = None;
     s.ctx = None;
@@ -167,10 +177,11 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
         }
         3 => {
             closed(s);
-            assert!(s.run_command(
+            run_ok(
+                s,
                 "clip.speed.set",
-                json!({ "ids": [c.to_string()], "percent": 150 })
-            ));
+                json!({ "ids": [c.to_string()], "percent": 150 }),
+            );
             processing(s, g);
             let row = s
                 .context_rows()
@@ -181,14 +192,16 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
         }
         4 => {
             closed(s);
-            assert!(s.run_command(
+            run_ok(
+                s,
                 "clip.speed.set",
-                json!({ "ids": [c.to_string()], "percent": 100 })
-            ));
-            assert!(s.run_command(
+                json!({ "ids": [c.to_string()], "percent": 100 }),
+            );
+            run_ok(
+                s,
                 "clip.ara.attach.apply",
-                json!({ "ids": [c.to_string()], "plugin": UID, "name": NAME })
-            ));
+                json!({ "ids": [c.to_string()], "plugin": UID, "name": NAME }),
+            );
             s.ara.fake = Some(vec![report(c, Phase::Analysing, 0.42)]);
             assert!(s.ara_badge(c).is_some());
         }

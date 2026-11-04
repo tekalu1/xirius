@@ -24,6 +24,7 @@ use xirius_core::id::ClipId;
 use xirius_plugins::{Catalog, Entry};
 use xirius_session::ara::{Phase, Report};
 
+use crate::ara_shots::run_ok;
 use crate::arrange::probe::{clip_mid, track};
 use crate::clip_ara::Badge;
 use crate::shot::{Act, Play, Shot, run_for};
@@ -221,11 +222,11 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             s.error
         );
         // Four bars at 120: the tone's eight seconds.
-        let ok = s.run_command(
+        run_ok(
+            s,
             "clip.import.place",
             json!({ "file": wav.to_string_lossy(), "length": 4 * 4 * 960, "name": TRACK }),
         );
-        assert!(ok, "{:?}", s.error);
         let g = &s.geometry(g.size.0, g.size.1);
         s.resized(g);
         // The player a song gets when it is opened (ENG-064); the plugin runs in it.
@@ -341,9 +342,10 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             if let Some(h) = s.transport.host() {
                 h.mark_ara_changed();
             }
-            let saved = s.run_command("project.save", json!({}));
+            run_ok(s, "project.save", json!({}));
             wait(s, 30.0, |s| s.song.is_saved());
-            assert!(s.song.is_saved(), "the song was not written: {:?}", s.error);
+            let saved = s.song.is_saved() && s.error.is_none();
+            assert!(saved, "the song was not written: {:?}", s.error);
             let archives = s.project().ara.archives.clone();
             let archived = archives.len();
             // Empty and empty would compare equal: the plugin's archive must be in the song.
@@ -352,8 +354,9 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
                 "the song was written without the plugin's archive ({archived} archives)"
             );
             let song = dir().join("song");
-            let opened = s.run_command("project.open", json!({ "path": song.to_string_lossy() }));
-            wait(s, 30.0, |s| clip(s).is_some());
+            run_ok(s, "project.open", json!({ "path": song.to_string_lossy() }));
+            wait(s, 30.0, |s| s.opening.is_none() && clip(s).is_some());
+            let opened = s.opening.is_none() && s.error.is_none();
             let back = clip(s).is_some_and(|c| s.project().ara.clips.contains_key(&c));
             let kept = s.project().ara.archives.len();
             assert!(
