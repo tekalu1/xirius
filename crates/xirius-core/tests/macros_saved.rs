@@ -505,3 +505,46 @@ fn a_renumbered_branch_keeps_its_maps_and_lanes() {
         "the lane followed"
     );
 }
+
+/// An edit that changes one control of a track lets that control's targets stand, and still
+/// puts the other controls' targets back to the value each control gives them.
+#[test]
+fn a_changed_control_lets_only_its_own_targets_stand() {
+    use xirius_core::auto::AutoTarget;
+    let mut s = Session::new("macros");
+    let t = id_of(&run(&mut s, "track.add.audio", json!({"name": "Vocal"})));
+    run(
+        &mut s,
+        "control.assign",
+        json!({"track": t, "control": "k1", "target": "volume"}),
+    );
+    run(
+        &mut s,
+        "control.assign",
+        json!({"track": t, "control": "k2", "target": "pan"}),
+    );
+    let tid = t.parse::<TrackId>().unwrap();
+    let before = s.project().clone();
+    let pan = AutoTarget::Pan.stored_value(before.track(tid).unwrap());
+    let mut after = before.clone();
+    {
+        let t = std::sync::Arc::make_mut(after.tracks.get_mut(&tid).unwrap());
+        t.controls.get_mut(ControlId::Knob(0)).value = 0.2;
+        AutoTarget::Volume.set_on(t, -20.0);
+        AutoTarget::Pan.set_on(t, 0.7);
+    }
+    let held = after.hold_owned(&before);
+    let t = after.track(tid).unwrap();
+    assert_eq!(held.len(), 1, "{held:?}");
+    assert!(held[0].contains("K2"), "{held:?}");
+    assert_eq!(
+        AutoTarget::Pan.stored_value(t),
+        pan,
+        "the pan went back to K2's value"
+    );
+    assert_eq!(
+        AutoTarget::Volume.stored_value(t),
+        Some(-20.0),
+        "K1 changed, so it stands"
+    );
+}

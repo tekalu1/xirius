@@ -520,9 +520,10 @@ impl crate::model::Project {
 
     /// Puts back what an edit moved of a target a macro control moves (MIX-039): what the
     /// song keeps and what plays would part, and the next lane or reopen would jump back. An
-    /// edit that changed the controls themselves (`control.*`, a preset) sets both, so it
-    /// stands; so does a target that was already apart and was not touched. Returns what was
-    /// put back, as "Vocal のボリューム（K1）".
+    /// edit that changed a control itself (`control.*`, a preset) sets both, so that control's
+    /// targets stand; so does a target that was already apart and was not touched. What is put
+    /// back is the value the control gives it. Returns what was put back, as
+    /// "Vocal のボリューム（K1）".
     pub fn hold_owned(&mut self, before: &crate::model::Project) -> Vec<String> {
         let mut held = Vec::new();
         for (id, t) in self.tracks.iter_mut() {
@@ -532,20 +533,29 @@ impl crate::model::Project {
             let Some(b) = before.tracks.get(id) else {
                 continue;
             };
-            if b.controls != t.controls {
-                continue;
-            }
+            // what a changed control moves stands, even where another control moves it too
+            let set: Vec<&AutoTarget> = t
+                .controls
+                .iter()
+                .filter(|(k, c)| b.controls.get(*k) != *c)
+                .flat_map(|(_, c)| c.maps.iter().map(|m| &m.target))
+                .collect();
             let mut put = Vec::new();
             for (k, c) in t.controls.iter() {
-                for m in &c.maps {
+                if b.controls.get(k) != c {
+                    continue;
+                }
+                for m in c.maps.iter().filter(|m| !set.contains(&&m.target)) {
                     let now = m.target.stored_value(t);
                     if now == m.target.stored_value(b) {
                         continue;
                     }
                     let mut heard = (**t).clone();
                     heard.apply_control_at(k, c.value);
-                    if m.target.stored_value(&heard) != now {
-                        put.push((k, m.target.clone()));
+                    if let Some(v) = m.target.stored_value(&heard)
+                        && Some(v) != now
+                    {
+                        put.push((k, m.target.clone(), v));
                     }
                 }
             }
@@ -553,16 +563,14 @@ impl crate::model::Project {
                 continue;
             }
             let t = std::sync::Arc::make_mut(t);
-            for (k, target) in put {
+            for (k, target, v) in put {
                 held.push(format!(
                     "{} の{}（{}）",
                     t.name,
                     target_name(t, &target),
                     k.to_string().to_uppercase()
                 ));
-                if let Some(v) = target.stored_value(b) {
-                    target.set_on(t, v);
-                }
+                target.set_on(t, v);
             }
         }
         held
