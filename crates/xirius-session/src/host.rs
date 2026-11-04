@@ -591,6 +591,8 @@ impl SessionHost {
         self.polled = Some(Instant::now());
         // The windows that moved with the last mix, as the hosts that had them let go.
         self.builder.plugins_mut().settle_following();
+        // What a full file ring turned away while the engine was not taking it.
+        self.builder.plugins_mut().resend_files();
         self.follow();
         self.refresh_latency();
         self.refresh_processed();

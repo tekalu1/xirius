@@ -675,6 +675,9 @@ fn param_id(params: &[xirius_vst3::ParamInfo], key: &str) -> Option<u32> {
 struct Stock {
     handle: StockHandle,
     applied: Plugin,
+    /// The plugin whose files a full ring turned away: applied once
+    /// [`PluginLoader::resend_files`] gets them through.
+    waiting: Option<Plugin>,
 }
 
 /// A plugin opened before the build that takes it (ENG-064).
@@ -902,6 +905,7 @@ impl PluginLoader {
                     Stock {
                         handle: value.handle.clone(),
                         applied: value.applied.clone(),
+                        waiting: value.waiting.clone(),
                     },
                 )
             })
@@ -2016,10 +2020,24 @@ impl PluginLoader {
             Stock {
                 handle,
                 applied: x.clone(),
+                waiting: None,
             },
         );
         self.fresh_stock.push(x.id);
         Some((processor, warnings))
+    }
+
+    /// Sends again the files and values a full ring turned away, once the devices have
+    /// polled (L2-smp-4): called with each poll of the engine, so the last change does not
+    /// wait for the next one.
+    pub fn resend_files(&mut self) {
+        for s in self.stock.values_mut() {
+            if s.handle.resend_files()
+                && let Some(x) = s.waiting.take()
+            {
+                s.applied = x;
+            }
+        }
     }
 
     /// Whether the plugin runs as a built-in of the engine's.
@@ -2067,6 +2085,7 @@ impl PluginLoader {
             }
             if s.applied.samples == x.samples {
                 s.applied = x.clone();
+                s.waiting = None;
                 return true;
             }
             // A new set of files reaches the running device without a new mix (ENG-077).
@@ -2076,11 +2095,15 @@ impl PluginLoader {
             self.file_warnings
                 .extend(w.into_iter().map(|e| format!("{}: {e}", x.name)));
             // The ring being full (the device is not polling) keeps `applied` as it was, so
-            // the next `apply` sends the set again.
-            if let Some(s) = self.stock.get_mut(&x.id)
-                && handle.set_files(set)
-            {
-                s.applied = x.clone();
+            // the next `apply` or `resend_files` sends the set again.
+            let sent = handle.set_files(set);
+            if let Some(s) = self.stock.get_mut(&x.id) {
+                if sent {
+                    s.applied = x.clone();
+                    s.waiting = None;
+                } else {
+                    s.waiting = Some(x.clone());
+                }
             }
             return true;
         }
@@ -3181,8 +3204,8 @@ mod tests {
         assert!(warnings[0].contains("gone.wav"), "{}", warnings[0]);
     }
 
-    /// A set that cannot go into a full ring is not marked applied, so a later `apply` sends
-    /// it again once the device polls (ENG-077).
+    /// A set that cannot go into a full ring is not marked applied, and the next poll after
+    /// the device took the ring sends it again without another change (ENG-077, L2-smp-4).
     #[test]
     fn a_full_ring_leaves_the_new_files_pending_until_the_device_polls() {
         use xirius_engine::{AudioIo, RenderMode};
@@ -3220,6 +3243,12 @@ mod tests {
         let x2 = mk(vec!["b.wav".into()]);
         assert!(loader.apply(&x2));
         assert_eq!(loader.stock[&x.id].applied.samples, vec!["a.wav"]);
+        loader.resend_files();
+        assert_eq!(
+            loader.stock[&x.id].applied.samples,
+            vec!["a.wav"],
+            "still full"
+        );
         // The device polls once, the ring empties, and the change lands on a retry.
         p.prepare(&ProcessSetup {
             sample_rate: 48_000.0,
@@ -3236,6 +3265,9 @@ mod tests {
             },
             &[],
         );
+        loader.resend_files();
+        assert_eq!(loader.stock[&x.id].applied.samples, vec!["b.wav"]);
+        assert!(loader.stock[&x.id].waiting.is_none());
         assert!(loader.apply(&x2));
         assert_eq!(loader.stock[&x.id].applied.samples, vec!["b.wav"]);
     }

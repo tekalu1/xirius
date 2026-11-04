@@ -456,6 +456,25 @@ mod tests {
         assert_eq!(peak(&play(p.as_mut(), 60, 1.0, 9_600, 9_600)), 0.0);
     }
 
+    /// A set a full ring turned away (the device not polling) is not lost: once the device
+    /// has polled, `resend_files` gets it through without another change (L2-smp-4).
+    #[test]
+    fn a_set_turned_away_by_a_full_ring_is_sent_again() {
+        let (mut p, h) = make("sampler");
+        set_plain(&h, "attack", 1.0);
+        let low = || vec![Some(sine_file("tone.wav", 220.0, 0.4, 48_000))];
+        while h.set_files(low()) {}
+        assert!(!h.set_files(vec![Some(sine_file("tone.wav", 440.0, 0.4, 48_000))]));
+        assert!(!h.resend_files(), "the ring is still full");
+        let x = play(p.as_mut(), 60, 1.0, 40_000, 40_000);
+        assert!((pitch_of(&x, 4_800, 18_000) - 220.0).abs() < 2.0);
+        assert!(h.resend_files());
+        let x = play(p.as_mut(), 60, 1.0, 40_000, 40_000);
+        let f = pitch_of(&x, 4_800, 18_000);
+        assert!((f - 440.0).abs() < 2.0, "{f}");
+        assert!(h.resend_files(), "nothing is left waiting");
+    }
+
     /// A newer set replaces the one that plays, and the old one is handed back to be freed
     /// off the audio thread (ENG-077).
     #[test]

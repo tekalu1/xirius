@@ -98,7 +98,8 @@ struct Files {
     slots: Vec<Option<FileSlot>>,
     /// The values kept per file and per pad (0..1), under the keys the song keeps them by.
     scoped: BTreeMap<String, f64>,
-    /// The last layout did not get through (the ring was full): the next change sends it.
+    /// The last layout did not get through (the ring was full): the next change or
+    /// [`StockHandle::resend_files`] sends it.
     pending: bool,
 }
 
@@ -237,6 +238,17 @@ impl StockHandle {
         };
         files.slots = slots;
         files.send(def)
+    }
+
+    /// Sends again the layout a full ring turned away, once the device has polled (L2-smp-4):
+    /// without it the last change waits for the next one. `true` when nothing is left
+    /// waiting.
+    pub fn resend_files(&self) -> bool {
+        let def = self.bank.def();
+        match self.files() {
+            Some(mut files) if files.pending => files.send(def),
+            _ => true,
+        }
     }
 
     /// Frees the sets the audio thread handed back. Called inside `set_files`; on its own
