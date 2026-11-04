@@ -142,8 +142,8 @@ pub fn view(p: &Project, presets: &Presets, menu: Menu) -> (Vec<Choice>, String)
             let mut rows: Vec<Choice> =
                 list.iter().map(|n| row(&format!("{LOAD}{n}"), n)).collect();
             // Over a preset's file once the knobs moved off it, or again when its file is
-            // gone; never over Default.
-            let save = off && name != super::window::DEFAULT;
+            // gone; never over Default, nor while the tag knows no preset (—).
+            let save = off && name != super::window::DEFAULT && presets.origin(x).is_some();
             rows.push(row(if save { SAVE } else { "off:@save" }, "上書き保存"));
             rows.push(row(SAVE_AS, "名前を付けて保存…"));
             rows.push(row(SHOW, "ブラウザーに表示"));

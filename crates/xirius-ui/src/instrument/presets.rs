@@ -272,8 +272,8 @@ impl Studio {
     }
 
     /// 名前を付けて保存…: the box for the name under the list's tag. It starts with a name
-    /// no preset of the device has, the tag's with a number (empty at Default), so Enter
-    /// saves a new one.
+    /// no preset of the device has, the tag's with a number (empty at Default; the next
+    /// number when it ends in one, `Bass 2` → `Bass 3`), so Enter saves a new one.
     pub(crate) fn save_preset_as(&mut self, id: PluginId) -> bool {
         let Some((t, _)) = self.device_place(id) else {
             return false;
@@ -286,8 +286,12 @@ impl Studio {
             .and_then(|x| self.instruments.presets.origin(x))
             .filter(|n| n != DEFAULT)
             .map(|n| {
-                (2..)
-                    .map(|k| format!("{n} {k}"))
+                let (base, from) = n
+                    .rsplit_once(' ')
+                    .and_then(|(b, k)| Some((b.to_string(), k.parse::<u32>().ok()? + 1)))
+                    .unwrap_or_else(|| (n.clone(), 2));
+                (from..)
+                    .map(|k| format!("{base} {k}"))
                     .find(|c| self.preset_named(id, c).is_none())
                     .unwrap_or(n)
             })
@@ -311,8 +315,13 @@ impl Studio {
 
     /// Enter in the name box of 名前を付けて保存…: a new name saves; a name the device has
     /// asks once more (上書きして保存…) and Enter on it again writes over that file.
+    /// Default is no file: the session refuses it at once, before anything is asked.
     pub(crate) fn save_preset_named(&mut self, id: PluginId, name: &str, over: Option<&str>) {
         let fold = |s: &str| s.trim().to_lowercase();
+        if fold(name) == fold(DEFAULT) {
+            self.save_preset(id, name, false);
+            return;
+        }
         match self.preset_named(id, name) {
             Some(had) if over.is_none_or(|o| fold(o) != fold(&had)) => {
                 self.ask_save_name("上書きして保存…", id, Some(&had), &had);

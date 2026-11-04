@@ -1078,3 +1078,44 @@ fn the_saves_stay_under_a_filtered_list() {
         ["上書き保存", "名前を付けて保存…", "ブラウザーに表示"]
     );
 }
+
+/// L2-pre-1: 名前を付けて保存… from a preset whose name ends in a number starts at the next
+/// one, and Default is refused at once, nothing asked or written. L2-pre-2: at 「—」 (no
+/// preset known) 上書き保存 is off.
+#[test]
+fn save_as_counts_on_and_refuses_default_and_the_dash_writes_nothing() {
+    let (mut s, g, t, _) = studio();
+    let id = compressor(&mut s, t);
+    nudge(&mut s, &g, id, "threshold");
+    assert!(s.save_preset(id, "締める 2", false));
+    nudge(&mut s, &g, id, "ratio");
+    preset_rows(&mut s, &g, id);
+    s.inst_menu_pick(Menu::Preset(t, id), super::menu::SAVE_AS);
+    assert_eq!(
+        s.ask_field().map(|f| f.text()),
+        Some("締める 3".to_string())
+    );
+    for _ in 0..40 {
+        s.ask_key("backspace");
+    }
+    let before = s.song().steps();
+    s.ask_text(None, "default", false);
+    s.ask_key("enter");
+    assert!(!s.context_open(), "nothing asked");
+    assert!(s.error.is_some());
+    assert_eq!(s.song().steps(), before, "nothing written");
+
+    let mut p = (*s.project()).clone();
+    for x in p
+        .tracks
+        .values_mut()
+        .flat_map(|t| &mut std::sync::Arc::make_mut(t).inserts)
+    {
+        if x.id == id {
+            x.preset = None;
+        }
+    }
+    let (rows, _) = super::menu::view(&p, &s.instruments.presets, Menu::Preset(t, id));
+    let save = rows.iter().find(|c| c.label == "上書き保存").unwrap();
+    assert!(save.to.starts_with("off:"), "{}", save.to);
+}
