@@ -132,6 +132,56 @@ fn ui_333_zones_of_one_root_and_off_the_keys_can_each_be_chosen() {
     }
 }
 
+/// N3-smp-1 (UI-333): zones that meet at a black key meet on the line that key sits on, each
+/// as wide as its keys: none is taken into its neighbour's place and shares it.
+#[test]
+fn n3_smp_1_zones_that_meet_at_a_black_key_meet_on_its_line() {
+    let (mut s, g, t, id) = window("Sampler");
+    // B1 plays ..C2, D2 plays C#2..D#2, F2 plays E2..: the middle one starts and ends on a
+    // black key.
+    add(&mut s, id, &["Pad B1.wav", "Pad D2.wav", "Pad F2.wav"]);
+    let b = body(&s, &g, t);
+    let key = |p: u8| b.keys.iter().find(|k| k.pitch == p).unwrap().r;
+    let line = |p: u8| key(p).x + key(p).w / 2.0;
+    let zone = |f: usize| b.spots[spot(&s, &g, t, Mark::Zone(f))].r;
+    let (a, m, c) = (zone(0), zone(1), zone(2));
+    // B1's zone ends at C2's right; D2's runs from C#2's line to D#2's; F2's starts at E2.
+    assert!((a.right() + 1.0 - key(48).right()).abs() < 0.01, "{a:?}");
+    assert!((m.x - line(49)).abs() < 0.01, "{m:?}");
+    assert!((m.right() + 1.0 - line(51)).abs() < 0.01, "{m:?}");
+    assert!((c.x - key(52).x).abs() < 0.01, "{c:?}");
+    // Side by side, not over each other, and the middle one as wide as one white key.
+    assert!(a.right() <= m.x && m.right() <= c.x, "{a:?} {m:?} {c:?}");
+    assert!((m.w + 1.0 - (line(51) - line(49))).abs() < 0.01);
+    assert!(c.w > 2.0 * m.w, "F2 plays up to C5: {c:?}");
+    // Each is chosen where it is seen.
+    for (f, r) in [(0, a), (1, m), (2, c)] {
+        let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+        assert_eq!(
+            sampler::spot_at(&b, x, y).map(|n| b.spots[n].mark),
+            Some(Mark::Zone(f))
+        );
+    }
+    // Zones off the keys sit at their edges, a sliver wide, and leave the next their keys:
+    // C0 plays ..F#0 and C8 G#7.., both off C1..C5.
+    let (mut s, g, t, id) = window("Sampler");
+    add(
+        &mut s,
+        id,
+        &["Sub C0.wav", "Low C1.wav", "High C7.wav", "Bell C8.wav"],
+    );
+    let b = body(&s, &g, t);
+    let zone = |f: usize| b.spots[spot(&s, &g, t, Mark::Zone(f))].r;
+    let (sub, low, high, bell) = (zone(0), zone(1), zone(2), zone(3));
+    let (first, last) = (b.keys[0].r, b.keys.iter().rfind(|k| !k.black).unwrap().r);
+    assert!((sub.x - first.x).abs() < 0.01 && sub.w < 8.0, "{sub:?}");
+    assert!(
+        (bell.right() + 1.0 - last.right()).abs() < 0.01 && bell.w < 8.0,
+        "{bell:?}"
+    );
+    assert!(sub.right() <= low.x && low.right() <= high.x && high.right() <= bell.x);
+}
+
 #[test]
 fn ui_333_the_zones_choose_whose_sample_the_knobs_set_in_one_step() {
     let (mut s, g, t, id) = window("Sampler");

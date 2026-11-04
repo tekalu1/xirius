@@ -231,20 +231,13 @@ impl FileSet {
                 .collect();
             order.sort();
             let mut zones = Vec::with_capacity(order.len());
-            for (k, &(root, slot)) in order.iter().enumerate() {
-                let lo = match k {
-                    0 => 0,
-                    _ => ((u16::from(order[k - 1].0) + u16::from(root)) / 2 + 1).min(127) as u8,
-                };
-                let hi = match order.get(k + 1) {
-                    None => 127,
-                    Some(&(next, _)) => ((u16::from(root) + u16::from(next)) / 2) as u8,
-                };
+            for &(root, slot) in &order {
+                let (lo, hi) = root_keys(&order, root);
                 let c = cut(&|id| file(slot, id));
                 zones.push(Zone {
                     slot,
                     root,
-                    lo: lo.min(hi),
+                    lo,
                     hi,
                     cut: c,
                     gain: lift(&slots[slot], c.normalize),
@@ -466,6 +459,17 @@ impl FileSlot {
     }
 }
 
+/// The keys a Sampler zone of `root` plays, `order` the zones' roots in rising order: up to
+/// halfway to the next root down and up. Zones of one root share their keys (the first
+/// of them sounds).
+pub fn root_keys(order: &[(u8, usize)], root: u8) -> (u8, u8) {
+    let below = order.iter().rev().map(|o| o.0).find(|&r| r < root);
+    let above = order.iter().map(|o| o.0).find(|&r| r > root);
+    let lo = below.map_or(0, |b| ((u16::from(b) + u16::from(root)) / 2 + 1) as u8);
+    let hi = above.map_or(127, |a| ((u16::from(root) + u16::from(a)) / 2) as u8);
+    (lo.min(hi), hi)
+}
+
 /// The root note a file's name asks for: the last note-name token it has (`c3`, `F#4`, `Bb2`)
 /// in the C3 = 60 convention, else C3 itself. Numbers alone do not count (`snare_01` keeps
 /// the default).
@@ -593,6 +597,14 @@ mod tests {
             .map(|z| (z.slot, z.root, z.lo, z.hi))
             .collect();
         assert_eq!(keys, [(2, 48, 0, 54), (1, 60, 55, 72), (0, 84, 73, 127)]);
+        // Files of one root share its keys, however many there are (the first sounds).
+        let one = FileSet::layout(
+            def,
+            &v,
+            slots(&["a_C3.wav", "b_C3.wav", "c_C3.wav", "d_C4.wav"]),
+        );
+        let keys: Vec<(usize, u8, u8)> = one.zones.iter().map(|z| (z.slot, z.lo, z.hi)).collect();
+        assert_eq!(keys, [(0, 0, 66), (1, 0, 66), (2, 0, 66), (3, 67, 127)]);
         let mid = s.zones[1];
         assert!((mid.cut.start - 0.25).abs() < 1e-9 && mid.cut.normalize);
         // Normalize lifts the file's peak (6) to full.

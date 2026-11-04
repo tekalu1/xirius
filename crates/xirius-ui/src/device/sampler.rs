@@ -14,7 +14,7 @@ use std::path::Path;
 
 use xirius_core::model::Plugin;
 use xirius_design::{FontSize, Radius, Weight};
-use xirius_engine::stock::files::root_of;
+use xirius_engine::stock::files::{root_keys, root_of};
 use xirius_params::{BuiltinDef, PADS, Scope, bare_id, pad_key};
 
 use super::control::{self, DIAL_SM, Look, NAME_H, SEG_H, TOGGLE_H, VALUE_H};
@@ -184,7 +184,8 @@ pub struct Zone {
     pub hi: u8,
 }
 
-/// The Sampler's zones as the engine plays them: by root, each up to halfway to the next.
+/// The Sampler's zones as the engine plays them: by root, each up to halfway to the next;
+/// files of one root share its keys.
 pub fn zones(files: &[String]) -> Vec<Zone> {
     let mut order: Vec<(u8, usize)> = files
         .iter()
@@ -192,22 +193,11 @@ pub fn zones(files: &[String]) -> Vec<Zone> {
         .map(|(i, f)| (root_of(&leaf(f)), i))
         .collect();
     order.sort();
-    (0..order.len())
-        .map(|k| {
-            let (root, file) = order[k];
-            let lo = match k {
-                0 => 0,
-                _ => ((u16::from(order[k - 1].0) + u16::from(root)) / 2 + 1).min(127) as u8,
-            };
-            let hi = order.get(k + 1).map_or(127, |&(next, _)| {
-                ((u16::from(root) + u16::from(next)) / 2) as u8
-            });
-            Zone {
-                file,
-                root,
-                lo: lo.min(hi),
-                hi,
-            }
+    order
+        .iter()
+        .map(|&(root, file)| {
+            let (lo, hi) = root_keys(&order, root);
+            Zone { file, root, lo, hi }
         })
         .collect()
 }
@@ -514,38 +504,33 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
     y += WAVE_H + GAP;
     y = voice(def, &mut b, PAD, y, inner) + GAP;
     let keys = play::keys(Rect::new(PAD, y + ZONE_H + 4.0, inner, KEYS_H));
-    let span = |p: u8| {
-        keys.iter()
-            .find(|k| k.pitch == p.clamp(LOW, HIGH))
-            .map(|k| (k.r.x, k.r.right(), k.r.x + k.r.w / 2.0))
-    };
-    // Every zone can be chosen (N-smp-6): one off the keys sits at their edge, and zones
-    // that fall on one place (files of one root) share it side by side.
-    let mut placed: Vec<(Zone, f32, f32)> = Vec::new();
+    // Every zone can be chosen (N-smp-6): its keys' place on the columns of the white keys,
+    // one off the keys a sliver at their edge, and zones of one root side by side in theirs.
+    let mut groups: Vec<(Vec<Zone>, f32, f32)> = Vec::new();
     for z in zones(files) {
-        let (Some((x0, _, _)), Some((_, x1, _))) = (span(z.lo), span(z.hi)) else {
-            continue;
-        };
-        placed.push((z, x0, x1.max(x0 + ZONE_MIN)));
-    }
-    let mut k = 0;
-    while k < placed.len() {
-        let (mut x0, mut x1) = (placed[k].1, placed[k].2);
-        let mut n = k + 1;
-        while n < placed.len() && placed[n].1 < x1 - 1.0 {
-            x0 = x0.min(placed[n].1);
-            x1 = x1.max(placed[n].2);
-            n += 1;
-        }
-        if n - k > 1 {
-            let share = (x1 - x0) / (n - k) as f32;
-            for (j, p) in placed[k..n].iter_mut().enumerate() {
-                p.1 = x0 + share * j as f32;
-                p.2 = p.1 + share;
+        match groups.last_mut() {
+            Some((g, _, _)) if (g[0].lo, g[0].hi) == (z.lo, z.hi) => g.push(z),
+            _ => {
+                let (x0, x1) = zone_x(&keys, z.lo, z.hi);
+                groups.push((vec![z], x0, x1));
             }
         }
-        k = n;
     }
+    for k in 1..groups.len() {
+        let (prev_x0, prev_x1) = (groups[k - 1].1, groups[k - 1].2);
+        if groups[k].1 < prev_x1 {
+            groups[k - 1].2 = groups[k].1.max(prev_x0 + ZONE_MIN);
+            groups[k].1 = groups[k].1.max(groups[k - 1].2);
+            groups[k].2 = groups[k].2.max(groups[k].1 + ZONE_MIN);
+        }
+    }
+    let placed = groups.into_iter().flat_map(|(g, x0, x1)| {
+        let share = (x1 - x0) / g.len() as f32;
+        g.into_iter().enumerate().map(move |(j, z)| {
+            let at = x0 + share * j as f32;
+            (z, at, at + share)
+        })
+    });
     for (z, x0, x1) in placed {
         let mut spot = Spot::new(
             Rect::new(x0, y, (x1 - x0 - 1.0).max(4.0), ZONE_H),
@@ -554,12 +539,41 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
         );
         spot.on = z.file == pick;
         spot.note = Some(z.root);
-        spot.dot = (LOW..=HIGH).contains(&z.root);
+        spot.dot = true;
         b.spots.push(spot);
     }
     b.keys = keys;
     b.h = y + ZONE_H + 4.0 + KEYS_H + PAD;
     b
+}
+
+/// Where a zone of the keys `lo..=hi` sits over `keys`: from the left of its lowest key to
+/// the right of its highest, a black key standing for the line it sits on, so zones that meet
+/// at a black key meet there; keys off the keyboard a [`ZONE_MIN`] sliver at its edge.
+pub fn zone_x(keys: &[play::Key], lo: u8, hi: u8) -> (f32, f32) {
+    let (Some(first), Some(last)) = (keys.first(), keys.iter().rfind(|k| !k.black)) else {
+        return (0.0, ZONE_MIN);
+    };
+    let (left, right) = (first.r.x, last.r.right());
+    if hi < LOW {
+        return (left, left + ZONE_MIN);
+    }
+    if lo > HIGH {
+        return (right - ZONE_MIN, right);
+    }
+    let place = |p: u8| keys.iter().find(|k| k.pitch == p);
+    let line = |r: Rect| r.x + r.w / 2.0;
+    let x0 = match place(lo.max(LOW)) {
+        Some(k) if k.black => line(k.r),
+        Some(k) => k.r.x,
+        None => left,
+    };
+    let x1 = match place(hi.min(HIGH)) {
+        Some(k) if k.black => line(k.r),
+        Some(k) => k.r.right(),
+        None => right,
+    };
+    (x0, x1.max(x0 + ZONE_MIN))
 }
 
 /// The Drum Kit's body for its files and the pad chosen (`s.pick`) and its layer (`s.layer`):
@@ -1519,10 +1533,12 @@ pub fn paint_spots(pen: &mut Pen, body: &Body, hot: Option<usize>) {
             }
         }
         if let (Mark::Zone(_), Some(note)) = (s.mark, s.note.filter(|_| s.dot)) {
-            // The root's dot over its key.
-            if let Some(k) = body.keys.iter().find(|k| k.pitch == note) {
+            // The root's dot over its key, kept in the zone (a root off the keys at their edge).
+            if let Some(k) = body.keys.iter().find(|k| k.pitch == note.clamp(LOW, HIGH)) {
                 let d = 5.0;
-                let dot = Rect::new(k.r.x + k.r.w / 2.0 - d / 2.0, r.bottom() - d - 2.0, d, d);
+                let mid = (k.r.x + k.r.w / 2.0)
+                    .clamp(r.x + d / 2.0, (r.right() - d / 2.0).max(r.x + d / 2.0));
+                let dot = Rect::new(mid - d / 2.0, r.bottom() - d - 2.0, d, d);
                 pen.round(
                     dot,
                     if s.on { c.on_fill } else { c.ink_strong },
