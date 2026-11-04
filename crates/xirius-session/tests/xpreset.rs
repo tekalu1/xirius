@@ -1709,3 +1709,147 @@ fn an_old_songs_compressor_opens_at_its_preset_and_reloads_it_unchanged() {
     assert_eq!(after.params, before.params);
     assert_eq!(after.preset.as_deref(), Some("ドラムをまとめる"));
 }
+
+/// L-pre-8, L2-rev-1: a folder copied from the shipped version 1 set (やさしく・強め・声を前に on
+/// every effect) comes up to this set: the files left untouched go, one the user edited
+/// stays, each device's own presets come, and the mark records this set alone.
+#[test]
+fn y13_a_folder_of_the_version_1_set_comes_up_to_this_one() {
+    let r = rig("y13");
+    let mut uids: Vec<&str> = xirius_params::FACTORY_PRESETS
+        .iter()
+        .map(|(uid, _, _)| *uid)
+        .collect();
+    uids.dedup();
+    let body = |uid: &str, name: &str, gain: f64| {
+        json!({
+            "format": "xirius-preset", "version": 1, "kind": "fx", "name": name,
+            "devices": [{ "name": uid, "kind": "effect", "format": "builtin", "uid": uid,
+                          "params": { "mix": gain } }],
+        })
+        .to_string()
+    };
+    let mut files = Vec::new();
+    let mut recs = Vec::new();
+    for uid in &uids {
+        let dir = r.dir.join("fx").join(uid);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, share) in [("やさしく", -0.18), ("強め", 0.22), ("声を前に", 0.1)] {
+            let copied = body(uid, name, 0.5 + share);
+            let path = dir.join(format!("{name}.xpreset"));
+            let edited = *uid == "compressor" && name == "強め";
+            let text = if edited {
+                body(uid, name, 0.9)
+            } else {
+                copied.clone()
+            };
+            std::fs::write(&path, text).unwrap();
+            files.push((path, edited));
+            recs.push(json!({
+                "kind": "fx", "device": uid, "name": name,
+                "file": format!("fx/{uid}/{name}.xpreset"),
+                "sha256": sha256_hex(copied.as_bytes()),
+            }));
+        }
+    }
+    let mark = json!({ "version": 1, "files": recs });
+    std::fs::write(r.dir.join(".factory-seeded"), mark.to_string()).unwrap();
+    xirius_session::xpreset::seed(&r.dir).unwrap();
+    for (path, edited) in &files {
+        assert_eq!(path.is_file(), *edited, "{}", path.display());
+    }
+    for (uid, name, _) in xirius_params::FACTORY_PRESETS {
+        let p = r.dir.join("fx").join(uid).join(format!("{name}.xpreset"));
+        assert!(p.is_file(), "{}", p.display());
+    }
+    let mark = read_json(&r.dir.join(".factory-seeded"));
+    assert_eq!(
+        mark["version"].as_u64(),
+        Some(u64::from(xirius_params::FACTORY_VERSION))
+    );
+    let recorded = mark["files"].as_array().unwrap();
+    assert_eq!(recorded.len(), xirius_params::FACTORY_PRESETS.len());
+    assert!(recorded.iter().all(|f| f["name"] != "強め"), "{recorded:?}");
+}
+
+/// L2-smp-8: a Drum Kit's preset brings back its pads as they were: the layers of a pad,
+/// where each ends, and the pad's own values (Choke, Mute).
+#[test]
+fn y14_a_kits_pads_and_choke_come_back_with_its_preset() {
+    let mut r = rig("y14");
+    let t = id(&run(
+        &mut r.s,
+        "track.add.instrument",
+        json!({ "name": "Drums" }),
+    ));
+    let x = plugin(&mut r.s, &t, "Drum Kit");
+    let tid: TrackId = t.parse().unwrap();
+    let files = ["kit/Snare_a.wav", "kit/Snare_b.wav", "kit/Hat.wav"];
+    let song = std::env::temp_dir().join(format!("xirius-xpresets-{}-y14", std::process::id()));
+    let _ = std::fs::remove_dir_all(&song);
+    {
+        let mut p = r.s.project().clone();
+        let k = &mut Arc::make_mut(p.tracks.get_mut(&tid).unwrap()).inserts[0];
+        k.samples = files.iter().map(|f| f.to_string()).collect();
+        k.params.insert("file1.pad".into(), 0.0);
+        k.params.insert("file2.pad".into(), 0.0);
+        k.params.insert("file1.top".into(), 0.25);
+        k.params.insert("file3.pad".into(), 0.5);
+        k.params.insert("A1.choke".into(), 0.5);
+        k.params.insert("A1.mute".into(), 1.0);
+        r.s = session_with(&r.dir, p);
+    }
+    r.s.save_as(&song).unwrap();
+    for f in files {
+        let at = song.join(f);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::fs::write(&at, format!("RIFF {f}")).unwrap();
+    }
+    let before = track(&r.s, &t).inserts[0].clone();
+    run(
+        &mut r.s,
+        "preset.save",
+        json!({ "track": t, "kind": "instrument", "name": "Kit" }),
+    );
+    run(
+        &mut r.s,
+        "plugin.samples.remove",
+        json!({ "id": x, "pad": "A1" }),
+    );
+    run(
+        &mut r.s,
+        "plugin.param.set",
+        json!({ "id": x, "param": "file1.pad", "plain": 5 }),
+    );
+    assert_ne!(track(&r.s, &t).inserts[0].params, before.params);
+    run(
+        &mut r.s,
+        "preset.load",
+        json!({ "track": t, "preset": "Kit", "of": x }),
+    );
+    let after = track(&r.s, &t).inserts[0].clone();
+    assert_eq!(after.samples.len(), 3, "{:?}", after.samples);
+    for (a, f) in after.samples.iter().zip(files) {
+        let at = if Path::new(a).is_absolute() {
+            PathBuf::from(a)
+        } else {
+            song.join(a)
+        };
+        assert_eq!(
+            std::fs::read(&at).unwrap(),
+            format!("RIFF {f}").as_bytes(),
+            "{a}"
+        );
+    }
+    for k in [
+        "file1.pad",
+        "file2.pad",
+        "file1.top",
+        "file3.pad",
+        "A1.choke",
+        "A1.mute",
+    ] {
+        assert_eq!(after.params.get(k), before.params.get(k), "{k}");
+    }
+    let _ = std::fs::remove_dir_all(&song);
+}
