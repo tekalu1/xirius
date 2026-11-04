@@ -317,3 +317,55 @@ fn a_hand_edited_map_is_held_to_its_range_and_to_one_control() {
     assert_eq!(k2.len(), 1, "the volume stays K1's");
     assert_eq!(k2[0].target.to_string(), "pan");
 }
+
+#[test]
+fn a_muted_send_a_macro_moves_stays_muted_when_the_song_opens() {
+    let base = tempfile::Builder::new()
+        .prefix("xirius-core-test-")
+        .tempdir()
+        .unwrap();
+    let dir = base.path().join("muted");
+    let mut s = Session::new("Muted");
+    let t = id_of(&run(&mut s, "track.add.audio", json!({"name": "Vocal"})));
+    let fx = id_of(&run(&mut s, "track.add.bus", json!({"name": "FX"})));
+    run(
+        &mut s,
+        "send.add",
+        json!({"ids": [t], "to": fx, "level": -6}),
+    );
+    let tid: TrackId = t.parse().unwrap();
+    let send = s.project().track(tid).unwrap().sends[0].id.to_string();
+    run(
+        &mut s,
+        "control.assign",
+        json!({"track": t, "control": "k1", "target": format!("send:{send}")}),
+    );
+    run(
+        &mut s,
+        "control.set",
+        json!({"track": t, "control": "k1", "value": 0.25}),
+    );
+    run(&mut s, "send.mute", json!({"id": send, "on": true}));
+    let kept = s.project().track(tid).unwrap().sends[0].clone();
+    assert_eq!(kept.level_db, xirius_core::model::MIN_DB);
+    let held = kept.muted_level.expect("the level is kept aside");
+
+    // the knob moves the kept level and the send stays silent
+    run(
+        &mut s,
+        "control.set",
+        json!({"track": t, "control": "k1", "value": 0.75}),
+    );
+    let moved = s.project().track(tid).unwrap().sends[0].clone();
+    assert_eq!(moved.level_db, xirius_core::model::MIN_DB, "still silent");
+    let level = moved.muted_level.expect("still muted");
+    assert_ne!(level, held, "the knob moved the kept level");
+    s.save_as(&dir).unwrap();
+    drop(s);
+
+    let s = Session::open(&dir).unwrap();
+    let back = &s.project().track(tid).unwrap().sends[0];
+    assert_eq!(back.level_db, xirius_core::model::MIN_DB, "opening keeps it silent");
+    assert_eq!(back.muted_level, Some(level));
+    assert!(!s.is_dirty(), "opening alone is no edit");
+}

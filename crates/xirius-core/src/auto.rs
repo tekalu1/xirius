@@ -219,8 +219,13 @@ impl AutoTarget {
             AutoTarget::Volume => t.volume_db = v,
             AutoTarget::Pan => t.pan = v,
             AutoTarget::Mute => t.mute = v >= 0.5,
+            // A muted send keeps its level aside (`muted_level`) and stays silent: a macro or a
+            // lane moves the kept level, as `stored_value` reads it.
             AutoTarget::Send(s) => match t.sends.iter_mut().find(|x| x.id == *s) {
-                Some(x) => x.level_db = v,
+                Some(x) => match x.muted_level.as_mut() {
+                    Some(kept) => *kept = v,
+                    None => x.level_db = v,
+                },
                 None => return false,
             },
             AutoTarget::Param(pid, name) => match t.inserts.iter_mut().find(|x| x.id == *pid) {
