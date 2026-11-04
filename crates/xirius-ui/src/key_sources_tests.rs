@@ -145,6 +145,22 @@ fn a_channel_the_key_would_loop_back_from_shows_the_loop_and_takes_nothing() {
     assert!(!row.enabled && row.key.unwrap().looped);
     let layout = s.popup.as_ref().unwrap().layout(g.size);
     assert!(layout.cells.iter().any(|c| c.spoken == "ループ"));
+    // the row itself is fainter, and a screen reader hears it cannot be picked
+    let drums_row = layout
+        .cells
+        .iter()
+        .find(|c| matches!(c.look, Look::Key(KLook::Row { .. })) && c.text == "Drums")
+        .unwrap();
+    assert!(!drums_row.enabled);
+    fn find<'a>(marks: &'a [crate::a11y::Mark], label: &str) -> Option<&'a crate::a11y::Mark> {
+        marks.iter().find_map(|m| {
+            (m.node.role() == accesskit::Role::Group && m.node.label() == Some(label))
+                .then_some(m)
+                .or_else(|| find(&m.children, label))
+        })
+    }
+    let marks = crate::a11y::marks(&s, &g);
+    assert!(find(&marks, "Drums").unwrap().node.is_disabled());
     let send = &layout.cells[cell(&s, &g, "Drums センド")];
     assert!(!send.live());
     assert!(!s.press(&g, Hit::Item(cell(&s, &g, "Drums センド"))));

@@ -220,17 +220,17 @@ pub fn row_cells(r: Rect, name: &str, key: &KeyRow, cur: bool) -> Vec<Cell> {
     });
     parts.push(check(out_col, key.output, KeyPart::Output, "出力"));
     let right = r.right() - (extra - GAP);
-    let mut out = vec![
-        Cell::new(
-            r,
-            Look::Key(KLook::Row {
-                mark: key.mark,
-                right,
-            }),
-        )
-        .text(name)
-        .cur(cur),
-    ];
+    let row = Cell::new(
+        r,
+        Look::Key(KLook::Row {
+            mark: key.mark,
+            right,
+        }),
+    )
+    .text(name)
+    .cur(cur);
+    // A row the key would loop back from is fainter and said to be off (sidechain.html).
+    let mut out = vec![if key.looped { row.off() } else { row }];
     out.extend(parts);
     out
 }
@@ -265,7 +265,7 @@ pub fn paint_cell(pen: &mut Pen, cell: &Cell, look: &KLook, hot: bool) {
                 &name,
                 FontSize::Small,
                 Weight::Medium,
-                c.ink_strong,
+                if cell.enabled { c.ink_strong } else { c.ink },
                 room,
                 Align::Left,
             );
