@@ -327,6 +327,16 @@ impl Chain {
         (devices, rack, controls)
     }
 
+    /// The chain as a file keeps it, by ref: the same for two chains whose ids alone differ,
+    /// so a track's chain can be told to be a preset's. The macros count by what they move
+    /// and where they stand, not by their knob or name: a load lands one on a free knob and
+    /// names it after the preset.
+    pub fn shape(&self) -> Value {
+        let (devices, rack, controls) = self.to_values(false);
+        let macros = controls.as_ref().map(mapped).unwrap_or_default();
+        json!({ "devices": devices, "rack": rack, "macros": macros })
+    }
+
     /// Reads the devices (from `devices_key`), the rack and the macros of a file for a track
     /// of `kind`; `track` lets the macros move the track's volume and pan.
     pub(crate) fn parse(
@@ -519,6 +529,31 @@ impl Refs {
         });
         v
     }
+}
+
+/// The controls of a saved set that have maps (knobs, buttons, pads' axes), as their maps
+/// and values, in one order.
+fn mapped(v: &Value) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    let mut controls: Vec<&Value> = Vec::new();
+    for k in ["knobs", "buttons"] {
+        controls.extend(v.get(k).and_then(Value::as_array).into_iter().flatten());
+    }
+    for pad in v
+        .get("pads")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        controls.extend(["x", "y"].iter().filter_map(|axis| pad.get(*axis)));
+    }
+    for c in controls {
+        if c["maps"].as_array().is_some_and(|m| !m.is_empty()) {
+            out.push(json!({ "maps": c["maps"], "value": c.get("value") }));
+        }
+    }
+    out.sort_by_key(Value::to_string);
+    out
 }
 
 /// Runs `f` on every map of a saved set of controls (knobs, buttons, pads' axes); a map `f`

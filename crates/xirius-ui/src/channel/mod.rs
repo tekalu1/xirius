@@ -482,8 +482,9 @@ pub fn col_label(col: &Column) -> String {
     }
 }
 
-/// The x of a head's middle, between the level and its value: on the line, as the mock's, where
-/// a branch's ＋ shows. A column too narrow for M and × right of it moves it left.
+/// The x of a head's middle, between the level and its value: on the line, as the mock's. A
+/// column too narrow for M and × right of it moves it left. A branch's ＋ is not in the head
+/// but in the room under it, on the line (review 3 中4).
 pub fn head_mid(h: Rect) -> f32 {
     let right = HEAD_MID / 2.0 + VALUE_W + HEAD_GAP + MUTE_W + HEAD_GAP + REMOVE + 2.0;
     (h.x + h.w / 2.0).min(h.right() - right)

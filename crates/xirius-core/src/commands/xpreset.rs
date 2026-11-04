@@ -87,7 +87,10 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 ),
                 device(),
                 ArgDef::text("query", "名前で絞る文字列"),
-                ArgDef::flag("values", "各プリセットのつまみの値（params）も返す"),
+                ArgDef::flag(
+                    "values",
+                    "各プリセットのつまみの値（params）、チェーンのプリセットは中身（chain）も返す",
+                ),
             ],
             Risk::Read,
             false,

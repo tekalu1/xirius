@@ -4,7 +4,7 @@
 use xirius_core::model::{Plugin, Track};
 use xirius_design::{FontSize, LineState, Radius, Weight};
 
-use super::flow::{CardKind, Column, Flow, Key};
+use super::flow::{CardKind, Column, Flow, Gap, Key};
 use super::keys;
 use super::{
     ChannelWin, Grab, Part, Tool, View, card_parts, col_label, head_parts, head_shown, mode_text,
@@ -429,11 +429,8 @@ fn paint_flow(pen: &mut Pen, s: &Studio, w: &ChannelWin, t: &Track, f: &Flow) {
     for card in &f.cards {
         paint_card(pen, s, w, t, card, dragged == Some(card.pick));
     }
-    let pointer = w.pointer;
     for (i, gap) in f.gaps.iter().enumerate() {
-        let near = pointer.is_some_and(|(x, y)| gap.rect.contains(x, y))
-            || w.chosen.is_some_and(|pick| f.beside(pick, gap));
-        if w.grab.is_some() || !near {
+        if !gap_shown(s, w, t, f, gap) {
             continue;
         }
         let lit = w.hot == Some(Part::Gap(i));
@@ -459,6 +456,15 @@ fn paint_flow(pen: &mut Pen, s: &Studio, w: &ChannelWin, t: &Track, f: &Flow) {
     {
         pen.round(slot.mark, c.ring, Radius::Pill);
     }
+}
+
+/// Does `gap` show its ＋: the pointer is in its room or the chosen card is right before or
+/// after it, and no card or head's level is held (review 3 低12).
+pub(crate) fn gap_shown(s: &Studio, w: &ChannelWin, t: &Track, f: &Flow, gap: &Gap) -> bool {
+    let near = w.pointer.is_some_and(|(x, y)| gap.rect.contains(x, y))
+        || w.chosen.is_some_and(|pick| f.beside(pick, gap));
+    let held = s.mixer.level_drag.is_some_and(|d| d.track == t.id);
+    near && w.grab.is_none() && !held
 }
 
 #[allow(clippy::too_many_arguments)]

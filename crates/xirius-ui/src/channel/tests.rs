@@ -313,11 +313,12 @@ fn a_gap_adds_the_effect_in_its_place() {
 }
 
 #[test]
-fn a_branch_head_has_a_plus_on_its_line_that_adds_its_first() {
+fn a_branchs_plus_is_in_the_room_under_its_head_on_the_line() {
     let (mut s, g) = studio();
     let (t, _, [_, comp, _], b) = vocal(&mut s);
     let v = s.channel_view(&g).unwrap();
     let col = column(&v, b[0]);
+    let first = card(&v, Pick::Plugin(comp)).rect;
     let (i, gap) = v
         .flow
         .gaps
@@ -325,33 +326,88 @@ fn a_branch_head_has_a_plus_on_its_line_that_adds_its_first() {
         .enumerate()
         .find(|(_, gp)| gp.chain == Chain::Branch(b[0]) && gp.index == 0)
         .map(|(i, gp)| (i, *gp))
-        .expect("the head's ＋");
+        .expect("the branch's first ＋");
     assert_eq!(gap.after, None);
-    // In the head's middle, on the line, clear of the level, its value, M and ×.
+    // Between the head and the first card, as much room as between two parts, its ＋ on the
+    // line down the column (review 3 中4).
+    assert_eq!(gap.rect.y, col.head.bottom());
+    assert_eq!(gap.rect.bottom(), first.y);
+    assert_eq!(gap.rect.h, flow::STEP);
     let (bx, by) = mid(gap.button);
-    assert!(col.head.contains(bx, by));
-    assert!((bx - head_mid(col.head)).abs() < 0.5);
-    let hp = head_parts(&col);
-    for r in [hp.num, hp.level, hp.value, hp.mute]
-        .into_iter()
-        .chain(hp.remove)
-    {
-        assert!(
-            r.right() <= gap.button.x || r.x >= gap.button.right(),
-            "{r:?} {:?}",
-            gap.button
-        );
-    }
+    assert!(!col.head.contains(bx, by));
+    assert!((bx - (col.head.x + col.head.w / 2.0)).abs() < 0.5);
+    assert!((bx - mid(first).0).abs() < 0.5);
+    // The same ＋ as after the branch's last part.
+    let last = v
+        .flow
+        .gaps
+        .iter()
+        .find(|gp| gp.after == Some(Pick::Plugin(comp)))
+        .unwrap();
+    assert_eq!(
+        (gap.button.w, gap.button.h, gap.rect.h),
+        (last.button.w, last.button.h, last.rect.h)
+    );
+    // The head keeps its number, level, value, M and × and no ＋: its middle is the head's.
+    assert_ne!(
+        part_at(&v, head_mid(col.head), mid(col.head).1),
+        Some(Part::Gap(i))
+    );
     assert_eq!(part_at(&v, bx, by), Some(Part::Gap(i)));
-    // A touch on the branch's first card shows it; the press opens the list into the head.
+    // It shows as the other gaps do: the pointer in its room or its next card chosen, not the
+    // pointer on the head (review 3 低12).
+    let shown = |s: &Studio| {
+        let t = &s.project().tracks[&t];
+        paint::gap_shown(s, s.channel.as_ref().unwrap(), t, &v.flow, &gap)
+    };
+    assert!(!shown(&s));
+    s.channel_hover(&g, head_mid(col.head), mid(col.head).1);
+    assert!(!shown(&s));
+    s.channel_hover(&g, bx, by);
+    assert!(shown(&s));
+    s.channel_hover(&g, 2.0, 2.0);
     s.channel.as_mut().unwrap().chosen = Some(Pick::Plugin(comp));
-    assert!(v.flow.beside(Pick::Plugin(comp), &gap));
+    assert!(shown(&s));
+    // Not while the head's level is held.
+    let hp = head_parts(&col);
+    assert!(s.channel_press(&g, mid(hp.level).0, mid(hp.level).1, 1));
+    assert!(s.mixer.level_drag.is_some());
+    s.channel_hover(&g, bx, by);
+    assert!(!shown(&s));
+    assert!(s.level_up());
+    // The press opens the list into the branch's head; Alt+Insert is the keys' way.
     press(&mut s, &g, (bx, by));
     assert_eq!(s.mixer.insert_into, Some((t, Chain::Branch(b[0]), 0)));
     assert!(matches!(
         s.popup.as_ref().map(|p| p.kind),
         Some(crate::popup::PopupKind::Insert(_))
     ));
+}
+
+#[test]
+fn a_branchs_room_under_its_head_counts_in_the_splitters_height() {
+    let (mut s, g) = studio();
+    let (_, _, [_, comp, verb], b) = vocal(&mut s);
+    let v = s.channel_view(&g).unwrap();
+    for (id, pick) in [(b[0], comp), (b[1], verb)] {
+        let col = column(&v, id);
+        let r = card(&v, Pick::Plugin(pick)).rect;
+        assert_eq!(r.y, col.head.bottom() + flow::STEP);
+        assert!(
+            r.bottom() <= col.rect.bottom() + 0.5,
+            "{r:?} {:?}",
+            col.rect
+        );
+    }
+    // The output's pill stays under the branches' last parts.
+    let out = v.flow.ios.last().unwrap().rect;
+    let deepest = v
+        .flow
+        .columns
+        .iter()
+        .map(|c| c.rect.bottom())
+        .fold(0.0, f32::max);
+    assert!(out.y >= deepest + flow::STEP - 0.5);
 }
 
 #[test]
@@ -886,9 +942,10 @@ fn the_bar_steps_the_chain_presets_and_marks_a_change() {
     let (t, _, _, b) = vocal(&mut s);
     assert_eq!(
         tag(&s, t),
-        (crate::instrument::presets::UNKNOWN.into(), false)
+        (crate::instrument::presets::UNKNOWN.into(), true),
+        "a chain of effects no preset holds"
     );
-    assert_eq!(steps(&s, t), (false, false), "no name to step from");
+    assert_eq!(steps(&s, t), (false, true), "› goes to Default");
 
     assert!(s.save_chain_preset(t, "声 A", false));
     assert_eq!(tag(&s, t), ("声 A".into(), false));
@@ -901,18 +958,22 @@ fn the_bar_steps_the_chain_presets_and_marks_a_change() {
     let v = s.channel_view(&g).unwrap();
     press(&mut s, &g, mid(v.bar.prev.unwrap()));
     assert_eq!(tag(&s, t), ("声 A".into(), false));
-    assert_eq!(steps(&s, t), (false, true), "the list's first");
+    assert_eq!(steps(&s, t), (true, true), "Default is before it");
     let gain = |s: &Studio| match &s.project().tracks[&t].rack.as_ref().unwrap().fx[..] {
         [.., RackNode::Split(x)] => x.branches[1].gain_db,
         other => panic!("{other:?}"),
     };
     assert_eq!(gain(&s), -6.0, "A's branch level");
-    // The ‹ at the first does nothing.
-    assert!(!s.step_chain_preset(t, false));
     let v = s.channel_view(&g).unwrap();
     press(&mut s, &g, mid(v.bar.next.unwrap()));
     assert_eq!(tag(&s, t), ("声 B".into(), false));
     assert_eq!(gain(&s), -3.0, "B's branch level");
+    // ‹ ‹ to Default, the list's first: its ‹ does nothing.
+    assert!(s.step_chain_preset(t, false));
+    assert!(s.step_chain_preset(t, false));
+    assert_eq!(tag(&s, t), ("Default".into(), false));
+    assert_eq!(steps(&s, t), (false, true), "the list's first");
+    assert!(!s.step_chain_preset(t, false));
 }
 
 /// The tag opens the list: a row loads that preset, 上書き保存 waits for a change, and the
@@ -938,8 +999,17 @@ fn the_tag_lists_the_chain_presets_and_a_row_loads_one() {
         .iter()
         .map(|r| (r.label.as_str(), r.to.as_str()))
         .collect();
+    assert_eq!(
+        labels[0],
+        ("Default", "load:Default"),
+        "the list's first row"
+    );
     assert!(labels.contains(&("広い", "load:広い")));
     assert!(labels.contains(&("狭い", "load:狭い")));
+    assert!(
+        !labels.iter().any(|(l, _)| *l == "プリセットがありません"),
+        "Default is always there"
+    );
     assert!(
         labels.contains(&("上書き保存", "off:@save")),
         "nothing changed"
@@ -969,8 +1039,8 @@ fn the_tag_lists_the_chain_presets_and_a_row_loads_one() {
         })
         .collect();
     assert!(keys.contains(&("channel-preset", "プリセット: 広い（変更あり）".into())));
-    // 広い is the list's first: its ‹ says it cannot be chosen (review 3 中6)
-    assert!(keys.contains(&("channel-preset-prev", "前のプリセット（選べません）".into())));
+    // Default is before 広い, 狭い after it.
+    assert!(keys.contains(&("channel-preset-prev", "前のプリセット".into())));
     assert!(keys.contains(&("channel-preset-next", "次のプリセット".into())));
 }
 
@@ -981,8 +1051,9 @@ fn branch(s: &Studio, t: TrackId) -> NodeId {
     }
 }
 
-/// Review 3 中5: a track no chain preset was loaded on (every new track's) steps with › to the
-/// list's first; its ‹ stays dim, there is nothing before.
+/// Review 3 中5: the song keeps no chain preset's name, so a song opened again names a
+/// chain by what it is: a saved preset's by its name, one no preset holds 「—」 marked. That
+/// one steps with › to the list's first, Default; its ‹ stays dim, there is nothing before.
 #[test]
 fn a_tag_with_no_preset_steps_to_the_lists_first() {
     let (mut s, g) = studio();
@@ -990,17 +1061,22 @@ fn a_tag_with_no_preset_steps_to_the_lists_first() {
     assert!(s.save_chain_preset(t, "声 A", false));
     assert!(s.run_command("rack.branch.set", json!({"id":b[1],"gain":-3.0})));
     assert!(s.save_chain_preset(t, "声 B", false));
-    // another song's tracks: the tag names nothing
+    // the song opened again: its marks are gone, the chain is still B's
     s.chain_presets.forget();
+    assert_eq!(tag(&s, t), ("声 B".into(), false));
+    assert!(s.run_command("rack.branch.set", json!({"id":b[1],"gain":-6.0})));
+    assert_eq!(tag(&s, t), ("声 A".into(), false), "A's level again");
+    assert!(s.run_command("rack.branch.set", json!({"id":b[1],"gain":-9.0})));
     assert_eq!(
         tag(&s, t),
-        (crate::instrument::presets::UNKNOWN.into(), false)
+        (crate::instrument::presets::UNKNOWN.into(), true),
+        "no preset holds it"
     );
     assert_eq!(steps(&s, t), (false, true));
     assert!(!s.step_chain_preset(t, false), "nothing before");
     let v = s.channel_view(&g).unwrap();
     press(&mut s, &g, mid(v.bar.next.unwrap()));
-    assert_eq!(tag(&s, t), ("声 A".into(), false));
+    assert_eq!(tag(&s, t), ("Default".into(), false));
     assert_eq!(steps(&s, t), (false, true));
     // Review 3 中6: the dim ‹ says it cannot be chosen, the bridge carries no "off".
     let label = |key: &str| {
@@ -1013,4 +1089,125 @@ fn a_tag_with_no_preset_steps_to_the_lists_first() {
     };
     assert_eq!(label("channel-preset-prev"), "前のプリセット（選べません）");
     assert_eq!(label("channel-preset-next"), "次のプリセット");
+}
+
+/// Review 3 中5: every new track's tag says Default, the list's first row, ticked; there is no
+/// file to write over, and 名前を付けて保存… starts empty, as a device's.
+#[test]
+fn a_new_track_starts_at_default() {
+    use crate::instrument::menu::Menu;
+    let (mut s, _g) = studio();
+    for (command, name) in [
+        ("track.add.audio", "Take"),
+        ("track.add.bus", "Room"),
+        ("track.add.instrument", "Lead"),
+    ] {
+        assert!(s.run_command(command, json!({ "name": name })));
+        let t = track(&s, name);
+        assert_eq!(tag(&s, t), ("Default".into(), false), "{name}");
+        assert_eq!(steps(&s, t), (false, false), "{name}: no saved preset yet");
+        let (rows, now) = s.inst_menu_view(Menu::Chain(t));
+        assert_eq!(
+            (rows[0].label.as_str(), rows[0].to.as_str()),
+            ("Default", "load:Default")
+        );
+        assert_eq!(now, "load:Default");
+        assert!(
+            rows.iter()
+                .any(|r| r.label == "上書き保存" && r.to == "off:@save")
+        );
+    }
+    // A reverb moves it off Default, which it was never loaded as: no preset holds it.
+    let t = track(&s, "Take");
+    add(&mut s, t, "Reverb");
+    assert_eq!(
+        tag(&s, t),
+        (crate::instrument::presets::UNKNOWN.into(), true)
+    );
+}
+
+/// Review 3 中5: Default takes every effect and splitter off, in one step that one undo takes
+/// back, and the tag names the chain that comes back again.
+#[test]
+fn default_empties_the_chain_in_one_step() {
+    use crate::instrument::menu::Menu;
+    let (mut s, g) = studio();
+    let (t, _, _, _) = vocal(&mut s);
+    assert!(s.save_chain_preset(t, "声", false));
+    let before = s.project().tracks[&t].clone();
+    s.inst_menu_pick(Menu::Chain(t), "load:Default");
+    let x = &s.project().tracks[&t];
+    assert!(
+        x.inserts
+            .iter()
+            .all(|p| p.kind != xirius_core::model::PluginKind::Effect),
+        "{:?}",
+        x.inserts
+    );
+    assert!(
+        x.rack.as_ref().is_none_or(|r| r.fx.is_empty()),
+        "{:?}",
+        x.rack
+    );
+    assert_eq!(tag(&s, t), ("Default".into(), false));
+    let (rows, now) = s.inst_menu_view(Menu::Chain(t));
+    assert_eq!(now, "load:Default");
+    assert!(
+        rows.iter()
+            .any(|r| r.label == "上書き保存" && r.to == "off:@save")
+    );
+    // Moved off it, the tag keeps Default, marked; 上書き保存 still has no file to write.
+    add(&mut s, t, "EQ");
+    assert_eq!(tag(&s, t), ("Default".into(), true));
+    let (rows, _) = s.inst_menu_view(Menu::Chain(t));
+    assert!(
+        rows.iter()
+            .any(|r| r.label == "上書き保存" && r.to == "off:@save")
+    );
+    // One undo for the EQ, one for Default.
+    assert!(s.undo(&g));
+    assert!(s.undo(&g));
+    let x = &s.project().tracks[&t];
+    assert_eq!(x.inserts, before.inserts);
+    assert_eq!(x.rack, before.rack);
+    assert_eq!(tag(&s, t), ("声".into(), false), "the saved chain is back");
+}
+
+/// Review 3 中5: a multi-instrument's Default keeps its layers and key ranges and takes only
+/// their effects off.
+#[test]
+fn a_multi_instruments_default_keeps_its_layers() {
+    let (mut s, _g) = studio();
+    let (t, layers) = multi(&mut s);
+    assert_eq!(tag(&s, t), ("Default".into(), false), "layers alone");
+    assert!(s.run_command(
+        "rack.layer.set",
+        json!({"id": layers[1].id, "keys": "60-72"})
+    ));
+    assert_eq!(
+        tag(&s, t),
+        ("Default".into(), false),
+        "a key range is no effect"
+    );
+    let verb = add(&mut s, t, "Reverb");
+    assert!(s.run_command("rack.node.move", json!({"id":verb,"to":layers[1].id})));
+    assert!(s.run_command("rack.split.add", json!({"track":t})));
+    assert_ne!(tag(&s, t).0, "Default");
+    let kept = keys::layers(&s.project().tracks[&t])
+        .iter()
+        .map(|l| (l.id, l.instrument, l.keys))
+        .collect::<Vec<_>>();
+    assert!(s.load_default_chain(t));
+    let x = &s.project().tracks[&t];
+    let now = keys::layers(x)
+        .iter()
+        .map(|l| (l.id, l.instrument, l.keys))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        now, kept,
+        "the layers, their instruments and key ranges stay"
+    );
+    assert!(keys::layers(x).iter().all(|l| l.fx.is_empty()));
+    assert!(x.rack.as_ref().unwrap().fx.is_empty());
+    assert_eq!(tag(&s, t), ("Default".into(), false));
 }

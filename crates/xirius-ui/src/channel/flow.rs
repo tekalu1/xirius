@@ -213,14 +213,18 @@ fn node_h(n: &RackNode) -> f32 {
     match n {
         RackNode::Plugin(_) => CARD_H,
         RackNode::Split(s) => {
-            CARD_H
-                + FAN
-                + HEAD_H
-                + s.branches
-                    .iter()
-                    .map(|b| chain_h(&b.fx))
-                    .fold(0.0, f32::max)
+            CARD_H + FAN + HEAD_H + s.branches.iter().map(branch_h).fold(0.0, f32::max)
         }
+    }
+}
+
+/// A branch's room under its head: an empty one's ＋, else the room before its first part (its
+/// ＋, as between two parts) and its chain.
+fn branch_h(b: &Branch) -> f32 {
+    if b.fx.is_empty() {
+        CARD_H
+    } else {
+        STEP + chain_h(&b.fx)
     }
 }
 
@@ -536,11 +540,7 @@ impl Flow {
         let mut x = cx - used.max(w.min(used)) / 2.0;
         let head_y = card.bottom() + FAN;
         let col_top = head_y + HEAD_H;
-        let deepest = s
-            .branches
-            .iter()
-            .map(|b| chain_h(&b.fx))
-            .fold(0.0, f32::max);
+        let deepest = s.branches.iter().map(branch_h).fold(0.0, f32::max);
         let mut out = Vec::new();
         let mut cols = Vec::new();
         for (i, (b, bw)) in s.branches.iter().zip(&widths).enumerate() {
@@ -560,8 +560,7 @@ impl Flow {
                 band,
                 within: inside.clone(),
             });
-            let head = Rect::new(x, head_y, *bw, HEAD_H);
-            out.extend(self.column(b, (ccx, head), card, col_top, &inside));
+            out.extend(self.column(b, ccx, card, col_top, &inside));
             x += bw + COL_GAP;
         }
         if s.mode == SplitMode::Frequency {
@@ -580,16 +579,9 @@ impl Flow {
         (out, col_top + deepest)
     }
 
-    /// One branch's column under the splitter's `card`: fanned to from it, its chain laid
-    /// from `top`, under its `head`.
-    fn column(
-        &mut self,
-        b: &Branch,
-        (cx, head): (f32, Rect),
-        card: Rect,
-        top: f32,
-        within: &[Key],
-    ) -> Vec<End> {
+    /// One branch's column on `cx` under the splitter's `card`: fanned to from it, its chain
+    /// laid under its head, whose bottom is `top`.
+    fn column(&mut self, b: &Branch, cx: f32, card: Rect, top: f32, within: &[Key]) -> Vec<End> {
         let mut inside = within.to_vec();
         inside.push(Key::Node(b.id));
         let fan = End {
@@ -617,26 +609,17 @@ impl Flow {
                 keys: inside,
             }];
         }
-        // A card dragged to the head goes first. Its ＋ is in the head's middle, on the line,
-        // between the level and its value: it adds the branch's first (by touch, too).
-        self.gaps.push(Gap {
-            rect: head,
-            button: Rect::new(
-                super::head_mid(head) - GAP_BTN / 2.0,
-                head.y + (head.h - GAP_BTN) / 2.0,
-                GAP_BTN,
-                GAP_BTN,
-            ),
-            chain: Chain::Branch(b.id),
-            index: 0,
-            after: None,
-        });
-        self.slots.push(Slot {
-            chain: Chain::Branch(b.id),
-            index: 0,
-            mark: Rect::new(cx - CARD_W / 2.0, top - 2.0, CARD_W, 2.0),
-        });
-        let (ends, bottom) = self.chain(&b.fx, Chain::Branch(b.id), cx, top, vec![fan], &inside);
+        // The room under the head, as between two parts: its ＋ adds the branch's first, and a
+        // card dragged there goes first.
+        self.gap_before(Chain::Branch(b.id), 0, None, cx, top, top + STEP);
+        let (ends, bottom) = self.chain(
+            &b.fx,
+            Chain::Branch(b.id),
+            cx,
+            top + STEP,
+            vec![fan],
+            &inside,
+        );
         // The ＋ after the branch's last part, before the merge.
         if let Some(last) = b.fx.last() {
             self.gap_before(

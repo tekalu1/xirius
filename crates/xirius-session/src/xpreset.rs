@@ -1078,6 +1078,13 @@ fn list_chains(
             if let Some(at) = e.saved_at {
                 r.insert("saved_at".into(), json!(at));
             }
+            // The chain too, as a file keeps it, for a window to tell whether a track's is the
+            // preset's (review 3 中5).
+            if a.flag("values")
+                && let Ok((p, _)) = ChainPreset::parse(&e.value, None)
+            {
+                r.insert("chain".into(), p.chain.shape());
+            }
             Value::Object(r)
         })
         .collect();

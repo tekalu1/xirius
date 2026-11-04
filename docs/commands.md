@@ -5234,7 +5234,7 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 | `device` | — | `{"type":"string"}` | 機器の uid か名前（その機器のプリセットだけに絞ります） |
 | `kind` | — | `{"enum":["fx","instrument","fx-chain","instrument-fx","multi-instrument"],"type":"string"}` | プリセットの種類（チェーンは、その種類のときだけ一覧します） |
 | `query` | — | `{"type":"string"}` | 名前で絞る文字列 |
-| `values` | — | `{"type":"boolean"}` | 各プリセットのつまみの値（params）も返す |
+| `values` | — | `{"type":"boolean"}` | 各プリセットのつまみの値（params）、チェーンのプリセットは中身（chain）も返す |
 
 ## `preset.load`
 

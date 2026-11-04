@@ -465,3 +465,47 @@ fn a_device_preset_with_a_place_goes_in_as_a_chain_of_one() {
     let x = &all[1];
     assert_eq!(x.preset.as_deref(), Some("Bright"));
 }
+
+/// Review 3 中5: with its values the list gives each chain as a file keeps it, the same as a
+/// track's chain the preset was loaded onto, so a window names a chain by the preset it is.
+#[test]
+fn the_list_with_values_gives_each_chain_to_tell_a_tracks_is_it() {
+    use xirius_core::chain_preset::{Chain, ChainKind};
+    let mut r = rig("shape");
+    save_wide(&mut r);
+    let rows = run(
+        &mut r.s,
+        "preset.list",
+        json!({ "kind": "fx-chain", "values": true }),
+    )["presets"]
+        .clone();
+    let wide = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "Wide")
+        .unwrap()["chain"]
+        .clone();
+    assert!(
+        wide["devices"].as_array().is_some_and(|d| d.len() == 3),
+        "{wide}"
+    );
+    let shape = |s: &Session, t: &str| {
+        Chain::capture(&track(s, t), ChainKind::Fx, None)
+            .unwrap()
+            .0
+            .shape()
+    };
+    let b = audio(&mut r.s, "Guitar");
+    plugin(&mut r.s, &b, "Reverb");
+    assert_ne!(shape(&r.s, &b), wide);
+    run(
+        &mut r.s,
+        "preset.load",
+        json!({ "track": b, "preset": "Wide", "at": "track", "replace": true }),
+    );
+    assert_eq!(shape(&r.s, &b), wide, "the song's own ids aside");
+    // Without the values the list stays as it was.
+    let plain = run(&mut r.s, "preset.list", json!({ "kind": "fx-chain" }));
+    assert!(plain["presets"][0].get("chain").is_none());
+}

@@ -6,18 +6,25 @@
 //! the list's ends, as the mock's), a row loads it over the whole chain, 上書き保存 and
 //! 名前を付けて保存… write the chain.
 //!
-//! The song keeps no chain preset's name, so the tag names the preset this screen last
-//! loaded onto the track or saved from it while the song is open, and the mark says the
-//! chain moved off what it was then. A track none was loaded on shows [`UNKNOWN`]; its › loads
-//! the list's first.
+//! The list starts with [`DEFAULT`], a chain of no effects (an audio or a bus track's empty
+//! FX, an instrument track's instrument alone, a multi-instrument's layers and key ranges
+//! alone), as a device window's (review 3 中5). The song keeps no chain preset's name, so the
+//! tag names, as the device window's: the preset this screen last loaded onto the track or
+//! saved from it while the song is open, while the chain is still that; else `Default` when
+//! the chain is of no effects (every new track's); else the saved preset the chain is; else
+//! the one loaded or saved last, marked; else [`UNKNOWN`], marked. So a song opened again
+//! shows the names it showed. A tag that names no row sits before the list: its › loads
+//! `Default`.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use xirius_core::chain_preset::{Chain, ChainKind};
-use xirius_core::id::TrackId;
-use xirius_core::model::{Track, TrackKind};
+use xirius_core::id::{NodeId, PluginId, TrackId};
+use xirius_core::model::{PluginKind, Track, TrackKind};
+use xirius_core::rack::{Rack, RackNode, Source};
+pub use xirius_core::xpreset::DEFAULT_PRESET as DEFAULT;
 
 use crate::instrument::menu::{LOAD, SAVE, SAVE_AS};
 use crate::instrument::presets::UNKNOWN;
@@ -32,14 +39,17 @@ const EVERY: Duration = Duration::from_millis(500);
 pub struct Listed {
     pub name: String,
     pub file: String,
+    /// Its chain as [`Chain::shape`] gives it, to tell a track's chain is it.
+    pub shape: Option<Value>,
 }
 
-/// The preset a track's tag names and the chain as it was loaded or saved.
+/// The preset a track's tag names and the chain as it was loaded or saved (none: no chain a
+/// preset holds, as an audio track's empty FX after `Default`).
 #[derive(Clone, Debug)]
 struct Mark {
     name: String,
     kind: ChainKind,
-    chain: Chain,
+    shape: Option<Value>,
 }
 
 #[derive(Debug, Default)]
@@ -61,21 +71,67 @@ pub fn kind_of(t: &Track) -> ChainKind {
     }
 }
 
-/// The whole chain of `t` as a preset of `kind` holds it; none when it cannot be one.
-fn chain_of(t: &Track, kind: ChainKind) -> Option<Chain> {
-    Chain::capture(t, kind, None).ok().map(|(c, _)| c)
+/// The whole chain of `t` as a preset of `kind` holds it, by [`Chain::shape`]; none when it
+/// cannot be one.
+fn shape_of(t: &Track, kind: ChainKind) -> Option<Value> {
+    Chain::capture(t, kind, None).ok().map(|(c, _)| c.shape())
+}
+
+/// The rack of `t`, a serial track's as its order.
+fn rack_of(t: &Track) -> Rack {
+    t.rack.clone().unwrap_or_else(|| Rack::serial(t))
+}
+
+/// The chains of `rack` effects sit in: its FX and each layer's.
+fn chains(rack: &Rack) -> Vec<&[RackNode]> {
+    let mut v = vec![rack.fx.as_slice()];
+    if let Some(Source::Multi { layers, .. }) = &rack.source {
+        v.extend(layers.iter().map(|l| l.fx.as_slice()));
+    }
+    v
+}
+
+/// The splitters in `nodes`, the ones in their branches too.
+fn splitters(nodes: &[RackNode], out: &mut Vec<NodeId>) {
+    for n in nodes {
+        if let RackNode::Split(x) = n {
+            out.push(x.id);
+            for b in &x.branches {
+                splitters(&b.fx, out);
+            }
+        }
+    }
+}
+
+/// Is the chain of `t` the `Default` one: no effect and no splitter, the instrument or the
+/// layers and their key ranges as they are.
+pub fn is_default(t: &Track) -> bool {
+    t.inserts.iter().all(|x| x.kind != PluginKind::Effect)
+        && chains(&rack_of(t)).iter().all(|c| c.is_empty())
 }
 
 impl ChainPresets {
-    /// The tag of `t`: the preset's name and whether the chain moved off it.
+    /// The tag of `t`: the preset's name and whether the chain moved off it (the module's
+    /// order).
     pub fn tag(&self, t: &Track) -> (String, bool) {
         let kind = kind_of(t);
-        match self.marks.get(&t.id).filter(|m| m.kind == kind) {
-            Some(m) => (
-                m.name.clone(),
-                chain_of(t, kind).is_none_or(|c| c != m.chain),
-            ),
-            None => (UNKNOWN.into(), false),
+        let mark = self.marks.get(&t.id).filter(|m| m.kind == kind);
+        let now = shape_of(t, kind);
+        if let Some(m) = mark.filter(|m| m.shape == now) {
+            return (m.name.clone(), false);
+        }
+        if is_default(t) {
+            return (DEFAULT.into(), false);
+        }
+        let saved = now.as_ref().and_then(|now| {
+            self.list(kind)
+                .iter()
+                .find(|l| l.shape.as_ref() == Some(now))
+        });
+        match (saved, mark) {
+            (Some(l), _) => (l.name.clone(), false),
+            (None, Some(m)) => (m.name.clone(), true),
+            (None, None) => (UNKNOWN.into(), true),
         }
     }
 
@@ -84,14 +140,21 @@ impl ChainPresets {
         self.lists.get(kind.name()).map_or(&[], Vec::as_slice)
     }
 
-    /// Whether the ‹ and the › of `t` can step: none past the ends. A tag that names no preset
-    /// of the list sits before its first, so › loads that (review 3 中5).
+    /// The names of the tag's rows: `Default`, then the presets of `kind`.
+    pub fn names(&self, kind: ChainKind) -> Vec<String> {
+        std::iter::once(DEFAULT.to_string())
+            .chain(self.list(kind).iter().map(|l| l.name.clone()))
+            .collect()
+    }
+
+    /// Whether the ‹ and the › of `t` can step: none past the ends. A tag that names no row
+    /// sits before the first, so › loads `Default` (review 3 中5).
     pub fn steps(&self, t: &Track) -> (bool, bool) {
-        let list = self.list(kind_of(t));
+        let names = self.names(kind_of(t));
         let (name, _) = self.tag(t);
-        match list.iter().position(|l| l.name == name) {
-            Some(k) => (k > 0, k + 1 < list.len()),
-            None => (false, !list.is_empty()),
+        match names.iter().position(|n| *n == name) {
+            Some(k) => (k > 0, k + 1 < names.len()),
+            None => (false, true),
         }
     }
 
@@ -105,8 +168,9 @@ impl Studio {
     /// Reads the presets of `kind` again; true when the list changed.
     pub(crate) fn read_chain_presets(&mut self, kind: ChainKind) -> bool {
         self.chain_presets.read_at = Some(Instant::now());
+        let args = json!({ "kind": kind.name(), "values": true });
         // design-lint: allow(ui-blocking-io) MIX-042: on the window thread the session answers the list from its cache and reads the files on a background job.
-        let Ok(data) = self.song.run("preset.list", json!({ "kind": kind.name() })) else {
+        let Ok(data) = self.song.run("preset.list", args) else {
             return false;
         };
         let list: Vec<Listed> = data["presets"]
@@ -117,8 +181,11 @@ impl Studio {
                 Some(Listed {
                     name: p["name"].as_str()?.to_string(),
                     file: p["file"].as_str()?.to_string(),
+                    shape: p.get("chain").cloned(),
                 })
             })
+            // `Default` is the list's own row; a file of the name cannot be saved.
+            .filter(|l| !l.name.trim().eq_ignore_ascii_case(DEFAULT))
             .collect();
         let had = self.chain_presets.lists.insert(kind.name(), list.clone());
         had.as_ref() != Some(&list)
@@ -152,25 +219,85 @@ impl Studio {
         )
     }
 
+    /// `Default` over the whole chain of `t`, in one step to take back: its splitters and
+    /// effects go, the instrument or the layers and their key ranges stay.
+    pub(crate) fn load_default_chain(&mut self, t: TrackId) -> bool {
+        let p = self.project();
+        let Some(track) = p.tracks.get(&t) else {
+            return false;
+        };
+        let kind = kind_of(track);
+        let effects: Vec<PluginId> = track
+            .inserts
+            .iter()
+            .filter(|x| x.kind == PluginKind::Effect)
+            .map(|x| x.id)
+            .collect();
+        let mut splits = Vec::new();
+        for c in chains(&rack_of(track)) {
+            splitters(c, &mut splits);
+        }
+        self.song.session_mut().begin_group();
+        let mut done = true;
+        if !effects.is_empty() {
+            let ids: Vec<String> = effects.iter().map(ToString::to_string).collect();
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+            done &= self.run_command("plugin.remove", json!({ "ids": ids }));
+        }
+        // Emptied, a splitter lays its (empty) branches in its place.
+        for id in splits {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+            done &= self.run_command("rack.split.remove", json!({ "id": id.to_string() }));
+        }
+        self.song.session_mut().end_group();
+        if let Some(track) = self.project().tracks.get(&t) {
+            let shape = shape_of(track, kind);
+            self.chain_presets.marks.insert(
+                t,
+                Mark {
+                    name: DEFAULT.into(),
+                    kind,
+                    shape,
+                },
+            );
+        }
+        done
+    }
+
+    /// Loads the row `name` of the tag's list over the whole chain of `t`.
+    fn load_chain_row(&mut self, t: TrackId, kind: ChainKind, name: &str) -> bool {
+        if name == DEFAULT {
+            return self.load_default_chain(t);
+        }
+        let file = self
+            .chain_presets
+            .list(kind)
+            .iter()
+            .find(|l| l.name == name)
+            .map(|l| l.file.clone());
+        file.is_some_and(|f| self.load_chain_preset(t, &f))
+    }
+
     /// The ‹ (`forward` false) or the › of the tag of `t`.
     pub(crate) fn step_chain_preset(&mut self, t: TrackId, forward: bool) -> bool {
         let p = self.project();
         let Some(track) = p.tracks.get(&t) else {
             return false;
         };
+        let kind = kind_of(track);
         let (name, _) = self.chain_presets.tag(track);
-        let list = self.chain_presets.list(kind_of(track));
-        let to = match list.iter().position(|l| l.name == name) {
+        let names = self.chain_presets.names(kind);
+        let to = match names.iter().position(|n| *n == name) {
             Some(k) if forward => k + 1,
             Some(k) => k.wrapping_sub(1),
             // a tag before the list: › goes to its first
             None if forward => 0,
             None => return false,
         };
-        let Some(file) = list.get(to).map(|l| l.file.clone()) else {
+        let Some(name) = names.get(to) else {
             return false;
         };
-        self.load_chain_preset(t, &file)
+        self.load_chain_row(t, kind, name)
     }
 
     /// Saves the whole chain of `t` as the preset `name` (`overwrite`: over its file).
@@ -200,7 +327,8 @@ impl Studio {
             .map(|l| l.name.clone())
     }
 
-    /// 名前を付けて保存…: the name box, with the tag's name and a number not taken yet.
+    /// 名前を付けて保存…: the name box, with the tag's name and a number not taken yet
+    /// (empty at `Default`, as a device's).
     pub(crate) fn save_chain_preset_as(&mut self, t: TrackId) -> bool {
         let p = self.project();
         let Some(track) = p.tracks.get(&t) else {
@@ -208,7 +336,7 @@ impl Studio {
         };
         let kind = kind_of(track);
         let (name, _) = self.chain_presets.tag(track);
-        let initial = if name == UNKNOWN {
+        let initial = if name == UNKNOWN || name == DEFAULT {
             String::new()
         } else {
             (2..)
@@ -249,8 +377,8 @@ impl Studio {
         }
     }
 
-    /// The rows of the tag's list: the presets, the ✓ on the tag's, then 上書き保存 /
-    /// 名前を付けて保存… / ブラウザーに表示 under them, as a device's.
+    /// The rows of the tag's list: `Default` and the presets, the ✓ on the tag's, then
+    /// 上書き保存 / 名前を付けて保存… / ブラウザーに表示 under them, as a device's.
     pub(crate) fn chain_menu_view(&self, t: TrackId) -> (Vec<Choice>, String) {
         let row = |to: &str, label: &str| Choice {
             to: to.into(),
@@ -260,20 +388,16 @@ impl Studio {
         let Some(track) = p.tracks.get(&t) else {
             return (Vec::new(), String::new());
         };
-        let list = self.chain_presets.list(kind_of(track));
+        let names = self.chain_presets.names(kind_of(track));
         let (name, off) = self.chain_presets.tag(track);
-        let mut rows: Vec<Choice> = list
+        let mut rows: Vec<Choice> = names
             .iter()
-            .map(|l| row(&format!("{LOAD}{}", l.name), &l.name))
+            .map(|n| row(&format!("{LOAD}{n}"), n))
             .collect();
-        if rows.is_empty() {
-            rows.push(row("off:none", "プリセットがありません"));
-        }
         let known = name != UNKNOWN;
-        rows.push(row(
-            if known && off { SAVE } else { "off:@save" },
-            "上書き保存",
-        ));
+        // `Default` is no file to write over.
+        let over = known && off && name != DEFAULT;
+        rows.push(row(if over { SAVE } else { "off:@save" }, "上書き保存"));
         rows.push(row(SAVE_AS, "名前を付けて保存…"));
         // The browser lists no chain presets yet.
         rows.push(row("off:@show", "ブラウザーに表示"));
@@ -295,7 +419,7 @@ impl Studio {
         match to {
             SAVE => {
                 let (name, _) = self.chain_presets.tag(track);
-                if name != UNKNOWN {
+                if name != UNKNOWN && name != DEFAULT {
                     self.save_chain_preset(t, &name, true);
                 }
             }
@@ -306,15 +430,7 @@ impl Studio {
                 let Some(name) = to.strip_prefix(LOAD) else {
                     return;
                 };
-                let file = self
-                    .chain_presets
-                    .list(kind)
-                    .iter()
-                    .find(|l| l.name == name)
-                    .map(|l| l.file.clone());
-                if let Some(file) = file {
-                    self.load_chain_preset(t, &file);
-                }
+                self.load_chain_row(t, kind, name);
             }
         }
     }
@@ -352,12 +468,13 @@ impl Studio {
                 .map(|s| s.trim().to_string()),
             _ => None,
         };
-        let (Some(name), Some(chain)) = (name, chain_of(track, kind)) else {
+        let (Some(name), Some(shape)) = (name, shape_of(track, kind)) else {
             return;
         };
+        let shape = Some(shape);
         self.chain_presets
             .marks
-            .insert(t, Mark { name, kind, chain });
+            .insert(t, Mark { name, kind, shape });
         if command == "preset.save" {
             self.read_chain_presets(kind);
         }
