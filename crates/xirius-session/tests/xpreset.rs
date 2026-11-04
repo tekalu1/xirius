@@ -1309,9 +1309,9 @@ fn z2_a_relative_path_is_refused() {
     assert!(m.contains("絶対"), "{m}");
 }
 
-#[test]
-fn y10_samples_are_kept_as_full_paths_and_a_missing_one_is_reported() {
-    let mut r = rig("y10");
+/// A song saved in its own folder with a Sampler on `Keys` playing `files` (names in the
+/// song, each written with its own bytes).
+fn sampler_song(r: &mut Rig, tag: &str, files: &[&str]) -> (Session, String, PathBuf) {
     let t = id(&run(
         &mut r.s,
         "track.add.instrument",
@@ -1321,14 +1321,45 @@ fn y10_samples_are_kept_as_full_paths_and_a_missing_one_is_reported() {
     let tid: TrackId = t.parse().unwrap();
     let mut p = r.s.project().clone();
     Arc::make_mut(p.tracks.get_mut(&tid).unwrap()).inserts[0].samples =
-        vec!["Media/Kick.wav".into()];
-    let song = std::env::temp_dir().join(format!("xirius-xpresets-{}-y10song", std::process::id()));
+        files.iter().map(|f| f.to_string()).collect();
+    let song = std::env::temp_dir().join(format!("xirius-xpresets-{}-{tag}", std::process::id()));
     let _ = std::fs::remove_dir_all(&song);
     let mut s = session_with(&r.dir, p);
     s.save_as(&song).unwrap();
-    std::fs::create_dir_all(song.join("Media")).unwrap();
-    let kick = song.join("Media").join("Kick.wav");
-    std::fs::write(&kick, b"RIFF").unwrap();
+    for f in files {
+        let at = song.join(f);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::fs::write(&at, format!("RIFF {f}")).unwrap();
+    }
+    (s, t, song)
+}
+
+fn copies(dir: &Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(dir.join("samples"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    v.sort();
+    v
+}
+
+fn rejected(out: &Value, name: &str) -> bool {
+    out["adjusted"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|x| x["kind"] == "rejected" && x["what"].as_str().is_some_and(|w| w.contains(name)))
+}
+
+/// N-smp-1: a preset keeps its samples as copies in the presets' folder, named from there.
+/// It plays when the files move or are gone, on another PC with the presets' folder, and
+/// holds no folder of the person's.
+#[test]
+fn y10_samples_are_copied_into_the_presets_folder() {
+    let mut r = rig("y10");
+    let (mut s, t, song) = sampler_song(&mut r, "y10song", &["Media/Kick.wav"]);
     run(
         &mut s,
         "preset.save",
@@ -1339,11 +1370,18 @@ fn y10_samples_are_kept_as_full_paths_and_a_missing_one_is_reported() {
         .join("instrument")
         .join("sampler")
         .join("Kick.xpreset");
-    let v: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let text = std::fs::read_to_string(&file).unwrap();
+    let v: Value = serde_json::from_str(&text).unwrap();
     let saved = v["devices"][0]["samples"][0].as_str().unwrap().to_string();
-    assert!(Path::new(&saved).is_absolute(), "{saved}");
-    assert!(Path::new(&saved).is_file(), "{saved}");
-    // Another song (with no folder) reads the full path.
+    assert!(
+        saved.starts_with("preset:samples/Kick-") && saved.ends_with(".wav"),
+        "{saved}"
+    );
+    let song_dir = song.to_string_lossy().replace('\\', "\\\\");
+    assert!(!text.contains(&*song_dir), "{text}");
+    assert_eq!(copies(&r.dir).len(), 1, "{:?}", copies(&r.dir));
+    // The song's own file goes: another song still plays the copy.
+    std::fs::remove_file(song.join("Media").join("Kick.wav")).unwrap();
     let other = id(&run(
         &mut r.s,
         "track.add.instrument",
@@ -1356,23 +1394,118 @@ fn y10_samples_are_kept_as_full_paths_and_a_missing_one_is_reported() {
         json!({ "track": other, "preset": "Kick" }),
     );
     assert!(!out["adjusted"].to_string().contains("rejected"), "{out:?}");
-    assert_eq!(track(&r.s, &other).inserts[0].samples, vec![saved.clone()]);
-    // Gone from the disk: left out, and said so.
-    std::fs::remove_file(&kick).unwrap();
-    let out = run(
-        &mut r.s,
-        "preset.load",
-        json!({ "track": other, "preset": "Kick" }),
+    let got = track(&r.s, &other).inserts[0].samples.clone();
+    assert_eq!(got.len(), 1);
+    assert!(Path::new(&got[0]).is_file(), "{got:?}");
+    assert_eq!(std::fs::read(&got[0]).unwrap(), b"RIFF Media/Kick.wav");
+    // Saved again, the same sound is the same copy.
+    run(
+        &mut s,
+        "preset.save",
+        json!({ "track": t, "kind": "instrument", "name": "Kick 2" }),
     );
-    let rows = out["adjusted"].as_array().unwrap();
-    assert!(
-        rows.iter()
-            .any(|x| x["kind"] == "rejected" && x["what"].as_str().unwrap().contains("Kick.wav")),
-        "{rows:?}"
-    );
-    assert!(track(&r.s, &other).inserts[0].samples.is_empty());
+    assert_eq!(copies(&r.dir).len(), 1);
     drop(s);
     let _ = std::fs::remove_dir_all(&song);
+}
+
+/// N-smp-1: a sample not at its place is looked for by its name in the song's folder and the
+/// preset's; one found nowhere is left out with its own values, the later files keep theirs,
+/// and it is said by its name.
+#[test]
+fn y11_a_sample_moved_is_found_and_one_gone_is_left_out_with_its_values() {
+    let mut r = rig("y11");
+    let (mut s, t, song) = sampler_song(&mut r, "y11song", &["Media/A.wav", "Media/B.wav"]);
+    let x = track(&s, &t).inserts[0].id;
+    run(
+        &mut s,
+        "plugin.param.set",
+        json!({ "id": x.to_string(), "param": "file2.start", "value": 0.4 }),
+    );
+    let start2 = track(&s, &t).inserts[0].params["file2.start"];
+    run(
+        &mut s,
+        "preset.save",
+        json!({ "track": t, "kind": "instrument", "name": "AB" }),
+    );
+    // The presets' copies go (a folder of presets brought without them): each is found in
+    // the song's folder, where it moved to.
+    std::fs::remove_dir_all(r.dir.join("samples")).unwrap();
+    std::fs::create_dir_all(song.join("Moved")).unwrap();
+    for f in ["A.wav", "B.wav"] {
+        std::fs::rename(song.join("Media").join(f), song.join("Moved").join(f)).unwrap();
+    }
+    let out = run(&mut s, "preset.load", json!({ "track": t, "preset": "AB" }));
+    assert!(!out["adjusted"].to_string().contains("rejected"), "{out:?}");
+    assert_eq!(
+        track(&s, &t).inserts[0].samples,
+        vec!["Moved/A.wav".to_string(), "Moved/B.wav".to_string()]
+    );
+    // A is gone everywhere: B stays with its own values, now the first file's.
+    std::fs::remove_file(song.join("Moved").join("A.wav")).unwrap();
+    let out = run(&mut s, "preset.load", json!({ "track": t, "preset": "AB" }));
+    assert!(rejected(&out, "A.wav"), "{out:?}");
+    let x = &track(&s, &t).inserts[0];
+    assert_eq!(x.samples, vec!["Moved/B.wav".to_string()]);
+    assert_eq!(x.params.get("file1.start"), Some(&start2), "{:?}", x.params);
+    assert!(!x.params.contains_key("file2.start"), "{:?}", x.params);
+    drop(s);
+    let _ = std::fs::remove_dir_all(&song);
+}
+
+/// N-smp-2: an old preset that says nothing of samples leaves the files alone, and with them
+/// the pads they are on and the pads' own values.
+#[test]
+fn y12_an_old_preset_keeps_the_kits_pads_and_their_values() {
+    let mut r = rig("y12");
+    let t = id(&run(
+        &mut r.s,
+        "track.add.instrument",
+        json!({ "name": "Drums" }),
+    ));
+    let x = plugin(&mut r.s, &t, "Drum Kit");
+    let tid: TrackId = t.parse().unwrap();
+    {
+        let mut p = r.s.project().clone();
+        let k = &mut Arc::make_mut(p.tracks.get_mut(&tid).unwrap()).inserts[0];
+        k.samples = vec!["C:/kit/a.wav".into(), "C:/kit/b.wav".into()];
+        k.params.insert("file1.pad".into(), 0.0);
+        k.params.insert("file2.pad".into(), 0.0);
+        k.params.insert("file2.top".into(), 0.5);
+        k.params.insert("A1.choke".into(), 0.5);
+        r.s = session_with(&r.dir, p);
+    }
+    let before = track(&r.s, &t).inserts[0].clone();
+    // A preset from before the files: the device's own values only.
+    run(
+        &mut r.s,
+        "preset.save",
+        json!({ "track": t, "kind": "instrument", "name": "Old" }),
+    );
+    let file = r
+        .dir
+        .join("instrument")
+        .join("drum-kit")
+        .join("Old.xpreset");
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let d = v["devices"][0].as_object_mut().unwrap();
+    d.remove("samples");
+    d["params"]
+        .as_object_mut()
+        .unwrap()
+        .retain(|k, _| !k.starts_with("file") && !k.contains('.'));
+    std::fs::write(&file, v.to_string()).unwrap();
+    run(
+        &mut r.s,
+        "preset.load",
+        json!({ "track": t, "preset": "Old", "of": x }),
+    );
+    let after = track(&r.s, &t).inserts[0].clone();
+    assert_eq!(after.samples, before.samples);
+    for k in ["file1.pad", "file2.pad", "file2.top", "A1.choke"] {
+        assert_eq!(after.params.get(k), before.params.get(k), "{k}");
+    }
+    assert_eq!(after.preset.as_deref(), Some("Old"));
 }
 
 #[test]

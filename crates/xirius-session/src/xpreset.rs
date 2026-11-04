@@ -28,6 +28,7 @@ use std::fmt::Write as _;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
+use crate::import::song_path;
 use serde_json::{Map, Value, json};
 use xirius_core::chain_preset::{Chain, ChainKind, ChainPreset, kind_of_value};
 use xirius_core::command::Output;
@@ -661,6 +662,116 @@ fn sample_path(s: &str, song: Option<&Path>) -> Option<PathBuf> {
     })
 }
 
+/// The presets' own folder of the samples their presets play (N-smp-1).
+const SAMPLES: &str = "samples";
+
+/// How a preset names a sample copied into [`SAMPLES`]: from the presets' folder.
+const KEPT: &str = "preset:";
+
+/// A copy of the sample `p` in the presets' [`SAMPLES`] folder, as a preset names it. One
+/// file a content: the same sound saved by two presets is one copy, and two sounds of one
+/// name are two.
+fn keep_sample(dir: &Path, p: &Path, dry: bool) -> CmdResult<String> {
+    let data = std::fs::read(p).map_err(io)?;
+    let stem = p
+        .file_stem()
+        .map(|s| file_name(&s.to_string_lossy()))
+        .unwrap_or_default();
+    let ext = p
+        .extension()
+        .map(|e| format!(".{}", file_name(&e.to_string_lossy())))
+        .unwrap_or_default();
+    let name = format!("{stem}-{}{ext}", &sha256_hex(&data)[..16]);
+    let to = dir.join(SAMPLES).join(&name);
+    if !dry && std::fs::metadata(&to).map(|m| m.len()).ok() != Some(data.len() as u64) {
+        std::fs::create_dir_all(dir.join(SAMPLES)).map_err(io)?;
+        atomic_write(&to, &data)?;
+    }
+    Ok(format!("{KEPT}{SAMPLES}/{name}"))
+}
+
+/// The name a sample had before it was copied: a copy's without the hash its name took.
+fn first_name(s: &str) -> String {
+    let name = s.rsplit(['/', '\\']).next().unwrap_or(s);
+    if !s.starts_with(KEPT) {
+        return name.to_string();
+    }
+    let (stem, ext) = name.rsplit_once('.').unwrap_or((name, ""));
+    let stem = match stem.rsplit_once('-') {
+        Some((a, h)) if h.len() == 16 && h.bytes().all(|b| b.is_ascii_hexdigit()) => a,
+        _ => stem,
+    };
+    if ext.is_empty() {
+        stem.to_string()
+    } else {
+        format!("{stem}.{ext}")
+    }
+}
+
+/// Where a preset's sample is on this PC (N-smp-1).
+#[derive(Debug, PartialEq)]
+enum Sample {
+    /// At its place: a copy in the presets' folder, a name in the song, a path.
+    Here(PathBuf),
+    /// Not at its place, but a file of its name is in the song's folder, the preset's or the
+    /// presets' samples (a folder moved, a preset brought from another PC).
+    Moved(PathBuf),
+    /// A name in a song not saved yet: not known to be gone, so kept as the song keeps it.
+    Unplaced,
+    /// Nowhere.
+    Lost,
+}
+
+fn find_sample(s: &str, dir: &Path, song: Option<&Path>, near: Option<&Path>) -> Sample {
+    let at = match s.strip_prefix(KEPT) {
+        Some(rel) => under(dir, rel),
+        None => sample_path(s, song),
+    };
+    match at {
+        Some(p) if p.is_file() => return Sample::Here(p),
+        None if !s.starts_with(KEPT) => return Sample::Unplaced,
+        _ => {}
+    }
+    let name = first_name(s);
+    let mut budget = 20_000;
+    let roots = [
+        song.map(|d| (d.to_path_buf(), 4)),
+        near.map(|d| (d.to_path_buf(), 1)),
+        Some((dir.join(SAMPLES), 0)),
+    ];
+    for (root, depth) in roots.into_iter().flatten() {
+        if let Some(p) = find_named(&root, &name, depth, &mut budget) {
+            return Sample::Moved(p);
+        }
+    }
+    Sample::Lost
+}
+
+/// A file named `name` (letter case aside) in `root` or its folders `depth` deep, looking at
+/// no more than `budget` entries in all.
+fn find_named(root: &Path, name: &str, depth: usize, budget: &mut usize) -> Option<PathBuf> {
+    let mut folders = Vec::new();
+    for e in std::fs::read_dir(root).ok()?.flatten() {
+        if *budget == 0 {
+            return None;
+        }
+        *budget -= 1;
+        let p = e.path();
+        if p.is_dir() {
+            folders.push(p);
+        } else if e.file_name().to_string_lossy().eq_ignore_ascii_case(name) {
+            return Some(p);
+        }
+    }
+    if depth == 0 {
+        return None;
+    }
+    folders.sort();
+    folders
+        .iter()
+        .find_map(|f| find_named(f, name, depth - 1, budget))
+}
+
 /// Runs one of [`NAMES`] on the presets in `dir`; `song` is the open song's folder.
 pub(crate) fn run(
     dir: &Path,
@@ -681,7 +792,7 @@ pub(crate) fn run(
     match name {
         "preset.save" => save(dir, song, project, &entries, a, dry),
         "preset.list" => list(dir, catalog, &entries, &skipped, a),
-        "preset.load" => load(song, project, catalog, &entries, a, dry),
+        "preset.load" => load(dir, song, project, catalog, &entries, a, dry),
         "preset.remove" | "preset.rename" => {
             let spec = a.str("preset")?.trim();
             if is_default(spec) {
@@ -770,12 +881,16 @@ fn save(
         )));
     }
     let mut preset = DevicePreset::capture(x, &name, Some(now_ms()));
-    // A sample is named from the song's folder; the preset keeps where it is, so another
-    // song reads the same file.
+    // A sample is copied into the presets' own folder and named from there: the preset
+    // plays when the file moves, on another PC with the presets' folder, and holds no
+    // folder of the person's (N-smp-1). A file not on the disk keeps only its name, to be
+    // looked for when the preset is loaded.
     if let Some(samples) = preset.device.samples.as_mut() {
         for s in samples.iter_mut() {
-            if let Some(p) = sample_path(s, song) {
-                *s = p.to_string_lossy().into_owned();
+            match sample_path(s, song) {
+                Some(p) if p.is_file() => *s = keep_sample(dir, &p, dry)?,
+                Some(_) => *s = first_name(s),
+                None => {}
             }
         }
     }
@@ -1106,6 +1221,7 @@ fn list_chains(
 }
 
 fn load(
+    dir: &Path,
     song: Option<&Path>,
     project: &Project,
     catalog: &Catalog,
@@ -1125,7 +1241,7 @@ fn load(
         Some(x) => Some(canon_uid(&x.format, &x.uid)),
         None => a.opt_str("device").map(|d| device_key(d, catalog, entries)),
     };
-    let (mut value, preset, mut rows) = if is_default(spec) {
+    let (mut value, preset, mut rows, near) = if is_default(spec) {
         let x = match (ofx, &device) {
             (Some(x), _) => x,
             (None, Some(d)) => project
@@ -1147,7 +1263,7 @@ fn load(
         };
         of = Some(x.id);
         let p = DevicePreset::factory_default(x);
-        (p.to_value(), p, Vec::new())
+        (p.to_value(), p, Vec::new(), None)
     } else {
         let mut found = find_in(entries, spec, device.as_deref());
         // A name every device has (a factory preset's, say) is still clear when the track
@@ -1195,24 +1311,31 @@ fn load(
             return load_chain(song, catalog, tid, v, &fallback, a, dry);
         }
         let (preset, rows) = DevicePreset::parse(&v, Some(&fallback))?;
-        (v, preset, rows)
+        let near = path.parent().map(Path::to_path_buf);
+        (v, preset, rows, near)
     };
-    // A sample that is not on the disk any more is left out, and said so. A name relative to
-    // a song not saved yet is not known to be gone: it is kept, as the song keeps it.
-    let lost: Vec<String> = preset
-        .device
-        .samples
-        .iter()
-        .flatten()
-        .filter(|s| sample_path(s, song).is_some_and(|p| !p.is_file()))
-        .cloned()
-        .collect();
-    if !lost.is_empty()
-        && let Some(list) = value
-            .pointer_mut("/devices/0/samples")
-            .and_then(Value::as_array_mut)
+    // Each sample is named the way the song names its files, from where it is found
+    // (N-smp-1). One found nowhere stays in the list for the edit to take away with its
+    // own values, and is said by its name; one moved is named where it was found.
+    let mut lost: Vec<String> = Vec::new();
+    if let Some(list) = value
+        .pointer_mut("/devices/0/samples")
+        .and_then(Value::as_array_mut)
     {
-        list.retain(|s| !s.as_str().is_some_and(|s| lost.iter().any(|l| l == s)));
+        for item in list.iter_mut() {
+            let Some(s) = item.as_str().map(str::to_string) else {
+                continue;
+            };
+            match find_sample(&s, dir, song, near.as_deref()) {
+                Sample::Here(p) | Sample::Moved(p) => *item = json!(song_path(&p, song)),
+                Sample::Unplaced => {}
+                Sample::Lost => {
+                    let name = first_name(&s);
+                    *item = json!(name);
+                    lost.push(name);
+                }
+            }
+        }
     }
     let missed = !preset.device.format.eq_ignore_ascii_case("builtin")
         && !catalog.entries.is_empty()

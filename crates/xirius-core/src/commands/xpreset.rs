@@ -279,6 +279,19 @@ fn put(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
             }
         },
     };
+    // A sample not found is left out with its own values; the other files keep theirs
+    // (N-smp-1).
+    if !lost.is_empty()
+        && let Some(x) = p
+            .track_mut(tid)?
+            .inserts
+            .iter_mut()
+            .find(|x| x.id == plugin)
+        && let Some(def) = x.builtin()
+    {
+        let gone: Vec<bool> = x.samples.iter().map(|s| lost.contains(s)).collect();
+        super::samples::drop_files(def, x, &gone);
+    }
     rows.extend(p.fix_track_rack(tid));
     Ok(Output::with(
         message,
@@ -288,14 +301,22 @@ fn put(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
 
 /// The preset's settings on the plug-in: parameters and state are the preset's, but for the
 /// knobs no preset holds ([`xpreset::holds`]), which stay as they are; samples only when the
-/// file carried them (an old `plugin.preset` file leaves them alone).
+/// file carried them. An old file that says nothing of samples leaves the files alone, and
+/// with them their own values and the pads' (N-smp-2).
 fn apply(x: &mut Plugin, dev: &PresetDevice, name: &str) {
+    let laid_out = |x: &Plugin, k: &str| {
+        x.builtin()
+            .and_then(|d| d.resolve(k))
+            .is_some_and(|r| r.scope != xirius_params::Scope::Device)
+    };
+    let stays =
+        |x: &Plugin, k: &str| !xpreset::holds(x, k) || (dev.samples.is_none() && laid_out(x, k));
     let mut params = dev.params.clone();
-    params.retain(|k, _| xpreset::holds(x, k));
+    params.retain(|k, _| !stays(x, k));
     params.extend(
         x.params
             .iter()
-            .filter(|(k, _)| !xpreset::holds(x, k))
+            .filter(|(k, _)| stays(x, k))
             .map(|(k, v)| (k.clone(), *v)),
     );
     x.params = params;

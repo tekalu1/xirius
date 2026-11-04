@@ -354,7 +354,6 @@ fn remove(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
     if pad.is_some() && def.per_pad.is_empty() {
         return Err(CmdError::invalid("--pad はドラムキットにだけ使えます"));
     }
-    pin_pads(def, x);
     let gone: Vec<bool> = (0..x.samples.len())
         .map(|i| match (index, pad) {
             (Some(n), _) => i + 1 == n,
@@ -369,6 +368,17 @@ fn remove(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
             None => format!("{} のそのパッドにサンプルはありません", x.name),
         }));
     }
+    drop_files(def, x, &gone);
+    Ok(Output::with(
+        format!("{} のサンプルを {count} 個外しました", x.name),
+        json!({ "plugin": id.to_string(), "removed": count, "left": x.samples.len() }),
+    ))
+}
+
+/// Takes the files `gone` says away from the device `x`: the later files' values move down
+/// with them, and a Drum Kit's files stay on their pads.
+pub fn drop_files(def: &BuiltinDef, x: &mut Plugin, gone: &[bool]) {
+    pin_pads(def, x);
     // Where each kept file goes: its values move down with it.
     let mut to = vec![None; gone.len()];
     let mut next = 0;
@@ -400,12 +410,8 @@ fn remove(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
     let mut i = 0;
     x.samples.retain(|_| {
         i += 1;
-        !gone[i - 1]
+        !gone.get(i - 1).copied().unwrap_or(false)
     });
-    Ok(Output::with(
-        format!("{} のサンプルを {count} 個外しました", x.name),
-        json!({ "plugin": id.to_string(), "removed": count, "left": x.samples.len() }),
-    ))
 }
 
 /// Writes down the pad of every file of a Drum Kit that has none (it was on the pad of its
