@@ -168,6 +168,26 @@ fn ui_324_escape_during_a_drag_puts_nothing_in() {
     assert_eq!(value(&s, t, "feedback").1, start);
 }
 
+/// The macro pad keeping its focus does not take that Esc: the drag lets go, and the pad
+/// still has the keys.
+#[test]
+fn escape_during_a_drag_lets_go_before_the_macro_pad_takes_it() {
+    let (mut s, g, t, id) = delay();
+    let (k, start) = value(&s, t, "feedback");
+    s.open_macros(t);
+    s.macro_pad.as_mut().unwrap().focused = true;
+    let (x, y) = center(&s, &g, id, k);
+    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
+    assert!(s.instrument_moved(&g, x, y - 30.0, false));
+    assert!(s.field_keys(&g, "escape", None, Mods::NONE));
+    assert!(s.instruments.grab.is_none());
+    assert!(
+        s.macro_pad.as_ref().unwrap().focused,
+        "the pad keeps the keys"
+    );
+    assert_eq!(value(&s, t, "feedback").1, start);
+}
+
 #[test]
 fn ui_324_shift_drags_a_quarter_as_far() {
     let (mut s, g, t, id) = delay();

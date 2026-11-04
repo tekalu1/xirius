@@ -1909,6 +1909,11 @@ impl Studio {
         mods: Mods,
     ) -> bool {
         self.inspector_follow(g);
+        // Esc during a press on a device's window lets go of it first, whatever else has the
+        // keys (the macro pad's focus, the grip's).
+        if key == "escape" && self.instrument_cancel() {
+            return true;
+        }
         // Esc while waiting for a controller's knob, or while its clash asks, ends the wait first
         // (OPS-007), not a row's or the pad's hold on the keys.
         let assign = &self.live_midi.assign;
