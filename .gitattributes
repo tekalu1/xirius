@@ -1,1 +1,2 @@
 * text=auto eol=lf
+third_party/ara_api/** text eol=crlf
