@@ -109,6 +109,7 @@ impl Studio {
         // (N-smp-5); the others go in.
         let (paths, other): (Vec<&PathBuf>, Vec<&PathBuf>) = paths
             .iter()
+            // design-lint: allow(ui-blocking-io) PLG-068 review: one metadata read per path the OS has just dropped, once, to keep folders (the session walks them on its job).
             .partition(|p| p.is_dir() || crate::drop_audio::is_audio(p));
         let refused = (!other.is_empty()).then(|| {
             let names: Vec<_> = other
