@@ -112,6 +112,14 @@ fn read_groove(path: &Path, ppq: u32) -> Result<serde_json::Value, String> {
 }
 
 impl Studio {
+    /// Whether files dropped at `(x, y)` go to the quantize panel's groove: the drag's plan
+    /// looks here first, as the drop does (low 14 of the fourth review).
+    pub(crate) fn groove_over(&self, g: &Geometry, x: f32, y: f32) -> bool {
+        self.popup
+            .as_ref()
+            .is_some_and(|p| p.kind == PopupKind::Quantize && p.layout(g.size).rect.contains(x, y))
+    }
+
     pub(crate) fn groove_drop(
         &mut self,
         g: &Geometry,
@@ -119,11 +127,7 @@ impl Studio {
         y: f32,
         paths: &[std::path::PathBuf],
     ) -> bool {
-        if !self
-            .popup
-            .as_ref()
-            .is_some_and(|p| p.kind == PopupKind::Quantize && p.layout(g.size).rect.contains(x, y))
-        {
+        if !self.groove_over(g, x, y) {
             return false;
         }
         if let Some(path) = paths.first()

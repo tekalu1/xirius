@@ -1576,6 +1576,40 @@ fn n4_kit_2_shift_of_an_os_drag_is_read_from_the_os() {
     assert!(!s.instruments.drop_layers, "the drop takes the Shift");
 }
 
+/// Low 14 of the fourth review: what takes a drop before the window takes the plan too. A
+/// `.dawproject` among the files opens as a song, and over the quantize panel the groove
+/// takes them: no pads are planned there.
+#[test]
+fn the_plan_gives_way_where_a_dawproject_or_the_groove_takes_the_drop() {
+    let (dir, two) = wavs(&["Snare.wav", "Clap.wav"]);
+    let (mut s, g, _, id) = window("Drum Kit");
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).expect("A1");
+    let mut with_song = two.clone();
+    with_song.push(dir.path().join("Song.dawproject"));
+    s.files_moved(&g, x, y, &with_song, false);
+    assert!(s.instruments.preview.is_none());
+    assert!(s.instruments.drop_on.is_none());
+    s.files_moved(&g, x, y, &two, false);
+    assert!(s.instruments.preview.is_some());
+    s.open_popup(
+        crate::popup::PopupKind::Quantize,
+        crate::studio::Rect::new(x, y, 1.0, 1.0),
+    );
+    let r = s.popup.as_ref().unwrap().layout(g.size).rect;
+    let frame = s.instruments.frame(0, &g);
+    let (px, py) = (
+        r.x.max(frame.x) + 2.0,
+        r.y.max(frame.y + crate::title_bar::BAR_H) + 2.0,
+    );
+    assert!(
+        r.contains(px, py) && frame.contains(px, py),
+        "{r:?} {frame:?}"
+    );
+    s.files_moved(&g, px, py, &two, false);
+    assert!(s.instruments.preview.is_none());
+    assert!(s.instruments.drop_on.is_none());
+}
+
 /// Low 20 of the fourth review: input held in the middle of a drag (a question on the song)
 /// puts out the plan and the light at the next move, not only when the drag leaves.
 #[test]

@@ -88,9 +88,20 @@ impl Studio {
         self.instruments.dragged.of(paths);
         self.instruments.dragged.at = Some((x, y));
         let held = self.instruments.dragged.clone();
-        let drop_on = self.drop_target(g, x, y);
+        // What takes the drop before a window does takes the plan too: a `.dawproject` and the
+        // quantize panel's groove (low 14 of the fourth review).
+        let first = held
+            .paths
+            .iter()
+            .any(|p| xirius_core::dawproject::is_dawproject(p))
+            || self.groove_over(g, x, y);
+        let drop_on = self.drop_target(g, x, y).filter(|_| !first);
         let on_layers = drop_on.is_some_and(|d| d.1 == sampler::DropOn::Layers);
-        let preview = self.kit_plan(g, x, y, &held.names, shift || on_layers);
+        let preview = if first {
+            None
+        } else {
+            self.kit_plan(g, x, y, &held.names, shift || on_layers)
+        };
         let changed = self.instruments.preview != preview || self.instruments.drop_on != drop_on;
         self.instruments.preview = preview;
         self.instruments.drop_on = drop_on;
