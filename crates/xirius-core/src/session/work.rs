@@ -1223,6 +1223,8 @@ impl Session {
             return Ok(RunResult::new("ai.batch", Output::msg(msg), changes));
         }
         self.begin_request(&opts.author, &title, RequestMode::Direct)?;
+        // what a macro kept a step from changing (the step's own message is not returned)
+        let mut held: Vec<Value> = Vec::new();
         for (i, (cmd, a)) in steps.iter().enumerate() {
             match self.run(cmd, a, opts) {
                 Err(e) => {
@@ -1230,6 +1232,9 @@ impl Session {
                     return Err(wrap(i, cmd, e, "すべて取り消しました"));
                 }
                 Ok(r) => {
+                    if let Some(h) = r.data.get("held").and_then(Value::as_array) {
+                        held.extend(h.iter().cloned());
+                    }
                     if let Some(d) = r.decision {
                         self.ai_work.pending.retain(|p| p.token != d.token);
                         let _ = self.revert_request();
@@ -1248,12 +1253,17 @@ impl Session {
         }
         let req = self.ai_work.req.take().expect("the batch's request");
         let o = self.finish_direct(req, "done")?;
-        let msg = format!("{} 件の操作を 1 つの操作にまとめました", o.commands);
-        let mut r = RunResult::new(
-            "ai.batch",
-            Output::with(msg, json!({ "title": o.title, "commands": o.commands })),
-            o.changes,
-        );
+        let mut msg = format!("{} 件の操作を 1 つの操作にまとめました", o.commands);
+        let mut data = json!({ "title": o.title, "commands": o.commands });
+        if !held.is_empty() {
+            let names: Vec<&str> = held.iter().filter_map(Value::as_str).collect();
+            msg.push_str(&format!(
+                "（{} はマクロのつまみが動かしているため、変えませんでした）",
+                names.join("・")
+            ));
+            data["held"] = Value::Array(held);
+        }
+        let mut r = RunResult::new("ai.batch", Output::with(msg, data), o.changes);
         r.step = o.step;
         Ok(r)
     }

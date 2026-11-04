@@ -593,3 +593,37 @@ fn the_clock_makes_save_points_on_its_own_and_stops() {
     std::thread::sleep(Duration::from_millis(60));
     assert_eq!(*made.lock().unwrap(), 1, "stopped for good");
 }
+
+/// What a macro holds: a step that only touches it is a conflict and the batch goes back
+/// whole; a step that a macro kept partly from changing leaves the names in `data.held`.
+#[test]
+fn a_batch_says_in_its_data_what_a_macro_kept() {
+    let mut s = session();
+    let t = id_of(&human(&mut s, "track.add.audio", json!({"name": "Vocal"})));
+    let u = id_of(&human(&mut s, "track.add.audio", json!({"name": "Keys"})));
+    human(
+        &mut s,
+        "control.assign",
+        json!({"track": t, "control": "k1", "target": "volume"}),
+    );
+    let e = ai(
+        &mut s,
+        "ai.batch",
+        json!({"commands": [
+            {"command": "track.volume.set", "args": {"ids": [t], "db": -6.0}},
+        ]}),
+    )
+    .expect_err("held by the macro");
+    assert_eq!(e.code, ErrorCode::Conflict, "{}", e.message);
+    let r = ai_ok(
+        &mut s,
+        "ai.batch",
+        json!({"commands": [
+            {"command": "track.volume.set", "args": {"ids": [t, u], "db": -3.0}},
+        ]}),
+    );
+    let held = r.data["held"].as_array().expect("held in data");
+    assert_eq!(held.len(), 1, "{held:?}");
+    assert!(held[0].as_str().unwrap().contains("Vocal"), "{held:?}");
+    assert!(r.message.contains("変えませんでした"), "{}", r.message);
+}

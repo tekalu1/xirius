@@ -1536,7 +1536,7 @@ impl Session {
             let mut a = work.clone();
             a.next_id = before.next_id;
             if a == *before && !held.is_empty() {
-                return Err(CmdError::invalid(format!(
+                return Err(CmdError::conflict(format!(
                     "{} はマクロのつまみが動かしています（つまみの値を変えるか、割り当てを外してください）",
                     held.join("・")
                 )));
@@ -1562,6 +1562,13 @@ impl Session {
                 "（{} はマクロのつまみが動かしているため、変えませんでした）",
                 held.join("・")
             ));
+            // the AI reads `data`, not the message
+            if result.data.is_null() {
+                result.data = json!({});
+            }
+            if let Some(d) = result.data.as_object_mut() {
+                d.insert("held".into(), json!(held));
+            }
         }
         if dry {
             return Ok(result);
