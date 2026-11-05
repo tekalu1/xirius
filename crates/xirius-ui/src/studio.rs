@@ -700,6 +700,8 @@ pub struct Studio {
     pub(crate) inserts_wait: Option<crate::insert_states::Wait>,
     /// The plug-ins have just answered: the copy or the paste runs without asking again.
     pub(crate) inserts_read: bool,
+    /// A wait was dropped with its song: the input held for it goes too (MIX-045).
+    pub(crate) held_input_dropped: std::cell::Cell<bool>,
     /// The levels of the inputs of the armed tracks (REC-002).
     pub inputs: crate::inmeter::InputMeters,
     /// Tracks whose Comp and take rows are open under the track (REC-005). They start folded:
@@ -906,6 +908,7 @@ impl Studio {
             mixer: crate::mixer::Mixer::default(),
             inserts_wait: None,
             inserts_read: false,
+            held_input_dropped: std::cell::Cell::new(false),
             inputs: crate::inmeter::InputMeters::default(),
             takes_open: HashSet::new(),
             comp_sel: None,

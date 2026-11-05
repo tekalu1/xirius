@@ -4,7 +4,6 @@
 use serde_json::json;
 use xirius_core::clipboard::Clipboard;
 use xirius_core::id::PluginId;
-use xirius_session::host::PULL_WAIT;
 
 use super::*;
 use crate::held_input::{Held, HeldInput};
@@ -340,24 +339,33 @@ fn ctrl_c_on_the_heading_copies_what_the_plugin_holds_now() {
 }
 
 #[test]
-fn a_plugin_that_does_not_answer_in_time_is_copied_as_the_song_last_had_it() {
+fn a_wait_cut_short_still_reads_the_plugins_in_this_process() {
     let Song {
         mut s,
         g,
         vocal,
         guitar,
         from,
-        ..
+        to,
     } = song("inprocess");
     turn_silently(&mut s, from, 0.5);
+    turn_silently(&mut s, to, 0.625);
+    // a copy reads them itself: nothing to wait for
+    assert!(
+        s.arrange_run("channel.inserts.copy", json!({ "id": vocal.to_string() }))
+            .is_some()
+    );
+    assert!(s.inserts_wait.is_none(), "copied at once");
     drag(&mut s, &g, vocal, guitar);
-    // an in-process capture is not ready before it has been given its time
-    let wait = s.inserts_wait.as_mut().expect("waiting");
-    wait.since -= PULL_WAIT;
-    assert!(s.poll_inserts_wait());
-    assert!(s.inserts_wait.is_none(), "not waited for any longer");
-    assert_eq!(held(&s, guitar), (0.75, None), "the song's last state");
+    assert!(s.inserts_wait.is_some());
+    // the window closed or the song left at once: what they hold is still read
+    s.inserts_wait_flush();
+    assert!(s.inserts_wait.is_none());
+    assert_eq!(held(&s, guitar), (0.5, Some(delay(0.5))));
     assert_eq!(s.notice_text(), Some("インサートを貼り付けました"));
+    assert!(s.undo(&g));
+    assert_eq!(s.project().tracks[&guitar].inserts[0].id, to);
+    assert_eq!(held(&s, guitar), (0.625, Some(delay(0.625))));
     s.transport.pause();
 }
 
@@ -413,5 +421,167 @@ fn built_in_effects_alone_are_copied_at_once() {
     drag(&mut s, &g, vocal, guitar);
     assert!(s.inserts_wait.is_none(), "nothing to ask");
     assert_eq!(s.project().tracks[&guitar].inserts[0].name, "EQ");
+    s.transport.pause();
+}
+
+fn has_track(s: &Studio, name: &str) -> bool {
+    s.project().tracks.values().any(|t| t.name == name)
+}
+
+#[test]
+fn a_macro_copies_what_the_plugin_holds_now_before_its_next_step() {
+    let Song {
+        mut s,
+        g,
+        vocal,
+        from,
+        ..
+    } = song("dedicated");
+    turn_silently(&mut s, from, 0.5);
+    s.song.settings().lock().unwrap().macros.set(
+        "Copy",
+        vec![
+            format!("channel.inserts.copy --id {vocal}"),
+            "track.add.audio --name After".into(),
+        ],
+    );
+    assert!(s.run_macro(&g, "Copy"));
+    assert!(s.inserts_wait.is_some(), "the step waits for the plug-in");
+    assert!(!has_track(&s, "After"), "the next step waits too");
+    crate::shot::run_for(&mut s, 5.0, |s| has_track(s, "After"));
+    assert_eq!(s.error, None);
+    let Some(Clipboard::Inserts(c)) = &s.song.session().state.clipboard else {
+        panic!("the inserts are copied");
+    };
+    let state = c.plugins[0].state.as_ref().expect("with a state");
+    assert_eq!(
+        xirius_plugins::decode_state(state).unwrap().component,
+        delay(0.5)
+    );
+    assert!(has_track(&s, "After"), "and the macro went on");
+    assert!(s.macro_run.is_none());
+    s.transport.pause();
+}
+
+#[test]
+fn a_macro_pastes_what_the_plugin_holds_now_before_its_next_step() {
+    let Song {
+        mut s,
+        g,
+        vocal,
+        guitar,
+        from,
+        to,
+    } = song("dedicated");
+    turn_silently(&mut s, from, 0.5);
+    turn_silently(&mut s, to, 0.625);
+    s.song.settings().lock().unwrap().macros.set(
+        "Paste",
+        vec![
+            format!("channel.inserts.copy --id {vocal}"),
+            // the words a macro writes: the plug-in it replaces is asked too
+            format!("channel.inserts.paste --from {vocal} --ids {guitar}"),
+            "track.add.audio --name After".into(),
+        ],
+    );
+    assert!(s.run_macro(&g, "Paste"));
+    crate::shot::run_for(&mut s, 10.0, |s| has_track(s, "After"));
+    assert_eq!(s.error, None);
+    assert!(has_track(&s, "After"));
+    assert_eq!(
+        held(&s, guitar),
+        (0.5, Some(delay(0.5))),
+        "pasted as it is now"
+    );
+    // the macro is one step: an undo takes it all back, the replaced one as it answered
+    assert!(s.undo(&g));
+    assert!(!has_track(&s, "After"));
+    assert_eq!(s.project().tracks[&guitar].inserts[0].id, to);
+    assert_eq!(held(&s, guitar), (0.625, Some(delay(0.625))));
+    s.transport.pause();
+}
+
+#[test]
+fn a_macro_paste_that_cannot_run_after_its_wait_is_said_and_stops_the_macro() {
+    let Song {
+        mut s,
+        g,
+        vocal,
+        guitar,
+        ..
+    } = song("dedicated");
+    s.song.settings().lock().unwrap().macros.set(
+        "Paste",
+        vec![
+            format!("channel.inserts.paste --from {vocal} --ids {guitar}"),
+            "track.add.audio --name After".into(),
+        ],
+    );
+    assert!(s.run_macro(&g, "Paste"));
+    assert!(s.inserts_wait.is_some());
+    // the target goes while it waits (only a script could do so)
+    s.song
+        .run("track.delete", json!({ "ids": [guitar.to_string()] }))
+        .unwrap();
+    crate::shot::run_for(&mut s, 5.0, |s| {
+        s.inserts_wait.is_none() && s.macro_run.is_none()
+    });
+    assert!(s.inserts_wait.is_none());
+    assert!(s.macro_run.is_none(), "the macro stopped");
+    assert!(s.error.is_some(), "and says why");
+    assert!(!has_track(&s, "After"), "its next step did not run");
+    s.transport.pause();
+}
+
+#[test]
+fn input_held_for_a_paste_whose_song_is_replaced_is_dropped_with_it() {
+    let Song {
+        mut s,
+        g,
+        vocal,
+        guitar,
+        ..
+    } = song("dedicated");
+    drag(&mut s, &g, vocal, guitar);
+    assert!(s.inserts_wait.is_some());
+    let mut typed = HeldInput::default();
+    assert!(typed.hold(s.input_hold(), Held::Text(None, "z".into())));
+    assert!(!s.take_held_input_dropped());
+    s.new_song_sync();
+    assert!(s.take_held_input_dropped(), "the window throws it away");
+    assert!(!s.take_held_input_dropped(), "once");
+    // as the window does with it (Screen's render): nothing typed reaches the next song
+    typed.forget();
+    assert!(typed.release(s.input_hold()).is_empty());
+    s.transport.pause();
+}
+
+#[test]
+fn leaving_for_a_new_song_puts_a_waiting_paste_in_this_one_first() {
+    let Song {
+        mut s,
+        g,
+        vocal,
+        guitar,
+        to,
+        ..
+    } = song("dedicated");
+    drag(&mut s, &g, vocal, guitar);
+    assert!(s.inserts_wait.is_some());
+    s.start_leaving(crate::saving::Leave::New);
+    assert!(
+        s.inserts_wait.is_none(),
+        "not left running beside the leaving"
+    );
+    assert_ne!(
+        s.project().tracks[&guitar].inserts[0].id,
+        to,
+        "the paste is in the song being left"
+    );
+    assert!(
+        !s.take_held_input_dropped(),
+        "what was typed meanwhile still goes to it"
+    );
+    assert!(!s.poll_inserts_wait(), "and it does not run again");
     s.transport.pause();
 }

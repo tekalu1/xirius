@@ -47,6 +47,11 @@ impl HeldInput {
         true
     }
 
+    /// Throws away what waited: what it was for has gone with its song (MIX-045).
+    pub(crate) fn forget(&mut self) {
+        self.0.clear();
+    }
+
     /// What waited, once nothing holds the window.
     pub(crate) fn release(&mut self, holding: Option<bool>) -> Vec<Held> {
         if holding.is_some() {

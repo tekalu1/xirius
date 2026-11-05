@@ -19,7 +19,12 @@
 //! The wait belongs to the song it began in. Leaving that song or closing the window runs the
 //! command first, with what has answered ([`Studio::inserts_wait_flush`]), so the paste is in
 //! the song the question whether to save asks about; a song replaced by another way drops it
-//! ([`Studio::inserts_wait_drop`]), never running it in the next song.
+//! ([`Studio::inserts_wait_drop`]), never running it in the next song, nor the input held
+//! meanwhile.
+//!
+//! A step of a macro waits the same way: the macro goes on once the command has run, as one of
+//! its steps, and stops when it could not. A command that could not run after its wait is
+//! said, never dropped without a word.
 
 use std::collections::HashSet;
 use std::time::Instant;
@@ -39,6 +44,8 @@ pub(crate) struct Wait {
     args: Value,
     pull: StatePull,
     since: Instant,
+    /// A step of the macro running when it began: it runs as that step.
+    in_macro: bool,
 }
 
 impl Wait {
@@ -81,6 +88,7 @@ impl Studio {
             args: args.clone(),
             pull,
             since: crate::wait::now(),
+            in_macro: self.macro_stepping,
         };
         if wait.pull.ready() && wait.pull.error().is_none() {
             // only built-in effects, or plug-ins that had nothing to read: no frame to wait
@@ -125,7 +133,15 @@ impl Studio {
     pub(crate) fn inserts_wait_drop(&mut self) {
         if let Some(wait) = self.inserts_wait.take() {
             wait.pull.quarantine();
+            // what was typed or pressed meanwhile was meant for that song too
+            self.held_input_dropped.set(true);
         }
+    }
+
+    /// Whether the input held while a copy or a paste waited was dropped with it since the
+    /// last look ([`Studio::inserts_wait_drop`]): the window throws it away.
+    pub(crate) fn take_held_input_dropped(&self) -> bool {
+        self.held_input_dropped.take()
     }
 
     /// Reads what the plug-ins answered and runs the command with it. True when it ran.
@@ -139,11 +155,30 @@ impl Studio {
             self.after_edit();
         }
         self.inserts_read = true;
+        // a macro's step runs as the step it is, the macro waiting for it
+        let stepping = self.macro_stepping;
+        self.macro_stepping |= wait.in_macro;
         // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         let ran = self.arrange_run(&wait.command, wait.args.clone());
+        self.macro_stepping = stepping;
         self.inserts_read = false;
         if wait.copy() && ran.is_some() {
             self.inserts_copy_states(&wait);
+        }
+        if ran.is_none() {
+            // refused (said already), or the window turned to something else meanwhile
+            let what = if wait.copy() {
+                "コピー"
+            } else {
+                "貼り付け"
+            };
+            let reason = self.error.clone().unwrap_or_else(|| {
+                format!("インサートの{what}を実行できませんでした。曲が別の処理中です")
+            });
+            self.error = Some(reason.clone());
+            if wait.in_macro {
+                self.fail_macro(reason);
+            }
         }
         ran.is_some()
     }
@@ -166,7 +201,8 @@ impl Studio {
     }
 
     /// The plug-ins whose state `command` copies or throws away: the source's inserts, and
-    /// the targets' when they are replaced.
+    /// the targets' when they are replaced. The targets are read as the command reads them:
+    /// a list, words a macro or the palette wrote (`--ids a,b`), or the selection.
     fn inserts_plugins(&self, command: &str, args: &Value) -> HashSet<PluginId> {
         let track = |v: &Value| v.as_str().and_then(|s| s.parse::<TrackId>().ok());
         let mut tracks: Vec<TrackId> = Vec::new();
@@ -174,9 +210,28 @@ impl Studio {
             "channel.inserts.copy" => tracks.extend(track(&args["id"])),
             "channel.inserts.paste" => {
                 tracks.extend(track(&args["from"]));
-                if args["append"].as_bool() != Some(true) {
-                    let ids = args["ids"].as_array().map_or(&[][..], Vec::as_slice);
-                    tracks.extend(ids.iter().filter_map(track));
+                let append = match &args["append"] {
+                    Value::Bool(b) => *b,
+                    Value::String(s) => s == "true",
+                    _ => false,
+                };
+                if !append {
+                    match &args["ids"] {
+                        Value::Array(ids) => tracks.extend(ids.iter().filter_map(track)),
+                        Value::String(ids) => tracks.extend(
+                            ids.split([',', ' '])
+                                .filter_map(|s| s.parse::<TrackId>().ok()),
+                        ),
+                        Value::Null => {
+                            tracks.extend(self.song.session().state.selection.iter().filter_map(
+                                |i| match i {
+                                    xirius_core::id::AnyId::Track(t) => Some(*t),
+                                    _ => None,
+                                },
+                            ))
+                        }
+                        _ => {}
+                    }
                 }
             }
             "edit.paste"

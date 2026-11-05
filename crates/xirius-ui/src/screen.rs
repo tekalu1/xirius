@@ -1635,6 +1635,10 @@ impl Render for Screen {
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
             }
         }
+        // input held for a copy or a paste whose song has gone is not given to the next one
+        if self.studio.borrow().take_held_input_dropped() {
+            self.pending_save_input.forget();
+        }
         let inputs = self
             .pending_save_input
             .release(self.studio.borrow().input_hold());

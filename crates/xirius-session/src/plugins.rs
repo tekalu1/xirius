@@ -286,7 +286,7 @@ pub struct StatePull {
     owned: Vec<(PluginId, crate::owned_local::Capture)>,
     basis: HashMap<PluginId, StateIntent>,
     ignored: std::cell::RefCell<HashSet<PluginId>>,
-    not_before: Instant,
+    not_before: std::cell::Cell<Instant>,
 }
 impl StatePull {
     pub fn reconcile(&self, target: &xirius_core::model::Project) {
@@ -320,6 +320,8 @@ impl StatePull {
     /// are read on their own (MIX-045): one host gone down does not throw away the others'
     /// states. A late answer is quarantined, not put in the song afterwards.
     pub fn settle(&self) {
+        // what is read now is read now, though a plugin in this process had a moment more
+        self.not_before.set(Instant::now());
         let mut ignored = self.ignored.borrow_mut();
         for (id, _) in &self.errors {
             ignored.insert(*id);
@@ -353,7 +355,7 @@ impl StatePull {
 
     pub fn ready(&self) -> bool {
         self.cancelled.get()
-            || (Instant::now() >= self.not_before
+            || (Instant::now() >= self.not_before.get()
                 && self.asked.iter().all(|(id, link, request)| {
                     self.ignored.borrow().contains(id) || link.capture_finished(*request)
                 })
@@ -2425,7 +2427,15 @@ impl PluginLoader {
             owned,
             basis,
             ignored: Default::default(),
-            not_before: Instant::now() + if local { CAPTURE_WAIT } else { Duration::ZERO },
+            // a peek reads a plugin in this process itself, with no capture to wait for
+            not_before: std::cell::Cell::new(
+                Instant::now()
+                    + if local && !peek {
+                        CAPTURE_WAIT
+                    } else {
+                        Duration::ZERO
+                    },
+            ),
         }
     }
 
