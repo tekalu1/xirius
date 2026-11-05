@@ -1356,6 +1356,8 @@ impl Studio {
     /// the top; else the unpinned window used last takes it in; else, all
     /// pinned, a new window opens a step on. Its frame lights either way.
     pub(crate) fn show_instrument(&mut self, t: TrackId, id: PluginId) {
+        // Another window asked for: the one waiting for a plugin just put in is not (PLG-050).
+        self.mixer.open_later = None;
         // A sweep on the device whose window this one takes in goes into the song first, on
         // the zone or the pad the window shows (the window gone, it would go to the first).
         let ins = &self.instruments;

@@ -13,9 +13,13 @@ use crate::studio::Studio;
 pub(crate) const GIVE_UP_MS: u64 = 8_000;
 /// One turn of a spinner.
 pub(crate) const TURN_MS: u64 = 900;
-/// How long a window asked for with a plugin just put in waits for the plugin host. A heavy
-/// plugin takes a while; one never reported is said as not loaded.
-pub(crate) const OPEN_GIVE_UP_MS: u64 = 30_000;
+/// How long a window asked for with a plugin just put in waits for the plugin host, as long
+/// as its item's spinner turns. Past it the person has gone on to something else: the window
+/// is not asked for, and nothing is said (its row still opens it).
+pub(crate) const OPEN_GIVE_UP_MS: u64 = GIVE_UP_MS;
+/// The most of the time between two frames that counts toward the wait: while the window is
+/// held (saving, opening, preparing the sound) its frames do not ask, and that does not count.
+const OPEN_FRAME_MS: u64 = 250;
 
 /// A plugin of the list that is being loaded.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,7 +34,10 @@ pub struct Loading {
 pub struct OpenLater {
     pub track: TrackId,
     pub id: PluginId,
-    pub since: u64,
+    /// How long it has waited, in frames that asked ([`OPEN_FRAME_MS`]).
+    pub waited: u64,
+    /// When a frame last asked.
+    pub seen: u64,
 }
 
 /// The plugin host of a test: which plugins it has, and the windows asked for of it.
@@ -106,7 +113,8 @@ impl Studio {
             self.mixer.open_later = Some(OpenLater {
                 track: t,
                 id,
-                since: now_ms(),
+                waited: 0,
+                seen: now_ms(),
             });
             return;
         }
@@ -123,24 +131,24 @@ impl Studio {
         self.transport.is_windowed() && self.transport.host().is_some()
     }
 
-    /// Whether the plugin host has `id`, played, failed or gone down: its window can be asked
-    /// for, or says why not.
+    /// Whether the plugin host has answered for `id` (it opened it, failed to, or went down):
+    /// its window can be asked for, or says once why not ([`Studio::open_plugin`]).
     pub(crate) fn has_loaded(&self, id: PluginId) -> bool {
         #[cfg(test)]
         if let Some(fake) = &self.mixer.fake_load {
             return fake.loaded.contains(&id);
         }
-        self.transport.host().is_some_and(|h| {
-            h.plugins().local(id).is_some() || h.plugin_statuses().iter().any(|(at, ..)| *at == id)
-        })
+        self.transport
+            .host()
+            .is_some_and(|h| h.plugins().answered(id))
     }
 
     /// Once a frame: the window asked for with a plugin just put in opens, once, when the host
-    /// has it. It does not when the plugin was taken out or another song is open; a plugin
-    /// that failed is said as a window that cannot open. True while it waits, so frames keep
-    /// coming.
+    /// has answered for it; one that failed says so where a window that cannot open does. It
+    /// does not open when the plugin was taken out, another song is open or another window
+    /// was opened, and not after the wait. True while it waits, so frames keep coming.
     pub(crate) fn poll_open_later(&mut self) -> bool {
-        let Some(w) = self.mixer.open_later else {
+        let Some(mut w) = self.mixer.open_later else {
             return false;
         };
         let here = self
@@ -152,8 +160,15 @@ impl Studio {
             self.mixer.open_later = None;
             return false;
         }
-        let waited = now_ms().saturating_sub(w.since) > OPEN_GIVE_UP_MS;
-        if self.loads_apart() && !self.has_loaded(w.id) && !waited {
+        if self.loads_apart() && !self.has_loaded(w.id) {
+            let now = now_ms();
+            w.waited += now.saturating_sub(w.seen).min(OPEN_FRAME_MS);
+            w.seen = now;
+            if w.waited > OPEN_GIVE_UP_MS {
+                self.mixer.open_later = None;
+                return false;
+            }
+            self.mixer.open_later = Some(w);
             return true;
         }
         self.mixer.open_later = None;
@@ -322,11 +337,11 @@ mod tests {
         frames_loaded(&mut s, t, id);
     }
 
-    /// A plugin the host failed to open, or that took the host down, is loaded as far as its
-    /// window goes: the window is asked for once and says why it cannot open. One never
-    /// reported is asked for once the wait is over, and says it was not loaded.
+    /// A plugin the host failed to open, or that took the host down, is answered for: the
+    /// window is asked for once and says why it cannot open. One never answered for is not
+    /// asked for once the wait is over, and nothing is said.
     #[test]
-    fn a_plugin_that_failed_or_never_answers_is_asked_for_once() {
+    fn a_plugin_that_failed_is_asked_for_once_and_one_never_answered_for_is_dropped() {
         let mut s = apart();
         let t = track(&s, "Vocal");
         let id = put_in(&mut s, t);
@@ -337,11 +352,30 @@ mod tests {
         let id = put_in(&mut s, t);
         frames_loading(&mut s, id);
         if let Some(w) = &mut s.mixer.open_later {
-            w.since = now_ms().saturating_sub(OPEN_GIVE_UP_MS + 1);
+            w.waited = OPEN_GIVE_UP_MS;
+            w.seen = now_ms().saturating_sub(OPEN_FRAME_MS);
         }
-        assert!(s.poll_open_later());
+        assert!(!s.poll_open_later(), "no frames once it is given up");
+        assert_eq!(s.mixer.open_later, None);
+        loaded(&mut s, id);
         assert!(!s.poll_open_later());
-        assert_eq!(asked(&s), vec![(t, id)]);
+        assert!(asked(&s).is_empty(), "not opened late");
+        assert_eq!(s.error, None, "nothing said");
+    }
+
+    /// The time the window's frames do not ask (saving, opening, preparing the sound) does
+    /// not count toward the wait.
+    #[test]
+    fn time_the_window_is_held_does_not_count_toward_the_wait() {
+        let mut s = apart();
+        let t = track(&s, "Vocal");
+        let id = put_in(&mut s, t);
+        if let Some(w) = &mut s.mixer.open_later {
+            w.seen = now_ms().saturating_sub(10 * OPEN_GIVE_UP_MS);
+        }
+        frames_loading(&mut s, id);
+        assert!(s.mixer.open_later.unwrap().waited <= OPEN_FRAME_MS + 1_000);
+        frames_loaded(&mut s, t, id);
     }
 
     /// The same in a splitter's branch and in a layer of a multi-instrument (MIX-042).
@@ -412,5 +446,12 @@ mod tests {
         loaded(&mut s, id);
         assert!(!s.poll_open_later());
         assert!(asked(&s).is_empty(), "another window");
+
+        let id = put_in(&mut s, t);
+        frames_loading(&mut s, id);
+        s.show_instrument(t, eq);
+        loaded(&mut s, id);
+        assert!(!s.poll_open_later());
+        assert!(asked(&s).is_empty(), "a built-in window shown");
     }
 }

@@ -359,3 +359,40 @@ fn a_key_gives_up_after_the_wait_when_the_swap_does_not_come() {
     s.tick();
     assert_eq!(s.pc_keys.roll, None);
 }
+
+/// PLG-050: an instance built into a new mix is not answered for while its host opens it,
+/// though the mix already has it, and is once the host has. The window asked for with a
+/// plugin just put in waits for this. (The window's player builds a plugin put in this way;
+/// this one, without the window, waits for it, so the instance is opened again in another
+/// host here.)
+#[test]
+fn a_plugin_is_answered_for_once_its_host_has_opened_it() {
+    let slow = Slow::on();
+    let (mut s, keys, id) = song(&slow);
+    later(&mut s, &slow);
+    playing(&mut s, keys, &slow);
+    assert!(s.has_loaded(id), "playing");
+    slow.hold();
+    assert!(s.run_command(
+        "plugin.isolation.set",
+        json!({"ids":[id.to_string()], "mode":"shared"}),
+    ));
+    wait_until("its host entered its gate", || {
+        s.tick();
+        slow.dll.with_extension("entered").exists()
+    });
+    for _ in 0..5 {
+        frame(&mut s);
+    }
+    assert!(s.transport.host().expect("the player").swap_pending());
+    assert!(!s.has_loaded(id), "its new host is still opening it");
+    slow.release();
+    wait_until("its host answered", || {
+        s.tick();
+        s.has_loaded(id)
+    });
+    let statuses = s.transport.host().unwrap().plugin_statuses();
+    let (.., status) = statuses.iter().find(|(at, ..)| *at == id).unwrap();
+    assert_eq!(status.error, None);
+    assert!(!status.crashed);
+}

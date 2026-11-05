@@ -3034,6 +3034,16 @@ impl PluginLoader {
         self.remotes.get(&id).map(|r| r.link.clone())
     }
 
+    /// Whether the last build's instance of `id` has been answered for (PLG-050): its host
+    /// opened it, failed to, or went down; a plugin in this process, once it was made. Until
+    /// then its window cannot be asked for, and what went wrong is not known yet.
+    pub fn answered(&self, id: PluginId) -> bool {
+        match self.remotes.get(&id) {
+            Some(r) => r.link.answers() > 0 || r.server.crashed(),
+            None => self.locals.contains_key(&id),
+        }
+    }
+
     /// The link of the instance in a host process that plays `id`: while a new mix that moves
     /// it is on its way, the one it moves away from (ENG-071).
     pub fn playing_link(&self, id: PluginId) -> Option<Arc<PluginLink>> {
@@ -3174,6 +3184,56 @@ impl PluginLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PLG-050: a plugin built for a host process is not answered for until the host says how
+    /// its opening went, here that the host could not be started.
+    #[test]
+    fn a_plugin_in_a_host_is_answered_for_once_its_opening_is() {
+        let id = PluginId(7);
+        let missing = std::env::temp_dir()
+            .join("xirius-no-such-host")
+            .join("host.exe");
+        let server = PluginServer::new(Some(missing));
+        let link = PluginLink::new();
+        let mut loader = PluginLoader::new(None);
+        assert!(!loader.answered(id), "not built");
+        loader.remotes.insert(
+            id,
+            Remote {
+                link: link.clone(),
+                server: server.clone(),
+                placement: PluginIsolation::Shared,
+                owner: String::new(),
+                applied: Plugin {
+                    id,
+                    name: "Fixture".into(),
+                    kind: PluginKind::Effect,
+                    format: "vst3".into(),
+                    uid: "fixture".into(),
+                    bypass: false,
+                    deactivated: false,
+                    params: Default::default(),
+                    state: None,
+                    sidechain: None,
+                    preset: None,
+                    samples: Vec::new(),
+                    isolation: PluginIsolation::Shared,
+                },
+            },
+        );
+        assert!(!loader.answered(id), "built, not opened yet");
+        let mut processor = RemotePlugin::new(server, link.clone(), RemoteSpec::default());
+        processor.prepare(&ProcessSetup {
+            sample_rate: 48_000.0,
+            max_block: 512,
+            mode: xirius_engine::RenderMode::Realtime,
+        });
+        assert!(loader.answered(id), "its opening failed: answered");
+        // What the window then says it from: the plugin could not be loaded.
+        let statuses = loader.statuses();
+        let (.., status) = statuses.iter().find(|(at, ..)| *at == id).unwrap();
+        assert!(status.error.is_some(), "{status:?}");
+    }
 
     #[test]
     fn model_commands_reset_undo_and_observations_use_one_monotonic_intent_clock() {
