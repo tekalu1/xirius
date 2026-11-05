@@ -409,7 +409,7 @@ impl Studio {
                 self.mixer.chosen = Some((t, Choose::Plugin(id)));
             }
             self.begin_loading(&pick.name, &pick.format, id);
-            self.open_plugin(t, id);
+            self.open_when_loaded(t, id);
         }
         true
     }

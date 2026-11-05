@@ -1869,7 +1869,7 @@ impl Studio {
         let meters = self.mixer.meters.feed(&levels);
         let inputs = self.watch_inputs();
         let scan = self.poll_plugin_scan();
-        let loading = self.poll_loading();
+        let loading = self.poll_loading() | self.poll_open_later();
         let audition = self.audition_frame();
         let export = self.poll_export();
         let job = self.poll_job()

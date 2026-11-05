@@ -83,7 +83,7 @@ impl Studio {
                 && let Some(id) = self.device_on(t, uid)
             {
                 self.reveal_last(t, crate::mixer::List::Inserts);
-                self.open_plugin(t, id);
+                self.open_when_loaded(t, id);
             }
             return true;
         }

@@ -2792,6 +2792,7 @@ impl Studio {
         self.mixer.level_drag = None;
         self.mixer.insert_after = None;
         self.mixer.insert_into = None;
+        self.mixer.open_later = None;
         self.mixer.wide.clear();
         self.mixer.folds.clear();
         self.mixer.lead = None;

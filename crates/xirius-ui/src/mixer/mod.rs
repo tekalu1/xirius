@@ -578,6 +578,10 @@ pub struct Mixer {
     /// The channel editor's ＋ the insert list was opened from, when nothing is before it in
     /// its chain (MIX-042): the new effect is moved there.
     pub insert_into: Option<(TrackId, crate::channel::flow::Chain, usize)>,
+    /// The plugin just put in whose window opens once it is loaded (PLG-050).
+    pub(crate) open_later: Option<crate::loading::OpenLater>,
+    #[cfg(test)]
+    pub(crate) fake_load: Option<crate::loading::FakeLoad>,
     pub(crate) editors: Vec<OpenEditor>,
     /// The plugins found by the last scan; read when a list first needs it.
     pub catalog: Option<Arc<Catalog>>,
@@ -1800,6 +1804,15 @@ impl Studio {
     /// the window's keys; the window itself is the plugin's). A window the
     /// person closed opens again.
     pub fn open_plugin(&mut self, t: TrackId, id: PluginId) -> bool {
+        // Asked for again while it loads: it opens once loaded, as it will (PLG-050). Another
+        // window asked for drops the wait.
+        if let Some(w) = self.mixer.open_later.take()
+            && w.id == id
+            && !self.has_loaded(id)
+        {
+            self.mixer.open_later = Some(w);
+            return true;
+        }
         // The face in the drawer comes out as a window (MIX-046).
         if let Some(i) = self.instruments.dock_slot()
             && self.instruments.open[i].plugin == id
