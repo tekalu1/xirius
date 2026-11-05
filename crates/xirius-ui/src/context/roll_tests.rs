@@ -295,13 +295,13 @@ fn the_empty_grid_pastes_selects_inverts_and_sets_the_grid() {
 }
 
 #[test]
-fn a_press_outside_the_grid_opens_no_roll_menu() {
+fn a_press_on_the_ruler_above_the_grid_opens_the_rulers_menu_not_the_rolls() {
     let (mut s, g) = roll();
     let c = s.roll_ctx(&g).unwrap();
     let v = s.roll.view(&c);
-    // The ruler above the grid is none of the roll's menus.
-    assert!(!s.roll_context(&g, v.grid.x + 20.0, v.grid.y - 6.0));
-    assert!(!s.context_open());
+    // The ruler above the grid has the arrangement's ruler menu (2026-11-05).
+    assert!(s.roll_context(&g, v.grid.x + 20.0, v.grid.y - 6.0));
+    assert_eq!(labels(&s)[0], "ここから再生");
 }
 
 /// KEY-025: the key on a row is the keymap's now, so a remap shows and an unbound row has none.
