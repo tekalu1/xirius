@@ -25,6 +25,8 @@ const POLL: Duration = Duration::from_millis(100);
 pub const RESCAN: &str = "plugin-rescan";
 /// The insert list's choice that stops the running scan.
 pub const STOP: &str = "plugin-scan-stop";
+/// The insert list's first choice: a splitter where the effect would go (MIX-044).
+pub const SPLITTER: &str = "rack-splitter";
 
 #[cfg(test)]
 mod menu_io_tests {
@@ -496,7 +498,7 @@ impl Studio {
         true
     }
 
-    /// The insert list's menu (UI-320): 最近, エフェクト, プラグイン,
+    /// The insert list's menu (UI-320): Splitter (MIX-044), 最近, エフェクト, プラグイン,
     /// with the scan's rows under it (never filtered).
     pub(crate) fn insert_pick(&mut self) -> crate::pick_list::PickList {
         use crate::pick_list::PickList;
@@ -507,8 +509,13 @@ impl Studio {
         let all: Vec<_> = all.into_iter().filter(|c| !seen.contains(&c.to)).collect();
         let (builtin, plugins): (Vec<_>, Vec<_>) =
             all.into_iter().partition(|c| c.to.starts_with("builtin:"));
+        let splitter = vec![Choice {
+            to: SPLITTER.to_string(),
+            label: "Splitter".into(),
+        }];
         let mut list = PickList::grouped(
             vec![
+                ("", splitter),
                 ("最近", recent),
                 ("エフェクト", builtin),
                 ("プラグイン", plugins),
@@ -516,7 +523,7 @@ impl Studio {
             "effects",
             |to| Action::Pick(to.to_string()),
         )
-        .named("一致するエフェクトはありません");
+        .named("一致する項目はありません");
         list.footer = self.scan_footer();
         list
     }

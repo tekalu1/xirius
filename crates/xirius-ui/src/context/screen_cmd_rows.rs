@@ -20,6 +20,7 @@ use super::export::{ExportAct, Row};
 use crate::autovalue::AutoRef;
 use crate::browser::intern;
 use crate::export::Range;
+use crate::mixer::flow::Pick;
 use crate::popup::PopupKind;
 use crate::studio::{FileRequest, Geometry, Studio};
 
@@ -227,7 +228,28 @@ impl Studio {
                 let Some(t) = id::<TrackId>(args, "id") else {
                     return Some(false);
                 };
-                Some(self.pick_insert(g, t))
+                if let Some(after) = text(args, "after") {
+                    let pick = match after.parse::<AnyId>() {
+                        Ok(AnyId::Plugin(id)) => Pick::Plugin(id),
+                        Ok(AnyId::RackNode(id)) => Pick::Split(id),
+                        _ => return Some(false),
+                    };
+                    return Some(self.pick_after(g, t, pick));
+                }
+                Some(match text(args, "area") {
+                    Some("layer") => self.pick_layer(g, t),
+                    _ => self.pick_insert(g, t),
+                })
+            }
+            "view.channel.editor" => {
+                let Some(t) = id::<TrackId>(args, "id") else {
+                    return Some(false);
+                };
+                if !self.project().tracks.contains_key(&t) {
+                    return Some(false);
+                }
+                self.open_channel(t);
+                Some(true)
             }
             "control.pick" => {
                 let (Some(t), Some(ControlId::Knob(k))) = (

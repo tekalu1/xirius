@@ -12,6 +12,7 @@ use xirius_core::model::CtrlKind;
 use super::Act;
 use super::browser::{BrowseAct, FxTarget};
 use super::export::Row;
+use crate::mixer::flow::Pick;
 use crate::roll::LaneKind;
 use crate::studio::{DrawerTab, Geometry, Studio};
 
@@ -91,6 +92,15 @@ pub fn act_command(act: &Act) -> (&'static str, Value) {
             },
         ),
         Act::PickInsert(t) => ("plugin.pick", json!({"id": t.to_string()})),
+        Act::PickLayer(t) => ("plugin.pick", json!({"id": t.to_string(), "area": "layer"})),
+        Act::PickAfter(t, pick) => (
+            "plugin.pick",
+            json!({"id": t.to_string(), "after": match pick {
+                Pick::Plugin(id) => id.to_string(),
+                Pick::Split(id) => id.to_string(),
+            }}),
+        ),
+        Act::OpenChannel(t) => ("view.channel.editor", json!({"id": t.to_string()})),
         Act::PickMacro(t, k) => (
             "control.pick",
             json!({"track": t.to_string(), "control": ControlId::Knob(*k).to_string()}),

@@ -70,7 +70,7 @@ pub fn command(hit: Hit) -> Option<String> {
                     crate::mixer::MixerHit::AddInsert(_) => Some("plugin.add".into()),
                     crate::mixer::MixerHit::AddInstrument(_) => Some("view.instrument".into()),
                     crate::mixer::MixerHit::AddLayer(_) => Some("rack.layer.add".into()),
-                    crate::mixer::MixerHit::Fold(..) => None,
+                    crate::mixer::MixerHit::Fold(..) | crate::mixer::MixerHit::Heading(..) => None,
                     crate::mixer::MixerHit::AddSend(_) => Some("send.add".into()),
                     crate::mixer::MixerHit::SendLevel(..) => Some("send.set".into()),
                     crate::mixer::MixerHit::SendPre(..) => Some("send.set".into()),

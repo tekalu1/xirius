@@ -922,13 +922,22 @@ fn flow_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                     node.set_expanded(open);
                     parts.push((MixerHit::Fold(t, id), node));
                 }
-                (Kind::Add, Area::Insert) => {
-                    let name = label("plugin.add").unwrap_or("plugin.add");
-                    parts.push((MixerHit::AddInsert(t), button(name)));
+                (Kind::Head { add }, Area::Insert) => {
+                    // the heading is dragged and copied from (MIX-045); its ＋ adds (MIX-044)
+                    parts.push((MixerHit::Heading(t, Area::Insert), button("インサート")));
+                    if add {
+                        parts.push((MixerHit::AddInsert(t), button("エフェクトを追加")));
+                    }
                 }
-                (Kind::Add, Area::Instrument) if flow.has_instrument() => {
+                (Kind::Head { add: true }, Area::Instrument) if flow.has_instrument() => {
                     let name = label("rack.layer.add").unwrap_or("rack.layer.add");
                     parts.push((MixerHit::AddLayer(t), button(name)));
+                }
+                (Kind::Head { add: true }, Area::Instrument) => {
+                    parts.push((
+                        MixerHit::AddInstrument(t),
+                        button("インストゥルメントを追加"),
+                    ));
                 }
                 _ => {}
             }

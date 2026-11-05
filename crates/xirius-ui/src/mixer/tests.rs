@@ -186,7 +186,9 @@ fn an_insert_picked_from_the_scan_lands_on_the_strip_and_bypasses() {
     assert!(press(&mut s, &g, MixerHit::AddInsert(t)));
     let popup = s.popup.as_ref().expect("the insert list");
     assert_eq!(popup.kind, PopupKind::Insert(t));
-    assert_eq!(popup.choices().len(), 7);
+    // The splitter first, then the effects.
+    assert_eq!(popup.choices().len(), 8);
+    assert_eq!(popup.choices()[0].to, scan::SPLITTER);
     let chosen = popup
         .choices()
         .iter()
@@ -218,11 +220,12 @@ fn with_no_plugins_scanned_the_insert_list_still_offers_builtins() {
     let t = track(&s, "Vocal");
     press(&mut s, &g, MixerHit::AddInsert(t));
     let choices = s.popup.as_ref().unwrap().choices();
-    assert!(choices[0].to.starts_with("builtin:"));
+    assert_eq!(choices[0].to, scan::SPLITTER);
+    assert!(choices[1].to.starts_with("builtin:"));
     // The other row offers the scan.
     assert_eq!(choices.last().unwrap().to, scan::RESCAN);
     let before = s.song().steps();
-    s.popup_action(&g, Action::Pick(choices[0].to.clone()));
+    s.popup_action(&g, Action::Pick(choices[1].to.clone()));
     assert_eq!(s.song().steps(), before + 1);
     assert!(!s.instruments.open.is_empty());
 }

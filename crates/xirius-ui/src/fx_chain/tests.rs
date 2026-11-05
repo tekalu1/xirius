@@ -167,7 +167,8 @@ fn many_inserts_scroll_without_moving_the_fader() {
         .find(|r| r.track == a)
         .unwrap();
     assert_eq!(before, after);
-    assert!(s.mixer_rect(&g, MixerHit::AddInsert(a)).is_some());
+    // The ＋ is on the heading: it goes up with it and comes back with it.
+    assert!(s.mixer_rect(&g, MixerHit::AddInsert(a)).is_none());
     let strip = s
         .mixer_strips(&g)
         .into_iter()
@@ -176,6 +177,16 @@ fn many_inserts_scroll_without_moving_the_fader() {
     let max = s.flow_max(&strip, &s.project().tracks[&a]);
     assert!(max > 60);
     assert_eq!(s.mixer.offset(a, List::Flow), max);
+    for _ in 0..100 {
+        s.mixer_wheel(
+            &g,
+            before.inserts.x + 30.0,
+            before.inserts.y + 10.0,
+            0.0,
+            1.0,
+        );
+    }
+    assert!(s.mixer_rect(&g, MixerHit::AddInsert(a)).is_some());
 }
 
 #[test]

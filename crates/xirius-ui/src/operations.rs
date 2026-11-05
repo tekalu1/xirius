@@ -132,6 +132,7 @@ pub fn of_hit(hit: Hit) -> Option<(&'static str, &'static str)> {
             MixerHit::AddInstrument(_) => ("mixer.add_instrument", "instrument.add"),
             MixerHit::AddLayer(_) => ("mixer.add_layer", "layer.add"),
             MixerHit::Fold(..) => ("mixer.fold", "split.fold"),
+            MixerHit::Heading(..) => ("mixer.heading", "insert.heading"),
             MixerHit::SendLevel(..) => ("mixer.send_level", "send.level"),
             MixerHit::SendPre(..) => ("mixer.send_pre", "send.prepost"),
             MixerHit::AddSend(_) => ("mixer.add_send", "send.add"),

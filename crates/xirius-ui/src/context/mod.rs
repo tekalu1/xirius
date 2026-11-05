@@ -135,6 +135,13 @@ pub enum Act {
     RestartPlugin(PluginId),
     /// Opens the list of effects under a channel's ＋ row.
     PickInsert(TrackId),
+    /// Opens the list of instruments under the ＋ of a channel's instrument area, or of layers
+    /// when it has an instrument (MIX-044).
+    PickLayer(TrackId),
+    /// Opens the list of effects that go after a row of a channel's flow (MIX-044).
+    PickAfter(TrackId, crate::mixer::flow::Pick),
+    /// Opens a channel's editor.
+    OpenChannel(TrackId),
     /// Opens the list of what a track can give its macro knob (MIX-040).
     PickMacro(TrackId, u8),
     /// Puts an effect used lately (its name or `builtin:` id) at the end of a channel.
@@ -832,6 +839,8 @@ mod export_tests;
 mod fields_tests;
 #[cfg(test)]
 mod finish_tests;
+#[cfg(test)]
+mod flow_add_tests;
 #[cfg(test)]
 mod folder_stem_tests;
 #[cfg(test)]

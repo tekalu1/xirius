@@ -179,6 +179,7 @@ pub const LABELS: &[(&str, &str)] = &[
     ("plugin.samples.pick", "サンプルのファイルを選択"),
     ("plugin.samples.reveal", "サンプルをブラウザーで表示"),
     ("plugin.pick", "エフェクトを追加…"),
+    ("view.channel.editor", "チャンネルエディターを開く"),
     ("control.pick", "割り当てを追加…"),
     ("plugin.insert", "最近使ったエフェクトを追加"),
     ("browser.use", "ブラウザーのインストゥルメントを使う"),

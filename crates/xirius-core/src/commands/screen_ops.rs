@@ -23,6 +23,7 @@ pub const NAMES: &[&str] = &[
     "plugin.samples.pick",
     "plugin.samples.reveal",
     "plugin.pick",
+    "view.channel.editor",
     "control.pick",
     "plugin.insert",
     "browser.use",
@@ -197,7 +198,16 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         screen(
             "plugin.pick",
-            "チャンネルの ＋ の下に、挿すエフェクトの一覧を開きます",
+            "チャンネルの ＋ の下に、挿すエフェクトの一覧を開きます（--area layer は楽器かレイヤーの一覧、--after はその行の後ろに挿す一覧）",
+            vec![
+                ArgDef::id("id", IdKind::Track, "トラック").req(),
+                ArgDef::choice("area", &["insert", "layer"], "足す欄（省略時は insert）"),
+                ArgDef::text("after", "この後ろに挿す（プラグインかスプリッターの id）"),
+            ],
+        ),
+        screen(
+            "view.channel.editor",
+            "チャンネルエディターを開きます",
             vec![ArgDef::id("id", IdKind::Track, "トラック").req()],
         ),
         screen(

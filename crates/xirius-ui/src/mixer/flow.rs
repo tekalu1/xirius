@@ -91,8 +91,11 @@ pub enum Area {
 /// What one line of the flow is.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Kind {
-    /// The area's heading.
-    Head,
+    /// The area's heading, with the ＋ that adds to the area at its right end (`add`; not on a
+    /// frozen track).
+    Head {
+        add: bool,
+    },
     /// An instrument; `layer` is its place among the layers of a multi-instrument that has
     /// more than one.
     Instrument {
@@ -105,8 +108,6 @@ pub enum Kind {
         branches: usize,
         open: bool,
     },
-    /// The ＋ that adds to the area.
-    Add,
     /// Under the picked row: the level of the branch it heads or of its layer (MIX-045).
     Level,
 }
@@ -226,7 +227,7 @@ pub fn lines(t: &Track, folded: &HashSet<NodeId>) -> Vec<Line> {
     let open = t.frozen.is_none();
     let mut out = Vec::new();
     if t.kind == TrackKind::Instrument {
-        out.push(Line::new(Area::Instrument, Kind::Head, 0));
+        out.push(Line::new(Area::Instrument, Kind::Head { add: open }, 0));
         match &rack.source {
             None => {}
             Some(Source::Single(id)) => out.push(Line::new(
@@ -266,15 +267,9 @@ pub fn lines(t: &Track, folded: &HashSet<NodeId>) -> Vec<Line> {
                 }
             }
         }
-        if open {
-            out.push(Line::new(Area::Instrument, Kind::Add, 0));
-        }
     }
-    out.push(Line::new(Area::Insert, Kind::Head, 0));
+    out.push(Line::new(Area::Insert, Kind::Head { add: open }, 0));
     chain(&mut out, Area::Insert, &rack.fx, 0, folded);
-    if open {
-        out.push(Line::new(Area::Insert, Kind::Add, 0));
-    }
     out
 }
 
@@ -487,11 +482,19 @@ impl Flow {
         self.rows.iter().find(|(l, _)| l.plugin() == Some(id))
     }
 
-    /// The ＋ of an area.
+    /// The ＋ of an area, at the right end of its heading.
     pub fn add(&self, area: Area) -> Option<Rect> {
         self.rows
             .iter()
-            .find(|(l, _)| l.area == area && l.kind == Kind::Add)
+            .find(|(l, _)| l.area == area && l.kind == Kind::Head { add: true })
+            .map(|(_, r)| add_part(*r))
+    }
+
+    /// The heading of an area.
+    pub fn head(&self, area: Area) -> Option<Rect> {
+        self.rows
+            .iter()
+            .find(|(l, _)| l.area == area && matches!(l.kind, Kind::Head { .. }))
             .map(|(_, r)| *r)
     }
 
@@ -509,13 +512,24 @@ impl Flow {
             .any(|(l, _)| matches!(l.kind, Kind::Instrument { .. }))
     }
 
-    /// Whether an area holds nothing yet: its ＋ shows without the pointer on it.
-    fn empty(&self, area: Area) -> bool {
-        !self
-            .rows
+    /// The end of the insert area: where inserts put after the last go (MIX-045).
+    pub fn insert_end(&self) -> Option<f32> {
+        self.rows
             .iter()
-            .any(|(l, _)| l.area == area && !matches!(l.kind, Kind::Head | Kind::Add))
+            .filter(|(l, _)| l.area == Area::Insert && l.kind != Kind::Level)
+            .map(|(_, r)| r.bottom())
+            .reduce(f32::max)
     }
+}
+
+/// The ＋ at the right end of an area's heading.
+pub fn add_part(head: Rect) -> Rect {
+    Rect::new(
+        head.right() - END - DOT_BUTTON,
+        head.y + (head.h - DOT_BUTTON) / 2.0,
+        DOT_BUTTON,
+        DOT_BUTTON,
+    )
 }
 
 /// The 16 × 16 button round a row's power dot.
@@ -714,12 +728,13 @@ pub fn hit(s: &Studio, t: &Track, flow: &Flow, x: f32, y: f32) -> MixerHit {
         }
     }
     match l.kind {
-        Kind::Head | Kind::Level => MixerHit::Strip(t.id),
-        Kind::Add => match l.area {
+        Kind::Head { add: true } if add_part(*row).contains(x, y) => match l.area {
             Area::Insert => MixerHit::AddInsert(t.id),
             Area::Instrument if flow.has_instrument() => MixerHit::AddLayer(t.id),
             Area::Instrument => MixerHit::AddInstrument(t.id),
         },
+        Kind::Head { .. } => MixerHit::Heading(t.id, l.area),
+        Kind::Level => MixerHit::Strip(t.id),
         Kind::Split { id, .. } if fold_part(*row, l).contains(x, y) => MixerHit::Fold(t.id, id),
         Kind::Split { .. } => MixerHit::Strip(t.id),
         Kind::Instrument { id, .. } | Kind::Effect(id) => {
@@ -742,10 +757,11 @@ fn on(l: &Line, h: MixerHit) -> bool {
         (Kind::Instrument { id, .. } | Kind::Effect(id), MixerHit::Open(_, p))
         | (Kind::Instrument { id, .. } | Kind::Effect(id), MixerHit::Bypass(_, p)) => id == p,
         (Kind::Split { id, .. }, MixerHit::Fold(_, s)) => id == s,
-        (Kind::Add, MixerHit::AddInsert(_)) => l.area == Area::Insert,
-        (Kind::Add, MixerHit::AddInstrument(_) | MixerHit::AddLayer(_)) => {
+        (Kind::Head { .. }, MixerHit::AddInsert(_)) => l.area == Area::Insert,
+        (Kind::Head { .. }, MixerHit::AddInstrument(_) | MixerHit::AddLayer(_)) => {
             l.area == Area::Instrument
         }
+        (Kind::Head { .. }, MixerHit::Heading(_, a)) => l.area == a,
         _ => false,
     }
 }
@@ -771,9 +787,6 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
         Hit::Mixer(h) if !frozen && h.track() == t.id => Some(h),
         _ => None,
     };
-    let near = |area: Area| {
-        hover.is_some_and(|h| flow.rows.iter().any(|(l, _)| l.area == area && on(l, h)))
-    };
     pen.mask(region, |pen| {
         for (_, r) in &flow.panels {
             pen.round(*r, c.surface_2, Radius::S);
@@ -788,40 +801,48 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                         level_row(pen, s, t.id, target, row);
                     }
                 }
-                Kind::Head => {
-                    let r = Rect::new(row.x + HEAD_X, row.y, row.w - HEAD_X, row.h);
+                Kind::Head { add } => {
+                    // The ＋ is always there at the right end (MIX-044); a narrow strip cuts the
+                    // heading, not the ＋.
+                    let end = if add {
+                        add_part(row).x - CHIP_GAP
+                    } else {
+                        row.right() - END
+                    };
+                    let r = Rect::new(
+                        row.x + HEAD_X,
+                        row.y,
+                        (end - row.x - HEAD_X).max(0.0),
+                        row.h,
+                    );
                     let label = match l.area {
                         Area::Instrument => "インストゥルメント",
                         Area::Insert => "インサート",
                     };
+                    let label = pen.fit(label, FontSize::Micro, Weight::Regular, r.w);
                     pen.text(
-                        label,
+                        &label,
                         FontSize::Micro,
                         Weight::Regular,
                         c.ink,
                         r,
                         Align::Left,
                     );
-                }
-                Kind::Add => {
-                    // The ＋ keeps its room, and shows where the pointer is in its area or the
-                    // area is empty.
-                    if !(near(l.area) || flow.empty(l.area)) {
-                        continue;
+                    if add {
+                        let b = add_part(row);
+                        let on_plus = matches!(
+                            hover,
+                            Some(
+                                MixerHit::AddInsert(_)
+                                    | MixerHit::AddInstrument(_)
+                                    | MixerHit::AddLayer(_)
+                            )
+                        );
+                        if hot && on_plus {
+                            pen.round(b, c.surface_3, Radius::Xs);
+                        }
+                        pen.icon("plus", Rect::new(b.x + 2.0, b.y + 2.0, 12.0, 12.0), c.ink);
                     }
-                    if hot {
-                        pen.round(row, c.surface_3, Radius::Clip);
-                    }
-                    pen.icon(
-                        "plus",
-                        Rect::new(
-                            row.x + (row.w - 12.0) / 2.0,
-                            row.y + (row.h - 12.0) / 2.0,
-                            12.0,
-                            12.0,
-                        ),
-                        c.ink,
-                    );
                 }
                 Kind::Split { branches, open, .. } => {
                     let ink = if chosen {

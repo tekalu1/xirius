@@ -71,7 +71,7 @@ fn vocal(s: &mut Studio) -> (TrackId, NodeId, [PluginId; 3]) {
 fn rows(s: &Studio, t: TrackId) -> Vec<Line> {
     lines(&s.project().tracks[&t], &s.mixer.folded)
         .into_iter()
-        .filter(|l| !matches!(l.kind, Kind::Head | Kind::Add))
+        .filter(|l| !matches!(l.kind, Kind::Head { .. }))
         .collect()
 }
 
@@ -234,7 +234,7 @@ fn an_effect_let_go_on_a_strip_lands_by_the_row_under_it() {
     let head = flow
         .rows
         .iter()
-        .find(|(l, _)| l.area == Area::Insert && l.kind == Kind::Head)
+        .find(|(l, _)| l.area == Area::Insert && matches!(l.kind, Kind::Head { .. }))
         .unwrap()
         .1;
     assert_eq!(drop_index(&track, &flow, head.y + 2.0), 0);
@@ -296,7 +296,9 @@ fn the_screen_reader_names_the_splitter_and_the_plus_of_each_area() {
     assert_eq!(split.node.label(), Some("スプリッター 1"));
     assert_eq!(split.node.is_expanded(), Some(true));
     let plus = find(format!("flow-{t}-{:?}", MixerHit::AddInsert(t)));
-    assert_eq!(plus.node.label(), Some("プラグインを追加"));
+    assert_eq!(plus.node.label(), Some("エフェクトを追加"));
+    let heading = find(format!("flow-{t}-{:?}", MixerHit::Heading(t, Area::Insert)));
+    assert_eq!(heading.node.label(), Some("インサート"));
     let layer = find(format!("flow-{k}-{:?}", MixerHit::AddLayer(k)));
     assert_eq!(layer.node.label(), Some("レイヤーを追加"));
     s.mixer.folded.insert(sp);

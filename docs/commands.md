@@ -4617,7 +4617,7 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 
 エフェクトを追加…
 
-チャンネルの ＋ の下に、挿すエフェクトの一覧を開きます
+チャンネルの ＋ の下に、挿すエフェクトの一覧を開きます（--area layer は楽器かレイヤーの一覧、--after はその行の後ろに挿す一覧）
 
 事前条件: AI の権限が読み取り以上。指定した ID が存在し、引数が次の型・範囲に一致すること。
 
@@ -4625,6 +4625,8 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 
 | 引数 | 必須 | 型・範囲・既定値 | 内容 |
 |---|---|---|---|
+| `after` | — | `{"type":"string"}` | この後ろに挿す（プラグインかスプリッターの id） |
+| `area` | — | `{"enum":["insert","layer"],"type":"string"}` | 足す欄（省略時は insert） |
 | `id` | 必須 | `{"type":"string"}` | トラック（track の ID） |
 
 ## `plugin.preset.apply`
@@ -8339,6 +8341,20 @@ EQ の窓のアナライザーに出すものを選びます（off・input・out
 |---|---|---|---|
 | `order` | 必須 | `{"enum":["kind","vendor","format","name","favourites"],"type":"string"}` | 並べ方 |
 | `tab` | — | `{"enum":["instruments","effects","song_files"],"type":"string"}` | タブ（省略時は表示中のタブ） |
+
+## `view.channel.editor`
+
+チャンネルエディターを開く
+
+チャンネルエディターを開きます
+
+事前条件: AI の権限が読み取り以上。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 記録なし。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `id` | 必須 | `{"type":"string"}` | トラック（track の ID） |
 
 ## `view.channel.width`
 

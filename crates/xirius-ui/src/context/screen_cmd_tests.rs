@@ -52,6 +52,9 @@ fn on_screen(act: &Act) -> bool {
         | Act::RestartPlugin(_)
         | Act::RestartPlugins
         | Act::PickInsert(_)
+        | Act::PickLayer(_)
+        | Act::PickAfter(..)
+        | Act::OpenChannel(_)
         | Act::PickMacro(..)
         | Act::InsertRecent(..)
         | Act::PresetFile(..)
@@ -106,6 +109,13 @@ fn samples(t: TrackId, p: PluginId, f: FolderId) -> Vec<Act> {
         Act::RestartPlugins,
         Act::AraAttach(vec!["c1".into()]),
         Act::PickInsert(t),
+        Act::PickLayer(t),
+        Act::PickAfter(t, crate::mixer::flow::Pick::Plugin(p)),
+        Act::PickAfter(
+            t,
+            crate::mixer::flow::Pick::Split(xirius_core::id::NodeId(9)),
+        ),
+        Act::OpenChannel(t),
         Act::PickMacro(t, 2),
         Act::InsertRecent(t, "EQ".into()),
         Act::PresetFile(p, false),

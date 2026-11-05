@@ -238,6 +238,7 @@ impl Studio {
             Item::sub("下にトラックを追加", add),
             Item::gap(),
         ];
+        rows.extend(self.flow_add_items(t));
         rows.extend(self.preset_items(t));
         rows.extend([
             Item::sub("オートメーションを表示", lanes),

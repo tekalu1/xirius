@@ -136,6 +136,8 @@ pub enum MixerHit {
     Widen(TrackId),
     /// The button by the name that opens the channel editor (MIX-042).
     Editor(TrackId),
+    /// An area's heading in the flow (MIX-044).
+    Heading(TrackId, flow::Area),
 }
 
 impl MixerHit {
@@ -165,7 +167,8 @@ impl MixerHit {
             | MixerHit::Level(t, _)
             | MixerHit::After(t, _)
             | MixerHit::Widen(t)
-            | MixerHit::Editor(t) => t,
+            | MixerHit::Editor(t)
+            | MixerHit::Heading(t, _) => t,
         }
     }
 }
@@ -1283,6 +1286,7 @@ impl Studio {
             MixerHit::AddInstrument(_) | MixerHit::AddLayer(_) => {
                 flow.add(flow::Area::Instrument).filter(|r| seen(*r))
             }
+            MixerHit::Heading(_, area) => flow.head(area).filter(|r| seen(*r)),
             MixerHit::Fold(_, id) => flow
                 .split(id)
                 .filter(|(_, r)| seen(*r))
@@ -1382,7 +1386,7 @@ impl Studio {
             // The name and the ground choose as a head does (UI-340); any other part of a track
             // outside the selection acts on that track and leaves the selection as it is
             // (MIX-050).
-            if matches!(hit, MixerHit::Strip(_)) {
+            if matches!(hit, MixerHit::Strip(_) | MixerHit::Heading(..)) {
                 self.pick_row(RowKind::Track(t), self.arrange.mods);
             } else if self.is_picked(RowKind::Track(t)) {
                 self.select_row(Some(RowKind::Track(t)));
@@ -1396,6 +1400,7 @@ impl Studio {
         }
         match hit {
             MixerHit::Strip(_)
+            | MixerHit::Heading(..)
             | MixerHit::Fader(_)
             | MixerHit::Pan(_)
             | MixerHit::SendLevel(..) => true,
@@ -1580,7 +1585,21 @@ impl Studio {
             PopupKind::Insert(t) => {
                 let after = self.mixer.insert_after.take().filter(|(x, _)| *x == t);
                 let into = self.mixer.insert_into.take().filter(|(x, ..)| *x == t);
-                if let Some(pick) = self.effect_pick(to) {
+                if to == scan::SPLITTER {
+                    use crate::channel::flow::Chain;
+                    let at = match (after, into) {
+                        (Some((_, flow::Pick::Plugin(id))), _) => format!("after:{id}"),
+                        (Some((_, flow::Pick::Split(id))), _) => format!("after:{id}"),
+                        (None, Some((_, Chain::Branch(n), i))) => format!("branch:{n}:{i}"),
+                        (None, Some((_, Chain::Layer(n), i))) => format!("layer:{n}:{i}"),
+                        (None, _) => "track".to_string(),
+                    };
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+                    self.arrange_run(
+                        "rack.split.add",
+                        json!({ "track": t.to_string(), "at": at }),
+                    );
+                } else if let Some(pick) = self.effect_pick(to) {
                     match (after, into) {
                         (Some((_, after)), _) => {
                             self.add_effect_after(t, after, &pick);

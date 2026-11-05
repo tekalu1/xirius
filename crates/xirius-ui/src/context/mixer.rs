@@ -9,8 +9,9 @@
 use serde_json::{Value, json};
 use xirius_core::auto::AutoTarget;
 use xirius_core::clipboard::Clipboard;
-use xirius_core::id::{PluginId, SendId, TrackId};
-use xirius_core::model::{Output, Plugin, Project, TrackKind};
+use xirius_core::id::{NodeId, PluginId, SendId, TrackId};
+use xirius_core::model::{Output, Plugin, PluginKind, Project, Track, TrackKind};
+use xirius_core::rack::RackNode;
 use xirius_prefs::midimap::Target;
 
 use xirius_core::controls::{ControlId, KNOBS};
@@ -18,9 +19,10 @@ use xirius_core::controls::{ControlId, KNOBS};
 use super::{Act, Item};
 use crate::arrange::{lane_name, targets_of};
 use crate::instrument::window::is_built_in;
+use crate::mixer::flow::{Area, Kind, Line, Pick};
 use crate::mixer::{List, MixerHit, NEW_BUS, row_at, send_choices, send_parts};
 use crate::popup::PopupKind;
-use crate::studio::{Geometry, Studio};
+use crate::studio::{Geometry, Rect, Studio};
 use crate::tree::RowKind;
 
 /// The row that gives a part to a macro knob (MIX-040).
@@ -38,6 +40,12 @@ enum Spot {
     AddSend(TrackId),
     Plugin(TrackId, PluginId),
     AddInsert(TrackId),
+    /// The insert heading of a strip.
+    InsertHeading(TrackId),
+    /// The instrument heading of a strip.
+    InstrumentHeading(TrackId),
+    /// A splitter's row (MIX-044).
+    Split(TrackId, NodeId),
     /// The room right of the last strip.
     Empty,
 }
@@ -73,6 +81,9 @@ impl Studio {
             Spot::AddSend(t) => self.add_send_items(t),
             Spot::Plugin(t, id) => self.plugin_items(t, id),
             Spot::AddInsert(t) => self.add_insert_items(g, t),
+            Spot::InsertHeading(t) => self.insert_heading_items(t),
+            Spot::InstrumentHeading(t) => trimmed(self.flow_add_items(t)),
+            Spot::Split(t, id) => self.split_items(t, id),
             Spot::Empty => self.empty_items(),
         };
         if items.is_empty() {
@@ -94,11 +105,13 @@ impl Studio {
             MixerHit::SendPre(t, s) => Spot::Send(t, s),
             MixerHit::AddSend(t) => Spot::AddSend(t),
             MixerHit::AddInsert(t) => Spot::AddInsert(t),
+            MixerHit::Heading(t, Area::Insert) => Spot::InsertHeading(t),
+            MixerHit::Heading(t, Area::Instrument) => Spot::InstrumentHeading(t),
+            MixerHit::Fold(t, id) => Spot::Split(t, id),
             // The instrument row has its own menu; a plugin that went down keeps the one
             // that restarts it.
             MixerHit::AddInstrument(_)
             | MixerHit::AddLayer(_)
-            | MixerHit::Fold(..)
             | MixerHit::RowMute(..)
             | MixerHit::Level(..)
             | MixerHit::After(..)
@@ -110,9 +123,16 @@ impl Studio {
                 }
                 Spot::Plugin(t, id)
             }
-            MixerHit::Strip(t) => match self.send_under(g, t, x, y) {
-                Some(s) => Spot::Send(t, s),
-                None => Spot::Head(t),
+            MixerHit::Strip(t) => match (self.send_under(g, t, x, y), self.flow_line(g, t, x, y)) {
+                (Some(s), _) => Spot::Send(t, s),
+                (
+                    None,
+                    Some(Line {
+                        kind: Kind::Split { id, .. },
+                        ..
+                    }),
+                ) => Spot::Split(t, id),
+                _ => Spot::Head(t),
             },
             MixerHit::Mute(t)
             | MixerHit::Solo(t)
@@ -207,6 +227,7 @@ impl Studio {
             TrackKind::Master => {
                 let mixdown = self.ctx_key(g, "export.mixdown");
                 let mut rows = self.channel_copy_items(t);
+                rows.extend(self.flow_add_items(t));
                 rows.extend([
                     mixdown,
                     Item::gap(),
@@ -226,6 +247,7 @@ impl Studio {
                 );
                 let delete = self.ctx_cmd("track.delete", json!({ "ids": ids }));
                 let mut rows = self.channel_copy_items(t);
+                rows.extend(self.flow_add_items(t));
                 rows.extend([
                     rename,
                     color,
@@ -250,6 +272,7 @@ impl Studio {
                 let stems = self.stems_item(vec![t]);
                 let delete = self.ctx_cmd("track.delete", json!({ "ids": ids }));
                 let mut rows = self.channel_copy_items(t);
+                rows.extend(self.flow_add_items(t));
                 rows.extend([
                     rename,
                     color,
@@ -620,7 +643,13 @@ impl Studio {
         let mut restart = Item::act("再起動", "", Act::RestartPlugin(id));
         restart.enabled = self.health.crashed(id);
         restart.reason = "クラッシュしたプラグインだけ再起動できます".into();
-        vec![
+        let mut adds = self.after_items(t, Pick::Plugin(id));
+        if let Some(split) = split_holding(track, &RackNode::Plugin(id)) {
+            adds.push(self.branch_item(split));
+        }
+        adds.push(Item::gap());
+        adds.extend(self.flow_add_items(t));
+        let rows = vec![
             Item::act("画面を開く", "", Act::OpenPlugin(t, id)),
             Item::sub("プリセット", presets),
             // A plugin that went down has the menu of PLG-053 instead; this one is for the
@@ -631,13 +660,117 @@ impl Studio {
             Item::sub("別のチャンネルへ移動", moves),
             Item::sub("別のチャンネルへ写す", copies),
             Item::gap(),
+        ];
+        let tail = [
             Item::sub("オートメーションを表示", lanes),
             Item::gap(),
             cut,
             copy,
             Item::gap(),
             remove,
+        ];
+        rows.into_iter().chain(adds).chain(tail).collect()
+    }
+
+    // ------------------------------------------------------------ MIX-044 MIX-045 the flow
+
+    /// "レイヤーを追加…", "エフェクトを追加…", "スプリッターを追加", "チャンネルエディターを開く"
+    /// and a gap: what the track's head, its name, the headings and the rows of its flow add to
+    /// it, with the same words everywhere (MIX-044).
+    pub(crate) fn flow_add_items(&mut self, t: TrackId) -> Vec<Item> {
+        let p = self.project();
+        let Some(track) = p.tracks.get(&t) else {
+            return Vec::new();
+        };
+        let open = track.frozen.is_none();
+        // only a track with an instrument area has layers
+        let layer = (track.kind == TrackKind::Instrument)
+            .then(|| Item::act("レイヤーを追加…", "", Act::PickLayer(t)).enabled(open));
+        let fx = Item::act("エフェクトを追加…", "", Act::PickInsert(t)).enabled(open);
+        let split = self.ctx_as(
+            "スプリッターを追加",
+            "rack.split.add",
+            json!({ "track": t.to_string(), "at": "track" }),
+        );
+        layer
+            .into_iter()
+            .chain([
+                fx,
+                split,
+                Item::act("チャンネルエディターを開く", "", Act::OpenChannel(t)),
+                Item::gap(),
+            ])
+            .collect()
+    }
+
+    /// "エフェクトを後ろに追加…" and "スプリッターを後ろに追加" for a row of the flow.
+    fn after_items(&mut self, t: TrackId, pick: Pick) -> Vec<Item> {
+        let open = self
+            .project()
+            .tracks
+            .get(&t)
+            .is_some_and(|x| x.frozen.is_none());
+        let at = match pick {
+            Pick::Plugin(id) => id.to_string(),
+            Pick::Split(id) => id.to_string(),
+        };
+        let split = self.ctx_as(
+            "スプリッターを後ろに追加",
+            "rack.split.add",
+            json!({ "track": t.to_string(), "at": format!("after:{at}") }),
+        );
+        vec![
+            Item::act("エフェクトを後ろに追加…", "", Act::PickAfter(t, pick)).enabled(open),
+            split,
         ]
+    }
+
+    /// "分岐を追加": one more (empty) branch of a splitter.
+    fn branch_item(&mut self, split: NodeId) -> Item {
+        self.ctx_as(
+            "分岐を追加",
+            "rack.branch.add",
+            json!({ "split": split.to_string() }),
+        )
+    }
+
+    /// The menu of a splitter's row.
+    fn split_items(&mut self, t: TrackId, id: NodeId) -> Vec<Item> {
+        let mut rows = vec![self.branch_item(id)];
+        rows.extend(self.after_items(t, Pick::Split(id)));
+        rows.push(Item::gap());
+        rows.extend(self.flow_add_items(t));
+        trimmed(rows)
+    }
+
+    /// The menu of the insert heading: an effect or a splitter added, and the channel's
+    /// settings.
+    fn insert_heading_items(&mut self, t: TrackId) -> Vec<Item> {
+        let open = self
+            .project()
+            .tracks
+            .get(&t)
+            .is_some_and(|x| x.frozen.is_none());
+        let fx = Item::act("エフェクトを追加…", "", Act::PickInsert(t)).enabled(open);
+        let split = self.ctx_as(
+            "スプリッターを追加",
+            "rack.split.add",
+            json!({ "track": t.to_string(), "at": "track" }),
+        );
+        let mut rows = vec![fx, split, Item::gap()];
+        rows.extend(self.channel_copy_items(t));
+        trimmed(rows)
+    }
+
+    /// The line of `t`'s flow under a point of its strip.
+    fn flow_line(&self, g: &Geometry, t: TrackId, x: f32, y: f32) -> Option<Line> {
+        let s = self.mixer_strips(g).into_iter().find(|s| s.track == t)?;
+        if !s.inserts.contains(x, y) {
+            return None;
+        }
+        let p = self.project();
+        let track = p.tracks.get(&t)?;
+        self.strip_flow(&s, track).at(x, y).map(|(l, _)| *l)
     }
 
     /// The parameters of one plugin that can have a lane.
@@ -810,12 +943,96 @@ impl Studio {
     }
 
     pub(super) fn pick_insert(&mut self, g: &Geometry, t: TrackId) -> bool {
-        let Some(anchor) = self.mixer_rect(g, MixerHit::AddInsert(t)) else {
+        let Some(anchor) = self.strip_anchor(g, MixerHit::AddInsert(t)) else {
             return false;
         };
+        self.mixer.insert_after = None;
+        self.mixer.insert_into = None;
         self.open_popup(PopupKind::Insert(t), anchor);
         true
     }
+
+    /// The list under the ＋ of the instrument area: the instruments while the track has none,
+    /// else the layers of a multi-instrument (MIX-044).
+    pub(super) fn pick_layer(&mut self, g: &Geometry, t: TrackId) -> bool {
+        let p = self.project();
+        let Some(track) = p.tracks.get(&t) else {
+            return false;
+        };
+        if track.kind != TrackKind::Instrument {
+            return false;
+        }
+        let (hit, kind) = if has_instrument(track) {
+            (MixerHit::AddLayer(t), PopupKind::Layer(t))
+        } else {
+            (MixerHit::AddInstrument(t), PopupKind::Instrument(t))
+        };
+        let Some(anchor) = self.strip_anchor(g, hit) else {
+            return false;
+        };
+        self.mixer.insert_after = None;
+        self.mixer.insert_into = None;
+        self.open_popup(kind, anchor);
+        true
+    }
+
+    /// The list of effects that go after a row of the flow (its ＋ after).
+    pub(super) fn pick_after(&mut self, g: &Geometry, t: TrackId, pick: Pick) -> bool {
+        let Some(anchor) = self.strip_anchor(g, MixerHit::After(t, pick)) else {
+            return false;
+        };
+        self.insert_after(t, pick, anchor);
+        true
+    }
+
+    /// Where a list for a part of `hit`'s strip opens: the part itself, with the mixer brought
+    /// up and scrolled to the strip when it is out of sight (a menu of the track column).
+    fn strip_anchor(&mut self, g: &Geometry, hit: MixerHit) -> Option<Rect> {
+        if let Some(r) = self.mixer_rect(g, hit) {
+            return Some(r);
+        }
+        let t = hit.track();
+        if !crate::mixer::strip_order(&self.project()).contains(&t) {
+            return None;
+        }
+        self.drawer_open = true;
+        self.tab = crate::studio::DrawerTab::Mixer;
+        self.resized(g);
+        let g = self.settled_geometry(g.size.0, g.size.1);
+        self.show_strip(&g, t);
+        self.mixer_rect(&g, hit)
+    }
+}
+
+/// A menu without the gap it would end with.
+fn trimmed(mut rows: Vec<Item>) -> Vec<Item> {
+    while rows
+        .last()
+        .is_some_and(|r| matches!(r.run, super::Run::Gap))
+    {
+        rows.pop();
+    }
+    rows
+}
+
+/// Whether the track has an instrument (the ＋ of its area then adds a layer).
+fn has_instrument(t: &Track) -> bool {
+    t.inserts.iter().any(|p| p.kind == PluginKind::Instrument)
+}
+
+/// The splitter whose branch holds `node` directly, in the insert area.
+fn split_holding(t: &Track, node: &RackNode) -> Option<NodeId> {
+    fn walk(nodes: &[RackNode], node: &RackNode) -> Option<NodeId> {
+        nodes.iter().find_map(|n| match n {
+            RackNode::Split(sp) => sp.branches.iter().find_map(|b| {
+                b.fx.contains(node)
+                    .then_some(sp.id)
+                    .or_else(|| walk(&b.fx, node))
+            }),
+            RackNode::Plugin(_) => None,
+        })
+    }
+    walk(&t.rack.as_ref()?.fx, node)
 }
 
 fn spot_track(spot: &Spot) -> Option<TrackId> {
@@ -827,7 +1044,10 @@ fn spot_track(spot: &Spot) -> Option<TrackId> {
         | Spot::Send(t, _)
         | Spot::AddSend(t)
         | Spot::Plugin(t, _)
-        | Spot::AddInsert(t) => Some(*t),
+        | Spot::AddInsert(t)
+        | Spot::InsertHeading(t)
+        | Spot::InstrumentHeading(t)
+        | Spot::Split(t, _) => Some(*t),
         Spot::Empty => None,
     }
 }
