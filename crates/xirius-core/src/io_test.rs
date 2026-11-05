@@ -39,7 +39,7 @@ pub fn before(op: &str, path: &Path) -> std::io::Result<()> {
         UI_SCOPE.get() == 0
             || matches!(
                 op,
-                "writer_complete" | "recent_poll_empty" | "request_after_peek"
+                "writer_complete" | "recent_poll_empty" | "request_after_peek" | "capture_answer"
             ),
         "UI callback reached I/O boundary: {op}"
     );

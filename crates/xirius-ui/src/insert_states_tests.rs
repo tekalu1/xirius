@@ -1,6 +1,9 @@
 //! A copy or a paste of inserts reads what the plug-ins hold now (MIX-045), with the test
 //! VST3 in a host process and in this one, its patch changed without a word.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use serde_json::json;
 use xirius_core::clipboard::Clipboard;
 use xirius_core::id::PluginId;
@@ -125,6 +128,36 @@ fn drag(s: &mut Studio, g: &Geometry, from: TrackId, to: TrackId) {
     assert!(s.insert_drag_up(g, at.0, at.1, false));
 }
 
+/// The plug-ins' answers to a question for their state, held back on this test's thread until
+/// released or dropped: the copy or the paste waits however fast the host answers.
+struct Hold {
+    open: Arc<AtomicBool>,
+    _observe: xirius_core::io_test::Observation,
+}
+
+impl Hold {
+    fn new() -> Hold {
+        let open = Arc::new(AtomicBool::new(false));
+        let shut = open.clone();
+        let test = std::thread::current().id();
+        let _observe = xirius_core::io_test::observe(Arc::new(move |op, _| {
+            if op == "capture_answer"
+                && std::thread::current().id() == test
+                && !shut.load(Ordering::SeqCst)
+            {
+                return Err(std::io::Error::other("held by the test"));
+            }
+            Ok(())
+        }));
+        Hold { open, _observe }
+    }
+
+    /// The answers are let in, as they came.
+    fn release(&self) {
+        self.open.store(true, Ordering::SeqCst);
+    }
+}
+
 #[test]
 fn a_drag_carries_what_the_plugin_holds_now_and_an_undo_brings_back_what_it_replaced() {
     let Song {
@@ -141,6 +174,7 @@ fn a_drag_carries_what_the_plugin_holds_now_and_an_undo_brings_back_what_it_repl
     assert_eq!(held(&s, guitar), (0.25, None));
     let before = s.song.steps();
 
+    let hold = Hold::new();
     drag(&mut s, &g, vocal, guitar);
     // the window goes on while the plug-ins answer; the keys wait with the paste
     assert!(s.inserts_wait.is_some());
@@ -150,6 +184,7 @@ fn a_drag_carries_what_the_plugin_holds_now_and_an_undo_brings_back_what_it_repl
     let mut typed = HeldInput::default();
     assert!(typed.hold(s.input_hold(), Held::Text(None, "z".into())));
     assert!(typed.release(s.input_hold()).is_empty(), "it waits");
+    hold.release();
     crate::shot::run_for(&mut s, 5.0, |s| s.inserts_wait.is_none());
     assert!(s.inserts_wait.is_none(), "the paste ran");
     assert_eq!(s.input_hold(), None);
@@ -274,6 +309,7 @@ fn closing_the_window_puts_a_waiting_paste_in_before_asking_to_save() {
         to,
         ..
     } = song("dedicated");
+    let _hold = Hold::new();
     drag(&mut s, &g, vocal, guitar);
     assert!(s.inserts_wait.is_some());
     assert!(!s.request_close());
@@ -296,6 +332,7 @@ fn a_paste_waiting_when_the_song_is_replaced_does_not_run_in_the_next_one() {
         guitar,
         ..
     } = song("dedicated");
+    let _hold = Hold::new();
     drag(&mut s, &g, vocal, guitar);
     assert!(s.inserts_wait.is_some());
     s.new_song_sync();
@@ -445,9 +482,11 @@ fn a_macro_copies_what_the_plugin_holds_now_before_its_next_step() {
             "track.add.audio --name After".into(),
         ],
     );
+    let hold = Hold::new();
     assert!(s.run_macro(&g, "Copy"));
     assert!(s.inserts_wait.is_some(), "the step waits for the plug-in");
     assert!(!has_track(&s, "After"), "the next step waits too");
+    hold.release();
     crate::shot::run_for(&mut s, 5.0, |s| has_track(s, "After"));
     assert_eq!(s.error, None);
     let Some(Clipboard::Inserts(c)) = &s.song.session().state.clipboard else {
@@ -517,12 +556,14 @@ fn a_macro_paste_that_cannot_run_after_its_wait_is_said_and_stops_the_macro() {
             "track.add.audio --name After".into(),
         ],
     );
+    let hold = Hold::new();
     assert!(s.run_macro(&g, "Paste"));
     assert!(s.inserts_wait.is_some());
     // the target goes while it waits (only a script could do so)
     s.song
         .run("track.delete", json!({ "ids": [guitar.to_string()] }))
         .unwrap();
+    hold.release();
     crate::shot::run_for(&mut s, 5.0, |s| {
         s.inserts_wait.is_none() && s.macro_run.is_none()
     });
@@ -542,6 +583,7 @@ fn input_held_for_a_paste_whose_song_is_replaced_is_dropped_with_it() {
         guitar,
         ..
     } = song("dedicated");
+    let _hold = Hold::new();
     drag(&mut s, &g, vocal, guitar);
     assert!(s.inserts_wait.is_some());
     let mut typed = HeldInput::default();
@@ -566,6 +608,7 @@ fn leaving_for_a_new_song_puts_a_waiting_paste_in_this_one_first() {
         to,
         ..
     } = song("dedicated");
+    let _hold = Hold::new();
     drag(&mut s, &g, vocal, guitar);
     assert!(s.inserts_wait.is_some());
     s.start_leaving(crate::saving::Leave::New);

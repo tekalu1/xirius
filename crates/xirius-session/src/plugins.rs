@@ -328,7 +328,8 @@ impl StatePull {
         }
         for (id, link, request) in &self.asked {
             if !ignored.contains(id)
-                && (!link.capture_finished(*request) || link.capture_error(*request).is_some())
+                && (!self.answered(link.capture_finished(*request))
+                    || link.capture_error(*request).is_some())
             {
                 link.cancel_capture(*request);
                 ignored.insert(*id);
@@ -338,7 +339,7 @@ impl StatePull {
             if ignored.contains(id) {
                 continue;
             }
-            if !capture.ready() {
+            if !self.answered(capture.ready()) {
                 capture.quarantine();
                 ignored.insert(*id);
             } else if capture.error().is_some() {
@@ -346,6 +347,19 @@ impl StatePull {
                 ignored.insert(*id);
             }
         }
+    }
+
+    /// Whether a plugin's answer is in, `finished` as its host or capture says. A test can hold
+    /// the answers back on its own thread (`capture_answer`), as from a host slower than any
+    /// wait, whichever way the processes race.
+    fn answered(&self, finished: bool) -> bool {
+        #[cfg(feature = "test-io")]
+        if finished
+            && xirius_core::io_test::before("capture_answer", std::path::Path::new("")).is_err()
+        {
+            return false;
+        }
+        finished
     }
 
     /// Whether the pull asked plugin `id` for its state.
@@ -357,12 +371,12 @@ impl StatePull {
         self.cancelled.get()
             || (Instant::now() >= self.not_before.get()
                 && self.asked.iter().all(|(id, link, request)| {
-                    self.ignored.borrow().contains(id) || link.capture_finished(*request)
+                    self.ignored.borrow().contains(id)
+                        || self.answered(link.capture_finished(*request))
                 })
-                && self
-                    .owned
-                    .iter()
-                    .all(|(id, capture)| self.ignored.borrow().contains(id) || capture.ready()))
+                && self.owned.iter().all(|(id, capture)| {
+                    self.ignored.borrow().contains(id) || self.answered(capture.ready())
+                }))
     }
 
     pub fn error(&self) -> Option<String> {
