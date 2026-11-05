@@ -76,6 +76,8 @@ pub struct Name {
     pub size: FontSize,
     /// Strong ink (a band that is on), else the plain ink.
     pub strong: bool,
+    /// The dim of a band cut, as its point (an EQ band that is off, UI-326).
+    pub dim: bool,
 }
 
 /// A tab choosing what the body shows (a narrow EQ's bands).

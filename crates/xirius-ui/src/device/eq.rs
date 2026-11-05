@@ -78,6 +78,11 @@ pub fn band_of(def: &BuiltinDef, k: usize) -> Option<usize> {
         .position(|b| [b.on, b.kind, b.freq, b.gain, b.q, b.slope].contains(&id))
 }
 
+/// The on of the band `i`: a press on its chosen point or Space switches it (UI-326).
+pub fn switch(def: &BuiltinDef, i: usize) -> Option<usize> {
+    def.param(EQ_BANDS.get(i)?.on).map(|(k, _)| k)
+}
+
 fn index(def: &BuiltinDef, id: &str) -> usize {
     def.param(id).map_or(0, |(k, _)| k)
 }
@@ -171,6 +176,7 @@ fn column(def: &BuiltinDef, s: &Shape, i: usize, col: Rect, row: bool, b: &mut B
         text: NAMES[i],
         size: FontSize::Small,
         strong: on,
+        dim: !on,
     });
     let type_x = name_x + name_w + 3.0;
     b.slots.push(Slot {
@@ -428,7 +434,12 @@ pub fn points_at(def: &BuiltinDef, r: Rect, values: &[f64], rate: f64) -> Vec<Po
                 on: false,
             }));
             Point {
-                name: format!("{} {}", NAMES[i], kind.label()),
+                name: format!(
+                    "{} {} {}",
+                    NAMES[i],
+                    if on { "オン" } else { "オフ" },
+                    kind.label()
+                ),
                 label: NAMES[i].to_string(),
                 value: if on {
                     tip.join("  ")
@@ -730,7 +741,7 @@ mod tests {
         assert_eq!(pts.len(), 6);
         let lmf = &pts[2];
         assert_eq!(lmf.label, "LMF");
-        assert_eq!(lmf.name, "LMF Peaking");
+        assert_eq!(lmf.name, "LMF オン Peaking");
         assert_eq!(lmf.x.unwrap().k, index(def, "mid1_freq"));
         assert_eq!(lmf.y.unwrap().k, index(def, "mid1_gain"));
         assert_eq!(lmf.wheel, Some(index(def, "mid1_q")));
@@ -764,7 +775,7 @@ mod tests {
             v[k] = x;
         }
         let p = &points(def, r, &v)[3];
-        assert_eq!(p.name, "HMF Notch");
+        assert_eq!(p.name, "HMF オン Notch");
         assert!(p.y.is_none());
         // Its menu's «back to the defaults» puts its type back too.
         assert!(p.resets().contains(&index(def, "b4_type")));

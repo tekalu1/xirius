@@ -149,6 +149,7 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
         text: "Color",
         size: FontSize::Caption,
         strong: false,
+        dim: false,
     });
     for (i, id) in KNOBS.iter().enumerate() {
         b.slots.push(Slot {

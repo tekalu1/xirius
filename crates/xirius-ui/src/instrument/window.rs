@@ -195,6 +195,9 @@ pub(crate) enum Grab {
         pointer: (f32, f32),
         x: Option<(usize, f64, f64)>,
         y: Option<(usize, f64, f64)>,
+        /// An EQ band's on (UI-326): let go before the pointer goes [`TAP`] from where it
+        /// was pressed, the press on the chosen point switches the band and moves nothing.
+        tap: Option<usize>,
     },
     /// A key or a pad (PLG-066): its note sounds while it is held and the pointer stays on it.
     Note { plugin: PluginId, pitch: u8 },
@@ -358,6 +361,9 @@ pub struct Windows {
     pub hot: Option<(PluginId, Part)>,
     /// The point chosen on each device's graph: its graph and its index.
     pub chosen: HashMap<PluginId, (usize, usize)>,
+    /// The point last pressed (UI-326): a second press on it within [`DOUBLE`] types its
+    /// value, putting back the band the first one switched.
+    pub(crate) pressed: Option<Pressed>,
     /// Each open EQ's analyser.
     pub(crate) analysers: HashMap<PluginId, Analyser>,
     /// Each open window's output meter (ENG-072).
@@ -404,6 +410,23 @@ pub struct Windows {
     /// loop's ends are taken where they were drawn while Reverse turns it (the sixth
     /// review's low 2).
     pub(crate) turns: std::cell::RefCell<HashMap<PluginId, f64>>,
+}
+
+/// How far the pointer goes on a pressed point before the press moves it, not switches
+/// its band (UI-326).
+pub(crate) const TAP: f32 = 4.0;
+
+/// How soon a second press on a point is a double one (UI-326).
+pub(crate) const DOUBLE: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// A press on a graph's point (UI-326): the point (its plug-in, its graph and its index),
+/// when, and the band's on it switched with the value it had.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Pressed {
+    pub plugin: PluginId,
+    pub at: (usize, usize),
+    pub when: std::time::Instant,
+    pub flip: Option<(usize, f64)>,
 }
 
 /// How long a pad pressed waits for its voice to be heard.
@@ -1841,10 +1864,18 @@ impl Studio {
                 self.instruments.sizes.insert(def.uid, w.body);
             }
         }
-        if let Grab::Point { plugin, x, y, .. } = grab {
+        if let Grab::Point {
+            plugin, x, y, tap, ..
+        } = grab
+        {
             if !self.instruments.open.iter().any(|w| w.plugin == plugin) {
                 // Its window went while it moved: the sound goes back to the song's (L2-ui-4).
                 self.device_hear();
+                return true;
+            }
+            // Let go where it was pressed: the chosen point's band switches (UI-326).
+            if let Some(k) = tap {
+                self.device_point_tap(plugin, k);
                 return true;
             }
             // Both of a point's values go in as one step.
@@ -2239,7 +2270,13 @@ fn paint_window(
             );
         }
         for name in &body.names {
-            let ink = if name.strong { c.ink_strong } else { c.ink };
+            let ink = if name.dim {
+                c.scroll_thumb[0]
+            } else if name.strong {
+                c.ink_strong
+            } else {
+                c.ink
+            };
             let w = name.r.w + 4.0;
             pen.text(
                 name.text,

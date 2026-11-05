@@ -334,6 +334,7 @@ fn name(r: Rect, text: &'static str) -> Name {
         text,
         size: FontSize::Caption,
         strong: false,
+        dim: false,
     }
 }
 

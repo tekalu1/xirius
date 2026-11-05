@@ -120,6 +120,7 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
         text: "Color",
         size: FontSize::Caption,
         strong: false,
+        dim: false,
     });
     let row_of = |n: usize| n as f32 * KNOB_W + (n - 1) as f32 * KNOB_GAP;
     let per = if row_of(KNOBS.len()) <= inner {

@@ -132,6 +132,7 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
         text: "Sidechain",
         size: FontSize::Small,
         strong: true,
+        dim: false,
     });
     x += name_w + 12.0;
     for id in ["filter", "listen"] {

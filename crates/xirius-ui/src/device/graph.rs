@@ -146,7 +146,7 @@ pub struct Choice {
 /// A point on a graph.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Point {
-    /// What a screen reader calls it (`LMF Peaking`).
+    /// What a screen reader calls it, with its state (`LMF オン Peaking`).
     pub name: String,
     /// The short name written over it (`LMF`).
     pub label: String,
@@ -231,6 +231,15 @@ pub fn points_turned(
         ("sampler" | "drum-kit", 1) => super::sampler::env_points(def, r, values),
         ("sampler" | "drum-kit", 2) => super::sampler::filter_points(def, r, values),
         _ => Vec::new(),
+    }
+}
+
+/// The parameter that switches the `i`th point of a device's `n`th graph on and off as it
+/// is pressed and let go once chosen, or by Space (an EQ's band, UI-326).
+pub fn switch(def: &BuiltinDef, n: usize, i: usize) -> Option<usize> {
+    match (def.uid, n) {
+        ("eq", 0) => super::eq::switch(def, i),
+        _ => None,
     }
 }
 
@@ -489,14 +498,12 @@ pub fn paint_points(pen: &mut Pen, plane: Rect, points: &[Point], view: &View) {
         let hot = chosen || view.hot == Some(i);
         let d = point_size(hot);
         let dot = Rect::new(p.at.0 - d / 2.0, p.at.1 - d / 2.0, d, d);
-        let face = if !p.on {
-            c.scroll_thumb[0]
-        } else if hot {
-            c.fill
+        // A switched-off point is a ring in the dim of a band cut, its middle empty (UI-326).
+        if p.on {
+            pen.round(dot, if hot { c.fill } else { c.ink }, Radius::Pill);
         } else {
-            c.ink
-        };
-        pen.round(dot, face, Radius::Pill);
+            pen.outline(dot, c.scroll_thumb[0], Radius::Pill, 2.0);
+        }
         if chosen && view.focused {
             let ring = Rect::new(dot.x - 3.0, dot.y - 3.0, dot.w + 6.0, dot.h + 6.0);
             pen.outline(ring, c.ring, Radius::Pill, 2.0);

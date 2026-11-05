@@ -489,15 +489,19 @@ pub fn paint_toggle(pen: &mut Pen, r: Rect, label: &str, on: bool, focused: bool
     }
 }
 
-/// The dot of a band's on (UI-326) in its round button `r`: blue while on.
+/// The dot of a band's on (UI-326) in its round button `r`: blue while on, an empty ring
+/// in the dim of a band cut while off, as its point on the graph.
 pub fn paint_dot(pen: &mut Pen, r: Rect, on: bool, hot: bool, focused: bool) {
     let c = pen.c;
     if hot {
         pen.round(r, c.surface_3, Radius::Pill);
     }
     let dot = Rect::new(r.x + (r.w - DOT) / 2.0, r.y + (r.h - DOT) / 2.0, DOT, DOT);
-    let dot_face = if on { c.ink_blue } else { c.scroll_thumb[0] };
-    pen.round(dot, dot_face, Radius::Pill);
+    if on {
+        pen.round(dot, c.ink_blue, Radius::Pill);
+    } else {
+        pen.outline(dot, c.scroll_thumb[0], Radius::Pill, 1.5);
+    }
     if focused {
         pen.outline(r, c.ring, Radius::Pill, 2.0);
     }
