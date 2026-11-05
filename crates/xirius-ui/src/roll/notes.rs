@@ -674,7 +674,12 @@ impl Roll {
             return;
         };
         let (dx, dy) = (px - d.press.0, py - d.press.1);
-        if !d.moved && dx.hypot(dy) >= SLOP {
+        let moved = if matches!(d.mode, Mode::Loop(_)) {
+            crate::ruler::moved(d.press, (px, py), self.coarse)
+        } else {
+            dx.hypot(dy) >= SLOP
+        };
+        if !d.moved && moved {
             d.moved = true;
         }
         if !d.drag_enabled && d.moved {

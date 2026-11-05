@@ -411,7 +411,10 @@ pub fn loop_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             (g.lanes.x, g.lanes.right()),
         ));
     }
-    if let Some(ctx) = s.roll_ctx(g) {
+    // Under a menu neither band is offered, as the menu takes the presses.
+    if s.popup.is_none()
+        && let Some(ctx) = s.roll_ctx(g)
+    {
         let f = s.roll.frame(ctx.body);
         out.extend(mark(
             "roll-loop-band",

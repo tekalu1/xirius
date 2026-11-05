@@ -336,3 +336,187 @@ fn the_numbers_take_the_ink_for_a_fill_only_over_a_filled_band() {
     assert_eq!(band(true, None).over(), Some((10.0, 50.0)));
     assert_eq!(band(false, Some(LoopGrip::Body)).over(), Some((10.0, 50.0)));
 }
+
+/// The song playing to a silent output.
+fn play_silent(s: &mut Studio, g: &Geometry) {
+    s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
+    assert!(s.edit_key(g, "space", Mods::NONE));
+    assert!(s.transport.playing, "{:?}", s.error);
+}
+
+/// Both bands as they would be painted now: the arrangement's and the roll's.
+fn bands(s: &Studio, g: &Geometry) -> [Band; 2] {
+    let p = s.project();
+    let (a, _) = crate::arrange::paint::band(s, &p, g).expect("the arrangement's band");
+    let (r, _) = crate::roll::ruler::band(s, &s.roll, &ctx(s, g)).expect("the roll's band");
+    [a, r]
+}
+
+/// Review M4: under auto-punch both bands are red; a press still shows: full red with the
+/// ink for a fill while the loop is on, a faint red with the plain ink while it is off.
+#[test]
+fn auto_punch_shows_the_loop_on_and_off_on_both_bands() {
+    let (mut s, g) = with_roll();
+    s.song.set("record.punch", json!({"on": true})).unwrap();
+    s.song
+        .set("record.preroll", json!({"on": true, "bars": 1}))
+        .unwrap();
+    let c = crate::paint::Colors::new(xirius_design::Theme::ALL[0]);
+    let p = s.project();
+    let (_, rolls) = crate::arrange::paint::band(&s, &p, &g).unwrap();
+    let (_, roll_rolls) = crate::roll::ruler::band(&s, &s.roll, &ctx(&s, &g)).unwrap();
+    assert!(
+        rolls[0].is_some() && roll_rolls[0].is_some(),
+        "the pre-roll beside both"
+    );
+    for b in bands(&s, &g) {
+        assert!(b.punch && !b.lit);
+        assert_eq!(b.over(), None, "off: the numbers keep their ink");
+        assert_eq!(b.face(&c), c.alert.opacity(0.3));
+    }
+    let at = band_at(&s, &g, 6 * BAR);
+    arrange_click(&mut s, &g, at);
+    assert!(
+        s.transport.looping,
+        "the press turns the loop on under punch too"
+    );
+    s.arrange.hover = Spot::None;
+    for b in bands(&s, &g) {
+        assert!(b.punch && b.lit);
+        assert_eq!(b.over(), Some((b.x0, b.x1)));
+        assert_eq!(b.face(&c), c.alert);
+    }
+    let at = roll_at(&s, &g, 6 * BAR, 5.0);
+    roll_click(&mut s, &g, at);
+    assert!(!s.transport.looping);
+    s.roll.ruler_hover = None;
+    for b in bands(&s, &g) {
+        assert_eq!(b.face(&c), c.alert.opacity(0.3));
+    }
+    assert_eq!(loop_now(&s), Some((4 * BAR, 8 * BAR)));
+}
+
+/// Review M5: the bar numbers, the times and the seconds all sit in the band's row and take
+/// the ink for a fill where they cross the band's fill; a bar's (and its seconds) blue.
+#[test]
+fn every_number_on_the_ruler_sits_in_the_band_row() {
+    use crate::ruler::{band_row, number_ink, row_parts};
+    use crate::studio::Rect;
+    let ruler = Rect::new(100.0, 40.0, 600.0, 28.0);
+    let row = band_row(ruler);
+    assert_eq!((row.y, row.h), (ruler.y, LOOP_H));
+    assert_eq!(row_parts(ruler, None), vec![(row, false)]);
+    let parts = row_parts(ruler, Some((200.0, 300.0)));
+    assert_eq!(
+        parts,
+        vec![
+            (Rect::new(100.0, 40.0, 100.0, LOOP_H), false),
+            (Rect::new(300.0, 40.0, 400.0, LOOP_H), false),
+            (Rect::new(200.0, 40.0, 100.0, LOOP_H), true),
+        ]
+    );
+    // A band past the ruler's left edge leaves no stretch there.
+    assert_eq!(row_parts(ruler, Some((50.0, 150.0))).len(), 2);
+    for theme in xirius_design::Theme::ALL {
+        let c = crate::paint::Colors::new(theme);
+        assert_eq!(number_ink(&c, true, false), c.ink_blue);
+        assert_eq!(number_ink(&c, false, false), c.ink);
+        assert_eq!(number_ink(&c, true, true), c.on_fill);
+        assert_eq!(number_ink(&c, false, true), c.on_fill);
+    }
+}
+
+/// Review M6 and L1: both bands tell a press from a drag by the straight distance, 3 px for a
+/// mouse and 10 px for a finger or a pen.
+#[test]
+fn both_bands_tell_a_press_from_a_drag_alike_and_a_finger_may_tremble_further() {
+    let (mut s, g) = with_roll();
+    let body = band_at(&s, &g, 6 * BAR);
+    let shift = |p: (f32, f32), d: (f32, f32)| (p.0 + d.0, p.1 + d.1);
+    // 2 px aslant (2.8 px) is a press in both; 2.5 px aslant (3.5 px) a drag in both.
+    arrange_drag(&mut s, &g, body, shift(body, (2.0, 2.0)));
+    assert!(s.transport.looping);
+    arrange_drag(&mut s, &g, body, shift(body, (2.5, 2.5)));
+    assert!(
+        s.transport.looping,
+        "a drag back onto the bar turns nothing"
+    );
+    let rb = roll_at(&s, &g, 6 * BAR, 5.0);
+    roll_drag(&mut s, &g, rb, shift(rb, (2.0, 2.0)));
+    assert!(!s.transport.looping);
+    roll_drag(&mut s, &g, rb, shift(rb, (2.5, 2.5)));
+    assert!(!s.transport.looping);
+    assert_eq!(loop_now(&s), Some((4 * BAR, 8 * BAR)));
+    // A finger: 8 px is still a press on either band.
+    s.coarse_press = true;
+    arrange_drag(&mut s, &g, body, shift(body, (6.0, 5.0)));
+    assert!(s.transport.looping);
+    assert!(s.roll_press(&g, rb.0, rb.1, Mods::NONE, 1));
+    let c = ctx(&s, &g);
+    let out = s.roll.moved(&c, rb.0 + 6.0, rb.1 + 5.0, Mods::NONE);
+    apply(&mut s, &g, out);
+    let c = ctx(&s, &g);
+    let out = s.roll.up(&c, rb.0 + 6.0, rb.1 + 5.0, Mods::NONE);
+    apply(&mut s, &g, out);
+    assert!(!s.transport.looping);
+    // Past 10 px it moves the band.
+    let far = shift(body, (s.beat_w * 8.0, 0.0));
+    arrange_drag(&mut s, &g, body, far);
+    assert!(!s.transport.looping);
+    assert_ne!(loop_now(&s), Some((4 * BAR, 8 * BAR)));
+}
+
+/// Review L9: a band pulled and brought back, or an end pulled onto the other, leaves the
+/// loop as it was and turns nothing; a press while the song plays turns the loop on and off.
+#[test]
+fn a_band_brought_back_or_pulled_to_nothing_changes_nothing_and_a_press_works_while_playing() {
+    let (mut s, g) = with_roll();
+    let steps = s.song.steps();
+    let body = band_at(&s, &g, 6 * BAR);
+    arrange_down(&mut s, &g, body);
+    s.arrange_move(&g, body.0 + 80.0, body.1, Mods::NONE);
+    s.arrange_move(&g, body.0, body.1, Mods::NONE);
+    s.arrange_up(&g, body.0, body.1, Mods::NONE);
+    assert!(!s.transport.looping);
+    let rb = roll_at(&s, &g, 6 * BAR, 5.0);
+    let c = ctx(&s, &g);
+    let out = s.roll.down(&c, rb.0, rb.1, Mods::NONE, 1);
+    apply(&mut s, &g, out);
+    let c = ctx(&s, &g);
+    let out = s.roll.moved(&c, rb.0 + 80.0, rb.1, Mods::NONE);
+    apply(&mut s, &g, out);
+    let c = ctx(&s, &g);
+    let out = s.roll.up(&c, rb.0, rb.1, Mods::NONE);
+    apply(&mut s, &g, out);
+    assert!(!s.transport.looping);
+    // The end onto the start: no loop of no length.
+    let (end, start) = (band_at(&s, &g, 8 * BAR), band_at(&s, &g, 4 * BAR));
+    arrange_drag(&mut s, &g, end, start);
+    assert_eq!(loop_now(&s), Some((4 * BAR, 8 * BAR)));
+    assert_eq!(s.song.steps(), steps);
+    // While the song plays.
+    play_silent(&mut s, &g);
+    arrange_click(&mut s, &g, body);
+    assert!(s.transport.looping && s.transport.playing);
+    roll_click(&mut s, &g, rb);
+    assert!(!s.transport.looping && s.transport.playing);
+    assert_eq!(s.song.steps(), steps);
+}
+
+/// Review L4: under a menu neither band is offered to a screen reader.
+#[test]
+fn a_screen_reader_is_offered_neither_band_under_a_menu() {
+    let (mut s, g) = with_roll();
+    let rb = roll_at(&s, &g, 6 * BAR, 5.0);
+    assert!(s.roll_context(&g, rb.0, rb.1));
+    assert!(s.popup.is_some(), "the menu is open");
+    let keys: Vec<_> = crate::a11y::marks(&s, &g)
+        .into_iter()
+        .map(|m| m.key)
+        .collect();
+    assert!(
+        !keys
+            .iter()
+            .any(|k| k == "loop-band" || k == "roll-loop-band")
+    );
+}

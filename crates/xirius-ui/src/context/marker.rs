@@ -87,11 +87,14 @@ pub(crate) fn paint(pen: &mut Pen, s: &Studio, g: &Geometry) {
     }
 }
 
-pub(crate) fn paint_seconds(pen: &mut Pen, s: &Studio, g: &Geometry) {
+/// The ruler in seconds: each shown bar's time, in the band's row as the bar numbers are
+/// (blue, and the ink for a fill where they cross the band's fill, `over`).
+pub(crate) fn paint_seconds(pen: &mut Pen, s: &Studio, g: &Geometry, over: Option<(f32, f32)>) {
     let p = s.project();
     let map = xirius_session::tempo::TempoMap::from_project(&p);
     let tm = p.time_map();
     let every = crate::ruler::bar_every(s.ticks_to_px(tm.bar_start(2) - tm.bar_start(1)));
+    let mut shown = Vec::new();
     for (bar, tick) in s.visible_bars(g) {
         if (bar - 1) % every != 0 {
             continue;
@@ -104,13 +107,19 @@ pub(crate) fn paint_seconds(pen: &mut Pen, s: &Studio, g: &Geometry) {
             continue;
         }
         let secs = map.seconds_at(tick).max(0.0).round() as u64;
-        pen.text(
-            &format!("{}:{:02}", secs / 60, secs % 60),
-            FontSize::Caption,
-            Weight::Medium,
-            pen.c.ink_blue,
-            Rect::new(x + 4.0, g.ruler.y, 64.0, g.ruler.h),
-            Align::Left,
-        );
+        shown.push((x, format!("{}:{:02}", secs / 60, secs % 60)));
     }
+    crate::ruler::paint_row(pen, g.ruler, over, |pen, row, on_fill| {
+        let ink = crate::ruler::number_ink(pen.c, true, on_fill);
+        for (x, text) in &shown {
+            pen.text(
+                text,
+                FontSize::Caption,
+                Weight::Medium,
+                ink,
+                Rect::new(x + 4.0, row.y, 64.0, row.h),
+                Align::Left,
+            );
+        }
+    });
 }

@@ -880,7 +880,7 @@ fn paint_ruler(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
         let over = crate::arrange::paint::loop_band(pen, studio, &project, g);
         let scale = studio.ruler_scale(g);
         if studio.song.session().state.view.ruler_seconds {
-            crate::context::marker::paint_seconds(pen, studio, g);
+            crate::context::marker::paint_seconds(pen, studio, g, over);
         } else {
             // The grid's ticks, then the numbers (bars thinned out until they
             // fit, beats and 16ths as it zooms in), none under a marker's name.
@@ -916,7 +916,7 @@ fn paint_ruler(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
                     .map(|(l, text)| (studio.tick_x_f(g, l.at), text.as_str()))
                     .filter(|(x, _)| free(*x))
                     .collect();
-                crate::ruler::paint_times(pen, &shown, g.ruler);
+                crate::ruler::paint_times(pen, &shown, g.ruler, over);
             }
         }
         crate::context::marker::paint(pen, studio, g);

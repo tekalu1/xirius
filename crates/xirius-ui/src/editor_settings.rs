@@ -194,6 +194,7 @@ impl Studio {
         }
         self.arrange.focus = false;
         self.choose_editor();
+        self.roll.coarse = self.coarse_press;
         let out = self.roll.down(&ctx, x, y, mods, clicks);
         let used = out.used;
         self.apply_roll(g, out);

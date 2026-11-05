@@ -201,19 +201,31 @@ pub fn paint_ruler(pen: &mut Pen, studio: &Studio, roll: &Roll, ctx: &Ctx, f: &F
             Radius::Xs,
         );
     }
-    let over = roll.shown_loop(ctx).and_then(|(a, b)| {
-        let band = Band {
-            x0: scale.x(a),
-            x1: scale.x(b),
-            lit: lit(studio, roll),
-            held: roll.loop_dragging(),
-            hover: roll.ruler_hover,
-            punch: false,
-        };
+    let over = band(studio, roll, ctx).and_then(|(band, rolls)| {
+        shared::paint_rolls(pen, ruler, rolls);
         shared::paint_band(pen, &band, ruler, None);
         band.over()
     });
     shared::paint_labels(pen, &marks, ruler, over, |t| scale.x(t));
+}
+
+/// What the roll's loop band shows, and the pre-roll and the post-roll beside it (window x)
+/// while auto-punch is on: as the arrangement's (REC-007).
+pub fn band(studio: &Studio, roll: &Roll, ctx: &Ctx) -> Option<(Band, shared::Rolls)> {
+    let (a, b) = roll.shown_loop(ctx)?;
+    let scale = roll.ruler_scale(ctx);
+    let punch = crate::arrange::paint::punch_bands(studio, &ctx.project);
+    let x = |r: Option<(Tick, Tick)>| r.map(|(p, q)| (scale.x(p), scale.x(q)));
+    let rolls = punch.map_or([None, None], |bands| [x(bands.pre), x(bands.post)]);
+    let band = Band {
+        x0: scale.x(a),
+        x1: scale.x(b),
+        lit: lit(studio, roll),
+        held: roll.loop_dragging(),
+        hover: roll.ruler_hover,
+        punch: punch.is_some(),
+    };
+    Some((band, rolls))
 }
 
 /// The grid outside the clip, dimmed: before its head and past its end.

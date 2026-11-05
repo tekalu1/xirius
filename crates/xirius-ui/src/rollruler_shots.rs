@@ -291,9 +291,26 @@ pub(crate) fn play(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window,
         // A press let go in the middle of the loop made by stage 7: the loop turns on or
         // off; the pointer then leaves so that the hover does not fill the band.
         9 => {
-            if let Some(p) = ruler(studio, window, 310.0, 6.0) {
-                click(p, window, cx);
-            }
+            // The middle of the loop stage 7 made, found rather than assumed.
+            let p = {
+                let mut s = studio.borrow_mut();
+                let g = crate::screen::geometry(&s, window);
+                s.roll_ctx(&g).and_then(|ctx| {
+                    let r = s.roll.frame(ctx.body).ruler;
+                    let l = ctx.project.loop_range?;
+                    let scale = s.roll.ruler_scale(&ctx);
+                    let p = ((scale.x(l.start) + scale.x(l.end)) / 2.0, r.y + 6.0);
+                    let grip = s.roll.ruler_menu_at(&ctx, p.0, p.1).and_then(|(g, _)| g);
+                    Some((p, grip))
+                })
+            };
+            let (p, grip) = p.expect("stage 7 made a loop the roll shows");
+            assert_eq!(
+                grip,
+                Some(crate::ruler::LoopGrip::Body),
+                "the press lands in the band"
+            );
+            click(p, window, cx);
             leave(window, cx);
         }
         _ => {}

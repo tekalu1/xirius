@@ -1298,7 +1298,13 @@ impl Studio {
             } else {
                 Arrange::DRAG_PX
             };
-            if !d.started && ((x - d.from.0).abs() > limit || (y - d.from.1).abs() > limit) {
+            // The loop band tells a press from a drag as the roll's does (ARR-001).
+            let moved = if matches!(d.spot, Spot::Loop(_)) {
+                crate::ruler::moved(d.from, (x, y), self.coarse_press)
+            } else {
+                (x - d.from.0).abs() > limit || (y - d.from.1).abs() > limit
+            };
+            if !d.started && moved {
                 d.started = true;
             }
             // Points, curves, tempo and the loop are previewed in the picture itself.

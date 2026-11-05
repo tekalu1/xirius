@@ -33,7 +33,7 @@ pub mod paint;
 pub mod parts;
 mod pointclip;
 pub mod probe;
-mod ruler;
+pub(crate) mod ruler;
 #[cfg(test)]
 mod tests;
 mod visible;
@@ -443,6 +443,9 @@ pub struct Roll {
     pub ruler_hover: Option<LoopGrip>,
     /// The pointer is on the clip's end handle on the ruler.
     pub end_hover: bool,
+    /// The press under way is a finger's or a pen's: a press on the loop band may wander
+    /// [`crate::ruler::SLOP_COARSE`] before it is a drag.
+    pub coarse: bool,
     /// The tick in the middle of the grid when a drag of the zoom slider began.
     pub zoom_anchor: Option<f64>,
     /// The key that lights up (an audition, or the note being dragged).
@@ -501,6 +504,7 @@ impl Default for Roll {
             hover: None,
             ruler_hover: None,
             end_hover: false,
+            coarse: false,
             zoom_anchor: None,
             audition: None,
             listen: None,

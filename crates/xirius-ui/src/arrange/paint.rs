@@ -491,15 +491,28 @@ pub fn loop_band(
     project: &Project,
     g: &Geometry,
 ) -> Option<(f32, f32)> {
+    let (band, rolls) = band(studio, project, g)?;
+    crate::ruler::paint_rolls(pen, g.ruler, rolls);
+    let below = g.ruler.y + Arrange::LOOP_H;
+    let shade_to = Rect::new(0.0, below, 0.0, g.header_h() - Arrange::LOOP_H);
+    crate::ruler::paint_band(pen, &band, g.ruler, Some(shade_to));
+    band.over()
+}
+
+/// What the arrangement's loop band shows, and the pre-roll and the post-roll beside it
+/// (window x) while auto-punch is on.
+pub fn band(
+    studio: &Studio,
+    project: &Project,
+    g: &Geometry,
+) -> Option<(crate::ruler::Band, crate::ruler::Rolls)> {
     let (a, b) = loop_now(studio, g, project)?;
     let scale = studio.ruler_scale(g);
     // Auto-punch makes the loop range the punch range: red, with the pre-roll and the
     // post-roll as grey stretches beside it (REC-007).
     let punch = punch_bands(studio, project);
-    if let Some(bands) = punch {
-        let x = |r: Option<(Tick, Tick)>| r.map(|(p, q)| (scale.x(p), scale.x(q)));
-        crate::ruler::paint_rolls(pen, g.ruler, [x(bands.pre), x(bands.post)]);
-    }
+    let x = |r: Option<(Tick, Tick)>| r.map(|(p, q)| (scale.x(p), scale.x(q)));
+    let rolls = punch.map_or([None, None], |bands| [x(bands.pre), x(bands.post)]);
     let band = crate::ruler::Band {
         x0: scale.x(a),
         x1: scale.x(b),
@@ -515,10 +528,7 @@ pub fn loop_band(
             _ => None,
         },
     };
-    let below = g.ruler.y + Arrange::LOOP_H;
-    let shade_to = Rect::new(0.0, below, 0.0, g.header_h() - Arrange::LOOP_H);
-    crate::ruler::paint_band(pen, &band, g.ruler, Some(shade_to));
-    band.over()
+    Some((band, rolls))
 }
 
 use super::Arrange;
