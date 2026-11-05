@@ -18,7 +18,9 @@ use super::graph::{self, Point};
 use super::layout::{self, Slot};
 use super::sampler;
 use crate::context::Item;
-use crate::instrument::window::{DOUBLE, Grab, Part, Pressed, TAP, Win, live, values_of};
+use crate::instrument::window::{
+    DOUBLE, Grab, Part, Pressed, TAP, TAP_COARSE, Win, live, values_of,
+};
 use crate::settings::FieldId;
 use crate::settings::field::Field;
 use crate::studio::{Geometry, Studio};
@@ -196,6 +198,7 @@ impl Studio {
         self.device_sweep_end();
         self.instruments.focus = None;
         self.instruments.edge = None;
+        self.instruments.on_point = None;
     }
 
     /// What is typed goes into the song when it reads as a value; else the
@@ -248,6 +251,7 @@ impl Studio {
         }
         self.device_sweep_end();
         self.instruments.focus = Some((w.plugin, k));
+        self.instruments.on_point = None;
         let Some(spec) = def.params.get(k) else {
             return;
         };
@@ -290,8 +294,9 @@ impl Studio {
     /// A press on a graph's point (`at`: its graph and its index): it is
     /// chosen and takes the keys; Alt puts its y and its wheel's values back
     /// to their defaults, a double click types its x's, else it is taken
-    /// hold of. An EQ band's point already chosen switches its band when it is let go
-    /// unmoved (UI-326); a second press within [`DOUBLE`] puts the band back and types.
+    /// hold of. An EQ band's point that has the keys (chosen by a press on the graph)
+    /// switches its band when it is let go unmoved (UI-326); a second press within
+    /// [`DOUBLE`] takes that step back and types.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn device_point_press(
         &mut self,
@@ -305,8 +310,11 @@ impl Studio {
     ) {
         self.device_commit();
         self.device_sweep_end();
-        let was = self.instruments.chosen.get(&w.plugin) == Some(&at);
+        // Chosen in its column, on a tab, by its menu or by Tab, the point only takes the keys.
+        let was = self.instruments.on_point == Some((w.plugin, at))
+            && self.instruments.chosen.get(&w.plugin) == Some(&at);
         self.instruments.chosen.insert(w.plugin, at);
+        self.instruments.on_point = Some((w.plugin, at));
         let first = point.params().next();
         self.instruments.focus = first.map(|k| (w.plugin, k));
         let free = |s: &Studio, k: usize| {
@@ -344,8 +352,8 @@ impl Studio {
         // A point that switches its band counts its own double press: the first one may
         // have switched it, and a slow second one switches it again.
         if clicks >= 2 && (switch.is_none() || again.is_some()) {
-            if let Some((k, before)) = again.and_then(|p| p.flip) {
-                self.device_set(w.plugin, k, before);
+            if let Some(flip) = again.and_then(|p| p.flip) {
+                self.device_unflip(w.plugin, flip);
             }
             if let Some(k) = point.x.or(point.y).map(|d| d.k).filter(|&k| free(self, k))
                 && let Some(now) = self.device_value(w.plugin, k)
@@ -382,18 +390,38 @@ impl Studio {
             return false;
         };
         let done = self.device_set(plugin, k, 1.0 - before.round());
+        let step = self.song.session().last_step();
         if done && let Some(p) = &mut self.instruments.pressed {
-            p.flip = Some((k, before));
+            p.flip = Some((k, before, step));
         }
         done
     }
 
-    /// Space on a point that has the keys (UI-326): the band of the chosen EQ point
-    /// switches, before the transport takes Space. False when the keys are on no such point.
+    /// A double press puts back the band its first press switched: the switch's step is
+    /// taken back, so the history keeps nothing of it. Past another step (or one undone),
+    /// the band is set back as a step of its own.
+    fn device_unflip(&mut self, plugin: PluginId, (k, before, step): (usize, f64, u64)) {
+        let s = self.song.session();
+        if s.last_step() == step && !s.can_redo() && s.can_undo() {
+            // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+            let done = self.run_command("history.undo", json!({}));
+            self.device_unheard(done);
+        } else {
+            self.device_set(plugin, k, before);
+        }
+    }
+
+    /// Space on a graph's point that has the keys (UI-326): the band of the EQ point
+    /// switches, before the transport takes Space. False when the keys are on no such point
+    /// (a column's knob, or a point chosen another way) or its lane holds the band: Space is
+    /// the transport's then.
     fn device_point_space(&mut self, g: &Geometry, plugin: PluginId, k: usize) -> bool {
         let Some(&(n, i)) = self.instruments.chosen.get(&plugin) else {
             return false;
         };
+        if self.instruments.on_point != Some((plugin, (n, i))) {
+            return false;
+        }
         let Some(at) = self
             .instruments
             .open
@@ -412,12 +440,14 @@ impl Studio {
             return false;
         }
         let w = self.instruments.open[at];
-        self.device_sweep_end();
-        if !self.param_locked(w.track, plugin, def.params[on].id)
-            && let Some(v) = self.device_value(plugin, on)
-        {
-            self.device_set(plugin, on, 1.0 - v.round());
+        if self.param_locked(w.track, plugin, def.params[on].id) {
+            return false;
         }
+        let Some(v) = self.device_value(plugin, on) else {
+            return false;
+        };
+        self.device_sweep_end();
+        self.device_set(plugin, on, 1.0 - v.round());
         true
     }
 
@@ -446,7 +476,8 @@ impl Studio {
         // Within [`TAP`] of the press it may still be one that switches the band; past it,
         // it is a drag and switches nothing.
         if tap.is_some() {
-            if (px - pointer.0).hypot(py - pointer.1) <= TAP {
+            let slop = if self.coarse_press { TAP_COARSE } else { TAP };
+            if (px - pointer.0).hypot(py - pointer.1) <= slop {
                 return true;
             }
             if let Some(Grab::Point { tap, .. }) = &mut self.instruments.grab {
@@ -1053,6 +1084,7 @@ impl Studio {
     ) {
         self.instruments.focus = Some((plugin, stop.k));
         self.instruments.edge = None;
+        self.instruments.on_point = None;
         let Some(at) = stop.point else {
             return;
         };

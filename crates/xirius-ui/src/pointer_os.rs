@@ -45,6 +45,14 @@ pub fn from_touch() -> bool {
     extra & 0xFFFF_FF80 == 0xFF51_5780
 }
 
+/// Whether the mouse message being handled was made from a pen or a finger: both tremble
+/// more than a mouse as they lift.
+pub fn from_pen_or_touch() -> bool {
+    // SAFETY: reads the extra information of the thread's last message; no pointers.
+    let extra = unsafe { GetMessageExtraInfo() } as u32;
+    extra & 0xFFFF_FF00 == 0xFF51_5700
+}
+
 /// The size of a cursor at the window's scale: 32 pixels at 96 dpi.
 pub fn size_for(hwnd: isize) -> usize {
     // SAFETY: a plain query on a window handle.

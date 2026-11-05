@@ -336,6 +336,7 @@ impl Screen {
         #[cfg(windows)]
         {
             studio.mixer.coarse_next = Some(crate::pointer_os::from_touch());
+            studio.coarse_press = crate::pointer_os::from_pen_or_touch();
         }
         if studio.prepare_press(&g, x, y)
             || studio.recovery_press(&g, x, y)

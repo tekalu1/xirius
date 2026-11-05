@@ -520,14 +520,44 @@ fn ui_325_a_points_slider_says_the_value_it_turns() {
 
 /// Presses the LMF point at its middle (`clicks`), moves it by `d` and lets go.
 fn tap_point(s: &mut Studio, g: &Geometry, id: PluginId, clicks: u32, d: (f32, f32)) {
+    tap_at(s, g, id, 2, clicks, d);
+}
+
+/// Presses the `i`th band's point at its middle (`clicks`), moves it by `d` and lets go.
+fn tap_at(s: &mut Studio, g: &Geometry, id: PluginId, i: usize, clicks: u32, d: (f32, f32)) {
     let (x, y) = s
-        .instrument_center(g, id, Part::Point(0, 2))
-        .expect("the LMF point");
+        .instrument_center(g, id, Part::Point(0, i))
+        .expect("the point");
     assert!(s.instrument_press(g, x, y, clicks, Mods::NONE));
     if d != (0.0, 0.0) {
         s.instrument_moved(g, x + d.0, y + d.1, false);
     }
     s.instrument_up();
+}
+
+/// Space goes past the window to the transport: the song starts (to a silent output) and
+/// stops again.
+fn space_plays(s: &mut Studio, g: &Geometry) {
+    assert!(
+        !s.field_keys(g, "space", None, Mods::NONE),
+        "the window lets Space go"
+    );
+    s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
+    assert!(s.edit_key(g, "space", Mods::NONE));
+    assert!(s.transport.playing, "the transport takes Space");
+    assert!(s.edit_key(g, "space", Mods::NONE));
+    assert!(!s.transport.playing);
+}
+
+/// Presses the knob of the parameter `name` and lets go.
+fn press_knob(s: &mut Studio, g: &Geometry, t: TrackId, id: PluginId, name: &str) {
+    let k = k_of(s, t, name);
+    press(s, g, id, Part::Knob(k));
+}
+
+/// Where the history stands.
+fn cursor(s: &Studio) -> u64 {
+    s.song.session().cursor()
 }
 
 /// The last press on a point was a while ago: the next one is not a double press.
@@ -590,14 +620,31 @@ fn ui_326_a_double_press_types_the_frequency_and_puts_the_band_back() {
     assert_eq!(plain(&s, t, "b3_on"), 1.0);
     assert_eq!(s.instruments.entry.as_ref().map(|e| e.k), Some(freq));
     s.device_blur();
-    // Chosen: the first press switches, the second puts it back and types.
+    // Away from the window and back, the first press takes the keys again.
+    press_ago(&mut s);
+    tap_point(&mut s, &g, id, 1, (0.0, 0.0));
+    assert_eq!(plain(&s, t, "b3_on"), 1.0);
+    // Chosen: the first press switches, the second takes that step back and types.
+    let c0 = cursor(&s);
     press_ago(&mut s);
     tap_point(&mut s, &g, id, 1, (0.0, 0.0));
     assert_eq!(plain(&s, t, "b3_on"), 0.0);
+    assert_eq!(cursor(&s), c0 + 1);
     tap_point(&mut s, &g, id, 2, (0.0, 0.0));
     assert_eq!(plain(&s, t, "b3_on"), 1.0, "put back");
+    assert_eq!(cursor(&s), c0, "nothing of the switch is left to undo");
     assert_eq!(s.instruments.entry.as_ref().map(|e| e.k), Some(freq));
-    s.device_blur();
+    // The typed frequency is the one step: one undo takes it back, the band stays on.
+    let f0 = plain(&s, t, "mid1_freq");
+    s.ime_replace(None, "1000", false);
+    assert!(s.field_keys(&g, "enter", None, Mods::NONE));
+    assert!((plain(&s, t, "mid1_freq") - 1000.0).abs() < 1.0);
+    assert_eq!(cursor(&s), c0 + 1, "one step");
+    assert!(!s.song.session().can_redo());
+    assert!(s.undo(&g));
+    assert_eq!(plain(&s, t, "mid1_freq"), f0);
+    assert_eq!(plain(&s, t, "b3_on"), 1.0);
+    assert_eq!(cursor(&s), c0);
     // A second press after 400 ms is a press of its own, though the system counts two.
     press_ago(&mut s);
     tap_point(&mut s, &g, id, 1, (0.0, 0.0));
@@ -608,8 +655,8 @@ fn ui_326_a_double_press_types_the_frequency_and_puts_the_band_back() {
     assert!(s.instruments.entry.is_none());
 }
 
-/// UI-326: Space on the chosen point switches its band before the transport takes it, and
-/// Enter types its frequency; Space on a column's knob is still the transport's.
+/// UI-326: Space on the point pressed on the graph switches its band before the transport
+/// takes it, and Enter types its frequency.
 #[test]
 fn ui_326_space_on_a_point_switches_its_band_and_enter_types() {
     let (mut s, g, t, id) = eq_window();
@@ -627,9 +674,139 @@ fn ui_326_space_on_a_point_switches_its_band_and_enter_types() {
         s.instruments.entry.as_ref().map(|e| e.k),
         Some(k_of(&s, t, "mid1_freq"))
     );
-    s.device_blur();
-    s.instruments.focus = Some((id, k_of(&s, t, "high_freq")));
-    assert!(!s.field_keys(&g, "space", None, Mods::NONE));
+}
+
+/// UI-326 (review H1): after a press on a column's knob, the analyser's button or Tab, Space
+/// plays: only a point pressed on the graph has the keys for its band.
+#[test]
+fn ui_326_space_after_a_knob_or_another_part_is_the_transports() {
+    let (mut s, g, t, id) = eq_window();
+    let c0 = cursor(&s);
+    // The LMF column's frequency knob: the band and the focus as on the LMF point.
+    press_knob(&mut s, &g, t, id, "mid1_freq");
+    assert_eq!(s.instruments.chosen.get(&id), Some(&(0, 2)));
+    assert_eq!(s.instruments.focus, Some((id, k_of(&s, t, "mid1_freq"))));
+    space_plays(&mut s, &g);
+    assert_eq!(plain(&s, t, "b3_on"), 1.0);
+    // The HIGH column's frequency knob chooses HIGH; Space still plays.
+    press_knob(&mut s, &g, t, id, "high_freq");
+    assert_eq!(s.instruments.chosen.get(&id), Some(&(0, 4)));
+    space_plays(&mut s, &g);
+    assert_eq!(plain(&s, t, "b5_on"), 1.0);
+    // Its gain and Q too.
+    for k in ["high_gain", "b5_q"] {
+        press_knob(&mut s, &g, t, id, k);
+        space_plays(&mut s, &g);
+    }
+    // The point pressed on the graph has the keys; a knob pressed after takes them.
+    tap_at(&mut s, &g, id, 4, 1, (0.0, 0.0));
+    assert!(s.field_keys(&g, "space", None, Mods::NONE));
+    assert_eq!(plain(&s, t, "b5_on"), 0.0);
+    assert!(s.field_keys(&g, "space", None, Mods::NONE));
+    assert_eq!(plain(&s, t, "b5_on"), 1.0);
+    press_knob(&mut s, &g, t, id, "high_gain");
+    space_plays(&mut s, &g);
+    // So does the analyser's button.
+    tap_at(&mut s, &g, id, 4, 1, (0.0, 0.0));
+    let (sx, sy) = s.instrument_center(&g, id, Part::Spectrum).unwrap();
+    assert!(s.instrument_press(&g, sx, sy, 1, Mods::NONE));
+    s.instrument_up();
+    s.popup = None;
+    space_plays(&mut s, &g);
+    // Tab from the point moves the keys on to a column: Space plays.
+    tap_at(&mut s, &g, id, 4, 1, (0.0, 0.0));
+    assert!(s.field_keys(&g, "tab", None, Mods::NONE));
+    space_plays(&mut s, &g);
+    assert_eq!(plain(&s, t, "b5_on"), 1.0);
+    assert_eq!(plain(&s, t, "b3_on"), 1.0);
+    assert_eq!(cursor(&s), c0 + 2, "only the two switches on the point");
+}
+
+/// UI-326 (review M3): a point chosen in its column, by its menu or by Tab is only chosen;
+/// its first press on the graph takes the keys and switches nothing, the next one switches.
+#[test]
+fn ui_326_a_point_chosen_another_way_takes_the_keys_on_its_first_press() {
+    let (mut s, g, t, id) = eq_window();
+    let c0 = cursor(&s);
+    // In its column.
+    press_knob(&mut s, &g, t, id, "high_freq");
+    assert_eq!(s.instruments.chosen.get(&id), Some(&(0, 4)));
+    tap_at(&mut s, &g, id, 4, 1, (0.0, 0.0));
+    assert_eq!(plain(&s, t, "b5_on"), 1.0, "the first press takes the keys");
+    assert_eq!(cursor(&s), c0);
+    press_ago(&mut s);
+    tap_at(&mut s, &g, id, 4, 1, (0.0, 0.0));
+    assert_eq!(plain(&s, t, "b5_on"), 0.0, "the next one switches");
+    assert!(s.undo(&g));
+    // By its menu.
+    let (x, y) = s.instrument_center(&g, id, Part::Point(0, 3)).unwrap();
+    assert!(s.instrument_right(&g, x, y));
+    assert_eq!(s.instruments.chosen.get(&id), Some(&(0, 3)));
+    s.popup = None;
+    press_ago(&mut s);
+    tap_at(&mut s, &g, id, 3, 1, (0.0, 0.0));
+    assert_eq!(plain(&s, t, "b4_on"), 1.0);
+    press_ago(&mut s);
+    tap_at(&mut s, &g, id, 3, 1, (0.0, 0.0));
+    assert_eq!(plain(&s, t, "b4_on"), 0.0);
+    assert!(s.undo(&g));
+    // By Tab: on to the next column, whose point is chosen; its first press takes the keys.
+    let was = *s.instruments.chosen.get(&id).unwrap();
+    let mut n = 0;
+    while s.instruments.chosen.get(&id) == Some(&was) {
+        assert!(s.field_keys(&g, "tab", None, Mods::NONE));
+        n += 1;
+        assert!(n < 40, "Tab reaches the next band");
+    }
+    let (_, i) = *s.instruments.chosen.get(&id).unwrap();
+    let on = xirius_params::EQ_BANDS[i].on;
+    press_ago(&mut s);
+    tap_at(&mut s, &g, id, i, 1, (0.0, 0.0));
+    assert_eq!(plain(&s, t, on), 1.0);
+    press_ago(&mut s);
+    tap_at(&mut s, &g, id, i, 1, (0.0, 0.0));
+    assert_eq!(plain(&s, t, on), 0.0);
+}
+
+/// UI-326 (review M6): a finger or a pen trembles more as it lifts: within 10 px it is still a
+/// press that switches the band; a mouse past 4 px drags.
+#[test]
+fn ui_326_a_finger_may_tremble_further_and_still_switch() {
+    let (mut s, g, t, id) = eq_window();
+    let f0 = plain(&s, t, "mid1_freq");
+    s.coarse_press = true;
+    tap_point(&mut s, &g, id, 1, (0.0, 0.0));
+    press_ago(&mut s);
+    tap_point(&mut s, &g, id, 1, (6.0, -5.0));
+    assert_eq!(plain(&s, t, "b3_on"), 0.0, "an 8 px tremble is a press");
+    assert_eq!(plain(&s, t, "mid1_freq"), f0, "nothing moved");
+    // Past 10 px it drags.
+    press_ago(&mut s);
+    tap_point(&mut s, &g, id, 1, (12.0, 0.0));
+    assert_eq!(plain(&s, t, "b3_on"), 0.0);
+    assert!(plain(&s, t, "mid1_freq") > f0);
+    // The same tremble from a mouse drags.
+    s.coarse_press = false;
+    let f1 = plain(&s, t, "mid1_freq");
+    press_ago(&mut s);
+    tap_point(&mut s, &g, id, 1, (6.0, -5.0));
+    assert_eq!(plain(&s, t, "b3_on"), 0.0);
+    assert!(plain(&s, t, "mid1_freq") > f1);
+}
+
+/// UI-326 (review L9): pulled past 4 px and brought back to where it was pressed, the press
+/// is a drag still: the band does not switch.
+#[test]
+fn ui_326_a_point_pulled_and_brought_back_switches_nothing() {
+    let (mut s, g, t, id) = eq_window();
+    tap_point(&mut s, &g, id, 1, (0.0, 0.0));
+    press_ago(&mut s);
+    let (x, y) = s.instrument_center(&g, id, Part::Point(0, 2)).unwrap();
+    assert!(s.instrument_press(&g, x, y, 1, Mods::NONE));
+    s.instrument_moved(&g, x + 20.0, y, false);
+    s.instrument_moved(&g, x, y, false);
+    s.instrument_up();
+    assert_eq!(plain(&s, t, "b3_on"), 1.0);
 }
 
 /// UI-326: the point's menu has its types, «バンドをオフ» or «バンドをオン» and «既定に戻す»;
@@ -686,7 +863,7 @@ fn ui_326_the_points_menu_switches_its_band_and_the_reader_hears_it() {
 }
 
 /// UI-326: the band's on keeps its stepped lane: while its lane plays it (Read), a press on
-/// the chosen point and Space switch nothing.
+/// the chosen point switches nothing and Space goes on to the transport (review M1).
 #[test]
 fn ui_326_a_band_its_lane_plays_is_not_switched_by_hand() {
     use xirius_core::auto::AutoTarget;
@@ -703,6 +880,7 @@ fn ui_326_a_band_its_lane_plays_is_not_switched_by_hand() {
     tap_point(&mut s, &g, id, 1, (0.0, 0.0));
     press_ago(&mut s);
     tap_point(&mut s, &g, id, 1, (0.0, 0.0));
-    assert!(s.field_keys(&g, "space", None, Mods::NONE));
+    assert_eq!(s.song().steps(), before);
+    space_plays(&mut s, &g);
     assert_eq!(s.song().steps(), before);
 }

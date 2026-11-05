@@ -745,6 +745,9 @@ pub struct Studio {
     pub(crate) macro_stepping: bool,
     /// A mouse button is down in the window: something may be dragged (UI-289).
     pub(crate) pointer_held: bool,
+    /// The last press was a finger's or a pen's: a press and a drag are told apart further
+    /// from where it began (UI-326, ARR-001).
+    pub(crate) coarse_press: bool,
     pub(crate) leaving_ready: bool,
     pub(crate) save_test_delay: std::time::Duration,
     #[cfg(test)]
@@ -924,6 +927,7 @@ impl Studio {
             macro_run: None,
             macro_stepping: false,
             pointer_held: false,
+            coarse_press: false,
             leaving_ready: false,
             save_test_delay: std::time::Duration::ZERO,
             #[cfg(test)]

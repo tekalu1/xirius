@@ -364,6 +364,10 @@ pub struct Windows {
     /// The point last pressed (UI-326): a second press on it within [`DOUBLE`] types its
     /// value, putting back the band the first one switched.
     pub(crate) pressed: Option<Pressed>,
+    /// The graph's point that has the keys (UI-326): pressed on the graph, and nothing
+    /// pressed or reached by Tab since. Only then do Space and a press on it switch its band;
+    /// a point chosen in its column, on a tab, by its menu or by Tab is only chosen.
+    pub(crate) on_point: Option<(PluginId, (usize, usize))>,
     /// Each open EQ's analyser.
     pub(crate) analysers: HashMap<PluginId, Analyser>,
     /// Each open window's output meter (ENG-072).
@@ -415,6 +419,8 @@ pub struct Windows {
 /// How far the pointer goes on a pressed point before the press moves it, not switches
 /// its band (UI-326).
 pub(crate) const TAP: f32 = 4.0;
+/// [`TAP`] for a finger or a pen, which tremble more as they lift.
+pub(crate) const TAP_COARSE: f32 = 10.0;
 
 /// How soon a second press on a point is a double one (UI-326).
 pub(crate) const DOUBLE: std::time::Duration = std::time::Duration::from_millis(400);
@@ -426,7 +432,9 @@ pub(crate) struct Pressed {
     pub plugin: PluginId,
     pub at: (usize, usize),
     pub when: std::time::Instant,
-    pub flip: Option<(usize, f64)>,
+    /// The band it switched: the parameter, its value before, and the step of the history
+    /// the switch was (a double press takes that step back).
+    pub flip: Option<(usize, f64, u64)>,
 }
 
 /// How long a pad pressed waits for its voice to be heard.
@@ -1440,6 +1448,10 @@ impl Studio {
             self.device_blur();
             return false;
         };
+        // A press on anything but a graph's point takes the keys from the point (UI-326).
+        if !matches!(part, Part::Point(..)) {
+            self.instruments.on_point = None;
+        }
         // The face in the mixer's drawer (MIX-046): its pin's place and a
         // double click on its bar take it out as a window; it does not move.
         if self.instruments.open[i].docked {
