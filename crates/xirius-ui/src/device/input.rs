@@ -823,9 +823,10 @@ impl Studio {
             if !e.field.marked.is_empty() {
                 return true;
             }
-            // While a save or an undo on the worker holds the song (a double press's undo
-            // goes there in the window, review 2 M2), Enter and Tab keep what is typed: the
-            // song would not take it, and it would go unsaid. Enter after puts it in.
+            // While a save or an undo on the worker holds the song, Enter and Tab keep what
+            // is typed: the song would not take it, and it would go unsaid. The window's
+            // keys and text wait for a short save before they come here (`held_input`); this
+            // is for the keys that come another way.
             if matches!(key, "enter" | "tab") && blocked {
                 return true;
             }

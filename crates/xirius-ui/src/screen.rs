@@ -28,6 +28,7 @@ use xirius_session::output::OutputMode;
 use crate::app::Place;
 use crate::assets::{Assets, LOGO_PATH};
 use crate::draw::{Pen, paint_overlay, paint_roll};
+use crate::held_input::{Held, HeldInput};
 use crate::paint::Colors;
 use crate::park::{PARK_AT, park};
 use crate::shot::{self, Act, Capture, Outcome, Play};
@@ -104,7 +105,7 @@ fn mods(m: Modifiers) -> Mods {
 }
 
 struct Screen {
-    pending_save_input: Vec<PlatformInput>,
+    pending_save_input: HeldInput,
     studio: Rc<RefCell<Studio>>,
     colors: Rc<Colors>,
     focus: FocusHandle,
@@ -131,18 +132,26 @@ impl Screen {
     /// Before a short save needs a veil, input waits as it did with a synchronous save.
     fn queue_save_input(&mut self, input: PlatformInput) -> bool {
         let studio = self.studio.borrow();
-        let Some(save) = &studio.saving else {
-            return false;
-        };
-        let release = match &input {
-            PlatformInput::MouseUp(up) => self.pending_save_input.iter().any(|event| matches!(event, PlatformInput::MouseDown(down) if down.button == up.button)),
-            PlatformInput::KeyUp(up) => self.pending_save_input.iter().any(|event| matches!(event, PlatformInput::KeyDown(down) if down.keystroke.key == up.keystroke.key)),
-            _ => false,
-        };
-        if save.defers_input() || release {
-            self.pending_save_input.push(input);
+        self.pending_save_input
+            .hold(studio.saving.as_ref(), Held::Event(input))
+    }
+
+    /// Text typed into a field: it waits with the keys while a short save holds the window
+    /// (UI-326, review 3 M1), and goes while anything else holds it.
+    fn text_in(&mut self, range: Option<Range<usize>>, text: &str, cx: &mut Context<Self>) {
+        {
+            let studio = self.studio.borrow();
+            let held = Held::Text(range.clone(), text.to_string());
+            if self.pending_save_input.hold(studio.saving.as_ref(), held) {
+                return;
+            }
         }
-        true
+        let mut studio = self.studio.borrow_mut();
+        if studio.input_blocked() {
+            return;
+        }
+        studio.ime_replace(range, text, false);
+        cx.notify();
     }
     fn right_pressed(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.studio.borrow_mut().view_read.cleanup.want_open = false;
@@ -1388,12 +1397,7 @@ impl EntityInputHandler for Screen {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mut studio = self.studio.borrow_mut();
-        if studio.input_blocked() {
-            return;
-        }
-        studio.ime_replace(range, text, false);
-        cx.notify();
+        self.text_in(range, text, cx);
     }
 
     fn replace_and_mark_text_in_range(
@@ -1624,15 +1628,23 @@ impl Render for Screen {
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
             }
         }
-        if self.studio.borrow().saving.is_none() {
-            let inputs = std::mem::take(&mut self.pending_save_input);
-            if !inputs.is_empty() {
-                window.defer(cx, move |window, cx| {
-                    for input in inputs {
-                        window.dispatch_event(input, cx);
+        let inputs = self
+            .pending_save_input
+            .release(self.studio.borrow().saving.as_ref());
+        if !inputs.is_empty() {
+            let screen = cx.entity();
+            window.defer(cx, move |window, cx| {
+                for input in inputs {
+                    match input {
+                        Held::Event(input) => {
+                            window.dispatch_event(input, cx);
+                        }
+                        Held::Text(range, text) => {
+                            screen.update(cx, |screen, cx| screen.text_in(range, &text, cx));
+                        }
                     }
-                });
-            }
+                }
+            });
         }
         let g = geometry(&self.studio.borrow(), window);
         self.background.update(cx, |view, cx| view.sync(g, cx));
@@ -2500,7 +2512,7 @@ pub fn run(opts: Options) {
                                 }
                             }));
                         Screen {
-                            pending_save_input: Vec::new(),
+                            pending_save_input: HeldInput::default(),
                             studio,
                             colors,
                             focus,

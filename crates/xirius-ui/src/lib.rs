@@ -129,6 +129,7 @@ pub mod glyphs;
 pub mod grid_lines;
 pub mod health;
 pub mod heavy_plugin_shots;
+mod held_input;
 pub mod history_time_shots;
 pub mod home;
 pub mod hover_tip;

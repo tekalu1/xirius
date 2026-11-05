@@ -10,6 +10,7 @@ use xirius_engine::stock::Tap;
 
 use super::eq;
 use super::layout;
+use crate::held_input::{Held, HeldInput};
 use crate::instrument::window::{Part, values};
 use crate::studio::{Geometry, Rect, Studio};
 use crate::tools::Mods;
@@ -959,42 +960,106 @@ fn ui_326_the_ring_is_on_a_point_only_while_it_has_the_keys() {
     assert!(s.instruments.point_ringed(c.id, def, 0, PLANE, &vals));
 }
 
-/// UI-326 (review 2 M2): in the window the double press's undo goes to the worker, as
-/// Ctrl+Z does; a value typed and put in before it is done stays typed, and Enter after puts
-/// it in, the one step left.
-#[test]
-fn ui_326_a_value_typed_while_the_undo_runs_on_the_worker_is_kept() {
-    let (mut s, g, t, id) = eq_window();
+/// A key let go of at once.
+fn key_down(key: &str) -> gpui::PlatformInput {
+    gpui::PlatformInput::KeyDown(gpui::KeyDownEvent {
+        keystroke: gpui::Keystroke::parse(key).expect("a key"),
+        is_held: false,
+        prefer_character_input: false,
+    })
+}
+
+/// Types `text` and presses Enter as the window's screen gets them: a key's event, then its
+/// characters as text; while a short save runs both wait in `held`.
+fn type_held(s: &Studio, held: &mut HeldInput, text: &str) {
+    for ch in text.chars() {
+        let ch = ch.to_string();
+        assert!(held.hold(s.saving.as_ref(), Held::Event(key_down(&ch))));
+        assert!(held.hold(s.saving.as_ref(), Held::Text(None, ch)));
+    }
+    assert!(held.hold(s.saving.as_ref(), Held::Event(key_down("enter"))));
+}
+
+/// What waited comes in, in order, as the screen lets it through again: a key to the keys of
+/// the window, text to the field.
+fn let_through(s: &mut Studio, g: &Geometry, held: &mut HeldInput) {
+    for h in held.release(s.saving.as_ref()) {
+        match h {
+            Held::Event(gpui::PlatformInput::KeyDown(k)) => {
+                if !s.field_keys(g, &k.keystroke.key, None, Mods::NONE) {
+                    s.edit_key(g, &k.keystroke.key, Mods::NONE);
+                }
+            }
+            Held::Text(range, text) => s.ime_replace(range, &text, false),
+            Held::Event(_) => {}
+        }
+    }
+}
+
+/// The double press on the chosen LMF point in the window, its undo on the worker; the
+/// history's place before the switch.
+fn double_press_in_window(s: &mut Studio, g: &Geometry, t: TrackId, id: PluginId) -> u64 {
     s.bind_window_io();
-    let freq = k_of(&s, t, "mid1_freq");
-    tap_point(&mut s, &g, id, 1, (0.0, 0.0));
-    let c0 = cursor(&s);
-    press_ago(&mut s);
-    tap_point(&mut s, &g, id, 1, (0.0, 0.0));
-    assert_eq!(plain(&s, t, "b3_on"), 0.0);
-    press_now(&mut s);
-    tap_point(&mut s, &g, id, 2, (0.0, 0.0));
+    tap_point(s, g, id, 1, (0.0, 0.0));
+    let c0 = cursor(s);
+    press_ago(s);
+    tap_point(s, g, id, 1, (0.0, 0.0));
+    assert_eq!(plain(s, t, "b3_on"), 0.0);
+    press_now(s);
+    tap_point(s, g, id, 2, (0.0, 0.0));
     assert!(s.saving.is_some(), "the undo runs on the worker");
     assert!(s.input_blocked());
-    assert_eq!(s.instruments.entry.as_ref().map(|e| e.k), Some(freq));
-    let f0 = plain(&s, t, "mid1_freq");
-    s.ime_replace(None, "1000", false);
-    assert!(s.field_keys(&g, "enter", None, Mods::NONE));
-    assert!(s.field_keys(&g, "tab", None, Mods::NONE));
+    assert_eq!(
+        s.instruments.entry.as_ref().map(|e| e.k),
+        Some(k_of(s, t, "mid1_freq"))
+    );
+    c0
+}
+
+/// UI-326 (review 3 M1): in the window the double press's undo goes to the worker, as Ctrl+Z
+/// does. A value typed before the save needs its veil waits with its keys, the characters
+/// too, and comes in order once it is done: the frequency goes in, the one step left.
+#[test]
+fn ui_326_a_value_typed_while_the_undo_runs_on_the_worker_goes_in() {
+    let (mut s, g, t, id) = eq_window();
+    let c0 = double_press_in_window(&mut s, &g, t, id);
+    let typed = s.instruments.entry.as_ref().map(|e| e.field.text());
+    let mut held = HeldInput::default();
+    type_held(&s, &mut held, "1000");
     assert_eq!(
         s.instruments.entry.as_ref().map(|e| e.field.text()),
-        Some("1000".to_string()),
-        "what is typed stays"
+        typed,
+        "nothing reaches the field meanwhile"
     );
-    assert_eq!(plain(&s, t, "mid1_freq"), f0);
+    assert!(held.release(s.saving.as_ref()).is_empty(), "it waits");
     crate::review_io_tests::finish(&mut s);
     assert_eq!(plain(&s, t, "b3_on"), 1.0, "put back");
     assert_eq!(cursor(&s), c0);
-    assert!(s.field_keys(&g, "enter", None, Mods::NONE));
+    let_through(&mut s, &g, &mut held);
     assert!(s.instruments.entry.is_none());
     assert!((plain(&s, t, "mid1_freq") - 1000.0).abs() < 1.0);
     assert_eq!(cursor(&s), c0 + 1, "one step");
     assert_eq!(plain(&s, t, "b3_on"), 1.0);
+}
+
+/// UI-326 (review 3 M1): once the save shows its veil, what is typed goes, keys and text
+/// alike, as every input then does; the field stays open with what it had.
+#[test]
+fn ui_326_what_is_typed_under_the_veil_goes() {
+    let (mut s, g, t, id) = eq_window();
+    let c0 = double_press_in_window(&mut s, &g, t, id);
+    let typed = s.instruments.entry.as_ref().map(|e| e.field.text());
+    let f0 = plain(&s, t, "mid1_freq");
+    if let Some(save) = &mut s.saving {
+        save.since -= crate::wait::OVERLAY_AFTER;
+    }
+    let mut held = HeldInput::default();
+    type_held(&s, &mut held, "1000");
+    crate::review_io_tests::finish(&mut s);
+    let_through(&mut s, &g, &mut held);
+    assert_eq!(s.instruments.entry.as_ref().map(|e| e.field.text()), typed);
+    assert_eq!(plain(&s, t, "mid1_freq"), f0);
+    assert_eq!(cursor(&s), c0);
 }
 
 /// UI-326 (review 2 L1): a switch the song did not take (a take being finished holds it) is
