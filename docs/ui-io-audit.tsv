@@ -98,7 +98,7 @@ crates/xirius-ui/src/context/screen_cmd_rows.rs	arrange_run	2
 crates/xirius-ui/src/context/track.rs	arrange_run	1
 crates/xirius-ui/src/cpu_list.rs	arrange_run	1
 crates/xirius-ui/src/dawproject_ui.rs	std :: thread :: sleep	1
-crates/xirius-ui/src/device/input.rs	run_command	2
+crates/xirius-ui/src/device/input.rs	run_command	3
 crates/xirius-ui/src/drawer_edge.rs	std :: fs :: create_dir_all	1
 crates/xirius-ui/src/drawer_edge.rs	std :: fs :: read_to_string	1
 crates/xirius-ui/src/drawer_edge.rs	std :: fs :: rename	1
