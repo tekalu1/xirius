@@ -346,6 +346,80 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     out.extend(audition_mark(s, g));
     out.extend(preset_marks(s, g));
     out.extend(drawer_marks(s, g));
+    out.extend(loop_marks(s, g));
+    out
+}
+
+/// What a screen reader calls the loop band: 「ループ 5 小節〜8 小節 オン」, the bars it starts
+/// and ends in and whether it repeats (2026-11-05).
+pub fn loop_name(s: &Studio) -> Option<String> {
+    let p = s.project();
+    let l = p.loop_range?;
+    let tm = p.time_map();
+    let (a, b) = (tm.to_bbt(l.start).0, tm.to_bbt((l.end - 1).max(l.start)).0);
+    let on = if s.transport.looping {
+        "オン"
+    } else {
+        "オフ"
+    };
+    Some(format!("ループ {a} 小節〜{b} 小節 {on}"))
+}
+
+/// The loop band on the arrangement's ruler and on the roll's: a Button named by
+/// [`loop_name`], toggled while the loop repeats; a press turns the loop on or off, as a press
+/// let go on the band does (2026-11-05).
+pub fn loop_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
+    use crate::topbar::BarButton;
+    let (Some(name), Some(l)) = (loop_name(s), s.project().loop_range) else {
+        return Vec::new();
+    };
+    let mark = |key: &str, ruler: Rect, scale: crate::ruler::Scale, view: (f32, f32)| {
+        let (x0, x1) = (scale.x(l.start).max(view.0), scale.x(l.end).min(view.1));
+        if x1 <= x0 || ruler.w <= 0.0 {
+            return None;
+        }
+        let mut node = accesskit::Node::new(accesskit::Role::Button);
+        node.set_label(name.clone());
+        node.set_toggled(if s.transport.looping {
+            accesskit::Toggled::True
+        } else {
+            accesskit::Toggled::False
+        });
+        node.set_bounds(bounds(Rect::new(
+            x0,
+            ruler.y,
+            x1 - x0,
+            crate::ruler::LOOP_H,
+        )));
+        Some(Mark {
+            key: key.into(),
+            children: Vec::new(),
+            node,
+            fold: None,
+            pick: None,
+            press: Some(Hit::Bar(BarButton::Loop)),
+            turn: None,
+            edge: None,
+        })
+    };
+    let mut out = Vec::new();
+    if s.popup.is_none() && g.ruler.w > 0.0 && g.ruler.h > 0.0 {
+        out.extend(mark(
+            "loop-band",
+            g.ruler,
+            s.ruler_scale(g),
+            (g.lanes.x, g.lanes.right()),
+        ));
+    }
+    if let Some(ctx) = s.roll_ctx(g) {
+        let f = s.roll.frame(ctx.body);
+        out.extend(mark(
+            "roll-loop-band",
+            f.ruler,
+            s.roll.ruler_scale(&ctx),
+            (f.grid.x, f.grid.right()),
+        ));
+    }
     out
 }
 

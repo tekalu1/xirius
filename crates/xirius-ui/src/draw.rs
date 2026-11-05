@@ -877,7 +877,7 @@ fn paint_ruler(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
         if g.tempo.h > 0.0 {
             crate::arrange::paint::tempo(pen, studio, &project, g);
         }
-        crate::arrange::paint::loop_band(pen, studio, &project, g);
+        let over = crate::arrange::paint::loop_band(pen, studio, &project, g);
         let scale = studio.ruler_scale(g);
         if studio.song.session().state.view.ruler_seconds {
             crate::context::marker::paint_seconds(pen, studio, g);
@@ -905,7 +905,7 @@ fn paint_ruler(pen: &mut Pen, studio: &Studio, g: &Geometry, grid: &Grid) {
                 })
             })
             .collect();
-            crate::ruler::paint_labels(pen, &marks, g.ruler, |t| scale.x(t));
+            crate::ruler::paint_labels(pen, &marks, g.ruler, over, |t| scale.x(t));
             // The times, where no number of the grid's is.
             if let Some(times) = &grid.times {
                 let taken: Vec<f32> = marks.iter().map(|m| scale.x(m.tick)).collect();

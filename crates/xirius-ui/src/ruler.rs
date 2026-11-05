@@ -247,6 +247,19 @@ pub struct Band {
     pub punch: bool,
 }
 
+impl Band {
+    /// Whether the band's face is a fill (on, held, pointed at or punching): the numbers over
+    /// it take the ink for a fill.
+    pub fn filled(&self) -> bool {
+        self.punch || self.lit || self.held || self.hover.is_some_and(|g| g != LoopGrip::New)
+    }
+
+    /// The stretch of the ruler the numbers cross in the ink for a fill, if any.
+    pub fn over(&self) -> Option<(f32, f32)> {
+        self.filled().then_some((self.x0, self.x1))
+    }
+}
+
 /// The grey stretches the pre-roll and the post-roll add around the punch range, level
 /// with the band, as window x pairs.
 pub fn paint_rolls(pen: &mut Pen, ruler: Rect, rolls: [Option<(f32, f32)>; 2]) {
@@ -290,21 +303,49 @@ pub fn paint_band(pen: &mut Pen, band: &Band, ruler: Rect, shade_to: Option<Rect
     }
 }
 
-/// The ruler's numbers, each just right of its tick: a bar's in blue, the
-/// others in the ink. `x_of` puts a tick on screen.
-pub fn paint_labels(pen: &mut Pen, marks: &[Mark], ruler: Rect, x_of: impl Fn(Tick) -> f32) {
-    for m in marks {
-        let x = x_of(m.tick).round();
-        let ink = if m.bar { pen.c.ink_blue } else { pen.c.ink };
-        pen.digits(
-            &m.label,
-            FontSize::Caption,
-            Weight::Medium,
-            ink,
-            Rect::new(x + Space::X1.px(), ruler.y, STEP_MIN_PX, ruler.h),
-            Align::Left,
-        );
+/// The ruler's numbers, each just right of its tick, in the band's row over the loop band
+/// (2026-11-05): a bar's in blue, the others in the ink, and where they cross the band's
+/// fill (`over`, window x) in the ink for a fill. `x_of` puts a tick on screen.
+pub fn paint_labels(
+    pen: &mut Pen,
+    marks: &[Mark],
+    ruler: Rect,
+    over: Option<(f32, f32)>,
+    x_of: impl Fn(Tick) -> f32,
+) {
+    let row = Rect::new(ruler.x, ruler.y, ruler.w, LOOP_H);
+    let draw = |pen: &mut Pen, on_fill: bool| {
+        for m in marks {
+            let x = x_of(m.tick).round();
+            let ink = if on_fill {
+                pen.c.on_fill
+            } else if m.bar {
+                pen.c.ink_blue
+            } else {
+                pen.c.ink
+            };
+            pen.digits(
+                &m.label,
+                FontSize::Caption,
+                Weight::Medium,
+                ink,
+                Rect::new(x + Space::X1.px(), row.y, STEP_MIN_PX, row.h),
+                Align::Left,
+            );
+        }
+    };
+    let Some((x0, x1)) = over.filter(|(x0, x1)| x1 > x0) else {
+        draw(pen, false);
+        return;
+    };
+    let left = Rect::new(row.x, row.y, (x0 - row.x).max(0.0), row.h);
+    let right = Rect::new(x1, row.y, (row.right() - x1).max(0.0), row.h);
+    for side in [left, right] {
+        if side.w > 0.0 {
+            pen.mask(side, |pen| draw(pen, false));
+        }
     }
+    pen.mask(Rect::new(x0, row.y, x1 - x0, row.h), |pen| draw(pen, true));
 }
 
 /// The room a time takes on the ruler (`0:09.3765`), in px.

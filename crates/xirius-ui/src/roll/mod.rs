@@ -367,6 +367,8 @@ pub struct Out {
     pub seek: Option<Tick>,
     /// The autoscroll switch was pressed (it runs the same toggle as F).
     pub follow: bool,
+    /// The loop band was pressed and let go unmoved: the loop turns on or off.
+    pub toggle_loop: bool,
 }
 
 impl Out {

@@ -34,7 +34,10 @@ impl Studio {
             Spot::Clip { track, clip, .. }
             | Spot::Fx { track, clip, .. }
             | Spot::Ara { track, clip } => self.clip_context(g, track, clip, x, y),
-            Spot::Loop(grip) => self.ruler_context(g, Some(grip), x, y),
+            Spot::Loop(grip) => {
+                let at = self.ctx_tick(g, x);
+                self.ruler_context(g, Some(grip), at, x, y)
+            }
             Spot::Section { id, .. } => self.section_context(g, id, x, y),
             Spot::Band => self.band_context(g, x, y),
             Spot::Tempo(i) => self.tempo_point_context(i, x, y),
@@ -58,7 +61,10 @@ impl Studio {
                 index,
             } => self.auto_lane_context(g, track, target, Some(index), (x, y)),
             Spot::Lane { track, target } => self.auto_lane_context(g, track, target, None, (x, y)),
-            Spot::None if g.ruler.contains(x, y) => self.ruler_context(g, None, x, y),
+            Spot::None if g.ruler.contains(x, y) => {
+                let at = self.ctx_tick(g, x);
+                self.ruler_context(g, None, at, x, y)
+            }
             Spot::TempoGap if self.in_range(g, x) => self.tempo_range_context((x, y)),
             Spot::TempoGap => self.tempo_row_context(g, x, y),
             Spot::Row(kind) => self.row_context(g, kind, x, y),

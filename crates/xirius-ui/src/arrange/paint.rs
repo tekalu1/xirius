@@ -483,11 +483,15 @@ pub fn punch_bands(studio: &Studio, project: &Project) -> Option<xirius_session:
 }
 
 /// The loop band along the top of the ruler (ARR-001): filled while the
-/// range repeats, grey while it does not.
-pub fn loop_band(pen: &mut Pen, studio: &Studio, project: &Project, g: &Geometry) {
-    let Some((a, b)) = loop_now(studio, g, project) else {
-        return;
-    };
+/// range repeats, grey while it does not. Answers the stretch the numbers over it cross in
+/// the ink for a fill.
+pub fn loop_band(
+    pen: &mut Pen,
+    studio: &Studio,
+    project: &Project,
+    g: &Geometry,
+) -> Option<(f32, f32)> {
+    let (a, b) = loop_now(studio, g, project)?;
     let scale = studio.ruler_scale(g);
     // Auto-punch makes the loop range the punch range: red, with the pre-roll and the
     // post-roll as grey stretches beside it (REC-007).
@@ -514,6 +518,7 @@ pub fn loop_band(pen: &mut Pen, studio: &Studio, project: &Project, g: &Geometry
     let below = g.ruler.y + Arrange::LOOP_H;
     let shade_to = Rect::new(0.0, below, 0.0, g.header_h() - Arrange::LOOP_H);
     crate::ruler::paint_band(pen, &band, g.ruler, Some(shade_to));
+    band.over()
 }
 
 use super::Arrange;

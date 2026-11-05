@@ -1481,6 +1481,9 @@ impl Studio {
                 true
             }
             Spot::FrameGrip { .. } => true,
+            // Pressed and let go on the loop band unmoved: the loop turns on or off; it
+            // keeps its range (2026-11-05).
+            Spot::Loop(LoopGrip::Body) => self.toggle_loop(),
             // The press selected the section (or let go of it); the playhead stays.
             Spot::Section { .. } | Spot::Band => true,
             Spot::Rec { track, part } => self.rec_down(*track, part.clone()),

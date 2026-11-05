@@ -263,6 +263,9 @@ impl Studio {
         if out.follow {
             self.toggle_follow();
         }
+        if out.toggle_loop {
+            self.toggle_loop();
+        }
         for edit in out.edits {
             let args = if edit.command == "note.quantize" {
                 self.quant_args(edit.args)

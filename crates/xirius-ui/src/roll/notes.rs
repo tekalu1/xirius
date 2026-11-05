@@ -15,6 +15,7 @@ use super::{
     BEAT_PX_MAX, BEAT_PX_MIN, Balloon, Ctx, Drag, Edit, Mode, NoteView, Out, Preview, ROW_H_MAX,
     ROW_H_MIN, Roll, SLOP, Then, VEL_PER_PX, Zone, ids_json, length_text, pitch_name,
 };
+use crate::ruler::LoopGrip;
 use crate::studio::Rect;
 use crate::tools::{Area, Mods, Tool, snap_round};
 
@@ -1119,6 +1120,12 @@ impl Roll {
                     Then::Keep,
                 )),
                 _ => Out::used(),
+            },
+            // Pressed and let go on the band unmoved: the loop turns on or off, as in the
+            // arrangement (2026-11-05).
+            Mode::Loop(LoopGrip::Body) if !d.moved => Out {
+                toggle_loop: true,
+                ..Out::used()
             },
             Mode::Loop(_) => match pv.loop_span {
                 Some((start, end)) => Out::edit(Edit::new(

@@ -837,6 +837,8 @@ mod folder_stem_tests;
 #[cfg(test)]
 mod key_more_tests;
 #[cfg(test)]
+mod loop_band_tests;
+#[cfg(test)]
 mod marker_tests;
 #[cfg(test)]
 mod midi_export_tests;

@@ -21,6 +21,11 @@ impl Studio {
         if !ctx.body.contains(x, y) {
             return false;
         }
+        // The ruler and its loop band have the arrangement's menus (2026-11-05).
+        if let Some((grip, at)) = self.roll.ruler_menu_at(&ctx, x, y) {
+            self.focus_arrange(false);
+            return self.ruler_context(g, grip, at, x, y);
+        }
         let Some(spot) = self.roll.context_spot(&ctx, x, y) else {
             return false;
         };

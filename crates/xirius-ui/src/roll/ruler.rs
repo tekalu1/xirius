@@ -45,6 +45,26 @@ impl Roll {
         self.loop_grip(ctx, f, x, y)
     }
 
+    /// A right press on the ruler: the loop grip under it (`None` below the band) and the
+    /// tick the ruler's menu acts at, on the grid. `None` off the ruler. The menus are the
+    /// arrangement's (2026-11-05).
+    pub(crate) fn ruler_menu_at(
+        &mut self,
+        ctx: &Ctx,
+        x: f32,
+        y: f32,
+    ) -> Option<(Option<LoopGrip>, Tick)> {
+        self.sync(ctx);
+        let f = self.frame(ctx.body);
+        if !f.ruler.contains(x, y) {
+            return None;
+        }
+        self.cancel();
+        let at = self.ruler_scale(ctx).tick(x).max(0) - ctx.clip.start;
+        let at = (ctx.snapped(self.beat_px, false, at) + ctx.clip.start).max(0);
+        Some((self.loop_grip(ctx, &f, x, y), at))
+    }
+
     /// Whether a point on the ruler's lower half is on the clip's end handle.
     pub fn end_grab(&self, ctx: &Ctx, f: &Frame, x: f32, y: f32) -> bool {
         if !f.ruler.contains(x, y) || shared::on_band(f.ruler, y) {
@@ -144,7 +164,8 @@ fn lit(studio: &Studio, roll: &Roll) -> bool {
     studio.transport.looping || roll.loop_dragging()
 }
 
-/// The ruler's parts: the bar numbers, then the loop band.
+/// The ruler's parts: the clip's span and end handle, the loop band, then the bar numbers
+/// over it (2026-11-05).
 pub fn paint_ruler(pen: &mut Pen, studio: &Studio, roll: &Roll, ctx: &Ctx, f: &Frame) {
     let scale = roll.ruler_scale(ctx);
     let ruler = f.ruler;
@@ -161,7 +182,6 @@ pub fn paint_ruler(pen: &mut Pen, studio: &Studio, roll: &Roll, ctx: &Ctx, f: &F
         first,
         last,
     );
-    shared::paint_labels(pen, &marks, ruler, |t| scale.x(t));
     let (left, end) = (scale.x(ctx.clip.start), roll.shown_end_x(studio, ctx));
     let (left, end) = (left.max(f.grid.x), end.min(f.grid.right() + 8.0));
     if end > left {
@@ -181,7 +201,7 @@ pub fn paint_ruler(pen: &mut Pen, studio: &Studio, roll: &Roll, ctx: &Ctx, f: &F
             Radius::Xs,
         );
     }
-    if let Some((a, b)) = roll.shown_loop(ctx) {
+    let over = roll.shown_loop(ctx).and_then(|(a, b)| {
         let band = Band {
             x0: scale.x(a),
             x1: scale.x(b),
@@ -191,7 +211,9 @@ pub fn paint_ruler(pen: &mut Pen, studio: &Studio, roll: &Roll, ctx: &Ctx, f: &F
             punch: false,
         };
         shared::paint_band(pen, &band, ruler, None);
-    }
+        band.over()
+    });
+    shared::paint_labels(pen, &marks, ruler, over, |t| scale.x(t));
 }
 
 /// The grid outside the clip, dimmed: before its head and past its end.

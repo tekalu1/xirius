@@ -1,6 +1,7 @@
 //! The menus of the ruler (S10) and of the loop band above it (S11).
 
 use serde_json::json;
+use xirius_core::time::Tick;
 
 use super::{Act, Item};
 use crate::export::Range;
@@ -20,26 +21,27 @@ const METERS: [(u32, u32); 8] = [
 ];
 
 impl Studio {
-    /// The right press on the ruler: the loop band's own menu on the loop, the ruler's
-    /// everywhere else.
+    /// The right press on the ruler, of the arrangement or of the piano roll (the same
+    /// menus in both): the loop band's own menu on the loop, the ruler's everywhere else,
+    /// acting at song tick `at`.
     pub(crate) fn ruler_context(
         &mut self,
         g: &Geometry,
         grip: Option<LoopGrip>,
+        at: Tick,
         x: f32,
         y: f32,
     ) -> bool {
         let items = match grip {
             Some(LoopGrip::Start | LoopGrip::End | LoopGrip::Body) => self.loop_items(g),
-            _ => self.ruler_items(g, x),
+            _ => self.ruler_items(at),
         };
         self.open_context(items, x, y);
         true
     }
 
     /// S10: what can be done at a point of the ruler.
-    fn ruler_items(&mut self, g: &Geometry, x: f32) -> Vec<Item> {
-        let at = self.ctx_tick(g, x);
+    fn ruler_items(&mut self, at: Tick) -> Vec<Item> {
         let p = self.project();
         let bpm = p
             .tempo
@@ -117,7 +119,7 @@ impl Studio {
     }
 
     /// Starts playing from `at`.
-    pub(super) fn play_from(&mut self, at: xirius_core::time::Tick) -> bool {
+    pub(super) fn play_from(&mut self, at: Tick) -> bool {
         // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
         self.seek(at);
         if !self.transport.playing {
