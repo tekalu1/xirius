@@ -19,7 +19,7 @@ use super::layout::{self, Slot};
 use super::sampler;
 use crate::context::Item;
 use crate::instrument::window::{
-    DOUBLE, Grab, Part, Pressed, TAP, TAP_COARSE, Win, live, values_of,
+    DOUBLE, Flip, Grab, Part, Pressed, TAP, TAP_COARSE, Win, live, values_of,
 };
 use crate::settings::FieldId;
 use crate::settings::field::Field;
@@ -389,8 +389,11 @@ impl Studio {
         let Some(before) = self.device_value(plugin, k) else {
             return false;
         };
+        let was = self.song.session().last_step();
         let done = self.device_set(plugin, k, 1.0 - before.round());
-        let step = self.song.session().last_step();
+        // A switch the song did not take (a save holds it) is no step: a double press then
+        // sets the band back rather than undo a step of its own (review 2 L1).
+        let step = Some(self.song.session().last_step()).filter(|&n| n != was);
         if done && let Some(p) = &mut self.instruments.pressed {
             p.flip = Some((k, before, step));
         }
@@ -400,9 +403,9 @@ impl Studio {
     /// A double press puts back the band its first press switched: the switch's step is
     /// taken back, so the history keeps nothing of it. Past another step (or one undone),
     /// the band is set back as a step of its own.
-    fn device_unflip(&mut self, plugin: PluginId, (k, before, step): (usize, f64, u64)) {
+    fn device_unflip(&mut self, plugin: PluginId, (k, before, step): Flip) {
         let s = self.song.session();
-        if s.last_step() == step && !s.can_redo() && s.can_undo() {
+        if step == Some(s.last_step()) && !s.can_redo() && s.can_undo() {
             // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             let done = self.run_command("history.undo", json!({}));
             self.device_unheard(done);
@@ -815,8 +818,15 @@ impl Studio {
                 return false;
             }
         }
+        let blocked = self.input_blocked();
         if let Some(e) = &mut self.instruments.entry {
             if !e.field.marked.is_empty() {
+                return true;
+            }
+            // While a save or an undo on the worker holds the song (a double press's undo
+            // goes there in the window, review 2 M2), Enter and Tab keep what is typed: the
+            // song would not take it, and it would go unsaid. Enter after puts it in.
+            if matches!(key, "enter" | "tab") && blocked {
                 return true;
             }
             match key {

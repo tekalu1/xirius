@@ -434,8 +434,12 @@ pub(crate) struct Pressed {
     pub when: std::time::Instant,
     /// The band it switched: the parameter, its value before, and the step of the history
     /// the switch was (a double press takes that step back).
-    pub flip: Option<(usize, f64, u64)>,
+    pub flip: Option<Flip>,
 }
+
+/// A band a press switched: the parameter, its value before, and the step of the history the
+/// switch was (none when the song did not take it).
+pub(crate) type Flip = (usize, f64, Option<u64>);
 
 /// How long a pad pressed waits for its voice to be heard.
 const FOLLOW: std::time::Duration = std::time::Duration::from_millis(500);
@@ -731,6 +735,32 @@ impl Windows {
             // too; the strip is where a point of it always is).
             Part::Body => Rect::new(r.x, r.bottom() - layout::PAD, r.w, layout::PAD),
         }
+    }
+
+    /// Whether the chosen point of the graph `n` of `plugin` wears the ring of the keys: the
+    /// keys are on one of its values. A point that switches a band (an EQ's, UI-326) wears it
+    /// only while it has the keys, pressed on the graph: then a press on it and Space switch
+    /// the band; chosen in its column, on a tab, by its menu or by Tab, it is only chosen.
+    pub(crate) fn point_ringed(
+        &self,
+        plugin: PluginId,
+        def: &BuiltinDef,
+        n: usize,
+        plane: Rect,
+        values: &[f64],
+    ) -> bool {
+        let Some(c) = self.chosen.get(&plugin).filter(|c| c.0 == n).map(|c| c.1) else {
+            return false;
+        };
+        if graph::switch(def, n, c).is_some() && self.on_point != Some((plugin, (n, c))) {
+            return false;
+        }
+        self.focus.is_some_and(|(id, k)| {
+            id == plugin
+                && graph::points(def, n, plane, values)
+                    .get(c)
+                    .is_some_and(|pt| pt.params().any(|x| x == k))
+        })
     }
 
     /// The point a graph draws as hot: the one held, else the one under the
@@ -2236,12 +2266,7 @@ fn paint_window(
         }
         for (n, &plane) in body.graphs.iter().enumerate() {
             let chosen = ins.chosen.get(&plugin.id).filter(|c| c.0 == n).map(|c| c.1);
-            let focused = ins.focus.is_some_and(|(id, k)| {
-                id == plugin.id
-                    && chosen
-                        .and_then(|c| graph::points(def, n, plane, &shown).get(c).cloned())
-                        .is_some_and(|pt| pt.params().any(|x| x == k))
-            });
+            let focused = ins.point_ringed(plugin.id, def, n, plane, &shown);
             let view = graph::View {
                 plugin: Some(plugin.id),
                 chosen,

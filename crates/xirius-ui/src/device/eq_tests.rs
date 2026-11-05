@@ -567,6 +567,14 @@ fn press_ago(s: &mut Studio) {
     }
 }
 
+/// The last press on a point was just now, however slow the test runs: the next one is a
+/// double press.
+fn press_now(s: &mut Studio) {
+    if let Some(p) = &mut s.instruments.pressed {
+        p.when = Instant::now();
+    }
+}
+
 /// UI-326 (2026-11-05): the first press on a point chooses it; pressed again and let go
 /// unmoved, its band switches, one step to undo; moved within 4 px it still switches and
 /// moves nothing, past 4 px it moves and switches nothing.
@@ -883,4 +891,133 @@ fn ui_326_a_band_its_lane_plays_is_not_switched_by_hand() {
     assert_eq!(s.song().steps(), before);
     space_plays(&mut s, &g);
     assert_eq!(s.song().steps(), before);
+}
+
+/// A plane for the graph's points: their values, not where they are, give the ring.
+const PLANE: Rect = Rect::new(0.0, 0.0, 400.0, 160.0);
+
+/// Whether the EQ's chosen point wears the ring of the keys.
+fn ringed(s: &Studio, t: TrackId, id: PluginId) -> bool {
+    let x = fx(s, t);
+    s.instruments
+        .point_ringed(id, x.builtin().unwrap(), 0, PLANE, &values(&x))
+}
+
+/// UI-326 (review 2 M1): the EQ's point wears the ring only while it has the keys, pressed
+/// on the graph, as then its first press switches the band; chosen in its column, by Tab or
+/// by its menu it is drawn chosen, without the ring. A point that switches nothing (the
+/// Compressor's) keeps the ring the keys of its column give it.
+#[test]
+fn ui_326_the_ring_is_on_a_point_only_while_it_has_the_keys() {
+    let (mut s, g, t, id) = eq_window();
+    press_knob(&mut s, &g, t, id, "mid1_freq");
+    assert_eq!(s.instruments.chosen.get(&id), Some(&(0, 2)));
+    assert_eq!(s.instruments.focus, Some((id, k_of(&s, t, "mid1_freq"))));
+    assert!(!ringed(&s, t, id), "chosen in its column: no ring");
+    tap_point(&mut s, &g, id, 1, (0.0, 0.0));
+    assert!(ringed(&s, t, id), "pressed on the graph: the ring");
+    assert_eq!(plain(&s, t, "b3_on"), 1.0);
+    press_ago(&mut s);
+    tap_point(&mut s, &g, id, 1, (0.0, 0.0));
+    assert_eq!(
+        plain(&s, t, "b3_on"),
+        0.0,
+        "the point with the ring switches"
+    );
+    assert!(ringed(&s, t, id));
+    assert!(s.field_keys(&g, "tab", None, Mods::NONE));
+    assert!(!ringed(&s, t, id), "Tab takes the ring off");
+    let (x, y) = s.instrument_center(&g, id, Part::Point(0, 3)).unwrap();
+    assert!(s.instrument_right(&g, x, y));
+    s.popup = None;
+    assert_eq!(s.instruments.chosen.get(&id), Some(&(0, 3)));
+    assert!(!ringed(&s, t, id), "chosen by its menu: no ring");
+    tap_at(&mut s, &g, id, 3, 1, (0.0, 0.0));
+    assert!(ringed(&s, t, id));
+    press_knob(&mut s, &g, t, id, "mid2_gain");
+    assert!(!ringed(&s, t, id), "a knob takes the ring off");
+    // A Compressor's point, its value's keys in its column: the ring as before.
+    assert!(s.run_command(
+        "plugin.add",
+        json!({ "track": t.to_string(), "name": "Compressor" }),
+    ));
+    let c = s.project().tracks[&t]
+        .inserts
+        .iter()
+        .find(|x| x.name == "Compressor")
+        .cloned()
+        .unwrap();
+    let def = c.builtin().unwrap();
+    let vals = values(&c);
+    let k = super::graph::points(def, 0, PLANE, &vals)
+        .first()
+        .and_then(|p| p.params().next())
+        .expect("a point with a value");
+    s.instruments.chosen.insert(c.id, (0, 0));
+    s.instruments.focus = Some((c.id, k));
+    s.instruments.on_point = None;
+    assert!(s.instruments.point_ringed(c.id, def, 0, PLANE, &vals));
+}
+
+/// UI-326 (review 2 M2): in the window the double press's undo goes to the worker, as
+/// Ctrl+Z does; a value typed and put in before it is done stays typed, and Enter after puts
+/// it in, the one step left.
+#[test]
+fn ui_326_a_value_typed_while_the_undo_runs_on_the_worker_is_kept() {
+    let (mut s, g, t, id) = eq_window();
+    s.bind_window_io();
+    let freq = k_of(&s, t, "mid1_freq");
+    tap_point(&mut s, &g, id, 1, (0.0, 0.0));
+    let c0 = cursor(&s);
+    press_ago(&mut s);
+    tap_point(&mut s, &g, id, 1, (0.0, 0.0));
+    assert_eq!(plain(&s, t, "b3_on"), 0.0);
+    press_now(&mut s);
+    tap_point(&mut s, &g, id, 2, (0.0, 0.0));
+    assert!(s.saving.is_some(), "the undo runs on the worker");
+    assert!(s.input_blocked());
+    assert_eq!(s.instruments.entry.as_ref().map(|e| e.k), Some(freq));
+    let f0 = plain(&s, t, "mid1_freq");
+    s.ime_replace(None, "1000", false);
+    assert!(s.field_keys(&g, "enter", None, Mods::NONE));
+    assert!(s.field_keys(&g, "tab", None, Mods::NONE));
+    assert_eq!(
+        s.instruments.entry.as_ref().map(|e| e.field.text()),
+        Some("1000".to_string()),
+        "what is typed stays"
+    );
+    assert_eq!(plain(&s, t, "mid1_freq"), f0);
+    crate::review_io_tests::finish(&mut s);
+    assert_eq!(plain(&s, t, "b3_on"), 1.0, "put back");
+    assert_eq!(cursor(&s), c0);
+    assert!(s.field_keys(&g, "enter", None, Mods::NONE));
+    assert!(s.instruments.entry.is_none());
+    assert!((plain(&s, t, "mid1_freq") - 1000.0).abs() < 1.0);
+    assert_eq!(cursor(&s), c0 + 1, "one step");
+    assert_eq!(plain(&s, t, "b3_on"), 1.0);
+}
+
+/// UI-326 (review 2 L1): a switch the song did not take (a take being finished holds it) is
+/// no step; a double press after sets the band back, and takes back no step before it.
+#[test]
+fn ui_326_a_refused_switch_takes_back_no_step_on_a_double_press() {
+    let (mut s, g, t, id) = eq_window();
+    tap_point(&mut s, &g, id, 1, (0.0, 0.0));
+    let gain = k_of(&s, t, "mid1_gain");
+    assert!(s.device_set(id, gain, 0.8));
+    let g1 = plain(&s, t, "mid1_gain");
+    let c1 = cursor(&s);
+    s.transport.finishing_take = true;
+    press_ago(&mut s);
+    tap_point(&mut s, &g, id, 1, (0.0, 0.0));
+    s.transport.finishing_take = false;
+    assert_eq!(plain(&s, t, "b3_on"), 1.0, "the song did not take it");
+    assert_eq!(cursor(&s), c1);
+    press_now(&mut s);
+    tap_point(&mut s, &g, id, 2, (0.0, 0.0));
+    assert_eq!(plain(&s, t, "mid1_gain"), g1, "the step before stays");
+    assert_eq!(plain(&s, t, "b3_on"), 1.0);
+    assert_eq!(cursor(&s), c1);
+    assert!(s.song.session().can_undo());
+    assert!(s.instruments.entry.is_some());
 }
