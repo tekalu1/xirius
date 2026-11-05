@@ -401,6 +401,33 @@ impl Studio {
         self.popup = popup;
     }
 
+    /// The screen's own `plugin.rescan` on the song's owner (PLG-021). Only the session goes
+    /// to the worker: nothing on the screen is closed or cleared for it, as nothing is saved.
+    pub(crate) fn rescan_on_worker(&mut self, raw: serde_json::Map<String, serde_json::Value>) {
+        let command: SaveCommand = ("plugin.rescan".into(), raw, RunOptions::human(), false);
+        let progress = Arc::new(SaveProgress::default());
+        let work =
+            Work::Writing(self.save_worker(None, false, progress.clone(), Some(command.clone())));
+        self.saving = Some(Saving {
+            device_entry: None,
+            palette_query: None,
+            operation: Some(crate::io_command::label("plugin.rescan")),
+            mcp: None,
+            command: Some(command),
+            work,
+            since: crate::wait::now(),
+            progress,
+            target: None,
+            leaving: None,
+            draft: None,
+            close_when_done: false,
+            lose_unwritten: false,
+            stop_take: false,
+            record_error: None,
+            cancel_hover: false,
+        });
+    }
+
     pub(crate) fn io_command_for_mcp(&mut self, job: xirius_mcp::Job) {
         if let Some(error) = self.io_device_change_error(&job.command, &job.raw) {
             job.answer(Err(CmdError::conflict(error)));
@@ -799,8 +826,10 @@ impl Studio {
                     if name.starts_with("history.") {
                         self.view_read.history_points = None;
                     }
-                    if name == "plugin.rescan" {
+                    // The screen's own scan says it where scans fail, and only there.
+                    if name == "plugin.rescan" && self.scan_sent().is_some() {
                         self.scan_not_started(error.to_string());
+                        return true;
                     }
                     self.error = Some(error.to_string());
                     if let Some(ui) = &mut self.settings {

@@ -155,6 +155,145 @@ mod menu_io_tests {
         assert!(s.mixer.scan.error.is_none(), "{:?}", s.mixer.scan.error);
     }
 
+    /// A windowed studio scanning no folders into a list of its own.
+    fn windowed(root: &std::path::Path) -> Studio {
+        let mut s = Studio::new(crate::song::Song::sample_with(ScanOptions {
+            dirs: Vec::new(),
+            cache: root.join("catalog.json"),
+            ..ScanOptions::default()
+        }));
+        crate::transport::mark_window_thread();
+        s.bind_window_io();
+        s
+    }
+
+    fn owner_done(s: &mut Studio) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while s.saving.is_some() {
+            s.poll_saving();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+    }
+
+    /// Frames until the scan and the list it leaves are done; no scan failed on the way.
+    fn scan_done(s: &mut Studio) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while s.mixer.scan.running() || s.mixer.scan.catalog_read.is_some() {
+            s.tick();
+            assert!(s.mixer.scan.error.is_none(), "{:?}", s.mixer.scan.error);
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(s.mixer.scan.cache_current, Some(true));
+        assert!(s.error.is_none(), "{:?}", s.error);
+    }
+
+    #[test]
+    fn a_scan_running_when_a_new_song_comes_is_asked_again_and_nothing_fails() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = windowed(root.path());
+        s.start_plugin_scan().unwrap();
+        owner_done(&mut s);
+        let first = s.mixer.scan.job.clone().expect("the job runs");
+        // The new song's session has jobs of its own: the scan went with the old one.
+        s.new_song_sync();
+        assert!(s.mixer.scan.running());
+        s.poll_plugin_scan();
+        assert!(s.mixer.scan.error.is_none(), "{:?}", s.mixer.scan.error);
+        assert!(s.mixer.scan.running(), "the same scan is asked for again");
+        owner_done(&mut s);
+        assert!(s.mixer.scan.job.as_ref().is_some_and(|job| *job != first));
+        scan_done(&mut s);
+        assert!(root.path().join("catalog.json").exists());
+    }
+
+    #[test]
+    fn a_scan_running_when_a_song_is_opened_goes_on_and_nothing_fails() {
+        let root = tempfile::tempdir().unwrap();
+        let song = root.path().join("song");
+        crate::song::Song::empty().save_as(&song).unwrap();
+        let mut s = windowed(root.path());
+        s.start_plugin_scan().unwrap();
+        owner_done(&mut s);
+        assert!(s.mixer.scan.job.is_some());
+        assert!(s.request_open_file(crate::studio::FileRequest::Open, &song));
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while s.opening.is_some() {
+            s.poll_opening();
+            assert!(Instant::now() < deadline, "the song never opened");
+            std::thread::yield_now();
+        }
+        assert_eq!(s.song.dir(), Some(song.clone()));
+        scan_done(&mut s);
+    }
+
+    #[test]
+    fn a_scan_stopped_when_a_new_song_comes_keeps_the_list_and_nothing_fails() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = windowed(root.path());
+        s.start_plugin_scan().unwrap();
+        owner_done(&mut s);
+        s.mixer.scan.stopping = true;
+        s.new_song_sync();
+        s.poll_plugin_scan();
+        assert!(
+            !s.mixer.scan.running(),
+            "a stopped scan is not asked for again"
+        );
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while s.mixer.scan.catalog_read.is_some() {
+            s.poll_plugin_scan();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert!(s.mixer.scan.error.is_none(), "{:?}", s.mixer.scan.error);
+        assert!(s.mixer.catalog.is_some());
+    }
+
+    #[test]
+    fn the_automatic_scan_leaves_the_screen_as_it_was() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = windowed(root.path());
+        s.mixer.scan.auto = true;
+        let g = s.geometry(1280.0, 720.0);
+        s.open_palette(&g);
+        s.error = Some("起動時の誤り".into());
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while s.saving.is_none() {
+            s.poll_plugin_scan();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        owner_done(&mut s);
+        assert!(s.mixer.scan.job.is_some());
+        assert_eq!(s.error.as_deref(), Some("起動時の誤り"));
+        assert!(s.palette.is_some());
+        assert!(s.toast.is_none());
+    }
+
+    #[test]
+    fn a_scan_asked_while_the_window_is_held_starts_once_it_is_free() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = windowed(root.path());
+        s.save_test_delay = Duration::from_millis(50);
+        s.io_command_on_worker(
+            "prefs.set",
+            json!({"key":"ui.theme","value":"light"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        s.mixer_pick(PopupKind::Insert(TrackId::MASTER), RESCAN);
+        assert!(s.mixer.scan.running(), "the press is kept");
+        s.save_test_delay = Duration::ZERO;
+        owner_done(&mut s);
+        s.poll_plugin_scan();
+        owner_done(&mut s);
+        assert!(s.mixer.scan.job.is_some());
+        scan_done(&mut s);
+    }
+
     #[test]
     fn a_scan_the_songs_owner_refuses_is_said_where_scans_fail() {
         let root = tempfile::tempdir().unwrap();
@@ -169,6 +308,8 @@ mod menu_io_tests {
         s.wait_for_save();
         assert!(!s.mixer.scan.running());
         assert_eq!(s.mixer.scan.error.as_deref(), Some("保存できません"));
+        // Said there only, not again as the window's error.
+        assert!(s.error.is_none(), "{:?}", s.error);
     }
 
     #[test]
@@ -243,13 +384,50 @@ pub struct PluginScan {
     polled: Option<Instant>,
     /// Asked to stop; ending.
     pub stopping: bool,
-    /// The unusable plugin a scan asked for opens again, shown so once its job runs.
-    retry_next: Option<std::path::PathBuf>,
+    /// Asked for while the window's input was held: started once it is free.
+    queued: Option<Asked>,
+    /// On the song's owner until it answers with the job, whose start is not said.
+    sent: Option<Asked>,
+    /// What the running job was asked with, asked again on a song that did not keep it.
+    following: Option<Asked>,
+    /// The song was replaced while the job ran: its next answer says whether the job went
+    /// with the song that was closed.
+    replaced: bool,
+}
+
+/// A scan the screen asked for: the command's arguments, and the unusable plugin it opens
+/// again (shown so once its job runs).
+#[derive(Clone)]
+pub(crate) struct Asked {
+    args: serde_json::Value,
+    retry: Option<std::path::PathBuf>,
+}
+
+impl Asked {
+    fn whole() -> Asked {
+        Asked {
+            args: json!({ "background": true }),
+            retry: None,
+        }
+    }
+
+    /// A scan the palette or the AI asked for, asked again the same way.
+    pub(crate) fn from_args(raw: &serde_json::Map<String, serde_json::Value>) -> Asked {
+        Asked {
+            args: serde_json::Value::Object(raw.clone()),
+            retry: None,
+        }
+    }
+
+    fn args(&self) -> serde_json::Map<String, serde_json::Value> {
+        self.args.as_object().cloned().unwrap_or_default()
+    }
 }
 
 impl PluginScan {
+    /// A job runs, or one asked for has not started yet.
     pub fn running(&self) -> bool {
-        self.job.is_some()
+        self.job.is_some() || self.sent.is_some() || self.queued.is_some()
     }
 
     /// `スキャン中 12 / 295` once the number of bundles is known.
@@ -267,7 +445,7 @@ impl PluginScan {
 impl Studio {
     /// Starts `plugin.rescan --background`; a scan already running is left to finish.
     pub fn start_plugin_scan(&mut self) -> Result<(), String> {
-        self.start_scan(json!({ "background": true }))
+        self.start_scan(Asked::whole())
     }
 
     /// Scans the unusable plugin `at` (an index into the browser's list of them) again; the
@@ -280,43 +458,63 @@ impl Studio {
             return Ok(());
         }
         let path = bad.path.clone();
-        let args = json!({ "background": true, "path": path.to_string_lossy() });
-        self.mixer.scan.retry_next = Some(path);
-        let started = self.start_scan(args);
-        if started.is_err() {
-            self.mixer.scan.retry_next = None;
-        }
-        started
+        self.start_scan(Asked {
+            args: json!({ "background": true, "path": path.to_string_lossy() }),
+            retry: Some(path),
+        })
     }
 
-    fn start_scan(&mut self, args: serde_json::Value) -> Result<(), String> {
+    fn start_scan(&mut self, asked: Asked) -> Result<(), String> {
         if self.mixer.scan.running() {
             return Ok(());
         }
         // In the window the song's owner runs it (PRJ-031); the end of that run follows the job
-        // (`io_command_finished`) or says why it did not start (`scan_not_started`).
+        // (`scan_answered`) or says why it did not start (`scan_not_started`). Asked while
+        // something else holds the window, it starts once that is done.
         if self.transport.is_windowed() {
             if self.input_blocked() {
-                self.mixer.scan.retry_next = None;
+                self.mixer.scan.queued = Some(asked);
             } else {
-                let raw = args.as_object().cloned().unwrap_or_default();
-                self.io_command_on_worker("plugin.rescan", raw);
+                self.rescan_on_worker(asked.args());
+                self.mixer.scan.sent = Some(asked);
             }
+            self.refresh_insert_list();
             return Ok(());
         }
         // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
-        let data = self.song.run("plugin.rescan", args)?;
-        self.track_scan(&data)
+        let data = self.song.run("plugin.rescan", asked.args.clone())?;
+        self.track_scan(&data, Some(asked))
+    }
+
+    /// The scan the screen asked the song's owner for, if that is what it ran: answered by
+    /// [`Studio::scan_answered`], without the toast and the clean-up of other commands.
+    pub(crate) fn scan_sent(&mut self) -> Option<Asked> {
+        self.mixer.scan.sent.take()
+    }
+
+    /// The song's owner started the scan the screen asked for: its rows say how it goes.
+    pub(crate) fn scan_answered(&mut self, data: &serde_json::Value, asked: Asked) {
+        if data["state"] == "running" {
+            if let Err(error) = self.track_scan(data, Some(asked)) {
+                self.scan_not_started(error);
+            }
+        } else {
+            self.reload_catalog_later();
+        }
+        self.refresh_insert_list();
     }
 
     /// The song's owner could not start the scan: said where a failed scan is said.
     pub(crate) fn scan_not_started(&mut self, error: String) {
-        self.mixer.scan.retry_next = None;
         self.mixer.scan.error = Some(error);
         self.refresh_insert_list();
     }
 
-    pub(crate) fn track_scan(&mut self, data: &serde_json::Value) -> Result<(), String> {
+    pub(crate) fn track_scan(
+        &mut self,
+        data: &serde_json::Value,
+        asked: Option<Asked>,
+    ) -> Result<(), String> {
         let job = data["job"].as_str().ok_or("plugin.rescan gave no job")?;
         let scan = &mut self.mixer.scan;
         if scan.job.as_deref() == Some(job) {
@@ -325,11 +523,45 @@ impl Studio {
         scan.job = Some(job.to_string());
         (scan.done, scan.total, scan.error, scan.polled) = (0, 0, None, None);
         scan.stopping = false;
+        scan.replaced = false;
         self.browser.scanning = true;
         self.browser.scan_stopping = false;
         (self.browser.scan_done, self.browser.scan_total) = (0, 0);
-        self.browser.retrying = scan.retry_next.take();
+        self.browser.retrying = asked.as_ref().and_then(|a| a.retry.clone());
+        scan.following = asked;
         Ok(())
+    }
+
+    /// Another song is in this one's place (PLG-021). The scan does not depend on the song:
+    /// the job goes on if the song's owner kept it, and is asked again if it went with the
+    /// song that was closed. Nothing has failed either way.
+    pub(crate) fn scan_song_replaced(&mut self) {
+        let scan = &mut self.mixer.scan;
+        if scan.job.as_deref().is_some_and(|job| job != "pose") {
+            scan.replaced = true;
+            scan.polled = None;
+        }
+    }
+
+    /// The job went with the song that was closed: the same scan on this one, or, if it was
+    /// being stopped, the list as the stop left it.
+    fn scan_lost(&mut self) {
+        let scan = &mut self.mixer.scan;
+        let stopping = std::mem::take(&mut scan.stopping);
+        let asked = scan.following.take();
+        scan.job = None;
+        scan.file.clear();
+        (scan.done, scan.total, scan.polled) = (0, 0, None);
+        self.browser.scanning = false;
+        self.browser.scan_stopping = false;
+        self.browser.retrying = None;
+        (self.browser.scan_done, self.browser.scan_total) = (0, 0);
+        if stopping {
+            self.reload_catalog_later();
+        } else if let Err(error) = self.start_scan(asked.unwrap_or_else(Asked::whole)) {
+            self.mixer.scan.error = Some(error);
+        }
+        self.refresh_insert_list();
     }
 
     /// For the screenshots: a scan shown half way, which no frame polls and nothing ends.
@@ -347,6 +579,10 @@ impl Studio {
     /// what it opened.
     pub fn stop_plugin_scan(&mut self) {
         let Some(job) = self.mixer.scan.job.clone() else {
+            // One still waiting for the window is not asked for any more.
+            if self.mixer.scan.queued.take().is_some() {
+                self.refresh_insert_list();
+            }
             return;
         };
         if self.mixer.scan.stopping {
@@ -360,6 +596,12 @@ impl Studio {
                 // Asked at once, so the end shows on the next frame.
                 self.mixer.scan.polled = None;
                 self.refresh_insert_list();
+            }
+            // The job went with the song that was closed before a frame asked after it.
+            Err(_) if self.mixer.scan.replaced => {
+                self.mixer.scan.replaced = false;
+                self.mixer.scan.stopping = true;
+                self.scan_lost();
             }
             Err(e) => self.error = Some(e),
         }
@@ -467,9 +709,19 @@ impl Studio {
                 }
             }
         }
+        if self.mixer.scan.queued.is_some() {
+            if self.transport.is_windowed() && self.input_blocked() {
+                return true;
+            }
+            let asked = self.mixer.scan.queued.take().unwrap();
+            if let Err(error) = self.start_scan(asked) {
+                self.mixer.scan.error = Some(error);
+            }
+            return true;
+        }
         let scan = &mut self.mixer.scan;
         let Some(job) = scan.job.clone() else {
-            return loaded || scan.catalog_read.is_some();
+            return loaded || scan.catalog_read.is_some() || scan.sent.is_some();
         };
         if scan.polled.is_some_and(|t| t.elapsed() < POLL) {
             return true;
@@ -477,6 +729,10 @@ impl Studio {
         scan.polled = Some(Instant::now());
         // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         let status = self.song.run("export.status", json!({ "job": job }));
+        if std::mem::take(&mut self.mixer.scan.replaced) && status.is_err() {
+            self.scan_lost();
+            return true;
+        }
         let scan = &mut self.mixer.scan;
         let state = match &status {
             Ok(v) => {

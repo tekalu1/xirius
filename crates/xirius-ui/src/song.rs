@@ -115,8 +115,9 @@ pub struct Song {
     files: std::cell::RefCell<files::Reads>,
     windowed: bool,
     session: Session,
-    /// The list `plugin.rescan` keeps.
-    plugin_cache: PathBuf,
+    /// Where `plugin.rescan` looks and the list it keeps; a song in this one's place scans
+    /// the same.
+    scan: ScanOptions,
     /// The user's settings, answered by the session's `prefs.*` / `keymap.*` /
     /// `mousemap.*` commands. In memory until [`Song::load_settings`].
     settings: xirius_prefs::Shared,
@@ -907,7 +908,7 @@ impl Song {
     /// The sample song in the place of `old`, with its settings (see [`Song::empty_after`]).
     pub fn sample_after(old: &Song) -> Song {
         Song::sample_into(
-            crate::mixer::scan::options(),
+            old.scan.clone(),
             default_trash(),
             Some((old.settings.clone(), old.io.clone())),
         )
@@ -929,7 +930,7 @@ impl Song {
     pub fn empty_after(old: &Song) -> Song {
         Song::start(
             Session::new(EMPTY_NAME),
-            crate::mixer::scan::options(),
+            old.scan.clone(),
             old.trash.clone(),
             Some((old.settings.clone(), old.io.clone())),
         )
@@ -940,7 +941,7 @@ impl Song {
     pub fn imported_after(old: &Song, project: Project) -> Song {
         Song::start(
             Session::with_registry(project, xirius_session::commands::shared_registry()),
-            crate::mixer::scan::options(),
+            old.scan.clone(),
             old.trash.clone(),
             Some((old.settings.clone(), old.io.clone())),
         )
@@ -997,10 +998,9 @@ impl Song {
     ) -> Song {
         let registry = xirius_session::commands::shared_registry();
         let mut session = Session::with_registry(built.project().clone(), registry.clone());
-        let plugin_cache = scan.cache.clone();
         let config = ExtConfig {
             output: OutputMode::None,
-            scan,
+            scan: scan.clone(),
             catalog: None,
         };
         // The record button records on the screen's own player, which opens
@@ -1050,7 +1050,7 @@ impl Song {
             files: Default::default(),
             windowed,
             session,
-            plugin_cache,
+            scan,
             settings,
             io,
             draft: false,
@@ -1103,7 +1103,7 @@ impl Song {
     }
 
     pub fn plugin_cache(&self) -> &Path {
-        &self.plugin_cache
+        &self.scan.cache
     }
 
     /// `project.cleanup`: the recordings in the song's folder that nothing

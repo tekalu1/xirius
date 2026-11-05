@@ -2793,6 +2793,7 @@ impl Studio {
         self.mixer.insert_after = None;
         self.mixer.insert_into = None;
         self.mixer.open_later = None;
+        self.scan_song_replaced();
         self.mixer.wide.clear();
         self.mixer.folds.clear();
         self.mixer.lead = None;

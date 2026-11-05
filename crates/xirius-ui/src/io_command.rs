@@ -99,6 +99,12 @@ impl Studio {
         raw: &serde_json::Map<String, serde_json::Value>,
         result: &xirius_core::session::RunResult,
     ) {
+        if name == "plugin.rescan"
+            && let Some(asked) = self.scan_sent()
+        {
+            self.scan_answered(&result.data, asked);
+            return;
+        }
         self.error = None;
         self.after_edit();
         if name.starts_with("preset.") {
@@ -127,14 +133,13 @@ impl Studio {
         }
         if name == "plugin.rescan" {
             if result.data["state"] == "running" {
-                if let Err(error) = self.track_scan(&result.data) {
-                    self.scan_not_started(error);
+                let asked = crate::mixer::scan::Asked::from_args(raw);
+                if let Err(error) = self.track_scan(&result.data, Some(asked)) {
+                    self.error = Some(error);
                 }
-                // The scan's rows say how it goes; the job's start is not a toast.
-                self.refresh_insert_list();
-                return;
+            } else {
+                self.reload_catalog_later();
             }
-            self.reload_catalog_later();
         }
         if name.starts_with("export.") {
             if name == "export.delete"
