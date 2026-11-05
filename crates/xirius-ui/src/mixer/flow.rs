@@ -828,6 +828,9 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                         r,
                         Align::Left,
                     );
+                    if s.mixer.heading == Some(t.id) && l.area == Area::Insert {
+                        pen.outline(row, c.ring, Radius::S, 1.5);
+                    }
                     if add {
                         let b = add_part(row);
                         let on_plus = matches!(

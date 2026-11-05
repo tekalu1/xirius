@@ -136,7 +136,8 @@ pub enum MixerHit {
     Widen(TrackId),
     /// The button by the name that opens the channel editor (MIX-042).
     Editor(TrackId),
-    /// An area's heading in the flow (MIX-044).
+    /// An area's heading in the flow: the insert heading drags the inserts to other channels
+    /// and takes Ctrl+C / Ctrl+V for them (MIX-045).
     Heading(TrackId, flow::Area),
 }
 
@@ -532,6 +533,11 @@ pub struct Mixer {
     pub fx_drag: Option<crate::fx_chain::Drag>,
     /// A channel name held, on its way to another channel.
     pub name_drag: Option<crate::name_drag::Drag>,
+    /// A channel's insert heading held, its inserts on their way to another channel (MIX-045).
+    pub insert_drag: Option<crate::insert_drag::Drag>,
+    /// The channel whose insert heading has the keys: Ctrl+C and Ctrl+V copy and paste its
+    /// inserts (MIX-045).
+    pub heading: Option<TrackId>,
     /// The master, when it is the strip pressed last (a selected row never is the master).
     pub master_picked: bool,
     pub recent: Vec<crate::instrument::Pick>,
@@ -1382,6 +1388,10 @@ impl Studio {
         if !matches!(hit, MixerHit::KeyLevel(..)) {
             self.mixer.key_focus = None;
         }
+        self.mixer.heading = match hit {
+            MixerHit::Heading(t, flow::Area::Insert) => Some(t),
+            _ => None,
+        };
         if !t.is_master() {
             // The name and the ground choose as a head does (UI-340); any other part of a track
             // outside the selection acts on that track and leaves the selection as it is

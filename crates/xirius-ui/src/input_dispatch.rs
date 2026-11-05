@@ -639,7 +639,13 @@ impl Studio {
                     _ => None,
                 })
             };
+            // With the keys on an insert heading, its inserts go (MIX-045).
+            let heading = self.mixer.heading.filter(|_| name == "edit.copy");
             let used = match (picked, channel) {
+                (None, _) if let Some(t) = heading => self
+                    // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+                    .arrange_run("channel.inserts.copy", json!({"id": t.to_string()}))
+                    .is_some(),
                 // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 (Some(args), _) => self.arrange_run(&name, args).is_some(),
                 (None, Some(t)) if name == "edit.copy" => self
@@ -652,7 +658,7 @@ impl Studio {
                     .is_some(),
                 (None, None) => false,
             };
-            if used || channel.is_some() {
+            if used || channel.is_some() || heading.is_some() {
                 self.rebuild(g);
                 return true;
             }

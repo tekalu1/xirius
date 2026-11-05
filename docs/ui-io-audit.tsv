@@ -114,13 +114,14 @@ crates/xirius-ui/src/fx_chain.rs	arrange_run	2
 crates/xirius-ui/src/fx_chain.rs	run_command	2
 crates/xirius-ui/src/fx_preset.rs	run_command	1
 crates/xirius-ui/src/health.rs	run_command	2
-crates/xirius-ui/src/input_dispatch.rs	arrange_run	9
+crates/xirius-ui/src/input_dispatch.rs	arrange_run	10
 crates/xirius-ui/src/input_dispatch.rs	lock	3
 crates/xirius-ui/src/input_dispatch.rs	run_command	4
 crates/xirius-ui/src/input_dispatch.rs	run_macro	1
 crates/xirius-ui/src/input_dispatch.rs	run_parsed	1
 crates/xirius-ui/src/input_dispatch.rs	seek	3
 crates/xirius-ui/src/input_follow.rs	lock	1
+crates/xirius-ui/src/insert_drag.rs	arrange_run	1
 crates/xirius-ui/src/inspector.rs	arrange_run	1
 crates/xirius-ui/src/instrument/keys.rs	lock	2
 crates/xirius-ui/src/instrument/keys.rs	seek	1

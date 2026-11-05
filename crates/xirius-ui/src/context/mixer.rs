@@ -40,7 +40,7 @@ enum Spot {
     AddSend(TrackId),
     Plugin(TrackId, PluginId),
     AddInsert(TrackId),
-    /// The insert heading of a strip.
+    /// The insert heading of a strip (MIX-045).
     InsertHeading(TrackId),
     /// The instrument heading of a strip.
     InstrumentHeading(TrackId),
@@ -743,9 +743,38 @@ impl Studio {
         trimmed(rows)
     }
 
-    /// The menu of the insert heading: an effect or a splitter added, and the channel's
-    /// settings.
+    /// The menu of the insert heading (MIX-045): its inserts copied and pasted, an effect or a
+    /// splitter added, and the channel's settings.
     fn insert_heading_items(&mut self, t: TrackId) -> Vec<Item> {
+        let copied_from = match &self.song.session().state.clipboard {
+            Some(Clipboard::Inserts(c)) => Some(c.source),
+            _ => None,
+        };
+        let targets = self.channels_of(t);
+        let ids: Vec<String> = targets.iter().map(ToString::to_string).collect();
+        let usable = copied_from.is_some_and(|from| targets.iter().any(|x| *x != from));
+        // A copy changes nothing in the song, and its dry run would fill the clipboard.
+        let mut copy = self.ctx_setting(
+            "インサートをコピー",
+            "channel.inserts.copy",
+            json!({ "id": t.to_string() }),
+        );
+        copy.key = self.menu_key("edit.copy");
+        let mut paste = self.ctx_as(
+            "インサートを貼り付け",
+            "channel.inserts.paste",
+            json!({ "ids": ids }),
+        );
+        paste.key = self.menu_key("edit.paste");
+        let on = usable && paste.enabled;
+        let paste = paste.enabled(on);
+        let append = self.ctx_as(
+            "インサートを後ろに貼り付け",
+            "channel.inserts.paste",
+            json!({ "ids": ids, "append": true }),
+        );
+        let on = usable && append.enabled;
+        let append = append.enabled(on);
         let open = self
             .project()
             .tracks
@@ -757,7 +786,7 @@ impl Studio {
             "rack.split.add",
             json!({ "track": t.to_string(), "at": "track" }),
         );
-        let mut rows = vec![fx, split, Item::gap()];
+        let mut rows = vec![copy, paste, append, Item::gap(), fx, split, Item::gap()];
         rows.extend(self.channel_copy_items(t));
         trimmed(rows)
     }

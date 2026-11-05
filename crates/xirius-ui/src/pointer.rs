@@ -111,7 +111,7 @@ pub fn of_studio(studio: &Studio, g: &Geometry) -> Pointer {
     if studio.pan.is_some() {
         return Pointer::style(CursorStyle::ClosedHand);
     }
-    if studio.lock_hovered(g).is_some() {
+    if studio.lock_hovered(g).is_some() || studio.insert_drag_refused(g) {
         return Pointer::style(CursorStyle::OperationNotAllowed);
     }
     let cursor = crate::arrange::paint::cursor(studio).unwrap_or_else(|| {

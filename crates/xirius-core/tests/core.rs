@@ -519,6 +519,11 @@ fn every_history_command_undoes_and_redoes() {
     rig.step("plugin.duplicate", json!({"id":comp}));
     rig.step("plugin.rename", json!({"id": comp, "name": "Glue"}));
     rig.step("channel.settings.paste", json!({"ids":[lead],"from":kick}));
+    rig.step("channel.inserts.paste", json!({"ids":[lead],"from":kick}));
+    rig.step(
+        "channel.inserts.paste",
+        json!({"ids":[lead],"from":kick,"append":true}),
+    );
     let preset = json!({
         "version": 1, "name": "Keys", "kind": "audio", "volume_db": -3.0, "pan": 0.0,
         "inserts": [{"name": "EQ", "kind": "effect", "format": "builtin", "uid": "EQ", "bypass": false}],

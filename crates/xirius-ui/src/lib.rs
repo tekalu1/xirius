@@ -141,6 +141,8 @@ pub mod input;
 pub mod input_dispatch;
 pub mod input_follow;
 pub mod input_row;
+pub mod insert_drag;
+pub mod insert_flow_shots;
 pub mod inspector;
 pub mod inspector_shots;
 pub mod instrument;
@@ -395,6 +397,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("history-time", history_time_shots::SHOTS),
     ("import", import_shots::IMPORT),
     ("importchoice", import_choice_shots::IMPORT_CHOICE),
+    ("insert-flow", insert_flow_shots::SHOTS),
     ("inspector", inspector_shots::SHOTS),
     ("instrument", instrument::shots::SHOTS),
     ("instrument-menu", fixed_screens_shots::INSTRUMENT_MENU),

@@ -58,6 +58,14 @@ impl Studio {
                 };
                 self.tell_with(text, "元に戻す", Press::Undo);
             }
+            "channel.inserts.paste" => {
+                let text = if data["append"].as_bool() == Some(true) {
+                    "インサートを後ろに貼り付けました"
+                } else {
+                    "インサートを貼り付けました"
+                };
+                self.tell_with(text.to_string(), "元に戻す", Press::Undo);
+            }
             // The song-files tab (BRW-004): the first file by its name, the rest by their count.
             "file.locate" | "file.collect" => {
                 let files = data["files"].as_array().map_or(&[][..], Vec::as_slice);

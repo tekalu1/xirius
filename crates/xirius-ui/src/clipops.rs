@@ -490,29 +490,18 @@ impl Studio {
                     self.tell(format!("{}は、ミキサーで貼り付けます", board.describe()));
                 }
             }
-            Clipboard::Channel(_) => {
+            Clipboard::Channel(_) | Clipboard::Inserts(_) => {
                 // On the selected channels (the master takes it too).
-                let ids: Vec<String> = self
-                    .arrange
-                    .tracks
-                    .iter()
-                    .filter_map(|r| match r {
-                        RowKind::Track(t) => Some(t.to_string()),
-                        _ => None,
-                    })
-                    .collect();
-                let ids = match (ids.is_empty(), self.selected_row) {
-                    _ if mixer && self.mixer.master_picked => {
-                        vec![TrackId::MASTER.to_string()]
-                    }
-                    (true, Some(RowKind::Track(t))) => vec![t.to_string()],
-                    _ => ids,
+                let ids = self.paste_channels(mixer);
+                let cmd = match board {
+                    Clipboard::Inserts(_) => "channel.inserts.paste",
+                    _ => "channel.settings.paste",
                 };
                 if ids.is_empty() {
                     self.tell(format!("{}は、ミキサーで貼り付けます", board.describe()));
                 } else {
                     // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
-                    self.arrange_run("channel.settings.paste", json!({ "ids": ids }));
+                    self.arrange_run(cmd, json!({ "ids": ids }));
                 }
             }
             Clipboard::Notes(_) | Clipboard::Controller { .. } => {
@@ -523,6 +512,25 @@ impl Studio {
             }
         }
         true
+    }
+
+    /// The channels a channel's settings or inserts go onto: the selected ones, the master when
+    /// it is picked in the mixer, else the selected row.
+    pub(crate) fn paste_channels(&self, mixer: bool) -> Vec<String> {
+        let ids: Vec<String> = self
+            .arrange
+            .tracks
+            .iter()
+            .filter_map(|r| match r {
+                RowKind::Track(t) => Some(t.to_string()),
+                _ => None,
+            })
+            .collect();
+        match (ids.is_empty(), self.selected_row) {
+            _ if mixer && self.mixer.master_picked => vec![TrackId::MASTER.to_string()],
+            (true, Some(RowKind::Track(t))) => vec![t.to_string()],
+            _ => ids,
+        }
     }
 
     /// The automation lane the pointer is over, if any.
@@ -557,7 +565,7 @@ impl Studio {
                 let out = self.roll.paste_points(&ctx, &board, at);
                 Some(self.apply_roll(g, out))
             }
-            Clipboard::Plugins(_) | Clipboard::Channel(_) => {
+            Clipboard::Plugins(_) | Clipboard::Channel(_) | Clipboard::Inserts(_) => {
                 self.tell(format!("{}は、ミキサーで貼り付けます", board.describe()));
                 Some(true)
             }

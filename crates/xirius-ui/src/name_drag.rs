@@ -216,7 +216,8 @@ pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry) {
         }
         Some(Drop::Paste(to)) => {
             if let Some(strip) = strip(to) {
-                pen.fill(strip.rect, c.fill_hover.opacity(0.3));
+                let view = s.mixer_view(g);
+                pen.mask(view, |pen| pen.outline(strip.rect, c.ring, Radius::S, 2.0));
             }
         }
         None => {}

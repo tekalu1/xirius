@@ -8,6 +8,7 @@
 use crate::auto::{AutoPoint, AutoTarget};
 use crate::id::{ClipId, SectionId, TrackId};
 use crate::model::{AuxSend, Clip, CtrlKind, CtrlPoint, Note, Plugin};
+use crate::rack::RackNode;
 use crate::time::Tick;
 
 /// A note and the clip it was taken from; `note.start` is the song position.
@@ -44,6 +45,16 @@ pub struct ChannelCopy {
     pub pan: f64,
 }
 
+/// A channel's insert area: its effects and splitters, as the rack lays them out (MIX-045). The
+/// instrument area stays out.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InsertsCopy {
+    pub source: TrackId,
+    /// The plug-ins, in the order the area plays them.
+    pub plugins: Vec<Plugin>,
+    pub fx: Vec<RackNode>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Clipboard {
     Tracks {
@@ -61,6 +72,8 @@ pub enum Clipboard {
     Plugins(Vec<PluginCopy>),
     /// A channel's effects, sends, fader and pan.
     Channel(ChannelCopy),
+    /// A channel's inserts, splitters and all.
+    Inserts(InsertsCopy),
     /// Points of one lane of a MIDI clip; `tick` is the song position.
     Controller {
         clip: ClipId,
@@ -84,6 +97,7 @@ impl Clipboard {
             Clipboard::Clips(_) => "clips",
             Clipboard::Plugins(_) => "plugins",
             Clipboard::Channel(_) => "channel",
+            Clipboard::Inserts(_) => "inserts",
             Clipboard::Controller { .. } => "controller",
             Clipboard::Automation { .. } => "automation",
         }
@@ -96,7 +110,7 @@ impl Clipboard {
             Clipboard::Notes(v) => v.len(),
             Clipboard::Clips(v) => v.len(),
             Clipboard::Plugins(v) => v.len(),
-            Clipboard::Channel(_) => 1,
+            Clipboard::Channel(_) | Clipboard::Inserts(_) => 1,
             Clipboard::Controller { points, .. } => points.len(),
             Clipboard::Automation { points, .. } => points.len(),
         }
@@ -130,7 +144,7 @@ impl Clipboard {
                 .map(|c| (c.note.start, c.note.start + c.note.length))
                 .collect(),
             Clipboard::Clips(v) => v.iter().map(|c| (c.clip.start, c.clip.end())).collect(),
-            Clipboard::Plugins(_) | Clipboard::Channel(_) => Vec::new(),
+            Clipboard::Plugins(_) | Clipboard::Channel(_) | Clipboard::Inserts(_) => Vec::new(),
             Clipboard::Controller { points, .. } => {
                 points.iter().map(|p| (p.tick, p.tick)).collect()
             }
@@ -158,6 +172,7 @@ impl Clipboard {
             Clipboard::Clips(_) => format!("クリップ {n} 件"),
             Clipboard::Plugins(_) => format!("プラグイン {n} 個"),
             Clipboard::Channel(_) => "チャンネルの設定".to_string(),
+            Clipboard::Inserts(_) => "インサート".to_string(),
             Clipboard::Controller { kind, .. } => {
                 format!("コントローラー {} のポイント {n} 個", kind.key())
             }

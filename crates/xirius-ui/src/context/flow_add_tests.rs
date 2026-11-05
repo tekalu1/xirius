@@ -2,10 +2,11 @@
 //! (MIX-045), pressed as the window presses them.
 
 use serde_json::json;
+use xirius_core::clipboard::Clipboard;
 use xirius_core::id::{PluginId, TrackId};
 use xirius_core::rack::RackNode;
 
-use super::tests::{choose, enabled, labels};
+use super::tests::{choose, enabled, key, labels};
 use crate::channel::flow::{CardKind, ColKind};
 use crate::mixer::MixerHit;
 use crate::mixer::flow::{Area, Kind};
@@ -102,6 +103,58 @@ const ADDS: [&str; 4] = [
     "スプリッターを追加",
     "チャンネルエディターを開く",
 ];
+
+#[test]
+fn the_insert_heading_menu_has_its_rows_in_order() {
+    let (mut s, g) = mix();
+    let vocal = track(&s, "Vocal");
+    assert!(press(&mut s, &g, MixerHit::Heading(vocal, Area::Insert)));
+    assert_eq!(
+        labels(&s),
+        [
+            "インサートをコピー",
+            "インサートを貼り付け",
+            "インサートを後ろに貼り付け",
+            "エフェクトを追加…",
+            "スプリッターを追加",
+            "チャンネルの設定をコピー",
+            "チャンネルの設定を貼り付け",
+        ]
+    );
+    assert_eq!(key(&s, "インサートをコピー"), "Ctrl+C");
+    assert_eq!(key(&s, "インサートを貼り付け"), "Ctrl+V");
+    assert!(enabled(&s, "インサートをコピー"));
+    assert!(!enabled(&s, "インサートを貼り付け"));
+    assert!(!enabled(&s, "インサートを後ろに貼り付け"));
+}
+
+#[test]
+fn the_heading_menu_copies_and_pastes_the_inserts() {
+    let (mut s, g) = mix();
+    let (vocal, guitar) = (track(&s, "Vocal"), track(&s, "Guitar"));
+    add_effect(&mut s, vocal, "Compressor");
+    add_effect(&mut s, guitar, "Delay");
+    assert!(press(&mut s, &g, MixerHit::Heading(vocal, Area::Insert)));
+    choose(&mut s, &g, "インサートをコピー");
+    assert!(matches!(
+        s.song.session().state.clipboard,
+        Some(Clipboard::Inserts(ref c)) if c.source == vocal
+    ));
+    // on the source itself there is nothing to paste
+    assert!(press(&mut s, &g, MixerHit::Heading(vocal, Area::Insert)));
+    assert!(!enabled(&s, "インサートを貼り付け"));
+    close(&mut s);
+    assert!(press(&mut s, &g, MixerHit::Heading(guitar, Area::Insert)));
+    assert!(enabled(&s, "インサートを後ろに貼り付け"));
+    assert!(choose(&mut s, &g, "インサートを後ろに貼り付け"));
+    let names: Vec<_> = s.project().tracks[&guitar]
+        .inserts
+        .iter()
+        .map(|p| p.name.clone())
+        .collect();
+    assert_eq!(names, ["Delay", "Compressor"]);
+    assert_eq!(s.notice_text(), Some("インサートを後ろに貼り付けました"));
+}
 
 #[test]
 fn the_head_the_name_and_the_rows_add_with_the_same_words() {

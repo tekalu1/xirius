@@ -273,7 +273,11 @@ impl Screen {
             }
             return;
         }
-        if studio.name_drag_move(x, y) || studio.fx_move(x, y) || studio.lib_move(x, y) {
+        if studio.insert_drag_move(x, y, ev.modifiers.shift)
+            || studio.name_drag_move(x, y)
+            || studio.fx_move(x, y)
+            || studio.lib_move(x, y)
+        {
             cx.notify();
             return;
         }
@@ -419,6 +423,7 @@ impl Screen {
             return;
         }
         studio.name_drag_down(&g, x, y);
+        studio.insert_drag_down(&g, x, y);
         if studio.chain_down(&g, x, y) {
             cx.notify();
             drop(studio);
@@ -716,6 +721,7 @@ impl Screen {
             return;
         }
         if studio.level_up()
+            || studio.insert_drag_up(&g, x, y, ev.modifiers.shift)
             || studio.name_drag_up(&g, x, y)
             || studio.fx_up(&g, x, y, ev.modifiers.alt)
             || studio.lib_up(&g, x, y)

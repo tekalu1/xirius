@@ -68,6 +68,7 @@ impl Studio {
             || self.mixer.bar_grab.is_some()
             || self.mixer.fx_drag.is_some()
             || self.mixer.name_drag.is_some()
+            || self.mixer.insert_drag.is_some()
             || self.drawer_size.drag.is_some()
             || self.side_size.drag.is_some()
             || self.input_map.zoom_box.is_some()

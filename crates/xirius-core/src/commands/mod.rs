@@ -20,6 +20,7 @@ mod browser;
 mod bus_group;
 mod cc;
 mod chain_preset;
+mod channel_inserts;
 mod channel_settings;
 mod clip;
 pub mod clip_ara;
@@ -142,6 +143,7 @@ pub fn all() -> Vec<CommandDef> {
     v.extend(range_lane::defs());
     v.extend(roll_view::defs());
     v.extend(channel_settings::defs());
+    v.extend(channel_inserts::defs());
     v.extend(track_preset::defs());
     v.extend(xpreset::defs());
     v.extend(rack::defs());

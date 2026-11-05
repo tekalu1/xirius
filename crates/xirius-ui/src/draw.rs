@@ -606,6 +606,7 @@ pub fn paint_overlay(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     crate::browser_inst::paint(pen, studio, g);
     crate::fx_chain::paint_drag(pen, studio, g);
     crate::name_drag::paint(pen, studio, g);
+    crate::insert_drag::paint(pen, studio, g);
     crate::fx_preset::paint(pen, studio);
     crate::hover_tip::paint(pen, studio, g);
     crate::gain_tip::paint(pen, studio, g);

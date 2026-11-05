@@ -68,6 +68,15 @@ impl Studio {
         if self.input_blocked() {
             return false;
         }
+        // An undo takes back the inserts a paste put, and what it said with them (MIX-045).
+        if !redo
+            && self
+                .notice
+                .as_ref()
+                .is_some_and(|n| n.text.starts_with("インサートを"))
+        {
+            self.notice = None;
+        }
         // A device's knob turned by the wheel or keys a moment ago is a step of its own first
         // (M-par-1): Ctrl+Z then takes it back, not the step before it.
         if self.device_sweep_end() {

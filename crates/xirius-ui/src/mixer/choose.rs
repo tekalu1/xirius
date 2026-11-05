@@ -85,6 +85,7 @@ impl Studio {
     pub(crate) fn mixer_let_go_keys(&mut self) {
         self.mixer.chosen = None;
         self.mixer.key_focus = None;
+        self.mixer.heading = None;
     }
 
     /// Is one of the windows that float over the screen under the point?

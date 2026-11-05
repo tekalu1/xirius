@@ -2776,6 +2776,8 @@ impl Studio {
         self.macro_pad = None;
         self.mixer.chosen = None;
         self.mixer.key_focus = None;
+        self.mixer.heading = None;
+        self.mixer.insert_drag = None;
         self.mixer.key_drag = None;
         self.mixer.level_drag = None;
         self.mixer.insert_after = None;

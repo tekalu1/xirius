@@ -494,8 +494,8 @@ fn remove(p: &mut Project, board: &Clipboard) -> CmdResult<()> {
                 p.fix_track_rack(tid);
             }
         }
-        // A channel's settings are copied, never cut.
-        Clipboard::Channel(_) => {}
+        // A channel's settings and inserts are copied, never cut.
+        Clipboard::Channel(_) | Clipboard::Inserts(_) => {}
         Clipboard::Controller { clip, kind, points } => {
             let (_, cl) = p.clip_mut(*clip)?;
             let ticks: HashSet<Tick> = points.iter().map(|q| q.tick - cl.start).collect();
@@ -663,6 +663,10 @@ fn put(
         Clipboard::Channel(c) => Ok((
             String::new(),
             super::channel_settings::paste_from_board(p, cx, c, a)?,
+        )),
+        Clipboard::Inserts(c) => Ok((
+            String::new(),
+            super::channel_inserts::paste_from_board(p, cx, c, a)?,
         )),
         Clipboard::Plugins(v) => {
             let mut made = Vec::new();
