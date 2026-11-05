@@ -696,6 +696,10 @@ pub struct Studio {
     pub arrange: crate::arrange::Arrange,
     pub transport: crate::transport::Transport,
     pub mixer: crate::mixer::Mixer,
+    /// A copy or a paste of inserts waiting for what their plug-ins hold now (MIX-045).
+    pub(crate) inserts_wait: Option<crate::insert_states::Wait>,
+    /// The plug-ins have just answered: the copy or the paste runs without asking again.
+    pub(crate) inserts_read: bool,
     /// The levels of the inputs of the armed tracks (REC-002).
     pub inputs: crate::inmeter::InputMeters,
     /// Tracks whose Comp and take rows are open under the track (REC-005). They start folded:
@@ -900,6 +904,8 @@ impl Studio {
             arrange: crate::arrange::Arrange::default(),
             transport: crate::transport::Transport::new(xirius_session::output::OutputMode::None),
             mixer: crate::mixer::Mixer::default(),
+            inserts_wait: None,
+            inserts_read: false,
             inputs: crate::inmeter::InputMeters::default(),
             takes_open: HashSet::new(),
             comp_sel: None,

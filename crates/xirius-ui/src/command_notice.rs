@@ -65,6 +65,9 @@ impl Studio {
                     "インサートを貼り付けました"
                 };
                 self.tell_with(text.to_string(), "元に戻す", Press::Undo);
+                if let Some(n) = &mut self.notice {
+                    n.command = Some("channel.inserts.paste");
+                }
             }
             // The song-files tab (BRW-004): the first file by its name, the rest by their count.
             "file.locate" | "file.collect" => {

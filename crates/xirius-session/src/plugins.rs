@@ -2297,6 +2297,12 @@ impl PluginLoader {
         self.begin_pull_states_matching(None)
     }
 
+    /// [`PluginLoader::begin_pull_states`] for the plugins `ids` names only: a channel's
+    /// inserts copied or replaced read what those hold now (MIX-045).
+    pub fn begin_pull_states_of(&mut self, ids: &HashSet<PluginId>) -> StatePull {
+        self.begin_pull_states_matching(Some(ids))
+    }
+
     fn begin_pull_states_matching(&mut self, wanted: Option<&HashSet<PluginId>>) -> StatePull {
         let selected = |id: &PluginId| wanted.is_none_or(|ids| ids.contains(id));
         let basis = self

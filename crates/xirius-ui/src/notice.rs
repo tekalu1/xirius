@@ -27,6 +27,9 @@ pub struct Notice {
     pub text: String,
     pub since: Instant,
     pub button: Option<Button>,
+    /// The command whose step it reports, when it reports one: an undo or a new drag takes
+    /// away its own notice and leaves the others (MIX-045).
+    pub command: Option<&'static str>,
 }
 
 /// The button at the end of a notice, and what a press on it does.
@@ -157,6 +160,7 @@ impl Studio {
             text,
             since: Instant::now(),
             button: None,
+            command: None,
         });
     }
 
@@ -169,7 +173,19 @@ impl Studio {
                 label: label.to_string(),
                 press,
             }),
+            command: None,
         });
+    }
+
+    /// Takes the notice away when it reports `command`'s step.
+    pub(crate) fn untell(&mut self, command: &str) {
+        if self
+            .notice
+            .as_ref()
+            .is_some_and(|n| n.command == Some(command))
+        {
+            self.notice = None;
+        }
     }
 
     /// What is being said, while it still is.

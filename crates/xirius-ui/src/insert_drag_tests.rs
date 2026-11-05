@@ -158,10 +158,29 @@ fn a_new_drag_and_a_drop_nowhere_take_the_last_toast_away() {
     let (x, y) = heading(&s, &g, vocal);
     assert!(s.insert_drag_move(x + 40.0, y - 300.0, false));
     assert!(s.notice.is_none(), "a new drag clears the toast");
-    s.tell_with("インサートを貼り付けました".into(), "元に戻す", Press::Undo);
+    assert!(s.insert_drag_up(&g, x + 40.0, y - 300.0, false));
+    assert!(drag(&mut s, &g, vocal, at, false));
+    assert!(s.notice.is_some());
     // off every strip and every track
+    press_heading(&mut s, &g, vocal);
+    assert!(s.insert_drag_move(x + 40.0, y - 300.0, false));
     assert!(s.insert_drag_up(&g, x + 40.0, y - 300.0, false));
     assert!(s.notice.is_none());
+}
+
+#[test]
+fn a_drag_leaves_what_another_action_said() {
+    let (mut s, g, vocal, guitar) = song();
+    s.tell_with("インサートを開きました".into(), "元に戻す", Press::Undo);
+    press_heading(&mut s, &g, vocal);
+    let (x, y) = heading(&s, &g, vocal);
+    assert!(s.insert_drag_move(x + 40.0, y - 300.0, false));
+    assert!(s.insert_drag_up(&g, x + 40.0, y - 300.0, false));
+    assert_eq!(s.notice_text(), Some("インサートを開きました"));
+    // nor does an undo take it, though it begins alike
+    assert!(s.undo(&g));
+    assert_eq!(inserts(&s, guitar), Vec::<String>::new());
+    assert_eq!(s.notice_text(), Some("インサートを開きました"));
 }
 
 #[test]
@@ -243,4 +262,25 @@ fn the_name_drag_stays_a_settings_paste() {
     assert!(s.mixer.name_drag.is_none());
     assert!(s.mixer.insert_drag.is_some());
     let _ = guitar;
+}
+
+#[test]
+fn a_pen_or_a_finger_moves_further_before_it_drags() {
+    let (mut s, g, vocal, guitar) = song();
+    let (x, y) = heading(&s, &g, vocal);
+    // a mouse: 4 px
+    press_heading(&mut s, &g, vocal);
+    assert!(s.insert_drag_move(x + 4.0, y, false));
+    s.mixer.insert_drag = None;
+    // a pen or a finger trembles as it lifts: 10 px, as the ruler and the EQ (UI-326)
+    s.coarse_press = true;
+    press_heading(&mut s, &g, vocal);
+    assert!(!s.insert_drag_move(x + 6.0, y + 6.0, false));
+    assert!(!s.insert_drag_up(&g, x + 6.0, y + 6.0, false), "a press");
+    press_heading(&mut s, &g, vocal);
+    assert!(s.insert_drag_move(x + 10.0, y, false));
+    let at = area(&s, &g, guitar);
+    assert!(s.insert_drag_move(at.0, at.1, false));
+    assert!(s.insert_drag_up(&g, at.0, at.1, false));
+    assert_eq!(inserts(&s, guitar), ["Compressor", "EQ"]);
 }

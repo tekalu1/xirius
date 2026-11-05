@@ -143,6 +143,7 @@ pub mod input_follow;
 pub mod input_row;
 pub mod insert_drag;
 pub mod insert_flow_shots;
+mod insert_states;
 pub mod inspector;
 pub mod inspector_shots;
 pub mod instrument;

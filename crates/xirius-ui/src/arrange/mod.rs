@@ -1584,6 +1584,10 @@ impl Studio {
         if command.starts_with("history.") {
             self.drag_drop();
         }
+        // Inserts copied or replaced first read what their plug-ins hold now (MIX-045).
+        if self.inserts_wait_begin(command, &args) {
+            return Some(json!({}));
+        }
         let said = args.clone();
         if crate::audio_job::NAMES.contains(&command) {
             return self.job_start(command, args).then(|| json!({}));

@@ -1884,6 +1884,7 @@ impl Studio {
             | self.poll_perf()
             | self.poll_roll_host();
         let editors = self.poll_editors();
+        let inserts = self.poll_inserts_wait();
         let ai = self.ai_moving();
         let said = self.say_driver_notice();
         let device = self.poll_device()
@@ -1919,6 +1920,7 @@ impl Studio {
             || toast
             || plugins
             || editors
+            || inserts
             || ai
             || settings
             || said

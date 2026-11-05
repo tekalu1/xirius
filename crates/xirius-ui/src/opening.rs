@@ -223,6 +223,7 @@ impl Studio {
             || self.unsaved.is_some()
             || self.update.preparing()
             || self.update.launched()
+            || self.inserts_wait.is_some()
     }
     pub(crate) fn request_open_file(&mut self, request: FileRequest, path: &Path) -> bool {
         self.request_open(Request::File(request, path.to_path_buf()))

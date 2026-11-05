@@ -310,6 +310,15 @@ impl SessionHost {
         self.builder.plugins_mut().begin_pull_states()
     }
 
+    /// The states of the plugins `ids` names, read as [`SessionHost::begin_pull_states`] reads
+    /// all of them (MIX-045).
+    pub fn begin_pull_states_of(
+        &mut self,
+        ids: &std::collections::HashSet<xirius_core::id::PluginId>,
+    ) -> crate::plugins::StatePull {
+        self.builder.plugins_mut().begin_pull_states_of(ids)
+    }
+
     /// Save As moved this same song. Future loads and recordings use its new folder;
     /// current plugin instances, the audio engine and the transport stay alive (ARC-043).
     pub fn relocate(&mut self, dir: Option<PathBuf>) {

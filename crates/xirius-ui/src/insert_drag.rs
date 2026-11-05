@@ -1,6 +1,7 @@
-//! A strip's insert heading dragged (MIX-045). Held and moved 4 px, a copy of the insert rows
-//! follows the pointer; let go on another strip or on a track's head in the arrangement, that
-//! channel's inserts become the same plug-ins and splitters in the same state, in one step
+//! A strip's insert heading dragged (MIX-045). Held and moved 4 px (10 with a pen or a
+//! finger), a copy of the insert rows follows the pointer; let go on another strip or on a
+//! track's head in the arrangement, that channel's inserts become the same plug-ins and
+//! splitters in the same state, in one step
 //! (`channel.inserts.paste --from`). With Shift they go after the ones it has. The source and a
 //! frozen track take nothing: the copy dims and the pointer says so.
 
@@ -10,13 +11,16 @@ use xirius_design::{FontSize, Radius, Space, Weight};
 
 use crate::draw::{Align, Pen};
 use crate::mixer::flow::{self, Area, Kind};
-use crate::mixer::{MixerHit, ROW_H};
+use crate::mixer::{MixerHit, ROW_H, WIDE_W};
 use crate::studio::{Geometry, Hit, Rect, Studio};
 use crate::tree::RowKind;
 
-/// How far the pointer goes before a press on the heading is a drag.
+/// How far the pointer goes before a press on the heading is a drag: further for a pen or a
+/// finger, which tremble as they lift (UI-326).
 const SLOP: f32 = 4.0;
-/// The copy that follows the pointer: its width, its room inside and the rows it shows.
+const SLOP_COARSE: f32 = 10.0;
+/// The copy that follows the pointer: its width (the name drag's), its room inside and the
+/// rows it shows.
 const GHOST_W: f32 = 120.0;
 const GHOST_PAD: f32 = 3.0;
 const GHOST_ROWS: usize = 6;
@@ -71,12 +75,13 @@ impl Studio {
         };
         d.at = (x, y);
         d.append = shift;
-        let began = !d.moved && (x - d.start.0).hypot(y - d.start.1) > SLOP;
+        let slop = if self.coarse_press { SLOP_COARSE } else { SLOP };
+        let began = !d.moved && (x - d.start.0).hypot(y - d.start.1) >= slop;
         d.moved |= began;
         let moved = d.moved;
         if began {
-            // a new drag: what the last one said goes
-            self.notice = None;
+            // a new drag: what the last one said goes, and nothing else
+            self.untell("channel.inserts.paste");
         }
         moved
     }
@@ -95,16 +100,14 @@ impl Studio {
                 to, takes: true, ..
             }) => {
                 // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
-                let done = self.arrange_run(
+                // a refusal says why, as any failed command does
+                self.arrange_run(
                     "channel.inserts.paste",
                     json!({ "ids": [to.to_string()], "from": d.from.to_string(), "append": shift }),
                 );
-                if done.is_none() {
-                    self.notice = None;
-                }
                 self.rebuild(g);
             }
-            _ => self.notice = None,
+            _ => self.untell("channel.inserts.paste"),
         }
         true
     }
@@ -229,15 +232,17 @@ fn ghost(pen: &mut Pen, s: &Studio, g: &Geometry, d: Drag, refused: bool) {
     let Some(track) = p.tracks.get(&d.from) else {
         return;
     };
-    let rows: Vec<_> = flow::lines(track, &s.mixer.folds, s.mixer.wide.contains(&d.from))
+    // the rows as the source strip shows them, at the width it has now
+    let wide = s.width_of(g, d.from) >= WIDE_W;
+    let rows: Vec<_> = flow::lines(track, &s.mixer.folds, wide)
         .into_iter()
         .filter(|l| l.area == Area::Insert && !matches!(l.kind, Kind::Head { .. }))
         .collect();
     let shown = rows.len().clamp(1, GHOST_ROWS);
     let h = shown as f32 * ROW_H + GHOST_PAD * 2.0;
     let r = Rect::new(
-        (d.at.0 + 12.0).min(g.size.0 - GHOST_W - 12.0),
-        (d.at.1 + 12.0).min(g.size.1 - h - 4.0),
+        (d.at.0 + Space::X3.px()).min(g.size.0 - GHOST_W - Space::X3.px()),
+        (d.at.1 + Space::X3.px()).min(g.size.1 - h - Space::X1.px()),
         GHOST_W,
         h,
     );
