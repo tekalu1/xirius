@@ -227,6 +227,28 @@ fn the_plus_of_both_headings_shows_without_the_pointer() {
         name(MixerHit::Heading(vocal, Area::Insert)).as_deref(),
         Some("インサート")
     );
+    // the instrument heading is read too, before what its ＋ adds
+    let named = |hit: MixerHit| {
+        marks
+            .iter()
+            .find(|m| m.key == format!("flow-{keys}-{hit:?}"))
+            .map(|m| (m.node.role(), m.node.label().map(str::to_string)))
+    };
+    assert_eq!(
+        named(MixerHit::Heading(keys, Area::Instrument)),
+        Some((
+            gpui::accesskit::Role::Label,
+            Some("インストゥルメント".to_string())
+        ))
+    );
+    if s.mixer_rect(&g, MixerHit::AddInstrument(keys)).is_some() {
+        assert_eq!(
+            named(MixerHit::AddInstrument(keys))
+                .and_then(|(_, n)| n)
+                .as_deref(),
+            Some("インストゥルメントを追加")
+        );
+    }
     add_instrument(&mut s, keys);
     let marks = crate::a11y::marks(&s, &g);
     let layer = marks

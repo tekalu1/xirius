@@ -64,6 +64,7 @@ mod draw_shape;
 mod preset;
 mod rack;
 mod range_lane;
+pub use rack::split_fits;
 pub use range_lane::{RangeMove, bpm_at, moved_lane, moved_tempo, stretch};
 mod receipts;
 mod record;

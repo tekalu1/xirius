@@ -924,20 +924,25 @@ fn flow_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 }
                 (Kind::Head { add }, Area::Insert) => {
                     // the heading is dragged and copied from (MIX-045); its ＋ adds (MIX-044)
-                    parts.push((MixerHit::Heading(t, Area::Insert), button("インサート")));
+                    let head = button(crate::mixer::INSERT_HEAD);
+                    parts.push((MixerHit::Heading(t, Area::Insert), head));
                     if add {
-                        parts.push((MixerHit::AddInsert(t), button("エフェクトを追加")));
+                        let plus = button(crate::mixer::ADD_EFFECT_LABEL);
+                        parts.push((MixerHit::AddInsert(t), plus));
                     }
                 }
-                (Kind::Head { add: true }, Area::Instrument) if flow.has_instrument() => {
-                    let name = label("rack.layer.add").unwrap_or("rack.layer.add");
-                    parts.push((MixerHit::AddLayer(t), button(name)));
-                }
-                (Kind::Head { add: true }, Area::Instrument) => {
-                    parts.push((
-                        MixerHit::AddInstrument(t),
-                        button("インストゥルメントを追加"),
-                    ));
+                (Kind::Head { add }, Area::Instrument) => {
+                    // the heading names the area its ＋ adds to
+                    let mut head = accesskit::Node::new(accesskit::Role::Label);
+                    head.set_label(crate::mixer::INSTRUMENT_HEAD);
+                    parts.push((MixerHit::Heading(t, Area::Instrument), head));
+                    if add && flow.has_instrument() {
+                        let name = label("rack.layer.add").unwrap_or("rack.layer.add");
+                        parts.push((MixerHit::AddLayer(t), button(name)));
+                    } else if add {
+                        let plus = button(crate::mixer::ADD_INSTRUMENT_LABEL);
+                        parts.push((MixerHit::AddInstrument(t), plus));
+                    }
                 }
                 _ => {}
             }

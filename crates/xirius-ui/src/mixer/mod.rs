@@ -53,6 +53,12 @@ pub const WIDE_W: f32 = 252.0;
 /// What the screen reader calls the buttons by a strip's name (MIX-045).
 pub const EDITOR_LABEL: &str = "チャンネルエディターを開く";
 pub const WIDEN_LABEL: &str = "広げる";
+/// The strip's area headings, and what their ＋ adds: the same words on the strip, in its
+/// menus and in what the screen reader says (MIX-044).
+pub const INSTRUMENT_HEAD: &str = "インストゥルメント";
+pub const INSERT_HEAD: &str = "インサート";
+pub const ADD_EFFECT_LABEL: &str = "エフェクトを追加";
+pub const ADD_INSTRUMENT_LABEL: &str = "インストゥルメントを追加";
 pub const STRIP_GAP: f32 = 2.0;
 const PAD: f32 = 6.0;
 const GAP: f32 = 5.0;
@@ -711,6 +717,7 @@ impl Mixer {
         }) {
             self.level_drag = None;
         }
+        // only the lists' rows are read here, and they are the same at any width
         let rows = Rows::with(p, self.look());
         let live = |id: PluginId| {
             p.tracks
@@ -725,13 +732,29 @@ impl Mixer {
             *off = (*off).min(list_max(p, track, *list, rows));
             true
         });
-        self.folds
-            .retain(|id| p.tracks.values().any(|t| flow::has_split(t, id)));
+        // what a person opened or shut stays for a splitter that is gone: an undo brings the
+        // same splitter back, and a song opened clears it all
         if let Some(d) = self.drag
             && !p.tracks.contains_key(&d.hit.track())
         {
             self.drag = None;
         }
+    }
+}
+
+/// Where the insert list's Splitter goes: after the row it was opened from, into the branch
+/// or layer, or at the end of the track's effects.
+pub(crate) fn split_at(
+    after: Option<(TrackId, flow::Pick)>,
+    into: Option<(TrackId, crate::channel::flow::Chain, usize)>,
+) -> String {
+    use crate::channel::flow::Chain;
+    match (after, into) {
+        (Some((_, flow::Pick::Plugin(id))), _) => format!("after:{id}"),
+        (Some((_, flow::Pick::Split(id))), _) => format!("after:{id}"),
+        (None, Some((_, Chain::Branch(n), i))) => format!("branch:{n}:{i}"),
+        (None, Some((_, Chain::Layer(n), i))) => format!("layer:{n}:{i}"),
+        (None, _) => "track".to_string(),
     }
 }
 
@@ -956,6 +979,15 @@ impl Studio {
         }
     }
 
+    /// The strips at [`WIDE_W`] now: the widened ones, or the one in front while folded.
+    fn wide_now(&self, g: &Geometry) -> HashSet<TrackId> {
+        if self.mixer_folded(g) {
+            self.mixer_lead().into_iter().collect()
+        } else {
+            self.mixer.wide.clone()
+        }
+    }
+
     /// Where `t`'s strip starts in the scrolled row of channels (0 at the first's left).
     pub(crate) fn strip_offset(&self, g: &Geometry, t: TrackId) -> Option<f32> {
         let mut x = 0.0;
@@ -1040,7 +1072,15 @@ impl Studio {
             body.y + STRIP_GAP,
             (body.h - STRIP_GAP * 2.0 - BAR_H - BAR_GAP).max(0.0),
         );
-        let rows = Rows::with(&p, self.mixer.look());
+        // the flows' height as each strip shows its own, at the width it has now
+        let wide = self.wide_now(g);
+        let rows = Rows::with(
+            &p,
+            flow::Look {
+                wide: &wide,
+                ..self.mixer.look()
+            },
+        );
         let mut left = view.x + STRIP_GAP - self.mixer_scroll(g);
         let mut out: Vec<StripLayout> = strip_order(&p)
             .into_iter()
@@ -1598,14 +1638,7 @@ impl Studio {
                 let after = self.mixer.insert_after.take().filter(|(x, _)| *x == t);
                 let into = self.mixer.insert_into.take().filter(|(x, ..)| *x == t);
                 if to == scan::SPLITTER {
-                    use crate::channel::flow::Chain;
-                    let at = match (after, into) {
-                        (Some((_, flow::Pick::Plugin(id))), _) => format!("after:{id}"),
-                        (Some((_, flow::Pick::Split(id))), _) => format!("after:{id}"),
-                        (None, Some((_, Chain::Branch(n), i))) => format!("branch:{n}:{i}"),
-                        (None, Some((_, Chain::Layer(n), i))) => format!("layer:{n}:{i}"),
-                        (None, _) => "track".to_string(),
-                    };
+                    let at = split_at(after, into);
                     // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     self.arrange_run(
                         "rack.split.add",
@@ -1672,6 +1705,7 @@ impl Studio {
     pub(crate) fn reveal_last(&mut self, t: TrackId, list: List) {
         let p = self.project();
         if let Some(track) = p.tracks.get(&t) {
+            // the lists' rows are the same at any width
             let max = list_max(&p, track, list, Rows::with(&p, self.mixer.look()));
             self.mixer.offsets.insert((t, list), max);
             // A new insert is the last row of the strip's flow too.

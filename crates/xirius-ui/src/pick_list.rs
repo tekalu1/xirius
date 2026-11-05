@@ -887,7 +887,7 @@ impl Studio {
     /// is made.
     pub(crate) fn pick_view(&mut self, kind: PopupKind) -> Option<PickList> {
         match kind {
-            PopupKind::Insert(_) => Some(self.insert_pick()),
+            PopupKind::Insert(t) => Some(self.insert_pick(t)),
             PopupKind::Instrument(_) | PopupKind::Layer(_) => Some(self.instrument_pick()),
             PopupKind::AraPlugin => Some(self.ara_pick_list()),
             PopupKind::KeySources(plugin) => {

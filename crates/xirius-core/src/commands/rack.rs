@@ -772,6 +772,12 @@ pub(super) fn insert_at(r: &mut Rack, c: Chain, index: usize, node: RackNode) {
 }
 
 /// Where `--at` points: the chain, the index in it and the chain's split depth.
+/// Whether `rack.split.add` can put a splitter at `at` on `t` (the nesting has room there).
+pub fn split_fits(t: &Track, at: &str) -> bool {
+    let mut r = t.rack.clone().unwrap_or_else(|| Rack::serial(t));
+    place(&mut r, at).is_ok_and(|(_, _, depth)| depth < MAX_SPLIT_DEPTH)
+}
+
 pub(super) fn place(r: &mut Rack, at: &str) -> CmdResult<(Chain, usize, usize)> {
     if at == "track" {
         return Ok((Chain::Top, r.fx.len(), 0));

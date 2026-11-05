@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
+use xirius_core::id::TrackId;
 use xirius_plugins::{CHILD_ARG, Catalog, ChildProgram, ScanOptions};
 
 use crate::popup::{Action, Choice, PopupKind};
@@ -65,7 +66,7 @@ mod menu_io_tests {
                 s.bind_window_io();
                 xirius_session::host::mark_window_thread();
                 if operation == "plugin_menu_catalog" {
-                    s.insert_pick();
+                    s.insert_pick(TrackId::MASTER);
                 } else {
                     s.song.run("track.preset.list", json!({})).unwrap();
                 }
@@ -500,7 +501,7 @@ impl Studio {
 
     /// The insert list's menu (UI-320): Splitter (MIX-044), 最近, エフェクト, プラグイン,
     /// with the scan's rows under it (never filtered).
-    pub(crate) fn insert_pick(&mut self) -> crate::pick_list::PickList {
+    pub(crate) fn insert_pick(&mut self, t: TrackId) -> crate::pick_list::PickList {
         use crate::pick_list::PickList;
         let catalog = self.plugin_catalog();
         let all = super::insert_choices(&catalog);
@@ -509,10 +510,22 @@ impl Studio {
         let all: Vec<_> = all.into_iter().filter(|c| !seen.contains(&c.to)).collect();
         let (builtin, plugins): (Vec<_>, Vec<_>) =
             all.into_iter().partition(|c| c.to.starts_with("builtin:"));
-        let splitter = vec![Choice {
-            to: SPLITTER.to_string(),
-            label: "Splitter".into(),
-        }];
+        // no Splitter where the nesting is as deep as it goes
+        let after = self.mixer.insert_after.filter(|(x, _)| *x == t);
+        let into = self.mixer.insert_into.filter(|(x, ..)| *x == t);
+        let at = super::split_at(after, into);
+        let p = self.project();
+        let fits = p
+            .tracks
+            .get(&t)
+            .is_some_and(|track| xirius_core::commands::split_fits(track, &at));
+        let splitter: Vec<Choice> = fits
+            .then(|| Choice {
+                to: SPLITTER.to_string(),
+                label: "Splitter".into(),
+            })
+            .into_iter()
+            .collect();
         let mut list = PickList::grouped(
             vec![
                 ("", splitter),

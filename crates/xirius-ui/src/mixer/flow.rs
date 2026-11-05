@@ -42,6 +42,10 @@ const CHIP_GAP: f32 = 3.0;
 /// The space a row keeps at its right end.
 const END: f32 = 4.0;
 const HEAD_X: f32 = 5.0;
+/// The key's ring on a heading, as the app's other focus rings draw it.
+const FOCUS_W: f32 = 2.0;
+/// The room around a glyph in a row's button.
+const GLYPH_INSET: f32 = 2.0;
 /// The ring of a plug-in that is switched off.
 const RING: f32 = 1.5;
 /// The room of the heavy plugin's gauge before the close, and its size.
@@ -610,6 +614,16 @@ impl Flow {
 }
 
 /// The ＋ at the right end of an area's heading.
+/// The glyph inside a row's button.
+fn glyph(b: Rect) -> Rect {
+    Rect::new(
+        b.x + GLYPH_INSET,
+        b.y + GLYPH_INSET,
+        b.w - GLYPH_INSET * 2.0,
+        b.h - GLYPH_INSET * 2.0,
+    )
+}
+
 pub fn add_part(head: Rect) -> Rect {
     Rect::new(
         head.right() - END - DOT_BUTTON,
@@ -903,8 +917,8 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                         row.h,
                     );
                     let label = match l.area {
-                        Area::Instrument => "インストゥルメント",
-                        Area::Insert => "インサート",
+                        Area::Instrument => super::INSTRUMENT_HEAD,
+                        Area::Insert => super::INSERT_HEAD,
                     };
                     let label = pen.fit(label, FontSize::Micro, Weight::Regular, r.w);
                     pen.text(
@@ -916,7 +930,7 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                         Align::Left,
                     );
                     if s.mixer.heading == Some(t.id) && l.area == Area::Insert {
-                        pen.outline(row, c.ring, Radius::S, 1.5);
+                        pen.outline(row, c.ring, Radius::S, FOCUS_W);
                     }
                     if add {
                         let b = add_part(row);
@@ -931,7 +945,7 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                         if hot && on_plus {
                             pen.round(b, c.surface_3, Radius::Xs);
                         }
-                        pen.icon("plus", Rect::new(b.x + 2.0, b.y + 2.0, 12.0, 12.0), c.ink);
+                        pen.icon("plus", glyph(b), c.ink);
                     }
                 }
                 Kind::Split { branches, open, .. } => {
@@ -1135,7 +1149,7 @@ fn plugin_row(
         pen.round(row, c.fill.opacity(0.35), Radius::Clip);
     }
     let b = dot_button(row, l);
-    let glyph = Rect::new(b.x + 2.0, b.y + 2.0, 12.0, 12.0);
+    let glyph = glyph(b);
     // on the picked row's fill the marks wear its ink
     let alert = if chosen { c.primary.1 } else { c.alert };
     let locked = if chosen {

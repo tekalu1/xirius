@@ -213,3 +213,45 @@ fn the_screen_reader_hears_a_nested_splitter_shut_then_open() {
     widen(&mut s, &g, t);
     assert_eq!(expanded(&s, &g), Some(true), "the wide strip shows it open");
 }
+
+#[test]
+fn the_insert_list_offers_no_splitter_where_the_nesting_is_as_deep_as_it_goes() {
+    use crate::channel::flow::Chain;
+    use crate::mixer::scan;
+    let (mut s, _) = studio();
+    let (t, [.., deepest]) = nest(&mut s);
+    let branch = |s: &Studio, id: NodeId| {
+        fn find(nodes: &[RackNode], id: NodeId) -> Option<NodeId> {
+            nodes.iter().find_map(|n| match n {
+                RackNode::Split(x) if x.id == id => Some(x.branches[0].id),
+                RackNode::Split(x) => x.branches.iter().find_map(|b| find(&b.fx, id)),
+                RackNode::Plugin(_) => None,
+            })
+        }
+        find(&s.project().tracks[&t].rack.as_ref().unwrap().fx, id).unwrap()
+    };
+    let has_splitter = |s: &mut Studio, chain: Chain| {
+        s.mixer.insert_into = Some((t, chain, 0));
+        s.insert_pick(t)
+            .choices()
+            .iter()
+            .any(|c| c.to == scan::SPLITTER)
+    };
+    // a fourth level still goes in the third's branch
+    let third = branch(&s, deepest);
+    assert!(has_splitter(&mut s, Chain::Branch(third)));
+    assert!(has_splitter(&mut s, Chain::Top));
+    let before = splits(&s, t);
+    let at = format!("branch:{third}:0");
+    assert!(s.run_command("rack.split.add", json!({"track":t,"at":at})));
+    let fourth = *splits(&s, t).iter().find(|x| !before.contains(x)).unwrap();
+    // in the fourth's branch a splitter would be one level too many
+    let full = branch(&s, fourth);
+    assert!(!has_splitter(&mut s, Chain::Branch(full)));
+    let at = format!("branch:{full}:0");
+    assert!(!xirius_core::commands::split_fits(
+        &s.project().tracks[&t],
+        &at
+    ));
+    assert!(!s.run_command("rack.split.add", json!({"track":t,"at":at})));
+}

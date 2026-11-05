@@ -178,9 +178,22 @@ fn a_splitter_is_one_row_that_opens_on_its_branches_and_folds_away() {
         ]
     );
     assert!(pieces(&flow_of(&s, &g, t)).is_empty());
-    // a splitter that is gone is forgotten
+    // a splitter taken away and brought back by an undo is as the person left it
     assert!(s.run_command("rack.flatten", json!({"track":t})));
-    assert!(!s.mixer.folds.knows(sp));
+    assert!(s.undo(&g));
+    assert!(has_split(&s.project().tracks[&t], sp));
+    assert!(!s.mixer.folds.open(sp, false, false));
+    assert_eq!(
+        rows(&s, t).iter().map(|l| l.kind).collect::<Vec<_>>(),
+        vec![
+            Kind::Effect(eq),
+            Kind::Split {
+                id: sp,
+                branches: 2,
+                open: false
+            }
+        ]
+    );
 }
 
 #[test]
