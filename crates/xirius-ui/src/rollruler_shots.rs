@@ -63,6 +63,22 @@ pub const ROLL_RULER: &[Shot] = &[
         name: "r08-head-switch-left-window",
         acts: &[Act::Reset, Act::RollRuler(8)],
     },
+    // A drag on the band makes a loop, then a press let go on it turns the loop on: both
+    // bands fill and the bar numbers over them take the ink for a fill (ARR-001).
+    Shot {
+        name: "r09-loop-band-on",
+        acts: &[Act::Reset, Act::RollRuler(7), Act::RollRuler(9)],
+    },
+    // Pressed and let go again: the loop is off and keeps its range and its look.
+    Shot {
+        name: "r10-loop-band-off",
+        acts: &[
+            Act::Reset,
+            Act::RollRuler(7),
+            Act::RollRuler(9),
+            Act::RollRuler(9),
+        ],
+    },
 ];
 
 /// The part of the screen a stage aims at, read without holding the studio
@@ -272,6 +288,14 @@ pub(crate) fn play(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window,
                 exit(p, window, cx);
             }
         }
+        // A press let go in the middle of the loop made by stage 7: the loop turns on or
+        // off; the pointer then leaves so that the hover does not fill the band.
+        9 => {
+            if let Some(p) = ruler(studio, window, 310.0, 6.0) {
+                click(p, window, cx);
+            }
+            leave(window, cx);
+        }
         _ => {}
     }
 }
@@ -289,7 +313,7 @@ mod tests {
         for shot in ROLL_RULER {
             for act in shot.acts {
                 if let Act::RollRuler(n) = act {
-                    assert!(*n <= 8, "{act:?}");
+                    assert!(*n <= 9, "{act:?}");
                 }
             }
         }
