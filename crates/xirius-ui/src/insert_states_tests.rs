@@ -163,13 +163,147 @@ fn a_drag_carries_what_the_plugin_holds_now_and_an_undo_brings_back_what_it_repl
     assert_eq!(held(&s, guitar), (0.5, Some(delay(0.5))), "the state now");
     assert_eq!(held(&s, vocal), (0.5, Some(delay(0.5))));
     assert_eq!(s.notice_text(), Some("インサートを貼り付けました"));
-    // what the plug-ins answered is a step, and the paste one more
-    assert_eq!(s.song.steps(), before + 2);
+    // what the plug-ins answered is in the song with no step of its own: the paste is one
+    assert_eq!(s.song.steps(), before + 1);
 
     // One undo: the replaced plug-in comes back as it was a moment before.
     assert!(s.undo(&g));
+    assert_eq!(s.song.steps(), before + 1, "undone, not gone");
     assert_eq!(s.project().tracks[&guitar].inserts[0].id, to);
     assert_eq!(held(&s, guitar), (0.625, Some(delay(0.625))));
+    s.transport.pause();
+}
+
+/// The song's steps, where its history stands, whether it is unsaved, and whether a redo is
+/// there.
+fn history(s: &Studio) -> (usize, u64, bool, bool) {
+    let session = s.song.session();
+    (
+        s.song.steps(),
+        session.cursor(),
+        session.is_dirty(),
+        session.can_redo(),
+    )
+}
+
+#[test]
+fn a_copy_leaves_the_song_and_its_history_as_they_were() {
+    copy_leaves_the_song("dedicated");
+}
+
+#[test]
+fn a_copy_from_plugins_in_this_process_leaves_the_song_too() {
+    copy_leaves_the_song("inprocess");
+}
+
+fn copy_leaves_the_song(mode: &str) {
+    let Song {
+        mut s,
+        g,
+        vocal,
+        from,
+        to,
+        ..
+    } = song(mode);
+    // something to redo, which a copy must not take away
+    assert!(s.run_command(
+        "plugin.param.set",
+        json!({ "id": to.to_string(), "param": "1", "value": 0.375 })
+    ));
+    assert!(s.undo(&g));
+    turn_silently(&mut s, from, 0.5);
+    let before = history(&s);
+    assert!(before.3, "a redo is there");
+
+    assert!(
+        s.arrange_run("channel.inserts.copy", json!({ "id": vocal.to_string() }))
+            .is_some()
+    );
+    crate::shot::run_for(&mut s, 5.0, |s| s.inserts_wait.is_none());
+    assert!(s.inserts_wait.is_none());
+    let Some(Clipboard::Inserts(c)) = &s.song.session().state.clipboard else {
+        panic!("the inserts are copied");
+    };
+    let state = c.plugins[0].state.as_ref().expect("with a state");
+    assert_eq!(
+        xirius_plugins::decode_state(state).unwrap().component,
+        delay(0.5)
+    );
+    assert_eq!(c.plugins[0].params["1"], 0.5, "the copy's value too");
+    assert_eq!(held(&s, vocal), (0.75, None), "the song is as it was");
+    assert_eq!(
+        history(&s),
+        before,
+        "no step, nothing unsaved, the redo kept"
+    );
+    s.transport.pause();
+}
+
+#[test]
+fn a_paste_that_would_be_refused_asks_nothing_and_leaves_no_step() {
+    let Song {
+        mut s, vocal, from, ..
+    } = song("dedicated");
+    assert!(
+        s.arrange_run("channel.inserts.copy", json!({ "id": vocal.to_string() }))
+            .is_some()
+    );
+    crate::shot::run_for(&mut s, 5.0, |s| s.inserts_wait.is_none());
+    turn_silently(&mut s, from, 0.625);
+    let before = history(&s);
+
+    // onto the channel it was copied from: refused at once
+    let pasted = s.arrange_run(
+        "channel.inserts.paste",
+        json!({ "ids": [vocal.to_string()] }),
+    );
+    assert!(pasted.is_none());
+    assert!(s.inserts_wait.is_none(), "nothing asked");
+    assert!(s.error.is_some(), "the refusal is said");
+    assert_eq!(history(&s), before, "no step, nothing unsaved");
+    assert_eq!(held(&s, vocal), (0.75, None));
+    s.transport.pause();
+}
+
+#[test]
+fn closing_the_window_puts_a_waiting_paste_in_before_asking_to_save() {
+    let Song {
+        mut s,
+        g,
+        vocal,
+        guitar,
+        to,
+        ..
+    } = song("dedicated");
+    drag(&mut s, &g, vocal, guitar);
+    assert!(s.inserts_wait.is_some());
+    assert!(!s.request_close());
+    assert!(
+        s.inserts_wait.is_none(),
+        "not left running beside the close"
+    );
+    let pasted = &s.project().tracks[&guitar].inserts[0];
+    assert_ne!(pasted.id, to, "the paste is in the song being closed");
+    assert!(!s.poll_inserts_wait(), "and does not run again");
+    s.transport.pause();
+}
+
+#[test]
+fn a_paste_waiting_when_the_song_is_replaced_does_not_run_in_the_next_one() {
+    let Song {
+        mut s,
+        g,
+        vocal,
+        guitar,
+        ..
+    } = song("dedicated");
+    drag(&mut s, &g, vocal, guitar);
+    assert!(s.inserts_wait.is_some());
+    s.new_song_sync();
+    assert!(s.inserts_wait.is_none(), "it went with its song");
+    assert!(!s.input_blocked());
+    assert!(!s.poll_inserts_wait());
+    assert_ne!(s.notice_text(), Some("インサートを貼り付けました"));
     s.transport.pause();
 }
 
@@ -235,7 +369,7 @@ fn a_plugin_whose_host_went_down_is_copied_as_the_song_last_had_it() {
         vocal,
         guitar,
         from,
-        ..
+        to,
     } = song("dedicated");
     let host = s.transport.host().unwrap();
     let link = host.plugins().link(from).unwrap();
@@ -246,10 +380,15 @@ fn a_plugin_whose_host_went_down_is_copied_as_the_song_last_had_it() {
     crate::shot::run_for(&mut s, 15.0, |s| s.health.crashed(from));
     s.poll_plugins_now();
     assert!(s.health.crashed(from));
+    turn_silently(&mut s, to, 0.625);
     drag(&mut s, &g, vocal, guitar);
     crate::shot::run_for(&mut s, 5.0, |s| s.inserts_wait.is_none());
     assert!(s.inserts_wait.is_none());
     assert_eq!(held(&s, guitar), (0.75, None));
+    // the one that answered is still read: an undo brings it back as it answered
+    assert!(s.undo(&g));
+    assert_eq!(s.project().tracks[&guitar].inserts[0].id, to);
+    assert_eq!(held(&s, guitar), (0.625, Some(delay(0.625))));
     s.transport.pause();
 }
 

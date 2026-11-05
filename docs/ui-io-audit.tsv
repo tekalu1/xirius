@@ -123,6 +123,7 @@ crates/xirius-ui/src/input_dispatch.rs	seek	3
 crates/xirius-ui/src/input_follow.rs	lock	1
 crates/xirius-ui/src/insert_drag.rs	arrange_run	1
 crates/xirius-ui/src/insert_states.rs	arrange_run	1
+crates/xirius-ui/src/insert_states.rs	run_value	1
 crates/xirius-ui/src/inspector.rs	arrange_run	1
 crates/xirius-ui/src/instrument/keys.rs	lock	2
 crates/xirius-ui/src/instrument/keys.rs	seek	1

@@ -319,6 +319,15 @@ impl SessionHost {
         self.builder.plugins_mut().begin_pull_states_of(ids)
     }
 
+    /// [`SessionHost::begin_pull_states_of`] for a copy that leaves the song as it is: read
+    /// the answers with [`peek_pulled_states`] (MIX-045).
+    pub fn begin_peek_states_of(
+        &mut self,
+        ids: &std::collections::HashSet<xirius_core::id::PluginId>,
+    ) -> crate::plugins::StatePull {
+        self.builder.plugins_mut().begin_peek_states_of(ids)
+    }
+
     /// Save As moved this same song. Future loads and recordings use its new folder;
     /// current plugin instances, the audio engine and the transport stay alive (ARC-043).
     pub fn relocate(&mut self, dir: Option<PathBuf>) {
@@ -1732,7 +1741,7 @@ pub(crate) fn collect_current(
         .plugins_mut()
         .current_edits(session.project(), None)
         .map_err(xirius_core::CmdError::io)?;
-    collect_edits(session, host, opts, edits, wait)
+    collect_edits(session, host, Put::Step(opts), edits, wait)
 }
 
 /// [`collect_plugin_states`] with the states of a pull ([`SessionHost::begin_pull_states`]),
@@ -1745,28 +1754,102 @@ pub fn collect_pulled_states(
     pull: &crate::plugins::StatePull,
     opts: &RunOptions,
 ) -> CmdResult<Collected> {
-    collect_pulled(session, host, pull, opts, false)
+    collect_pulled(session, host, pull, Put::Step(opts), false)
+}
+
+/// [`collect_pulled_states`] for the plugins a paste replaces or copies (MIX-045): what they
+/// answered goes in the song at the cursor with no step of its own ([`Session::amend`]), so
+/// the paste's one step is what an undo takes back, and the replaced plugins come back with
+/// the state they answered. The edits of the plugins the pull did not ask are left for the
+/// next collection.
+pub fn collect_pulled_in_place(
+    session: &mut Session,
+    host: &mut SessionHost,
+    pull: &crate::plugins::StatePull,
+) -> CmdResult<Collected> {
+    collect_pulled(session, host, pull, Put::InPlace, false)
+}
+
+/// How collected plugin states go in the song.
+#[derive(Clone, Copy)]
+enum Put<'a> {
+    /// As a step of the history, by whom the options say.
+    Step(&'a RunOptions),
+    /// At the cursor with no step, and only for the plugins a pull asked.
+    InPlace,
 }
 
 fn collect_pulled(
     session: &mut Session,
     host: &mut SessionHost,
     pull: &crate::plugins::StatePull,
-    opts: &RunOptions,
+    put: Put,
     wait: bool,
 ) -> CmdResult<Collected> {
-    let edits = host
-        .builder
-        .plugins_mut()
+    let plugins = host.builder.plugins_mut();
+    let mut edits = plugins
         .current_edits(session.project(), Some(pull))
         .map_err(xirius_core::CmdError::io)?;
-    collect_edits(session, host, opts, edits, wait)
+    if matches!(put, Put::InPlace) {
+        let (asked, others) = edits.into_iter().partition(|e| pull.asks(e.plugin));
+        plugins.carry(others);
+        edits = asked;
+    }
+    collect_edits(session, host, put, edits, wait)
+}
+
+/// The states the plugins of a peek ([`SessionHost::begin_peek_states_of`]) answered, put in
+/// `plugins` (copies of the song's, as a clipboard keeps them) and not in the song (MIX-045):
+/// each one's state, and the values of the parameters the song names, except the ones a macro
+/// control moves (the control's value is the song's). A plugin that failed or did not answer
+/// keeps what the song had. Returns how many of `plugins` changed.
+pub fn peek_pulled_states(
+    host: &mut SessionHost,
+    pull: &crate::plugins::StatePull,
+    song: &Project,
+    plugins: &mut [Plugin],
+) -> usize {
+    pull.reconcile(song);
+    let edits = host.builder.plugins_mut().peek_pulled_states(pull);
+    let mut changed = 0;
+    for e in edits {
+        let Some(state) = e.state else {
+            continue;
+        };
+        let Some(x) = plugins.iter_mut().find(|x| x.id == e.plugin) else {
+            continue;
+        };
+        let titles = host.builder.plugins().param_titles(e.plugin);
+        let before = x.clone();
+        x.state = Some(state);
+        for (key, value) in &mut x.params {
+            let target = xirius_core::auto::AutoTarget::Param(e.plugin, key.clone());
+            if song
+                .tracks
+                .values()
+                .any(|t| t.controls.owner_of(&target).is_some())
+            {
+                continue;
+            }
+            let answered = e.params.iter().find(|p| {
+                key.parse::<u32>().ok() == Some(p.id)
+                    || titles
+                        .iter()
+                        .any(|(id, t)| *id == p.id && t.eq_ignore_ascii_case(key))
+            });
+            if let Some(v) = answered.and_then(|p| p.value) {
+                *value = v;
+            }
+        }
+        changed += usize::from(*x != before);
+    }
+    changed
 }
 
 fn collect_edits(
     session: &mut Session,
     host: &mut SessionHost,
-    opts: &RunOptions,
+    put: Put,
     edits: Vec<crate::plugins::RemoteEdit>,
     wait: bool,
 ) -> CmdResult<Collected> {
@@ -1874,10 +1957,21 @@ fn collect_edits(
             .taken(*id, Some(state.clone()), params, *stamp, *origin);
     }
     if !commands.is_empty() {
-        let mut args = Map::new();
-        args.insert("commands".into(), Value::Array(commands));
-        args.insert("title".into(), json!("プラグインの編集を反映"));
-        out.result = Some(session.run("ai.batch", &args, opts)?);
+        match put {
+            Put::Step(opts) => {
+                let mut args = Map::new();
+                args.insert("commands".into(), Value::Array(commands));
+                args.insert("title".into(), json!("プラグインの編集を反映"));
+                out.result = Some(session.run("ai.batch", &args, opts)?);
+            }
+            Put::InPlace => {
+                session.amend(|p| {
+                    for c in &commands {
+                        put_in_place(p, &c["command"], &c["args"]);
+                    }
+                })?;
+            }
+        }
     }
     if !taken.is_empty() {
         host.sync(session.project());
@@ -1911,7 +2005,37 @@ pub fn pull_plugin_states(
         .pull_states(wait)
         .map_err(xirius_core::error::CmdError::io)?;
     // No window to keep going: the ARA plugins' archives asked for are waited for.
-    collect_pulled(session, host, &pull, opts, true)
+    collect_pulled(session, host, &pull, Put::Step(opts), true)
+}
+
+/// A `plugin.state.set` or `plugin.param.set` of [`collect_edits`], made on the song itself.
+fn put_in_place(p: &mut Project, command: &Value, args: &Value) {
+    let Some(id) = args["id"].as_str().and_then(|s| s.parse::<PluginId>().ok()) else {
+        return;
+    };
+    let Some(track) = p
+        .tracks
+        .iter()
+        .find(|(_, t)| t.inserts.iter().any(|x| x.id == id))
+        .map(|(t, _)| *t)
+    else {
+        return;
+    };
+    let Ok(track) = p.track_mut(track) else {
+        return;
+    };
+    let Some(x) = track.inserts.iter_mut().find(|x| x.id == id) else {
+        return;
+    };
+    match command.as_str() {
+        Some("plugin.state.set") => x.state = args["state"].as_str().map(str::to_string),
+        Some("plugin.param.set") => {
+            if let (Some(key), Some(v)) = (args["param"].as_str(), args["value"].as_f64()) {
+                x.params.insert(key.to_string(), v);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn find_plugin(p: &Project, id: PluginId) -> Option<&Plugin> {

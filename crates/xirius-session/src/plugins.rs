@@ -316,6 +316,41 @@ impl StatePull {
         }
         self.cancel();
     }
+    /// Leaves out each plugin that failed or has not answered yet, so the ones that answered
+    /// are read on their own (MIX-045): one host gone down does not throw away the others'
+    /// states. A late answer is quarantined, not put in the song afterwards.
+    pub fn settle(&self) {
+        let mut ignored = self.ignored.borrow_mut();
+        for (id, _) in &self.errors {
+            ignored.insert(*id);
+        }
+        for (id, link, request) in &self.asked {
+            if !ignored.contains(id)
+                && (!link.capture_finished(*request) || link.capture_error(*request).is_some())
+            {
+                link.cancel_capture(*request);
+                ignored.insert(*id);
+            }
+        }
+        for (id, capture) in &self.owned {
+            if ignored.contains(id) {
+                continue;
+            }
+            if !capture.ready() {
+                capture.quarantine();
+                ignored.insert(*id);
+            } else if capture.error().is_some() {
+                capture.cancel();
+                ignored.insert(*id);
+            }
+        }
+    }
+
+    /// Whether the pull asked plugin `id` for its state.
+    pub(crate) fn asks(&self, id: PluginId) -> bool {
+        self.basis.contains_key(&id)
+    }
+
     pub fn ready(&self) -> bool {
         self.cancelled.get()
             || (Instant::now() >= self.not_before
@@ -956,7 +991,7 @@ impl PluginLoader {
             .filter(|(_, next)| basis.get(&next.id).is_some_and(|old| old.accepts(next)))
             .map(|(_, next)| next.id)
             .collect();
-        let receipt = self.begin_pull_states_matching(Some(&wanted));
+        let receipt = self.begin_pull_states_matching(Some(&wanted), false);
         let receipt = Self::wait_for_pull(receipt, crate::host::PULL_WAIT)?;
         let mut edits = self.current_edits(target, Some(&receipt))?;
         for edit in &mut edits {
@@ -2294,16 +2329,28 @@ impl PluginLoader {
     /// saved with the state from when it was opened. The ones in host processes are asked
     /// and waited for, up to `wait` (the ones whose host went down or never opened are not).
     pub fn begin_pull_states(&mut self) -> StatePull {
-        self.begin_pull_states_matching(None)
+        self.begin_pull_states_matching(None, false)
     }
 
     /// [`PluginLoader::begin_pull_states`] for the plugins `ids` names only: a channel's
     /// inserts copied or replaced read what those hold now (MIX-045).
     pub fn begin_pull_states_of(&mut self, ids: &HashSet<PluginId>) -> StatePull {
-        self.begin_pull_states_matching(Some(ids))
+        self.begin_pull_states_matching(Some(ids), false)
     }
 
-    fn begin_pull_states_matching(&mut self, wanted: Option<&HashSet<PluginId>>) -> StatePull {
+    /// [`PluginLoader::begin_pull_states_of`] for a read that leaves the song as it is (a
+    /// copy, MIX-045): a plugin in this process is not marked to be captured, so the edits
+    /// collected each frame do not take its state into the song meanwhile. Read the answers
+    /// with [`PluginLoader::peek_pulled_states`].
+    pub fn begin_peek_states_of(&mut self, ids: &HashSet<PluginId>) -> StatePull {
+        self.begin_pull_states_matching(Some(ids), true)
+    }
+
+    fn begin_pull_states_matching(
+        &mut self,
+        wanted: Option<&HashSet<PluginId>>,
+        peek: bool,
+    ) -> StatePull {
         let selected = |id: &PluginId| wanted.is_none_or(|ids| ids.contains(id));
         let basis = self
             .state_basis()
@@ -2320,7 +2367,7 @@ impl PluginLoader {
             local = true;
             if let Some(local) = &l.owned {
                 owned.push((*id, local.request_capture(CAPTURE_WAIT)));
-            } else {
+            } else if !peek {
                 l.capture = Some(Instant::now());
             }
         }
@@ -2340,7 +2387,7 @@ impl PluginLoader {
                     local = true;
                     if let Some(local) = &l.owned {
                         owned.push((*id, local.request_capture(CAPTURE_WAIT)));
-                    } else {
+                    } else if !peek {
                         l.capture = Some(Instant::now());
                     }
                 }
@@ -2407,6 +2454,85 @@ impl PluginLoader {
     pub fn take_edits(&mut self) -> Vec<RemoteEdit> {
         self.take_edits_with_pull(None)
             .expect("ordinary edit reports have no capture receipt")
+    }
+
+    /// What the plugins a pull asked have answered, each on its own: one that failed or did
+    /// not answer is left out and the others are still read (MIX-045). Nothing the song
+    /// collects from the plugins is taken (their edits stay for the next collection), so a
+    /// copy can carry the states without the song changing. The pull should come from
+    /// [`PluginLoader::begin_peek_states_of`]; a plugin in this process is read here.
+    pub fn peek_pulled_states(&mut self, pull: &StatePull) -> Vec<RemoteEdit> {
+        let ignored = pull.ignored.borrow();
+        let snapshot = |values: Vec<(u32, String, f64)>| {
+            values
+                .into_iter()
+                .map(|(id, title, value)| ParamEdit {
+                    id,
+                    title,
+                    value: Some(value),
+                    phase: EditPhase::Snapshot,
+                    at: Instant::now(),
+                })
+                .collect()
+        };
+        let mut out = Vec::new();
+        for (id, capture) in pull.owned.iter().filter(|(id, _)| !ignored.contains(id)) {
+            if let Some(Ok(s)) = capture.take() {
+                out.push(RemoteEdit {
+                    origin: Origin::Capture,
+                    stamp: s.stamp,
+                    plugin: *id,
+                    state: Some(s.state),
+                    params: snapshot(s.params),
+                });
+            }
+        }
+        for (id, link, request) in pull.asked.iter().filter(|(id, _, _)| !ignored.contains(id)) {
+            if let Ok(e) = link.take_capture_edits(*request)
+                && let Some(state) = e.state.as_ref()
+            {
+                out.push(RemoteEdit {
+                    origin: e.origin,
+                    stamp: e.stamp,
+                    plugin: *id,
+                    state: Some(xirius_plugins::encode_state(state)),
+                    params: e.params,
+                });
+            }
+        }
+        let leaving = self.leaving.iter().filter_map(|(id, l)| match l {
+            Leaving::Local(l, _) => Some((id, l)),
+            Leaving::Remote(_) => None,
+        });
+        for (id, l) in self.locals.iter().chain(leaving) {
+            if !pull.basis.contains_key(id) || ignored.contains(id) || l.owned.is_some() {
+                continue;
+            }
+            let Some(plugin) = l.plugin.as_ref().and_then(OnThread::get) else {
+                continue;
+            };
+            let Ok(state) = plugin.get_state() else {
+                continue;
+            };
+            let params = plugin
+                .params()
+                .iter()
+                .filter_map(|p| plugin.param(p.id).map(|v| (p.id, p.title.clone(), v)))
+                .collect();
+            out.push(RemoteEdit {
+                origin: Origin::Editor,
+                stamp: l.update_gate().stamp(),
+                plugin: *id,
+                state: Some(xirius_plugins::encode_state(&state)),
+                params: snapshot(params),
+            });
+        }
+        out
+    }
+
+    /// Edits taken and not put in the song, for the next collection to take again.
+    pub(crate) fn carry(&mut self, edits: Vec<RemoteEdit>) {
+        self.carried.extend(edits);
     }
 
     pub fn take_pulled_edits(&mut self, pull: &StatePull) -> Result<Vec<RemoteEdit>, String> {

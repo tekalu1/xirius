@@ -68,10 +68,6 @@ impl Studio {
         if self.input_blocked() {
             return false;
         }
-        // An undo takes back the inserts a paste put, and what it said with them (MIX-045).
-        if !redo {
-            self.untell("channel.inserts.paste");
-        }
         // A device's knob turned by the wheel or keys a moment ago is a step of its own first
         // (M-par-1): Ctrl+Z then takes it back, not the step before it.
         if self.device_sweep_end() {
@@ -119,6 +115,7 @@ impl Studio {
             if !can {
                 return false;
             }
+            self.untell_undone(redo);
             self.view_read.history_points = selection;
             self.io_command_on_worker(
                 if redo { "history.redo" } else { "history.undo" },
@@ -141,9 +138,18 @@ impl Studio {
             }
         };
         if changed {
+            self.untell_undone(redo);
             self.restore_history_points(selection);
         }
         changed
+    }
+
+    /// An undo takes back the inserts a paste put, and what it said with them (MIX-045): only
+    /// once a step is in fact taken back.
+    fn untell_undone(&mut self, redo: bool) {
+        if !redo {
+            self.untell("channel.inserts.paste");
+        }
     }
 
     pub(crate) fn restore_history_points(&mut self, selection: Option<HistoryPoints>) {

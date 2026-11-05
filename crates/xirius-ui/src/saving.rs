@@ -206,6 +206,8 @@ impl Studio {
     }
 
     pub(crate) fn start_leaving(&mut self, leave: Leave) {
+        // A copy or paste of inserts waiting for its plug-ins belongs to this song (MIX-045).
+        self.inserts_wait_flush();
         // A device's knob still turning belongs to the song being left (M-par-1); not while
         // a save, an open or a question holds the song (low 17).
         if !self.input_blocked() {
@@ -949,6 +951,9 @@ impl Studio {
     }
 
     fn close_ready(&mut self) -> bool {
+        // A copy or paste of inserts waiting for its plug-ins goes in before anything asks
+        // whether to save (MIX-045).
+        self.inserts_wait_flush();
         if self.unsaved.is_some() {
             return false;
         }

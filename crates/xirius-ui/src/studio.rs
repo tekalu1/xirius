@@ -2784,6 +2784,7 @@ impl Studio {
         self.mixer.key_focus = None;
         self.mixer.heading = None;
         self.mixer.insert_drag = None;
+        self.inserts_wait_drop();
         self.mixer.key_drag = None;
         self.mixer.level_drag = None;
         self.mixer.insert_after = None;
