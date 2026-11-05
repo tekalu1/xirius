@@ -69,10 +69,14 @@ fn vocal(s: &mut Studio) -> (TrackId, NodeId, [PluginId; 3]) {
 }
 
 fn rows(s: &Studio, t: TrackId) -> Vec<Line> {
-    lines(&s.project().tracks[&t], &s.mixer.folded)
-        .into_iter()
-        .filter(|l| !matches!(l.kind, Kind::Head { .. }))
-        .collect()
+    lines(
+        &s.project().tracks[&t],
+        &s.mixer.folds,
+        s.mixer.wide.contains(&t),
+    )
+    .into_iter()
+    .filter(|l| !matches!(l.kind, Kind::Head { .. }))
+    .collect()
 }
 
 fn flow_of(s: &Studio, g: &Geometry, t: TrackId) -> Flow {
@@ -117,7 +121,11 @@ fn a_multi_lists_its_layers_with_their_own_effects_stepped_in_under_them() {
             (Area::Insert, Kind::Effect(reverb), 0, None),
         ]
     );
-    let audio = lines(&s.project().tracks[&track(&s, "Guitar")], &HashSet::new());
+    let audio = lines(
+        &s.project().tracks[&track(&s, "Guitar")],
+        &Folds::default(),
+        false,
+    );
     assert!(audio.iter().all(|l| l.area == Area::Insert));
 }
 
@@ -157,7 +165,7 @@ fn a_splitter_is_one_row_that_opens_on_its_branches_and_folds_away() {
     let (x, y) = s.mixer_center(&g, fold).unwrap();
     assert_eq!(s.hit(&g, x, y), Hit::Mixer(fold));
     assert!(s.press(&g, Hit::Mixer(fold)));
-    assert!(s.mixer.folded.contains(&sp));
+    assert!(!s.mixer.folds.open(sp, false, false));
     assert_eq!(
         rows(&s, t).iter().map(|l| l.kind).collect::<Vec<_>>(),
         vec![
@@ -172,7 +180,7 @@ fn a_splitter_is_one_row_that_opens_on_its_branches_and_folds_away() {
     assert!(pieces(&flow_of(&s, &g, t)).is_empty());
     // a splitter that is gone is forgotten
     assert!(s.run_command("rack.flatten", json!({"track":t})));
-    assert!(!s.mixer.folded.contains(&sp));
+    assert!(!s.mixer.folds.knows(sp));
 }
 
 #[test]
@@ -301,7 +309,7 @@ fn the_screen_reader_names_the_splitter_and_the_plus_of_each_area() {
     assert_eq!(heading.node.label(), Some("インサート"));
     let layer = find(format!("flow-{k}-{:?}", MixerHit::AddLayer(k)));
     assert_eq!(layer.node.label(), Some("レイヤーを追加"));
-    s.mixer.folded.insert(sp);
+    s.mixer.folds.set(sp, false, false, false);
     let marks = crate::a11y::marks(&s, &g);
     let split = marks
         .iter()
@@ -345,3 +353,6 @@ fn at_the_narrow_width_a_hovered_or_picked_branch_row_keeps_its_whole_name() {
     s.mixer.chosen = Some((t, Pick::Plugin(verb)));
     assert!(fits(room(&s, verb), "Reverb"), "{}", room(&s, verb));
 }
+
+#[path = "nest_tests.rs"]
+mod nest;

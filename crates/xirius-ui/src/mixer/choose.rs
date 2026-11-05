@@ -233,7 +233,8 @@ impl Studio {
         let Some(track) = p.tracks.get(&t) else {
             return false;
         };
-        let lines = self.mixer.look().lines(track);
+        let wide = self.width_of(g, t) >= super::WIDE_W;
+        let lines = self.mixer.look().at(wide).lines(track);
         let picks: Vec<Pick> = lines
             .iter()
             .filter(|l| l.kind != Kind::Level)
@@ -320,11 +321,7 @@ impl Studio {
                 Pick::Plugin(id) => {
                     self.open_plugin(t, id);
                 }
-                Pick::Split(id) => {
-                    if !self.mixer.folded.remove(&id) {
-                        self.mixer.folded.insert(id);
-                    }
-                }
+                Pick::Split(id) => self.fold_split(g, t, id),
             },
             "space" => {
                 let Pick::Plugin(id) = pick else {

@@ -229,7 +229,7 @@ fn ghost(pen: &mut Pen, s: &Studio, g: &Geometry, d: Drag, refused: bool) {
     let Some(track) = p.tracks.get(&d.from) else {
         return;
     };
-    let rows: Vec<_> = flow::lines(track, &s.mixer.folded)
+    let rows: Vec<_> = flow::lines(track, &s.mixer.folds, s.mixer.wide.contains(&d.from))
         .into_iter()
         .filter(|l| l.area == Area::Insert && !matches!(l.kind, Kind::Head { .. }))
         .collect();

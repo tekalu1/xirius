@@ -8,7 +8,7 @@
 //! branch or is a layer, a row under it moves that level. The pointer on a row shows its M and,
 //! at its bottom edge, the ＋ that puts a plug-in after it. Rows are 32 high for touch.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use gpui::Hsla;
 
@@ -128,19 +128,76 @@ pub struct Target {
     pub mute: bool,
 }
 
-/// How the strips show their flows: the splitters shut, the row picked and whether rows are
-/// for touch.
+/// Which splitters the strips' flows show open. A splitter starts open; one nested in another
+/// starts shut while its strip is at the narrow width, and opens with the strip widened. What a
+/// person opens or shuts is kept apart from that: a top splitter keeps it at every width, a
+/// nested one at the width it was pressed at. It is the view's, not the song's: a song opened
+/// starts from the start again.
+#[derive(Clone, Debug, Default)]
+pub struct Folds {
+    /// The person's own, by splitter and (for a nested one) the strip being wide.
+    kept: HashMap<(NodeId, Option<bool>), bool>,
+}
+
+impl Folds {
+    fn key(id: NodeId, nested: bool, wide: bool) -> (NodeId, Option<bool>) {
+        (id, nested.then_some(wide))
+    }
+
+    /// Whether splitter `id` shows its branches.
+    pub fn open(&self, id: NodeId, nested: bool, wide: bool) -> bool {
+        self.kept
+            .get(&Self::key(id, nested, wide))
+            .copied()
+            .unwrap_or(wide || !nested)
+    }
+
+    /// The person opened or shut splitter `id`.
+    pub fn set(&mut self, id: NodeId, nested: bool, wide: bool, open: bool) {
+        self.kept.insert(Self::key(id, nested, wide), open);
+    }
+
+    /// Whether anything is kept of splitter `id`.
+    pub fn knows(&self, id: NodeId) -> bool {
+        self.kept.keys().any(|(x, _)| *x == id)
+    }
+
+    /// Forgets the splitters `keep` says no to.
+    pub fn retain(&mut self, mut keep: impl FnMut(NodeId) -> bool) {
+        self.kept.retain(|(id, _), _| keep(*id));
+    }
+
+    pub fn clear(&mut self) {
+        self.kept.clear();
+    }
+}
+
+/// How the strips show their flows: the splitters shut, the strips widened, the row picked and
+/// whether rows are for touch.
 #[derive(Clone, Copy)]
 pub struct Look<'a> {
-    pub folded: &'a HashSet<NodeId>,
+    pub folds: &'a Folds,
+    /// The strips widened by their buttons.
+    pub wide: &'a HashSet<TrackId>,
+    /// The width of the strip laid, when it is known (it is wide or it is not).
+    pub at: Option<bool>,
     pub chosen: Option<(TrackId, Pick)>,
     pub coarse: bool,
 }
 
 impl Look<'_> {
+    /// As on a strip that is wide or not.
+    pub fn at(self, wide: bool) -> Self {
+        Self {
+            at: Some(wide),
+            ..self
+        }
+    }
+
     /// `t`'s lines, with the level row under its picked row.
     pub fn lines(&self, t: &Track) -> Vec<Line> {
-        let mut out = lines(t, self.folded);
+        let wide = self.at.unwrap_or_else(|| self.wide.contains(&t.id));
+        let mut out = lines(t, self.folds, wide);
         if let Some((_, pick)) = self.chosen.filter(|(id, _)| *id == t.id)
             && let Some(i) = out.iter().position(|l| l.pick() == Some(pick))
             && out[i].target.is_some()
@@ -221,13 +278,14 @@ fn shown(gain_db: f64, mute: bool) -> Option<(f64, bool)> {
     (mute || gain_db.abs() >= 0.05).then_some((gain_db, mute))
 }
 
-/// The lines of `t`'s flow, top to bottom; `folded` holds the splitters that are closed.
-pub fn lines(t: &Track, folded: &HashSet<NodeId>) -> Vec<Line> {
+/// The lines of `t`'s flow, top to bottom, on a strip that is `wide` or not.
+pub fn lines(t: &Track, folds: &Folds, wide: bool) -> Vec<Line> {
+    let open = |id: NodeId, nested: bool| folds.open(id, nested, wide);
     let rack = t.rack.clone().unwrap_or_else(|| Rack::serial(t));
-    let open = t.frozen.is_none();
+    let add = t.frozen.is_none();
     let mut out = Vec::new();
     if t.kind == TrackKind::Instrument {
-        out.push(Line::new(Area::Instrument, Kind::Head { add: open }, 0));
+        out.push(Line::new(Area::Instrument, Kind::Head { add }, 0));
         match &rack.source {
             None => {}
             Some(Source::Single(id)) => out.push(Line::new(
@@ -260,7 +318,7 @@ pub fn lines(t: &Track, folded: &HashSet<NodeId>) -> Vec<Line> {
                     }
                     out.push(row);
                     let from = out.len();
-                    chain(&mut out, Area::Instrument, &l.fx, 1, folded);
+                    chain(&mut out, Area::Instrument, &l.fx, 1, false, &open);
                     for r in &mut out[from..] {
                         r.under = Some(l.instrument);
                     }
@@ -268,32 +326,40 @@ pub fn lines(t: &Track, folded: &HashSet<NodeId>) -> Vec<Line> {
             }
         }
     }
-    out.push(Line::new(Area::Insert, Kind::Head { add: open }, 0));
-    chain(&mut out, Area::Insert, &rack.fx, 0, folded);
+    out.push(Line::new(Area::Insert, Kind::Head { add }, 0));
+    chain(&mut out, Area::Insert, &rack.fx, 0, false, &open);
     out
 }
 
-fn chain(out: &mut Vec<Line>, area: Area, nodes: &[RackNode], depth: u8, folded: &HashSet<NodeId>) {
+/// `nested`: the nodes are in a splitter's branch.
+fn chain(
+    out: &mut Vec<Line>,
+    area: Area,
+    nodes: &[RackNode],
+    depth: u8,
+    nested: bool,
+    open: &dyn Fn(NodeId, bool) -> bool,
+) {
     for n in nodes {
         match n {
             RackNode::Plugin(id) => out.push(Line::new(area, Kind::Effect(*id), depth)),
             RackNode::Split(s) => {
-                let open = !folded.contains(&s.id);
+                let shows = open(s.id, nested);
                 out.push(Line::new(
                     area,
                     Kind::Split {
                         id: s.id,
                         branches: s.branches.len(),
-                        open,
+                        open: shows,
                     },
                     depth,
                 ));
-                if !open {
+                if !shows {
                     continue;
                 }
                 for b in &s.branches {
                     let from = out.len();
-                    chain(out, area, &b.fx, depth + 1, folded);
+                    chain(out, area, &b.fx, depth + 1, true, open);
                     if let Some(first) = out.get_mut(from) {
                         first.heads = Some(s.id);
                         first.level = shown(b.gain_db, b.mute);
@@ -324,6 +390,27 @@ pub fn has_split(t: &Track, id: NodeId) -> bool {
     within(&rack.fx, id)
         || matches!(&rack.source, Some(Source::Multi { layers, .. })
             if layers.iter().any(|l| within(&l.fx, id)))
+}
+
+/// Whether `t`'s splitter `id` is in another splitter's branch.
+pub fn nested(t: &Track, id: NodeId) -> bool {
+    fn depth(nodes: &[RackNode], id: NodeId, n: usize) -> Option<usize> {
+        nodes.iter().find_map(|x| match x {
+            RackNode::Plugin(_) => None,
+            RackNode::Split(s) if s.id == id => Some(n),
+            RackNode::Split(s) => s.branches.iter().find_map(|b| depth(&b.fx, id, n + 1)),
+        })
+    }
+    let Some(rack) = &t.rack else {
+        return false;
+    };
+    let layers = match &rack.source {
+        Some(Source::Multi { layers, .. }) => layers.as_slice(),
+        _ => &[],
+    };
+    depth(&rack.fx, id, 0)
+        .or_else(|| layers.iter().find_map(|l| depth(&l.fx, id, 0)))
+        .is_some_and(|n| n > 0)
 }
 
 /// Where a picked node sits: the branch or layer that holds it (none: the track's own chain),

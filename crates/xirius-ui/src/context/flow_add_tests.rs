@@ -355,7 +355,7 @@ fn a_layer_added_from_the_menu_grows_the_strip_and_the_editor() {
     s.popup = None;
     s.mixer_pick(PopupKind::Layer(keys), &to);
     assert!(layers(&s) > before.max(1), "{} → {}", before, layers(&s));
-    let strip_layers = crate::mixer::flow::lines(&s.project().tracks[&keys], &s.mixer.folded)
+    let strip_layers = crate::mixer::flow::lines(&s.project().tracks[&keys], &s.mixer.folds, false)
         .iter()
         .filter(|l| l.target.is_some_and(|x| x.layer))
         .count();

@@ -216,7 +216,9 @@ impl Rows {
         Self::with(
             p,
             flow::Look {
-                folded: &HashSet::new(),
+                folds: &flow::Folds::default(),
+                wide: &HashSet::new(),
+                at: Some(false),
                 chosen: None,
                 coarse: false,
             },
@@ -546,8 +548,8 @@ pub struct Mixer {
     /// A file supplied by a caller in place of the system's preset picker.
     pub preset_file: Option<std::path::PathBuf>,
     offsets: HashMap<(TrackId, List), usize>,
-    /// The splitters whose branches the strips' flows hide (MIX-044).
-    pub folded: HashSet<NodeId>,
+    /// Which splitters the strips' flows show open (MIX-044).
+    pub folds: flow::Folds,
     /// The row picked on a strip (MIX-045).
     pub chosen: Option<(TrackId, flow::Pick)>,
     /// The strips widened by the button by their names (MIX-045).
@@ -680,7 +682,9 @@ impl Mixer {
     /// How the strips show their flows.
     pub fn look(&self) -> flow::Look<'_> {
         flow::Look {
-            folded: &self.folded,
+            folds: &self.folds,
+            wide: &self.wide,
+            at: None,
             chosen: self.chosen,
             coarse: self.coarse,
         }
@@ -721,8 +725,8 @@ impl Mixer {
             *off = (*off).min(list_max(p, track, *list, rows));
             true
         });
-        self.folded
-            .retain(|id| p.tracks.values().any(|t| flow::has_split(t, *id)));
+        self.folds
+            .retain(|id| p.tracks.values().any(|t| flow::has_split(t, id)));
         if let Some(d) = self.drag
             && !p.tracks.contains_key(&d.hit.track())
         {
@@ -737,7 +741,7 @@ fn list_max(p: &Project, track: &Track, list: List, rows: Rows) -> usize {
         List::Inserts => track.inserts.len() + crate::instrument::gap(track),
         List::Sends => track.sends.len() + keys::key_count(p, track.id),
         // The layout holds a flow's scroll to what is hidden; here only a bound.
-        List::Flow => return flow::lines(track, &HashSet::new()).len(),
+        List::Flow => return flow::lines(track, &flow::Folds::default(), true).len(),
     };
     (n + 1).saturating_sub(rows.of_list(list))
 }
@@ -1468,9 +1472,7 @@ impl Studio {
                 true
             }
             MixerHit::Fold(t, id) => {
-                if !self.mixer.folded.remove(&id) {
-                    self.mixer.folded.insert(id);
-                }
+                self.fold_split(g, t, id);
                 self.mixer.chosen = Some((t, flow::Pick::Split(id)));
                 true
             }
@@ -1683,7 +1685,7 @@ impl Studio {
     /// `track`'s flow on strip `s`, scrolled as far as its list was moved and no further
     /// than what is hidden (MIX-044).
     pub fn strip_flow(&self, s: &StripLayout, track: &Track) -> flow::Flow {
-        let look = self.mixer.look();
+        let look = self.mixer.look().at(s.rect.w >= WIDE_W);
         let lines = look.lines(track);
         let h = flow::Flow::height(&lines, look.coarse);
         let scroll = (self.mixer.offset(track.id, List::Flow) as f32 * ROW_H)
@@ -1713,10 +1715,11 @@ impl Studio {
         let Some(track) = p.tracks.get(&t) else {
             return;
         };
-        let flow = self
-            .mixer
-            .look()
-            .lay(track, Rect::new(0.0, 0.0, s.inserts.w, 0.0), 0.0);
+        let flow = self.mixer.look().at(s.rect.w >= WIDE_W).lay(
+            track,
+            Rect::new(0.0, 0.0, s.inserts.w, 0.0),
+            0.0,
+        );
         let Some((l, r)) = flow.picked(pick) else {
             return;
         };
@@ -1742,8 +1745,21 @@ impl Studio {
 
     /// How many rows of [`ROW_H`] a strip's flow can move up: what it hides, rounded up.
     pub(crate) fn flow_max(&self, s: &StripLayout, track: &Track) -> usize {
-        let h = self.mixer.look().height(track);
+        let h = self.mixer.look().at(s.rect.w >= WIDE_W).height(track);
         ((h - s.inserts.h).max(0.0) / ROW_H).ceil() as usize
+    }
+
+    /// Opens splitter `id` on `t`'s strip when it is shut, and shuts it when it is open, at the
+    /// width the strip is now.
+    pub(crate) fn fold_split(&mut self, g: &Geometry, t: TrackId, id: NodeId) {
+        let p = self.project();
+        let Some(track) = p.tracks.get(&t) else {
+            return;
+        };
+        let nested = flow::nested(track, id);
+        let wide = self.width_of(g, t) >= WIDE_W;
+        let open = self.mixer.folds.open(id, nested, wide);
+        self.mixer.folds.set(id, nested, wide, !open);
     }
 
     /// Opens a plugin's own window, or shuts it when it is open (UI-025 is

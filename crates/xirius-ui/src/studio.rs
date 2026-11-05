@@ -2783,7 +2783,7 @@ impl Studio {
         self.mixer.insert_after = None;
         self.mixer.insert_into = None;
         self.mixer.wide.clear();
-        self.mixer.folded.clear();
+        self.mixer.folds.clear();
         self.mixer.lead = None;
         self.mixer.grip_focus = false;
         self.mixer.grip_drag = None;

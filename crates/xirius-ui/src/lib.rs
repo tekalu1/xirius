@@ -193,6 +193,7 @@ pub mod mouse_dispatch;
 pub mod mp3_shots;
 pub mod name_drag;
 pub mod native_key;
+pub mod nest_shots;
 pub mod note_edit_panel;
 pub mod notes;
 pub mod notice;
@@ -424,6 +425,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("mouse-cut", mouse_cut_shots::SHOTS),
     ("mouse2", mouse2_shots::MOUSE2),
     ("mp3", mp3_shots::MP3),
+    ("nest", nest_shots::SHOTS),
     #[cfg(feature = "loading-probe")]
     ("opening", opening_shots::SHOTS),
     ("opline", opline_shots::OPLINE),

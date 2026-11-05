@@ -84,7 +84,7 @@ fn setup(s: &mut Studio, n: u8) {
     s.run_command("rack.node.move", json!({"id":verb,"to":branches[1]}));
     s.run_command("rack.branch.set", json!({"id":branches[1],"gain":-6.0}));
     if n == 1 {
-        s.mixer.folded.insert(sp);
+        s.mixer.folds.set(sp, false, false, false);
     }
 
     // the mock's strips are as tall as the flow; the third keeps the height the drawer opens with
