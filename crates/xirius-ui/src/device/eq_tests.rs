@@ -974,16 +974,16 @@ fn key_down(key: &str) -> gpui::PlatformInput {
 fn type_held(s: &Studio, held: &mut HeldInput, text: &str) {
     for ch in text.chars() {
         let ch = ch.to_string();
-        assert!(held.hold(s.saving.as_ref(), Held::Event(key_down(&ch))));
-        assert!(held.hold(s.saving.as_ref(), Held::Text(None, ch)));
+        assert!(held.hold(s.input_hold(), Held::Event(key_down(&ch))));
+        assert!(held.hold(s.input_hold(), Held::Text(None, ch)));
     }
-    assert!(held.hold(s.saving.as_ref(), Held::Event(key_down("enter"))));
+    assert!(held.hold(s.input_hold(), Held::Event(key_down("enter"))));
 }
 
 /// What waited comes in, in order, as the screen lets it through again: a key to the keys of
 /// the window, text to the field.
 fn let_through(s: &mut Studio, g: &Geometry, held: &mut HeldInput) {
-    for h in held.release(s.saving.as_ref()) {
+    for h in held.release(s.input_hold()) {
         match h {
             Held::Event(gpui::PlatformInput::KeyDown(k)) => {
                 if !s.field_keys(g, &k.keystroke.key, None, Mods::NONE) {
@@ -1031,7 +1031,7 @@ fn ui_326_a_value_typed_while_the_undo_runs_on_the_worker_goes_in() {
         typed,
         "nothing reaches the field meanwhile"
     );
-    assert!(held.release(s.saving.as_ref()).is_empty(), "it waits");
+    assert!(held.release(s.input_hold()).is_empty(), "it waits");
     crate::review_io_tests::finish(&mut s);
     assert_eq!(plain(&s, t, "b3_on"), 1.0, "put back");
     assert_eq!(cursor(&s), c0);

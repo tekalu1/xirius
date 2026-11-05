@@ -7,6 +7,7 @@ use xirius_core::id::PluginId;
 use xirius_session::host::PULL_WAIT;
 
 use super::*;
+use crate::held_input::{Held, HeldInput};
 use crate::mixer::MixerHit;
 use crate::mixer::flow::Area;
 use crate::studio::Geometry;
@@ -146,8 +147,15 @@ fn a_drag_carries_what_the_plugin_holds_now_and_an_undo_brings_back_what_it_repl
     assert!(s.inserts_wait.is_some());
     assert!(s.input_blocked());
     assert_eq!(s.project().tracks[&guitar].inserts[0].id, to);
+    // what is typed meanwhile waits, as before a save's veil, and comes in once it ran
+    let mut typed = HeldInput::default();
+    assert!(typed.hold(s.input_hold(), Held::Text(None, "z".into())));
+    assert!(typed.release(s.input_hold()).is_empty(), "it waits");
     crate::shot::run_for(&mut s, 5.0, |s| s.inserts_wait.is_none());
     assert!(s.inserts_wait.is_none(), "the paste ran");
+    assert_eq!(s.input_hold(), None);
+    let typed = typed.release(s.input_hold());
+    assert!(matches!(typed.as_slice(), [Held::Text(None, z)] if z == "z"));
 
     let copied = &s.project().tracks[&guitar].inserts[0];
     assert_ne!(copied.id, to);

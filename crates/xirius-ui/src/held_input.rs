@@ -2,13 +2,13 @@
 //! presses, keys and typed text wait, as they did with a synchronous save, and come in order
 //! once it is done; after the veil they go. A key's characters come as text of their own,
 //! not with the key's event let through again, so the text waits beside the keys (UI-326,
-//! review 3 M1: a value typed while a double press's undo runs on the worker).
+//! review 3 M1: a value typed while a double press's undo runs on the worker). A copy or a
+//! paste of inserts asking its plug-ins for their state holds the input the same way, all
+//! the while it waits, as it has no veil (MIX-045).
 
 use std::ops::Range;
 
 use gpui::PlatformInput;
-
-use crate::saving::Saving;
 
 /// One piece of input held back: an event, or text typed into a field.
 pub(crate) enum Held {
@@ -21,10 +21,12 @@ pub(crate) enum Held {
 pub(crate) struct HeldInput(Vec<Held>);
 
 impl HeldInput {
-    /// Whether a save holds the window: `held` waits for it then (before its veil, or a
-    /// press's release whose press waits), or goes.
-    pub(crate) fn hold(&mut self, saving: Option<&Saving>, held: Held) -> bool {
-        let Some(save) = saving else {
+    /// Whether something short holds the window ([`Studio::input_hold`]): `held` waits for it
+    /// then (while it defers input, or a press's release whose press waits), or goes.
+    ///
+    /// [`Studio::input_hold`]: crate::studio::Studio::input_hold
+    pub(crate) fn hold(&mut self, holding: Option<bool>, held: Held) -> bool {
+        let Some(defers) = holding else {
             return false;
         };
         let waits = |f: &dyn Fn(&PlatformInput) -> bool| {
@@ -39,15 +41,15 @@ impl HeldInput {
             ),
             _ => false,
         };
-        if save.defers_input() || release {
+        if defers || release {
             self.0.push(held);
         }
         true
     }
 
-    /// What waited, once no save holds the window.
-    pub(crate) fn release(&mut self, saving: Option<&Saving>) -> Vec<Held> {
-        if saving.is_some() {
+    /// What waited, once nothing holds the window.
+    pub(crate) fn release(&mut self, holding: Option<bool>) -> Vec<Held> {
+        if holding.is_some() {
             return Vec::new();
         }
         std::mem::take(&mut self.0)

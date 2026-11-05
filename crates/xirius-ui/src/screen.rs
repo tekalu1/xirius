@@ -129,11 +129,12 @@ struct Screen {
 }
 
 impl Screen {
-    /// Before a short save needs a veil, input waits as it did with a synchronous save.
+    /// Before a short save needs a veil, input waits as it did with a synchronous save; while
+    /// inserts ask their plug-ins too (MIX-045).
     fn queue_save_input(&mut self, input: PlatformInput) -> bool {
         let studio = self.studio.borrow();
         self.pending_save_input
-            .hold(studio.saving.as_ref(), Held::Event(input))
+            .hold(studio.input_hold(), Held::Event(input))
     }
 
     /// Text typed into a field: it waits with the keys while a short save holds the window
@@ -142,7 +143,7 @@ impl Screen {
         {
             let studio = self.studio.borrow();
             let held = Held::Text(range.clone(), text.to_string());
-            if self.pending_save_input.hold(studio.saving.as_ref(), held) {
+            if self.pending_save_input.hold(studio.input_hold(), held) {
                 return;
             }
         }
@@ -1636,7 +1637,7 @@ impl Render for Screen {
         }
         let inputs = self
             .pending_save_input
-            .release(self.studio.borrow().saving.as_ref());
+            .release(self.studio.borrow().input_hold());
         if !inputs.is_empty() {
             let screen = cx.entity();
             window.defer(cx, move |window, cx| {

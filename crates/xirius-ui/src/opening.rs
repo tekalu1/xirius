@@ -225,6 +225,15 @@ impl Studio {
             || self.update.launched()
             || self.inserts_wait.is_some()
     }
+    /// Whether something short holds the window's input, and whether what comes meanwhile
+    /// waits for it (`Some(true)`) or goes (`Some(false)`): a save until its veil (PRJ-031), a
+    /// copy or a paste of inserts asking its plug-ins all the while (MIX-045).
+    pub(crate) fn input_hold(&self) -> Option<bool> {
+        match &self.saving {
+            Some(save) => Some(save.defers_input()),
+            None => self.inserts_wait.is_some().then_some(true),
+        }
+    }
     pub(crate) fn request_open_file(&mut self, request: FileRequest, path: &Path) -> bool {
         self.request_open(Request::File(request, path.to_path_buf()))
     }
