@@ -799,6 +799,9 @@ impl Studio {
                     if name.starts_with("history.") {
                         self.view_read.history_points = None;
                     }
+                    if name == "plugin.rescan" {
+                        self.scan_not_started(error.to_string());
+                    }
                     self.error = Some(error.to_string());
                     if let Some(ui) = &mut self.settings {
                         ui.tell(error.to_string(), None);

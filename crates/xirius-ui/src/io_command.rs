@@ -128,11 +128,13 @@ impl Studio {
         if name == "plugin.rescan" {
             if result.data["state"] == "running" {
                 if let Err(error) = self.track_scan(&result.data) {
-                    self.error = Some(error);
+                    self.scan_not_started(error);
                 }
-            } else {
-                self.reload_catalog_later();
+                // The scan's rows say how it goes; the job's start is not a toast.
+                self.refresh_insert_list();
+                return;
             }
+            self.reload_catalog_later();
         }
         if name.starts_with("export.") {
             if name == "export.delete"

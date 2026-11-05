@@ -1387,6 +1387,91 @@ fn a_first_launch_scans_in_the_background_and_the_plugin_page_follows_it() {
     assert!(!s.mixer.scan.running());
 }
 
+/// The real window's owner of the song (PRJ-031): the plugin page's scans run on the song's
+/// owner, not on the window's thread, and are not refused there. The launch above scans on a
+/// Studio that is not windowed, which is how this went unseen.
+fn launch_windowed(dir: &std::path::Path) -> (Studio, Geometry) {
+    let (mut s, g) = launch_scanning(dir);
+    crate::transport::mark_window_thread();
+    s.bind_window_io();
+    s.use_installed_plugins();
+    (s, g)
+}
+
+/// Frames until `done`, the song's owner finishing what it was given on the way. The scan's
+/// job is not read while the owner is busy, so a scan seen started was started by the owner.
+fn frames_until(s: &mut Studio, what: &str, mut done: impl FnMut(&Studio) -> bool) {
+    let start = std::time::Instant::now();
+    while !done(s) {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(30),
+            "{what}: {:?} / {:?}",
+            s.error,
+            s.mixer.scan.error
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        if s.saving.is_some() {
+            s.poll_saving();
+        } else {
+            s.poll_plugin_scan();
+        }
+    }
+}
+
+#[test]
+fn the_windowed_plugin_page_scans_on_the_songs_owner() {
+    let dir_tmp = temp("windowed-scan");
+    let dir = dir_tmp.path().to_path_buf();
+    let (mut s, g) = launch_windowed(&dir);
+
+    // The first launch scans by itself, through the song's owner.
+    frames_until(&mut s, "the first scan", |s| {
+        s.mixer.scan.running() || s.mixer.scan.error.is_some()
+    });
+    assert_eq!(s.mixer.scan.error, None);
+    let first = s.mixer.scan.job.clone();
+    frames_until(&mut s, "the first scan's end", |s| {
+        !s.mixer.scan.running() && s.saving.is_none()
+    });
+    assert!(dir.join("plugins.json").exists());
+    assert_eq!(s.mixer.scan.error, None);
+
+    // 「再スキャン」 starts a job of its own and says no refusal.
+    s.open_settings(Section::Plugins);
+    press(&mut s, &g, &Do::Rescan);
+    assert_eq!(s.error, None);
+    frames_until(&mut s, "the rescan", |s| {
+        s.mixer.scan.running() || s.mixer.scan.error.is_some()
+    });
+    assert_eq!(s.mixer.scan.error, None);
+    assert_eq!(s.settings.as_ref().unwrap().plugins.error, None);
+    assert_ne!(s.mixer.scan.job, first);
+    assert!(s.settings.is_some(), "the page stays open");
+    frames_until(&mut s, "the rescan's end", |s| {
+        !s.mixer.scan.running() && s.saving.is_none()
+    });
+    assert_eq!(s.error, None);
+
+    // 「再試行」 opens one bundle again and marks it while it runs.
+    let gone = dir.join("VST3").join("Gone.vst3");
+    let mut catalog = xirius_plugins::Catalog::default();
+    catalog.failures.push(xirius_plugins::Failure {
+        path: gone.clone(),
+        kind: xirius_plugins::FailureKind::Crashed,
+        error: "gone".into(),
+    });
+    s.use_plugins(catalog);
+    let at = s.browser.bad.iter().position(|b| b.path == gone).unwrap();
+    s.retry_plugin(at).unwrap();
+    frames_until(&mut s, "the retry", |s| {
+        s.mixer.scan.running() || s.mixer.scan.error.is_some()
+    });
+    assert_eq!(s.mixer.scan.error, None);
+    assert_eq!(s.browser.retrying.as_ref(), Some(&gone));
+    frames_until(&mut s, "the retry's end", |s| !s.mixer.scan.running());
+    assert_eq!(s.browser.retrying, None);
+}
+
 /// UI-262: 「更新を確認」 on 一般 turns the asking at launch off, and the dot with it; it is
 /// off the next launch too.
 #[test]

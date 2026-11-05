@@ -125,6 +125,53 @@ mod menu_io_tests {
     }
 
     #[test]
+    fn the_windowed_insert_list_rescans_on_the_songs_owner() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = Studio::new(crate::song::Song::sample_with(ScanOptions {
+            dirs: Vec::new(),
+            cache: root.path().join("catalog.json"),
+            ..ScanOptions::default()
+        }));
+        crate::transport::mark_window_thread();
+        s.bind_window_io();
+        s.mixer_pick(PopupKind::Insert(TrackId::MASTER), RESCAN);
+        assert!(s.error.is_none(), "{:?}", s.error);
+        // A second pick while the owner has it starts nothing more.
+        s.mixer_pick(PopupKind::Insert(TrackId::MASTER), RESCAN);
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while s.saving.is_some() {
+            s.poll_saving();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert!(s.mixer.scan.running(), "{:?}", s.mixer.scan.error);
+        assert!(s.mixer.scan.error.is_none() && s.error.is_none());
+        while s.mixer.scan.job.is_some() || s.mixer.scan.catalog_read.is_some() {
+            s.poll_plugin_scan();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(s.mixer.scan.cache_current, Some(true));
+        assert!(s.mixer.scan.error.is_none(), "{:?}", s.mixer.scan.error);
+    }
+
+    #[test]
+    fn a_scan_the_songs_owner_refuses_is_said_where_scans_fail() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = Studio::new(crate::song::Song::sample_with(ScanOptions {
+            dirs: Vec::new(),
+            cache: root.path().join("catalog.json"),
+            ..ScanOptions::default()
+        }));
+        s.bind_window_io();
+        s.save_test_failure = true;
+        s.start_plugin_scan().unwrap();
+        s.wait_for_save();
+        assert!(!s.mixer.scan.running());
+        assert_eq!(s.mixer.scan.error.as_deref(), Some("保存できません"));
+    }
+
+    #[test]
     fn an_explicit_catalog_reload_discards_a_late_pre_scan_snapshot() {
         let root = tempfile::tempdir().unwrap();
         let mut s = Studio::new(crate::song::Song::sample_with(ScanOptions {
@@ -186,7 +233,7 @@ pub struct PluginScan {
     /// Scan by itself when there is no list yet (the real window; tests leave it off).
     pub auto: bool,
     checked: bool,
-    job: Option<String>,
+    pub(crate) job: Option<String>,
     pub done: u64,
     pub total: u64,
     /// The bundle it opens now (PLG-059); empty until it says.
@@ -196,6 +243,8 @@ pub struct PluginScan {
     polled: Option<Instant>,
     /// Asked to stop; ending.
     pub stopping: bool,
+    /// The unusable plugin a scan asked for opens again, shown so once its job runs.
+    retry_next: Option<std::path::PathBuf>,
 }
 
 impl PluginScan {
@@ -231,18 +280,40 @@ impl Studio {
             return Ok(());
         }
         let path = bad.path.clone();
-        self.start_scan(json!({ "background": true, "path": path.to_string_lossy() }))?;
-        self.browser.retrying = Some(path);
-        Ok(())
+        let args = json!({ "background": true, "path": path.to_string_lossy() });
+        self.mixer.scan.retry_next = Some(path);
+        let started = self.start_scan(args);
+        if started.is_err() {
+            self.mixer.scan.retry_next = None;
+        }
+        started
     }
 
     fn start_scan(&mut self, args: serde_json::Value) -> Result<(), String> {
         if self.mixer.scan.running() {
             return Ok(());
         }
+        // In the window the song's owner runs it (PRJ-031); the end of that run follows the job
+        // (`io_command_finished`) or says why it did not start (`scan_not_started`).
+        if self.transport.is_windowed() {
+            if self.input_blocked() {
+                self.mixer.scan.retry_next = None;
+            } else {
+                let raw = args.as_object().cloned().unwrap_or_default();
+                self.io_command_on_worker("plugin.rescan", raw);
+            }
+            return Ok(());
+        }
         // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         let data = self.song.run("plugin.rescan", args)?;
         self.track_scan(&data)
+    }
+
+    /// The song's owner could not start the scan: said where a failed scan is said.
+    pub(crate) fn scan_not_started(&mut self, error: String) {
+        self.mixer.scan.retry_next = None;
+        self.mixer.scan.error = Some(error);
+        self.refresh_insert_list();
     }
 
     pub(crate) fn track_scan(&mut self, data: &serde_json::Value) -> Result<(), String> {
@@ -257,7 +328,7 @@ impl Studio {
         self.browser.scanning = true;
         self.browser.scan_stopping = false;
         (self.browser.scan_done, self.browser.scan_total) = (0, 0);
-        self.browser.retrying = None;
+        self.browser.retrying = scan.retry_next.take();
         Ok(())
     }
 
@@ -294,7 +365,7 @@ impl Studio {
         }
     }
 
-    fn refresh_insert_list(&mut self) {
+    pub(crate) fn refresh_insert_list(&mut self) {
         if self.popup.as_ref().is_some_and(|p| {
             matches!(
                 p.kind,
@@ -377,6 +448,11 @@ impl Studio {
                 }
                 return self.mixer.scan.catalog_read.is_some();
             }
+            // The song's owner starts it once the window's input is free again.
+            if self.transport.is_windowed() && self.input_blocked() {
+                return loaded;
+            }
+            let scan = &mut self.mixer.scan;
             scan.checked = true;
             let current = if self.transport.is_windowed() {
                 scan.cache_current.unwrap_or(false)
