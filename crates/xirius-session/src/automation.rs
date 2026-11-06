@@ -67,45 +67,60 @@ pub(crate) fn at_each(
         let Some(slot) = out.tracks.get_mut(id) else {
             continue;
         };
-        let t = Arc::make_mut(slot);
-        for lane in t.automation.clone() {
-            // a mapped target's own lane rests while its macro control moves it (AUT-018)
-            if t.controls.owner_of(&lane.target).is_some() {
-                continue;
-            }
-            let Some(v) = lane.value_at(tick(*id, &lane.target)) else {
-                continue;
-            };
-            match &lane.target {
-                // the control's own value; what it moves is set below
-                AutoTarget::Control(c) => t.controls.get_mut(*c).value = control_value(*c, v),
-                target => {
-                    target.set_on(t, v);
-                }
-            }
+        play(Arc::make_mut(slot), |target| tick(*id, target));
+    }
+    out
+}
+
+/// What `t` says at `tick` when it plays its lanes: their values written into the channel.
+fn play(t: &mut Track, mut tick: impl FnMut(&AutoTarget) -> f64) {
+    for lane in t.automation.clone() {
+        // a mapped target's own lane rests while its macro control moves it (AUT-018)
+        if t.controls.owner_of(&lane.target).is_some() {
+            continue;
         }
-        // a mapped target follows its macro control, not its own lane (MIX-039), and a
-        // control's lane is read at the time of each target: a plug-in's parameter as late as
-        // that plug-in, not as the fader (AUT-019)
-        for (c, control) in t.controls.clone().iter() {
-            let lane = t
-                .automation
-                .iter()
-                .find(|l| l.target == AutoTarget::Control(c) && !l.points.is_empty())
-                .cloned();
-            for m in &control.maps {
-                if !m.target.exists_on(t) {
-                    continue;
-                }
-                let v = lane
-                    .as_ref()
-                    .and_then(|l| l.value_at(tick(*id, &m.target)))
-                    .map_or(control.value, |v| control_value(c, v));
-                m.target.set_on(t, m.value(v));
+        let Some(v) = lane.value_at(tick(&lane.target)) else {
+            continue;
+        };
+        match &lane.target {
+            // the control's own value; what it moves is set below
+            AutoTarget::Control(c) => t.controls.get_mut(*c).value = control_value(*c, v),
+            target => {
+                target.set_on(t, v);
             }
         }
     }
-    out
+    // a mapped target follows its macro control, not its own lane (MIX-039), and a
+    // control's lane is read at the time of each target: a plug-in's parameter as late as
+    // that plug-in, not as the fader (AUT-019)
+    for (c, control) in t.controls.clone().iter() {
+        let lane = t
+            .automation
+            .iter()
+            .find(|l| l.target == AutoTarget::Control(c) && !l.points.is_empty())
+            .cloned();
+        for m in &control.maps {
+            if !m.target.exists_on(t) {
+                continue;
+            }
+            let v = lane
+                .as_ref()
+                .and_then(|l| l.value_at(tick(&m.target)))
+                .map_or(control.value, |v| control_value(c, v));
+            m.target.set_on(t, m.value(v));
+        }
+    }
+}
+
+/// One channel as the mix should hear it at `tick`, without the song around it: itself when
+/// it plays no lane. What a fader shows is this, so a screen of many channels does not take
+/// the whole song's lanes for each of them.
+pub fn track_at(p: &Project, id: xirius_core::id::TrackId, tick: f64) -> Option<Arc<Track>> {
+    let mut t = p.tracks.get(&id)?.clone();
+    if plays(&t) {
+        play(Arc::make_mut(&mut t), |_| tick);
+    }
+    Some(t)
 }
 
 /// A control's value as its lane says it: a button is on or off.

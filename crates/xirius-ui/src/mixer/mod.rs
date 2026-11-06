@@ -1414,9 +1414,10 @@ impl Studio {
     /// The value of a fader or a knob when nothing drags it.
     pub(crate) fn mixer_rest(&self, hit: MixerHit) -> Option<f64> {
         // A channel whose lanes play shows the lanes' value at the playhead.
+        // Only this channel's lanes are read: a screen of many faders does not take the whole
+        // song's for each of them.
         let p = self.project();
-        let p = xirius_session::automation::song_at(&p, self.playhead as f64);
-        let t = p.tracks.get(&hit.track())?;
+        let t = xirius_session::automation::track_at(&p, hit.track(), self.playhead as f64)?;
         match hit {
             MixerHit::Fader(_) => Some(t.volume_db),
             MixerHit::Pan(_) => Some(t.pan),

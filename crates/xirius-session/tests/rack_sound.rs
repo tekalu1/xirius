@@ -338,6 +338,41 @@ fn a_macro_moves_a_branch_and_a_parameter_offline_and_live() {
     assert!(near(level(&s), one, 1e-3), "undo puts the parameter back");
 }
 
+/// A track alone is played as the whole song plays it: lanes, and a track without one as it is.
+#[test]
+fn one_track_at_a_tick_is_what_the_song_has_for_it() {
+    use xirius_core::id::TrackId;
+    let mut s = song("track at");
+    let a = voice(&mut s);
+    let b = id_of(&run(&mut s, "track.add.instrument", json!({ "name": "B" })));
+    for (at, v) in [(0, 0.0), (3840, 1.0)] {
+        run(
+            &mut s,
+            "auto.point.add",
+            json!({ "track": a, "target": "volume", "at": at, "value": v }),
+        );
+    }
+    let (a, b): (TrackId, TrackId) = (a.parse().unwrap(), b.parse().unwrap());
+    for tick in [0.0, 960.0, 1920.0, 3840.0, 9000.0] {
+        let whole = xirius_session::automation::at(s.project(), tick);
+        for id in [a, b] {
+            let one = xirius_session::automation::track_at(s.project(), id, tick).unwrap();
+            assert_eq!(one, whole.tracks[&id], "{id:?} at {tick}");
+        }
+    }
+    // The lane moves the volume, and a lane that does not play leaves the track as it is.
+    let played = xirius_session::automation::track_at(s.project(), a, 1920.0).unwrap();
+    assert_ne!(played.volume_db, s.project().tracks[&a].volume_db);
+    let rest = xirius_session::automation::track_at(s.project(), b, 1920.0).unwrap();
+    assert_eq!(rest, s.project().tracks[&b]);
+    // A track that is not in the song (taken back) is none.
+    let c = id_of(&run(&mut s, "track.add.instrument", json!({ "name": "C" })));
+    let c: TrackId = c.parse().unwrap();
+    assert!(xirius_session::automation::track_at(s.project(), c, 0.0).is_some());
+    s.undo(1).unwrap();
+    assert!(xirius_session::automation::track_at(s.project(), c, 0.0).is_none());
+}
+
 /// A macro control's lane plays what the control moves; the lane of a target it moves rests
 /// (AUT-018).
 #[test]
@@ -378,6 +413,10 @@ fn a_macro_lane_moves_its_targets_and_their_own_lanes_rest() {
     assert!(near(levels.unwrap().0, -6.0, 1e-6), "{levels:?}");
     let k1 = played.tracks[&tid].controls.knobs[0].value;
     assert!(near(k1, gain.to_norm(-6.0), 1e-6), "{k1}");
+    // One track on its own plays what the whole song plays for it (the track head's fader reads
+    // only its own).
+    let alone = xirius_session::automation::track_at(s.project(), tid, 1920.0).unwrap();
+    assert_eq!(alone, played.tracks[&tid]);
     let params = xirius_session::automation::params_at(s.project(), 1920.0);
     let eq_out: Vec<f64> = params
         .iter()

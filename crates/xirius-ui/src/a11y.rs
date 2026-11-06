@@ -284,10 +284,12 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             continue;
         };
         // The head's volume fader (a Slider in dB); a press on it opens the number field.
-        if let (Some(r), Some(db)) = (
-            s.head_fader_rect(g, t),
-            s.mixer_value(crate::mixer::MixerHit::Fader(t)),
-        ) && g.column.contains(r.x + r.w / 2.0, r.y + r.h / 2.0)
+        // Whether it is on show is known before its value is read: a narrow column, or a row
+        // scrolled out, costs nothing (the value is a track's lanes at the playhead).
+        if let Some(r) = s
+            .head_fader_row_rect(g, row)
+            .filter(|r| g.column.contains(r.x + r.w / 2.0, r.y + r.h / 2.0))
+            && let Some(db) = s.head_fader_value(t)
         {
             let mut node = accesskit::Node::new(accesskit::Role::Slider);
             node.set_label(format!("{} の音量", track.name));
