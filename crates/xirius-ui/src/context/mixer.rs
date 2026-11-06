@@ -370,7 +370,12 @@ impl Studio {
             "track.volume.set",
             json!({ "ids": targets, "db": 0.0 }),
         );
-        let now = format!("{:.1}", track.volume_db);
+        // The value the fader shows now (a lane's, at the playhead), as the mixer paints it.
+        let now = format!(
+            "{:.1}",
+            self.mixer_value(MixerHit::Fader(t))
+                .unwrap_or(track.volume_db)
+        );
         let clear = self.lane_clear_item(t, AutoTarget::Volume);
         let held = crate::auto_lock::held(track, &AutoTarget::Volume);
         vec![

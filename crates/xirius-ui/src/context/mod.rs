@@ -744,6 +744,9 @@ impl Studio {
     /// The right press at a point of the body: opens the menu of what is there. False when
     /// no scene claims the point.
     pub(crate) fn scene_context(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
+        // A value typed in a head's field is put in before the menu is built from the song:
+        // a row that offers the value (「値を入力…」) opens with the one the song has now.
+        self.head_fader_blur();
         self.cancel_browser_menu();
         self.browser.typing = false;
         self.input_map.browser_focus = self.browser.open && g.panel.contains(x, y);
@@ -770,6 +773,8 @@ impl Studio {
     /// a press on its middle would open it: the clip in the arrangement, the first selected
     /// note in the piano roll, the selected track's strip in the mixer.
     pub(crate) fn key_context(&mut self, g: &Geometry) -> bool {
+        // The same as a press: what is typed in a head's field goes in before the menu is built.
+        self.head_fader_blur();
         // The song-files tab with the keys: the menu of the row the keys are on (BRW-004).
         if self.input_context(g) == "browser" && self.pool_shown() {
             return self.pool_key_menu(g);

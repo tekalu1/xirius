@@ -609,6 +609,70 @@ fn a_field_open_in_the_head_goes_with_the_menu_that_opens_over_it() {
     assert!(s.scene_context(&g, x, y));
     assert!(s.head_fader.entry.is_none());
     assert_eq!(volume(&s, t), -5.0);
+    // The menu's value field opens with that -5, not the -7 the song had when the press came;
+    // Enter without a change puts back what it has, adding no step of history.
+    let steps = s.song.steps();
+    let row = s
+        .context_rows()
+        .iter()
+        .position(|r| r.label == "値を入力…")
+        .expect("the value field");
+    assert!(s.context_pick(&g, row));
+    let opened = s.ask_field().map(|f| f.value.clone()).unwrap_or_default();
+    assert_eq!(opened.parse::<f64>().ok(), Some(-5.0), "{opened}");
+    press_key(&mut s, &g, "enter");
+    assert_eq!((volume(&s, t), s.song.steps()), (-5.0, steps));
+}
+
+#[test]
+fn the_menus_value_field_opens_with_the_value_the_fader_shows_over_a_lane() {
+    let (mut s, g) = studio(420.0);
+    let t = track(&s, "Keys");
+    set(&mut s, t, -7.0);
+    let bar = i64::from(s.project().ppq) * 4;
+    for (at, v) in [(4 * bar, -24.0), (6 * bar, 0.0)] {
+        assert!(s.run_command(
+            "auto.point.add",
+            json!({ "track": t.to_string(), "target": "volume", "at": at, "value": v })
+        ));
+    }
+    // Touch keeps the field usable while the lane plays: the fader shows the lane's value.
+    assert!(s.run_command(
+        "auto.mode",
+        json!({ "ids": [t.to_string()], "mode": "touch" })
+    ));
+    s.seek(4 * bar);
+    assert_eq!(s.head_fader_value(t), Some(-24.0));
+    let (x, y) = mid(&s, &g, t);
+    assert!(s.scene_context(&g, x, y));
+    let row = s
+        .context_rows()
+        .iter()
+        .position(|r| r.label == "値を入力…")
+        .expect("the value field");
+    assert!(s.context_rows()[row].enabled);
+    assert!(s.context_pick(&g, row));
+    let opened = s.ask_field().map(|f| f.value.clone()).unwrap_or_default();
+    assert_eq!(opened.parse::<f64>().ok(), Some(-24.0), "{opened}");
+}
+
+#[test]
+fn the_menu_key_too_puts_in_what_the_head_field_has_before_it_builds_the_menu() {
+    let (mut s, g) = studio(420.0);
+    let t = track(&s, "Keys");
+    set(&mut s, t, -7.0);
+    focus(&mut s, &g, t);
+    s.select_row(Some(RowKind::Track(t)));
+    let (x, _) = mid(&s, &g, t);
+    assert!(s.head_fader_down(&g, Hit::HeadFader(t), x, 2, none()));
+    s.head_fader
+        .entry
+        .as_mut()
+        .unwrap()
+        .type_text(None, "-4", false);
+    s.key_context(&g);
+    assert!(s.head_fader.entry.is_none());
+    assert_eq!(volume(&s, t), -4.0);
 }
 
 #[test]
