@@ -2809,6 +2809,9 @@ impl Studio {
         // A song is open: the start screen is done (UI-350).
         self.home = None;
         self.drag_drop();
+        // A head fader's keys and the value typed in it were the old song's: track ids repeat
+        // between songs, so they would land on the new song's.
+        self.head_fader = crate::head_fader::HeadFader::default();
         self.select_row(None);
         self.selected_clip = None;
         // The devices' windows were of the song that closed (M-par-2).

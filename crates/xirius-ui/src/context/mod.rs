@@ -571,6 +571,8 @@ impl Studio {
     /// dropped when nothing follows it.
     pub(crate) fn open_context(&mut self, items: Vec<Item>, x: f32, y: f32) {
         self.cancel_browser_menu();
+        // The menu has the keys now: a head fader lets them go, keeping what was typed in it.
+        self.head_fader_blur();
         let mut items = items;
         for item in &mut items {
             if let Run::Sub(rows) = &mut item.run {

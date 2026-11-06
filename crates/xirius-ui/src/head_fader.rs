@@ -83,6 +83,11 @@ impl Studio {
     /// Where the fader of `t` is on the screen, when its row shows it.
     pub fn head_fader_rect(&self, g: &Geometry, t: TrackId) -> Option<Rect> {
         let row = self.tree().row_of(RowKind::Track(t))?;
+        self.head_fader_row_rect(g, row)
+    }
+
+    /// The fader of `row` when the row has one: the row is in hand, so nothing is searched for.
+    pub fn head_fader_row_rect(&self, g: &Geometry, row: &crate::tree::Row) -> Option<Rect> {
         let r = g.parts(row).fader?;
         Some(Rect::new(
             g.column.x + r.x,
@@ -92,13 +97,14 @@ impl Studio {
         ))
     }
 
-    /// The fader the pointer holds, with the value it shows now.
-    fn head_fader_value(&self, t: TrackId) -> Option<f64> {
+    /// The value the fader shows now. Only this track's lanes are read (see
+    /// [`Studio::mixer_rest`]), so a screen of many faders costs one track's worth each.
+    pub(crate) fn head_fader_value(&self, t: TrackId) -> Option<f64> {
         self.mixer_value(MixerHit::Fader(t))
     }
 
     /// A press on the fader: it takes the keys, and a field open on another fader keeps what
-    /// is typed.
+    /// is typed (the press moves on to this one).
     pub(crate) fn head_fader_press(&mut self, t: TrackId) -> bool {
         if self.head_fader.entry.as_ref().is_some_and(|e| e.track != t) {
             self.head_fader_commit();
@@ -120,8 +126,13 @@ impl Studio {
         let Hit::HeadFader(t) = hit else {
             return false;
         };
-        if self.head_fader.entry.is_some() {
+        // The field open on this fader takes the press as it is; one open on another keeps what
+        // is typed, and the press goes on to this fader.
+        if self.head_fader.entry.as_ref().is_some_and(|e| e.track == t) {
             return true;
+        }
+        if self.head_fader.entry.is_some() {
+            self.head_fader_commit();
         }
         if mods.alt {
             self.head_fader_zero(t);
@@ -218,13 +229,44 @@ impl Studio {
         if self.head_fader.focus.is_none() && self.head_fader.entry.is_none() {
             return;
         }
-        if !matches!(self.hit(g, x, y), Hit::HeadFader(_)) {
+        // Another fader is not the same one: the keys and the field stay only on this track's.
+        let on = self
+            .head_fader
+            .entry
+            .as_ref()
+            .map(|e| e.track)
+            .or(self.head_fader.focus);
+        if !matches!(self.hit(g, x, y), Hit::HeadFader(t) if Some(t) == on) {
             self.head_fader_blur();
         }
     }
 
     /// A key for the fader that has the keys or its field. False when it is not the fader's.
     pub(crate) fn head_fader_key(&mut self, key: &str, mods: Mods) -> bool {
+        // A menu or another field open has the keys, not the fader behind it.
+        if self.popup.is_some()
+            || self
+                .ime_target()
+                .is_some_and(|t| t != crate::interaction::ImeTarget::Head)
+            || self.bar_edit.is_typing()
+            || self.inspector.field.is_some()
+            || self.field_typing().is_some()
+        {
+            return false;
+        }
+        // A track that is gone (undone, removed) takes no key.
+        let gone = |s: &Self, t: TrackId| s.tree().row_of(RowKind::Track(t)).is_none();
+        if self
+            .head_fader
+            .entry
+            .as_ref()
+            .is_some_and(|e| gone(self, e.track))
+        {
+            self.head_fader.entry = None;
+        }
+        if self.head_fader.focus.is_some_and(|t| gone(self, t)) {
+            self.head_fader.focus = None;
+        }
         let blocked = self.input_blocked();
         if let Some(e) = &mut self.head_fader.entry {
             if !e.field.marked.is_empty() {
@@ -253,10 +295,6 @@ impl Studio {
             return false;
         };
         if mods.ctrl || mods.alt {
-            return false;
-        }
-        if self.tree().row_of(RowKind::Track(t)).is_none() {
-            self.head_fader.focus = None;
             return false;
         }
         let small = if mods.shift { FINE_DB } else { STEP_DB };

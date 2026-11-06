@@ -497,3 +497,226 @@ fn a_screen_reader_finds_the_fader_as_a_slider_and_a_press_opens_the_field() {
             .any(|m| m.key.starts_with("head-fader-"))
     );
 }
+
+/// A key as the window sends it: a field takes it first, then the menu's box, else the screen's
+/// commands.
+fn press_key(s: &mut Studio, g: &Geometry, k: &str) {
+    if !s.field_keys(g, k, None, none()) && !s.typed(g, k, None) {
+        s.key(g, k, false, false);
+    }
+}
+
+#[test]
+fn a_song_opened_over_keeps_nothing_of_the_old_faders_keys() {
+    let (mut s, g) = studio(420.0);
+    let t = track(&s, "Keys");
+    set(&mut s, t, -7.0);
+    let before = s.song.steps();
+    // The keys were on the fader, then another song with the same track ids replaces it.
+    focus(&mut s, &g, t);
+    s.song_replaced(Ok(None));
+    assert_eq!(s.head_fader, crate::head_fader::HeadFader::default());
+    for k in ["right", "left", "pageup", "delete", "enter"] {
+        assert!(!key(&mut s, k, none()), "{k}");
+    }
+    assert_eq!((volume(&s, t), s.song.steps()), (-7.0, before));
+    // A drag still going is let go, with its value not written.
+    let (x, y) = mid(&s, &g, t);
+    assert!(s.head_fader_down(&g, Hit::HeadFader(t), x, 1, none()));
+    assert!(s.drag_move_at(x + 40.0, y, false));
+    s.song_replaced(Ok(None));
+    assert!(s.mixer.drag.is_none() && s.head_fader.dragging.is_none());
+    assert!(!key(&mut s, "right", none()));
+    assert_eq!((volume(&s, t), s.song.steps()), (-7.0, before));
+    // What was typed in the field does not go into the new song.
+    assert!(s.head_fader_down(&g, Hit::HeadFader(t), x, 2, none()));
+    s.head_fader
+        .entry
+        .as_mut()
+        .unwrap()
+        .type_text(None, "-3", false);
+    s.song_replaced(Ok(None));
+    assert!(s.head_fader.entry.is_none());
+    assert!(!key(&mut s, "enter", none()));
+    assert_eq!((volume(&s, t), s.song.steps()), (-7.0, before));
+}
+
+#[test]
+fn the_menu_has_the_keys_and_its_value_field_takes_the_number() {
+    let (mut s, g) = studio(420.0);
+    let t = track(&s, "Keys");
+    set(&mut s, t, -7.0);
+    // The fader has the keys, then the right-click opens the menu: the fader lets them go.
+    focus(&mut s, &g, t);
+    let (x, y) = mid(&s, &g, t);
+    assert!(s.scene_context(&g, x, y));
+    assert_eq!(s.head_fader.focus, None);
+    let before = s.song.steps();
+    // Arrows and Delete go to the menu, not to the volume behind it.
+    for k in ["right", "left", "pageup", "delete"] {
+        press_key(&mut s, &g, k);
+    }
+    assert_eq!((volume(&s, t), s.song.steps()), (-7.0, before));
+    // 「値を入力…」, the number, Enter: the volume is the typed one, in one step, and the head's
+    // own field did not open on the way.
+    let row = s
+        .context_rows()
+        .iter()
+        .position(|r| r.label == "値を入力…")
+        .expect("the value field");
+    assert!(s.context_pick(&g, row));
+    assert_eq!(s.ime_target(), Some(crate::interaction::ImeTarget::Ask));
+    // The box opens with the value it has; it is cleared, as a person would, before the number.
+    for _ in 0..8 {
+        press_key(&mut s, &g, "backspace");
+    }
+    s.ask_text(None, "-3", false);
+    press_key(&mut s, &g, "enter");
+    assert!(s.head_fader.entry.is_none());
+    assert_eq!(volume(&s, t), -3.0);
+    assert_eq!(s.song.steps(), before + 1);
+    // Esc in the menu's field leaves the value.
+    assert!(s.scene_context(&g, x, y));
+    let row = s
+        .context_rows()
+        .iter()
+        .position(|r| r.label == "値を入力…")
+        .unwrap();
+    assert!(s.context_pick(&g, row));
+    for _ in 0..8 {
+        press_key(&mut s, &g, "backspace");
+    }
+    s.ask_text(None, "-20", false);
+    press_key(&mut s, &g, "escape");
+    assert_eq!((volume(&s, t), s.song.steps()), (-3.0, before + 1));
+    assert!(s.head_fader.entry.is_none());
+}
+
+#[test]
+fn a_field_open_in_the_head_goes_with_the_menu_that_opens_over_it() {
+    let (mut s, g) = studio(420.0);
+    let t = track(&s, "Keys");
+    set(&mut s, t, -7.0);
+    let (x, y) = mid(&s, &g, t);
+    assert!(s.head_fader_down(&g, Hit::HeadFader(t), x, 2, none()));
+    s.head_fader
+        .entry
+        .as_mut()
+        .unwrap()
+        .type_text(None, "-5", false);
+    // The menu keeps what was typed (as a press elsewhere does), and the field is not left open
+    // behind it to take Enter, Esc and Backspace.
+    assert!(s.scene_context(&g, x, y));
+    assert!(s.head_fader.entry.is_none());
+    assert_eq!(volume(&s, t), -5.0);
+}
+
+#[test]
+fn another_fader_takes_the_press_and_the_field_moves_to_it() {
+    let (mut s, g) = studio(420.0);
+    let (a, b) = (track(&s, "Keys"), track(&s, "Bass"));
+    set(&mut s, a, -7.0);
+    set(&mut s, b, -9.0);
+    let before = s.song.steps();
+    // A field typed in on A, then a drag on B: A keeps what was typed, B is dragged.
+    let (ax, ay) = mid(&s, &g, a);
+    assert!(s.head_fader_down(&g, Hit::HeadFader(a), ax, 2, none()));
+    s.head_fader
+        .entry
+        .as_mut()
+        .unwrap()
+        .type_text(None, "-4", false);
+    let (bx, by) = mid(&s, &g, b);
+    s.press_keys(&g, bx, by);
+    assert!(s.head_fader_down(&g, Hit::HeadFader(b), bx, 1, none()));
+    assert_eq!(volume(&s, a), -4.0);
+    assert!(s.head_fader.entry.is_none());
+    assert_eq!(s.head_fader.dragging, Some(b));
+    assert!(s.drag_move_at(bx + 30.0, by, false));
+    assert!(s.drag_end());
+    assert!(volume(&s, b) > -9.0);
+    assert_eq!(s.head_fader.focus, Some(b));
+    assert_eq!(s.song.steps(), before + 2);
+    // Straight from B's focus to A's number field: a double click opens it on A.
+    s.press_keys(&g, ax, ay);
+    assert_eq!(s.head_fader.focus, None);
+    assert!(s.head_fader_down(&g, Hit::HeadFader(a), ax, 2, none()));
+    assert_eq!(s.head_fader.entry.as_ref().map(|e| e.track), Some(a));
+    // A press on the field's own fader leaves it open; one on B commits it and moves on.
+    s.press_keys(&g, ax, ay);
+    assert!(s.head_fader.entry.is_some());
+    s.head_fader
+        .entry
+        .as_mut()
+        .unwrap()
+        .type_text(None, "-2", false);
+    s.press_keys(&g, bx, by);
+    assert!(s.head_fader_down(&g, Hit::HeadFader(b), bx, 2, none()));
+    assert_eq!(volume(&s, a), -2.0);
+    assert_eq!(s.head_fader.entry.as_ref().map(|e| e.track), Some(b));
+}
+
+#[test]
+fn a_track_that_goes_takes_no_key_of_the_fader() {
+    let (mut s, g) = studio(420.0);
+    let t = track(&s, "Keys");
+    focus(&mut s, &g, t);
+    s.head_fader.entry = Some(crate::head_fader::Entry {
+        track: TrackId::MASTER,
+        field: crate::settings::field::Field::new(crate::settings::FieldId::Value, "1".into()),
+        fresh: true,
+    });
+    // The field of a track that is not in the tree is dropped, the focus stays.
+    assert!(key(&mut s, "left", none()));
+    assert!(s.head_fader.entry.is_none());
+    assert_eq!(s.head_fader.focus, Some(t));
+}
+
+/// A song of `n` tracks that each play a volume lane, and the studio on it.
+fn big_song(n: usize, width: f32) -> (Studio, Geometry) {
+    let (mut s, g) = studio(width);
+    let keys = track(&s, "Keys");
+    let bar = i64::from(s.project().ppq) * 4;
+    for i in 0..16 {
+        assert!(s.run_command(
+            "auto.point.add",
+            json!({ "track": keys.to_string(), "target": "volume", "at": i * bar, "value": -12.0 + i as f64 })
+        ));
+    }
+    while s.project().tracks.len() < n {
+        assert!(s.run_command("track.duplicate", json!({ "ids": [keys.to_string()] })));
+    }
+    s.rebuild(&g);
+    let g = s.geometry(1600.0, 1000.0);
+    (s, g)
+}
+
+/// What a still screen asks of the head faders each frame: the screen reader's tree and rows.
+#[test]
+#[ignore = "a measurement, not a check"]
+fn measure_the_still_screen_with_many_tracks() {
+    use std::time::Instant;
+    for (n, width) in [(24, 420.0), (96, 420.0), (96, 232.0), (192, 420.0)] {
+        let (s, g) = big_song(n, width);
+        let rows = s.tree().rows.len();
+        let (mut best, mut marks_best) = (f64::MAX, f64::MAX);
+        let mut total = 0.0;
+        let frames = 20;
+        for _ in 0..frames {
+            let t = Instant::now();
+            let marks = a11y::marks(&s, &g);
+            let mid = t.elapsed().as_secs_f64() * 1000.0;
+            let nodes = a11y::track_rows(&s, &g);
+            let ms = t.elapsed().as_secs_f64() * 1000.0;
+            std::hint::black_box((marks.len(), nodes.len()));
+            best = best.min(ms);
+            total += ms;
+            marks_best = marks_best.min(mid);
+        }
+        println!(
+            "MEASURE tracks={} rows={rows} width={width} best={best:.2}ms (marks {marks_best:.2}ms) mean={:.2}ms",
+            s.project().tracks.len(),
+            total / frames as f64
+        );
+    }
+}
