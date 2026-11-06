@@ -40,9 +40,8 @@ pub fn paint(
     row: &Row,
     track: TrackId,
     mode: AutoMode,
-    left: f32,
+    (left, top): (f32, f32),
     column_w: f32,
-    top: f32,
 ) {
     let Some(auto) = crate::studio::RowParts::at(row, column_w).auto else {
         return;

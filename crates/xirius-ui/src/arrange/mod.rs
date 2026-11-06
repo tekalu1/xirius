@@ -22,7 +22,7 @@ use xirius_core::model::{ClipBody, MAX_DB, MIN_DB, Parent, Project, Track, Track
 use xirius_core::time::Tick;
 use xirius_design::{Layout, Space};
 
-use crate::studio::{Geometry, Hit, Rect, RowParts, Studio};
+use crate::studio::{Geometry, Hit, Rect, Studio};
 use crate::tools::{Area, Meter, Mods, Tool, round_in_bars};
 use crate::tree::{LANE_H, Row, RowKind};
 

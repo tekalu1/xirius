@@ -4,6 +4,7 @@
 use super::probe::{clip_mid, down, folder, hold, point_xy, row_at, row_mid, track, two_lanes};
 use super::*;
 use crate::roll::Cursor;
+use crate::studio::RowParts;
 use crate::tools::SnapMode;
 use xirius_core::id::Node;
 

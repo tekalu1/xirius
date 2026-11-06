@@ -106,7 +106,7 @@ pub fn paint(
 ) {
     let c = pen.c;
     let bus = bus_of(p, f);
-    let r = rect(row, bus.map(|(_, n)| n));
+    let r = rect(row, g.column.w, bus.map(|(_, n)| n));
     let r = Rect::new(g.column.x + r.x, top + r.y, r.w, r.h);
     let open = studio
         .popup

@@ -18,7 +18,7 @@ use super::clipfx::FxPart;
 use super::{Grip, LaneButton, LaneParts, LoopGrip, Preview, Spot, lane_value_y};
 use crate::draw::{Align, Pen, track_color};
 use crate::roll::Cursor;
-use crate::studio::{Geometry, Rect, RowParts, Studio};
+use crate::studio::{Geometry, Rect, Studio};
 use crate::tools::Tool;
 use crate::tree::{LANE_H, Row, RowKind};
 
@@ -147,9 +147,8 @@ pub fn head(pen: &mut Pen, studio: &Studio, project: &Project, g: &Geometry, row
         row,
         t,
         track.auto_mode,
-        g.column.x,
+        (g.column.x, top),
         g.column.w,
-        top,
     );
     for (i, lane) in studio.arrange.lanes_of(track).iter().enumerate() {
         let lane_top = top + row.h + i as f32 * LANE_H;

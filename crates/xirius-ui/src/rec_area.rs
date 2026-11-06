@@ -770,6 +770,34 @@ mod tests {
     }
 
     #[test]
+    fn the_record_area_follows_the_column_s_dragged_width() {
+        let r = row();
+        let edge = Space::X2.px();
+        let narrow = gain_rect(&r, r.head_w);
+        for w in [340.0, 420.0] {
+            // The gain slider and the level meter reach the column's right edge.
+            for rect in [gain_rect(&r, w), meter_rect(&r, w)] {
+                assert!((rect.right() - (w - edge)).abs() < 0.01, "{w}: {rect:?}");
+                assert_eq!(rect.x, narrow.x);
+            }
+            // The same dB sits further right, in step with the slider.
+            assert!(gain_x(&r, w, 6.0) > gain_x(&r, r.head_w, 6.0));
+            assert_eq!(gain_at(&r, w, gain_x(&r, w, -6.0)), -6.0);
+            let area = RecArea {
+                input: true,
+                stacks: vec![TakeStack {
+                    start: 0,
+                    end: 100,
+                    rows: 2,
+                    slots: Vec::new(),
+                }],
+                open: true,
+            };
+            assert_eq!(fold_rect(&r, w, &area).unwrap().w, w);
+        }
+    }
+
+    #[test]
     fn a_stack_is_a_comp_row_and_a_row_for_each_take() {
         let area = RecArea {
             input: true,
