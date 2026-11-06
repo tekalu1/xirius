@@ -283,7 +283,9 @@ fn moving_inside_a_plain_track_reorders_it_without_leaving_a_rack() {
 }
 
 #[test]
-fn removing_a_branch_does_not_drop_the_values_of_the_one_left() {
+fn removing_one_of_two_branches_takes_the_splitter_off_and_undo_brings_it_back() {
+    // ✖ always removes the branch (2026-11-06): with two, the splitter comes off and the branch
+    // left goes back in series, its level, pan and mute with it; undo brings all of it back.
     let (mut s, t, fx) = song();
     let v = run(&mut s, "rack.split.add", json!({ "track": t }));
     let b0 = v["branches"][0].as_str().unwrap().to_string();
@@ -296,20 +298,124 @@ fn removing_a_branch_does_not_drop_the_values_of_the_one_left() {
         json!({ "id": b1, "gain": -12.0, "pan": -1.0, "mute": "on" }),
     );
     let before = s.project().clone();
-    // Folded to a line, the muted branch would sound again at 0 dB in the centre.
-    let e = fails(&mut s, "rack.branch.remove", json!({ "id": b0 }));
-    assert!(e.contains("ミュート"), "{e}");
-    assert_eq!(*s.project(), before);
+    let out = s
+        .run_value(
+            "rack.branch.remove",
+            json!({ "id": b0 }),
+            &RunOptions::human(),
+        )
+        .unwrap();
+    assert!(
+        out.message.contains("スプリッターを外しました"),
+        "{}",
+        out.message
+    );
+    assert_eq!(names(&s, &t), ["C", "B"]);
+    assert!(s.project().tracks[&tid(&t)].rack.is_none());
+    s.undo(1).expect("undo");
+    assert_eq!(*s.project(), before, "undo brings the splitter back");
+}
 
-    // Back at its defaults, it folds as before.
+#[test]
+fn removing_one_of_three_branches_keeps_the_splitter_and_the_ai_is_not_refused() {
+    let (mut s, t, _) = song();
+    let v = run(
+        &mut s,
+        "rack.split.add",
+        json!({ "track": t, "branches": 3 }),
+    );
+    let b2 = v["branches"][2].as_str().unwrap().to_string();
+    let out = s
+        .run_value(
+            "rack.branch.remove",
+            json!({ "id": b2 }),
+            &RunOptions::human(),
+        )
+        .unwrap();
+    assert_eq!(out.message, "分岐を削除しました");
+    let r = s.project().tracks[&tid(&t)].rack.clone().unwrap();
+    let RackNode::Split(sp) = r.fx.last().unwrap() else {
+        panic!("the splitter stays")
+    };
+    assert_eq!(sp.branches.len(), 2);
+    // The AI's removal (MCP) goes the same way: one of two takes the splitter off.
+    let b1 = sp.branches[1].id.to_string();
     run(
         &mut s,
         "rack.branch.set",
-        json!({ "id": b1, "gain": 0.0, "pan": 0.0, "mute": "off" }),
+        json!({ "id": sp.branches[0].id.to_string(), "mute": "on" }),
     );
-    step(&mut s, "rack.branch.remove", json!({ "id": b0 }));
-    assert_eq!(names(&s, &t), ["C", "B"]);
+    let out = s
+        .run_value(
+            "rack.branch.remove",
+            json!({ "id": b1 }),
+            &RunOptions::ai("mcp"),
+        )
+        .unwrap();
+    assert!(
+        out.message.contains("スプリッターを外しました"),
+        "{}",
+        out.message
+    );
     assert!(s.project().tracks[&tid(&t)].rack.is_none());
+}
+
+#[test]
+fn a_splitter_has_no_upper_limit_on_branches() {
+    let (mut s, t, _) = song();
+    let split = id(&run(
+        &mut s,
+        "rack.split.add",
+        json!({ "track": t, "branches": 6 }),
+    ));
+    for _ in 0..57 {
+        run(&mut s, "rack.branch.add", json!({ "split": split }));
+    }
+    step(&mut s, "rack.branch.add", json!({ "split": split }));
+    step(
+        &mut s,
+        "rack.split.mode",
+        json!({ "id": split, "mode": "frequency" }),
+    );
+    let r = s.project().tracks[&tid(&t)].rack.clone().unwrap();
+    let RackNode::Split(sp) = r.fx.last().unwrap() else {
+        panic!()
+    };
+    assert_eq!(sp.branches.len(), 64);
+    assert_eq!(sp.crossovers.len(), 63);
+    s.project().validate().unwrap();
+}
+
+#[test]
+fn switching_to_channel_drops_the_branches_after_the_second_and_undoes() {
+    let (mut s, t, fx) = song();
+    let v = run(
+        &mut s,
+        "rack.split.add",
+        json!({ "track": t, "branches": 4 }),
+    );
+    let split = id(&v);
+    let b2 = v["branches"][2].as_str().unwrap().to_string();
+    run(&mut s, "rack.node.move", json!({ "id": fx[0], "to": b2 }));
+    let before = s.project().clone();
+    let out = s
+        .run_value(
+            "rack.split.mode",
+            json!({ "id": split, "mode": "channel" }),
+            &RunOptions::human(),
+        )
+        .unwrap();
+    assert!(out.message.contains("分岐 2 本"), "{}", out.message);
+    let r = s.project().tracks[&tid(&t)].rack.clone().unwrap();
+    let RackNode::Split(sp) = r.fx.last().unwrap() else {
+        panic!()
+    };
+    assert_eq!((sp.mode, sp.branches.len()), (SplitMode::Channel, 2));
+    // A went with its branch.
+    assert_eq!(names(&s, &t), ["B", "C"]);
+    s.project().validate().unwrap();
+    s.undo(1).expect("undo");
+    assert_eq!(*s.project(), before);
 }
 
 /// A, B and C with A alone in the first branch and B in the second.

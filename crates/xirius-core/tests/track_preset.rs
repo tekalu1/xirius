@@ -433,6 +433,60 @@ fn a_version_2_preset_keeps_the_rack_and_the_macros() {
     );
 }
 
+/// A splitter has no upper limit (MIX-045, approved 2026-11-06): one of 64 branches goes into
+/// a preset and onto another track whole, with each branch's level, and the put is one step.
+#[test]
+fn a_preset_keeps_a_splitter_of_64_branches() {
+    use xirius_core::rack::RackNode;
+    let Song { mut s, a, b, .. } = song();
+    split_eq(&mut s, &a);
+    let split = match &track(&s, &a).rack.as_ref().unwrap().fx[..] {
+        [.., RackNode::Split(x)] => x.id.to_string(),
+        other => panic!("{other:?}"),
+    };
+    for _ in 2..64 {
+        run(&mut s, "rack.branch.add", json!({ "split": split }));
+    }
+    let last = match &track(&s, &a).rack.as_ref().unwrap().fx[..] {
+        [.., RackNode::Split(x)] => {
+            assert_eq!(x.branches.len(), 64);
+            x.branches[63].id.to_string()
+        }
+        other => panic!("{other:?}"),
+    };
+    run(
+        &mut s,
+        "rack.branch.set",
+        json!({ "id": last, "gain": -9.0, "pan": 0.25 }),
+    );
+    let preset = preset_of(&s, &a, "Wide");
+    let (back, rows) = TrackPreset::parse(&preset).unwrap();
+    assert!(rows.is_empty(), "{rows:?}");
+    assert_eq!(back.to_value(), preset);
+    let n = s.steps().len();
+    let out = put(&mut s, &[&b], &preset);
+    assert!(out["adjusted"].as_array().unwrap().is_empty(), "{out}");
+    assert_eq!(s.steps().len(), n + 1);
+    let split_of = |s: &Session| match track(s, &b).rack.as_ref().map(|r| r.fx.clone()) {
+        Some(fx) => fx.iter().find_map(|x| match x {
+            RackNode::Split(x) => Some(x.clone()),
+            _ => None,
+        }),
+        None => None,
+    };
+    let got = split_of(&s).expect("the splitter came along");
+    assert_eq!(got.branches.len(), 64);
+    assert_eq!(
+        (got.branches[63].gain_db, got.branches[63].pan),
+        (-9.0, 0.25)
+    );
+    s.project().validate().unwrap();
+    run(&mut s, "history.undo", json!({}));
+    assert!(split_of(&s).is_none());
+    run(&mut s, "history.redo", json!({}));
+    assert_eq!(split_of(&s).unwrap().branches.len(), 64);
+}
+
 #[test]
 fn a_rack_on_an_instrument_track_keeps_its_own_instrument() {
     let Song {

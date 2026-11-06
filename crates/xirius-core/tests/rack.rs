@@ -238,7 +238,7 @@ fn a_serial_rack_folds_back_to_the_plain_shape() {
 #[test]
 fn splits_over_the_limits_are_mended() {
     // A split nested deeper than MAX_SPLIT_DEPTH is dropped; a one-branch
-    // split unfolds; more than five branches are trimmed.
+    // split unfolds; a split of many branches keeps them all.
     let mut t = track(
         1,
         TrackKind::Audio,
@@ -306,14 +306,15 @@ fn splits_over_the_limits_are_mended() {
     let Some(r) = &t.rack else {
         panic!("a real split stays")
     };
-    // The one-branch split unfolded inline; the six-branch kept five; the
-    // five-deep split is gone and its plug-in is filled at the end.
+    // The one-branch split unfolded inline; the six-branch kept all six (a
+    // split has no upper limit); the five-deep split is gone and its plug-in
+    // is filled at the end.
     let top: Vec<&RackNode> = r.fx.iter().collect();
     assert!(matches!(top[0], RackNode::Plugin(_)));
     if let RackNode::Split(s) = top[1] {
-        assert_eq!(s.branches.len(), 5);
+        assert_eq!(s.branches.len(), 6);
     } else {
-        panic!("second node is the trimmed split");
+        panic!("second node is the six-branch split");
     }
     assert_eq!(
         t.inserts.iter().map(|x| x.id.0).collect::<Vec<_>>(),
@@ -322,36 +323,53 @@ fn splits_over_the_limits_are_mended() {
 }
 
 #[test]
-fn a_trimmed_branchs_plugins_go_back_into_the_chain() {
-    // The sixth branch holds a plug-in: trimming must not leave the insert
-    // orphaned (which failed the song's open with "not in the rack").
-    let (_d, dir) = dir("trim");
+fn a_split_of_many_branches_is_written_and_read_whole() {
+    // A split has no upper limit (2026-11-06): 64 branches, each with its plug-in, come back
+    // as they were written, with nothing dropped and nothing to report.
+    let (_d, dir) = dir("many");
+    let n = 64;
     let p = project(vec![track(
         2,
         TrackKind::Audio,
-        (1..=6).map(|i| plugin(i, PluginKind::Effect)).collect(),
+        (1..=n).map(|i| plugin(i, PluginKind::Effect)).collect(),
         Some(Rack {
             source: None,
             fx: vec![split(
-                10,
-                (1..=6)
+                1000,
+                (1..=n)
                     .map(|i| vec![RackNode::Plugin(PluginId(i))])
                     .collect(),
             )],
         }),
     )]);
+    p.validate().unwrap();
     Store::new(&dir).write_project(&p).unwrap();
     let (q, rows) = Store::new(&dir).read_project_report().unwrap();
+    assert!(rows.is_empty(), "{rows:?}");
     let t = &q.tracks[&TrackId(2)];
-    let r = t.rack.as_ref().expect("the trimmed split stays");
+    let r = t.rack.as_ref().expect("the split stays");
     let RackNode::Split(s) = &r.fx[0] else {
         panic!("first node is the split")
     };
-    assert_eq!(s.branches.len(), 5);
-    // The sixth plug-in rejoins the chain right after the split.
-    assert!(matches!(&r.fx[1], RackNode::Plugin(x) if *x == PluginId(6)));
-    assert!(rows.iter().any(|r| r.kind == AdjustKind::Dropped));
+    assert_eq!(s.branches.len(), n as usize);
+    assert_eq!(t.inserts.len(), n as usize);
     q.validate().unwrap();
+}
+
+#[test]
+fn the_default_crossovers_rise_for_any_number_of_branches() {
+    use xirius_core::rack::default_crossovers;
+    // Two to five keep the values they always had.
+    assert_eq!(default_crossovers(2), [1000.0]);
+    assert_eq!(default_crossovers(3), [200.0, 2000.0]);
+    assert_eq!(default_crossovers(4), [150.0, 800.0, 4000.0]);
+    assert_eq!(default_crossovers(5), [100.0, 400.0, 1600.0, 6000.0]);
+    for n in [6, 7, 12, 64] {
+        let c = default_crossovers(n);
+        assert_eq!(c.len(), n - 1, "{n}");
+        assert!(c.windows(2).all(|w| w[0] < w[1]), "{n}: {c:?}");
+        assert!(c[0] >= 20.0 && *c.last().unwrap() <= 20_000.0, "{n}: {c:?}");
+    }
 }
 
 #[test]

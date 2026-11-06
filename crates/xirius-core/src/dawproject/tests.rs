@@ -1029,6 +1029,59 @@ fn a_plugins_state_goes_with_it_both_ways() {
     }
 }
 
+/// A splitter has no upper limit (MIX-045, approved 2026-11-06): a track whose 64 branches each
+/// hold a plug-in writes all 64 devices, in the rack's order, and reads them back.
+#[test]
+fn a_splitter_of_64_branches_writes_every_device() {
+    use crate::rack::{Branch, Rack, RackNode, Split, SplitMode};
+    let dir = tempfile::tempdir().unwrap();
+    let mut p = Project::new("Wide");
+    let t = add(&mut p, TrackKind::Audio, "Wide");
+    let fx: Vec<Plugin> = (0..64)
+        .map(|i| {
+            plugin(
+                &mut p,
+                "clap",
+                "com.example.verb",
+                &format!("Verb {i}"),
+                PluginKind::Effect,
+            )
+        })
+        .collect();
+    let split = Split {
+        id: NodeId(p.alloc()),
+        mode: SplitMode::Normal,
+        crossovers: Vec::new(),
+        branches: fx
+            .iter()
+            .map(|x| Branch {
+                id: NodeId(p.alloc()),
+                fx: vec![RackNode::Plugin(x.id)],
+                gain_db: 0.0,
+                pan: 0.0,
+                mute: false,
+            })
+            .collect(),
+    };
+    let tr = tm(&mut p, t);
+    tr.inserts = fx;
+    tr.rack = Some(Rack {
+        source: None,
+        fx: vec![RackNode::Split(split)],
+    });
+    p.validate().unwrap();
+    let out = dir.path().join("Wide.dawproject");
+    export(&p, &out, &opts(dir.path(), &wav_info)).unwrap();
+    let got = import(&out, &dir.path().join("media")).unwrap();
+    let names: Vec<&str> = track(&got.project, "Wide")
+        .inserts
+        .iter()
+        .map(|x| x.name.as_str())
+        .collect();
+    let want: Vec<String> = (0..64).map(|i| format!("Verb {i}")).collect();
+    assert_eq!(names, want);
+}
+
 #[test]
 fn opening_a_dawproject_lists_the_plugins_this_pc_does_not_have() {
     use crate::command::{Args, CommandDef, Output};

@@ -21,8 +21,6 @@ use crate::id::{NodeId, PluginId};
 use crate::model::{MAX_DB, MIN_DB, PluginKind, Track, TrackKind};
 use crate::track_preset::{Adjust, AdjustKind};
 
-/// A split holds no more than this many branches.
-pub const MAX_BRANCHES: usize = 5;
 /// A split holds no less than this many branches; fewer is folded into a line.
 pub const MIN_BRANCHES: usize = 2;
 /// How deep splits may nest inside each chain (the track's fx and each
@@ -30,13 +28,21 @@ pub const MIN_BRANCHES: usize = 2;
 pub const MAX_SPLIT_DEPTH: usize = 4;
 
 /// The default crossover frequencies for a split of `branches` branches
-/// (ENG-076): two branches split at 1k, three at 200 and 2k, and so on.
-pub fn default_crossovers(branches: usize) -> &'static [f64] {
+/// (ENG-076): two branches split at 1k, three at 200 and 2k, and so on. Six and more are spread
+/// evenly on a log scale from 60 Hz to 12 kHz; a split has no upper limit on branches.
+pub fn default_crossovers(branches: usize) -> Vec<f64> {
     match branches {
-        2 => &[1000.0],
-        3 => &[200.0, 2000.0],
-        4 => &[150.0, 800.0, 4000.0],
-        _ => &[100.0, 400.0, 1600.0, 6000.0],
+        0..=2 => vec![1000.0],
+        3 => vec![200.0, 2000.0],
+        4 => vec![150.0, 800.0, 4000.0],
+        5 => vec![100.0, 400.0, 1600.0, 6000.0],
+        n => {
+            let (lo, hi) = (60.0_f64, 12_000.0_f64);
+            let steps = (n - 2) as f64;
+            (0..n - 1)
+                .map(|i| (lo * (hi / lo).powf(i as f64 / steps)).round())
+                .collect()
+        }
     }
 }
 
@@ -80,7 +86,7 @@ pub struct Split {
     /// (`branches.len() - 1` of them, ascending); empty otherwise.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub crossovers: Vec<f64>,
-    /// 2..=5 branches.
+    /// Two branches or more, with no upper limit (two for [`SplitMode::Channel`]).
     #[serde(default)]
     pub branches: Vec<Branch>,
 }
@@ -970,19 +976,6 @@ fn fix_nodes(
                 // Branches are cut before their fx is walked: whatever they
                 // held is appended to this chain, so it stays in the file.
                 let mut extra: Vec<RackNode> = Vec::new();
-                if s.branches.len() > MAX_BRANCHES {
-                    rows.push(Adjust::new(
-                        AdjustKind::Dropped,
-                        format!("{at} のスプリッターの分岐"),
-                        format!(
-                            "{MAX_BRANCHES} 本までのため、{} 本を外しました",
-                            s.branches.len() - MAX_BRANCHES
-                        ),
-                    ));
-                    for b in s.branches.split_off(MAX_BRANCHES) {
-                        extra.extend(b.fx);
-                    }
-                }
                 if s.mode == SplitMode::Channel && s.branches.len() > 2 {
                     rows.push(Adjust::new(
                         AdjustKind::Dropped,

@@ -600,6 +600,78 @@ fn split_branches_and_their_values_do_not_allocate() {
     assert!(out.iter().any(|s| *s != 0.0));
 }
 
+/// A splitter has no upper limit of branches (MIX-045, approved 2026-11-06): 64 of them, each
+/// with its own insert, while every value moves, half mute and come back, and the plan is
+/// swapped with the track kept.
+#[test]
+fn sixty_four_branches_and_their_values_do_not_allocate() {
+    use xirius_engine::split::{BranchSpec, SplitProc};
+    const N: u64 = 64;
+    let setup = ProcessSetup {
+        sample_rate: 48_000.0,
+        max_block: 256,
+        mode: RenderMode::Realtime,
+    };
+    let wide = || {
+        let branches = (0..N)
+            .map(|i| {
+                let fx: Box<dyn xirius_engine::Processor> = if i % 2 == 0 {
+                    Box::new(Gain::new(0.5))
+                } else {
+                    Box::new(Delay::new(32 * (i as usize + 1)))
+                };
+                BranchSpec::new(100 + i, vec![(1000 + i, fx)])
+            })
+            .collect();
+        let mut t = TrackSpec::new("wide", Box::new(Sine::new(220.0, 0.3)));
+        t.inserts = vec![Box::new(SplitProc::new(1, branches))];
+        let mut home = TrackSpec::new("home", Box::new(Sine::new(330.0, 0.3)));
+        home.inserts = vec![Box::new(SplitProc::new(
+            2,
+            (0..N)
+                .map(|i| BranchSpec::new(200 + i, Vec::new()))
+                .collect(),
+        ))];
+        home.prefetch = false;
+        MixSpec {
+            tracks: vec![TrackSlot::New(t), TrackSlot::New(home)],
+            ..MixSpec::default()
+        }
+    };
+    let (mut audio, mut control) = engine::create(
+        Plan::build(wide(), setup, None).unwrap(),
+        EngineConfig::default(),
+    );
+    let mut out = vec![0.0f32; 1000 * 2];
+    reset_violation_count();
+    for i in 0..100u32 {
+        for node in (100..100 + N)
+            .chain(200..200 + N)
+            .filter(|n| (*n + u64::from(i)) % 4 == 0)
+        {
+            control
+                .send(Command::BranchGain {
+                    node,
+                    gain: (i % 10) as f32 / 10.0,
+                    pan: (i % 5) as f32 / 2.0 - 1.0,
+                    // every other value sent mutes, the rest come back
+                    mute: (u64::from(i) + node) % 8 == 0,
+                })
+                .ok()
+                .unwrap();
+        }
+        if i % 40 == 20 {
+            let mut s = wide();
+            s.tracks[0] = TrackSlot::Keep(0);
+            control.swap(s).unwrap();
+        }
+        audio.render(&mut out, 2);
+        control.poll(|_| {});
+    }
+    assert_eq!(violation_count(), 0);
+    assert!(out.iter().any(|s| *s != 0.0));
+}
+
 /// The browser's audition (BRW-020): one file after another on the kept plan, each played to
 /// the end it stops at by itself, cut short by the next, or stopped.
 #[test]

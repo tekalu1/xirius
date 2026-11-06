@@ -2110,7 +2110,7 @@ impl Project {
 
 /// The rack's invariants (`validate` runs this on every track that has one):
 /// every insert appears exactly once, instruments sit only in the source's
-/// seats, splits hold 2..=5 branches with mode-true crossovers, and splits
+/// seats, splits hold 2 branches or more with mode-true crossovers, and splits
 /// nest at most `MAX_SPLIT_DEPTH` deep.
 fn check_rack(t: &Track, r: &crate::rack::Rack) -> CmdResult<()> {
     use crate::rack::Source;
@@ -2187,7 +2187,7 @@ fn check_nodes(
     name: &str,
     depth: usize,
 ) -> CmdResult<()> {
-    use crate::rack::{MAX_BRANCHES, MAX_SPLIT_DEPTH, MIN_BRANCHES, RackNode, SplitMode};
+    use crate::rack::{MAX_SPLIT_DEPTH, MIN_BRANCHES, RackNode, SplitMode};
     for n in nodes {
         match n {
             RackNode::Plugin(id) => {
@@ -2213,9 +2213,9 @@ fn check_nodes(
                         "{name}: スプリッターの入れ子は {MAX_SPLIT_DEPTH} 段までです"
                     )));
                 }
-                if !(MIN_BRANCHES..=MAX_BRANCHES).contains(&s.branches.len()) {
+                if s.branches.len() < MIN_BRANCHES {
                     return Err(CmdError::conflict(format!(
-                        "{name}: スプリッターの分岐は {MIN_BRANCHES}〜{MAX_BRANCHES} 本です"
+                        "{name}: スプリッターの分岐は {MIN_BRANCHES} 本以上です"
                     )));
                 }
                 match s.mode {

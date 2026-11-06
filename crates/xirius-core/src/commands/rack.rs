@@ -10,7 +10,7 @@ use crate::auto::AutoTarget;
 use crate::id::{AnyId, IdKind, NodeId, PluginId, SendId, TrackId};
 use crate::model::{MAX_DB, MIN_DB, PluginKind, Project, Track, TrackKind};
 use crate::rack::{
-    Branch, Layer, MAX_BRANCHES, MAX_SPLIT_DEPTH, Rack, RackNode, Source, Split, SplitMode,
+    Branch, Layer, MAX_SPLIT_DEPTH, MIN_BRANCHES, Rack, RackNode, Source, Split, SplitMode,
 };
 
 const MODES: &[&str] = &["normal", "channel", "frequency"];
@@ -48,14 +48,13 @@ pub(super) fn defs() -> Vec<CommandDef> {
                     "置く所: track・after:<id>・branch:<分岐の id>:<位置>・layer:<レイヤーの id>:<位置>（省略時は track）",
                 ),
                 ArgDef::choice("mode", MODES, "分け方（省略時は normal）"),
-                ArgDef::int("branches", "分岐の数（2〜5。channel は 2）")
-                    .range(2.0, MAX_BRANCHES as f64),
+                ArgDef::int("branches", "分岐の数（2 以上。channel は 2）").range(2.0, 1e6),
             ],
             |p, _, a| split_add(p, a),
         ),
         edit(
             "rack.split.mode",
-            "スプリッターの分け方を変えます（frequency の --crossovers は Hz をカンマで区切り、分岐より 1 つ少なく）",
+            "スプリッターの分け方を変えます（frequency の --crossovers は Hz をカンマで区切り、分岐より 1 つ少なく。channel にすると 3 本目からの分岐を中のプラグインごと削除します）",
             vec![
                 ArgDef::id("id", IdKind::RackNode, "スプリッター").req(),
                 ArgDef::choice("mode", MODES, "分け方").req(),
@@ -68,7 +67,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         edit(
             "rack.branch.add",
-            "スプリッターに空の分岐を足します（5 本まで。channel は 2 本のまま）",
+            "スプリッターに空の分岐を追加します（本数に上限はありません。channel は 2 本のまま）",
             vec![ArgDef::id("split", IdKind::RackNode, "スプリッター").req()],
             |p, _, a| branch_add(p, a.id("split")?),
         ),
@@ -80,7 +79,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         destroy(
             "rack.branch.remove",
-            "分岐を中のプラグインごと削除します（1 本だけ残ったスプリッターは直列に戻ります）",
+            "分岐を中のプラグインごと削除します（2 本のときはスプリッターを外し、残る分岐を直列に戻します。残る分岐の音量・パン・ミュートは無くなります）",
             vec![ArgDef::id("id", IdKind::RackNode, "分岐").req()],
             |p, _, a| branch_remove(p, a.id("id")?),
         ),
@@ -218,13 +217,15 @@ fn split_mode(p: &mut Project, a: &Args) -> CmdResult<Output> {
         ),
     };
     let tid = node_track(p, id)?;
-    let r = rack_of(p.track_mut(tid)?);
+    let t = p.track_mut(tid)?;
+    let r = rack_of(t);
     let s = find_split(r, id).ok_or_else(|| not_split(id))?;
-    if mode == SplitMode::Channel && s.branches.len() != 2 {
-        return Err(CmdError::conflict(
-            "channel にできるのは分岐が 2 本のスプリッターだけです",
-        ));
-    }
+    // A channel split has two branches: the ones after the second go with their plug-ins.
+    let gone: Vec<Branch> = if mode == SplitMode::Channel && s.branches.len() > 2 {
+        s.branches.split_off(2)
+    } else {
+        Vec::new()
+    };
     s.crossovers = match crossovers {
         Some(_) if mode != SplitMode::Frequency => {
             return Err(CmdError::invalid(
@@ -248,11 +249,17 @@ fn split_mode(p: &mut Project, a: &Args) -> CmdResult<Output> {
         None => Vec::new(),
     };
     s.mode = mode;
+    let dropped = gone.len();
+    let plugins = drop_branches(p, tid, gone)?;
     p.fix_track_rack(tid);
-    Ok(Output::msg(format!(
-        "スプリッターの分け方を {} にしました",
-        MODES[mode as usize]
-    )))
+    Ok(Output::msg(if dropped == 0 {
+        format!("スプリッターの分け方を {} にしました", MODES[mode as usize])
+    } else {
+        format!(
+            "分岐 {dropped} 本（プラグイン {plugins} 件）を削除し、スプリッターの分け方を {} にしました",
+            MODES[mode as usize]
+        )
+    }))
 }
 
 fn branch_add(p: &mut Project, id: NodeId) -> CmdResult<Output> {
@@ -262,11 +269,6 @@ fn branch_add(p: &mut Project, id: NodeId) -> CmdResult<Output> {
     let s = find_split(r, id).ok_or_else(|| not_split(id))?;
     if s.mode == SplitMode::Channel {
         return Err(CmdError::conflict("channel の分岐は 2 本のままです"));
-    }
-    if s.branches.len() >= MAX_BRANCHES {
-        return Err(CmdError::conflict(format!(
-            "分岐は {MAX_BRANCHES} 本までです"
-        )));
     }
     s.branches.push(empty_branch(new));
     p.fix_track_rack(tid);
@@ -309,22 +311,37 @@ fn split_remove(p: &mut Project, id: NodeId) -> CmdResult<Output> {
 
 fn branch_remove(p: &mut Project, id: NodeId) -> CmdResult<Output> {
     let tid = node_track(p, id)?;
-    let t = p.track_mut(tid)?;
-    let r = rack_of(t);
+    let r = rack_of(p.track_mut(tid)?);
     let (s, i) = find_branch_parent(r, id).ok_or_else(|| not_branch(id))?;
-    // The one branch left folds into a line, which has no level, pan or mute of its own.
-    if let [a, b] = &s.branches[..] {
-        let left = if i == 0 { b } else { a };
-        if left.gain_db != 0.0 || left.pan != 0.0 || left.mute {
-            return Err(CmdError::conflict(
-                "残る分岐の音量・パン・ミュートが失われます。先に rack.branch.set で 0 dB・中央・ミュートなしに戻してください",
-            ));
-        }
-    }
+    // With two, the one branch left folds into a line, which has no level, pan or mute of its
+    // own: the splitter comes off (undo brings it back).
+    let folds = s.branches.len() <= MIN_BRANCHES;
     let gone = s.branches.remove(i);
+    let plugins = drop_branches(p, tid, vec![gone])?;
+    p.fix_track_rack(tid);
+    let message = match (folds, plugins) {
+        (true, 0) => "スプリッターを外しました".to_string(),
+        (true, n) => format!("分岐をプラグイン {n} 件とともに削除し、スプリッターを外しました"),
+        (false, 0) => "分岐を削除しました".to_string(),
+        (false, n) => format!("分岐をプラグイン {n} 件とともに削除しました"),
+    };
+    Ok(Output::with(
+        message,
+        json!({ "folded": folds, "plugins": plugins }),
+    ))
+}
+
+/// Removes the plug-ins of branches already taken out of `tid`'s rack, and the sidechain sends
+/// they received with them, as with `plugin.remove`. Returns how many plug-ins went.
+fn drop_branches(p: &mut Project, tid: TrackId, gone: Vec<Branch>) -> CmdResult<usize> {
     let mut plugins = Vec::new();
-    plugins_in(&gone.fx, &mut plugins);
-    // The sidechain sends the removed plug-ins received go with them, as with `plugin.remove`.
+    for b in &gone {
+        plugins_in(&b.fx, &mut plugins);
+    }
+    if plugins.is_empty() {
+        return Ok(0);
+    }
+    let t = p.track_mut(tid)?;
     let gone_keys: Vec<SendId> = t
         .inserts
         .iter()
@@ -333,17 +350,12 @@ fn branch_remove(p: &mut Project, id: NodeId) -> CmdResult<Output> {
         .flat_map(|sc| sc.sources.iter().map(|s| s.id))
         .collect();
     t.inserts.retain(|x| !plugins.contains(&x.id));
-    p.fix_track_rack(tid);
     for t in p.tracks.keys().copied().collect::<Vec<_>>() {
         p.track_mut(t)?
             .automation
             .retain(|l| !matches!(&l.target, AutoTarget::Send(id) if gone_keys.contains(id)));
     }
-    Ok(Output::msg(if plugins.is_empty() {
-        "分岐を削除しました".to_string()
-    } else {
-        format!("分岐をプラグイン {} 件とともに削除しました", plugins.len())
-    }))
+    Ok(plugins.len())
 }
 
 fn branch_set(p: &mut Project, a: &Args) -> CmdResult<Output> {
