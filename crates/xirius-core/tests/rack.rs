@@ -558,6 +558,169 @@ fn a_branch_added_to_an_older_songs_split_keeps_its_crossovers() {
     }
 }
 
+/// Runs `name` on `s` as one undo step that undoes to the song before and redoes to the song
+/// after, and leaves the song after.
+fn undone(s: &mut Session, name: &str, args: Value) {
+    let before = s.project().clone();
+    run(s, name, args);
+    let after = s.project().clone();
+    assert_ne!(after, before, "{name} changed the song");
+    s.undo(1).expect("undo");
+    assert_eq!(*s.project(), before, "{name} undoes");
+    s.redo(1).expect("redo");
+    assert_eq!(*s.project(), after, "{name} redoes");
+}
+
+/// Fails `name` on `s` and leaves the song and its history as they were.
+fn refused(s: &mut Session, name: &str, args: Value) -> String {
+    let before = s.project().clone();
+    let undo = s.can_undo();
+    let e = match s.run_value(name, args, &RunOptions::human()) {
+        Ok(r) => panic!("{name} should fail, said {}", r.message),
+        Err(e) => e.message,
+    };
+    assert_eq!(*s.project(), before, "{name} left the song");
+    assert_eq!(s.can_undo(), undo, "{name} left the history");
+    e
+}
+
+#[test]
+fn an_older_songs_crossover_outside_the_range_stays_or_moves_towards_it() {
+    let (_d, dir) = dir("oldmove");
+    Session::create(&dir, old_song()).unwrap();
+    let mut s = Session::open(&dir).unwrap();
+    let mode = |k: u64, c: &str| json!({ "id": NodeId(40 + k).to_string(), "mode": "frequency", "crossovers": c });
+    let at = |s: &Session, k: u64| crossovers_of(&s.project().tracks[&TrackId(2 + k)]);
+    // [1000, 25000]: the top one dragged down, still above 20 kHz, as the screen shows it.
+    let down = 25_000.0 / 1.05_f64.powf(1.25);
+    undone(&mut s, "rack.split.mode", mode(1, &format!("1000,{down}")));
+    assert_eq!(at(&s, 1), [1000.0, down]);
+    s.undo(1).unwrap();
+    // The 1 kHz moved while the 25 kHz stays exactly as saved.
+    undone(&mut s, "rack.split.mode", mode(1, "1500.25,25000"));
+    assert_eq!(at(&s, 1), [1500.25, 25_000.0]);
+    s.undo(1).unwrap();
+    assert_eq!(at(&s, 1), [1000.0, 25_000.0]);
+    // Moved further out, or a new one outside the range, is refused and changes nothing.
+    for c in ["1000,26000", "1000,25000.5", "10,25000", "1000,20500,"] {
+        let e = refused(&mut s, "rack.split.mode", mode(1, c));
+        assert!(
+            e.contains("20〜20000 Hz") || e.contains("読み取れません"),
+            "{c}: {e}"
+        );
+    }
+    // [10]: up towards 20 Hz is taken, down is not.
+    undone(&mut s, "rack.split.mode", mode(0, "12.5"));
+    s.undo(1).unwrap();
+    refused(&mut s, "rack.split.mode", mode(0, "9"));
+    // [5, 30, 40000]: the middle one moved, the two outside kept bit for bit.
+    undone(
+        &mut s,
+        "rack.split.mode",
+        mode(3, "5,31.000000000000004,40000"),
+    );
+    assert_eq!(at(&s, 3), [5.0, 31.000000000000004, 40_000.0]);
+    s.undo(1).unwrap();
+    // A normal split made frequency has none to keep: the range holds for every one.
+    run(
+        &mut s,
+        "rack.split.mode",
+        json!({ "id": NodeId(41).to_string(), "mode": "normal" }),
+    );
+    refused(&mut s, "rack.split.mode", mode(1, "1000,25000"));
+    s.undo(1).unwrap();
+    assert_eq!(old_crossovers(s.project())[1], [1000.0, 25_000.0]);
+    s.project().validate().unwrap();
+}
+
+#[test]
+fn an_older_songs_split_undoes_a_deleted_branch_and_a_switch_to_channel() {
+    let (_d, dir) = dir("oldundo");
+    Session::create(&dir, old_song()).unwrap();
+    let mut s = Session::open(&dir).unwrap();
+    let want: Vec<Vec<f64>> = OLD_CROSSOVERS.iter().map(|c| c.to_vec()).collect();
+    for (k, c) in OLD_CROSSOVERS.iter().enumerate() {
+        let split = 40 + k as u64;
+        // The top branch deleted (the splitter comes off with two), and back.
+        let top = NodeId(split * 10 + c.len() as u64 + 1);
+        undone(
+            &mut s,
+            "rack.branch.remove",
+            json!({ "id": top.to_string() }),
+        );
+        s.undo(1).unwrap();
+        assert_eq!(old_crossovers(s.project()), want, "{k}");
+        // Switched to channel and back by undo, then forward by redo.
+        undone(
+            &mut s,
+            "rack.split.mode",
+            json!({ "id": NodeId(split).to_string(), "mode": "channel" }),
+        );
+        assert!(crossovers_of(&s.project().tracks[&TrackId(2 + k as u64)]).is_empty());
+        s.undo(1).unwrap();
+        assert_eq!(old_crossovers(s.project()), want, "{k}");
+    }
+    s.project().validate().unwrap();
+}
+
+#[test]
+fn a_branch_added_above_a_crossover_near_the_largest_number_keeps_it_or_changes_nothing() {
+    use xirius_core::rack::crossovers_kept;
+    let tops: [&[f64]; 3] = [&[1.75e308], &[1000.0, 1.75e308], &[f64::MAX]];
+    let tracks = tops
+        .iter()
+        .enumerate()
+        .map(|(k, c)| {
+            let RackNode::Split(mut x) =
+                split(60 + k as u64, (0..=c.len()).map(|_| Vec::new()).collect())
+            else {
+                unreachable!("split makes a split")
+            };
+            x.mode = SplitMode::Frequency;
+            x.crossovers = c.to_vec();
+            track(
+                20 + k as u64,
+                TrackKind::Audio,
+                Vec::new(),
+                Some(Rack {
+                    source: None,
+                    fx: vec![RackNode::Split(x)],
+                }),
+            )
+        })
+        .collect();
+    let (_d, dir) = dir("bigtop");
+    Session::create(&dir, project(tracks)).unwrap();
+    let mut s = Session::open(&dir).unwrap();
+    let at = |s: &Session, k: usize| crossovers_of(&s.project().tracks[&TrackId(20 + k as u64)]);
+    for (k, c) in tops.iter().enumerate().take(2) {
+        assert_eq!(at(&s, k), c.to_vec(), "{k}: kept on open");
+        let add = json!({ "split": NodeId(60 + k as u64).to_string() });
+        undone(&mut s, "rack.branch.add", add.clone());
+        // Three more on top: every one there was stays, they rise and are numbers.
+        for more in 0..3 {
+            run(&mut s, "rack.branch.add", add.clone());
+            let now = at(&s, k);
+            assert_eq!(now[..c.len()], c[..], "{k} {more}");
+            assert!(
+                crossovers_kept(&now, c.len() + more + 3),
+                "{k} {more}: {now:?}"
+            );
+        }
+        s.undo(4).unwrap();
+        assert_eq!(at(&s, k), c.to_vec(), "{k}: undone");
+    }
+    // Right at the largest number there is no room above: nothing changes, not even a reset.
+    let e = refused(
+        &mut s,
+        "rack.branch.add",
+        json!({ "split": NodeId(62).to_string() }),
+    );
+    assert!(e.contains("余地"), "{e}");
+    assert_eq!(at(&s, 2), [f64::MAX]);
+    s.project().validate().unwrap();
+}
+
 #[test]
 fn frequency_crossovers_are_written_and_read_whole_for_any_number_of_branches() {
     use xirius_core::rack::default_crossovers;

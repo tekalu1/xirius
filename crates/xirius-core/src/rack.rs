@@ -81,6 +81,23 @@ pub fn crossovers_fit(c: &[f64], branches: usize) -> bool {
             .all(|f| (CROSSOVER_MIN_HZ..=CROSSOVER_MAX_HZ).contains(f))
 }
 
+/// Whether `c` may replace a frequency split's crossovers `was` (ENG-076): kept
+/// ([`crossovers_kept`]), and each one either inside the range a new one takes, left exactly as
+/// saved, or moved from outside the range towards it. A saved song's crossover at 25 kHz can then
+/// be dragged down, or stay where it is while its neighbour moves; a new one outside the range,
+/// or one moved further out, is refused. `was` is empty where there are none to keep.
+pub fn crossovers_edited(c: &[f64], was: &[f64], branches: usize) -> bool {
+    crossovers_kept(c, branches)
+        && c.iter().enumerate().all(|(i, &f)| {
+            (CROSSOVER_MIN_HZ..=CROSSOVER_MAX_HZ).contains(&f)
+                || was.get(i).is_some_and(|&o| {
+                    o.to_bits() == f.to_bits()
+                        || (o > CROSSOVER_MAX_HZ && f < o)
+                        || (o < CROSSOVER_MIN_HZ && f > o)
+                })
+        })
+}
+
 /// Whether `c` are crossovers a frequency split of `branches` branches keeps as they are: one
 /// fewer than the branches, each above zero, and rising. A saved song's crossovers that pass are
 /// never changed on load, even outside the range a new one takes (ENG-076).
@@ -95,7 +112,8 @@ pub fn crossovers_kept(c: &[f64], branches: usize) -> bool {
 /// scale) to 20 kHz when that is lower: one added branch takes the upper half of the top band,
 /// several share it evenly, and every other branch keeps its band. With no room left below
 /// 20 kHz (a saved song's crossover at or above it, or a top band halved down to nothing) they
-/// go [`CROSSOVER_GAP`] apart above `last`.
+/// go [`CROSSOVER_GAP`] apart above `last`, or, where that would pass the largest number a song
+/// keeps, evenly up to it. Only above the largest number itself do they not rise.
 pub fn added_crossovers(last: f64, m: usize) -> Vec<f64> {
     if last < CROSSOVER_MAX_HZ {
         let room = CROSSOVER_MAX_HZ / last;
@@ -114,8 +132,15 @@ pub fn added_crossovers(last: f64, m: usize) -> Vec<f64> {
             return under;
         }
     }
-    (1..=m)
+    let apart: Vec<f64> = (1..=m)
         .map(|j| last * CROSSOVER_GAP.powf(j as f64))
+        .collect();
+    if apart.iter().all(|f| f.is_finite()) {
+        return apart;
+    }
+    let room = f64::MAX - last;
+    (1..=m)
+        .map(|j| last + room * (j as f64 / (m + 1) as f64))
         .collect()
 }
 

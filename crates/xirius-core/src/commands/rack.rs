@@ -11,7 +11,7 @@ use crate::id::{AnyId, IdKind, NodeId, PluginId, SendId, TrackId};
 use crate::model::{MAX_DB, MIN_DB, PluginKind, Project, Track, TrackKind};
 use crate::rack::{
     Branch, Layer, MAX_SPLIT_DEPTH, MIN_BRANCHES, Rack, RackNode, Source, Split, SplitMode,
-    crossovers_fit,
+    added_crossovers, crossovers_edited, crossovers_kept,
 };
 
 const MODES: &[&str] = &["normal", "channel", "frequency"];
@@ -234,9 +234,16 @@ fn split_mode(p: &mut Project, a: &Args) -> CmdResult<Output> {
             ));
         }
         Some(c) => {
-            if !crossovers_fit(&c, s.branches.len()) {
+            // A saved song's crossover outside the range stays, or moves towards it; the ones
+            // given or changed go inside it, as a drag on the screen shows them.
+            let was: &[f64] = if s.mode == SplitMode::Frequency {
+                &s.crossovers
+            } else {
+                &[]
+            };
+            if !crossovers_edited(&c, was, s.branches.len()) {
                 return Err(CmdError::range(
-                    "クロスオーバーは 20〜20000 Hz の中で、分岐より 1 つ少なく、昇順にしてください",
+                    "クロスオーバーは分岐より 1 つ少なく昇順にし、変える値は 20〜20000 Hz の中にしてください",
                 ));
             }
             c
@@ -264,6 +271,20 @@ fn branch_add(p: &mut Project, id: NodeId) -> CmdResult<Output> {
     let s = find_split(r, id).ok_or_else(|| not_split(id))?;
     if s.mode == SplitMode::Channel {
         return Err(CmdError::conflict("channel の分岐は 2 本のままです"));
+    }
+    // The new branch takes the top band's upper part and every other crossover stays; where
+    // there is no number left above the top one, nothing changes.
+    if s.mode == SplitMode::Frequency && crossovers_kept(&s.crossovers, s.branches.len()) {
+        let mut c = s.crossovers.clone();
+        if let Some(&last) = c.last() {
+            c.extend(added_crossovers(last, 1));
+        }
+        if !crossovers_kept(&c, s.branches.len() + 1) {
+            return Err(CmdError::range(
+                "一番上のクロスオーバーより上に、分岐を足す余地がありません",
+            ));
+        }
+        s.crossovers = c;
     }
     s.branches.push(empty_branch(new));
     p.fix_track_rack(tid);
