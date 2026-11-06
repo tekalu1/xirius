@@ -113,6 +113,7 @@ crates/xirius-ui/src/folder_bus.rs	run_command	2
 crates/xirius-ui/src/fx_chain.rs	arrange_run	2
 crates/xirius-ui/src/fx_chain.rs	run_command	2
 crates/xirius-ui/src/fx_preset.rs	run_command	1
+crates/xirius-ui/src/head_fader.rs	run_command	1
 crates/xirius-ui/src/health.rs	run_command	2
 crates/xirius-ui/src/input_dispatch.rs	arrange_run	10
 crates/xirius-ui/src/input_dispatch.rs	lock	3

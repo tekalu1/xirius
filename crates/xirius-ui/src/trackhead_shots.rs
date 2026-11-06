@@ -24,58 +24,58 @@ const fn staged(n: u8) -> Act {
 
 pub const SHOTS: &[Shot] = &[
     Shot {
-        name: "th-h56-w216",
+        name: "th-01-h56-w216",
         acts: &[staged(0)],
     },
     Shot {
-        name: "th-h56-w340",
+        name: "th-02-h56-w340",
         acts: &[staged(1)],
     },
     Shot {
-        name: "th-h56-w420",
+        name: "th-03-h56-w420",
         acts: &[staged(2)],
     },
     Shot {
-        name: "th-h64-w216",
+        name: "th-04-h64-w216",
         acts: &[staged(3)],
     },
     Shot {
-        name: "th-h64-w340",
+        name: "th-05-h64-w340",
         acts: &[staged(4)],
     },
     Shot {
-        name: "th-h64-w420",
+        name: "th-06-h64-w420",
         acts: &[staged(5)],
     },
     Shot {
-        name: "th-h128-w216",
+        name: "th-07-h128-w216",
         acts: &[staged(6)],
     },
     Shot {
-        name: "th-h128-w340",
+        name: "th-08-h128-w340",
         acts: &[staged(7)],
     },
     Shot {
-        name: "th-h128-w420",
+        name: "th-09-h128-w420",
         acts: &[staged(8)],
     },
     // The first track widened with its ↕, at 420.
     Shot {
-        name: "th-widened-w420",
+        name: "th-10-widened-w420",
         acts: &[staged(9)],
     },
     // The fader of the first track, held and moved (the value tag shows), let go, and
     // double-clicked (the number field opens).
     Shot {
-        name: "th-fader-held",
+        name: "th-11-fader-held",
         acts: &[staged(10)],
     },
     Shot {
-        name: "th-fader-let-go",
+        name: "th-12-fader-let-go",
         acts: &[staged(11)],
     },
     Shot {
-        name: "th-fader-field",
+        name: "th-13-fader-field",
         acts: &[staged(12)],
     },
 ];

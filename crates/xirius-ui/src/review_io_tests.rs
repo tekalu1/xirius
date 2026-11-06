@@ -199,6 +199,29 @@ fn external_reads_preserve_a_value_typed_in_a_device_knob() {
 }
 
 #[test]
+fn external_reads_preserve_a_value_typed_in_a_track_head_fader() {
+    let (_root, mut s) = setup();
+    assert!(s.run_command("track.add.audio", json!({})));
+    let t = *s.project().tracks.keys().next().unwrap();
+    s.head_fader_type(t);
+    assert_eq!(s.ime_target(), Some(crate::interaction::ImeTarget::Head));
+    s.ime_replace(None, "-3", false);
+    s.ime_replace(None, "未確定", true);
+    let before = s.ime_field().cloned().unwrap();
+    assert_eq!(before.marked, "未確定");
+    s.bind_window_io();
+    let call = request(&mut s, "track.list", json!({}), RunOptions::human());
+    assert!(call.join().unwrap().is_err());
+    assert!(s.saving.is_none());
+    assert_eq!(s.ime_field().cloned().unwrap(), before);
+    s.head_fader.entry = None;
+    assert!(!s.human_interaction_active());
+    let retry = request(&mut s, "track.list", json!({}), RunOptions::human());
+    finish(&mut s);
+    retry.join().unwrap().unwrap();
+}
+
+#[test]
 fn external_reads_preserve_palette_search_forms_and_menu_composition() {
     use crate::tools::Mods;
     for target in 0..4 {

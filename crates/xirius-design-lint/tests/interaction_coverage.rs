@@ -134,6 +134,11 @@ fn a_new_text_owner_requires_an_interaction_review() {
         ("context/mod.rs:State.field", "self.popup.is_some()"),
         ("context/mod.rs:State.search", "self.popup.is_some()"),
         ("context/search.rs:Search.field", "self.popup.is_some()"),
+        // The track head's volume fader: a value typed in its field, like the device knob's.
+        (
+            "head_fader.rs:Entry.field",
+            "self.head_fader.entry.is_some()",
+        ),
         // The start screen's search: its words, once typed, are someone's work (UI-350).
         ("home.rs:Home.pick", "self.ime_target().is_some()"),
         (
