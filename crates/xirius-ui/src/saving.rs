@@ -41,6 +41,9 @@ pub(crate) struct Saving {
     record_error: Option<String>,
     /// The pointer is over 「中止 Esc」 (it lights as on the opening card).
     pub(crate) cancel_hover: bool,
+    /// The keys and the roll still held when the veil comes are let go then, as a save lets
+    /// them go when it starts: a release after the veil does not reach them (PLG-021).
+    let_go_at_veil: bool,
 }
 
 struct McpSave {
@@ -368,6 +371,7 @@ impl Studio {
             stop_take: false,
             record_error: None,
             cancel_hover: false,
+            let_go_at_veil: false,
         });
     }
 
@@ -403,6 +407,7 @@ impl Studio {
 
     /// The screen's own `plugin.rescan` on the song's owner (PLG-021). Only the session goes
     /// to the worker: nothing on the screen is closed or cleared for it, as nothing is saved.
+    /// Only if it outlasts the veil do the keys and the roll let go, as for a save.
     pub(crate) fn rescan_on_worker(&mut self, raw: serde_json::Map<String, serde_json::Value>) {
         let command: SaveCommand = ("plugin.rescan".into(), raw, RunOptions::human(), false);
         let progress = Arc::new(SaveProgress::default());
@@ -425,6 +430,7 @@ impl Studio {
             stop_take: false,
             record_error: None,
             cancel_hover: false,
+            let_go_at_veil: true,
         });
     }
 
@@ -570,6 +576,7 @@ impl Studio {
             stop_take: false,
             record_error: None,
             cancel_hover: false,
+            let_go_at_veil: false,
         });
     }
 
@@ -644,6 +651,16 @@ impl Studio {
     }
 
     pub(crate) fn poll_saving(&mut self) -> bool {
+        if let Some(save) = self
+            .saving
+            .as_mut()
+            .filter(|s| s.let_go_at_veil && s.veil())
+        {
+            save.let_go_at_veil = false;
+            self.roll.cancel();
+            self.pc_keys_release();
+            self.sound_roll_audition();
+        }
         let Some(save) = self.saving.as_ref() else {
             return false;
         };
@@ -1116,6 +1133,50 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(s.saving.is_none());
+    }
+
+    /// A studio with a key of the PC keyboard held, whose rescan looks in no folder.
+    fn held_while_rescanning(root: &std::path::Path, delay: Duration) -> Studio {
+        let mut s = Studio::new(Song::sample_with(xirius_plugins::ScanOptions {
+            dirs: Vec::new(),
+            cache: root.join("catalog.json"),
+            ..xirius_plugins::ScanOptions::default()
+        }));
+        s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
+        assert!(s.start_midi());
+        assert!(s.pc_key_down("a", false));
+        assert_eq!(s.pc_keys.down.len(), 1);
+        s.save_test_delay = delay;
+        s.rescan_on_worker(serde_json::Map::new());
+        s
+    }
+
+    #[test]
+    fn a_rescan_that_outlasts_the_veil_lets_the_held_keys_go() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = held_while_rescanning(root.path(), Duration::from_millis(600));
+        s.poll_saving();
+        assert_eq!(s.pc_keys.down.len(), 1, "a short rescan disturbs nothing");
+        // After the veil, a release no longer reaches the key: the key lets go then.
+        while !s.saving.as_ref().unwrap().veil() {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        s.poll_saving();
+        assert!(s.saving.is_some());
+        assert!(s.pc_keys.down.is_empty());
+        assert!(s.roll.audition.is_none());
+        finish(&mut s);
+        assert!(s.error.is_none(), "{:?}", s.error);
+    }
+
+    #[test]
+    fn a_rescan_done_before_the_veil_keeps_the_held_keys() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = held_while_rescanning(root.path(), Duration::ZERO);
+        finish(&mut s);
+        assert_eq!(s.pc_keys.down.len(), 1);
+        assert!(s.pc_key_up("a"));
+        assert!(s.pc_keys.down.is_empty());
     }
 
     #[test]
