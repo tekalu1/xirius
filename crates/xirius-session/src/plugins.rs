@@ -817,6 +817,8 @@ pub struct PluginLoader {
     file_warnings: Vec<String>,
     /// The plugins opened ahead of the next build ([`PluginLoader::preload`]).
     ready: HashMap<PluginId, Ready>,
+    /// The plugins whose last opening for a build failed, for [`PluginLoader::answered`].
+    failed: HashSet<PluginId>,
     /// How long the plugins opened since the last build took here, with their owner and name.
     took: HashMap<PluginId, (String, String, Duration)>,
     /// Plugins in a host process the build took before the host answered (ENG-065), with how
@@ -1207,6 +1209,20 @@ impl PluginLoader {
     /// parameters it does not have and where it runs. `owner` names the track or bus in
     /// messages. A plugin [`PluginLoader::preload`] opened as it is now is taken as it is.
     pub fn instantiate(
+        &mut self,
+        owner: &str,
+        x: &Plugin,
+    ) -> Result<(Box<dyn Processor>, Vec<String>), String> {
+        let out = self.instantiate_once(owner, x);
+        if out.is_err() {
+            self.failed.insert(x.id);
+        } else {
+            self.failed.remove(&x.id);
+        }
+        out
+    }
+
+    fn instantiate_once(
         &mut self,
         owner: &str,
         x: &Plugin,
@@ -3035,12 +3051,13 @@ impl PluginLoader {
     }
 
     /// Whether the last build's instance of `id` has been answered for (PLG-050): its host
-    /// opened it, failed to, or went down; a plugin in this process, once it was made. Until
-    /// then its window cannot be asked for, and what went wrong is not known yet.
+    /// opened it, failed to, or went down; a plugin in this process, once it was made or the
+    /// build could not make it. Until then its window cannot be asked for, and what went wrong
+    /// is not known yet.
     pub fn answered(&self, id: PluginId) -> bool {
         match self.remotes.get(&id) {
             Some(r) => r.link.answers() > 0 || r.server.crashed(),
-            None => self.locals.contains_key(&id),
+            None => self.locals.contains_key(&id) || self.failed.contains(&id),
         }
     }
 
@@ -3184,6 +3201,34 @@ impl PluginLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PLG-050: a plugin in this process that the build could not make is answered for, so
+    /// its window says it could not be loaded rather than giving up in silence.
+    #[test]
+    fn a_plugin_in_this_process_the_build_could_not_make_is_answered_for() {
+        let id = PluginId(8);
+        let plugin = Plugin {
+            id,
+            name: "Fixture".into(),
+            kind: PluginKind::Effect,
+            format: "vst3".into(),
+            uid: "not-installed".into(),
+            bypass: false,
+            deactivated: false,
+            params: Default::default(),
+            state: None,
+            sidechain: None,
+            preset: None,
+            samples: Vec::new(),
+            isolation: PluginIsolation::InProcess,
+        };
+        let mut loader = PluginLoader::new(Some(Arc::new(Catalog::default())));
+        assert!(!loader.answered(id), "not built");
+        assert!(loader.instantiate("Track 1", &plugin).is_err());
+        assert!(loader.answered(id), "its opening failed: answered");
+        assert!(loader.local(id).is_none());
+        assert!(loader.statuses().iter().all(|(at, ..)| *at != id));
+    }
 
     /// PLG-050: a plugin built for a host process is not answered for until the host says how
     /// its opening went, here that the host could not be started.
