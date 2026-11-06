@@ -233,23 +233,29 @@ pub struct HomeLayout {
     pub list_size: (f32, f32),
 }
 
+/// The column the start screen's parts sit in: at the top under the bar, as the approved mock
+/// has it, and at most [`CONTENT_MAX`] wide in the middle (UI-350).
+pub fn column(g: &Geometry) -> Rect {
+    let (top, side, bottom) = if g.size.0 < NARROW {
+        (Space::X4.px(), Space::X3.px(), Space::X4.px())
+    } else {
+        (TOP, Space::X5.px(), Space::X5.px())
+    };
+    let room = (g.size.0 - 2.0 * side).max(0.0);
+    let w = room.min(CONTENT_MAX);
+    Rect::new(
+        side + (room - w) / 2.0,
+        top,
+        w,
+        (g.size.1 - top - bottom).max(0.0),
+    )
+}
+
 impl HomeLayout {
     pub fn of(home: &Home, g: &Geometry, no_device: bool) -> HomeLayout {
-        // At the top under the bar, as the approved mock has it (UI-350).
         let narrow = g.size.0 < NARROW;
-        let (top, side, bottom) = if narrow {
-            (Space::X4.px(), Space::X3.px(), Space::X4.px())
-        } else {
-            (TOP, Space::X5.px(), Space::X5.px())
-        };
-        let z = Rect::new(
-            side,
-            top,
-            (g.size.0 - 2.0 * side).max(0.0),
-            (g.size.1 - top - bottom).max(0.0),
-        );
-        let w = z.w.min(CONTENT_MAX);
-        let x0 = z.x + (z.w - w) / 2.0;
+        let z = column(g);
+        let (x0, w) = (z.x, z.w);
         let gap = Space::X1.px();
         let line = |x: f32, y: f32| {
             let lw = crate::start::no_device::width();

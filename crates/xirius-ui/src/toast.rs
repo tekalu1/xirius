@@ -278,8 +278,8 @@ impl Studio {
 }
 
 /// Where the toast and its parts go: at the left foot of the lanes, above the failed command's
-/// line when that shows too. With no lanes (the start screen, the new song's screen) it is in
-/// the middle of the foot, as the other lines there are.
+/// line when that shows too (`docs/ui-approved.md`). With no lanes (the start screen, the new
+/// song's screen) it is at the left foot of the column their parts sit in ([`Studio::foot`]).
 pub fn layout(studio: &Studio, g: &Geometry) -> Option<Parts> {
     let t = studio.toast_shown()?;
     let width = |s: &str| crate::browser::text_width(s, FontSize::Small);
@@ -301,12 +301,7 @@ pub fn layout(studio: &Studio, g: &Geometry) -> Option<Parts> {
     } else {
         0.0
     };
-    let x = if studio.start_shown() {
-        foot.x + (foot.w - w) / 2.0
-    } else {
-        foot.x + MARGIN
-    };
-    let r = Rect::new(x, foot.bottom() - MARGIN - H - lift, w, H);
+    let r = Rect::new(foot.x + MARGIN, foot.bottom() - MARGIN - H - lift, w, H);
     let mid = |h: f32| r.y + (H - h) / 2.0;
     let mut x = r.x + LEFT;
     let icon = t.marked().then(|| {

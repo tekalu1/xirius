@@ -433,29 +433,47 @@ fn the_settings_audio_page_has_no_test_tone_without_a_device() {
     assert!(s.settings_scene(&g).find(&Do::Tone).is_none());
 }
 
-/// The lines at the foot have no lanes to sit under on the new song's screen: they are in the
-/// middle of the body, at the distance from its bottom they keep over the lanes.
-#[test]
-fn the_lines_at_the_foot_are_in_the_middle_of_the_body() {
-    let (mut s, g) = empty();
-    let foot = s.foot(&g);
-    assert_eq!(foot, Rect::new(0.0, 0.0, g.size.0, g.size.1));
-    let middle = |r: Rect| (r.x + r.w / 2.0 - g.size.0 / 2.0).abs() < 0.5;
+/// The lines at the foot have no lanes to sit under on the start screen and the new song's
+/// screen: they are as wide as the column the screen's parts sit in, at the distance from the
+/// body's bottom they keep over the lanes. The strip and the lines are in its middle, and the
+/// toast at its left, as it is at the lanes' left (docs/ui-approved.md).
+fn lines_at_the_foot_of(mut s: Studio, g: &Geometry, across: Rect) {
+    let foot = s.foot(g);
+    assert_eq!(foot, Rect::new(across.x, 0.0, across.w, g.size.1));
+    assert!(foot.w < g.size.0, "not the whole window: {foot:?}");
+    let middle = |r: Rect| (r.x + r.w / 2.0 - (foot.x + foot.w / 2.0)).abs() < 0.5;
     s.error = Some("だめでした".into());
-    let notice = crate::notice::place(&s, &g, "片付けました", None);
+    let notice = crate::notice::place(&s, g, "片付けました", None);
     assert!(middle(notice), "{notice:?}");
     assert!(
         notice.bottom() <= g.size.1 - 36.0,
         "above the strip: {notice:?}"
     );
     s.warn("「drumloop」を伸縮できません".into(), None);
-    let toast = crate::toast::layout(&s, &g).expect("shown").rect;
-    assert!(middle(toast), "{toast:?}");
+    let toast = crate::toast::layout(&s, g).expect("shown").rect;
+    assert_eq!(toast.x, foot.x + 8.0, "at the left: {toast:?}");
+    assert!(toast.right() <= foot.right(), "{toast:?}");
     assert!(toast.bottom() <= g.size.1 - 36.0, "{toast:?}");
     s.live_midi.assign.learning = Some(xirius_prefs::midimap::Target::Volume("1".into()));
-    let (pill, _) = s.midi_pill(&g).expect("learning");
+    let (pill, _) = s.midi_pill(g).expect("learning");
     assert!(middle(pill), "{pill:?}");
     assert!(pill.bottom() <= g.size.1 - 36.0, "{pill:?}");
+}
+
+#[test]
+fn on_the_new_songs_screen_the_lines_at_the_foot_are_as_wide_as_its_zone() {
+    let (s, g) = empty();
+    lines_at_the_foot_of(s, &g, zone(&g));
+}
+
+#[test]
+fn on_the_start_screen_the_lines_at_the_foot_are_as_wide_as_its_column() {
+    let (mut s, g) = empty();
+    s.home = Some(crate::home::Home::default());
+    assert!(s.home_shown());
+    let column = crate::home::column(&g);
+    assert_eq!(column.w, 680.0, "the content's most, in a wide window");
+    lines_at_the_foot_of(s, &g, column);
 }
 
 /// Over the lanes, the foot is theirs, above the drawer.

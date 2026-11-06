@@ -600,15 +600,17 @@ impl Transport {
                     return Err(PREPARING.into());
                 }
                 // A player that could not begin to start is a failure, said as it was: a
-                // device that cannot be had is still tried again after a while.
+                // device that cannot be had is still tried again after a while. Its notice
+                // stays, to be said by the tick for a caller that puts nothing on the strip.
                 self.down = down.map(|d| Down {
                     due: Instant::now() + REOPEN,
                     ..d
                 });
+                debug_assert!(self.driver_notice.is_some(), "a start refused says why");
                 return Err(self
                     .driver_notice
-                    .take()
-                    .unwrap_or_else(|| PREPARING.into()));
+                    .clone()
+                    .unwrap_or_else(|| unavailable("開けませんでした")));
             }
             if self.mode == OutputMode::Device
                 && self.io_prefs.text("audio.driver") == "wasapi-exclusive"
@@ -1584,10 +1586,19 @@ impl Studio {
                 }
                 self.error = (!warnings.is_empty()).then(|| warnings.join("。"));
             }
-            Err(e) if e == MIDI_PREPARING => self.transport.pending_record = true,
-            Err(e) => self.error = Some(e),
+            Err(e) => self.record_refused(e),
         }
         true
+    }
+
+    /// A record that could not begin: the MIDI input still opening is waited for, and pressed
+    /// again once it is open; anything else is said on the strip.
+    fn record_refused(&mut self, e: String) {
+        if e == MIDI_PREPARING {
+            self.transport.pending_record = true;
+        } else {
+            self.error = Some(e);
+        }
     }
 
     /// The song plays up to where the punch range begins: the record button blinks (REC-007).
@@ -2062,11 +2073,14 @@ impl Studio {
         self.say_reopened(tried, before, INPUT_REOPENED) | changed
     }
 
-    /// Says how the sound device was opened when that was not the way asked for.
+    /// Says how the sound device was opened when that was not the way asked for, or why it
+    /// could not be: not again when the strip says it already.
     fn say_driver_notice(&mut self) -> bool {
         match self.transport.take_driver_notice() {
             Some(text) => {
-                self.tell(text);
+                if self.error.as_ref() != Some(&text) {
+                    self.tell(text);
+                }
                 true
             }
             None => false,
@@ -3950,20 +3964,34 @@ mod tests {
     }
 
     /// A player that cannot begin to start is a failure, said once as it was: not "preparing",
-    /// and not tried again at every frame.
+    /// and not tried again at every frame. On the strip, it is not said again by the notice.
     #[test]
     fn a_player_that_cannot_begin_to_start_is_said_as_a_failure() {
         let mut s = windowed_empty();
         s.transport.observe_inputs = true;
         s.transport.fail_start = Some("開けません".into());
-        let p = s.project();
-        assert_eq!(
-            s.transport.watch(&p, s.song.dir(), &[]),
-            Some("開けません".into())
-        );
+        s.watch_inputs();
+        assert_eq!(s.error.as_deref(), Some("開けません"));
         assert!(!s.transport.preparing());
-        assert!(s.transport.take_driver_notice().is_none(), "said once");
+        assert!(s.say_driver_notice());
+        assert!(s.notice.is_none(), "said once: {:?}", s.notice);
+        assert!(s.transport.take_driver_notice().is_none());
+        let p = s.project();
         assert_eq!(s.transport.watch(&p, s.song.dir(), &[]), None);
+    }
+
+    /// A record refused while its MIDI input opens waits for it, with nothing on the strip; one
+    /// refused otherwise says why.
+    #[test]
+    fn a_record_waiting_for_its_midi_input_says_nothing() {
+        let mut s = windowed_empty();
+        s.record_refused(MIDI_PREPARING.into());
+        assert!(s.transport.pending_record);
+        assert_eq!(s.error, None);
+        s.transport.pending_record = false;
+        s.record_refused("録音できません".into());
+        assert!(!s.transport.pending_record);
+        assert_eq!(s.error.as_deref(), Some("録音できません"));
     }
 
     /// A device that cannot be had, tried again and failing to start: tried again later still.

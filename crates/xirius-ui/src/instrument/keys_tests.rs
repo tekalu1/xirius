@@ -114,6 +114,23 @@ fn a_key_lit_and_let_go_follows_the_keys_own_pitch_when_the_track_transposes() {
     assert_eq!(s.roll.audition, None, "the light goes off");
 }
 
+/// The roll's lit key asking for a player that cannot begin to start: nothing sounds and the
+/// key puts nothing on the strip, but the failure is said all the same, as it was.
+#[test]
+fn a_lit_key_that_cannot_start_the_player_still_has_the_failure_said() {
+    let mut s = Studio::sample();
+    s.transport.mode = OutputMode::Silent { paced: true };
+    s.transport.bind_window();
+    s.transport.fail_start = Some("開けません".into());
+    s.roll.audition = Some(60);
+    s.sound_roll_audition();
+    assert_eq!(s.pc_keys.roll, None, "nothing sounds");
+    assert_eq!(s.error, None, "the key puts nothing on the strip");
+    s.tick();
+    let said = s.notice.as_ref().map(|n| n.text.as_str());
+    assert_eq!(said, Some("開けません"));
+}
+
 #[test]
 fn the_note_a_key_started_ends_even_after_the_octave_moved() {
     let (mut s, _) = played(OutputMode::Silent { paced: true });

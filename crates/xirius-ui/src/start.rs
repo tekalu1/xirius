@@ -196,15 +196,19 @@ impl Studio {
     }
 
     /// Where the lines at the foot of the screen go (the failed command's strip, the notices,
-    /// the toast and MIDI 学習): across the lanes and above the drawer, or across the whole body
-    /// on the start screen and the new song's screen, which show neither. Each keeps its own
-    /// distance from the bottom and its own width.
+    /// the toast and MIDI 学習): as wide as what the screen shows, at its foot. That is the
+    /// lanes above the drawer, or on the start screen and the new song's screen, which show
+    /// neither, the column their parts sit in ([`crate::home::column`], [`zone`]) at the foot
+    /// of the body. Each keeps its own distance from the bottom and its own width.
     pub fn foot(&self, g: &Geometry) -> Rect {
-        if self.start_shown() {
-            Rect::new(0.0, 0.0, g.size.0, g.size.1)
+        let across = if self.home_shown() {
+            crate::home::column(g)
+        } else if self.start_shown() {
+            zone(g)
         } else {
-            Rect::new(g.lanes.x, 0.0, g.lanes.w, g.drawer.y)
-        }
+            return Rect::new(g.lanes.x, 0.0, g.lanes.w, g.drawer.y);
+        };
+        Rect::new(across.x, 0.0, across.w, g.size.1)
     }
 
     /// The recording entry has its mark: a device with nothing to record from. With no
