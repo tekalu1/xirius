@@ -621,7 +621,7 @@ fn mute_badge(pen: &mut Pen, r: Rect, on: bool) {
 fn plugin_of(t: &Track, pick: Pick) -> Option<&Plugin> {
     match pick {
         Pick::Plugin(id) => t.inserts.iter().find(|p| p.id == id),
-        Pick::Split(_) => None,
+        Pick::Split(_) | Pick::Branch(_) => None,
     }
 }
 

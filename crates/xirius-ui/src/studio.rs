@@ -1671,6 +1671,8 @@ impl Studio {
                 true
             }
             Hit::Rail(tab) => {
+                // a tab of the browser brought up (F6 and its row) takes the keys from a value
+                self.value_let_go();
                 self.browser.press_rail(tab);
                 self.inspector.field = None;
                 self.rebuild(g);

@@ -112,7 +112,7 @@ pub fn act_command(act: &Act) -> (&'static str, Value) {
             "plugin.pick",
             json!({"id": t.to_string(), "after": match pick {
                 Pick::Plugin(id) => id.to_string(),
-                Pick::Split(id) => id.to_string(),
+                Pick::Split(id) | Pick::Branch(id) => id.to_string(),
             }}),
         ),
         Act::OpenChannel(t) => ("view.channel.editor", json!({"id": t.to_string()})),

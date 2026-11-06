@@ -7,13 +7,20 @@
 //! then scrolled the same way with the song stopped, then once more with the loop
 //! off from two bars before the song's end, so the song plays out and stops inside
 //! the run. Frames of [`SLOW_MS`] or more are listed with where they fell.
+//!
+//! With `--branches <n>` (MIX-045), the first of those instruments gets a splitter of n
+//! branches, an effect in each, its strip wide and its channel editor open: the scrolled
+//! runs scroll the editor across every column and back as well, and its paint is timed on
+//! its own. The numbers go to `branch-bench.json`.
 
 use std::f32::consts::TAU;
 use std::path::PathBuf;
 use std::time::Instant;
 
 use serde_json::{Value, json};
+use xirius_core::id::{NodeId, TrackId};
 use xirius_core::model::TrackKind;
+use xirius_core::rack::RackNode;
 
 use super::strip_order;
 use crate::frame::{Criteria, Distribution};
@@ -35,6 +42,8 @@ struct Samples {
     frames: Vec<f64>,
     /// The mixer's paint, ms.
     paints: Vec<f64>,
+    /// The channel editor's paint, ms.
+    editor_paints: Vec<f64>,
     /// Strips on screen.
     shown: Vec<usize>,
     /// Strips whose meter showed a level.
@@ -45,6 +54,8 @@ struct Samples {
 
 pub struct Bench {
     out: PathBuf,
+    /// The branches of the measured splitter, 0 for none.
+    branches: usize,
     ready: bool,
     warm: usize,
     run: usize,
@@ -55,7 +66,7 @@ pub struct Bench {
 
 /// The song's strips made up to [`STRIPS`] by duplicating, in turn, the instruments
 /// that play all through the loop.
-pub fn prepare(s: &mut Studio) -> Result<(), String> {
+pub fn prepare(s: &mut Studio, branches: usize) -> Result<(), String> {
     let p = s.project();
     let tm = p.time_map();
     let (start, end) = (tm.bar_start(5), tm.bar_start(9));
@@ -81,13 +92,58 @@ pub fn prepare(s: &mut Studio) -> Result<(), String> {
     s.toggle_loop();
     // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
     s.seek(start);
+    if branches > 0 {
+        split_wide(s, &sources[0], branches)?;
+    }
     Ok(())
 }
 
+/// A splitter of `n` branches at the end of `track`'s effects, an EQ or a Comp in each.
+fn split_wide(s: &mut Studio, track: &str, n: usize) -> Result<(), String> {
+    let run = |s: &mut Studio, name: &str, args: Value| {
+        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
+        s.song.run(name, args).map(|_| ())
+    };
+    run(
+        s,
+        "rack.split.add",
+        json!({ "track": track, "branches": n }),
+    )?;
+    let t: TrackId = track.parse().map_err(|_| format!("no track {track}"))?;
+    let branches = split_of(s, t).ok_or("no splitter")?;
+    for (i, b) in branches.into_iter().enumerate() {
+        let name = if i % 2 == 0 { "EQ" } else { "Comp" };
+        run(s, "plugin.add", json!({ "track": track, "name": name }))?;
+        let id = s.project().tracks[&t].inserts.last().map(|p| p.id);
+        run(s, "rack.node.move", json!({ "id": id, "to": b }))?;
+    }
+    Ok(())
+}
+
+/// The branches of the last splitter in `t`'s effects.
+fn split_of(s: &Studio, t: TrackId) -> Option<Vec<NodeId>> {
+    let p = s.project();
+    let fx = &p.tracks.get(&t)?.rack.as_ref()?.fx;
+    fx.iter().rev().find_map(|n| match n {
+        RackNode::Split(x) => Some(x.branches.iter().map(|b| b.id).collect()),
+        RackNode::Plugin(_) => None,
+    })
+}
+
+/// The track whose splitter has `n` branches.
+fn wide_track(s: &Studio, n: usize) -> Option<TrackId> {
+    let p = s.project();
+    p.tracks
+        .keys()
+        .copied()
+        .find(|t| split_of(s, *t).is_some_and(|b| b.len() == n))
+}
+
 impl Bench {
-    pub fn new(out: PathBuf) -> Self {
+    pub fn new(out: PathBuf, branches: usize) -> Self {
         Bench {
             out,
+            branches,
             ready: false,
             warm: WARM,
             run: 0,
@@ -102,6 +158,10 @@ impl Bench {
         if !self.ready {
             // Through the tab, as a press would; then play.
             s.press(g, Hit::Tab(DrawerTab::Mixer));
+            if let Some(t) = wide_track(s, self.branches).filter(|_| self.branches > 0) {
+                s.mixer.wide.insert(t);
+                s.open_channel(t);
+            }
             s.toggle_play();
             self.ready = true;
         }
@@ -116,6 +176,8 @@ impl Bench {
             m.frames
                 .push(now.duration_since(last).as_secs_f64() * 1000.0);
             m.paints.push(s.mixer.paint_us.replace(0) as f64 / 1000.0);
+            m.editor_paints
+                .push(s.mixer.editor_paint_us.replace(0) as f64 / 1000.0);
             m.shown.push(s.mixer_strips(g).len());
             m.metered.push(s.mixer.meters.count());
             m.playing.push(s.transport.playing);
@@ -124,7 +186,13 @@ impl Bench {
         if RUNS[self.run].starts_with("scroll") {
             // Once across every strip and back over the run.
             let t = self.samples.frames.len() as f32 / FRAMES as f32;
-            s.mixer.scroll = s.mixer_max_scroll(g) * (0.5 - 0.5 * (t * TAU).cos());
+            let phase = 0.5 - 0.5 * (t * TAU).cos();
+            s.mixer.scroll = s.mixer_max_scroll(g) * phase;
+            if let Some(v) = s.channel_view(g)
+                && let Some(w) = s.channel.as_mut()
+            {
+                w.scroll.0 = (v.flow.w - v.body.w).max(0.0) * phase;
+            }
         }
         if self.samples.frames.len() < FRAMES {
             return false;
@@ -153,8 +221,17 @@ impl Bench {
             self.warm = 10;
             return false;
         }
+        let editor = s.channel_view(g).map(|v| {
+            json!({
+                "size": [v.r.w, v.r.h],
+                "flow_w": v.flow.w,
+                "columns": v.flow.columns.len(),
+            })
+        });
         let data = json!({
             "strips": strip_order(&s.project()).len(),
+            "branches": self.branches,
+            "editor": editor,
             "window": [g.size.0, g.size.1 + xirius_design::Layout::TOP_BAR_H + xirius_design::Layout::BOTTOM_BAR_H],
             "error": s.error,
             "criteria": { "min_fps": Criteria::FPS_60.min_fps, "max_p99_ms": Criteria::FPS_60.max_p99_ms },
@@ -164,7 +241,11 @@ impl Bench {
         if let Err(e) = std::fs::create_dir_all(&self.out).and_then(|()| {
             // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
             std::fs::write(
-                self.out.join("mixer-bench.json"),
+                self.out.join(if self.branches > 0 {
+                    "branch-bench.json"
+                } else {
+                    "mixer-bench.json"
+                }),
                 serde_json::to_vec_pretty(&data).unwrap_or_default(),
             )
         }) {
@@ -180,6 +261,7 @@ impl Bench {
 fn summary(name: &str, m: &Samples, playing: bool) -> Value {
     let f = Distribution::from_samples(&m.frames);
     let p = Distribution::from_samples(&m.paints);
+    let e = Distribution::from_samples(&m.editor_paints);
     let c = Criteria::FPS_60;
     let fps = 1000.0 / f.mean;
     let span = |v: &[usize]| json!([v.iter().min(), v.iter().max()]);
@@ -190,6 +272,7 @@ fn summary(name: &str, m: &Samples, playing: bool) -> Value {
         "fps": fps,
         "frame_ms": { "mean": f.mean, "p50": f.p50, "p95": f.p95, "p99": f.p99, "max": f.max },
         "mixer_paint_ms": { "mean": p.mean, "p99": p.p99, "max": p.max },
+        "editor_paint_ms": { "mean": e.mean, "p99": e.p99, "max": e.max },
         "strips_shown": span(&m.shown),
         "strips_metered": span(&m.metered),
         "slow_frames": slow(m),
@@ -205,7 +288,7 @@ fn slow(m: &Samples) -> Vec<Value> {
         .iter()
         .enumerate()
         .filter(|(_, ms)| **ms >= SLOW_MS)
-        .map(|(i, ms)| json!({ "at": i, "ms": ms, "paint_ms": m.paints[i], "playing": m.playing[i] }))
+        .map(|(i, ms)| json!({ "at": i, "ms": ms, "paint_ms": m.paints[i], "editor_paint_ms": m.editor_paints[i], "playing": m.playing[i] }))
         .collect()
 }
 
@@ -216,7 +299,7 @@ mod tests {
     #[test]
     fn the_measured_song_has_64_strips_and_loops_where_they_play() {
         let mut s = Studio::sample();
-        prepare(&mut s).unwrap();
+        prepare(&mut s, 0).unwrap();
         let p = s.project();
         assert_eq!(strip_order(&p).len(), STRIPS);
         let tm = p.time_map();
@@ -237,6 +320,7 @@ mod tests {
         let m = Samples {
             frames: vec![16.6, 22.4, 16.7, 20.0],
             paints: vec![0.5, 0.9, 0.4, 0.6],
+            editor_paints: vec![0.0; 4],
             shown: vec![13; 4],
             metered: vec![61, 61, 0, 0],
             playing: vec![true, true, false, false],
@@ -249,5 +333,19 @@ mod tests {
         assert_eq!(slow[1]["at"], 3);
         assert_eq!(v["ended_at"], 2);
         assert!(RUNS.contains(&"scroll_to_end"));
+    }
+
+    #[test]
+    fn mix_045_the_measured_splitter_has_its_branches_each_with_an_effect() {
+        let mut s = Studio::sample();
+        prepare(&mut s, 64).unwrap();
+        let t = wide_track(&s, 64).unwrap();
+        let p = s.project();
+        let Some(RackNode::Split(x)) = p.tracks[&t].rack.as_ref().unwrap().fx.last() else {
+            panic!("no splitter");
+        };
+        assert_eq!(x.branches.len(), 64);
+        assert!(x.branches.iter().all(|b| b.fx.len() == 1));
+        assert_eq!(strip_order(&p).len(), STRIPS);
     }
 }

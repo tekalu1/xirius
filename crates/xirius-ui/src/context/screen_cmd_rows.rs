@@ -254,7 +254,11 @@ impl Studio {
                 if let Some(after) = text(args, "after") {
                     let pick = match after.parse::<AnyId>() {
                         Ok(AnyId::Plugin(id)) => Pick::Plugin(id),
-                        Ok(AnyId::RackNode(id)) => Pick::Split(id),
+                        // a splitter, or an empty branch to put it in
+                        Ok(AnyId::RackNode(id)) => match self.project().tracks.get(&t) {
+                            Some(x) if crate::mixer::flow::has_split(x, id) => Pick::Split(id),
+                            _ => Pick::Branch(id),
+                        },
                         _ => return Some(false),
                     };
                     return Some(self.pick_after(g, t, pick));

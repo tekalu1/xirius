@@ -25,6 +25,8 @@
 //!                       uses --out and always parks the window
 //!   --mixer             measure 64 mixer strips playing (UI-024) to a silent
 //!                       output; uses --out and --size and always parks the window
+//!   --branches <n>      with --mixer: one of the strips gets a splitter of n branches,
+//!                       its channel editor open and scrolled across them (MIX-045)
 //!
 //! Windows are shown without being activated, so they never take the
 //! keyboard from whoever is using the PC.
@@ -103,6 +105,9 @@ fn main() {
             mixer_bench: Some(PathBuf::from(
                 value("--out").unwrap_or_else(|| "target/mixer-bench".into()),
             )),
+            bench_branches: value("--branches")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
             ..screen::Options::default()
         });
     } else if args.iter().any(|a| a == "--bench") {

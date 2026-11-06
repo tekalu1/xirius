@@ -390,7 +390,8 @@ impl Studio {
         match after {
             Some(Choose::Plugin(id)) => args["after"] = json!(id.to_string()),
             Some(Choose::Split(id)) => args["after"] = json!(id.to_string()),
-            None => args["index"] = json!(index),
+            // an empty branch goes through `insert_into`, never here
+            Some(Choose::Branch(_)) | None => args["index"] = json!(index),
         }
         // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         let Some(data) = self.arrange_run("plugin.add", args) else {

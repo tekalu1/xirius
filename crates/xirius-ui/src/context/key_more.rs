@@ -276,6 +276,8 @@ impl Studio {
         if to != Place::Dock {
             self.mixer_let_go_keys();
         }
+        // a branch's value lets the keys go wherever they go, the editor's too (MIX-045)
+        self.value_let_go();
         self.browser.typing = false;
         self.rebuild(g);
         true

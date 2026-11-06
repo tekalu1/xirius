@@ -119,10 +119,12 @@ pub enum Kind {
         channel: bool,
     },
     /// A branch of splitter `split` with nothing in it, at `index` among its branches: it is
-    /// still a row, so its level and its M are there (MIX-045, approved 2026-11-06).
+    /// still a row, so its level and its M are there (MIX-045, approved 2026-11-06). A channel
+    /// split's two are L and R.
     Empty {
         split: NodeId,
         index: usize,
+        channel: bool,
     },
     /// Under the picked row: the level of the branch it heads or of its layer (MIX-045).
     Level,
@@ -133,6 +135,8 @@ pub enum Kind {
 pub enum Pick {
     Plugin(PluginId),
     Split(NodeId),
+    /// A branch with nothing in it, by its own id (review 1, M1): picking it opens its level row.
+    Branch(NodeId),
 }
 
 /// The level a row's M and level row move: the branch it heads, or its layer.
@@ -274,6 +278,7 @@ impl Line {
         match self.kind {
             Kind::Instrument { id, .. } | Kind::Effect(id) => Some(Pick::Plugin(id)),
             Kind::Split { id, .. } => Some(Pick::Split(id)),
+            Kind::Empty { .. } => self.target.map(|x| Pick::Branch(x.id)),
             _ => None,
         }
     }
@@ -380,7 +385,11 @@ fn chain(
                 for (index, b) in s.branches.iter().enumerate() {
                     let from = out.len();
                     if b.fx.is_empty() {
-                        let kind = Kind::Empty { split: s.id, index };
+                        let kind = Kind::Empty {
+                            split: s.id,
+                            index,
+                            channel: s.mode == SplitMode::Channel,
+                        };
                         out.push(Line::new(area, kind, depth + 1));
                     } else {
                         chain(out, area, &b.fx, depth + 1, true, open);
@@ -437,6 +446,27 @@ pub fn nested(t: &Track, id: NodeId) -> bool {
     depth(&rack.fx, id, 0)
         .or_else(|| layers.iter().find_map(|l| depth(&l.fx, id, 0)))
         .is_some_and(|n| n > 0)
+}
+
+/// Whether `id` is a branch of `t` with nothing in it.
+pub fn empty_branch(t: &Track, id: NodeId) -> bool {
+    fn within(nodes: &[RackNode], id: NodeId) -> bool {
+        nodes.iter().any(|n| match n {
+            RackNode::Plugin(_) => false,
+            RackNode::Split(s) => s
+                .branches
+                .iter()
+                .any(|b| (b.id == id && b.fx.is_empty()) || within(&b.fx, id)),
+        })
+    }
+    let Some(rack) = &t.rack else {
+        return false;
+    };
+    let layers = match &rack.source {
+        Some(Source::Multi { layers, .. }) => layers.as_slice(),
+        _ => &[],
+    };
+    within(&rack.fx, id) || layers.iter().any(|l| within(&l.fx, id))
 }
 
 /// Where a picked node sits: the branch or layer that holds it (none: the track's own chain),
@@ -850,7 +880,9 @@ fn hovered(s: &Studio, t: TrackId, l: &Line) -> bool {
 
 /// Whether a row shows its ＋ after it: picked, or under the pointer.
 fn shows_after(s: &Studio, t: TrackId, l: &Line) -> bool {
-    l.kind != Kind::Level && l.pick().is_some() && (picked(s, t, l) || hovered(s, t, l))
+    !matches!(l.kind, Kind::Level | Kind::Empty { .. })
+        && l.pick().is_some()
+        && (picked(s, t, l) || hovered(s, t, l))
 }
 
 /// Whether a row shows its M: one with a level, not picked (the picked row's M is on its
@@ -865,7 +897,7 @@ pub(crate) fn shows_mute(s: &Studio, t: TrackId, l: &Line) -> bool {
 pub fn row_name(t: &Track, l: &Line) -> String {
     match l.kind {
         Kind::Split { .. } => "スプリッター".into(),
-        Kind::Empty { index, .. } => empty_name(index),
+        Kind::Empty { index, channel, .. } => empty_name(index, channel),
         _ => l
             .plugin()
             .and_then(|id| t.inserts.iter().find(|p| p.id == id))
@@ -874,9 +906,14 @@ pub fn row_name(t: &Track, l: &Line) -> String {
     }
 }
 
-/// An empty branch's name: 「分岐 2」 for the second.
-pub fn empty_name(index: usize) -> String {
-    format!("分岐 {}", index + 1)
+/// An empty branch's name: 「分岐 2」 for the second; a channel split's 「分岐 L」 and
+/// 「分岐 R」, as the channel editor names its columns.
+pub fn empty_name(index: usize, channel: bool) -> String {
+    match (channel, index) {
+        (true, 0) => "分岐 L".into(),
+        (true, _) => "分岐 R".into(),
+        (false, _) => format!("分岐 {}", index + 1),
+    }
 }
 
 /// What a point on a row of `t`'s flow is.
@@ -1125,10 +1162,17 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                         pen.icon("plus", glyph(b), soft);
                     }
                 }
-                Kind::Empty { index, .. } => {
-                    if hot {
-                        pen.round(row, c.surface_3, Radius::Clip);
-                    }
+                Kind::Empty { index, channel, .. } => {
+                    // picked, it fills as any row does (its level row opens under it)
+                    let ink = if chosen {
+                        pen.round(row, c.primary.0, Radius::Clip);
+                        c.primary.1
+                    } else {
+                        if hot {
+                            pen.round(row, c.surface_3, Radius::Clip);
+                        }
+                        c.ink
+                    };
                     if !frozen {
                         pen.round(dot(row, l), c.solo_on.0, Radius::Pill);
                     }
@@ -1142,7 +1186,7 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                             &level_text(level),
                             FontSize::Micro,
                             Weight::Regular,
-                            c.ink,
+                            ink,
                             level_part(row),
                             Align::Right,
                         )
@@ -1152,12 +1196,17 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                     }
                     let x = row.x + l.indent() + NAME_X;
                     let w = (end - x).max(0.0);
-                    let name = pen.fit(&empty_name(index), FontSize::Small, Weight::Regular, w);
+                    let name = pen.fit(
+                        &empty_name(index, channel),
+                        FontSize::Small,
+                        Weight::Regular,
+                        w,
+                    );
                     pen.text(
                         &name,
                         FontSize::Small,
                         Weight::Regular,
-                        c.ink,
+                        ink,
                         Rect::new(x, row.y, w, row.h),
                         Align::Left,
                     );

@@ -507,3 +507,108 @@ fn mix_045_sixty_four_branches_lay_out_without_a_stall() {
     assert!(start.elapsed().as_millis() < 500);
     assert!(flow.rows.len() > 64);
 }
+
+#[test]
+fn mix_045_a_heads_value_lets_the_keys_go_when_they_move_on_or_the_editor_shuts() {
+    let (mut s, g) = studio();
+    let (t, _, b) = vocal(&mut s);
+    let before = levels(&s, t, b[0]);
+    let untouched = |s: &mut Studio| {
+        for k in ["left", "right", "up", "pageup", "pagedown", "delete", "m"] {
+            assert!(!s.value_key(k, Mods::default()), "{k}");
+        }
+        assert_eq!(s.mixer.value_focus, None);
+    };
+    for way in ["next", "prev"] {
+        let v = s.channel_view(&g).unwrap();
+        let hp = head_parts(&column(&v, b[0]));
+        for r in [hp.level, hp.pan.unwrap()] {
+            click(&mut s, &g, mid(r), 1, Mods::default());
+            assert!(s.mixer.value_focus.is_some());
+            assert!(round(&mut s, &g, way), "{way}");
+            untouched(&mut s);
+            assert_eq!(levels(&s, t, b[0]), before, "{way}");
+        }
+    }
+    // F6 brings the browser's instruments up: the keys go with it
+    let v = s.channel_view(&g).unwrap();
+    let hp = head_parts(&column(&v, b[0]));
+    click(&mut s, &g, mid(hp.pan.unwrap()), 1, Mods::default());
+    assert!(s.mixer.value_focus.is_some());
+    assert!(!key(&mut s, &g, "f6", Mods::default()));
+    let args = json!({ "tab": "instruments" });
+    assert_eq!(
+        s.key_more(&g, "browser.tab", args.as_object().unwrap()),
+        Some(true)
+    );
+    untouched(&mut s);
+    assert_eq!(levels(&s, t, b[0]), before);
+    // the editor shut: its heads take no keys
+    click(&mut s, &g, mid(hp.level), 1, Mods::default());
+    assert!(s.mixer.value_focus.is_some());
+    s.channel = None;
+    untouched(&mut s);
+    assert_eq!(levels(&s, t, b[0]), before);
+}
+
+#[test]
+fn mix_045_a_heads_pan_takes_pageup_and_pagedown_and_stops_at_the_ends() {
+    let (mut s, g) = studio();
+    let (t, _, b) = vocal(&mut s);
+    let v = s.channel_view(&g).unwrap();
+    let pan = head_parts(&column(&v, b[1])).pan.unwrap();
+    click(&mut s, &g, mid(pan), 1, Mods::default());
+    for want in [-0.2, -0.4, -0.6, -0.8, -1.0, -1.0] {
+        assert!(key(&mut s, &g, "pagedown", Mods::default()));
+        assert_eq!(levels(&s, t, b[1]).1, want);
+    }
+    for _ in 0..12 {
+        assert!(key(&mut s, &g, "pageup", Mods::default()));
+    }
+    assert_eq!(levels(&s, t, b[1]).1, 1.0);
+    assert_eq!(levels(&s, t, b[1]).0, -6.0, "the level stays");
+}
+
+/// The press a screen reader's action on the mark `key` makes, as the screen wires it.
+fn reader_press(s: &mut Studio, g: &Geometry, key: &str) -> bool {
+    fn find(marks: &[crate::a11y::Mark], key: &str) -> Option<crate::studio::Hit> {
+        marks.iter().find_map(|m| {
+            if m.key == key {
+                m.press
+            } else {
+                find(&m.children, key)
+            }
+        })
+    }
+    let hit = find(&crate::a11y::marks(s, g), key).expect("the mark has an action");
+    crate::a11y::press(s, g, hit)
+}
+
+#[test]
+fn mix_045_a_reader_presses_the_plus_and_a_heads_mute() {
+    let (mut s, g) = studio();
+    let (t, sp, b) = vocal(&mut s);
+    assert!(reader_press(
+        &mut s,
+        &g,
+        &format!("channel-add-branch-{sp}")
+    ));
+    assert_eq!(split(&s, t, sp).unwrap().branches.len(), 3);
+    assert_eq!(s.channel.as_ref().unwrap().chosen, Some(Pick::Split(sp)));
+    assert!(reader_press(
+        &mut s,
+        &g,
+        &format!("channel-add-branch-{sp}")
+    ));
+    assert_eq!(split(&s, t, sp).unwrap().branches.len(), 4);
+    s.undo(&g);
+    assert_eq!(split(&s, t, sp).unwrap().branches.len(), 3);
+    assert!(reader_press(&mut s, &g, &format!("channel-mute-{}", b[0])));
+    assert!(levels(&s, t, b[0]).2);
+}
+
+/// The keys go round the places (「次の領域へ」 / 「前の領域へ」), as the key or the palette runs it.
+fn round(s: &mut Studio, g: &Geometry, way: &str) -> bool {
+    let args = json!({ "way": way });
+    s.key_more(g, "view.focus", args.as_object().unwrap()) == Some(true)
+}

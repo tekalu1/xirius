@@ -636,6 +636,8 @@ pub struct Mixer {
     pub scan: scan::PluginScan,
     /// How long the last paint took, in µs (for the measurement of UI-024).
     pub paint_us: Cell<u64>,
+    /// How long the channel editor's last paint took, in µs (the measurement of MIX-045).
+    pub editor_paint_us: Cell<u64>,
     /// The channel a double click on a track's head brought up, and when it did (ms).
     flash: Option<(TrackId, u64)>,
     /// The band pressed last while the strips are folded: its strip stays open (MIX-046).
@@ -755,6 +757,7 @@ impl Mixer {
             && !p.tracks.get(&t).is_some_and(|t| match pick {
                 flow::Pick::Plugin(id) => t.inserts.iter().any(|x| x.id == id),
                 flow::Pick::Split(id) => flow::has_split(t, id),
+                flow::Pick::Branch(id) => flow::empty_branch(t, id),
             })
         {
             self.chosen = None;
@@ -821,6 +824,7 @@ pub(crate) fn split_at(
     match (after, into) {
         (Some((_, flow::Pick::Plugin(id))), _) => format!("after:{id}"),
         (Some((_, flow::Pick::Split(id))), _) => format!("after:{id}"),
+        (Some((_, flow::Pick::Branch(id))), _) => format!("branch:{id}:0"),
         (None, Some((_, Chain::Branch(n), i))) => format!("branch:{n}:{i}"),
         (None, Some((_, Chain::Layer(n), i))) => format!("layer:{n}:{i}"),
         (None, _) => "track".to_string(),
@@ -1613,9 +1617,21 @@ impl Studio {
                 true
             }
             MixerHit::RowMute(t, n) => self.row_mute(t, n),
-            MixerHit::Level(..) | MixerHit::BranchPan(..) | MixerHit::Branch(..) => true,
+            MixerHit::Level(..) | MixerHit::BranchPan(..) => true,
+            MixerHit::Branch(t, n) => {
+                // an empty branch is picked as a row is, so its level row opens under it
+                let pick = flow::Pick::Branch(n);
+                self.mixer.chosen = Some((t, pick));
+                self.dock_follow(g);
+                self.reveal_pick(g, t, pick);
+                true
+            }
             MixerHit::AddBranch(t, id) => {
                 self.mixer.chosen = Some((t, flow::Pick::Split(id)));
+                // the editor's ＋ is pressed this way by a screen reader: it picks there too
+                if let Some(w) = self.channel.as_mut().filter(|w| w.track == t) {
+                    w.chosen = Some(flow::Pick::Split(id));
+                }
                 // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                 self.run_command("rack.branch.add", json!({ "split": id.to_string() }))
             }

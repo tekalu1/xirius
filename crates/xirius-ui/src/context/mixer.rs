@@ -722,13 +722,15 @@ impl Studio {
             .get(&t)
             .is_some_and(|x| x.frozen.is_none());
         let at = match pick {
-            Pick::Plugin(id) => id.to_string(),
-            Pick::Split(id) => id.to_string(),
+            Pick::Plugin(id) => format!("after:{id}"),
+            Pick::Split(id) => format!("after:{id}"),
+            // an empty branch: into it
+            Pick::Branch(id) => format!("branch:{id}:0"),
         };
         let split = self.ctx_as(
             "スプリッターを後ろに追加",
             "rack.split.add",
-            json!({ "track": t.to_string(), "at": format!("after:{at}") }),
+            json!({ "track": t.to_string(), "at": at }),
         );
         vec![
             Item::act("エフェクトを後ろに追加…", "", Act::PickAfter(t, pick)).enabled(open),

@@ -84,8 +84,9 @@ impl Studio {
     }
 
     /// The keys move to another part (F6, the palette, a menu of the arrangement): the picked
-    /// row and the key send's bar let them go.
+    /// row, the key send's bar and a branch's value let them go.
     pub(crate) fn mixer_let_go_keys(&mut self) {
+        self.value_let_go();
         self.mixer.chosen = None;
         self.mixer.key_focus = None;
         self.mixer.heading = None;
@@ -138,6 +139,16 @@ impl Studio {
             self.mixer.insert_after = None;
             self.mixer.insert_into = None;
             self.open_popup(PopupKind::Layer(t), anchor);
+            return;
+        }
+        if let Pick::Branch(id) = pick {
+            // an empty branch: the plug-in goes in it
+            self.mixer.insert_after = None;
+            self.mixer.insert_into = Some((t, crate::channel::flow::Chain::Branch(id), 0));
+            self.open_popup(PopupKind::Insert(t), anchor);
+            if self.popup.is_none() {
+                self.mixer.insert_into = None;
+            }
             return;
         }
         self.mixer.insert_into = None;
@@ -278,7 +289,7 @@ impl Studio {
                 };
                 let id = match pick {
                     Pick::Plugin(id) => id.to_string(),
-                    Pick::Split(id) => id.to_string(),
+                    Pick::Split(id) | Pick::Branch(id) => id.to_string(),
                 };
                 if track.rack.is_none() {
                     // the instrument stays first; the effects are after it
@@ -334,6 +345,8 @@ impl Studio {
                     self.open_plugin(t, id);
                 }
                 Pick::Split(id) => self.fold_split(g, t, id),
+                // an empty branch: the list of plug-ins, to put one in it
+                Pick::Branch(_) => self.after_key(g, t, pick, frozen),
             },
             "space" => {
                 let Pick::Plugin(id) = pick else {
@@ -370,6 +383,8 @@ impl Studio {
                     }
                 }
                 Pick::Plugin(_) => {}
+                // an empty branch goes with its ✖ (one undo with its notice)
+                Pick::Branch(_) => {}
                 // a splitter goes with rack.flatten or its branches' own removal
                 Pick::Split(_) => {
                     self.error = Some("スプリッターはキーでは削除できません".into());
@@ -395,6 +410,9 @@ impl Studio {
     /// chain. The row heading a branch or a layer's effects adds at its head (MIX-042).
     fn before_key(&mut self, g: &Geometry, t: TrackId, pick: Pick) {
         use crate::channel::flow::Chain;
+        if let Pick::Branch(_) = pick {
+            return self.after_key(g, t, pick, false);
+        }
         let p = self.project();
         let Some(track) = p.tracks.get(&t) else {
             return;

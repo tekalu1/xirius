@@ -711,7 +711,7 @@ pub fn part_at(v: &View, x: f32, y: f32) -> Option<Part> {
 fn pick_id(pick: Pick) -> String {
     match pick {
         Pick::Plugin(id) => id.to_string(),
-        Pick::Split(id) => id.to_string(),
+        Pick::Split(id) | Pick::Branch(id) => id.to_string(),
     }
 }
 
@@ -780,16 +780,28 @@ fn slot_near(flow: &Flow, pick: Pick, x: f32, y: f32) -> Option<Slot> {
 }
 
 /// A crossover dragged `dx` from where it was taken: twice as high for every 24 px, between
-/// its neighbours.
+/// its neighbours with a gap, inside 20 Hz to 20 kHz (ENG-076). Neighbours too close for the
+/// gap hold it halfway between them; a whole hertz is taken only when it stays between them.
 pub fn crossed(from: &[f64], i: usize, dx: f32) -> Vec<f64> {
+    use xirius_core::rack::{CROSSOVER_GAP, CROSSOVER_MAX_HZ, CROSSOVER_MIN_HZ};
     let mut now = from.to_vec();
     let Some(f0) = from.get(i) else {
         return now;
     };
-    let lo = if i == 0 { 20.0 } else { from[i - 1] * 1.05 };
-    let hi = from.get(i + 1).map_or(20000.0, |f| f / 1.05);
-    let f = f0 * 2f64.powf(f64::from(dx) / 24.0);
-    now[i] = f.clamp(lo, hi.max(lo)).round();
+    let below = i.checked_sub(1).map(|j| from[j]);
+    let above = from.get(i + 1).copied();
+    let mut lo = below.map_or(CROSSOVER_MIN_HZ, |f| f * CROSSOVER_GAP);
+    let mut hi = above.map_or(CROSSOVER_MAX_HZ, |f| f / CROSSOVER_GAP);
+    if lo > hi {
+        let mid = (below.unwrap_or(CROSSOVER_MIN_HZ) * above.unwrap_or(CROSSOVER_MAX_HZ)).sqrt();
+        (lo, hi) = (mid, mid);
+    }
+    let f = (f0 * 2f64.powf(f64::from(dx) / 24.0)).clamp(lo, hi);
+    let whole = f.round();
+    let fits = below.is_none_or(|b| whole > b)
+        && above.is_none_or(|a| whole < a)
+        && (CROSSOVER_MIN_HZ..=CROSSOVER_MAX_HZ).contains(&whole);
+    now[i] = if fits { whole } else { f };
     now
 }
 
@@ -1149,6 +1161,8 @@ impl Studio {
                 ));
                 items
             }
+            // the editor's cards are plug-ins and splitters
+            Pick::Branch(_) => return,
         };
         self.open_context(items, x, y);
     }
@@ -1502,7 +1516,7 @@ fn col_who(t: &xirius_core::model::Track, f: &Flow, col: &Column) -> String {
             .find(|c| matches!(c.kind, CardKind::Instrument { layer: Some(i) } if i == index))
             .and_then(|c| match c.pick {
                 Pick::Plugin(id) => t.inserts.iter().find(|p| p.id == id),
-                Pick::Split(_) => None,
+                Pick::Split(_) | Pick::Branch(_) => None,
             })
             .map_or_else(
                 || format!("レイヤー {}", col.n),
@@ -1515,7 +1529,8 @@ fn col_who(t: &xirius_core::model::Track, f: &Flow, col: &Column) -> String {
 /// the bar's preset tag and its ‹ › (dim at the list's ends),
 /// its toolbar's buttons, a Button for each card (a device's with its power as a toggle, a
 /// splitter's with its mode) and, for each branch and layer, a Slider of its level in dB, a
-/// toggle Button for its mute and a Button that takes it away.
+/// toggle Button for its mute and a Button that takes it away. A splitter's ＋ adds a branch
+/// when the reader presses it.
 pub fn marks(s: &Studio, g: &Geometry) -> Vec<crate::a11y::Mark> {
     use crate::a11y::{Mark, bounds};
     use gpui::accesskit;
@@ -1633,6 +1648,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<crate::a11y::Mark> {
                     children.push(mark(format!("channel-mode-{id}"), node));
                 }
             }
+            Pick::Branch(_) => {}
         }
     }
     for col in v.flow.columns.iter().filter(|c| shown(c.head)) {
@@ -1668,7 +1684,11 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<crate::a11y::Mark> {
         }
         let mut mute = button(&format!("{who} をミュート"), hp.mute);
         toggled(&mut mute, target.mute);
-        children.push(mark(format!("channel-mute-{}", col.id), mute));
+        let mut mute = mark(format!("channel-mute-{}", col.id), mute);
+        mute.press = Some(crate::studio::Hit::Mixer(crate::mixer::MixerHit::RowMute(
+            w.track, col.id,
+        )));
+        children.push(mute);
         if let Some(r) = hp.remove {
             let verb = match col.kind {
                 ColKind::Branch { .. } => "削除",
@@ -1680,11 +1700,16 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<crate::a11y::Mark> {
             ));
         }
     }
+    // the ＋ presses as the strip's does: one more branch, the splitter picked (MIX-045)
     for add in v.flow.adds.iter().filter(|a| shown(a.rect)) {
-        children.push(mark(
+        let mut m = mark(
             format!("channel-add-branch-{}", add.split),
             button("分岐を追加", add.rect),
+        );
+        m.press = Some(crate::studio::Hit::Mixer(
+            crate::mixer::MixerHit::AddBranch(w.track, add.split),
         ));
+        children.push(m);
     }
     if let Some(k) = &v.keys {
         for b in &k.boxes {

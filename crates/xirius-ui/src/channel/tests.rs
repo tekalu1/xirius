@@ -119,7 +119,7 @@ fn it_sits_in_the_middle_and_wraps_its_tools_when_narrow() {
         .iter()
         .find_map(|c| match c.pick {
             Pick::Split(id) => Some(id),
-            Pick::Plugin(_) => None,
+            Pick::Plugin(_) | Pick::Branch(_) => None,
         });
     assert!(s.run_command("rack.branch.add", json!({"split": sp.unwrap()})));
     let narrow = s.geometry(360.0, 800.0);
@@ -483,6 +483,20 @@ fn a_crossover_stays_between_its_neighbours() {
     assert_eq!(crossed(&from, 1, 240.0)[1], (8000.0f64 / 1.05).round());
     assert_eq!(crossed(&from, 1, -240.0)[1], (200.0f64 * 1.05).round());
     assert_eq!(crossed(&from, 0, -480.0)[0], 20.0);
+}
+
+#[test]
+fn a_crossover_among_close_neighbours_stays_rising_and_in_range() {
+    use xirius_core::rack::{crossovers_fit, default_crossovers};
+    for n in [64, 512, 2000] {
+        let from = default_crossovers(n);
+        for i in [0, 1, n / 2, n - 3, n - 2] {
+            for dx in [-2400.0, -3.0, 3.0, 2400.0] {
+                let now = crossed(&from, i, dx);
+                assert!(crossovers_fit(&now, n), "{n} {i} {dx}");
+            }
+        }
+    }
 }
 
 #[test]

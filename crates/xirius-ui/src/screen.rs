@@ -57,6 +57,9 @@ pub struct Options {
     pub roll_bench: Option<PathBuf>,
     /// Measure 64 strips playing in the mixer (UI-024) and write the numbers here.
     pub mixer_bench: Option<PathBuf>,
+    /// With `mixer_bench`, a splitter of this many branches in one strip, its editor open
+    /// (MIX-045); 0 for none.
+    pub bench_branches: usize,
     pub light: bool,
     /// Where the transport plays to.
     pub output: OutputMode,
@@ -71,6 +74,7 @@ impl Default for Options {
             script: shot::SCRIPT,
             roll_bench: None,
             mixer_bench: None,
+            bench_branches: 0,
             light: false,
             output: OutputMode::Device,
         }
@@ -2281,7 +2285,8 @@ pub fn run(opts: Options) {
                 crate::roll::probe::Bench::prepare(&mut studio.borrow_mut());
             }
             if opts.mixer_bench.is_some()
-                && let Err(e) = crate::mixer::bench::prepare(&mut studio.borrow_mut())
+                && let Err(e) =
+                    crate::mixer::bench::prepare(&mut studio.borrow_mut(), opts.bench_branches)
             {
                 // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.
                 eprintln!("could not make the 64 strips: {e}");
@@ -2333,7 +2338,7 @@ pub fn run(opts: Options) {
                 mixer_bench: opts
                     .mixer_bench
                     .clone()
-                    .map(crate::mixer::bench::Bench::new),
+                    .map(|out| crate::mixer::bench::Bench::new(out, opts.bench_branches)),
             }));
             let scripted = opts.shots.is_some() || measured;
             // What the last window moved when it closed: said once (REC-016).

@@ -2,10 +2,11 @@
 //! level row and on the channel editor's branch heads (MIX-045, approved 2026-11-06).
 //!
 //! A press on the bar, the value or the pan takes the keys: ←→ (and ↑↓) move the level by
-//! 1 dB (Shift 0.1), PageUp/PageDown by 6 dB, the pan by 5 % (Shift 1 %); Delete puts it back
-//! to its default, M mutes, Enter or a double press types it, Tab goes to the next value and Esc
-//! lets the keys go. In the field Enter puts the value in, Esc keeps the old one and Tab puts it
-//! in and goes on. A level takes "-3", "-3 dB" and "-inf"; a pan "C", "L20" and "R35".
+//! 1 dB (Shift 0.1), PageUp/PageDown by 6 dB, the pan by 5 % (Shift 1 %, PageUp/PageDown 20 %:
+//! a tenth of its range, as a device's knob takes); Delete puts it back to its default, M mutes,
+//! Enter or a double press types it, Tab goes to the next value and Esc lets the keys go. F6 and
+//! a value going out of sight let them go too. In the field Enter puts the value in, Esc keeps
+//! the old one and Tab puts it in and goes on. A level takes "-3", "-3 dB" and "-inf"; a pan "C", "L20" and "R35".
 
 use serde_json::json;
 use xirius_core::id::{NodeId, TrackId};
@@ -27,6 +28,8 @@ const PAGE: f64 = 6.0;
 /// A pan step of the arrows, and with Shift.
 const PAN_STEP: f64 = 0.05;
 const PAN_FINE: f64 = 0.01;
+/// A pan step of PageUp/PageDown: a tenth of L100〜R100, as a knob's large step is.
+const PAN_PAGE: f64 = 0.2;
 
 /// Which value of a branch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -202,6 +205,38 @@ impl Studio {
         self.mixer.value_focus = Some(f);
     }
 
+    /// The keys go to another place (F6, the palette, a menu): what is typed goes in and the
+    /// value lets the keys go.
+    pub(crate) fn value_let_go(&mut self) {
+        self.value_commit();
+        self.mixer.value_focus = None;
+    }
+
+    /// Whether `f` is on screen now: the strip's level row under its picked row (its pan only
+    /// on a wide strip) in the mixer shown, or a head of the channel editor open on the track.
+    pub(crate) fn value_shown(&self, f: Focus) -> bool {
+        match f.place {
+            Place::Strip => {
+                let p = self.project();
+                let Some(t) = p.tracks.get(&f.track) else {
+                    return false;
+                };
+                self.mixer_shown()
+                    && self.mixer.look().lines(t).iter().any(|l| {
+                        l.kind == crate::mixer::flow::Kind::Level
+                            && l.target.is_some_and(|x| x.id == f.node)
+                    })
+                    && (f.which == Which::Gain || self.strip_pan_shown(f.track, f.node))
+            }
+            Place::Editor => {
+                self.channel.as_ref().is_some_and(|w| w.track == f.track)
+                    && crate::channel::branch_heads(&self.project(), f.track)
+                        .into_iter()
+                        .any(|(n, pan)| n == f.node && (f.which == Which::Gain || pan))
+            }
+        }
+    }
+
     /// The field opens on `f` with its value chosen.
     pub(crate) fn value_type(&mut self, f: Focus) -> bool {
         let Some((target, pan)) = self.branch_now(f.track, f.node) else {
@@ -286,6 +321,11 @@ impl Studio {
         let Some(f) = self.mixer.value_focus else {
             return false;
         };
+        // a value that is not on screen any more has let the keys go
+        if !self.value_shown(f) {
+            self.mixer.value_focus = None;
+            return false;
+        }
         let other = self.popup.is_some()
             || self.ime_target().is_some()
             || self.bar_edit.is_typing()
@@ -322,6 +362,10 @@ impl Studio {
             ("pageup" | "pagedown", Which::Gain) => {
                 let by = if key == "pageup" { PAGE } else { -PAGE };
                 self.value_set(f, "gain", step_gain(target.db, by));
+            }
+            ("pageup" | "pagedown", Which::Pan) => {
+                let by = if key == "pageup" { PAN_PAGE } else { -PAN_PAGE };
+                self.value_set(f, "pan", step_pan(pan, by));
             }
             ("delete" | "backspace", _) => {
                 self.value_reset(f);

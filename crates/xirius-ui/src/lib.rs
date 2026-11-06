@@ -285,6 +285,7 @@ pub mod smf;
 mod snap_length_tests;
 pub mod song;
 pub mod spatial;
+pub mod splitter_branch_shots;
 pub mod start;
 pub mod startup_shots;
 pub mod studio;
@@ -473,6 +474,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("settings", settings::shots::SHOTS),
     ("side", side_shots::SIDE),
     ("small", shot_small::SMALL),
+    ("splitter-branches", splitter_branch_shots::SHOTS),
     ("startup", startup_shots::SHOTS),
     ("tempo-edit", tempo_edit_shots::SHOTS),
     ("tempo-follow", tempo_follow_shots::SHOTS),

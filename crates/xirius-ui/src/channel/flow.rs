@@ -57,7 +57,7 @@ impl Key {
     pub fn of(pick: Pick) -> Key {
         match pick {
             Pick::Plugin(id) => Key::Plugin(id),
-            Pick::Split(id) => Key::Node(id),
+            Pick::Split(id) | Pick::Branch(id) => Key::Node(id),
         }
     }
 }
