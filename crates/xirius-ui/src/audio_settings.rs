@@ -58,8 +58,9 @@ impl Studio {
         }
         if self.transport.mode == xirius_session::output::OutputMode::Device {
             let prefs = settings.prefs.clone();
+            // The start screen has no meter: the sound starts with the song opened from it.
             self.transport.observe_inputs = detecting
-                || project.root.is_empty()
+                || (project.root.is_empty() && !self.home_shown())
                 || self
                     .settings
                     .as_ref()

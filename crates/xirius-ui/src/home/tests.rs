@@ -645,3 +645,32 @@ fn the_mixer_is_not_painted_under_the_start_screen() {
     s.home = None;
     assert!(s.mixer_painted());
 }
+
+/// The start screen has no meter: its empty song does not watch the inputs (that would start
+/// the sound behind it); a new empty song does.
+#[test]
+fn the_start_screen_does_not_watch_the_inputs() {
+    let (mut s, _g, _tmp) = kept(&[]);
+    s.transport.mode = xirius_session::output::OutputMode::Device;
+    s.poll_io();
+    assert!(!s.transport.observe_inputs);
+    s.home = None;
+    s.poll_io();
+    assert!(s.transport.observe_inputs);
+    s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
+}
+
+/// What the strip says over the start screen goes with the next press there, as it does over
+/// the song: a click on the list, or a button pressed with Enter.
+#[test]
+fn the_strip_over_the_start_screen_goes_with_the_next_press() {
+    let (mut s, g, _tmp) = kept(&[]);
+    s.error = Some("開けません".into());
+    assert!(s.home_press(&g, Spot::Row(0)));
+    assert!(s.error.is_none() && s.home_shown());
+    s.error = Some("開けません".into());
+    s.home.as_mut().unwrap().focus = Focus::Button(Button::Open);
+    assert!(s.home_key(&g, "enter", NONE));
+    assert!(s.error.is_none());
+    assert_eq!(s.file_request, Some(FileRequest::Open));
+}

@@ -341,6 +341,111 @@ mod menu_io_tests {
         assert!(s.toast.is_none());
     }
 
+    /// The start screen as the window starts with a device: an empty song whose inputs are
+    /// watched (the settings do so for an empty song), its list scanned by itself.
+    fn home(root: &std::path::Path) -> Studio {
+        let mut s = Studio::new(crate::song::Song::empty_after(
+            &crate::song::Song::sample_with(ScanOptions {
+                dirs: Vec::new(),
+                cache: root.join("catalog.json"),
+                ..ScanOptions::default()
+            }),
+        ));
+        crate::transport::mark_window_thread();
+        s.bind_window_io();
+        s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
+        s.transport.observe_inputs = true;
+        s.home = Some(crate::home::Home::default());
+        s.mixer.scan.auto = true;
+        assert!(s.home_shown());
+        s
+    }
+
+    /// Frames until the scan, the list it leaves and the sound for the inputs are done; then
+    /// nothing is left over the start screen.
+    fn home_done(s: &mut Studio) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while s.saving.is_some()
+            || s.mixer.scan.running()
+            || s.mixer.scan.catalog_read.is_some()
+            || s.sound_preparing()
+            || !s.mixer.scan.checked
+        {
+            s.tick();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        for _ in 0..8 {
+            s.tick();
+        }
+        assert!(s.home_shown());
+        assert!(s.error.is_none(), "{:?}", s.error);
+        assert!(s.preparing.is_none(), "the card is down");
+        assert!(!s.input_blocked(), "the veil is down");
+    }
+
+    #[test]
+    fn the_start_screen_is_left_clear_after_the_automatic_scan() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = home(root.path());
+        home_done(&mut s);
+        assert_eq!(s.mixer.scan.cache_current, Some(true));
+        assert!(s.mixer.scan.error.is_none(), "{:?}", s.mixer.scan.error);
+        assert!(
+            s.transport.is_live(),
+            "the inputs are watched once the sound is ready"
+        );
+    }
+
+    #[test]
+    fn the_start_screen_is_left_clear_after_a_failed_automatic_scan() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = home(root.path());
+        s.save_test_failure = true;
+        home_done(&mut s);
+        assert_eq!(s.mixer.scan.error.as_deref(), Some("保存できません"));
+    }
+
+    #[test]
+    fn the_start_screen_is_left_clear_when_the_sound_cannot_be_prepared() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = home(root.path());
+        s.transport.fail_start = Some("開けません".into());
+        home_done(&mut s);
+        assert!(!s.transport.is_live());
+    }
+
+    #[test]
+    fn a_new_song_made_during_the_automatic_scan_is_left_clear() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = home(root.path());
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while s.mixer.scan.job.is_none() {
+            s.tick();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        // 新規 on the start screen, as its button does.
+        s.start_leaving(crate::saving::Leave::New);
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while s.home_shown()
+            || s.saving.is_some()
+            || s.opening.is_some()
+            || s.mixer.scan.running()
+            || s.mixer.scan.catalog_read.is_some()
+            || s.sound_preparing()
+        {
+            s.tick();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        for _ in 0..8 {
+            s.tick();
+        }
+        assert!(s.error.is_none(), "{:?}", s.error);
+        assert!(s.preparing.is_none() && !s.input_blocked());
+    }
+
     #[test]
     fn a_scan_asked_while_the_window_is_held_starts_once_it_is_free() {
         let root = tempfile::tempdir().unwrap();

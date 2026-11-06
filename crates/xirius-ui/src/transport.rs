@@ -111,6 +111,8 @@ pub struct Take {
 }
 
 const PREVIEW_CLOSING: &str = "試聴の出力を閉じています";
+/// What [`Transport::ensure`] gives while the player starts behind the card: not a failure.
+pub(crate) const PREPARING: &str = "音を準備しています";
 
 thread_local! {
     static WINDOW_THREAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -580,7 +582,7 @@ impl Transport {
     /// Starts the player for `p` if there is none (or the song moved).
     fn ensure(&mut self, p: &Project, dir: Option<PathBuf>) -> Result<&mut Player, String> {
         if self.prepared_start.is_some() {
-            return Err("音を準備しています".into());
+            return Err(PREPARING.into());
         }
         if self.auditioning_export {
             return Err("書き出した音を試聴中です".into());
@@ -592,7 +594,7 @@ impl Transport {
             if self.windowed && self.mode != OutputMode::None {
                 self.down = None;
                 self.begin_start(p, dir);
-                return Err("音を準備しています".into());
+                return Err(PREPARING.into());
             }
             if self.mode == OutputMode::Device
                 && self.io_prefs.text("audio.driver") == "wasapi-exclusive"
@@ -1241,9 +1243,16 @@ impl Transport {
             self.driver_notice = Some(n.clone());
         }
         // An input device that would not open is tried again after a while; another failure
-        // not until the armed tracks change.
+        // not until the armed tracks change. A player that began to start is waited for: the
+        // input is watched once it is up. One that could not begin says why in its notice.
         let failed = started.err();
         match &failed {
+            Some(e) if e == PREPARING => {
+                if !self.preparing() {
+                    self.watch_tried = Some(armed.to_vec());
+                }
+                return None;
+            }
             Some(e) if is_input_unavailable(e) => self.input_went_down(e.clone()),
             Some(_) => self.watch_tried = Some(armed.to_vec()),
             None => {}
@@ -1841,6 +1850,10 @@ impl Studio {
         if self.sound_preparing() {
             self.poll_preparing();
             return true;
+        }
+        // What was said while the player started is over once it started (or gave up).
+        if self.error.as_deref() == Some(PREPARING) {
+            self.error = None;
         }
         let continued = self.poll_macro();
         if self.saving.is_some() || self.opening.is_some() {
