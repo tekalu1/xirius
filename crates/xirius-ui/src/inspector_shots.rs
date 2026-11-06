@@ -109,7 +109,7 @@ mod tests {
             .tree()
             .row_of(crate::tree::RowKind::Track(keys(&s)))
             .expect("the row");
-        let mark = s.row_mark(&row, t);
+        let mark = s.row_mark(&row, row.head_w, t);
         assert_eq!(mark.text.as_deref(), Some("−12 +10%"));
     }
 

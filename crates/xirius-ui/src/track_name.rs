@@ -10,8 +10,13 @@ use xirius_design::{FontSize, Radius, Weight};
 
 /// Where a track's name text sits in its row (row-local): a double click on it renames the
 /// track. The width is measured the way the browser's buttons are placed, with a little room.
-pub fn name_text(row: &crate::tree::Row, name: &str, mark: &crate::draw::MarkChoice) -> Rect {
-    let area = crate::draw::track_name_rect(row, mark);
+pub fn name_text(
+    row: &crate::tree::Row,
+    column_w: f32,
+    name: &str,
+    mark: &crate::draw::MarkChoice,
+) -> Rect {
+    let area = crate::draw::track_name_rect(row, column_w, mark);
     let w = (crate::draw::estimated_text_width(name, FontSize::Body) + 6.0).min(area.w);
     Rect::new(area.x, area.y, w.max(8.0), area.h)
 }
@@ -27,8 +32,8 @@ impl Studio {
         let row = self.tree().row_of(RowKind::Track(id))?;
         let p = self.project();
         let track = p.tracks.get(&id)?;
-        let mark = self.row_mark(row, track);
-        let area = crate::draw::track_name_rect(row, &mark);
+        let mark = self.row_mark(row, g.column.w, track);
+        let area = crate::draw::track_name_rect(row, g.column.w, &mark);
         Some(Rect::new(
             g.column.x + area.x,
             g.column.y + row.y - self.scroll.1 + area.y,
@@ -58,8 +63,8 @@ impl Studio {
         let p = self.project();
         let track = &p.tracks[&t];
         let name = track.name.clone();
-        let mark = self.row_mark(row, track);
-        if !name_text(row, &name, &mark).contains(x - g.column.x, y - top) {
+        let mark = self.row_mark(row, g.column.w, track);
+        if !name_text(row, g.column.w, &name, &mark).contains(x - g.column.x, y - top) {
             // The rest of the head is the channel's: the mixer opens on it.
             self.field_blur();
             return self.run_binding(g, &format!("mixer.focus --id {t}"));
@@ -188,25 +193,25 @@ mod tests {
         let row = *s.tree().row_of(RowKind::Track(t)).expect("the row");
         let p = s.project();
         let track = &p.tracks[&t];
-        let mark = s.row_mark(&row, track);
+        let mark = s.row_mark(&row, row.head_w, track);
         assert_eq!(
             mark.text.as_deref(),
             Some("−64"),
             "the one-value form fits, the whole one does not"
         );
-        let area = crate::draw::track_name_rect(&row, &mark);
+        let area = crate::draw::track_name_rect(&row, row.head_w, &mark);
         assert!(
             area.w >= crate::draw::min_name_width(),
             "the name keeps its 3 characters: {area:?}"
         );
-        let pill = crate::draw::track_mark_rect(&row, &mark);
+        let pill = crate::draw::track_mark_rect(&row, row.head_w, &mark);
         assert!(pill.x >= area.right(), "{pill:?} after {area:?}");
         assert!(
             pill.right() <= crate::studio::RowParts::of(&row).name_right + 0.01,
             "{pill:?} inside the buttons"
         );
         // The name's hit area starts and ends where it is drawn.
-        let hit = name_text(&row, &track.name, &mark);
+        let hit = name_text(&row, row.head_w, &track.name, &mark);
         assert_eq!(hit.x, area.x);
         assert!(hit.right() <= area.right() + 0.01);
         // The field that types the name stops where the mark starts (UI-312).
@@ -232,13 +237,13 @@ mod tests {
             .unwrap();
         let p = s.project();
         let track = &p.tracks[&t];
-        let mark = s.row_mark(&row, track);
-        let area = crate::draw::track_name_rect(&row, &mark);
+        let mark = s.row_mark(&row, row.head_w, track);
+        let area = crate::draw::track_name_rect(&row, row.head_w, &mark);
         assert!(
             area.w >= crate::draw::min_name_width(),
             "the long name still keeps 3 characters: {area:?}"
         );
-        let pill = crate::draw::track_mark_rect(&row, &mark);
+        let pill = crate::draw::track_mark_rect(&row, row.head_w, &mark);
         assert!(
             pill.x >= area.right(),
             "the name and the mark do not overlap: {pill:?} {area:?}"
@@ -269,7 +274,7 @@ mod tests {
             .unwrap();
         let p = s.project();
         let track = &p.tracks[&t];
-        let mark = s.row_mark(&row, track);
+        let mark = s.row_mark(&row, row.head_w, track);
         assert_eq!(mark.text.as_deref(), Some("+2"), "the whole mark fits");
     }
 
@@ -309,18 +314,18 @@ mod tests {
         let row = *s.tree().row_of(RowKind::Track(t)).expect("the row");
         let p = s.project();
         let track = &p.tracks[&t];
-        let mark = s.row_mark(&row, track);
+        let mark = s.row_mark(&row, row.head_w, track);
         assert_eq!(
             mark.text.as_deref(),
             Some("−12 +10%"),
             "the whole mark fits with the tightened padding"
         );
-        let area = crate::draw::track_name_rect(&row, &mark);
+        let area = crate::draw::track_name_rect(&row, row.head_w, &mark);
         assert!(
             area.w >= crate::draw::estimated_text_width(&track.name, FontSize::Body),
             "the short name still fits: {area:?}"
         );
-        let pill = crate::draw::track_mark_rect(&row, &mark);
+        let pill = crate::draw::track_mark_rect(&row, row.head_w, &mark);
         assert!(pill.x >= area.right(), "{pill:?} {area:?}");
         assert!(pill.right() <= crate::studio::RowParts::of(&row).name_right + 0.01);
     }

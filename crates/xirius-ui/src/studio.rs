@@ -250,6 +250,11 @@ impl Geometry {
         Geometry::with_head(w, h, panels, Layout::TRACK_HEAD_W)
     }
 
+    /// The parts of `row` in the column as wide as it is shown (see [`RowParts::at`]).
+    pub fn parts(&self, row: &Row) -> RowParts {
+        RowParts::at(row, self.column.w)
+    }
+
     /// Like [`Geometry::with_panels`], with a track head `head_w` wide
     /// ([`Tree::head_w`]).
     pub fn with_head(w: f32, h: f32, panels: Panels, head_w: f32) -> Geometry {
@@ -486,12 +491,24 @@ pub struct RowParts {
     pub meter: Option<Rect>,
     /// Freezes the track (EXP-004), at the right of the buttons' line when there is room.
     pub freeze: Option<Rect>,
+    /// The track's volume, a text-less fader on line 2 between the buttons and the freeze
+    /// button (or the meter); shown only when it is at least [`Self::FADER_MIN_W`] long.
+    pub fader: Option<Rect>,
 }
 
 impl RowParts {
+    /// The parts of a row in a head as wide as the row's content ([`Row::head_w`]): what the
+    /// tests and the shots use when the column is not dragged wider.
     pub fn of(row: &Row) -> RowParts {
+        RowParts::at(row, row.head_w)
+    }
+
+    /// The parts of a row in a column `column_w` wide: what sits at the right (the automation
+    /// marks, the meter, the freeze button, the output field) follows the column's right edge,
+    /// and the name takes what is left.
+    pub fn at(row: &Row, column_w: f32) -> RowParts {
         let x = row.content_x();
-        let right = row.head_w - Space::X2.px();
+        let right = column_w.max(row.head_w) - Space::X2.px();
         match row.kind {
             RowKind::Folder(_) => {
                 let icon_y = (row.h - Layout::ROW_ICON) / 2.0;
@@ -518,6 +535,7 @@ impl RowParts {
                     auto: None,
                     meter: None,
                     freeze: None,
+                    fader: None,
                 }
             }
             RowKind::Track(_) => {
@@ -558,6 +576,10 @@ impl RowParts {
                 let freeze = Rect::new(meter.x - Space::X2.px() - t, Self::LINE_2_Y, t, t);
                 let freeze =
                     (freeze.x >= button(4.0).right() + Layout::TOGGLE_GAP).then_some(freeze);
+                let fader_from = button(4.0).right() + Space::X2.px();
+                let fader_to = freeze.map_or(meter.x, |f| f.x) - Space::X2.px();
+                let fader = (fader_to - fader_from >= Self::FADER_MIN_W)
+                    .then(|| Rect::new(fader_from, Self::LINE_2_Y, fader_to - fader_from, t));
                 RowParts {
                     chevron: None,
                     swatch: Some(swatch),
@@ -573,6 +595,7 @@ impl RowParts {
                     auto: Some(auto),
                     meter: Some(meter),
                     freeze,
+                    fader,
                     output: row.tall.then(|| {
                         Rect::new(
                             name_x,
@@ -591,6 +614,9 @@ impl RowParts {
     pub const SWATCH_CELL: f32 = 16.0;
     pub const SWATCH_MARK: f32 = 12.0;
     pub const METER_W: f32 = 6.0;
+    /// The volume fader is left out when it would be shorter than this (the first thing to go
+    /// when the column narrows).
+    pub const FADER_MIN_W: f32 = 64.0;
     pub const LINE_2_Y: f32 = 36.0;
     pub const LINE_3_Y: f32 = 64.0;
 
@@ -1200,7 +1226,7 @@ impl Studio {
         let mid = |r: Rect| (r.x + r.w / 2.0, r.y + r.h / 2.0);
         let part = |kind: RowKind, pick: fn(&RowParts) -> Option<Rect>| {
             let row = self.tree.row_of(kind)?;
-            let r = pick(&RowParts::of(row))?;
+            let r = pick(&g.parts(row))?;
             let top = self.row_y(g, row);
             Some(mid(Rect::new(g.column.x + r.x, top + r.y, r.w, r.h)))
         };
@@ -1263,9 +1289,9 @@ impl Studio {
             Hit::TrackMark(t) => {
                 let row = self.tree.row_of(RowKind::Track(t))?;
                 let track = self.project().tracks.get(&t)?.clone();
-                let mark = self.row_mark(row, &track);
+                let mark = self.row_mark(row, g.column.w, &track);
                 mark.text.as_ref()?;
-                let r = crate::draw::track_mark_rect(row, &mark);
+                let r = crate::draw::track_mark_rect(row, g.column.w, &mark);
                 Some((
                     g.column.x + r.x + r.w / 2.0,
                     self.row_y(g, row) + r.y + r.h / 2.0,
@@ -1283,7 +1309,7 @@ impl Studio {
             Hit::Solo(t) => part(RowKind::Track(t), |p| p.solo),
             Hit::Row(kind) => {
                 let row = self.tree.row_of(kind)?;
-                let name = RowParts::of(row).name_x;
+                let name = g.parts(row).name_x;
                 let y = if matches!(kind, RowKind::Track(_)) {
                     18.0
                 } else {
@@ -1428,12 +1454,12 @@ impl Studio {
         };
         let top = self.row_y(g, row);
         if in_column {
-            let parts = RowParts::of(row);
+            let parts = g.parts(row);
             let (lx, ly) = (x - g.column.x, y - top);
             let on = |r: Option<Rect>| r.is_some_and(|r| r.contains(lx, ly));
             match row.kind {
                 RowKind::Folder(f) if on(parts.chevron) => return Hit::Chevron(f),
-                RowKind::Folder(f) if self.folder_bus_rect(row, f).contains(lx, ly) => {
+                RowKind::Folder(f) if self.folder_bus_rect(row, g.column.w, f).contains(lx, ly) => {
                     return Hit::FolderBus(f);
                 }
                 RowKind::Track(t) if on(parts.freeze) && self.freezable(t) => {
@@ -1457,9 +1483,9 @@ impl Studio {
                 // The mark says its values on hover; a press is the row's (UI-312).
                 RowKind::Track(t)
                     if self.project().tracks.get(&t).is_some_and(|track| {
-                        let mark = self.row_mark(row, track);
+                        let mark = self.row_mark(row, g.column.w, track);
                         mark.text.is_some()
-                            && crate::draw::track_mark_rect(row, &mark).contains(lx, ly)
+                            && crate::draw::track_mark_rect(row, g.column.w, &mark).contains(lx, ly)
                     }) =>
                 {
                     return Hit::TrackMark(t);
@@ -1751,7 +1777,7 @@ impl Studio {
                 let Some(row) = self.tree.row_of(RowKind::Track(t)) else {
                     return false;
                 };
-                let parts = RowParts::of(row);
+                let parts = g.parts(row);
                 let (kind, r) = if hit == Hit::TrackColor(t) {
                     let Some(r) = parts.swatch else { return false };
                     (PopupKind::Color(t), r)
@@ -1767,7 +1793,7 @@ impl Studio {
                 let Some(row) = self.tree.row_of(RowKind::Track(t)) else {
                     return false;
                 };
-                let Some(r) = RowParts::of(row).keys else {
+                let Some(r) = g.parts(row).keys else {
                     return false;
                 };
                 let anchor = Rect::new(g.column.x + r.x, self.row_y(g, row) + r.y, r.w, r.h);

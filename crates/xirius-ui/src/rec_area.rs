@@ -152,44 +152,45 @@ pub fn heights(studio: &Studio, p: &Project) -> std::collections::HashMap<TrackI
         .collect()
 }
 
-fn gain_rect(row: &Row) -> Rect {
+fn gain_rect(row: &Row, column_w: f32) -> Rect {
     let x = row.content_x();
     Rect::new(
         x,
         GAIN_Y,
-        (row.head_w - Space::X2.px() - x).max(0.0),
+        (column_w.max(row.head_w) - Space::X2.px() - x).max(0.0),
         GAIN_H,
     )
 }
 
-fn meter_rect(row: &Row) -> Rect {
+fn meter_rect(row: &Row, column_w: f32) -> Rect {
     let x = row.content_x();
     Rect::new(
         x,
         METER_Y,
-        (row.head_w - Space::X2.px() - x).max(0.0),
+        (column_w.max(row.head_w) - Space::X2.px() - x).max(0.0),
         METER_H,
     )
 }
 
 /// The gain at `x` of the slider (relative to the column's left edge).
-fn gain_at(row: &Row, x: f32) -> f64 {
-    let r = gain_rect(row);
+fn gain_at(row: &Row, column_w: f32, x: f32) -> f64 {
+    let r = gain_rect(row, column_w);
     let t = ((x - r.x) / r.w.max(1.0)).clamp(0.0, 1.0) as f64;
     let db = GAIN_RANGE.0 + t * (GAIN_RANGE.1 - GAIN_RANGE.0);
     // Whole decibels, and an exact 0 dB in the middle.
     db.round().clamp(GAIN_RANGE.0, GAIN_RANGE.1)
 }
 
-fn gain_x(row: &Row, db: f64) -> f32 {
-    let r = gain_rect(row);
+fn gain_x(row: &Row, column_w: f32, db: f64) -> f32 {
+    let r = gain_rect(row, column_w);
     let t = ((db - GAIN_RANGE.0) / (GAIN_RANGE.1 - GAIN_RANGE.0)).clamp(0.0, 1.0) as f32;
     r.x + t * r.w
 }
 
 /// The Comp row's head, where pressing folds the takes away.
-fn fold_rect(row: &Row, area: &RecArea) -> Option<Rect> {
-    area.comp_y().map(|y| Rect::new(0.0, y, row.head_w, COMP_H))
+fn fold_rect(row: &Row, column_w: f32, area: &RecArea) -> Option<Rect> {
+    area.comp_y()
+        .map(|y| Rect::new(0.0, y, column_w.max(row.head_w), COMP_H))
 }
 
 /// Where the Comp row of a stack changes take: its ends, and each place the take that plays
@@ -252,14 +253,14 @@ impl Studio {
                 && ry >= iy
                 && ry < iy + INPUT_H
             {
-                let r = gain_rect(row);
+                let r = gain_rect(row, g.column.w);
                 // The slider takes the row a little above and below, to be easy to hit.
                 if ry >= GAIN_Y - 4.0 && lx >= r.x - 4.0 && lx <= r.right() + 4.0 {
-                    return rec(RecPart::Gain(gain_at(row, lx)));
+                    return rec(RecPart::Gain(gain_at(row, g.column.w, lx)));
                 }
                 return Spot::None;
             }
-            if fold_rect(row, &area).is_some_and(|r| r.contains(lx, ry)) {
+            if fold_rect(row, g.column.w, &area).is_some_and(|r| r.contains(lx, ry)) {
                 return rec(RecPart::Fold);
             }
             return Spot::None;
@@ -498,7 +499,7 @@ pub fn paint_head(
     if let Some(iy) = area.input_y() {
         let y = base + iy;
         let m = studio.inputs.of(track, studio.transport.input_channels());
-        let mut meter = at(meter_rect(row), y);
+        let mut meter = at(meter_rect(row, g.column.w), y);
         // Recording with the input outside the frame: it is said beside the meter.
         if studio.input_outside_frame(t) {
             let w = (meter.w * 0.4).min(84.0);
@@ -514,11 +515,11 @@ pub fn paint_head(
         }
         paint_meter(pen, meter, &m);
         // The gain slider: a groove and a thumb at the dB.
-        let r = at(gain_rect(row), y);
+        let r = at(gain_rect(row, g.column.w), y);
         let groove = Rect::new(r.x, r.y + (r.h - 4.0) / 2.0, r.w, 4.0);
         pen.round(groove, c.well, Radius::Pill);
-        let mid = gain_x(row, 0.0) + g.column.x;
-        let x = gain_x(row, track.input_gain_db) + g.column.x;
+        let mid = gain_x(row, g.column.w, 0.0) + g.column.x;
+        let x = gain_x(row, g.column.w, track.input_gain_db) + g.column.x;
         let (a, b) = (mid.min(x), mid.max(x));
         if b - a > 0.5 {
             pen.round(Rect::new(a, groove.y, b - a, 4.0), c.ink_blue, Radius::Pill);
@@ -555,7 +556,7 @@ pub fn paint_head(
             Rect::new(
                 x + s + Space::X1.px(),
                 y,
-                (g.column.x + row.head_w - x - s).max(0.0),
+                (g.column.x + g.column.w - x - s).max(0.0),
                 COMP_H,
             ),
             Align::Left,
@@ -760,12 +761,12 @@ mod tests {
     #[test]
     fn the_gain_slider_maps_its_ends_and_middle_to_the_range() {
         let r = row();
-        let g = gain_rect(&r);
-        assert_eq!(gain_at(&r, g.x - 10.0), GAIN_RANGE.0);
-        assert_eq!(gain_at(&r, g.right() + 10.0), GAIN_RANGE.1);
-        assert_eq!(gain_at(&r, g.x + g.w / 2.0), 0.0);
-        let x = gain_x(&r, 6.0);
-        assert_eq!(gain_at(&r, x), 6.0);
+        let g = gain_rect(&r, r.head_w);
+        assert_eq!(gain_at(&r, r.head_w, g.x - 10.0), GAIN_RANGE.0);
+        assert_eq!(gain_at(&r, r.head_w, g.right() + 10.0), GAIN_RANGE.1);
+        assert_eq!(gain_at(&r, r.head_w, g.x + g.w / 2.0), 0.0);
+        let x = gain_x(&r, r.head_w, 6.0);
+        assert_eq!(gain_at(&r, r.head_w, x), 6.0);
     }
 
     #[test]

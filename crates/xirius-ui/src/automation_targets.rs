@@ -155,7 +155,7 @@ impl Studio {
         else {
             return;
         };
-        let parts = LaneParts::of(row, lane == 0);
+        let parts = LaneParts::at(row, g.column.w, lane == 0);
         let r = if replace { parts.param } else { parts.add };
         let anchor = Rect::new(
             g.column.x + r.x,

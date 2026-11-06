@@ -373,7 +373,7 @@ pub(crate) fn pointer_tip(s: &Studio, g: &Geometry) -> Option<(&'static str, Rec
 fn anchor(s: &Studio, g: &Geometry, hit: Hit) -> Option<Rect> {
     if let Hit::Monitor(t) | Hit::Keys(t) = hit {
         let row = s.tree().row_of(crate::tree::RowKind::Track(t))?;
-        let parts = crate::studio::RowParts::of(row);
+        let parts = g.parts(row);
         let r = if matches!(hit, Hit::Monitor(_)) {
             parts.ear?
         } else {
@@ -437,9 +437,9 @@ mod tests {
             .expect("the row");
         let p = s.project();
         let track = &p.tracks[&t];
-        let mark = s.row_mark(&row, track);
+        let mark = s.row_mark(&row, row.head_w, track);
         assert!(mark.text.is_some(), "a mark");
-        let r = crate::draw::track_mark_rect(&row, &mark);
+        let r = crate::draw::track_mark_rect(&row, row.head_w, &mark);
         let at = (
             g.column.x + r.x + r.w / 2.0,
             s.row_y(&g, &row) + r.y + r.h / 2.0,

@@ -41,9 +41,10 @@ pub fn paint(
     track: TrackId,
     mode: AutoMode,
     left: f32,
+    column_w: f32,
     top: f32,
 ) {
-    let Some(auto) = crate::studio::RowParts::of(row).auto else {
+    let Some(auto) = crate::studio::RowParts::at(row, column_w).auto else {
         return;
     };
     let r = rect(auto);

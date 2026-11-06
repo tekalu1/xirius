@@ -672,7 +672,7 @@ fn paint_head_meters(pen: &mut Pen, studio: &Studio, g: &Geometry) {
             if top + row.full_h() < g.column.y || top > g.column.bottom() {
                 continue;
             }
-            let Some(r) = RowParts::of(row).meter else {
+            let Some(r) = g.parts(row).meter else {
                 continue;
             };
             let m = studio
@@ -1102,7 +1102,7 @@ fn paint_row_parts(
     row: &Row,
     top: f32,
 ) {
-    let parts = RowParts::of(row);
+    let parts = g.parts(row);
     let at = |r: Rect| Rect::new(g.column.x + r.x, top + r.y, r.w, r.h);
     let c = pen.c;
     match row.kind {
@@ -1121,7 +1121,7 @@ fn paint_row_parts(
             }
             pen.icon("folder", at(parts.icon), c.ink);
             // The name stops before the output bus button (EDT-073).
-            let bus = studio.folder_bus_rect(row, f);
+            let bus = studio.folder_bus_rect(row, g.column.w, f);
             let name_right = parts.name_right.min(bus.x - Space::X1.px());
             let name_r = Rect::new(
                 g.column.x + parts.name_x,
@@ -1178,8 +1178,8 @@ fn paint_row_parts(
                     .map_or(0.0, |t| pen.measure(&t, FontSize::Micro, Weight::Semibold)),
             };
             studio.set_mark_widths(track.id, widths);
-            let mark = studio.row_mark(row, track);
-            let area = track_name_rect(row, &mark);
+            let mark = studio.row_mark(row, g.column.w, track);
+            let area = track_name_rect(row, g.column.w, &mark);
             let name_r = Rect::new(g.column.x + area.x, top + area.y, area.w, area.h);
             let label = if studio.sound_unavailable(t) {
                 format!("音なし · {}", track.name)
@@ -1198,7 +1198,7 @@ fn paint_row_parts(
                 );
             });
             if let Some(text) = mark.text.as_deref() {
-                let r = track_mark_rect(row, &mark);
+                let r = track_mark_rect(row, g.column.w, &mark);
                 let r = Rect::new(g.column.x + r.x, top + r.y, r.w, r.h);
                 pen.round(r, c.surface_3, Radius::Xs);
                 if text == MARK_DOT {
@@ -1500,12 +1500,17 @@ pub struct MarkChoice {
 /// The mark a row has room for, given the measured (or estimated) widths: all its numbers, one
 /// of them, or only the dot. The name keeps at least [`min_name_width`]. If the mark's usual
 /// padding does not fit, it is tightened before the numbers are dropped (UI-312).
-pub fn choose_mark(row: &crate::tree::Row, widths: MarkWidths, track: &Track) -> MarkChoice {
+pub fn choose_mark(
+    row: &crate::tree::Row,
+    column_w: f32,
+    widths: MarkWidths,
+    track: &Track,
+) -> MarkChoice {
     let Some(full) = track_mark(track) else {
         return MarkChoice::default();
     };
     let short = track_mark_short(track).unwrap_or_else(|| full.clone());
-    let parts = RowParts::of(row);
+    let parts = RowParts::at(row, column_w);
     let avail = (parts.name_right - parts.name_x).max(0.0);
     let reserve = widths.name.min(min_name_width());
     let gap = Space::X1.px();
@@ -1555,21 +1560,21 @@ impl Studio {
 
     /// The mark `row` shows: the measured widths when a paint has stored them, else the
     /// estimate. The drawing, the hit test, the name's field and the balloon all use this.
-    pub fn row_mark(&self, row: &crate::tree::Row, track: &Track) -> MarkChoice {
+    pub fn row_mark(&self, row: &crate::tree::Row, column_w: f32, track: &Track) -> MarkChoice {
         let widths = self
             .mark_widths
             .borrow()
             .get(&track.id)
             .copied()
             .unwrap_or_else(|| MarkWidths::estimate(track));
-        choose_mark(row, widths, track)
+        choose_mark(row, column_w, widths, track)
     }
 }
 
 /// Where the name of a track sits in its row (row-local), leaving the mark and the right
 /// buttons their places (UI-312).
-pub fn track_name_rect(row: &crate::tree::Row, mark: &MarkChoice) -> Rect {
-    let parts = RowParts::of(row);
+pub fn track_name_rect(row: &crate::tree::Row, column_w: f32, mark: &MarkChoice) -> Rect {
+    let parts = RowParts::at(row, column_w);
     let avail = (parts.name_right - parts.name_x).max(0.0);
     let (mark_w, gap) = if mark.text.is_some() {
         (mark.width, mark.gap)
@@ -1585,8 +1590,8 @@ pub fn track_name_rect(row: &crate::tree::Row, mark: &MarkChoice) -> Rect {
 }
 
 /// Where the mark's pill sits in its row (row-local), after the name.
-pub fn track_mark_rect(row: &crate::tree::Row, mark: &MarkChoice) -> Rect {
-    let name = track_name_rect(row, mark);
+pub fn track_mark_rect(row: &crate::tree::Row, column_w: f32, mark: &MarkChoice) -> Rect {
+    let name = track_name_rect(row, column_w, mark);
     Rect::new(
         name.right() + mark.gap,
         RowParts::LINE_1_Y + (Layout::ROW_ICON - 13.0) / 2.0,

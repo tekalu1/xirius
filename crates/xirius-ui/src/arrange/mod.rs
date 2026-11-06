@@ -413,9 +413,14 @@ pub struct LaneParts {
 
 impl LaneParts {
     /// The parameter, add and remove on one line, under the track's name.
-    pub fn of(row: &Row, _first: bool) -> LaneParts {
+    pub fn of(row: &Row, first: bool) -> LaneParts {
+        LaneParts::at(row, row.head_w, first)
+    }
+
+    /// The same in a column `column_w` wide: the add and remove buttons stay at its right edge.
+    pub fn at(row: &Row, column_w: f32, _first: bool) -> LaneParts {
         let x = row.content_x() + Layout::ROW_ICON + Space::X1.px();
-        let right = row.head_w - Space::X2.px();
+        let right = column_w.max(row.head_w) - Space::X2.px();
         let b = Layout::TOGGLE;
         let gap = Layout::TOGGLE_GAP;
         let top = (LANE_H - b) / 2.0;
@@ -714,13 +719,13 @@ impl Studio {
         }
         if in_column {
             if let RowKind::Track(t) = row.kind
-                && let Some(auto) = RowParts::of(row).auto
+                && let Some(auto) = g.parts(row).auto
                 && crate::automation_track_mode::rect(auto).contains(x - g.column.x, y - top)
             {
                 return crate::automation_track_mode::spot(t, p.tracks[&t].auto_mode);
             }
             if let RowKind::Track(t) = row.kind
-                && RowParts::of(row)
+                && g.parts(row)
                     .auto
                     .is_some_and(|r| r.contains(x - g.column.x, y - top))
             {
@@ -858,7 +863,7 @@ impl Studio {
         let top = self.lane_top(g, row, i);
         let target = lane.target.clone();
         if in_column {
-            let parts = LaneParts::of(row, i == 0);
+            let parts = LaneParts::at(row, g.column.w, i == 0);
             let (lx, ly) = (x - g.column.x, y - top);
             for (r, button) in [
                 (parts.param, LaneButton::Param),

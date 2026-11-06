@@ -108,7 +108,7 @@ fn color(pen: &Pen, project: &Project, planned: &Planned) -> gpui::Hsla {
 /// The track column's part: the colour, the kind and the name of each new track, faint.
 pub fn paint_head(pen: &mut Pen, studio: &Studio, project: &Project, g: &Geometry, row: &Row) {
     for place in places(studio, row) {
-        let parts = RowParts::of(&place.row);
+        let parts = g.parts(&place.row);
         let top = studio.row_y(g, &place.row);
         let at = |r: Rect| Rect::new(g.column.x + r.x, top + r.y, r.w, r.h);
         let c = pen.c;

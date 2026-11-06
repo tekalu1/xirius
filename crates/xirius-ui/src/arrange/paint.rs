@@ -120,7 +120,7 @@ pub fn head(pen: &mut Pen, studio: &Studio, project: &Project, g: &Geometry, row
     };
     let c = pen.c;
     let at = |r: Rect, y: f32| Rect::new(g.column.x + r.x, y + r.y, r.w, r.h);
-    if let Some(r) = RowParts::of(row).auto {
+    if let Some(r) = g.parts(row).auto {
         let open = studio.arrange.open.contains(&t);
         let used = track.automation.iter().any(|l| !l.points.is_empty());
         let ink = if studio.arrange.hover == Spot::AutoToggle(t) {
@@ -141,10 +141,19 @@ pub fn head(pen: &mut Pen, studio: &Studio, project: &Project, g: &Geometry, row
         }
         pen.icon(name, at(r, top), ink);
     }
-    crate::automation_track_mode::paint(pen, studio, row, t, track.auto_mode, g.column.x, top);
+    crate::automation_track_mode::paint(
+        pen,
+        studio,
+        row,
+        t,
+        track.auto_mode,
+        g.column.x,
+        g.column.w,
+        top,
+    );
     for (i, lane) in studio.arrange.lanes_of(track).iter().enumerate() {
         let lane_top = top + row.h + i as f32 * LANE_H;
-        let parts = LaneParts::of(row, i == 0);
+        let parts = LaneParts::at(row, g.column.w, i == 0);
         let hot = |b: LaneButton| {
             studio.arrange.hover
                 == Spot::LaneHead {

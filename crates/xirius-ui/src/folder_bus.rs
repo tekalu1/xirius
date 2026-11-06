@@ -32,14 +32,14 @@ pub fn bus_of(p: &Project, f: FolderId) -> Option<(TrackId, &str)> {
 }
 
 /// Where the button sits in the row (row coordinates): at the right of the head.
-pub fn rect(row: &Row, name: Option<&str>) -> Rect {
+pub fn rect(row: &Row, column_w: f32, name: Option<&str>) -> Rect {
     let w = match name {
         Some(n) => {
             (PAD_X * 2.0 + ICON + GAP + crate::browser::text_width(n, FontSize::Caption)).min(MAX_W)
         }
         None => PAD_X * 2.0 + ICON,
     };
-    let right = row.head_w - Space::X2.px();
+    let right = column_w.max(row.head_w) - Space::X2.px();
     Rect::new(right - w, (row.h - H) / 2.0, w, H)
 }
 
@@ -135,15 +135,15 @@ pub fn paint(
 
 impl Studio {
     /// The button's rect on the folder's row (row coordinates).
-    pub(crate) fn folder_bus_rect(&self, row: &Row, f: FolderId) -> Rect {
+    pub(crate) fn folder_bus_rect(&self, row: &Row, column_w: f32, f: FolderId) -> Rect {
         let p = self.project();
-        rect(row, bus_of(&p, f).map(|(_, n)| n))
+        rect(row, column_w, bus_of(&p, f).map(|(_, n)| n))
     }
 
     /// The middle of a folder's bus button on screen.
     pub(crate) fn folder_bus_center(&self, g: &Geometry, f: FolderId) -> Option<(f32, f32)> {
         let row = self.tree().row_of(crate::tree::RowKind::Folder(f))?;
-        let r = self.folder_bus_rect(row, f);
+        let r = self.folder_bus_rect(row, g.column.w, f);
         let top = self.row_y(g, row);
         Some((g.column.x + r.x + r.w / 2.0, top + r.y + r.h / 2.0))
     }
@@ -153,7 +153,7 @@ impl Studio {
         let Some(row) = self.tree().row_of(crate::tree::RowKind::Folder(f)) else {
             return false;
         };
-        let r = self.folder_bus_rect(row, f);
+        let r = self.folder_bus_rect(row, g.column.w, f);
         let anchor = Rect::new(g.column.x + r.x, self.row_y(g, row) + r.y, r.w, r.h);
         self.open_popup(PopupKind::FolderBus(f), anchor);
         true
@@ -271,13 +271,13 @@ mod tests {
         let groove = add_bus(&mut s, "Groove");
         s.after_edit();
         let row = *s.tree().row_of(RowKind::Folder(f)).unwrap();
-        let bare = s.folder_bus_rect(&row, f);
+        let bare = s.folder_bus_rect(&row, row.head_w, f);
         s.press(&g, Hit::FolderBus(f));
         choose(&mut s, &g, "Groove");
         assert!(s.popup.is_none());
         assert_eq!(s.project().folders[&f].bus, Some(groove));
         // Wider with the name, never past 84, still at the head's right.
-        let named = s.folder_bus_rect(&row, f);
+        let named = s.folder_bus_rect(&row, row.head_w, f);
         assert!(named.w > bare.w && named.w <= MAX_W);
         assert_eq!(named.right(), bare.right());
         // The menu lights it; つながない takes it off.
@@ -313,7 +313,7 @@ mod tests {
         }
         // The button names the new bus.
         let row = *s.tree().row_of(RowKind::Folder(f)).unwrap();
-        assert!(s.folder_bus_rect(&row, f).w > PAD_X * 2.0 + ICON);
+        assert!(s.folder_bus_rect(&row, row.head_w, f).w > PAD_X * 2.0 + ICON);
         // One undo takes the bus and the connection away together.
         s.undo(&g);
         assert_eq!(s.project().content_hash(), before);

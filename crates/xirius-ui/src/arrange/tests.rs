@@ -270,9 +270,9 @@ fn mark_mid(s: &Studio, g: &Geometry, t: xirius_core::id::TrackId) -> (f32, f32)
         .expect("the row is in sight");
     let p = s.project();
     let track = &p.tracks[&t];
-    let mark = s.row_mark(&row, track);
+    let mark = s.row_mark(&row, row.head_w, track);
     assert!(mark.text.is_some(), "a mark");
-    let r = crate::draw::track_mark_rect(&row, &mark);
+    let r = crate::draw::track_mark_rect(&row, row.head_w, &mark);
     (
         g.column.x + r.x + r.w / 2.0,
         s.row_y(g, &row) + r.y + r.h / 2.0,
