@@ -55,15 +55,15 @@ pub const SIDE: &[Shot] = &[
     },
 ];
 
-fn at(x: f32, y: f32) -> Point<Pixels> {
+pub(crate) fn at(x: f32, y: f32) -> Point<Pixels> {
     point(px(x), px(y + Layout::TOP_BAR_H))
 }
 
-fn mid(r: Rect) -> (f32, f32) {
+pub(crate) fn mid(r: Rect) -> (f32, f32) {
     (r.x + r.w / 2.0, r.y + r.h / 2.0)
 }
 
-fn button(down: bool, p: Point<Pixels>, clicks: usize) -> PlatformInput {
+pub(crate) fn button(down: bool, p: Point<Pixels>, clicks: usize) -> PlatformInput {
     if down {
         PlatformInput::MouseDown(MouseDownEvent {
             button: MouseButton::Left,
@@ -82,7 +82,7 @@ fn button(down: bool, p: Point<Pixels>, clicks: usize) -> PlatformInput {
     }
 }
 
-fn moved(p: Point<Pixels>, held: bool) -> PlatformInput {
+pub(crate) fn moved(p: Point<Pixels>, held: bool) -> PlatformInput {
     PlatformInput::MouseMove(MouseMoveEvent {
         position: p,
         pressed_button: held.then_some(MouseButton::Left),
@@ -90,7 +90,7 @@ fn moved(p: Point<Pixels>, held: bool) -> PlatformInput {
     })
 }
 
-fn geometry(studio: &Rc<RefCell<Studio>>, window: &Window) -> Geometry {
+pub(crate) fn geometry(studio: &Rc<RefCell<Studio>>, window: &Window) -> Geometry {
     crate::screen::geometry(&studio.borrow(), window)
 }
 
@@ -102,7 +102,13 @@ fn edge(studio: &Rc<RefCell<Studio>>, window: &Window, side: Side) -> Option<(f3
 
 /// Press on the edge, move by `dx` in four steps with the button held (the pointer
 /// stays inside the window), let go.
-fn drag(side: Side, dx: f32, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) {
+pub(crate) fn drag(
+    side: Side,
+    dx: f32,
+    studio: &Rc<RefCell<Studio>>,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let Some(from) = edge(studio, window, side) else {
         return eprintln!("side-check no edge for {side:?}");
     };

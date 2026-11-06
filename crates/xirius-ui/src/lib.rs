@@ -300,6 +300,7 @@ pub mod topbar;
 pub mod track_group;
 pub mod track_name;
 pub mod track_select;
+pub mod trackhead_shots;
 pub mod trackmenu_shots;
 pub mod transport;
 pub mod tree;
@@ -475,6 +476,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("tempo-edit", tempo_edit_shots::SHOTS),
     ("tempo-follow", tempo_follow_shots::SHOTS),
     ("toast-hover", toast_hover_shots::SHOTS),
+    ("trackhead", trackhead_shots::SHOTS),
     ("trackmenu", trackmenu_shots::TRACKMENU),
     ("update", update_shots::SHOTS),
     ("update-check", manual_update_shots::SHOTS),
