@@ -1197,7 +1197,10 @@ impl Session {
         };
         let grouped = edits.len() > 1 && exts[i].groups_edits(def.name);
         self.extensions = exts;
-        if grouped {
+        // A group the caller opened (a macro's, a wheel's) goes on across this run: a read the
+        // screen makes between two of its steps (`preset.list` every half second) must not end it.
+        let outer = self.group;
+        if grouped && outer.is_none() {
             self.group = Some(0);
         }
         let mut result = RunResult::new(def.name, out?, ChangeSet::default());
@@ -1205,7 +1208,7 @@ impl Session {
         // table, each a step of the history, reported under this command's name.
         for (name, raw) in edits {
             let r = self.run_inner(&name, &raw, opts, true);
-            if r.is_err() {
+            if r.is_err() && outer.is_none() {
                 self.group = None;
             }
             let r = r?;
@@ -1224,7 +1227,9 @@ impl Session {
             result.changes = r.changes;
             result.step = r.step.or(result.step);
         }
-        self.group = None;
+        if outer.is_none() {
+            self.group = None;
+        }
         Ok(result)
     }
 

@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 use xirius_core::id::ClipId;
 use xirius_core::model::{Clip, Project};
 use xirius_core::session::{RunOptions, RunResult, Session};
+use xirius_core::{Args, CmdResult, CommandDef, ExtContext, Extension, Output};
 
 fn run(s: &mut Session, name: &str, args: Value) -> RunResult {
     s.run_value(name, args.clone(), &RunOptions::human())
@@ -142,4 +143,56 @@ fn the_screens_edits_go_without_state_hash() {
         )
         .unwrap();
     assert!(r.data["state_hash"]["after"].is_string(), "{:?}", r.data);
+}
+
+/// Answers `preset.list`, a read the screen makes now and then (every half second while a
+/// device window or the browser's list is open).
+struct Lists;
+
+impl Extension for Lists {
+    fn answers(&self, name: &str) -> bool {
+        name == "preset.list"
+    }
+
+    fn run(&mut self, _: &ExtContext<'_>, _: &CommandDef, _: &Args, _: bool) -> CmdResult<Output> {
+        Ok(Output::with("", json!({})))
+    }
+}
+
+#[test]
+fn a_read_between_the_steps_of_a_group_does_not_end_it() {
+    let mut s = Session::new("group");
+    s.add_extension(Box::new(Lists));
+    let c = midi(&mut s);
+    let steps = s.steps().len();
+    s.begin_group();
+    run(&mut s, "clip.transpose", json!({"ids": [c], "by": 1}));
+    run(&mut s, "preset.list", json!({}));
+    run(&mut s, "clip.transpose", json!({"ids": [c], "by": 1}));
+    run(&mut s, "preset.list", json!({}));
+    run(&mut s, "clip.rename", json!({"id": c, "name": "B"}));
+    s.end_group();
+    assert_eq!(s.steps().len(), steps + 3);
+    let group = s.steps()[steps].group;
+    assert_ne!(group, 0);
+    assert!(s.steps()[steps..].iter().all(|x| x.group == group));
+    // one undo takes all three back
+    s.undo(1).unwrap();
+    assert_eq!(clip(s.project(), &c).transpose(), 0);
+    assert_eq!(s.steps().len(), steps + 3);
+}
+
+#[test]
+fn a_read_outside_a_group_leaves_no_group_open() {
+    let mut s = Session::new("group");
+    s.add_extension(Box::new(Lists));
+    let c = midi(&mut s);
+    let steps = s.steps().len();
+    run(&mut s, "preset.list", json!({}));
+    run(&mut s, "clip.transpose", json!({"ids": [c], "by": 1}));
+    run(&mut s, "clip.transpose", json!({"ids": [c], "by": 1}));
+    assert_eq!(s.steps().len(), steps + 2);
+    assert!(s.steps()[steps..].iter().all(|x| x.group == 0));
+    s.undo(1).unwrap();
+    assert_eq!(clip(s.project(), &c).transpose(), 1);
 }

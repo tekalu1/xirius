@@ -533,9 +533,19 @@ fn a_macro_pastes_what_the_plugin_holds_now_before_its_next_step() {
         "pasted as it is now"
     );
     // the macro is one step: an undo takes it all back, the replaced one as it answered
+    let steps = s.song.session().steps();
+    let tail: Vec<_> = steps[steps.len() - 2..]
+        .iter()
+        .map(|x| (x.n, x.command.clone(), x.group))
+        .collect();
     assert!(s.undo(&g));
     assert!(!has_track(&s, "After"));
-    assert_eq!(s.project().tracks[&guitar].inserts[0].id, to);
+    assert_eq!(
+        s.project().tracks[&guitar].inserts[0].id,
+        to,
+        "one undo took the whole macro back; its last steps {tail:?}, error {:?}",
+        s.error
+    );
     assert_eq!(held(&s, guitar), (0.625, Some(delay(0.625))));
     s.transport.pause();
 }
@@ -626,5 +636,49 @@ fn leaving_for_a_new_song_puts_a_waiting_paste_in_this_one_first() {
         "what was typed meanwhile still goes to it"
     );
     assert!(!s.poll_inserts_wait(), "and it does not run again");
+    s.transport.pause();
+}
+
+/// The browser lists the devices, so the screen reads the presets every half second: a read
+/// while a macro waits for its paste must not end the macro's undo step.
+#[test]
+fn a_macro_stays_one_undo_step_while_the_screen_reads_presets_during_its_wait() {
+    let Song {
+        mut s,
+        g,
+        vocal,
+        guitar,
+        from,
+        to,
+    } = song("dedicated");
+    turn_silently(&mut s, from, 0.5);
+    turn_silently(&mut s, to, 0.625);
+    s.song.settings().lock().unwrap().macros.set(
+        "Paste",
+        vec![
+            format!("channel.inserts.copy --id {vocal}"),
+            format!("channel.inserts.paste --from {vocal} --ids {guitar}"),
+            "track.add.audio --name After".into(),
+        ],
+    );
+    let hold = Hold::new();
+    assert!(s.run_macro(&g, "Paste"));
+    // longer than the half second between two reads of the presets
+    crate::shot::run_for(&mut s, 1.2, |_| false);
+    assert!(s.inserts_wait.is_some(), "the paste is still waiting");
+    hold.release();
+    crate::shot::run_for(&mut s, 10.0, |s| has_track(s, "After"));
+    let steps = s.song.session().steps();
+    let tail = &steps[steps.len() - 2..];
+    assert!(
+        tail[0].group != 0 && tail[0].group == tail[1].group,
+        "the paste and the track after it are one group: {:?}",
+        tail.iter()
+            .map(|x| (x.n, x.command.as_str(), x.group))
+            .collect::<Vec<_>>()
+    );
+    assert!(s.undo(&g));
+    assert!(!has_track(&s, "After"));
+    assert_eq!(s.project().tracks[&guitar].inserts[0].id, to);
     s.transport.pause();
 }
