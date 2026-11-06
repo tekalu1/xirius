@@ -11,6 +11,7 @@ use crate::id::{AnyId, IdKind, NodeId, PluginId, SendId, TrackId};
 use crate::model::{MAX_DB, MIN_DB, PluginKind, Project, Track, TrackKind};
 use crate::rack::{
     Branch, Layer, MAX_SPLIT_DEPTH, MIN_BRANCHES, Rack, RackNode, Source, Split, SplitMode,
+    crossovers_fit,
 };
 
 const MODES: &[&str] = &["normal", "channel", "frequency"];
@@ -233,12 +234,9 @@ fn split_mode(p: &mut Project, a: &Args) -> CmdResult<Output> {
             ));
         }
         Some(c) => {
-            let ok = c.len() == s.branches.len() - 1
-                && c.iter().all(|f| f.is_finite() && *f > 0.0)
-                && c.windows(2).all(|w| w[0] < w[1]);
-            if !ok {
+            if !crossovers_fit(&c, s.branches.len()) {
                 return Err(CmdError::range(
-                    "クロスオーバーは分岐より 1 つ少なく、昇順にしてください",
+                    "クロスオーバーは 20〜20000 Hz の中で、分岐より 1 つ少なく、昇順にしてください",
                 ));
             }
             c
@@ -252,14 +250,11 @@ fn split_mode(p: &mut Project, a: &Args) -> CmdResult<Output> {
     let dropped = gone.len();
     let plugins = drop_branches(p, tid, gone)?;
     p.fix_track_rack(tid);
-    Ok(Output::msg(if dropped == 0 {
-        format!("スプリッターの分け方を {} にしました", MODES[mode as usize])
-    } else {
-        format!(
-            "分岐 {dropped} 本（プラグイン {plugins} 件）を削除し、スプリッターの分け方を {} にしました",
-            MODES[mode as usize]
-        )
-    }))
+    // The words stay those of any change of mode; what went with a channel split is in the data.
+    Ok(Output::with(
+        format!("スプリッターの分け方を {} にしました", MODES[mode as usize]),
+        json!({ "dropped_branches": dropped, "plugins": plugins }),
+    ))
 }
 
 fn branch_add(p: &mut Project, id: NodeId) -> CmdResult<Output> {
@@ -319,11 +314,11 @@ fn branch_remove(p: &mut Project, id: NodeId) -> CmdResult<Output> {
     let gone = s.branches.remove(i);
     let plugins = drop_branches(p, tid, vec![gone])?;
     p.fix_track_rack(tid);
-    let message = match (folds, plugins) {
-        (true, 0) => "スプリッターを外しました".to_string(),
-        (true, n) => format!("分岐をプラグイン {n} 件とともに削除し、スプリッターを外しました"),
-        (false, 0) => "分岐を削除しました".to_string(),
-        (false, n) => format!("分岐をプラグイン {n} 件とともに削除しました"),
+    // The approved words (MIX-045); how many plug-ins went is in the data.
+    let message = if folds {
+        "スプリッターを外しました"
+    } else {
+        "分岐を削除しました"
     };
     Ok(Output::with(
         message,

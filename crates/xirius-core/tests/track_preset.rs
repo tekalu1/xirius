@@ -539,3 +539,36 @@ fn a_macro_lane_a_preset_takes_off_has_a_row() {
     );
     assert!(track(&s, &b).automation.is_empty(), "the lane went");
 }
+
+#[test]
+fn a_preset_keeps_the_crossovers_of_a_frequency_split_of_any_size() {
+    use xirius_core::rack::{RackNode, default_crossovers};
+    let crossovers = |s: &Session, t: &str| {
+        track(s, t)
+            .rack
+            .as_ref()
+            .and_then(|r| {
+                r.fx.iter().find_map(|x| match x {
+                    RackNode::Split(x) => Some(x.crossovers.clone()),
+                    _ => None,
+                })
+            })
+            .expect("a splitter")
+    };
+    for n in [6usize, 64, 512] {
+        let Song { mut s, a, b, .. } = song();
+        run(
+            &mut s,
+            "rack.split.add",
+            json!({ "track": a, "branches": n, "mode": "frequency" }),
+        );
+        let preset = preset_of(&s, &a, "Bands");
+        let (back, rows) = TrackPreset::parse(&preset).unwrap();
+        assert!(rows.is_empty(), "{n}: {rows:?}");
+        assert_eq!(back.to_value(), preset);
+        let out = put(&mut s, &[&b], &preset);
+        assert!(out["adjusted"].as_array().unwrap().is_empty(), "{n}: {out}");
+        assert_eq!(crossovers(&s, &b), default_crossovers(n), "{n}");
+        s.project().validate().unwrap();
+    }
+}

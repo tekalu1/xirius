@@ -2225,12 +2225,9 @@ fn check_nodes(
                         )));
                     }
                     SplitMode::Frequency => {
-                        let ok = s.crossovers.len() == s.branches.len() - 1
-                            && s.crossovers.iter().all(|f| f.is_finite() && *f > 0.0)
-                            && s.crossovers.windows(2).all(|w| w[0] < w[1]);
-                        if !ok {
+                        if !crate::rack::crossovers_fit(&s.crossovers, s.branches.len()) {
                             return Err(CmdError::range(format!(
-                                "{name}: クロスオーバーは分岐より 1 つ少なく、昇順にしてください"
+                                "{name}: クロスオーバーは 20〜20000 Hz の中で、分岐より 1 つ少なく、昇順にしてください"
                             )));
                         }
                     }

@@ -672,6 +672,94 @@ fn sixty_four_branches_and_their_values_do_not_allocate() {
     assert!(out.iter().any(|s| *s != 0.0));
 }
 
+/// Adding and taking away branches as the song plays (MIX-045 review L3): the plan of a
+/// track whose splitter grows from 64 to 65, falls to 63 and comes back to 64 (the undo) is
+/// built on the control side and swapped in, with a splitter nested in a branch, while the
+/// values of the other track's 64 keep moving. The audio thread neither allocates nor
+/// leaks a plan.
+#[test]
+fn branches_added_and_taken_away_as_it_plays_do_not_allocate() {
+    use xirius_engine::split::{BranchSpec, SplitProc};
+    let setup = ProcessSetup {
+        sample_rate: 48_000.0,
+        max_block: 256,
+        mode: RenderMode::Realtime,
+    };
+    let split = |node: u64, n: u64| -> Box<dyn xirius_engine::Processor> {
+        let branches = (0..n)
+            .map(|i| {
+                let fx: Box<dyn xirius_engine::Processor> = match i % 3 {
+                    0 => Box::new(Gain::new(0.5)),
+                    1 => Box::new(Delay::new(32 * (i as usize + 1))),
+                    // a splitter in a branch, its own branches holding an insert or none
+                    _ => Box::new(SplitProc::new(
+                        node * 1_000_000 + 500_000 + i,
+                        vec![
+                            BranchSpec::new(
+                                node * 10_000_000 + i * 10,
+                                vec![(node * 10_000_000 + i * 10 + 1, Box::new(Gain::new(0.7)))],
+                            ),
+                            BranchSpec::new(node * 10_000_000 + i * 10 + 2, Vec::new()),
+                        ],
+                    )),
+                };
+                BranchSpec::new(node * 1000 + i, vec![(node * 1_000_000 + i, fx)])
+            })
+            .collect();
+        Box::new(SplitProc::new(node, branches))
+    };
+    let spec = |n: u64, keep_home: bool| {
+        let mut t = TrackSpec::new("wide", Box::new(Sine::new(220.0, 0.3)));
+        t.inserts = vec![split(1, n)];
+        let home = if keep_home {
+            TrackSlot::Keep(1)
+        } else {
+            let mut home = TrackSpec::new("home", Box::new(Sine::new(330.0, 0.3)));
+            home.inserts = vec![split(2, 64)];
+            home.prefetch = false;
+            TrackSlot::New(home)
+        };
+        MixSpec {
+            tracks: vec![TrackSlot::New(t), home],
+            ..MixSpec::default()
+        }
+    };
+    let (mut audio, mut control) = engine::create(
+        Plan::build(spec(64, false), setup, None).unwrap(),
+        EngineConfig::default(),
+    );
+    control.send(Command::Play).ok().unwrap();
+    let mut out = vec![0.0f32; 1000 * 2];
+    reset_violation_count();
+    let mut swaps = 0;
+    for i in 0..240u32 {
+        for node in (2000..2000 + 64).filter(|n| (*n + u64::from(i)) % 4 == 0) {
+            control
+                .send(Command::BranchGain {
+                    node,
+                    gain: (i % 10) as f32 / 10.0,
+                    pan: (i % 5) as f32 / 2.0 - 1.0,
+                    mute: (u64::from(i) + node) % 8 == 0,
+                })
+                .ok()
+                .unwrap();
+        }
+        // 64 → 65 (added) → 63 (two taken away) → 64 (undone), and once more
+        if i % 30 == 15 {
+            let n = [65, 63, 64, 65, 63, 64, 65, 64][(i / 30) as usize];
+            control.swap(spec(n, true)).unwrap();
+            swaps += 1;
+        }
+        audio.render(&mut out, 2);
+        control.poll(|_| {});
+    }
+    assert_eq!(swaps, 8);
+    assert_eq!(violation_count(), 0);
+    assert_eq!(audio.leaked_plans(), 0);
+    assert!(audio.is_playing());
+    assert!(out.iter().any(|s| *s != 0.0));
+}
+
 /// The browser's audition (BRW-020): one file after another on the kept plan, each played to
 /// the end it stops at by itself, cut short by the next, or stopped.
 #[test]

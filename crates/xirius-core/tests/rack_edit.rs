@@ -179,7 +179,12 @@ fn removing_a_branch_takes_its_plugins_and_one_branch_folds_to_a_line() {
             &RunOptions::human(),
         )
         .unwrap();
-    assert!(out.message.contains("1 件"), "{}", out.message);
+    // The approved words; how many plug-ins went is in the data (MIX-045).
+    assert_eq!(out.message, "スプリッターを外しました");
+    assert_eq!(
+        (&out.data["folded"], &out.data["plugins"]),
+        (&json!(true), &json!(1))
+    );
     // B went with its branch; A's branch is the only one left and is a line again.
     assert_eq!(names(&s, &t), ["C", "A"]);
     assert!(
@@ -318,13 +323,14 @@ fn removing_one_of_two_branches_takes_the_splitter_off_and_undo_brings_it_back()
 
 #[test]
 fn removing_one_of_three_branches_keeps_the_splitter_and_the_ai_is_not_refused() {
-    let (mut s, t, _) = song();
+    let (mut s, t, fx) = song();
     let v = run(
         &mut s,
         "rack.split.add",
         json!({ "track": t, "branches": 3 }),
     );
     let b2 = v["branches"][2].as_str().unwrap().to_string();
+    run(&mut s, "rack.node.move", json!({ "id": fx[0], "to": b2 }));
     let out = s
         .run_value(
             "rack.branch.remove",
@@ -332,7 +338,12 @@ fn removing_one_of_three_branches_keeps_the_splitter_and_the_ai_is_not_refused()
             &RunOptions::human(),
         )
         .unwrap();
+    // The approved words even with a plug-in in it; the count is in the data (MIX-045).
     assert_eq!(out.message, "分岐を削除しました");
+    assert_eq!(
+        (&out.data["folded"], &out.data["plugins"]),
+        (&json!(false), &json!(1))
+    );
     let r = s.project().tracks[&tid(&t)].rack.clone().unwrap();
     let RackNode::Split(sp) = r.fx.last().unwrap() else {
         panic!("the splitter stays")
@@ -386,6 +397,83 @@ fn a_splitter_has_no_upper_limit_on_branches() {
     s.project().validate().unwrap();
 }
 
+/// The crossovers of the split `split` on `t`.
+fn crossovers(s: &Session, t: &str, split: &str) -> Vec<f64> {
+    let r = s.project().tracks[&tid(t)].rack.clone().unwrap();
+    match r
+        .fx
+        .iter()
+        .find(|n| matches!(n, RackNode::Split(x) if x.id.to_string() == split))
+    {
+        Some(RackNode::Split(x)) => x.crossovers.clone(),
+        _ => panic!("no split {split}"),
+    }
+}
+
+#[test]
+fn frequency_crossovers_rise_inside_the_range_however_the_split_is_made() {
+    use xirius_core::rack::{crossovers_fit, default_crossovers};
+    for n in [6usize, 64, 512] {
+        let (mut s, t, _) = song();
+        // Made as a frequency split.
+        let a = id(&run(
+            &mut s,
+            "rack.split.add",
+            json!({ "track": t, "branches": n, "mode": "frequency" }),
+        ));
+        assert_eq!(crossovers(&s, &t, &a), default_crossovers(n), "{n}");
+        // Made normal and switched.
+        let b = id(&run(
+            &mut s,
+            "rack.split.add",
+            json!({ "track": t, "branches": n }),
+        ));
+        step(
+            &mut s,
+            "rack.split.mode",
+            json!({ "id": b, "mode": "frequency" }),
+        );
+        assert_eq!(crossovers(&s, &t, &b), default_crossovers(n), "{n}");
+        // A branch added to it.
+        step(&mut s, "rack.branch.add", json!({ "split": b }));
+        let c = crossovers(&s, &t, &b);
+        assert!(crossovers_fit(&c, n + 1), "{n}: {:?}", &c[c.len() - 4..]);
+        s.project().validate().unwrap();
+    }
+    // Branches added one by one to a frequency split of two keep rising inside the range.
+    let (mut s, t, _) = song();
+    let a = id(&run(
+        &mut s,
+        "rack.split.add",
+        json!({ "track": t, "mode": "frequency" }),
+    ));
+    for k in 3..=200 {
+        run(&mut s, "rack.branch.add", json!({ "split": a }));
+        let c = crossovers(&s, &t, &a);
+        assert!(
+            crossovers_fit(&c, k),
+            "{k}: {:?}",
+            &c[c.len().saturating_sub(4)..]
+        );
+        if k == 3 {
+            // The first added cuts the top band and keeps the 1 kHz the user had.
+            assert_eq!(c, [1000.0, 2000.0]);
+        }
+    }
+    // The AI cannot type crossovers outside 20 Hz to 20 kHz.
+    let b = id(&run(
+        &mut s,
+        "rack.split.add",
+        json!({ "track": t, "branches": 3 }),
+    ));
+    let e = fails(
+        &mut s,
+        "rack.split.mode",
+        json!({ "id": b, "mode": "frequency", "crossovers": "1000, 25000" }),
+    );
+    assert!(e.contains("20〜20000 Hz"), "{e}");
+}
+
 #[test]
 fn switching_to_channel_drops_the_branches_after_the_second_and_undoes() {
     let (mut s, t, fx) = song();
@@ -405,7 +493,11 @@ fn switching_to_channel_drops_the_branches_after_the_second_and_undoes() {
             &RunOptions::human(),
         )
         .unwrap();
-    assert!(out.message.contains("分岐 2 本"), "{}", out.message);
+    assert_eq!(out.message, "スプリッターの分け方を channel にしました");
+    assert_eq!(
+        (&out.data["dropped_branches"], &out.data["plugins"]),
+        (&json!(2), &json!(1))
+    );
     let r = s.project().tracks[&tid(&t)].rack.clone().unwrap();
     let RackNode::Split(sp) = r.fx.last().unwrap() else {
         panic!()

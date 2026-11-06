@@ -358,17 +358,101 @@ fn a_split_of_many_branches_is_written_and_read_whole() {
 
 #[test]
 fn the_default_crossovers_rise_for_any_number_of_branches() {
-    use xirius_core::rack::default_crossovers;
+    use xirius_core::rack::{CROSSOVER_GAP, crossovers_fit, default_crossovers};
     // Two to five keep the values they always had.
     assert_eq!(default_crossovers(2), [1000.0]);
     assert_eq!(default_crossovers(3), [200.0, 2000.0]);
     assert_eq!(default_crossovers(4), [150.0, 800.0, 4000.0]);
     assert_eq!(default_crossovers(5), [100.0, 400.0, 1600.0, 6000.0]);
-    for n in [6, 7, 12, 64] {
+    for n in [6, 7, 12, 64, 109, 110, 142, 143, 512, 100_000] {
         let c = default_crossovers(n);
-        assert_eq!(c.len(), n - 1, "{n}");
-        assert!(c.windows(2).all(|w| w[0] < w[1]), "{n}: {c:?}");
-        assert!(c[0] >= 20.0 && *c.last().unwrap() <= 20_000.0, "{n}: {c:?}");
+        assert!(crossovers_fit(&c, n), "{n}: {:?}", &c[..c.len().min(8)]);
+        // Up to 142 branches the bands keep the gap a dragged crossover keeps; past that they
+        // still rise, narrower than the gap.
+        let gap = c.windows(2).map(|w| w[1] / w[0]).fold(f64::MAX, f64::min);
+        assert!(n > 142 || gap >= CROSSOVER_GAP - 1e-12, "{n}: {gap}");
+    }
+    // Six to 110 spread over 60 Hz to 12 kHz; 111 and more over the whole range.
+    let c = default_crossovers(64);
+    assert!(
+        (c[0] - 60.0).abs() < 1e-9 && (c[62] - 12_000.0).abs() < 1e-6,
+        "{c:?}"
+    );
+    let c = default_crossovers(512);
+    assert!((c[0] - 20.0).abs() < 1e-9 && (c[510] - 20_000.0).abs() < 1e-6);
+}
+
+/// A frequency split of `n` empty branches with `crossovers`, alone on a track.
+fn frequency_track(n: u64, crossovers: Vec<f64>) -> Track {
+    let RackNode::Split(mut s) = split(1000, (0..n).map(|_| Vec::new()).collect()) else {
+        unreachable!("split makes a split")
+    };
+    s.mode = SplitMode::Frequency;
+    s.crossovers = crossovers;
+    track(
+        2,
+        TrackKind::Audio,
+        Vec::new(),
+        Some(Rack {
+            source: None,
+            fx: vec![RackNode::Split(s)],
+        }),
+    )
+}
+
+fn crossovers_of(t: &Track) -> Vec<f64> {
+    match &t.rack.as_ref().expect("the rack stays").fx[0] {
+        RackNode::Split(s) => s.crossovers.clone(),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn missing_crossovers_are_filled_inside_the_range_for_any_number_of_branches() {
+    use xirius_core::rack::{crossovers_fit, default_crossovers};
+    for n in [6, 64, 512] {
+        // None at all, out of the range, or out of order: the defaults, as they are.
+        for broken in [
+            vec![],
+            vec![1000.0, 50_000.0],
+            vec![5.0],
+            vec![2000.0, 200.0],
+        ] {
+            let mut t = frequency_track(n, broken.clone());
+            t.fix_rack(&mut fresh_id());
+            assert_eq!(
+                crossovers_of(&t),
+                default_crossovers(n as usize),
+                "{n} {broken:?}"
+            );
+        }
+        // Kept ones that fit stay; the missing ones cut the top band while there is room.
+        let mut t = frequency_track(n, vec![1000.0]);
+        t.fix_rack(&mut fresh_id());
+        let c = crossovers_of(&t);
+        assert!(crossovers_fit(&c, n as usize), "{n}: {:?}", &c[..6]);
+    }
+    let mut t = frequency_track(4, vec![1000.0]);
+    t.fix_rack(&mut fresh_id());
+    assert_eq!(crossovers_of(&t), [1000.0, 2000.0, 4000.0]);
+    // 64 do not fit above 1 kHz with the gap, so all go back to the defaults.
+    let mut t = frequency_track(64, vec![1000.0]);
+    t.fix_rack(&mut fresh_id());
+    assert_eq!(crossovers_of(&t), default_crossovers(64));
+}
+
+#[test]
+fn frequency_crossovers_are_written_and_read_whole_for_any_number_of_branches() {
+    use xirius_core::rack::default_crossovers;
+    for n in [6, 64, 512] {
+        let (_d, dir) = dir(&format!("bands-{n}"));
+        let c = default_crossovers(n as usize);
+        let p = project(vec![frequency_track(n, c.clone())]);
+        p.validate().unwrap();
+        Store::new(&dir).write_project(&p).unwrap();
+        let (q, rows) = Store::new(&dir).read_project_report().unwrap();
+        assert!(rows.is_empty(), "{n}: {rows:?}");
+        assert_eq!(crossovers_of(&q.tracks[&TrackId(2)]), c, "{n}");
     }
 }
 
