@@ -5,8 +5,9 @@
 //! 1 dB (Shift 0.1), PageUp/PageDown by 6 dB, the pan by 5 % (Shift 1 %, PageUp/PageDown 20 %:
 //! a tenth of its range, as a device's knob takes); Delete puts it back to its default, M mutes,
 //! Enter or a double press types it, Tab goes to the next value and Esc lets the keys go. F6 and
-//! a value going out of sight let them go too. In the field Enter puts the value in, Esc keeps
-//! the old one and Tab puts it in and goes on. A level takes "-3", "-3 dB" and "-inf"; a pan "C", "L20" and "R35".
+//! a value going out of sight let them go too, in the field as well (what is typed goes in). In
+//! the field Enter puts the value in, Esc keeps the old one and Tab puts it in and goes on. A
+//! level takes "-3", "-3 dB" and "-inf"; a pan "C", "L20" and "R35".
 
 use serde_json::json;
 use xirius_core::id::{NodeId, TrackId};
@@ -95,6 +96,12 @@ pub fn pan_text(pan: f64) -> String {
         n if n < 0 => format!("L{}", -n),
         n => format!("R{n}"),
     }
+}
+
+/// F1 to F24, which a field typing a value leaves to the screen.
+fn function_key(key: &str) -> bool {
+    key.strip_prefix('f')
+        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
 }
 
 fn minus(s: &str) -> String {
@@ -292,10 +299,27 @@ impl Studio {
 
     /// The keys of a branch's value (see the module).
     pub(crate) fn value_key(&mut self, key: &str, m: Mods) -> bool {
+        // a value that is not on screen any more, typed or not, has let the keys go
+        let held = self
+            .mixer
+            .value_entry
+            .as_ref()
+            .map(|e| e.focus)
+            .or(self.mixer.value_focus);
+        if held.is_some_and(|f| !self.value_shown(f)) {
+            self.value_let_go();
+            return false;
+        }
         let blocked = self.input_blocked();
         if let Some(e) = &mut self.mixer.value_entry {
             if !e.field.marked.is_empty() {
                 return true;
+            }
+            // F6 and the other function keys are not the field's: they put the value in and
+            // go on to the screen
+            if function_key(key) {
+                self.value_let_go();
+                return false;
             }
             if matches!(key, "enter" | "tab") && blocked {
                 return true;
@@ -321,11 +345,6 @@ impl Studio {
         let Some(f) = self.mixer.value_focus else {
             return false;
         };
-        // a value that is not on screen any more has let the keys go
-        if !self.value_shown(f) {
-            self.mixer.value_focus = None;
-            return false;
-        }
         let other = self.popup.is_some()
             || self.ime_target().is_some()
             || self.bar_edit.is_typing()

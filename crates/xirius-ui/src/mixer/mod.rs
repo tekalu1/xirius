@@ -638,6 +638,13 @@ pub struct Mixer {
     pub paint_us: Cell<u64>,
     /// How long the channel editor's last paint took, in µs (the measurement of MIX-045).
     pub editor_paint_us: Cell<u64>,
+    /// How long the last frame's reader tree (its marks and rows) and pointer took to make,
+    /// in µs (the measurement of MIX-045).
+    pub marks_us: Cell<u64>,
+    pub pointer_us: Cell<u64>,
+    /// How long the channel editor's and the strips' layouts took since it was last taken, in
+    /// ns, wherever they were made (the paint, the reader tree, the pointer; MIX-045).
+    pub layout_ns: Cell<u64>,
     /// The channel a double click on a track's head brought up, and when it did (ms).
     flash: Option<(TrackId, u64)>,
     /// The band pressed last while the strips are folded: its strip stays open (MIX-046).
@@ -656,6 +663,12 @@ pub const FLASH_MS: u64 = 1000;
 const FLASH_HOLD_MS: u64 = 350;
 
 impl Mixer {
+    /// Adds the time since `started` to [`Mixer::layout_ns`].
+    pub(crate) fn took(&self, started: std::time::Instant) {
+        let ns = started.elapsed().as_nanos() as u64;
+        self.layout_ns.set(self.layout_ns.get().saturating_add(ns));
+    }
+
     /// Lights `t`'s strip, from `now`.
     pub(crate) fn flash_strip(&mut self, t: TrackId, now: u64) {
         self.flash = Some((t, now));
@@ -1477,9 +1490,16 @@ impl Studio {
 
     /// A point that [`Studio::mixer_hit`] answers `hit` for.
     pub fn mixer_center(&self, g: &Geometry, hit: MixerHit) -> Option<(f32, f32)> {
+        self.mixer_seen(g, hit)
+            .map(|r| (r.x + r.w / 2.0, r.y + r.h / 2.0))
+    }
+
+    /// `hit`'s rectangle, when [`Studio::mixer_hit`] answers `hit` at its middle: laid out
+    /// once for both (review 2, M4).
+    pub(crate) fn mixer_seen(&self, g: &Geometry, hit: MixerHit) -> Option<Rect> {
         let r = self.mixer_rect(g, hit)?;
         let at = (r.x + r.w / 2.0, r.y + r.h / 2.0);
-        (self.mixer_hit(g, at.0, at.1) == Some(hit)).then_some(at)
+        (self.mixer_hit(g, at.0, at.1) == Some(hit)).then_some(r)
     }
 
     /// The value of a fader or a knob as shown: the dragged one, else the song's.
@@ -1836,12 +1856,15 @@ impl Studio {
     /// `track`'s flow on strip `s`, scrolled as far as its list was moved and no further
     /// than what is hidden (MIX-044).
     pub fn strip_flow(&self, s: &StripLayout, track: &Track) -> flow::Flow {
+        let started = std::time::Instant::now();
         let look = self.mixer.look().at(s.rect.w >= WIDE_W);
         let lines = look.lines(track);
         let h = flow::Flow::height(&lines, look.coarse);
         let scroll = (self.mixer.offset(track.id, List::Flow) as f32 * ROW_H)
             .min((h - s.inserts.h).max(0.0));
-        flow::Flow::lay(&lines, s.inserts, scroll, look.coarse)
+        let f = flow::Flow::lay(&lines, s.inserts, scroll, look.coarse);
+        self.mixer.took(started);
+        f
     }
 
     /// The row of plug-in `id` on `t`'s strip from its indent on, where its marks are.

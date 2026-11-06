@@ -392,7 +392,8 @@ pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
     } else {
         body.x - sx
     };
-    let flow = flow::layout(p, t, (x0, body.y - sy));
+    let mut flow = probe;
+    flow.shift(x0, body.y - sy);
     Some(View {
         r,
         name,
@@ -779,28 +780,37 @@ fn slot_near(flow: &Flow, pick: Pick, x: f32, y: f32) -> Option<Slot> {
         .copied()
 }
 
-/// A crossover dragged `dx` from where it was taken: twice as high for every 24 px, between
-/// its neighbours with a gap, inside 20 Hz to 20 kHz (ENG-076). Neighbours too close for the
-/// gap hold it halfway between them; a whole hertz is taken only when it stays between them.
+/// A crossover dragged `dx` from where it was taken: twice as high for every 24 px, inside 20 Hz
+/// to 20 kHz and between its neighbours with a gap (ENG-076). The gap is [`CROSSOVER_GAP`] where
+/// the neighbours leave room for it; where they are closer, a third of the band between them on
+/// each side, so the crossover still moves both ways however many there are. It only ever moves
+/// the way it is dragged, and a whole hertz is taken only when that keeps the gap.
+///
+/// [`CROSSOVER_GAP`]: xirius_core::rack::CROSSOVER_GAP
 pub fn crossed(from: &[f64], i: usize, dx: f32) -> Vec<f64> {
     use xirius_core::rack::{CROSSOVER_GAP, CROSSOVER_MAX_HZ, CROSSOVER_MIN_HZ};
     let mut now = from.to_vec();
-    let Some(f0) = from.get(i) else {
+    let Some(&f0) = from.get(i) else {
         return now;
     };
     let below = i.checked_sub(1).map(|j| from[j]);
     let above = from.get(i + 1).copied();
-    let mut lo = below.map_or(CROSSOVER_MIN_HZ, |f| f * CROSSOVER_GAP);
-    let mut hi = above.map_or(CROSSOVER_MAX_HZ, |f| f / CROSSOVER_GAP);
-    if lo > hi {
-        let mid = (below.unwrap_or(CROSSOVER_MIN_HZ) * above.unwrap_or(CROSSOVER_MAX_HZ)).sqrt();
-        (lo, hi) = (mid, mid);
+    let room = above.unwrap_or(CROSSOVER_MAX_HZ) / below.unwrap_or(CROSSOVER_MIN_HZ);
+    let gap = CROSSOVER_GAP.min(room.max(1.0).cbrt());
+    let lo = below.map_or(CROSSOVER_MIN_HZ, |f| (f * gap).max(CROSSOVER_MIN_HZ));
+    let hi = above.map_or(CROSSOVER_MAX_HZ, |f| (f / gap).min(CROSSOVER_MAX_HZ));
+    if dx == 0.0 || lo >= hi {
+        return now;
     }
-    let f = (f0 * 2f64.powf(f64::from(dx) / 24.0)).clamp(lo, hi);
+    let to = f0 * 2f64.powf(f64::from(dx) / 24.0);
+    // Up never lower than it was, down never higher, even from outside the bounds.
+    let f = if dx > 0.0 {
+        to.min(hi).max(f0)
+    } else {
+        to.max(lo).min(f0)
+    };
     let whole = f.round();
-    let fits = below.is_none_or(|b| whole > b)
-        && above.is_none_or(|a| whole < a)
-        && (CROSSOVER_MIN_HZ..=CROSSOVER_MAX_HZ).contains(&whole);
+    let fits = (lo..=hi).contains(&whole) && (whole - f0) * f64::from(dx) > 0.0;
     now[i] = if fits { whole } else { f };
     now
 }
@@ -808,7 +818,10 @@ pub fn crossed(from: &[f64], i: usize, dx: f32) -> Vec<f64> {
 impl Studio {
     /// The open channel editor as it is laid out.
     pub fn channel_view(&self, g: &Geometry) -> Option<View> {
-        view(&self.project(), self.channel.as_ref()?, g.size)
+        let started = std::time::Instant::now();
+        let v = view(&self.project(), self.channel.as_ref()?, g.size);
+        self.mixer.took(started);
+        v
     }
 
     /// Opens the channel editor of `t`: the open one comes to the top; another track's takes
@@ -1652,9 +1665,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<crate::a11y::Mark> {
         }
     }
     for col in v.flow.columns.iter().filter(|c| shown(c.head)) {
-        let Some(target) = s.row_target(t.id, col.id) else {
-            continue;
-        };
+        let target = col.target;
         let who = col_who(t, &v.flow, col);
         let hp = head_parts(col);
         let db = s

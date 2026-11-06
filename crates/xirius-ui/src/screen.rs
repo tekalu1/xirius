@@ -60,6 +60,8 @@ pub struct Options {
     /// With `mixer_bench`, a splitter of this many branches in one strip, its editor open
     /// (MIX-045); 0 for none.
     pub bench_branches: usize,
+    /// The measured splitter's channel editor is open (`--editor closed` shuts it).
+    pub bench_editor: bool,
     pub light: bool,
     /// Where the transport plays to.
     pub output: OutputMode,
@@ -75,6 +77,7 @@ impl Default for Options {
             roll_bench: None,
             mixer_bench: None,
             bench_branches: 0,
+            bench_editor: true,
             light: false,
             output: OutputMode::Device,
         }
@@ -1695,10 +1698,12 @@ impl Render for Screen {
         let studio = self.studio.clone();
         let colors = self.colors.clone();
         let (entity, focus) = (cx.entity(), self.focus.clone());
+        let started = std::time::Instant::now();
         let pointer = {
             let studio = self.studio.borrow();
             crate::pointer::of_studio(&studio, &g)
         };
+        let pointed = started.elapsed();
         #[cfg(windows)]
         self.tool_cursor(pointer.shape);
         let cursor = pointer.style;
@@ -1711,6 +1716,12 @@ impl Render for Screen {
         let has_about = !has_settings && !about_nodes.is_empty();
         let track_rows = crate::a11y::track_rows(&self.studio.borrow(), &g);
         let marks = crate::a11y::marks(&self.studio.borrow(), &g);
+        {
+            let studio = self.studio.borrow();
+            let marked = started.elapsed().saturating_sub(pointed);
+            studio.mixer.pointer_us.set(pointed.as_micros() as u64);
+            studio.mixer.marks_us.set(marked.as_micros() as u64);
+        }
         let body = div()
             .id("studio-body")
             .when(has_settings, |body| {
@@ -2335,10 +2346,9 @@ pub fn run(opts: Options) {
                 parked: false,
                 driver,
                 roll_bench: opts.roll_bench.clone().map(crate::roll::probe::Bench::new),
-                mixer_bench: opts
-                    .mixer_bench
-                    .clone()
-                    .map(|out| crate::mixer::bench::Bench::new(out, opts.bench_branches)),
+                mixer_bench: opts.mixer_bench.clone().map(|out| {
+                    crate::mixer::bench::Bench::new(out, opts.bench_branches, opts.bench_editor)
+                }),
             }));
             let scripted = opts.shots.is_some() || measured;
             // What the last window moved when it closed: said once (REC-016).

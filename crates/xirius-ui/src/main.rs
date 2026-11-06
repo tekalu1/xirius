@@ -38,6 +38,10 @@
 // so that --list, a usage line and a panic still print there (UI-290).
 #![windows_subsystem = "windows"]
 
+#[cfg(feature = "alloc-count")]
+#[global_allocator]
+static ALLOC: xirius_ui::alloc_count::Counting = xirius_ui::alloc_count::Counting;
+
 mod console;
 
 use std::path::PathBuf;
@@ -108,6 +112,7 @@ fn main() {
             bench_branches: value("--branches")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0),
+            bench_editor: value("--editor").is_none_or(|v| v != "closed"),
             ..screen::Options::default()
         });
     } else if args.iter().any(|a| a == "--bench") {

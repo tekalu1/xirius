@@ -1046,10 +1046,7 @@ fn flow_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             parts.push((MixerHit::KeyLevel(t, key.id), node));
         }
         for (hit, mut node) in parts {
-            if s.mixer_center(g, hit).is_none() {
-                continue;
-            }
-            let Some(r) = s.mixer_rect(g, hit) else {
+            let Some(r) = s.mixer_seen(g, hit) else {
                 continue;
             };
             node.set_bounds(bounds(r));

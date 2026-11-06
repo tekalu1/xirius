@@ -543,6 +543,33 @@ fn mix_045_a_heads_value_lets_the_keys_go_when_they_move_on_or_the_editor_shuts(
     );
     untouched(&mut s);
     assert_eq!(levels(&s, t, b[0]), before);
+    // typed, then F6 through the field's keys to the browser: what is typed goes in as one
+    // step, the field shuts and the keys go
+    click(&mut s, &g, mid(hp.value), 2, Mods::default());
+    assert!(s.mixer.value_entry.is_some());
+    let steps = s.song.steps();
+    s.ime_replace(None, "-9", false);
+    assert!(!s.field_keys(&g, "f6", None, Mods::default()));
+    assert_eq!(
+        s.key_more(&g, "browser.tab", args.as_object().unwrap()),
+        Some(true)
+    );
+    assert!(s.mixer.value_entry.is_none());
+    untouched(&mut s);
+    assert_eq!(s.song.steps(), steps + 1);
+    assert_eq!(levels(&s, t, b[0]).0, -9.0);
+    s.undo(&g);
+    assert_eq!(levels(&s, t, b[0]), before);
+    // typed, and the editor shuts: what is typed goes in and the keys go
+    click(&mut s, &g, mid(hp.value), 2, Mods::default());
+    s.ime_replace(None, "-4", false);
+    let open = s.channel.take();
+    assert!(!s.value_key("enter", Mods::default()));
+    assert!(s.mixer.value_entry.is_none());
+    untouched(&mut s);
+    assert_eq!(levels(&s, t, b[0]).0, -4.0);
+    s.undo(&g);
+    s.channel = open;
     // the editor shut: its heads take no keys
     click(&mut s, &g, mid(hp.level), 1, Mods::default());
     assert!(s.mixer.value_focus.is_some());

@@ -5,13 +5,15 @@
 //! `mixer-flow.html` s03); every line knows the parts it touches, so the one under the
 //! pointer and the chosen one light their own paths.
 
+use std::borrow::Cow;
+
 use xirius_core::id::{NodeId, PluginId};
 use xirius_core::model::{PluginKind, Project, Track, TrackKind};
 use xirius_core::rack::{Branch, Layer, Rack, RackNode, Source, Split, SplitMode};
 use xirius_design::{FontSize, LinePiece, StructureLine};
 
 use crate::draw::estimated_text_width;
-use crate::mixer::flow::Pick;
+use crate::mixer::flow::{Pick, Target};
 use crate::studio::Rect;
 
 /// The flow's margin inside the body.
@@ -114,6 +116,9 @@ pub struct Column {
     /// A frequency split's band ("〜200", "200–2k", "2k〜").
     pub band: Option<String>,
     pub within: Vec<Key>,
+    /// The level its head shows and moves, read as it is laid out: not looked for again in the
+    /// rack for each column (review 2, M4).
+    pub target: Target,
 }
 
 /// A ＋ between two parts, or in an empty chain: it adds an effect there.
@@ -195,8 +200,10 @@ struct End {
 }
 
 /// A track's rack as the editor shows it: its own, or its inserts in a line.
-pub fn rack_of(t: &Track) -> Rack {
-    t.rack.clone().unwrap_or_else(|| Rack::serial(t))
+pub fn rack_of(t: &Track) -> Cow<'_, Rack> {
+    t.rack
+        .as_ref()
+        .map_or_else(|| Cow::Owned(Rack::serial(t)), Cow::Borrowed)
 }
 
 fn pill_w(text: &str) -> f32 {
@@ -396,6 +403,47 @@ fn end_of(card: Rect, keys: Vec<Key>) -> End {
 }
 
 impl Flow {
+    /// The same flow moved by `dx`, `dy`: what [`layout`] makes at another corner, without
+    /// making it again (review 2, M4).
+    pub fn shift(&mut self, dx: f32, dy: f32) {
+        let r = |r: &mut Rect| {
+            r.x += dx;
+            r.y += dy;
+        };
+        let pt = |p: &mut (f32, f32)| {
+            p.0 += dx;
+            p.1 += dy;
+        };
+        self.ios.iter_mut().for_each(|io| r(&mut io.rect));
+        self.cards.iter_mut().for_each(|c| r(&mut c.rect));
+        for c in &mut self.columns {
+            r(&mut c.head);
+            r(&mut c.rect);
+        }
+        for g in &mut self.gaps {
+            r(&mut g.rect);
+            r(&mut g.button);
+        }
+        self.slots.iter_mut().for_each(|s| r(&mut s.mark));
+        self.crosses.iter_mut().for_each(|c| r(&mut c.rect));
+        self.adds.iter_mut().for_each(|a| r(&mut a.rect));
+        for piece in self.links.iter_mut().flat_map(|l| &mut l.pieces) {
+            match piece {
+                LinePiece::Straight { from, to } => {
+                    pt(from);
+                    pt(to);
+                }
+                LinePiece::Quarter {
+                    from, to, center, ..
+                } => {
+                    pt(from);
+                    pt(to);
+                    pt(center);
+                }
+            }
+        }
+    }
+
     /// Is the gap right before or after the card `pick`? Its ＋ shows while that card is
     /// chosen, as the mock's (and for a touch or the keys, which have no pointer over it).
     pub fn beside(&self, pick: Pick, gap: &Gap) -> bool {
@@ -585,6 +633,13 @@ impl Flow {
                 rect: col,
                 band,
                 within: inside.clone(),
+                target: Target {
+                    id: b.id,
+                    layer: false,
+                    db: b.gain_db,
+                    pan: b.pan,
+                    mute: b.mute,
+                },
             });
             out.extend(self.column(b, ccx, card, col_top, &inside));
             x += bw + COL_GAP;
@@ -724,6 +779,13 @@ impl Flow {
                 rect: Rect::new(x, head_y, *lw, HEAD_H + deepest),
                 band: None,
                 within: vec![multi],
+                target: Target {
+                    id: l.id,
+                    layer: true,
+                    db: l.gain_db,
+                    pan: l.pan,
+                    mute: l.mute,
+                },
             });
             let key = Key::Plugin(l.instrument);
             let card = self.card(

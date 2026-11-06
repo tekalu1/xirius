@@ -7,6 +7,7 @@ pub mod about_shots;
 pub mod adjust_report;
 pub mod ai;
 pub mod aiarc_shots;
+pub mod alloc_count;
 mod ancillary_io;
 pub mod app;
 pub mod app_menu;

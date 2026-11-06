@@ -262,6 +262,44 @@ fn mix_045_a_value_lets_the_keys_go_when_they_move_on_or_it_goes_out_of_sight() 
     assert_eq!(s.mixer.value_entry, None);
     assert_eq!(branch(&s, t, b[1]).0, -9.0);
     s.undo(&g);
+    // typed, then F6 through the field's keys to the browser: what is typed goes in as one
+    // step, the field shuts and the keys go
+    for hit in [MixerHit::Level(t, b[1]), MixerHit::BranchPan(t, b[1])] {
+        s.mixer.chosen = Some((t, Pick::Plugin(verb)));
+        let at = s.mixer_center(&g, hit).unwrap();
+        click(&mut s, &g, at, 2, Mods::default());
+        assert!(s.mixer.value_entry.is_some());
+        assert!(s.song.can_redo(), "{hit:?}");
+        s.ime_replace(
+            None,
+            if hit == MixerHit::Level(t, b[1]) {
+                "-9"
+            } else {
+                "L30"
+            },
+            false,
+        );
+        assert!(f6(&mut s, &g), "{hit:?}");
+        assert_eq!(s.mixer.value_entry, None);
+        untouched(&mut s);
+        // a new step went in (the one undone before is gone) and one undo takes it back
+        assert!(!s.song.can_redo(), "{hit:?}");
+        let now = branch(&s, t, b[1]);
+        assert!(now.0 == -9.0 || now.1 == -0.3, "{hit:?}: {now:?}");
+        s.undo(&g);
+        assert_eq!(branch(&s, t, b[1]), before, "{hit:?}");
+    }
+    // typed, and the row it is on goes out of sight: what is typed goes in and the keys go
+    s.mixer.chosen = Some((t, Pick::Plugin(verb)));
+    click(&mut s, &g, at, 2, Mods::default());
+    s.ime_replace(None, "-4", false);
+    s.mixer.chosen = Some((t, Pick::Plugin(comp)));
+    assert!(!s.value_key("enter", Mods::default()));
+    assert_eq!(s.mixer.value_entry, None);
+    untouched(&mut s);
+    assert_eq!(branch(&s, t, b[1]).0, -4.0);
+    s.undo(&g);
+    assert_eq!(branch(&s, t, b[1]), before);
     // another row picked, or the mixer put away: the level row is gone and so are its keys
     s.mixer.chosen = Some((t, Pick::Plugin(verb)));
     click(&mut s, &g, at, 1, Mods::default());

@@ -2,9 +2,9 @@
 //! the flow, cut to its body.
 
 use xirius_core::model::{Plugin, Track};
-use xirius_design::{FontSize, LineState, Radius, Weight};
+use xirius_design::{FontSize, LinePiece, LineState, Radius, StructureLine, Weight};
 
-use super::flow::{CardKind, Column, Flow, Gap, Key};
+use super::flow::{CardKind, Column, Flow, Gap, Key, Link};
 use super::keys;
 use super::{
     ChannelWin, Grab, Part, Tool, View, card_parts, col_label, head_parts, head_shown, mode_text,
@@ -70,7 +70,7 @@ pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry, over: bool) {
     if let Some(m) = &v.macros {
         paint_macros(pen, s, w, t, m);
     }
-    pen.mask(v.body, |pen| paint_flow(pen, s, w, t, &v.flow));
+    pen.mask(v.body, |pen| paint_flow(pen, s, w, t, &v.flow, v.body));
     if let Some(k) = &v.keys {
         paint_keys(pen, w, t, k);
     }
@@ -348,12 +348,40 @@ fn hot_key(w: &ChannelWin) -> Option<Key> {
     }
 }
 
-fn paint_flow(pen: &mut Pen, s: &Studio, w: &ChannelWin, t: &Track, f: &Flow) {
+/// Do `a` and `b` overlap?
+fn meets(a: Rect, b: Rect) -> bool {
+    a.x < b.right() && b.x < a.right() && a.y < b.bottom() && b.y < a.bottom()
+}
+
+/// The rectangle round a line's pieces, its width and its rounded ends with them.
+fn line_box(pieces: &[LinePiece]) -> Rect {
+    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for piece in pieces {
+        let (a, b) = match *piece {
+            LinePiece::Straight { from, to } | LinePiece::Quarter { from, to, .. } => (from, to),
+        };
+        for (x, y) in [a, b] {
+            x0 = x0.min(x);
+            y0 = y0.min(y);
+            x1 = x1.max(x);
+            y1 = y1.max(y);
+        }
+    }
+    let m = StructureLine::THICKNESS;
+    Rect::new(x0 - m, y0 - m, x1 - x0 + 2.0 * m, y1 - y0 + 2.0 * m)
+}
+
+fn paint_flow(pen: &mut Pen, s: &Studio, w: &ChannelWin, t: &Track, f: &Flow, seen: Rect) {
     let c = pen.c;
     let hot = hot_key(w);
     let chosen = w.chosen.map(Key::of);
+    let links: Vec<&Link> = f
+        .links
+        .iter()
+        .filter(|l| meets(line_box(&l.pieces), seen))
+        .collect();
     for state in [LineState::Rest, LineState::Hover, LineState::Selected] {
-        for link in &f.links {
+        for link in &links {
             let lit = match state {
                 LineState::Rest => true,
                 LineState::Hover => hot.is_some_and(|k| link.keys.contains(&k)),
@@ -395,10 +423,10 @@ fn paint_flow(pen: &mut Pen, s: &Studio, w: &ChannelWin, t: &Track, f: &Flow) {
                 .filter(|v| v.track == t.id && v.place == Place::Editor)
                 .map(|v| v.node)
         });
-    for col in &f.columns {
+    for col in f.columns.iter().filter(|col| meets(col.head, seen)) {
         paint_head(pen, s, w, t, f, col, held);
     }
-    for add in &f.adds {
+    for add in f.adds.iter().filter(|a| meets(a.rect, seen)) {
         // the splitter's ＋, always there: round, its face under the pointer (the mock's)
         if w.hot == Some(Part::AddBranch(add.split)) {
             pen.round(add.rect, c.surface_3, Radius::Pill);
@@ -411,7 +439,7 @@ fn paint_flow(pen: &mut Pen, s: &Studio, w: &ChannelWin, t: &Track, f: &Flow) {
             c.ink,
         );
     }
-    for cross in &f.crosses {
+    for cross in f.crosses.iter().filter(|x| meets(x.rect, seen)) {
         let grabbed = matches!(
             &w.grab,
             Some(Grab::Cross { split, i, .. }) if *split == cross.split && *i == cross.i
@@ -453,11 +481,11 @@ fn paint_flow(pen: &mut Pen, s: &Studio, w: &ChannelWin, t: &Track, f: &Flow) {
         }) => Some(*pick),
         _ => None,
     };
-    for card in &f.cards {
+    for card in f.cards.iter().filter(|c| meets(c.rect, seen)) {
         paint_card(pen, s, w, t, card, dragged == Some(card.pick));
     }
     for (i, gap) in f.gaps.iter().enumerate() {
-        if !gap_shown(s, w, t, f, gap) {
+        if !meets(gap.button, seen) || !gap_shown(s, w, t, f, gap) {
             continue;
         }
         let lit = w.hot == Some(Part::Gap(i));
@@ -505,9 +533,7 @@ fn paint_head(
     held: Option<xirius_core::id::NodeId>,
 ) {
     let c = pen.c;
-    let Some(target) = s.row_target(t.id, col.id) else {
-        return;
-    };
+    let target = col.target;
     let drag = s
         .mixer
         .level_drag

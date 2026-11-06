@@ -488,15 +488,58 @@ fn a_crossover_stays_between_its_neighbours() {
 #[test]
 fn a_crossover_among_close_neighbours_stays_rising_and_in_range() {
     use xirius_core::rack::{crossovers_fit, default_crossovers};
-    for n in [64, 512, 2000] {
+    for n in [64, 143, 144, 512, 2000] {
         let from = default_crossovers(n);
         for i in [0, 1, n / 2, n - 3, n - 2] {
+            assert_eq!(
+                crossed(&from, i, 0.0),
+                from,
+                "{n} {i}: not dragged, not moved"
+            );
             for dx in [-2400.0, -3.0, 3.0, 2400.0] {
                 let now = crossed(&from, i, dx);
                 assert!(crossovers_fit(&now, n), "{n} {i} {dx}");
+                // It moves the way it is dragged, however close the neighbours are (the
+                // lowest cannot go under 20 Hz).
+                let moved = now[i] - from[i];
+                if !(i == 0 && dx < 0.0 && from[0] <= 20.0) {
+                    assert!(
+                        moved * f64::from(dx) > 0.0,
+                        "{n} {i} {dx}: {} → {}",
+                        from[i],
+                        now[i]
+                    );
+                }
+                // And keeps a gap to its neighbours: a third of the band between them at least.
+                if i > 0 && i < n - 2 {
+                    let third = (from[i + 1] / from[i - 1]).cbrt().min(1.05);
+                    assert!(now[i] / now[i - 1] >= third - 1e-9, "{n} {i} {dx}");
+                    assert!(now[i + 1] / now[i] >= third - 1e-9, "{n} {i} {dx}");
+                }
             }
+            // Left and right pick different values.
+            assert!(
+                crossed(&from, i, -3.0)[i] < crossed(&from, i, 3.0)[i],
+                "{n} {i}"
+            );
         }
     }
+}
+
+#[test]
+fn a_whole_hertz_is_taken_only_when_it_keeps_the_gap() {
+    // 21 Hz would sit closer to 20.1 than the gap allows here.
+    let from = [20.1, 21.5, 23.0];
+    let now = crossed(&from, 1, -240.0);
+    let gap = (23.0f64 / 20.1).cbrt();
+    assert!(now[1] / now[0] >= gap - 1e-12, "{now:?}");
+    assert_ne!(now[1], 21.0);
+    assert!(now[1] < 21.5);
+    // A crossover an older song saved above 20 kHz only comes down when dragged down.
+    let old = [1000.0, 25_000.0];
+    assert_eq!(crossed(&old, 1, 24.0), old);
+    let down = crossed(&old, 1, -2.0)[1];
+    assert!(down < 25_000.0 && down > 20_000.0, "{down}");
 }
 
 #[test]

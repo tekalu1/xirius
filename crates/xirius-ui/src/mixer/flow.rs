@@ -14,7 +14,7 @@ use gpui::Hsla;
 
 use xirius_core::id::{NodeId, PluginId, TrackId};
 use xirius_core::model::{Plugin, Track, TrackKind};
-use xirius_core::rack::{Rack, RackNode, Source, SplitMode};
+use xirius_core::rack::{RackNode, Source, SplitMode};
 use xirius_design::{FontSize, LinePiece, LineState, Radius, Space, StructureLine, Weight};
 
 use super::{MixerHit, ROW_H, meters};
@@ -304,7 +304,7 @@ fn shown(gain_db: f64, mute: bool) -> Option<(f64, bool)> {
 /// The lines of `t`'s flow, top to bottom, on a strip that is `wide` or not.
 pub fn lines(t: &Track, folds: &Folds, wide: bool) -> Vec<Line> {
     let open = |id: NodeId, nested: bool| folds.open(id, nested, wide);
-    let rack = t.rack.clone().unwrap_or_else(|| Rack::serial(t));
+    let rack = crate::channel::flow::rack_of(t);
     let add = t.frozen.is_none();
     let mut out = Vec::new();
     if t.kind == TrackKind::Instrument {

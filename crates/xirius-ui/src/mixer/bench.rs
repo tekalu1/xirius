@@ -11,7 +11,12 @@
 //! With `--branches <n>` (MIX-045), the first of those instruments gets a splitter of n
 //! branches, an effect in each, its strip wide and its channel editor open: the scrolled
 //! runs scroll the editor across every column and back as well, and its paint is timed on
-//! its own. The numbers go to `branch-bench.json`.
+//! its own; `--editor closed` leaves the editor shut to compare. The numbers go to
+//! `branch-bench.json`.
+//!
+//! The song's sound is got ready first, as a song opened with a sound device is; the runs
+//! start once it is (at most [`PREPARE`] frames on) and the song plays, so it plays to the
+//! silent output and the reader tree is made as it is for a user.
 
 use std::f32::consts::TAU;
 use std::path::PathBuf;
@@ -30,6 +35,8 @@ use crate::studio::{DrawerTab, Geometry, Hit, Studio};
 pub const STRIPS: usize = 64;
 /// Frames let go before each run is timed.
 const WARM: usize = 60;
+/// Frames waited at most for the song's sound to be ready before the runs.
+const PREPARE: usize = 60 * 120;
 /// Frames timed in each run.
 const FRAMES: usize = 600;
 const RUNS: [&str; 4] = ["still", "scroll", "scroll_stopped", "scroll_to_end"];
@@ -44,6 +51,13 @@ struct Samples {
     paints: Vec<f64>,
     /// The channel editor's paint, ms.
     editor_paints: Vec<f64>,
+    /// The reader tree's marks and rows, and the pointer, as the frame made them, ms.
+    marks: Vec<f64>,
+    pointers: Vec<f64>,
+    /// The editor's and the strips' layouts, wherever the frame made them, ms.
+    layouts: Vec<f64>,
+    /// Allocations the window's thread made from one frame to the next, when counted.
+    allocs: Vec<f64>,
     /// Strips on screen.
     shown: Vec<usize>,
     /// Strips whose meter showed a level.
@@ -56,10 +70,23 @@ pub struct Bench {
     out: PathBuf,
     /// The branches of the measured splitter, 0 for none.
     branches: usize,
+    /// Its channel editor is open.
+    editor: bool,
     ready: bool,
+    /// The sound was waited for and the song set playing.
+    started: bool,
+    /// Frames waited for the sound, and whether it was ready when the runs began.
+    waited: usize,
+    prepared: bool,
+    /// What the card said when the wait ended: done / parts, failures, the failure.
+    left: Option<String>,
+    /// How many parts of the song could not open and were left out to start.
+    skipped: Vec<String>,
     warm: usize,
     run: usize,
     last: Option<Instant>,
+    /// The window thread's allocations at the last frame (`alloc-count`).
+    made: Option<u64>,
     samples: Samples,
     results: Vec<Value>,
 }
@@ -140,14 +167,21 @@ fn wide_track(s: &Studio, n: usize) -> Option<TrackId> {
 }
 
 impl Bench {
-    pub fn new(out: PathBuf, branches: usize) -> Self {
+    pub fn new(out: PathBuf, branches: usize, editor: bool) -> Self {
         Bench {
             out,
             branches,
+            editor,
             ready: false,
+            started: false,
+            waited: 0,
+            prepared: false,
+            left: None,
+            skipped: Vec::new(),
             warm: WARM,
             run: 0,
             last: None,
+            made: None,
             samples: Samples::default(),
             results: Vec::new(),
         }
@@ -160,10 +194,46 @@ impl Bench {
             s.press(g, Hit::Tab(DrawerTab::Mixer));
             if let Some(t) = wide_track(s, self.branches).filter(|_| self.branches > 0) {
                 s.mixer.wide.insert(t);
-                s.open_channel(t);
+                if self.editor {
+                    s.open_channel(t);
+                }
             }
-            s.toggle_play();
+            s.prepare_song();
             self.ready = true;
+        }
+        if !self.started {
+            let preparing = s.sound_preparing() || s.transport.preparing();
+            if preparing && self.waited < PREPARE {
+                // As the window's idle does between frames; parts that could not open are
+                // left out, as このまま開く does.
+                s.poll_preparing();
+                if s.preparing.as_ref().is_some_and(|c| !c.failures.is_empty()) {
+                    self.skipped = s.preparing.as_ref().map_or_else(Vec::new, |c| {
+                        c.failures
+                            .iter()
+                            .map(|f| format!("{}: {}", f.name, f.reason))
+                            .collect()
+                    });
+                    s.prepare_continue();
+                }
+                self.waited += 1;
+                return false;
+            }
+            self.prepared = !preparing;
+            self.left = s.preparing.as_ref().map(|c| {
+                format!(
+                    "{}/{} failures {} {:?} background {}",
+                    c.progress.done,
+                    c.progress.units.len(),
+                    c.failures.len(),
+                    c.failure,
+                    c.background
+                )
+            });
+            if !s.transport.playing {
+                s.toggle_play();
+            }
+            self.started = true;
         }
         if self.warm > 0 {
             self.warm -= 1;
@@ -171,6 +241,8 @@ impl Bench {
             return false;
         }
         let now = Instant::now();
+        let made = crate::alloc_count::here();
+        let made = made.zip(self.made).map(|(b, a)| b.saturating_sub(a));
         if let Some(last) = self.last {
             let m = &mut self.samples;
             m.frames
@@ -178,9 +250,17 @@ impl Bench {
             m.paints.push(s.mixer.paint_us.replace(0) as f64 / 1000.0);
             m.editor_paints
                 .push(s.mixer.editor_paint_us.replace(0) as f64 / 1000.0);
+            m.marks.push(s.mixer.marks_us.replace(0) as f64 / 1000.0);
+            m.pointers
+                .push(s.mixer.pointer_us.replace(0) as f64 / 1000.0);
+            m.layouts
+                .push(s.mixer.layout_ns.replace(0) as f64 / 1_000_000.0);
             m.shown.push(s.mixer_strips(g).len());
             m.metered.push(s.mixer.meters.count());
             m.playing.push(s.transport.playing);
+            if let Some(n) = made {
+                m.allocs.push(n as f64);
+            }
         }
         self.last = Some(now);
         if RUNS[self.run].starts_with("scroll") {
@@ -194,6 +274,10 @@ impl Bench {
                 w.scroll.0 = (v.flow.w - v.body.w).max(0.0) * phase;
             }
         }
+        // The layout and the allocations made for the scroll above are the measurement's, not
+        // the frame's.
+        s.mixer.layout_ns.set(0);
+        self.made = crate::alloc_count::here();
         if self.samples.frames.len() < FRAMES {
             return false;
         }
@@ -231,9 +315,14 @@ impl Bench {
         let data = json!({
             "strips": strip_order(&s.project()).len(),
             "branches": self.branches,
+            "editor_open": self.editor,
             "editor": editor,
             "window": [g.size.0, g.size.1 + xirius_design::Layout::TOP_BAR_H + xirius_design::Layout::BOTTOM_BAR_H],
             "error": s.error,
+            "sound_ready": self.prepared,
+            "waited_frames": self.waited,
+            "prepare_left": self.left,
+            "prepare_skipped": self.skipped,
             "criteria": { "min_fps": Criteria::FPS_60.min_fps, "max_p99_ms": Criteria::FPS_60.max_p99_ms },
             "runs": self.results,
         });
@@ -262,6 +351,13 @@ fn summary(name: &str, m: &Samples, playing: bool) -> Value {
     let f = Distribution::from_samples(&m.frames);
     let p = Distribution::from_samples(&m.paints);
     let e = Distribution::from_samples(&m.editor_paints);
+    let a = Distribution::from_samples(&m.marks);
+    let o = Distribution::from_samples(&m.pointers);
+    let l = Distribution::from_samples(&m.layouts);
+    let allocs = (!m.allocs.is_empty()).then(|| {
+        let n = Distribution::from_samples(&m.allocs);
+        json!({ "mean": n.mean, "p50": n.p50, "p99": n.p99, "max": n.max })
+    });
     let c = Criteria::FPS_60;
     let fps = 1000.0 / f.mean;
     let span = |v: &[usize]| json!([v.iter().min(), v.iter().max()]);
@@ -273,6 +369,10 @@ fn summary(name: &str, m: &Samples, playing: bool) -> Value {
         "frame_ms": { "mean": f.mean, "p50": f.p50, "p95": f.p95, "p99": f.p99, "max": f.max },
         "mixer_paint_ms": { "mean": p.mean, "p99": p.p99, "max": p.max },
         "editor_paint_ms": { "mean": e.mean, "p99": e.p99, "max": e.max },
+        "reader_ms": { "mean": a.mean, "p50": a.p50, "p99": a.p99, "max": a.max },
+        "pointer_ms": { "mean": o.mean, "p99": o.p99, "max": o.max },
+        "layout_ms": { "mean": l.mean, "p50": l.p50, "p99": l.p99, "max": l.max },
+        "allocs_per_frame": allocs,
         "strips_shown": span(&m.shown),
         "strips_metered": span(&m.metered),
         "slow_frames": slow(m),
@@ -324,6 +424,7 @@ mod tests {
             shown: vec![13; 4],
             metered: vec![61, 61, 0, 0],
             playing: vec![true, true, false, false],
+            ..Samples::default()
         };
         let v = summary("scroll_to_end", &m, false);
         let slow = v["slow_frames"].as_array().unwrap();
