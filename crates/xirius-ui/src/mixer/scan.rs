@@ -341,8 +341,9 @@ mod menu_io_tests {
         assert!(s.toast.is_none());
     }
 
-    /// The start screen as the window starts with a device: an empty song whose inputs are
-    /// watched (the settings do so for an empty song), its list scanned by itself.
+    /// The start screen with its inputs watched, as a device had them watched before the start
+    /// screen stopped doing so (`poll_io`), its list scanned by itself: what the scan and the
+    /// sound for the inputs leave over it, apart from that.
     fn home(root: &std::path::Path) -> Studio {
         let mut s = Studio::new(crate::song::Song::empty_after(
             &crate::song::Song::sample_with(ScanOptions {
@@ -379,7 +380,6 @@ mod menu_io_tests {
             s.tick();
         }
         assert!(s.home_shown());
-        assert!(s.error.is_none(), "{:?}", s.error);
         assert!(s.preparing.is_none(), "the card is down");
         assert!(!s.input_blocked(), "the veil is down");
     }
@@ -389,10 +389,11 @@ mod menu_io_tests {
         let root = tempfile::tempdir().unwrap();
         let mut s = home(root.path());
         home_done(&mut s);
+        assert!(s.error.is_none(), "{:?}", s.error);
         assert_eq!(s.mixer.scan.cache_current, Some(true));
         assert!(s.mixer.scan.error.is_none(), "{:?}", s.mixer.scan.error);
         assert!(
-            s.transport.is_live(),
+            s.transport.host().is_some_and(|h| h.is_watching()),
             "the inputs are watched once the sound is ready"
         );
     }
@@ -403,6 +404,7 @@ mod menu_io_tests {
         let mut s = home(root.path());
         s.save_test_failure = true;
         home_done(&mut s);
+        assert!(s.error.is_none(), "{:?}", s.error);
         assert_eq!(s.mixer.scan.error.as_deref(), Some("保存できません"));
     }
 
@@ -412,6 +414,8 @@ mod menu_io_tests {
         let mut s = home(root.path());
         s.transport.fail_start = Some("開けません".into());
         home_done(&mut s);
+        // Said as the failure it is, not as the sound being prepared.
+        assert_eq!(s.error.as_deref(), Some("開けません"));
         assert!(!s.transport.is_live());
     }
 

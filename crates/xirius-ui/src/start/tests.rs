@@ -432,3 +432,40 @@ fn the_settings_audio_page_has_no_test_tone_without_a_device() {
     s.open_settings(Section::Audio);
     assert!(s.settings_scene(&g).find(&Do::Tone).is_none());
 }
+
+/// The lines at the foot have no lanes to sit under on the new song's screen: they are in the
+/// middle of the body, at the distance from its bottom they keep over the lanes.
+#[test]
+fn the_lines_at_the_foot_are_in_the_middle_of_the_body() {
+    let (mut s, g) = empty();
+    let foot = s.foot(&g);
+    assert_eq!(foot, Rect::new(0.0, 0.0, g.size.0, g.size.1));
+    let middle = |r: Rect| (r.x + r.w / 2.0 - g.size.0 / 2.0).abs() < 0.5;
+    s.error = Some("だめでした".into());
+    let notice = crate::notice::place(&s, &g, "片付けました", None);
+    assert!(middle(notice), "{notice:?}");
+    assert!(
+        notice.bottom() <= g.size.1 - 36.0,
+        "above the strip: {notice:?}"
+    );
+    s.warn("「drumloop」を伸縮できません".into(), None);
+    let toast = crate::toast::layout(&s, &g).expect("shown").rect;
+    assert!(middle(toast), "{toast:?}");
+    assert!(toast.bottom() <= g.size.1 - 36.0, "{toast:?}");
+    s.live_midi.assign.learning = Some(xirius_prefs::midimap::Target::Volume("1".into()));
+    let (pill, _) = s.midi_pill(&g).expect("learning");
+    assert!(middle(pill), "{pill:?}");
+    assert!(pill.bottom() <= g.size.1 - 36.0, "{pill:?}");
+}
+
+/// Over the lanes, the foot is theirs, above the drawer.
+#[test]
+fn over_the_lanes_the_foot_is_theirs() {
+    let s = Studio::sample();
+    let g = s.geometry(1600.0, 1000.0);
+    let foot = s.foot(&g);
+    assert_eq!(
+        (foot.x, foot.w, foot.bottom()),
+        (g.lanes.x, g.lanes.w, g.drawer.y)
+    );
+}

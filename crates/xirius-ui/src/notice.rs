@@ -390,16 +390,17 @@ pub fn place(studio: &Studio, g: &Geometry, text: &str, button: Option<&str>) ->
     let extra = button.map_or(0.0, |b| {
         Space::X2.px() + crate::browser::text_width(b, FontSize::Small) + Space::X3.px() * 2.0
     });
+    let foot = studio.foot(g);
     let w = (crate::browser::text_width(text, FontSize::Small) + Space::X4.px() * 2.0 + extra)
-        .min(g.lanes.w);
+        .min(foot.w);
     let lift = if studio.error.is_some() {
         H + Space::X1.px()
     } else {
         0.0
     };
     Rect::new(
-        g.lanes.x + (g.lanes.w - w) / 2.0,
-        g.drawer.y - 36.0 - lift,
+        foot.x + (foot.w - w) / 2.0,
+        foot.bottom() - 36.0 - lift,
         w,
         H,
     )

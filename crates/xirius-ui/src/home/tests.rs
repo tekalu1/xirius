@@ -564,9 +564,9 @@ fn a_screen_reader_reads_the_buttons_the_search_and_the_list() {
 }
 
 fn finish_open(s: &mut Studio) {
-    let end = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let end = Instant::now() + Duration::from_secs(15);
     while s.opening.is_some() {
-        assert!(std::time::Instant::now() < end, "open never returned");
+        assert!(Instant::now() < end, "open never returned");
         s.poll_opening();
         std::thread::yield_now();
     }
@@ -647,7 +647,8 @@ fn the_mixer_is_not_painted_under_the_start_screen() {
 }
 
 /// The start screen has no meter: its empty song does not watch the inputs (that would start
-/// the sound behind it); a new empty song does.
+/// the sound behind it); a new empty song does. The devices are the simulated ones of [`kept`]:
+/// nothing real is listed or opened.
 #[test]
 fn the_start_screen_does_not_watch_the_inputs() {
     let (mut s, _g, _tmp) = kept(&[]);
@@ -657,20 +658,56 @@ fn the_start_screen_does_not_watch_the_inputs() {
     s.home = None;
     s.poll_io();
     assert!(s.transport.observe_inputs);
-    s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
 }
 
 /// What the strip says over the start screen goes with the next press there, as it does over
-/// the song: a click on the list, or a button pressed with Enter.
+/// the song: a click on the list (by the way every click comes), or a button pressed with Enter.
 #[test]
 fn the_strip_over_the_start_screen_goes_with_the_next_press() {
     let (mut s, g, _tmp) = kept(&[]);
     s.error = Some("開けません".into());
-    assert!(s.home_press(&g, Spot::Row(0)));
+    assert!(s.press(&g, Hit::Home(Spot::Row(0))));
     assert!(s.error.is_none() && s.home_shown());
     s.error = Some("開けません".into());
     s.home.as_mut().unwrap().focus = Focus::Button(Button::Open);
     assert!(s.home_key(&g, "enter", NONE));
     assert!(s.error.is_none());
     assert_eq!(s.file_request, Some(FileRequest::Open));
+}
+
+/// 「閉じる」 goes back to the start screen with no sound started behind it: no card, no veil,
+/// no player starting. The window's way of starting the sound (in the background) is used.
+#[test]
+fn closing_to_the_start_screen_starts_no_sound_behind_it() {
+    let (mut s, _g, _tmp) = kept(&[]);
+    s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
+    s.transport.bind_window();
+    let opened = |s: &mut Studio| {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while s.opening.is_some() || s.sound_preparing() {
+            s.tick();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+    };
+    assert!(s.request_open(crate::opening::Request::New));
+    opened(&mut s);
+    assert!(!s.home_shown());
+    assert!(s.transport.host().is_some(), "the song's sound started");
+    assert!(s.close_to_home());
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while s.opening.is_some() {
+        s.poll_opening();
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(s.home_shown());
+    assert!(!s.transport.preparing(), "no sound is started");
+    assert!(s.preparing.is_none() && !s.sound_preparing(), "no card");
+    assert!(!s.input_blocked(), "no veil");
+    for _ in 0..8 {
+        s.tick();
+    }
+    assert!(s.home_shown() && s.transport.host().is_none());
+    assert!(s.error.is_none(), "{:?}", s.error);
 }

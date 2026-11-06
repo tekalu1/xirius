@@ -195,6 +195,18 @@ impl Studio {
         self.project().root.is_empty()
     }
 
+    /// Where the lines at the foot of the screen go (the failed command's strip, the notices,
+    /// the toast and MIDI 学習): across the lanes and above the drawer, or across the whole body
+    /// on the start screen and the new song's screen, which show neither. Each keeps its own
+    /// distance from the bottom and its own width.
+    pub fn foot(&self, g: &Geometry) -> Rect {
+        if self.start_shown() {
+            Rect::new(0.0, 0.0, g.size.0, g.size.1)
+        } else {
+            Rect::new(g.lanes.x, 0.0, g.lanes.w, g.drawer.y)
+        }
+    }
+
     /// The recording entry has its mark: a device with nothing to record from. With no
     /// device at all the line under the entries says so, once (UI-350).
     pub fn audio_entry_marked(&self) -> bool {

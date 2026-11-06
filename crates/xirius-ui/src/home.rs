@@ -404,6 +404,10 @@ impl Studio {
         }
         self.popup = None;
         if self.request_open(crate::opening::Request::New) {
+            // The start screen has no sound: it starts with the song opened from it.
+            if let Some(open) = self.opening.as_mut() {
+                open.to_home = true;
+            }
             self.after_open(|s| {
                 s.home = Some(Home::default());
                 s.poll_io();
@@ -485,8 +489,6 @@ impl Studio {
     /// A press on the start screen.
     pub fn home_press(&mut self, g: &Geometry, spot: Spot) -> bool {
         self.home_tick();
-        // What the strip says goes with the next press, as it does over the song.
-        self.error = None;
         match spot {
             Spot::Button(b) => {
                 if let Some(home) = self.home.as_mut() {
@@ -527,6 +529,7 @@ impl Studio {
     }
 
     fn home_button(&mut self, b: Button) {
+        // What the strip says goes with the next press, as a click's does in `Studio::press`.
         self.error = None;
         match b {
             Button::New => self.start_leaving(crate::saving::Leave::New),

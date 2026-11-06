@@ -113,6 +113,9 @@ pub struct Take {
 const PREVIEW_CLOSING: &str = "試聴の出力を閉じています";
 /// What [`Transport::ensure`] gives while the player starts behind the card: not a failure.
 pub(crate) const PREPARING: &str = "音を準備しています";
+/// What [`Transport::record`] gives while the MIDI input opens: the record is pressed again
+/// once it is open, not said.
+const MIDI_PREPARING: &str = "MIDI 入力を準備しています";
 
 thread_local! {
     static WINDOW_THREAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -592,9 +595,20 @@ impl Transport {
         }
         if self.player.is_none() {
             if self.windowed && self.mode != OutputMode::None {
-                self.down = None;
-                self.begin_start(p, dir);
-                return Err(PREPARING.into());
+                let down = self.down.take();
+                if self.begin_start(p, dir) || self.preparing() {
+                    return Err(PREPARING.into());
+                }
+                // A player that could not begin to start is a failure, said as it was: a
+                // device that cannot be had is still tried again after a while.
+                self.down = down.map(|d| Down {
+                    due: Instant::now() + REOPEN,
+                    ..d
+                });
+                return Err(self
+                    .driver_notice
+                    .take()
+                    .unwrap_or_else(|| PREPARING.into()));
             }
             if self.mode == OutputMode::Device
                 && self.io_prefs.text("audio.driver") == "wasapi-exclusive"
@@ -955,7 +969,7 @@ impl Transport {
             && midi
             && !self.prepare_midi_record_input(self.host().map_or(48_000, |h| h.rate()))
         {
-            return Err("MIDI 入力を準備しています".into());
+            return Err(MIDI_PREPARING.into());
         }
         let midi_error = self.midi_open_error.take();
         let midi_input = self.midi_record_input.take();
@@ -1570,6 +1584,7 @@ impl Studio {
                 }
                 self.error = (!warnings.is_empty()).then(|| warnings.join("。"));
             }
+            Err(e) if e == MIDI_PREPARING => self.transport.pending_record = true,
             Err(e) => self.error = Some(e),
         }
         true
@@ -3899,5 +3914,93 @@ mod tests {
         s.transport.down = None;
         assert_eq!(s.transport.note(&p, s.song.dir(), t, on), Ok(()));
         assert!(s.transport.host().is_some());
+    }
+
+    /// An empty song in a window, with no player yet: one starts behind the card when asked.
+    fn windowed_empty() -> Studio {
+        let mut s = Studio::new(crate::song::Song::empty());
+        s.transport.mode = paced();
+        s.transport.bind_window();
+        s
+    }
+
+    fn prepared(s: &mut Studio) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while s.sound_preparing() {
+            s.poll_preparing();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+    }
+
+    /// The inputs asked for while the player starts behind the card: that is no failure, and
+    /// they are watched once it is up, not given up on. Nothing here takes a frame.
+    #[test]
+    fn inputs_asked_for_while_the_player_starts_are_watched_once_it_is_up() {
+        let mut s = windowed_empty();
+        s.transport.observe_inputs = true;
+        let p = s.project();
+        assert_eq!(s.transport.watch(&p, s.song.dir(), &[]), None);
+        assert!(s.transport.preparing());
+        prepared(&mut s);
+        assert!(s.transport.host().is_some());
+        assert_eq!(s.transport.watch(&p, s.song.dir(), &[]), None);
+        assert!(s.transport.host().is_some_and(|h| h.is_watching()));
+        assert!(s.error.is_none(), "{:?}", s.error);
+    }
+
+    /// A player that cannot begin to start is a failure, said once as it was: not "preparing",
+    /// and not tried again at every frame.
+    #[test]
+    fn a_player_that_cannot_begin_to_start_is_said_as_a_failure() {
+        let mut s = windowed_empty();
+        s.transport.observe_inputs = true;
+        s.transport.fail_start = Some("開けません".into());
+        let p = s.project();
+        assert_eq!(
+            s.transport.watch(&p, s.song.dir(), &[]),
+            Some("開けません".into())
+        );
+        assert!(!s.transport.preparing());
+        assert!(s.transport.take_driver_notice().is_none(), "said once");
+        assert_eq!(s.transport.watch(&p, s.song.dir(), &[]), None);
+    }
+
+    /// A device that cannot be had, tried again and failing to start: tried again later still.
+    #[test]
+    fn a_device_tried_again_that_fails_to_start_is_tried_again_later() {
+        let mut s = windowed_empty();
+        s.transport.mode = OutputMode::Device;
+        s.transport.went_down("デバイスが見つかりません".into());
+        s.transport.down.as_mut().unwrap().due = Instant::now();
+        s.transport.fail_start = Some("開けません".into());
+        let p = s.project();
+        assert_eq!(
+            s.transport.reopen(&p, s.song.dir()),
+            Some(Err("開けません".into()))
+        );
+        let down = s.transport.down.as_ref().expect("tried again later");
+        assert_eq!(down.said, "デバイスが見つかりません");
+        assert!(down.due > Instant::now());
+    }
+
+    /// What was said while the player started goes once it is up, whatever said it: here a press
+    /// of play before there was a player; and one left over with nothing starting.
+    #[test]
+    fn what_was_said_while_the_player_started_goes_once_it_is_up() {
+        let mut s = windowed_empty();
+        assert!(s.toggle_play());
+        assert_eq!(s.error.as_deref(), Some(PREPARING));
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while s.sound_preparing() {
+            s.tick();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        s.tick();
+        assert!(s.error.is_none(), "{:?}", s.error);
+        s.error = Some(PREPARING.into());
+        s.tick();
+        assert!(s.error.is_none(), "{:?}", s.error);
     }
 }

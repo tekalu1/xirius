@@ -65,6 +65,8 @@ pub(crate) struct Opening {
     pub announcement: String,
     sample: bool,
     startup: bool,
+    /// The empty song is for the start screen (「閉じる」): no sound is started for it.
+    pub(crate) to_home: bool,
     closing: Result<Option<xirius_session::cleanup::Closed>, String>,
     mcp: Option<xirius_mcp::Job>,
 }
@@ -344,6 +346,7 @@ impl Studio {
             announcement: TITLE.into(),
             sample,
             startup: is_startup,
+            to_home: false,
             closing,
             mcp: None,
         });
@@ -630,6 +633,7 @@ impl Studio {
                             .record_dir()
                             .is_some_and(|dir| self.keep.is_draft_dir(&dir));
                         self.song.opened(sample, draft);
+                        self.skip_preparation_once |= open.to_home;
                         self.open_adopted(std::mem::replace(&mut open.closing, Ok(None)));
                         if let Some(skipped) = outcome.skipped {
                             self.dawproject_skipped(skipped);

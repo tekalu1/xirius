@@ -278,7 +278,8 @@ impl Studio {
 }
 
 /// Where the toast and its parts go: at the left foot of the lanes, above the failed command's
-/// line when that shows too.
+/// line when that shows too. With no lanes (the start screen, the new song's screen) it is in
+/// the middle of the foot, as the other lines there are.
 pub fn layout(studio: &Studio, g: &Geometry) -> Option<Parts> {
     let t = studio.toast_shown()?;
     let width = |s: &str| crate::browser::text_width(s, FontSize::Small);
@@ -290,7 +291,8 @@ pub fn layout(studio: &Studio, g: &Geometry) -> Option<Parts> {
     let (first_w, also_w) = (button_w(&t.button), button_w(&t.also));
     // Without the ×, the text ends as far from the edge as it starts.
     let end = if t.closes() { GAP + CLOSE + PAD } else { LEFT };
-    let room = (g.lanes.w - MARGIN * 2.0).max(0.0);
+    let foot = studio.foot(g);
+    let room = (foot.w - MARGIN * 2.0).max(0.0);
     let fixed = LEFT + icon_w + first_w + also_w + end;
     let text_w = width(&t.text).min((room - fixed).max(0.0));
     let w = (fixed + text_w).min(room);
@@ -299,7 +301,12 @@ pub fn layout(studio: &Studio, g: &Geometry) -> Option<Parts> {
     } else {
         0.0
     };
-    let r = Rect::new(g.lanes.x + MARGIN, g.drawer.y - MARGIN - H - lift, w, H);
+    let x = if studio.start_shown() {
+        foot.x + (foot.w - w) / 2.0
+    } else {
+        foot.x + MARGIN
+    };
+    let r = Rect::new(x, foot.bottom() - MARGIN - H - lift, w, H);
     let mid = |h: f32| r.y + (H - h) / 2.0;
     let mut x = r.x + LEFT;
     let icon = t.marked().then(|| {

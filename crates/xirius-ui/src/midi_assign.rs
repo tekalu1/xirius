@@ -356,11 +356,11 @@ impl Studio {
     pub fn midi_pill(&self, g: &Geometry) -> Option<(Rect, Rect)> {
         let target = self.live_midi.assign.learning.as_ref()?;
         let text = format!("MIDI 学習 · {}", self.midi_target_name(target));
-        let w =
-            (crate::browser::text_width(&text, FontSize::Small) + CANCEL_W + 40.0).min(g.lanes.w);
+        let foot = self.foot(g);
+        let w = (crate::browser::text_width(&text, FontSize::Small) + CANCEL_W + 40.0).min(foot.w);
         let r = Rect::new(
-            g.lanes.x + (g.lanes.w - w) / 2.0,
-            g.drawer.y - 36.0 - PILL_H - 8.0,
+            foot.x + (foot.w - w) / 2.0,
+            foot.bottom() - 36.0 - PILL_H - 8.0,
             w,
             PILL_H,
         );
