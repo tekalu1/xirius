@@ -119,6 +119,9 @@ pub enum Hit {
     /// The snowflake of an audio or instrument track: freezes it, lets it go, or stops the
     /// freeze while it runs (EXP-004).
     Freeze(TrackId),
+    /// The text-less volume fader of a wide column's second line (UI-324): the mixer fader's
+    /// value, dragged sideways.
+    HeadFader(TrackId),
     Output(TrackId),
     /// A folder's output bus button (EDT-073).
     FolderBus(FolderId),
@@ -806,6 +809,8 @@ pub struct Studio {
     pub live_midi: crate::midi_live::LiveMidi,
     /// The open windows of built-in instruments (UI-098).
     pub instruments: crate::instrument::window::Windows,
+    /// The volume fader of a wide track head: its keys, its drag and the value typed (UI-324).
+    pub head_fader: crate::head_fader::HeadFader,
     /// The open channel editor (MIX-042).
     pub channel: Option<crate::channel::ChannelWin>,
     /// The channel editor's chain preset tags (MIX-042).
@@ -980,6 +985,7 @@ impl Studio {
             midi_ports: crate::midi_watch::Ports::default(),
             live_midi: Default::default(),
             instruments: crate::instrument::window::Windows::default(),
+            head_fader: crate::head_fader::HeadFader::default(),
             channel: None,
             chain_presets: Default::default(),
             macro_pad: None,
@@ -1283,6 +1289,7 @@ impl Studio {
             Hit::Keys(t) => part(RowKind::Track(t), |p| p.keys),
             Hit::Widen(t) => part(RowKind::Track(t), |p| p.widen),
             Hit::Freeze(t) => part(RowKind::Track(t), |p| p.freeze),
+            Hit::HeadFader(t) => part(RowKind::Track(t), |p| p.fader),
             Hit::Output(t) => part(RowKind::Track(t), |p| p.output),
             Hit::TrackColor(t) => part(RowKind::Track(t), |p| p.swatch),
             Hit::TrackIcon(t) => part(RowKind::Track(t), |p| Some(p.icon)),
@@ -1473,6 +1480,9 @@ impl Studio {
                             .any(on) =>
                 {
                     return Hit::Row(row.kind);
+                }
+                RowKind::Track(t) if on(parts.fader) && self.job_freezing(t).is_none() => {
+                    return Hit::HeadFader(t);
                 }
                 RowKind::Track(t) if on(parts.mute) => return Hit::Mute(t),
                 RowKind::Track(t) if on(parts.solo) => return Hit::Solo(t),
@@ -1736,6 +1746,12 @@ impl Studio {
                 self.toggle_follow();
                 true
             }
+            // The pointer's press is taken in `head_fader_down` (the drag needs where it began);
+            // a screen reader's press opens the number field.
+            Hit::HeadFader(t) => {
+                self.head_fader_type(t);
+                self.head_fader.entry.is_some()
+            }
             Hit::Freeze(t) => {
                 if self.job_freezing(t).is_some() {
                     self.job_cancel();
@@ -1972,6 +1988,7 @@ impl Studio {
             || self.grip_key(g, key)
             || self.macro_key(key, mods)
             || self.device_key(g, key, mods)
+            || self.head_fader_key(key, mods)
             || self.bar_key(key, ch, mods)
             || self.inspector_key(g, key, ch, mods)
             || self.field_key(g, key, ch, mods.shift).is_some()

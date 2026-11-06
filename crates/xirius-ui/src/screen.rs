@@ -269,7 +269,7 @@ impl Screen {
             return;
         }
         if studio.mixer.drag.is_some() {
-            if studio.drag_move(y, ev.modifiers.shift) {
+            if studio.drag_move_at(x, y, ev.modifiers.shift) {
                 cx.notify();
             }
             return;
@@ -449,6 +449,12 @@ impl Screen {
             return;
         }
         let hit = studio.hit(&g, x, y);
+        if studio.popup.is_none()
+            && studio.head_fader_down(&g, hit, x, ev.click_count as u32, mods(ev.modifiers))
+        {
+            cx.notify();
+            return;
+        }
         let menu = studio.popup.is_some();
         // A file row is held before its press: the press closes the band under the row
         // selected before, and the rows below it move up.
@@ -1495,11 +1501,16 @@ impl EntityInputHandler for Screen {
         if let Some(f) = studio.ime_field().filter(|_| {
             matches!(
                 studio.ime_target(),
-                Some(crate::interaction::ImeTarget::Name | crate::interaction::ImeTarget::Settings)
+                Some(
+                    crate::interaction::ImeTarget::Name
+                        | crate::interaction::ImeTarget::Settings
+                        | crate::interaction::ImeTarget::Head
+                )
             )
         }) {
             let at = studio
                 .name_rect(&g)
+                .or_else(|| studio.head_fader_field_rect(&g))
                 .or_else(|| studio.settings_scene(&g).field)?;
             let mut pen = Pen {
                 window,

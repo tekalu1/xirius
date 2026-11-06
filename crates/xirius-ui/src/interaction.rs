@@ -11,6 +11,8 @@ pub(crate) enum ImeTarget {
     Settings,
     /// A value typed in a device's knob (UI-324).
     Device,
+    /// A value typed in a track head's fader (UI-324).
+    Head,
     Palette,
 }
 
@@ -28,6 +30,8 @@ impl Studio {
             Some(ImeTarget::Settings)
         } else if self.instruments.entry.is_some() {
             Some(ImeTarget::Device)
+        } else if self.head_fader.entry.is_some() {
+            Some(ImeTarget::Head)
         } else if self.palette.is_some() {
             Some(ImeTarget::Palette)
         } else {
@@ -103,6 +107,7 @@ impl Studio {
             ImeTarget::Name => self.input_map.name.as_ref().map(|n| &n.field),
             ImeTarget::Settings => self.settings.as_ref()?.field.as_ref(),
             ImeTarget::Device => self.instruments.entry.as_ref().map(|e| &e.field),
+            ImeTarget::Head => self.head_fader.entry.as_ref().map(|e| &e.field),
             ImeTarget::Pick | ImeTarget::Palette => None,
         }
     }
@@ -132,6 +137,10 @@ impl Studio {
                 let entry = self.instruments.entry.as_mut().unwrap();
                 entry.type_text(range, text, marked);
             }
+            Some(ImeTarget::Head) => {
+                let entry = self.head_fader.entry.as_mut().unwrap();
+                entry.type_text(range, text, marked);
+            }
             Some(ImeTarget::Palette) => {
                 let palette = self.palette.as_mut().unwrap();
                 if marked {
@@ -153,6 +162,7 @@ impl Studio {
             Some(ImeTarget::Name) => self.input_map.name.as_mut().unwrap().field.unmark(),
             Some(ImeTarget::Settings) => self.settings_unmark(),
             Some(ImeTarget::Device) => self.instruments.entry.as_mut().unwrap().field.unmark(),
+            Some(ImeTarget::Head) => self.head_fader.entry.as_mut().unwrap().field.unmark(),
             Some(ImeTarget::Palette) => self.palette.as_mut().unwrap().unmark(),
             None => {}
         }

@@ -16,6 +16,7 @@ UI-004: 同じ操作を画面の 2 か所に置かない。この一覧は `crat
 | `track.solo` | `head.solo`, `mixer.solo` | トラックの頭とミキサーの帯の S: 同上 |
 | `track.arm` | `head.arm`, `mixer.arm` | トラックの頭とミキサーの帯の R: 同上 |
 | `track.output.menu` | `head.output`, `mixer.output` | トラックの頭（広げたとき）とミキサーの帯の出力: 同上 |
+| `track.volume` | `head.fader`, `mixer.fader` | トラックの頭の音量のフェーダーとミキサーの帯のフェーダー: 2026-11-06 の利用者の決定（頭の列の幅）。同じトラックの同じ音量を動かす |
 | `song.new` | `home.new`, `popup.song` | スタート画面の「新規」と曲のメニューの「新規」: 2026-11-03 の利用者の決定（UI-350）。スタート画面は曲を開く前の画面で、曲のメニューと同時には出ない |
 | `song.open` | `home.open`, `popup.song` | スタート画面の「開く…」と曲のメニューの「開く…」: 同上 |
 | `song.open_dawproject` | `home.dawproject`, `popup.song` | スタート画面の「DAWproject を開く…」と曲のメニューの同じ項目: 同上 |
@@ -116,7 +117,7 @@ UI-004: 同じ操作を画面の 2 か所に置かない。この一覧は `crat
 | `track.pan` | `mixer.pan` |
 | `track.select` | `mixer.strip` |
 | `track.solo` | `head.solo`, `mixer.solo` |
-| `track.volume` | `mixer.fader` |
+| `track.volume` | `head.fader`, `mixer.fader` |
 | `track.widen` | `head.widen` |
 | `transport.loop` | `bar.loop` |
 | `transport.metronome` | `bar.metronome` |
@@ -140,7 +141,7 @@ UI-004: 同じ操作を画面の 2 か所に置かない。この一覧は `crat
 | `view.zoom.out` | `head.zoom_out` |
 | `view.zoom.wave` | `head.wave_zoom` |
 
-操作 113 件、うち 2 か所にあるもの 13 件（すべて承認済み）。
+操作 113 件、うち 2 か所にあるもの 14 件（すべて承認済み）。
 
 保存（UI-288）: Ctrl+S と曲のメニューは同じ保存を開始する。場所が未定なら別名保存の窓を開く。書き込み中の印は少なくとも 450 ms 保ち、200 ms を超える待ちは幕に載せる。別名保存の幕だけに進捗の棒と「中止 Esc」を置く。保存の警告の札の「別名で保存…」は同じ窓を開き、「もう一度」は同じ保存を再試行する。札を閉じても、保存成功まで警告の印を保つ。
 

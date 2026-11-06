@@ -1863,32 +1863,49 @@ impl Studio {
     pub fn drag_begin(&mut self, g: &Geometry, hit: Hit, y: f32) -> bool {
         match hit {
             Hit::Mixer(h @ (MixerHit::Fader(_) | MixerHit::Pan(_) | MixerHit::SendLevel(..))) => {
-                // Its lane plays it (UI-063): taken, so nothing under it gets the press.
-                if self.mixer_locked(h) {
-                    return true;
-                }
-                let Some(start) = self.mixer_value(h) else {
-                    return false;
-                };
                 let travel = match h {
                     MixerHit::Fader(_) => self
                         .mixer_rect(g, h)
                         .map_or(100.0, |r| (r.h - CAP_H).max(1.0)),
                     _ => KNOB_TRAVEL,
                 };
-                self.mixer.drag = Some(Drag {
-                    hit: h,
-                    y0: y,
-                    travel,
-                    start,
-                    value: start,
-                    alone: self.arrange.mods.alt,
-                });
-                self.auto_touch(h, Phase::Begin, Some(start));
-                true
+                self.drag_open(h, y, travel)
+            }
+            // A track head's fader (UI-324) is the same fader, dragged sideways.
+            Hit::HeadFader(t) => {
+                let travel = self
+                    .head_fader_rect(g, t)
+                    .map_or(100.0, |r| (r.w - crate::head_fader::CAP_W).max(1.0));
+                let began = self.drag_open(MixerHit::Fader(t), y, travel);
+                if self.mixer.drag.is_some() {
+                    self.head_fader.dragging = Some(t);
+                }
+                began
             }
             _ => false,
         }
+    }
+
+    /// Takes hold of `h` with the pointer at `y0` (the x of a head's fader), `travel` px from
+    /// one end of its range to the other. True when it took the press.
+    pub(crate) fn drag_open(&mut self, h: MixerHit, y0: f32, travel: f32) -> bool {
+        // Its lane plays it (UI-063): taken, so nothing under it gets the press.
+        if self.mixer_locked(h) {
+            return true;
+        }
+        let Some(start) = self.mixer_value(h) else {
+            return false;
+        };
+        self.mixer.drag = Some(Drag {
+            hit: h,
+            y0,
+            travel,
+            start,
+            value: start,
+            alone: self.arrange.mods.alt,
+        });
+        self.auto_touch(h, Phase::Begin, Some(start));
+        true
     }
 
     /// Starts dragging a macro knob of a window (MIX-041) as a mixer knob: it is one step when
@@ -1915,10 +1932,21 @@ impl Studio {
 
     /// The pointer moved during a drag; `fine` (Shift) moves a quarter as far.
     pub fn drag_move(&mut self, y: f32, fine: bool) -> bool {
+        self.drag_move_at(0.0, y, fine)
+    }
+
+    /// The pointer moved to (`x`, `y`) during a drag: a track head's fader (UI-324) is dragged
+    /// sideways, every other control up and down.
+    pub fn drag_move_at(&mut self, x: f32, y: f32, fine: bool) -> bool {
         let Some(d) = self.mixer.drag else {
             return false;
         };
-        let dy = (d.y0 - y) * if fine { 0.25 } else { 1.0 };
+        let moved = if self.head_fader.dragging.is_some() {
+            x - d.y0
+        } else {
+            d.y0 - y
+        };
+        let dy = moved * if fine { 0.25 } else { 1.0 };
         let value = match d.hit {
             MixerHit::Pan(_) => {
                 let v = (d.start as f32 + dy * 2.0 / d.travel).clamp(-1.0, 1.0);
@@ -1978,6 +2006,7 @@ impl Studio {
         self.auto_touch(d.hit, Phase::End, None);
         self.mixer.drag = None;
         self.mixer.knob_at = None;
+        self.head_fader.dragging = None;
     }
 
     /// Ends a drag: one command when the value changed.
@@ -1994,6 +2023,7 @@ impl Studio {
             .map(ToString::to_string)
             .collect();
         self.mixer.drag = None;
+        self.head_fader.dragging = None;
         if written {
             return true;
         }

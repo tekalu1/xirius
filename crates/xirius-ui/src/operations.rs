@@ -45,6 +45,7 @@ pub fn of_hit(hit: Hit) -> Option<(&'static str, &'static str)> {
         Hit::TrackColor(_) => ("head.color", "track.color.menu"),
         Hit::Widen(_) => ("head.widen", "track.widen"),
         Hit::Freeze(_) => ("head.freeze", "track.freeze"),
+        Hit::HeadFader(_) => ("head.fader", "track.volume"),
         Hit::Output(_) => ("head.output", "track.output.menu"),
         Hit::FolderBus(_) => ("head.bus", "folder.bus.menu"),
         Hit::Rec(part) => match part {
@@ -294,6 +295,11 @@ pub const APPROVED: &[Approved] = &[
         op: "track.output.menu",
         places: &["head.output", "mixer.output"],
         ground: "トラックの頭（広げたとき）とミキサーの帯の出力: 同上",
+    },
+    Approved {
+        op: "track.volume",
+        places: &["head.fader", "mixer.fader"],
+        ground: "トラックの頭の音量のフェーダーとミキサーの帯のフェーダー: 2026-11-06 の利用者の決定（頭の列の幅）。同じトラックの同じ音量を動かす",
     },
     Approved {
         op: "song.new",
@@ -574,6 +580,10 @@ mod tests {
             wide.press(&g, Hit::Widen(t));
         }
         states.push(wide);
+        // The head column dragged wide: the volume fader shows on the second line.
+        let mut column = Studio::sample();
+        column.side_size.head = Some(340.0);
+        states.push(column);
         // The record panel, with auto-punch on so that the post-roll shows too.
         let mut rec = Studio::sample();
         rec.rec_panel.open = true;

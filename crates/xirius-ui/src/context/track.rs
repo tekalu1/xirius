@@ -13,7 +13,7 @@ use xirius_core::model::{Parent, Project, TrackKind};
 use super::{Act, Item};
 use crate::arrange::{lane_name, targets_of};
 use crate::export::Group;
-use crate::studio::{Geometry, Studio};
+use crate::studio::{Geometry, Hit, Studio};
 use crate::tree::RowKind;
 
 /// The rows a menu acts on, as the ids the commands take.
@@ -68,6 +68,14 @@ impl Studio {
         self.select_row(Some(kind));
         self.arrange.touched();
         let items = match (rows.as_slice(), kind) {
+            // The fader of the head has the mixer fader's menu: the value, 0 dB, its lane
+            // (UI-324).
+            (_, RowKind::Track(_)) if matches!(self.hit(g, x, y), Hit::HeadFader(_)) => {
+                let Hit::HeadFader(t) = self.hit(g, x, y) else {
+                    return false;
+                };
+                self.fader_items(t)
+            }
             ([_], RowKind::Track(t)) => self.track_items(g, t),
             ([_], RowKind::Folder(f)) => self.folder_items(f),
             _ => self.rows_items(&rows),

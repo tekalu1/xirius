@@ -20,6 +20,10 @@ impl Studio {
         if let Some((track, target)) = self.lane_head_at(g, x, y) {
             return self.auto_head_context(track, target, (x, y));
         }
+        // The head's volume fader is no spot of the arrangement: its menu is the row's.
+        if let crate::studio::Hit::HeadFader(t) = self.hit(g, x, y) {
+            return self.row_context(g, RowKind::Track(t), x, y);
+        }
         match self.arrange_spot(g, x, y) {
             Spot::Space(RowKind::Track(_)) if self.in_range(g, x) => {
                 let items = self.range_items();

@@ -357,7 +357,7 @@ impl Studio {
 
     // ------------------------------------------------------------ S28 S29 a fader or a knob
 
-    fn fader_items(&mut self, t: TrackId) -> Vec<Item> {
+    pub(super) fn fader_items(&mut self, t: TrackId) -> Vec<Item> {
         let p = self.project();
         let Some(track) = p.tracks.get(&t) else {
             return Vec::new();

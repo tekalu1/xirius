@@ -78,6 +78,7 @@ impl Studio {
         if !self.over_instrument(g, x, y) {
             self.device_blur();
         }
+        self.head_fader_press_off(g, x, y);
     }
 
     /// The keys move to another part (F6, the palette, a menu of the arrangement): the picked

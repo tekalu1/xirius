@@ -15,6 +15,7 @@ pub fn command(hit: Hit) -> Option<String> {
             Hit::TrackColor(_) => "track.color.set",
             Hit::Widen(_) => "view.track-details",
             Hit::Freeze(_) => "track.freeze",
+            Hit::HeadFader(_) => "track.volume.set",
             Hit::Output(_) => "track.output.set",
             Hit::FolderBus(_) => "folder.bus.set",
             Hit::Chevron(_) => "view.folder",

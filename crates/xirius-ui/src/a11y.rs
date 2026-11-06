@@ -283,6 +283,30 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
         let Some(track) = p.tracks.get(&t) else {
             continue;
         };
+        // The head's volume fader (a Slider in dB); a press on it opens the number field.
+        if let (Some(r), Some(db)) = (
+            s.head_fader_rect(g, t),
+            s.mixer_value(crate::mixer::MixerHit::Fader(t)),
+        ) && g.column.contains(r.x + r.w / 2.0, r.y + r.h / 2.0)
+        {
+            let mut node = accesskit::Node::new(accesskit::Role::Slider);
+            node.set_label(format!("{} の音量", track.name));
+            node.set_min_numeric_value(f64::from(crate::mixer::meters::FLOOR_DB));
+            node.set_max_numeric_value(f64::from(crate::mixer::meters::CEIL_DB));
+            node.set_numeric_value(db.max(f64::from(crate::mixer::meters::FLOOR_DB)));
+            node.set_value(format!("{} dB", crate::head_fader::text(db)));
+            node.set_bounds(bounds(r));
+            out.push(Mark {
+                key: format!("head-fader-{t}"),
+                children: Vec::new(),
+                node,
+                fold: None,
+                pick: None,
+                press: Some(Hit::HeadFader(t)),
+                turn: None,
+                edge: None,
+            });
+        }
         let stacks = xirius_core::takes::stacks(track);
         for clip in &track.clips {
             // The ARA badge: a button with the plugin's state, and why it cannot be opened.

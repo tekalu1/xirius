@@ -89,6 +89,10 @@ impl Studio {
                 let why = self.mixer_held(m)?;
                 self.mixer_rect(g, m).map(|r| (why, r))
             }
+            Hit::HeadFader(t) => {
+                let why = self.mixer_held(MixerHit::Fader(t))?;
+                self.head_fader_rect(g, t).map(|r| (why, r))
+            }
             _ => None,
         }
     }

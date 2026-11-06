@@ -127,6 +127,9 @@ pub mod fx_preset;
 pub mod gain_tip;
 pub mod glyphs;
 pub mod grid_lines;
+pub mod head_fader;
+#[cfg(test)]
+mod head_fader_tests;
 pub mod health;
 pub mod heavy_plugin_shots;
 mod held_input;

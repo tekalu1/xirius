@@ -610,6 +610,7 @@ pub fn paint_overlay(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     crate::fx_preset::paint(pen, studio);
     crate::hover_tip::paint(pen, studio, g);
     crate::gain_tip::paint(pen, studio, g);
+    crate::head_fader::paint(pen, studio, g);
     crate::home::paint(pen, studio, g);
     if let Some(p) = &studio.popup {
         let hover = if let Hit::Item(i) = studio.hover {
@@ -1220,6 +1221,11 @@ fn paint_row_parts(
                 && let Some(r) = parts.freeze
             {
                 paint_freeze(pen, studio, track, at(r), freezing.is_some());
+            }
+            if freezing.is_none()
+                && let Some(r) = parts.fader
+            {
+                crate::head_fader::paint_fader(pen, studio, t, at(r));
             }
             if let Some(f) = freezing {
                 let line = Rect::new(
