@@ -412,7 +412,7 @@ fn crossovers(s: &Session, t: &str, split: &str) -> Vec<f64> {
 
 #[test]
 fn frequency_crossovers_rise_inside_the_range_however_the_split_is_made() {
-    use xirius_core::rack::{crossovers_fit, default_crossovers};
+    use xirius_core::rack::{crossovers_fit, crossovers_kept, default_crossovers};
     for n in [6usize, 64, 512] {
         let (mut s, t, _) = song();
         // Made as a frequency split.
@@ -440,25 +440,30 @@ fn frequency_crossovers_rise_inside_the_range_however_the_split_is_made() {
         assert!(crossovers_fit(&c, n + 1), "{n}: {:?}", &c[c.len() - 4..]);
         s.project().validate().unwrap();
     }
-    // Branches added one by one to a frequency split of two keep rising inside the range.
+    // Branches added one by one to a frequency split of two keep every crossover there was and
+    // rise; inside the range while the top band can still be halved under 20 kHz (57 added).
     let (mut s, t, _) = song();
     let a = id(&run(
         &mut s,
         "rack.split.add",
         json!({ "track": t, "mode": "frequency" }),
     ));
+    let mut was = crossovers(&s, &t, &a);
     for k in 3..=200 {
         run(&mut s, "rack.branch.add", json!({ "split": a }));
         let c = crossovers(&s, &t, &a);
+        assert_eq!(c[..was.len()], was[..], "{k}");
+        assert!(crossovers_kept(&c, k), "{k}: {:?}", &c[c.len() - 4..]);
         assert!(
-            crossovers_fit(&c, k),
+            k > 58 || crossovers_fit(&c, k),
             "{k}: {:?}",
-            &c[c.len().saturating_sub(4)..]
+            &c[c.len() - 4..]
         );
         if k == 3 {
             // The first added cuts the top band and keeps the 1 kHz the user had.
             assert_eq!(c, [1000.0, 2000.0]);
         }
+        was = c;
     }
     // The AI cannot type crossovers outside 20 Hz to 20 kHz.
     let b = id(&run(
@@ -472,6 +477,62 @@ fn frequency_crossovers_rise_inside_the_range_however_the_split_is_made() {
         json!({ "id": b, "mode": "frequency", "crossovers": "1000, 25000" }),
     );
     assert!(e.contains("20〜20000 Hz"), "{e}");
+}
+
+/// A frequency split on `t` with `c` as its crossovers, typed as the AI or an older song would.
+fn frequency_split(s: &mut Session, t: &str, c: &[f64]) -> String {
+    let a = id(&run(
+        s,
+        "rack.split.add",
+        json!({ "track": t, "branches": c.len() + 1 }),
+    ));
+    let typed: Vec<String> = c.iter().map(f64::to_string).collect();
+    run(
+        s,
+        "rack.split.mode",
+        json!({ "id": a, "mode": "frequency", "crossovers": typed.join(", ") }),
+    );
+    assert_eq!(crossovers(s, t, &a), c);
+    a
+}
+
+#[test]
+fn a_branch_added_to_a_frequency_split_keeps_every_crossover_and_undoes() {
+    use xirius_core::rack::{crossovers_fit, default_crossovers};
+    let (mut s, t, _) = song();
+    // A narrow top band: the new crossover takes its upper half, the two set stay.
+    let a = frequency_split(&mut s, &t, &[1000.0, 19_000.0]);
+    step(&mut s, "rack.branch.add", json!({ "split": a }));
+    let c = crossovers(&s, &t, &a);
+    assert_eq!(c[..2], [1000.0, 19_000.0]);
+    assert!(crossovers_fit(&c, 4) && c[2] < 20_000.0, "{c:?}");
+    // The top one right at 20 kHz: still kept, the new one above it.
+    let b = frequency_split(&mut s, &t, &[300.0, 20_000.0]);
+    step(&mut s, "rack.branch.add", json!({ "split": b }));
+    let c = crossovers(&s, &t, &b);
+    assert_eq!(c[..2], [300.0, 20_000.0]);
+    assert!(c[2] > 20_000.0, "{c:?}");
+    // From the defaults of 64 up to 68, and of 110 up to 115: none of those there goes back
+    // to the defaults, every one stays inside the range, and each add undoes on its own.
+    for (from, to) in [(64usize, 68usize), (110, 115), (111, 115)] {
+        let x = id(&run(
+            &mut s,
+            "rack.split.add",
+            json!({ "track": t, "branches": from, "mode": "frequency" }),
+        ));
+        let first = default_crossovers(from);
+        for k in from + 1..=to {
+            let was = crossovers(&s, &t, &x);
+            step(&mut s, "rack.branch.add", json!({ "split": x }));
+            let c = crossovers(&s, &t, &x);
+            assert_eq!(c[..was.len()], was[..], "{from} {k}");
+            assert_eq!(c[..first.len()], first[..], "{from} {k}");
+            assert!(crossovers_fit(&c, k), "{from} {k}: {:?}", &c[c.len() - 4..]);
+        }
+        s.undo(1).expect("undo");
+        assert_eq!(crossovers(&s, &t, &x).len(), to - 2, "{from}");
+    }
+    s.project().validate().unwrap();
 }
 
 #[test]

@@ -364,22 +364,37 @@ fn the_default_crossovers_rise_for_any_number_of_branches() {
     assert_eq!(default_crossovers(3), [200.0, 2000.0]);
     assert_eq!(default_crossovers(4), [150.0, 800.0, 4000.0]);
     assert_eq!(default_crossovers(5), [100.0, 400.0, 1600.0, 6000.0]);
-    for n in [6, 7, 12, 64, 109, 110, 142, 143, 512, 100_000] {
+    let gap = |c: &[f64]| c.windows(2).map(|w| w[1] / w[0]).fold(f64::MAX, f64::min);
+    for n in [
+        6, 7, 12, 64, 109, 110, 111, 112, 141, 142, 143, 144, 512, 100_000,
+    ] {
         let c = default_crossovers(n);
         assert!(crossovers_fit(&c, n), "{n}: {:?}", &c[..c.len().min(8)]);
         // Up to 142 branches the bands keep the gap a dragged crossover keeps; past that they
         // still rise, narrower than the gap.
-        let gap = c.windows(2).map(|w| w[1] / w[0]).fold(f64::MAX, f64::min);
-        assert!(n > 142 || gap >= CROSSOVER_GAP - 1e-12, "{n}: {gap}");
+        let g = gap(&c);
+        assert!(n > 142 || g >= CROSSOVER_GAP - 1e-12, "{n}: {g}");
+        if n > 110 {
+            // 111 and more start at 20 Hz and leave one even step free under 20 kHz, so the
+            // next added branch has room.
+            let top = c[n - 2];
+            assert!((c[0] - 20.0).abs() < 1e-9, "{n}: {}", c[0]);
+            assert!(top < 20_000.0, "{n}: {top}");
+            assert!(
+                (top * (1000.0_f64).powf(1.0 / (n - 1) as f64) - 20_000.0).abs() < 1.0,
+                "{n}: {top}"
+            );
+        }
     }
-    // Six to 110 spread over 60 Hz to 12 kHz; 111 and more over the whole range.
-    let c = default_crossovers(64);
-    assert!(
-        (c[0] - 60.0).abs() < 1e-9 && (c[62] - 12_000.0).abs() < 1e-6,
-        "{c:?}"
-    );
-    let c = default_crossovers(512);
-    assert!((c[0] - 20.0).abs() < 1e-9 && (c[510] - 20_000.0).abs() < 1e-6);
+    assert!(gap(&default_crossovers(143)) < CROSSOVER_GAP);
+    // Six to 110 spread over 60 Hz to 12 kHz.
+    for n in [6, 64, 110] {
+        let c = default_crossovers(n);
+        assert!(
+            (c[0] - 60.0).abs() < 1e-9 && (c[n - 2] - 12_000.0).abs() < 1e-6,
+            "{n}: {c:?}"
+        );
+    }
 }
 
 /// A frequency split of `n` empty branches with `crossovers`, alone on a track.
@@ -408,16 +423,11 @@ fn crossovers_of(t: &Track) -> Vec<f64> {
 }
 
 #[test]
-fn missing_crossovers_are_filled_inside_the_range_for_any_number_of_branches() {
-    use xirius_core::rack::{crossovers_fit, default_crossovers};
+fn missing_crossovers_are_filled_on_top_of_the_kept_ones_for_any_number_of_branches() {
+    use xirius_core::rack::{crossovers_fit, crossovers_kept, default_crossovers};
     for n in [6, 64, 512] {
-        // None at all, out of the range, or out of order: the defaults, as they are.
-        for broken in [
-            vec![],
-            vec![1000.0, 50_000.0],
-            vec![5.0],
-            vec![2000.0, 200.0],
-        ] {
+        // None at all, or out of order: the defaults, as they are.
+        for broken in [vec![], vec![2000.0, 200.0], vec![500.0, 500.0]] {
             let mut t = frequency_track(n, broken.clone());
             t.fix_rack(&mut fresh_id());
             assert_eq!(
@@ -426,7 +436,16 @@ fn missing_crossovers_are_filled_inside_the_range_for_any_number_of_branches() {
                 "{n} {broken:?}"
             );
         }
-        // Kept ones that fit stay; the missing ones cut the top band while there is room.
+        // Kept ones that rise stay, even outside 20 Hz to 20 kHz as an older song may hold
+        // them; the missing ones go on top.
+        for kept in [vec![1000.0], vec![5.0], vec![1000.0, 50_000.0]] {
+            let mut t = frequency_track(n, kept.clone());
+            t.fix_rack(&mut fresh_id());
+            let c = crossovers_of(&t);
+            assert!(crossovers_kept(&c, n as usize), "{n} {kept:?}");
+            assert_eq!(c[..kept.len()], kept[..], "{n}");
+        }
+        // Ones in the range stay in it.
         let mut t = frequency_track(n, vec![1000.0]);
         t.fix_rack(&mut fresh_id());
         let c = crossovers_of(&t);
@@ -435,10 +454,108 @@ fn missing_crossovers_are_filled_inside_the_range_for_any_number_of_branches() {
     let mut t = frequency_track(4, vec![1000.0]);
     t.fix_rack(&mut fresh_id());
     assert_eq!(crossovers_of(&t), [1000.0, 2000.0, 4000.0]);
-    // 64 do not fit above 1 kHz with the gap, so all go back to the defaults.
-    let mut t = frequency_track(64, vec![1000.0]);
-    t.fix_rack(&mut fresh_id());
-    assert_eq!(crossovers_of(&t), default_crossovers(64));
+    // A zero, a negative or one that is not a number goes; the rest stay.
+    let mut t = frequency_track(3, vec![0.0, 300.0, -5.0, f64::NAN, 3000.0]);
+    let rows = t.fix_rack(&mut fresh_id());
+    assert_eq!(crossovers_of(&t), [300.0, 3000.0]);
+    assert!(!rows.is_empty());
+}
+
+/// The crossovers a version before ENG-076 took and wrote: one fewer than the branches, above
+/// zero and rising, outside 20 Hz to 20 kHz or closer than the gap.
+const OLD_CROSSOVERS: [&[f64]; 4] = [
+    &[10.0],
+    &[1000.0, 25_000.0],
+    &[1000.0, 1010.0],
+    &[5.0, 30.0, 40_000.0],
+];
+
+/// A song with one frequency split per entry of [`OLD_CROSSOVERS`], each on its own track.
+fn old_song() -> Project {
+    let tracks = OLD_CROSSOVERS
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let k = i as u64;
+            let RackNode::Split(mut s) = split(40 + k, (0..=c.len()).map(|_| Vec::new()).collect())
+            else {
+                unreachable!("split makes a split")
+            };
+            s.mode = SplitMode::Frequency;
+            s.crossovers = c.to_vec();
+            track(
+                2 + k,
+                TrackKind::Audio,
+                Vec::new(),
+                Some(Rack {
+                    source: None,
+                    fx: vec![RackNode::Split(s)],
+                }),
+            )
+        })
+        .collect();
+    project(tracks)
+}
+
+fn old_crossovers(p: &Project) -> Vec<Vec<f64>> {
+    (0..OLD_CROSSOVERS.len() as u64)
+        .map(|k| crossovers_of(&p.tracks[&TrackId(2 + k)]))
+        .collect()
+}
+
+#[test]
+fn an_older_songs_crossovers_stay_as_they_were_saved_through_open_edit_save_and_open() {
+    let want: Vec<Vec<f64>> = OLD_CROSSOVERS.iter().map(|c| c.to_vec()).collect();
+    let (_d, dir) = dir("oldbands");
+    let p = old_song();
+    p.validate().unwrap();
+    // The file as the older version wrote it, read on its own.
+    Session::create(&dir, p.clone()).unwrap();
+    std::fs::remove_dir_all(dir.join("history")).unwrap();
+    Store::new(&dir).write_project(&p).unwrap();
+    let (q, rows) = Store::new(&dir).read_project_report().unwrap();
+    assert!(rows.is_empty(), "{rows:?}");
+    assert_eq!(old_crossovers(&q), want);
+    // Opened, something else changed, saved and opened again: still the same.
+    let mut s = Session::open(&dir).unwrap();
+    assert!(
+        !s.notices.iter().any(|n| n.contains("クロスオーバー")),
+        "{:?}",
+        s.notices
+    );
+    assert_eq!(old_crossovers(s.project()), want);
+    run(
+        &mut s,
+        "track.volume.set",
+        json!({"ids": [TrackId(2).to_string(), TrackId(3).to_string()], "db": -6.0}),
+    );
+    s.save().unwrap();
+    drop(s);
+    let s = Session::open(&dir).unwrap();
+    assert_eq!(old_crossovers(s.project()), want);
+    assert_eq!(s.project().tracks[&TrackId(2)].volume_db, -6.0);
+    s.project().validate().unwrap();
+    let (q, rows) = Store::new(&dir).read_project_report().unwrap();
+    assert!(rows.is_empty(), "{rows:?}");
+    assert_eq!(old_crossovers(&q), want);
+}
+
+#[test]
+fn a_branch_added_to_an_older_songs_split_keeps_its_crossovers() {
+    use xirius_core::rack::crossovers_kept;
+    let (_d, dir) = dir("oldadd");
+    Session::create(&dir, old_song()).unwrap();
+    let mut s = Session::open(&dir).unwrap();
+    for (k, c) in OLD_CROSSOVERS.iter().enumerate() {
+        run(
+            &mut s,
+            "rack.branch.add",
+            json!({ "split": NodeId(40 + k as u64).to_string() }),
+        );
+        let now = crossovers_of(&s.project().tracks[&TrackId(2 + k as u64)]);
+        assert_eq!(now[..c.len()], c[..], "{k}");
+        assert!(crossovers_kept(&now, c.len() + 2), "{k}: {now:?}");
+    }
 }
 
 #[test]

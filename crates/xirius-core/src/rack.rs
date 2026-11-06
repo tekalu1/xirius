@@ -27,19 +27,23 @@ pub const MIN_BRANCHES: usize = 2;
 /// layer's fx each count from zero).
 pub const MAX_SPLIT_DEPTH: usize = 4;
 
-/// The lowest and highest crossover a frequency split takes, in Hz (ENG-076).
+/// The lowest and highest crossover a frequency split takes when one is made or typed, in Hz
+/// (ENG-076). A song saved before this range keeps its crossovers as they are
+/// ([`crossovers_kept`]).
 pub const CROSSOVER_MIN_HZ: f64 = 20.0;
 pub const CROSSOVER_MAX_HZ: f64 = 20_000.0;
-/// The narrowest band the defaults leave between two neighbouring crossovers: the higher one
-/// is at least this many times the lower, the same gap a dragged crossover keeps (ENG-076).
+/// The band left between two neighbouring crossovers where there is room for it: the higher one
+/// is at least this many times the lower (ENG-076). Where there is not (the defaults past 142
+/// branches, a dragged crossover between close neighbours), the room is shared evenly instead.
 pub const CROSSOVER_GAP: f64 = 1.05;
 
 /// The default crossover frequencies for a split of `branches` branches
-/// (ENG-076): two branches split at 1k, three at 200 and 2k, and so on. Six and more are spread
-/// evenly on a log scale from 60 Hz to 12 kHz; when that would leave bands narrower than
-/// [`CROSSOVER_GAP`], over the whole 20 Hz to 20 kHz instead, and past what even that holds
-/// (more than 142 crossovers) still evenly, the bands then narrower than the gap. They always
-/// rise and stay inside the range; a split has no upper limit on branches.
+/// (ENG-076): two branches split at 1k, three at 200 and 2k, and so on. Six to 110 are spread
+/// evenly on a log scale from 60 Hz to 12 kHz. Past that they would leave bands narrower than
+/// [`CROSSOVER_GAP`], so 111 and more are spread evenly over 20 Hz to 20 kHz, with one even step
+/// left free above the top crossover so a branch added later still has room. Up to 142 branches
+/// the bands keep the gap; past that (no upper limit on branches) they are narrower, evenly. They
+/// always rise and stay inside the range.
 pub fn default_crossovers(branches: usize) -> Vec<f64> {
     match branches {
         0..=2 => vec![1000.0],
@@ -47,12 +51,12 @@ pub fn default_crossovers(branches: usize) -> Vec<f64> {
         4 => vec![150.0, 800.0, 4000.0],
         5 => vec![100.0, 400.0, 1600.0, 6000.0],
         n => {
-            let steps = (n - 2) as f64;
-            let (lo, hi) = if (12_000.0_f64 / 60.0).powf(1.0 / steps) >= CROSSOVER_GAP {
-                (60.0_f64, 12_000.0_f64)
-            } else {
-                (CROSSOVER_MIN_HZ, CROSSOVER_MAX_HZ)
-            };
+            let (lo, hi, steps) =
+                if (12_000.0_f64 / 60.0).powf(1.0 / (n - 2) as f64) >= CROSSOVER_GAP {
+                    (60.0_f64, 12_000.0_f64, (n - 2) as f64)
+                } else {
+                    (CROSSOVER_MIN_HZ, CROSSOVER_MAX_HZ, (n - 1) as f64)
+                };
             let c: Vec<f64> = (0..n - 1)
                 .map(|i| lo * (hi / lo).powf(i as f64 / steps))
                 .collect();
@@ -68,13 +72,51 @@ pub fn default_crossovers(branches: usize) -> Vec<f64> {
     }
 }
 
-/// Whether `c` are crossovers a frequency split of `branches` branches can take: one fewer
-/// than the branches, rising, and inside [`CROSSOVER_MIN_HZ`]..=[`CROSSOVER_MAX_HZ`].
+/// Whether `c` are crossovers a frequency split of `branches` branches can be given now (typed
+/// or made): one fewer than the branches, rising, and inside
+/// [`CROSSOVER_MIN_HZ`]..=[`CROSSOVER_MAX_HZ`].
 pub fn crossovers_fit(c: &[f64], branches: usize) -> bool {
-    c.len() + 1 == branches
+    crossovers_kept(c, branches)
         && c.iter()
             .all(|f| (CROSSOVER_MIN_HZ..=CROSSOVER_MAX_HZ).contains(f))
+}
+
+/// Whether `c` are crossovers a frequency split of `branches` branches keeps as they are: one
+/// fewer than the branches, each above zero, and rising. A saved song's crossovers that pass are
+/// never changed on load, even outside the range a new one takes (ENG-076).
+pub fn crossovers_kept(c: &[f64], branches: usize) -> bool {
+    c.len() + 1 == branches
+        && c.iter().all(|f| f.is_finite() && *f > 0.0)
         && c.windows(2).all(|w| w[0] < w[1])
+}
+
+/// The `m` crossovers branches added on top of a frequency split take, above its top crossover
+/// `last` (ENG-076). The `j`-th is `2^j` times `last`, or `j / (m + 1)` of the way (on a log
+/// scale) to 20 kHz when that is lower: one added branch takes the upper half of the top band,
+/// several share it evenly, and every other branch keeps its band. With no room left below
+/// 20 kHz (a saved song's crossover at or above it, or a top band halved down to nothing) they
+/// go [`CROSSOVER_GAP`] apart above `last`.
+pub fn added_crossovers(last: f64, m: usize) -> Vec<f64> {
+    if last < CROSSOVER_MAX_HZ {
+        let room = CROSSOVER_MAX_HZ / last;
+        let under: Vec<f64> = (1..=m)
+            .map(|j| {
+                let even = last * room.powf(j as f64 / (m + 1) as f64);
+                (last * 2.0_f64.powf(j as f64)).min(even)
+            })
+            .collect();
+        let mut below = last;
+        if under.iter().all(|&f| {
+            let rises = f > below && f < CROSSOVER_MAX_HZ;
+            below = f;
+            rises
+        }) {
+            return under;
+        }
+    }
+    (1..=m)
+        .map(|j| last * CROSSOVER_GAP.powf(j as f64))
+        .collect()
 }
 
 /// How a split feeds its branches.
@@ -1080,30 +1122,32 @@ fn fix_level(gain_db: &mut f64, pan: &mut f64, what: &str, rows: &mut Vec<Adjust
     }
 }
 
-/// `kept` crossovers made whole for `branches` branches (ENG-076). Kept ones that rise inside
-/// the range stay and the missing ones go into the top band: each twice the one below, or
-/// halfway (on a log scale) to 20 kHz when that is lower, so a branch added to a frequency
-/// split cuts its top band. When that would leave a band narrower than [`CROSSOVER_GAP`], or
-/// the kept ones do not rise inside the range, every crossover goes back to the defaults.
+/// `kept` crossovers made whole for `branches` branches (ENG-076). Kept ones that rise all
+/// stay as they are, and the missing ones go on top ([`added_crossovers`]), so a branch added to
+/// a frequency split cuts its top band and leaves the others as they were. Only when the kept
+/// ones do not rise (or there are none, or the added ones would not rise) do the crossovers go
+/// back to the defaults.
 fn filled_crossovers(kept: &[f64], branches: usize) -> Vec<f64> {
     let need = branches - 1;
-    if kept.is_empty() || kept.len() > need || !crossovers_fit(kept, kept.len() + 1) {
+    if kept.is_empty() || kept.len() > need || !crossovers_kept(kept, kept.len() + 1) {
         return default_crossovers(branches);
     }
     let mut c = kept.to_vec();
-    while c.len() < need {
-        let last = *c.last().expect("kept is not empty");
-        let next = (last * 2.0).min((last * CROSSOVER_MAX_HZ).sqrt());
-        if next < last * CROSSOVER_GAP {
-            return default_crossovers(branches);
-        }
-        c.push(next);
+    c.extend(added_crossovers(
+        *kept.last().expect("kept is not empty"),
+        need - kept.len(),
+    ));
+    if crossovers_kept(&c, branches) {
+        c
+    } else {
+        // Only for tens of thousands added above 20 kHz, or squeezed under it.
+        default_crossovers(branches)
     }
-    c
 }
 
-/// A kept split's `crossovers` made to match its mode: Frequency gets
-/// `branches - 1` ascending boundaries, the other modes get none.
+/// A kept split's `crossovers` made to match its mode: Frequency gets `branches - 1` rising
+/// boundaries above zero, the other modes get none. Ones that already are so stay exactly as
+/// they were saved, inside 20 Hz to 20 kHz or not (ENG-076).
 fn fix_crossovers(s: &mut Split, rows: &mut Vec<Adjust>, at: &str) {
     if s.mode != SplitMode::Frequency {
         if !s.crossovers.is_empty() {
@@ -1118,6 +1162,12 @@ fn fix_crossovers(s: &mut Split, rows: &mut Vec<Adjust>, at: &str) {
     }
     let n = s.branches.len();
     let need = n - 1;
+    if crossovers_kept(&s.crossovers, n) {
+        return;
+    }
+    let before = s.crossovers.len();
+    s.crossovers.retain(|f| f.is_finite() && *f > 0.0);
+    let mut filled = s.crossovers.len() != before;
     if s.crossovers.len() > need {
         rows.push(Adjust::new(
             AdjustKind::Dropped,
@@ -1126,12 +1176,15 @@ fn fix_crossovers(s: &mut Split, rows: &mut Vec<Adjust>, at: &str) {
         ));
         s.crossovers.truncate(need);
     }
-    if !crossovers_fit(&s.crossovers, n) {
+    if !crossovers_kept(&s.crossovers, n) {
         s.crossovers = filled_crossovers(&s.crossovers, n);
+        filled = true;
+    }
+    if filled {
         rows.push(Adjust::new(
             AdjustKind::Filled,
             format!("{at} のクロスオーバー"),
-            "個数・順序・範囲が合わないため、直しました",
+            "個数または順序が合わないため、直しました",
         ));
     }
 }
