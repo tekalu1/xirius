@@ -189,22 +189,52 @@ mod menu_io_tests {
         assert!(s.error.is_none(), "{:?}", s.error);
     }
 
-    #[test]
-    fn a_scan_running_when_a_new_song_comes_is_asked_again_and_nothing_fails() {
-        let root = tempfile::tempdir().unwrap();
-        let mut s = windowed(root.path());
+    /// Frames until the song asked for is in place or the opening is called off; the scan's
+    /// job is never another one on the way.
+    fn opened(s: &mut Studio, first: &str) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while s.opening.is_some() {
+            s.poll_opening();
+            assert!(s.mixer.scan.job.as_ref().is_none_or(|job| job == first));
+            assert!(Instant::now() < deadline, "the song never opened");
+            std::thread::yield_now();
+        }
+    }
+
+    /// [`scan_done`], with the scan the first job's to its end: it is not asked again.
+    fn same_scan_done(s: &mut Studio, first: &str) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while s.mixer.scan.running() || s.mixer.scan.catalog_read.is_some() {
+            s.tick();
+            assert!(s.mixer.scan.queued.is_none() && s.mixer.scan.sent.is_none());
+            assert!(s.mixer.scan.job.as_ref().is_none_or(|job| job == first));
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        scan_done(s);
+    }
+
+    /// A windowed studio whose scan's job runs; the job's name.
+    fn scanning(root: &std::path::Path) -> (Studio, String) {
+        let mut s = windowed(root);
         s.start_plugin_scan().unwrap();
         owner_done(&mut s);
         let first = s.mixer.scan.job.clone().expect("the job runs");
-        // The new song's session has jobs of its own: the scan went with the old one.
-        s.new_song_sync();
-        assert!(s.mixer.scan.running());
-        s.poll_plugin_scan();
-        assert!(s.mixer.scan.error.is_none(), "{:?}", s.mixer.scan.error);
-        assert!(s.mixer.scan.running(), "the same scan is asked for again");
-        owner_done(&mut s);
-        assert!(s.mixer.scan.job.as_ref().is_some_and(|job| *job != first));
-        scan_done(&mut s);
+        (s, first)
+    }
+
+    #[test]
+    fn a_scan_running_when_a_new_song_comes_goes_on_and_nothing_fails() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut s, first) = scanning(root.path());
+        let before = s.project();
+        assert!(s.request_open(crate::opening::Request::New));
+        opened(&mut s, &first);
+        assert!(
+            !Arc::ptr_eq(&before, &s.project()),
+            "the new song is in place"
+        );
+        same_scan_done(&mut s, &first);
         assert!(root.path().join("catalog.json").exists());
     }
 
@@ -229,18 +259,56 @@ mod menu_io_tests {
     }
 
     #[test]
-    fn a_scan_stopped_when_a_new_song_comes_keeps_the_list_and_nothing_fails() {
+    fn a_scan_running_when_an_opening_is_called_off_goes_on_and_nothing_fails() {
         let root = tempfile::tempdir().unwrap();
-        let mut s = windowed(root.path());
-        s.start_plugin_scan().unwrap();
-        owner_done(&mut s);
-        s.mixer.scan.stopping = true;
+        let (mut s, first) = scanning(root.path());
+        assert!(s.request_open(crate::opening::Request::New));
+        s.cancel_opening();
+        opened(&mut s, &first);
+        same_scan_done(&mut s, &first);
+        // Called off once its job is under way as well.
+        let (mut s, first) = scanning(root.path());
+        assert!(s.request_open(crate::opening::Request::New));
+        s.poll_opening();
+        s.cancel_opening();
+        opened(&mut s, &first);
+        same_scan_done(&mut s, &first);
+    }
+
+    #[test]
+    fn a_scan_running_through_one_song_after_another_goes_on_and_nothing_fails() {
+        let root = tempfile::tempdir().unwrap();
+        let song = root.path().join("song");
+        crate::song::Song::empty().save_as(&song).unwrap();
+        let (mut s, first) = scanning(root.path());
+        for request in [
+            crate::opening::Request::New,
+            crate::opening::Request::File(crate::studio::FileRequest::Open, song.clone()),
+            crate::opening::Request::Sample,
+            crate::opening::Request::New,
+        ] {
+            assert!(s.request_open(request));
+            opened(&mut s, &first);
+            assert!(s.mixer.scan.error.is_none(), "{:?}", s.mixer.scan.error);
+            assert!(s.error.is_none(), "{:?}", s.error);
+        }
+        // Closed to the start screen as well.
+        assert!(s.close_to_home());
+        opened(&mut s, &first);
+        assert!(s.home_shown());
+        same_scan_done(&mut s, &first);
+    }
+
+    /// Should a song's job go with it all the same (a session made anew, as only tests do), the
+    /// scan ends with the list as it was: not asked again over the one let go.
+    #[test]
+    fn a_scan_whose_job_went_with_the_song_ends_and_nothing_fails() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut s, _) = scanning(root.path());
         s.new_song_sync();
         s.poll_plugin_scan();
-        assert!(
-            !s.mixer.scan.running(),
-            "a stopped scan is not asked for again"
-        );
+        assert!(!s.mixer.scan.running(), "not asked for again");
+        assert!(!s.browser.scanning);
         let deadline = Instant::now() + Duration::from_secs(20);
         while s.mixer.scan.catalog_read.is_some() {
             s.poll_plugin_scan();
@@ -248,6 +316,7 @@ mod menu_io_tests {
             std::thread::yield_now();
         }
         assert!(s.mixer.scan.error.is_none(), "{:?}", s.mixer.scan.error);
+        assert!(s.error.is_none(), "{:?}", s.error);
         assert!(s.mixer.catalog.is_some());
     }
 
@@ -286,12 +355,38 @@ mod menu_io_tests {
         );
         s.mixer_pick(PopupKind::Insert(TrackId::MASTER), RESCAN);
         assert!(s.mixer.scan.running(), "the press is kept");
+        assert!(s.browser.scanning, "the browser says so as the list does");
         s.save_test_delay = Duration::ZERO;
         owner_done(&mut s);
         s.poll_plugin_scan();
+        assert!(s.browser.scanning);
         owner_done(&mut s);
         assert!(s.mixer.scan.job.is_some());
         scan_done(&mut s);
+        assert!(!s.browser.scanning);
+    }
+
+    #[test]
+    fn a_scan_stopped_before_it_starts_leaves_the_browser_as_the_list() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = windowed(root.path());
+        s.save_test_delay = Duration::from_millis(50);
+        s.io_command_on_worker(
+            "prefs.set",
+            json!({"key":"ui.theme","value":"light"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        s.mixer_pick(PopupKind::Insert(TrackId::MASTER), RESCAN);
+        assert!(s.mixer.scan.running() && s.browser.scanning);
+        s.stop_plugin_scan();
+        assert!(!s.mixer.scan.running());
+        assert!(!s.browser.scanning);
+        s.save_test_delay = Duration::ZERO;
+        owner_done(&mut s);
+        s.poll_plugin_scan();
+        assert!(!s.mixer.scan.running() && !s.browser.scanning);
     }
 
     #[test]
@@ -305,8 +400,10 @@ mod menu_io_tests {
         s.bind_window_io();
         s.save_test_failure = true;
         s.start_plugin_scan().unwrap();
+        assert!(s.browser.scanning);
         s.wait_for_save();
         assert!(!s.mixer.scan.running());
+        assert!(!s.browser.scanning);
         assert_eq!(s.mixer.scan.error.as_deref(), Some("保存できません"));
         // Said there only, not again as the window's error.
         assert!(s.error.is_none(), "{:?}", s.error);
@@ -388,8 +485,6 @@ pub struct PluginScan {
     queued: Option<Asked>,
     /// On the song's owner until it answers with the job, whose start is not said.
     sent: Option<Asked>,
-    /// What the running job was asked with, asked again on a song that did not keep it.
-    following: Option<Asked>,
     /// The song was replaced while the job ran: its next answer says whether the job went
     /// with the song that was closed.
     replaced: bool,
@@ -472,6 +567,7 @@ impl Studio {
         // (`scan_answered`) or says why it did not start (`scan_not_started`). Asked while
         // something else holds the window, it starts once that is done.
         if self.transport.is_windowed() {
+            self.browser_scan(Some(&asked));
             if self.input_blocked() {
                 self.mixer.scan.queued = Some(asked);
             } else {
@@ -499,6 +595,7 @@ impl Studio {
                 self.scan_not_started(error);
             }
         } else {
+            self.browser_scan(None);
             self.reload_catalog_later();
         }
         self.refresh_insert_list();
@@ -507,7 +604,17 @@ impl Studio {
     /// The song's owner could not start the scan: said where a failed scan is said.
     pub(crate) fn scan_not_started(&mut self, error: String) {
         self.mixer.scan.error = Some(error);
+        self.browser_scan(None);
         self.refresh_insert_list();
+    }
+
+    /// The browser's scanning row, as the inserts' list and the settings show it
+    /// ([`PluginScan::running`]): from the time a scan is asked for, not once its job comes.
+    fn browser_scan(&mut self, asked: Option<&Asked>) {
+        self.browser.scanning = asked.is_some();
+        self.browser.scan_stopping = false;
+        (self.browser.scan_done, self.browser.scan_total) = (0, 0);
+        self.browser.retrying = asked.and_then(|a| a.retry.clone());
     }
 
     pub(crate) fn track_scan(
@@ -527,14 +634,13 @@ impl Studio {
         self.browser.scanning = true;
         self.browser.scan_stopping = false;
         (self.browser.scan_done, self.browser.scan_total) = (0, 0);
-        self.browser.retrying = asked.as_ref().and_then(|a| a.retry.clone());
-        scan.following = asked;
+        self.browser.retrying = asked.and_then(|a| a.retry);
         Ok(())
     }
 
-    /// Another song is in this one's place (PLG-021). The scan does not depend on the song:
-    /// the job goes on if the song's owner kept it, and is asked again if it went with the
-    /// song that was closed. Nothing has failed either way.
+    /// Another song is in this one's place (PLG-021). The song's owner keeps its session, and
+    /// the scan's job with it, so the job goes on. Should it have gone with the song that was
+    /// closed, its next answer says so and the scan ends there; nothing has failed.
     pub(crate) fn scan_song_replaced(&mut self) {
         let scan = &mut self.mixer.scan;
         if scan.job.as_deref().is_some_and(|job| job != "pose") {
@@ -543,24 +649,16 @@ impl Studio {
         }
     }
 
-    /// The job went with the song that was closed: the same scan on this one, or, if it was
-    /// being stopped, the list as the stop left it.
+    /// The job went with the song that was closed: the scan ends with the list as it was left.
+    /// It is not asked again, as the one let go may still be writing that list.
     fn scan_lost(&mut self) {
         let scan = &mut self.mixer.scan;
-        let stopping = std::mem::take(&mut scan.stopping);
-        let asked = scan.following.take();
         scan.job = None;
+        scan.stopping = false;
         scan.file.clear();
         (scan.done, scan.total, scan.polled) = (0, 0, None);
-        self.browser.scanning = false;
-        self.browser.scan_stopping = false;
-        self.browser.retrying = None;
-        (self.browser.scan_done, self.browser.scan_total) = (0, 0);
-        if stopping {
-            self.reload_catalog_later();
-        } else if let Err(error) = self.start_scan(asked.unwrap_or_else(Asked::whole)) {
-            self.mixer.scan.error = Some(error);
-        }
+        self.browser_scan(None);
+        self.reload_catalog_later();
         self.refresh_insert_list();
     }
 
@@ -581,6 +679,7 @@ impl Studio {
         let Some(job) = self.mixer.scan.job.clone() else {
             // One still waiting for the window is not asked for any more.
             if self.mixer.scan.queued.take().is_some() {
+                self.browser_scan(None);
                 self.refresh_insert_list();
             }
             return;
@@ -600,7 +699,6 @@ impl Studio {
             // The job went with the song that was closed before a frame asked after it.
             Err(_) if self.mixer.scan.replaced => {
                 self.mixer.scan.replaced = false;
-                self.mixer.scan.stopping = true;
                 self.scan_lost();
             }
             Err(e) => self.error = Some(e),
