@@ -3758,6 +3758,23 @@ MIDI 学習
 |---|---|---|---|
 | `way` | 必須 | `{"enum":["next","prev"],"type":"string"}` | スクロールの向き |
 
+## `mixer.branch.value`
+
+分岐の値を入力
+
+分岐の音量かパンを入力する枠を開きます（ミキサーのストリップの音量の行か、チャンネルエディターの分岐の頭）
+
+事前条件: AI の権限が読み取り以上。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 記録なし。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `id` | 必須 | `{"type":"string"}` | 分岐（rack node の ID） |
+| `place` | — | `{"default":"strip","enum":["strip","editor"],"type":"string"}` | ストリップかチャンネルエディター |
+| `track` | 必須 | `{"type":"string"}` | トラック（track の ID） |
+| `value` | — | `{"default":"gain","enum":["gain","pan"],"type":"string"}` | 音量かパン |
+
 ## `mixer.channel.next`
 
 次のチャンネル

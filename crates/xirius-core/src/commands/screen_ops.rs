@@ -17,6 +17,7 @@ pub const NAMES: &[&str] = &[
     "cc.lane.hide",
     "auto.lane.show",
     "auto.point.value",
+    "mixer.branch.value",
     "view.export",
     "plugin.preset.choose",
     "plugin.preset.file",
@@ -144,6 +145,21 @@ pub(super) fn defs() -> Vec<CommandDef> {
                 ArgDef::id("track", IdKind::Track, "トラック").req(),
                 ArgDef::text("target", "レーンの対象").req(),
                 ArgDef::pos("at", "点の位置").req(),
+            ],
+        ),
+        screen(
+            "mixer.branch.value",
+            "分岐の音量かパンを入力する枠を開きます（ミキサーのストリップの音量の行か、チャンネルエディターの分岐の頭）",
+            vec![
+                ArgDef::id("track", IdKind::Track, "トラック").req(),
+                ArgDef::id("id", IdKind::RackNode, "分岐").req(),
+                ArgDef::choice("value", &["gain", "pan"], "音量かパン").default(json!("gain")),
+                ArgDef::choice(
+                    "place",
+                    &["strip", "editor"],
+                    "ストリップかチャンネルエディター",
+                )
+                .default(json!("strip")),
             ],
         ),
         screen(

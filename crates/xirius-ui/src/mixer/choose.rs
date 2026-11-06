@@ -24,13 +24,14 @@ impl Studio {
     pub(crate) fn row_target(&self, t: TrackId, n: NodeId) -> Option<Target> {
         let p = self.project();
         let rack = p.tracks.get(&t)?.rack.as_ref()?;
-        let (db, _, mute) = rack.levels(n)?;
+        let (db, pan, mute) = rack.levels(n)?;
         let layer = matches!(&rack.source, Some(Source::Multi { layers, .. })
             if layers.iter().any(|l| l.id == n));
         Some(Target {
             id: n,
             layer,
             db,
+            pan,
             mute,
         })
     }
@@ -67,6 +68,7 @@ impl Studio {
         if self.popup.is_some() {
             return;
         }
+        self.value_blur(g, x, y);
         if !matches!(self.hit(g, x, y), Hit::Mixer(MixerHit::KeyLevel(..))) {
             self.mixer.key_focus = None;
         }
@@ -115,6 +117,8 @@ impl Studio {
                     | MixerHit::Fold(..)
                     | MixerHit::RowMute(..)
                     | MixerHit::Level(..)
+                    | MixerHit::BranchPan(..)
+                    | MixerHit::AddBranch(..)
                     | MixerHit::After(..)
                     | MixerHit::Editor(..)
                     | MixerHit::Widen(..)
@@ -144,7 +148,8 @@ impl Studio {
         }
     }
 
-    /// A press on the bar of the level row: the level goes where it is pressed, and follows.
+    /// A press on the bar of the level row: the level stays, and moves by the way the pointer
+    /// goes (MIX-045, approved 2026-11-06).
     pub fn level_down(&mut self, g: &Geometry, hit: Hit, x: f32) -> bool {
         if self.key_down(g, hit, x) {
             return true;
@@ -168,19 +173,23 @@ impl Studio {
         let Some(mut d) = self.mixer.level_drag else {
             return false;
         };
-        let dx = (x - d.x0) / d.w * if fine { 0.25 } else { 1.0 };
-        let db = (flow::level_db((d.t0 + dx).clamp(0.0, 1.0)) * 10.0).round() / 10.0;
-        if db == d.value {
+        let at = d.at(x, fine);
+        self.mixer.level_drag = Some(d);
+        let Some(v) = at.filter(|v| *v != d.value) else {
             return false;
-        }
-        d.value = db;
+        };
+        d.value = v;
         self.mixer.level_drag = Some(d);
         if self.transport.is_live() {
             let mut p = (*self.project()).clone();
             if let Ok(track) = p.track_mut(d.track)
                 && let Some(l) = track.rack.as_mut().and_then(|r| r.levels_mut(d.node))
             {
-                *l.gain_db = db;
+                if d.pan {
+                    *l.pan = v;
+                } else {
+                    *l.gain_db = v;
+                }
             }
             let heard = self.auto_heard(&p);
             self.transport.sync(&heard, self.song().dir());
@@ -205,9 +214,11 @@ impl Studio {
             id: d.node,
             layer: d.layer,
             db: d.start,
+            pan: d.start,
             mute: false,
         };
-        self.set_target(target, json!({ "gain": d.value }));
+        let key = if d.pan { "pan" } else { "gain" };
+        self.set_target(target, json!({ key: d.value }));
         true
     }
 

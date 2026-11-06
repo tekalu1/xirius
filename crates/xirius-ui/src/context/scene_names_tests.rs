@@ -73,6 +73,7 @@ const DIALOG_ACTS: &[&str] = &[
     "PickMacro",
     "PointValue",
     "MidiExport",
+    "BranchValue",
 ];
 
 /// Rows that end with "…" and are neither an `ask_number` nor one of the acts above: the four

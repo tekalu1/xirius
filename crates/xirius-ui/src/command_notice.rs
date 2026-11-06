@@ -69,6 +69,16 @@ impl Studio {
                     n.command = Some("channel.inserts.paste");
                 }
             }
+            // A branch's ✖ (MIX-045, approved 2026-11-06): the last but one folds the splitter
+            // into a line; either way 元に戻す brings it back.
+            "rack.branch.remove" => {
+                let text = if data["folded"].as_bool() == Some(true) {
+                    "スプリッターを外しました"
+                } else {
+                    "分岐を削除しました"
+                };
+                self.tell_with(text.to_string(), "元に戻す", Press::Undo);
+            }
             // The song-files tab (BRW-004): the first file by its name, the rest by their count.
             "file.locate" | "file.collect" => {
                 let files = data["files"].as_array().map_or(&[][..], Vec::as_slice);

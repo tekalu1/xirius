@@ -14,10 +14,11 @@ use gpui::Hsla;
 
 use xirius_core::id::{NodeId, PluginId, TrackId};
 use xirius_core::model::{Plugin, Track, TrackKind};
-use xirius_core::rack::{Rack, RackNode, Source};
+use xirius_core::rack::{Rack, RackNode, Source, SplitMode};
 use xirius_design::{FontSize, LinePiece, LineState, Radius, Space, StructureLine, Weight};
 
 use super::{MixerHit, ROW_H, meters};
+use crate::branch_value::{Focus, Place, Which, pan_text};
 use crate::draw::{Align, Pen};
 use crate::fx_chain::{preset_mark_fits, remove_part};
 use crate::studio::{Hit, Rect, Studio};
@@ -76,6 +77,9 @@ const SUB_TOP: f32 = 1.0;
 const SUB_BOTTOM: f32 = 6.0;
 const SUB_PAD: f32 = 4.0;
 const SUB_VAL: f32 = 26.0;
+pub(crate) const SUB_PAN: f32 = 30.0;
+/// The stub left of a splitter's line when every branch is muted.
+const MUTED_STUB: f32 = 4.0;
 /// The level bar: its rail and its cap.
 const RAIL: f32 = 3.0;
 const CAP_W: f32 = 4.0;
@@ -107,10 +111,18 @@ pub enum Kind {
         layer: Option<usize>,
     },
     Effect(PluginId),
+    /// A splitter; `channel`: it splits left from right, so it keeps its two branches.
     Split {
         id: NodeId,
         branches: usize,
         open: bool,
+        channel: bool,
+    },
+    /// A branch of splitter `split` with nothing in it, at `index` among its branches: it is
+    /// still a row, so its level and its M are there (MIX-045, approved 2026-11-06).
+    Empty {
+        split: NodeId,
+        index: usize,
     },
     /// Under the picked row: the level of the branch it heads or of its layer (MIX-045).
     Level,
@@ -129,6 +141,8 @@ pub struct Target {
     pub id: NodeId,
     pub layer: bool,
     pub db: f64,
+    /// A branch's pan (a layer has none: 0).
+    pub pan: f64,
     pub mute: bool,
 }
 
@@ -317,6 +331,7 @@ pub fn lines(t: &Track, folds: &Folds, wide: bool) -> Vec<Line> {
                             id: l.id,
                             layer: true,
                             db: l.gain_db,
+                            pan: 0.0,
                             mute: l.mute,
                         });
                     }
@@ -355,15 +370,21 @@ fn chain(
                         id: s.id,
                         branches: s.branches.len(),
                         open: shows,
+                        channel: s.mode == SplitMode::Channel,
                     },
                     depth,
                 ));
                 if !shows {
                     continue;
                 }
-                for b in &s.branches {
+                for (index, b) in s.branches.iter().enumerate() {
                     let from = out.len();
-                    chain(out, area, &b.fx, depth + 1, true, open);
+                    if b.fx.is_empty() {
+                        let kind = Kind::Empty { split: s.id, index };
+                        out.push(Line::new(area, kind, depth + 1));
+                    } else {
+                        chain(out, area, &b.fx, depth + 1, true, open);
+                    }
                     if let Some(first) = out.get_mut(from) {
                         first.heads = Some(s.id);
                         first.level = shown(b.gain_db, b.mute);
@@ -371,6 +392,7 @@ fn chain(
                             id: b.id,
                             layer: false,
                             db: b.gain_db,
+                            pan: b.pan,
                             mute: b.mute,
                         });
                     }
@@ -644,7 +666,7 @@ pub fn dot_button(row: Rect, l: &Line) -> Rect {
 }
 
 /// The power dot itself.
-fn dot(row: Rect, l: &Line) -> Rect {
+pub(crate) fn dot(row: Rect, l: &Line) -> Rect {
     let b = dot_button(row, l);
     Rect::new(
         b.x + (DOT_BUTTON - DOT) / 2.0,
@@ -703,18 +725,70 @@ pub fn mute_part(row: Rect, l: &Line) -> Rect {
     Rect::new(end - w, row.y + (row.h - h) / 2.0, w, h)
 }
 
-/// The parts of the level row: the bar, the value and the M.
-pub fn sub_parts(sub: Rect) -> (Rect, Rect, Rect) {
+/// The parts of the level row.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SubParts {
+    pub bar: Rect,
+    pub val: Rect,
+    /// A branch's pan, on a wide strip (a strip of 116 has no room for it).
+    pub pan: Option<Rect>,
+    pub mute: Rect,
+}
+
+/// The parts of the level row: the bar, the value, the pan when `pan` and the M.
+pub fn sub_parts(sub: Rect, pan: bool) -> SubParts {
     let (w, h) = if sub.h > ROW_H {
         (MM_COARSE, MM_COARSE)
     } else {
         (MM_W, MM_H)
     };
     let mute = Rect::new(sub.right() - SUB_PAD - w, sub.y + (sub.h - h) / 2.0, w, h);
-    let val = Rect::new(mute.x - SUB_PAD - SUB_VAL, sub.y, SUB_VAL, sub.h);
+    let pan = pan.then(|| Rect::new(mute.x - SUB_PAD - SUB_PAN, sub.y, SUB_PAN, sub.h));
+    let end = pan.map_or(mute.x, |p| p.x);
+    let val = Rect::new(end - SUB_PAD - SUB_VAL, sub.y, SUB_VAL, sub.h);
     let x = sub.x + SUB_PAD;
     let bar = Rect::new(x, sub.y, (val.x - SUB_PAD - x).max(0.0), sub.h);
-    (bar, val, mute)
+    SubParts {
+        bar,
+        val,
+        pan,
+        mute,
+    }
+}
+
+/// Whether `t`'s level row shows the pan of `target`: a branch's, on a wide strip.
+pub fn sub_pan(s: &Studio, t: TrackId, target: Target) -> bool {
+    !target.layer && s.mixer.wide.contains(&t)
+}
+
+/// The ＋ that adds a branch to an open splitter, at its row's end (left of an M showing).
+pub fn branch_add_part(row: Rect, l: &Line, mute: bool) -> Rect {
+    let end = if mute {
+        mute_part(row, l).x - SUB_PAD
+    } else {
+        row.right() - END
+    };
+    Rect::new(
+        end - DOT_BUTTON,
+        row.y + (row.h - DOT_BUTTON) / 2.0,
+        DOT_BUTTON,
+        DOT_BUTTON,
+    )
+}
+
+/// Whether a splitter row shows its ＋: open, not split left from right, not frozen, and on a
+/// wide strip, or with the pointer on it or picked on a strip of 116.
+pub(crate) fn shows_branch_add(s: &Studio, t: &Track, l: &Line) -> bool {
+    let Kind::Split {
+        open: true,
+        channel: false,
+        ..
+    } = l.kind
+    else {
+        return false;
+    };
+    t.frozen.is_none()
+        && (s.mixer.wide.contains(&t.id) || picked(s, t.id, l) || hovered(s, t.id, l))
 }
 
 /// Where a level sits along the level row's bar, 0..1 (the fader's scale).
@@ -779,22 +853,30 @@ fn shows_after(s: &Studio, t: TrackId, l: &Line) -> bool {
     l.kind != Kind::Level && l.pick().is_some() && (picked(s, t, l) || hovered(s, t, l))
 }
 
-/// Whether a row shows its M: one with a level, under the pointer, and not picked (the
-/// picked row's M is on its level row).
-fn shows_mute(s: &Studio, t: TrackId, l: &Line) -> bool {
-    l.kind != Kind::Level && l.target.is_some() && !picked(s, t, l) && hovered(s, t, l)
+/// Whether a row shows its M: one with a level, not picked (the picked row's M is on its
+/// level row), and under the pointer or muted (a muted branch keeps its M lit as a badge).
+pub(crate) fn shows_mute(s: &Studio, t: TrackId, l: &Line) -> bool {
+    l.kind != Kind::Level
+        && l.target.is_some_and(|x| x.mute || hovered(s, t, l))
+        && !picked(s, t, l)
 }
 
-/// The name a row goes by: its plug-in's, or 「スプリッター」.
+/// The name a row goes by: its plug-in's, 「スプリッター」, or 「分岐 N」 for an empty branch.
 pub fn row_name(t: &Track, l: &Line) -> String {
     match l.kind {
         Kind::Split { .. } => "スプリッター".into(),
+        Kind::Empty { index, .. } => empty_name(index),
         _ => l
             .plugin()
             .and_then(|id| t.inserts.iter().find(|p| p.id == id))
             .map(|p| p.name.clone())
             .unwrap_or_default(),
     }
+}
+
+/// An empty branch's name: 「分岐 2」 for the second.
+pub fn empty_name(index: usize) -> String {
+    format!("分岐 {}", index + 1)
 }
 
 /// What a point on a row of `t`'s flow is.
@@ -817,9 +899,11 @@ pub fn hit(s: &Studio, t: &Track, flow: &Flow, x: f32, y: f32) -> MixerHit {
         && t.frozen.is_none()
     {
         if l.kind == Kind::Level {
-            let (_, _, mute) = sub_parts(*row);
-            return if mute.contains(x, y) {
+            let parts = sub_parts(*row, sub_pan(s, t.id, target));
+            return if parts.mute.contains(x, y) {
                 MixerHit::RowMute(t.id, target.id)
+            } else if parts.pan.is_some_and(|p| x >= p.x - SUB_PAD / 2.0) {
+                MixerHit::BranchPan(t.id, target.id)
             } else {
                 MixerHit::Level(t.id, target.id)
             };
@@ -827,6 +911,12 @@ pub fn hit(s: &Studio, t: &Track, flow: &Flow, x: f32, y: f32) -> MixerHit {
         if shows_mute(s, t.id, l) && mute_part(*row, l).contains(x, y) {
             return MixerHit::RowMute(t.id, target.id);
         }
+    }
+    if let Kind::Split { id, .. } = l.kind
+        && shows_branch_add(s, t, l)
+        && branch_add_part(*row, l, shows_mute(s, t.id, l)).contains(x, y)
+    {
+        return MixerHit::AddBranch(t.id, id);
     }
     match l.kind {
         Kind::Head { add: true } if add_part(*row).contains(x, y) => match l.area {
@@ -838,6 +928,10 @@ pub fn hit(s: &Studio, t: &Track, flow: &Flow, x: f32, y: f32) -> MixerHit {
         Kind::Level => MixerHit::Strip(t.id),
         Kind::Split { id, .. } if fold_part(*row, l).contains(x, y) => MixerHit::Fold(t.id, id),
         Kind::Split { .. } => MixerHit::Strip(t.id),
+        Kind::Empty { .. } => match l.target {
+            Some(target) if t.frozen.is_none() => MixerHit::Branch(t.id, target.id),
+            _ => MixerHit::Strip(t.id),
+        },
         Kind::Instrument { id, .. } | Kind::Effect(id) => {
             if !t.inserts.iter().any(|p| p.id == id) {
                 MixerHit::Strip(t.id)
@@ -853,7 +947,14 @@ pub fn hit(s: &Studio, t: &Track, flow: &Flow, x: f32, y: f32) -> MixerHit {
 /// Whether the pointer's part `h` is on line `l`.
 fn on(l: &Line, h: MixerHit) -> bool {
     match (l.kind, h) {
-        (_, MixerHit::RowMute(_, n) | MixerHit::Level(_, n)) => l.target.is_some_and(|x| x.id == n),
+        (
+            _,
+            MixerHit::RowMute(_, n)
+            | MixerHit::Level(_, n)
+            | MixerHit::BranchPan(_, n)
+            | MixerHit::Branch(_, n),
+        ) => l.target.is_some_and(|x| x.id == n),
+        (Kind::Split { id, .. }, MixerHit::AddBranch(_, s)) => id == s,
         (_, MixerHit::After(_, p)) => l.pick() == Some(p),
         (Kind::Instrument { id, .. } | Kind::Effect(id), MixerHit::Open(_, p))
         | (Kind::Instrument { id, .. } | Kind::Effect(id), MixerHit::Bypass(_, p)) => id == p,
@@ -975,8 +1076,13 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                         );
                         end -= w + CHIP_GAP;
                     }
-                    if shows_mute(s, t.id, l) {
+                    let mute = shows_mute(s, t.id, l);
+                    if mute {
                         end = end.min(mute_part(row, l).x - SUB_PAD);
+                    }
+                    let add = shows_branch_add(s, t, l).then(|| branch_add_part(row, l, mute));
+                    if let Some(b) = add {
+                        end = end.min(b.x - CHIP_GAP);
                     }
                     let x = row.x + l.indent() + NAME_X;
                     // the device's own name, as its window's title says it: short enough for a
@@ -1004,8 +1110,59 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
                         Rect::new(x + w + 2.0, row.y + (row.h - 12.0) / 2.0, 12.0, 12.0),
                         soft,
                     );
-                    if let Some(target) = l.target.filter(|_| shows_mute(s, t.id, l)) {
-                        row_mute(pen, row, l, target.mute);
+                    if let Some(target) = l.target.filter(|_| mute) {
+                        row_mute(pen, row, l, target.mute, hot);
+                    }
+                    if let Some(b) = add {
+                        if matches!(hover, Some(MixerHit::AddBranch(..))) && hot {
+                            let face = if chosen {
+                                c.primary_hover.0
+                            } else {
+                                c.surface_3
+                            };
+                            pen.round(b, face, Radius::Xs);
+                        }
+                        pen.icon("plus", glyph(b), soft);
+                    }
+                }
+                Kind::Empty { index, .. } => {
+                    if hot {
+                        pen.round(row, c.surface_3, Radius::Clip);
+                    }
+                    if !frozen {
+                        pen.round(dot(row, l), c.solo_on.0, Radius::Pill);
+                    }
+                    let mute = !frozen && shows_mute(s, t.id, l);
+                    let mut end = row.right() - END;
+                    if mute {
+                        end = mute_part(row, l).x - SUB_PAD;
+                    }
+                    let level = l.level.filter(|_| !mute).map_or(0.0, |level| {
+                        pen.digits(
+                            &level_text(level),
+                            FontSize::Micro,
+                            Weight::Regular,
+                            c.ink,
+                            level_part(row),
+                            Align::Right,
+                        )
+                    });
+                    if level > 0.0 {
+                        end -= level + CHIP_GAP;
+                    }
+                    let x = row.x + l.indent() + NAME_X;
+                    let w = (end - x).max(0.0);
+                    let name = pen.fit(&empty_name(index), FontSize::Small, Weight::Regular, w);
+                    pen.text(
+                        &name,
+                        FontSize::Small,
+                        Weight::Regular,
+                        c.ink,
+                        Rect::new(x, row.y, w, row.h),
+                        Align::Left,
+                    );
+                    if let Some(target) = l.target.filter(|_| mute) {
+                        row_mute(pen, row, l, target.mute, hot);
                     }
                 }
                 Kind::Instrument { id, .. } | Kind::Effect(id) => {
@@ -1048,16 +1205,18 @@ pub fn paint(pen: &mut Pen, s: &Studio, t: &Track, flow: &Flow, region: Rect) {
     });
 }
 
-/// The M of a row under the pointer, on a strip of the hover colour that covers the name's
-/// tail.
-fn row_mute(pen: &mut Pen, row: Rect, l: &Line, on: bool) {
+/// The M of a row: under the pointer on a strip of the hover colour that covers the name's
+/// tail; a muted branch's at rest, as a badge.
+fn row_mute(pen: &mut Pen, row: Rect, l: &Line, on: bool, hot: bool) {
     let c = pen.c;
     let m = mute_part(row, l);
-    pen.round(
-        Rect::new(m.x - SUB_PAD, row.y, m.w + SUB_PAD, row.h),
-        c.surface_3,
-        Radius::Clip,
-    );
+    if hot {
+        pen.round(
+            Rect::new(m.x - SUB_PAD, row.y, m.w + SUB_PAD, row.h),
+            c.surface_3,
+            Radius::Clip,
+        );
+    }
     mute_button(pen, m, on);
 }
 
@@ -1080,12 +1239,18 @@ fn mute_button(pen: &mut Pen, m: Rect, on: bool) {
 fn level_row(pen: &mut Pen, s: &Studio, t: TrackId, target: Target, sub: Rect) {
     let c = pen.c;
     pen.round(sub, c.surface_3, Radius::Clip);
-    let (bar, val, mute) = sub_parts(sub);
-    let db = s
+    let SubParts {
+        bar,
+        val,
+        pan,
+        mute,
+    } = sub_parts(sub, sub_pan(s, t, target));
+    let drag = s
         .mixer
         .level_drag
-        .filter(|d| d.track == t && d.node == target.id)
-        .map_or(target.db, |d| d.value);
+        .filter(|d| d.track == t && d.node == target.id);
+    let db = drag.filter(|d| !d.pan).map_or(target.db, |d| d.value);
+    let pan_now = drag.filter(|d| d.pan).map_or(target.pan, |d| d.value);
     let coarse = sub.h > ROW_H;
     let mid = bar.y + bar.h / 2.0;
     let rail = Rect::new(bar.x, mid - RAIL / 2.0, bar.w, RAIL);
@@ -1102,15 +1267,55 @@ fn level_row(pen: &mut Pen, s: &Studio, t: TrackId, target: Target, sub: Rect) {
         c.ring,
         Radius::Pill,
     );
+    let at = |which| Focus {
+        track: t,
+        node: target.id,
+        which,
+        place: Place::Strip,
+    };
+    value_text(pen, s, at(Which::Gain), val, &level_text((db, false)));
+    if let Some(p) = pan {
+        value_text(pen, s, at(Which::Pan), p, &pan_text(pan_now));
+    }
+    if s.mixer.value_focus == Some(at(Which::Gain)) && s.mixer.value_entry.is_none() {
+        pen.outline(bar, c.ring, Radius::Clip, FOCUS_W);
+    }
+    mute_button(pen, mute, target.mute);
+}
+
+/// A branch value's text on a level row or a head, flush right: the field while it is typed,
+/// and the key's ring on a pan that has the keys (MIX-045).
+pub fn value_text(pen: &mut Pen, s: &Studio, f: Focus, r: Rect, text: &str) {
+    let c = pen.c;
+    if let Some(e) = s.mixer.value_entry.as_ref().filter(|e| e.focus == f) {
+        let field = Rect::new(r.x - 2.0, r.y + (r.h - MM_H) / 2.0, r.w + 4.0, MM_H);
+        pen.round(field, c.surface_2, Radius::Clip);
+        let shown = e.field.text();
+        let inner = Rect::new(field.x + 2.0, field.y, field.w - 4.0, field.h);
+        pen.mask(field, |pen| {
+            pen.digits(
+                &shown,
+                FontSize::Micro,
+                Weight::Regular,
+                c.ink_strong,
+                inner,
+                Align::Right,
+            );
+        });
+        pen.outline(field, c.ring, Radius::Clip, FOCUS_W);
+        return;
+    }
     pen.digits(
-        &level_text((db, false)),
+        text,
         FontSize::Micro,
         Weight::Regular,
         c.ink_strong,
-        val,
+        r,
         Align::Right,
     );
-    mute_button(pen, mute, target.mute);
+    if s.mixer.value_focus == Some(f) && f.which == Which::Pan {
+        pen.outline(r, c.ring, Radius::Clip, FOCUS_W);
+    }
 }
 
 /// The sidechain mark of a keyed plug-in's row, ending at `end` (MIX-048).
@@ -1288,7 +1493,7 @@ fn plugin_row(
         );
     }
     if let Some(target) = l.target.filter(|_| mute) {
-        row_mute(pen, row, l, target.mute);
+        row_mute(pen, row, l, target.mute, hot);
     }
     if frozen {
         pen.icon(
@@ -1344,12 +1549,24 @@ pub fn pieces(flow: &Flow) -> Vec<Vec<LinePiece>> {
             Kind::Split { id, open: true, .. } => {
                 let d = dot(*row, l);
                 let from = (d.x + d.w / 2.0, d.bottom() + inset);
+                // a muted branch has no hook: its line is cut (MIX-045, approved 2026-11-06)
+                let mut live = 0;
                 for (h, hr) in flow.rows[i + 1..]
                     .iter()
                     .filter(|(h, _)| h.heads == Some(id))
                 {
+                    if h.target.is_some_and(|x| x.mute) {
+                        continue;
+                    }
+                    live += 1;
                     let hd = dot(*hr, h);
                     out.push(StructureLine::hook(from, (hd.x - inset, hd.y + hd.h / 2.0)));
+                }
+                if live == 0 {
+                    out.push(vec![LinePiece::Straight {
+                        from,
+                        to: (from.0, from.1 + MUTED_STUB),
+                    }]);
                 }
             }
             Kind::Instrument { id, .. } => {

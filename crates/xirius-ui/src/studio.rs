@@ -1989,6 +1989,7 @@ impl Studio {
             || self.macro_key(key, mods)
             || self.device_key(g, key, mods)
             || self.head_fader_key(key, mods)
+            || self.value_key(key, mods)
             || self.bar_key(key, ch, mods)
             || self.inspector_key(g, key, ch, mods)
             || self.field_key(g, key, ch, mods.shift).is_some()

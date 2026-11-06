@@ -99,7 +99,8 @@ fn at_the_narrow_width_a_nested_splitter_starts_shut_and_opens_one_level_at_a_ti
         Kind::Split {
             id: inner,
             branches: 2,
-            open: false
+            open: false,
+            channel: false
         }
     );
     assert_eq!(row.depth, 1, "the indent is as it was");

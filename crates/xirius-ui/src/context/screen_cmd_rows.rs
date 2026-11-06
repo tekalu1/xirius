@@ -165,6 +165,29 @@ impl Studio {
                 let (x, y) = self.input_map.pointer;
                 Some(self.auto_value_open(point, x, y))
             }
+            "mixer.branch.value" => {
+                use crate::branch_value::{Focus, Place, Which};
+                let (Some(track), Some(node)) = (
+                    id::<TrackId>(args, "track"),
+                    id::<xirius_core::id::NodeId>(args, "id"),
+                ) else {
+                    return Some(false);
+                };
+                let which = match text(args, "value") {
+                    Some("pan") => Which::Pan,
+                    _ => Which::Gain,
+                };
+                let place = match text(args, "place") {
+                    Some("editor") => Place::Editor,
+                    _ => Place::Strip,
+                };
+                Some(self.value_type(Focus {
+                    track,
+                    node,
+                    which,
+                    place,
+                }))
+            }
             "view.export" => Some(self.view_export(g, args)),
             "view.export.close" => Some(
                 self.popup

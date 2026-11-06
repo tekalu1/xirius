@@ -47,6 +47,7 @@ fn on_screen(act: &Act) -> bool {
         | Act::ExportSpan(..)
         | Act::MidiExport(..)
         | Act::PointValue(..)
+        | Act::BranchValue(..)
         | Act::Preset(..)
         | Act::Analyser(..)
         | Act::RestartPlugin(_)
@@ -89,6 +90,12 @@ fn samples(t: TrackId, p: PluginId, f: FolderId) -> Vec<Act> {
         Act::MidiExport(vec![t], Some((0, 3840))),
         Act::PointValue(t, AutoTarget::Volume, 960, 10.0, 10.0),
         Act::DeletePoints,
+        Act::BranchValue(
+            t,
+            xirius_core::id::NodeId(9),
+            crate::branch_value::Which::Pan,
+            crate::branch_value::Place::Editor,
+        ),
         Act::RangeFrame(Some((t, AutoTarget::Volume)), 0, 1920),
         Act::RangeFrame(None, 0, 1920),
         Act::RollPitch(60),

@@ -81,6 +81,22 @@ fn external_reads_wait_for_each_text_surface_and_pointer_owner() {
         ("native picker", |s| {
             s.begin_picker();
         }),
+        ("branch value", |s| {
+            use crate::branch_value::{Entry, Focus, Place, Which};
+            s.mixer.value_entry = Some(Entry {
+                focus: Focus {
+                    track: xirius_core::id::TrackId(1),
+                    node: xirius_core::id::NodeId(1),
+                    which: Which::Gain,
+                    place: Place::Strip,
+                },
+                field: crate::settings::field::Field::new(
+                    crate::settings::FieldId::Value,
+                    "-3".into(),
+                ),
+                fresh: false,
+            })
+        }),
         ("pointer", |s| s.pointer_held = true),
         ("external drag", |s| s.drop_over = true),
         ("mixer scroll", |s| s.mixer.bar_grab = Some(0.0)),

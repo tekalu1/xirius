@@ -56,6 +56,21 @@ pub fn act_command(act: &Act) -> (&'static str, Value) {
             json!({"track": t.to_string(), "target": target.to_string(), "at": at}),
         ),
         Act::DeletePoints => ("clip.delete", json!({})),
+        Act::BranchValue(t, node, which, place) => (
+            "mixer.branch.value",
+            json!({
+                "track": t.to_string(),
+                "id": node.to_string(),
+                "value": match which {
+                    crate::branch_value::Which::Gain => "gain",
+                    crate::branch_value::Which::Pan => "pan",
+                },
+                "place": match place {
+                    crate::branch_value::Place::Strip => "strip",
+                    crate::branch_value::Place::Editor => "editor",
+                },
+            }),
+        ),
         Act::Preset(id, name) => (
             "plugin.preset.choose",
             json!({"id": id.to_string(), "preset": name}),

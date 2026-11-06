@@ -5,6 +5,8 @@
 //! «route» button opens it, and so does a device window's. A multi-instrument's window has
 //! the key range figure under its flow (MIX-043).
 
+#[cfg(test)]
+mod branch_tests;
 pub mod flow;
 pub mod keys;
 pub mod paint;
@@ -18,6 +20,7 @@ use xirius_core::model::{PluginKind, Project};
 use xirius_core::rack::{RackNode, Split, SplitMode};
 use xirius_design::FontSize;
 
+use crate::branch_value::{Focus, Place, Which};
 use crate::context::Item;
 use crate::draw::estimated_text_width;
 use crate::mixer::flow::Pick;
@@ -60,6 +63,10 @@ pub const PILL_H: f32 = 22.0;
 /// A head's parts: the level's bar, the value, the M and the ×.
 pub const LEVEL_W: f32 = 44.0;
 pub const VALUE_W: f32 = 28.0;
+/// A branch head's value and pan, as the mock's (approved 2026-11-06).
+pub const BRANCH_VALUE_W: f32 = 32.0;
+pub const PAN_W: f32 = 30.0;
+const NUM_W: f32 = 12.0;
 pub const MUTE_W: f32 = 18.0;
 pub const MUTE_H: f32 = 16.0;
 pub const REMOVE: f32 = 18.0;
@@ -126,8 +133,12 @@ pub enum Part {
     /// The ＋ of the `i`th gap.
     Gap(usize),
     Level(NodeId),
+    /// A branch's pan on its head (MIX-045).
+    Pan(NodeId),
     Mute(NodeId),
     Remove(NodeId),
+    /// A splitter's ＋ right of its columns: it adds a branch.
+    AddBranch(NodeId),
     /// A frequency split's `i`th crossover.
     Cross(NodeId, usize),
     /// A layer's box in the key range figure, and one of its sides.
@@ -464,6 +475,8 @@ pub struct HeadParts {
     pub num: Rect,
     pub level: Rect,
     pub value: Rect,
+    /// A branch's pan; a layer has none.
+    pub pan: Option<Rect>,
     pub mute: Rect,
     /// Not on a channel split's branches: they stay two.
     pub remove: Option<Rect>,
@@ -494,6 +507,37 @@ pub fn head_parts(col: &Column) -> HeadParts {
     let h = col.head;
     let cy = h.y + h.h / 2.0;
     let label = col_label(col);
+    if let ColKind::Branch { mode, .. } = col.kind {
+        // A branch's head in a row on its middle, as the mock's: n, level, value, pan, M, ×.
+        let removable = mode != SplitMode::Channel;
+        let parts = [NUM_W, LEVEL_W, BRANCH_VALUE_W, PAN_W, MUTE_W];
+        let n = parts.len() + usize::from(removable);
+        let w = parts.iter().sum::<f32>()
+            + if removable { REMOVE } else { 0.0 }
+            + HEAD_GAP * (n - 1) as f32;
+        let mut x = h.x + (h.w - w) / 2.0;
+        let mut next = |pw: f32, ph: f32| {
+            let r = Rect::new(x, cy - ph / 2.0, pw, ph);
+            x += pw + HEAD_GAP;
+            r
+        };
+        let num = next(NUM_W, h.h);
+        let level = next(LEVEL_W, MUTE_H);
+        let value = next(BRANCH_VALUE_W, h.h);
+        let pan = next(PAN_W, h.h);
+        let mute = next(MUTE_W, MUTE_H);
+        let remove = removable.then(|| next(REMOVE, REMOVE));
+        return HeadParts {
+            label,
+            num,
+            level,
+            value,
+            pan: Some(pan),
+            mute,
+            remove,
+            keep: Rect::new(h.right() - 4.0 - 40.0, h.y, 40.0, h.h),
+        };
+    }
     let num_w = estimated_text_width(&label, FontSize::Caption).max(6.0);
     let removable = !matches!(
         col.kind,
@@ -519,6 +563,7 @@ pub fn head_parts(col: &Column) -> HeadParts {
         num,
         level,
         value,
+        pan: None,
         mute,
         remove,
         keep: Rect::new(h.right() - 4.0 - 40.0, h.y, 40.0, h.h),
@@ -618,14 +663,22 @@ pub fn part_at(v: &View, x: f32, y: f32) -> Option<Part> {
             continue;
         }
         let hp = head_parts(col);
-        if hp.level.contains(x, y) {
+        if hp.level.contains(x, y) || hp.value.contains(x, y) {
             return Some(Part::Level(col.id));
+        }
+        if hp.pan.is_some_and(|r| r.contains(x, y)) {
+            return Some(Part::Pan(col.id));
         }
         if hp.mute.contains(x, y) {
             return Some(Part::Mute(col.id));
         }
         if hp.remove.is_some_and(|r| r.contains(x, y)) {
             return Some(Part::Remove(col.id));
+        }
+    }
+    for add in &f.adds {
+        if add.rect.contains(x, y) {
+            return Some(Part::AddBranch(add.split));
         }
     }
     for card in &f.cards {
@@ -889,6 +942,13 @@ impl Studio {
                     self.level_move(x, false);
                 }
             }
+            // a pan's press is the branch value's (branch_value.rs); a frozen track's stays
+            Part::Pan(_) => {}
+            Part::AddBranch(split) => {
+                w.chosen = Some(Pick::Split(split));
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+                self.run_command("rack.branch.add", json!({ "split": split.to_string() }));
+            }
             Part::Mute(n) => {
                 self.row_mute(t, n);
             }
@@ -1076,19 +1136,19 @@ impl Studio {
                 items.insert(1.min(items.len()), rename);
                 items
             }
-            Pick::Split(id) => vec![
-                self.ctx_as(
-                    "分岐を足す",
-                    "rack.branch.add",
-                    json!({ "split": id.to_string() }),
-                ),
-                Item::gap(),
-                self.ctx_as(
+            Pick::Split(id) => {
+                // a channel split's branches are L and R: no 「分岐を追加」
+                let mut items: Vec<Item> = self.branch_item(t, id).into_iter().collect();
+                if !items.is_empty() {
+                    items.push(Item::gap());
+                }
+                items.push(self.ctx_as(
                     "スプリッターを外す",
                     "rack.split.remove",
                     json!({ "id": id.to_string() }),
-                ),
-            ],
+                ));
+                items
+            }
         };
         self.open_context(items, x, y);
     }
@@ -1312,9 +1372,53 @@ impl Studio {
                 self.channel_menu(t, pick, x, y);
             }
             Some(Part::Macro(k)) => self.macro_knob_menu(t, k, x, y),
+            Some(Part::Level(n)) => self.channel_value_menu(t, n, Which::Gain, x, y),
+            Some(Part::Pan(n)) => self.channel_value_menu(t, n, Which::Pan, x, y),
+            Some(Part::AddBranch(id)) => {
+                if let Some(item) = self.branch_item(t, id) {
+                    self.open_context(vec![item], x, y);
+                }
+            }
             _ => {}
         }
         true
+    }
+
+    /// A head's level or pan: 「値を入力… ／ 0 dB に戻す」 (MIX-045).
+    fn channel_value_menu(&mut self, t: TrackId, n: NodeId, which: Which, x: f32, y: f32) {
+        let items = self.branch_value_items(t, n, which, Place::Editor);
+        if !items.is_empty() {
+            self.open_context(items, x, y);
+        }
+    }
+
+    /// The head value under a point, with the rect a drag sweeps: a column's level (its bar or
+    /// value) or a branch's pan.
+    pub(crate) fn channel_value_at(&self, g: &Geometry, x: f32, y: f32) -> Option<(Focus, Rect)> {
+        if !self.over_channel(g, x, y) {
+            return None;
+        }
+        let w = self.channel.as_ref()?;
+        let v = self.channel_view(g)?;
+        let (node, which) = match part_at(&v, x, y)? {
+            Part::Level(n) => (n, Which::Gain),
+            Part::Pan(n) => (n, Which::Pan),
+            _ => return None,
+        };
+        let hp = head_parts(v.flow.columns.iter().find(|c| c.id == node)?);
+        let r = match which {
+            Which::Gain => hp.level,
+            Which::Pan => hp.pan?,
+        };
+        Some((
+            Focus {
+                track: w.track,
+                node,
+                which,
+                place: Place::Editor,
+            },
+            r,
+        ))
     }
 
     /// A turn of the wheel over the flow scrolls it (Shift: sideways).
@@ -1370,6 +1474,23 @@ fn layer_pick(p: &Project, t: TrackId, id: NodeId) -> Option<Pick> {
         .iter()
         .find(|l| l.id == id)
         .map(|l| Pick::Plugin(l.instrument))
+}
+
+/// The heads of the editor of `t`, left to right: each column's id and whether it has a pan
+/// (a branch's; a layer has none).
+pub fn branch_heads(p: &Project, t: TrackId) -> Vec<(NodeId, bool)> {
+    let Some(track) = p.tracks.get(&t) else {
+        return Vec::new();
+    };
+    let mut cols = flow::layout(p, track, (0.0, 0.0)).columns;
+    cols.sort_by(|a, b| {
+        (a.head.y, a.head.x)
+            .partial_cmp(&(b.head.y, b.head.x))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    cols.iter()
+        .map(|c| (c.id, matches!(c.kind, ColKind::Branch { .. })))
+        .collect()
 }
 
 fn col_who(t: &xirius_core::model::Track, f: &Flow, col: &Column) -> String {
@@ -1533,15 +1654,37 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<crate::a11y::Mark> {
         level.set_numeric_value(db);
         level.set_value(crate::mixer::flow::level_text((db, false)));
         children.push(mark(format!("channel-level-{}", col.id), level));
+        if let Some(r) = hp.pan
+            && let Some((_, pan, _)) = t.rack.as_ref().and_then(|r| r.levels(col.id))
+        {
+            let mut node = accesskit::Node::new(accesskit::Role::Slider);
+            node.set_label(format!("{who} のパン"));
+            node.set_bounds(bounds(r));
+            node.set_min_numeric_value(-100.0);
+            node.set_max_numeric_value(100.0);
+            node.set_numeric_value((pan * 100.0).round());
+            node.set_value(crate::branch_value::pan_text(pan));
+            children.push(mark(format!("channel-pan-{}", col.id), node));
+        }
         let mut mute = button(&format!("{who} をミュート"), hp.mute);
         toggled(&mut mute, target.mute);
         children.push(mark(format!("channel-mute-{}", col.id), mute));
         if let Some(r) = hp.remove {
+            let verb = match col.kind {
+                ColKind::Branch { .. } => "削除",
+                ColKind::Layer { .. } => "外す",
+            };
             children.push(mark(
                 format!("channel-remove-{}", col.id),
-                button(&format!("{who} を外す"), r),
+                button(&format!("{who} を{verb}"), r),
             ));
         }
+    }
+    for add in v.flow.adds.iter().filter(|a| shown(a.rect)) {
+        children.push(mark(
+            format!("channel-add-branch-{}", add.split),
+            button("分岐を追加", add.rect),
+        ));
     }
     if let Some(k) = &v.keys {
         for b in &k.boxes {

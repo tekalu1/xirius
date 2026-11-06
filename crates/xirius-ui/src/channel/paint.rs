@@ -9,8 +9,9 @@ use super::keys;
 use super::{
     ChannelWin, Grab, Part, Tool, View, card_parts, col_label, head_parts, head_shown, mode_text,
 };
+use crate::branch_value::{Focus, Place, Which, pan_text};
 use crate::draw::{Align, Pen};
-use crate::mixer::flow::{Pick, level_t, level_text};
+use crate::mixer::flow::{Pick, level_t, level_text, value_text};
 use crate::studio::{Geometry, Rect, Studio};
 use crate::title_bar;
 
@@ -20,9 +21,14 @@ const CAP_W: f32 = 4.0;
 const CAP_H: f32 = 10.0;
 /// The ring round a bypassed device's dot.
 const RING: f32 = 1.5;
+/// The ring of a value that has the keys.
+const FOCUS_W: f32 = 2.0;
 /// A crossover's line.
 const CROSS_W: f32 = 2.0;
 const CROSS_H: f32 = 14.0;
+/// The cut in a branch's line across its head while the head shows (the mock's).
+const LINE_CUT_W: f32 = 4.0;
+const LINE_CUT_H: f32 = 18.0;
 
 /// Paints the open channel editor: over the device windows when it was the last pressed,
 /// under them when not (`over` says which pass this is).
@@ -336,7 +342,8 @@ fn hot_key(w: &ChannelWin) -> Option<Key> {
     match w.hot? {
         Part::Card(pick) | Part::Dot(pick) | Part::More(pick) => Some(Key::of(pick)),
         Part::Mode(id) => Some(Key::Node(id)),
-        Part::Level(id) | Part::Mute(id) | Part::Remove(id) => Some(Key::Node(id)),
+        Part::Level(id) | Part::Pan(id) | Part::Mute(id) | Part::Remove(id) => Some(Key::Node(id)),
+        Part::AddBranch(id) => Some(Key::Node(id)),
         _ => None,
     }
 }
@@ -376,13 +383,33 @@ fn paint_flow(pen: &mut Pen, s: &Studio, w: &ChannelWin, t: &Track, f: &Flow) {
             Align::Left,
         );
     }
+    // a head shows its parts while its value is held or has the keys
     let held = s
         .mixer
         .level_drag
         .filter(|d| d.track == t.id)
-        .map(|d| d.node);
+        .map(|d| d.node)
+        .or_else(|| {
+            s.mixer
+                .value_focus
+                .filter(|v| v.track == t.id && v.place == Place::Editor)
+                .map(|v| v.node)
+        });
     for col in &f.columns {
         paint_head(pen, s, w, t, f, col, held);
+    }
+    for add in &f.adds {
+        // the splitter's ＋, always there: round, its face under the pointer (the mock's)
+        if w.hot == Some(Part::AddBranch(add.split)) {
+            pen.round(add.rect, c.surface_3, Radius::Pill);
+        }
+        let i = 16.0;
+        let r = add.rect;
+        pen.icon(
+            "plus",
+            Rect::new(r.x + (r.w - i) / 2.0, r.y + (r.h - i) / 2.0, i, i),
+            c.ink,
+        );
     }
     for cross in &f.crosses {
         let grabbed = matches!(
@@ -481,16 +508,22 @@ fn paint_head(
     let Some(target) = s.row_target(t.id, col.id) else {
         return;
     };
-    let db = s
+    let drag = s
         .mixer
         .level_drag
-        .filter(|d| d.track == t.id && d.node == col.id)
-        .map_or(target.db, |d| d.value);
+        .filter(|d| d.track == t.id && d.node == col.id);
+    let db = drag.filter(|d| !d.pan).map_or(target.db, |d| d.value);
+    let pan = drag.filter(|d| d.pan).map_or(target.pan, |d| d.value);
     let hp = head_parts(col);
     if !head_shown(w, col, f, held) {
-        // At rest a head keeps only what is away from the default: M, a level, a band.
-        let keep = if target.mute || db != 0.0 {
-            Some(level_text((db, target.mute)))
+        // At rest a head keeps only what is away from the default: a muted one's M as a badge
+        // (MIX-045, approved 2026-11-06), a level, a band.
+        if target.mute {
+            mute_badge(pen, hp.mute, true);
+            return;
+        }
+        let keep = if db != 0.0 {
+            Some(level_text((db, false)))
         } else {
             col.band.clone()
         };
@@ -505,6 +538,20 @@ fn paint_head(
             );
         }
         return;
+    }
+    if hp.pan.is_some() {
+        // A branch's head sits on its line, cut across the head as the mock's.
+        let cx = col.head.x + col.head.w / 2.0;
+        let cy = col.head.y + col.head.h / 2.0;
+        pen.fill(
+            Rect::new(
+                cx - LINE_CUT_W / 2.0,
+                cy - LINE_CUT_H / 2.0,
+                LINE_CUT_W,
+                LINE_CUT_H,
+            ),
+            c.paper,
+        );
     }
     pen.text(
         &col_label(col),
@@ -529,28 +576,20 @@ fn paint_head(
         c.ring,
         Radius::Pill,
     );
-    pen.digits(
-        &level_text((db, false)),
-        FontSize::Micro,
-        Weight::Regular,
-        c.ink_strong,
-        hp.value,
-        Align::Right,
-    );
-    let (face, ink) = if target.mute {
-        c.mute_on
-    } else {
-        (c.surface_2, c.ink)
+    let at = |which| Focus {
+        track: t.id,
+        node: col.id,
+        which,
+        place: Place::Editor,
     };
-    pen.round(hp.mute, face, Radius::Clip);
-    pen.text(
-        "M",
-        FontSize::Micro,
-        Weight::Semibold,
-        ink,
-        hp.mute,
-        Align::Center,
-    );
+    value_text(pen, s, at(Which::Gain), hp.value, &level_text((db, false)));
+    if let Some(r) = hp.pan {
+        value_text(pen, s, at(Which::Pan), r, &pan_text(pan));
+    }
+    if s.mixer.value_focus == Some(at(Which::Gain)) && s.mixer.value_entry.is_none() {
+        pen.outline(bar, c.ring, Radius::Clip, FOCUS_W);
+    }
+    mute_badge(pen, hp.mute, target.mute);
     if let Some(r) = hp.remove {
         if w.hot == Some(Part::Remove(col.id)) {
             pen.round(r, c.surface_3, Radius::Clip);
@@ -562,6 +601,21 @@ fn paint_head(
             c.ink,
         );
     }
+}
+
+/// A head's M: yellow while muted, as the mixer's.
+fn mute_badge(pen: &mut Pen, r: Rect, on: bool) {
+    let c = pen.c;
+    let (face, ink) = if on { c.mute_on } else { (c.surface_2, c.ink) };
+    pen.round(r, face, Radius::Clip);
+    pen.text(
+        "M",
+        FontSize::Micro,
+        Weight::Semibold,
+        ink,
+        r,
+        Align::Center,
+    );
 }
 
 fn plugin_of(t: &Track, pick: Pick) -> Option<&Plugin> {

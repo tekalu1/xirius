@@ -121,13 +121,17 @@ fn the_picked_row_has_a_level_row_whose_bar_and_m_move_its_branch() {
     let (_, under) = *flow.picked(Pick::Plugin(verb)).unwrap();
     assert!((under.bottom()..=under.bottom() + 1.0).contains(&sub.y));
     assert_eq!(l.target.map(|x| (x.id, x.layer)), Some((b[1], false)));
-    // a press at the bar's right end and a drag to its middle: one step of the history
+    // a press at the bar's right end and a drag to its middle: the level moves from where it
+    // was by the way the pointer went (approved 2026-11-06), one step of the history
     let bar = s.mixer_rect(&g, MixerHit::Level(t, b[1])).unwrap();
     let hit = s.hit(&g, bar.right() - 1.0, bar.y + bar.h / 2.0);
     assert_eq!(hit, Hit::Mixer(MixerHit::Level(t, b[1])));
     assert!(s.level_down(&g, hit, bar.right() - 1.0));
+    assert_eq!(branch(&s, t, b[1]).0, 0.0, "a press alone does not jump");
     assert!(s.level_move(bar.x + bar.w / 2.0, false));
-    let want = (flow::level_db(0.5) * 10.0).round() / 10.0;
+    let d = -(bar.w / 2.0 - 1.0) / bar.w.max(44.0);
+    let want = (flow::level_db((flow::level_t(0.0) + d).clamp(0.0, 1.0)) * 10.0).round() / 10.0;
+    assert!(want < 0.0);
     assert_eq!(branch(&s, t, b[1]).0, 0.0);
     assert!(s.level_up());
     assert_eq!(branch(&s, t, b[1]).0, want);
@@ -151,6 +155,9 @@ fn a_row_with_a_level_shows_its_m_under_the_pointer() {
     let (x, y) = s.mixer_center(&g, m).unwrap();
     assert!(s.press(&g, Hit::Mixer(m)));
     assert!(branch(&s, t, b[0]).2);
+    // a muted branch keeps its M lit (MIX-045); unmuted, it waits for the pointer again
+    assert!(s.press(&g, Hit::Mixer(m)));
+    assert!(!branch(&s, t, b[0]).2);
     // a row that heads no branch has no M
     s.hover = Hit::Mixer(MixerHit::Open(t, eq));
     assert!(flow_of(&s, &g, t).plugin(eq).unwrap().0.target.is_none());
@@ -454,3 +461,6 @@ fn alt_insert_adds_before_the_picked_row_and_at_a_branch_head() {
         Some((t, crate::channel::flow::Chain::Top, 0))
     );
 }
+
+#[path = "branch_tests.rs"]
+mod branch;

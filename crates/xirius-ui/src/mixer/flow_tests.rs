@@ -145,7 +145,8 @@ fn a_splitter_is_one_row_that_opens_on_its_branches_and_folds_away() {
                 Kind::Split {
                     id: sp,
                     branches: 2,
-                    open: true
+                    open: true,
+                    channel: false
                 },
                 0,
                 None,
@@ -173,7 +174,8 @@ fn a_splitter_is_one_row_that_opens_on_its_branches_and_folds_away() {
             Kind::Split {
                 id: sp,
                 branches: 2,
-                open: false
+                open: false,
+                channel: false
             }
         ]
     );
@@ -190,7 +192,8 @@ fn a_splitter_is_one_row_that_opens_on_its_branches_and_folds_away() {
             Kind::Split {
                 id: sp,
                 branches: 2,
-                open: false
+                open: false,
+                channel: false
             }
         ]
     );

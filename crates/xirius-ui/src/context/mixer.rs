@@ -18,6 +18,7 @@ use xirius_core::controls::{ControlId, KNOBS};
 
 use super::{Act, Item};
 use crate::arrange::{lane_name, targets_of};
+use crate::branch_value::{Place, Which};
 use crate::instrument::window::is_built_in;
 use crate::mixer::flow::{Area, Kind, Line, Pick};
 use crate::mixer::{List, MixerHit, NEW_BUS, row_at, send_choices, send_parts};
@@ -46,6 +47,8 @@ enum Spot {
     InstrumentHeading(TrackId),
     /// A splitter's row (MIX-044).
     Split(TrackId, NodeId),
+    /// A branch's level or pan on a level row (approved 2026-11-06).
+    Value(TrackId, NodeId, Which),
     /// The room right of the last strip.
     Empty,
 }
@@ -84,6 +87,7 @@ impl Studio {
             Spot::InsertHeading(t) => self.insert_heading_items(t),
             Spot::InstrumentHeading(t) => trimmed(self.flow_add_items(t)),
             Spot::Split(t, id) => self.split_items(t, id),
+            Spot::Value(t, n, which) => self.branch_value_items(t, n, which, Place::Strip),
             Spot::Empty => self.empty_items(),
         };
         if items.is_empty() {
@@ -107,13 +111,15 @@ impl Studio {
             MixerHit::AddInsert(t) => Spot::AddInsert(t),
             MixerHit::Heading(t, Area::Insert) => Spot::InsertHeading(t),
             MixerHit::Heading(t, Area::Instrument) => Spot::InstrumentHeading(t),
-            MixerHit::Fold(t, id) => Spot::Split(t, id),
+            MixerHit::Fold(t, id) | MixerHit::AddBranch(t, id) => Spot::Split(t, id),
+            MixerHit::Level(t, n) => Spot::Value(t, n, Which::Gain),
+            MixerHit::BranchPan(t, n) => Spot::Value(t, n, Which::Pan),
             // The instrument row has its own menu; a plugin that went down keeps the one
             // that restarts it.
             MixerHit::AddInstrument(_)
             | MixerHit::AddLayer(_)
             | MixerHit::RowMute(..)
-            | MixerHit::Level(..)
+            | MixerHit::Branch(..)
             | MixerHit::After(..)
             | MixerHit::KeySend(..)
             | MixerHit::KeyLevel(..) => return None,
@@ -650,7 +656,7 @@ impl Studio {
         restart.reason = "クラッシュしたプラグインだけ再起動できます".into();
         let mut adds = self.after_items(t, Pick::Plugin(id));
         if let Some(split) = split_holding(track, &RackNode::Plugin(id)) {
-            adds.push(self.branch_item(split));
+            adds.extend(self.branch_item(t, split));
         }
         adds.push(Item::gap());
         adds.extend(self.flow_add_items(t));
@@ -731,17 +737,56 @@ impl Studio {
     }
 
     /// "分岐を追加": one more (empty) branch of a splitter.
-    fn branch_item(&mut self, split: NodeId) -> Item {
-        self.ctx_as(
-            "分岐を追加",
-            "rack.branch.add",
-            json!({ "split": split.to_string() }),
-        )
+    /// 「分岐を追加」, but not on a channel split, whose branches are L and R (approved
+    /// 2026-11-06).
+    pub(crate) fn branch_item(&mut self, t: TrackId, split: NodeId) -> Option<Item> {
+        let channel = crate::channel::split_of(&self.project(), t, split)
+            .is_some_and(|s| s.mode == xirius_core::rack::SplitMode::Channel);
+        (!channel).then(|| {
+            self.ctx_as(
+                "分岐を追加",
+                "rack.branch.add",
+                json!({ "split": split.to_string() }),
+            )
+        })
     }
 
-    /// The menu of a splitter's row.
+    /// The menu of a branch's level or pan, on a strip's level row or an editor's head: the
+    /// field, and the default back (approved 2026-11-06).
+    pub(crate) fn branch_value_items(
+        &mut self,
+        t: TrackId,
+        n: NodeId,
+        which: Which,
+        place: Place,
+    ) -> Vec<Item> {
+        let Some(target) = self.row_target(t, n) else {
+            return Vec::new();
+        };
+        let open = self
+            .project()
+            .tracks
+            .get(&t)
+            .is_some_and(|x| x.frozen.is_none());
+        let command = if target.layer {
+            "rack.layer.set"
+        } else {
+            "rack.branch.set"
+        };
+        let (label, args) = match which {
+            Which::Gain => ("0 dB に戻す", json!({ "id": n.to_string(), "gain": 0.0 })),
+            Which::Pan => ("既定に戻す", json!({ "id": n.to_string(), "pan": 0.0 })),
+        };
+        vec![
+            Item::act("値を入力…", "", Act::BranchValue(t, n, which, place)).enabled(open),
+            self.ctx_as(label, command, args),
+        ]
+    }
+
+    /// The menu of a splitter's row: 「分岐を追加」 but on a channel split, whose branches are
+    /// L and R.
     fn split_items(&mut self, t: TrackId, id: NodeId) -> Vec<Item> {
-        let mut rows = vec![self.branch_item(id)];
+        let mut rows: Vec<Item> = self.branch_item(t, id).into_iter().collect();
         rows.extend(self.after_items(t, Pick::Split(id)));
         rows.push(Item::gap());
         rows.extend(self.flow_add_items(t));
@@ -1081,7 +1126,8 @@ fn spot_track(spot: &Spot) -> Option<TrackId> {
         | Spot::AddInsert(t)
         | Spot::InsertHeading(t)
         | Spot::InstrumentHeading(t)
-        | Spot::Split(t, _) => Some(*t),
+        | Spot::Split(t, _)
+        | Spot::Value(t, ..) => Some(*t),
         Spot::Empty => None,
     }
 }

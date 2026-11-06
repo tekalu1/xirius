@@ -79,9 +79,11 @@ pub fn command(hit: Hit) -> Option<String> {
                     crate::mixer::MixerHit::Open(..) => Some("plugin.open".into()),
                     crate::mixer::MixerHit::Control(..) => Some("control.set".into()),
                     crate::mixer::MixerHit::Strip(_) => None,
-                    crate::mixer::MixerHit::RowMute(..) | crate::mixer::MixerHit::Level(..) => {
-                        Some("rack.branch.set".into())
-                    }
+                    crate::mixer::MixerHit::RowMute(..)
+                    | crate::mixer::MixerHit::Level(..)
+                    | crate::mixer::MixerHit::BranchPan(..) => Some("rack.branch.set".into()),
+                    crate::mixer::MixerHit::AddBranch(..) => Some("rack.branch.add".into()),
+                    crate::mixer::MixerHit::Branch(..) => None,
                     crate::mixer::MixerHit::After(..) => Some("plugin.add".into()),
                     crate::mixer::MixerHit::KeySend(..) => Some("plugin.open".into()),
                     crate::mixer::MixerHit::KeyLevel(..) => Some("plugin.sidechain.set".into()),
@@ -362,6 +364,9 @@ pub(crate) fn pointer_tip(s: &Studio, g: &Geometry) -> Option<(&'static str, Rec
     if let Some(tip) = roll_control(s, g) {
         return Some(tip);
     }
+    if let Some(tip) = channel_control(s, g) {
+        return Some(tip);
+    }
     let hit = hovered(s, g);
     let name = match hit {
         Hit::Monitor(_) => "track.monitor",
@@ -387,6 +392,28 @@ fn anchor(s: &Studio, g: &Geometry, hit: Hit) -> Option<Rect> {
             .then_some(r);
     }
     s.center_of(g, hit).map(|(x, y)| Rect::new(x, y, 0.0, 12.0))
+}
+
+/// The channel editor's ✖ and ＋ of a branch: 「分岐を削除」「分岐を追加」 (MIX-045).
+fn channel_control(s: &Studio, g: &Geometry) -> Option<(&'static str, Rect)> {
+    use crate::channel::{Part, flow::ColKind, head_parts};
+    let w = s.channel.as_ref()?;
+    let v = s.channel_view(g)?;
+    match w.hot? {
+        Part::AddBranch(id) => {
+            let add = v.flow.adds.iter().find(|a| a.split == id)?;
+            Some(("rack.branch.add", add.rect))
+        }
+        Part::Remove(id) => {
+            let col = v.flow.columns.iter().find(|c| c.id == id)?;
+            let name = match col.kind {
+                ColKind::Branch { .. } => "rack.branch.remove",
+                ColKind::Layer { .. } => "rack.layer.remove",
+            };
+            Some((name, head_parts(col).remove?))
+        }
+        _ => None,
+    }
 }
 
 fn roll_control(s: &Studio, g: &Geometry) -> Option<(&'static str, Rect)> {

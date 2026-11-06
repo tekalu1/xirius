@@ -13,6 +13,8 @@ pub(crate) enum ImeTarget {
     Device,
     /// A value typed in a track head's fader (UI-324).
     Head,
+    /// A branch's level or pan typed on a strip or an editor's head (MIX-045).
+    Branch,
     Palette,
 }
 
@@ -32,6 +34,8 @@ impl Studio {
             Some(ImeTarget::Device)
         } else if self.head_fader.entry.is_some() {
             Some(ImeTarget::Head)
+        } else if self.mixer.value_entry.is_some() {
+            Some(ImeTarget::Branch)
         } else if self.palette.is_some() {
             Some(ImeTarget::Palette)
         } else {
@@ -108,6 +112,7 @@ impl Studio {
             ImeTarget::Settings => self.settings.as_ref()?.field.as_ref(),
             ImeTarget::Device => self.instruments.entry.as_ref().map(|e| &e.field),
             ImeTarget::Head => self.head_fader.entry.as_ref().map(|e| &e.field),
+            ImeTarget::Branch => self.mixer.value_entry.as_ref().map(|e| &e.field),
             ImeTarget::Pick | ImeTarget::Palette => None,
         }
     }
@@ -141,6 +146,10 @@ impl Studio {
                 let entry = self.head_fader.entry.as_mut().unwrap();
                 entry.type_text(range, text, marked);
             }
+            Some(ImeTarget::Branch) => {
+                let entry = self.mixer.value_entry.as_mut().unwrap();
+                entry.type_text(range, text, marked);
+            }
             Some(ImeTarget::Palette) => {
                 let palette = self.palette.as_mut().unwrap();
                 if marked {
@@ -163,6 +172,7 @@ impl Studio {
             Some(ImeTarget::Settings) => self.settings_unmark(),
             Some(ImeTarget::Device) => self.instruments.entry.as_mut().unwrap().field.unmark(),
             Some(ImeTarget::Head) => self.head_fader.entry.as_mut().unwrap().field.unmark(),
+            Some(ImeTarget::Branch) => self.mixer.value_entry.as_mut().unwrap().field.unmark(),
             Some(ImeTarget::Palette) => self.palette.as_mut().unwrap().unmark(),
             None => {}
         }

@@ -947,6 +947,8 @@ fn flow_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                     let mut node = button(&format!("スプリッター {splits}"));
                     node.set_expanded(open);
                     parts.push((MixerHit::Fold(t, id), node));
+                    // its ＋ (not on a channel split; at 116 only while shown: MIX-045)
+                    parts.push((MixerHit::AddBranch(t, id), button("分岐を追加")));
                 }
                 (Kind::Head { add }, Area::Insert) => {
                     // the heading is dragged and copied from (MIX-045); its ＋ adds (MIX-044)
@@ -1010,6 +1012,15 @@ fn flow_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                     node.set_numeric_value(db);
                     node.set_value(crate::mixer::flow::level_text((db, false)));
                     parts.push((MixerHit::Level(t, target.id), node));
+                    if !target.layer {
+                        let mut node = accesskit::Node::new(accesskit::Role::Slider);
+                        node.set_label(format!("{name} の{whose}のパン"));
+                        node.set_min_numeric_value(-100.0);
+                        node.set_max_numeric_value(100.0);
+                        node.set_numeric_value((target.pan * 100.0).round());
+                        node.set_value(crate::branch_value::pan_text(target.pan));
+                        parts.push((MixerHit::BranchPan(t, target.id), node));
+                    }
                 }
             }
             if let Some(pick) = l.pick() {

@@ -127,6 +127,10 @@ fn a_new_text_owner_requires_an_interaction_review() {
     let guards = [
         ("about.rs:View.query", "self.popup.is_some()"),
         ("bar_tempo.rs:BarEdit.typing", "self.bar_edit.active()"),
+        (
+            "branch_value.rs:Entry.field",
+            "self.mixer.value_entry.is_some()",
+        ),
         ("browser.rs:Browser.typing", "self.browser.typing"),
         ("context/ask.rs:Ask.input", "self.popup.is_some()"),
         ("context/fields.rs:Typing.marked", "self.popup.is_some()"),

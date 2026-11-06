@@ -428,8 +428,10 @@ fn a_head_sets_the_level_mutes_and_takes_the_branch_away() {
         None
     ));
 
-    assert!(s.channel_press(&g, hp.level.right() - 1.0, mid(hp.level).1, 1));
+    // the level moves by the way the pointer goes, not to where it was pressed
+    assert!(s.channel_press(&g, hp.level.x + 1.0, mid(hp.level).1, 1));
     assert!(s.mixer.level_drag.is_some());
+    assert!(s.level_move(hp.level.right(), false));
     assert!(s.level_up());
     assert!(split(&s, t, sp).branches[1].gain_db > -6.0);
 
@@ -617,7 +619,9 @@ fn a_reader_hears_the_window_its_cards_and_its_heads() {
         "分け方",
         "分岐 1 の音量",
         "分岐 2 をミュート",
-        "分岐 2 を外す",
+        "分岐 2 を削除",
+        "分岐 2 のパン",
+        "分岐を追加",
     ] {
         assert!(labels.iter().any(|l| l == want), "{want} in {labels:?}");
     }

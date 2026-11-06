@@ -170,6 +170,14 @@ pub enum Act {
     /// Opens the export panel on the MIDI files of these instrument tracks, over the span or the
     /// whole song (UI-281).
     MidiExport(Vec<TrackId>, Option<(Tick, Tick)>),
+    /// Opens the field that types a branch's level or pan, on a strip's level row or an
+    /// editor's head (MIX-045).
+    BranchValue(
+        TrackId,
+        xirius_core::id::NodeId,
+        crate::branch_value::Which,
+        crate::branch_value::Place,
+    ),
 }
 
 /// One row of a menu.

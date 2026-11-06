@@ -1805,6 +1805,10 @@ impl Studio {
                 if let Some(args) = &preset {
                     self.chain_preset_ran(command, args, &data);
                 }
+                // a branch's ✖ says what went, with 元に戻す (MIX-045)
+                if command == "rack.branch.remove" {
+                    self.say_command(command, &serde_json::Value::Null, &data);
+                }
                 self.after_command(command, &data);
                 true
             }

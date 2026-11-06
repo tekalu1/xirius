@@ -62,7 +62,7 @@ crates/xirius-ui/src/browser_prefs_save.rs	places :: load	1
 crates/xirius-ui/src/browser_prefs_save.rs	places :: save	1
 crates/xirius-ui/src/browser_prefs_save.rs	wait	1
 crates/xirius-ui/src/browser_presets.rs	run_command	1
-crates/xirius-ui/src/channel/mod.rs	run_command	8
+crates/xirius-ui/src/channel/mod.rs	run_command	9
 crates/xirius-ui/src/channel/preset.rs	run	1
 crates/xirius-ui/src/channel/preset.rs	run_command	4
 crates/xirius-ui/src/chrome.rs	eprintln	1
@@ -163,7 +163,7 @@ crates/xirius-ui/src/mixer/choose.rs	run_command	4
 crates/xirius-ui/src/mixer/keys.rs	run_command	2
 crates/xirius-ui/src/mixer/mod.rs	arrange_run	1
 crates/xirius-ui/src/mixer/mod.rs	lock	1
-crates/xirius-ui/src/mixer/mod.rs	run_command	12
+crates/xirius-ui/src/mixer/mod.rs	run_command	13
 crates/xirius-ui/src/mixer/paint.rs	lock	1
 crates/xirius-ui/src/mixer/scan.rs	run	4
 crates/xirius-ui/src/mouse_dispatch.rs	lock	2

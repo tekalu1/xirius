@@ -386,7 +386,8 @@ impl Screen {
         studio.press_keys(&g, x, y);
         // The windows that float over the screen take a press before what is under them.
         if studio.popup.is_none()
-            && (studio.macro_press(&g, x, y)
+            && (studio.value_press(&g, x, y, ev.click_count as u32, mods(ev.modifiers))
+                || studio.macro_press(&g, x, y)
                 || studio.channel_press(&g, x, y, ev.click_count as u32)
                 || studio.instrument_press(&g, x, y, ev.click_count as u32, mods(ev.modifiers)))
         {

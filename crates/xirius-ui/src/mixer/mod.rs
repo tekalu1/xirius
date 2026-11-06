@@ -136,6 +136,12 @@ pub enum MixerHit {
     RowMute(TrackId, NodeId),
     /// The bar of the level row under the picked row (MIX-045).
     Level(TrackId, NodeId),
+    /// The pan on a wide strip's level row (MIX-045, approved 2026-11-06).
+    BranchPan(TrackId, NodeId),
+    /// The ＋ at the end of a splitter's row: another branch (approved 2026-11-06).
+    AddBranch(TrackId, NodeId),
+    /// The row of an empty branch: 「分岐 N」 (approved 2026-11-06).
+    Branch(TrackId, NodeId),
     /// The ＋ on a row's bottom edge: a plug-in after it (MIX-045).
     After(TrackId, flow::Pick),
     /// The button by the name that widens the strip or narrows it again (MIX-045).
@@ -172,6 +178,9 @@ impl MixerHit {
             | MixerHit::Control(t, _)
             | MixerHit::RowMute(t, _)
             | MixerHit::Level(t, _)
+            | MixerHit::BranchPan(t, _)
+            | MixerHit::AddBranch(t, _)
+            | MixerHit::Branch(t, _)
             | MixerHit::After(t, _)
             | MixerHit::Widen(t)
             | MixerHit::Editor(t)
@@ -494,36 +503,72 @@ pub struct Drag {
     pub alone: bool,
 }
 
-/// The bar of a level row held (MIX-045): the branch or layer it moves.
+/// The bar of a level row held, or a branch's pan (MIX-045): the branch or layer it moves.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LevelDrag {
     pub track: TrackId,
     pub node: NodeId,
     pub layer: bool,
+    /// The pan moves, not the level.
+    pub pan: bool,
     start: f64,
     /// The value shown and heard now.
     pub value: f64,
     x0: f32,
     t0: f32,
-    /// The bar's width.
+    /// The width a whole sweep takes.
     w: f32,
+    /// The pointer went past the slack, so the value follows it.
+    moved: bool,
 }
+
+/// The narrowest a drag's sweep is, and the slack before the value follows (the mock's).
+const DRAG_MIN_W: f32 = 44.0;
+const DRAG_SLACK: f32 = 2.0;
 
 impl LevelDrag {
     /// A row's level taken at `x` on its bar `bar` (the strip's row, and the channel editor's
-    /// heads of MIX-042).
+    /// heads of MIX-042). The level moves from where it is, as the knobs' do (approved
+    /// 2026-11-06).
     pub(crate) fn taken(t: TrackId, target: flow::Target, bar: Rect, x: f32) -> LevelDrag {
-        let w = bar.w.max(1.0);
         LevelDrag {
             track: t,
             node: target.id,
             layer: target.layer,
+            pan: false,
             start: target.db,
             value: target.db,
             x0: x,
-            t0: ((x - bar.x) / w).clamp(0.0, 1.0),
-            w,
+            t0: flow::level_t(target.db),
+            w: bar.w.max(DRAG_MIN_W),
+            moved: false,
         }
+    }
+
+    /// A branch's pan taken at `x` on its text `r`: the whole sweep, L100 to R100, is twice its
+    /// width.
+    pub(crate) fn taken_pan(t: TrackId, target: flow::Target, r: Rect, x: f32) -> LevelDrag {
+        LevelDrag {
+            pan: true,
+            start: target.pan,
+            value: target.pan,
+            w: r.w.max(DRAG_MIN_W),
+            ..LevelDrag::taken(t, target, r, x)
+        }
+    }
+
+    /// The value at `x`; `fine` (Shift) moves a quarter as far. None inside the slack.
+    pub(crate) fn at(&mut self, x: f32, fine: bool) -> Option<f64> {
+        if !self.moved && (x - self.x0).abs() < DRAG_SLACK {
+            return None;
+        }
+        self.moved = true;
+        let d = f64::from((x - self.x0) / self.w * if fine { 0.25 } else { 1.0 });
+        Some(if self.pan {
+            ((self.start + d * 2.0).clamp(-1.0, 1.0) * 100.0).round() / 100.0
+        } else {
+            (flow::level_db((self.t0 + d as f32).clamp(0.0, 1.0)) * 10.0).round() / 10.0
+        })
     }
 }
 
@@ -565,6 +610,9 @@ pub struct Mixer {
     /// What the press held now was, for [`Mixer::coarse`] once it is let go.
     pub coarse_next: Option<bool>,
     pub level_drag: Option<LevelDrag>,
+    /// The branch value that has the keys, and the field typing it (approved 2026-11-06).
+    pub value_focus: Option<crate::branch_value::Focus>,
+    pub value_entry: Option<crate::branch_value::Entry>,
     /// The bar of a key send held (MIX-048).
     pub key_drag: Option<keys::KeyDrag>,
     /// The key send whose bar ←→ move: the one pressed last (MIX-048).
@@ -720,6 +768,23 @@ impl Mixer {
                 .is_none()
         }) {
             self.level_drag = None;
+        }
+        let gone = |t: TrackId, n: NodeId| {
+            p.track(t)
+                .ok()
+                .and_then(|t| t.rack.as_ref())
+                .and_then(|r| r.levels(n))
+                .is_none()
+        };
+        if self.value_focus.is_some_and(|f| gone(f.track, f.node)) {
+            self.value_focus = None;
+        }
+        if self
+            .value_entry
+            .as_ref()
+            .is_some_and(|e| gone(e.focus.track, e.focus.node))
+        {
+            self.value_entry = None;
         }
         // only the lists' rows are read here, and they are the same at any width
         let rows = Rows::with(p, self.look());
@@ -1361,7 +1426,10 @@ impl Studio {
                 .iter()
                 .filter(|(l, r)| seen(*r) && l.target.is_some_and(|x| x.id == n))
                 .find_map(|(l, r)| match l.kind {
-                    flow::Kind::Level => Some(flow::sub_parts(*r).2),
+                    flow::Kind::Level => {
+                        let pan = l.target.is_some_and(|x| flow::sub_pan(self, t, x));
+                        Some(flow::sub_parts(*r, pan).mute)
+                    }
                     _ if self.mixer.chosen.is_none_or(|c| Some(c.1) != l.pick()) => {
                         Some(flow::mute_part(*r, l))
                     }
@@ -1370,7 +1438,30 @@ impl Studio {
             MixerHit::Level(_, n) => flow
                 .level()
                 .filter(|(l, r)| seen(*r) && l.target.is_some_and(|x| x.id == n))
-                .map(|(_, r)| flow::sub_parts(*r).0),
+                .map(|(l, r)| {
+                    let pan = l.target.is_some_and(|x| flow::sub_pan(self, t, x));
+                    flow::sub_parts(*r, pan).bar
+                }),
+            MixerHit::BranchPan(_, n) => flow
+                .level()
+                .filter(|(l, r)| seen(*r) && l.target.is_some_and(|x| x.id == n))
+                .and_then(|(l, r)| {
+                    let pan = l.target.is_some_and(|x| flow::sub_pan(self, t, x));
+                    flow::sub_parts(*r, pan).pan
+                }),
+            MixerHit::AddBranch(_, id) => flow
+                .split(id)
+                .filter(|(l, r)| seen(*r) && flow::shows_branch_add(self, track, l))
+                .map(|(l, r)| flow::branch_add_part(*r, l, flow::shows_mute(self, t, l))),
+            MixerHit::Branch(_, n) => flow
+                .rows
+                .iter()
+                .find(|(l, r)| {
+                    seen(*r)
+                        && matches!(l.kind, flow::Kind::Empty { .. })
+                        && l.target.is_some_and(|x| x.id == n)
+                })
+                .map(|(_, r)| *r),
             MixerHit::After(_, pick) => flow
                 .picked(pick)
                 .filter(|(_, r)| seen(*r))
@@ -1522,7 +1613,12 @@ impl Studio {
                 true
             }
             MixerHit::RowMute(t, n) => self.row_mute(t, n),
-            MixerHit::Level(..) => true,
+            MixerHit::Level(..) | MixerHit::BranchPan(..) | MixerHit::Branch(..) => true,
+            MixerHit::AddBranch(t, id) => {
+                self.mixer.chosen = Some((t, flow::Pick::Split(id)));
+                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
+                self.run_command("rack.branch.add", json!({ "split": id.to_string() }))
+            }
             MixerHit::After(t, pick) => {
                 let Some(anchor) = self.mixer_rect(g, hit) else {
                     return false;

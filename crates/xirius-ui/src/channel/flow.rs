@@ -31,9 +31,17 @@ pub const STEP: f32 = 32.0;
 const FAN: f32 = 16.0;
 /// A branch's or a layer's head: its number, level, M and ×.
 pub const HEAD_H: f32 = 26.0;
-/// A column's least width and the room between columns.
+/// A layer's column's least width, a branch's (its head has a pan too: MIX-045) and the room
+/// between columns.
 const COL_MIN: f32 = 148.0;
-const COL_GAP: f32 = 8.0;
+const BRANCH_MIN: f32 = 176.0;
+pub const COL_GAP: f32 = 8.0;
+/// A splitter's ＋ right of its columns, and the room kept for it on each side so the
+/// columns stay on the middle.
+pub const ADD_BTN: f32 = 24.0;
+const ADD_ROOM: f32 = COL_GAP + 4.0 + ADD_BTN;
+/// The cut in a muted branch's line under its head (MIX-045, approved 2026-11-06).
+pub const MUTE_CUT: f32 = 12.0;
 /// A gap's ＋.
 pub const GAP_BTN: f32 = 20.0;
 const INSET: f32 = StructureLine::END_INSET;
@@ -163,6 +171,15 @@ pub struct Flow {
     pub slots: Vec<Slot>,
     pub crosses: Vec<Cross>,
     pub links: Vec<Link>,
+    /// Each splitter's ＋ that adds a branch; a channel split has none.
+    pub adds: Vec<Add>,
+}
+
+/// A splitter's ＋ right of its columns.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Add {
+    pub split: NodeId,
+    pub rect: Rect,
 }
 
 /// The end of a chain a line leaves from: its point, how far below it the line starts and
@@ -193,8 +210,18 @@ fn chain_w(nodes: &[RackNode]) -> f32 {
 fn node_w(n: &RackNode) -> f32 {
     match n {
         RackNode::Plugin(_) => CARD_W,
-        RackNode::Split(s) => cols_w(s.branches.iter().map(|b| chain_w(&b.fx))).max(SPLIT_W),
+        RackNode::Split(s) => split_w(s),
     }
+}
+
+/// A splitter's width: its columns, and the room for its ＋ on both sides.
+fn split_w(s: &Split) -> f32 {
+    let add = if s.mode == SplitMode::Channel {
+        0.0
+    } else {
+        2.0 * ADD_ROOM
+    };
+    (cols_w(s.branches.iter().map(|b| chain_w(&b.fx).max(BRANCH_MIN))) + add).max(SPLIT_W)
 }
 
 fn cols_w(widths: impl Iterator<Item = f32>) -> f32 {
@@ -518,7 +545,6 @@ impl Flow {
         within: &[Key],
     ) -> (Vec<End>, f32) {
         let key = Key::Node(s.id);
-        let w = cols_w(s.branches.iter().map(|b| chain_w(&b.fx))).max(SPLIT_W);
         let card = self.card(
             Pick::Split(s.id),
             cx,
@@ -534,10 +560,10 @@ impl Flow {
         let widths: Vec<f32> = s
             .branches
             .iter()
-            .map(|b| chain_w(&b.fx).max(COL_MIN))
+            .map(|b| chain_w(&b.fx).max(BRANCH_MIN))
             .collect();
         let used = widths.iter().sum::<f32>() + COL_GAP * (widths.len().max(1) - 1) as f32;
-        let mut x = cx - used.max(w.min(used)) / 2.0;
+        let mut x = cx - used / 2.0;
         let head_y = card.bottom() + FAN;
         let col_top = head_y + HEAD_H;
         let deepest = s.branches.iter().map(branch_h).fold(0.0, f32::max);
@@ -562,6 +588,14 @@ impl Flow {
             });
             out.extend(self.column(b, ccx, card, col_top, &inside));
             x += bw + COL_GAP;
+        }
+        if s.mode != SplitMode::Channel
+            && let Some(last) = cols.last()
+        {
+            self.adds.push(Add {
+                split: s.id,
+                rect: Rect::new(last.right() + COL_GAP + 4.0, head_y + 1.0, ADD_BTN, ADD_BTN),
+            });
         }
         if s.mode == SplitMode::Frequency {
             for i in 0..cols.len().saturating_sub(1) {
@@ -592,23 +626,49 @@ impl Flow {
             keys: inside.clone(),
         };
         if b.fx.is_empty() {
-            // The line passes through the empty room; its ＋ adds the branch's first.
+            // The line passes through the empty room; its ＋ adds the branch's first. A muted
+            // branch's is cut in the room's middle.
             let room = Rect::new(cx - 1.0, top, 2.0, CARD_H);
+            let (stop, go) = if b.mute {
+                let mid = top + CARD_H / 2.0;
+                (mid - MUTE_CUT / 2.0, mid + MUTE_CUT / 2.0)
+            } else {
+                (room.y, room.y)
+            };
             self.line(
                 (fan.x, fan.y + fan.inset),
-                (cx, room.y),
+                (cx, stop),
                 card.bottom() + FAN,
                 inside.clone(),
             );
             self.gap_before(Chain::Branch(b.id), 0, None, cx, top, top + CARD_H);
             return vec![End {
                 x: cx,
-                y: room.y,
+                y: go,
                 inset: 0.0,
                 ym: None,
                 keys: inside,
             }];
         }
+        // A muted branch's line stops under its head and goes on after the cut.
+        let fan = if b.mute {
+            let mid = top + STEP / 2.0;
+            self.line(
+                (fan.x, fan.y + fan.inset),
+                (cx, mid - MUTE_CUT / 2.0),
+                card.bottom() + FAN,
+                inside.clone(),
+            );
+            End {
+                x: cx,
+                y: mid + MUTE_CUT / 2.0,
+                inset: 0.0,
+                ym: None,
+                keys: inside.clone(),
+            }
+        } else {
+            fan
+        };
         // The room under the head, as between two parts: its ＋ adds the branch's first, and a
         // card dragged there goes first.
         self.gap_before(Chain::Branch(b.id), 0, None, cx, top, top + STEP);

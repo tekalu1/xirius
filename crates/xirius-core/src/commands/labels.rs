@@ -173,6 +173,7 @@ pub const LABELS: &[(&str, &str)] = &[
     ("cc.lane.hide", "レーンを隠す"),
     ("auto.lane.show", "レーンを表示"),
     ("auto.point.value", "ポイントの値を入力"),
+    ("mixer.branch.value", "分岐の値を入力"),
     ("view.export", "書き出しの画面を開く"),
     ("plugin.preset.choose", "プリセットを選ぶ"),
     ("plugin.preset.file", "プリセットをファイルで読み書き"),

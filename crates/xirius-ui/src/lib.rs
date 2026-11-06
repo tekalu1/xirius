@@ -38,6 +38,7 @@ pub mod bar_tools;
 pub mod bar_tools_shots;
 pub mod bench;
 pub mod bounce_row;
+pub mod branch_value;
 pub mod browser;
 pub mod browser_builtin_shots;
 pub mod browser_files;
