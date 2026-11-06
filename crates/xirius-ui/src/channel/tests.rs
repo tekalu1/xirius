@@ -477,6 +477,138 @@ fn a_crossover_dragged_sets_its_frequency_once() {
     assert_eq!(s.project().tracks.len(), steps);
 }
 
+/// A new track "Bands" with a frequency split of `n` branches, open in the channel editor.
+fn bands(s: &mut Studio, n: usize) -> (TrackId, NodeId) {
+    assert!(s.run_command("track.add.audio", json!({"name": "Bands"})));
+    let t = track(s, "Bands");
+    assert!(s.run_command(
+        "rack.split.add",
+        json!({"track": t, "branches": n, "mode": "frequency"})
+    ));
+    let sp = match &s.project().tracks[&t].rack.as_ref().unwrap().fx[..] {
+        [RackNode::Split(x)] => x.id,
+        other => panic!("{other:?}"),
+    };
+    s.open_channel(t);
+    (t, sp)
+}
+
+/// Drags a crossover of `sp` that is on the screen (the second one there is, or the first)
+/// by `dx` and lets it go: which one, the crossovers before, the drag's own and the song's after.
+fn drag_cross(
+    s: &mut Studio,
+    g: &Geometry,
+    t: TrackId,
+    sp: NodeId,
+    dx: f32,
+) -> (usize, Vec<f64>, Vec<f64>, Vec<f64>) {
+    let v = s.channel_view(g).unwrap();
+    let shown: Vec<(usize, (f32, f32))> = v
+        .flow
+        .crosses
+        .iter()
+        .filter(|c| c.split == sp)
+        .map(|c| (c.i, mid(c.rect)))
+        .filter(|&(i, (x, y))| part_at(&v, x, y) == Some(Part::Cross(sp, i)))
+        .collect();
+    let (i, (x, y)) = *shown
+        .get(1)
+        .or(shown.first())
+        .expect("a crossover on the screen");
+    let from = split(s, t, sp).crossovers;
+    assert!(s.channel_press(g, x, y, 1));
+    s.channel_moved(g, x + dx / 2.0, y);
+    s.channel_moved(g, x + dx, y);
+    let shows = crossed(&from, i, dx);
+    s.channel_up(g);
+    (i, from, shows, split(s, t, sp).crossovers)
+}
+
+#[test]
+fn mix_045_a_crossover_dragged_among_many_is_saved_as_shown_and_undoes() {
+    for n in [64usize, 512, 2000] {
+        let (mut s, g) = studio();
+        let (t, sp) = bands(&mut s, n);
+        for dx in [9.0, -9.0] {
+            let (i, from, shows, now) = drag_cross(&mut s, &g, t, sp, dx);
+            // The song takes it (close ones are not rounded together) exactly as the drag
+            // showed it, and only the dragged one moved, bit for bit.
+            assert_ne!(now, from, "{n} {dx}: not saved");
+            assert!(
+                now.iter()
+                    .zip(&shows)
+                    .all(|(a, b)| a.to_bits() == b.to_bits()),
+                "{n} {dx}"
+            );
+            for (j, (a, b)) in from.iter().zip(&now).enumerate() {
+                assert!(
+                    j == i || a.to_bits() == b.to_bits(),
+                    "{n} {dx}: {j} {a} → {b}"
+                );
+            }
+            assert!((now[i] - from[i]) * f64::from(dx) > 0.0, "{n} {dx}");
+            // One undo puts every one back as it was.
+            s.undo(&g);
+            let back = split(&s, t, sp).crossovers;
+            assert!(
+                back.iter()
+                    .zip(&from)
+                    .all(|(a, b)| a.to_bits() == b.to_bits()),
+                "{n} {dx}"
+            );
+        }
+    }
+}
+
+#[test]
+fn mix_045_an_older_songs_crossover_above_20_khz_is_dragged_down_and_undoes() {
+    let (mut s, g) = studio();
+    let (t, sp) = bands(&mut s, 3);
+    // As a song saved before the range has it.
+    s.song
+        .amend(|p| {
+            let t = std::sync::Arc::make_mut(p.tracks.get_mut(&t).unwrap());
+            if let Some(RackNode::Split(x)) = t.rack.as_mut().unwrap().fx.first_mut() {
+                x.crossovers = vec![1000.0, 25_000.0];
+            }
+        })
+        .unwrap();
+    assert_eq!(split(&s, t, sp).crossovers, [1000.0, 25_000.0]);
+    let v = s.channel_view(&g).unwrap();
+    let top = v
+        .flow
+        .crosses
+        .iter()
+        .find(|c| c.split == sp && c.i == 1)
+        .unwrap();
+    let (x, y) = mid(top.rect);
+    assert_eq!(part_at(&v, x, y), Some(Part::Cross(sp, 1)));
+    // Dragged down: still above 20 kHz, taken as shown, the 1 kHz untouched.
+    assert!(s.channel_press(&g, x, y, 1));
+    s.channel_moved(&g, x - 2.0, y);
+    s.channel_up(&g);
+    let down = crossed(&[1000.0, 25_000.0], 1, -2.0);
+    assert_eq!(split(&s, t, sp).crossovers, down);
+    assert!(down[1] > 20_000.0 && down[1] < 25_000.0, "{down:?}");
+    s.undo(&g);
+    assert_eq!(split(&s, t, sp).crossovers, [1000.0, 25_000.0]);
+    // The 1 kHz dragged while the 25 kHz stays where it was saved.
+    let low = v
+        .flow
+        .crosses
+        .iter()
+        .find(|c| c.split == sp && c.i == 0)
+        .unwrap();
+    let (x, y) = mid(low.rect);
+    assert!(s.channel_press(&g, x, y, 1));
+    s.channel_moved(&g, x + 12.0, y);
+    s.channel_up(&g);
+    let now = split(&s, t, sp).crossovers;
+    assert!(now[0] > 1000.0 && now[1] == 25_000.0, "{now:?}");
+    s.undo(&g);
+    assert_eq!(split(&s, t, sp).crossovers, [1000.0, 25_000.0]);
+}
+
 #[test]
 fn a_crossover_stays_between_its_neighbours() {
     let from = [200.0, 2000.0, 8000.0];

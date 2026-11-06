@@ -1320,9 +1320,11 @@ impl Studio {
             Grab::Cross {
                 split, from, now, ..
             } if from != now => {
+                // Each to the shortest digits that read back as the same number, so the ones not
+                // dragged arrive unchanged and close ones stay apart.
                 let list = now
                     .iter()
-                    .map(|f| format!("{f:.0}"))
+                    .map(|f| format!("{f}"))
                     .collect::<Vec<_>>()
                     .join(",");
                 // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
