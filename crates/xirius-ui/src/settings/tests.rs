@@ -1426,7 +1426,7 @@ fn the_windowed_plugin_page_scans_on_the_songs_owner() {
 
     // The first launch scans by itself, through the song's owner.
     frames_until(&mut s, "the first scan", |s| {
-        s.mixer.scan.running() || s.mixer.scan.error.is_some()
+        s.mixer.scan.job.is_some() || s.mixer.scan.error.is_some()
     });
     assert_eq!(s.mixer.scan.error, None);
     let first = s.mixer.scan.job.clone();
@@ -1441,7 +1441,7 @@ fn the_windowed_plugin_page_scans_on_the_songs_owner() {
     press(&mut s, &g, &Do::Rescan);
     assert_eq!(s.error, None);
     frames_until(&mut s, "the rescan", |s| {
-        s.mixer.scan.running() || s.mixer.scan.error.is_some()
+        s.mixer.scan.job.is_some() || s.mixer.scan.error.is_some()
     });
     assert_eq!(s.mixer.scan.error, None);
     assert_eq!(s.settings.as_ref().unwrap().plugins.error, None);
@@ -1464,7 +1464,7 @@ fn the_windowed_plugin_page_scans_on_the_songs_owner() {
     let at = s.browser.bad.iter().position(|b| b.path == gone).unwrap();
     s.retry_plugin(at).unwrap();
     frames_until(&mut s, "the retry", |s| {
-        s.mixer.scan.running() || s.mixer.scan.error.is_some()
+        s.mixer.scan.job.is_some() || s.mixer.scan.error.is_some()
     });
     assert_eq!(s.mixer.scan.error, None);
     assert_eq!(s.browser.retrying.as_ref(), Some(&gone));
