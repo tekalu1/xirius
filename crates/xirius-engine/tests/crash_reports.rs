@@ -25,6 +25,27 @@ fn crash_child() {
         let _ = std::panic::catch_unwind(|| panic!("caught first failure"));
         assert!(!crash::log_failed());
     }
+    if kind == "small-stack-read" || kind == "small-stack-overflow-record" {
+        use windows_sys::Win32::System::Threading::{
+            CreateThread, INFINITE, STACK_SIZE_PARAM_IS_A_RESERVATION, WaitForSingleObject,
+        };
+        // SAFETY: child-only thread with an actual 64 KiB reservation. No Rust
+        // thread wrapper can enlarge it; the process must die before it returns.
+        unsafe {
+            let parameter = usize::from(kind == "small-stack-overflow-record") as *const _;
+            let thread = CreateThread(
+                std::ptr::null(),
+                64 * 1024,
+                Some(small_stack_fault),
+                parameter,
+                STACK_SIZE_PARAM_IS_A_RESERVATION,
+                std::ptr::null_mut(),
+            );
+            assert!(!thread.is_null());
+            WaitForSingleObject(thread, INFINITE);
+        }
+        panic!("the faulting thread unexpectedly returned");
+    }
     if kind == "handled-read" || kind == "handled-cpp" {
         use windows_sys::Win32::System::Diagnostics::Debug::{
             AddVectoredExceptionHandler, RaiseException, RemoveVectoredExceptionHandler,
@@ -99,6 +120,71 @@ fn crash_child() {
             1,
             0,
             std::ptr::null(),
+        );
+    }
+}
+
+unsafe extern "system" fn small_stack_fault(parameter: *mut std::ffi::c_void) -> u32 {
+    use windows_sys::Win32::System::Diagnostics::Debug::RaiseException;
+    use windows_sys::Win32::System::Memory::{
+        MEM_COMMIT, MEM_RESERVE, PAGE_NOACCESS, VirtualAlloc,
+    };
+    let _context = xirius_vst3::crash_context::enter("vst3:small-stack-test");
+    // SAFETY: deliberate native faults, only in the parent's bounded child process.
+    unsafe {
+        if !parameter.is_null() {
+            // Synthetic stack-overflow exception tests the skipped module lookup;
+            // unlike exhausting the stack, it leaves room for the existing DbgHelp writer.
+            RaiseException(0xc00000fd, 1, 0, std::ptr::null());
+        } else {
+            let page = VirtualAlloc(
+                std::ptr::null(),
+                4096,
+                MEM_COMMIT | MEM_RESERVE,
+                PAGE_NOACCESS,
+            );
+            assert!(!page.is_null());
+            std::ptr::write_volatile(page.cast::<u8>(), 1);
+        }
+    }
+    0
+}
+
+#[test]
+fn a_64k_stack_fault_keeps_attribution_log_and_minidump() {
+    let root = tempfile::tempdir().unwrap();
+    for kind in ["small-stack-read", "small-stack-overflow-record"] {
+        let directory = root.path().join(kind);
+        assert!(!finish(child(kind, &directory)).success());
+        let reports = crash::reports_at(&directory).unwrap();
+        assert_eq!(reports.len(), 1, "{kind}");
+        let log = std::fs::read_to_string(&reports[0].log).unwrap();
+        assert!(log.contains("fatal: unhandled exception"), "{kind}: {log}");
+        assert!(
+            log.contains("fault-plugin:\nvst3:small-stack-test"),
+            "{kind}: {log}"
+        );
+        assert!(log.contains("minidump: complete"), "{kind}: {log}");
+        assert_eq!(
+            log.contains("fault-module-utf16:"),
+            kind == "small-stack-read"
+        );
+        let dump = std::fs::read(&reports[0].dump).unwrap();
+        assert_eq!(&dump[..4], b"MDMP");
+        let u32_at = |at| u32::from_le_bytes(dump[at..at + 4].try_into().unwrap());
+        let directory = u32_at(12) as usize;
+        let entry = (0..u32_at(8) as usize)
+            .map(|i| directory + i * 12)
+            .find(|&entry| u32_at(entry) == 6)
+            .expect("native exception stream");
+        let offset = u32_at(entry + 8) as usize;
+        assert_eq!(
+            u32_at(offset + 8),
+            if kind == "small-stack-read" {
+                0xc0000005
+            } else {
+                0xc00000fd
+            }
         );
     }
 }

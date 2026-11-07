@@ -4,6 +4,7 @@
 //! and marked to be deleted when the process lets go of them: a run that ends without a crash,
 //! or is ended from outside, leaves nothing (ENG-062). A crash takes the mark off before it
 //! writes, and `tidy_at` later moves the pair into its own `<pid>-<stamp>` folder.
+use std::cell::UnsafeCell;
 use std::fs::File;
 use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::AsRawHandle;
@@ -11,8 +12,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_ACCESS_DENIED, EXCEPTION_ACCESS_VIOLATION, FILETIME, GENERIC_READ,
-    GENERIC_WRITE, GetLastError, HANDLE, STILL_ACTIVE,
+    CloseHandle, ERROR_ACCESS_DENIED, EXCEPTION_ACCESS_VIOLATION, EXCEPTION_STACK_OVERFLOW,
+    FILETIME, GENERIC_READ, GENERIC_WRITE, GetLastError, HANDLE, STILL_ACTIVE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     DELETE, FILE_BEGIN, FILE_DISPOSITION_INFO, FILE_SHARE_READ, FileDispositionInfo,
@@ -35,6 +36,19 @@ struct Writer {
     log_failed: AtomicBool,
 }
 static WRITER: OnceLock<Writer> = OnceLock::new();
+
+struct ModuleBuffers {
+    path: [u16; 32768],
+    encoded: [u8; 131072],
+}
+struct CrashBuffers(UnsafeCell<ModuleBuffers>);
+// SAFETY: accessed only while WRITER.writing is exclusively held, including on
+// reentry from a second exception. Release/Acquire orders reuse between threads.
+unsafe impl Sync for CrashBuffers {}
+static MODULE_BUFFERS: CrashBuffers = CrashBuffers(UnsafeCell::new(ModuleBuffers {
+    path: [0; 32768],
+    encoded: [0; 131072],
+}));
 static EXCEPTION_FILTER: AtomicBool = AtomicBool::new(false);
 /// A filter asked before the crash report, as a `usize` (0: none). See [`set_first_filter`].
 static FIRST_FILTER: AtomicUsize = AtomicUsize::new(0);
@@ -242,11 +256,13 @@ unsafe fn record_exception_inner(exception: *const EXCEPTION_POINTERS, fatal: bo
                 GetModuleHandleExW,
             };
             let mut module = std::ptr::null_mut();
-            let mut path = [0u16; 32768];
             // SAFETY: supplied exception record; FROM_ADDRESS interprets the pointer as an address.
+            // The writing guard above grants exclusive access to the static buffers.
             unsafe {
                 let record = (*exception).ExceptionRecord;
                 if !record.is_null()
+                    // A depleted stack must not enter the loader's module lookup either.
+                    && (*record).ExceptionCode != EXCEPTION_STACK_OVERFLOW
                     && GetModuleHandleExW(
                         GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
                             | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -254,11 +270,11 @@ unsafe fn record_exception_inner(exception: *const EXCEPTION_POINTERS, fatal: bo
                         &mut module,
                     ) != 0
                 {
+                    let ModuleBuffers { path, encoded } = &mut *MODULE_BUFFERS.0.get();
                     let len =
                         GetModuleFileNameW(module, path.as_mut_ptr(), path.len() as u32) as usize;
                     if len > 0 && len < path.len() {
                         // Encode UTF-16 into a fixed ASCII buffer; no formatting or allocation in the filter.
-                        let mut encoded = [0u8; 131072];
                         let hex = b"0123456789abcdef";
                         for (i, unit) in path[..len].iter().enumerate() {
                             for j in 0..4 {
