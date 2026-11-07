@@ -32,6 +32,9 @@ pub const IO_GAP: f32 = 6.0;
 pub const STEP: f32 = 32.0;
 /// From a splitter's card (or the MIDI) down to its branches' heads.
 const FAN: f32 = 16.0;
+/// The split bracket ends above the head; its outgoing wire starts below it.
+const SPLIT_HEAD_GAP: f32 = FAN + 24.0;
+pub const BRANCH_STEP: f32 = 48.0;
 /// A branch's or a layer's head: its number, level, M and ×.
 pub const HEAD_H: f32 = 26.0;
 /// A layer's column's least width, a branch's (its head has a pan too: MIX-045) and the room
@@ -132,6 +135,8 @@ pub struct Gap {
     pub index: usize,
     /// The part before it in its chain.
     pub after: Option<Pick>,
+    /// An empty branch's permanent destination, rather than a hover-only insertion gap.
+    pub empty_branch: bool,
 }
 
 /// Where a dragged card can go: a chain and a place in it, marked by a line.
@@ -249,7 +254,7 @@ fn node_h(n: &RackNode) -> f32 {
     match n {
         RackNode::Plugin(_) => CARD_H,
         RackNode::Split(s) => {
-            CARD_H + FAN + HEAD_H + s.branches.iter().map(branch_h).fold(0.0, f32::max)
+            CARD_H + SPLIT_HEAD_GAP + HEAD_H + s.branches.iter().map(branch_h).fold(0.0, f32::max)
         }
     }
 }
@@ -257,11 +262,7 @@ fn node_h(n: &RackNode) -> f32 {
 /// A branch's room under its head: an empty one's ＋, else the room before its first part (its
 /// ＋, as between two parts) and its chain.
 fn branch_h(b: &Branch) -> f32 {
-    if b.fx.is_empty() {
-        CARD_H
-    } else {
-        STEP + chain_h(&b.fx)
-    }
+    BRANCH_STEP + chain_h(&b.fx)
 }
 
 fn layer_w(l: &Layer) -> f32 {
@@ -531,6 +532,7 @@ impl Flow {
             chain,
             index,
             after,
+            empty_branch: false,
         });
         self.slots.push(Slot {
             chain,
@@ -617,7 +619,7 @@ impl Flow {
             .collect();
         let used = widths.iter().sum::<f32>() + COL_GAP * (widths.len().max(1) - 1) as f32;
         let mut x = cx - used / 2.0;
-        let head_y = card.bottom() + FAN;
+        let head_y = card.bottom() + SPLIT_HEAD_GAP;
         let col_top = head_y + HEAD_H;
         let deepest = s.branches.iter().map(branch_h).fold(0.0, f32::max);
         let mut out = Vec::new();
@@ -678,55 +680,26 @@ impl Flow {
     fn column(&mut self, b: &Branch, cx: f32, card: Rect, top: f32, within: &[Key]) -> Vec<End> {
         let mut inside = within.to_vec();
         inside.push(Key::Node(b.id));
-        let fan = End {
-            x: card.x + card.w / 2.0,
-            y: card.bottom(),
-            inset: INSET,
-            ym: Some(card.bottom() + FAN),
-            keys: inside.clone(),
-        };
-        if b.fx.is_empty() {
-            // The line passes through the empty room; its ＋ adds the branch's first. A muted
-            // branch's is cut in the room's middle.
-            let room = Rect::new(cx - 1.0, top, 2.0, CARD_H);
-            let (stop, go) = if b.mute {
-                let mid = top + CARD_H / 2.0;
-                self.switches.push((
-                    MuteSwitch::vertical((cx, mid - MUTE_CUT / 2.0)),
-                    inside.clone(),
-                ));
-                (mid - MUTE_CUT / 2.0, mid + MUTE_CUT / 2.0)
-            } else {
-                (room.y, room.y)
-            };
+        // Each branch has its own input axis. Never carry a bracket through the head:
+        // it otherwise reads as the shared side of two adjacent boxes.
+        self.line(
+            (card.x + card.w / 2.0, card.bottom() + INSET),
+            (cx, top - HEAD_H - INSET),
+            card.bottom() + FAN,
+            inside.clone(),
+        );
+        let mid = top + BRANCH_STEP / 2.0;
+        let fan = if b.mute {
             self.line(
-                (fan.x, fan.y + fan.inset),
-                (cx, stop),
-                card.bottom() + FAN,
+                (cx, top + INSET),
+                (cx, mid - MUTE_CUT / 2.0),
+                mid,
                 inside.clone(),
             );
-            self.gap_before(Chain::Branch(b.id), 0, None, cx, top, top + CARD_H);
-            return vec![End {
-                x: cx,
-                y: go,
-                inset: 0.0,
-                ym: None,
-                keys: inside,
-            }];
-        }
-        // A muted branch's line stops under its head and goes on after the cut.
-        let fan = if b.mute {
-            let mid = top + STEP / 2.0;
             self.switches.push((
                 MuteSwitch::vertical((cx, mid - MUTE_CUT / 2.0)),
                 inside.clone(),
             ));
-            self.line(
-                (fan.x, fan.y + fan.inset),
-                (cx, mid - MUTE_CUT / 2.0),
-                card.bottom() + FAN,
-                inside.clone(),
-            );
             End {
                 x: cx,
                 y: mid + MUTE_CUT / 2.0,
@@ -735,16 +708,41 @@ impl Flow {
                 keys: inside.clone(),
             }
         } else {
-            fan
+            End {
+                x: cx,
+                y: top,
+                inset: INSET,
+                ym: None,
+                keys: inside.clone(),
+            }
         };
+        if b.fx.is_empty() {
+            let row_top = top + BRANCH_STEP;
+            self.gap_before(Chain::Branch(b.id), 0, None, cx, row_top, row_top + CARD_H);
+            self.gaps.last_mut().unwrap().empty_branch = true;
+            let button = self.gaps.last().unwrap().button;
+            self.line(
+                (fan.x, fan.y + fan.inset),
+                (cx, button.y - INSET),
+                mid,
+                inside.clone(),
+            );
+            return vec![End {
+                x: cx,
+                y: button.bottom(),
+                inset: INSET,
+                ym: None,
+                keys: inside,
+            }];
+        }
         // The room under the head, as between two parts: its ＋ adds the branch's first, and a
         // card dragged there goes first.
-        self.gap_before(Chain::Branch(b.id), 0, None, cx, top, top + STEP);
+        self.gap_before(Chain::Branch(b.id), 0, None, cx, top, top + BRANCH_STEP);
         let (ends, bottom) = self.chain(
             &b.fx,
             Chain::Branch(b.id),
             cx,
-            top + STEP,
+            top + BRANCH_STEP,
             vec![fan],
             &inside,
         );
