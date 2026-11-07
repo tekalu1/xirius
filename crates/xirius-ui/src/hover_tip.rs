@@ -160,6 +160,11 @@ pub fn text(s: &Studio, hit: Hit) -> Option<String> {
     if let Hit::Rail(tab) = hit {
         return Some(rail_text(s, tab));
     }
+    if let Hit::Browser(crate::browser::BrowserHit::File(i)) = hit
+        && let Some(crate::browser::BRow::File { name, .. }) = s.browser.rows().get(i)
+    {
+        return Some(name.clone());
+    }
     // The audition's stop button, while the file is read and nothing is heard (BRW-023).
     if hit == Hit::Browser(crate::browser::BrowserHit::Audition)
         && s.browser
