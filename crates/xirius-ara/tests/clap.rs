@@ -258,6 +258,7 @@ fn a_clap_plugin_binds_to_the_document_and_plays_the_region() {
     let s = Service::start(loader(), None, Arc::new(|| {}));
     s.sync(&Song {
         clips: vec![ClipSpec {
+            regions: Vec::new(),
             key: 1,
             clone_of: None,
             source: source_id("clap.wav"),

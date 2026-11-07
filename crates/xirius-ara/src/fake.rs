@@ -1389,6 +1389,11 @@ impl Instance for FakeInstance {
         Ok(0)
     }
 
+    fn set_active(&mut self, active: bool) -> Result<(), Error> {
+        self.renderer.active.store(active, Ordering::Release);
+        Ok(())
+    }
+
     fn set_transport(&mut self, _playing: bool, position: i64) {
         self.position = position;
     }

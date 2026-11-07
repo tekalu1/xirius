@@ -197,6 +197,7 @@ fn a_real_plugin_through_the_songs_clips() {
         samples.clone(),
     ));
     let spec = ClipSpec {
+        regions: Vec::new(),
         key: 1,
         clone_of: None,
         source: source_id("tune.wav"),

@@ -30,6 +30,7 @@ fn clip(
     duration: f64,
 ) -> ClipSpec {
     ClipSpec {
+        regions: Vec::new(),
         key,
         clone_of: None,
         source: source_id(file),
@@ -528,6 +529,54 @@ fn changing_the_full_musical_map_sends_one_notification() {
     service.sync(&song);
     assert!(service.wait_idle(Instant::now() + WAIT));
     assert_eq!(service.probe(WAIT).unwrap().musical_updates, 1);
+    assert!(service.close(Instant::now() + WAIT));
+    no_violations();
+}
+
+#[test]
+fn loop_regions_share_edits_and_resize_without_preparing_again() {
+    use xirius_ara::document::RegionProps;
+    let audio = Arc::new(SourceAudio::stereo(
+        48000.0,
+        vec![0.4; 96000],
+        vec![0.2; 96000],
+    ));
+    let service = start(Config::default(), None);
+    let mut spec = clip(9002, "loop.wav", &audio, 0.0, 0.25, 2.25);
+    let set = |spec: &mut ClipSpec, count: usize| {
+        spec.duration = (count - 1) as f64 * 0.5 + 0.25;
+        spec.regions = (0..count)
+            .map(|i| RegionProps {
+                start_in_modification: 0.25,
+                duration_in_modification: if i + 1 == count { 0.25 } else { 0.5 },
+                start_in_playback: i as f64 * 0.5,
+                duration_in_playback: if i + 1 == count { 0.25 } else { 0.5 },
+            })
+            .collect();
+    };
+    set(&mut spec, 5);
+    service.sync(&song(vec![spec.clone()]));
+    ready(&service, 9002);
+    fake::edit(&modification_id(9002), 0.5);
+    until("the plugin edit", || service.take_dirty());
+    let edited = ready(&service, 9002);
+    for i in (20..edited.left.len()).step_by(97) {
+        assert!((edited.left[i] - 0.2).abs() < 1e-6, "frame {i}");
+    }
+    for count in [9, 2, 5, 1, 5] {
+        set(&mut spec, count);
+        service.sync(&song(vec![spec.clone()]));
+        assert!(service.wait_idle(Instant::now() + WAIT));
+        let rendered = ready(&service, 9002);
+        assert_eq!(
+            rendered.left.len(),
+            (spec.duration * 48000.0).ceil() as usize
+        );
+        assert!((rendered.left[100] - 0.2).abs() < 1e-6);
+        let probe = service.probe(WAIT).unwrap();
+        assert_eq!(probe.regions, count);
+        assert_eq!(probe.preparations, 1);
+    }
     assert!(service.close(Instant::now() + WAIT));
     no_violations();
 }

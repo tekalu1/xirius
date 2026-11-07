@@ -339,8 +339,34 @@ impl Doc {
                     }
                     None => unread(),
                 };
+                let looped = p.clip_loop(c.id);
+                if let Some(l) = looped.filter(|l| l.length > 0) {
+                    let count = 1 + ((c.length - l.end()).max(0) + l.length - 1) / l.length;
+                    if count as usize > xirius_ara::service::MAX_REGIONS_PER_CLIP {
+                        warnings.push(format!(
+                            "{} / {}: ARA のループは 4096 区間までです",
+                            t.name, c.name
+                        ));
+                        continue;
+                    }
+                }
+                let regions = xirius_core::clipfx::pieces(looped, c.length)
+                    .into_iter()
+                    .map(|(at, from, len)| {
+                        let start = tmap.seconds_at(c.start + at);
+                        let duration = tmap.seconds_at(c.start + at + len) - start;
+                        xirius_ara::document::RegionProps {
+                            start_in_modification: tmap.seconds_at(c.start + *offset + from)
+                                - tmap.seconds_at(c.start),
+                            duration_in_modification: duration,
+                            start_in_playback: start,
+                            duration_in_playback: duration,
+                        }
+                    })
+                    .collect();
                 let (start, offset, duration) = times(c, *offset, tmap);
                 clips.push(ClipSpec {
+                    regions,
                     key: c.id.0,
                     clone_of: row.clone_of.map(|c| c.0),
                     // The file as the song names it, so the plugin's archive still fits when the
@@ -372,7 +398,7 @@ impl Doc {
                 .iter()
                 .map(|s| {
                     (
-                        s.tick as f64 / f64::from(p.ppq.max(1)),
+                        p.time_map().bar_start(s.bar) as f64 / f64::from(p.ppq.max(1)),
                         s.num as i32,
                         s.den as i32,
                     )

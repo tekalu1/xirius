@@ -747,8 +747,7 @@ impl Builder {
                     };
                     // Through its ARA plugin once rendered for the clip as it is; until then, and
                     // when the plugin is missing or crashed, the file (PLG-036, PLG-058).
-                    if parts.len() == 1
-                        && process.is_plain()
+                    if process.is_plain()
                         && let Some(data) = self.ara.sound(p, clip, *offset, tmap, self.rate)
                     {
                         let start = tmap.frame_at(clip.start, rate);

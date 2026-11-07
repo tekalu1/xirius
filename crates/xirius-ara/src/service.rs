@@ -59,6 +59,8 @@ pub trait Instance {
     fn extension(&self) -> sys::PlugInExtensionInstance;
     /// Sets the instance up to process offline at `rate`. Returns its latency in frames.
     fn prepare(&mut self, rate: f64, max_block: usize) -> Result<u32, Error>;
+    /// Leaves/enters render state without repeating the processing setup.
+    fn set_active(&mut self, active: bool) -> Result<(), Error>;
     fn set_transport(&mut self, playing: bool, position: i64);
     fn process(&mut self, left: &mut [f32], right: &mut [f32]);
     /// Opens the instance's editor (its ARA editor view) in a window of its own, on the ARA
@@ -108,8 +110,12 @@ impl Default for Song {
 }
 
 /// One clip with ARA.
+pub const MAX_REGIONS_PER_CLIP: usize = 4096;
+
 #[derive(Debug, Clone)]
 pub struct ClipSpec {
+    /// Empty for a single region described by start/offset/duration.
+    pub regions: Vec<RegionProps>,
     pub key: u64,
     /// The clip this one was duplicated from: its modification is cloned with its edits.
     pub clone_of: Option<u64>,
@@ -127,7 +133,8 @@ pub struct ClipSpec {
 
 impl PartialEq for ClipSpec {
     fn eq(&self, o: &ClipSpec) -> bool {
-        self.key == o.key
+        self.regions == o.regions
+            && self.key == o.key
             && self.clone_of == o.clone_of
             && self.source == o.source
             && self.name == o.name
@@ -208,6 +215,8 @@ pub struct Probe {
     pub notices_off_thread: u64,
     pub notices: u64,
     pub musical_updates: u64,
+    pub regions: usize,
+    pub preparations: u64,
     pub asserts: u64,
     pub last_assert: String,
 }
@@ -630,7 +639,7 @@ struct Source {
 struct Clip {
     spec: ClipSpec,
     modification: Ref,
-    region: Ref,
+    regions: Vec<(usize, Ref)>,
     instance: Option<Box<dyn Instance>>,
     prepared: f64,
     rendered: Option<Arc<Rendered>>,
@@ -663,6 +672,8 @@ struct Ara {
     musical_updates: u64,
     sources: HashMap<String, Source>,
     next_source: usize,
+    next_region: usize,
+    preparations: u64,
     clips: HashMap<u64, Clip>,
     archive: Option<(Vec<u8>, String)>,
     /// Notifications of the document's data right after a restore are not edits.
@@ -1061,6 +1072,8 @@ fn start(
         musical: Musical::default(),
         musical_updates: 0,
         sources: HashMap::new(),
+        next_region: 1,
+        preparations: 0,
         next_source: 1,
         clips: HashMap::new(),
         archive,
@@ -1086,6 +1099,74 @@ fn region_props(c: &ClipSpec) -> RegionProps {
 /// The host reference of a clip's modification and region (never zero).
 fn clip_ref(key: u64) -> usize {
     key as usize + 1
+}
+
+/// Reconcile regions while keeping the modification, renderer and processing setup.
+fn sync_regions(
+    doc: &mut Document,
+    context: Ref,
+    sequence: Ref,
+    next: &mut usize,
+    clip: &mut Clip,
+    spec: &ClipSpec,
+) -> Result<(), Error> {
+    let props = if spec.regions.is_empty() {
+        vec![region_props(spec)]
+    } else {
+        spec.regions.clone()
+    };
+    if props.len() > MAX_REGIONS_PER_CLIP {
+        return Err(error("ARA playback region limit exceeded"));
+    }
+    let resize = props.len() != clip.regions.len();
+    if resize && let Some(instance) = clip.instance.as_mut() {
+        if let Some(pass) = clip.pass.take() {
+            instance.set_transport(false, pass.start + pass.at as i64);
+        }
+        instance.set_active(false)?;
+    }
+    let result = (|| {
+        while clip.regions.len() > props.len() {
+            let (_, region) = clip.regions.pop().expect("length checked");
+            if let Some(instance) = clip.instance.as_mut() {
+                let ext = instance.extension();
+                // SAFETY: a live, inactive renderer; its region is removed before destruction.
+                contain::call(|| unsafe {
+                    ((*ext.playback_renderer_interface).remove_playback_region)(
+                        ext.playback_renderer_ref,
+                        region,
+                    )
+                });
+            }
+            doc.destroy_playback_region(region);
+        }
+        for (i, p) in props.iter().enumerate() {
+            if let Some((_, region)) = clip.regions.get(i) {
+                doc.update_playback_region(*region, p, context, sequence);
+            } else {
+                let key = *next;
+                *next += 1;
+                let region =
+                    doc.create_playback_region(clip.modification, key, p, context, sequence)?;
+                clip.regions.push((key, region));
+                if let Some(instance) = clip.instance.as_mut() {
+                    let ext = instance.extension();
+                    // SAFETY: the renderer is inactive and this region is live.
+                    contain::call(|| unsafe {
+                        ((*ext.playback_renderer_interface).add_playback_region)(
+                            ext.playback_renderer_ref,
+                            region,
+                        )
+                    });
+                }
+            }
+        }
+        Ok(())
+    })();
+    if resize && let Some(instance) = clip.instance.as_mut() {
+        instance.set_active(true)?;
+    }
+    result
 }
 
 impl Ara {
@@ -1134,7 +1215,9 @@ impl Ara {
         for key in gone {
             if let Some(mut c) = self.clips.remove(&key) {
                 c.instance = None;
-                self.doc.destroy_playback_region(c.region);
+                for (_, region) in c.regions {
+                    self.doc.destroy_playback_region(region);
+                }
                 self.doc.destroy_audio_modification(c.modification);
             }
             lock(&self.shared.states).remove(&key);
@@ -1167,12 +1250,22 @@ impl Ara {
                         continue;
                     }
                     let same_audio = Arc::ptr_eq(&c.spec.audio, &spec.audio);
-                    let moved_only = c.spec.offset == spec.offset
+                    let moved_only = c.spec.regions == spec.regions
+                        && c.spec.offset == spec.offset
                         && c.spec.duration == spec.duration
                         && same_audio;
-                    let p = region_props(spec);
-                    self.doc
-                        .update_playback_region(c.region, &p, self.context, self.sequence);
+                    if let Err(e) = sync_regions(
+                        &mut self.doc,
+                        self.context,
+                        self.sequence,
+                        &mut self.next_region,
+                        c,
+                        spec,
+                    ) {
+                        c.failed = true;
+                        *lock(&self.shared.failed) = Some(e.0);
+                        continue;
+                    }
                     if !moved_only {
                         if !same_audio {
                             // The old sound is of another file's content.
@@ -1288,33 +1381,32 @@ impl Ara {
                 .doc
                 .create_audio_modification(source, key, &spec.name, &id)?,
         };
-        let region = match self.doc.create_playback_region(
+        let mut clip = Clip {
+            spec: spec.clone(),
             modification,
-            key,
-            &region_props(spec),
+            regions: Vec::new(),
+            instance: None,
+            prepared: 0.0,
+            rendered: None,
+            pass: None,
+            stale: true,
+            failed: false,
+        };
+        if let Err(e) = sync_regions(
+            &mut self.doc,
             self.context,
             self.sequence,
+            &mut self.next_region,
+            &mut clip,
+            spec,
         ) {
-            Ok(r) => r,
-            Err(e) => {
-                self.doc.destroy_audio_modification(modification);
-                return Err(e);
+            for (_, region) in clip.regions {
+                self.doc.destroy_playback_region(region);
             }
-        };
-        self.clips.insert(
-            spec.key,
-            Clip {
-                spec: spec.clone(),
-                modification,
-                region,
-                instance: None,
-                prepared: 0.0,
-                rendered: None,
-                pass: None,
-                stale: true,
-                failed: false,
-            },
-        );
+            self.doc.destroy_audio_modification(modification);
+            return Err(e);
+        }
+        self.clips.insert(spec.key, clip);
         Ok(())
     }
 
@@ -1410,10 +1502,19 @@ impl Ara {
                         }
                     }
                 }
+                Notice::RegionContent { region: r, .. } => {
+                    if let Some(c) = self
+                        .clips
+                        .values_mut()
+                        .find(|c| c.regions.iter().any(|(k, _)| *k == r))
+                    {
+                        c.stale = true;
+                        restale = true;
+                    }
+                }
                 Notice::ModificationContent {
                     modification: r, ..
-                }
-                | Notice::RegionContent { region: r, .. } => {
+                } => {
                     if let Some(c) = self.clips.values_mut().find(|c| clip_ref(c.spec.key) == r) {
                         c.stale = true;
                         restale = true;
@@ -1471,10 +1572,12 @@ impl Ara {
                         // SAFETY: the renderer of a live instance, before it is set up to
                         // process.
                         contain::call(|| unsafe {
-                            ((*ext.playback_renderer_interface).add_playback_region)(
-                                ext.playback_renderer_ref,
-                                c.region,
-                            )
+                            for &(_, region) in &c.regions {
+                                ((*ext.playback_renderer_interface).add_playback_region)(
+                                    ext.playback_renderer_ref,
+                                    region,
+                                );
+                            }
                         });
                         c.instance = Some(i);
                         c.prepared = 0.0;
@@ -1492,8 +1595,12 @@ impl Ara {
                     return true;
                 }
                 c.prepared = rate;
+                self.preparations += 1;
             }
-            let (_, tail) = self.doc.head_and_tail(c.region);
+            let tail = c
+                .regions
+                .last()
+                .map_or(0.0, |r| self.doc.head_and_tail(r.1).1);
             let spec = &c.spec;
             let frames = (spec.duration * rate).ceil().max(0.0) as usize
                 + (tail.min(MAX_TAIL) * rate).ceil() as usize;
@@ -1549,7 +1656,8 @@ impl Ara {
         let e = self.editor.as_ref().expect("made above");
         let regions: Vec<Ref> = keys
             .iter()
-            .filter_map(|k| self.clips.get(k).map(|c| c.region))
+            .filter_map(|k| self.clips.get(k))
+            .flat_map(|c| c.regions.iter().map(|r| r.1))
             .collect();
         let ext = e.instance.extension();
         if !regions.is_empty()
@@ -1670,6 +1778,8 @@ impl Ara {
             notices_off_thread: self.notices_off_thread,
             notices: self.notices,
             musical_updates: self.musical_updates,
+            regions: self.clips.values().map(|c| c.regions.len()).sum(),
+            preparations: self.preparations,
             asserts,
             last_assert,
         }
@@ -1687,7 +1797,9 @@ impl Ara {
         }
         self.doc.begin_editing();
         for (_, c) in self.clips.drain() {
-            self.doc.destroy_playback_region(c.region);
+            for (_, region) in c.regions {
+                self.doc.destroy_playback_region(region);
+            }
             self.doc.destroy_audio_modification(c.modification);
         }
         for (_, s) in self.sources.drain() {

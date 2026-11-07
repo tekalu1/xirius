@@ -17,6 +17,7 @@ fn song(key: u64) -> Song {
     ));
     Song {
         clips: vec![ClipSpec {
+            regions: Vec::new(),
             key,
             clone_of: None,
             source: source_id("crash.wav"),
