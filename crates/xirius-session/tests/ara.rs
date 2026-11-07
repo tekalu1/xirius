@@ -1,6 +1,6 @@
 //! A plugin the catalogue marks as ARA runs in this process whatever the song asks (PLG-025),
 //! with a warning; the same plugin without the mark goes to the host the song names. The
-//! host path does not exist: a plugin sent there would fail to open.
+//! host path does not exist: a non-ARA plugin must fail closed before loading (PLG-022).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -77,13 +77,27 @@ fn an_ara_plugin_stays_in_this_process() {
         };
         assert!(w.contains("ARA") && w.contains(mode.name()), "{w}");
 
-        // Without the mark it goes where the song says.
+        // Without the mark it requires the host the song names, and fails closed
+        // before opening the module when that executable does not exist.
         let mut b = builder(Catalog {
             entries: entries.clone(),
             failures: Vec::new(),
         });
-        b.build(&p, Select::All);
-        assert_eq!(b.plugins().placement_of(PID), Some(mode));
+        let built = b.build(&p, Select::All);
+        assert!(
+            b.plugins_mut()
+                .runs_apart(&p.tracks[&TrackId(100)].inserts[0])
+        );
+        assert_eq!(b.plugins().placement_of(PID), None);
+        assert!(b.plugins().server().is_none());
+        assert!(
+            built
+                .warnings
+                .iter()
+                .any(|w| w.contains("ホストが見つからない")),
+            "{:?}",
+            built.warnings
+        );
     }
 
     // Asked to run here, an ARA plugin says nothing.

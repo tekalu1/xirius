@@ -727,7 +727,7 @@ fn every_process_mode_plays_and_only_another_process_adds_its_delay() {
     }
     assert!(pids[1].is_some() && pids[2].is_some() && pids[1] != pids[2]);
 
-    // Without the host, a plugin that asks for another process runs in this one, and says so.
+    // Without the requested host, loading stops before any in-process instance opens.
     let config = HostConfig {
         rate: Some(RATE),
         dir: Some(song_dir.clone()),
@@ -737,10 +737,12 @@ fn every_process_mode_plays_and_only_another_process_adds_its_delay() {
     };
     let (host, _audio, warnings) = SessionHost::start(s.project(), config).unwrap();
     assert!(host.plugin_statuses().is_empty());
+    assert!(host.plugins().local(id).is_none());
+    assert!(host.plugins().server_of(id).is_none());
     assert!(
         warnings
             .iter()
-            .any(|w| w.contains("xirius-plugin-host が見つからないため")),
+            .any(|w| w.contains("ホストが見つからないため")),
         "{warnings:?}"
     );
 }
