@@ -1,7 +1,7 @@
 //! The window of a plugin moves to the instance a new mix opened when that mix comes in
 //! (ENG-066). The old instance's window is closed then, and the host reads its state once more
-//! as it does for any window that closes: that state is not the plugin's any more, so it is not
-//! taken as an edit of the song (ENG-067).
+//! as it does for any window that closes. Its opaque state may be inherited, but must not
+//! overwrite an explicit value of the successor (ENG-067, PRJ-030).
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -108,6 +108,9 @@ fn the_state_the_old_window_leaves_when_it_closes_is_not_the_new_instances() {
     // A track more needs a new mix, which opens the plugin again; it comes in with the window
     // open on the old instance.
     let mut p2 = p.clone();
+    Arc::make_mut(p2.tracks.get_mut(&TrackId(100)).unwrap()).inserts[0]
+        .params
+        .insert("1".into(), 0.25);
     let t = track(1, &uid, false);
     p2.root.push(Node::Track(t.id));
     p2.tracks.insert(t.id, t);
@@ -120,7 +123,6 @@ fn the_state_the_old_window_leaves_when_it_closes_is_not_the_new_instances() {
         std::thread::sleep(Duration::from_millis(5));
     }
     let _ = link.take_edits();
-    let seen = link.states_seen();
     let deadline = Instant::now() + Duration::from_secs(60);
     let report = loop {
         assert!(Instant::now() < deadline, "the mix never came in");
@@ -132,15 +134,17 @@ fn the_state_the_old_window_leaves_when_it_closes_is_not_the_new_instances() {
     assert!(report.swapped, "{:?}", report.warnings);
 
     // The old window was closed and its state read once more, while the old mix still has
-    // the old instance (the audio thread has not taken the new mix yet): it is not the
-    // plugin's.
+    // the old instance (the audio thread has not taken the new mix yet). PRJ-030 accepts
+    // ancestor state and reapplies protected explicit values; counting state messages
+    // cannot tell whether the old state incorrectly overwrote the successor.
     std::thread::sleep(Duration::from_millis(1500));
+    let (new, delay) = playing(&server, &link);
+    assert_ne!(new, old, "the successor plays");
     assert_eq!(
-        link.states_seen(),
-        seen,
-        "no state came from the old instance"
+        delay, 64,
+        "the successor's explicit delay survives old state"
     );
-    assert!(!link.has_pending_state(), "nothing to take into the song");
+    let _ = link.take_edits();
     assert!(
         server.status(&link).editor_open,
         "the window is on the new one"
