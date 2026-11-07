@@ -634,6 +634,29 @@ fn mix_045_a_reader_presses_the_plus_and_a_heads_mute() {
     assert!(levels(&s, t, b[0]).2);
 }
 
+#[test]
+fn mix_045_empty_branch_names_remain_visible_without_the_controls() {
+    let (mut s, g) = studio();
+    let (t, sp, _) = vocal(&mut s);
+    assert!(s.run_command("rack.branch.add", json!({"split":sp})));
+    s.channel.as_mut().unwrap().pointer = None;
+    s.channel.as_mut().unwrap().chosen = None;
+    let v = s.channel_view(&g).unwrap();
+    for b in split(&s, t, sp).unwrap().branches {
+        let col = column(&v, b.id);
+        assert!(!head_shown(
+            s.channel.as_ref().unwrap(),
+            &col,
+            &v.flow,
+            None
+        ));
+        let (name, rect) = paint::resting_branch_name(&col).unwrap();
+        assert_eq!(name, format!("分岐 {}", col.n));
+        assert!(rect.right() < col.head.x + col.head.w / 2.0);
+        assert!(rect.right() < head_parts(&col).keep.x);
+    }
+}
+
 /// The keys go round the places (「次の領域へ」 / 「前の領域へ」), as the key or the palette runs it.
 fn round(s: &mut Studio, g: &Geometry, way: &str) -> bool {
     let args = json!({ "way": way });
