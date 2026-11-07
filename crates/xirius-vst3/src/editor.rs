@@ -37,21 +37,22 @@ use windows_sys::Win32::Storage::Xps::PrintWindow;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-    GWLP_USERDATA, GetClientRect, GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW,
-    GetWindowRect, HWND_BOTTOM, HWND_TOP, IsWindow, IsWindowVisible, MINMAXINFO, MSG, PM_REMOVE,
-    PeekMessageW, RegisterClassExW, SIZE_MINIMIZED, SM_CXVIRTUALSCREEN, SM_XVIRTUALSCREEN, SW_HIDE,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SendMessageW,
-    SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, WM_CLOSE, WM_DPICHANGED,
-    WM_GETMINMAXINFO, WM_SIZE, WM_SIZING, WMSZ_BOTTOMLEFT, WMSZ_BOTTOMRIGHT, WMSZ_LEFT, WMSZ_TOP,
-    WMSZ_TOPLEFT, WMSZ_TOPRIGHT, WNDCLASSEXW, WS_CAPTION, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_MAXIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU, WS_THICKFRAME,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClientRect,
+    GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, HWND_BOTTOM, HWND_TOP,
+    IsWindow, IsWindowVisible, MINMAXINFO, MSG, PM_REMOVE, PeekMessageW, RegisterClassExW,
+    SIZE_MINIMIZED, SM_CXVIRTUALSCREEN, SM_XVIRTUALSCREEN, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SendMessageW, SetWindowLongPtrW, SetWindowPos,
+    ShowWindow, TranslateMessage, WM_CLOSE, WM_DPICHANGED, WM_GETMINMAXINFO, WM_SIZE, WM_SIZING,
+    WMSZ_BOTTOMLEFT, WMSZ_BOTTOMRIGHT, WMSZ_LEFT, WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT,
+    WNDCLASSEXW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
 };
 
 use crate::plugin::{Plugin, Shared};
 use crate::{Error, error};
 
-const STYLE: u32 = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
+const STYLE: u32 = windows_sys::Win32::UI::WindowsAndMessaging::WS_POPUP
+    | WS_SYSMENU
+    | windows_sys::Win32::UI::WindowsAndMessaging::WS_CLIPCHILDREN;
 /// For a view that can resize: a sizing border and a maximize box.
 const RESIZABLE: u32 = STYLE | WS_THICKFRAME | WS_MAXIMIZEBOX;
 const EX_STYLE: u32 = WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
@@ -94,6 +95,8 @@ fn offscreen_wanted() -> bool {
 /// foreground; this only decides where it is and what it stays above.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Placement {
+    /// Snapshot of the main window and its monitor; never an HWND ownership link.
+    pub area: Option<crate::EditorArea>,
     /// The window that owns it (an `HWND`): the editor stays above that window and is
     /// destroyed with it.
     pub owner: Option<isize>,
@@ -187,6 +190,7 @@ impl Placement {
             at: None,
             top: true,
             caption: None,
+            area: owner.and_then(crate::EditorArea::from_window),
         }
     }
 
@@ -204,6 +208,7 @@ impl Placement {
             at: Some((x + w + 200, 0)),
             top: false,
             caption: None,
+            area: None,
         }
     }
 
@@ -238,6 +243,12 @@ fn wide(s: &str) -> Vec<u16> {
 /// What the window procedure and the frame share about one editor window. It lives in a box
 /// owned by the [`Editor`]; the window's `GWLP_USERDATA` points at it.
 struct WindowState {
+    native_frame: bool,
+    viewport: HWND,
+    chrome: crate::editor_chrome::Controls,
+    shared: Arc<Shared>,
+    chrome_scale: Cell<f32>,
+    chrome_caption: Cell<Option<Caption>>,
     /// The attached view (no reference of its own: the `Editor` holds one).
     view: *mut IPlugView,
     style: u32,
@@ -258,11 +269,58 @@ impl WindowState {
 
     /// Frame size: the outer window minus its client area.
     fn frame_size(&self) -> (i32, i32) {
-        outer_size(&rect(0, 0), self.style)
+        let mut r = RECT::default();
+        if self.native_frame {
+            // SAFETY: a local rectangle, no window or plugin call.
+            unsafe {
+                windows_sys::Win32::UI::WindowsAndMessaging::AdjustWindowRectEx(
+                    &mut r, self.style, 0, EX_STYLE,
+                );
+            }
+        }
+        (
+            r.right - r.left,
+            r.bottom - r.top + crate::editor_chrome::height(self.chrome_scale.get()),
+        )
+    }
+
+    fn outer_size(&self, size: ViewRect) -> (i32, i32) {
+        (
+            (size.right - size.left).max((316.0 * self.chrome_scale.get()).round() as i32)
+                + self.frame_size().0,
+            size.bottom - size.top + self.frame_size().1,
+        )
+    }
+
+    fn layout(&self, width: i32, height: i32) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::GetParent;
+        let mut outer = RECT::default();
+        // SAFETY: the viewport and its frame are owned on this GUI thread.
+        unsafe {
+            GetClientRect(GetParent(self.viewport), &mut outer);
+            SetWindowPos(
+                self.viewport,
+                std::ptr::null_mut(),
+                ((outer.right - width) / 2).max(0),
+                crate::editor_chrome::height(self.chrome_scale.get()),
+                width,
+                height,
+                SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+        let bar = self
+            .shared
+            .editor_bar
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        self.chrome
+            .layout(outer.right, self.chrome_scale.get(), &bar);
     }
 
     /// Tells the view its new size and keeps it.
     fn on_size(&self, w: i32, h: i32) {
+        self.layout(w, h);
         let mut r = rect(w, h);
         // SAFETY: the attached view and a rect owned here.
         unsafe { self.view().onSize(&mut r) };
@@ -300,6 +358,114 @@ unsafe fn state<'a>(hwnd: HWND) -> Option<&'a WindowState> {
 }
 
 unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    use windows_sys::Win32::Graphics::Gdi::{BeginPaint, EndPaint, PAINTSTRUCT, ScreenToClient};
+    use windows_sys::Win32::UI::WindowsAndMessaging::WM_PAINT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP,
+        HTTOPLEFT, HTTOPRIGHT, WM_COMMAND, WM_DRAWITEM, WM_NCCALCSIZE, WM_NCHITTEST,
+    };
+    // SAFETY: the style belongs to this window; a fallback keeps its native frame.
+    let native =
+        unsafe { GetWindowLongPtrW(hwnd, windows_sys::Win32::UI::WindowsAndMessaging::GWL_STYLE) }
+            as u32
+            & windows_sys::Win32::UI::WindowsAndMessaging::WS_CAPTION
+            != 0;
+    if msg == WM_NCCALCSIZE && !native {
+        return 0;
+    }
+    // SAFETY: our class's pointer, cleared before its state is released.
+    if let Some(st) = unsafe { state(hwnd) } {
+        if msg == WM_PAINT {
+            let mut ps = PAINTSTRUCT::default();
+            // SAFETY: balanced paint scope on the frame.
+            unsafe {
+                let dc = BeginPaint(hwnd, &mut ps);
+                let bar = st
+                    .shared
+                    .editor_bar
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
+                crate::editor_chrome::paint(
+                    hwnd,
+                    dc,
+                    &bar,
+                    st.chrome_caption.get(),
+                    st.chrome_scale.get(),
+                    None,
+                );
+                EndPaint(hwnd, &ps);
+            }
+            return 0;
+        }
+        if msg == WM_DRAWITEM && lp != 0 {
+            // SAFETY: Windows supplies a DRAWITEMSTRUCT for a child owner-drawn button.
+            let item = unsafe { &*(lp as *const windows_sys::Win32::UI::Controls::DRAWITEMSTRUCT) };
+            let bar = st
+                .shared
+                .editor_bar
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            crate::editor_chrome::paint(
+                hwnd,
+                item.hDC,
+                &bar,
+                st.chrome_caption.get(),
+                st.chrome_scale.get(),
+                Some(item.CtlID as usize),
+            );
+            return 1;
+        }
+        if msg == WM_COMMAND && (wp >> 16) == 0 {
+            if let Some(action) = crate::editor_chrome::command(hwnd, wp & 0xffff) {
+                let mut actions = st
+                    .shared
+                    .editor_actions
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                if actions.len() < 64 {
+                    actions.push(action);
+                }
+            }
+            return 0;
+        }
+        if msg == WM_NCHITTEST && !native {
+            let mut p = windows_sys::Win32::Foundation::POINT {
+                x: (lp as u16) as i16 as i32,
+                y: ((lp >> 16) as u16) as i16 as i32,
+            };
+            let mut r = RECT::default();
+            unsafe {
+                ScreenToClient(hwnd, &mut p);
+                GetClientRect(hwnd, &mut r);
+            }
+            let edge = (5.0 * st.chrome_scale.get()).round() as i32;
+            let left = p.x < edge;
+            let right = p.x >= r.right - edge;
+            let top = p.y < edge;
+            let bottom = p.y >= r.bottom - edge;
+            let hit = if st.style & WS_THICKFRAME != 0 {
+                match (left, right, top, bottom) {
+                    (true, _, true, _) => HTTOPLEFT,
+                    (_, true, true, _) => HTTOPRIGHT,
+                    (true, _, _, true) => HTBOTTOMLEFT,
+                    (_, true, _, true) => HTBOTTOMRIGHT,
+                    (true, _, _, _) => HTLEFT,
+                    (_, true, _, _) => HTRIGHT,
+                    (_, _, true, _) => HTTOP,
+                    (_, _, _, true) => HTBOTTOM,
+                    _ if p.y < st.frame_size().1 => HTCAPTION,
+                    _ => HTCLIENT,
+                }
+            } else if p.y < st.frame_size().1 {
+                HTCAPTION
+            } else {
+                HTCLIENT
+            };
+            return hit as LRESULT;
+        }
+    }
     if crate::editor_keys::handle(hwnd, msg, wp, lp) {
         return 0;
     }
@@ -329,7 +495,10 @@ fn sizing(hwnd: HWND, st: &WindowState, msg: u32, wp: WPARAM, lp: LPARAM) -> Opt
             // SAFETY: the system passes the dragged outer rect, in screen coordinates.
             let r = unsafe { &mut *(lp as *mut RECT) };
             let (bw, bh) = st.frame_size();
-            let mut want = rect(r.right - r.left - bw, r.bottom - r.top - bh);
+            let mut want = rect(
+                (r.right - r.left - bw).max((316.0 * st.chrome_scale.get()).ceil() as i32),
+                r.bottom - r.top - bh,
+            );
             // SAFETY: the attached view and a rect owned here.
             if unsafe { st.view().checkSizeConstraint(&mut want) } != kResultOk {
                 return None;
@@ -350,7 +519,7 @@ fn sizing(hwnd: HWND, st: &WindowState, msg: u32, wp: WPARAM, lp: LPARAM) -> Opt
             Some(1)
         }
         WM_GETMINMAXINFO if resizable && lp != 0 => {
-            let mut least = rect(1, 1);
+            let mut least = rect((316.0 * st.chrome_scale.get()).ceil() as i32, 1);
             // SAFETY: the attached view and a rect owned here.
             if unsafe { st.view().checkSizeConstraint(&mut least) } != kResultOk {
                 return None;
@@ -363,19 +532,30 @@ fn sizing(hwnd: HWND, st: &WindowState, msg: u32, wp: WPARAM, lp: LPARAM) -> Opt
             Some(0)
         }
         WM_SIZE if !st.quiet.get() && wp as u32 != SIZE_MINIMIZED => {
-            let (w, h) = ((lp & 0xffff) as i32, ((lp >> 16) & 0xffff) as i32);
+            let (w, h) = (
+                (lp & 0xffff) as i32,
+                (((lp >> 16) & 0xffff) as i32
+                    - crate::editor_chrome::height(st.chrome_scale.get()))
+                .max(1),
+            );
             let now = st.size.get();
-            if (now.right - now.left, now.bottom - now.top) != (w, h) {
+            if resizable && (now.right - now.left, now.bottom - now.top) != (w, h) {
                 st.on_size(w, h);
+            } else {
+                st.layout(now.right - now.left, now.bottom - now.top);
             }
             Some(0)
         }
         WM_DPICHANGED => {
             let factor = (wp & 0xffff) as f32 / 96.0;
+            st.chrome_scale.set(factor);
             // The view picks its own size for the new scale (through `resizeView`); the window
             // only moves to where the system suggests. A view without a content scale keeps
             // its size.
             st.set_scale(factor);
+            let size = st.size.get();
+            let (width, height) = st.outer_size(size);
+            st.quiet.set(true);
             if lp != 0 {
                 // SAFETY: the system passes the suggested outer rect.
                 let r = unsafe { &*(lp as *const RECT) };
@@ -386,12 +566,14 @@ fn sizing(hwnd: HWND, st: &WindowState, msg: u32, wp: WPARAM, lp: LPARAM) -> Opt
                         std::ptr::null_mut(),
                         r.left,
                         r.top,
-                        0,
-                        0,
-                        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                        width,
+                        height,
+                        SWP_NOZORDER | SWP_NOACTIVATE,
                     )
                 };
             }
+            st.layout(size.right - size.left, size.bottom - size.top);
+            st.quiet.set(false);
             Some(0)
         }
         _ => None,
@@ -417,19 +599,6 @@ fn class_name() -> &'static [u16] {
     })
 }
 
-/// Outer window size for a client area of `rect` in a window of `style`.
-fn outer_size(rect: &ViewRect, style: u32) -> (i32, i32) {
-    let mut r = RECT {
-        left: 0,
-        top: 0,
-        right: rect.right - rect.left,
-        bottom: rect.bottom - rect.top,
-    };
-    // SAFETY: `r` is a RECT owned here.
-    unsafe { AdjustWindowRectEx(&mut r, style, 0, EX_STYLE) };
-    (r.right - r.left, r.bottom - r.top)
-}
-
 /// The host side of the view: the plugin asks it to resize the window.
 pub struct PlugFrame {
     hwnd: usize,
@@ -451,7 +620,7 @@ impl IPlugFrameTrait for PlugFrame {
         let st = unsafe { &*(self.state as *const WindowState) };
         // SAFETY: checked for null; the plugin passes its live view and a rect.
         unsafe {
-            let (w, h) = outer_size(&*new_size, st.style);
+            let (w, h) = st.outer_size(*new_size);
             // The window's own WM_SIZE stays quiet: the view hears of its size once, here.
             st.quiet.set(true);
             SetWindowPos(
@@ -464,6 +633,10 @@ impl IPlugFrameTrait for PlugFrame {
                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
             );
             st.quiet.set(false);
+            st.layout(
+                (*new_size).right - (*new_size).left,
+                (*new_size).bottom - (*new_size).top,
+            );
             if let Some(v) = vst3::ComRef::from_raw(view) {
                 v.onSize(new_size);
             }
@@ -502,6 +675,32 @@ pub struct Editor {
 }
 
 impl Plugin {
+    pub fn set_editor_bar(&self, bar: crate::EditorBar) {
+        *self
+            .shared()
+            .editor_bar
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = bar;
+    }
+
+    pub fn take_editor_actions(&self) -> Vec<crate::EditorAction> {
+        std::mem::take(
+            &mut *self
+                .shared()
+                .editor_actions
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+        )
+    }
+
+    pub fn set_editor_area(&self, area: crate::EditorArea) {
+        self.shared()
+            .editor_position
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .area = Some(area);
+    }
+
     /// Opens the plugin's editor in a new window titled `title`, at the bottom of the z-order
     /// (off every screen while [`OFFSCREEN_ENV`] is set). Call it on the thread that will
     /// pump messages (`Editor::pump`).
@@ -522,6 +721,16 @@ impl Plugin {
     }
 
     fn open(&self, title: &str, place: Placement, pump: bool) -> Result<Editor, Error> {
+        self.open_frame(title, place, pump, false)
+    }
+
+    fn open_frame(
+        &self,
+        title: &str,
+        place: Placement,
+        pump: bool,
+        native_frame: bool,
+    ) -> Result<Editor, Error> {
         let controller = self
             .shared()
             .controller
@@ -549,8 +758,35 @@ impl Plugin {
         } else {
             STYLE
         };
-        let (w, h) = outer_size(&size, style);
-        let (x, y) = place.origin(w, h);
+        let style = if native_frame {
+            style | windows_sys::Win32::UI::WindowsAndMessaging::WS_CAPTION
+        } else {
+            style
+        };
+        let scale =
+            unsafe { windows_sys::Win32::UI::HiDpi::GetDpiForSystem() }.max(96) as f32 / 96.0;
+        let (w, h) = (
+            (size.right - size.left).max((316.0 * scale).round() as i32),
+            size.bottom - size.top + crate::editor_chrome::height(scale),
+        );
+        let (x, y) = {
+            let mut position = self
+                .shared()
+                .editor_position
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if place.area.is_some() {
+                position.area = place.area;
+            }
+            if place.top && !offscreen_wanted() {
+                position.area.map_or_else(
+                    || place.origin(w, h),
+                    |area| area.origin((w, h), place.at.or(area.restore).or(position.saved)),
+                )
+            } else {
+                place.origin(w, h)
+            }
+        };
         let owner = place.owner.unwrap_or(0) as HWND;
         let t = wide(title);
         let before = unsafe { GetForegroundWindow() };
@@ -577,9 +813,52 @@ impl Plugin {
                 std::io::Error::last_os_error()
             )));
         }
+        // SAFETY: this frame alone; older Windows simply ignore the unsupported attribute.
+        unsafe {
+            use windows_sys::Win32::Graphics::Dwm::{DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND};
+            let corner = DWMWCP_ROUND;
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+                &corner as *const _ as _,
+                std::mem::size_of_val(&corner) as u32,
+            );
+        }
         // Before the window is first shown, so its caption is never seen in another colour.
         let caption = place.caption.filter(|c| c.apply(hwnd));
+        let scale = unsafe { GetDpiForWindow(hwnd) }.max(96) as f32 / 96.0;
+        // SAFETY: the plug-in viewport is a child on the SAME GUI thread as this frame.
+        let viewport = unsafe {
+            CreateWindowExW(
+                0,
+                wide("STATIC").as_ptr(),
+                std::ptr::null(),
+                windows_sys::Win32::UI::WindowsAndMessaging::WS_CHILD
+                    | windows_sys::Win32::UI::WindowsAndMessaging::WS_VISIBLE
+                    | windows_sys::Win32::UI::WindowsAndMessaging::WS_CLIPCHILDREN,
+                0,
+                crate::editor_chrome::height(scale),
+                size.right - size.left,
+                size.bottom - size.top,
+                hwnd,
+                std::ptr::null_mut(),
+                GetModuleHandleW(std::ptr::null()),
+                std::ptr::null(),
+            )
+        };
+        if viewport.is_null() {
+            unsafe {
+                DestroyWindow(hwnd);
+            }
+            return Err(error("cannot create plug-in viewport"));
+        }
         let state = Box::new(WindowState {
+            native_frame,
+            viewport,
+            chrome: crate::editor_chrome::Controls::new(hwnd),
+            shared: self.shared().clone(),
+            chrome_scale: Cell::new(scale),
+            chrome_caption: Cell::new(place.caption),
             view: view.as_ptr(),
             style,
             live: Cell::new(false),
@@ -620,7 +899,7 @@ impl Plugin {
         // SAFETY: the frame and the window outlive the view's attachment (see Drop).
         let attached = unsafe {
             view.setFrame(frame_ptr);
-            view.attached(hwnd, kPlatformTypeHWND)
+            view.attached(viewport, kPlatformTypeHWND)
         };
         let mut editor = Editor {
             hwnd,
@@ -635,6 +914,10 @@ impl Plugin {
             _apartment: apartment,
         };
         if attached != kResultOk {
+            drop(editor);
+            if !native_frame {
+                return self.open_frame(title, place, pump, true);
+            }
             return Err(error("IPlugView::attached failed"));
         }
         // SAFETY: the plugin may have changed its size while attaching.
@@ -647,6 +930,47 @@ impl Plugin {
         // SAFETY: a plain query on our window (96 in a process that is not DPI aware).
         let dpi = unsafe { GetDpiForWindow(hwnd) };
         editor.state.set_scale(dpi.max(96) as f32 / 96.0);
+        let now = editor.state.size.get();
+        let (width, height) = editor.state.outer_size(now);
+        // Attachment and the monitor's DPI can change the view size. Clamp the final
+        // frame, including its bar, rather than only the pre-attachment estimate.
+        let final_origin = if place.top && !offscreen_wanted() {
+            let position = self
+                .shared()
+                .editor_position
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            position.area.map(|area| {
+                area.origin(
+                    (width, height),
+                    place.at.or(area.restore).or(position.saved),
+                )
+            })
+        } else {
+            None
+        };
+        editor.state.quiet.set(true);
+        unsafe {
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                final_origin.map_or(0, |p| p.0),
+                final_origin.map_or(0, |p| p.1),
+                width,
+                height,
+                SWP_NOZORDER
+                    | SWP_NOACTIVATE
+                    | if final_origin.is_none() {
+                        SWP_NOMOVE
+                    } else {
+                        0
+                    },
+            );
+        }
+        editor.state.quiet.set(false);
+        editor
+            .state
+            .layout(now.right - now.left, now.bottom - now.top);
         // A GUI's own loop runs the messages; pumping here would run its handlers inside the
         // caller's.
         if pump {
@@ -659,6 +983,43 @@ impl Plugin {
 }
 
 impl Editor {
+    /// True when the common frame had to retain the OS caption for this product.
+    pub fn uses_native_frame(&self) -> bool {
+        self.state.native_frame
+    }
+    pub fn refresh_bar(&self) {
+        let size = self.size();
+        self.state.layout(size.0, size.1);
+        // SAFETY: invalidate only our own frame, on its GUI thread.
+        unsafe {
+            windows_sys::Win32::Graphics::Gdi::RedrawWindow(
+                self.hwnd,
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                windows_sys::Win32::Graphics::Gdi::RDW_INVALIDATE
+                    | windows_sys::Win32::Graphics::Gdi::RDW_ALLCHILDREN,
+            );
+        }
+    }
+
+    pub fn set_bar(&self, bar: crate::EditorBar) {
+        *self
+            ._shared
+            .editor_bar
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = bar;
+        self.refresh_bar();
+    }
+
+    pub fn take_actions(&self) -> Vec<crate::EditorAction> {
+        std::mem::take(
+            &mut *self
+                ._shared
+                .editor_actions
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+        )
+    }
     /// Plain Space presses from the editor frame, consumed by its host. Text fields keep Space.
     pub fn take_play_requests(&self) -> u32 {
         self.keys.take()
@@ -794,10 +1155,17 @@ impl Editor {
         self.hwnd as isize
     }
 
+    /// Parent of the plug-in view, excluding the common title bar.
+    pub fn viewport_hwnd(&self) -> isize {
+        self.state.viewport as isize
+    }
+
     /// Gives the window's caption these colours (the theme was changed).
     pub fn set_caption(&self, caption: Caption) {
         self.caption
             .set(caption.apply(self.hwnd).then_some(caption));
+        self.state.chrome_caption.set(Some(caption));
+        self.refresh_bar();
     }
 
     /// The caption colours the system took for the window; `None` when none were given or it
@@ -934,6 +1302,13 @@ fn write_bmp(path: &Path, w: u32, h: u32, px: &[u32]) -> std::io::Result<()> {
 
 impl Drop for Editor {
     fn drop(&mut self) {
+        if !offscreen_wanted() {
+            self._shared
+                .editor_position
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .saved = Some(self.origin());
+        }
         // SAFETY: detach in the SDK's order, then destroy our window. The window forgets the
         // state first, so no message reaches a view that is going.
         unsafe {

@@ -12,7 +12,7 @@ use xirius_vst3::{Caption, PluginState};
 
 /// The version of these messages and of the shared memory's layout together. Bump it with
 /// any change to either.
-pub const PROTOCOL: u32 = 11;
+pub const PROTOCOL: u32 = 12;
 /// Starts the encoded [`FromHost::Hello`], so a stray first message is not taken for one.
 const HELLO_MAGIC: u32 = u32::from_le_bytes(*b"XPHH");
 
@@ -48,6 +48,18 @@ pub enum ToHost {
     },
     CloseEditor {
         slot: u32,
+    },
+    /// Restore the order after the main window activates; never opens a closed view.
+    RaiseEditor {
+        slot: u32,
+    },
+    SetEditorArea {
+        slot: u32,
+        area: xirius_vst3::EditorArea,
+    },
+    SetEditorBar {
+        slot: u32,
+        bar: xirius_vst3::EditorBar,
     },
     /// The app's theme changed: give the open window the new caption colours.
     SetCaption {
@@ -106,6 +118,10 @@ pub struct OpenSlot {
 /// What the host tells the engine.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FromHost {
+    EditorPosition {
+        slot: u32,
+        origin: (i32, i32),
+    },
     /// The first message: the host's [`PROTOCOL`] and the version of its build. Its encoding
     /// never changes, so hosts of any version can be told apart.
     Hello {
@@ -158,6 +174,10 @@ pub enum FromHost {
     },
     PlayKey {
         slot: u32,
+    },
+    EditorAction {
+        slot: u32,
+        action: xirius_vst3::EditorAction,
     },
     /// The names the plugin gives its keys changed (a state or a program was loaded, EDT-134).
     NoteNames {
@@ -374,6 +394,30 @@ impl ToHost {
             ToHost::CloseEditor { slot } => {
                 o.u8(6).u32(*slot);
             }
+            ToHost::RaiseEditor { slot } => {
+                o.u8(11).u32(*slot);
+            }
+            ToHost::SetEditorBar { slot, bar } => {
+                o.u8(13)
+                    .u32(*slot)
+                    .str(&bar.track)
+                    .str(&bar.device)
+                    .str(&bar.preset)
+                    .u8(u8::from(bar.instrument))
+                    .u8(u8::from(bar.powered))
+                    .u8(u8::from(bar.pinned))
+                    .u8(u8::from(bar.sidechain));
+            }
+            ToHost::SetEditorArea { slot, area } => {
+                o.u8(12).u32(*slot);
+                for n in area.main.into_iter().chain(area.work) {
+                    o.u32(n as u32);
+                }
+                o.u8(u8::from(area.restore.is_some()));
+                if let Some((x, y)) = area.restore {
+                    o.u32(x as u32).u32(y as u32);
+                }
+            }
             ToHost::SimulateEdit { slot, id, values } => {
                 o.u8(7).u32(*slot).u32(*id).u32(values.len() as u32);
                 for v in values {
@@ -456,6 +500,41 @@ impl ToHost {
                 caption: i.caption()?,
             },
             6 => ToHost::CloseEditor { slot: i.u32()? },
+            11 => ToHost::RaiseEditor { slot: i.u32()? },
+            13 => ToHost::SetEditorBar {
+                slot: i.u32()?,
+                bar: xirius_vst3::EditorBar {
+                    track: i.str()?,
+                    device: i.str()?,
+                    preset: i.str()?,
+                    instrument: i.u8()? != 0,
+                    powered: i.u8()? != 0,
+                    pinned: i.u8()? != 0,
+                    sidechain: i.u8()? != 0,
+                },
+            },
+            12 => ToHost::SetEditorArea {
+                slot: i.u32()?,
+                area: xirius_vst3::EditorArea {
+                    main: [
+                        i.u32()? as i32,
+                        i.u32()? as i32,
+                        i.u32()? as i32,
+                        i.u32()? as i32,
+                    ],
+                    work: [
+                        i.u32()? as i32,
+                        i.u32()? as i32,
+                        i.u32()? as i32,
+                        i.u32()? as i32,
+                    ],
+                    restore: if i.u8()? != 0 {
+                        Some((i.u32()? as i32, i.u32()? as i32))
+                    } else {
+                        None
+                    },
+                },
+            },
             7 => ToHost::SimulateEdit {
                 slot: i.u32()?,
                 id: i.u32()?,
@@ -579,6 +658,15 @@ impl FromHost {
             FromHost::PlayKey { slot } => {
                 o.u8(6).u32(*slot);
             }
+            FromHost::EditorAction { slot, action } => {
+                o.u8(10).u32(*slot).u8(*action as u8);
+            }
+            FromHost::EditorPosition {
+                slot,
+                origin: (x, y),
+            } => {
+                o.u8(11).u32(*slot).u32(*x as u32).u32(*y as u32);
+            }
             FromHost::NoteNames { slot, names } => {
                 o.u8(7).u32(*slot).note_names(names);
             }
@@ -592,6 +680,10 @@ impl FromHost {
     pub fn decode(b: &[u8]) -> io::Result<FromHost> {
         let mut i = In(b);
         Ok(match i.u8()? {
+            11 => FromHost::EditorPosition {
+                slot: i.u32()?,
+                origin: (i.u32()? as i32, i.u32()? as i32),
+            },
             0 => {
                 if i.u32()? != HELLO_MAGIC {
                     return Err(bad("greeting"));
@@ -651,6 +743,11 @@ impl FromHost {
             },
             5 => FromHost::EditorClosed { slot: i.u32()? },
             6 => FromHost::PlayKey { slot: i.u32()? },
+            10 => FromHost::EditorAction {
+                slot: i.u32()?,
+                action: xirius_vst3::EditorAction::from_byte(i.u8()?)
+                    .ok_or_else(|| bad("editor action"))?,
+            },
             7 => FromHost::NoteNames {
                 slot: i.u32()?,
                 names: i.list(|i| Ok((i.u8()?, i.str()?)))?,
@@ -763,6 +860,27 @@ mod tests {
                 caption: caption(),
             },
             ToHost::CloseEditor { slot: 4 },
+            ToHost::RaiseEditor { slot: 4 },
+            ToHost::SetEditorBar {
+                slot: 4,
+                bar: xirius_vst3::EditorBar {
+                    track: "音源 1".into(),
+                    device: "試験".into(),
+                    preset: "My preset".into(),
+                    instrument: true,
+                    powered: false,
+                    pinned: true,
+                    sidechain: false,
+                },
+            },
+            ToHost::SetEditorArea {
+                slot: 4,
+                area: xirius_vst3::EditorArea {
+                    main: [-1920, -500, -200, 800],
+                    work: [-1920, -600, 0, 1040],
+                    restore: Some((-1200, -400)),
+                },
+            },
             ToHost::CaptureState {
                 slot: 4,
                 request: 23,
@@ -782,6 +900,18 @@ mod tests {
             assert_eq!(ToHost::decode(&m.encode()).unwrap(), m);
         }
         let from = [
+            FromHost::EditorPosition {
+                slot: 4,
+                origin: (-1200, -400),
+            },
+            FromHost::EditorAction {
+                slot: 4,
+                action: xirius_vst3::EditorAction::Power,
+            },
+            FromHost::EditorAction {
+                slot: 4,
+                action: xirius_vst3::EditorAction::Pin,
+            },
             FromHost::Hello {
                 protocol: PROTOCOL,
                 build: "1.0.0".into(),

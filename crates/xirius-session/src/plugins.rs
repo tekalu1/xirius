@@ -1664,6 +1664,7 @@ impl PluginLoader {
         let mut predecessor = transfer
             .as_ref()
             .and_then(|(_, protected, gate)| gate.clone().map(|gate| (gate, protected.clone())));
+        let editor_context = moving.as_ref().map(|previous| previous.link.clone());
         let mut values = self.values(x, moving)?;
         // The instance that played in this process until now: what its editor changed that
         // the song has not taken yet goes to the new one, and to the song later.
@@ -1748,6 +1749,9 @@ impl PluginLoader {
             );
             self.fresh.push(x.id);
             if let Some((title, caption)) = window {
+                if let Some(previous) = &editor_context {
+                    link.copy_editor_context_from(previous);
+                }
                 server.open_editor_later(&link, &title, caption);
             }
             let mut processor = RemotePlugin::new(server, link, spec);
@@ -3042,6 +3046,71 @@ impl PluginLoader {
             }
         }
         Ok(())
+    }
+
+    /// Queues a physical coordinate snapshot before opening the view.
+    pub fn editor_bar(&self, id: PluginId, bar: xirius_vst3::EditorBar) {
+        if let Some(local) = self.playing_local(id)
+            && let Some(owned) = &local.owned
+        {
+            owned.editor_bar(bar.clone());
+        }
+        if let Some(r) = self.playing_remote(id) {
+            r.server.editor_bar(&r.link, bar.clone());
+        }
+        if self.leaving.contains_key(&id)
+            && let Some(new) = self.remotes.get(&id)
+        {
+            new.server.editor_bar(&new.link, bar);
+        }
+    }
+
+    pub fn take_editor_actions(&self, id: PluginId) -> Vec<xirius_vst3::EditorAction> {
+        if let Some(local) = self.playing_local(id)
+            && let Some(owned) = &local.owned
+        {
+            return owned.take_editor_actions();
+        }
+        self.playing_remote(id)
+            .map_or_else(Vec::new, |r| r.link.take_editor_actions())
+    }
+
+    pub fn editor_origin(&self, id: PluginId) -> Option<(i32, i32)> {
+        if let Some(local) = self.playing_local(id)
+            && let Some(owned) = &local.owned
+        {
+            return owned.editor_origin();
+        }
+        self.playing_remote(id).and_then(|r| r.link.editor_origin())
+    }
+
+    /// Queues a physical coordinate snapshot before opening the view.
+    pub fn editor_area(&self, id: PluginId, area: xirius_vst3::EditorArea) {
+        if let Some(local) = self.playing_local(id)
+            && let Some(owned) = &local.owned
+        {
+            owned.editor_area(area);
+        }
+        if let Some(r) = self.playing_remote(id) {
+            r.server.editor_area(&r.link, area);
+        }
+        if self.leaving.contains_key(&id)
+            && let Some(new) = self.remotes.get(&id)
+        {
+            new.server.editor_area(&new.link, area);
+        }
+    }
+
+    /// Queues a raise without changing the view's open/closed state.
+    pub fn raise_editor(&self, id: PluginId) {
+        if let Some(local) = self.playing_local(id)
+            && let Some(owned) = &local.owned
+        {
+            owned.raise_editor();
+        }
+        if let Some(r) = self.playing_remote(id) {
+            r.server.raise_editor(&r.link);
+        }
     }
 
     /// Gives the open window of `id` new caption colours.

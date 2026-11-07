@@ -237,6 +237,8 @@ pub struct Edits {
     pub restart_flags: i32,
     pub note_names: Vec<(u8, String)>,
     pub editor_visible: bool,
+    pub editor_origin: Option<(i32, i32)>,
+    pub editor_actions: Vec<crate::EditorAction>,
     pub play_requests: u32,
     pub latency: u32,
 }
@@ -493,6 +495,15 @@ impl Controller {
                 restart_flags: i.plugin.handler().take_restart_flags(),
                 note_names: i.plugin.note_names(),
                 editor_visible: i.editor.as_ref().is_some_and(Editor::is_visible),
+                editor_origin: i.editor.as_ref().map(Editor::origin).or_else(|| {
+                    i.plugin
+                        .shared()
+                        .editor_position
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .saved
+                }),
+                editor_actions: i.plugin.take_editor_actions(),
                 play_requests: i.editor.as_ref().map_or(0, Editor::take_play_requests),
                 latency: i.plugin.latency(),
             })
@@ -520,6 +531,35 @@ impl Controller {
     pub fn close_editor(&self) -> Result<Ticket<()>, String> {
         self.ask(|i| {
             i.editor = None;
+            Ok(())
+        })
+    }
+
+    /// Raise only an existing visible editor, on its owning GUI thread.
+    pub fn raise_editor(&self) -> Result<Ticket<()>, String> {
+        self.ask(|i| {
+            if let Some(editor) = &i.editor
+                && editor.is_visible()
+            {
+                editor.raise();
+            }
+            Ok(())
+        })
+    }
+
+    pub fn editor_area(&self, area: crate::EditorArea) -> Result<Ticket<()>, String> {
+        self.ask(move |i| {
+            i.plugin.set_editor_area(area);
+            Ok(())
+        })
+    }
+
+    pub fn editor_bar(&self, bar: crate::EditorBar) -> Result<Ticket<()>, String> {
+        self.ask(move |i| {
+            i.plugin.set_editor_bar(bar);
+            if let Some(editor) = &i.editor {
+                editor.refresh_bar();
+            }
             Ok(())
         })
     }

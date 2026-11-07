@@ -235,6 +235,10 @@ struct LinkInner {
     /// How many times the host said the window was shut (the person closed it).
     shut: u64,
     play_requests: u32,
+    editor_actions: Vec<xirius_vst3::EditorAction>,
+    editor_origin: Option<(i32, i32)>,
+    editor_area: Option<xirius_vst3::EditorArea>,
+    editor_bar: Option<xirius_vst3::EditorBar>,
 }
 
 impl LinkInner {
@@ -254,6 +258,34 @@ impl LinkInner {
 }
 
 impl PluginLink {
+    pub fn copy_editor_context_from(&self, previous: &PluginLink) {
+        let context = {
+            let old = previous.lock();
+            (old.editor_area, old.editor_bar.clone(), old.editor_origin)
+        };
+        let mut next = self.lock();
+        next.editor_area = context.0;
+        next.editor_bar = context.1;
+        next.editor_origin = context.2;
+    }
+    fn editor_context(&self, slot: u32) -> Vec<ToHost> {
+        let inner = self.lock();
+        let mut messages = Vec::new();
+        if let Some(mut area) = inner.editor_area {
+            area.restore = inner.editor_origin.or(area.restore);
+            messages.push(ToHost::SetEditorArea { slot, area });
+        }
+        if let Some(bar) = &inner.editor_bar {
+            messages.push(ToHost::SetEditorBar {
+                slot,
+                bar: bar.clone(),
+            });
+        }
+        messages
+    }
+    pub fn editor_origin(&self) -> Option<(i32, i32)> {
+        self.lock().editor_origin
+    }
     #[cfg(test)]
     fn begin_capture(&self) -> u64 {
         let stamp = self.lock().updates.stamp();
@@ -368,6 +400,9 @@ impl PluginLink {
     /// Plain Space presses received from the hosted editor frame.
     pub fn take_play_requests(&self) -> u32 {
         std::mem::take(&mut self.lock().play_requests)
+    }
+    pub fn take_editor_actions(&self) -> Vec<xirius_vst3::EditorAction> {
+        std::mem::take(&mut self.lock().editor_actions)
     }
 
     /// What the plugin's open window was asked with (its title and caption colours), or
@@ -1620,6 +1655,9 @@ impl PluginServer {
         if let Some((title, caption)) = waiting
             && st.slots.contains_key(&slot)
         {
+            for msg in link.editor_context(slot) {
+                st.send(&msg);
+            }
             st.send(&ToHost::OpenEditor {
                 slot,
                 title,
@@ -1810,6 +1848,15 @@ impl PluginServer {
 
     /// Opens the plugin's editor in the host process (behind other windows, not activated).
     pub fn open_editor(&self, link: &PluginLink, title: &str, caption: Option<Caption>) {
+        {
+            let mut st = self.inner.lock();
+            let slot = link.slot.load(Ordering::Acquire);
+            if st.slots.contains_key(&slot) {
+                for msg in link.editor_context(slot) {
+                    st.send(&msg);
+                }
+            }
+        }
         self.with_slot(link, |o| {
             Some(ToHost::OpenEditor {
                 slot: o.slot,
@@ -1849,6 +1896,25 @@ impl PluginServer {
         l.editor_open = false;
         l.editor = None;
         l.editor_later = false;
+    }
+
+    /// Queued IPC; no foreign window is touched by the caller.
+    pub fn raise_editor(&self, link: &PluginLink) {
+        self.with_slot(link, |o| Some(ToHost::RaiseEditor { slot: o.slot }));
+    }
+
+    pub fn editor_area(&self, link: &PluginLink, area: xirius_vst3::EditorArea) {
+        link.lock().editor_area = Some(area);
+        self.with_slot(link, |o| Some(ToHost::SetEditorArea { slot: o.slot, area }));
+    }
+    pub fn editor_bar(&self, link: &PluginLink, bar: xirius_vst3::EditorBar) {
+        link.lock().editor_bar = Some(bar.clone());
+        self.with_slot(link, |o| {
+            Some(ToHost::SetEditorBar {
+                slot: o.slot,
+                bar: bar.clone(),
+            })
+        });
     }
 
     /// Moves a parameter the way the editor does. For tests of edit collection.
@@ -2191,6 +2257,23 @@ impl Inner {
                 if let Some(link) = link {
                     let mut inner = link.lock();
                     inner.play_requests = inner.play_requests.saturating_add(1).min(32);
+                }
+            }
+            FromHost::EditorPosition { slot, origin } => {
+                if let Some(rec) = st.slots.get(&slot)
+                    && st.seat_of(&rec.link, slot).is_some()
+                {
+                    rec.link.lock().editor_origin = Some(origin);
+                }
+            }
+            FromHost::EditorAction { slot, action } => {
+                if let Some(rec) = st.slots.get(&slot)
+                    && st.seat_of(&rec.link, slot).is_some()
+                {
+                    let mut inner = rec.link.lock();
+                    if inner.editor_actions.len() < 64 {
+                        inner.editor_actions.push(action);
+                    }
                 }
             }
             FromHost::EditorClosed { slot } => {
@@ -2689,6 +2772,9 @@ impl State {
         if let Some((title, caption)) = shown {
             if let Some(slot) = leaving {
                 self.send(&ToHost::CloseEditor { slot });
+            }
+            for msg in link.editor_context(next) {
+                self.send(&msg);
             }
             self.send(&ToHost::OpenEditor {
                 slot: next,

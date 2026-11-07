@@ -941,6 +941,21 @@ impl SessionHost {
         self.builder.plugins().editor(id, open, caption)
     }
 
+    pub fn plugin_editor_area(&self, id: PluginId, area: xirius_vst3::EditorArea) {
+        self.builder.plugins().editor_area(id, area);
+    }
+    pub fn plugin_editor_bar(&self, id: PluginId, bar: xirius_vst3::EditorBar) {
+        self.builder.plugins().editor_bar(id, bar);
+    }
+    pub fn take_editor_actions(&self, id: PluginId) -> Vec<xirius_vst3::EditorAction> {
+        self.builder.plugins().take_editor_actions(id)
+    }
+
+    /// Raise asynchronously on the GUI owner without opening another view.
+    pub fn raise_plugin_editor(&self, id: PluginId) {
+        self.builder.plugins().raise_editor(id);
+    }
+
     /// Gives the editor of `id` that is open in its host process new caption colours.
     pub fn plugin_caption(&self, id: PluginId, caption: xirius_vst3::Caption) {
         self.builder.plugins().set_caption(id, caption);

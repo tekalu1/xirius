@@ -56,10 +56,9 @@ fn client(hwnd: HWND) -> (i32, i32) {
 
 /// What the fixture's view says it was told: "size=WxH scale=S".
 fn report(editor: &Editor) -> String {
-    let hwnd = editor.hwnd() as HWND;
     // SAFETY: queries on our window and its child (the view's window, same thread).
     unsafe {
-        let child = GetWindow(hwnd, GW_CHILD);
+        let child = GetWindow(editor.viewport_hwnd() as HWND, GW_CHILD);
         assert!(!child.is_null(), "the view has a window");
         let mut buf = [0u16; 128];
         let n = GetWindowTextW(child, buf.as_mut_ptr(), buf.len() as i32);
@@ -120,7 +119,7 @@ fn a_drag_and_a_dpi_change_reach_the_view_through_its_constraint() {
         .content_scale()
         .expect("the view takes a content scale");
     let (w0, h0) = editor.size();
-    assert_eq!(client(hwnd), (w0, h0));
+    assert_eq!(client(editor.viewport_hwnd() as HWND), (w0, h0));
     assert_eq!(report(&editor), format!("size={w0}x{h0} scale={scale:.2}"));
 
     // The bottom-right corner, 123 px wider and 77 px taller: the width snaps to the view's
@@ -138,7 +137,7 @@ fn a_drag_and_a_dpi_change_reach_the_view_through_its_constraint() {
     let want = constrain(w0 + 123, h0 + 77);
     assert_eq!(want.0 % STEP, 0);
     assert_eq!((to.left, to.top), (before.left, before.top));
-    assert_eq!(client(hwnd), want);
+    assert_eq!(client(editor.viewport_hwnd() as HWND), want);
     assert_eq!(editor.size(), want);
     assert_eq!(
         report(&editor),
@@ -147,7 +146,7 @@ fn a_drag_and_a_dpi_change_reach_the_view_through_its_constraint() {
     let cap = editor
         .capture_bmp(&shot_dir().join("plg027-editor-dragged.bmp"))
         .expect("capture");
-    assert_eq!((cap.width as i32, cap.height as i32), want);
+    assert_eq!((cap.width as i32, cap.height as i32), client(hwnd));
     assert!(cap.distinct_colors > 1, "the view draws after the resize");
 
     // The left edge, far below the smallest size: the right edge stays and the view gets its
@@ -162,8 +161,9 @@ fn a_drag_and_a_dpi_change_reach_the_view_through_its_constraint() {
         },
     );
     assert_eq!(to.right, before.right);
-    assert_eq!(client(hwnd).0, MIN.0);
-    assert_eq!(editor.size().0, MIN.0);
+    let minimum = constrain((316.0 * scale).ceil() as i32, MIN.1).0;
+    assert_eq!(client(editor.viewport_hwnd() as HWND).0, minimum);
+    assert_eq!(editor.size().0, minimum);
 
     // A move to a monitor at 150 %: the view gets the scale and asks for its larger size
     // through the frame.
@@ -187,7 +187,7 @@ fn a_drag_and_a_dpi_change_reach_the_view_through_its_constraint() {
     );
     assert_eq!(editor.resize_requests(), requests + 1);
     assert_eq!(editor.size(), want);
-    assert_eq!(client(hwnd), want);
+    assert_eq!(client(editor.viewport_hwnd() as HWND), want);
     assert_eq!(
         report(&editor),
         format!("size={}x{} scale=1.50", want.0, want.1)
@@ -228,7 +228,82 @@ fn a_window_resized_without_a_drag_still_tells_the_view() {
         )
     };
     editor.pump(Duration::from_millis(30));
-    let (w, h) = client(hwnd);
+    let (w, h) = client(editor.viewport_hwnd() as HWND);
     assert_eq!(editor.size(), (w, h));
     assert!(report(&editor).starts_with(&format!("size={w}x{h} ")));
+}
+
+#[test]
+fn common_bar_and_view_share_the_gui_thread_without_topmost_or_native_caption() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GWL_EXSTYLE, GWL_STYLE, GetDlgItem, GetWindowLongW, GetWindowThreadProcessId, WM_COMMAND,
+        WS_CAPTION, WS_EX_TOPMOST,
+    };
+    use xirius_vst3::{EditorAction, EditorBar};
+    let plugin = fixture();
+    plugin.set_editor_bar(EditorBar {
+        track: "Vocal".into(),
+        device: "Test Effect".into(),
+        preset: "Default".into(),
+        powered: true,
+        ..Default::default()
+    });
+    let mut editor = plugin
+        .open_editor_at("Common frame test", Placement::offscreen())
+        .unwrap();
+    editor.pump(Duration::from_millis(100));
+    assert!(!editor.uses_native_frame());
+    assert!(!editor.took_foreground());
+    let hwnd = editor.hwnd() as HWND;
+    // SAFETY: queries and messages only to the frame and viewport made by this test.
+    unsafe {
+        assert_eq!(GetWindowLongW(hwnd, GWL_STYLE) as u32 & WS_CAPTION, 0);
+        assert_eq!(GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST, 0);
+        assert_eq!(
+            GetWindowThreadProcessId(hwnd, std::ptr::null_mut()),
+            GetWindowThreadProcessId(editor.viewport_hwnd() as HWND, std::ptr::null_mut())
+        );
+        let button = GetDlgItem(hwnd, 3);
+        assert!(!button.is_null());
+        let mut label = [0u16; 32];
+        let n = GetWindowTextW(button, label.as_mut_ptr(), label.len() as i32);
+        assert_eq!(String::from_utf16_lossy(&label[..n as usize]), "表示先");
+        SendMessageW(hwnd, WM_COMMAND, 1, 0);
+        SendMessageW(hwnd, WM_COMMAND, 4, 0);
+    }
+    assert_eq!(
+        editor.take_actions(),
+        [EditorAction::Power, EditorAction::Pin]
+    );
+    let frame = client(hwnd);
+    let view = client(editor.viewport_hwnd() as HWND);
+    assert!(frame.1 > view.1);
+    editor
+        .capture_bmp(&shot_dir().join("common-frame-fixture.bmp"))
+        .unwrap();
+    let suggested = window_rect(hwnd);
+    // SAFETY: simulate a 175% monitor notification only on this test's parked frame.
+    unsafe {
+        SendMessageW(
+            hwnd,
+            WM_DPICHANGED,
+            168 | (168 << 16),
+            &suggested as *const RECT as isize,
+        );
+    }
+    editor.pump(Duration::from_millis(50));
+    let mut origin = windows_sys::Win32::Foundation::POINT::default();
+    unsafe {
+        windows_sys::Win32::Graphics::Gdi::ClientToScreen(hwnd, &mut origin);
+    }
+    let viewport = window_rect(editor.viewport_hwnd() as HWND);
+    assert_eq!(viewport.top - origin.y, 63, "36 logical pixels at 175%");
+    assert_eq!(
+        client(hwnd).1 - client(editor.viewport_hwnd() as HWND).1,
+        63
+    );
+    assert!(report(&editor).ends_with("scale=1.75"));
+    editor
+        .capture_bmp(&shot_dir().join("common-frame-fixture-175.bmp"))
+        .unwrap();
 }

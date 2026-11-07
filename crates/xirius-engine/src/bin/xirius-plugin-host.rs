@@ -122,6 +122,7 @@ mod relay_tests {
                 updates: parent.clone(),
                 plugin,
                 editor: None,
+                editor_origin: None,
                 audio: None,
                 stop: Arc::new(AtomicBool::new(false)),
                 fault: Arc::new(FaultCtl::default()),
@@ -348,6 +349,7 @@ struct Instance {
     updates: xirius_engine::plugin_updates::UpdateGate,
     plugin: Loaded,
     editor: Option<Editor>,
+    editor_origin: Option<(i32, i32)>,
     audio: Option<JoinHandle<Audio>>,
     stop: Arc<AtomicBool>,
     fault: Arc<FaultCtl>,
@@ -446,6 +448,9 @@ impl Host {
             | ToHost::SetParam { slot, .. }
             | ToHost::OpenEditor { slot, .. }
             | ToHost::CloseEditor { slot }
+            | ToHost::RaiseEditor { slot }
+            | ToHost::SetEditorArea { slot, .. }
+            | ToHost::SetEditorBar { slot, .. }
             | ToHost::SetCaption { slot, .. }
             | ToHost::CaptureState { slot, .. }
             | ToHost::SimulateEdit { slot, .. }
@@ -572,6 +577,26 @@ impl Host {
                             self.send(&FromHost::EditorClosed { slot });
                         }
                     }
+                }
+            }
+            ToHost::SetEditorArea { slot, area } => {
+                if let Some(inst) = self.instances.get(&slot) {
+                    inst.plugin.set_editor_area(area);
+                }
+            }
+            ToHost::SetEditorBar { slot, bar } => {
+                if let Some(inst) = self.instances.get(&slot) {
+                    inst.plugin.set_editor_bar(bar);
+                    if let Some(editor) = &inst.editor {
+                        editor.refresh_bar();
+                    }
+                }
+            }
+            ToHost::RaiseEditor { slot } => {
+                if let Some(editor) = self.instances.get(&slot).and_then(|i| i.editor.as_ref())
+                    && editor.is_visible()
+                {
+                    editor.raise();
                 }
             }
             ToHost::SetCaption { slot, caption } => {
@@ -781,6 +806,7 @@ impl Host {
             ),
             plugin,
             editor: None,
+            editor_origin: None,
             audio: Some(thread),
             stop,
             fault,
@@ -869,6 +895,14 @@ impl Host {
                 });
             }
             if let Some(editor) = &inst.editor {
+                let origin = editor.origin();
+                if inst.editor_origin != Some(origin) {
+                    inst.editor_origin = Some(origin);
+                    out.push(FromHost::EditorPosition { slot, origin });
+                }
+                for action in editor.take_actions() {
+                    out.push(FromHost::EditorAction { slot, action });
+                }
                 for _ in 0..editor.take_play_requests() {
                     out.push(FromHost::PlayKey { slot });
                 }
