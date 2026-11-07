@@ -37,6 +37,8 @@ pub const LOAD: &str = "load:";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Menu {
+    Destination(TrackId, PluginId),
+    ChannelDestination(TrackId),
     /// The presets of a built-in instrument (the box at the foot of its window).
     Preset(TrackId, PluginId),
     /// The right press on an instrument track's instrument row (S30).
@@ -175,7 +177,9 @@ pub fn view(p: &Project, presets: &Presets, menu: Menu) -> (Vec<Choice>, String)
             (rows, String::new())
         }
         // The studio keeps the chain presets' list ([`Studio::chain_menu_view`]).
-        Menu::Chain(_) => (Vec::new(), String::new()),
+        Menu::Chain(_) | Menu::Destination(..) | Menu::ChannelDestination(_) => {
+            (Vec::new(), String::new())
+        }
         Menu::Params(t, id) => {
             let names = plugin_of(p, t, id).map(params).unwrap_or_default();
             if names.is_empty() {
@@ -215,6 +219,28 @@ impl Studio {
     }
 
     pub(crate) fn inst_menu_view(&self, menu: Menu) -> (Vec<Choice>, String) {
+        if let Menu::ChannelDestination(t) = menu {
+            let detached = self
+                .channel
+                .as_ref()
+                .is_some_and(|w| w.track == t && w.detached);
+            return (
+                vec![
+                    Choice {
+                        to: "internal".into(),
+                        label: "画面内".into(),
+                    },
+                    Choice {
+                        to: "external".into(),
+                        label: "独立ウィンドウ".into(),
+                    },
+                ],
+                if detached { "external" } else { "internal" }.into(),
+            );
+        }
+        if let Menu::Destination(_, id) = menu {
+            return self.device_destinations(id);
+        }
         if let Menu::Chain(t) = menu {
             return self.chain_menu_view(t);
         }
@@ -224,6 +250,20 @@ impl Studio {
     /// A row of an instrument's menu was picked (the menu is shut already).
     pub(crate) fn inst_menu_pick(&mut self, menu: Menu, to: &str) {
         match menu {
+            Menu::ChannelDestination(t) => {
+                if let Some(w) = self.channel.as_mut().filter(|w| w.track == t)
+                    && matches!(to, "internal" | "external")
+                {
+                    w.detached = to == "external";
+                }
+            }
+            Menu::Destination(t, id) => {
+                if to == "channel" {
+                    self.open_channel(t);
+                } else {
+                    self.move_device_view(id, to);
+                }
+            }
             Menu::Preset(_, id) => match to {
                 SAVE => {
                     let p = self.project();

@@ -243,6 +243,7 @@ impl Grab {
 /// A part of a window: the title bar's seats first (UI-322), then the body.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
+    Destination,
     /// The bar's drag handle: the name's band and the empty stretch.
     Head,
     Power,
@@ -344,6 +345,10 @@ impl Analyser {
 /// The open windows, the last on top.
 #[derive(Debug, Default)]
 pub struct Windows {
+    /// A detached view still owns the same Win and PluginId; only its surface changes.
+    pub(crate) detached: std::collections::HashSet<PluginId>,
+    pub(crate) detached_target: Option<PluginId>,
+    pub(crate) detached_channel: bool,
     pub open: Vec<Win>,
     pub(crate) grab: Option<Grab>,
     /// The control the keys move (UI-324): its plug-in and its parameter.
@@ -712,6 +717,7 @@ impl Windows {
             Part::Sidechain => bar.sidechain_on.unwrap_or_default(),
             Part::Sources => bar.sidechain_list.unwrap_or_default(),
             Part::Channel => bar.channel.unwrap_or_default(),
+            Part::Destination => bar.destination,
             Part::Pin => bar.pin,
             Part::Close => bar.close,
             Part::Resize => grip(r),
@@ -780,6 +786,25 @@ impl Windows {
     /// drawer is where the drawer puts it, and nothing while the drawer shows
     /// something else (MIX-046); a window is [`Self::rect`].
     pub fn frame(&self, i: usize, g: &Geometry) -> Rect {
+        if self.detached_channel {
+            return Rect::default();
+        }
+        let id = self.open[i].plugin;
+        if let Some(target) = self.detached_target {
+            return if id == target {
+                Rect::new(
+                    0.0,
+                    0.0,
+                    self.open[i].body.0,
+                    self.open[i].body.1 + title_bar::BAR_H,
+                )
+            } else {
+                Rect::default()
+            };
+        }
+        if self.detached.contains(&id) {
+            return Rect::default();
+        }
         if !self.open[i].docked {
             return self.rect(i, g.size);
         }
@@ -841,6 +866,7 @@ impl Windows {
                     (b.sidechain_on, Part::Sidechain),
                     (b.sidechain_list, Part::Sources),
                     (b.channel, Part::Channel),
+                    (Some(b.destination), Part::Destination),
                     (Some(b.pin), Part::Pin),
                     (Some(b.close), Part::Close),
                 ]
@@ -973,6 +999,7 @@ impl Windows {
             self.sweep = None;
         }
         let open: Vec<PluginId> = self.open.iter().map(|w| w.plugin).collect();
+        self.detached.retain(|id| open.contains(id));
         self.chosen.retain(|id, _| open.contains(id));
         self.analysers.retain(|id, _| open.contains(id));
         self.meters.retain(|id, _| open.contains(id));
@@ -1356,6 +1383,7 @@ impl Studio {
     /// the top; else the unpinned window used last takes it in; else, all
     /// pinned, a new window opens a step on. Its frame lights either way.
     pub(crate) fn show_instrument(&mut self, t: TrackId, id: PluginId) {
+        self.replace_unpinned_editors(id);
         // Another window asked for: the one waiting for a plugin just put in is not (PLG-050).
         self.mixer.open_later = None;
         // A sweep on the device whose window this one takes in goes into the song first, on
@@ -1375,10 +1403,12 @@ impl Studio {
         let ins = &mut self.instruments;
         // The face in the drawer comes out as a window (MIX-046), on the zone or pad and the
         // layer it showed: the focus and the typed value there stay theirs.
-        let mut shown = (0, 0, None);
+        let shown = (0, 0, None);
         if let Some(i) = ins.dock_slot().filter(|&i| ins.open[i].plugin == id) {
-            shown = (ins.open[i].pick, ins.open[i].layer, ins.open[i].bank);
-            ins.open.retain(|w| !w.docked);
+            ins.open[i].docked = false;
+            ins.raise(i);
+            ins.flash = Some((id, std::time::Instant::now()));
+            return;
         }
         match ins.open.iter().position(|w| w.plugin == id) {
             Some(i) => {
@@ -1481,18 +1511,15 @@ impl Studio {
             return false;
         };
         // A press on anything but a graph's point takes the keys from the point (UI-326).
-        if !matches!(part, Part::Point(..)) {
+        if !matches!(part, Part::Point(..) | Part::Destination) {
             self.instruments.on_point = None;
         }
-        // The face in the mixer's drawer (MIX-046): its pin's place and a
-        // double click on its bar take it out as a window; it does not move.
+        // The face in the mixer's drawer (MIX-046): its destination menu and a
+        // double click on its bar take it out; pinning is disabled while docked.
         if self.instruments.open[i].docked {
             let w = self.instruments.open[i];
             match part {
-                Part::Pin => {
-                    self.show_instrument(w.track, w.plugin);
-                    return true;
-                }
+                Part::Pin => return true,
                 Part::Head => {
                     if clicks >= 2 {
                         self.show_instrument(w.track, w.plugin);
@@ -1503,7 +1530,7 @@ impl Studio {
                 _ => {}
             }
         }
-        if !matches!(part, Part::Knob(_) | Part::Point(..)) {
+        if !matches!(part, Part::Knob(_) | Part::Point(..) | Part::Destination) {
             self.device_blur();
         }
         self.instruments.edge = None;
@@ -1516,12 +1543,17 @@ impl Studio {
         let w = self.instruments.open[i];
         let r = self.instruments.frame(i, g);
         match part {
-            Part::Close => {
-                if self.instruments.note.is_some_and(|n| n.plugin == w.plugin) {
-                    self.window_note_off();
+            Part::Destination => {
+                let anchor = live(&p, &w).map(|(track, plugin, def)| {
+                    self.instruments
+                        .part_rect(r, &p, track, plugin, def, Part::Destination)
+                });
+                if let Some(anchor) = anchor {
+                    self.open_inst_menu(Menu::Destination(w.track, w.plugin), anchor);
                 }
-                self.instruments.open.remove(i);
-                forget_turns(self);
+            }
+            Part::Close => {
+                self.close_device_view(w.plugin);
             }
             Part::Key(pitch) => {
                 // A Sampler's key chooses the zone that plays it (UI-333).
@@ -2164,6 +2196,9 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
             continue;
         };
         let r = studio.instruments.frame(i, g);
+        if r.w <= 0.0 {
+            continue;
+        }
         paint_window(pen, studio, r, *w, track, plugin, def);
         // The window a device just opened in: a ring of the focus colour
         // round it that fades out (UI-323), none under reduced motion.

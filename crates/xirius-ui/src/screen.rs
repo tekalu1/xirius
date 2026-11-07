@@ -112,6 +112,7 @@ fn mods(m: Modifiers) -> Mods {
 }
 
 struct Screen {
+    device_windows: crate::device_window::Windows,
     pending_save_input: HeldInput,
     studio: Rc<RefCell<Studio>>,
     colors: Rc<Colors>,
@@ -133,6 +134,7 @@ struct Screen {
     /// count (KEY-012).
     last_caps: Option<bool>,
     _activation: Option<gpui::Subscription>,
+    _visibility: gpui::Subscription,
 }
 
 impl Screen {
@@ -1586,6 +1588,7 @@ impl Screen {
 
 impl Render for Screen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.device_windows.sync(&self.studio, window, cx);
         // The theme follows `ui.theme` at once (SET-002); `auto` follows the system.
         let theme = self.fixed_theme.unwrap_or_else(|| {
             let system = match window.appearance() {
@@ -1630,6 +1633,7 @@ impl Render for Screen {
                     window.toggle_fullscreen();
                 }
                 Some(crate::context::key_more::WindowAsk::Quit) if studio.close_now() => {
+                    self.device_windows.close(cx);
                     window.defer(cx, |window, _| window.remove_window());
                 }
                 Some(crate::context::key_more::WindowAsk::Quit) | None => {}
@@ -1819,6 +1823,7 @@ impl Render for Screen {
             .child(bar)
             .child(body)
             .child(bottom)
+            .children(crate::device_window::accessible(&self.studio, &g))
             .child(crate::opening_view::accessible(self.studio.clone(), &g))
             .child(crate::prepare_card::accessible(self.studio.clone(), &g))
             .child(crate::unsaved::accessible(self.studio.clone(), &g))
@@ -2543,6 +2548,12 @@ pub fn run(opts: Options) {
                         watch(window, cx, !scripted);
                         let _activation =
                             Some(cx.observe_window_activation(window, |this, window, cx| {
+                                this.studio
+                                    .borrow()
+                                    .main_window_editor_event(window.is_window_active(), false);
+                                if window.is_window_active() {
+                                    this.device_windows.raise(&this.studio.borrow());
+                                }
                                 if !window.is_window_active() {
                                     this.last_caps = None;
                                     // The release will not come here (M-ui-3).
@@ -2551,7 +2562,15 @@ pub fn run(opts: Options) {
                                     }
                                 }
                             }));
+                        let _visibility =
+                            cx.observe_window_visibility(window, |this, visibility, _, _| {
+                                if visibility == gpui::WindowVisibility::Visible {
+                                    this.studio.borrow().main_window_editor_event(false, true);
+                                    this.device_windows.raise(&this.studio.borrow());
+                                }
+                            });
                         Screen {
+                            device_windows: Default::default(),
                             pending_save_input: HeldInput::default(),
                             studio,
                             colors,
@@ -2564,6 +2583,7 @@ pub fn run(opts: Options) {
                             files_dragged: false,
                             last_caps: None,
                             _activation,
+                            _visibility,
                         }
                     })
                 },

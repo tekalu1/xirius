@@ -631,6 +631,9 @@ pub struct Mixer {
     #[cfg(test)]
     pub(crate) fake_load: Option<crate::loading::FakeLoad>,
     pub(crate) editors: Vec<OpenEditor>,
+    pub(crate) editor_pins: std::collections::HashSet<PluginId>,
+    pub(crate) editor_bars: std::collections::HashMap<PluginId, xirius_vst3::EditorBar>,
+    pub(crate) editor_positions: std::collections::HashMap<PluginId, (i32, i32)>,
     /// The plugins found by the last scan; read when a list first needs it.
     pub catalog: Option<Arc<Catalog>>,
     pub scan: scan::PluginScan,
@@ -1987,6 +1990,9 @@ impl Studio {
             return true;
         }
         let title = format!("{} · {}", plugin.name, track.shown_name());
+        self.replace_unpinned_editors(id);
+        self.device_sweep_end();
+        self.instruments.open.retain(|w| w.docked || w.pinned);
         match self.open_vst3_window(plugin, title, None) {
             Ok(e) => self.mixer.editors.push(e),
             Err(e) => self.error = Some(e),
