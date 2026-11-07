@@ -97,6 +97,7 @@ crates/xirius-ui/src/context/ruler.rs	seek	1
 crates/xirius-ui/src/context/screen_cmd_rows.rs	arrange_run	2
 crates/xirius-ui/src/context/track.rs	arrange_run	1
 crates/xirius-ui/src/cpu_list.rs	arrange_run	1
+crates/xirius-ui/src/crash_reports.rs	lock	3
 crates/xirius-ui/src/dawproject_ui.rs	std :: thread :: sleep	1
 crates/xirius-ui/src/device/input.rs	run_command	3
 crates/xirius-ui/src/drawer_edge.rs	std :: fs :: create_dir_all	1
@@ -114,7 +115,9 @@ crates/xirius-ui/src/fx_chain.rs	arrange_run	2
 crates/xirius-ui/src/fx_chain.rs	run_command	2
 crates/xirius-ui/src/fx_preset.rs	run_command	1
 crates/xirius-ui/src/head_fader.rs	run_command	1
-crates/xirius-ui/src/health.rs	run_command	2
+crates/xirius-ui/src/health.rs	lock	1
+crates/xirius-ui/src/health.rs	run_command	3
+crates/xirius-ui/src/health.rs	set	1
 crates/xirius-ui/src/input_dispatch.rs	arrange_run	10
 crates/xirius-ui/src/input_dispatch.rs	lock	3
 crates/xirius-ui/src/input_dispatch.rs	run_command	4
@@ -246,6 +249,7 @@ crates/xirius-ui/src/studio.rs	seek	1
 crates/xirius-ui/src/tidy.rs	join	3
 crates/xirius-ui/src/tidy.rs	recv_timeout	1
 crates/xirius-ui/src/toast.rs	arrange_run	2
+crates/xirius-ui/src/toast.rs	run_command	1
 crates/xirius-ui/src/track_group.rs	run	1
 crates/xirius-ui/src/track_name.rs	run_command	1
 crates/xirius-ui/src/transport.rs	lock	2
