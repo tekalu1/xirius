@@ -430,6 +430,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     out.extend(device_marks(s, g));
     out.extend(audition_mark(s, g));
     out.extend(preset_marks(s, g));
+    out.extend(file_marks(s, g));
     out.extend(drawer_marks(s, g));
     out.extend(loop_marks(s, g));
     out
@@ -820,6 +821,50 @@ fn audition_mark(s: &Studio, g: &Geometry) -> Option<Mark> {
         turn: None,
         edge: None,
     })
+}
+
+/// File labels keep the full name even when the painter fits it with an ellipsis.
+fn file_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
+    use crate::browser::{BRow, BrowserHit, RailTab};
+    if !s.browser.open || s.browser.tab != RailTab::Files {
+        return Vec::new();
+    }
+    let l = s.browser.layout(g.panel);
+    l.rows
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| {
+            let BRow::File {
+                key,
+                name,
+                len,
+                selected,
+                ..
+            } = &p.row
+            else {
+                return None;
+            };
+            let r = s.browser.row_rect(&l, p);
+            if r.bottom() <= l.list.y || r.y >= l.list.bottom() {
+                return None;
+            }
+            let mut node = accesskit::Node::new(accesskit::Role::ListItem);
+            node.set_label(name.clone());
+            node.set_description(len.clone());
+            node.set_selected(*selected);
+            node.set_bounds(bounds(r));
+            Some(Mark {
+                key: format!("browser-file-{key}"),
+                children: Vec::new(),
+                node,
+                fold: None,
+                pick: None,
+                press: Some(crate::studio::Hit::Browser(BrowserHit::File(i))),
+                turn: None,
+                edge: None,
+            })
+        })
+        .collect()
 }
 
 /// The presets under the built-in devices in the browser (BRW-017): the arrow before a device
@@ -1721,6 +1766,45 @@ pub fn toast_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
 mod tests {
     use super::*;
     use crate::settings::Section;
+
+    #[test]
+    fn file_name_is_whole_in_accessibility_and_tooltip_when_visually_shortened() {
+        use crate::browser::{BRow, BrowserHit, RailTab};
+        let tmp = tempfile::tempdir().unwrap();
+        let name = "長いファイル名_very_long_sample_name.wav";
+        std::fs::write(tmp.path().join(name), []).unwrap();
+        std::fs::write(tmp.path().join("z.wav"), []).unwrap();
+        let mut s = Studio::sample();
+        s.browser.press_rail(RailTab::Files);
+        s.browser.add_place_fixture(tmp.path()).unwrap();
+        crate::browser_files::settle_rows(&s.browser);
+        let g = s.geometry(1200.0, 800.0);
+        let l = s.browser.layout(g.panel);
+        let i = l
+            .rows
+            .iter()
+            .position(|p| matches!(&p.row, BRow::File { name: n, .. } if n == name))
+            .unwrap();
+        let hit = crate::studio::Hit::Browser(BrowserHit::File(i));
+        assert_eq!(crate::hover_tip::text(&s, hit).as_deref(), Some(name));
+        let marks = file_marks(&s, &g);
+        let mark = marks.iter().find(|m| m.node.label() == Some(name)).unwrap();
+        assert_eq!(mark.node.role(), accesskit::Role::ListItem);
+        assert_eq!(mark.press, Some(hit));
+        let keys: Vec<_> = marks.iter().map(|m| m.key.clone()).collect();
+        s.browser
+            .select_file(&tmp.path().join(name).to_string_lossy());
+        // Inserting the audition row must not change the following file's identity.
+        assert_eq!(
+            file_marks(&s, &g)
+                .iter()
+                .map(|m| m.key.clone())
+                .collect::<Vec<_>>(),
+            keys
+        );
+        s.browser.open = false;
+        assert!(file_marks(&s, &g).is_empty());
+    }
 
     /// UI-300 / UI-301: a screen reader finds the transport in the bottom bar, and reads the
     /// CPU's load as a number.

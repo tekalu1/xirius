@@ -1670,6 +1670,14 @@ fn paint_panel(
     });
 }
 
+/// Reserve the complete duration before fitting the file name.
+fn file_text_parts(r: Rect, depth: usize, len_w: f32) -> (Rect, Rect) {
+    let length = Rect::new(r.right() - len_w - Space::X2.px(), r.y, len_w, r.h);
+    let x = r.x + Browser::indent(depth) + 18.0 + 14.0 + Space::X2.px();
+    let name = Rect::new(x, r.y, (length.x - x).max(0.0), r.h);
+    (name, length)
+}
+
 /// Only the outside corners of the file and its preview are rounded.
 fn preview_face(browser: &Browser, l: &BrowserLayout, i: usize) -> Option<Rect> {
     let file = l.rows.get(i)?;
@@ -1907,15 +1915,11 @@ fn paint_row(
             let midi = crate::browser_files::is_midi(std::path::Path::new(name));
             pen.icon(if midi { "keys" } else { "wave" }, icon_at(x), c.ink_strong);
             let len_w = text_width(len, FontSize::Caption) + pad;
-            let name_r = Rect::new(
-                x + 14.0 + Space::X2.px(),
-                r.y,
-                r.right() - len_w - pad - x - 22.0,
-                r.h,
-            );
+            let (name_r, length_r) = file_text_parts(r, *depth, len_w);
+            let shown = pen.fit(name, FontSize::Small, Weight::Regular, name_r.w);
             pen.mask(name_r, |pen| {
                 pen.text(
-                    name,
+                    &shown,
                     FontSize::Small,
                     Weight::Regular,
                     pen.c.ink_strong,
@@ -1928,7 +1932,7 @@ fn paint_row(
                 FontSize::Caption,
                 Weight::Regular,
                 c.ink,
-                Rect::new(r.right() - len_w - pad, r.y, len_w, r.h),
+                length_r,
                 Align::Right,
             );
         }
@@ -2129,6 +2133,28 @@ mod tests {
                     l.rows[1].row = BRow::Note("other");
                     assert!(preview_face(&b, &l, 0).is_none());
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn long_file_names_fit_with_ellipsis_and_leave_the_complete_duration() {
+        let full = "長いファイル名_very_long_sample_name.wav";
+        let len = "0.4 秒";
+        for width in [220.0, 280.0] {
+            for depth in [0, 2] {
+                let r = Rect::new(52.0, 10.0, width, 28.0);
+                let len_w = text_width(len, FontSize::Caption) + Space::X2.px();
+                let (name, duration) = file_text_parts(r, depth, len_w);
+                let measure = |s: &str| text_width(s, FontSize::Small);
+                let shown = crate::draw::fit_text(full, name.w, measure);
+                assert!(shown.ends_with('…'));
+                assert!(measure(&shown) <= name.w);
+                assert_eq!(duration.w, len_w);
+                assert!(duration.w >= text_width(len, FontSize::Caption));
+                assert_eq!(duration.right(), r.right() - 8.0);
+                assert!(name.right() <= duration.x);
+                assert_eq!(crate::draw::fit_text("短い", name.w, measure), "短い");
             }
         }
     }

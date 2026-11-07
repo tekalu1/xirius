@@ -2248,7 +2248,7 @@ fn paint_roll_switch(pen: &mut Pen, studio: &Studio, g: &Geometry, drum: Option<
 }
 
 /// Measure-based truncation, also exercised without a window for narrow drawer names.
-fn fit_text(s: &str, w: f32, mut measure: impl FnMut(&str) -> f32) -> String {
+pub(crate) fn fit_text(s: &str, w: f32, mut measure: impl FnMut(&str) -> f32) -> String {
     if w <= 0.0 {
         return String::new();
     }
