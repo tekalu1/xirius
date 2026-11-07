@@ -479,6 +479,7 @@ fn a_real_plugin_through_the_songs_clips() {
     player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
     let dry = render(&mut player, &p, 4);
     assert!(stopped(&player).is_none());
+    // Detach keeps the document until its asynchronous final archive is collected.
     until("the detached document's final archive", || {
         player.ara().take_arrived(&p);
         player.ara().reports().is_empty()
