@@ -239,7 +239,7 @@ mod menu_tests;
 #[cfg(test)]
 mod pin_tests;
 #[cfg(test)]
-mod play_tests;
+pub(crate) mod play_tests;
 #[cfg(test)]
 mod resize_tests;
 #[cfg(test)]

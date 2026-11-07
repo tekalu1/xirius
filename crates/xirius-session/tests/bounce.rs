@@ -16,6 +16,7 @@ use xirius_session::ext::ExtConfig;
 use xirius_session::graph::Select;
 
 const RATE: u32 = 48_000;
+mod support;
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -286,6 +287,7 @@ fn a_midi_clip_always_goes_to_a_new_track() {
         "track.add.instrument",
         json!({ "name": "Keys" }),
     ));
+    support::tone(&mut s, t.parse().unwrap());
     let c = id_of(&run(
         &mut s,
         "clip.add.midi",
@@ -501,6 +503,7 @@ fn a_frozen_instrument_sounds_the_same() {
         "track.add.instrument",
         json!({ "name": "Keys" }),
     ));
+    support::tone(&mut s, t.parse().unwrap());
     let c = id_of(&run(
         &mut s,
         "clip.add.midi",

@@ -546,6 +546,86 @@ fn mcp_lists_the_registry_and_runs_a_tool() {
 }
 
 #[test]
+fn cli_and_mcp_create_silent_empty_instruments_and_drum_pads() {
+    for mcp in [false, true] {
+        for instrument in [None, Some("Sampler"), Some("Drum Kit")] {
+            let s = Song::new();
+            let t = if mcp {
+                let (name, arguments) = match instrument {
+                    None => ("track_add_instrument", json!({})),
+                    Some(name) => ("track_add_with-instrument", json!({"instrument": name})),
+                };
+                let replies = mcp_exchange(
+                    &s.dir,
+                    &[],
+                    &[
+                        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                        "protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}),
+                        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+                        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":name,"arguments":arguments}}),
+                    ],
+                );
+                let reply = replies.iter().find(|r| r["id"] == 2).unwrap();
+                assert_eq!(reply["result"]["isError"], false, "{reply}");
+                reply["result"]["structuredContent"]["data"]["id"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            } else {
+                match instrument {
+                    None => s.id(&["track.add.instrument"]),
+                    Some(name) => s.id(&["track.add.with-instrument", "--instrument", name]),
+                }
+            };
+            let c = s.id(&["clip.add.midi", "--track", &t, "--at", "0", "--bars", "1"]);
+            s.ok(&[
+                "note.add",
+                "--clip",
+                &c,
+                "--at",
+                "0",
+                "--pitch",
+                "36",
+                "--length",
+                "960",
+                "--velocity",
+                "127",
+            ]);
+            let loaded = xirius_core::session::Session::open(&s.dir).unwrap();
+            let t = t.parse().unwrap();
+            assert!(
+                loaded.project().tracks[&t]
+                    .inserts
+                    .iter()
+                    .all(|x| x.samples.is_empty())
+            );
+            let (mut host, mut audio, warnings) = xirius_session::host::SessionHost::start(
+                loaded.project(),
+                xirius_session::host::HostConfig::default(),
+            )
+            .unwrap();
+            assert!(warnings.is_empty(), "{warnings:?}");
+            host.note(
+                t,
+                xirius_engine::NoteKind::On {
+                    pitch: 36,
+                    velocity: 1.0,
+                },
+            );
+            host.play();
+            for _ in 0..100 {
+                let mut out = [123.0; 960];
+                audio.render(&mut out, 2);
+                assert!(
+                    out.iter().all(|x| *x == 0.0),
+                    "mcp={mcp} instrument={instrument:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn mcp_reports_protocol_mistakes() {
     let s = Song::new();
     let replies = mcp_exchange(

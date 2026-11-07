@@ -111,7 +111,27 @@ fn text(b: &[u8]) -> String {
 /// An instrument track with one MIDI clip of two notes, two bars from the start.
 fn song_with_notes() -> Song {
     let s = Song::new();
-    let trk = s.id(&["track.add.instrument", "--name", "Keys"]);
+    let made = s.ok(&[
+        "track.add.with-instrument",
+        "--name",
+        "Keys",
+        "--instrument",
+        "Sampler",
+    ]);
+    let trk = made["data"]["id"].as_str().unwrap().to_string();
+    let plugin = made["data"]["plugin"].as_str().unwrap();
+    let file = s.dir.join("tone_C3.wav");
+    let samples: Vec<f32> = (0..48000)
+        .map(|i| (i as f32 * 440.0 * std::f32::consts::TAU / 48000.0).sin() * 0.25)
+        .collect();
+    xirius_session::export::write_wav(&file, &samples, &samples, 48000, 32).unwrap();
+    s.ok(&[
+        "plugin.samples.add",
+        "--id",
+        plugin,
+        "--file",
+        file.to_str().unwrap(),
+    ]);
     let clp = s.id(&[
         "clip.add.midi",
         "--track",

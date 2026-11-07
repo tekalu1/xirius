@@ -3238,6 +3238,14 @@ mod tests {
         let mut s = Studio::sample();
         s.command(|song| song.save_as(&dir));
         assert!(s.error.is_none(), "{:?}", s.error);
+        let t = s
+            .project()
+            .tracks
+            .values()
+            .find(|t| t.name == "Keys")
+            .unwrap()
+            .id;
+        crate::instrument::play_tests::give_track_sample(&mut s, t);
         let g = s.geometry(1600.0, 900.0);
         s.open_export(Rect::new(1500.0, -40.0, 28.0, 28.0));
         assert!(view(&s).can_go());

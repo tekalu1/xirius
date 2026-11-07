@@ -370,13 +370,21 @@ fn flow(e: &mut dyn Endpoint) -> Made {
         "timesig.set",
         json!({"num": 7, "den": 8, "bar": 9}),
     );
-    let keys = id(&edit(
+    let made_keys = edit(
         e,
         l,
         "instrument track",
         "track.add.with-instrument",
         json!({"instrument": "Sampler", "name": "Keys"}),
-    ));
+    );
+    let keys = id(&made_keys);
+    edit(
+        e,
+        l,
+        "key sample",
+        "plugin.samples.add",
+        json!({"id": made_keys["data"]["plugin"], "file": "Samples/tone.wav"}),
+    );
 
     // 2. Notes drawn, moved and quantized; drum hits; an audio file.
     let clip = id(&edit(
@@ -414,13 +422,21 @@ fn flow(e: &mut dyn Endpoint) -> Made {
         json!({"ids": [clip], "grid": "1/8"}),
     );
     step(e, l, "note list after", "note.list", json!({"clip": clip}));
-    let drums = id(&edit(
+    let made_drums = edit(
         e,
         l,
         "drum track",
         "track.add.with-instrument",
         json!({"instrument": "Sampler", "name": "Drums"}),
-    ));
+    );
+    let drums = id(&made_drums);
+    edit(
+        e,
+        l,
+        "drum sample",
+        "plugin.samples.add",
+        json!({"id": made_drums["data"]["plugin"], "file": "Samples/tone.wav"}),
+    );
     let beat = id(&edit(
         e,
         l,
@@ -743,7 +759,8 @@ fn arc_041_one_song_through_the_program_and_the_mcp_server_answers_the_same() {
         assert!(changed.is_empty(), "{}", changed.join("\n"));
         assert_eq!(made.redone, made.saved);
         let (seconds, peak) = wav_measure(&made.wav);
-        assert!(seconds > 4.0, "{seconds}");
+        // Two 128 BPM bars plus the imported file's end; no implicit synth tail.
+        assert!(seconds >= 3.875, "{seconds}");
         assert!(peak > 0.01, "{peak}");
         assert!(made.dawproject.is_file());
         if let Err(e) = &made.mp3 {

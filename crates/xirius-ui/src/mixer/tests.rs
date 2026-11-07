@@ -385,6 +385,8 @@ fn a_bank_of_strips_starts_at_a_strip_however_wide_the_strips_are() {
 #[test]
 fn levels_from_the_player_reach_the_strip_meters() {
     let (mut s, _) = studio();
+    let t = track(&s, "Keys");
+    crate::instrument::play_tests::give_track_sample(&mut s, t);
     s.transport.mode = OutputMode::Silent { paced: true };
     assert!(s.toggle_play());
     let t = Instant::now();

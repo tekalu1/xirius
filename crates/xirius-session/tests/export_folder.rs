@@ -1,6 +1,8 @@
 //! CTX-018: a folder as one stem. A folder connected to a bus is written as the bus's mix under
 //! the folder's name; one without a bus is refused. Every render is offline.
 
+mod support;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -106,6 +108,7 @@ fn id_of(r: &RunResult) -> String {
 
 fn voice(s: &mut Session, name: &str, pitch: i64) -> String {
     let t = id_of(&run(s, "track.add.instrument", json!({ "name": name })));
+    support::tone(s, t.parse().unwrap());
     let c = id_of(&run(
         s,
         "clip.add.midi",

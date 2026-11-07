@@ -13,6 +13,7 @@ use xirius_session::ext::ExtConfig;
 use xirius_session::graph::{Select, song_end_tick};
 use xirius_session::host::{HostConfig, SessionHost};
 use xirius_session::tempo::TempoMap;
+mod support;
 
 fn song(name: &str) -> Session {
     let mut s = Session::with_registry(Project::new(name), shared_registry());
@@ -39,11 +40,7 @@ fn id_of(r: &RunResult) -> String {
 /// An instrument track playing the built-in Sampler, with one E3 (64) through a bar.
 fn voice(s: &mut Session) -> String {
     let t = id_of(&run(s, "track.add.instrument", json!({ "name": "A" })));
-    run(
-        s,
-        "plugin.add",
-        json!({ "track": t, "name": "Sampler", "kind": "instrument" }),
-    );
+    support::tone(s, t.parse().unwrap());
     let c = id_of(&run(
         s,
         "clip.add.midi",
@@ -61,11 +58,14 @@ fn voice(s: &mut Session) -> String {
 fn layered(name: &str) -> (Session, String, String) {
     let mut s = song(name);
     let t = voice(&mut s);
-    let second = id_of(&run(
+    let made = run(
         &mut s,
         "rack.layer.add",
         json!({ "track": t, "name": "Sampler" }),
-    ));
+    );
+    let second = id_of(&made);
+    let plugin = made.data["plugin"].as_str().unwrap().parse().unwrap();
+    support::sample(&mut s, plugin);
     (s, t, second)
 }
 

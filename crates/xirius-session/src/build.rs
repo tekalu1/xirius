@@ -979,13 +979,6 @@ impl Builder {
                     stand_in(flavor_of(x))
                 }
             },
-            // A Sampler or a Drum Kit with no files plays the stand-in, so a new instrument
-            // track sounds before it has any (PLG-067, PLG-068).
-            Some(x)
-                if x.samples.is_empty() && x.builtin().is_some_and(|d| !d.per_file.is_empty()) =>
-            {
-                stand_in(flavor_of(x))
-            }
             Some(x) if x.builtin().is_some_and(|d| d.kind == Kind::Instrument) => {
                 match self.plugins.stock(x) {
                     Some((p, w)) => {
@@ -1002,7 +995,7 @@ impl Builder {
                 ));
                 stand_in(flavor_of(x))
             }
-            None => stand_in(Flavor::Tone),
+            None => Box::new(Silence),
         }
     }
 
@@ -1243,9 +1236,8 @@ fn is_drums(x: &Plugin) -> bool {
     hit(&x.name) || hit(&x.uid)
 }
 
-/// The instrument that plays a track whose own cannot, or that has none: the placeholder, a
-/// tone or drum hits. It also plays for a Sampler or a Drum Kit until it has a file, as they
-/// play only the files a song gives them (PLG-067, PLG-068).
+/// The substitute for an instrument that cannot be loaded. Empty tracks and file-based
+/// instruments never use it (PLG-067, PLG-068).
 fn stand_in(flavor: Flavor) -> Box<dyn Processor> {
     Box::new(PlaceholderSynth::new(flavor))
 }

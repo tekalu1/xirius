@@ -59,8 +59,10 @@ fn prepare(s: &mut Studio, n: u8) {
             assert_eq!(s.export_view().cards[0].state, crate::export::State::Done);
         }
         2 => {
-            crate::shot::run_for(s, 60.0, |s| s.export.preview_peak > 0.01);
-            assert!(s.export.preview_peak > 0.01, "{:?}", s.error);
+            // The sample song's instruments have no files assigned. Listening to its
+            // silent export still starts the preview, without an implicit synth.
+            crate::shot::run_for(s, 0.2, |_| false);
+            assert_eq!(s.export.preview_peak, 0.0, "{:?}", s.error);
             assert!(s.export.preview.is_some());
             assert!(!s.transport.is_live());
             assert!(s.transport.auditioning_export);

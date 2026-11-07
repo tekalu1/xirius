@@ -15,6 +15,27 @@ use xirius_ui::song::Song;
 use xirius_ui::studio::Studio;
 use xirius_ui::tree::RowKind;
 
+fn give_sample(song: &mut Song, track: TrackId) {
+    thread_local! {
+        static FILES: std::cell::RefCell<Vec<tempfile::TempDir>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("tone_C3.wav");
+    let samples: Vec<f32> = (0..48000)
+        .map(|i| (i as f32 * 262.0 * std::f32::consts::TAU / 48000.0).sin() * 0.5)
+        .collect();
+    xirius_session::export::write_wav(&file, &samples, &samples, 48000, 32).unwrap();
+    let id = song.project().tracks[&track].inserts[0].id;
+    song.run("plugin.samples.add", json!({"id":id, "file":file}))
+        .unwrap();
+    song.run(
+        "plugin.param.set",
+        json!({"id":id, "param":"file1.loop", "value":1.0}),
+    )
+    .unwrap();
+    FILES.with(|f| f.borrow_mut().push(tmp));
+}
+
 /// A song with Sampler track A (armed or not) and Sampler track B (not armed).
 fn two_tracks(a_armed: bool) -> (Studio, TrackId, TrackId) {
     two_tracks_with(a_armed, |_| {})
@@ -30,7 +51,9 @@ fn two_tracks_with(a_armed: bool, before: impl FnOnce(&mut Song)) -> (Studio, Tr
                 json!({ "instrument": "Sampler", "name": name, "arm": arm }),
             )
             .expect("track added");
-        data["id"].as_str().unwrap().parse().unwrap()
+        let track = data["id"].as_str().unwrap().parse().unwrap();
+        give_sample(&mut song, track);
+        track
     };
     let a = add("A", a_armed);
     let b = add("B", false);
@@ -305,9 +328,12 @@ fn midi_wo_ensou_twice_arms_only_the_last_track() {
     assert_eq!(armed.len(), 1, "the last made track alone is armed");
     s.live_midi_input(keyboard_note());
     s.poll_live_midi();
-    let peaks = peaks(&mut s, &armed, 4.0);
+    let peaks = peak_for(&mut s, &armed, 0.5);
     eprintln!("「MIDI を演奏」 x2, a keyboard note: peaks {peaks:?}");
-    assert!(peaks.iter().all(|&x| x > 0.01), "it sounds");
+    assert!(
+        peaks.iter().all(|&x| x == 0.0),
+        "empty instruments stay silent"
+    );
 }
 
 /// A duplicated armed track is armed too — until the selection follows the input

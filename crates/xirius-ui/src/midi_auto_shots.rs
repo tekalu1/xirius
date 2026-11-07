@@ -93,13 +93,15 @@ pub(crate) fn connect(s: &mut Studio, name: &str) {
     WATCH.with(|watch| *watch.borrow_mut() = Some(tx));
     assert!(s.live_midi.input.is_some());
     assert_eq!(s.midi_ports.known(), ["Mock Keyboard"]);
-    crate::shot::run_for(s, 5.0, |s| {
-        s.mixer.meters.get(Strip::Track(t)).hold[0] > 0.0
-    });
+    // No sample was assigned by setup: receiving MIDI must leave the empty device silent.
+    crate::shot::run_for(s, 0.2, |_| false);
+    assert_eq!(s.mixer.meters.get(Strip::Track(t)).hold, [0.0; 2]);
+    #[cfg(test)]
     assert!(
-        s.mixer.meters.get(Strip::Track(t)).hold[0] > 0.0,
-        "{:?}",
-        s.error
+        s.live_midi
+            .sent
+            .iter()
+            .any(|(track, kind)| *track == t && matches!(kind, xirius_engine::NoteKind::On { .. }))
     );
     assert!(!s.transport.playing && !s.transport.recording);
     assert!(s.error.is_none(), "{:?}", s.error);
@@ -267,7 +269,7 @@ mod tests {
         s.transport.reset();
     }
     #[test]
-    fn hotplug_opens_a_port_and_plays_the_selected_sampler_without_arming() {
+    fn hotplug_opens_a_port_and_leaves_the_empty_selected_sampler_silent() {
         let mut s = Studio::sample();
         let opens = setup(&mut s, "Keys", "Sampler", 60);
         let t = track(&s, "Keys");
@@ -278,8 +280,8 @@ mod tests {
         let held = std::time::Instant::now();
         while held.elapsed() < std::time::Duration::from_secs(2) {
             assert!(
-                fresh_peak(&mut s, t) > 1e-4,
-                "sustained sample ended without disconnect"
+                fresh_peak(&mut s, t) == 0.0,
+                "empty sampler sounded after MIDI input"
             );
         }
         assert_eq!(opens.load(Ordering::Relaxed), 1);

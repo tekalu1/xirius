@@ -36,7 +36,7 @@ mod tests {
     use crate::{studio::Hit, tree::RowKind};
     use std::sync::atomic::Ordering;
     #[test]
-    fn hotplug_and_replug_play_a_kick_on_the_selected_unarmed_drum_kit() {
+    fn hotplug_and_replug_leave_the_empty_selected_drum_kit_silent() {
         let mut s = Studio::sample();
         let opened = midi::setup(&mut s, "Drums", "Drum Kit", 36);
         let t = midi::track(&s, "Drums");

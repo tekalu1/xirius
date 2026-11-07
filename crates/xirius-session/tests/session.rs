@@ -15,6 +15,7 @@ use xirius_session::ext::ExtConfig;
 use xirius_session::graph::{Select, song_end_tick};
 use xirius_session::host::{HostConfig, SessionHost};
 use xirius_session::tempo::TempoMap;
+mod support;
 
 // ---- helpers ------------------------------------------------------------------------------
 
@@ -78,7 +79,26 @@ fn id_of(r: &RunResult) -> String {
 
 /// An instrument track with one MIDI clip of `bars` bars holding one long note of `pitch`.
 fn voice(s: &mut Session, name: &str, pitch: i64, bars: f64) -> (String, String) {
-    let t = id_of(&run(s, "track.add.instrument", json!({ "name": name })));
+    let t = id_of(&run(
+        s,
+        "track.add.with-instrument",
+        json!({ "name": name, "instrument": "Sampler" }),
+    ));
+    // These mixing tests require an explicitly assigned source; empty tracks are silent.
+    thread_local! {
+        static FILES: std::cell::RefCell<Vec<Dir>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    let dir = Dir::new("voice");
+    let file = dir.path().join("tone_A3.wav");
+    write_sine(&file, 48000, 1.0, 0.25);
+    let id = s.project().tracks[&t.parse().unwrap()].inserts[0].id;
+    run(s, "plugin.samples.add", json!({"id": id, "file": file}));
+    run(
+        s,
+        "plugin.param.set",
+        json!({"id": id, "param": "file1.loop", "value": 1.0}),
+    );
+    FILES.with(|f| f.borrow_mut().push(dir));
     let c = id_of(&run(
         s,
         "clip.add.midi",
@@ -406,6 +426,7 @@ fn a_folder_passes_no_sound_but_its_bus_collects_its_tracks() {
         "track.add.instrument",
         json!({ "name": "A", "into": f }),
     ));
+    support::tone(&mut s, a.parse().unwrap());
     let c = id_of(&run(
         &mut s,
         "clip.add.midi",
@@ -609,10 +630,9 @@ fn a_fixed_song_exports_a_fixed_wav() {
     assert_eq!(std::fs::read(&out).unwrap(), std::fs::read(&again).unwrap());
 }
 
-// The lead and the bass have no instrument, so the placeholder tone plays them: the Sampler
-// stands in no more, as it sounds only with a file (PLG-067).
-const EXPECT_RMS: f64 = 0.216_358;
-const EXPECT_PEAK: f64 = 0.624_381;
+// Lead and bass use an explicitly assigned, looping Sampler file (PLG-067).
+const EXPECT_RMS: f64 = 0.192_782;
+const EXPECT_PEAK: f64 = 0.574_285;
 
 #[test]
 fn the_export_format_follows_the_song_settings_and_the_options() {

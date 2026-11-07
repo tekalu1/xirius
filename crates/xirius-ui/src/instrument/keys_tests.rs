@@ -16,7 +16,37 @@ fn played(mode: OutputMode) -> (Studio, TrackId) {
     s.transport.mode = mode;
     assert!(s.start_midi());
     let t = s.pc_target().expect("the armed instrument track");
+    let id = current(&s.project().tracks[&t]).unwrap().id;
+    super::play_tests::give_sample(&mut s, id);
     (s, t)
+}
+
+#[test]
+fn empty_sampler_pc_keys_and_roll_audition_do_not_move_the_meter() {
+    let mut s = Studio::new(Song::empty());
+    s.transport.mode = OutputMode::Silent { paced: true };
+    assert!(s.start_midi());
+    let t = s.pc_target().unwrap();
+    assert!(current(&s.project().tracks[&t]).unwrap().samples.is_empty());
+    assert!(s.pc_key_down("a", false));
+    assert_eq!(s.pc_keys.down.len(), 1);
+    wait_level(&mut s, t, |peak| peak == 0.0);
+    assert!(s.pc_key_up("a"));
+    let data = s
+        .song
+        .run(
+            "clip.add.midi",
+            serde_json::json!({"track": t, "at": 0, "bars": 1}),
+        )
+        .unwrap();
+    s.select_clip_here(t, data["id"].as_str().unwrap().parse().unwrap());
+    s.roll.audition = Some(60);
+    s.sound_roll_audition();
+    assert_eq!(s.pc_keys.roll, Some((t, 60)));
+    wait_level(&mut s, t, |peak| peak == 0.0);
+    s.roll.audition = None;
+    s.sound_roll_audition();
+    s.transport.reset();
 }
 
 /// Waits for fresh meter reports, with a guard for an engine that stops reporting.
@@ -203,6 +233,7 @@ fn the_roll_keyboard_sounds_the_pitch_it_lights_until_let_go() {
     let mut s = Studio::sample();
     s.transport.mode = OutputMode::Silent { paced: true };
     let t = s.roll_target().expect("the Keys clip in the roll").track.id;
+    super::play_tests::give_track_sample(&mut s, t);
     // As a press on the roll's keyboard does it: the roll lights the key and the studio applies it.
     let g = s.geometry(1440.0, 820.0);
     s.apply_roll(&g, crate::roll::Out::default());
@@ -233,6 +264,7 @@ fn the_audition_tool_plays_the_clips_track_alone_while_held_and_stops_on_release
     s.transport.mode = OutputMode::Silent { paced: true };
     let target = s.roll_target().expect("the Keys clip in the roll");
     let (t, at) = (target.track.id, target.clip.start);
+    super::play_tests::give_track_sample(&mut s, t);
     let g = s.geometry(1440.0, 820.0);
     s.apply_roll(&g, crate::roll::Out::default());
     s.playhead = 123;
@@ -284,6 +316,8 @@ fn roll_click(s: &mut Studio, g: &crate::studio::Geometry, p: (f32, f32), drag_t
 fn ui_285_a_note_drawn_or_picked_sounds_with_the_settings_as_they_come() {
     let mut s = Studio::sample();
     s.transport.mode = OutputMode::Silent { paced: true };
+    let t = s.roll_target().unwrap().track.id;
+    super::play_tests::give_track_sample(&mut s, t);
     let g = s.geometry(1440.0, 820.0);
     s.apply_edit_prefs();
     let c = s.roll_ctx(&g).unwrap();

@@ -2,6 +2,8 @@
 //! track makes no sound of its own, and its notes reach the port. The ports are a stand-in; no
 //! MIDI device is opened.
 
+mod support;
+
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value, json};
@@ -40,6 +42,7 @@ fn id_of(r: &RunResult) -> String {
 /// An instrument track with one long note of `pitch`.
 fn voice(s: &mut Session, pitch: i64) -> String {
     let t = id_of(&run(s, "track.add.instrument", json!({ "name": "A" })));
+    support::tone(s, t.parse().unwrap());
     let c = id_of(&run(
         s,
         "clip.add.midi",

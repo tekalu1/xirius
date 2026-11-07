@@ -140,7 +140,7 @@ fn other_files_and_broken_ones_are_refused_with_their_name() {
 }
 
 #[test]
-fn playing_after_the_drop_sounds_the_instrument() {
+fn playing_dropped_midi_leaves_the_empty_instrument_silent() {
     let dir_tmp = folder("play");
     let dir = dir_tmp.path().to_path_buf();
     let (mut s, g) = empty();
@@ -154,17 +154,18 @@ fn playing_after_the_drop_sounds_the_instrument() {
     assert_eq!(s.error, None);
     let since = Instant::now();
     let mut peak = 0.0f32;
-    // Until the notes sound, not for a time: on a busy machine the player starts late. The
-    // minute is only a bound.
-    while peak <= 0.01 && since.elapsed() < Duration::from_secs(60) {
+    let mut reports = 0;
+    while reports < 3 && since.elapsed() < Duration::from_secs(60) {
         s.transport.poll();
         if let Some(r) = s.transport.take_levels().get(&Strip::Track(track)) {
             peak = peak.max(r.peak[0]).max(r.peak[1]);
+            reports += 1;
         }
         std::thread::sleep(Duration::from_millis(16));
     }
     s.stop_transport();
-    assert!(peak > 0.01, "the dropped notes sound ({peak})");
+    assert_eq!(reports, 3, "the player reported output");
+    assert_eq!(peak, 0.0, "MIDI import must not assign an implicit sound");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

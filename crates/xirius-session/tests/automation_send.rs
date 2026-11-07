@@ -7,6 +7,7 @@ use xirius_session::{
     graph::Select,
     host::{HostConfig, SessionHost},
 };
+mod support;
 
 fn run(s: &mut Session, name: &str, args: Value) -> Value {
     s.run(name, args.as_object().unwrap(), &RunOptions::human())
@@ -36,6 +37,7 @@ fn send_points_attenuate_only_the_send_and_follow_in_the_running_engine() {
         .unwrap()
         .parse::<TrackId>()
         .unwrap();
+    support::tone(&mut s, track);
     let clip = run(
         &mut s,
         "clip.add.midi",

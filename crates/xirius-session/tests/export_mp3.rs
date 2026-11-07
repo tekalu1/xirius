@@ -7,6 +7,8 @@
 //! encoder cannot be loaded, a test that needs it is reported as `ignored`, with why, in libtest's
 //! own words, and the rest run as ever. Every render is offline.
 
+mod support;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -94,6 +96,7 @@ fn id_of(r: &RunResult) -> String {
 /// An instrument track with one MIDI clip of `bars` bars holding a chord.
 fn voice(s: &mut Session, name: &str, pitch: i64, bars: f64) -> String {
     let t = id_of(&run(s, "track.add.instrument", json!({ "name": name })));
+    support::tone(s, t.parse().unwrap());
     let c = id_of(&run(
         s,
         "clip.add.midi",

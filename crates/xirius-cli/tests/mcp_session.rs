@@ -176,6 +176,23 @@ impl Drop for Client {
     }
 }
 
+fn sounding_track(c: &mut Client) -> Value {
+    let made = c.call(
+        "track_add_with-instrument",
+        json!({"name":"Keys", "instrument":"Sampler"}),
+    );
+    let file = c.dir.join("tone_C3.wav");
+    let data: Vec<f32> = (0..192000)
+        .map(|i| (i as f32 * 261.62555 * std::f32::consts::TAU / 48000.0).sin() * 0.25)
+        .collect();
+    xirius_session::export::write_wav(&file, &data, &data, 48000, 32).unwrap();
+    c.call(
+        "plugin_samples_add",
+        json!({"id":made["plugin"], "file":file}),
+    );
+    made["id"].clone()
+}
+
 #[test]
 fn export_completion_arrives_without_status_polling() {
     let mut client = Client::start("export-event");
@@ -229,7 +246,7 @@ fn mcp_exports_polls_cancels_and_controls_silent_playback() {
         mix["inputSchema"]["properties"]["background"]["default"],
         true
     );
-    let t = c.call("track_add_instrument", json!({"name": "Keys"}))["id"].clone();
+    let t = sounding_track(&mut c);
     let clip = c.call("clip_add_midi", json!({"track": t, "at": 0, "bars": 2}))["id"].clone();
     c.call(
         "note_add",
@@ -541,7 +558,7 @@ fn ai_013_listen_is_one_name_in_the_cli_and_mcp_and_gives_the_same_numbers() {
             .iter()
             .any(|t| t["name"] == "mix_listen")
     );
-    let t = c.call("track_add_instrument", json!({"name": "Keys"}))["id"].clone();
+    let t = sounding_track(&mut c);
     let clip = c.call("clip_add_midi", json!({"track": t, "at": 0, "bars": 2}))["id"].clone();
     c.call(
         "note_add",

@@ -12,6 +12,7 @@ use xirius_session::ext::ExtConfig;
 use xirius_session::graph::{Select, song_end_tick};
 use xirius_session::host::{HostConfig, SessionHost};
 use xirius_session::tempo::TempoMap;
+mod support;
 
 fn song(name: &str) -> Session {
     let mut s = Session::with_registry(Project::new(name), shared_registry());
@@ -39,6 +40,7 @@ fn id_of(r: &RunResult) -> String {
 /// An instrument track with one note of `pitch` through `bars` bars.
 fn voice(s: &mut Session, pitch: i64, bars: f64) -> String {
     let t = id_of(&run(s, "track.add.instrument", json!({ "name": "A" })));
+    support::tone(s, t.parse().unwrap());
     let c = id_of(&run(
         s,
         "clip.add.midi",

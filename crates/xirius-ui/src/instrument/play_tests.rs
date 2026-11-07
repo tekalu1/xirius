@@ -38,7 +38,7 @@ thread_local! {
 
 /// A tone for the device `id` to play: the Sampler and the Drum Kit sound only with a file
 /// (PLG-067, PLG-068).
-fn give_sample(s: &mut Studio, id: PluginId) {
+pub(crate) fn give_sample(s: &mut Studio, id: PluginId) {
     let dir = tempfile::Builder::new()
         .prefix("xirius-ui-play-")
         .tempdir()
@@ -53,6 +53,13 @@ fn give_sample(s: &mut Studio, id: PluginId) {
         serde_json::json!({"id": id, "file": file.display().to_string()})
     ));
     FILES.with(|f| f.borrow_mut().push(dir));
+}
+
+/// The sample song has MIDI tracks without a device. Tests that measure sound assign both.
+pub(crate) fn give_track_sample(s: &mut Studio, track: TrackId) {
+    assert!(s.set_instrument(track, &Pick::built_in(DEFAULT)));
+    let id = current(&s.project().tracks[&track]).unwrap().id;
+    give_sample(s, id);
 }
 
 /// How many voices of `id` sound, once the engine has played.

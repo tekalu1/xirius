@@ -1,5 +1,5 @@
-//! Placeholder instruments: what plays a track whose instrument cannot be loaded, or that has
-//! none (the Sampler and the Drum Kit are silent without files). They make a clearly audible,
+//! Placeholder instruments: what plays a track whose instrument cannot be loaded. Empty
+//! tracks, the Sampler and the Drum Kit are silent without files. They make a clearly audible,
 //! deterministic sound from note events so the session layer can be heard and tested end to
 //! end. Fixed voice count, no allocation while processing.
 
