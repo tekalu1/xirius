@@ -542,6 +542,16 @@ fn paint_head(
     let pan = drag.filter(|d| d.pan).map_or(target.pan, |d| d.value);
     let hp = head_parts(col);
     if !head_shown(w, col, f, held) {
+        if let Some((label, rect)) = resting_branch_name(col) {
+            pen.text(
+                &label,
+                FontSize::Caption,
+                Weight::Semibold,
+                c.ink_strong,
+                rect,
+                Align::Left,
+            );
+        }
         // At rest a head keeps only what is away from the default: a muted one's M as a badge
         // (MIX-045, approved 2026-11-06), a level, a band.
         if target.mute {
@@ -627,6 +637,23 @@ fn paint_head(
             c.ink,
         );
     }
+}
+
+/// Branch names remain visible while the controls rest, including empty branches.
+pub(crate) fn resting_branch_name(col: &Column) -> Option<(String, Rect)> {
+    if !matches!(col.kind, super::flow::ColKind::Branch { .. }) {
+        return None;
+    }
+    let label = match col.kind {
+        super::flow::ColKind::Branch {
+            mode: xirius_core::rack::SplitMode::Channel,
+            ..
+        } => col_label(col),
+        _ => format!("分岐 {}", col_label(col)),
+    };
+    let h = col.head;
+    // Left of the centre line and the right-hand M / non-default value.
+    Some((label, Rect::new(h.x + 4.0, h.y, h.w / 2.0 - 8.0, h.h)))
 }
 
 /// A head's M: yellow while muted, as the mixer's.
