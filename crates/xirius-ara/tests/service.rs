@@ -12,6 +12,9 @@ use xirius_ara::{ClipSpec, Phase, Service, Song, SourceAudio};
 
 const WAIT: Duration = Duration::from_secs(10);
 
+#[path = "support/render_checkpoint.rs"]
+mod render_checkpoint;
+
 fn tone(rate: f64, seconds: f64, amplitude: f32) -> Arc<SourceAudio> {
     let n = (rate * seconds) as usize;
     let l: Vec<f32> = (0..n)
@@ -207,6 +210,7 @@ fn moving_a_region_keeps_its_sound() {
     let s = start(Config::default(), None);
     s.sync(&song(vec![clip(3601, "e.wav", &audio, 0.0, 0.0, 1.0)]));
     let before = ready(&s, 3601);
+    until("analysis cache", || s.analysis_archive().is_some());
     let cached = s.analysis_archive().expect("analysis cache");
     let generation = s.generation();
     for step in 1..=5 {
@@ -337,41 +341,82 @@ fn waiting_for_idle_after_a_change_ends_on_the_new_render() {
 #[test]
 fn a_long_render_still_answers() {
     let audio = tone(48000.0, 10.0, 0.5);
-    let s = start(
-        Config {
-            render_spin_us: 1000,
-            ..Config::default()
-        },
-        None,
-    );
-    let begun = Instant::now();
+    let (checkpoints, loader) = render_checkpoint::Checkpoints::new(false);
+    let s = Arc::new(Service::start(loader, None, Arc::new(|| {})));
+    checkpoints.attach(&s);
     s.sync(&song(vec![clip(4901, "long.wav", &audio, 0.0, 0.0, 10.0)]));
-    let mut slowest = Duration::ZERO;
-    let mut answered = 0;
-    while s.state(4901).is_none_or(|c| c.phase != Phase::Ready) {
-        let asked = Instant::now();
-        assert!(s.probe(WAIT).is_some());
-        slowest = slowest.max(asked.elapsed());
-        answered += 1;
-        assert!(begun.elapsed() < WAIT, "the render did not end");
+    for turn in 1..=10 {
+        // Each query is enqueued by the renderer at the end of this second. Its reply must
+        // precede the next turn, even when the whole render takes only a few milliseconds.
+        let reply = checkpoints.replies.recv_timeout(WAIT).unwrap();
+        let p = reply.recv_timeout(WAIT).unwrap();
+        assert_eq!(p.render_turns, turn);
+        assert_eq!(p.render_blocks, turn * 48_000_usize.div_ceil(BLOCK) as u64);
+        assert_eq!(p.max_render_frames_per_turn, 48_000);
+        assert_eq!(
+            p.analysis_archives, 0,
+            "archive delayed a render checkpoint"
+        );
     }
-    // Check the work and the yield boundary directly, rather than inferring them from a
-    // minimum wall time. Every second ends with its own partial process block.
+    assert_eq!(ready(&s, 4901).left.len(), 480_000);
+    until("the idle analysis archive", || {
+        s.analysis_archive().is_some()
+    });
     let p = s.probe(WAIT).unwrap();
     println!(
-        "render: {} blocks, {} turns, largest {} frames; {answered} replies, slowest {slowest:?}, elapsed {:?}",
-        p.render_blocks,
-        p.render_turns,
-        p.max_render_frames_per_turn,
-        begun.elapsed()
+        "render: {} blocks, {} turns, largest {} frames; 10 boundary replies before {} analysis archive",
+        p.render_blocks, p.render_turns, p.max_render_frames_per_turn, p.analysis_archives
     );
     assert_eq!(p.render_blocks, 10 * 48_000_usize.div_ceil(BLOCK) as u64);
     assert_eq!(p.render_turns, 10);
-    assert_eq!(p.max_render_frames_per_turn, 48_000);
-    assert_eq!(s.state(4901).unwrap().rendered.unwrap().left.len(), 480_000);
-    assert!(answered >= 3, "{answered}");
-    assert!(slowest < Duration::from_millis(400), "{slowest:?}");
-    assert!(s.close(Instant::now() + WAIT));
+    assert_eq!(p.analysis_archives, 1);
+    assert!(
+        Arc::try_unwrap(s)
+            .ok()
+            .unwrap()
+            .close(Instant::now() + WAIT)
+    );
+    no_violations();
+}
+
+/// ARC-025: explicit saves may capture analysis before all rendering finishes, without dirty.
+#[test]
+fn an_explicit_save_collects_analysis_during_rendering_without_an_edit() {
+    let audio = tone(48000.0, 10.0, 0.5);
+    let (checkpoints, loader) = render_checkpoint::Checkpoints::new(true);
+    let s = Arc::new(Service::start(loader, None, Arc::new(|| {})));
+    checkpoints.attach(&s);
+    s.sync(&song(vec![clip(
+        4902,
+        "save-during-render.wav",
+        &audio,
+        0.0,
+        0.0,
+        10.0,
+    )]));
+    let stored = checkpoints.saves.recv_timeout(WAIT).unwrap();
+    assert!(
+        stored.recv_timeout(WAIT).unwrap().is_none(),
+        "no edit archive"
+    );
+    for turn in 1..=10 {
+        let p = checkpoints
+            .replies
+            .recv_timeout(WAIT)
+            .unwrap()
+            .recv_timeout(WAIT)
+            .unwrap();
+        assert_eq!(p.render_turns, turn);
+        assert_eq!(p.analysis_archives, 1);
+    }
+    assert!(s.analysis_archive().is_some());
+    assert!(!s.take_dirty());
+    assert!(
+        Arc::try_unwrap(s)
+            .ok()
+            .unwrap()
+            .close(Instant::now() + WAIT)
+    );
     no_violations();
 }
 

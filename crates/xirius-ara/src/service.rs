@@ -227,6 +227,7 @@ pub struct Probe {
     pub render_turns: u64,
     /// Most source-rate frames processed in one turn (messages run between turns).
     pub max_render_frames_per_turn: usize,
+    pub analysis_archives: u64,
     pub asserts: u64,
     pub last_assert: String,
 }
@@ -444,6 +445,8 @@ impl Service {
     /// [`Service::store_later`] only when the plugin changed its document since it was last
     /// asked; the answer is `None` when it did not. The plugin's thread takes its notifications
     /// first, so an edit it has not told of yet (they come a turn later) counts too.
+    /// Explicit save requests also populate [`Service::analysis_archive`] from completed
+    /// analysis, even when the reply is `None`; that cache does not mark an edit.
     pub fn store_changed_later(&self) -> Option<Stored> {
         if self.crashed().is_some() {
             return None;
@@ -462,11 +465,13 @@ impl Service {
     }
 
     pub fn probe(&self, limit: Duration) -> Option<Probe> {
+        self.probe_later()?.recv_timeout(limit).ok()
+    }
+
+    /// Enqueues a query without waiting, including from a renderer's test checkpoint.
+    pub fn probe_later(&self) -> Option<Receiver<Probe>> {
         let (tx, rx) = mpsc::channel();
-        if !self.send(Msg::Probe(tx)) {
-            return None;
-        }
-        rx.recv_timeout(limit).ok()
+        self.send(Msg::Probe(tx)).then_some(rx)
     }
 
     pub fn state(&self, key: u64) -> Option<ClipState> {
@@ -731,6 +736,7 @@ struct Ara {
     render_blocks: u64,
     render_turns: u64,
     max_render_frames_per_turn: usize,
+    analysis_archives: u64,
     clips: HashMap<u64, Clip>,
     archive: Option<(Vec<u8>, String)>,
     /// Notifications of the document's data right after a restore are not edits.
@@ -1035,6 +1041,7 @@ fn host_loop(rx: &Receiver<Job>, host: &Host) {
     let mut slots: Vec<(u64, Slot)> = Vec::new();
     let mut busy = false;
     let mut windows = false;
+    let mut next_cache = 0;
     loop {
         pump();
         // While a render is under way, the next turn comes at once; while an editor is open,
@@ -1066,6 +1073,7 @@ fn host_loop(rx: &Receiver<Job>, host: &Host) {
         // Messages for documents already closed are dropped, and so are their answers.
         busy = false;
         windows = false;
+        let mut rendered = false;
         let mut i = 0;
         while i < slots.len() {
             let mine = msgs.remove(&slots[i].0).unwrap_or_default();
@@ -1074,7 +1082,9 @@ fn host_loop(rx: &Receiver<Job>, host: &Host) {
                 continue;
             }
             if let Slot::Open(ara) = &mut slots[i].1 {
+                let before = ara.render_turns;
                 busy |= ara.tick();
+                rendered |= before != ara.render_turns;
                 windows |= ara.editor.is_some();
             }
             i += 1;
@@ -1086,6 +1096,21 @@ fn host_loop(rx: &Receiver<Job>, host: &Host) {
             host.crash(&why);
             std::mem::forget(slots);
             return;
+        }
+        // Never add archive work to a render turn, or delay another document's render.
+        // The next iteration handles queued messages before this optional idle work.
+        // Only one whole-plugin archive call per turn: ARA does not expose resumable stores.
+        // Rotate even after a failed store so it cannot starve another document's cache.
+        if !busy && !rendered {
+            for offset in 0..slots.len() {
+                let index = (next_cache + offset) % slots.len();
+                if let Slot::Open(ara) = &mut slots[index].1
+                    && ara.cache_analysis()
+                {
+                    next_cache = index + 1;
+                    break;
+                }
+            }
         }
     }
     for (_, slot) in slots {
@@ -1138,6 +1163,7 @@ fn start(
         render_blocks: 0,
         render_turns: 0,
         max_render_frames_per_turn: 0,
+        analysis_archives: 0,
         next_source: 1,
         clips: HashMap::new(),
         archive,
@@ -1538,17 +1564,6 @@ impl Ara {
                 changed = true;
             }
         }
-        if self.cache_needed
-            && !self.sources.is_empty()
-            && self.sources.values().all(|s| s.analysed)
-        {
-            // Archive on the plugin thread, once all current sources finished. Kept outside
-            // the song until an explicit save; analysis alone never sets dirty.
-            if let Some(archive) = self.store() {
-                *lock(&self.shared.analysis_archive) = Some(Arc::new(archive));
-                self.cache_needed = false;
-            }
-        }
         // A render that a change made old starts again.
         for c in self.clips.values_mut() {
             if c.stale
@@ -1584,6 +1599,24 @@ impl Ara {
             self.publish();
         }
         self.clips.values().any(|c| c.pass.is_some())
+    }
+
+    /// Completed analysis is captured only in an idle turn or for an explicit save.
+    /// Whether a plugin archive call was attempted. It cannot be split across threads/turns.
+    fn cache_analysis(&mut self) -> bool {
+        if !self.cache_needed
+            || self.sources.is_empty()
+            || self.sources.values().any(|s| !s.analysed)
+        {
+            return false;
+        }
+        if let Some(archive) = self.store() {
+            *lock(&self.shared.analysis_archive) = Some(Arc::new(archive));
+            self.cache_needed = false;
+            self.analysis_archives += 1;
+            self.shared.changed();
+        }
+        true
     }
 
     /// The plugin's notifications since the last turn: whether its document changed, and
@@ -1677,6 +1710,9 @@ impl Ara {
             self.publish();
         }
         if !self.shared.dirty.swap(false, Ordering::AcqRel) {
+            // Explicit save/collect requests still capture completed analysis while a
+            // render is pending. This cache does not become an edit archive or set dirty.
+            self.cache_analysis();
             return None;
         }
         self.store()
@@ -1940,6 +1976,7 @@ impl Ara {
             render_blocks: self.render_blocks,
             render_turns: self.render_turns,
             max_render_frames_per_turn: self.max_render_frames_per_turn,
+            analysis_archives: self.analysis_archives,
             asserts,
             last_assert,
         }
