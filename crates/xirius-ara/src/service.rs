@@ -222,6 +222,11 @@ pub struct Probe {
     pub analysis_starts: u64,
     pub regions: usize,
     pub preparations: u64,
+    /// Completed process calls and render turns, across this document's clips.
+    pub render_blocks: u64,
+    pub render_turns: u64,
+    /// Most source-rate frames processed in one turn (messages run between turns).
+    pub max_render_frames_per_turn: usize,
     pub asserts: u64,
     pub last_assert: String,
 }
@@ -723,6 +728,9 @@ struct Ara {
     next_source: usize,
     next_region: usize,
     preparations: u64,
+    render_blocks: u64,
+    render_turns: u64,
+    max_render_frames_per_turn: usize,
     clips: HashMap<u64, Clip>,
     archive: Option<(Vec<u8>, String)>,
     /// Notifications of the document's data right after a restore are not edits.
@@ -1127,6 +1135,9 @@ fn start(
         sources: HashMap::new(),
         next_region: 1,
         preparations: 0,
+        render_blocks: 0,
+        render_turns: 0,
+        max_render_frames_per_turn: 0,
         next_source: 1,
         clips: HashMap::new(),
         archive,
@@ -1749,12 +1760,16 @@ impl Ara {
             return false;
         };
         let frames = p.left.len();
+        let begin = p.at;
         let end = frames.min(p.at + (RENDER_STEP * p.rate).ceil() as usize);
         while p.at < end {
             let n = BLOCK.min(end - p.at);
             instance.process(&mut p.left[p.at..p.at + n], &mut p.right[p.at..p.at + n]);
+            self.render_blocks += 1;
             p.at += n;
         }
+        self.render_turns += 1;
+        self.max_render_frames_per_turn = self.max_render_frames_per_turn.max(p.at - begin);
         if p.at < frames {
             return false;
         }
@@ -1922,6 +1937,9 @@ impl Ara {
             analysis_starts: self.analysis_starts,
             regions: self.clips.values().map(|c| c.regions.len()).sum(),
             preparations: self.preparations,
+            render_blocks: self.render_blocks,
+            render_turns: self.render_turns,
+            max_render_frames_per_turn: self.max_render_frames_per_turn,
             asserts,
             last_assert,
         }

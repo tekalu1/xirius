@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use xirius_ara::fake::{self, Config};
 use xirius_ara::host::Request;
-use xirius_ara::service::{Placement, modification_id, source_id};
+use xirius_ara::service::{BLOCK, Placement, modification_id, source_id};
 use xirius_ara::{ClipSpec, Phase, Service, Song, SourceAudio};
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -355,13 +355,20 @@ fn a_long_render_still_answers() {
         answered += 1;
         assert!(begun.elapsed() < WAIT, "the render did not end");
     }
-    // About 940 blocks of a millisecond: the whole render takes most of a second, a turn a
-    // tenth of one.
-    assert!(
-        begun.elapsed() >= Duration::from_millis(800),
-        "{:?}",
+    // Check the work and the yield boundary directly, rather than inferring them from a
+    // minimum wall time. Every second ends with its own partial process block.
+    let p = s.probe(WAIT).unwrap();
+    println!(
+        "render: {} blocks, {} turns, largest {} frames; {answered} replies, slowest {slowest:?}, elapsed {:?}",
+        p.render_blocks,
+        p.render_turns,
+        p.max_render_frames_per_turn,
         begun.elapsed()
     );
+    assert_eq!(p.render_blocks, 10 * 48_000_usize.div_ceil(BLOCK) as u64);
+    assert_eq!(p.render_turns, 10);
+    assert_eq!(p.max_render_frames_per_turn, 48_000);
+    assert_eq!(s.state(4901).unwrap().rendered.unwrap().left.len(), 480_000);
     assert!(answered >= 3, "{answered}");
     assert!(slowest < Duration::from_millis(400), "{slowest:?}");
     assert!(s.close(Instant::now() + WAIT));
