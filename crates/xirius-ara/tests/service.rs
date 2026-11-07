@@ -511,3 +511,23 @@ fn the_editor_opens_once_per_document_and_closes_by_its_close_box() {
     assert_eq!(mine(), 0, "the document's end closes its editor");
     no_violations();
 }
+
+#[test]
+fn changing_the_full_musical_map_sends_one_notification() {
+    let audio = tone(48000.0, 1.0, 0.5);
+    let service = start(Config::default(), None);
+    let mut song = song(vec![clip(9001, "tempo-map.wav", &audio, 0.0, 0.0, 1.0)]);
+    service.sync(&song);
+    let before = ready(&service, 9001);
+    song.tempos = vec![(0.0, 0.0), (2.0, 4.0), (6.0, 8.0), (6.25, 9.0)];
+    song.bars = vec![(0.0, 4, 4), (4.0, 3, 4)];
+    service.sync(&song);
+    assert!(service.wait_idle(Instant::now() + WAIT));
+    assert_eq!(service.probe(WAIT).unwrap().musical_updates, 1);
+    assert_eq!(ready(&service, 9001).left, before.left);
+    service.sync(&song);
+    assert!(service.wait_idle(Instant::now() + WAIT));
+    assert_eq!(service.probe(WAIT).unwrap().musical_updates, 1);
+    assert!(service.close(Instant::now() + WAIT));
+    no_violations();
+}

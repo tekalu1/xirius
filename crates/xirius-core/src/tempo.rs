@@ -58,6 +58,35 @@ impl TempoMap {
         TempoMap { ppq, pts }
     }
 
+    /// Piecewise linear (seconds, quarter notes) anchors for interchange formats such as ARA.
+    /// Ramps use the bound |f''| * span² / 8 on linear interpolation error. The last
+    /// anchor extends the final constant tempo, including songs with just one tempo point.
+    pub fn linear_time_points(&self, max_error: f64) -> Vec<(f64, f64)> {
+        let mut out = Vec::new();
+        for (i, p) in self.pts.iter().enumerate() {
+            out.push((p.secs, p.tick as f64 / self.ppq));
+            if let Some(n) = self.pts.get(i + 1) {
+                let span = (n.tick - p.tick) as f64 / self.ppq;
+                let delta = n.bpm - p.bpm;
+                if p.ramp && delta.abs() > 1e-9 {
+                    let curvature = 60.0 * delta.abs() / (span * p.bpm.min(n.bpm).powi(2));
+                    let steps = (curvature * span * span / (8.0 * max_error.max(1e-12)))
+                        .sqrt()
+                        .ceil()
+                        .max(1.0) as usize;
+                    for k in 1..steps {
+                        let f = k as f64 / steps as f64;
+                        let seconds = 60.0 * span / delta * (1.0 + delta * f / p.bpm).ln();
+                        out.push((p.secs + seconds, p.tick as f64 / self.ppq + span * f));
+                    }
+                }
+            } else {
+                out.push((p.secs + 60.0 / p.bpm, p.tick as f64 / self.ppq + 1.0));
+            }
+        }
+        out
+    }
+
     pub fn ppq(&self) -> u32 {
         self.ppq as u32
     }
@@ -279,5 +308,65 @@ mod tests {
         let m = TempoMap::new(960, &[pt(1, 960, 60.0, false)]);
         assert!((m.seconds_at(960) - 1.0).abs() < 1e-12);
         assert!((m.seconds_at(-960) + 1.0).abs() < 1e-12);
+    }
+}
+
+#[cfg(test)]
+mod interchange_tests {
+    use super::*;
+    use crate::id::TempoId;
+
+    #[test]
+    fn linear_anchors_match_both_directions_across_jumps_and_ramps() {
+        let map = TempoMap::new(
+            960,
+            &[
+                TempoPoint {
+                    id: TempoId(1),
+                    tick: 0,
+                    bpm: 120.0,
+                    ramp: false,
+                },
+                TempoPoint {
+                    id: TempoId(2),
+                    tick: 3840,
+                    bpm: 45.0,
+                    ramp: true,
+                },
+                TempoPoint {
+                    id: TempoId(3),
+                    tick: 19200,
+                    bpm: 280.0,
+                    ramp: false,
+                },
+                TempoPoint {
+                    id: TempoId(4),
+                    tick: 24000,
+                    bpm: 90.0,
+                    ramp: true,
+                },
+                TempoPoint {
+                    id: TempoId(5),
+                    tick: 30000,
+                    bpm: 30.0,
+                    ramp: false,
+                },
+            ],
+        );
+        let anchors = map.linear_time_points(0.5 / 384_000.0);
+        for tick in -960..40000 {
+            let q = tick as f64 / 960.0;
+            let i = anchors
+                .partition_point(|a| a.1 <= q)
+                .saturating_sub(1)
+                .min(anchors.len() - 2);
+            let (a, b) = (anchors[i], anchors[i + 1]);
+            let seconds = a.0 + (q - a.1) * (b.0 - a.0) / (b.1 - a.1);
+            let exact = map.seconds_at(tick);
+            assert!((seconds - exact).abs() * 384_000.0 <= 1.0, "tick {tick}");
+            let quarter = a.1 + (exact - a.0) * (b.1 - a.1) / (b.0 - a.0);
+            let inverse_seconds = map.seconds_at(tick) + (quarter - q) * 60.0 / map.bpm_at(tick);
+            assert!((inverse_seconds - exact).abs() * 384_000.0 <= 1.0);
+        }
     }
 }

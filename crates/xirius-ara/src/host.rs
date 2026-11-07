@@ -45,8 +45,12 @@ impl SourceAudio {
 }
 
 /// The song's time as the plugin's musical context sees it.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Musical {
+    /// (seconds, quarter notes), with at least two anchors when supplied.
+    pub tempos: Vec<(f64, f64)>,
+    /// (quarter notes, numerator, denominator).
+    pub bars: Vec<(f64, i32, i32)>,
     pub bpm: f64,
     pub numerator: i32,
     pub denominator: i32,
@@ -55,6 +59,8 @@ pub struct Musical {
 impl Default for Musical {
     fn default() -> Musical {
         Musical {
+            tempos: Vec::new(),
+            bars: Vec::new(),
             bpm: 120.0,
             numerator: 4,
             denominator: 4,
@@ -422,6 +428,27 @@ enum Events {
 
 fn musical_events(m: Musical, kind: ContentType) -> Option<Events> {
     match kind {
+        sys::CONTENT_TEMPO_ENTRIES if m.tempos.len() >= 2 => Some(Events::Tempo(
+            m.tempos
+                .into_iter()
+                .map(|(time_position, quarter_position)| sys::ContentTempoEntry {
+                    time_position,
+                    quarter_position,
+                })
+                .collect(),
+        )),
+        sys::CONTENT_BAR_SIGNATURES if !m.bars.is_empty() => Some(Events::Bars(
+            m.bars
+                .into_iter()
+                .map(
+                    |(position, numerator, denominator)| sys::ContentBarSignature {
+                        position,
+                        numerator,
+                        denominator,
+                    },
+                )
+                .collect(),
+        )),
         // Two entries are the least the API allows; a constant tempo is a straight line.
         sys::CONTENT_TEMPO_ENTRIES => Some(Events::Tempo(vec![
             sys::ContentTempoEntry {
@@ -473,7 +500,7 @@ unsafe extern "C" fn create_musical_content_reader(
     // SAFETY: as above.
     let s = unsafe { side(ctrl) };
     s.calls.content_access.fetch_add(1, Ordering::AcqRel);
-    let Some(m) = lock(&s.musical).get(&(context as usize)).copied() else {
+    let Some(m) = lock(&s.musical).get(&(context as usize)).cloned() else {
         return std::ptr::null_mut();
     };
     match musical_events(m, kind) {
@@ -792,5 +819,52 @@ mod tests {
         });
         assert!(!moved.join().unwrap());
         assert!(side.is_main());
+    }
+}
+
+#[cfg(test)]
+mod musical_tests {
+    use super::*;
+
+    #[test]
+    fn content_readers_return_every_anchor_and_keep_their_snapshot() {
+        let side = HostSide::new();
+        let musical = Musical {
+            tempos: vec![(0.0, 0.0), (2.0, 4.0), (6.0, 8.0), (6.25, 9.0)],
+            bars: vec![(0.0, 4, 4), (4.0, 3, 4), (7.0, 7, 8)],
+            ..Musical::default()
+        };
+        side.set_musical(1, musical.clone());
+        let ctrl = Arc::as_ptr(&side) as Ref;
+        // SAFETY: the controller, context key and readers below belong to this test.
+        unsafe {
+            for kind in [sys::CONTENT_TEMPO_ENTRIES, sys::CONTENT_BAR_SIGNATURES] {
+                let reader = create_musical_content_reader(ctrl, 1 as Ref, kind, std::ptr::null());
+                side.set_musical(1, Musical::default());
+                if kind == sys::CONTENT_TEMPO_ENTRIES {
+                    assert_eq!(
+                        content_event_count(ctrl, reader),
+                        musical.tempos.len() as i32
+                    );
+                    for (i, &(seconds, quarters)) in musical.tempos.iter().enumerate() {
+                        let e = &*content_event(ctrl, reader, i as i32)
+                            .cast::<sys::ContentTempoEntry>();
+                        assert_eq!((e.time_position, e.quarter_position), (seconds, quarters));
+                    }
+                } else {
+                    assert_eq!(content_event_count(ctrl, reader), musical.bars.len() as i32);
+                    for (i, &(position, num, den)) in musical.bars.iter().enumerate() {
+                        let e = &*content_event(ctrl, reader, i as i32)
+                            .cast::<sys::ContentBarSignature>();
+                        assert_eq!(
+                            (e.position, e.numerator, e.denominator),
+                            (position, num, den)
+                        );
+                    }
+                }
+                destroy_content_reader(ctrl, reader);
+                side.set_musical(1, musical.clone());
+            }
+        }
     }
 }
