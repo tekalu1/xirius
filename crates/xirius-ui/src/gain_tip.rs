@@ -38,6 +38,17 @@ impl Studio {
             return;
         }
         if command == "plugin.samples.load" {
+            // Keep the warning when the owner returns, too: starting an asynchronous
+            // load only accepted the request, it had not yet skipped these files.
+            if let Some(skipped) = data["skipped"].as_array() {
+                let names: Vec<_> = skipped.iter().filter_map(Value::as_str).collect();
+                if !names.is_empty() {
+                    self.error = Some(format!(
+                        "「{}」は読み込めません（音声ファイルに対応しています）",
+                        names.join("」「")
+                    ));
+                }
+            }
             // The files past H16 did not go in: said, not as a fault (N4-kit-1).
             let n = data["left_out"].as_u64().unwrap_or(0);
             if n > 0 {

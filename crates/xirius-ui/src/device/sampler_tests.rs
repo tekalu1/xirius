@@ -474,6 +474,243 @@ fn wavs(names: &[&str]) -> (tempfile::TempDir, Vec<PathBuf>) {
     (dir, files)
 }
 
+/// Exercise the same dispatcher and owner boundary as a real window, rather than
+/// letting Studio::sample run the Session handler inline.
+#[test]
+fn sample_io_windowed_drop_picker_and_arrows_complete_on_the_owner() {
+    use crate::studio::FileRequest;
+    for name in ["Drum Kit", "Sampler"] {
+        let (dir, files) = wavs(&["First_C3.wav", "Second_C3.wav", "Third_C4.wav"]);
+        let (mut s, g, t, id) = window(name);
+        s.song.save_as(&dir.path().join("song")).unwrap();
+        s.bind_window_io();
+        assert!(s.transport.is_windowed());
+        let steps = s.song().steps();
+        let (x, y) = if name == "Drum Kit" {
+            s.instrument_center(&g, id, Part::Pad(41)).unwrap()
+        } else {
+            let r = body(&s, &g, t).spots[spot(&s, &g, t, Mark::Drop)].r;
+            (r.x + r.w / 2.0, r.y + 12.0)
+        };
+        assert!(s.window_drop(&g, x, y, &files[..1]));
+        assert!(s.saving.is_some(), "the UI accepted an owner job");
+        assert_eq!(
+            s.saving.as_ref().unwrap().label(),
+            "サンプルを読み込んでいます"
+        );
+        s.wait_for_save();
+        assert!(s.error.is_none(), "{:?}", s.error);
+        assert_eq!(plugin(&s, t).samples.len(), 1);
+        assert!(s.instruments.open[0].filled);
+        let pick = if name == "Drum Kit" { 5 } else { 0 };
+        assert_eq!(s.instruments.open[0].pick, pick);
+        assert_eq!(s.song().steps(), steps + 1);
+
+        // Both arrows use the shown pad/layer or zone; neither moves the selection.
+        for mark in [Mark::Next, Mark::Prev] {
+            press_spot(&mut s, &g, t, id, mark);
+            assert!(s.saving.is_some());
+            s.wait_for_save();
+            assert!(s.error.is_none(), "{:?}", s.error);
+            assert_eq!(s.instruments.open[0].pick, pick);
+        }
+        assert!(plugin(&s, t).samples[0].ends_with("First_C3.wav"));
+
+        // The result of the OS picker follows the same dispatcher (no OS dialog here).
+        s.finish_picked(FileRequest::Sample(id, 0), &files[1..2]);
+        assert!(s.saving.is_some());
+        s.wait_for_save();
+        assert!(s.error.is_none(), "{:?}", s.error);
+        assert!(plugin(&s, t).samples[0].ends_with("Second_C3.wav"));
+        let before = plugin(&s, t);
+        let steps = s.song().steps();
+        if name == "Drum Kit" {
+            s.finish_picked(FileRequest::PadSamples(id, pick), &files[1..]);
+        } else {
+            let n = spot(&s, &g, t, Mark::Zone(0));
+            let (x, y) = s.instrument_center(&g, id, Part::Spot(n)).unwrap();
+            assert!(s.window_drop(&g, x, y, &files[2..]));
+        }
+        assert!(s.saving.is_some());
+        s.wait_for_save();
+        assert!(s.error.is_none(), "{:?}", s.error);
+        assert_eq!(s.song().steps(), steps + 1);
+        if name == "Drum Kit" {
+            assert_eq!(
+                sampler::pad_files(plugin(&s, t).builtin().unwrap(), &plugin(&s, t), pick).len(),
+                3
+            );
+        } else {
+            assert_eq!(sampler::zones(&plugin(&s, t).samples).len(), 2);
+        }
+        assert!(s.run_command("history.undo", json!({})));
+        s.wait_for_save();
+        assert_eq!(plugin(&s, t), before);
+
+        // A folder dropped on the empty plane / sample surface: layers for a kit,
+        // replace for a Sampler; the entire import is one undo step.
+        if name == "Drum Kit" {
+            s.instruments.pick(id, 10, 0);
+        }
+        let b = body(&s, &g, t);
+        let r = b
+            .spots
+            .iter()
+            .find(|s| {
+                s.mark
+                    == if name == "Drum Kit" {
+                        Mark::Drop
+                    } else {
+                        Mark::Name
+                    }
+            })
+            .unwrap()
+            .r;
+        let before = plugin(&s, t);
+        let cursor = s.song.session().cursor();
+        s.instruments.drop_layers = name == "Drum Kit";
+        assert!(s.window_drop(&g, r.x + r.w / 2.0, r.y + 8.0, &[dir.path().to_owned()]));
+        s.wait_for_save();
+        assert!(s.error.is_none(), "{:?}", s.error);
+        assert_eq!(s.song.session().cursor(), cursor + 1);
+        assert_eq!(
+            plugin(&s, t).samples.len(),
+            if name == "Drum Kit" { 4 } else { 3 }
+        );
+        let loaded = plugin(&s, t);
+        assert!(s.run_command("history.undo", json!({})));
+        s.wait_for_save();
+        assert_eq!(plugin(&s, t), before);
+        assert!(s.run_command("history.redo", json!({})));
+        s.wait_for_save();
+        assert_eq!(plugin(&s, t), loaded);
+        assert!(s.run_command("project.save", json!({})));
+        s.wait_for_save();
+        assert!(s.error.is_none(), "{:?}", s.error);
+        let saved = plugin(&s, t);
+        let mut reopened = crate::song::Song::empty();
+        reopened.open(&dir.path().join("song")).unwrap();
+        assert_eq!(current(&reopened.project().tracks[&t]).unwrap(), &saved);
+    }
+}
+
+#[test]
+fn sample_io_held_owner_rejects_overlapping_input_and_returns_failures_and_warnings() {
+    use std::{
+        sync::{Arc, mpsc},
+        time::Duration,
+    };
+    let (dir, files) = wavs(&["First.wav", "Second.wav", "notes.txt"]);
+    let (mut s, g, t, id) = window("Drum Kit");
+    s.bind_window_io();
+    let release = crate::browser_io_tests::Release::new();
+    let gate = release.0.clone();
+    let root = dir.path().to_owned();
+    let ui = std::thread::current().id();
+    let (tx, entered) = mpsc::channel();
+    let _observe = xirius_core::io_test::observe(Arc::new(move |op, file| {
+        if op == "samples_list" && file == root {
+            assert_ne!(std::thread::current().id(), ui);
+            let _ = tx.send(());
+            drop(
+                gate.1
+                    .wait_while(gate.0.lock().unwrap(), |done| !*done)
+                    .unwrap(),
+            );
+        }
+        Ok(())
+    }));
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(41)).unwrap();
+    assert!(s.window_drop(&g, x, y, &[dir.path().to_owned()]));
+    entered.recv_timeout(Duration::from_secs(20)).unwrap();
+    // A second drop is consumed, but cannot replace the in-flight Session or selection.
+    let (nx, ny) = s.instrument_center(&g, id, Part::Pad(42)).unwrap();
+    assert!(s.window_drop(&g, nx, ny, &files[..1]));
+    assert_eq!(s.instruments.open[0].pick, 5);
+    for _ in 0..8 {
+        s.tick();
+        s.idle();
+    }
+    assert!(s.saving.is_some());
+    release.release();
+    s.wait_for_save();
+    assert!(s.error.is_none(), "{:?}", s.error);
+    assert_eq!(plugin(&s, t).samples.len(), 2);
+    assert_eq!(s.instruments.open[0].pick, 5);
+
+    // Unsupported files are still named after completion clears the pending error.
+    assert!(s.window_drop(&g, x, y, &[files[0].clone(), files[2].clone()]));
+    s.wait_for_save();
+    assert!(
+        s.error.as_deref().is_some_and(|e| e.contains("notes.txt")),
+        "{:?}",
+        s.error
+    );
+    assert!(s.run_command("plugin.samples.remove", json!({"id":id, "all":true})));
+    assert!(plugin(&s, t).samples.is_empty());
+    assert!(!s.instruments.open[0].filled);
+    let steps = s.song().steps();
+    assert!(s.window_drop(&g, x, y, &[dir.path().join("missing.wav")]));
+    assert!(s.saving.is_some());
+    s.wait_for_save();
+    assert!(
+        s.error
+            .as_deref()
+            .is_some_and(|e| e.contains("見つかりません")),
+        "{:?}",
+        s.error
+    );
+    assert!(plugin(&s, t).samples.is_empty());
+    assert_eq!(s.song().steps(), steps);
+}
+
+#[test]
+fn sample_io_windowed_overflow_notice_is_published_at_completion() {
+    let (_dir, files) = wavs(&["Kick.wav", "Snare.wav"]);
+    let (mut s, g, t, id) = window("Drum Kit");
+    s.instruments.show_bank(id, 7);
+    s.bind_window_io();
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(35)).unwrap();
+    assert!(s.window_drop(&g, x, y, &files));
+    s.wait_for_save();
+    assert!(s.error.is_none(), "{:?}", s.error);
+    assert_eq!(plugin(&s, t).samples.len(), 1);
+    assert_eq!(s.instruments.open[0].pick, 127);
+    assert_eq!(
+        s.notice.as_ref().map(|n| n.text.as_str()),
+        Some("パッドに入りきらない 1 個は入れていません")
+    );
+}
+
+#[test]
+fn sample_io_windowed_arrows_keep_the_selected_zone_and_layer() {
+    let (_dir, files) = wavs(&["First_C3.wav", "Second_C3.wav", "Third_C4.wav"]);
+    for name in ["Sampler", "Drum Kit"] {
+        let (mut s, g, t, id) = window(name);
+        let paths: Vec<_> = files.iter().map(|path| json!({"path":path})).collect();
+        s.bind_window_io();
+        let mut args = json!({"id":id, "paths":paths});
+        if name == "Drum Kit" {
+            args["pad"] = json!("A6");
+            args["layers"] = json!(true);
+        }
+        assert!(s.run_command("plugin.samples.load", args));
+        s.wait_for_save();
+        assert!(s.error.is_none(), "{:?}", s.error);
+        let (pick, layer) = if name == "Drum Kit" { (5, 1) } else { (1, 0) };
+        s.instruments.pick(id, pick, layer);
+        for mark in [Mark::Next, Mark::Prev] {
+            press_spot(&mut s, &g, t, id, mark);
+            assert!(s.saving.is_some());
+            s.wait_for_save();
+            assert!(s.error.is_none(), "{:?}", s.error);
+            let w = s.instruments.open[0];
+            assert_eq!((w.pick, w.layer), (pick, layer));
+        }
+        assert!(plugin(&s, t).samples[1].ends_with("Second_C3.wav"));
+    }
+}
+
 /// N-smp-3, N-smp-4 (UI-334): with Shift the files dropped are the layers of one pad, and a
 /// drop off the pads goes to the pad chosen (an empty one), which stays chosen.
 #[test]

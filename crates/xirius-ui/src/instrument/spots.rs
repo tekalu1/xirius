@@ -460,6 +460,7 @@ impl Studio {
         // All of them in one load: one step, and the layers of a pad stay together.
         let list: Vec<_> = paths
             .iter()
+            .chain(other.iter())
             .map(|p| json!({ "path": p.to_string_lossy() }))
             .collect();
         let mut args = json!({ "id": w.plugin.to_string(), "paths": list });

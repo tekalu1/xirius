@@ -93,6 +93,93 @@ fn clips_in_song(s: &Studio) -> usize {
 }
 
 #[test]
+fn sample_io_windowed_empty_to_loaded_rebuilds_the_playing_route() {
+    for device in ["Sampler", "Drum Kit"] {
+        let mut s = Studio::new(Song::empty());
+        s.transport.mode = OutputMode::Silent { paced: true };
+        assert!(s.start_midi());
+        let t = s.pc_target().unwrap();
+        assert!(s.set_instrument(t, &Pick::built_in(device)));
+        let id = current(&s.project().tracks[&t]).unwrap().id;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("tone_C3.wav");
+        let wave: Vec<f32> = (0..48_000)
+            .map(|i| (i as f32 * 262.0 * std::f32::consts::TAU / 48_000.0).sin() * 0.5)
+            .collect();
+        xirius_session::export::write_wav(&file, &wave, &wave, 48_000, 16).unwrap();
+        s.show_instrument(t, id);
+        s.bind_window_io();
+        s.prepare_song();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while s.preparing.is_some() {
+            s.poll_preparing();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        let g = s.geometry(1600.0, 1000.0);
+        let part = if device == "Drum Kit" {
+            Part::Pad(36)
+        } else {
+            Part::Key(60)
+        };
+        let (x, y) = if device == "Drum Kit" {
+            s.instrument_center(&g, id, part).unwrap()
+        } else {
+            let w = s.instruments.open[0];
+            let p = s.project();
+            let (_, plugin, def) = super::window::live(&p, &w).unwrap();
+            let r = s.instruments.rect(0, g.size);
+            let b = s.instruments.body(r, plugin, def);
+            let r = b
+                .spots
+                .iter()
+                .find(|s| s.mark == crate::device::layout::Mark::Drop)
+                .unwrap()
+                .r;
+            (r.x + r.w / 2.0, r.y + 12.0)
+        };
+        assert!(s.window_drop(&g, x, y, &[file]));
+        assert!(s.saving.is_some());
+        s.wait_for_save();
+        assert!(s.error.is_none(), "{:?}", s.error);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while s.transport.step_swap().0 {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let (x, y) = s.instrument_center(&g, id, part).unwrap();
+        let probe = s
+            .transport
+            .host()
+            .unwrap()
+            .plugins()
+            .stock_probe(id)
+            .unwrap();
+        probe.watch(true);
+        assert!(s.instrument_down(&g, x, y));
+        wait_sounding(&mut s, id, |n| n > 0);
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut file_voice = false;
+        let mut peak = 0.0_f32;
+        loop {
+            file_voice |= probe.voice().is_some_and(|v| v.file);
+            let (_, output) = probe.take_peaks();
+            peak = peak.max(output[0]).max(output[1]);
+            if file_voice && peak > 0.001 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "a sample voice must replace the empty route and produce audio: {file_voice}, {peak}"
+            );
+            std::thread::sleep(Duration::from_millis(16));
+        }
+        assert!(s.instrument_up());
+        wait_sounding(&mut s, id, |n| n == 0);
+    }
+}
+
+#[test]
 fn plg_066_a_key_sounds_while_held_and_stops_when_let_go_unrecorded() {
     let (mut s, g, t, id) = played(DEFAULT);
     let before = clips_in_song(&s);
