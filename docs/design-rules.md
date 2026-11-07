@@ -21,6 +21,15 @@
 | 有彩色の塗りの面の上は ink_on_fill（mute・solo の札はその対の色）（UI-309） | `Fill`・`FillHover`・`Danger`・`DangerHover` の面に許す文字は `OnFill` だけ。画面の `Colors` は `primary`・`primary_hover` を面と文字の組（`Pair<Fill, OnFill>` から作る）で持ち、`Pen::transition_pair` で面と文字を一緒に切り替える | `draw::tests`: 入ったトグルは 2 テーマとも面が fill・文字が on_fill（4.5:1 以上）。`color_usage`: 今の `xirius-ui` は 0 件・もとのトグルは落ちる | `fill-ink` |
 | 一覧系は検索付きの共通部品（PickList）で作る（UI-320・UI-338） | 一覧を作る API は PickList だけ（`Popup` と設定の `OpenMenu` は `pick: Option<PickList>` を持ち、一覧の腕はすべて `pick_list::cells` を通る）。ドロップダウンの `Menu` は「その他」の操作のメニューだけ | 一覧を開く試験で検索の欄・↑↓ Enter・Esc の 2 段・当たり無しの表示を数える（`pick_list::tests`、設定の一覧は `settings::tests`） | `list-menu` |
 
+## アイコン
+
+インストゥルメントは、正面から見た白鍵 3 本と黒鍵 2 本の鍵盤（案 A、承認済み（2026-11-07））にする。
+24 × 24 のグリッドで、外形は (3, 5) から幅 18・高さ 14、角の半径 2。線幅は 1.6、端と角は丸くする。
+白鍵の境は x = 9 / 15 の y = 12〜19、塗りの黒鍵は x = 7.5〜10.5 / 13.5〜16.5 の y = 5〜12。
+色は置いた場所の文字色を使い、16 px 前後でも上の黒鍵と下の白鍵が分かる形を保つ。
+元は `xirius-ui/assets/icons/instrument.svg` の 1 つだけにし、`keys`・`piano` の役割と保存済みのアイコン名も同じ元へ解決する。
+トラック頭・ブラウザー・＋の一覧・インスペクター・ミキサー／ストリップ・楽器未選択の欄などで別の鍵盤を描かない。
+
 ## lint の使い方
 
 ## 画面・CLI・MCP の用語（ARC-027）

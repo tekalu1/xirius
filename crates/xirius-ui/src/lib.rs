@@ -152,6 +152,7 @@ mod insert_states;
 pub mod inspector;
 pub mod inspector_shots;
 pub mod instrument;
+pub mod instrument_icon_shots;
 mod interaction;
 mod io_command;
 pub mod keep;
@@ -409,6 +410,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("insert-flow", insert_flow_shots::SHOTS),
     ("inspector", inspector_shots::SHOTS),
     ("instrument", instrument::shots::SHOTS),
+    ("instrument-icon", instrument_icon_shots::SHOTS),
     ("instrument-menu", fixed_screens_shots::INSTRUMENT_MENU),
     ("keep", keep_shots::KEEP),
     ("key-sources", key_sources_shots::SHOTS),

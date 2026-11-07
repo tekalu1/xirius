@@ -84,7 +84,6 @@ const ICONS_HEAD: &[(&str, &[u8])] = icons!(
     "magnet-off",
     "history",
     "input",
-    "keys",
     "metronome",
     "mic",
     "more",
@@ -114,7 +113,6 @@ const ICONS_HEAD: &[(&str, &[u8])] = icons!(
     "moon",
     "shield",
     "plug",
-    "piano",
     "kbd",
     "latency",
     "swap",
@@ -217,7 +215,16 @@ pub const MARK_LAYERS: usize = 2;
 
 /// `icons/<name>.svg`
 pub fn icon(name: &str) -> SharedString {
+    let name = icon_source(name);
     SharedString::from(format!("icons/{name}.svg"))
+}
+
+/// Keyboard roles share the approved instrument drawing, including saved track icon choices.
+fn icon_source(name: &str) -> &str {
+    match name {
+        "keys" | "piano" => "instrument",
+        _ => name,
+    }
 }
 
 pub struct Assets;
@@ -238,7 +245,7 @@ impl AssetSource for Assets {
         let bytes = path
             .strip_prefix("icons/")
             .and_then(|rest| rest.strip_suffix(".svg"))
-            .and_then(|name| all_icons().find(|(n, _)| *n == name))
+            .and_then(|name| all_icons().find(|(n, _)| *n == icon_source(name)))
             .map(|(_, bytes)| Cow::Borrowed(*bytes));
         Ok(bytes)
     }
@@ -256,6 +263,25 @@ impl AssetSource for Assets {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyboard_roles_and_saved_icon_paths_use_one_instrument_source() {
+        let source = Assets.load("icons/instrument.svg").unwrap().unwrap();
+        for name in ["instrument", "keys", "piano"] {
+            assert_eq!(icon(name), "icons/instrument.svg");
+            assert_eq!(
+                Assets.load(&format!("icons/{name}.svg")).unwrap().unwrap(),
+                source
+            );
+        }
+        assert_eq!(
+            all_icons()
+                .filter(|(name, _)| *name == "instrument")
+                .count(),
+            1
+        );
+        assert_eq!(icon("midi"), "icons/midi.svg");
+    }
 
     #[test]
     fn every_icon_loads_and_is_an_svg() {
