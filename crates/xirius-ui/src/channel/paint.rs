@@ -381,6 +381,16 @@ fn paint_flow(pen: &mut Pen, s: &Studio, w: &ChannelWin, t: &Track, f: &Flow, se
         .filter(|l| meets(line_box(&l.pieces), seen))
         .collect();
     for state in [LineState::Rest, LineState::Hover, LineState::Selected] {
+        for (switch, keys) in &f.switches {
+            let lit = match state {
+                LineState::Rest => true,
+                LineState::Hover => hot.is_some_and(|k| keys.contains(&k)),
+                LineState::Selected => chosen.is_some_and(|k| keys.contains(&k)),
+            };
+            if lit {
+                pen.mute_switch(*switch, state);
+            }
+        }
         for link in &links {
             let lit = match state {
                 LineState::Rest => true,

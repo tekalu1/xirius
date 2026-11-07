@@ -15,7 +15,9 @@ use gpui::Hsla;
 use xirius_core::id::{NodeId, PluginId, TrackId};
 use xirius_core::model::{Plugin, Track, TrackKind};
 use xirius_core::rack::{RackNode, Source, SplitMode};
-use xirius_design::{FontSize, LinePiece, LineState, Radius, Space, StructureLine, Weight};
+use xirius_design::{
+    FontSize, LinePiece, LineState, MuteSwitch, Radius, Space, StructureLine, Weight,
+};
 
 use super::{MixerHit, ROW_H, meters};
 use crate::branch_value::{Focus, Place, Which, pan_text};
@@ -78,8 +80,6 @@ const SUB_BOTTOM: f32 = 6.0;
 const SUB_PAD: f32 = 4.0;
 const SUB_VAL: f32 = 26.0;
 pub(crate) const SUB_PAN: f32 = 30.0;
-/// The stub left of a splitter's line when every branch is muted.
-const MUTED_STUB: f32 = 4.0;
 /// The level bar: its rail and its cap.
 const RAIL: f32 = 3.0;
 const CAP_W: f32 = 4.0;
@@ -1598,24 +1598,16 @@ pub fn pieces(flow: &Flow) -> Vec<Vec<LinePiece>> {
             Kind::Split { id, open: true, .. } => {
                 let d = dot(*row, l);
                 let from = (d.x + d.w / 2.0, d.bottom() + inset);
-                // a muted branch has no hook: its line is cut (MIX-045, approved 2026-11-06)
-                let mut live = 0;
                 for (h, hr) in flow.rows[i + 1..]
                     .iter()
                     .filter(|(h, _)| h.heads == Some(id))
                 {
-                    if h.target.is_some_and(|x| x.mute) {
-                        continue;
-                    }
-                    live += 1;
                     let hd = dot(*hr, h);
-                    out.push(StructureLine::hook(from, (hd.x - inset, hd.y + hd.h / 2.0)));
-                }
-                if live == 0 {
-                    out.push(vec![LinePiece::Straight {
-                        from,
-                        to: (from.0, from.1 + MUTED_STUB),
-                    }]);
+                    let mut to = (hd.x - inset, hd.y + hd.h / 2.0);
+                    if h.target.is_some_and(|x| x.mute) {
+                        to.0 -= MuteSwitch::STRIP_GAP;
+                    }
+                    out.push(StructureLine::hook(from, to));
                 }
             }
             Kind::Instrument { id, .. } => {
@@ -1642,6 +1634,24 @@ fn structure(pen: &mut Pen, flow: &Flow) {
     for p in pieces(flow) {
         pen.structure(&p, LineState::Rest);
     }
+    for switch in switches(flow) {
+        pen.mute_switch(switch, LineState::Rest);
+    }
+}
+
+/// Each muted branch opens the arm immediately before its row's power dot.
+pub fn switches(flow: &Flow) -> Vec<MuteSwitch> {
+    flow.rows
+        .iter()
+        .filter(|(l, _)| l.heads.is_some() && l.target.is_some_and(|t| t.mute))
+        .map(|(l, row)| {
+            let d = dot(*row, l);
+            MuteSwitch::horizontal((
+                d.x - StructureLine::inset(true) - MuteSwitch::STRIP_GAP,
+                d.y + d.h / 2.0,
+            ))
+        })
+        .collect()
 }
 
 #[cfg(test)]

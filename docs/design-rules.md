@@ -122,11 +122,12 @@ let d = div().border_1(); // design-lint: allow(border) 同じ行にも書ける
 - 曲がる線（UI-321）: チャンネルエディターとストリップの経路も、同じ構造線で描く。太さ・両端・色の 3 つの状態は変えない。
   - 直線は縦か横だけ。曲がる所は四分円だけで、半径は `StructureLine::RADIUS`（Radius::S、8）。間が詰まっているときは、四分円のまま小さくする。
     S 字のベジェや斜めの線は使わない。
+  - **承認済み（2026-11-07）・MIX-045**: ミュートした分岐の開いたスイッチだけ、切れ目の上流側の刃を斜めに開く。エディターは頭の下の中央の縦線（切れ目 12px、右へ 11px）、ストリップ 116・252 は分岐の行へ入る横線（切れ目 8px、上へ 8px）。入れ子も同じ。太さ 2px・丸い端・構造線の色を継承し、黄色の M と通常の名前を残す。寸法と向きは `MuteSwitch` に限定し、`LinePiece::Straight` の斜め線は引き続き不正とする。
   - 線は縦 → 四分円 → 横 → 四分円 → 縦とつなぐ（`StructureLine::elbow`）。ストリップの分岐は、縦 → 四分円 → 横で止める（`hook`）。
   - 分かれる所と合わさる所は、中央の縦の線から左右へ四分円で開く「かっこ」にする（`bracket`）。分岐が 1 本なら、まっすぐの縦の線だけ。
   - 合流の点・矢印・分岐の点は打たない。向きは上から下で決まっている。
   - 端は部品の縁から `END_INSET`（8）手前で止める。ストリップの 22 の行の中だけは、`TIGHT_INSET`（Space::X1、4）にする（`StructureLine::inset`）。
-  - 描くのは `Pen::structure` だけ（`paint_path` の線と、端の丸）。色は `line_structure`・`line_structure_hover`・`line_structure_selected` だけ。
+  - 経路を描くのは `Pen::structure` だけ（`paint_path` の線と、端の丸）。上記のミュートスイッチの刃と接点の端だけは `Pen::mute_switch` が描く。色は両方とも `line_structure`・`line_structure_hover`・`line_structure_selected` だけ。
   - 試験: `structure` の単体テストで、四分円でない曲がりと斜めの線を断ること、どの形でも曲がりが四分円であること、端の離れを見る。
 
 ## 例外: 時間のグリッドの線（UI-339）

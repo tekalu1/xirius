@@ -1,16 +1,17 @@
 //! Where the channel editor's flow puts things (MIX-042): the input at the top, the chain
 //! down the middle, a splitter's branches side by side under it with a head over each, a
 //! multi-instrument's layers fanned out from the MIDI, and the output at the bottom. The
-//! structure lines join them with straight runs and quarter circles only (the mock's
+//! structure lines join them with straight runs and quarter circles (the mock's
 //! `mixer-flow.html` s03); every line knows the parts it touches, so the one under the
-//! pointer and the chosen one light their own paths.
+//! pointer and the chosen one light their own paths. Only muted branches have an open diagonal
+//! blade, as approved on 2026-11-07 (MIX-045).
 
 use std::borrow::Cow;
 
 use xirius_core::id::{NodeId, PluginId};
 use xirius_core::model::{PluginKind, Project, Track, TrackKind};
 use xirius_core::rack::{Branch, Layer, Rack, RackNode, Source, Split, SplitMode};
-use xirius_design::{FontSize, LinePiece, StructureLine};
+use xirius_design::{FontSize, LinePiece, MuteSwitch, StructureLine};
 
 use crate::draw::estimated_text_width;
 use crate::mixer::flow::{Pick, Target};
@@ -43,7 +44,7 @@ pub const COL_GAP: f32 = 8.0;
 pub const ADD_BTN: f32 = 24.0;
 const ADD_ROOM: f32 = COL_GAP + 4.0 + ADD_BTN;
 /// The cut in a muted branch's line under its head (MIX-045, approved 2026-11-06).
-pub const MUTE_CUT: f32 = 12.0;
+pub const MUTE_CUT: f32 = MuteSwitch::EDITOR_GAP;
 /// A gap's ＋.
 pub const GAP_BTN: f32 = 20.0;
 const INSET: f32 = StructureLine::END_INSET;
@@ -176,6 +177,7 @@ pub struct Flow {
     pub slots: Vec<Slot>,
     pub crosses: Vec<Cross>,
     pub links: Vec<Link>,
+    pub switches: Vec<(MuteSwitch, Vec<Key>)>,
     /// Each splitter's ＋ that adds a branch; a channel split has none.
     pub adds: Vec<Add>,
 }
@@ -427,6 +429,9 @@ impl Flow {
         self.slots.iter_mut().for_each(|s| r(&mut s.mark));
         self.crosses.iter_mut().for_each(|c| r(&mut c.rect));
         self.adds.iter_mut().for_each(|a| r(&mut a.rect));
+        for (switch, _) in &mut self.switches {
+            *switch = switch.translated(dx, dy);
+        }
         for piece in self.links.iter_mut().flat_map(|l| &mut l.pieces) {
             match piece {
                 LinePiece::Straight { from, to } => {
@@ -686,6 +691,10 @@ impl Flow {
             let room = Rect::new(cx - 1.0, top, 2.0, CARD_H);
             let (stop, go) = if b.mute {
                 let mid = top + CARD_H / 2.0;
+                self.switches.push((
+                    MuteSwitch::vertical((cx, mid - MUTE_CUT / 2.0)),
+                    inside.clone(),
+                ));
                 (mid - MUTE_CUT / 2.0, mid + MUTE_CUT / 2.0)
             } else {
                 (room.y, room.y)
@@ -708,6 +717,10 @@ impl Flow {
         // A muted branch's line stops under its head and goes on after the cut.
         let fan = if b.mute {
             let mid = top + STEP / 2.0;
+            self.switches.push((
+                MuteSwitch::vertical((cx, mid - MUTE_CUT / 2.0)),
+                inside.clone(),
+            ));
             self.line(
                 (fan.x, fan.y + fan.inset),
                 (cx, mid - MUTE_CUT / 2.0),
