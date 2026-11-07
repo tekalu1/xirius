@@ -52,7 +52,7 @@ pub use pair::{
     ALLOWED, Ink, InkKind, Pair, Readable, ReadableOn, Resolved, Surface, SurfaceKind, ink, surface,
 };
 pub use palette::token_names;
-pub use structure::{LinePiece, LineState, StructureLine};
+pub use structure::{LinePiece, LineState, MuteSwitch, StructureLine};
 pub use theme::Theme;
 pub use toggle::{SwitchFace, Toggle, ToggleFace};
 pub use track::{SectionFace, TrackColor};

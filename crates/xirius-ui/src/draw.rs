@@ -15,7 +15,8 @@ use gpui::{
 use xirius_core::id::Node;
 use xirius_core::model::{ClipBody, Project, Track};
 use xirius_design::{
-    FontSize, Layout, LinePiece, LineState, Radius, Space, StructureLine, TrackColor, Weight,
+    FontSize, Layout, LinePiece, LineState, MuteSwitch, Radius, Space, StructureLine, TrackColor,
+    Weight,
 };
 
 use crate::assets::icon;
@@ -489,6 +490,32 @@ impl Pen<'_> {
                 StructureLine::THICKNESS,
             );
             self.round(dot, color, StructureLine::CAP);
+        }
+    }
+
+    /// Only the approved mute switch can paint a diagonal structure mark.
+    pub(crate) fn mute_switch(&mut self, switch: MuteSwitch, state: LineState) {
+        let color = self.c.line[LineState::ALL.iter().position(|s| *s == state).unwrap_or(0)];
+        let (ox, oy) = self.origin;
+        let at = |p: (f32, f32)| point(px(ox + p.0), px(oy + p.1));
+        let mut path = PathBuilder::stroke(px(StructureLine::THICKNESS));
+        path.move_to(at(switch.hinge()));
+        path.line_to(at(switch.tip()));
+        if let Ok(path) = path.build() {
+            self.window.paint_path(path, color);
+        }
+        let half = StructureLine::THICKNESS / 2.0;
+        for (x, y) in [switch.hinge(), switch.tip(), switch.contact()] {
+            self.round(
+                Rect::new(
+                    x - half,
+                    y - half,
+                    StructureLine::THICKNESS,
+                    StructureLine::THICKNESS,
+                ),
+                color,
+                StructureLine::CAP,
+            );
         }
     }
 

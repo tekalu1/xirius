@@ -39,6 +39,62 @@ impl LineState {
 #[derive(Clone, Copy, Debug)]
 pub struct StructureLine;
 
+/// A muted branch's open contact (MIX-045, approved 2026-11-07).
+/// The only diagonal structure mark: callers cannot choose the blade's angle or length.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MuteSwitch {
+    hinge: (f32, f32),
+    horizontal: bool,
+}
+
+impl MuteSwitch {
+    pub const EDITOR_GAP: f32 = 12.0;
+    pub const STRIP_GAP: f32 = 8.0;
+
+    pub fn vertical(hinge: (f32, f32)) -> Self {
+        Self {
+            hinge,
+            horizontal: false,
+        }
+    }
+
+    pub fn horizontal(hinge: (f32, f32)) -> Self {
+        Self {
+            hinge,
+            horizontal: true,
+        }
+    }
+
+    pub fn hinge(self) -> (f32, f32) {
+        self.hinge
+    }
+
+    pub fn tip(self) -> (f32, f32) {
+        let (x, y) = self.hinge;
+        if self.horizontal {
+            (x + Self::STRIP_GAP, y - 8.0)
+        } else {
+            (x + 11.0, y + Self::EDITOR_GAP)
+        }
+    }
+
+    pub fn contact(self) -> (f32, f32) {
+        let (x, y) = self.hinge;
+        if self.horizontal {
+            (x + Self::STRIP_GAP, y)
+        } else {
+            (x, y + Self::EDITOR_GAP)
+        }
+    }
+
+    pub fn translated(self, dx: f32, dy: f32) -> Self {
+        Self {
+            hinge: (self.hinge.0 + dx, self.hinge.1 + dy),
+            ..self
+        }
+    }
+}
+
 impl StructureLine {
     /// 太さ（px）。
     pub const THICKNESS: f32 = 2.0;
@@ -365,6 +421,34 @@ mod tests {
             radius: 8.0,
         };
         assert!(!off_axis.is_lawful(), "ends off the axes");
+    }
+
+    #[test]
+    fn mute_blades_have_only_the_two_approved_shapes() {
+        for (switch, tip, contact) in [
+            (
+                MuteSwitch::vertical((20.0, 30.0)),
+                (31.0, 42.0),
+                (20.0, 42.0),
+            ),
+            (
+                MuteSwitch::horizontal((20.0, 30.0)),
+                (28.0, 22.0),
+                (28.0, 30.0),
+            ),
+        ] {
+            assert_eq!(switch.tip(), tip);
+            assert_eq!(switch.contact(), contact);
+            assert!(
+                !LinePiece::Straight {
+                    from: switch.hinge(),
+                    to: switch.tip()
+                }
+                .is_lawful()
+            );
+            let shifted = switch.translated(5.0, -3.0);
+            assert_eq!(shifted.tip(), (tip.0 + 5.0, tip.1 - 3.0));
+        }
     }
 
     #[test]

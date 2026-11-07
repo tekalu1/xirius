@@ -1,5 +1,5 @@
 //! The branches of a splitter in the channel editor, as approved on 2026-11-06 (MIX-045): the
-//! ＋ right of the columns, the ✖ that always deletes, a muted branch's cut line and the head's
+//! ＋ right of the columns, the ✖ that always deletes, a muted branch's open switch and the head's
 //! level and pan typed and stepped as a device's knob is (UI-324).
 
 use serde_json::json;
@@ -330,6 +330,20 @@ fn mix_045_a_muted_branch_cuts_its_line_and_keeps_its_name() {
         assert!(s.run_command("rack.branch.set", json!({"id": n, "mute": "on"})));
         // a gap of MUTE_CUT under the head; the line goes on after it
         assert_eq!(cut(&s, n), (true, false, true), "muted");
+        let v = s.channel_view(&g).unwrap();
+        let (switch, _) = v
+            .flow
+            .switches
+            .iter()
+            .find(|(_, keys)| keys.contains(&flow::Key::Node(n)))
+            .unwrap();
+        let col = column(&v, n);
+        assert_eq!(switch.hinge().0, col.head.x + col.head.w / 2.0);
+        assert_eq!(switch.tip().0 - switch.hinge().0, 11.0);
+        assert_eq!(
+            paint::resting_branch_name(&col).unwrap().0,
+            format!("分岐 {}", col.n)
+        );
     }
     assert_eq!(cut(&s, b[0]), (true, true, true), "the others stay");
     // At rest the head keeps the yellow M; the name is not dimmed (the same ink).
@@ -339,6 +353,11 @@ fn mix_045_a_muted_branch_cuts_its_line_and_keeps_its_name() {
         "{labels:?}"
     );
     assert!(labels.iter().any(|l| l == "分岐 2 の音量"), "{labels:?}");
+    for n in [b[1], empty] {
+        assert!(s.run_command("rack.branch.set", json!({"id":n,"mute":"off"})));
+        assert_eq!(cut(&s, n), (true, true, true));
+    }
+    assert!(s.channel_view(&g).unwrap().flow.switches.is_empty());
 }
 
 #[test]

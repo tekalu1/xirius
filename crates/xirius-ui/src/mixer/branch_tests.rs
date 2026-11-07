@@ -1,5 +1,5 @@
 //! A splitter's branches on the strip, as approved on 2026-11-06 (MIX-045): the ＋ at the end
-//! of the splitter's row, the pan on a wide strip's level row, a muted branch with no hook and
+//! of the splitter's row, the pan on a wide strip's level row, a muted branch's open switch and
 //! the level row typed and stepped as a device's knob is (UI-324).
 
 use super::*;
@@ -153,7 +153,7 @@ fn mix_045_the_level_row_is_typed_and_stepped_as_a_knob() {
 }
 
 #[test]
-fn mix_045_a_muted_branch_has_no_hook_and_all_muted_leave_a_stub() {
+fn mix_045_a_muted_branch_opens_a_switch_and_unmuting_restores_the_hook() {
     let (mut s, g) = studio();
     let (t, sp, b, _) = vocal(&mut s);
     let hooks = |s: &Studio| {
@@ -169,12 +169,37 @@ fn mix_045_a_muted_branch_has_no_hook_and_all_muted_leave_a_stub() {
             .collect::<Vec<_>>()
     };
     assert_eq!(hooks(&s).len(), 2);
+    let original = flow::pieces(&flow_of(&s, &g, t));
+    assert!(flow::switches(&flow_of(&s, &g, t)).is_empty());
     assert!(s.run_command("rack.branch.set", json!({"id": b[0], "mute": "on"})));
-    assert_eq!(hooks(&s).len(), 1);
+    assert_eq!(hooks(&s).len(), 2);
+    assert_eq!(flow::switches(&flow_of(&s, &g, t)).len(), 1);
     assert!(s.run_command("rack.branch.set", json!({"id": b[1], "mute": "on"})));
-    let stub = hooks(&s);
-    assert_eq!(stub.len(), 1);
-    assert_eq!(stub[0].0, 1, "a short straight stub");
+    assert_eq!(hooks(&s).len(), 2);
+    for wide in [false, true] {
+        if wide {
+            s.mixer.wide.insert(t);
+        }
+        let f = flow_of(&s, &g, t);
+        let switches = flow::switches(&f);
+        assert_eq!(switches.len(), 2);
+        for switch in switches {
+            assert_eq!(switch.tip().1, switch.hinge().1 - 8.0);
+            assert!(switch.tip().0 > switch.hinge().0);
+        }
+        assert!(
+            flow::pieces(&f)
+                .iter()
+                .all(|p| xirius_design::StructureLine::lawful(p))
+        );
+    }
+    s.mixer.wide.remove(&t);
+    for id in b {
+        assert!(s.run_command("rack.branch.set", json!({"id":id,"mute":"off"})));
+    }
+    let f = flow_of(&s, &g, t);
+    assert!(flow::switches(&f).is_empty());
+    assert_eq!(flow::pieces(&f), original);
 }
 
 #[test]
