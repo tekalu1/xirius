@@ -207,6 +207,7 @@ fn moving_a_region_keeps_its_sound() {
     let s = start(Config::default(), None);
     s.sync(&song(vec![clip(3601, "e.wav", &audio, 0.0, 0.0, 1.0)]));
     let before = ready(&s, 3601);
+    let cached = s.analysis_archive().expect("analysis cache");
     let generation = s.generation();
     for step in 1..=5 {
         s.sync(&song(vec![clip(
@@ -226,6 +227,10 @@ fn moving_a_region_keeps_its_sound() {
     assert_eq!(after.phase, Phase::Ready);
     assert!(Arc::ptr_eq(&before, after.rendered.as_ref().unwrap()));
     assert!(s.generation() >= generation);
+    assert!(Arc::ptr_eq(
+        &cached,
+        &s.analysis_archive().expect("kept analysis cache")
+    ));
     assert!(s.close(Instant::now() + WAIT));
     no_violations();
 }
@@ -525,7 +530,12 @@ fn changing_the_full_musical_map_sends_one_notification() {
     service.sync(&song);
     assert!(service.wait_idle(Instant::now() + WAIT));
     assert_eq!(service.probe(WAIT).unwrap().musical_updates, 1);
-    assert_eq!(ready(&service, 9001).left, before.left);
+    let after = ready(&service, 9001);
+    assert_eq!(after.left, before.left);
+    assert!(
+        Arc::ptr_eq(&after, &before),
+        "grid-only notices redrew the audio"
+    );
     service.sync(&song);
     assert!(service.wait_idle(Instant::now() + WAIT));
     assert_eq!(service.probe(WAIT).unwrap().musical_updates, 1);
@@ -559,6 +569,14 @@ fn loop_regions_share_edits_and_resize_without_preparing_again() {
     ready(&service, 9002);
     fake::edit(&modification_id(9002), 0.5);
     until("the plugin edit", || service.take_dirty());
+    until("the edited loop render", || {
+        service.state(9002).is_some_and(|state| {
+            state.phase == Phase::Ready
+                && state
+                    .rendered
+                    .is_some_and(|r| (r.left[20] - 0.2).abs() < 1e-6)
+        })
+    });
     let edited = ready(&service, 9002);
     for i in (20..edited.left.len()).step_by(97) {
         assert!((edited.left[i] - 0.2).abs() < 1e-6, "frame {i}");
@@ -617,6 +635,78 @@ fn completed_analysis_is_cached_and_changed_audio_invalidates_it() {
     let p = service.probe(WAIT).unwrap();
     assert_eq!(p.analysis_requests, 1);
     assert_eq!(p.analysis_starts, 1);
+    assert!(service.close(Instant::now() + WAIT));
+    no_violations();
+}
+#[test]
+fn excessive_loop_regions_fail_before_creating_a_renderer() {
+    let audio = tone(48000.0, 0.1, 0.2);
+    let mut spec = clip(9004, "limit.wav", &audio, 0.0, 0.0, 0.1);
+    spec.regions = vec![
+        xirius_ara::document::RegionProps {
+            start_in_modification: 0.0,
+            duration_in_modification: 0.1,
+            start_in_playback: 0.0,
+            duration_in_playback: 0.1,
+        };
+        xirius_ara::service::MAX_REGIONS_PER_CLIP + 1
+    ];
+    let service = start(Config::default(), None);
+    service.sync(&song(vec![spec]));
+    until("the region limit", || {
+        service
+            .state(9004)
+            .is_some_and(|s| s.phase == Phase::Failed)
+    });
+    let probe = service.probe(WAIT).unwrap();
+    assert_eq!(probe.regions, 0);
+    assert_eq!(probe.preparations, 0);
+    assert!(service.close(Instant::now() + WAIT));
+    no_violations();
+}
+#[test]
+fn a_legacy_archive_keeps_edits_and_rebuilds_its_unverified_analysis() {
+    let audio = tone(48000.0, 1.0, 0.5);
+    let key = 9005;
+    let legacy = serde_json::to_vec(&serde_json::json!({
+        "archive": fake::ARCHIVE_ID,
+        "modifications": { (modification_id(key)): 0.5 }
+    }))
+    .unwrap();
+    let service = start(Config::default(), Some((legacy, fake::ARCHIVE_ID.into())));
+    service.sync(&song(vec![clip(key, "legacy.wav", &audio, 0.0, 0.0, 1.0)]));
+    let restored = ready(&service, key);
+    assert!((peak(&restored.left) - peak(&audio.channels[0]) * 0.5).abs() < 1e-6);
+    assert_eq!(service.probe(WAIT).unwrap().analysis_requests, 1);
+    assert!(!service.take_dirty());
+    assert!(service.close(Instant::now() + WAIT));
+    no_violations();
+}
+
+#[test]
+fn replacing_the_file_releases_its_old_modification_before_the_source() {
+    let audio = Arc::new(SourceAudio::stereo(
+        48000.0,
+        vec![0.4; 48000],
+        vec![0.4; 48000],
+    ));
+    let mut spec = clip(9006, "original.wav", &audio, 0.0, 0.0, 1.0);
+    let service = start(Config::default(), None);
+    service.sync(&song(vec![spec.clone()]));
+    ready(&service, 9006);
+    fake::edit(&modification_id(9006), 0.5);
+    until("the edit", || service.take_dirty());
+    spec.source = source_id("replacement.wav");
+    spec.audio = Arc::new(SourceAudio::stereo(
+        48000.0,
+        vec![0.3; 48000],
+        vec![0.3; 48000],
+    ));
+    service.sync(&song(vec![spec]));
+    assert!(service.wait_idle(Instant::now() + WAIT));
+    let rendered = ready(&service, 9006);
+    assert!((rendered.left[100] - 0.3).abs() < 1e-6);
+    assert_eq!(service.probe(WAIT).unwrap().analysis_requests, 2);
     assert!(service.close(Instant::now() + WAIT));
     no_violations();
 }

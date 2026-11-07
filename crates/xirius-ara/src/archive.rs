@@ -8,8 +8,8 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize};
 
-/// The version of this wrapper. A higher one is not read.
-pub const VERSION: u32 = 1;
+/// Version 2 permits the service's source-fingerprint envelope. A higher one is not read.
+pub const VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Archive {
@@ -18,7 +18,7 @@ pub struct Archive {
     pub plugin: String,
     /// The plugin's archive id, for its compatible ids on restore.
     pub archive_id: String,
-    /// The plugin's bytes, in base64.
+    /// Archive payload in base64 (the service adds a source-fingerprint envelope).
     pub data: String,
 }
 
@@ -54,7 +54,7 @@ mod tests {
     fn an_archive_keeps_its_bytes_and_says_its_version() {
         let a = Archive::new("vst3:abc", "com.example.doc", &[0, 1, 2, 255]);
         let json = serde_json::to_string(&a).unwrap();
-        assert!(json.contains("\"version\":1"));
+        assert!(json.contains("\"version\":2"));
         let b: Archive = serde_json::from_str(&json).unwrap();
         assert_eq!(b.bytes().unwrap(), vec![0, 1, 2, 255]);
         assert!(b.readable_by("com.example.doc", &[]));

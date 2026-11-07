@@ -286,7 +286,24 @@ fn a_real_plugin_through_the_songs_clips() {
         .zip(&again.left)
         .map(|(a, b)| a - b)
         .collect();
-    assert!(rms(&difference) < 1e-5, "tempo changed the rendered sound");
+    println!(
+        "ARA3 tempo difference rms {}, kept_render {}",
+        rms(&difference),
+        Arc::ptr_eq(&mapped_audio, &again)
+    );
+    assert!(
+        rms(&difference) < 1e-5,
+        "tempo changed the rendered sound: {}",
+        rms(&difference)
+    );
+    let updated_notes = s.notes(1, false, WAIT);
+    assert_eq!(
+        updated_notes
+            .iter()
+            .map(|n| n.frequency)
+            .collect::<Vec<_>>(),
+        notes.iter().map(|n| n.frequency).collect::<Vec<_>>()
+    );
     println!("ARA3 tempo: complete maps, one notification, unchanged audio");
     // Repeated regions refer to the same modification and keep the prepared renderer.
     let prepared = s.probe(WAIT).unwrap().preparations;
@@ -326,6 +343,40 @@ fn a_real_plugin_through_the_songs_clips() {
         }
     }
     println!("ARA3 loops: counts 4/7/2/4, same modification and processing setup");
+
+    let before_load = s.probe(WAIT).unwrap();
+    let spec = &mut mapped.clips[0];
+    spec.start = 0.0;
+    spec.offset = 0.125;
+    spec.duration = 3.2;
+    spec.regions = (0..64)
+        .map(|i| xirius_ara::document::RegionProps {
+            start_in_modification: 0.125,
+            duration_in_modification: 0.05,
+            start_in_playback: i as f64 * 0.05,
+            duration_in_playback: 0.05,
+        })
+        .collect();
+    let load_started = Instant::now();
+    s.sync(&mapped);
+    assert!(s.wait_idle(Instant::now() + WAIT));
+    let load = s.probe(WAIT).unwrap();
+    let loaded = s.state(1).unwrap().rendered.unwrap();
+    assert_eq!(load.regions, 64);
+    assert_eq!(load.preparations, before_load.preparations);
+    assert_eq!(load.analysis_requests, before_load.analysis_requests);
+    assert!(loaded.left.iter().all(|v| v.is_finite()));
+    println!(
+        "ARA3 load: regions=64 elapsed={:?} frames={} source_reads={} prepare_delta=0 analysis_delta=0",
+        load_started.elapsed(),
+        loaded.left.len(),
+        load.reads - before_load.reads
+    );
+    assert!(
+        rms(&loaded.left) > 0.01,
+        "the short repeated regions played silence"
+    );
+
     assert!(s.close(Instant::now() + WAIT));
 
     // The song: attach, analysis, playback, written and opened again, detach.
@@ -374,14 +425,6 @@ fn a_real_plugin_through_the_songs_clips() {
     assert!(song.project().ara.archives.contains_key(UID));
     assert!(!song.is_dirty());
     write_wav(&folder.join("tune.wav"), &samples, &samples, RATE, 32).unwrap();
-    assert!(
-        player
-            .ara()
-            .doc(UID)
-            .unwrap()
-            .service()
-            .close(Instant::now() + WAIT)
-    );
     drop(player);
     let mut reopened = Session::open_with(&folder, shared_registry()).unwrap();
     commands::attach(
@@ -436,6 +479,10 @@ fn a_real_plugin_through_the_songs_clips() {
     player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
     let dry = render(&mut player, &p, 4);
     assert!(stopped(&player).is_none());
+    until("the detached document's final archive", || {
+        player.ara().take_arrived(&p);
+        player.ara().reports().is_empty()
+    });
     println!(
         "5. detached: rms {:.4}, the plugin's documents {}",
         rms(&dry),

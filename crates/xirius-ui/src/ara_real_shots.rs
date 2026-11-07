@@ -192,6 +192,20 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
     if n == 0 {
         s.drawer_open = false;
         s.mixer.scan.auto = false;
+        // Preparation and reopening read the catalogue from disk too. Keep this fixture
+        // in the isolated profile, so the run never depends on the user's scan cache.
+        xirius_plugins::CacheFile {
+            bundles: vec![xirius_plugins::BundleRecord {
+                path: entry.path.clone(),
+                fingerprint: xirius_plugins::fingerprint(&entry.path),
+                entries: vec![entry.clone()],
+                failure: None,
+                probe_ms: 0,
+            }],
+            ..Default::default()
+        }
+        .write(s.song.plugin_cache())
+        .unwrap();
         s.use_plugins(Catalog {
             entries: vec![entry.clone()],
             failures: Vec::new(),

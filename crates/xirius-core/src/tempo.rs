@@ -62,7 +62,7 @@ impl TempoMap {
     /// Ramps use the bound |f''| * span² / 8 on linear interpolation error. The last
     /// anchor extends the final constant tempo, including songs with just one tempo point.
     pub fn linear_time_points(&self, max_error: f64) -> Vec<(f64, f64)> {
-        let mut out = Vec::new();
+        let mut out = vec![(-60.0 / self.pts[0].bpm, -1.0)];
         for (i, p) in self.pts.iter().enumerate() {
             out.push((p.secs, p.tick as f64 / self.ppq));
             if let Some(n) = self.pts.get(i + 1) {

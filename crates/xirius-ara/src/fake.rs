@@ -258,6 +258,7 @@ enum Pending {
     Progress(Ref, i32, f32),
     SourceContent(Ref),
     ModificationContent(Ref),
+    ModificationMetadata(Ref),
     RegionContent(Ref),
     DocumentData,
     Position(f64),
@@ -448,6 +449,13 @@ unsafe extern "C" fn notify_model_updates(r: Ref) {
                     std::ptr::null(),
                     sys::UPDATE_EVERYTHING,
                 ),
+                Pending::ModificationMetadata(m) => (model
+                    .notify_audio_modification_content_changed)(
+                    mref,
+                    m,
+                    std::ptr::null(),
+                    sys::UPDATE_SIGNAL_SCOPE_REMAINS_UNCHANGED,
+                ),
                 Pending::RegionContent(reg) => (model.notify_playback_region_content_changed)(
                     mref,
                     reg,
@@ -553,7 +561,7 @@ unsafe extern "C" fn update_musical_context_content(
             .map(|reg| s.modifications[&reg.modification].host)
             .collect();
         for m in changed {
-            s.pending.push(Pending::ModificationContent(m));
+            s.pending.push(Pending::ModificationMetadata(m));
         }
     }
 }
@@ -1134,9 +1142,8 @@ fn read_archive(d: &Dc, reader: Ref) -> Bool {
         use base64::Engine;
         for source in s.sources.values_mut() {
             if let Some(stored) = sources.get(&source.id) {
-                let channels: Option<Vec<Vec<f32>>> = stored["channels"]
-                    .as_array()
-                    .map(|channels| {
+                let channels: Option<Vec<Vec<f32>>> =
+                    stored["channels"].as_array().and_then(|channels| {
                         channels
                             .iter()
                             .map(|channel| {
@@ -1145,16 +1152,15 @@ fn read_archive(d: &Dc, reader: Ref) -> Bool {
                                     .ok()?;
                                 Some(
                                     bytes
-                                        .chunks_exact(4)
-                                        .map(|b| {
-                                            f32::from_le_bytes(b.try_into().expect("four bytes"))
-                                        })
+                                        .as_chunks::<4>()
+                                        .0
+                                        .iter()
+                                        .map(|b| f32::from_le_bytes(*b))
                                         .collect(),
                                 )
                             })
                             .collect()
-                    })
-                    .flatten();
+                    });
                 if let Some(channels) = channels {
                     source.cache = Arc::new(channels);
                     source.peak = stored["peak"].as_f64().unwrap_or(0.0) as f32;

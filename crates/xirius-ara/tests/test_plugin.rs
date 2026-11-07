@@ -73,7 +73,10 @@ fn until(what: &str, f: impl Fn() -> bool) {
 fn ready(s: &Service, key: u64) -> Arc<xirius_ara::service::Rendered> {
     until("the render", || {
         if let Some(why) = s.crashed().or(s.failed()) {
-            panic!("the plugin stopped: {why}");
+            panic!(
+                "the plugin stopped: {why}; asserts {:?}",
+                xirius_ara::document::asserts()
+            );
         }
         s.state(key).is_some_and(|c| c.phase == Phase::Ready)
     });
@@ -228,8 +231,51 @@ fn the_ara_test_plugin_passes_every_step() {
     }
     println!("step 8: loop regions grow/shrink/undo, unchanged prepare count");
 
+    let before_load = s.probe(WAIT).unwrap();
+    let spec = &mut mapped.clips[0];
+    spec.start = 0.0;
+    spec.offset = 0.125;
+    spec.duration = 3.2;
+    spec.regions = (0..64)
+        .map(|i| xirius_ara::document::RegionProps {
+            start_in_modification: 0.125,
+            duration_in_modification: 0.05,
+            start_in_playback: i as f64 * 0.05,
+            duration_in_playback: 0.05,
+        })
+        .collect();
+    let load_started = Instant::now();
+    s.sync(&mapped);
+    assert!(s.wait_idle(Instant::now() + WAIT));
+    let load = s.probe(WAIT).unwrap();
+    let loaded = s.state(1).unwrap().rendered.unwrap();
+    assert_eq!(load.regions, 64);
+    assert_eq!(load.preparations, before_load.preparations);
+    assert_eq!(load.analysis_requests, before_load.analysis_requests);
+    assert!(loaded.left.iter().all(|v| v.is_finite()));
+    println!(
+        "ARA3 load: regions=64 elapsed={:?} frames={} source_reads={} prepare_delta=0 analysis_delta=0",
+        load_started.elapsed(),
+        loaded.left.len(),
+        load.reads - before_load.reads
+    );
+    for (frame, sample) in loaded.left.iter().enumerate() {
+        assert!(
+            (*sample - audio.channels[0][6000 + frame % 2400]).abs() < 1e-4,
+            "short loop frame {frame}"
+        );
+    }
+
     let p = s.probe(WAIT).unwrap();
     assert_eq!(p.asserts, 0, "the plugin asserted: {}", p.last_assert);
     assert!(s.close(Instant::now() + WAIT));
-    println!("step 7: the document was taken down without asserts");
+    // This executable has closed every document and will create no more. Finish the SDK
+    // factory too, so its process-exit destructor is included in the zero-assert check.
+    let binary = Vst3Binary::load(&path, None).unwrap();
+    let factory = xirius_ara::service::Binary::factory(&binary);
+    // SAFETY: the module keeps the factory alive and all its document controllers are gone.
+    unsafe { ((*factory).uninitialize_ara)() };
+    let (asserts, last) = xirius_ara::document::asserts();
+    assert_eq!(asserts, 0, "teardown asserted: {last}");
+    println!("step 9: the document was taken down without asserts");
 }
