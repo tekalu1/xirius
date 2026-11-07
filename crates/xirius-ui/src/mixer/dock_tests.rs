@@ -112,7 +112,7 @@ fn another_row_takes_the_face_and_a_window_of_its_own_keeps_it() {
 #[test]
 fn the_face_opens_as_a_window_from_its_bar() {
     let (mut s, g, _, eq) = picked(1600.0);
-    press(&mut s, &g, eq, Part::Pin, 1);
+    undock(&mut s, &g, eq);
     assert_eq!(s.docked(), None);
     assert!(s.instruments.is_open(eq));
     assert!(!s.instruments.open[0].docked);
@@ -328,7 +328,7 @@ fn the_face_the_grip_and_the_bands_have_names() {
             .unwrap_or_else(|| panic!("no mark named {label}"))
     };
     assert_eq!(
-        find("窓で開く: Vocal › EQ").node.role(),
+        find("表示先: Vocal › EQ").node.role(),
         accesskit::Role::Button
     );
     assert_eq!(
@@ -363,7 +363,7 @@ fn the_face_taken_out_keeps_its_pad_its_layer_and_its_focus() {
     s.instruments.open[i].pick = 3;
     s.instruments.open[i].layer = 1;
     s.instruments.focus = Some((eq, 2));
-    press(&mut s, &g, eq, Part::Pin, 1);
+    undock(&mut s, &g, eq);
     assert_eq!(s.docked(), None);
     let w = s.instruments.open.iter().find(|w| w.plugin == eq).unwrap();
     assert!(!w.docked);
@@ -417,7 +417,7 @@ fn a_docked_face_is_no_unfinished_work_and_its_window_is() {
     s.tab = DrawerTab::Roll;
     assert!(!s.human_interaction_active(), "under another tab neither");
     s.tab = DrawerTab::Mixer;
-    press(&mut s, &g, eq, Part::Pin, 1);
+    undock(&mut s, &g, eq);
     assert!(s.instruments.is_open(eq));
     assert!(s.human_interaction_active());
 }
@@ -527,8 +527,18 @@ fn files_held_over_a_docked_drum_kit_go_to_its_face() {
     assert_eq!(pads, vec![vec![0], vec![1], vec![]]);
     assert_eq!(s.docked(), Some(i), "the face stays in the drawer");
     s.instruments.open[i].bank = Some(1);
-    press(&mut s, &g, kit, Part::Pin, 1);
+    undock(&mut s, &g, kit);
     let w = s.instruments.open.iter().find(|w| w.plugin == kit).unwrap();
     assert!(!w.docked);
     assert_eq!(w.bank, Some(1), "the window shows the bank the face showed");
+}
+
+fn undock(s: &mut Studio, g: &Geometry, id: xirius_core::id::PluginId) {
+    press(s, g, id, Part::Destination, 1);
+    let menu = s.popup.as_ref().expect("destination menu").kind;
+    let crate::popup::PopupKind::InstMenu(menu) = menu else {
+        panic!("destination menu")
+    };
+    s.popup = None;
+    s.inst_menu_pick(menu, "internal");
 }

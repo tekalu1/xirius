@@ -134,6 +134,7 @@ pub struct Bar {
     pub channel: Option<Rect>,
     /// The always-empty draggable stretch.
     pub space: Rect,
+    pub destination: Rect,
     pub pin: Rect,
     pub close: Rect,
 }
@@ -168,8 +169,11 @@ pub fn layout(r: Rect, track: &str, device: &str, seats: Seats<'_>) -> Bar {
     rx -= BTN + GAP;
     let pin = Rect::new(rx - BTN, cy, BTN, BTN);
     rx -= BTN + GAP;
-    let channel = seats.channel.then(|| Rect::new(rx - BTN, cy, BTN, BTN));
-    if seats.channel {
+    let destination = Rect::new(rx - BTN, cy, BTN, BTN);
+    rx -= BTN + GAP;
+    // In a compact bar the channel editor is in the destination menu.
+    let channel = (seats.channel && r.w >= 520.0).then(|| Rect::new(rx - BTN, cy, BTN, BTN));
+    if channel.is_some() {
         rx -= BTN + GAP;
     }
     // The seat: the on button, then «name ▾» (the name gone while narrow).
@@ -269,6 +273,7 @@ pub fn layout(r: Rect, track: &str, device: &str, seats: Seats<'_>) -> Bar {
         sidechain_name,
         channel,
         space,
+        destination,
         pin,
         close,
     }
@@ -463,8 +468,19 @@ pub fn paint(pen: &mut Pen, r: Rect, v: &View<'_>) {
     if let Some(b) = bar.channel {
         pen.icon("route", icon_box(b), c.ink);
     }
+    let destination = bar.destination;
+    pen.icon(
+        "popout",
+        Rect::new(destination.x + 2.0, destination.y + 6.0, 16.0, 16.0),
+        c.ink,
+    );
+    pen.icon(
+        "chevron-down",
+        Rect::new(destination.x + 20.0, destination.y + 11.0, 6.0, 6.0),
+        c.ink,
+    );
     if v.popout {
-        pen.icon("popout", icon_box(bar.pin), c.ink);
+        pen.icon("pin", icon_box(bar.pin), c.line[0]);
     } else if v.pinned {
         let (face, ink) = c.primary;
         pen.round(bar.pin, face, Radius::S);
@@ -731,6 +747,7 @@ mod tests {
             Some(b.tag),
             b.sidechain,
             b.channel,
+            Some(b.destination),
             Some(b.pin),
             Some(b.close),
         ]
@@ -762,8 +779,16 @@ mod tests {
             assert!(b.tag.right() <= b.space.x + GAP + 0.01);
             let sidechain = b.sidechain.unwrap();
             assert!(b.space.right() <= sidechain.x + 0.01);
-            assert!(sidechain.right() + GAP <= b.channel.unwrap().x + 0.01);
-            assert!(b.channel.unwrap().right() <= b.pin.x + GAP + 0.01);
+            if let Some(channel) = b.channel {
+                assert!(w >= 520.0);
+                assert!(sidechain.right() + GAP <= channel.x + 0.01);
+                assert!(channel.right() <= b.destination.x + GAP + 0.01);
+            } else {
+                assert!(w < 520.0);
+                assert!(sidechain.right() + GAP <= b.destination.x + 0.01);
+            }
+            assert_eq!(b.destination.w, BTN);
+            assert!(b.destination.right() <= b.pin.x + GAP + 0.01);
             assert!(b.pin.right() <= b.close.x + GAP + 0.01);
             assert_eq!(b.close.right(), r.right() - PAD);
             // The buttons are 28s and keep their width at any size.

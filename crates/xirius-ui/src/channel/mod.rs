@@ -114,6 +114,7 @@ impl Tool {
 /// A part of the window.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Part {
+    Destination,
     /// The bar: the window moves with the pointer.
     Head,
     Pin,
@@ -193,6 +194,8 @@ pub(crate) enum Grab {
 /// The open channel editor.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChannelWin {
+    pub(crate) detached: bool,
+    pub(crate) detached_surface: bool,
     pub track: TrackId,
     /// Where its corner is, once it was dragged.
     pub at: Option<(f32, f32)>,
@@ -214,6 +217,8 @@ pub struct ChannelWin {
 impl ChannelWin {
     pub fn new(track: TrackId) -> ChannelWin {
         ChannelWin {
+            detached: false,
+            detached_surface: false,
             track,
             at: None,
             pinned: false,
@@ -338,7 +343,11 @@ pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
     let probe = flow::layout(p, t, (0.0, 0.0));
     let multi = !keys::layers(t).is_empty();
     let least = if multi { keys::LEAST_W } else { MIN_W };
-    let width = probe.w.max(least).min((size.0 - 2.0 * SIDE).max(KEEP_W));
+    let width = if w.detached_surface {
+        size.0
+    } else {
+        probe.w.max(least).min((size.0 - 2.0 * SIDE).max(KEEP_W))
+    };
     let instrument = t.kind == xirius_core::model::TrackKind::Instrument;
     let (_, tool_h) = tools_of(Rect::new(0.0, 0.0, width, 0.0), instrument);
     let panel_h = if multi && width >= keys::LEAST_W {
@@ -347,8 +356,16 @@ pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
         0.0
     };
     let macro_h = if w.macros { MACRO_H } else { 0.0 };
-    let height = (BAR_H + tool_h + macro_h + probe.h + panel_h).min((size.1 - ROOM_Y).max(200.0));
-    let (x, y) = w.at.unwrap_or(((size.0 - width) / 2.0, TOP));
+    let height = if w.detached_surface {
+        size.1
+    } else {
+        (BAR_H + tool_h + macro_h + probe.h + panel_h).min((size.1 - ROOM_Y).max(200.0))
+    };
+    let (x, y) = if w.detached_surface {
+        (0.0, 0.0)
+    } else {
+        w.at.unwrap_or(((size.0 - width) / 2.0, TOP))
+    };
     let r = Rect::new(
         x.clamp(0.0, (size.0 - KEEP_W).max(0.0)),
         y.clamp(0.0, (size.1 - BAR_H).max(0.0)),
@@ -597,6 +614,9 @@ pub fn part_at(v: &View, x: f32, y: f32) -> Option<Part> {
         return None;
     }
     if y < v.r.y + BAR_H {
+        if v.bar.destination.contains(x, y) {
+            return Some(Part::Destination);
+        }
         if v.bar.pin.contains(x, y) {
             return Some(Part::Pin);
         }
@@ -818,6 +838,10 @@ pub fn crossed(from: &[f64], i: usize, dx: f32) -> Vec<f64> {
 impl Studio {
     /// The open channel editor as it is laid out.
     pub fn channel_view(&self, g: &Geometry) -> Option<View> {
+        let w = self.channel.as_ref()?;
+        if w.detached && !w.detached_surface {
+            return None;
+        }
         let started = std::time::Instant::now();
         let v = view(&self.project(), self.channel.as_ref()?, g.size);
         self.mixer.took(started);
@@ -838,6 +862,7 @@ impl Studio {
                 let at = w.at;
                 *w = ChannelWin {
                     at,
+                    detached: w.detached,
                     ..ChannelWin::new(t)
                 };
             }
@@ -876,6 +901,10 @@ impl Studio {
         w.top = true;
         let t = w.track;
         match part {
+            Part::Destination => self.open_inst_menu(
+                crate::instrument::menu::Menu::ChannelDestination(t),
+                v.bar.destination,
+            ),
             Part::Close => self.channel = None,
             Part::Pin => w.pinned = !w.pinned,
             Part::Preset => self.open_inst_menu(crate::instrument::menu::Menu::Chain(t), v.bar.tag),

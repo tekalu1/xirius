@@ -632,6 +632,7 @@ pub fn paint_overlay(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     crate::instrument::window::paint(pen, studio, g);
     let started = std::time::Instant::now();
     crate::channel::paint::paint(pen, studio, g, true);
+    crate::device_window::paint_tip(pen, studio, g);
     let editor = under + started.elapsed();
     studio.mixer.editor_paint_us.set(editor.as_micros() as u64);
     crate::macro_pad::paint::paint(pen, studio, g);

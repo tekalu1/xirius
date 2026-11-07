@@ -42,6 +42,7 @@ pub struct Saved {
 pub struct Presets {
     /// `None` until the files were read once: the factory set stands in.
     pub saved: Option<Vec<Saved>>,
+    pub external: BTreeMap<String, Vec<String>>,
     read_at: Option<Instant>,
 }
 
@@ -159,8 +160,21 @@ impl Presets {
                 })
             })
             .collect();
-        let changed = self.saved.as_ref() != Some(&saved);
+        let mut external = BTreeMap::<String, Vec<String>>::new();
+        for row in rows {
+            let (Some(device), Some(name)) = (row["device"].as_str(), row["name"].as_str()) else {
+                continue;
+            };
+            if xirius_params::find(device).is_none() {
+                external
+                    .entry(device.to_ascii_lowercase())
+                    .or_default()
+                    .push(name.to_string());
+            }
+        }
+        let changed = self.saved.as_ref() != Some(&saved) || self.external != external;
         self.saved = Some(saved);
+        self.external = external;
         changed
     }
 }
@@ -212,7 +226,7 @@ impl Studio {
                 self.browser.tab,
                 crate::browser::RailTab::Instruments | crate::browser::RailTab::Effects
             );
-        if (self.instruments.open.is_empty() && !listed)
+        if (self.instruments.open.is_empty() && self.mixer.editors.is_empty() && !listed)
             || self
                 .instruments
                 .presets

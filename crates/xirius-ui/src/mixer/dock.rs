@@ -36,7 +36,7 @@ pub const FOLDED_MIN: f32 = WIDE_W + 2.0 * BAND_W + 4.0 * STRIP_GAP;
 /// The grip's name for a screen reader.
 pub const GRIP_LABEL: &str = "ミキサーと機器の面の境目";
 /// The face's 「窓で開く」.
-pub const POPOUT_LABEL: &str = "窓で開く";
+pub const POPOUT_LABEL: &str = "表示先";
 
 /// Where the strips, the grip and the face sit in the drawer.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -414,7 +414,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
         let p = s.project();
         if let Some((track, plugin, def)) = live(&p, &w) {
             let r = s.instruments.frame(i, g);
-            for (part, name) in [(Part::Pin, POPOUT_LABEL), (Part::Close, "閉じる")] {
+            for (part, name) in [(Part::Destination, POPOUT_LABEL), (Part::Close, "閉じる")] {
                 let mut node = accesskit::Node::new(accesskit::Role::Button);
                 node.set_label(format!("{name}: {} › {}", track.shown_name(), plugin.name));
                 node.set_bounds(bounds(
