@@ -258,6 +258,7 @@ pub struct ClapInstance {
     active: bool,
     transport: clap_event_transport,
     steady: i64,
+    max_block: usize,
     rate: f64,
 }
 
@@ -333,6 +334,7 @@ impl ClapInstance {
             // SAFETY: plain data; all-zero is valid.
             transport: unsafe { std::mem::zeroed() },
             steady: 0,
+            max_block: 0,
             rate: 0.0,
         };
         if ext.is_null() {
@@ -384,7 +386,32 @@ impl Instance for ClapInstance {
         }
         self.active = true;
         self.rate = rate;
+        self.max_block = max_block;
         Ok(0)
+    }
+
+    fn set_active(&mut self, active: bool) -> Result<(), Error> {
+        if !active {
+            self.stop();
+        } else if !self.active {
+            // SAFETY: the initialized plugin is inactive, on its document thread.
+            let ok = unsafe {
+                contain::call(|| {
+                    (*self.plugin)
+                        .activate
+                        .is_some_and(|a| a(self.plugin, self.rate, 1, self.max_block as u32))
+                }) && contain::call(|| {
+                    (*self.plugin)
+                        .start_processing
+                        .is_none_or(|f| f(self.plugin))
+                })
+            };
+            if !ok {
+                return Err(error("the CLAP plugin did not reactivate"));
+            }
+            self.active = true;
+        }
+        Ok(())
     }
 
     fn set_transport(&mut self, playing: bool, position: i64) {

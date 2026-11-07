@@ -248,6 +248,13 @@ impl Instance for Vst3Instance {
         contain::call(|| audio.prepare(rate, max_block, true)).map_err(|e| error(e.to_string()))
     }
 
+    fn set_active(&mut self, active: bool) -> Result<(), Error> {
+        if let Some(audio) = self.audio.as_mut() {
+            contain::call(|| audio.set_render_active(active)).map_err(|e| error(e.to_string()))?;
+        }
+        Ok(())
+    }
+
     fn set_transport(&mut self, playing: bool, position: i64) {
         if let Some(a) = &mut self.audio {
             a.set_transport(playing, position);

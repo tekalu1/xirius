@@ -50,6 +50,7 @@ fn bursts(rate: f64, seconds: f64) -> Arc<SourceAudio> {
 
 fn clip(key: u64, audio: &Arc<SourceAudio>, start: f64, offset: f64, duration: f64) -> ClipSpec {
     ClipSpec {
+        regions: Vec::new(),
         key,
         clone_of: None,
         source: source_id("bursts.wav"),

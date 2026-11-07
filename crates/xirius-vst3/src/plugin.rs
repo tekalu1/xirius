@@ -817,6 +817,23 @@ impl AudioPart {
         Ok(self.latency())
     }
 
+    /// Toggle render state with the existing buses and processing setup (ARA region changes).
+    pub fn set_render_active(&mut self, active: bool) -> Result<(), Error> {
+        if !active {
+            self.deactivate();
+        } else if !self.active {
+            // SAFETY: processing has been set up, and no process call runs concurrently.
+            unsafe {
+                if self.shared.component.setActive(1) != kResultOk {
+                    return Err(error("IComponent::setActive failed"));
+                }
+                self.shared.processor.setProcessing(1);
+            }
+            self.active = true;
+        }
+        Ok(())
+    }
+
     fn deactivate(&mut self) {
         if self.active {
             // SAFETY: undoes `prepare`, in the SDK's order.
