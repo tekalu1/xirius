@@ -20,7 +20,7 @@ use crate::id::ClipId;
 use crate::model::Project;
 
 /// The version of the archive wrapper this build writes and reads up to.
-pub const ARCHIVE_VERSION: u32 = 1;
+pub const ARCHIVE_VERSION: u32 = 2;
 
 #[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize)]
 pub struct Ara {
@@ -54,7 +54,7 @@ pub struct Archive {
     pub version: u32,
     pub plugin: String,
     pub archive_id: String,
-    /// The plugin's bytes, in base64.
+    /// Archive payload in base64, including the host's source-fingerprint envelope in v2.
     pub data: String,
 }
 

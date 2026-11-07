@@ -59,8 +59,6 @@ unsafe extern "C" fn on_assert(
     *LAST_ASSERT.lock().unwrap_or_else(PoisonError::into_inner) = text;
 }
 
-static ASSERT_FUNCTION: sys::AssertFunction = on_assert;
-
 /// A factory's initialization in this process.
 #[derive(Clone, Copy)]
 enum Init {
@@ -159,7 +157,9 @@ unsafe fn initialize_within(
     let config = sys::InterfaceConfiguration {
         struct_size: std::mem::size_of::<sys::InterfaceConfiguration>(),
         desired_api_generation: generation,
-        assert_function_address: &ASSERT_FUNCTION,
+        // Debug plugins may replace this pointer. Each factory gets a writable slot of
+        // its own, kept for the process lifetime just like the resident plugin module.
+        assert_function_address: Box::into_raw(Box::new(on_assert as sys::AssertFunction)),
     };
     // The lock is let go through the call: a call that never comes back (its thread ended by
     // the watch) must not keep the other plugins' documents from being made.
@@ -418,7 +418,11 @@ impl Document {
     pub fn update_musical_context_content(&mut self, context: Ref) {
         let f = self.f().update_musical_context_content;
         // SAFETY: as above; a null range is the whole context.
-        contain::call(|| unsafe { f(self.dc, context, std::ptr::null(), sys::UPDATE_EVERYTHING) });
+        let flags = sys::UPDATE_SIGNAL_SCOPE_REMAINS_UNCHANGED
+            | sys::UPDATE_NOTE_SCOPE_REMAINS_UNCHANGED
+            | sys::UPDATE_TUNING_SCOPE_REMAINS_UNCHANGED
+            | sys::UPDATE_HARMONIC_SCOPE_REMAINS_UNCHANGED;
+        contain::call(|| unsafe { f(self.dc, context, std::ptr::null(), flags) });
     }
 
     pub fn destroy_musical_context(&mut self, context: Ref) {

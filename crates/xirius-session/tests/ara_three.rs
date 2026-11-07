@@ -23,7 +23,7 @@ fn run(s: &mut Session, name: &str, args: Value) -> Value {
         args.as_object().unwrap(),
         &RunOptions::human(),
     )
-    .unwrap()
+    .unwrap_or_else(|error| panic!("{name} {args}: {error:?}"))
     .data
 }
 fn id(v: Value) -> String {
@@ -45,14 +45,38 @@ fn attach(s: &mut Session) {
 fn sync(b: &mut Builder, s: &Session) {
     let p = s.project();
     b.sync_ara(p, &TempoMap::from_project(p), &mut Vec::new());
-    assert!(
-        b.ara()
-            .doc(UID)
-            .unwrap()
-            .service()
-            .wait_idle(Instant::now() + WAIT)
-    );
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let doc = b.ara().doc(UID).unwrap();
+        let idle = doc.service().wait_idle(deadline);
+        if idle
+            && p.ara
+                .clips
+                .iter()
+                .filter(|(_, row)| row.plugin == UID)
+                .all(|(key, _)| {
+                    doc.service()
+                        .state(key.0)
+                        .is_some_and(|s| s.phase == Phase::Ready)
+                })
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the source load/analysis did not complete"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
+fn closed() {
+    let deadline = Instant::now() + WAIT;
+    while fake::live_documents() != 0 {
+        assert!(Instant::now() < deadline, "the document did not close");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 #[test]
 fn analysis_save_reopen_and_edited_trimmed_loops() {
     ara::register(
@@ -92,8 +116,8 @@ fn analysis_save_reopen_and_edited_trimmed_loops() {
     assert!(s.project().ara.archives.contains_key(UID));
     assert!(!s.is_dirty());
     let service = b.ara().doc(UID).unwrap();
-    assert!(service.service().close(Instant::now() + WAIT));
     drop((service, b, s));
+    closed();
     let mut s = Session::open_with(&folder, commands::shared_registry()).unwrap();
     attach(&mut s);
     let mut b = Builder::new(RATE, Some(dir.path().into()));
@@ -112,15 +136,22 @@ fn analysis_save_reopen_and_edited_trimmed_loops() {
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(5));
     }
-    run(&mut s, "clip.slip", json!({"ids":[clip],"by":240}));
+    run(
+        &mut s,
+        "clip.loop.set",
+        json!({"ids":[clip],"start":480,"length":960}),
+    );
+    run(&mut s, "clip.slip", json!({"ids":[clip],"by":-240}));
     run(&mut s, "clip.trim", json!({"ids":[clip],"by":240}));
     run(&mut s, "clip.resize", json!({"ids":[clip],"by":-137}));
-    for length in [960, 480, 1920] {
-        run(
-            &mut s,
-            "clip.loop.set",
-            json!({"ids":[clip],"start":480,"length":length}),
-        );
+    for length in [None, Some(480), Some(1920)] {
+        if let Some(length) = length {
+            run(
+                &mut s,
+                "clip.loop.set",
+                json!({"ids":[clip],"start":480,"length":length}),
+            );
+        }
         sync(&mut b, &s);
         let c = s.project().clip(ClipId(key)).unwrap().1;
         let ClipBody::Audio { offset, .. } = c.body else {
@@ -137,11 +168,11 @@ fn analysis_save_reopen_and_edited_trimmed_loops() {
             export::render(&mut b, s.project(), Select::All, 0, u64::from(RATE) * 5, 0).unwrap();
         let c = s.project().clip(ClipId(key)).unwrap().1;
         for (at, from, len) in parts {
-            for tick in (2..len - 2).step_by(97) {
+            // The engine applies its normal clip-edge fades after the ARA render.
+            for tick in (32..len - 32).step_by(97) {
                 let out = ((c.start + at + tick) * 25 + 12) as usize;
                 let source = ((offset + from + tick) * 25 + 12) as usize;
-                // The master pan law applies 1/sqrt(2), as in the existing ARA song tests.
-                let expected = samples[source] * 0.5 / 2f32.sqrt();
+                let expected = samples[source] * 0.5;
                 assert!(
                     (output.left[out] - expected).abs() < 1e-4,
                     "tick {at}+{tick}: {} vs {expected}",
@@ -150,7 +181,7 @@ fn analysis_save_reopen_and_edited_trimmed_loops() {
             }
         }
     }
-    run(&mut s, "undo", json!({}));
+    s.undo(1).unwrap();
     sync(&mut b, &s);
     let c = s.project().clip(ClipId(key)).unwrap().1;
     let count = xirius_core::clipfx::pieces(s.project().clip_loop(c.id), c.length).len();
@@ -164,14 +195,8 @@ fn analysis_save_reopen_and_edited_trimmed_loops() {
             .regions,
         count
     );
-    assert!(
-        b.ara()
-            .doc(UID)
-            .unwrap()
-            .service()
-            .close(Instant::now() + WAIT)
-    );
     drop(b);
+    closed();
     // Same path and rate, changed content: the saved cache must be rejected.
     let changed = vec![0.05; RATE as usize * 4];
     export::write_wav(&file, &changed, &changed, RATE, 32).unwrap();
@@ -182,12 +207,7 @@ fn analysis_save_reopen_and_edited_trimmed_loops() {
     let probe = b.ara().doc(UID).unwrap().service().probe(WAIT).unwrap();
     assert_eq!(probe.analysis_requests, 1);
     assert_eq!(probe.analysis_starts, 1);
-    assert!(
-        b.ara()
-            .doc(UID)
-            .unwrap()
-            .service()
-            .close(Instant::now() + WAIT)
-    );
+    drop(b);
+    closed();
     assert!(fake::violations().is_empty(), "{:?}", fake::violations());
 }

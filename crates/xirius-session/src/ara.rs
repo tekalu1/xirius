@@ -15,9 +15,10 @@
 //!   a bounce) uses the live document as it is when it has the same song, at any rate, and
 //!   otherwise a document of its own, started from the live one's archive. It waits for the
 //!   analysis, at most [`EXPORT_WAIT`] (ENG-025).
-//! - A song keeps each plugin's archive ([`take_archives`], ARC-025, PLG-037). The archive is
-//!   asked for only after the plugin said its document changed, so opening a song and playing it
-//!   leaves it as it was. The window's thread never waits for it: the plugin's thread writes it
+//! - A song keeps each plugin's archive ([`take_archives`], ARC-025, PLG-037). Archives
+//!   of edits follow the plugin's document-change notices. Completed analyses are cached
+//!   separately until an explicit save, so opening and playing never marks an edit.
+//!   The window's thread never waits for it: the plugin's thread writes it
 //!   and a later frame puts it in; writing or leaving the song waits over the frames for the
 //!   one asked, at most [`STORE_WAIT`], and otherwise writes the one it has. A plugin whose
 //!   last clips leave the song is asked for its last edits; its archive is kept aside and an
@@ -265,6 +266,7 @@ pub struct Doc {
     /// The archive last taken from the plugin.
     stored: Mutex<Option<xirius_core::ara::Archive>>,
     analysis_seen: Mutex<Option<xirius_ara::service::CachedArchive>>,
+    restoring: AtomicBool,
     /// The archive asked for and not come yet.
     asked: Mutex<Option<Stored>>,
     /// The newest archive was asked for while [`Doc::asked`] was on its way: asked again when
@@ -277,6 +279,7 @@ pub struct Doc {
 impl Doc {
     fn start(key: Key, name: String, load: Loader, archive: Option<(Vec<u8>, String)>) -> Arc<Doc> {
         contain();
+        let restoring = archive.is_some();
         // Every document of the plugin on its one ARA thread (some keep to their first).
         let service =
             Service::start_shared(&key.1, load, archive, Arc::new(crate::processed::bump));
@@ -290,6 +293,7 @@ impl Doc {
             sounds: Mutex::new(HashMap::new()),
             stored: Mutex::new(None),
             analysis_seen: Mutex::new(None),
+            restoring: AtomicBool::new(restoring),
             asked: Mutex::new(None),
             again: AtomicBool::new(false),
             leaving: AtomicBool::new(false),
@@ -432,6 +436,14 @@ impl Doc {
             {
                 c.audio = a;
             }
+        }
+        // Validate every original source fingerprint before restoring a document. Otherwise
+        // a fast first file could restore an archive before a changed second file is decoded.
+        if self.restoring.load(Ordering::Acquire) {
+            if w.song.clips.iter().any(|c| Arc::ptr_eq(&c.audio, &none)) {
+                return;
+            }
+            self.restoring.store(false, Ordering::Release);
         }
         let song = Song {
             tempos: w.song.tempos.clone(),

@@ -41,6 +41,9 @@ pub const GRADE_APPROVED: ContentGrade = 3;
 
 pub const UPDATE_EVERYTHING: ContentUpdateFlags = 0;
 pub const UPDATE_SIGNAL_SCOPE_REMAINS_UNCHANGED: ContentUpdateFlags = 1;
+pub const UPDATE_NOTE_SCOPE_REMAINS_UNCHANGED: ContentUpdateFlags = 1 << 1;
+pub const UPDATE_TUNING_SCOPE_REMAINS_UNCHANGED: ContentUpdateFlags = 1 << 3;
+pub const UPDATE_HARMONIC_SCOPE_REMAINS_UNCHANGED: ContentUpdateFlags = 1 << 4;
 
 pub const ANALYSIS_STARTED: i32 = 0;
 pub const ANALYSIS_UPDATED: i32 = 1;
@@ -424,7 +427,7 @@ ara_struct! {
     pub struct InterfaceConfiguration {
         pub struct_size: Size,
         pub desired_api_generation: ApiGeneration,
-        pub assert_function_address: *const AssertFunction,
+        pub assert_function_address: *mut AssertFunction,
     }
 }
 

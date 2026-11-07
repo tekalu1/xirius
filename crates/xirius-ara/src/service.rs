@@ -12,7 +12,7 @@
 //!
 //! The song is handed over whole ([`Service::sync`]); the thread compares it with the model it
 //! made and edits the document in one cycle: sources (one per file), modifications and
-//! regions (one each per clip). After the plugin's analysis of a source completes, each clip
+//! regions (one per loop pass, sharing one modification per clip). After the plugin's analysis of a source completes, each clip
 //! is rendered offline through its own playback renderer, a second of sound per turn, and the
 //! result is handed back ([`Service::state`]). Moving a clip keeps its rendered sound
 //! (PLG-036); a new length or a new start in the source renders again. The plugin's
@@ -1234,8 +1234,18 @@ fn sync_regions(
 
 impl Ara {
     fn sync(&mut self, song: Song) {
-        self.cache_needed = true;
-        *lock(&self.shared.analysis_archive) = None;
+        // Host-only placement, loop and grid changes do not invalidate source analysis.
+        // Re-archive only when the source/modification set or source audio changes.
+        if self.clips.len() != song.clips.len()
+            || song.clips.iter().any(|spec| {
+                self.clips.get(&spec.key).is_none_or(|clip| {
+                    clip.spec.source != spec.source || !Arc::ptr_eq(&clip.spec.audio, &spec.audio)
+                })
+            })
+        {
+            self.cache_needed = true;
+            *lock(&self.shared.analysis_archive) = None;
+        }
         let musical = Musical {
             tempos: song.tempos.clone(),
             bars: song.bars.clone(),
@@ -1273,9 +1283,13 @@ impl Ara {
         // Gone clips: the instance first (it renders the region), then region and modification.
         let gone: Vec<u64> = self
             .clips
-            .keys()
-            .copied()
-            .filter(|k| !wanted.contains_key(k))
+            .iter()
+            .filter_map(|(&key, clip)| {
+                wanted
+                    .get(&key)
+                    .is_none_or(|spec| spec.source != clip.spec.source)
+                    .then_some(key)
+            })
             .collect();
         for key in gone {
             if let Some(mut c) = self.clips.remove(&key) {
@@ -1389,7 +1403,7 @@ impl Ara {
                 self.doc.enable_samples_access(s.r, true);
                 self.analysis_queries += self.kinds.len() as u64;
                 let incomplete = self.doc.incomplete(s.r, &self.kinds);
-                if !restored || !incomplete.is_empty() {
+                if !self.kinds.is_empty() && (!restored || !incomplete.is_empty()) {
                     self.doc.request_analysis(s.r, &self.kinds);
                     self.analysis_requests += 1;
                 }
@@ -1413,8 +1427,10 @@ impl Ara {
                 self.doc.update_audio_source_content(s.r);
                 self.doc.enable_samples_access(s.r, true);
                 s.analysed = false;
-                self.doc.request_analysis(s.r, &self.kinds);
-                self.analysis_requests += 1;
+                if !self.kinds.is_empty() {
+                    self.doc.request_analysis(s.r, &self.kinds);
+                    self.analysis_requests += 1;
+                }
             }
             return Ok(());
         }
@@ -1456,6 +1472,7 @@ impl Ara {
         let original = spec
             .clone_of
             .and_then(|k| self.clips.get(&k))
+            .filter(|c| c.spec.source == spec.source)
             .map(|c| c.modification);
         let modification = match original {
             Some(m) => self.doc.clone_audio_modification(m, key, &spec.name, &id)?,
@@ -1589,7 +1606,10 @@ impl Ara {
                         };
                     }
                 }
-                Notice::SourceContent { source, .. } => {
+                Notice::SourceContent { source, flags } => {
+                    if flags & sys::UPDATE_SIGNAL_SCOPE_REMAINS_UNCHANGED != 0 {
+                        continue;
+                    }
                     let id = self
                         .sources
                         .iter()
@@ -1602,7 +1622,10 @@ impl Ara {
                         }
                     }
                 }
-                Notice::RegionContent { region: r, .. } => {
+                Notice::RegionContent { region: r, flags } => {
+                    if flags & sys::UPDATE_SIGNAL_SCOPE_REMAINS_UNCHANGED != 0 {
+                        continue;
+                    }
                     if let Some(c) = self
                         .clips
                         .values_mut()
@@ -1613,8 +1636,12 @@ impl Ara {
                     }
                 }
                 Notice::ModificationContent {
-                    modification: r, ..
+                    modification: r,
+                    flags,
                 } => {
+                    if flags & sys::UPDATE_SIGNAL_SCOPE_REMAINS_UNCHANGED != 0 {
+                        continue;
+                    }
                     if let Some(c) = self.clips.values_mut().find(|c| clip_ref(c.spec.key) == r) {
                         c.stale = true;
                         restale = true;
