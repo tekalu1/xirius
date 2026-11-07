@@ -23,7 +23,8 @@
 //! nothing in the document and the user's edits stay. The caller converts the sound to the
 //! song's rate.
 
-use std::collections::{HashMap, HashSet};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
@@ -81,6 +82,7 @@ pub trait Window {
 
 /// The plugin's answer to [`Service::store_later`]: its archive and the archive id, or `None`.
 pub type Stored = Receiver<Option<(Vec<u8>, String)>>;
+pub type CachedArchive = Arc<(Vec<u8>, String)>;
 
 /// Makes the binary, on the ARA thread.
 pub type Loader = Box<dyn FnOnce() -> Result<Box<dyn Binary>, Error> + Send>;
@@ -215,6 +217,9 @@ pub struct Probe {
     pub notices_off_thread: u64,
     pub notices: u64,
     pub musical_updates: u64,
+    pub analysis_requests: u64,
+    pub analysis_queries: u64,
+    pub analysis_starts: u64,
     pub regions: usize,
     pub preparations: u64,
     pub asserts: u64,
@@ -247,6 +252,7 @@ struct Shared {
     crashed: Mutex<Option<String>>,
     failed: Mutex<Option<String>>,
     dirty: AtomicBool,
+    analysis_archive: Mutex<Option<CachedArchive>>,
     finished: AtomicBool,
     loaded: AtomicBool,
     generation: AtomicU64,
@@ -341,6 +347,7 @@ impl Service {
             crashed: Mutex::new(None),
             failed: Mutex::new(None),
             dirty: AtomicBool::new(false),
+            analysis_archive: Mutex::new(None),
             finished: AtomicBool::new(false),
             loaded: AtomicBool::new(false),
             generation: AtomicU64::new(0),
@@ -410,6 +417,11 @@ impl Service {
 
     /// The plugin's archive of the document and its archive id, or `None` when the plugin
     /// failed, crashed or did not answer within `limit`.
+    /// The completed analysis cached on the ARA thread. Taking a copy does not mark an edit.
+    pub fn analysis_archive(&self) -> Option<CachedArchive> {
+        lock(&self.shared.analysis_archive).clone()
+    }
+
     pub fn store(&self, limit: Duration) -> Option<(Vec<u8>, String)> {
         self.store_later()?.recv_timeout(limit).ok().flatten()
     }
@@ -632,8 +644,41 @@ struct Source {
     r: Ref,
     props: SourceProps,
     audio: Arc<SourceAudio>,
+    fingerprint: String,
     analysed: bool,
     progress: f32,
+}
+
+const ARCHIVE_MAGIC: &[u8] = b"XiriusARA\0\x01";
+
+fn fingerprint(audio: &SourceAudio) -> String {
+    let mut hash = Sha256::new();
+    hash.update(audio.rate.to_le_bytes());
+    hash.update((audio.channels.len() as u64).to_le_bytes());
+    for channel in &audio.channels {
+        hash.update((channel.len() as u64).to_le_bytes());
+        for sample in channel {
+            hash.update(sample.to_bits().to_le_bytes());
+        }
+    }
+    format!("{:x}", hash.finalize())
+}
+
+fn archive_payload<'a>(bytes: &'a [u8], sources: &HashMap<String, Source>) -> Option<&'a [u8]> {
+    // Preserve edits in older songs; the caller invalidates their unverifiable analysis.
+    let Some(rest) = bytes.strip_prefix(ARCHIVE_MAGIC) else {
+        return Some(bytes);
+    };
+    let length = usize::try_from(u64::from_le_bytes(rest.get(..8)?.try_into().ok()?)).ok()?;
+    let end = 8usize.checked_add(length)?;
+    let manifest: BTreeMap<String, String> = serde_json::from_slice(rest.get(8..end)?).ok()?;
+    if !sources
+        .iter()
+        .all(|(id, source)| manifest.get(id) == Some(&source.fingerprint))
+    {
+        return None;
+    }
+    rest.get(end..)
 }
 
 struct Clip {
@@ -670,6 +715,10 @@ struct Ara {
     sequence: Ref,
     musical: Musical,
     musical_updates: u64,
+    cache_needed: bool,
+    analysis_requests: u64,
+    analysis_queries: u64,
+    analysis_starts: u64,
     sources: HashMap<String, Source>,
     next_source: usize,
     next_region: usize,
@@ -1071,6 +1120,10 @@ fn start(
         sequence: std::ptr::null_mut(),
         musical: Musical::default(),
         musical_updates: 0,
+        cache_needed: false,
+        analysis_requests: 0,
+        analysis_queries: 0,
+        analysis_starts: 0,
         sources: HashMap::new(),
         next_region: 1,
         preparations: 0,
@@ -1099,6 +1152,16 @@ fn region_props(c: &ClipSpec) -> RegionProps {
 /// The host reference of a clip's modification and region (never zero).
 fn clip_ref(key: u64) -> usize {
     key as usize + 1
+}
+
+fn same_region_sound(a: &ClipSpec, b: &ClipSpec) -> bool {
+    a.regions.len() == b.regions.len()
+        && a.regions.iter().zip(&b.regions).all(|(x, y)| {
+            x.start_in_modification == y.start_in_modification
+                && x.duration_in_modification == y.duration_in_modification
+                && x.duration_in_playback == y.duration_in_playback
+                && ((x.start_in_playback - a.start) - (y.start_in_playback - b.start)).abs() < 1e-9
+        })
 }
 
 /// Reconcile regions while keeping the modification, renderer and processing setup.
@@ -1171,6 +1234,8 @@ fn sync_regions(
 
 impl Ara {
     fn sync(&mut self, song: Song) {
+        self.cache_needed = true;
+        *lock(&self.shared.analysis_archive) = None;
         let musical = Musical {
             tempos: song.tempos.clone(),
             bars: song.bars.clone(),
@@ -1250,7 +1315,7 @@ impl Ara {
                         continue;
                     }
                     let same_audio = Arc::ptr_eq(&c.spec.audio, &spec.audio);
-                    let moved_only = c.spec.regions == spec.regions
+                    let moved_only = same_region_sound(&c.spec, spec)
                         && c.spec.offset == spec.offset
                         && c.spec.duration == spec.duration
                         && same_audio;
@@ -1285,6 +1350,7 @@ impl Ara {
             }
         }
 
+        let mut restored = false;
         // The archive goes into the objects just made with the same persistent ids; kept while
         // there are none yet (a song whose files are still being read).
         if !self.clips.is_empty()
@@ -1298,12 +1364,20 @@ impl Ara {
                 *lock(&self.shared.failed) = Some(format!(
                     "the archive is of another kind ({id}) than the plugin reads"
                 ));
-            } else if self.doc.restore(&data, &id) {
+            } else if let Some(bytes) = archive_payload(&data, &self.sources)
+                && self.doc.restore(bytes, &id)
+            {
+                restored = data.starts_with(ARCHIVE_MAGIC);
+                if !restored {
+                    for source in self.sources.values() {
+                        self.doc.update_audio_source_content(source.r);
+                    }
+                }
                 self.quiet = 3;
                 for c in self.clips.values_mut() {
                     c.stale = true;
                 }
-            } else {
+            } else if archive_payload(&data, &self.sources).is_some() {
                 *lock(&self.shared.failed) =
                     Some("the plugin could not restore its archive".into());
             }
@@ -1313,7 +1387,12 @@ impl Ara {
         for id in new_sources {
             if let Some(s) = self.sources.get(&id) {
                 self.doc.enable_samples_access(s.r, true);
-                self.doc.request_analysis(s.r, &self.kinds);
+                self.analysis_queries += self.kinds.len() as u64;
+                let incomplete = self.doc.incomplete(s.r, &self.kinds);
+                if !restored || !incomplete.is_empty() {
+                    self.doc.request_analysis(s.r, &self.kinds);
+                    self.analysis_requests += 1;
+                }
             }
         }
         self.publish();
@@ -1325,6 +1404,7 @@ impl Ara {
                 // The file changed on disk: the plugin reads it again.
                 self.doc.enable_samples_access(s.r, false);
                 s.audio = spec.audio.clone();
+                s.fingerprint = fingerprint(&spec.audio);
                 s.props.frames = spec.audio.frames() as i64;
                 s.props.rate = spec.audio.rate;
                 s.props.channels = spec.audio.channels.len() as i32;
@@ -1334,6 +1414,7 @@ impl Ara {
                 self.doc.enable_samples_access(s.r, true);
                 s.analysed = false;
                 self.doc.request_analysis(s.r, &self.kinds);
+                self.analysis_requests += 1;
             }
             return Ok(());
         }
@@ -1355,6 +1436,7 @@ impl Ara {
                 r,
                 props,
                 audio: spec.audio.clone(),
+                fingerprint: fingerprint(&spec.audio),
                 analysed: self.kinds.is_empty(),
                 progress: 0.0,
             },
@@ -1418,10 +1500,25 @@ impl Ara {
         self.quiet = self.quiet.saturating_sub(1);
         let mut changed = dirty || restale;
         for s in self.sources.values_mut() {
-            if !s.analysed && self.doc.incomplete(s.r, &self.kinds).is_empty() {
+            if s.analysed {
+                continue;
+            }
+            self.analysis_queries += self.kinds.len() as u64;
+            if self.doc.incomplete(s.r, &self.kinds).is_empty() {
                 s.analysed = true;
                 s.progress = 1.0;
                 changed = true;
+            }
+        }
+        if self.cache_needed
+            && !self.sources.is_empty()
+            && self.sources.values().all(|s| s.analysed)
+        {
+            // Archive on the plugin thread, once all current sources finished. Kept outside
+            // the song until an explicit save; analysis alone never sets dirty.
+            if let Some(archive) = self.store() {
+                *lock(&self.shared.analysis_archive) = Some(Arc::new(archive));
+                self.cache_needed = false;
             }
         }
         // A render that a change made old starts again.
@@ -1481,6 +1578,9 @@ impl Ara {
                     state,
                     value,
                 } => {
+                    if state == sys::ANALYSIS_STARTED {
+                        self.analysis_starts += 1;
+                    }
                     if let Some(s) = self.sources.values_mut().find(|s| s.key == source) {
                         s.progress = if state == sys::ANALYSIS_COMPLETED {
                             1.0
@@ -1524,6 +1624,8 @@ impl Ara {
             }
         }
         if dirty {
+            *lock(&self.shared.analysis_archive) = None;
+            self.cache_needed = false;
             self.shared.dirty.store(true, Ordering::Release);
         }
         lock(&self.shared.requests).extend(self.side.take_requests());
@@ -1741,7 +1843,17 @@ impl Ara {
             return Some(a.clone());
         }
         let bytes = self.doc.store()?;
-        Some((bytes, self.doc.info().archive_id))
+        let manifest: BTreeMap<_, _> = self
+            .sources
+            .iter()
+            .map(|(id, source)| (id.clone(), source.fingerprint.clone()))
+            .collect();
+        let header = serde_json::to_vec(&manifest).ok()?;
+        let mut wrapped = ARCHIVE_MAGIC.to_vec();
+        wrapped.extend_from_slice(&(header.len() as u64).to_le_bytes());
+        wrapped.extend(header);
+        wrapped.extend(bytes);
+        Some((wrapped, self.doc.info().archive_id))
     }
 
     fn notes(&self, key: u64, of_modification: bool) -> Vec<Note> {
@@ -1778,6 +1890,9 @@ impl Ara {
             notices_off_thread: self.notices_off_thread,
             notices: self.notices,
             musical_updates: self.musical_updates,
+            analysis_requests: self.analysis_requests,
+            analysis_queries: self.analysis_queries,
+            analysis_starts: self.analysis_starts,
             regions: self.clips.values().map(|c| c.regions.len()).sum(),
             preparations: self.preparations,
             asserts,

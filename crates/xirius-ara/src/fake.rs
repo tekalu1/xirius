@@ -220,6 +220,7 @@ struct Context {
 }
 
 struct Source {
+    id: String,
     host: Ref,
     frames: i64,
     rate: f64,
@@ -577,6 +578,8 @@ unsafe extern "C" fn create_audio_source(
     s.sources.insert(
         id,
         Source {
+            // SAFETY: source properties are valid during this callback.
+            id: unsafe { sys::string(p.persistent_id) },
             host,
             frames: p.sample_count,
             rate: p.sample_rate,
@@ -1065,8 +1068,30 @@ fn archive_json(s: &State) -> Vec<u8> {
         .values()
         .map(|m| (m.id.clone(), serde_json::json!(m.gain)))
         .collect();
-    serde_json::to_vec(&serde_json::json!({ "archive": ARCHIVE_ID, "modifications": mods }))
-        .unwrap_or_default()
+    use base64::Engine;
+    let sources: serde_json::Map<String, serde_json::Value> = s
+        .sources
+        .values()
+        .filter(|source| source.analysed)
+        .map(|source| {
+            let channels: Vec<String> = source
+                .cache
+                .iter()
+                .map(|channel| {
+                    let bytes: Vec<u8> = channel.iter().flat_map(|s| s.to_le_bytes()).collect();
+                    base64::engine::general_purpose::STANDARD.encode(bytes)
+                })
+                .collect();
+            (
+                source.id.clone(),
+                serde_json::json!({"peak": source.peak, "channels": channels}),
+            )
+        })
+        .collect();
+    serde_json::to_vec(
+        &serde_json::json!({ "archive": ARCHIVE_ID, "modifications": mods, "sources": sources }),
+    )
+    .unwrap_or_default()
 }
 
 fn write_archive(d: &Dc, writer: Ref) -> Bool {
@@ -1105,6 +1130,39 @@ fn read_archive(d: &Dc, reader: Ref) -> Bool {
         return FALSE;
     };
     let mut s = lock(&d.state);
+    if let Some(sources) = v.get("sources").and_then(serde_json::Value::as_object) {
+        use base64::Engine;
+        for source in s.sources.values_mut() {
+            if let Some(stored) = sources.get(&source.id) {
+                let channels: Option<Vec<Vec<f32>>> = stored["channels"]
+                    .as_array()
+                    .map(|channels| {
+                        channels
+                            .iter()
+                            .map(|channel| {
+                                let bytes = base64::engine::general_purpose::STANDARD
+                                    .decode(channel.as_str()?)
+                                    .ok()?;
+                                Some(
+                                    bytes
+                                        .chunks_exact(4)
+                                        .map(|b| {
+                                            f32::from_le_bytes(b.try_into().expect("four bytes"))
+                                        })
+                                        .collect(),
+                                )
+                            })
+                            .collect()
+                    })
+                    .flatten();
+                if let Some(channels) = channels {
+                    source.cache = Arc::new(channels);
+                    source.peak = stored["peak"].as_f64().unwrap_or(0.0) as f32;
+                    source.analysed = true;
+                }
+            }
+        }
+    }
     let State {
         modifications,
         pending,
