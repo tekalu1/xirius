@@ -672,7 +672,7 @@ impl Studio {
             Item::sub("別のチャンネルへ写す", copies),
             Item::gap(),
         ];
-        if !builtin {
+        if !plugin.format.eq_ignore_ascii_case("builtin") {
             rows.insert(3, Item::sub("動かす場所", self.plugin_process_items(t, id)));
         }
         let tail = [
