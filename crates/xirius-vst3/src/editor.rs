@@ -182,6 +182,7 @@ impl Placement {
         if offscreen_wanted() {
             return Placement {
                 owner,
+                area: owner.and_then(crate::EditorArea::from_window),
                 ..Placement::offscreen()
             };
         }
@@ -286,7 +287,8 @@ impl WindowState {
 
     fn outer_size(&self, size: ViewRect) -> (i32, i32) {
         (
-            (size.right - size.left).max((316.0 * self.chrome_scale.get()).round() as i32)
+            (size.right - size.left)
+                .max((crate::editor_chrome::MIN_WIDTH * self.chrome_scale.get()).round() as i32)
                 + self.frame_size().0,
             size.bottom - size.top + self.frame_size().1,
         )
@@ -375,11 +377,16 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
     }
     // SAFETY: our class's pointer, cleared before its state is released.
     if let Some(st) = unsafe { state(hwnd) } {
-        if msg == WM_PAINT {
+        if msg == WM_PAINT || msg == windows_sys::Win32::UI::WindowsAndMessaging::WM_PRINTCLIENT {
             let mut ps = PAINTSTRUCT::default();
             // SAFETY: balanced paint scope on the frame.
             unsafe {
-                let dc = BeginPaint(hwnd, &mut ps);
+                let printing = msg != WM_PAINT;
+                let dc = if printing {
+                    wp as _
+                } else {
+                    BeginPaint(hwnd, &mut ps)
+                };
                 let bar = st
                     .shared
                     .editor_bar
@@ -394,7 +401,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                     st.chrome_scale.get(),
                     None,
                 );
-                EndPaint(hwnd, &ps);
+                if !printing {
+                    EndPaint(hwnd, &ps);
+                }
             }
             return 0;
         }
@@ -418,7 +427,13 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             return 1;
         }
         if msg == WM_COMMAND && (wp >> 16) == 0 {
-            if let Some(action) = crate::editor_chrome::command(hwnd, wp & 0xffff) {
+            let bar = st
+                .shared
+                .editor_bar
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            if let Some(action) = crate::editor_chrome::command(hwnd, wp & 0xffff, &bar) {
                 let mut actions = st
                     .shared
                     .editor_actions
@@ -496,7 +511,8 @@ fn sizing(hwnd: HWND, st: &WindowState, msg: u32, wp: WPARAM, lp: LPARAM) -> Opt
             let r = unsafe { &mut *(lp as *mut RECT) };
             let (bw, bh) = st.frame_size();
             let mut want = rect(
-                (r.right - r.left - bw).max((316.0 * st.chrome_scale.get()).ceil() as i32),
+                (r.right - r.left - bw)
+                    .max((crate::editor_chrome::MIN_WIDTH * st.chrome_scale.get()).ceil() as i32),
                 r.bottom - r.top - bh,
             );
             // SAFETY: the attached view and a rect owned here.
@@ -519,7 +535,10 @@ fn sizing(hwnd: HWND, st: &WindowState, msg: u32, wp: WPARAM, lp: LPARAM) -> Opt
             Some(1)
         }
         WM_GETMINMAXINFO if resizable && lp != 0 => {
-            let mut least = rect((316.0 * st.chrome_scale.get()).ceil() as i32, 1);
+            let mut least = rect(
+                (crate::editor_chrome::MIN_WIDTH * st.chrome_scale.get()).ceil() as i32,
+                1,
+            );
             // SAFETY: the attached view and a rect owned here.
             if unsafe { st.view().checkSizeConstraint(&mut least) } != kResultOk {
                 return None;
@@ -597,6 +616,27 @@ fn class_name() -> &'static [u16] {
         }
         name
     })
+}
+
+// A vendor forwards keys it did not consume to its parent. Keep that path through
+// our viewport to the frame; text input consumed by the vendor never arrives here.
+unsafe extern "system" fn viewport_proc(
+    hwnd: HWND,
+    msg: u32,
+    wp: WPARAM,
+    lp: LPARAM,
+    _: usize,
+    _: usize,
+) -> LRESULT {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetParent, SendMessageW, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS,
+    };
+    if matches!(msg, WM_KEYDOWN | WM_KEYUP | WM_KILLFOCUS) {
+        // SAFETY: this viewport and its frame are created on the same GUI thread.
+        return unsafe { SendMessageW(GetParent(hwnd), msg, wp, lp) };
+    }
+    // SAFETY: unhandled messages keep the standard child-window behavior.
+    unsafe { windows_sys::Win32::UI::Shell::DefSubclassProc(hwnd, msg, wp, lp) }
 }
 
 /// The host side of the view: the plugin asks it to resize the window.
@@ -766,7 +806,7 @@ impl Plugin {
         let scale =
             unsafe { windows_sys::Win32::UI::HiDpi::GetDpiForSystem() }.max(96) as f32 / 96.0;
         let (w, h) = (
-            (size.right - size.left).max((316.0 * scale).round() as i32),
+            (size.right - size.left).max((crate::editor_chrome::MIN_WIDTH * scale).round() as i32),
             size.bottom - size.top + crate::editor_chrome::height(scale),
         );
         let (x, y) = {
@@ -851,6 +891,16 @@ impl Plugin {
                 DestroyWindow(hwnd);
             }
             return Err(error("cannot create plug-in viewport"));
+        }
+        // SAFETY: subclass only our own child on this GUI thread; no borrowed callback data.
+        if unsafe {
+            windows_sys::Win32::UI::Shell::SetWindowSubclass(viewport, Some(viewport_proc), 1, 0)
+        } == 0
+        {
+            unsafe {
+                DestroyWindow(hwnd);
+            }
+            return Err(error("cannot route plug-in viewport keys"));
         }
         let state = Box::new(WindowState {
             native_frame,
@@ -1181,11 +1231,37 @@ impl Editor {
 
     /// Brings a hidden or buried window back above the others, without activating it.
     pub fn raise(&self) {
+        let main = self
+            ._shared
+            .editor_position
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .area
+            .map_or(std::ptr::null_mut(), |area| area.main_window as HWND);
         // SAFETY: our own window.
         unsafe {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                GW_HWNDPREV, GWL_EXSTYLE, GetWindow, GetWindowLongW, WS_EX_TOPMOST,
+            };
+            let previous = if IsWindow(main) != 0 {
+                GetWindow(main, GW_HWNDPREV)
+            } else {
+                HWND_TOP
+            };
+            if previous == self.hwnd {
+                return;
+            }
+            // Stay in the normal band even if a topmost window precedes the main window.
+            let after = if !previous.is_null()
+                && GetWindowLongW(previous, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST != 0
+            {
+                HWND_TOP
+            } else {
+                previous
+            };
             SetWindowPos(
                 self.hwnd,
-                HWND_TOP,
+                after,
                 0,
                 0,
                 0,
@@ -1235,7 +1311,21 @@ pub fn capture_window(hwnd: isize, path: &Path) -> Result<Capture, Error> {
             let dc = CreateCompatibleDC(screen);
             let bmp = CreateCompatibleBitmap(screen, w, h);
             let old = SelectObject(dc, bmp);
-            let printed = PrintWindow(hwnd, dc, PRINT_FLAGS) != 0;
+            let mut class = [0u16; 64];
+            let count = windows_sys::Win32::UI::WindowsAndMessaging::GetClassNameW(
+                hwnd,
+                class.as_mut_ptr(),
+                class.len() as i32,
+            );
+            let native = String::from_utf16_lossy(&class[..count as usize]);
+            // Full-content DWM capture can return stale/black child buttons offscreen.
+            // Our GDI frame implements WM_PRINTCLIENT and prints synchronously instead.
+            let flags = if native == "XiriusPluginEditor" {
+                1
+            } else {
+                PRINT_FLAGS
+            };
+            let printed = PrintWindow(hwnd, dc, flags) != 0;
             SelectObject(dc, old);
             let mut info: BITMAPINFO = std::mem::zeroed();
             info.bmiHeader = BITMAPINFOHEADER {

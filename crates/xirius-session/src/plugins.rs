@@ -774,6 +774,7 @@ pub struct OpenTime {
 /// does not load the DLL again; a plugin in a host process keeps its link across builds.
 #[derive(Default)]
 pub struct PluginLoader {
+    editor_contexts: Arc<Mutex<HashMap<PluginId, EditorContext>>>,
     intents: HashMap<PluginId, Option<Plugin>>,
     pending_owned: HashMap<PluginId, PendingOwned>,
     threaded_local: bool,
@@ -845,6 +846,12 @@ struct OwnedPreload {
     ready: Ready,
     carried: Option<RemoteEdit>,
     took: Duration,
+}
+
+#[derive(Clone, Default)]
+struct EditorContext {
+    area: Option<xirius_vst3::EditorArea>,
+    bar: Option<xirius_vst3::EditorBar>,
 }
 struct PendingOwned {
     job: crate::background::Job<OwnedPreload>,
@@ -960,6 +967,7 @@ impl PluginLoader {
         let shared = self.shared.clone();
         let dedicated = self.dedicated.clone();
         let remotes = self.remotes.clone();
+        let editor_contexts = self.editor_contexts.clone();
         let intents = self.intents.clone();
         let senders = self.senders.clone();
         let stock = self
@@ -981,6 +989,7 @@ impl PluginLoader {
             (self.dir.clone(), self.rate, self.tempo, self.process_setup);
         let clap_names = self.clap_names.clone();
         Ok(move || Self {
+            editor_contexts,
             intents,
             threaded_local: true,
             catalog,
@@ -1748,10 +1757,26 @@ impl PluginLoader {
                 },
             );
             self.fresh.push(x.id);
-            if let Some((title, caption)) = window {
-                if let Some(previous) = &editor_context {
-                    link.copy_editor_context_from(previous);
+            if let Some(previous) = &editor_context {
+                link.copy_editor_context_from(previous);
+            }
+            // Local -> remote and background rebuilds retain the same view context too.
+            // Cache it on the link before its deferred OpenEditor is sent.
+            let context = self
+                .editor_contexts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&x.id)
+                .cloned();
+            if let Some(context) = context {
+                if let Some(area) = context.area {
+                    server.editor_area(&link, area);
                 }
+                if let Some(bar) = context.bar {
+                    server.editor_bar(&link, bar);
+                }
+            }
+            if let Some((title, caption)) = window {
                 server.open_editor_later(&link, &title, caption);
             }
             let mut processor = RemotePlugin::new(server, link, spec);
@@ -3017,6 +3042,22 @@ impl PluginLoader {
         if let Some(local) = self.playing_local(id)
             && let Some(owned) = &local.owned
         {
+            if open {
+                let context = self
+                    .editor_contexts
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(&id)
+                    .cloned();
+                if let Some(context) = context {
+                    if let Some(area) = context.area {
+                        owned.editor_area(area);
+                    }
+                    if let Some(bar) = context.bar {
+                        owned.editor_bar(bar);
+                    }
+                }
+            }
             return if owned.editor(local.applied.name.clone(), caption, open) {
                 Ok(())
             } else {
@@ -3050,6 +3091,12 @@ impl PluginLoader {
 
     /// Queues a physical coordinate snapshot before opening the view.
     pub fn editor_bar(&self, id: PluginId, bar: xirius_vst3::EditorBar) {
+        self.editor_contexts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(id)
+            .or_default()
+            .bar = Some(bar.clone());
         if let Some(local) = self.playing_local(id)
             && let Some(owned) = &local.owned
         {
@@ -3076,16 +3123,34 @@ impl PluginLoader {
     }
 
     pub fn editor_origin(&self, id: PluginId) -> Option<(i32, i32)> {
-        if let Some(local) = self.playing_local(id)
+        let origin = if let Some(local) = self.playing_local(id)
             && let Some(owned) = &local.owned
         {
-            return owned.editor_origin();
+            owned.editor_origin()
+        } else {
+            self.playing_remote(id).and_then(|r| r.link.editor_origin())
+        };
+        if let Some(origin) = origin
+            && let Some(area) = self
+                .editor_contexts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_mut(&id)
+                .and_then(|context| context.area.as_mut())
+        {
+            area.restore = Some(origin);
         }
-        self.playing_remote(id).and_then(|r| r.link.editor_origin())
+        origin
     }
 
     /// Queues a physical coordinate snapshot before opening the view.
     pub fn editor_area(&self, id: PluginId, area: xirius_vst3::EditorArea) {
+        self.editor_contexts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(id)
+            .or_default()
+            .area = Some(area);
         if let Some(local) = self.playing_local(id)
             && let Some(owned) = &local.owned
         {
@@ -3318,6 +3383,47 @@ impl PluginLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editor_context_follows_background_rebuilds_without_opening_a_view() {
+        let loader = PluginLoader::default();
+        let id = PluginId(7);
+        let bar = xirius_vst3::EditorBar {
+            track: "Vocal".into(),
+            device: "Effect".into(),
+            preset: "Room".into(),
+            presets: vec!["Room".into(), "Hall".into()],
+            powered: true,
+            pinned: true,
+            ..Default::default()
+        };
+        let area = xirius_vst3::EditorArea {
+            main_window: 123,
+            main: [2000, 0, 3000, 800],
+            work: [1920, 0, 3840, 1040],
+            restore: Some((2200, 100)),
+        };
+        loader.editor_bar(id, bar.clone());
+        loader.editor_area(id, area);
+        let building = loader.live_copy().unwrap()();
+        let snapshot = building
+            .editor_contexts
+            .lock()
+            .unwrap()
+            .get(&id)
+            .cloned()
+            .unwrap();
+        assert_eq!(snapshot.area, Some(area));
+        assert_eq!(snapshot.bar, Some(bar.clone()));
+        let mut changed = bar;
+        changed.pinned = false;
+        loader.editor_bar(id, changed.clone());
+        assert_eq!(
+            building.editor_contexts.lock().unwrap()[&id].bar,
+            Some(changed)
+        );
+        assert!(loader.locals.is_empty() && building.remotes.is_empty());
+    }
 
     #[test]
     fn process_policy_precedes_first_load_for_new_song_and_preset_and_preload() {

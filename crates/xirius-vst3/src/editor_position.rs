@@ -8,6 +8,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EditorArea {
+    /// Used only to read z order; never assigned as an owner or parent.
+    pub main_window: isize,
     pub main: [i32; 4],
     pub work: [i32; 4],
     pub restore: Option<(i32, i32)>,
@@ -32,6 +34,7 @@ impl EditorArea {
             }
             let w = info.rcWork;
             Some(Self {
+                main_window: hwnd,
                 main: [r.left, r.top, r.right, r.bottom],
                 work: [w.left, w.top, w.right, w.bottom],
                 restore: None,
@@ -95,6 +98,7 @@ pub(crate) struct Position {
 mod tests {
     use super::*;
     const AREA: EditorArea = EditorArea {
+        main_window: 0,
         main: [2000, 100, 3200, 1000],
         work: [1920, 0, 3840, 1040],
         restore: None,
