@@ -179,6 +179,15 @@ fn external_reads_preserve_settings_pick_search_and_inline_rename_composition() 
 
 #[test]
 fn external_reads_preserve_a_value_typed_in_a_device_knob() {
+    device_knob_handoff(false);
+}
+
+#[test]
+fn external_reads_preserve_a_detached_devices_committed_and_marked_text() {
+    device_knob_handoff(true);
+}
+
+fn device_knob_handoff(detached: bool) {
     use crate::{instrument::window::Part, tools::Mods};
     let (_root, mut s) = setup();
     let g = s.geometry(1600.0, 1000.0);
@@ -191,6 +200,10 @@ fn external_reads_preserve_a_value_typed_in_a_device_knob() {
     let fx = s.project().tracks[&t].inserts[0].clone();
     let (k, _) = fx.builtin().unwrap().param("feedback").unwrap();
     s.show_instrument(t, fx.id);
+    if detached {
+        s.move_device_view(fx.id, "external");
+        s.instruments.detached_target = Some(fx.id);
+    }
     let (x, y) = s.instrument_center(&g, fx.id, Part::Knob(k)).unwrap();
     for clicks in [1, 2] {
         assert!(s.instrument_press(&g, x, y, clicks, Mods::NONE));
@@ -201,6 +214,8 @@ fn external_reads_preserve_a_value_typed_in_a_device_knob() {
     s.ime_replace(None, "未確定", true);
     let before = s.ime_field().cloned().unwrap();
     assert_eq!(before.marked, "未確定");
+    // Outside its callback the detached surface restores the main surface's scope.
+    s.instruments.detached_target = None;
     s.bind_window_io();
     let call = request(&mut s, "track.list", json!({}), RunOptions::human());
     assert!(call.join().unwrap().is_err());
@@ -208,6 +223,25 @@ fn external_reads_preserve_a_value_typed_in_a_device_knob() {
     assert_eq!(s.ime_field().cloned().unwrap(), before);
     s.instruments.entry = None;
     s.instruments.open.clear();
+    assert!(!s.human_interaction_active());
+    let retry = request(&mut s, "track.list", json!({}), RunOptions::human());
+    finish(&mut s);
+    retry.join().unwrap().unwrap();
+}
+
+#[test]
+fn a_detached_channel_keeps_its_view_until_the_person_closes_it() {
+    let (_root, mut s) = setup();
+    assert!(s.run_command("track.add.audio", json!({})));
+    let track = *s.project().tracks.keys().next().unwrap();
+    s.open_channel(track);
+    s.channel.as_mut().unwrap().detached = true;
+    s.bind_window_io();
+    let call = request(&mut s, "track.list", json!({}), RunOptions::human());
+    assert!(call.join().unwrap().is_err());
+    assert_eq!(s.channel.as_ref().unwrap().track, track);
+    assert!(s.saving.is_none());
+    s.channel = None;
     assert!(!s.human_interaction_active());
     let retry = request(&mut s, "track.list", json!({}), RunOptions::human());
     finish(&mut s);
