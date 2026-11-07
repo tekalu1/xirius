@@ -186,6 +186,15 @@ fn the_ara_test_plugin_passes_every_step() {
     assert!(s.wait_idle(begun + Duration::from_secs(10)));
     println!("step 6: waited {:?} for the analysis", begun.elapsed());
 
+    // Full musical context: all tempo anchors and signature changes are read by the SDK.
+    let mut mapped = song(vec![clip(1, &audio, 2.0, 0.5, 3.0)]);
+    mapped.tempos = vec![(0.0, 0.0), (2.0, 4.0), (6.0, 8.0), (6.25, 9.0)];
+    mapped.bars = vec![(0.0, 4, 4), (4.0, 3, 4), (7.0, 7, 8)];
+    s.sync(&mapped);
+    assert!(s.wait_idle(Instant::now() + WAIT));
+    assert_eq!(s.probe(WAIT).unwrap().musical_updates, 1);
+    println!("step 7: full tempo and bar-signature maps, one notification");
+
     let p = s.probe(WAIT).unwrap();
     assert_eq!(p.asserts, 0, "the plugin asserted: {}", p.last_assert);
     assert!(s.close(Instant::now() + WAIT));

@@ -364,6 +364,20 @@ impl Doc {
             .first()
             .map_or((4, 4), |s| (s.num as i32, s.den as i32));
         let song = Song {
+            // Half a sample at 384 kHz also bounds the inverse conversion by one sample
+            // at every supported audio rate, including the source's native rate.
+            tempos: tmap.linear_time_points(0.5 / 384_000.0),
+            bars: p
+                .timesig
+                .iter()
+                .map(|s| {
+                    (
+                        s.tick as f64 / f64::from(p.ppq.max(1)),
+                        s.num as i32,
+                        s.den as i32,
+                    )
+                })
+                .collect(),
             bpm: tmap.bpm_at(0),
             numerator,
             denominator,
@@ -392,6 +406,8 @@ impl Doc {
             }
         }
         let song = Song {
+            tempos: w.song.tempos.clone(),
+            bars: w.song.bars.clone(),
             bpm: w.song.bpm,
             numerator: w.song.numerator,
             denominator: w.song.denominator,

@@ -86,6 +86,8 @@ pub type Loader = Box<dyn FnOnce() -> Result<Box<dyn Binary>, Error> + Send>;
 /// The song as the plugin sees it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Song {
+    pub tempos: Vec<(f64, f64)>,
+    pub bars: Vec<(f64, i32, i32)>,
     pub bpm: f64,
     pub numerator: i32,
     pub denominator: i32,
@@ -95,6 +97,8 @@ pub struct Song {
 impl Default for Song {
     fn default() -> Song {
         Song {
+            tempos: Vec::new(),
+            bars: Vec::new(),
             bpm: 120.0,
             numerator: 4,
             denominator: 4,
@@ -203,6 +207,7 @@ pub struct Probe {
     /// Notifications that came on another thread than the ARA thread.
     pub notices_off_thread: u64,
     pub notices: u64,
+    pub musical_updates: u64,
     pub asserts: u64,
     pub last_assert: String,
 }
@@ -655,6 +660,7 @@ struct Ara {
     context: Ref,
     sequence: Ref,
     musical: Musical,
+    musical_updates: u64,
     sources: HashMap<String, Source>,
     next_source: usize,
     clips: HashMap<u64, Clip>,
@@ -1053,6 +1059,7 @@ fn start(
         context: std::ptr::null_mut(),
         sequence: std::ptr::null_mut(),
         musical: Musical::default(),
+        musical_updates: 0,
         sources: HashMap::new(),
         next_source: 1,
         clips: HashMap::new(),
@@ -1084,6 +1091,8 @@ fn clip_ref(key: u64) -> usize {
 impl Ara {
     fn sync(&mut self, song: Song) {
         let musical = Musical {
+            tempos: song.tempos.clone(),
+            bars: song.bars.clone(),
             bpm: song.bpm,
             numerator: song.numerator,
             denominator: song.denominator,
@@ -1095,7 +1104,7 @@ impl Ara {
         self.doc.begin_editing();
 
         if self.context.is_null() {
-            self.side.set_musical(CONTEXT_KEY, musical);
+            self.side.set_musical(CONTEXT_KEY, musical.clone());
             match self.doc.create_musical_context(CONTEXT_KEY, "Song") {
                 Ok(r) => self.context = r,
                 Err(e) => {
@@ -1109,8 +1118,9 @@ impl Ara {
                 .create_region_sequence(SEQUENCE_KEY, "Track", self.context)
                 .unwrap_or(std::ptr::null_mut());
         } else if musical != self.musical {
-            self.side.set_musical(CONTEXT_KEY, musical);
+            self.side.set_musical(CONTEXT_KEY, musical.clone());
             self.doc.update_musical_context_content(self.context);
+            self.musical_updates += 1;
         }
         self.musical = musical;
 
@@ -1659,6 +1669,7 @@ impl Ara {
             most_readers: calls.most_readers.load(Ordering::Acquire),
             notices_off_thread: self.notices_off_thread,
             notices: self.notices,
+            musical_updates: self.musical_updates,
             asserts,
             last_assert,
         }
