@@ -196,6 +196,8 @@ pub(crate) struct OwnedLocal {
     editor_intent: Cell<Option<bool>>,
     editor_job: RefCell<Option<Ticket<()>>>,
     play: Cell<u32>,
+    editor_actions: RefCell<Vec<xirius_vst3::EditorAction>>,
+    editor_origin: Cell<Option<(i32, i32)>>,
     names: RefCell<Vec<(u8, String)>>,
     pub latency: Cell<u32>,
     due: Cell<Option<Instant>>,
@@ -293,6 +295,8 @@ impl OwnedLocal {
             editor_intent: Cell::new(None),
             editor_job: RefCell::new(None),
             play: Cell::new(0),
+            editor_actions: Default::default(),
+            editor_origin: Default::default(),
             names: RefCell::new(names),
             latency: Cell::new(latency),
             due: Cell::new(None),
@@ -488,6 +492,24 @@ impl OwnedLocal {
         }
     }
 
+    pub fn raise_editor(&self) {
+        self.keep(self.controller.raise_editor());
+    }
+
+    pub fn editor_area(&self, area: xirius_vst3::EditorArea) {
+        self.keep(self.controller.editor_area(area));
+    }
+    pub fn editor_bar(&self, bar: xirius_vst3::EditorBar) {
+        self.keep(self.controller.editor_bar(bar));
+    }
+    pub fn take_editor_actions(&self) -> Vec<xirius_vst3::EditorAction> {
+        std::mem::take(&mut *self.editor_actions.borrow_mut())
+    }
+
+    pub fn editor_origin(&self) -> Option<(i32, i32)> {
+        self.editor_origin.get()
+    }
+
     fn poll_editor(&self) -> bool {
         let result = self.editor_job.borrow().as_ref().and_then(Ticket::poll);
         if let Some(result) = result {
@@ -562,6 +584,12 @@ impl OwnedLocal {
                     };
                     self.flags.set(self.flags.get() | edits.restart_flags);
                     self.visible.set(edits.editor_visible);
+                    if edits.editor_origin.is_some() {
+                        self.editor_origin.set(edits.editor_origin);
+                    }
+                    self.editor_actions
+                        .borrow_mut()
+                        .extend(edits.editor_actions);
                     self.play
                         .set(self.play.get().saturating_add(edits.play_requests));
                     self.latency.set(edits.latency);

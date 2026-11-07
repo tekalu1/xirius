@@ -124,6 +124,9 @@ pub struct PluginState {
 /// What both the UI side and the audio side hold. It is terminated and released when the last
 /// one goes, during a turn.
 pub(crate) struct Shared {
+    pub(crate) editor_bar: std::sync::Mutex<crate::EditorBar>,
+    pub(crate) editor_actions: std::sync::Mutex<Vec<crate::EditorAction>>,
+    pub(crate) editor_position: std::sync::Mutex<crate::editor_position::Position>,
     pub(crate) class: ClassInfo,
     pub(crate) controller: Option<ComPtr<IEditController>>,
     component: ManuallyDrop<ComPtr<IComponent>>,
@@ -197,6 +200,9 @@ impl Plugin {
             return Err(error("the class is not an IAudioProcessor"));
         };
         let mut shared = Shared {
+            editor_bar: Default::default(),
+            editor_actions: Default::default(),
+            editor_position: Default::default(),
             class: class.clone(),
             controller: None,
             processor: ManuallyDrop::new(processor),

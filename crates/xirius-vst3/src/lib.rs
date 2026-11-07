@@ -14,6 +14,12 @@
 
 pub mod crash_context;
 mod editor;
+mod editor_bar;
+mod editor_chrome;
+mod editor_icons;
+pub use editor_bar::{EditorAction, EditorBar};
+mod editor_position;
+pub use editor_position::EditorArea;
 mod editor_keys;
 mod host;
 mod module;

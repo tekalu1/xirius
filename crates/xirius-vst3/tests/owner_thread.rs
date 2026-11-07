@@ -99,6 +99,14 @@ fn state_requests_cancel_without_waiting_and_the_audio_returns_before_terminatio
         offline: false,
     };
     let opened = wait(&Controller::open(open()).unwrap()).unwrap();
+    // Restoring the main window may queue a raise after an editor was closed.
+    // The owner acknowledges it without opening another view or changing the instance.
+    let before_raise = wait(&opened.controller.edits().unwrap()).unwrap().serial;
+    wait(&opened.controller.raise_editor().unwrap()).unwrap();
+    let after_raise = wait(&opened.controller.edits().unwrap()).unwrap();
+    assert_eq!(after_raise.serial, before_raise);
+    assert!(!after_raise.editor_visible);
+    assert_eq!(after_raise.editor_origin, None);
     let wide: Vec<_> = dll.as_os_str().encode_wide().chain([0]).collect();
     // SAFETY: the loaded fixture exports these exact system ABI functions. Its
     // module stays loaded until process exit; all event handles outlive the call.

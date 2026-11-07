@@ -128,6 +128,17 @@ fn survey_here(relative: &str) {
     let Some(plugin) = load(relative) else {
         return;
     };
+    plugin.set_editor_bar(xirius_vst3::EditorBar {
+        track: "Vocal".into(),
+        device: std::path::Path::new(relative)
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+        preset: "Default".into(),
+        powered: true,
+        ..Default::default()
+    });
     let before = unsafe { GetForegroundWindow() };
     let mut editor = plugin
         .open_editor_at(relative, Placement::offscreen())
@@ -136,6 +147,20 @@ fn survey_here(relative: &str) {
     // A vendor that makes its windows late (a busy machine) is waited for.
     pump_until(&mut editor, |e| !classes(e.hwnd() as HWND).is_empty());
     let found = classes(editor.hwnd() as HWND);
+    eprintln!(
+        "{relative}: native-frame fallback={}",
+        editor.uses_native_frame()
+    );
+    if let Some(dir) = std::env::var_os("XIRIUS_EDITOR_SHOTS") {
+        let path = PathBuf::from(dir).join(format!(
+            "{}.bmp",
+            std::path::Path::new(relative)
+                .file_stem()
+                .unwrap()
+                .to_string_lossy()
+        ));
+        editor.capture_bmp(&path).expect("capture common frame");
+    }
     eprintln!("{relative}: {found:?}");
     assert!(!editor.took_foreground(), "{relative}: {found:?}");
     // Another program (or the person) may move the foreground meanwhile; none of ours may.
@@ -149,7 +174,7 @@ fn survey_here(relative: &str) {
         "{relative}: the view has windows below the frame"
     );
     // SAFETY: a plain query on our window.
-    let child = unsafe { GetWindow(editor.hwnd() as HWND, GW_CHILD) };
+    let child = unsafe { GetWindow(editor.viewport_hwnd() as HWND, GW_CHILD) };
     assert!(!child.is_null());
     let space = |child: HWND| {
         // SAFETY: window messages to the vendor's own child window, which no input device sends.

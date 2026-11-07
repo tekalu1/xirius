@@ -202,6 +202,17 @@ impl Loaded {
             Loaded::Clap(_) => Err("CLAP のエディターはまだ開けません".to_string()),
         }
     }
+
+    pub fn set_editor_area(&self, area: xirius_vst3::EditorArea) {
+        if let Loaded::Vst3(p) = self {
+            p.set_editor_area(area);
+        }
+    }
+    pub fn set_editor_bar(&self, bar: xirius_vst3::EditorBar) {
+        if let Loaded::Vst3(p) = self {
+            p.set_editor_bar(bar);
+        }
+    }
 }
 
 /// A plugin's real-time side, fed the engine's blocks.
