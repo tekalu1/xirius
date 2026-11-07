@@ -18,6 +18,7 @@ pub(crate) fn handles(name: &str) -> bool {
             || xirius_session::track_preset::NAMES.contains(&name)
             || xirius_session::preset::NAMES.contains(&name)
             || xirius_session::xpreset::NAMES.contains(&name)
+            || xirius_session::sample_files::NAMES.contains(&name)
             || xirius_prefs::is_settings_command(name)
             || [
                 "export.",
@@ -50,7 +51,9 @@ pub(crate) fn captures(name: &str) -> bool {
 }
 
 pub(crate) fn label(name: &str) -> &'static str {
-    if name.starts_with("export.") {
+    if xirius_session::sample_files::NAMES.contains(&name) {
+        "サンプルを読み込んでいます"
+    } else if name.starts_with("export.") {
         "書き出しを準備しています"
     } else if name.starts_with("file.")
         || name.starts_with("history.")
@@ -107,6 +110,9 @@ impl Studio {
         }
         self.error = None;
         self.after_edit();
+        if xirius_session::sample_files::NAMES.contains(&name) {
+            self.after_command(name, &result.data);
+        }
         if name == "prefs.set"
             && raw
                 .get("key")
@@ -194,6 +200,21 @@ mod tests {
         sync::{Arc, mpsc},
         time::Duration,
     };
+
+    #[test]
+    fn sample_file_commands_use_the_owner_but_model_edits_stay_inline() {
+        for name in xirius_session::sample_files::NAMES {
+            assert!(handles(name));
+            assert_eq!(label(name), "サンプルを読み込んでいます");
+        }
+        for name in [
+            "plugin.samples.add",
+            "plugin.samples.set",
+            "plugin.samples.remove",
+        ] {
+            assert!(!handles(name));
+        }
+    }
 
     fn recording(root: &std::path::Path) -> (Studio, xirius_core::id::TrackId) {
         let mut s = Studio::new(Song::empty());
