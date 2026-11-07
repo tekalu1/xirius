@@ -100,6 +100,21 @@ fn shot_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_TARGET_TMPDIR")))
 }
 
+fn assert_bar_is_painted(path: &std::path::Path, width: u32, height: usize) {
+    let bmp = std::fs::read(path).unwrap();
+    let bar = &bmp[54..54 + width as usize * height * 4];
+    let black = bar
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|p| p[..3] == [0, 0, 0])
+        .count();
+    assert!(
+        black * 100 < width as usize * height * 5,
+        "unpainted bar pixels: {black}"
+    );
+}
+
 #[test]
 fn a_drag_and_a_dpi_change_reach_the_view_through_its_constraint() {
     let plugin = fixture();
@@ -125,6 +140,7 @@ fn a_drag_and_a_dpi_change_reach_the_view_through_its_constraint() {
     // The bottom-right corner, 123 px wider and 77 px taller: the width snaps to the view's
     // step, the left and top edges stay.
     let before = window_rect(hwnd);
+    let initial_frame_width = client(hwnd).0;
     let to = drag(
         &mut editor,
         WMSZ_BOTTOMRIGHT,
@@ -134,7 +150,7 @@ fn a_drag_and_a_dpi_change_reach_the_view_through_its_constraint() {
             ..before
         },
     );
-    let want = constrain(w0 + 123, h0 + 77);
+    let want = constrain(initial_frame_width + 123, h0 + 77);
     assert_eq!(want.0 % STEP, 0);
     assert_eq!((to.left, to.top), (before.left, before.top));
     assert_eq!(client(editor.viewport_hwnd() as HWND), want);
@@ -161,7 +177,7 @@ fn a_drag_and_a_dpi_change_reach_the_view_through_its_constraint() {
         },
     );
     assert_eq!(to.right, before.right);
-    let minimum = constrain((316.0 * scale).ceil() as i32, MIN.1).0;
+    let minimum = constrain((412.0 * scale).ceil() as i32, MIN.1).0;
     assert_eq!(client(editor.viewport_hwnd() as HWND).0, minimum);
     assert_eq!(editor.size().0, minimum);
 
@@ -281,6 +297,18 @@ fn common_bar_and_view_share_the_gui_thread_without_topmost_or_native_caption() 
     editor
         .capture_bmp(&shot_dir().join("common-frame-fixture.bmp"))
         .unwrap();
+    for id in 1..=5 {
+        let button = unsafe { GetDlgItem(hwnd, id) };
+        let picture = xirius_vst3::capture_window(
+            button as isize,
+            &shot_dir().join(format!("common-frame-button-{id}.bmp")),
+        )
+        .unwrap();
+        assert!(
+            picture.distinct_colors > 1,
+            "bar button {id} draws its face and icon"
+        );
+    }
     let suggested = window_rect(hwnd);
     // SAFETY: simulate a 175% monitor notification only on this test's parked frame.
     unsafe {
@@ -303,7 +331,7 @@ fn common_bar_and_view_share_the_gui_thread_without_topmost_or_native_caption() 
         63
     );
     assert!(report(&editor).ends_with("scale=1.75"));
-    editor
-        .capture_bmp(&shot_dir().join("common-frame-fixture-175.bmp"))
-        .unwrap();
+    let path = shot_dir().join("common-frame-fixture-175.bmp");
+    let capture = editor.capture_bmp(&path).unwrap();
+    assert_bar_is_painted(&path, capture.width, 63);
 }

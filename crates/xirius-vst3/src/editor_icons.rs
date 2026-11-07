@@ -31,8 +31,8 @@ pub(crate) fn paint(dc: HDC, id: usize, x: f32, y: f32, scale: f32, ink: u32, fi
             cache.clear();
         }
         let pixels = cache.entry((id, size, ink, fill)).or_insert_with(|| {
-            let rgb = |c: u32| ((c & 255) << 16) | (c & 0xff00) | ((c >> 16) & 255);
-            let source = svg.replace("currentColor", &format!("#{:06x}", rgb(ink)));
+            let from_colorref = |c: u32| ((c & 255) << 16) | (c & 0xff00) | ((c >> 16) & 255);
+            let source = svg.replace("currentColor", &format!("#{:06x}", from_colorref(ink)));
             let Ok(tree) = resvg::usvg::Tree::from_str(&source, &Default::default()) else {
                 return Vec::new();
             };

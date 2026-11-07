@@ -4,13 +4,14 @@ pub struct EditorBar {
     pub track: String,
     pub device: String,
     pub preset: String,
+    pub presets: Vec<String>,
     pub instrument: bool,
     pub powered: bool,
     pub pinned: bool,
     pub sidechain: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum EditorAction {
     Power = 0,
@@ -19,9 +20,21 @@ pub enum EditorAction {
     Pin = 3,
     Channel = 4,
     Sidechain = 5,
+    PresetSelect(String) = 6,
 }
 
 impl EditorAction {
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::Power => 0,
+            Self::PresetOpen => 1,
+            Self::PresetSave => 2,
+            Self::Pin => 3,
+            Self::Channel => 4,
+            Self::Sidechain => 5,
+            Self::PresetSelect(_) => 6,
+        }
+    }
     pub fn from_byte(value: u8) -> Option<Self> {
         Some(match value {
             0 => Self::Power,
