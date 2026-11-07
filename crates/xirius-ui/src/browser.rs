@@ -1648,11 +1648,51 @@ fn paint_panel(
             }),
     );
     pen.mask(l.list, |pen| {
+        // One 60px selection face, including when its file row is scrolled out.
+        for i in 0..l.rows.len() {
+            if let Some(face) = preview_face(browser, l, i) {
+                pen.round(face, c.sel, Radius::S);
+            }
+        }
         for (i, p) in l.rows.iter().enumerate().filter(|(_, p)| on_screen(p)) {
             let r = browser.row_rect(l, p);
-            paint_row(pen, browser, hover, i, p, r, motion);
+            paint_row(
+                pen,
+                browser,
+                hover,
+                i,
+                p,
+                r,
+                preview_face(browser, l, i).is_some(),
+                motion,
+            );
         }
     });
+}
+
+/// Only the outside corners of the file and its preview are rounded.
+fn preview_face(browser: &Browser, l: &BrowserLayout, i: usize) -> Option<Rect> {
+    let file = l.rows.get(i)?;
+    let BRow::File {
+        key,
+        selected: true,
+        ..
+    } = &file.row
+    else {
+        return None;
+    };
+    let preview = l.rows.get(i + 1)?;
+    if !matches!(&preview.row, BRow::Audition { key: k, .. } if k == key) {
+        return None;
+    }
+    let r = browser.row_rect(l, file);
+    let end = browser.row_rect(l, preview);
+    Some(Rect::new(
+        r.x + Space::X1.px(),
+        r.y,
+        r.w - Space::X1.px() * 2.0,
+        end.bottom() - r.y,
+    ))
 }
 
 /// The favourite's star at the right end of a row.
@@ -1665,6 +1705,7 @@ fn paint_star(pen: &mut Pen, star: Rect, fav: bool, hot: bool) {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_row(
     pen: &mut Pen,
     browser: &Browser,
@@ -1672,6 +1713,7 @@ fn paint_row(
     i: usize,
     p: &Placed,
     r: Rect,
+    has_preview: bool,
     motion: xirius_design::Motion,
 ) {
     let c = pen.c;
@@ -1856,9 +1898,9 @@ fn paint_row(
             selected,
             ..
         } => {
-            if *selected {
+            if *selected && !has_preview {
                 pen.round(inner, c.sel, Radius::S);
-            } else if row_hot {
+            } else if !*selected && row_hot {
                 pen.round(inner, c.hover, Radius::S);
             }
             let x = r.x + Browser::indent(*depth) + 18.0;
@@ -1895,7 +1937,6 @@ fn paint_row(
             depth,
             key,
         } => {
-            pen.round(inner, c.sel, Radius::S);
             let (play, wave) = browser.audition_parts(r, *depth);
             let hot = hover == Some(BrowserHit::Audition);
             pen.round(play, if hot { c.fill_hover } else { c.fill }, Radius::Pill);
@@ -2040,6 +2081,57 @@ pub(crate) mod test_library;
 mod tests {
     use super::test_library::example;
     use super::*;
+
+    #[test]
+    fn preview_is_one_face_with_no_internal_corners_at_all_widths_and_scrolls() {
+        let mut b = Browser::new();
+        for width in [220.0, 280.0] {
+            for scroll in [0.0, 35.0] {
+                b.scroll = scroll;
+                for playing in [false, true] {
+                    let mut l = b.layout(Rect::new(52.0, 6.0, width, 470.0));
+                    l.rows = vec![
+                        Placed {
+                            row: BRow::File {
+                                key: "sample.wav".into(),
+                                name: "sample.wav".into(),
+                                len: "0.4 秒".into(),
+                                depth: 0,
+                                selected: true,
+                            },
+                            y: 0.0,
+                            h: 28.0,
+                        },
+                        Placed {
+                            row: BRow::Audition {
+                                key: "sample.wav".into(),
+                                depth: 0,
+                                playing,
+                            },
+                            y: 28.0,
+                            h: 32.0,
+                        },
+                    ];
+                    let file = b.row_rect(&l, &l.rows[0]);
+                    let preview = b.row_rect(&l, &l.rows[1]);
+                    let face = preview_face(&b, &l, 0).unwrap();
+                    assert_eq!(file.bottom(), preview.y);
+                    assert_eq!(face.y, file.y);
+                    assert_eq!(face.bottom(), preview.bottom());
+                    assert_eq!(face.h, 60.0);
+                    assert_eq!(face.x, file.x + 4.0);
+                    assert_eq!(face.right(), file.right() - 4.0);
+                    // A single round rectangle has full width at this seam: both
+                    // outside corner arcs end before it (radius 8, seam at 28).
+                    assert!(preview.y - face.y > Radius::S.px());
+                    assert!(face.bottom() - preview.y > Radius::S.px());
+                    assert!(preview_face(&b, &l, 1).is_none());
+                    l.rows[1].row = BRow::Note("other");
+                    assert!(preview_face(&b, &l, 0).is_none());
+                }
+            }
+        }
+    }
 
     fn panel() -> Rect {
         Rect::new(52.0, 6.0, Layout::BROWSER_W, 470.0)
