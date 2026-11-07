@@ -119,6 +119,21 @@ impl IPluginFactoryTrait for Factory {
         }
         let bus_mode = id[15] as u8;
         #[cfg(windows)]
+        // A flag file lets an isolated UI test restore normal behavior before its Undo action.
+        if std::env::var_os("XIRIUS_TEST_VST3_CRASH_OPEN")
+            .is_some_and(|mode| mode == "1" || std::path::Path::new(&mode).is_file())
+        {
+            // SAFETY: intentional fatal fixture exception, isolated by the test runner.
+            unsafe {
+                windows_sys::Win32::System::Diagnostics::Debug::RaiseException(
+                    0xc0000005,
+                    1,
+                    0,
+                    std::ptr::null(),
+                );
+            }
+        }
+        #[cfg(windows)]
         opening_gate();
         // A slow plugin, for the opening of a song's plugins together (ENG-064).
         if let Some(ms) = std::env::var("XIRIUS_TEST_VST3_OPEN_MS")
