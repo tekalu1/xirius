@@ -95,87 +95,206 @@ fn clips_in_song(s: &Studio) -> usize {
 #[test]
 fn sample_io_windowed_empty_to_loaded_rebuilds_the_playing_route() {
     for device in ["Sampler", "Drum Kit"] {
-        let mut s = Studio::new(Song::empty());
-        s.transport.mode = OutputMode::Silent { paced: true };
-        assert!(s.start_midi());
-        let t = s.pc_target().unwrap();
-        assert!(s.set_instrument(t, &Pick::built_in(device)));
-        let id = current(&s.project().tracks[&t]).unwrap().id;
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("tone_C3.wav");
-        let wave: Vec<f32> = (0..48_000)
-            .map(|i| (i as f32 * 262.0 * std::f32::consts::TAU / 48_000.0).sin() * 0.5)
-            .collect();
-        xirius_session::export::write_wav(&file, &wave, &wave, 48_000, 16).unwrap();
-        s.show_instrument(t, id);
-        s.bind_window_io();
-        s.prepare_song();
-        let deadline = Instant::now() + Duration::from_secs(60);
-        while s.preparing.is_some() {
-            s.poll_preparing();
-            assert!(Instant::now() < deadline);
-            std::thread::yield_now();
-        }
-        let g = s.geometry(1600.0, 1000.0);
-        let part = if device == "Drum Kit" {
-            Part::Pad(36)
-        } else {
-            Part::Key(60)
-        };
-        let (x, y) = if device == "Drum Kit" {
-            s.instrument_center(&g, id, part).unwrap()
-        } else {
-            let w = s.instruments.open[0];
-            let p = s.project();
-            let (_, plugin, def) = super::window::live(&p, &w).unwrap();
-            let r = s.instruments.rect(0, g.size);
-            let b = s.instruments.body(r, plugin, def);
-            let r = b
-                .spots
-                .iter()
-                .find(|s| s.mark == crate::device::layout::Mark::Drop)
-                .unwrap()
-                .r;
-            (r.x + r.w / 2.0, r.y + 12.0)
-        };
-        assert!(s.window_drop(&g, x, y, &[file]));
-        assert!(s.saving.is_some());
-        s.wait_for_save();
-        assert!(s.error.is_none(), "{:?}", s.error);
-        let deadline = Instant::now() + Duration::from_secs(60);
-        while s.transport.step_swap().0 {
-            assert!(Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        let (x, y) = s.instrument_center(&g, id, part).unwrap();
-        let probe = s
+        sample_io_transition(device, false, false);
+    }
+}
+
+#[test]
+fn sample_io_windowed_failed_load_keeps_the_empty_route_silent() {
+    for device in ["Sampler", "Drum Kit"] {
+        sample_io_transition(device, true, false);
+    }
+}
+
+#[test]
+fn sample_io_windowed_removing_the_last_sample_returns_to_silence() {
+    for device in ["Sampler", "Drum Kit"] {
+        sample_io_transition(device, false, true);
+    }
+}
+
+fn sample_io_empty_is_silent(s: &mut Studio, t: TrackId, id: PluginId, pitch: u8) {
+    assert!(current(&s.project().tracks[&t]).unwrap().samples.is_empty());
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while s.transport.step_swap().0 {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let probe = s
+        .transport
+        .host()
+        .unwrap()
+        .plugins()
+        .stock_probe(id)
+        .unwrap();
+    probe.watch(true);
+    // Drain the reports from the graph that just retired before testing a new note.
+    // Three fresh quiet reports establish that the silent route is running.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut quiet = 0;
+    while quiet < 3 {
+        s.transport.poll();
+        if let Some(level) = s
             .transport
-            .host()
-            .unwrap()
-            .plugins()
-            .stock_probe(id)
-            .unwrap();
-        probe.watch(true);
-        assert!(s.instrument_down(&g, x, y));
-        wait_sounding(&mut s, id, |n| n > 0);
-        let deadline = Instant::now() + Duration::from_secs(20);
-        let mut file_voice = false;
-        let mut peak = 0.0_f32;
-        loop {
-            file_voice |= probe.voice().is_some_and(|v| v.file);
-            let (_, output) = probe.take_peaks();
-            peak = peak.max(output[0]).max(output[1]);
-            if file_voice && peak > 0.001 {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "a sample voice must replace the empty route and produce audio: {file_voice}, {peak}"
-            );
-            std::thread::sleep(Duration::from_millis(16));
+            .take_levels()
+            .get(&xirius_session::host::Strip::Track(t))
+        {
+            quiet = if level.peak == [0.0, 0.0] {
+                quiet + 1
+            } else {
+                0
+            };
         }
-        assert!(s.instrument_up());
-        wait_sounding(&mut s, id, |n| n == 0);
+        assert!(Instant::now() < deadline, "the empty route must settle");
+        std::thread::sleep(Duration::from_millis(16));
+    }
+    probe.take_peaks();
+    s.pc_keys.octave = (pitch / 12) as i8 - 1;
+    assert!(s.pc_key_down("a", false));
+    assert!(
+        s.pc_keys
+            .down
+            .iter()
+            .any(|(key, track, _, sent)| key == "a" && *track == t && *sent == pitch),
+        "the PC key must send the intended track and pitch: {:?}",
+        s.error
+    );
+    assert!(
+        s.pc_keys.pc_waiting.is_empty(),
+        "the route must already be ready"
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut reports = 0;
+    while reports < 3 {
+        s.transport.poll();
+        if let Some(level) = s
+            .transport
+            .take_levels()
+            .get(&xirius_session::host::Strip::Track(t))
+        {
+            assert_eq!(
+                level.peak,
+                [0.0, 0.0],
+                "an empty instrument must stay silent"
+            );
+            reports += 1;
+        }
+        assert!(Instant::now() < deadline, "fresh audio reports must arrive");
+        std::thread::sleep(Duration::from_millis(16));
+    }
+    assert_eq!(probe.take_peaks().1, [0.0, 0.0]);
+    assert_eq!(probe.sounding(), 0);
+    assert!(s.pc_key_up("a"));
+}
+
+fn sample_io_transition(device: &str, fail: bool, remove: bool) {
+    let mut s = Studio::new(Song::empty());
+    s.transport.mode = OutputMode::Silent { paced: true };
+    assert!(s.start_midi());
+    let t = s.pc_target().unwrap();
+    assert!(s.set_instrument(t, &Pick::built_in(device)));
+    let id = current(&s.project().tracks[&t]).unwrap().id;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("tone_C3.wav");
+    let wave: Vec<f32> = (0..48_000)
+        .map(|i| (i as f32 * 262.0 * std::f32::consts::TAU / 48_000.0).sin() * 0.5)
+        .collect();
+    xirius_session::export::write_wav(&file, &wave, &wave, 48_000, 16).unwrap();
+    s.show_instrument(t, id);
+    s.bind_window_io();
+    s.prepare_song();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while s.preparing.is_some() {
+        s.poll_preparing();
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    let g = s.geometry(1600.0, 1000.0);
+    let part = if device == "Drum Kit" {
+        Part::Pad(36)
+    } else {
+        Part::Key(60)
+    };
+    let pitch = if device == "Drum Kit" { 36 } else { 60 };
+    sample_io_empty_is_silent(&mut s, t, id, pitch);
+    let (x, y) = if device == "Drum Kit" {
+        s.instrument_center(&g, id, part).unwrap()
+    } else {
+        let w = s.instruments.open[0];
+        let p = s.project();
+        let (_, plugin, def) = super::window::live(&p, &w).unwrap();
+        let r = s.instruments.rect(0, g.size);
+        let b = s.instruments.body(r, plugin, def);
+        let r = b
+            .spots
+            .iter()
+            .find(|s| s.mark == crate::device::layout::Mark::Drop)
+            .unwrap()
+            .r;
+        (r.x + r.w / 2.0, r.y + 12.0)
+    };
+    let path = if fail {
+        dir.path().join("missing.wav")
+    } else {
+        file
+    };
+    assert!(s.window_drop(&g, x, y, &[path]));
+    assert!(s.saving.is_some());
+    s.wait_for_save();
+    if fail {
+        assert!(
+            s.error
+                .as_deref()
+                .is_some_and(|e| e.contains("見つかりません")),
+            "{:?}",
+            s.error
+        );
+        assert!(!s.instruments.open[0].filled);
+        sample_io_empty_is_silent(&mut s, t, id, pitch);
+        return;
+    }
+    assert!(s.error.is_none(), "{:?}", s.error);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while s.transport.step_swap().0 {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let (x, y) = s.instrument_center(&g, id, part).unwrap();
+    let probe = s
+        .transport
+        .host()
+        .unwrap()
+        .plugins()
+        .stock_probe(id)
+        .unwrap();
+    probe.watch(true);
+    assert!(s.instrument_down(&g, x, y));
+    wait_sounding(&mut s, id, |n| n > 0);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut file_voice = false;
+    let mut peak = 0.0_f32;
+    loop {
+        file_voice |= probe.voice().is_some_and(|v| v.file);
+        let (_, output) = probe.take_peaks();
+        peak = peak.max(output[0]).max(output[1]);
+        if file_voice && peak > 0.001 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "a sample voice must replace the empty route and produce audio: {file_voice}, {peak}"
+        );
+        std::thread::sleep(Duration::from_millis(16));
+    }
+    assert!(s.instrument_up());
+    wait_sounding(&mut s, id, |n| n == 0);
+    if remove {
+        assert!(s.run_command(
+            "plugin.samples.remove",
+            serde_json::json!({"id":id, "index":1})
+        ));
+        assert!(!s.instruments.open[0].filled);
+        sample_io_empty_is_silent(&mut s, t, id, pitch);
     }
 }
 
