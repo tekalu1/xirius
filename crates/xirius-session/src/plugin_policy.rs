@@ -117,9 +117,9 @@ pub fn culprit<'a>(log: &str, catalog: &'a Catalog) -> Option<&'a Entry> {
     let mut matches = catalog
         .entries
         .iter()
-        .filter(|e| !e.ara && same_bundle(&module, &e.path));
+        .filter(|e| same_bundle(&module, &e.path));
     let entry = matches.next()?;
-    matches.next().is_none().then_some(entry)
+    (!entry.ara && matches.next().is_none()).then_some(entry)
 }
 
 /// The setting and processed record IDs are persisted together in prefs.toml.
@@ -342,6 +342,8 @@ mod tests {
         let mut second = c.entries[0].clone();
         second.uid = "OTHER".into();
         c.entries.push(second);
+        assert!(culprit(&report("C:/fixture.vst3"), &c).is_none());
+        c.entries[1].ara = true;
         assert!(culprit(&report("C:/fixture.vst3"), &c).is_none());
     }
 }
