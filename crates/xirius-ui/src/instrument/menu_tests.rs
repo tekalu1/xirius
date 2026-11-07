@@ -226,3 +226,33 @@ fn shift_f11_opens_the_selected_tracks_instrument() {
     assert!(s.edit_key(&g, "f11", shift));
     assert!(!s.instruments.is_open(id), "again shuts it");
 }
+
+#[test]
+fn an_external_instrument_opens_the_effective_process_choices_from_its_row() {
+    let (mut s, g, t, _) = studio();
+    let pick = Pick {
+        name: "Fixture".into(),
+        format: "vst3".into(),
+        uid: "00112233445566778899AABBCCDDEEFF".into(),
+    };
+    assert!(s.set_instrument(t, &pick));
+    let id = current(&s.project().tracks[&t]).unwrap().id;
+    let key = xirius_prefs::isolation::key(&pick.format, &pick.uid);
+    s.song
+        .set("prefs.set", json!({"key":key,"value":"dedicated"}))
+        .unwrap();
+    right_press(&mut s, &g, t, id);
+    assert!(
+        rows(&s, &g)
+            .iter()
+            .any(|c| c.action == Some(Action::Pick("process".into())))
+    );
+    let marks = crate::a11y::marks(&s, &g);
+    assert!(marks.iter().any(|m| m.node.label() == Some("動かす場所")));
+    self::pick(&mut s, &g, "process");
+    assert_eq!(s.popup.as_ref().unwrap().kind, PopupKind::Plugin(t, id));
+    assert_eq!(
+        s.popup.as_ref().unwrap().plugin.as_ref().unwrap().mode,
+        xirius_core::model::PluginIsolation::Dedicated
+    );
+}

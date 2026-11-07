@@ -660,7 +660,7 @@ impl Studio {
         }
         adds.push(Item::gap());
         adds.extend(self.flow_add_items(t));
-        let rows = vec![
+        let mut rows = vec![
             Item::act("画面を開く", "", Act::OpenPlugin(t, id)),
             Item::sub("プリセット", presets),
             // A plugin that went down has the menu of PLG-053 instead; this one is for the
@@ -672,6 +672,9 @@ impl Studio {
             Item::sub("別のチャンネルへ写す", copies),
             Item::gap(),
         ];
+        if !builtin {
+            rows.insert(3, Item::sub("動かす場所", self.plugin_process_items(t, id)));
+        }
         let tail = [
             Item::sub("オートメーションを表示", lanes),
             Item::gap(),

@@ -35,6 +35,7 @@ const MARGIN: f32 = 8.0;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Answer {
     SaveAs,
+    RestorePluginProcess(String),
     SaveAgain,
     /// Renders again the clips whose sound could not be made.
     Retry(Vec<ClipId>),
@@ -153,8 +154,36 @@ impl Studio {
             .filter(|t| t.stays() || t.since.elapsed() < SHOWN)
     }
 
+    pub(crate) fn process_policy_changed(&mut self, key: &str) {
+        crate::crash_reports::acknowledge_recovered(key);
+        if self.toast.as_ref().and_then(|t|t.button.as_ref()).is_some_and(|(_,answer)|
+            matches!(answer,Answer::RestorePluginProcess(current) if current==key)) { self.toast=None; }
+    }
+
+    pub(crate) fn acknowledge_process_notice(&self) {
+        if let Some((_, Answer::RestorePluginProcess(key))) =
+            self.toast.as_ref().and_then(|t| t.button.as_ref())
+        {
+            crate::crash_reports::acknowledge_recovered(key);
+        }
+    }
+
+    pub(crate) fn recovered_plugin(&mut self, recovered: xirius_session::plugin_policy::Recovered) {
+        self.offer(
+            format!("{}：次から別のプロセスで動かします", recovered.name),
+            "元に戻す",
+            Answer::RestorePluginProcess(recovered.key),
+        );
+    }
+
     /// Lets go of a toast shown long enough. True when one went.
     pub fn expire_toast(&mut self) -> bool {
+        if self.toast.is_none()
+            && let Some(recovered) = crate::crash_reports::next_recovered()
+        {
+            self.recovered_plugin(recovered);
+            return true;
+        }
         if self.toast.is_some() && self.toast_shown().is_none() {
             self.toast = None;
             return true;
@@ -228,11 +257,18 @@ impl Studio {
             }
             return;
         }
+        if matches!(answer, Answer::RestorePluginProcess(_)) {
+            self.acknowledge_process_notice();
+        }
         if !matches!(answer, Answer::SaveAs | Answer::SaveAgain) {
             self.toast = None;
         }
         let ids = |xs: &[ClipId]| xs.iter().map(ToString::to_string).collect::<Vec<_>>();
         match answer {
+            Answer::RestorePluginProcess(key) => {
+                // design-lint: allow(ui-blocking-io) PRJ-031: prefs.set is dispatched to the existing settings worker.
+                self.run_command("prefs.set", serde_json::json!({"key":key,"value":"same"}));
+            }
             Answer::SaveAs => self.file_request = Some(crate::studio::FileRequest::SaveAs),
             Answer::SaveAgain => {
                 self.start_save();
@@ -267,6 +303,7 @@ impl Studio {
         }
         if parts.close.is_some_and(|c| c.contains(x, y)) {
             self.other_refused();
+            self.acknowledge_process_notice();
             self.toast = None;
         } else if parts.button.is_some_and(|b| b.contains(x, y)) {
             self.toast_button(Some(g), false);
@@ -495,5 +532,48 @@ mod tests {
         assert_eq!(s.hit(&g, ax, ay), Hit::Toast(ToastPart::Also));
         assert_eq!(s.center_of(&g, Hit::Toast(ToastPart::Also)), Some((ax, ay)));
         assert_eq!(s.center_of(&g, Hit::Toast(ToastPart::Close)), None);
+    }
+}
+
+#[cfg(test)]
+mod process_notice_tests {
+    use super::*;
+    use xirius_core::model::PluginIsolation;
+    #[test]
+    fn recovered_plugin_has_named_notice_and_restore_button_that_persists_inprocess() {
+        let mut s = Studio::sample();
+        let key = xirius_prefs::isolation::key("vst3", "ABCD");
+        s.song
+            .set(
+                "prefs.set",
+                serde_json::json!({"key":key,"value":"dedicated"}),
+            )
+            .unwrap();
+        s.recovered_plugin(xirius_session::plugin_policy::Recovered {
+            name: "Fixture".into(),
+            key: key.clone(),
+        });
+        let g = s.geometry(1440.0, 860.0);
+        let marks = crate::a11y::toast_marks(&s, &g);
+        assert!(
+            marks
+                .iter()
+                .any(|m| m.node.label() == Some("Fixture：次から別のプロセスで動かします"))
+        );
+        let restore = marks
+            .iter()
+            .find(|m| m.node.label() == Some("元に戻す"))
+            .unwrap();
+        assert_eq!(
+            restore.press,
+            Some(crate::studio::Hit::Toast(ToastPart::Button))
+        );
+        assert!(crate::a11y::press(&mut s, &g, restore.press.unwrap()));
+        let prefs = &s.song.settings().lock().unwrap().prefs;
+        assert_eq!(prefs.text(&key), "same");
+        assert_eq!(
+            xirius_prefs::isolation::resolve(prefs, "vst3", "ABCD", PluginIsolation::Dedicated),
+            PluginIsolation::InProcess
+        );
     }
 }

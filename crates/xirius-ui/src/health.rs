@@ -201,7 +201,24 @@ impl Studio {
         let x = p.tracks.get(&t)?.inserts.iter().find(|x| x.id == id)?;
         let builtin = x.format.eq_ignore_ascii_case("builtin");
         // The player keeps an ARA plugin here whatever the song says; the menu shows where it runs.
-        let ara = !builtin && self.plugin_catalog().find(&x.uid).is_some_and(|e| e.ara);
+        let catalog = self.plugin_catalog();
+        let ara =
+            !builtin && xirius_session::plugin_policy::find(&catalog, x).is_some_and(|e| e.ara);
+        let mode = self
+            .song
+            .settings()
+            // design-lint: allow(ui-blocking-io) PRJ-031: memory-only settings snapshot; no file access on the window thread.
+            .lock()
+            .ok()
+            .map(|s| {
+                xirius_prefs::isolation::resolve(
+                    &s.prefs,
+                    &x.format,
+                    &x.uid,
+                    xirius_session::plugin_policy::legacy(&s.prefs, Some(&catalog), x),
+                )
+            })
+            .unwrap_or(x.isolation);
         Some(PluginView {
             name: x.name.clone(),
             crashed: self.health.crashed(id),
@@ -209,14 +226,54 @@ impl Studio {
                 && x.isolation != PluginIsolation::Dedicated
                 && !builtin
                 && !ara,
-            mode: if ara {
+            mode: if ara || builtin {
                 PluginIsolation::InProcess
             } else {
-                x.isolation
+                mode
             },
             builtin,
             ara,
         })
+    }
+
+    /// The normal context menu shares the same three effective process choices.
+    pub(crate) fn plugin_process_items(
+        &mut self,
+        t: TrackId,
+        id: PluginId,
+    ) -> Vec<crate::context::Item> {
+        let Some(view) = self.plugin_view(t, id) else {
+            return vec![];
+        };
+        let p = self.project();
+        let Some(plugin) = p
+            .tracks
+            .get(&t)
+            .and_then(|t| t.inserts.iter().find(|x| x.id == id))
+        else {
+            return vec![];
+        };
+        let key = xirius_prefs::isolation::key(&plugin.format, &plugin.uid);
+        [
+            ("アプリ内", PluginIsolation::InProcess),
+            ("共有", PluginIsolation::Shared),
+            ("専用", PluginIsolation::Dedicated),
+        ]
+        .into_iter()
+        .map(|(label, mode)| {
+            let value = if mode == PluginIsolation::InProcess {
+                "same"
+            } else {
+                mode.name()
+            };
+            crate::context::Item {
+                run: crate::context::Run::Cmd("prefs.set", json!({"key":key,"value":value})),
+                ..crate::context::Item::title(label)
+            }
+            .enabled(!(view.builtin || view.ara) || mode == PluginIsolation::InProcess)
+            .on(view.mode == mode)
+        })
+        .collect()
     }
 
     /// A press in the plugin menu.
@@ -241,11 +298,35 @@ impl Studio {
                 self.run_command("plugin.remove", json!({ "ids": [id.to_string()] }))
             }
             PlugAct::Mode(mode) => {
-                // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
-                self.run_command(
-                    "plugin.isolation.set",
-                    json!({ "ids": [id.to_string()], "mode": mode.name() }),
-                );
+                let key = self
+                    .project()
+                    .tracks
+                    .get(&t)
+                    .and_then(|t| t.inserts.iter().find(|x| x.id == id))
+                    .map(|x| xirius_prefs::isolation::key(&x.format, &x.uid));
+                let Some(key) = key else {
+                    return false;
+                };
+                let value = if mode == PluginIsolation::InProcess {
+                    "same"
+                } else {
+                    mode.name()
+                };
+                if self.transport.is_windowed() {
+                    // design-lint: allow(ui-blocking-io) PRJ-031: settings persistence uses the worker; completion rebuilds with the new policy.
+                    self.run_command("prefs.set", json!({"key":key,"value":value}));
+                } else {
+                    // design-lint: allow(ui-blocking-io) PRJ-031: non-window callers and tests retain the model edit's undo step.
+                    self.run_command(
+                        "plugin.isolation.set",
+                        json!({"ids":[id.to_string()],"mode":mode.name()}),
+                    );
+                    // design-lint: allow(ui-blocking-io) PRJ-031: this branch has no interactive window; tests use memory-only settings.
+                    if let Err(error) = self.song.set("prefs.set", json!({"key":key,"value":value}))
+                    {
+                        self.fail(error);
+                    }
+                }
                 self.refresh_popup();
                 true
             }
@@ -528,5 +609,39 @@ mod tests {
         assert_eq!(s.crashed_on(t), None);
         assert!(s.restart_plugins());
         assert!(s.error.is_none(), "{:?}", s.error);
+    }
+    #[test]
+    fn normal_context_process_choices_show_the_effective_policy_and_restore_it() {
+        let (mut s, g, t, id) = with_effect();
+        let p = s.project();
+        let x = p.tracks[&t].inserts.iter().find(|x| x.id == id).unwrap();
+        let key = xirius_prefs::isolation::key(&x.format, &x.uid);
+        s.song
+            .set("prefs.set", json!({"key":key,"value":"dedicated"}))
+            .unwrap();
+        let items = s.plugin_items(t, id);
+        s.open_context(items, 400.0, 300.0);
+        assert!(s.context_choose(&g, "動かす場所"));
+        let choices = s.context_rows();
+        assert!(choices.iter().any(|r| r.label == "専用" && r.on));
+        let marks = crate::a11y::marks(&s, &g);
+        let dedicated = marks
+            .iter()
+            .find(|m| m.node.label() == Some("専用"))
+            .unwrap();
+        assert_eq!(
+            dedicated.node.toggled(),
+            Some(gpui::accesskit::Toggled::True)
+        );
+        assert!(s.context_choose(&g, "アプリ内"));
+        assert_eq!(s.song.settings().lock().unwrap().prefs.text(&key), "same");
+        let items = s.plugin_items(t, id);
+        s.open_context(items, 400.0, 300.0);
+        assert!(s.context_choose(&g, "動かす場所"));
+        assert!(
+            s.context_rows()
+                .iter()
+                .any(|r| r.label == "アプリ内" && r.on)
+        );
     }
 }

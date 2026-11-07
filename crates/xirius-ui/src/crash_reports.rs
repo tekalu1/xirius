@@ -8,8 +8,31 @@ use xirius_design::Layout;
 use xirius_engine::crash::{self, CrashReport};
 
 const PAGE: usize = 4;
+static RECOVERED: std::sync::Mutex<Vec<xirius_session::plugin_policy::Recovered>> =
+    std::sync::Mutex::new(Vec::new());
+pub fn next_recovered() -> Option<xirius_session::plugin_policy::Recovered> {
+    // design-lint: allow(ui-blocking-io) PRJ-031: memory-only queue; its mutex is never held during I/O.
+    let queue = RECOVERED.lock().unwrap_or_else(|e| e.into_inner());
+    queue.last().cloned()
+}
+pub fn acknowledge_recovered(key: &str) {
+    // design-lint: allow(ui-blocking-io) PRJ-031: memory-only queue; its mutex is never held during I/O.
+    let mut queue = RECOVERED.lock().unwrap_or_else(|e| e.into_inner());
+    queue.retain(|r| r.key != key);
+}
 
 pub fn install() -> std::io::Result<()> {
+    // Before the window and any song/plugin preparation; failures stop startup.
+    let mut settings = xirius_prefs::Settings::open(xirius_prefs::config_dir());
+    let recovered = xirius_session::plugin_policy::recover(
+        &mut settings,
+        &xirius_plugins::Catalog::load_standard(),
+        &crash::directory(),
+    )
+    .map_err(std::io::Error::other)?;
+    let queue = &RECOVERED;
+    // design-lint: allow(ui-blocking-io) PRJ-031: startup queue initialized before the window exists.
+    *queue.lock().unwrap_or_else(|e| e.into_inner()) = recovered;
     // Off the start: earlier builds may have left thousands of empty folders.
     let _ = std::thread::Builder::new()
         .name("crash records".into())

@@ -1715,7 +1715,8 @@ impl Render for Screen {
         let about_nodes = crate::a11y::about_nodes(&self.studio.borrow(), &g);
         let has_about = !has_settings && !about_nodes.is_empty();
         let track_rows = crate::a11y::track_rows(&self.studio.borrow(), &g);
-        let marks = crate::a11y::marks(&self.studio.borrow(), &g);
+        let mut marks = crate::a11y::marks(&self.studio.borrow(), &g);
+        marks.extend(crate::a11y::toast_marks(&self.studio.borrow(), &g));
         {
             let studio = self.studio.borrow();
             let marked = started.elapsed().saturating_sub(pointed);
@@ -2261,6 +2262,7 @@ pub fn run(opts: Options) {
     if let Err(e) = crate::crash_reports::install() {
         // design-lint: allow(ui-blocking-io) PRJ-031: startup failure before a usable window; no interactive callback remains.
         eprintln!("could not initialize crash records: {e}");
+        return;
     }
     crate::about::prepare_startup();
     gpui_platform::application()

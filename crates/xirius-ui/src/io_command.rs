@@ -107,6 +107,22 @@ impl Studio {
         }
         self.error = None;
         self.after_edit();
+        if name == "prefs.set"
+            && raw
+                .get("key")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|k| k.starts_with("plugins.isolation."))
+        {
+            if let Some(key) = raw.get("key").and_then(serde_json::Value::as_str) {
+                self.process_policy_changed(key);
+            }
+            if let Some(host) = self.transport.host_mut() {
+                host.refresh_plugin_processes();
+            } else {
+                self.prepare_song();
+            }
+            self.refresh_popup();
+        }
         if name.starts_with("preset.") {
             let args = serde_json::Value::Object(raw.clone());
             self.chain_preset_ran(name, &args, &result.data);

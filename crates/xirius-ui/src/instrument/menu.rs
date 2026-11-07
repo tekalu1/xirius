@@ -155,7 +155,7 @@ pub fn view(p: &Project, presets: &Presets, menu: Menu) -> (Vec<Choice>, String)
         }
         Menu::Row(t, id) => {
             let built_in = plugin_of(p, t, id).is_some_and(is_built_in);
-            let rows = vec![
+            let mut rows = vec![
                 row("open", "画面を開く"),
                 // Only the built-in instrument's presets are known here.
                 row(if built_in { "preset" } else { "off:preset" }, "プリセット"),
@@ -169,6 +169,9 @@ pub fn view(p: &Project, presets: &Presets, menu: Menu) -> (Vec<Choice>, String)
                 row(GAP, ""),
                 row("remove", "プラグインを削除"),
             ];
+            if !built_in {
+                rows.insert(4, row("process", "動かす場所"));
+            }
             (rows, String::new())
         }
         // The studio keeps the chain presets' list ([`Studio::chain_menu_view`]).
@@ -268,6 +271,7 @@ impl Studio {
                     self.open_plugin(t, id);
                 }
             }
+            "process" => self.open_plugin_menu(t, id, anchor),
             "preset" => self.open_inst_menu(Menu::Preset(t, id), anchor),
             "replace" => self.open_popup(PopupKind::Instrument(t), anchor),
             "reload" => {

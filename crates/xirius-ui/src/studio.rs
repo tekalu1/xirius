@@ -1580,6 +1580,7 @@ impl Studio {
                 match part {
                     crate::toast::ToastPart::Close => {
                         self.other_refused();
+                        self.acknowledge_process_notice();
                         self.toast = None;
                     }
                     crate::toast::ToastPart::Button => self.toast_button(Some(g), false),

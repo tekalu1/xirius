@@ -208,25 +208,65 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 .cells
                 .iter()
                 .enumerate()
-                .filter(|(_, c)| !c.spoken.is_empty())
-                .map(|(i, c)| {
-                    let mut node = accesskit::Node::new(accesskit::Role::SpinButton);
-                    node.set_label(c.spoken.clone());
+                .filter_map(|(i, c)| {
+                    let policy=|item: &crate::context::Item| matches!(&item.run,
+                        crate::context::Run::Cmd("prefs.set",args) if args["key"].as_str().is_some_and(|k|k.starts_with("plugins.isolation.")));
+                    let process=s.ctx.as_ref().and_then(|ctx|ctx.items.iter().find(|item|item.label==c.text))
+                        .and_then(|item| if policy(item) { Some(true) } else if matches!(&item.run,
+                            crate::context::Run::Sub(rows) if rows.iter().any(policy)) { Some(false) } else { None });
+                    if c.spoken.is_empty() && process.is_none() { return None; }
+                    let role=match process {Some(true)=>accesskit::Role::RadioButton,Some(false)=>accesskit::Role::Button,None=>accesskit::Role::SpinButton};
+                    let mut node = accesskit::Node::new(role);
+                    node.set_label(if process.is_some() {c.text.clone()} else {c.spoken.clone()});
+                    if process==Some(true) { node.set_toggled(if c.on {accesskit::Toggled::True} else {accesskit::Toggled::False}); }
+                    if !c.live() { node.set_disabled(); }
                     node.set_bounds(bounds(c.rect));
-                    Mark {
+                    Some(Mark {
                         key: format!("field-{i}"),
                         children: Vec::new(),
                         node,
                         fold: None,
                         pick: None,
-                        press: None,
+                        press: (process.is_some() && c.live()).then_some(Hit::Item(i)),
                         turn: None,
                         edge: None,
-                    }
+                    })
                 })
                 .collect();
         }
         let Some(pick) = &p.pick else {
+            if matches!(
+                p.kind,
+                crate::popup::PopupKind::Plugin(..) | crate::popup::PopupKind::CrashedPlugin(..)
+            ) {
+                return p
+                    .layout(g.size)
+                    .cells
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, c)| c.look == crate::popup::Look::Segment && c.live())
+                    .map(|(i, c)| {
+                        let mut node = accesskit::Node::new(accesskit::Role::RadioButton);
+                        node.set_label(c.text.clone());
+                        node.set_toggled(if c.on {
+                            accesskit::Toggled::True
+                        } else {
+                            accesskit::Toggled::False
+                        });
+                        node.set_bounds(bounds(c.rect));
+                        Mark {
+                            key: format!("plugin-process-{i}"),
+                            children: vec![],
+                            node,
+                            fold: None,
+                            pick: None,
+                            press: Some(Hit::Item(i)),
+                            turn: None,
+                            edge: None,
+                        }
+                    })
+                    .collect();
+            }
             return Vec::new();
         };
         let layout = p.layout(g.size);
@@ -263,6 +303,25 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                         fold: None,
                         pick: None,
                         press: None,
+                        turn: None,
+                        edge: None,
+                    });
+                }
+                if matches!(
+                    p.kind,
+                    crate::popup::PopupKind::InstMenu(crate::instrument::menu::Menu::Row(..))
+                ) && matches!(&c.action,Some(crate::popup::Action::Pick(to)) if to=="process")
+                {
+                    let mut node = accesskit::Node::new(accesskit::Role::Button);
+                    node.set_label(c.text.clone());
+                    node.set_bounds(bounds(c.rect));
+                    return Some(Mark {
+                        key: "instrument-process".into(),
+                        children: vec![],
+                        node,
+                        fold: None,
+                        pick: None,
+                        press: Some(Hit::Item(i)),
                         turn: None,
                         edge: None,
                     });
@@ -1596,6 +1655,64 @@ pub fn bottom_bar_nodes(s: &Studio, g: &Geometry) -> Vec<(usize, accesskit::Node
         }
         node.set_bounds(bounds(r));
         out.push((1 + i, node));
+    }
+    out
+}
+
+/// Persistent notifications expose both the message and their named actions.
+pub fn toast_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
+    use crate::toast::{self, ToastPart};
+    if s.settings.is_some() || s.popup.is_some() {
+        return vec![];
+    }
+    let (Some(t), Some(parts)) = (s.toast_shown(), toast::layout(s, g)) else {
+        return vec![];
+    };
+    let mut out = vec![];
+    let mut add = |key: &str, role, label: &str, rect, press| {
+        let mut node = accesskit::Node::new(role);
+        node.set_label(label);
+        node.set_bounds(bounds(rect));
+        out.push(Mark {
+            key: key.into(),
+            children: vec![],
+            node,
+            fold: None,
+            pick: None,
+            press,
+            turn: None,
+            edge: None,
+        });
+    };
+    add(
+        "toast-message",
+        accesskit::Role::Status,
+        &t.text,
+        parts.text,
+        None,
+    );
+    for (key, rect, button, part) in [
+        ("toast-button", parts.button, &t.button, ToastPart::Button),
+        ("toast-also", parts.also, &t.also, ToastPart::Also),
+    ] {
+        if let (Some(rect), Some((label, _))) = (rect, button) {
+            add(
+                key,
+                accesskit::Role::Button,
+                label,
+                rect,
+                Some(Hit::Toast(part)),
+            );
+        }
+    }
+    if let Some(rect) = parts.close {
+        add(
+            "toast-close",
+            accesskit::Role::Button,
+            "閉じる",
+            rect,
+            Some(Hit::Toast(ToastPart::Close)),
+        );
     }
     out
 }
