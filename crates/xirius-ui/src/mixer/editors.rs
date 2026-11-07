@@ -589,33 +589,6 @@ fn main_window_requests(
     editors.iter().filter(move |_| active || restored)
 }
 
-#[cfg(test)]
-mod activation_tests {
-    use super::*;
-
-    #[test]
-    fn activation_and_restore_request_open_views_without_opening_closed_devices() {
-        let mut open = vec![OpenEditor {
-            id: PluginId(7),
-            title: "Effect".into(),
-            at: Where::Host {
-                asked: Instant::now(),
-                opened: true,
-            },
-        }];
-        let requests = |active, restored, views: &[OpenEditor]| {
-            main_window_requests(active, restored, views)
-                .map(|e| e.id)
-                .collect::<Vec<_>>()
-        };
-        assert!(requests(false, false, &open).is_empty());
-        assert_eq!(requests(true, false, &open), [PluginId(7)]);
-        assert_eq!(requests(false, true, &open), [PluginId(7)]);
-        open.clear();
-        assert!(requests(true, true, &open).is_empty());
-    }
-}
-
 /// Makes an instance of the plugin of its own, with the song's state, and opens its window.
 fn open_apart(
     catalog: &xirius_plugins::Catalog,
@@ -650,4 +623,31 @@ fn open_apart(
             _plugin: instance,
         },
     })
+}
+
+#[cfg(test)]
+mod activation_tests {
+    use super::*;
+
+    #[test]
+    fn activation_and_restore_request_open_views_without_opening_closed_devices() {
+        let mut open = vec![OpenEditor {
+            id: PluginId(7),
+            title: "Effect".into(),
+            at: Where::Host {
+                asked: Instant::now(),
+                opened: true,
+            },
+        }];
+        let requests = |active, restored, views: &[OpenEditor]| {
+            main_window_requests(active, restored, views)
+                .map(|e| e.id)
+                .collect::<Vec<_>>()
+        };
+        assert!(requests(false, false, &open).is_empty());
+        assert_eq!(requests(true, false, &open), [PluginId(7)]);
+        assert_eq!(requests(false, true, &open), [PluginId(7)]);
+        open.clear();
+        assert!(requests(true, true, &open).is_empty());
+    }
 }
