@@ -264,6 +264,7 @@ pub struct Doc {
     sounds: Mutex<HashMap<u64, Sound>>,
     /// The archive last taken from the plugin.
     stored: Mutex<Option<xirius_core::ara::Archive>>,
+    analysis_seen: Mutex<Option<xirius_ara::service::CachedArchive>>,
     /// The archive asked for and not come yet.
     asked: Mutex<Option<Stored>>,
     /// The newest archive was asked for while [`Doc::asked`] was on its way: asked again when
@@ -288,6 +289,7 @@ impl Doc {
             wanted: Mutex::new(None),
             sounds: Mutex::new(HashMap::new()),
             stored: Mutex::new(None),
+            analysis_seen: Mutex::new(None),
             asked: Mutex::new(None),
             again: AtomicBool::new(false),
             leaving: AtomicBool::new(false),
@@ -1032,6 +1034,25 @@ pub fn take_archives(
     wait: bool,
 ) -> xirius_core::CmdResult<bool> {
     let archives = held.archives(session.project(), wait);
+    for doc in held.kept(session.project()) {
+        if archives.iter().any(|a| a.plugin == doc.plugin) {
+            session.forget_ara_cache(&doc.plugin);
+        } else if let Some(cached) = doc.service.analysis_archive() {
+            let mut seen = lock(&doc.analysis_seen);
+            if seen.as_ref().is_some_and(|old| Arc::ptr_eq(old, &cached)) {
+                continue;
+            }
+            let (bytes, id) = &*cached;
+            let a = xirius_ara::Archive::new(&doc.plugin, id, bytes);
+            *seen = Some(cached);
+            session.cache_ara_archive(xirius_core::ara::Archive {
+                version: a.version,
+                plugin: a.plugin,
+                archive_id: a.archive_id,
+                data: a.data,
+            });
+        }
+    }
     if archives.is_empty() {
         return Ok(false);
     }

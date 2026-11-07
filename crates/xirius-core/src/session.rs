@@ -8,7 +8,7 @@
 //! arguments, who ran it (human or AI) and when (ARC-003, ARC-007).
 
 use opening::io as fs;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -440,6 +440,7 @@ pub struct Session {
     current: Arc<Project>,
     /// The state `project.json` holds (none until the song has been saved).
     saved: Option<Arc<Project>>,
+    ara_cache: BTreeMap<String, crate::ara::Archive>,
     pub state: SessionState,
     store: Option<Store>,
     ai: AiPermission,
@@ -557,6 +558,7 @@ impl Session {
             hist: History::new(cur.clone()),
             current: cur,
             saved: None,
+            ara_cache: BTreeMap::new(),
             state: SessionState::default(),
             store: None,
             ai: AiPermission::default(),
@@ -752,6 +754,7 @@ impl Session {
             hist,
             current,
             saved: Some(saved.clone()),
+            ara_cache: BTreeMap::new(),
             state: SessionState {
                 view,
                 ..SessionState::default()
@@ -1955,6 +1958,9 @@ impl Session {
                 dir.display()
             )));
         }
+        if !draft {
+            self.apply_ara_cache()?;
+        }
         fs::create_dir_all(dir)?;
         let new_lane = Lane::take(dir, true)?;
         let new = Store::new(dir);
@@ -2010,9 +2016,35 @@ impl Session {
         Ok(())
     }
 
+    /// Completed ARA analysis is an optional cache until the next explicit save (ARC-025).
+    pub fn cache_ara_archive(&mut self, archive: crate::ara::Archive) {
+        self.ara_cache.insert(archive.plugin.clone(), archive);
+    }
+
+    pub fn forget_ara_cache(&mut self, plugin: &str) {
+        self.ara_cache.remove(plugin);
+    }
+
+    fn apply_ara_cache(&mut self) -> CmdResult<()> {
+        let cache = self.ara_cache.clone();
+        if cache.is_empty() {
+            return Ok(());
+        }
+        self.amend(|p| {
+            for (plugin, archive) in cache {
+                if p.ara.clips.values().any(|c| c.plugin == plugin) {
+                    p.ara.archives.insert(plugin, archive);
+                }
+            }
+        })?;
+        self.ara_cache.clear();
+        Ok(())
+    }
+
     pub fn save(&mut self) -> CmdResult<()> {
         self.check_available()?;
         let store = self.store.clone().ok_or_else(no_store)?;
+        self.apply_ara_cache()?;
         self.writer.flush();
         self.rewrite_history(&store)?;
         store.write_project(&self.current)?;
@@ -2065,6 +2097,7 @@ impl Session {
     /// in `backups/` and read back by its hash; the new file is read back as well.
     fn save_over(&mut self) -> CmdResult<Overwrite> {
         let store = self.store.clone().ok_or_else(no_store)?;
+        self.apply_ara_cache()?;
         self.writer.flush();
         let expected = self.expected_on_disk()?;
         let done = store.overwrite_project(&self.current, &expected)?;

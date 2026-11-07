@@ -580,3 +580,43 @@ fn loop_regions_share_edits_and_resize_without_preparing_again() {
     assert!(service.close(Instant::now() + WAIT));
     no_violations();
 }
+
+#[test]
+fn completed_analysis_is_cached_and_changed_audio_invalidates_it() {
+    let audio = tone(48000.0, 1.0, 0.5);
+    let spec = clip(9003, "analysis.wav", &audio, 0.0, 0.0, 1.0);
+    let service = start(Config::default(), None);
+    service.sync(&song(vec![spec.clone()]));
+    let before = ready(&service, 9003);
+    until("analysis archive", || service.analysis_archive().is_some());
+    assert!(!service.take_dirty());
+    let cached = (*service.analysis_archive().unwrap()).clone();
+    let p = service.probe(WAIT).unwrap();
+    assert_eq!(p.analysis_requests, 1);
+    assert_eq!(p.analysis_starts, 1);
+    assert!(service.close(Instant::now() + WAIT));
+
+    let service = start(Config::default(), Some(cached.clone()));
+    service.sync(&song(vec![spec.clone()]));
+    assert_eq!(ready(&service, 9003).left, before.left);
+    let p = service.probe(WAIT).unwrap();
+    assert!(p.analysis_queries > 0);
+    assert_eq!(p.analysis_requests, 0);
+    assert_eq!(p.analysis_starts, 0);
+    assert!(!service.take_dirty());
+    assert!(service.close(Instant::now() + WAIT));
+
+    let changed = ClipSpec {
+        audio: tone(48000.0, 1.0, 0.25),
+        ..spec
+    };
+    let service = start(Config::default(), Some(cached));
+    service.sync(&song(vec![changed]));
+    let after = ready(&service, 9003);
+    assert!(peak(&after.left) < peak(&before.left) * 0.6);
+    let p = service.probe(WAIT).unwrap();
+    assert_eq!(p.analysis_requests, 1);
+    assert_eq!(p.analysis_starts, 1);
+    assert!(service.close(Instant::now() + WAIT));
+    no_violations();
+}

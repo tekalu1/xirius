@@ -261,6 +261,71 @@ fn a_real_plugin_through_the_songs_clips() {
         rms(&again.left),
         s.notes(1, false, WAIT).len()
     );
+    let probe = s.probe(WAIT).unwrap();
+    assert!(probe.analysis_queries > 0);
+    assert_eq!(
+        probe.analysis_requests, 0,
+        "restoring requested another analysis"
+    );
+    assert_eq!(
+        probe.analysis_starts, 0,
+        "restoring started another analysis"
+    );
+    assert!(!dirty);
+    // Tempo and signature changes arrive once; they do not transform the rendered audio.
+    let mut mapped = song.clone();
+    mapped.tempos = vec![(0.0, 0.0), (2.0, 4.0), (6.0, 8.0), (6.25, 9.0)];
+    mapped.bars = vec![(0.0, 4, 4), (4.0, 3, 4), (7.0, 7, 8)];
+    s.sync(&mapped);
+    assert!(s.wait_idle(Instant::now() + WAIT));
+    assert_eq!(s.probe(WAIT).unwrap().musical_updates, 1);
+    let mapped_audio = s.state(1).unwrap().rendered.unwrap();
+    let difference: Vec<f32> = mapped_audio
+        .left
+        .iter()
+        .zip(&again.left)
+        .map(|(a, b)| a - b)
+        .collect();
+    assert!(rms(&difference) < 1e-5, "tempo changed the rendered sound");
+    println!("ARA3 tempo: complete maps, one notification, unchanged audio");
+    // Repeated regions refer to the same modification and keep the prepared renderer.
+    let prepared = s.probe(WAIT).unwrap().preparations;
+    for count in [4usize, 7, 2, 4] {
+        let spec = &mut mapped.clips[0];
+        spec.duration = count as f64 - 0.5;
+        spec.regions = (0..count)
+            .map(|i| xirius_ara::document::RegionProps {
+                start_in_modification: 0.5,
+                duration_in_modification: if i + 1 == count { 0.5 } else { 1.0 },
+                start_in_playback: i as f64,
+                duration_in_playback: if i + 1 == count { 0.5 } else { 1.0 },
+            })
+            .collect();
+        s.sync(&mapped);
+        assert!(s.wait_idle(Instant::now() + WAIT));
+        let probe = s.probe(WAIT).unwrap();
+        assert_eq!(probe.regions, count);
+        assert_eq!(probe.preparations, prepared);
+        let looped = s.state(1).unwrap().rendered.unwrap();
+        for i in 0..count {
+            let duration = if i + 1 == count { 0.5 } else { 1.0 };
+            // Ignore only 20 ms around seams: region boundaries may have plugin fades.
+            let from = ((i as f64 + 0.02) * f64::from(RATE)) as usize;
+            let to = ((i as f64 + duration - 0.02) * f64::from(RATE)) as usize;
+            let reference = ((0.5 + 0.02) * f64::from(RATE)) as usize;
+            let difference: Vec<f32> = looped.left[from..to]
+                .iter()
+                .zip(&first.left[reference..reference + to - from])
+                .map(|(a, b)| a - b)
+                .collect();
+            assert!(
+                rms(&difference) < 0.02,
+                "loop pass {i} differs: {}",
+                rms(&difference)
+            );
+        }
+    }
+    println!("ARA3 loops: counts 4/7/2/4, same modification and processing setup");
     assert!(s.close(Instant::now() + WAIT));
 
     // The song: attach, analysis, playback, written and opened again, detach.
@@ -303,32 +368,32 @@ fn a_real_plugin_through_the_songs_clips() {
     let changed = xirius_session::ara::take_archives(&mut song, player.ara(), true).unwrap();
     println!("   the song changed by playing: {changed}");
 
-    // An edit in the plugin's window would put its archive into the song; the window is not
-    // opened here, so the document's archive is put in as that edit would.
-    let (bytes, id) = player
-        .ara()
-        .doc(UID)
-        .and_then(|d| d.service().store(WAIT))
-        .expect("the song's archive");
-    let archive = xirius_ara::Archive::new(UID, &id, &bytes);
-    song.amend(|p| {
-        p.ara.archives.insert(
-            UID.to_string(),
-            xirius_core::ara::Archive {
-                version: archive.version,
-                plugin: archive.plugin,
-                archive_id: archive.archive_id,
-                data: archive.data,
-            },
-        );
-    })
-    .unwrap();
-    let saved = serde_json::to_string(song.project()).unwrap();
+    assert!(!changed, "analysis alone changed the song");
+    let folder = dir.path().join("saved-song");
+    song.save_as(&folder).unwrap();
+    assert!(song.project().ara.archives.contains_key(UID));
+    assert!(!song.is_dirty());
+    write_wav(&folder.join("tune.wav"), &samples, &samples, RATE, 32).unwrap();
+    assert!(
+        player
+            .ara()
+            .doc(UID)
+            .unwrap()
+            .service()
+            .close(Instant::now() + WAIT)
+    );
     drop(player);
-    let mut reopened = session(serde_json::from_str(&saved).unwrap());
+    let mut reopened = Session::open_with(&folder, shared_registry()).unwrap();
+    commands::attach(
+        &mut reopened,
+        ExtConfig {
+            catalog: Some(Arc::new(Catalog::default())),
+            ..ExtConfig::default()
+        },
+    );
     let opened = reopened.project().clone();
     // At another rate: the plugin still renders at the file's, so its edits stay (PLG-047).
-    let mut player = Builder::new(OTHER_RATE, Some(dir.path().to_path_buf()));
+    let mut player = Builder::new(OTHER_RATE, Some(folder.clone()));
     player.set_ara_live(true);
     let p = reopened.project().clone();
     player.sync_ara(&p, &TempoMap::from_project(&p), &mut Vec::new());
@@ -352,6 +417,19 @@ fn a_real_plugin_through_the_songs_clips() {
         !changed && *reopened.project() == opened,
         "opening changed the song"
     );
+
+    let probe = player
+        .ara()
+        .doc(UID)
+        .unwrap()
+        .service()
+        .probe(WAIT)
+        .unwrap();
+    assert!(probe.analysis_queries > 0);
+    assert_eq!(probe.analysis_requests, 0);
+    assert_eq!(probe.analysis_starts, 0);
+    assert!(!reopened.is_dirty());
+    println!("ARA3 archive: analysis-only save, no new analysis and no dirty on reopen");
 
     run(&mut reopened, "clip.ara.detach", json!({"ids": [a]}));
     let p = reopened.project().clone();

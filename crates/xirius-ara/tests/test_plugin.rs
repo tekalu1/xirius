@@ -156,6 +156,10 @@ fn the_ara_test_plugin_passes_every_step() {
     let s = Service::start(loader(&path), Some((bytes, id)), Arc::new(|| {}));
     s.sync(&song(vec![clip(1, &audio, 2.0, 0.5, 3.0)]));
     let again = ready(&s, 1);
+    let analysis = s.probe(WAIT).unwrap();
+    assert!(analysis.analysis_queries > 0);
+    assert_eq!(analysis.analysis_requests, 0);
+    assert_eq!(analysis.analysis_starts, 0);
     assert_eq!(again.left, r.left);
     std::thread::sleep(Duration::from_millis(300));
     assert!(!s.take_dirty(), "opening the song made it look changed");
@@ -195,6 +199,34 @@ fn the_ara_test_plugin_passes_every_step() {
     assert!(s.wait_idle(Instant::now() + WAIT));
     assert_eq!(s.probe(WAIT).unwrap().musical_updates, 1);
     println!("step 7: full tempo and bar-signature maps, one notification");
+    let prepared = s.probe(WAIT).unwrap().preparations;
+    for count in [4usize, 7, 2, 4] {
+        let spec = &mut mapped.clips[0];
+        spec.start = 0.0;
+        spec.duration = count as f64 - 0.5;
+        spec.regions = (0..count)
+            .map(|i| xirius_ara::document::RegionProps {
+                start_in_modification: 0.5,
+                duration_in_modification: if i + 1 == count { 0.5 } else { 1.0 },
+                start_in_playback: i as f64,
+                duration_in_playback: if i + 1 == count { 0.5 } else { 1.0 },
+            })
+            .collect();
+        s.sync(&mapped);
+        assert!(s.wait_idle(Instant::now() + WAIT));
+        let p = s.probe(WAIT).unwrap();
+        assert_eq!(p.regions, count);
+        assert_eq!(p.preparations, prepared);
+        let rendered = s.state(1).unwrap().rendered.unwrap();
+        for (i, sample) in rendered.left.iter().enumerate() {
+            let from = (0.5 * rate) as usize + i % rate as usize;
+            assert!(
+                (*sample - audio.channels[0][from]).abs() < 1e-4,
+                "loop frame {i}"
+            );
+        }
+    }
+    println!("step 8: loop regions grow/shrink/undo, unchanged prepare count");
 
     let p = s.probe(WAIT).unwrap();
     assert_eq!(p.asserts, 0, "the plugin asserted: {}", p.last_assert);
