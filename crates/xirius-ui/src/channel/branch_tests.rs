@@ -308,17 +308,7 @@ fn mix_045_a_muted_branch_cuts_its_line_and_keeps_its_name() {
         let v = s.channel_view(&g).unwrap();
         let col = column(&v, n);
         let cx = col.head.x + col.head.w / 2.0;
-        let full = split(s, t, sp)
-            .unwrap()
-            .branches
-            .iter()
-            .any(|x| x.id == n && !x.fx.is_empty());
-        let m = col.head.bottom()
-            + if full {
-                flow::STEP / 2.0
-            } else {
-                flow::CARD_H / 2.0
-            };
+        let m = col.head.bottom() + flow::BRANCH_STEP / 2.0;
         (
             line_at(&v, cx, m - flow::MUTE_CUT / 2.0 - 1.0),
             line_at(&v, cx, m),
@@ -671,8 +661,77 @@ fn mix_045_empty_branch_names_remain_visible_without_the_controls() {
         ));
         let (name, rect) = paint::resting_branch_name(&col).unwrap();
         assert_eq!(name, format!("分岐 {}", col.n));
-        assert!(rect.right() < col.head.x + col.head.w / 2.0);
+        assert_eq!(rect.x + rect.w / 2.0, col.head.x + col.head.w / 2.0);
         assert!(rect.right() < head_parts(&col).keep.x);
+    }
+}
+
+#[test]
+fn mix_045_each_empty_branch_has_its_own_axis_destination_and_switch() {
+    let (mut s, g) = studio();
+    assert!(s.run_command("track.add.audio", json!({"name":"Empty branches"})));
+    let t = s
+        .project()
+        .tracks
+        .values()
+        .find(|t| t.name == "Empty branches")
+        .unwrap()
+        .id;
+    assert!(s.run_command("rack.split.add", json!({"track":t,"branches":3})));
+    s.open_channel(t);
+    let branches = s
+        .channel_view(&g)
+        .unwrap()
+        .flow
+        .columns
+        .iter()
+        .map(|c| c.id)
+        .collect::<Vec<_>>();
+    for muted in branches {
+        assert!(s.run_command("rack.branch.set", json!({"id":muted,"mute":"on"})));
+        let v = s.channel_view(&g).unwrap();
+        assert_eq!(v.flow.switches.len(), 1);
+        for col in &v.flow.columns {
+            let x = col.head.x + col.head.w / 2.0;
+            let head_mid = col.head.y + col.head.h / 2.0;
+            assert!(
+                line_at(&v, x, col.head.y - 9.0),
+                "input above branch {}",
+                col.n
+            );
+            assert!(
+                !line_at(&v, x, head_mid),
+                "the head separates input and output"
+            );
+            assert!(line_at(&v, x, col.head.bottom() + 9.0));
+            let (name, label) = paint::resting_branch_name(col).unwrap();
+            assert_eq!(name, format!("分岐 {}", col.n));
+            assert_eq!(label.x + label.w / 2.0, x);
+            let gap = v
+                .flow
+                .gaps
+                .iter()
+                .find(|gap| gap.empty_branch && gap.chain == flow::Chain::Branch(col.id))
+                .unwrap();
+            assert_eq!(gap.button.x + gap.button.w / 2.0, x);
+            assert!(gap.button.y > col.head.bottom() + flow::BRANCH_STEP);
+            assert!(paint::gap_shown(
+                &s,
+                s.channel.as_ref().unwrap(),
+                &s.project().tracks[&t],
+                &v.flow,
+                gap
+            ));
+            let cut = col.head.bottom() + flow::BRANCH_STEP / 2.0;
+            assert_eq!(line_at(&v, x, cut), col.id != muted);
+            if col.id == muted {
+                let (blade, keys) = &v.flow.switches[0];
+                assert_eq!(blade.hinge().0, x);
+                assert_eq!(keys.last(), Some(&flow::Key::Node(muted)));
+            }
+        }
+        assert!(s.run_command("rack.branch.set", json!({"id":muted,"mute":"off"})));
+        assert!(s.channel_view(&g).unwrap().flow.switches.is_empty());
     }
 }
 

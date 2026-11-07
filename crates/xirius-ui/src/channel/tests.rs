@@ -332,7 +332,7 @@ fn a_branchs_plus_is_in_the_room_under_its_head_on_the_line() {
     // line down the column (review 3 中4).
     assert_eq!(gap.rect.y, col.head.bottom());
     assert_eq!(gap.rect.bottom(), first.y);
-    assert_eq!(gap.rect.h, flow::STEP);
+    assert_eq!(gap.rect.h, flow::BRANCH_STEP);
     let (bx, by) = mid(gap.button);
     assert!(!col.head.contains(bx, by));
     assert!((bx - (col.head.x + col.head.w / 2.0)).abs() < 0.5);
@@ -344,10 +344,7 @@ fn a_branchs_plus_is_in_the_room_under_its_head_on_the_line() {
         .iter()
         .find(|gp| gp.after == Some(Pick::Plugin(comp)))
         .unwrap();
-    assert_eq!(
-        (gap.button.w, gap.button.h, gap.rect.h),
-        (last.button.w, last.button.h, last.rect.h)
-    );
+    assert_eq!((gap.button.w, gap.button.h), (last.button.w, last.button.h));
     // The head keeps its number, level, value, M and × and no ＋: its middle is the head's.
     assert_ne!(
         part_at(&v, head_mid(col.head), mid(col.head).1),
@@ -392,7 +389,7 @@ fn a_branchs_room_under_its_head_counts_in_the_splitters_height() {
     for (id, pick) in [(b[0], comp), (b[1], verb)] {
         let col = column(&v, id);
         let r = card(&v, Pick::Plugin(pick)).rect;
-        assert_eq!(r.y, col.head.bottom() + flow::STEP);
+        assert_eq!(r.y, col.head.bottom() + flow::BRANCH_STEP);
         assert!(
             r.bottom() <= col.rect.bottom() + 0.5,
             "{r:?} {:?}",

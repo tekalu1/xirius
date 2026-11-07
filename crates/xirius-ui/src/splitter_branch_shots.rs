@@ -32,8 +32,20 @@ pub const SHOTS: &[Shot] = &[
         acts: &[Act::Reset, Act::Stage(Play::Laid(mute_switch), 3)],
     },
     Shot {
-        name: "mute-switch-restored",
+        name: "mute-switch-restored-empty-116",
         acts: &[Act::Reset, Act::Stage(Play::Laid(mute_switch), 4)],
+    },
+    Shot {
+        name: "mute-switch-restored-empty-252",
+        acts: &[Act::Reset, Act::Stage(Play::Laid(mute_switch), 5)],
+    },
+    Shot {
+        name: "mute-switch-restored-nested-116",
+        acts: &[Act::Reset, Act::Stage(Play::Laid(mute_switch), 6)],
+    },
+    Shot {
+        name: "mute-switch-restored-nested-252",
+        acts: &[Act::Reset, Act::Stage(Play::Laid(mute_switch), 7)],
     },
     Shot {
         name: "mute-switch-strip-empty-116",
@@ -83,7 +95,8 @@ fn mute_switch(s: &mut Studio, _g: &Geometry, n: u8) {
     let t = track(s, "Vocal");
     assert!(s.run_command("rack.split.add", json!({"track":t,"branches":3})));
     let (sp, b) = split(s, t);
-    if n >= 2 {
+    let mut targets = vec![b[1]];
+    if matches!(n, 2 | 3 | 6 | 7) {
         assert!(s.run_command(
             "rack.split.add",
             json!({"track":t,"at":format!("branch:{}",b[0])})
@@ -104,15 +117,15 @@ fn mute_switch(s: &mut Studio, _g: &Geometry, n: u8) {
         for wide in [false, true] {
             s.mixer.folds.set(nested.id, true, wide, true);
         }
-        if n != 4 {
-            assert!(s.run_command(
-                "rack.branch.set",
-                json!({"id":nested.branches[1].id,"mute":"on"})
-            ));
-        }
+        targets.push(nested.branches[1].id);
     }
-    if n != 4 {
-        assert!(s.run_command("rack.branch.set", json!({"id":b[1],"mute":"on"})));
+    for id in &targets {
+        assert!(s.run_command("rack.branch.set", json!({"id":id,"mute":"on"})));
+    }
+    if n >= 4 {
+        for id in targets {
+            assert!(s.run_command("rack.branch.set", json!({"id":id,"mute":"off"})));
+        }
     }
     for wide in [false, true] {
         s.mixer.folds.set(sp, false, wide, true);
@@ -133,13 +146,13 @@ fn mute_switch(s: &mut Studio, _g: &Geometry, n: u8) {
 #[test]
 fn mix_045_nested_switches_and_empty_names_survive_without_hover() {
     use crate::channel::{flow::Key, paint::resting_branch_name};
-    for n in 0..5 {
+    for n in 0..8 {
         let mut s = Studio::sample();
         let g = s.geometry(1600.0, 1000.0);
         mute_switch(&mut s, &g, n);
         let t = track(&s, "Vocal");
         let v = s.channel_view(&g).unwrap();
-        let count = if n == 4 {
+        let count = if n >= 4 {
             0
         } else if n >= 2 {
             2

@@ -526,6 +526,9 @@ fn paint_flow(pen: &mut Pen, s: &Studio, w: &ChannelWin, t: &Track, f: &Flow, se
 /// Does `gap` show its ＋: the pointer is in its room or the chosen card is right before or
 /// after it, and no card or head's level is held (review 3 低12).
 pub(crate) fn gap_shown(s: &Studio, w: &ChannelWin, t: &Track, f: &Flow, gap: &Gap) -> bool {
+    if gap.empty_branch {
+        return true;
+    }
     let near = w.pointer.is_some_and(|(x, y)| gap.rect.contains(x, y))
         || w.chosen.is_some_and(|pick| f.beside(pick, gap));
     let held = s.mixer.level_drag.is_some_and(|d| d.track == t.id);
@@ -559,7 +562,7 @@ fn paint_head(
                 Weight::Semibold,
                 c.ink_strong,
                 rect,
-                Align::Left,
+                Align::Center,
             );
         }
         // At rest a head keeps only what is away from the default: a muted one's M as a badge
@@ -586,7 +589,7 @@ fn paint_head(
         return;
     }
     if hp.pan.is_some() {
-        // A branch's head sits on its line, cut across the head as the mock's.
+        // Keep the controls' centre clear; their input and output wires stop outside the head.
         let cx = col.head.x + col.head.w / 2.0;
         let cy = col.head.y + col.head.h / 2.0;
         pen.fill(
@@ -662,8 +665,10 @@ pub(crate) fn resting_branch_name(col: &Column) -> Option<(String, Rect)> {
         _ => format!("分岐 {}", col_label(col)),
     };
     let h = col.head;
-    // Left of the centre line and the right-hand M / non-default value.
-    Some((label, Rect::new(h.x + 4.0, h.y, h.w / 2.0 - 8.0, h.h)))
+    let cx = h.x + h.w / 2.0;
+    let hp = head_parts(col);
+    let half = (hp.mute.x.min(hp.keep.x) - cx - 4.0).clamp(0.0, 40.0);
+    Some((label, Rect::new(cx - half, h.y, half * 2.0, h.h)))
 }
 
 /// A head's M: yellow while muted, as the mixer's.
