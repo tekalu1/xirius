@@ -76,7 +76,7 @@ pub enum Isolation {
     /// song says.
     Separate(PathBuf),
     /// Where each plugin's [`PluginIsolation`] says, with the given `xirius-plugin-host`
-    /// executable (`None`: there is none, and every plugin runs in this process).
+    /// executable (`None`: a separate placement is refused before loading).
     PerPlugin(Option<PathBuf>),
 }
 
@@ -107,7 +107,7 @@ impl Default for Isolation {
             return Isolation::InProcess;
         }
         if forced.eq_ignore_ascii_case("shared") || forced.eq_ignore_ascii_case("separate") {
-            return find_host().map_or(Isolation::InProcess, Isolation::Separate);
+            return Isolation::Separate(find_host().unwrap_or_default());
         }
         Isolation::PerPlugin(find_host())
     }
@@ -779,6 +779,7 @@ pub struct PluginLoader {
     threaded_local: bool,
     process_setup: Option<ProcessSetup>,
     catalog: Option<Arc<Catalog>>,
+    process_prefs: Option<xirius_prefs::Prefs>,
     modules: HashMap<PathBuf, Arc<Module>>,
     isolation: Isolation,
     /// The host the plugins share (OPEN-02: one for the VST3 plugins).
@@ -955,6 +956,7 @@ impl PluginLoader {
         }
         let catalog = self.catalog.clone();
         let isolation = self.isolation.clone();
+        let process_prefs = self.process_prefs.clone();
         let shared = self.shared.clone();
         let dedicated = self.dedicated.clone();
         let remotes = self.remotes.clone();
@@ -983,6 +985,7 @@ impl PluginLoader {
             threaded_local: true,
             catalog,
             isolation,
+            process_prefs,
             shared,
             dedicated,
             remotes,
@@ -1104,6 +1107,29 @@ impl PluginLoader {
         }
     }
 
+    /// A caller with an in-memory settings store can supply the same policy without file I/O.
+    pub fn set_process_prefs(&mut self, prefs: xirius_prefs::Prefs) {
+        self.process_prefs = Some(prefs);
+    }
+
+    fn requested(&self, x: &Plugin) -> (PluginIsolation, bool) {
+        let disk;
+        let prefs = if let Some(prefs) = &self.process_prefs {
+            prefs
+        } else {
+            disk = xirius_prefs::Settings::open(xirius_prefs::config_path());
+            &disk.prefs
+        };
+        let legacy = crate::plugin_policy::legacy_override(prefs, self.catalog.as_deref(), x);
+        let fallback = legacy.unwrap_or(x.isolation);
+        let configured = prefs.text(&xirius_prefs::isolation::key(&x.format, &x.uid)) != "song"
+            || legacy.is_some();
+        (
+            xirius_prefs::isolation::resolve(prefs, &x.format, &x.uid, fallback),
+            configured,
+        )
+    }
+
     /// Where `x` runs, and the host executable when that is not this process. `ara`: the
     /// catalogue says it uses ARA.
     fn placement(
@@ -1112,30 +1138,30 @@ impl PluginLoader {
         ara: bool,
         warnings: &mut Vec<String>,
     ) -> (PluginIsolation, PathBuf) {
+        let (requested, configured) = self.requested(x);
         if ara {
-            if x.isolation.is_separate() {
+            if requested.is_separate() {
                 warnings.push(format!(
                     "{}: ARA のプラグインのため、このプロセスで実行します（{} の指定）",
                     x.name,
-                    x.isolation.name()
+                    requested.name()
                 ));
             }
             return (PluginIsolation::InProcess, PathBuf::new());
         }
+        if configured {
+            let host = match &self.isolation {
+                Isolation::Separate(host) | Isolation::PerPlugin(Some(host)) => host.clone(),
+                Isolation::PerPlugin(None) => PathBuf::new(),
+                Isolation::InProcess => find_host().unwrap_or_default(),
+            };
+            return (requested, host);
+        }
         match &self.isolation {
             Isolation::InProcess => (PluginIsolation::InProcess, PathBuf::new()),
             Isolation::Separate(host) => (PluginIsolation::Shared, host.clone()),
-            Isolation::PerPlugin(Some(host)) => (x.isolation, host.clone()),
-            Isolation::PerPlugin(None) => {
-                if x.isolation.is_separate() {
-                    warnings.push(format!(
-                        "{}: xirius-plugin-host が見つからないため、このプロセスで実行します（{} の指定）",
-                        x.name,
-                        x.isolation.name()
-                    ));
-                }
-                (PluginIsolation::InProcess, PathBuf::new())
-            }
+            Isolation::PerPlugin(Some(host)) => (requested, host.clone()),
+            Isolation::PerPlugin(None) => (requested, PathBuf::new()),
         }
     }
 
@@ -1531,7 +1557,7 @@ impl PluginLoader {
 
     /// Whether `x` would run in a host process.
     pub fn runs_apart(&mut self, x: &Plugin) -> bool {
-        let Some(ara) = self.catalog().find(&x.uid).map(|e| e.ara) else {
+        let Some(ara) = crate::plugin_policy::find(self.catalog(), x).map(|e| e.ara) else {
             return false;
         };
         self.placement(x, ara, &mut Vec::new()).0.is_separate()
@@ -1563,18 +1589,38 @@ impl PluginLoader {
         owner: &str,
         x: &Plugin,
     ) -> Result<(Box<dyn Processor>, Vec<String>), String> {
+        let (processor, warnings) = self.open_raw(owner, x)?;
+        Ok((
+            Box::new(crate::plugin_policy::Attributed::new(x, processor)),
+            warnings,
+        ))
+    }
+
+    fn open_raw(
+        &mut self,
+        owner: &str,
+        x: &Plugin,
+    ) -> Result<(Box<dyn Processor>, Vec<String>), String> {
         if crate::host::on_window_thread() {
             return Err("音の準備は裏で行う必要があります".into());
         }
         let _filter = xirius_engine::crash::guard_exception_filter();
-        let entry = self.catalog().find(&x.uid).cloned().ok_or_else(|| {
-            format!(
-                "{}（{} {}）が見つかりません（plugin.rescan で再スキャンしてください）",
-                x.name, x.format, x.uid
-            )
-        })?;
+        let entry = crate::plugin_policy::find(self.catalog(), x)
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "{}（{} {}）が見つかりません（plugin.rescan で再スキャンしてください）",
+                    x.name, x.format, x.uid
+                )
+            })?;
         let mut warnings = Vec::new();
         let (placement, host) = self.placement(x, entry.ara, &mut warnings);
+        if placement.is_separate() && !host.is_file() {
+            return Err(format!(
+                "{}: 別プロセスのホストが見つからないため、読み込めません",
+                x.name
+            ));
+        }
         // A plugin that stays in its host keeps its link; one that moves is opened anew with
         // what it has now.
         let stays = self
@@ -1717,6 +1763,8 @@ impl PluginLoader {
             return Ok((Box::new(processor), warnings));
         }
 
+        let identity = format!("{}:{}", x.format.to_ascii_lowercase(), x.uid);
+        let _context = xirius_vst3::crash_context::enter(&identity);
         if is_clap(x) {
             let (p, names) = clap_plugins::open_in_process(
                 &entry.path,
@@ -3201,6 +3249,71 @@ impl PluginLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_policy_precedes_first_load_for_new_song_and_preset_and_preload() {
+        let base = Plugin {
+            id: PluginId(9),
+            name: "Renamed fixture".into(),
+            kind: PluginKind::Instrument,
+            format: "vst3".into(),
+            uid: "ABCDEF".into(),
+            bypass: false,
+            deactivated: false,
+            params: Default::default(),
+            state: None,
+            sidechain: None,
+            preset: None,
+            samples: vec![],
+            isolation: PluginIsolation::InProcess,
+        };
+        let catalog = Catalog {
+            entries: vec![xirius_plugins::Entry {
+                uid: base.uid.clone(),
+                name: "Original fixture".into(),
+                vendor: "Fixture".into(),
+                kind: base.kind,
+                format: base.format.clone(),
+                category: "Instrument".into(),
+                version: "1".into(),
+                path: PathBuf::from("missing-plugin.vst3"),
+                ara: false,
+                requires_process_main: false,
+            }],
+            failures: vec![],
+        };
+        let mut prefs = xirius_prefs::Prefs::default();
+        prefs
+            .set(
+                &xirius_prefs::isolation::key(&base.format, &base.uid),
+                &serde_json::json!("dedicated"),
+            )
+            .unwrap();
+        let song: Plugin = serde_json::from_value(serde_json::to_value(&base).unwrap()).unwrap();
+        let mut preset = base.clone();
+        preset.state = Some("invalid state: must never be decoded locally".into());
+        for plugin in [base, song, preset] {
+            for threaded in [false, true] {
+                let mut loader = PluginLoader::new(Some(Arc::new(catalog.clone())));
+                loader.set_process_prefs(prefs.clone());
+                loader.set_isolation(Isolation::PerPlugin(None));
+                loader.set_threaded_local(threaded);
+                assert!(loader.runs_apart(&plugin));
+                let error = loader.instantiate("Track", &plugin).err().unwrap();
+                assert!(error.contains("ホストが見つからない"), "{error}");
+                let setup = crate::build::setup(48000, xirius_engine::RenderMode::Realtime);
+                loader.preload("Track", &plugin, &setup);
+                assert!(
+                    loader.pending_owned.is_empty(),
+                    "must never enter in-process owner preload"
+                );
+                let error = loader.instantiate("Track", &plugin).err().unwrap();
+                assert!(error.contains("ホストが見つからない"), "{error}");
+                assert!(loader.locals.is_empty());
+                assert!(loader.modules.is_empty());
+            }
+        }
+    }
 
     /// PLG-050: a plugin in this process that the build could not make is answered for, so
     /// its window says it could not be loaded rather than giving up in silence.

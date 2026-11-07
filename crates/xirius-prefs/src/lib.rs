@@ -11,6 +11,7 @@ pub mod cmdline;
 pub mod export;
 pub mod ext;
 pub mod import;
+pub mod isolation;
 pub mod keymap;
 mod lines;
 pub mod macro_ext;

@@ -1101,6 +1101,20 @@ impl SessionHost {
         self.sync_with(p, true)
     }
 
+    /// Rebuild after a process preference changes, even when the song is unchanged.
+    /// Like a latency change, this must replace processors rather than keep tracks.
+    /// State capture and SDK work use the normal background graph preparation.
+    pub fn refresh_plugin_processes(&mut self) {
+        if let Some(update) = self.graph_work.take() {
+            let _ = crate::background::Job::spawn("old-process-graph", move || {
+                drop(update);
+                Ok(())
+            });
+        }
+        self.graph_failed = None;
+        self.begin_swap(self.heard_now(), SwapKind::Latency, Vec::new());
+    }
+
     /// Sends the recording's thru the track values it should play with now (UI-312).
     fn sync_thru(&mut self, p: &Project, report: &mut SyncReport) {
         let Some(rec) = &self.recording else {

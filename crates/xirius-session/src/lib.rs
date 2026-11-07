@@ -56,6 +56,7 @@ mod owned_local;
 pub mod peaks;
 pub mod perf;
 pub mod places;
+pub mod plugin_policy;
 pub mod plugins;
 pub mod pool;
 pub mod preparation;

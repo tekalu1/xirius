@@ -68,6 +68,12 @@ pub const PREFS: &[Pref] = &[
     p("plugins.clap.paths", Kind::List, ""),
     p("plugins.process.", Kind::Choice(PROCESS), "same"),
     p(
+        "plugins.isolation.",
+        Kind::Choice(&["song", "same", "shared", "dedicated"]),
+        "song",
+    ),
+    p("plugins.crash.processed", Kind::List, ""),
+    p(
         "edit.arrow.mode",
         Kind::Choice(&["extended", "basic"]),
         "basic",

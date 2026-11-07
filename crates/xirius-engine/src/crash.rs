@@ -208,6 +208,13 @@ pub fn log_failed() -> bool {
 /// # Safety
 /// `exception` is null or the exception pointers supplied to this process's Windows filter.
 pub unsafe fn record_exception(exception: *const EXCEPTION_POINTERS) {
+    // SAFETY: same exception-pointer contract, without attributing a first-chance/host report.
+    unsafe {
+        record_exception_inner(exception, false);
+    }
+}
+
+unsafe fn record_exception_inner(exception: *const EXCEPTION_POINTERS, fatal: bool) {
     let Some(writer) = WRITER.get() else { return };
     if writer
         .writing
@@ -220,6 +227,51 @@ pub unsafe fn record_exception(exception: *const EXCEPTION_POINTERS) {
     set_delete(&writer.log, false);
     set_delete(&writer.dump, false);
     note("crash: writing minidump");
+    // Only the last-chance filter records attribution, never a historical load note.
+    if fatal {
+        xirius_vst3::crash_context::with_active(|identity| {
+            if !identity.is_empty() {
+                note("fault-plugin:");
+                note(identity);
+            }
+        });
+        if !exception.is_null() {
+            use windows_sys::Win32::System::LibraryLoader::{
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, GetModuleFileNameW,
+                GetModuleHandleExW,
+            };
+            let mut module = std::ptr::null_mut();
+            let mut path = [0u16; 32768];
+            // SAFETY: supplied exception record; FROM_ADDRESS interprets the pointer as an address.
+            unsafe {
+                let record = (*exception).ExceptionRecord;
+                if !record.is_null()
+                    && GetModuleHandleExW(
+                        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                            | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                        (*record).ExceptionAddress.cast(),
+                        &mut module,
+                    ) != 0
+                {
+                    let len =
+                        GetModuleFileNameW(module, path.as_mut_ptr(), path.len() as u32) as usize;
+                    if len > 0 && len < path.len() {
+                        // Encode UTF-16 into a fixed ASCII buffer; no formatting or allocation in the filter.
+                        let mut encoded = [0u8; 131072];
+                        let hex = b"0123456789abcdef";
+                        for (i, unit) in path[..len].iter().enumerate() {
+                            for j in 0..4 {
+                                encoded[i * 4 + j] = hex[((unit >> ((3 - j) * 4)) & 15) as usize];
+                            }
+                        }
+                        note("fault-module-utf16:");
+                        note(std::str::from_utf8_unchecked(&encoded[..len * 4]));
+                    }
+                }
+            }
+        }
+    }
     let info = MINIDUMP_EXCEPTION_INFORMATION {
         ThreadId: unsafe { GetCurrentThreadId() },
         ExceptionPointers: exception.cast_mut(),
@@ -270,9 +322,10 @@ unsafe extern "system" fn on_exception(exception: *const EXCEPTION_POINTERS) -> 
             f(exception);
         }
     }
+    note("fatal: unhandled exception");
     // SAFETY: forwarded directly from Windows's exception filter.
     unsafe {
-        record_exception(exception);
+        record_exception_inner(exception, true);
     }
     EXCEPTION_CONTINUE_SEARCH
 }

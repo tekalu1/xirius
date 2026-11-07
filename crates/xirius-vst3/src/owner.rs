@@ -329,6 +329,14 @@ impl Controller {
                     return;
                 }
                 let (rate, block, offline) = (open.sample_rate, open.max_block, open.offline);
+                let identity = format!(
+                    "vst3:{}",
+                    open.class
+                        .iter()
+                        .map(|b| format!("{b:02X}"))
+                        .collect::<String>()
+                );
+                let context = crate::crash_context::enter(&identity);
                 let plugin = load(open);
                 let mut instance = match plugin {
                     Ok(plugin) => Instance {
@@ -386,6 +394,7 @@ impl Controller {
                 finished.0.0.unresponsive.store(false, Ordering::Release);
                 let _ = reply.send(Ok(opened));
                 drop(reply);
+                drop(context);
                 let mut disconnected = false;
                 loop {
                     returning.poll();
@@ -393,7 +402,10 @@ impl Controller {
                     // receiving messages even with a full command queue.
                     for _ in 0..8 {
                         match incoming.try_recv() {
-                            Ok(job) => job(&mut instance),
+                            Ok(job) => {
+                                let _context = crate::crash_context::enter(&identity);
+                                job(&mut instance);
+                            }
                             Err(TryRecvError::Empty) => break,
                             Err(TryRecvError::Disconnected) => {
                                 disconnected = true;

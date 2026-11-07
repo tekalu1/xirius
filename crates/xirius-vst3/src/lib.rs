@@ -12,6 +12,7 @@
 //! tearing down instances take turns across the process, and a bundle loaded twice shares one
 //! loaded module. Loaded DLLs stay initialized until process exit (ARC-043).
 
+pub mod crash_context;
 mod editor;
 mod editor_keys;
 mod host;
