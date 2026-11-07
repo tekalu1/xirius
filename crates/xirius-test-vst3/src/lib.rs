@@ -10,6 +10,14 @@ use vst3::{Class, ComPtr, ComWrapper};
 pub mod editor;
 
 pub const CID: TUID = [88, 73, 82, 73, 85, 83, 76, 65, 84, 69, 78, 67, 89, 0, 0, 1];
+/// Explicit fixture-only class IDs: zero inputs, zero outputs, mono, and sidechain.
+/// Kept out of enumeration so existing scanner fixtures still expose one effect.
+pub fn bus_layout_cid(mode: u8) -> [u8; 16] {
+    assert!((2..=5).contains(&mode));
+    let mut cid = CID.map(|b| b as u8);
+    cid[15] = mode;
+    cid
+}
 pub fn fixture_marker() {}
 /// Momentary test trigger: a positive point exits the hosting process during processing.
 pub const CRASH_PARAMETER: u32 = 3;
@@ -105,9 +113,11 @@ impl IPluginFactoryTrait for Factory {
             return kInvalidArgument;
         }
         // SAFETY: the factory ABI passes 16 readable UID bytes.
-        if unsafe { std::slice::from_raw_parts(cid, 16) } != CID {
+        let id = unsafe { std::slice::from_raw_parts(cid, 16) };
+        if id[..15] != CID[..15] || !(1..=5).contains(&id[15]) {
             return kResultFalse;
         }
+        let bus_mode = id[15] as u8;
         #[cfg(windows)]
         opening_gate();
         // A slow plugin, for the opening of a song's plugins together (ENG-064).
@@ -125,6 +135,8 @@ impl IPluginFactoryTrait for Factory {
             return kResultFalse;
         }
         let plugin = ComWrapper::new(Latency {
+            bus_mode,
+            arrangements_ok: AtomicU32::new(0),
             delay: Arc::new(AtomicU32::new(0)),
             mix: AtomicU32::new(0),
             number: MADE.fetch_add(1, Ordering::Relaxed) + 1,
@@ -145,6 +157,8 @@ impl IPluginFactoryTrait for Factory {
 static MADE: AtomicU32 = AtomicU32::new(0);
 
 struct Latency {
+    bus_mode: u8,
+    arrangements_ok: AtomicU32,
     /// Shared with the editor's view, which shows it.
     delay: Arc<AtomicU32>,
     mix: AtomicU32,
@@ -175,6 +189,14 @@ impl IPluginBaseTrait for Latency {
     }
 }
 impl Latency {
+    fn bus_count(&self, dir: BusDirection) -> int32 {
+        match (self.bus_mode, dir) {
+            (2, 0) | (3, 1) => 0,
+            (5, 0) => 2,
+            _ => 1,
+        }
+    }
+
     unsafe fn load(&self, state: *mut IBStream) -> tresult {
         let Some(stream) = (unsafe { vst3::ComRef::from_raw(state) }) else {
             return kInvalidArgument;
@@ -219,8 +241,8 @@ impl IComponentTrait for Latency {
     unsafe fn setIoMode(&self, _: IoMode) -> tresult {
         kResultOk
     }
-    unsafe fn getBusCount(&self, media: MediaType, _: BusDirection) -> int32 {
-        if media == 0 { 1 } else { 0 }
+    unsafe fn getBusCount(&self, media: MediaType, dir: BusDirection) -> int32 {
+        if media == 0 { self.bus_count(dir) } else { 0 }
     }
     unsafe fn getBusInfo(
         &self,
@@ -229,7 +251,7 @@ impl IComponentTrait for Latency {
         index: int32,
         bus: *mut BusInfo,
     ) -> tresult {
-        if media != 0 || index != 0 || bus.is_null() {
+        if media != 0 || index < 0 || index >= self.bus_count(dir) || bus.is_null() {
             return kInvalidArgument;
         }
         // SAFETY: checked output record.
@@ -237,7 +259,7 @@ impl IComponentTrait for Latency {
             *bus = std::mem::zeroed();
             (*bus).mediaType = media;
             (*bus).direction = dir;
-            (*bus).channelCount = 2;
+            (*bus).channelCount = if self.bus_mode == 4 { 1 } else { 2 };
             (*bus).busType = 0;
             (*bus).flags = 1;
             for (dst, src) in (*bus).name.iter_mut().zip(b"Stereo") {
@@ -265,24 +287,50 @@ impl IComponentTrait for Latency {
 impl IAudioProcessorTrait for Latency {
     unsafe fn setBusArrangements(
         &self,
-        _: *mut SpeakerArrangement,
-        _: int32,
-        _: *mut SpeakerArrangement,
-        _: int32,
+        inputs: *mut SpeakerArrangement,
+        num_inputs: int32,
+        outputs: *mut SpeakerArrangement,
+        num_outputs: int32,
     ) -> tresult {
-        kResultOk
+        let mut ok = true;
+        for (ptr, count, dir) in [(inputs, num_inputs, 0), (outputs, num_outputs, 1)] {
+            ok &= count == self.bus_count(dir);
+            // Deliberately reproduce Iris 2: read element zero even when count is zero.
+            // The host compatibility storage must keep this read valid.
+            let first = unsafe { *ptr };
+            ok &= first
+                == if count == 0 {
+                    SpeakerArr::kEmpty
+                } else {
+                    SpeakerArr::kStereo
+                };
+            for i in 0..count {
+                ok &= unsafe { *ptr.add(i as usize) } == SpeakerArr::kStereo;
+            }
+        }
+        self.arrangements_ok.store(u32::from(ok), Ordering::Relaxed);
+        if ok && self.bus_mode != 4 {
+            kResultOk
+        } else {
+            kResultFalse
+        }
     }
     unsafe fn getBusArrangement(
         &self,
-        _: BusDirection,
-        _: int32,
+        dir: BusDirection,
+        index: int32,
         arr: *mut SpeakerArrangement,
     ) -> tresult {
-        if arr.is_null() {
+        if arr.is_null() || index < 0 || index >= self.bus_count(dir) {
             return kInvalidArgument;
         }
+        // Mono refuses stereo and retains its original arrangement.
         unsafe {
-            *arr = 3;
+            *arr = if self.bus_mode == 4 {
+                SpeakerArr::kMono
+            } else {
+                SpeakerArr::kStereo
+            };
         }
         kResultOk
     }
@@ -293,7 +341,11 @@ impl IAudioProcessorTrait for Latency {
         self.delay.load(Ordering::Relaxed)
     }
     unsafe fn setupProcessing(&self, _: *mut ProcessSetup) -> tresult {
-        kResultOk
+        if self.arrangements_ok.load(Ordering::Relaxed) == 1 {
+            kResultOk
+        } else {
+            kResultFalse
+        }
     }
     unsafe fn setProcessing(&self, _: TBool) -> tresult {
         kResultOk
@@ -308,6 +360,33 @@ impl IAudioProcessorTrait for Latency {
         // SAFETY: the host supplies planar f32 stereo buses, and serializes this audio call.
         unsafe {
             let data = &mut *data;
+            if self.bus_mode != 1 {
+                for (ptr, count, dir) in [
+                    (data.inputs, data.numInputs, 0),
+                    (data.outputs, data.numOutputs, 1),
+                ] {
+                    if count != self.bus_count(dir) {
+                        return kResultFalse;
+                    }
+                    // Also inspect a zero-count ProcessData bus, without adding a real bus.
+                    let bus = &*ptr;
+                    if count == 0
+                        && (bus.numChannels != 0 || !(*bus.__field0.channelBuffers32).is_null())
+                    {
+                        return kResultFalse;
+                    }
+                }
+                if data.numOutputs > 0 {
+                    let bus = &mut *data.outputs;
+                    for ch in 0..bus.numChannels as usize {
+                        let samples = *bus.__field0.channelBuffers32.add(ch);
+                        for i in 0..data.numSamples as usize {
+                            *samples.add(i) = 0.25;
+                        }
+                    }
+                }
+                return kResultOk;
+            }
             if let Some(changes) = vst3::ComRef::from_raw(data.inputParameterChanges) {
                 for i in 0..changes.getParameterCount() {
                     if let Some(queue) = vst3::ComRef::from_raw(changes.getParameterData(i))

@@ -580,6 +580,14 @@ impl ParamSender {
     }
 }
 
+/// Keep one readable empty arrangement even when the logical bus count is zero.
+/// Some plugins (including Iris 2) read element zero without checking the count.
+fn bus_arrangements(count: usize) -> Vec<SpeakerArrangement> {
+    let mut arrangements = vec![SpeakerArr::kEmpty; count.max(1)];
+    arrangements[..count].fill(SpeakerArr::kStereo);
+    arrangements
+}
+
 /// Channel buffers for every bus in one direction, allocated once in `prepare`.
 struct Buses {
     storage: Vec<f32>,
@@ -602,7 +610,8 @@ impl Buses {
         let total: usize = channels.iter().sum();
         let mut b = Buses {
             storage: vec![0.0; total * max_block],
-            ptrs: Vec::with_capacity(total),
+            // The last pointer is a readable sentinel for zero-channel buses.
+            ptrs: Vec::with_capacity(total + 1),
             buffers: Vec::with_capacity(channels.len()),
             channels,
         };
@@ -611,17 +620,29 @@ impl Buses {
             // SAFETY: within `storage`, which is never resized after this.
             b.ptrs.push(unsafe { base.add(ch * max_block) });
         }
+        b.ptrs.push(std::ptr::null_mut());
         let mut first = 0;
         for &n in &b.channels {
             b.buffers.push(AudioBusBuffers {
                 numChannels: n as i32,
                 silenceFlags: 0,
                 __field0: AudioBusBuffers__type0 {
-                    // SAFETY: `first <= total`, so this is within or one past `ptrs`.
-                    channelBuffers32: unsafe { b.ptrs.as_mut_ptr().add(first) },
+                    // SAFETY: `first <= total`; the final sentinel is allocated too.
+                    channelBuffers32: unsafe {
+                        b.ptrs.as_mut_ptr().add(if n == 0 { total } else { first })
+                    },
                 },
             });
             first += n;
+        }
+        if b.buffers.is_empty() {
+            b.buffers.push(AudioBusBuffers {
+                numChannels: 0,
+                silenceFlags: 0,
+                __field0: AudioBusBuffers__type0 {
+                    channelBuffers32: b.ptrs.as_mut_ptr(),
+                },
+            });
         }
         b
     }
@@ -633,11 +654,8 @@ impl Buses {
     }
 
     fn data(&mut self) -> *mut AudioBusBuffers {
-        if self.buffers.is_empty() {
-            std::ptr::null_mut()
-        } else {
-            self.buffers.as_mut_ptr()
-        }
+        // Prepared storage includes a sentinel bus; `channels` is the logical count.
+        self.buffers.as_mut_ptr()
     }
 }
 
@@ -729,8 +747,8 @@ impl AudioPart {
         unsafe {
             let n_in = comp.getBusCount(kAudio, kInput).max(0);
             let n_out = comp.getBusCount(kAudio, kOutput).max(0);
-            let mut ins: Vec<SpeakerArrangement> = vec![SpeakerArr::kStereo; n_in as usize];
-            let mut outs: Vec<SpeakerArrangement> = vec![SpeakerArr::kStereo; n_out as usize];
+            let mut ins: Vec<SpeakerArrangement> = bus_arrangements(n_in as usize);
+            let mut outs: Vec<SpeakerArrangement> = bus_arrangements(n_out as usize);
             // Plugins may refuse; what they settle on is read back below.
             proc.setBusArrangements(ins.as_mut_ptr(), n_in, outs.as_mut_ptr(), n_out);
             let channels = |dir: i32, n: i32| -> Vec<usize> {
@@ -956,8 +974,8 @@ impl AudioPart {
             processMode: if self.offline { kOffline } else { kRealtime },
             symbolicSampleSize: kSample32,
             numSamples: n as i32,
-            numInputs: self.inputs.buffers.len() as i32,
-            numOutputs: self.outputs.buffers.len() as i32,
+            numInputs: self.inputs.channels.len() as i32,
+            numOutputs: self.outputs.channels.len() as i32,
             inputs: self.inputs.data(),
             outputs: self.outputs.data(),
             inputParameterChanges: com_ptr::<_, IParameterChanges>(&self.in_params),
@@ -1074,5 +1092,54 @@ fn control_event(c: &Control, frames: usize) -> Event {
 impl Drop for AudioPart {
     fn drop(&mut self) {
         self.deactivate();
+    }
+}
+
+#[cfg(test)]
+mod zero_bus_tests {
+    use super::*;
+
+    #[test]
+    fn empty_arrangement_is_readable_without_inventing_a_bus() {
+        for count in [0, 1, 2] {
+            let mut arrangements = bus_arrangements(count);
+            let ptr = arrangements.as_mut_ptr();
+            assert!(!ptr.is_null());
+            assert_ne!(ptr as usize, 0x8);
+            // SAFETY: even count zero has one initialized element.
+            assert_eq!(
+                unsafe { *ptr },
+                if count == 0 {
+                    SpeakerArr::kEmpty
+                } else {
+                    SpeakerArr::kStereo
+                }
+            );
+            assert_eq!(&arrangements[..count], vec![SpeakerArr::kStereo; count]);
+        }
+    }
+
+    #[test]
+    fn empty_process_buses_and_zero_channel_buses_have_preallocated_sentinels() {
+        for channels in [vec![], vec![0], vec![2, 0], vec![0, 2], vec![1], vec![2, 2]] {
+            let mut buses = Buses::new(channels.clone(), 64);
+            assert_eq!(buses.channels, channels);
+            let ptr = buses.data();
+            assert!(!ptr.is_null());
+            assert_ne!(ptr as usize, std::mem::align_of::<AudioBusBuffers>());
+            // SAFETY: new allocates at least one bus, including for an empty direction.
+            let first = unsafe { &*ptr };
+            assert_eq!(
+                first.numChannels as usize,
+                channels.first().copied().unwrap_or(0)
+            );
+            for bus in &buses.buffers {
+                if bus.numChannels == 0 {
+                    // SAFETY: zero-channel buses point to the allocated pointer sentinel.
+                    assert!(unsafe { *bus.__field0.channelBuffers32 }.is_null());
+                }
+            }
+            assert_eq!(ptr, buses.data());
+        }
     }
 }

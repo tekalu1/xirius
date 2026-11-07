@@ -75,6 +75,8 @@ impl IHostApplicationTrait for HostApplication {
     }
 }
 
+static EMPTY_BINARY: u8 = 0;
+
 enum Attr {
     Int(i64),
     Float(f64),
@@ -210,7 +212,13 @@ impl IAttributeListTrait for HostAttributeList {
                 // SAFETY: out-pointers checked above. The bytes stay put until the attribute
                 // is replaced or the list is released, which is the SDK's contract too.
                 unsafe {
-                    *data = b.as_ptr() as *const c_void;
+                    // A zero-length binary still exposes one readable zero byte.
+                    *data = if b.is_empty() {
+                        &EMPTY_BINARY
+                    } else {
+                        b.as_ptr()
+                    }
+                    .cast();
                     *size_in_bytes = b.len() as uint32;
                 }
                 kResultOk
@@ -448,5 +456,32 @@ mod tests {
         // Host changes through push_edit are not the user's gestures.
         h.push_edit(4, 1.0);
         assert!(h.take_gestures().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod empty_binary_tests {
+    use super::*;
+
+    #[test]
+    fn empty_binary_keeps_its_size_and_has_readable_storage() {
+        let attrs = HostAttributeList::default();
+        let mut ptr = std::ptr::null();
+        let mut size = 1;
+        // SAFETY: valid key and out-pointers; a zero-length input needs no data.
+        unsafe {
+            assert_eq!(
+                attrs.setBinary(c"empty".as_ptr(), std::ptr::null(), 0),
+                kResultOk
+            );
+            assert_eq!(
+                attrs.getBinary(c"empty".as_ptr(), &mut ptr, &mut size),
+                kResultOk
+            );
+            assert_eq!(size, 0);
+            assert!(!ptr.is_null());
+            assert_ne!(ptr as usize, 1);
+            assert_eq!(*ptr.cast::<u8>(), 0);
+        }
     }
 }
