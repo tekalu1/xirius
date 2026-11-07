@@ -138,6 +138,10 @@ fn a_new_text_owner_requires_an_interaction_review() {
         ("context/mod.rs:State.field", "self.popup.is_some()"),
         ("context/mod.rs:State.search", "self.popup.is_some()"),
         ("context/search.rs:Search.field", "self.popup.is_some()"),
+        (
+            "device_window.rs:EntityInputHandler",
+            "self.ime_target().is_some()",
+        ),
         // The track head's volume fader: a value typed in its field, like the device knob's.
         (
             "head_fader.rs:Entry.field",
@@ -245,17 +249,21 @@ fn the_native_text_handler_cannot_add_a_separate_input_route() {
             visit::visit_expr_method_call(self, call);
         }
     }
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../xirius-ui/src/screen.rs");
-    let file = syn::parse_file(&std::fs::read_to_string(path).unwrap()).unwrap();
     let mut routes = Routes(Vec::new());
-    for item in &file.items {
-        if let syn::Item::Impl(item) = item
-            && item
-                .trait_
-                .as_ref()
-                .is_some_and(|(_, path, _)| path.is_ident("EntityInputHandler"))
-        {
-            routes.visit_item_impl(item);
+    for name in ["screen.rs", "device_window.rs"] {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../xirius-ui/src")
+            .join(name);
+        let file = syn::parse_file(&std::fs::read_to_string(path).unwrap()).unwrap();
+        for item in &file.items {
+            if let syn::Item::Impl(item) = item
+                && item
+                    .trait_
+                    .as_ref()
+                    .is_some_and(|(_, path, _)| path.is_ident("EntityInputHandler"))
+            {
+                routes.visit_item_impl(item);
+            }
         }
     }
     assert!(

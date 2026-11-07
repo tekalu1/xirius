@@ -19,7 +19,8 @@ pub(crate) enum ImeTarget {
 }
 
 impl Studio {
-    /// The same priority used by GPUI's text handler. Merely opening a field owns it,
+    /// Both the main and detached GPUI text handlers use this priority.
+    /// Merely opening a field owns it,
     /// including an empty field or an unfinished IME composition.
     pub(crate) fn ime_target(&self) -> Option<ImeTarget> {
         if self.ask_field().is_some() {
@@ -64,6 +65,8 @@ impl Studio {
             // A face the mixer docked comes from choosing a row, not from opening a window: it
             // is no unfinished work (review 3 中3).
             || self.instruments.open.iter().any(|w| !w.docked)
+            // A detached CE also keeps its popup between callbacks in its GPUI view.
+            || self.channel.as_ref().is_some_and(|w| w.detached)
             || !self.mixer.editors.is_empty()
             || self.mixer.preset_panel.is_some()
             || self.pointer_held
