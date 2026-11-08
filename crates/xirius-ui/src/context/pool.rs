@@ -208,40 +208,65 @@ mod tests {
         s.bind_window_io();
         s.open_pool_menu(Rect::default());
         s.ask_text(None, "整理", false);
-        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        // The FIFO fence makes the cleanup answer ready before the first frame. That
+        // frame can enable the row, then start browser.preset.list on the song owner.
+        // Exercise that ordering without depending on the worker's speed.
+        let fence = crate::ancillary_io::submit(|| Ok(())).unwrap();
+        loop {
+            if let Some(result) = fence.poll() {
+                result.unwrap();
+                break;
+            }
+            assert!(std::time::Instant::now() < end, "cleanup fence timed out");
+            std::thread::yield_now();
+        }
         loop {
             s.tick();
-            if s.context_rows()
-                .iter()
-                .any(|row| row.label == "使われていない録音を整理…" && row.enabled)
+            // choose() calls press() directly, without Screen's held-input queue.
+            // An enabled row alone does not mean the song owner accepts input yet.
+            if !s.input_blocked()
+                && s.context_rows()
+                    .iter()
+                    .any(|row| row.label == "使われていない録音を整理…" && row.enabled)
             {
                 break;
             }
             assert!(
                 std::time::Instant::now() < end,
-                "cleanup row stayed disabled"
+                "cleanup menu did not become ready: blocked={}, error={:?}",
+                s.input_blocked(),
+                s.error
             );
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            std::thread::yield_now();
         }
         let g = s.geometry(1280.0, 800.0);
-        assert!(
-            s.context_rows()
-                .iter()
-                .any(|r| r.enabled && r.label == "使われていない録音を整理…")
+        assert_eq!(s.context_query().as_deref(), Some("整理"));
+        assert_eq!(s.ask_key("escape"), Some(true));
+        assert_eq!(s.context_query().as_deref(), Some(""));
+        let row = crate::context::tests::all_items(&s)
+            .into_iter()
+            .find(|row| row.label == "使われていない録音を整理…")
+            .expect("the restored tree contains cleanup");
+        assert!(row.enabled, "the restored cleanup row is enabled");
+        assert_eq!(
+            row.run,
+            super::super::Run::Do(Act::Browse(BrowseAct::Cleanup))
         );
-        s.ask_key("escape");
-        assert!(crate::context::tests::choose(
-            &mut s,
-            &g,
-            "使われていない録音を整理…"
-        ));
+        assert!(
+            crate::context::tests::choose(&mut s, &g, "使われていない録音を整理…"),
+            "cleanup selection failed: {:?}",
+            s.error
+        );
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
         while s.popup.as_ref().is_none_or(|p| p.cleanup.is_none()) {
             s.tick();
             assert!(
                 std::time::Instant::now() < end,
-                "cleanup dialog did not open"
+                "cleanup dialog did not open: {:?}",
+                s.error
             );
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            std::thread::yield_now();
         }
     }
 }
