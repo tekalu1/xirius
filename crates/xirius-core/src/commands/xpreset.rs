@@ -50,6 +50,83 @@ pub(super) fn defs() -> Vec<CommandDef> {
     };
     vec![
         session(
+            "browser.preset.apply",
+            "プリセットを指定の場所へ適用します（取り消し 1 回）",
+            vec![
+                ArgDef::text("entry", "一覧の entry id").req(),
+                ArgDef::id("track", IdKind::Track, "適用先トラック"),
+                ArgDef::choice(
+                    "target",
+                    &["track", "instrument", "insert", "effect", "new"],
+                    "適用先",
+                ),
+                at(),
+                of(),
+            ],
+            Risk::Write,
+            false,
+        ),
+        session(
+            "browser.preset.list",
+            "トラックブラウザーの一覧と検索結果を返します",
+            vec![
+                ArgDef::choice("tab", &["instruments", "effects", "tracks"], "種類"),
+                ArgDef::text(
+                    "query",
+                    "名前・機器・メーカー・出所・フォルダーを空白区切りの AND で検索",
+                ),
+            ],
+            Risk::Read,
+            false,
+        ),
+        session(
+            "browser.preset.favourite",
+            "機器かプリセットへのお気に入り参照を切り替えます",
+            vec![ArgDef::text("entry", "一覧の entry id").req()],
+            Risk::Guarded,
+            false,
+        ),
+        session(
+            "browser.preset.save",
+            "トラックの部分木を User に保存します",
+            vec![
+                track(),
+                ArgDef::choice(
+                    "kind",
+                    &[
+                        "instrument",
+                        "fx",
+                        "instrument-fx",
+                        "multi-instrument",
+                        "fx-chain",
+                        "track",
+                    ],
+                    "保存範囲",
+                ),
+                ArgDef::id("of", IdKind::RackNodeOrPlugin, "機器・分岐・レイヤー"),
+                ArgDef::text("name", "名前").req(),
+                ArgDef::flag("include_fx", "音源の後段 FX を含める"),
+                ArgDef::text("folder", "User 内のフォルダー"),
+                ArgDef::choice("source", &["User"], "保存先"),
+                ArgDef::flag("overwrite", "同名を上書き保存"),
+            ],
+            Risk::Guarded,
+            false,
+        ),
+        session(
+            "browser.preset.copy",
+            "元の範囲を保ち、プリセットを User にコピーします",
+            vec![
+                ArgDef::text("entry", "一覧の entry id").req(),
+                ArgDef::text("name", "名前").req(),
+                ArgDef::text("folder", "User 内のフォルダー"),
+                ArgDef::choice("source", &["User"], "保存先"),
+                ArgDef::flag("overwrite", "同名を上書き保存"),
+            ],
+            Risk::Guarded,
+            false,
+        ),
+        session(
             "preset.save",
             "機器の今の設定か機器の列（チェーン）を .xpreset のプリセットに保存します（同じ名前があるときは --overwrite で上書きします）",
             vec![

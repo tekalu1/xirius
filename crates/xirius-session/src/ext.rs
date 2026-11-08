@@ -1821,6 +1821,7 @@ impl Extension for SessionExt {
             || crate::preset::NAMES.contains(&name)
             || crate::track_preset::NAMES.contains(&name)
             || crate::xpreset::NAMES.contains(&name)
+            || crate::xpreset::browser::NAMES.contains(&name)
             || crate::export_watch::NAMES.contains(&name)
             || crate::midi_export::NAMES.contains(&name)
             || crate::dawproject::NAMES.contains(&name)
@@ -1838,6 +1839,19 @@ impl Extension for SessionExt {
     ) -> CmdResult<Output> {
         self.adopt();
         match def.name {
+            n if crate::xpreset::browser::NAMES.contains(&n) => {
+                let dir = self.presets.clone().unwrap_or_else(crate::xpreset::dir);
+                let tracks = self
+                    .track_presets
+                    .clone()
+                    .unwrap_or_else(crate::track_preset::dir);
+                let catalog = self.catalog();
+                let (output, edits) = crate::xpreset::browser::run(
+                    &dir, &tracks, cx.dir, cx.project, &catalog, n, args, dry,
+                )?;
+                self.pending.extend(edits);
+                Ok(output)
+            }
             n if crate::preset::NAMES.contains(&n) => {
                 let (output, edits) = crate::preset::run(cx, args, n, dry)?;
                 self.pending.extend(edits);

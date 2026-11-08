@@ -13,7 +13,7 @@ use crate::auto::AutoTarget;
 use crate::chain_preset::{ChainKind, ChainPreset, free};
 use crate::controls::{ControlId, MacroControls};
 use crate::id::{AnyId, PluginId, SendId, TrackId};
-use crate::model::{Track, TrackKind};
+use crate::model::{PluginKind, Track, TrackKind};
 use crate::rack::{MAX_SPLIT_DEPTH, RackNode, Source};
 use crate::track_preset::{Adjust, AdjustKind};
 
@@ -31,28 +31,20 @@ pub(super) fn put(
     let kind = p.track(tid)?.kind;
     let name = preset.name.clone();
     let mut chain = preset.chain;
-    let gone: HashSet<PluginId> = chain
-        .devices
-        .iter()
-        .filter(|x| missing.contains(&x.uid))
-        .map(|x| {
-            rows.push(Adjust::new(
-                AdjustKind::Rejected,
-                x.name.as_str(),
-                "この PC に無いため、空のスロットにしました",
-            ));
-            x.id
-        })
-        .collect();
-    let lost = chain.controls.retarget(|t| match t {
-        AutoTarget::Param(id, _) if gone.contains(id) => None,
-        _ => Some(t.clone()),
-    });
-    if lost > 0 {
+    if preset.kind == ChainKind::Instrument {
+        for x in chain
+            .devices
+            .iter_mut()
+            .filter(|x| x.kind == PluginKind::Instrument)
+        {
+            x.preset = Some(name.clone());
+        }
+    }
+    for x in chain.devices.iter().filter(|x| missing.contains(&x.uid)) {
         rows.push(Adjust::new(
             AdjustKind::Rejected,
-            "マクロの割り当て",
-            format!("{lost} 件は、この PC に無い機器を指すため外しました"),
+            x.name.as_str(),
+            "この PC に無いため、空のスロットにしました",
         ));
     }
     let new_ids = chain.renumber(&mut || p.alloc());
@@ -93,7 +85,9 @@ pub(super) fn put(
                 }
                 None => at.to_string(),
             };
-            let (c, mut index, depth) = place(r, &at)?;
+            let single = at.strip_prefix("replace:");
+            let resolved = single.map(|id| format!("after:{id}"));
+            let (c, mut index, depth) = place(r, resolved.as_deref().unwrap_or(&at))?;
             let tall = chain
                 .rack
                 .fx
@@ -110,7 +104,13 @@ pub(super) fn put(
                 )));
             }
             let mut taken = Vec::new();
-            if replace {
+            if single.is_some() {
+                index = index
+                    .checked_sub(1)
+                    .ok_or_else(|| CmdError::invalid("FX を選んでください"))?;
+                let old = chain_mut(r, c).expect("place found it").remove(index);
+                plugins_in(&[old], &mut taken);
+            } else if replace {
                 let old = std::mem::take(chain_mut(r, c).expect("place found it"));
                 plugins_in(&old, &mut taken);
                 index = 0;

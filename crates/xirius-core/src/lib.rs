@@ -39,6 +39,7 @@ pub mod store;
 pub mod takes;
 pub mod tempo;
 pub mod time;
+pub mod track_browser;
 pub mod track_preset;
 pub mod xpreset;
 

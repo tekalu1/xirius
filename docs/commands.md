@@ -8997,3 +8997,25 @@ PC のキーボードで演奏するのを入・切します
 | `by` | — | `{"type":"number"}` | 段数（×1・×2・×4 を上下） |
 | `to` | — | `{"type":"number"}` | 倍率（1・2・4） |
 
+# トラックブラウザー — 承認済み（2026-11-08）
+
+共通索引はプリセットの保存範囲でインストゥルメント・マルチ・FX・FX チェーン・トラックを分類する。
+画面は検索欄、インストゥルメント／FX／トラックの横ボタン、機器と Factory／User／フォルダーの木の順。
+メーカーは機器行の補助表示と検索対象。検索は空白区切りの AND で親を残し、検索中は枝を開く。
+お気に入りは索引 ID への参照。Factory は読むだけで、User へコピーして編集する。
+保存窓の「FX を含める」は新規時オフ、既存のコピーでは元の範囲を保持する。
+FX 付きは +FX と表示し、音源と全インサートを置換する。FX 無しは既存 FX を残す。
+センド・音量・パン・色まで保存する用途のためトラックの種類も残す。試聴は設けない。
+
+`browser.preset.list --tab instruments|effects|tracks --query <語>` は共通索引と木を返す。
+`browser.preset.favourite --entry <id>` は参照を切り替える。
+`browser.preset.save --track <id> --kind <範囲> --of <機器> --name <名前> --include_fx --folder <フォルダー>`
+は User に保存する。同名は `--overwrite` を明示する。
+`browser.preset.copy --entry <id> --name <名前> --folder <フォルダー>` は範囲を保持して User に写す。
+`browser.preset.apply --entry <id> --target track|instrument|insert|effect|new` は落とし先の意味を指定する。
+既存トラックへの適用には `--track`、FX の位置には `--at`、置換対象には `--of` を指定する。
+これらは登録済みコマンドから CLI と MCP に共通に公開し、画面のディスク操作は曲の所有者へ渡す。
+
+保存形式は DevicePreset / ChainPreset / TrackPreset を維持し、索引で統合する。
+読み込みに伴う元ファイルの自動変換・上書きは行わない。プラグイン不足でも状態・配線・マクロ参照を保持する。
+

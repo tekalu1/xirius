@@ -36,10 +36,83 @@ fn rig(tag: &str) -> Rig {
         },
         ExtExtras {
             presets: Some(dir.clone()),
+            track_presets: Some(dir.join("tracks")),
             ..ExtExtras::default()
         },
     );
     Rig { dir, s }
+}
+
+#[test]
+fn browser_saves_subtrees_copies_factory_and_applies_in_one_step() {
+    let mut r = rig("browser-subtrees");
+    let t = instrument(&mut r.s, "Keys", "Sampler");
+    let inst = track(&r.s, &t).inserts[0].id.to_string();
+    plugin(&mut r.s, &t, "EQ");
+    let save = json!({"track": t, "kind": "instrument", "of": inst, "name": "Warm", "folder": "Keys", "include_fx": true});
+    let out = run(&mut r.s, "browser.preset.save", save.clone());
+    assert_eq!(out["has_fx"], true);
+    assert!(fails(&mut r.s, "browser.preset.save", save.clone()).contains("上書き"));
+    let mut over = save.clone();
+    over["overwrite"] = json!(true);
+    run(&mut r.s, "browser.preset.save", over);
+    let mut forbidden = save;
+    forbidden["source"] = json!("Factory");
+    assert!(!fails(&mut r.s, "browser.preset.save", forbidden).is_empty());
+    let list = run(
+        &mut r.s,
+        "browser.preset.list",
+        json!({"query": "warm user keys sampler"}),
+    );
+    let entries = list["entries"].as_array().unwrap();
+    let entry = entries.iter().find(|e| e["name"] == "Warm").unwrap()["id"].clone();
+    let factory = entries.iter().find(|e| e["source"] == "Factory").unwrap()["id"].clone();
+    let copy = run(
+        &mut r.s,
+        "browser.preset.copy",
+        json!({"entry": factory, "name": "Copy", "folder": "Room"}),
+    );
+    assert!(Path::new(copy["file"].as_str().unwrap()).exists());
+    let fav = run(
+        &mut r.s,
+        "browser.preset.favourite",
+        json!({"entry": entry}),
+    );
+    assert!(fav["favourites"].as_array().unwrap().contains(&entry));
+    let target = instrument(&mut r.s, "Target", "Sampler");
+    plugin(&mut r.s, &target, "Delay");
+    step(
+        &mut r.s,
+        "browser.preset.apply",
+        json!({"entry": entry, "track": target, "target": "instrument"}),
+    );
+    assert_eq!(uids(&r.s, &target), ["sampler", "eq"]);
+    step(
+        &mut r.s,
+        "browser.preset.apply",
+        json!({"entry": entry, "target": "new"}),
+    );
+    let plain = run(
+        &mut r.s,
+        "browser.preset.save",
+        json!({"track": t, "of": inst, "kind": "instrument", "name": "Plain"}),
+    );
+    assert_eq!(plain["has_fx"], false);
+    let list = run(&mut r.s, "browser.preset.list", json!({}));
+    let plain = list["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["name"] == "Plain")
+        .unwrap()["id"]
+        .clone();
+    plugin(&mut r.s, &target, "Reverb");
+    step(
+        &mut r.s,
+        "browser.preset.apply",
+        json!({"entry": plain, "track": target}),
+    );
+    assert_eq!(uids(&r.s, &target), ["sampler", "eq", "reverb"]);
 }
 
 fn run(s: &mut Session, n: &str, a: Value) -> Value {
@@ -411,7 +484,7 @@ fn a_multi_instrument_comes_back_whole() {
 }
 
 #[test]
-fn a_device_this_pc_lacks_stays_as_an_empty_slot_and_its_map_goes() {
+fn a_device_this_pc_lacks_keeps_its_slot_and_macro_reference() {
     let mut r = rig("missing");
     save_wide(&mut r);
     let text = std::fs::read_to_string(file(&r.dir, "fx-chain", "Wide")).unwrap();
@@ -434,8 +507,8 @@ fn a_device_this_pc_lacks_stays_as_an_empty_slot_and_its_map_goes() {
         })
     };
     assert!(said("EQ", "この PC に無い"), "{rows:?}");
-    assert!(said("マクロ", "この PC に無い機器"), "{rows:?}");
-    assert!(knob(&r.s, &b, 0).1.is_empty());
+    assert!(!said("マクロ", "この PC に無い機器"), "{rows:?}");
+    assert!(!knob(&r.s, &b, 0).1.is_empty());
 }
 
 #[test]

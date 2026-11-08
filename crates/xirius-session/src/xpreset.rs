@@ -40,6 +40,8 @@ use xirius_core::{Args, CmdError, CmdResult};
 use xirius_params::{BuiltinDef, FACTORY_VERSION, factory_presets};
 use xirius_plugins::Catalog;
 
+pub mod browser;
+
 /// Commands answered here (through [`crate::ext::SessionExt`]).
 pub const NAMES: [&str; 6] = [
     "preset.save",
@@ -208,7 +210,8 @@ fn stored(dir: &Path) -> (Vec<Entry>, Vec<Skipped>) {
     let folders = [PluginKind::Effect, PluginKind::Instrument]
         .map(kind_name)
         .into_iter()
-        .chain(ChainKind::ALL.iter().map(|k| k.name()));
+        .chain(ChainKind::ALL.iter().map(|k| k.name()))
+        .chain(std::iter::once("library"));
     for folder in folders {
         let kd = dir.join(folder);
         let mut dirs = Vec::new();
@@ -243,6 +246,12 @@ fn files_in(d: &Path) -> Vec<PathBuf> {
         .flatten()
         .map(|e| e.path())
         .collect();
+    let nested: Vec<PathBuf> = v
+        .iter()
+        .filter(|p| p.is_dir() && !p.is_symlink())
+        .flat_map(|p| files_in(p))
+        .collect();
+    v.extend(nested);
     v.sort();
     v
 }
@@ -288,14 +297,26 @@ fn entry_at(path: &Path) -> Result<Entry, String> {
     let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned());
     if let Some(kind) = kind_of_value(&v) {
         let (c, _) = ChainPreset::parse(&v, stem.as_deref()).map_err(|e| e.message)?;
+        let instrument = (kind == ChainKind::Instrument)
+            .then(|| {
+                c.chain
+                    .devices
+                    .iter()
+                    .find(|x| x.kind == PluginKind::Instrument)
+            })
+            .flatten();
         return Ok(Entry {
             path: path.to_path_buf(),
             value: v,
             name: c.name,
             kind: chain_plugin_kind(kind),
-            device_uid: kind.name().to_string(),
-            device_name: String::new(),
-            device_format: CHAIN.to_string(),
+            device_uid: instrument
+                .map(|x| x.uid.clone())
+                .unwrap_or_else(|| kind.name().to_string()),
+            device_name: instrument.map(|x| x.name.clone()).unwrap_or_default(),
+            device_format: instrument
+                .map(|x| x.format.clone())
+                .unwrap_or_else(|| CHAIN.to_string()),
             saved_at: c.saved_at,
             chain: Some(kind),
         });
@@ -1174,7 +1195,8 @@ fn list(
             .or_insert_with(|| (def.name.to_string(), dk, def.uid.to_string()));
     }
     for e in entries {
-        if e.chain.is_some() || kind.is_some_and(|k| k != e.kind) {
+        if e.chain.is_some_and(|k| k != ChainKind::Instrument) || kind.is_some_and(|k| k != e.kind)
+        {
             continue;
         }
         devices
@@ -1211,7 +1233,11 @@ fn list(
         }
         let mut es: Vec<&Entry> = entries
             .iter()
-            .filter(|e| e.chain.is_none() && e.device() == *uid && e.kind == *dk)
+            .filter(|e| {
+                e.chain.is_none_or(|k| k == ChainKind::Instrument)
+                    && e.device() == *uid
+                    && e.kind == *dk
+            })
             .filter(|e| q(&e.name))
             .collect();
         es.sort_by(|a, b| {
@@ -1236,6 +1262,18 @@ fn list(
                 && let Ok((p, _)) = DevicePreset::parse(&e.value, None)
             {
                 r.insert("params".into(), json!(p.device.params));
+            }
+            if a.flag("values")
+                && e.chain == Some(ChainKind::Instrument)
+                && let Ok((p, _)) = ChainPreset::parse(&e.value, None)
+                && let Some(x) = p
+                    .chain
+                    .devices
+                    .iter()
+                    .find(|x| x.kind == PluginKind::Instrument)
+            {
+                r.insert("params".into(), json!(x.params));
+                r.insert("has_fx".into(), json!(!p.chain.rack.fx.is_empty()));
             }
             presets.push(Value::Object(r));
         }

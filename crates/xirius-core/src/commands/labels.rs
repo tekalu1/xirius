@@ -213,6 +213,11 @@ pub const LABELS: &[(&str, &str)] = &[
     ("preset.save", "プリセットを保存"),
     ("preset.load", "プリセットを読み込み"),
     ("preset.list", "プリセットの一覧"),
+    ("browser.preset.list", "トラックブラウザー"),
+    ("browser.preset.apply", "プリセットを適用"),
+    ("browser.preset.favourite", "お気に入りを切り替え"),
+    ("browser.preset.save", "プリセットを保存"),
+    ("browser.preset.copy", "User にコピー"),
     ("preset.remove", "プリセットを削除"),
     ("preset.rename", "プリセット名を変更"),
     (
@@ -556,6 +561,8 @@ pub fn label(name: &str) -> Option<&'static str> {
 /// Short field names for generated command forms. CLI help stays separate.
 pub fn argument(name: &str) -> &str {
     match name {
+        "include_fx" => "FX を含める",
+        "entry" => "ブラウザーの項目",
         "action" => "操作",
         "control" => "マクロコントロール",
         "min" => "最小",

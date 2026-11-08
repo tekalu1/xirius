@@ -239,7 +239,7 @@ fn apply_to(
         pan: preset.pan,
     };
     let keys = if preset.rack.is_some() {
-        put_rack(p, id, preset, missing, rows)?;
+        put_rack(p, id, preset, rows)?;
         0
     } else {
         super::channel_settings::replace_inserts(p, id, &copy)?
@@ -314,7 +314,6 @@ fn put_rack(
     p: &mut Project,
     id: TrackId,
     preset: &TrackPreset,
-    missing: &HashSet<String>,
     rows: &mut Vec<Adjust>,
 ) -> CmdResult<()> {
     let kind = p.track(id)?.kind;
@@ -323,16 +322,6 @@ fn put_rack(
         rack: preset.rack.clone().unwrap_or_default(),
         controls: preset.controls.clone(),
     };
-    let gone: HashSet<PluginId> = chain
-        .devices
-        .iter()
-        .filter(|x| missing.contains(&x.uid))
-        .map(|x| x.id)
-        .collect();
-    chain.controls.retarget(|t| match t {
-        AutoTarget::Param(pid, _) if gone.contains(pid) => None,
-        _ => Some(t.clone()),
-    });
     if kind != TrackKind::Instrument && chain.rack.source.is_some() {
         chain.rack.source = None;
         for x in chain
