@@ -215,7 +215,7 @@ crates/xirius-ui/src/saving.rs	join	1
 crates/xirius-ui/src/saving.rs	save_version	2
 crates/xirius-ui/src/screen.rs	eprintln	10
 crates/xirius-ui/src/screen.rs	println	1
-crates/xirius-ui/src/screen.rs	run	1
+crates/xirius-ui/src/screen.rs	run_command	1
 crates/xirius-ui/src/screen.rs	std :: fs :: create_dir_all	1
 crates/xirius-ui/src/settings/audio.rs	lock	1
 crates/xirius-ui/src/settings/mod.rs	lock	6
