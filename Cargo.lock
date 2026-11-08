@@ -8409,6 +8409,7 @@ dependencies = [
  "hound",
  "libc",
  "libloading 0.8.9",
+ "objc2-foundation 0.3.2",
  "rubato",
  "serde",
  "serde_json",

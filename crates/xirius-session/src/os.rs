@@ -192,22 +192,19 @@ fn to_trash(path: &Path) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn to_trash(path: &Path) -> Result<(), String> {
-    let script = format!(
-        "tell application \"Finder\" to delete POSIX file \"{}\"",
-        path.display()
-            .to_string()
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-    );
-    let out = Command::new("osascript")
-        .args(["-e", &script])
-        .output()
-        .map_err(|e| e.to_string())?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
-    }
+    use objc2_foundation::{NSFileManager, NSString, NSURL};
+    // Resolve the parent, not the last component: trash a symlink itself, not its target.
+    // Finder's POSIX-file coercion mishandles paths containing `..`; do not invoke Finder.
+    let parent = path.parent().ok_or("cannot trash a filesystem root")?;
+    let name = path.file_name().ok_or("cannot trash a filesystem root")?;
+    let path = std::fs::canonicalize(parent)
+        .map_err(|e| e.to_string())?
+        .join(name);
+    let path = path.to_str().ok_or("trash path is not UTF-8")?;
+    let url = NSURL::fileURLWithPath(&NSString::from_str(path));
+    NSFileManager::defaultManager()
+        .trashItemAtURL_resultingItemURL_error(&url, None)
+        .map_err(|e| e.localizedDescription().to_string())
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
@@ -403,5 +400,28 @@ mod tests {
             drop(release);
             completed.recv_timeout(Duration::from_secs(30)).unwrap();
         }
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_trash_tests {
+    #[test]
+    fn trash_resolves_parent_components_and_preserves_a_symlinks_target() {
+        let root = tempfile::tempdir().unwrap();
+        let sub = root.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        let keep = root.path().join("keep");
+        std::fs::write(&keep, b"keep").unwrap();
+        let item = root.path().join("item");
+        std::fs::write(&item, b"trash").unwrap();
+        super::trash(&sub.join("../item")).unwrap();
+        assert!(!item.exists());
+        assert_eq!(std::fs::read(&keep).unwrap(), b"keep");
+        assert!(sub.is_dir());
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(&keep, &link).unwrap();
+        super::trash(&link).unwrap();
+        assert!(std::fs::symlink_metadata(&link).is_err());
+        assert_eq!(std::fs::read(&keep).unwrap(), b"keep");
     }
 }

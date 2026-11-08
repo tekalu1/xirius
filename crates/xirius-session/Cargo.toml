@@ -66,6 +66,9 @@ windows-sys = { version = "0.61", features = [
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSFileManager", "NSURL", "NSString", "NSError"] }
+
 [dev-dependencies]
 # A test's folder under the temp folder, removed when dropped even if the test fails (ARC-028).
 tempfile = "3"
