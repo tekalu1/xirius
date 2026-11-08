@@ -170,6 +170,7 @@ fn play(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) 
                 .rows[0]
                 .1;
             click(row, window, cx);
+            crate::shot::run_for(&mut studio.borrow_mut(), 10.0, |s| !s.input_blocked());
             if n == 5 {
                 assert!(
                     studio
