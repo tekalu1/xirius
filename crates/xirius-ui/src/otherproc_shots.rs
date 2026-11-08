@@ -338,8 +338,16 @@ pub(crate) fn ready(studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut 
             match state.stage {
                 0 => {
                     key(window, cx, "space");
+                    // A press while the player opens only starts it: when it is
+                    // up, the next press plays.
                     crate::shot::run_for(&mut studio.borrow_mut(), 15.0, |s| {
-                        !s.sound_preparing() && s.transport.playing
+                        !s.sound_preparing()
+                    });
+                    if !studio.borrow().transport.playing {
+                        key(window, cx, "space");
+                    }
+                    crate::shot::run_for(&mut studio.borrow_mut(), 15.0, |s| {
+                        s.transport.playing
                     });
                     assert!(studio.borrow().transport.playing, "plays");
                     other_app(state, &["track.add.audio", "--name", "Bass"], None);

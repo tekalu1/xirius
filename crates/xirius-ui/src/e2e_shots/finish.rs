@@ -44,6 +44,11 @@ pub(super) fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) -> Done {
                 let was = memo(|m| m.closed.clone()).expect("saved song");
                 assert!(differences(&was, &now).is_empty());
             });
+            crate::shot::run_for(&mut s.borrow_mut(), 30.0, |s| s.opening.is_none());
+            check(s.borrow().opening.is_none(), "the open did not finish")?;
+            // The player opens behind the card after the open; presses wait for it.
+            crate::shot::run_for(&mut s.borrow_mut(), 30.0, |s| !s.sound_preparing());
+            check(!s.borrow().sound_preparing(), "still preparing")?;
             Ok("opening saved song".into())
         }
         28 => {
