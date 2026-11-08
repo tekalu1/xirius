@@ -1822,3 +1822,17 @@ fn windowed_settings_screen_persists_through_the_owner_without_a_window() {
     s.resized(&g);
     assert!(dir.path().join("prefs.toml").is_file());
 }
+
+#[test]
+fn audio_fixture_scene_only_passes_single_lines_to_the_text_renderer() {
+    let dir = temp("audio-lines");
+    let (mut s, g) = launch(dir.path());
+    s.bind_window_io();
+    crate::audioset_shots::fixture(&mut s);
+    s.open_settings(Section::Audio);
+    assert!(s.run_command("audio.input.select", json!({"channel": 1})));
+    s.wait_for_save();
+    for (text, _) in s.settings_scene(&g).text_boxes() {
+        assert!(!text.contains('\n'), "settings line: {text:?}");
+    }
+}
