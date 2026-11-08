@@ -1,3 +1,5 @@
+// Windows-only: HWND vendor editor inspection; macOS native editors are stage 3.
+#![cfg(target_os = "windows")]
 //! What other vendors' editors put under the frame (PLG-048): the class of every child window
 //! and which of them own a caret or an input context. Each test skips when its plugin is not
 //! installed. The windows open off every screen and never take the foreground; no OS input is

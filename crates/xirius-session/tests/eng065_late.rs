@@ -1,3 +1,5 @@
+// Windows-only: Win32 module-path and factory-event gate.
+#![cfg(target_os = "windows")]
 //! The player takes plugins that run in host processes before they have answered (ENG-065):
 //! `finish_late` does not wait for them, they play dry until they are in, and what their host
 //! says about them (a plugin that cannot be opened) comes afterwards.
@@ -50,7 +52,7 @@ fn the_player_does_not_wait_for_the_hosts_and_what_they_say_comes_later() {
         .to_path_buf();
     let tmp = tempfile::tempdir().unwrap();
     let dll = tmp.path().join("late.dll");
-    std::fs::copy(deps.join("xirius_test_vst3.dll"), &dll).unwrap();
+    std::fs::copy(xirius_test_vst3::fixture_path(&deps), &dll).unwrap();
     let entries = probe(&dll).unwrap();
     let uid = entries[0].uid.clone();
     // The catalog names a class the factory does not have; only its host finds out.

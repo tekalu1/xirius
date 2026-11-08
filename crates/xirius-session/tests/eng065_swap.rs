@@ -50,7 +50,7 @@ fn a_new_mix_is_built_without_holding_the_caller_and_swapped_in_when_ready() {
         .parent()
         .unwrap()
         .to_path_buf();
-    let entries = probe(&deps.join("xirius_test_vst3.dll")).unwrap();
+    let entries = probe(&xirius_test_vst3::fixture_path(&deps)).unwrap();
     let uid = entries[0].uid.clone();
     let catalog = Arc::new(Catalog {
         entries,

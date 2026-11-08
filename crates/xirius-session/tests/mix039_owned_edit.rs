@@ -52,11 +52,7 @@ fn a_value_a_macro_holds_moved_in_the_window_goes_back_to_the_macro_in_the_plugi
         return;
     };
     xirius_test_vst3::fixture_marker();
-    let dll = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("xirius_test_vst3.dll");
+    let dll = xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
     let entries = probe(&dll).unwrap();
     let uid = entries[0].uid.clone();
     let mut s = Session::with_registry(Project::new("owned-edit"), shared_registry());

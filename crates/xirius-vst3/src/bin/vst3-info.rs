@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use xirius_vst3::{Module, Plugin, default_vst3_dir, find_bundles};
+use xirius_vst3::{Module, Plugin, default_vst3_dirs, find_bundles};
 
 fn main() {
     let mut args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
@@ -20,7 +20,10 @@ fn main() {
         std::fs::create_dir_all(editor_dir.as_ref().unwrap()).expect("create the editor dir");
     }
     let bundles = if args.is_empty() {
-        find_bundles(&default_vst3_dir())
+        default_vst3_dirs()
+            .iter()
+            .flat_map(|dir| find_bundles(dir))
+            .collect()
     } else {
         args
     };

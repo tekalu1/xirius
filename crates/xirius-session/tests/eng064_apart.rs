@@ -30,7 +30,7 @@ fn plugins_in_hosts_of_their_own_open_at_once() {
         .parent()
         .unwrap()
         .to_path_buf();
-    let entries = probe(&deps.join("xirius_test_vst3.dll")).unwrap();
+    let entries = probe(&xirius_test_vst3::fixture_path(&deps)).unwrap();
     let uid = entries[0].uid.clone();
     let catalog = Arc::new(Catalog {
         entries,

@@ -7,6 +7,8 @@ use vst3::Steinberg::Vst::*;
 use vst3::Steinberg::*;
 use vst3::{Class, ComPtr, ComWrapper};
 
+// The fixture editor uses HWND; NSView testing belongs to stage 3.
+#[cfg(target_os = "windows")]
 pub mod editor;
 
 pub const CID: TUID = [88, 73, 82, 73, 85, 83, 76, 65, 84, 69, 78, 67, 89, 0, 0, 1];
@@ -19,6 +21,31 @@ pub fn bus_layout_cid(mode: u8) -> [u8; 16] {
     cid
 }
 pub fn fixture_marker() {}
+
+/// A host-loadable fixture: a DLL on Windows, a real bundle on macOS.
+/// Kept under the test build directory and removed by cargo clean.
+pub fn fixture_path(deps: &std::path::Path) -> std::path::PathBuf {
+    #[cfg(not(target_os = "macos"))]
+    {
+        deps.join("xirius_test_vst3.dll")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        static PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+        PATH.get_or_init(|| {
+            let root = deps.join(format!("xirius-fixture-{}.vst3", std::process::id()));
+            let contents = root.join("Contents");
+            std::fs::create_dir_all(contents.join("MacOS")).unwrap();
+            std::fs::copy(deps.join("libxirius_test_vst3.dylib"), contents.join("MacOS/Fixture")).unwrap();
+            std::fs::write(contents.join("Info.plist"), r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>CFBundleExecutable</key><string>Fixture</string>
+<key>CFBundleIdentifier</key><string>org.xirius.test-vst3</string>
+<key>CFBundlePackageType</key><string>BNDL</string></dict></plist>"#).unwrap();
+            root
+        }).clone()
+    }
+}
 /// Momentary test trigger: a positive point exits the hosting process during processing.
 pub const CRASH_PARAMETER: u32 = 3;
 /// Independent observable value for consecutive owner-command regression tests.
@@ -149,12 +176,16 @@ impl IPluginFactoryTrait for Factory {
         {
             return kResultFalse;
         }
+        let number = MADE.fetch_add(1, Ordering::Relaxed) + 1;
+        #[cfg(not(target_os = "windows"))]
+        let _ = number;
         let plugin = ComWrapper::new(Latency {
             bus_mode,
             arrangements_ok: AtomicU32::new(0),
             delay: Arc::new(AtomicU32::new(0)),
             mix: AtomicU32::new(0),
-            number: MADE.fetch_add(1, Ordering::Relaxed) + 1,
+            #[cfg(target_os = "windows")]
+            number,
             home: std::thread::current().id(),
             handler: UnsafeCell::new(None),
             buffers: UnsafeCell::new([[0.0; 512]; 2]),
@@ -178,6 +209,7 @@ struct Latency {
     delay: Arc<AtomicU32>,
     mix: AtomicU32,
     /// Which instance of this process this is (1 for the first), shown in the editor.
+    #[cfg(target_os = "windows")]
     number: u32,
     /// The thread that made it. Some plugins tie windows to it and break when another thread
     /// terminates them (ARC-044); [`FixtureTerminations`] counts those that were.
@@ -562,7 +594,14 @@ impl IEditControllerTrait for Latency {
         kResultOk
     }
     unsafe fn createView(&self, _: FIDString) -> *mut IPlugView {
-        editor::create(self.delay.clone(), self.number)
+        #[cfg(target_os = "windows")]
+        {
+            editor::create(self.delay.clone(), self.number)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            std::ptr::null_mut()
+        }
     }
 }
 
@@ -724,6 +763,10 @@ pub unsafe extern "system" fn FixtureOpenGate(entered: usize, release: usize) {
     OPEN_ENTERED.store(entered, Ordering::Release);
 }
 
+#[cfg(not(target_os = "windows"))]
+fn fixture_open_gate() {}
+
+#[cfg(target_os = "windows")]
 fn fixture_open_gate() {
     let entered = OPEN_ENTERED.load(Ordering::Acquire);
     if entered != 0 {
@@ -750,6 +793,10 @@ pub extern "system" fn FixtureStateAway() -> u32 {
     STATE_AWAY.load(Ordering::Relaxed)
 }
 
+#[cfg(not(target_os = "windows"))]
+fn state_gate() {}
+
+#[cfg(target_os = "windows")]
 fn state_gate() {
     let entered = STATE_ENTERED.load(Ordering::Acquire);
     if entered != 0 {
@@ -782,41 +829,59 @@ pub extern "system" fn FixtureModuleCalls() -> u64 {
         | (u64::from(EXITED.load(Ordering::Relaxed)) << 32)
 }
 
-// A deliberately lingering DLL callback for the module-lifetime regression. The caller
-// owns the counter until the one-shot timer has fired. No editor or audio device is opened.
-static TIMER_TARGET: std::sync::atomic::AtomicPtr<AtomicU32> =
-    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+#[cfg(target_os = "windows")]
+mod timer_fixture {
+    use super::*;
+    // A deliberately lingering DLL callback for the module-lifetime regression. The caller
+    // owns the counter until the one-shot timer has fired. No editor or audio device is opened.
+    static TIMER_TARGET: std::sync::atomic::AtomicPtr<AtomicU32> =
+        std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
 
-/// # Safety
-/// Dispatch on the thread that armed FixtureLingeringTimer, while its counter is valid.
-#[unsafe(no_mangle)]
-pub unsafe extern "system" fn FixtureTimerCallback(
-    _: windows_sys::Win32::Foundation::HWND,
-    _: u32,
-    timer: usize,
-    _: u32,
-) {
-    // SAFETY: a thread timer created below, on this thread.
-    unsafe { windows_sys::Win32::UI::WindowsAndMessaging::KillTimer(std::ptr::null_mut(), timer) };
-    let target = TIMER_TARGET.swap(std::ptr::null_mut(), Ordering::AcqRel);
-    if !target.is_null() {
-        // SAFETY: the fixture caller retains the counter through callback dispatch.
-        unsafe { (*target).fetch_add(1, Ordering::Release) };
+    /// # Safety
+    /// Dispatch on the thread that armed FixtureLingeringTimer, while its counter is valid.
+    #[unsafe(no_mangle)]
+    pub unsafe extern "system" fn FixtureTimerCallback(
+        _: windows_sys::Win32::Foundation::HWND,
+        _: u32,
+        timer: usize,
+        _: u32,
+    ) {
+        // SAFETY: a thread timer created below, on this thread.
+        unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::KillTimer(std::ptr::null_mut(), timer)
+        };
+        let target = TIMER_TARGET.swap(std::ptr::null_mut(), Ordering::AcqRel);
+        if !target.is_null() {
+            // SAFETY: the fixture caller retains the counter through callback dispatch.
+            unsafe { (*target).fetch_add(1, Ordering::Release) };
+        }
+    }
+
+    /// # Safety
+    /// `counter` must remain valid on this thread until its timer fires. Call once per process.
+    #[unsafe(no_mangle)]
+    pub unsafe extern "system" fn FixtureLingeringTimer(counter: *mut AtomicU32) -> usize {
+        TIMER_TARGET.store(counter, Ordering::Release);
+        // SAFETY: the callback has the TIMERPROC ABI and lives in this DLL.
+        unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::SetTimer(
+                std::ptr::null_mut(),
+                0,
+                1,
+                Some(FixtureTimerCallback),
+            )
+        }
     }
 }
 
-/// # Safety
-/// `counter` must remain valid on this thread until its timer fires. Call once per process.
+// macOS requires both bundle entry points, even for a device-free fixture.
+#[cfg(target_os = "macos")]
 #[unsafe(no_mangle)]
-pub unsafe extern "system" fn FixtureLingeringTimer(counter: *mut AtomicU32) -> usize {
-    TIMER_TARGET.store(counter, Ordering::Release);
-    // SAFETY: the callback has the TIMERPROC ABI and lives in this DLL.
-    unsafe {
-        windows_sys::Win32::UI::WindowsAndMessaging::SetTimer(
-            std::ptr::null_mut(),
-            0,
-            1,
-            Some(FixtureTimerCallback),
-        )
-    }
+pub extern "C" fn bundleEntry(_bundle: *const std::ffi::c_void) -> bool {
+    InitDll()
+}
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+pub extern "C" fn bundleExit() -> bool {
+    ExitDll()
 }

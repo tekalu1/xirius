@@ -751,8 +751,8 @@ impl AudioPart {
         let proc = &self.shared.processor;
         // SAFETY: plain calls with arrays and out-structs owned here.
         unsafe {
-            let n_in = comp.getBusCount(kAudio, kInput).max(0);
-            let n_out = comp.getBusCount(kAudio, kOutput).max(0);
+            let n_in = comp.getBusCount(kAudio as _, kInput as _).max(0);
+            let n_out = comp.getBusCount(kAudio as _, kOutput as _).max(0);
             let mut ins: Vec<SpeakerArrangement> = bus_arrangements(n_in as usize);
             let mut outs: Vec<SpeakerArrangement> = bus_arrangements(n_out as usize);
             // Plugins may refuse; what they settle on is read back below.
@@ -765,31 +765,35 @@ impl AudioPart {
                             arr.count_ones() as usize
                         } else {
                             let mut info: BusInfo = std::mem::zeroed();
-                            comp.getBusInfo(kAudio, dir, i, &mut info);
+                            comp.getBusInfo(kAudio as _, dir, i, &mut info);
                             info.channelCount.max(0) as usize
                         }
                     })
                     .collect()
             };
-            let in_ch = channels(kInput, n_in);
-            let out_ch = channels(kOutput, n_out);
+            let in_ch = channels(kInput as _, n_in);
+            let out_ch = channels(kOutput as _, n_out);
             for i in 0..n_in {
-                comp.activateBus(kAudio, kInput, i, (i == 0) as u8);
+                comp.activateBus(kAudio as _, kInput as _, i, (i == 0) as u8);
             }
             for i in 0..n_out {
-                comp.activateBus(kAudio, kOutput, i, (i == 0) as u8);
+                comp.activateBus(kAudio as _, kOutput as _, i, (i == 0) as u8);
             }
-            let n_ev = comp.getBusCount(kEvent, kInput);
+            let n_ev = comp.getBusCount(kEvent as _, kInput as _);
             for i in 0..n_ev {
-                comp.activateBus(kEvent, kInput, i, (i == 0) as u8);
+                comp.activateBus(kEvent as _, kInput as _, i, (i == 0) as u8);
             }
             self.has_event_input = n_ev > 0;
-            if proc.canProcessSampleSize(kSample32) != kResultOk {
+            if proc.canProcessSampleSize(kSample32 as _) != kResultOk {
                 return Err(error("the plugin cannot process 32-bit float"));
             }
             let mut setup = ProcessSetup {
-                processMode: if offline { kOffline } else { kRealtime },
-                symbolicSampleSize: kSample32,
+                processMode: if offline {
+                    kOffline as _
+                } else {
+                    kRealtime as _
+                },
+                symbolicSampleSize: kSample32 as _,
                 maxSamplesPerBlock: max_block as i32,
                 sampleRate: sample_rate,
             };
@@ -812,7 +816,7 @@ impl AudioPart {
                 | kTempoValid
                 | kTimeSigValid
                 | kProjectTimeMusicValid
-                | kContTimeValid) as u32,
+                | kContTimeValid) as _,
             sampleRate: sample_rate,
             tempo: 120.0,
             timeSigNumerator: 4,
@@ -856,10 +860,11 @@ impl AudioPart {
     /// Each block still moves the position on by its length.
     pub fn set_transport(&mut self, playing: bool, position: i64) {
         let c = &mut *self.context;
+        let playing_flag: u32 = kPlaying as _;
         if playing {
-            c.state |= kPlaying as u32;
+            c.state |= playing_flag;
         } else {
-            c.state &= !(kPlaying as u32);
+            c.state &= !(playing_flag);
         }
         c.projectTimeSamples = position;
         if c.sampleRate > 0.0 {
@@ -994,8 +999,12 @@ impl AudioPart {
         }
 
         let mut data = ProcessData {
-            processMode: if self.offline { kOffline } else { kRealtime },
-            symbolicSampleSize: kSample32,
+            processMode: if self.offline {
+                kOffline as _
+            } else {
+                kRealtime as _
+            },
+            symbolicSampleSize: kSample32 as _,
             numSamples: n as i32,
             numInputs: self.inputs.channels.len() as i32,
             numOutputs: self.outputs.channels.len() as i32,

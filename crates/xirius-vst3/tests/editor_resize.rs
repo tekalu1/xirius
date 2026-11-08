@@ -1,3 +1,5 @@
+// Windows-only: HWND resize messages; macOS native editors are stage 3.
+#![cfg(target_os = "windows")]
 //! The editor window's resize paths (PLG-027) against the fixture's resizable view: a drag on
 //! the border goes through `checkSizeConstraint` and `onSize`, and the window's DPI reaches the
 //! view as a content scale. The window opens off every screen and never takes the foreground;

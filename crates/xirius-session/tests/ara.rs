@@ -51,11 +51,7 @@ fn builder(catalog: Catalog) -> Builder {
 #[test]
 fn an_ara_plugin_stays_in_this_process() {
     xirius_test_vst3::fixture_marker();
-    let dll = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("xirius_test_vst3.dll");
+    let dll = xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
     assert!(dll.exists(), "the fixture's cdylib is built with the tests");
     let entries = probe(&dll).unwrap();
     assert!(entries.iter().all(|e| !e.ara), "the fixture is not ARA");

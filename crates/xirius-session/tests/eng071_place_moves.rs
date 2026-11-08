@@ -215,7 +215,7 @@ fn a_plugin_moved_between_processes_is_the_one_that_plays_until_the_new_mix_does
         .parent()
         .unwrap()
         .to_path_buf();
-    let entries = probe(&deps.join("xirius_test_vst3.dll")).unwrap();
+    let entries = probe(&xirius_test_vst3::fixture_path(&deps)).unwrap();
     let rig = Rig {
         uid: entries[0].uid.clone(),
         catalog: Arc::new(Catalog {

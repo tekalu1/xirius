@@ -19,7 +19,7 @@ fn catalog() -> (Arc<Catalog>, String) {
         .parent()
         .unwrap()
         .to_path_buf();
-    let dll = deps.join("xirius_test_vst3.dll");
+    let dll = xirius_test_vst3::fixture_path(&deps);
     assert!(
         dll.exists(),
         "the fixture's cdylib is built with its dev dependency"

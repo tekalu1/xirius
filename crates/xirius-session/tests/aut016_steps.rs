@@ -22,7 +22,7 @@ fn a_plug_in_in_a_host_tells_the_steps_of_its_switch() {
         .parent()
         .unwrap()
         .to_path_buf();
-    let entries = probe(&deps.join("xirius_test_vst3.dll")).unwrap();
+    let entries = probe(&xirius_test_vst3::fixture_path(&deps)).unwrap();
     let uid = entries[0].uid.clone();
     let catalog = Arc::new(Catalog {
         entries,

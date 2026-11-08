@@ -1,3 +1,5 @@
+// Windows-only: HWND caption colours.
+#![cfg(target_os = "windows")]
 //! The editor window's title bar takes the app's colours (UI-183): the colour given at open is
 //! on the window before it is first shown, and a later change (dark to light) reaches it. The
 //! window opens off every screen and never takes the foreground; the colours are read back from
@@ -17,7 +19,7 @@ fn fixture() -> Plugin {
         .parent()
         .unwrap()
         .to_path_buf();
-    let dll = deps.join("xirius_test_vst3.dll");
+    let dll = xirius_test_vst3::fixture_path(&deps);
     assert!(dll.exists(), "the fixture's cdylib is built with the tests");
     let module = Arc::new(Module::load(&dll).expect("load"));
     let class = module.classes().into_iter().next().expect("a class");

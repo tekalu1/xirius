@@ -139,7 +139,14 @@ fn mock_input(exclusive: bool) -> DeviceInput {
 #[test]
 fn exclusive_is_the_default_driver() {
     let p = xirius_prefs::Prefs::default();
-    assert_eq!(p.text("audio.driver"), "wasapi-exclusive");
+    assert_eq!(
+        p.text("audio.driver"),
+        if cfg!(target_os = "macos") {
+            "coreaudio"
+        } else {
+            "wasapi-exclusive"
+        }
+    );
 }
 
 #[test]

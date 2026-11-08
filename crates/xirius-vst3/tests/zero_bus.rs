@@ -5,11 +5,7 @@ use xirius_vst3::{Module, Plugin};
 #[test]
 fn zero_bus_compatibility_preserves_negotiation_and_process_counts() {
     xirius_test_vst3::fixture_marker();
-    let dll = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("xirius_test_vst3.dll");
+    let dll = xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
     let module = Arc::new(Module::load(&dll).unwrap());
     let class = module.classes().into_iter().next().unwrap();
     for (mode, inputs, outputs) in [

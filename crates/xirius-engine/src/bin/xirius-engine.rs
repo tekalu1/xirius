@@ -31,6 +31,7 @@ use std::time::{Duration, Instant};
 use xirius_engine::builtin::{Delay, Sine, SineSynth};
 use xirius_engine::device::{self, CpalOutput};
 use xirius_engine::engine::{self, EngineConfig};
+#[cfg(target_os = "windows")]
 use xirius_engine::exclusive::ExclusiveOutput;
 use xirius_engine::mixer::{MeterReading, NodeId};
 use xirius_engine::plugin::Vst3Processor;
@@ -48,6 +49,7 @@ type BoxError = Box<dyn std::error::Error>;
 
 enum Out {
     Shared(CpalOutput),
+    #[cfg(target_os = "windows")]
     Exclusive(ExclusiveOutput),
 }
 
@@ -432,19 +434,27 @@ fn play(
 
     let stats = audio.stats();
     let mut output = if a.exclusive {
-        let o = ExclusiveOutput::start(audio, a.buffer)?;
-        let i = &o.info;
-        println!(
-            "mode: WASAPI exclusive, {}  period {} frames ({:.2} ms; asked {}, device min {}, default {})  max block: {}",
-            i.format,
-            i.period_frames,
-            i.period_frames as f64 * 1000.0 / i.sample_rate as f64,
-            i.requested_period_frames,
-            i.min_period_frames,
-            i.default_period_frames,
-            a.max_block
+        #[cfg(not(target_os = "windows"))]
+        return Err(
+            "WASAPI exclusive mode is only available on Windows; use the default CoreAudio output"
+                .into(),
         );
-        Some(Out::Exclusive(o))
+        #[cfg(target_os = "windows")]
+        {
+            let o = ExclusiveOutput::start(audio, a.buffer)?;
+            let i = &o.info;
+            println!(
+                "mode: WASAPI exclusive, {}  period {} frames ({:.2} ms; asked {}, device min {}, default {})  max block: {}",
+                i.format,
+                i.period_frames,
+                i.period_frames as f64 * 1000.0 / i.sample_rate as f64,
+                i.requested_period_frames,
+                i.min_period_frames,
+                i.default_period_frames,
+                a.max_block
+            );
+            Some(Out::Exclusive(o))
+        }
     } else {
         let o = CpalOutput::start(audio, a.buffer)?;
         let mode = match a.buffer {
@@ -564,6 +574,7 @@ fn play(
     }
     match output.take() {
         Some(Out::Shared(o)) => drop(o.stop()),
+        #[cfg(target_os = "windows")]
         Some(Out::Exclusive(o)) => o.stop()?,
         None => {}
     }

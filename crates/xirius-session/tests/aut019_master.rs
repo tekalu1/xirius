@@ -18,11 +18,7 @@ use xirius_session::{
 
 fn catalog() -> (Arc<Catalog>, String) {
     xirius_test_vst3::fixture_marker();
-    let dll = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("xirius_test_vst3.dll");
+    let dll = xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
     assert!(dll.is_file());
     let entries = probe(&dll).unwrap();
     let uid = entries[0].uid.clone();

@@ -10,12 +10,15 @@ use vst3::Steinberg::{
     IPluginFactory3Trait, IPluginFactoryTrait, PClassInfo, PClassInfo2, PFactoryInfo, kResultOk,
 };
 use vst3::{ComPtr, Interface};
+#[cfg(target_os = "windows")]
 use windows_sys::Win32::Foundation::HMODULE;
+#[cfg(target_os = "windows")]
 use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 
 use crate::serial::{SETUP_LIMIT, turn, turn_within};
 use crate::{Error, c_str, error};
 
+#[cfg(target_os = "windows")]
 type InitDll = unsafe extern "system" fn() -> bool;
 type GetPluginFactory = unsafe extern "system" fn() -> *mut IPluginFactory;
 
@@ -60,7 +63,7 @@ pub struct Module {
 /// The DLL behind every [`Module`] of one binary. A successful open stays in `LOADED`.
 struct Library {
     binary: PathBuf,
-    _handle: HMODULE,
+    _handle: *mut c_void,
     factory: Option<ComPtr<IPluginFactory>>,
     vendor: String,
 }
@@ -79,11 +82,31 @@ struct Resident {
 static LOADED: Mutex<Vec<Resident>> = Mutex::new(Vec::new());
 
 /// `C:\Program Files\Common Files\VST3`, the standard 64-bit location on Windows.
+#[cfg(not(target_os = "macos"))]
 pub fn default_vst3_dir() -> PathBuf {
     let base = std::env::var_os("CommonProgramFiles")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(r"C:\Program Files\Common Files"));
     base.join("VST3")
+}
+
+#[cfg(target_os = "macos")]
+pub fn default_vst3_dir() -> PathBuf {
+    PathBuf::from("/Library/Audio/Plug-Ins/VST3")
+}
+
+/// System and per-user VST3 search roots.
+pub fn default_vst3_dirs() -> Vec<PathBuf> {
+    let dirs = vec![default_vst3_dir()];
+    #[cfg(target_os = "macos")]
+    let dirs = {
+        let mut dirs = dirs;
+        if let Some(home) = std::env::var_os("HOME") {
+            dirs.push(PathBuf::from(home).join("Library/Audio/Plug-Ins/VST3"));
+        }
+        dirs
+    };
+    dirs
 }
 
 /// Every `.vst3` bundle (directory or single file) under `dir`, sorted. Bundles are not
@@ -113,6 +136,7 @@ pub fn find_bundles(dir: &Path) -> Vec<PathBuf> {
 
 /// The DLL to load for a bundle: the path itself when it is a file, otherwise
 /// `Contents/x86_64-win/<name>.vst3`.
+#[cfg(not(target_os = "macos"))]
 fn binary_path(bundle: &Path) -> Result<PathBuf, Error> {
     if bundle.is_file() {
         return Ok(bundle.to_path_buf());
@@ -134,15 +158,48 @@ fn binary_path(bundle: &Path) -> Result<PathBuf, Error> {
         .ok_or_else(|| error(format!("no x86_64-win binary in {}", bundle.display())))
 }
 
+#[cfg(target_os = "windows")]
 fn wide(p: &Path) -> Vec<u16> {
     use std::os::windows::ffi::OsStrExt;
     p.as_os_str().encode_wide().chain([0]).collect()
 }
 
+#[cfg(target_os = "macos")]
+#[path = "module_macos.rs"]
+mod macos;
+#[cfg(target_os = "macos")]
+fn binary_path(bundle: &Path) -> Result<PathBuf, Error> {
+    macos::binary_path(bundle)
+}
+
 impl Library {
     /// Loads the DLL, calls `InitDll` if present and takes the plugin factory.
     fn open(binary: PathBuf) -> Result<Library, Error> {
-        let w = wide(&binary);
+        #[cfg(target_os = "macos")]
+        let (handle, factory) = macos::open(&binary)?;
+        #[cfg(target_os = "windows")]
+        let (handle, factory) = Self::open_windows(&binary)?;
+        let mut library = Library {
+            binary,
+            _handle: handle,
+            factory,
+            vendor: String::new(),
+        };
+        let factory = library
+            .factory
+            .as_ref()
+            .ok_or_else(|| error("GetPluginFactory returned null"))?;
+        // SAFETY: plain data filled by the factory.
+        let mut info: PFactoryInfo = unsafe { std::mem::zeroed() };
+        if unsafe { factory.getFactoryInfo(&mut info) } == kResultOk {
+            library.vendor = c_str(&info.vendor);
+        }
+        Ok(library)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn open_windows(binary: &Path) -> Result<(HMODULE, Option<ComPtr<IPluginFactory>>), Error> {
+        let w = wide(binary);
         // SAFETY: `w` is a NUL-terminated wide path. Loading runs the DLL's initialisers,
         // which is what hosting a plugin means.
         let handle = unsafe { LoadLibraryW(w.as_ptr()) };
@@ -153,12 +210,6 @@ impl Library {
                 std::io::Error::last_os_error()
             )));
         }
-        let mut library = Library {
-            binary,
-            _handle: handle,
-            factory: None,
-            vendor: String::new(),
-        };
         // SAFETY: the symbols are looked up by their documented names and called with the
         // documented signatures (`bool PLUGIN_API InitDll()` etc.).
         unsafe {
@@ -172,18 +223,8 @@ impl Library {
                 .ok_or_else(|| error("the module has no GetPluginFactory"))?;
             let get: GetPluginFactory = std::mem::transmute(get);
             // GetPluginFactory returns a reference the caller owns.
-            library.factory = ComPtr::from_raw(get());
+            Ok((handle, ComPtr::from_raw(get())))
         }
-        let factory = library
-            .factory
-            .as_ref()
-            .ok_or_else(|| error("GetPluginFactory returned null"))?;
-        // SAFETY: `PFactoryInfo` is plain data; the factory fills it.
-        let mut info: PFactoryInfo = unsafe { std::mem::zeroed() };
-        if unsafe { factory.getFactoryInfo(&mut info) } == kResultOk {
-            library.vendor = c_str(&info.vendor);
-        }
-        Ok(library)
     }
 }
 

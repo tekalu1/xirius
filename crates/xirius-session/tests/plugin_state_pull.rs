@@ -142,11 +142,7 @@ fn graph_and_save_captures_complete_independently_when_a_third_request_is_cancel
 /// A song with the fixture on a track, the plugin id, and the catalog that has it.
 fn song(isolation: PluginIsolation) -> (Session, Arc<Catalog>) {
     xirius_test_vst3::fixture_marker();
-    let dll = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("xirius_test_vst3.dll");
+    let dll = xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
     assert!(
         dll.exists(),
         "the fixture's cdylib is built with its dev dependency"

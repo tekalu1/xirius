@@ -52,11 +52,7 @@ fn terminations(fixture: &libloading::Library) -> (u32, u32) {
 #[test]
 fn a_plugin_in_the_app_is_terminated_on_its_own_thread_when_the_player_goes() {
     xirius_test_vst3::fixture_marker();
-    let dll = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("xirius_test_vst3.dll");
+    let dll = xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
     assert!(
         dll.exists(),
         "the fixture's cdylib is built with its dev dependency"

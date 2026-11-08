@@ -78,7 +78,7 @@ fn the_state_the_old_window_leaves_when_it_closes_is_not_the_new_instances() {
         .parent()
         .unwrap()
         .to_path_buf();
-    let entries = probe(&deps.join("xirius_test_vst3.dll")).unwrap();
+    let entries = probe(&xirius_test_vst3::fixture_path(&deps)).unwrap();
     let uid = entries[0].uid.clone();
     let catalog = Arc::new(Catalog {
         entries,

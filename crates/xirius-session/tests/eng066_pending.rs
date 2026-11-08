@@ -109,7 +109,7 @@ fn a_value_put_into_the_playing_plugin_while_a_new_mix_opens_stays_and_goes_on_t
         .parent()
         .unwrap()
         .to_path_buf();
-    let entries = probe(&deps.join("xirius_test_vst3.dll")).unwrap();
+    let entries = probe(&xirius_test_vst3::fixture_path(&deps)).unwrap();
     let uid = entries[0].uid.clone();
     let catalog = Arc::new(Catalog {
         entries,

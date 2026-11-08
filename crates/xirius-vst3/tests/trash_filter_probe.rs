@@ -1,3 +1,5 @@
+// Windows-only: Win32 desktop capture; macOS native editors are stage 3.
+#![cfg(target_os = "windows")]
 //! Optional, device-free investigation of the installed Trash 2 exception filter.
 use std::sync::Arc;
 use windows_sys::Win32::System::Diagnostics::Debug::{

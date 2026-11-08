@@ -89,9 +89,9 @@ impl IBStreamTrait for MemoryStream {
     unsafe fn seek(&self, pos: int64, mode: int32, result: *mut int64) -> tresult {
         let mut s = self.inner.lock().unwrap();
         let base = match mode {
-            m if m == kIBSeekSet => 0,
-            m if m == kIBSeekCur => s.pos as i64,
-            m if m == kIBSeekEnd => s.data.len() as i64,
+            m if m == kIBSeekSet as _ => 0,
+            m if m == kIBSeekCur as _ => s.pos as i64,
+            m if m == kIBSeekEnd as _ => s.data.len() as i64,
             _ => return kInvalidArgument,
         };
         let target = base + pos;
@@ -129,18 +129,18 @@ mod tests {
             assert_eq!(s.write(data.as_mut_ptr().cast(), 11, &mut n), kResultOk);
             assert_eq!(n, 11);
             let mut at = 0;
-            s.seek(6, kIBSeekSet, &mut at);
+            s.seek(6, kIBSeekSet as _, &mut at);
             assert_eq!(at, 6);
             let mut out = [0u8; 16];
             s.read(out.as_mut_ptr().cast(), 16, &mut n);
             assert_eq!(&out[..n as usize], b"world");
-            s.seek(-5, kIBSeekEnd, &mut at);
+            s.seek(-5, kIBSeekEnd as _, &mut at);
             s.write(b"WORLD".as_ptr() as *mut c_void, 5, &mut n);
-            s.seek(-11, kIBSeekCur, &mut at);
+            s.seek(-11, kIBSeekCur as _, &mut at);
             assert_eq!(at, 0);
             s.tell(&mut at);
             assert_eq!(at, 0);
-            assert_eq!(s.seek(-1, kIBSeekSet, &mut at), kResultFalse);
+            assert_eq!(s.seek(-1, kIBSeekSet as _, &mut at), kResultFalse);
         }
         assert_eq!(s.bytes(), b"hello WORLD");
         s.rewind();

@@ -24,7 +24,7 @@ fn a_latency_notification_rebuilds_pdc_while_the_transport_keeps_playing() {
         .parent()
         .unwrap()
         .to_path_buf();
-    let dll = deps.join("xirius_test_vst3.dll");
+    let dll = xirius_test_vst3::fixture_path(&deps);
     assert!(
         dll.exists(),
         "the fixture's cdylib is built with its dev dependency"

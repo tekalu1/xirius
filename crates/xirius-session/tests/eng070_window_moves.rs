@@ -70,7 +70,7 @@ fn the_window_moves_with_the_plugin_to_another_host() {
         .parent()
         .unwrap()
         .to_path_buf();
-    let entries = probe(&deps.join("xirius_test_vst3.dll")).unwrap();
+    let entries = probe(&xirius_test_vst3::fixture_path(&deps)).unwrap();
     let uid = entries[0].uid.clone();
     let mut p = Project::new("window-moves");
     let t = track(PluginIsolation::Dedicated, &uid);

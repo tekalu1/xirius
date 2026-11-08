@@ -36,7 +36,16 @@ const fn p(key: &'static str, kind: Kind, default: &'static str) -> Pref {
 
 pub const THEMES: &[&str] = &["dark", "light", "auto"];
 pub const LISTEN: &[&str] = &["localhost", "network"];
+#[cfg(not(target_os = "macos"))]
 pub const DRIVERS: &[&str] = &["wasapi-shared", "wasapi-exclusive"];
+// Preserve legacy values when importing Windows preferences; the system driver still
+// routes through CoreAudio on macOS, with no WASAPI code linked.
+#[cfg(target_os = "macos")]
+pub const DRIVERS: &[&str] = &["coreaudio", "wasapi-shared", "wasapi-exclusive"];
+#[cfg(target_os = "macos")]
+const DEFAULT_DRIVER: &str = "coreaudio";
+#[cfg(not(target_os = "macos"))]
+const DEFAULT_DRIVER: &str = "wasapi-exclusive";
 pub const BUFFERS: &[i64] = &[32, 64, 128, 256, 512, 1024];
 pub const PROCESS: &[&str] = &["same", "shared", "dedicated"];
 /// What an input-quantized recording snaps a note's head to (REC-009).
@@ -51,7 +60,7 @@ pub const PREFS: &[Pref] = &[
     p("app.update.beta", Kind::Bool, "false"),
     p("ai.mcp.enabled", Kind::Bool, "true"),
     p("ai.mcp.listen", Kind::Choice(LISTEN), "localhost"),
-    p("audio.driver", Kind::Choice(DRIVERS), "wasapi-exclusive"),
+    p("audio.driver", Kind::Choice(DRIVERS), DEFAULT_DRIVER),
     p("audio.device", Kind::Text, ""),
     p("audio.buffer", Kind::Int(32, 1024), "256"),
     p("audio.record-offset", Kind::Float(-500.0, 500.0), "0"),

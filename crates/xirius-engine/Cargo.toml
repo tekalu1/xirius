@@ -19,7 +19,6 @@ midir = "0.11"
 xirius-vst3 = { path = "../xirius-vst3" }
 xirius-clap = { path = "../xirius-clap" }
 xirius-params = { path = "../xirius-params" }
-wasapi = "0.25"
 assert_no_alloc = "1.1"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
@@ -47,3 +46,6 @@ xirius-test-clap = { path = "../xirius-test-clap" }
 # The version information of the programs (LIC-022, packaging/windows/version_info.rs).
 [target.'cfg(windows)'.build-dependencies]
 embed-resource = "3"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wasapi = "0.25"

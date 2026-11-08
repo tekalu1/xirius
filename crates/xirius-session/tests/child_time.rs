@@ -24,7 +24,7 @@ fn a_plugin_in_its_own_process_reads_as_the_time_it_took_there() {
         .parent()
         .unwrap()
         .to_path_buf();
-    let dll = deps.join("xirius_test_vst3.dll");
+    let dll = xirius_test_vst3::fixture_path(&deps);
     assert!(
         dll.exists(),
         "the fixture's cdylib is built with its dev dependency"

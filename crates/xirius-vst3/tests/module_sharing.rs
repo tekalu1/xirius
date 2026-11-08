@@ -1,3 +1,5 @@
+// Windows-only: LoadLibrary/GetProcAddress fixture counters; macOS native editors are stage 3.
+#![cfg(target_os = "windows")]
 //! A bundle loaded again shares the loaded module, which stays until process exit.
 //! One test in its own process, so no other test holds the module meanwhile.
 

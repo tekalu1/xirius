@@ -14,6 +14,8 @@ pub mod device_owner;
 pub mod devices;
 pub mod disk_stream;
 pub mod engine;
+// WASAPI has no macOS implementation; cpal selects CoreAudio there.
+#[cfg(target_os = "windows")]
 pub mod exclusive;
 pub mod midi_in;
 pub mod midi_out;

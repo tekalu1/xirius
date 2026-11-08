@@ -13,13 +13,20 @@
 //! loaded module. Loaded DLLs stay initialized until process exit (ARC-043).
 
 pub mod crash_context;
+#[cfg(target_os = "windows")]
+mod editor;
+#[cfg(not(target_os = "windows"))]
+#[path = "editor_unavailable.rs"]
 mod editor;
 mod editor_bar;
+#[cfg(target_os = "windows")]
 mod editor_chrome;
+#[cfg(target_os = "windows")]
 mod editor_icons;
 pub use editor_bar::{EditorAction, EditorBar};
 mod editor_position;
 pub use editor_position::EditorArea;
+#[cfg(target_os = "windows")]
 mod editor_keys;
 mod host;
 mod module;
@@ -31,7 +38,7 @@ mod stream;
 
 pub use editor::{Caption, Capture, Editor, OFFSCREEN_ENV, Placement, capture_window};
 pub use host::{ComponentHandler, Gesture, HostApplication, HostAttributeList, HostMessage};
-pub use module::{ClassInfo, Module, default_vst3_dir, find_bundles};
+pub use module::{ClassInfo, Module, default_vst3_dir, default_vst3_dirs, find_bundles};
 pub use plugin::{
     AudioPart, CTRL_AFTERTOUCH, CTRL_PITCH_BEND, Control, ControlCounts, Note, ParamChange,
     ParamInfo, ParamSender, Plugin, PluginState,

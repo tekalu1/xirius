@@ -1,3 +1,5 @@
+// Windows-only: WASAPI exclusive stand-in streams.
+#![cfg(target_os = "windows")]
 //! The same as plugin_release_thread.rs, on the device paths (ARC-044): a plugin in the app is
 //! terminated on the thread that made it when the player goes, with the output opened through
 //! `Output::open` by each driver — shared (`DeviceOutput`) and WASAPI exclusive
@@ -127,11 +129,7 @@ fn prefs(driver: &str) -> xirius_prefs::Prefs {
 #[test]
 fn a_plugin_in_the_app_is_terminated_on_its_own_thread_on_the_device_paths() {
     xirius_test_vst3::fixture_marker();
-    let dll = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("xirius_test_vst3.dll");
+    let dll = xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
     assert!(
         dll.exists(),
         "the fixture's cdylib is built with its dev dependency"

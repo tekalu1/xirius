@@ -76,11 +76,7 @@ fn run_child(root: &Path, mode: &str, host: &Path, dll: &Path) -> std::process::
 #[test]
 fn fatal_initialization_is_attributed_once_and_next_initialization_is_dedicated_and_silent() {
     xirius_test_vst3::fixture_marker();
-    let dll = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("xirius_test_vst3.dll");
+    let dll = xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
     assert!(dll.is_file());
     let host = xirius_engine::server::find_host()
         .expect("build xirius-plugin-host before this integration test");

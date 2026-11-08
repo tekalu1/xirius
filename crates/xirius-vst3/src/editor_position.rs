@@ -1,9 +1,12 @@
 //! Physical screen coordinates, passed by value across the GUI boundary (UI-337).
+#[cfg(target_os = "windows")]
 use windows_sys::Win32::Foundation::{HWND, RECT};
+#[cfg(target_os = "windows")]
 use windows_sys::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTONULL, MONITORINFO, MonitorFromRect,
     MonitorFromWindow,
 };
+#[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,7 +19,13 @@ pub struct EditorArea {
 }
 
 impl EditorArea {
+    #[cfg(not(target_os = "windows"))]
+    pub fn from_window(_handle: isize) -> Option<Self> {
+        None
+    }
+
     /// Read only the app's own HWND, before queuing the snapshot to a plugin.
+    #[cfg(target_os = "windows")]
     pub fn from_window(hwnd: isize) -> Option<Self> {
         let mut r = RECT::default();
         // SAFETY: queries only; invalid handles fail without dereferencing them.
@@ -42,11 +51,13 @@ impl EditorArea {
         }
     }
 
+    #[cfg(target_os = "windows")]
     pub(crate) fn origin(self, size: (i32, i32), saved: Option<(i32, i32)>) -> (i32, i32) {
         let work = saved.and_then(monitor_work);
         self.fit(size, saved, work)
     }
 
+    #[cfg(any(target_os = "windows", test))]
     fn fit(
         self,
         (w, h): (i32, i32),
@@ -66,6 +77,7 @@ impl EditorArea {
     }
 }
 
+#[cfg(target_os = "windows")]
 fn monitor_work((x, y): (i32, i32)) -> Option<[i32; 4]> {
     let r = RECT {
         left: x,

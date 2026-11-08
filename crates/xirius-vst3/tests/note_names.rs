@@ -12,7 +12,7 @@ fn fixture() -> Plugin {
         .parent()
         .unwrap()
         .to_path_buf();
-    let module = Arc::new(Module::load(&deps.join("xirius_test_vst3.dll")).expect("load"));
+    let module = Arc::new(Module::load(&xirius_test_vst3::fixture_path(&deps)).expect("load"));
     let class = module.classes().into_iter().next().expect("a class");
     Plugin::new(module, &class).expect("create")
 }

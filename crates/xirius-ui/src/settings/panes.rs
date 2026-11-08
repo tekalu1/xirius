@@ -115,6 +115,9 @@ fn select_row(
 /// What a dropdown of a preference offers: (value, label).
 pub fn choices(key: &str) -> Vec<(String, String)> {
     let pairs: &[(&str, &str)] = match key {
+        #[cfg(target_os = "macos")]
+        "audio.driver" => &[("coreaudio", "CoreAudio")],
+        #[cfg(not(target_os = "macos"))]
         "audio.driver" => &[
             ("wasapi-exclusive", "WASAPI（排他モード）"),
             ("wasapi-shared", "WASAPI（共有モード）"),
