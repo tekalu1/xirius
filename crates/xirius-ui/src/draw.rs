@@ -666,8 +666,7 @@ pub fn paint_overlay(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     crate::toast::paint(pen, studio, g);
     crate::dawproject_ui::paint_drop(pen, studio, g);
     if let Some(error) = &studio.error {
-        let foot = studio.foot(g);
-        let r = Rect::new(foot.x, foot.bottom() - 36.0, foot.w, 30.0);
+        let r = studio.error_rect(g);
         pen.round(r, pen.c.surface_3, Radius::S);
         pen.mask(r, |pen| {
             pen.text(

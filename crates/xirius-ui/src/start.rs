@@ -195,11 +195,19 @@ impl Studio {
         self.project().root.is_empty()
     }
 
-    /// Where the lines at the foot of the screen go (the failed command's strip, the notices,
-    /// the toast and MIDI 学習): as wide as what the screen shows, at its foot. That is the
-    /// lanes above the drawer, or on the start screen and the new song's screen, which show
-    /// neither, the column their parts sit in ([`crate::home::column`], [`zone`]) at the foot
-    /// of the body. Each keeps its own distance from the bottom and its own width.
+    /// Approved 2026-11-08: notifications stay above the transport regardless of the drawer.
+    /// Keep their existing horizontal placement and simultaneous-message offsets.
+    pub fn notification_foot(&self, g: &Geometry) -> Rect {
+        let across = self.foot(g);
+        Rect::new(across.x, 0.0, across.w, g.size.1)
+    }
+
+    pub fn error_rect(&self, g: &Geometry) -> Rect {
+        let foot = self.notification_foot(g);
+        Rect::new(foot.x, foot.bottom() - 36.0, foot.w, 30.0)
+    }
+
+    /// MIDI learning keeps the arrangement's foot, or the home/start column's foot.
     pub fn foot(&self, g: &Geometry) -> Rect {
         let across = if self.home_shown() {
             crate::home::column(g)

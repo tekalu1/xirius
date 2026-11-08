@@ -328,8 +328,8 @@ fn take_count(path: &Path) -> usize {
     n
 }
 
-/// The notice, centred at the foot of the arrangement; above the failed command's line when
-/// that shows too.
+/// The notice, centred horizontally above the transport; above the failed command's line
+/// when that shows too, independent of the drawer height (approved 2026-11-08).
 pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     let Some(text) = studio.notice_text() else {
         return;
@@ -390,7 +390,7 @@ pub fn place(studio: &Studio, g: &Geometry, text: &str, button: Option<&str>) ->
     let extra = button.map_or(0.0, |b| {
         Space::X2.px() + crate::browser::text_width(b, FontSize::Small) + Space::X3.px() * 2.0
     });
-    let foot = studio.foot(g);
+    let foot = studio.notification_foot(g);
     let w = (crate::browser::text_width(text, FontSize::Small) + Space::X4.px() * 2.0 + extra)
         .min(foot.w);
     let lift = if studio.error.is_some() {
@@ -527,9 +527,9 @@ mod tests {
         let r = place(&s, &g, &text, None);
         assert!(r.x > g.lanes.x && r.right() < g.lanes.right());
         assert!((r.x + r.w / 2.0 - (g.lanes.x + g.lanes.w / 2.0)).abs() < 0.5);
-        assert!(r.bottom() <= g.drawer.y);
+        assert!(r.bottom() <= g.size.1);
         s.error = Some("だめでした".into());
         let lifted = place(&s, &g, &text, None);
-        assert!(lifted.bottom() <= g.drawer.y - 36.0, "{lifted:?}");
+        assert!(lifted.bottom() <= g.size.1 - 36.0, "{lifted:?}");
     }
 }

@@ -314,9 +314,9 @@ impl Studio {
     }
 }
 
-/// Where the toast and its parts go: at the left foot of the lanes, above the failed command's
-/// line when that shows too (`docs/ui-approved.md`). With no lanes (the start screen, the new
-/// song's screen) it is at the left foot of the column their parts sit in ([`Studio::foot`]).
+/// Above the transport, aligned with the lanes' left edge, and above the failed command's
+/// line when that shows too (`docs/ui-approved.md`). Home/start retain their column's width
+/// through [`Studio::notification_foot`]; the drawer never moves notifications.
 pub fn layout(studio: &Studio, g: &Geometry) -> Option<Parts> {
     let t = studio.toast_shown()?;
     let width = |s: &str| crate::browser::text_width(s, FontSize::Small);
@@ -328,7 +328,7 @@ pub fn layout(studio: &Studio, g: &Geometry) -> Option<Parts> {
     let (first_w, also_w) = (button_w(&t.button), button_w(&t.also));
     // Without the ×, the text ends as far from the edge as it starts.
     let end = if t.closes() { GAP + CLOSE + PAD } else { LEFT };
-    let foot = studio.foot(g);
+    let foot = studio.notification_foot(g);
     let room = (foot.w - MARGIN * 2.0).max(0.0);
     let fixed = LEFT + icon_w + first_w + also_w + end;
     let text_w = width(&t.text).min((room - fixed).max(0.0));
@@ -461,6 +461,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn all_three_notifications_stay_above_transport_at_every_drawer_height() {
+        let mut s = Studio::sample();
+        s.warn("Notice".into(), None);
+        for tab in [
+            crate::studio::DrawerTab::Mixer,
+            crate::studio::DrawerTab::Roll,
+        ] {
+            s.tab = tab;
+            for error in [false, true] {
+                s.error = error.then(|| "Error".into());
+                let mut previous = None;
+                for height in [Some(0.0), None, Some(10000.0)] {
+                    s.drawer_open = height != Some(0.0);
+                    s.drawer_size.mixer = height;
+                    s.drawer_size.roll = height;
+                    let g = s.geometry(1440.0, 780.0);
+                    let places = (
+                        layout(&s, &g).unwrap().rect,
+                        crate::notice::place(&s, &g, "Notice", None),
+                        s.error_rect(&g),
+                    );
+                    assert!(places.0.bottom() <= g.size.1);
+                    assert!(places.1.bottom() <= g.size.1);
+                    assert_eq!(places.2.bottom(), g.size.1 - 6.0);
+                    if let Some(previous) = previous {
+                        assert_eq!(places, previous);
+                    }
+                    previous = Some(places);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn a_plain_toast_goes_and_one_with_a_button_or_alert_stays() {
         let mut s = Studio::sample();
         s.toast = Some(Toast {
@@ -485,7 +519,7 @@ mod tests {
         );
         let p = layout(&s, &g).unwrap();
         assert_eq!(p.rect.x, g.lanes.x + MARGIN);
-        assert!(p.rect.bottom() <= g.drawer.y - MARGIN + 0.01);
+        assert!(p.rect.bottom() <= g.size.1 - MARGIN + 0.01);
         let icon = p.icon.unwrap();
         let button = p.button.unwrap();
         assert!(icon.right() <= p.text.x && p.text.right() <= button.x);
