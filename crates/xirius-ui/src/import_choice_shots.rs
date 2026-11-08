@@ -199,38 +199,50 @@ mod tests {
     #[test]
     fn palette_import_keeps_physical_duration_and_exposes_the_tempo_choice() {
         make_fixture();
-        let mut studio = Studio::sample();
-        let g = studio.geometry(1440.0, 820.0);
-        assert!(
-            studio.open_palette_form("clip.import", json!({"file": fixture().to_string_lossy()}))
-        );
-        let form = studio.palette.as_mut().unwrap().form.as_mut().unwrap();
-        let tempo = form
-            .fields
-            .iter_mut()
-            .find(|field| field.name == "tempo")
-            .unwrap();
-        assert_eq!(
-            tempo
-                .choices
-                .iter()
-                .map(|(raw, _)| raw.as_str())
-                .collect::<Vec<_>>(),
-            ["auto", "file", "keep"]
-        );
-        tempo.value = "keep".into();
-        let before = studio.song.steps();
-        studio.palette_form_enter(&g);
-        assert!(studio.error.is_none(), "{:?}", studio.error);
-        assert_eq!(studio.project().tempo[0].bpm, 120.0);
-        assert_eq!(imported_length(&studio), Some(1920));
-        assert_eq!(
-            xirius_session::decode::probe(&fixture()).unwrap().frames,
-            48000
-        );
-        assert_eq!(studio.song.steps(), before + 1);
-        assert!(studio.undo(&g));
-        assert_eq!(imported_length(&studio), None);
+        for windowed in [false, true] {
+            let mut studio = Studio::sample();
+            if windowed {
+                studio.bind_window_io();
+            }
+            let g = studio.geometry(1440.0, 820.0);
+            assert!(
+                studio
+                    .open_palette_form("clip.import", json!({"file": fixture().to_string_lossy()}))
+            );
+            let form = studio.palette.as_mut().unwrap().form.as_mut().unwrap();
+            let tempo = form
+                .fields
+                .iter_mut()
+                .find(|field| field.name == "tempo")
+                .unwrap();
+            assert_eq!(
+                tempo
+                    .choices
+                    .iter()
+                    .map(|(raw, _)| raw.as_str())
+                    .collect::<Vec<_>>(),
+                ["auto", "file", "keep"]
+            );
+            tempo.value = "keep".into();
+            let before = studio.song.steps();
+            studio.palette_form_enter(&g);
+            assert!(studio.palette.is_none());
+            if windowed {
+                assert!(studio.saving.is_some());
+                studio.wait_for_save();
+            }
+            assert!(studio.error.is_none(), "{:?}", studio.error);
+            assert_eq!(studio.project().tempo[0].bpm, 120.0);
+            assert_eq!(imported_length(&studio), Some(1920));
+            assert_eq!(
+                xirius_session::decode::probe(&fixture()).unwrap().frames,
+                48000
+            );
+            assert_eq!(studio.song.steps(), before + 1);
+            assert!(studio.undo(&g));
+            studio.wait_for_save();
+            assert_eq!(imported_length(&studio), None);
+        }
         xirius_session::peaks::wait();
         std::fs::remove_file(fixture()).unwrap();
     }

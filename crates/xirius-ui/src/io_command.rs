@@ -19,6 +19,8 @@ pub(crate) fn handles(name: &str) -> bool {
             || xirius_session::preset::NAMES.contains(&name)
             || xirius_session::xpreset::NAMES.contains(&name)
             || xirius_session::sample_files::NAMES.contains(&name)
+            || xirius_session::import::NAMES.contains(&name)
+            || xirius_session::clip_audio::NAMES.contains(&name)
             || xirius_prefs::is_settings_command(name)
             || [
                 "export.",
@@ -51,8 +53,12 @@ pub(crate) fn captures(name: &str) -> bool {
 }
 
 pub(crate) fn label(name: &str) -> &'static str {
-    if xirius_session::sample_files::NAMES.contains(&name) {
+    if xirius_session::sample_files::NAMES.contains(&name)
+        || xirius_session::import::NAMES.contains(&name)
+    {
         "サンプルを読み込んでいます"
+    } else if xirius_session::clip_audio::NAMES.contains(&name) {
+        "オーディオを処理しています"
     } else if name.starts_with("export.") {
         "書き出しを準備しています"
     } else if name.starts_with("file.")
@@ -552,6 +558,107 @@ mod tests {
                 "light"
             );
             std::thread::yield_now();
+        }
+    }
+
+    /// Screen commands whose Session handler is not an I/O command and is not sent from the
+    /// screen as such: the MCP-only reads, and the keys the screen takes before they get here.
+    /// A new Session command that is in neither this list nor `handles` fails the test below,
+    /// so it is decided on which side it belongs (PRJ-031).
+    const NOT_FROM_THE_SCREEN: &[&str] = &[
+        "app.update.check",
+        "edit.nudge.left",
+        "edit.nudge.right",
+        "engine.stats",
+        "mix.listen",
+        "plugin.collect",
+        "plugin.reload",
+        "plugin.stats",
+        "plugin.status",
+        "record.status",
+        "song.recent",
+        "transport.status",
+    ];
+
+    #[test]
+    fn every_session_command_the_screen_sends_reaches_the_owner() {
+        let names: Vec<&'static str> = Song::empty()
+            .registry()
+            .all()
+            .iter()
+            .filter(|d| matches!(d.handler, xirius_core::command::Handler::Session))
+            .map(|d| d.name)
+            .collect();
+        let mut refused = Vec::new();
+        for name in names {
+            if matches!(
+                name,
+                "app.quit" | "project.close" | "macro.run" | "project.open" | "project.new"
+            ) || handles(name)
+            {
+                continue;
+            }
+            let root = tempfile::tempdir().unwrap();
+            let mut s = Studio::new(Song::empty());
+            s.song.save_as(&root.path().join("song")).unwrap();
+            s.bind_window_io();
+            let g = s.geometry(1280.0, 800.0);
+            let _ = s.run_parsed(&g, name.to_string(), serde_json::Map::new());
+            if s.error.as_deref().is_some_and(|e| e.contains("所有者")) {
+                refused.push(name);
+            }
+        }
+        refused.sort_unstable();
+        assert_eq!(refused, NOT_FROM_THE_SCREEN);
+    }
+
+    #[test]
+    fn clip_import_and_the_clip_audio_commands_go_to_the_owner_in_the_window() {
+        for name in xirius_session::import::NAMES
+            .iter()
+            .chain(&xirius_session::clip_audio::NAMES)
+        {
+            assert!(handles(name), "{name}");
+        }
+        let root = tempfile::tempdir().unwrap();
+        let samples = root.path().join("samples");
+        crate::import_shots::make_place(&samples);
+        let mut s = Studio::new(Song::empty());
+        s.song.save_as(&root.path().join("song")).unwrap();
+        s.bind_window_io();
+        assert!(s.run_command(
+            "clip.import",
+            serde_json::json!({"file": samples.join("Drums/kick_01.wav")}),
+        ));
+        assert!(s.saving.is_some(), "the import goes to the owner");
+        s.wait_for_save();
+        assert!(s.error.is_none(), "{:?}", s.error);
+        let id = s
+            .project()
+            .tracks
+            .values()
+            .flat_map(|t| &t.clips)
+            .next()
+            .expect("the imported clip")
+            .id
+            .to_string();
+        for name in xirius_session::clip_audio::NAMES {
+            assert!(
+                s.run_command(name, serde_json::json!({"ids": [id]})),
+                "{name}"
+            );
+            assert!(s.saving.is_some(), "{name} goes to the owner");
+            s.wait_for_save();
+            // A kick of half a second has no tempo to find; that answer is the owner's own.
+            if name != "clip.tempo.detect" {
+                assert!(s.error.is_none(), "{name}: {:?}", s.error);
+            }
+            assert!(
+                s.error.as_deref().is_none_or(|e| !e.contains("所有者")),
+                "{name}: {:?}",
+                s.error
+            );
+            s.error = None;
         }
     }
 }
