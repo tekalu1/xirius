@@ -4,6 +4,7 @@
 #![cfg(windows)]
 
 use std::process::{Child, Command};
+mod support;
 use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{HWND, LPARAM};
@@ -113,6 +114,8 @@ fn launch(env: Option<(&str, &str)>) -> AppChild {
     std::fs::create_dir_all(&keep).unwrap();
     // Startup now shows Home; explicitly request the sample for the track tree.
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_xirius-ui"));
+    support::sample_audio(tmp.path());
+    cmd.current_dir(tmp.path());
     cmd.args(["--park", "--silent"])
         .env("XIRIUS_CONFIG_DIR", tmp.path().join("prefs"))
         .env("XIRIUS_CRASH_DIR", tmp.path().join("crashes"))
@@ -133,18 +136,27 @@ fn launch(env: Option<(&str, &str)>) -> AppChild {
 }
 
 /// The window, then its UIA subtree once the nodes are in it.
-fn tree_of(child: &Child, a: &IUIAutomation, want: &str) -> Vec<(String, i32, Option<i32>)> {
+fn tree_of(child: &mut Child, a: &IUIAutomation, want: &str) -> Vec<(String, i32, Option<i32>)> {
     let limit = Instant::now() + Duration::from_secs(60);
+    let mut last = Vec::new();
     loop {
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "app exited before UIA exposed {want:?}"
+        );
         for hwnd in windows_of(child.id()) {
             if let Ok(root) = unsafe { a.ElementFromHandle(hwnd) } {
                 let rows = read(a, &root);
                 if rows.iter().any(|(n, _, _)| n.contains(want)) {
                     return rows;
                 }
+                last = rows;
             }
         }
-        assert!(Instant::now() < limit, "no UIA tree with {want:?} in 60 s");
+        assert!(
+            Instant::now() < limit,
+            "no UIA tree with {want:?} in 60 s: {last:?}"
+        );
         std::thread::sleep(Duration::from_millis(500));
     }
 }
@@ -158,7 +170,7 @@ const RADIO_BUTTON: i32 = 50013;
 fn the_track_list_is_a_tree_of_named_items_to_uia() {
     let (_uninit, a) = uia();
     let mut child = launch(None);
-    let rows = tree_of(&child.child, &a, "Keys");
+    let rows = tree_of(&mut child.child, &a, "Keys");
     child.child.kill().unwrap();
     child.child.wait().unwrap();
     let names: Vec<&str> = rows
@@ -179,7 +191,7 @@ fn the_track_list_is_a_tree_of_named_items_to_uia() {
 fn the_input_rows_read_as_radios_with_selection_to_uia() {
     let (_uninit, a) = uia();
     let mut child = launch(Some(("XIRIUS_OPEN_SECTION", "audio")));
-    let rows = tree_of(&child.child, &a, "In 1");
+    let rows = tree_of(&mut child.child, &a, "In 1");
     child.child.kill().unwrap();
     child.child.wait().unwrap();
     let radios: Vec<_> = rows
@@ -207,7 +219,7 @@ fn the_input_rows_read_as_radios_with_selection_to_uia() {
 fn the_midi_page_has_uia_children_with_state() {
     let (_uninit, a) = uia();
     let mut child = launch(Some(("XIRIUS_OPEN_SECTION", "midi")));
-    let rows = tree_of(&child.child, &a, "PC のキーボード");
+    let rows = tree_of(&mut child.child, &a, "PC のキーボード");
     child.child.kill().unwrap();
     child.child.wait().unwrap();
     assert!(

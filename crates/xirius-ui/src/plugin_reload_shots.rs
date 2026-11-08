@@ -146,7 +146,12 @@ pub(crate) fn ready(s: &mut Studio) {
                 })
             })
     });
-    assert!(s.error.is_none(), "{:?}", s.error);
+    assert!(
+        s.error.is_none(),
+        "error={:?}, preparation={:?}",
+        s.error,
+        s.preparing
+    );
     let reports = s.transport.host().unwrap().plugins().reports();
     assert!(
         reports.iter().any(|r| r.id == id

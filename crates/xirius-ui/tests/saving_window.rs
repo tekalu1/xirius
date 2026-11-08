@@ -1,13 +1,17 @@
 //! UI-288: real parked window, silent output, input dispatched only to this window.
 
+mod support;
+
 #[test]
 fn saving_marks_copy_cancel_failure_retry_and_close_drain_through_the_window() {
     let temporary = tempfile::tempdir().unwrap();
+    support::sample_audio(temporary.path());
     let pictures = std::env::var_os("XIRIUS_SAVING_SHOTS")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| temporary.path().join("shots"));
     std::fs::create_dir_all(&pictures).unwrap();
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+        .current_dir(temporary.path())
         .args(["--park", "--silent", "--script", "saving", "--shot"])
         .arg(&pictures)
         .env("XIRIUS_CONFIG_DIR", temporary.path().join("prefs"))

@@ -1,3 +1,5 @@
+mod support;
+
 #[test]
 fn playback_and_clicks_keep_the_parked_window_silent_and_without_os_focus() {
     let dir_tmp = tempfile::Builder::new()
@@ -6,9 +8,11 @@ fn playback_and_clicks_keep_the_parked_window_silent_and_without_os_focus() {
         .unwrap();
     let dir = dir_tmp.path().join("quiet-shots");
     std::fs::create_dir_all(&dir).unwrap();
+    support::sample_audio(&dir);
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
         .args(["--park", "--silent", "--script", "quiet", "--shot"])
         .arg(&dir)
+        .current_dir(&dir)
         .env("XIRIUS_CONFIG_DIR", dir.join("prefs"))
         .env("XIRIUS_CRASH_DIR", dir.join("crashes"))
         .output()

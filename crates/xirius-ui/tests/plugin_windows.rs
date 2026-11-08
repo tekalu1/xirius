@@ -14,6 +14,7 @@
 //! says why and is left out.
 
 use std::collections::{HashMap, HashSet};
+mod support;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -47,9 +48,11 @@ fn run_script() -> Run {
         .tempdir()
         .unwrap();
     let dir = dir_tmp.path().to_path_buf();
+    support::sample_audio(&dir);
     let out = Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
         .args(["--park", "--silent", "--script", "plugin", "--shot"])
         .arg(&dir)
+        .current_dir(&dir)
         .env("XIRIUS_EDITOR_OFFSCREEN", "1")
         .env("XIRIUS_CRASH_DIR", dir.join("crashes"))
         .output()

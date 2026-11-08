@@ -42,6 +42,8 @@ pub const SHOTS: &[Shot] = &[
             Act::Press(Target::Top(BarButton::Play)),
             Act::Stage(Play::Studio(stage), 0),
             Act::Press(Target::Strip(Part::Insert, "Vocal")),
+            // MIX-045: the first press selects; the second opens the selected row.
+            Act::Press(Target::Strip(Part::Insert, "Vocal")),
             Act::Stage(Play::Studio(stage), 1),
         ],
     },
