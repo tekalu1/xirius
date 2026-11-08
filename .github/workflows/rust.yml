@@ -92,9 +92,16 @@ jobs:
         with:
           fetch-depth: 0
       - name: gitleaks
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           tgz="$RUNNER_TEMP/gitleaks.tar.gz"
-          curl -sSL --fail --retry 3 --retry-delay 2 --retry-max-time 60 -o "$tgz" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          if ! curl -sSL --fail --retry 3 --retry-delay 2 --retry-max-time 60 -o "$tgz" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"; then
+            # The API route can remain available when the public download endpoint fails.
+            # Both routes must pass the same pinned checksum below.
+            gh release download "v${GITLEAKS_VERSION}" --repo gitleaks/gitleaks \
+              --pattern "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" --output "$tgz" --clobber
+          fi
           echo "$GITLEAKS_SHA256  $tgz" | sha256sum -c -
           mkdir -p "$RUNNER_TEMP/gitleaks"
           tar -xzf "$tgz" -C "$RUNNER_TEMP/gitleaks" gitleaks
