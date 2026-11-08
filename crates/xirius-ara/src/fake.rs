@@ -111,6 +111,64 @@ pub fn close_windows() {
     }
 }
 
+/// Holds archive writes until the test releases them. Drop also releases on assertion failure.
+/// The long timeout is a deadlock watchdog, never a performance expectation.
+pub struct StoreGate {
+    entered: std::sync::mpsc::Receiver<()>,
+    release: Option<std::sync::mpsc::Sender<()>>,
+    timed_out: Arc<AtomicBool>,
+}
+
+struct StoreCheckpoint {
+    entered: std::sync::mpsc::Sender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+    timed_out: Arc<AtomicBool>,
+}
+
+static STORE_GATE: Mutex<Option<StoreCheckpoint>> = Mutex::new(None);
+
+pub fn hold_store() -> StoreGate {
+    let (entered_tx, entered) = std::sync::mpsc::channel();
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let timed_out = Arc::new(AtomicBool::new(false));
+    let mut slot = lock(&STORE_GATE);
+    assert!(slot.is_none(), "another archive gate is installed");
+    *slot = Some(StoreCheckpoint {
+        entered: entered_tx,
+        release: release_rx,
+        timed_out: timed_out.clone(),
+    });
+    StoreGate {
+        entered,
+        release: Some(release),
+        timed_out,
+    }
+}
+
+impl StoreGate {
+    pub fn wait_entered(&self) {
+        self.entered
+            .recv_timeout(Duration::from_secs(30))
+            .expect("archive did not enter gate");
+    }
+
+    pub fn release(mut self) {
+        let _ = self.release.take().unwrap().send(());
+        assert!(
+            !self.timed_out.load(Ordering::Acquire),
+            "caller waited for the blocked archive"
+        );
+    }
+}
+
+impl Drop for StoreGate {
+    fn drop(&mut self) {
+        if let Some(tx) = self.release.take() {
+            let _ = tx.send(());
+        }
+    }
+}
+
 /// Makes every document take `pause` to write its archive, as a large one would.
 pub fn slow_store(pause: Duration) {
     STORE_PAUSE_MS.store(pause.as_millis() as u64, Ordering::Release);
@@ -1103,6 +1161,13 @@ fn archive_json(s: &State) -> Vec<u8> {
 }
 
 fn write_archive(d: &Dc, writer: Ref) -> Bool {
+    let checkpoint = lock(&STORE_GATE).take();
+    if let Some(gate) = checkpoint {
+        let _ = gate.entered.send(());
+        if gate.release.recv_timeout(Duration::from_secs(30)).is_err() {
+            gate.timed_out.store(true, Ordering::Release);
+        }
+    }
     std::thread::sleep(Duration::from_millis(
         STORE_PAUSE_MS.load(Ordering::Acquire),
     ));

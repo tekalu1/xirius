@@ -142,9 +142,8 @@ fn a_fault_and_a_hang_in_the_plugin_are_contained() {
     until("the clip's state", || {
         s.state(7).is_some_and(|c| c.phase == Phase::Crashed)
     });
-    let asked = Instant::now();
-    s.wait_idle(asked + Duration::from_secs(5));
-    assert!(asked.elapsed() < Duration::from_secs(1));
+    // A crashed clip is terminal, even with no waiting budget left.
+    assert!(s.wait_idle(Instant::now()));
     drop(s);
 
     // The process goes on, and a plugin that behaves still works.

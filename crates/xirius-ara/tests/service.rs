@@ -435,9 +435,9 @@ fn waiting_for_idle_ends_after_the_analysis() {
         clip(2501, "h.wav", &audio, 0.0, 0.0, 2.0),
         clip(2502, "i.wav", &audio, 3.0, 0.0, 2.0),
     ]));
-    let begun = Instant::now();
-    assert!(s.wait_idle(begun + WAIT));
-    assert!(begun.elapsed() >= Duration::from_millis(100));
+    // The analysis may already have finished if this thread was descheduled after sync.
+    // Completion, not time spent waiting, is the contract.
+    assert!(s.wait_idle(Instant::now() + WAIT));
     assert!(s.states().values().all(|c| c.phase == Phase::Ready));
     assert!(s.close(Instant::now() + WAIT));
     no_violations();
