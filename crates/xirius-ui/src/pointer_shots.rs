@@ -212,13 +212,12 @@ fn keys_in_view(s: &mut Studio) {
 }
 
 fn set_crosshair(s: &mut Studio, on: bool) {
-    s.song
-        .run(
-            "prefs.set",
-            serde_json::json!({"key": "edit.cursor.crosshair", "value": on.to_string()}),
-        )
-        .expect("the setting");
-    s.apply_edit_prefs();
+    assert!(s.run_command(
+        "prefs.set",
+        serde_json::json!({"key": "edit.cursor.crosshair", "value": on.to_string()}),
+    ));
+    crate::shot::run_for(s, 10.0, |s| s.saving.is_none());
+    assert!(s.saving.is_none() && s.error.is_none(), "{:?}", s.error);
 }
 
 /// Reports what the window hands over for case `n`, drawn since the stage before. The tool's

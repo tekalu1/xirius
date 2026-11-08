@@ -1792,3 +1792,33 @@ fn the_device_list_with_no_device_says_so() {
     let (_, cells) = open_pick(&s).expect("still open: nothing was picked");
     assert!(cells.iter().all(|c| !c.cursor));
 }
+
+#[test]
+fn windowed_settings_screen_persists_through_the_owner_without_a_window() {
+    let dir = temp("window-owner");
+    let (mut s, g) = launch(dir.path());
+    s.bind_window_io();
+    s.open_settings(Section::General);
+    for (key, value) in [("ui.theme", "light"), ("edit.cursor.crosshair", "true")] {
+        assert!(
+            s.settings_run("prefs.set", json!({"key": key, "value": value}))
+                .is_some()
+        );
+        assert!(
+            s.saving.is_some(),
+            "the screen must hand persistence to the owner"
+        );
+        s.wait_for_save();
+        assert!(s.error.is_none(), "{:?}", s.error);
+        assert_eq!(s.with_settings(|settings| settings.prefs.text(key)), value);
+    }
+    s.settings_pick(&MenuKind::Pref("ui.theme".into()), "dark");
+    s.wait_for_save();
+    assert!(s.error.is_none(), "{:?}", s.error);
+    assert_eq!(
+        s.with_settings(|settings| settings.prefs.text("ui.theme")),
+        "dark"
+    );
+    s.resized(&g);
+    assert!(dir.path().join("prefs.toml").is_file());
+}
