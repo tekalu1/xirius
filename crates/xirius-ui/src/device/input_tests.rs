@@ -33,6 +33,50 @@ fn delay() -> (Studio, Geometry, TrackId, PluginId) {
     (s, g, t, id)
 }
 
+#[test]
+fn context_catalog_covers_builtin_graphs_and_delay_candidates() {
+    for name in ["Compressor", "Limiter", "Delay", "Reverb"] {
+        let mut s = Studio::sample();
+        let g = s.geometry(1600.0, 1000.0);
+        let track = crate::arrange::probe::track(&s, "Keys");
+        assert!(s.run_command(
+            "plugin.add",
+            json!({"track": track.to_string(), "name": name})
+        ));
+        let plugin = s.project().tracks[&track]
+            .inserts
+            .iter()
+            .find(|p| p.name == name)
+            .unwrap()
+            .clone();
+        let def = plugin.builtin().unwrap();
+        s.show_instrument(track, plugin.id);
+        let frame = s.instruments.frame(0, &g);
+        let body = s.instruments.body(frame, &plugin, def);
+        for (graph, plane) in body.graphs.iter().enumerate() {
+            let points = super::graph::points(def, graph, *plane, &values(&plugin));
+            for point in 0..points.len() {
+                s.point_menu(&g, 0, (graph, point), 600.0, 300.0);
+                assert!(s.context_open(), "{name} graph {graph} point {point}");
+                if name == "Delay"
+                    && crate::context::tests::all_labels(&s).contains(&"1/4 T".into())
+                {
+                    assert!(s.context_choose(&g, "機器"));
+                    for group in ["通常", "付点", "3連"] {
+                        let at = s.context_path(group).unwrap()[0];
+                        let crate::context::Run::Sub(rows) = &s.ctx.as_ref().unwrap().items[at].run
+                        else {
+                            panic!("candidate group")
+                        };
+                        assert_eq!(rows.len(), 6);
+                    }
+                }
+                s.popup = None;
+            }
+        }
+    }
+}
+
 fn fx(s: &Studio, t: TrackId) -> Plugin {
     s.project().tracks[&t]
         .inserts
@@ -246,13 +290,8 @@ fn ui_324_on_off_is_a_button_and_the_beats_a_box_with_its_menu() {
     // A press on the Beats box opens its menu; a row goes in, in one step.
     let (division, _) = value(&s, t, "division");
     click(&mut s, &g, id, division, 1, Mods::NONE);
-    let at = s
-        .context_rows()
-        .iter()
-        .position(|r| r.label == "1/4 T")
-        .expect("the row");
     let before = s.song().steps();
-    assert!(s.context_pick(&g, at));
+    assert!(crate::context::tests::choose(&mut s, &g, "1/4 T"));
     assert_eq!(s.song().steps(), before + 1);
     assert_eq!(plain(&s, t, "division"), 3.0);
     assert_eq!(plain(&s, t, "feel"), 2.0);
@@ -419,7 +458,10 @@ fn ui_324_a_right_press_offers_default_automation_and_midi_learn() {
     let (k, _) = value(&s, t, "mix");
     let (x, y) = center(&s, &g, id, k);
     assert!(s.instrument_right(&g, x, y));
-    let rows: Vec<_> = s.context_rows().into_iter().filter(|r| !r.gap).collect();
+    let rows: Vec<_> = crate::context::tests::all_rows(&s)
+        .into_iter()
+        .filter(|r| !r.gap)
+        .collect();
     let labels: Vec<_> = rows.iter().map(|r| r.label.as_str()).collect();
     for want in ["既定に戻す", "オートメーションを表示", "MIDI 学習"] {
         assert!(labels.contains(&want), "{labels:?}");
@@ -694,6 +736,10 @@ fn a_switch_a_lane_turns_lays_out_the_window_a_press_lands_in() {
     // a press there opens the Beats box's menu, and the time the song keeps is left be
     let kept = value(&s, t, "time").1;
     click(&mut s, &g, id, division, 1, Mods::NONE);
-    assert!(s.context_rows().iter().any(|r| r.label == "1/4 T"));
+    assert!(
+        crate::context::tests::all_rows(&s)
+            .iter()
+            .any(|r| r.label == "1/4 T")
+    );
     assert_eq!(value(&s, t, "time").1, kept);
 }

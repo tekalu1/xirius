@@ -724,7 +724,14 @@ impl Studio {
 
     /// A right press on a graph's point: what it can be (its menu's rows),
     /// then back to the defaults of all it moves.
-    fn point_menu(&mut self, g: &Geometry, i: usize, at: (usize, usize), x: f32, y: f32) {
+    pub(super) fn point_menu(
+        &mut self,
+        g: &Geometry,
+        i: usize,
+        at: (usize, usize),
+        x: f32,
+        y: f32,
+    ) {
         let Some((def, pt)) = self.point(g, i, at.0, at.1) else {
             return;
         };

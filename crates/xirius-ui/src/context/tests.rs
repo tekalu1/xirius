@@ -85,7 +85,7 @@ pub(super) fn all_items(s: &Studio) -> Vec<&super::Item> {
     out
 }
 
-pub(super) fn all_labels(s: &Studio) -> Vec<String> {
+pub(crate) fn all_labels(s: &Studio) -> Vec<String> {
     all_items(s)
         .into_iter()
         .filter(|i| !matches!(i.run, super::Run::Gap))
@@ -93,7 +93,7 @@ pub(super) fn all_labels(s: &Studio) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn all_rows(s: &Studio) -> Vec<super::Row> {
+pub(crate) fn all_rows(s: &Studio) -> Vec<super::Row> {
     super::State {
         items: all_items(s).into_iter().cloned().collect(),
         ..Default::default()
@@ -117,7 +117,7 @@ fn path_to(items: &[super::Item], label: &str) -> Option<Vec<usize>> {
 }
 
 /// Presses the cell of the row named `label`, where the pop-over draws it.
-pub(super) fn choose(s: &mut Studio, g: &Geometry, label: &str) -> bool {
+pub(crate) fn choose(s: &mut Studio, g: &Geometry, label: &str) -> bool {
     let path = if let Some(state) = &s.ctx {
         if path_to(&state.items, label).is_none() && !state.trail.is_empty() {
             s.context_restore(0);

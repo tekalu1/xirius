@@ -1692,7 +1692,7 @@ fn menu(s: &Studio) -> Vec<String> {
 
 /// Whether the menu's row `label` can be chosen.
 fn live_row(s: &Studio, label: &str) -> bool {
-    s.context_rows()
+    crate::context::tests::all_rows(s)
         .iter()
         .find(|r| r.label == label)
         .unwrap_or_else(|| panic!("no row {label}: {:?}", menu(s)))
@@ -1701,12 +1701,7 @@ fn live_row(s: &Studio, label: &str) -> bool {
 
 /// Chooses the menu's row `label`.
 fn choose(s: &mut Studio, g: &Geometry, label: &str) {
-    let at = s
-        .context_rows()
-        .iter()
-        .position(|r| r.label == label)
-        .unwrap_or_else(|| panic!("no row {label}: {:?}", menu(s)));
-    s.context_pick(g, at);
+    crate::context::tests::choose(s, g, label);
 }
 
 /// A right press on the spot `mark`.

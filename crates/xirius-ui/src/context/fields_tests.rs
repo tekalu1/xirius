@@ -351,10 +351,12 @@ fn the_search_box_takes_the_keys_and_the_label_gives_them_back() {
     );
     s.ask_text(None, "トランスポーズ", false);
     let rows = s.context_rows();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].label, "トランスポーズ");
-    assert_eq!(rows[0].path, "クリップ");
-    assert!(s.context_pick(&g, 0));
+    let at = rows
+        .iter()
+        .position(|r| r.label == "トランスポーズ")
+        .unwrap();
+    assert_eq!(rows[at].path, "クリップ");
+    assert!(s.context_pick(&g, at));
     assert!(s.field_typing().is_some());
 }
 

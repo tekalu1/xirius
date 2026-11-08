@@ -81,7 +81,7 @@ fn labels(s: &Studio) -> Vec<String> {
 }
 
 fn row(s: &Studio, label: &str) -> crate::context::Row {
-    s.context_rows()
+    crate::context::tests::all_rows(s)
         .into_iter()
         .find(|r| r.label == label)
         .unwrap_or_else(|| panic!("no row {label}: {:?}", labels(s)))
@@ -92,23 +92,12 @@ fn processing(s: &mut Studio, g: &Geometry) {
     s.popup = None;
     let (x, y) = clip_mid(s, g, "Vocal", 0);
     assert!(s.scene_context(g, x, y));
-    choose(s, g, "処理");
+    choose(s, g, "オーディオ");
 }
 
 /// Presses the cell of the open menu's row named `label`.
 fn choose(s: &mut Studio, g: &Geometry, label: &str) -> bool {
-    let layout = s.popup.as_ref().expect("a menu is open").layout(g.size);
-    let cell = layout
-        .cells
-        .iter()
-        .find(|c| c.text == label)
-        .unwrap_or_else(|| panic!("no cell {label}"));
-    let hit = s.hit(
-        g,
-        cell.rect.x + cell.rect.w / 2.0,
-        cell.rect.y + cell.rect.h / 2.0,
-    );
-    s.press(g, hit)
+    crate::context::tests::choose(s, g, label)
 }
 
 fn picking(s: &Studio) -> bool {
@@ -185,7 +174,7 @@ fn why_not(s: &mut Studio, g: &Geometry, x: f32, y: f32) -> (crate::context::Row
     s.popup = None;
     s.error = None;
     assert!(s.scene_context(g, x, y));
-    choose(s, g, "処理");
+    choose(s, g, "オーディオ");
     let add = row(s, ADD);
     // A dim row does nothing.
     choose(s, g, ADD);
@@ -266,7 +255,7 @@ fn a_clip_that_cannot_take_it_has_the_row_dim_with_why() {
     s.popup = None;
     let (x, y) = clip_mid(&s, &g, "Vocal", 0);
     assert!(s.scene_context(&g, x, y));
-    let sub = row(&s, "処理");
+    let sub = row(&s, ADD);
     assert!(!sub.enabled);
     assert_eq!(sub.reason, crate::toast::FROZEN);
     // The key still reaches it, and says why.

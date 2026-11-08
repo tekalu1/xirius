@@ -650,15 +650,15 @@ fn reversing_from_the_menu_is_one_step_and_a_frozen_track_offers_to_unfreeze() {
         )
         .unwrap();
     assert!(press_on(&mut s, &g, "Vocal", 0));
-    assert!(!enabled(&s, "オーディオ"));
+    super::tests::disabled_descendants(&s, "オーディオ");
     let why = |s: &Studio, label: &str| {
-        super::tests::all_rows(&s)
+        super::tests::all_rows(s)
             .into_iter()
             .find(|r| r.label == label)
             .unwrap()
             .reason
     };
-    assert_eq!(why(&s, "オーディオ"), crate::toast::FROZEN);
+    assert_eq!(why(&s, "逆再生"), crate::toast::FROZEN);
     assert!(choose(&mut s, &g, "バウンス"));
     assert!(!enabled(&s, "クリップをバウンス"));
     assert_eq!(why(&s, "クリップをバウンス"), crate::toast::FROZEN);

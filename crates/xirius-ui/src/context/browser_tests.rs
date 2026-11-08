@@ -668,7 +668,7 @@ fn type_name(s: &mut Studio, text: &str) {
 
 /// What a dim row says it is dim for.
 fn reason(s: &Studio, label: &str) -> String {
-    super::tests::all_rows(&s)
+    super::tests::all_rows(s)
         .into_iter()
         .find(|r| r.label == label)
         .unwrap_or_else(|| panic!("no row {label}"))

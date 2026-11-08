@@ -51,6 +51,36 @@ fn eq_window() -> (Studio, Geometry, TrackId, PluginId) {
     (s, g, t, id)
 }
 
+#[test]
+fn context_catalog_covers_each_eq_band_type_and_switch_state() {
+    let (mut s, g, _, id) = eq_window();
+    for (band, spec) in xirius_params::EQ_BANDS.iter().enumerate() {
+        for kind in 0..spec.types.len() {
+            for on in [0.0, 1.0] {
+                s.song
+                    .run(
+                        "plugin.param.set",
+                        json!({"id": id.to_string(),
+                            "param": spec.kind, "value": eq::choice(spec.types.len(), kind),
+                            "also": [{"param": spec.on, "value": on}]
+                        }),
+                    )
+                    .unwrap();
+                s.point_menu(&g, 0, (0, band), 600.0, 300.0);
+                assert!(s.context_open());
+                assert_eq!(
+                    s.context_rows()
+                        .iter()
+                        .map(|r| r.label.as_str())
+                        .collect::<Vec<_>>(),
+                    ["機器"]
+                );
+                s.popup = None;
+            }
+        }
+    }
+}
+
 fn fx(s: &Studio, t: TrackId) -> Plugin {
     s.project().tracks[&t]
         .inserts

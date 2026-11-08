@@ -769,14 +769,18 @@ impl Studio {
     /// Chooses the row named `label` of the menu that is open (the screenshot scripts and
     /// the tests press rows by name).
     pub(crate) fn context_choose(&mut self, g: &Geometry, label: &str) -> bool {
-        let Some(i) = self
-            .context_rows()
-            .iter()
-            .position(|r| !r.gap && r.label == label)
-        else {
+        let Some(path) = self.context_path(label) else {
             return false;
         };
-        self.context_pick(g, i)
+        let last = path.len() - 1;
+        for (depth, row) in path.into_iter().enumerate() {
+            let row = row + if depth == 0 { 0 } else { 2 };
+            let chosen = self.context_pick(g, row);
+            if !chosen || depth == last {
+                return chosen;
+            }
+        }
+        false
     }
 
     /// Runs a row.
@@ -941,6 +945,8 @@ mod browser_names_tests;
 #[cfg(test)]
 mod browser_tests;
 #[cfg(test)]
+mod catalog_tests;
+#[cfg(test)]
 mod clip_tests;
 #[cfg(test)]
 mod drum_tests;
@@ -991,7 +997,7 @@ mod section_tests;
 #[cfg(test)]
 mod tempo_tests;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 #[cfg(test)]
 mod track_tests;
 #[cfg(test)]
