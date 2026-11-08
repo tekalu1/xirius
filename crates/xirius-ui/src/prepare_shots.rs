@@ -46,18 +46,7 @@ fn stage(s: &mut Studio, g: &Geometry, n: u8) {
 fn with_test_plugin(s: &mut Studio) {
     #[cfg(test)]
     crate::plugin_reload_shots::require_plugin_host();
-    let base = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf();
-    let dll = [
-        base.join("xirius_test_vst3.dll"),
-        base.join("deps/xirius_test_vst3.dll"),
-    ]
-    .into_iter()
-    .find(|p| p.is_file())
-    .expect("build xirius-test-vst3 first");
+    let dll = crate::plugin_fixture_shots::fixture_path();
     let entries = xirius_plugins::probe(&dll).unwrap();
     let entry = entries[0].clone();
     let keys = s.roll_target().map(|t| t.track.id);

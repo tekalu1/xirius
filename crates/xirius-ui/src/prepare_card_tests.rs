@@ -95,18 +95,7 @@ fn preparing_blocks_commands_shortcuts_save_transport_export_and_connected_mcp()
 /// process, and the plugins' ids.
 fn with_plugins() -> (Studio, Vec<PluginId>, Vec<String>) {
     let mut s = Studio::sample();
-    let base = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf();
-    let dll = [
-        base.join("xirius_test_vst3.dll"),
-        base.join("deps/xirius_test_vst3.dll"),
-    ]
-    .into_iter()
-    .find(|p| p.is_file())
-    .expect("build xirius-test-vst3 first");
+    let dll = crate::plugin_fixture_shots::fixture_path();
     let entries = xirius_plugins::probe(&dll).unwrap();
     let entry = entries[0].clone();
     let p = s.project();

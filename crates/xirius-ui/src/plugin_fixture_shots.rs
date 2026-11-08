@@ -5,6 +5,28 @@ use crate::{
 };
 use serde_json::json;
 
+/// Locate the fixture used by device-free scenarios; Mac tests construct a real bundle.
+pub(crate) fn fixture_path() -> std::path::PathBuf {
+    let base = std::env::current_exe().unwrap();
+    let base = base.parent().unwrap();
+    #[cfg(all(test, target_os = "macos"))]
+    {
+        xirius_test_vst3::fixture_path(base)
+    }
+    #[cfg(not(all(test, target_os = "macos")))]
+    {
+        let name = if cfg!(target_os = "macos") {
+            "xirius_test_vst3.vst3"
+        } else {
+            "xirius_test_vst3.dll"
+        };
+        [base.join(name), base.join("deps").join(name)]
+            .into_iter()
+            .find(|p| p.exists())
+            .expect("build xirius-test-vst3 (a bundle on macOS) first")
+    }
+}
+
 pub const SHOTS: &[Shot] = &[
     Shot {
         name: "fixture01-shared-exit",

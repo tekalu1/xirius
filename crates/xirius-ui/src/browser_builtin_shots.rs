@@ -43,18 +43,7 @@ fn effects(s: &mut Studio, _: u8) {
     );
 }
 fn catalog() -> Catalog {
-    let base = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf();
-    let direct = base.join("xirius_test_vst3.dll");
-    let path = if direct.is_file() {
-        direct
-    } else {
-        base.join("deps/xirius_test_vst3.dll")
-    };
-    assert!(path.is_file(), "build xirius-test-vst3 first");
+    let path = crate::plugin_fixture_shots::fixture_path();
     Catalog {
         entries: xirius_plugins::probe(&path).unwrap(),
         failures: Vec::new(),

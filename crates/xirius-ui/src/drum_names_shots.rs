@@ -32,18 +32,7 @@ pub const SHOTS: &[Shot] = &[
 
 /// The test VST3 built next to this executable.
 fn fixture() -> std::path::PathBuf {
-    let base = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf();
-    [
-        base.join("xirius_test_vst3.dll"),
-        base.join("deps/xirius_test_vst3.dll"),
-    ]
-    .into_iter()
-    .find(|p| p.is_file())
-    .expect("build xirius-test-vst3 first")
+    crate::plugin_fixture_shots::fixture_path()
 }
 
 fn drums(s: &Studio) -> xirius_core::id::TrackId {

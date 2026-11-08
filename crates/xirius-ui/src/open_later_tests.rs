@@ -3,6 +3,9 @@
 //! during a swap, a held key sounds when its instrument is in and a key let go of before that
 //! never does, and what else plays goes on. Everything plays to a silent output that keeps time.
 
+// Windows-only: the fixture's private opening gate uses GetModuleFileNameW on copied DLLs.
+#![cfg(windows)]
+
 use std::time::{Duration, Instant};
 
 use serde_json::json;

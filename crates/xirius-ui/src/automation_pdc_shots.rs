@@ -42,18 +42,7 @@ fn track(s: &Studio, name: &str) -> TrackId {
         .id
 }
 fn prepare(s: &mut Studio, _: u8) {
-    let base = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf();
-    let direct = base.join("xirius_test_vst3.dll");
-    let dll = if direct.is_file() {
-        direct
-    } else {
-        base.join("deps/xirius_test_vst3.dll")
-    };
-    assert!(dll.is_file(), "build xirius-test-vst3 first");
+    let dll = crate::plugin_fixture_shots::fixture_path();
     let entries = xirius_plugins::probe(&dll).unwrap();
     let uid = entries[0].uid.clone();
     let catalog = Arc::new(xirius_plugins::Catalog {
@@ -189,7 +178,7 @@ mod tests {
             .parent()
             .unwrap()
             .to_path_buf();
-        let entries = xirius_plugins::probe(&deps.join("xirius_test_vst3.dll")).unwrap();
+        let entries = xirius_plugins::probe(&xirius_test_vst3::fixture_path(&deps)).unwrap();
         builder.set_catalog(Some(Arc::new(xirius_plugins::Catalog {
             entries,
             failures: Vec::new(),

@@ -75,18 +75,7 @@ pub(crate) fn require_plugin_host() {
 pub(crate) fn prepare(s: &mut Studio, _: u8) {
     #[cfg(test)]
     require_plugin_host();
-    let base = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf();
-    let dll = [
-        base.join("xirius_test_vst3.dll"),
-        base.join("deps/xirius_test_vst3.dll"),
-    ]
-    .into_iter()
-    .find(|p| p.is_file())
-    .expect("build xirius-test-vst3 first");
+    let dll = crate::plugin_fixture_shots::fixture_path();
     let entries = xirius_plugins::probe(&dll).unwrap();
     let entry = &entries[0];
     let track = s
