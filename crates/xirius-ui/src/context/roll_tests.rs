@@ -80,7 +80,14 @@ fn a_note_has_the_rows_of_the_mock_and_is_selected_alone() {
             "Shift+M"
         }
     );
-    assert_eq!(key(&s, "ノートを削除"), "Del / Backspace");
+    assert_eq!(
+        key(&s, "ノートを削除"),
+        if cfg!(target_os = "macos") {
+            "⌫"
+        } else {
+            "Del / Backspace"
+        }
+    );
     let c = s.roll_ctx(&g).unwrap();
     let only = c.notes()[1].id;
     assert_eq!(s.roll.selected.len(), 1);

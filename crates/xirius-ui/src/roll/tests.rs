@@ -810,7 +810,11 @@ fn feel_10_menu_shortcuts_and_clipboard_keep_muting() {
         } else {
             "Ctrl+C"
         },
-        "Del / Backspace",
+        if cfg!(target_os = "macos") {
+            "⌫"
+        } else {
+            "Del / Backspace"
+        },
     ] {
         assert!(keys.iter().any(|k| k == key), "{key}");
     }

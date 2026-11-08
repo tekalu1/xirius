@@ -1,3 +1,6 @@
+// The last-chance native fault log and automatic recovery require Windows SEH.
+#![cfg(target_os = "windows")]
+
 //! Real fatal fixture initialization, recovery, and a dedicated host fault without windows.
 use std::{
     path::{Path, PathBuf},

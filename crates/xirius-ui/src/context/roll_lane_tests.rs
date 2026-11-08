@@ -192,7 +192,14 @@ fn a_controller_point_takes_a_value_and_is_copied_cut_and_deleted_with_the_selec
             "Ctrl+C"
         }
     );
-    assert_eq!(key(&s, "削除"), "Del / Backspace");
+    assert_eq!(
+        key(&s, "削除"),
+        if cfg!(target_os = "macos") {
+            "⌫"
+        } else {
+            "Del / Backspace"
+        }
+    );
     assert_eq!(s.roll.points.iter().copied().collect::<Vec<_>>(), [480]);
 
     assert!(choose(&mut s, &g, "値を入力…"));

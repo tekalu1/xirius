@@ -86,7 +86,14 @@ fn a_midi_clip_has_its_own_rows_in_the_order_of_the_mock() {
             "Ctrl+C"
         }
     );
-    assert_eq!(key(&s, "クリップを削除"), "Del / Backspace");
+    assert_eq!(
+        key(&s, "クリップを削除"),
+        if cfg!(target_os = "macos") {
+            "⌫"
+        } else {
+            "Del / Backspace"
+        }
+    );
     // The press made the clip the selection.
     assert_eq!(s.arrange.clips.len(), 1);
 }

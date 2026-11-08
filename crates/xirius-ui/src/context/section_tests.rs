@@ -139,7 +139,14 @@ fn the_right_press_on_a_section_opens_its_menu_in_the_order_of_the_mock() {
             "Ctrl+V"
         }
     );
-    assert_eq!(key(&s, "削除"), "Del / Backspace");
+    assert_eq!(
+        key(&s, "削除"),
+        if cfg!(target_os = "macos") {
+            "⌫"
+        } else {
+            "Del / Backspace"
+        }
+    );
     assert_eq!(
         key(&s, "時間を削除"),
         if cfg!(target_os = "macos") {

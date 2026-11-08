@@ -125,7 +125,7 @@ impl Song {
             .expect("tracks in project.json")
             .values()
             .find(|t| t["name"] == name)
-            .expect("the track in project.json")["clips"]
+            .unwrap_or_else(|| panic!("track {name} missing from saved song: {file}"))["clips"]
             .as_array()
             .cloned()
             .unwrap_or_default()
@@ -480,7 +480,6 @@ fn play_pad(s: &Song, config: &Path) -> Value {
         .cmd(&[
             "play",
             "--no-device",
-            "--unpaced",
             "--midi-script",
             script.to_str().unwrap(),
         ])

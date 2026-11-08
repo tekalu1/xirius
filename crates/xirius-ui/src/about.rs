@@ -1011,20 +1011,10 @@ fn rest(cells: &mut Vec<Cell>, v: &View, mut y: f32, offset: usize) {
                     "download",
                     Act::SourceRelease,
                 );
-                let last_x = x + w + w2 + Space::X2.px() * 2.0;
-                let last_w = Space::X2.px() * 3.0
-                    + Layout::ICON_SIZE
-                    + text_width("ライセンス文", FontSize::Small);
-                let (last_x, last_y) = if last_x + last_w > x + room {
-                    y += BUTTON_H + Space::X2.px();
-                    (x, y)
-                } else {
-                    (last_x, y)
-                };
                 button(
                     cells,
-                    last_x,
-                    last_y,
+                    x + w + w2 + Space::X2.px() * 2.0,
+                    y,
                     "ライセンス文",
                     "file",
                     Act::License(item),
@@ -2472,12 +2462,17 @@ pub(crate) mod tests {
         ] {
             assert!(a.contains(&act), "{act:?}");
         }
-        // The source actions fit the panel, wrapping if the native font needs more room.
+        // Layout cells are screen-relative, including the popup anchor offset.
         let last = cells
             .iter()
             .find(|c| c.action == Some(Action::About(Act::License(Item::Lame))))
             .unwrap();
-        assert!(last.rect.right() <= W - PAD, "{:?}", last.rect);
+        let panel = s.popup.as_ref().unwrap().layout(g.size).rect;
+        assert!(
+            last.rect.right() <= panel.right() - PAD,
+            "{:?} in {panel:?}",
+            last.rect
+        );
         assert!(
             !a.contains(&Act::License(Item::Inter)),
             "one row open at a time"

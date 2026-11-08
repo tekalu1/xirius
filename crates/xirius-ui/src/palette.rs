@@ -1996,7 +1996,14 @@ mod tests {
                 let def = s.song().registry().get(r.name).expect("in the registry");
                 assert_eq!(Some(r.label.as_str()), def.label());
                 if r.way == Way::Settings {
-                    assert_eq!(r.key.as_deref(), Some(SETTINGS.1));
+                    assert_eq!(
+                        r.key.as_deref(),
+                        Some(if cfg!(target_os = "macos") {
+                            "⌘,"
+                        } else {
+                            SETTINGS.1
+                        })
+                    );
                 }
                 if r.name == "transport.play" {
                     assert_eq!(r.key.as_deref(), Some("Space / MediaPlayPause"));
