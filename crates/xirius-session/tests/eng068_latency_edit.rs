@@ -51,18 +51,23 @@ fn delay(server: &PluginServer, link: &PluginLink) -> u32 {
 
 #[test]
 fn a_latency_moved_in_the_window_is_compensated_when_the_edit_is_taken_at_once() {
-    move_in_window(None);
+    move_in_window(None, false);
 }
 
 #[test]
 fn the_new_instance_has_the_value_moved_in_the_window_over_the_one_the_song_had() {
     // The song opens it with delay 192; the window moves it to 128.
-    move_in_window(Some(0.75));
+    move_in_window(Some(0.75), false);
+}
+
+#[test]
+fn the_windowed_owner_rebuilds_with_the_latency_moved_in_the_editor() {
+    move_in_window(Some(0.75), true);
 }
 
 /// Opens the test plugin (with the song's value `start` for its delay, if any), moves the
 /// delay to 128 in its window and runs the screen's frames until the mix plays the new latency.
-fn move_in_window(start: Option<f64>) {
+fn move_in_window(start: Option<f64>, windowed: bool) {
     let Some(exe) = find_host() else {
         eprintln!("opening in hosts needs the plugin host binary");
         return;
@@ -120,6 +125,9 @@ fn move_in_window(start: Option<f64>) {
     assert!(warnings.is_empty(), "{warnings:?}");
     // As the screen's player: a new latency builds its mix while the old one plays on.
     host.set_nonblocking(true);
+    if windowed {
+        host.set_windowed();
+    }
     let latency = |host: &SessionHost| {
         host.plugins()
             .reports()
@@ -150,7 +158,9 @@ fn move_in_window(start: Option<f64>) {
             .unwrap()
             .result
             .is_some();
-        host.step_swap();
+        if let Some(report) = host.step_swap() {
+            assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        }
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(taken, "the edit is in the song");

@@ -1416,9 +1416,17 @@ impl SessionHost {
             self.builder.plugins_mut().drop_ready();
             return;
         }
-        let hosted = crate::starting::hosted(&self.heard_now());
+        let heard = if self.windowed {
+            self.song.clone()
+        } else {
+            self.heard_now()
+        };
+        let hosted = crate::starting::hosted(&heard);
         let pd = self.pending.as_mut().expect("checked above");
         pd.kind = SwapKind::Latency;
+        // The background builder consumes target directly, so an editor edit
+        // collected after the latency notification must update that snapshot too.
+        pd.target = heard;
         if pd.hosted != hosted {
             pd.hosted = hosted;
             pd.asked = false;
@@ -2111,6 +2119,28 @@ mod tests {
         audio.render(&mut [0.0; 512], 2);
         host.poll();
         assert!(host.pending.as_ref().unwrap().latency);
+    }
+
+    #[test]
+    fn a_stale_live_build_keeps_the_latency_reason_when_retargeted() {
+        let mut p = Project::new("live-latency-edit");
+        let (mut host, _audio, _) = SessionHost::start(&p, HostConfig::default()).unwrap();
+        host.set_windowed();
+        host.begin_swap(p.clone(), SwapKind::Latency, Vec::new());
+        host.step_swap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !host.graph_work.as_ref().unwrap().work_ready() {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        // An editor edit can update the song while its latency plan is being built.
+        p.name = "edited while building".into();
+        host.sync_later(&p);
+        host.step_swap();
+        assert!(
+            host.pending.as_ref().unwrap().latency,
+            "the replacement must rebuild processors for the changed latency"
+        );
     }
 
     fn keyed(id: u64, sources: Vec<KeySource>) -> Plugin {
