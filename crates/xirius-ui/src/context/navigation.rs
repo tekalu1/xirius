@@ -43,10 +43,10 @@ impl Studio {
                 self.refresh_popup();
             }
             "enter" | "right" => {
-                if let Some(i) = state.cursor.or_else(|| selectable.first().copied()) {
-                    if key == "enter" || matches!(state.items[i].run, Run::Sub(_)) {
-                        self.context_pick(g, i);
-                    }
+                if let Some(i) = state.cursor.or_else(|| selectable.first().copied())
+                    && (key == "enter" || matches!(state.items[i].run, Run::Sub(_)))
+                {
+                    self.context_pick(g, i);
                 }
             }
             "left" | "escape" => {

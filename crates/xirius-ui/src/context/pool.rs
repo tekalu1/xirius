@@ -179,6 +179,7 @@ impl Studio {
             update(&mut ctx.items, &row);
             if let Some(search) = &mut ctx.search {
                 update(&mut search.pool, &row);
+                update(&mut search.index, &row);
             }
             for items in &mut ctx.trail {
                 update(items, &row);

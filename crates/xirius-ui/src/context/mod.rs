@@ -603,6 +603,7 @@ impl Studio {
         self.cancel_browser_menu();
         // The menu has the keys now: a head fader lets them go, keeping what was typed in it.
         self.head_fader_blur();
+        let mut search = search::Search::of(&items);
         let mut items = items;
         for item in &mut items {
             if let Run::Sub(rows) = &mut item.run {
@@ -611,6 +612,9 @@ impl Studio {
         }
         while matches!(items.last().map(|i| &i.run), Some(Run::Gap)) {
             items.pop();
+        }
+        if let Some(search) = &mut search {
+            search.pool = items.clone();
         }
         // The transposition's field takes the keys when the menu opens (UI-313, P3-5 of review
         // 15): the caret and its ring are there at once, the search box keeps none of the IME's
@@ -627,7 +631,7 @@ impl Studio {
         self.ctx = Some(State {
             cursor: None,
             cursors: Vec::new(),
-            search: search::Search::of(&items),
+            search,
             items,
             trail: Vec::new(),
             ask: None,

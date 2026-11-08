@@ -7,6 +7,8 @@ use crate::studio::Studio;
 pub struct Search {
     pub field: Field,
     pub pool: Vec<Item>,
+    /// Original labels and paths, before the legacy menu projection flattens children.
+    pub index: Vec<Item>,
     pub paths: Vec<String>,
 }
 impl Search {
@@ -14,6 +16,7 @@ impl Search {
         Some(Search {
             field: Field::new(FieldId::Search, String::new()),
             pool: items.to_vec(),
+            index: items.to_vec(),
             paths: Vec::new(),
         })
     }
@@ -79,7 +82,7 @@ impl Studio {
             search.paths.clear();
             search.pool.clone()
         } else {
-            let (items, paths) = find(&search.pool, &query).into_iter().unzip();
+            let (items, paths) = find(&search.index, &query).into_iter().unzip();
             search.paths = paths;
             items
         };
@@ -142,6 +145,32 @@ mod tests {
         let found = find(&[parent], "名前");
         assert!(!found[0].0.enabled);
         assert_eq!(found[0].0.reason, "対象なし");
+    }
+
+    #[test]
+    fn opening_and_searching_keeps_the_original_deep_label_and_runs_the_leaf() {
+        let (mut s, g) = crate::context::tests::studio();
+        let leaf = Item::ask(
+            "名前を変更…",
+            "clip.rename",
+            json!({"id":"c7"}),
+            "name",
+            "old",
+        );
+        s.open_context(
+            vec![Item::sub("編集", vec![Item::sub("対象", vec![leaf])])],
+            400.0,
+            300.0,
+        );
+        s.ask_text(None, "対象", false);
+        let rows = s.context_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "名前を変更…");
+        assert_eq!(rows[0].path, "編集 › 対象");
+        assert!(s.context_pick(&g, 0));
+        let ask = s.ctx.as_ref().unwrap().ask.as_ref().unwrap();
+        assert_eq!(ask.name, "clip.rename");
+        assert_eq!(ask.args, json!({"id":"c7"}));
     }
 
     #[test]
