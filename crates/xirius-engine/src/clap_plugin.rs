@@ -118,7 +118,12 @@ mod tests {
             .parent()
             .unwrap()
             .to_path_buf();
-        let bundle = Bundle::load(&deps.join("xirius_test_clap.dll")).expect("load");
+        let bundle = Bundle::load(&deps.join(format!(
+            "{}xirius_test_clap{}",
+            std::env::consts::DLL_PREFIX,
+            std::env::consts::DLL_SUFFIX
+        )))
+        .expect("load");
         Plugin::new(&bundle, xirius_test_clap::ID).expect("create")
     }
 

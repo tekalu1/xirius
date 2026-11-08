@@ -44,7 +44,15 @@ fn a_clap_file_is_listed_by_its_id() {
     let plugins = root.join("CLAP").join("Xirius");
     std::fs::create_dir_all(&plugins).unwrap();
     let file = plugins.join("Xirius Test Gain.clap");
-    std::fs::copy(deps.join("xirius_test_clap.dll"), &file).unwrap();
+    std::fs::copy(
+        deps.join(format!(
+            "{}xirius_test_clap{}",
+            std::env::consts::DLL_PREFIX,
+            std::env::consts::DLL_SUFFIX
+        )),
+        &file,
+    )
+    .unwrap();
 
     let opts = options(&root.join("CLAP"), &root.join("plugins.json"));
     let r = scan(&opts).expect("scan");

@@ -40,7 +40,15 @@ fn files(dir: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
     let plugins = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(dir);
     std::fs::create_dir_all(&plugins).unwrap();
     let clap = plugins.join("Xirius Test Gain.clap");
-    std::fs::copy(deps.join("xirius_test_clap.dll"), &clap).unwrap();
+    std::fs::copy(
+        deps.join(format!(
+            "{}xirius_test_clap{}",
+            std::env::consts::DLL_PREFIX,
+            std::env::consts::DLL_SUFFIX
+        )),
+        &clap,
+    )
+    .unwrap();
     let dir = tempfile::Builder::new()
         .prefix("xirius-clap-session-")
         .tempdir()

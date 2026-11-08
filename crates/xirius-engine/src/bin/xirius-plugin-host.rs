@@ -81,7 +81,11 @@ mod relay_tests {
             .unwrap()
             .parent()
             .unwrap()
-            .join("xirius_test_clap.dll");
+            .join(format!(
+                "{}xirius_test_clap{}",
+                std::env::consts::DLL_PREFIX,
+                std::env::consts::DLL_SUFFIX
+            ));
         let bundle = root.path().join("relay.clap");
         std::fs::copy(dll, &bundle).unwrap();
         let mut host = Host {

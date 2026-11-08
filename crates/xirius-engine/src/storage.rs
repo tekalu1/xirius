@@ -253,5 +253,5 @@ fn disk_space(directory: &Path) -> io::Result<u64> {
         return Err(io::Error::last_os_error());
     }
     let info = unsafe { info.assume_init() };
-    Ok(info.f_bavail.saturating_mul(info.f_frsize))
+    Ok(u64::from(info.f_bavail).saturating_mul(info.f_frsize))
 }

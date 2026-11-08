@@ -18,7 +18,11 @@ fn bundle() -> Bundle {
         .parent()
         .unwrap()
         .to_path_buf();
-    let dll = deps.join("xirius_test_clap.dll");
+    let dll = deps.join(format!(
+        "{}xirius_test_clap{}",
+        std::env::consts::DLL_PREFIX,
+        std::env::consts::DLL_SUFFIX
+    ));
     assert!(dll.exists(), "the fixture's cdylib is built with the tests");
     Bundle::load(&dll).expect("load")
 }

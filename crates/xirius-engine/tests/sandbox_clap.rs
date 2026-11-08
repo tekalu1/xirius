@@ -31,7 +31,15 @@ fn bundle(name: &str) -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("sandbox_clap");
     std::fs::create_dir_all(&dir).unwrap();
     let to = dir.join(format!("{name}-{}.clap", std::process::id()));
-    std::fs::copy(deps.join("xirius_test_clap.dll"), &to).unwrap();
+    std::fs::copy(
+        deps.join(format!(
+            "{}xirius_test_clap{}",
+            std::env::consts::DLL_PREFIX,
+            std::env::consts::DLL_SUFFIX
+        )),
+        &to,
+    )
+    .unwrap();
     to
 }
 
