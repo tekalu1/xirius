@@ -97,6 +97,13 @@ impl Studio {
     /// the field takes the composition and the digits; a letter goes to the search box instead
     /// (UI-313).
     pub(crate) fn ask_text(&mut self, range: Option<Range<usize>>, text: &str, marked: bool) {
+        if self
+            .ctx
+            .as_ref()
+            .is_some_and(|s| s.ask.is_none() && s.field.is_none() && !s.trail.is_empty())
+        {
+            self.context_restore(0);
+        }
         if self.field_typing().is_some() {
             if marked {
                 if self.field_marked(text) {

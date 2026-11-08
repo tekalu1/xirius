@@ -859,6 +859,7 @@ pub fn dropped(pick: &PickList, anchor: Rect, w: f32, size: (f32, f32)) -> Popup
         })
         .collect();
     PopupLayout {
+        panels: Vec::new(),
         rect: Rect::new(x, y, w, h),
         cells,
     }

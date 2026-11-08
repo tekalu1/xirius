@@ -2261,6 +2261,24 @@ impl Studio {
         let Some(p) = &mut self.popup else { return };
         if let Some(ctx) = ctx {
             p.ctx = ctx;
+            p.ctx_parents = self
+                .ctx
+                .as_ref()
+                .map(|s| {
+                    s.trail
+                        .iter()
+                        .enumerate()
+                        .map(|(depth, items)| {
+                            let parent = crate::context::State {
+                                items: items.clone(),
+                                cursor: s.parent_rows.get(depth).copied(),
+                                ..Default::default()
+                            };
+                            (parent.rows(), s.parent_rows[depth])
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
             p.ask = ask;
             p.ctx_query = query;
             p.ctx_search = self.ctx.as_ref().is_some_and(|s| s.field.is_none());
@@ -2280,7 +2298,11 @@ impl Studio {
         if let Some(id) = selected_version {
             p.selected = p.versions.iter().position(|v| v.id == id);
         }
-        p.offset = p.offset.min(p.max_offset((f32::MAX, f32::MAX)));
+        p.offset = p.offset.min(p.max_offset(if p.kind == PopupKind::Context {
+            self.viewport_size.get()
+        } else {
+            (f32::MAX, f32::MAX)
+        }));
         p.now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -2613,6 +2635,10 @@ impl Studio {
             }
             Action::About(act) => return self.about_action(act),
             Action::Ctx(i) => return self.context_pick(g, i),
+            Action::CtxAncestor(depth, action) => {
+                self.context_restore(depth);
+                return self.popup_action(g, *action);
+            }
             Action::CtxSearch => {
                 self.context_search();
                 return true;

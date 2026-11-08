@@ -114,6 +114,8 @@ fn mods(m: Modifiers) -> Mods {
 struct Screen {
     device_windows: crate::device_window::Windows,
     pending_save_input: HeldInput,
+    context_touch: crate::context::touch::Touch<MouseDownEvent>,
+    replaying_touch: bool,
     studio: Rc<RefCell<Studio>>,
     colors: Rc<Colors>,
     focus: FocusHandle,
@@ -198,6 +200,14 @@ impl Screen {
         }
     }
     fn moved(&mut self, ev: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(press) = self.context_touch.moved(in_body(ev.position)) {
+            self.replaying_touch = true;
+            self.pressed(&press, window, cx);
+            self.replaying_touch = false;
+        }
+        if self.context_touch.waiting() {
+            return;
+        }
         let mut studio = self.studio.borrow_mut();
         if ev.pressed_button.is_none() {
             // A release outside the window that did not come here.
@@ -250,6 +260,12 @@ impl Screen {
         }
         let pointer_tip = crate::hover_tip::pointer_tip(&studio, &g);
         studio.input_map.pointer = (x, y);
+        if studio.context_open() {
+            studio.context_hover(&g, x, y, std::time::Instant::now());
+            studio.hover = studio.hit(&g, x, y);
+            cx.notify();
+            return;
+        }
         if pointer_tip != crate::hover_tip::pointer_tip(&studio, &g) {
             cx.notify();
         }
@@ -331,6 +347,26 @@ impl Screen {
     }
 
     fn pressed(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(windows)]
+        if !self.replaying_touch && crate::pointer_os::from_touch() {
+            let studio = self.studio.borrow();
+            if !studio.input_blocked()
+                && studio.popup.is_none()
+                && studio.settings.is_none()
+                && studio.palette.is_none()
+                && studio.recovery.is_none()
+                && !studio.sound_preparing()
+            {
+                drop(studio);
+                self.context_touch.press(
+                    ev.clone(),
+                    in_body(ev.position),
+                    std::time::Instant::now(),
+                );
+                window.request_animation_frame();
+                return;
+            }
+        }
         self.studio.borrow_mut().view_read.cleanup.want_open = false;
         self.studio.borrow_mut().pointer_held = true;
         if self.queue_save_input(PlatformInput::MouseDown(ev.clone())) {
@@ -702,7 +738,16 @@ impl Screen {
     }
 
     fn released(&mut self, ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let (tap, consumed) = self.context_touch.release();
+        if let Some(press) = tap {
+            self.replaying_touch = true;
+            self.pressed(&press, window, cx);
+            self.replaying_touch = false;
+        }
         self.studio.borrow_mut().pointer_held = false;
+        if consumed {
+            return;
+        }
         if self.queue_save_input(PlatformInput::MouseUp(ev.clone())) {
             return;
         }
@@ -1639,6 +1684,12 @@ impl Render for Screen {
                 .update(cx, |view, cx| view.set_colors(colors, cx));
         }
         let c = self.colors.clone();
+        if let Some(press) = self.context_touch.poll(std::time::Instant::now()) {
+            self.right_pressed(&press, window, cx);
+        }
+        if self.context_touch.waiting() {
+            window.request_animation_frame();
+        }
         {
             let mut studio = self.studio.borrow_mut();
             // "Animation effects" can be turned off while the app runs (UI-055).
@@ -1670,7 +1721,9 @@ impl Render for Screen {
                 }
                 Some(crate::context::key_more::WindowAsk::Quit) | None => {}
             }
+            let menu_animating = studio.context_hover_tick(&g, std::time::Instant::now());
             if studio.tick()
+                || menu_animating
                 || studio.motion.moving()
                 || crate::wait::pending()
                 || crate::repaint_shots::still_frames()
@@ -2610,6 +2663,8 @@ pub fn run(opts: Options) {
                         Screen {
                             device_windows: Default::default(),
                             pending_save_input: HeldInput::default(),
+                            context_touch: Default::default(),
+                            replaying_touch: false,
                             studio,
                             colors,
                             focus,

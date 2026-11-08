@@ -7,7 +7,7 @@ use crate::studio::Studio;
 pub struct Search {
     pub field: Field,
     pub pool: Vec<Item>,
-    /// Original labels and paths, before the legacy menu projection flattens children.
+    /// Complete classified tree, independent of the currently open child.
     pub index: Vec<Item>,
     pub paths: Vec<String>,
 }
@@ -41,12 +41,17 @@ pub fn find(items: &[Item], query: &str) -> Vec<(Item, String)> {
                 }
             } else if !matches!(item.run, Run::Gap | Run::Title | Run::Back) {
                 let breadcrumb = path.join(" › ");
-                if format!("{} {breadcrumb}", item.label)
+                let label = item
+                    .swatch
+                    .map_or_else(|| item.label.clone(), |n| format!("色 {:02}", n + 1));
+                if format!("{label} {breadcrumb}")
                     .to_lowercase()
                     .contains(query)
                 {
+                    let mut found = item.clone();
+                    found.label = label;
                     out.push((
-                        item.clone(),
+                        found,
                         if breadcrumb.is_empty() {
                             "直下".into()
                         } else {

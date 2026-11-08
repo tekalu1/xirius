@@ -19,11 +19,9 @@ use crate::popup::{Action, Cell, Look, PopupKind};
 use crate::studio::{Geometry, Rect, Studio};
 
 pub mod ask;
-mod depth;
-mod range_lane;
-use depth::flatten;
 pub mod auto;
 pub mod browser;
+pub mod cascade;
 pub mod clip;
 pub mod export;
 pub mod fields;
@@ -34,8 +32,10 @@ pub mod mixed;
 pub mod mixer;
 mod navigation;
 mod next_prev;
+pub mod placement;
 mod pool;
 mod preset;
+mod range_lane;
 pub mod roll;
 pub mod ruler;
 pub mod screen_cmd;
@@ -46,6 +46,7 @@ pub mod take;
 pub mod tempo;
 pub mod timeline;
 pub mod tools;
+pub(crate) mod touch;
 pub mod track;
 
 /// The widest a menu grows to.
@@ -79,6 +80,8 @@ pub enum Run {
     /// A field of an audio clip's value at the head of its menu (its kind, the clips, the
     /// value they share).
     Field(fields::Kind, Value, Option<f64>),
+    /// Existing popup dispatcher, with its original owner and arguments intact.
+    Legacy(PopupKind, Rect, Box<Action>),
 }
 
 /// The changes of the screen the menus make that no command makes.
@@ -185,6 +188,8 @@ pub enum Act {
 /// One row of a menu.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Item {
+    /// Approved routing identity; dynamic candidates share the generating rule's identity.
+    pub ledger_id: Option<String>,
     pub label: String,
     /// The key, as the palette writes it.
     pub key: String,
@@ -202,8 +207,12 @@ pub struct Item {
 }
 
 impl Item {
+    pub(crate) fn legacy(label: &str, kind: PopupKind, anchor: Rect, action: Action) -> Self {
+        Self::new(label, Run::Legacy(kind, anchor, Box::new(action)))
+    }
     fn new(label: &str, run: Run) -> Item {
         Item {
+            ledger_id: None,
             label: label.to_string(),
             key: String::new(),
             enabled: true,
@@ -350,6 +359,9 @@ pub struct Row {
 /// The menu that is open.
 #[derive(Clone, Debug, Default)]
 pub struct State {
+    pub parent_rows: Vec<usize>,
+    pub hover_pending: Option<(usize, usize, std::time::Instant)>,
+    pub last_pointer: Option<(f32, f32)>,
     pub cursor: Option<usize>,
     pub cursors: Vec<Option<usize>>,
     pub search: Option<search::Search>,
@@ -445,7 +457,7 @@ pub fn cells(rows: &[Row], w: f32) -> Vec<Cell> {
             y += Space::X2.px();
             continue;
         }
-        if let Some(color) = row.swatch {
+        if let Some(color) = row.swatch.filter(|_| row.path.is_empty()) {
             let step = SWATCH + SWATCH_GAP;
             let r = Rect::new(pad + column as f32 * step, y, SWATCH, SWATCH);
             cells.push(
@@ -472,7 +484,9 @@ pub fn cells(rows: &[Row], w: f32) -> Vec<Cell> {
             y += Layout::MENU_ROW_H;
             continue;
         }
-        if let Some(field) = &row.field {
+        if let Some(field) = &row.field
+            && (row.path.is_empty() || field.focused)
+        {
             let mut row_cells = fields::cells(r, i, field, row.enabled);
             if !row.enabled {
                 for c in &mut row_cells {
@@ -480,12 +494,25 @@ pub fn cells(rows: &[Row], w: f32) -> Vec<Cell> {
                 }
             }
             cells.extend(row_cells);
-            y += fields::ROW_H;
+            if !row.path.is_empty() {
+                cells.push(
+                    Cell::new(
+                        Rect::new(r.x, r.y + fields::ROW_H, r.w, height - fields::ROW_H),
+                        Look::Label,
+                    )
+                    .text(row.path.clone()),
+                );
+            }
+            y += if row.path.is_empty() {
+                fields::ROW_H
+            } else {
+                height
+            };
             continue;
         }
         let mut cell = Cell::new(r, Look::Row)
             .text(row.label.clone())
-            .mark(row.mark)
+            .mark(row.swatch.or(row.mark))
             .cur(row.cursor);
         if !row.path.is_empty() {
             cell.look = Look::ContextResult(row.path.clone());
@@ -507,6 +534,21 @@ pub fn cells(rows: &[Row], w: f32) -> Vec<Cell> {
 }
 
 impl Studio {
+    pub(crate) fn open_classified(&mut self, target: &str, items: Vec<Item>, x: f32, y: f32) {
+        match placement::organize(target, items.clone()) {
+            Ok(rows) => self.open_context(rows, x, y),
+            Err(error) => {
+                #[cfg(test)]
+                panic!("unclassified menu row: {error:?}");
+                #[cfg(not(test))]
+                {
+                    // A future candidate must remain usable even if its routing data is missing.
+                    let _ = error;
+                    self.open_context(items, x, y);
+                }
+            }
+        }
+    }
     /// A row that runs `name` with `args`. Its name and key are the command's; it is dim
     /// when the command would change nothing now.
     pub(crate) fn ctx_cmd(&mut self, name: &'static str, args: Value) -> Item {
@@ -605,11 +647,6 @@ impl Studio {
         self.head_fader_blur();
         let mut search = search::Search::of(&items);
         let mut items = items;
-        for item in &mut items {
-            if let Run::Sub(rows) = &mut item.run {
-                *rows = flatten(std::mem::take(rows), "");
-            }
-        }
         while matches!(items.last().map(|i| &i.run), Some(Run::Gap)) {
             items.pop();
         }
@@ -629,6 +666,9 @@ impl Studio {
                     .position(|i| i.enabled && matches!(i.run, Run::Field(..)))
             });
         self.ctx = Some(State {
+            parent_rows: Vec::new(),
+            hover_pending: None,
+            last_pointer: None,
             cursor: None,
             cursors: Vec::new(),
             search,
@@ -671,22 +711,36 @@ impl Studio {
             return false;
         }
         if let Run::Sub(rows) = item.run.clone() {
+            if let Some(popup) = &mut self.popup {
+                popup.offset = 0;
+            }
             let st = self.ctx.as_mut().expect("the menu is open");
             let mut next = vec![Item::back(), Item::gap()];
             next.extend(rows);
             st.trail.push(std::mem::replace(&mut st.items, next));
+            st.parent_rows.push(i);
+            st.hover_pending = None;
             st.cursors.push(st.cursor.take());
-            st.search = search::Search::of(&st.items);
+            st.search = None;
             st.field = None;
             self.refresh_popup();
             return true;
         }
         if item.run == Run::Back {
+            if let Some(popup) = &mut self.popup {
+                popup.offset = 0;
+            }
             let st = self.ctx.as_mut().expect("the menu is open");
             if let Some(up) = st.trail.pop() {
+                st.parent_rows.pop();
+                st.hover_pending = None;
                 st.cursor = st.cursors.pop().flatten();
                 st.items = up;
-                st.search = search::Search::of(&st.items);
+                st.search = if st.trail.is_empty() {
+                    search::Search::of(&st.items)
+                } else {
+                    None
+                };
                 st.field = None;
             }
             self.refresh_popup();
@@ -720,6 +774,10 @@ impl Studio {
     /// Runs a row.
     fn context_run(&mut self, g: &Geometry, item: Item) -> bool {
         match item.run {
+            Run::Legacy(kind, anchor, action) => {
+                self.open_popup(kind, anchor);
+                self.popup_action(g, *action)
+            }
             Run::Gap
             | Run::Title
             | Run::Sub(_)

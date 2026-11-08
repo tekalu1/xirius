@@ -115,7 +115,15 @@ pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry) -> bool {
             Cell::new(back, Look::Button).text("戻る"),
             Cell::new(close, Look::Danger).text(open.close_action()),
         ];
-        crate::popup::paint(pen, &PopupLayout { rect: r, cells }, None);
+        crate::popup::paint(
+            pen,
+            &PopupLayout {
+                rect: r,
+                cells,
+                panels: Vec::new(),
+            },
+            None,
+        );
         pen.outline(
             if open.close_focus { close } else { back },
             pen.c.ring,

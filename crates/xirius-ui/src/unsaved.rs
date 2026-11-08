@@ -111,7 +111,15 @@ pub(crate) fn paint(pen: &mut Pen, s: &Studio, g: &Geometry) -> bool {
         Cell::new(back, Look::Button).text("戻る"),
         Cell::new(proceed, Look::Danger).text(PROCEED),
     ];
-    crate::popup::paint(pen, &PopupLayout { rect: r, cells }, None);
+    crate::popup::paint(
+        pen,
+        &PopupLayout {
+            rect: r,
+            cells,
+            panels: Vec::new(),
+        },
+        None,
+    );
     pen.outline(
         if q.proceed_focus { proceed } else { back },
         pen.c.ring,

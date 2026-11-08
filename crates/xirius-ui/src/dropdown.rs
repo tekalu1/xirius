@@ -112,6 +112,7 @@ impl Menu {
             .collect();
         Menu {
             layout: PopupLayout {
+                panels: Vec::new(),
                 rect: Rect::new(x, y, w, h),
                 cells,
             },

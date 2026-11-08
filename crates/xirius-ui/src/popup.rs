@@ -189,6 +189,8 @@ pub enum Action {
     About(crate::about::Act),
     /// Row `i` of a right-click menu.
     Ctx(usize),
+    /// An action in a still-visible ancestor of a cascading context menu.
+    CtxAncestor(usize, Box<Action>),
     /// The search box at the top of a long menu: it takes the keys (UI-313).
     CtxSearch,
     /// A press in the meter's pop-over.
@@ -287,6 +289,7 @@ pub struct Popup {
     pub recent: Vec<crate::keep::RecentSong>,
     /// The rows of a right-click menu.
     pub ctx: Vec<crate::context::Row>,
+    pub ctx_parents: Vec<(Vec<crate::context::Row>, usize)>,
     /// What a right-click menu's name box shows, while it asks for a name.
     pub ask: Option<String>,
     pub ctx_query: Option<String>,
@@ -335,6 +338,7 @@ impl Popup {
             about: None,
             recent: Vec::new(),
             ctx: Vec::new(),
+            ctx_parents: Vec::new(),
             ask: None,
             ctx_query: None,
             ctx_search: false,
@@ -358,6 +362,13 @@ impl Popup {
     /// menu's rows shrink to the screen's edge, so it counts with it).
     pub fn max_offset(&self, size: (f32, f32)) -> usize {
         match self.kind {
+            PopupKind::Context => {
+                let cells = crate::context::cells(&self.ctx, crate::context::width(&self.ctx));
+                let height = cells.iter().map(|c| c.rect.bottom()).fold(0.0f32, f32::max)
+                    + Layout::POPUP_PAD;
+                let room = size.1 - 8.0 - if self.ctx_query.is_some() { 40.0 } else { 0.0 };
+                ((height - room).max(0.0) / Layout::MENU_ROW_H).ceil() as usize
+            }
             PopupKind::History => {
                 (self.history.len() + self.notes.len()).saturating_sub(HISTORY_ROWS + 1)
             }
@@ -620,6 +631,8 @@ impl Cell {
 pub struct PopupLayout {
     pub rect: Rect,
     pub cells: Vec<Cell>,
+    /// Each surface and the exclusive end of its cells, in back-to-front order.
+    pub panels: Vec<(Rect, usize)>,
 }
 
 impl PopupLayout {
@@ -627,7 +640,7 @@ impl PopupLayout {
     pub fn item_at(&self, x: f32, y: f32) -> Option<usize> {
         self.cells
             .iter()
-            .position(|c| (c.live() || !c.tip.is_empty()) && c.rect.contains(x, y))
+            .rposition(|c| (c.live() || !c.tip.is_empty()) && c.rect.contains(x, y))
     }
 }
 
@@ -656,6 +669,13 @@ fn no_device_cells(w: f32) -> Vec<Cell> {
 impl Popup {
     /// The cells and the rectangle, for a body of `size`.
     pub fn layout(&self, size: (f32, f32)) -> PopupLayout {
+        if self.kind == PopupKind::Context && !self.ctx_parents.is_empty() && self.ask.is_none() {
+            return crate::context::cascade::layout(self, size);
+        }
+        self.single_layout(size)
+    }
+
+    pub(crate) fn single_layout(&self, size: (f32, f32)) -> PopupLayout {
         let pad = Layout::POPUP_PAD;
         let (width, cells) = match self.kind {
             PopupKind::History => (300.0, self.history_cells(300.0)),
@@ -704,6 +724,15 @@ impl Popup {
                 None => {
                     let w = crate::context::width(&self.ctx);
                     let mut cells = crate::context::cells(&self.ctx, w);
+                    let room = size.1 - 8.0 - if self.ctx_query.is_some() { 40.0 } else { 0.0 };
+                    let scroll = self.offset.min(self.max_offset(size)) as f32 * Layout::MENU_ROW_H;
+                    for cell in &mut cells {
+                        cell.rect.y -= scroll;
+                    }
+                    cells.retain(|cell| {
+                        cell.rect.y >= Layout::POPUP_PAD
+                            && cell.rect.bottom() <= room - Layout::POPUP_PAD
+                    });
                     if let Some(query) = &self.ctx_query {
                         for cell in &mut cells {
                             cell.rect.y += 40.0;
@@ -821,6 +850,7 @@ impl Popup {
         PopupLayout {
             rect: Rect::new(x, y, width, height),
             cells,
+            panels: Vec::new(),
         }
     }
 
@@ -1318,10 +1348,21 @@ pub fn paint_with(
     over: &dyn Fn(&mut Pen, &Cell),
 ) {
     let c = pen.c;
-    pen.floating(layout.rect, c.paper, Radius::M);
-    for (i, cell) in layout.cells.iter().enumerate() {
-        paint_cell(pen, cell, hover == Some(i));
-        over(pen, cell);
+    let single = [(layout.rect, layout.cells.len())];
+    let panels = if layout.panels.is_empty() {
+        &single[..]
+    } else {
+        &layout.panels
+    };
+    let mut start = 0;
+    for &(rect, end) in panels {
+        pen.floating(rect, c.paper, Radius::M);
+        for i in start..end {
+            let cell = &layout.cells[i];
+            paint_cell(pen, cell, hover == Some(i));
+            over(pen, cell);
+        }
+        start = end;
     }
     if let Some(cell) = hover.and_then(|i| layout.cells.get(i)) {
         tip(pen, cell, layout.rect);
@@ -2510,6 +2551,7 @@ mod tests {
     #[test]
     fn a_dim_cell_with_a_tip_is_found_but_does_nothing() {
         let l = PopupLayout {
+            panels: Vec::new(),
             rect: Rect::new(0.0, 0.0, 200.0, 100.0),
             cells: vec![
                 Cell {

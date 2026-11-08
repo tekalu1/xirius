@@ -108,6 +108,7 @@ impl Card {
             "",
         );
         PopupLayout {
+            panels: Vec::new(),
             rect: Rect::new(x, y, W, h),
             cells,
         }
