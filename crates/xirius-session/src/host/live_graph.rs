@@ -6,6 +6,7 @@ use crate::background::Job;
 pub(super) struct Update {
     source: Project,
     target: Project,
+    latency: bool,
     work: Job<Outcome>,
     ready: Option<Candidate>,
 }
@@ -127,6 +128,7 @@ impl SessionHost {
                     self.graph_work = Some(Update {
                         source,
                         target,
+                        latency,
                         work,
                         ready: None,
                     })
@@ -148,6 +150,7 @@ impl SessionHost {
                 self.graph_work = Some(update);
                 return None;
             }
+            let latency = update.latency;
             // A claimed candidate (queue pressure) is also destroyed off UI.
             let _ = Job::spawn("stale-graph", move || {
                 drop(update);
@@ -155,6 +158,11 @@ impl SessionHost {
             });
             if self.pending.is_none() {
                 self.begin_swap(self.song.clone(), SwapKind::Sync, Vec::new());
+            }
+            // Retargeting an editor edit must not turn a latency rebuild into
+            // a normal update that retains the old processors and compensation.
+            if let Some(pending) = &mut self.pending {
+                pending.latency |= latency;
             }
             return None;
         }
