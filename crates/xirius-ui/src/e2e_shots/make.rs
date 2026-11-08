@@ -9,7 +9,7 @@ use crate::{
     browser::{BrowserHit, RailTab},
     popup::Action,
     start::Entry,
-    studio::{DrawerTab, FileRequest, Hit},
+    studio::{DrawerTab, FileRequest, Hit, Studio},
     tools::Tool,
     topbar::BarButton,
 };
@@ -194,15 +194,43 @@ pub(super) fn song_path() -> PathBuf {
 
 /// Answers the open or save window the screen asked for, with `path`.
 pub(super) fn answer(s: &Studio1, want: FileRequest, path: &Path) -> Result<(), String> {
+    // The request is let go of while the player prepares: wait for it first.
+    crate::shot::run_for(&mut s.borrow_mut(), 15.0, |s| !s.sound_preparing());
+    check(!s.borrow().sound_preparing(), "still preparing")?;
     let asked = s.borrow_mut().file_request.take();
     check(
         asked.as_ref() == Some(&want),
         format!("the screen asked for {asked:?}, not {want:?}"),
     )?;
+    // An open stays up so the caller can ride `after_open` before it is waited out.
+    let opens = want == FileRequest::Open;
     s.borrow_mut().finish_file_request(want, path);
-    crate::shot::run_for(&mut s.borrow_mut(), 30.0, |s| !s.input_blocked());
-    check(!s.borrow().input_blocked(), "file operation timed out")?;
+    if !opens {
+        crate::shot::run_for(&mut s.borrow_mut(), 30.0, |s| !s.input_blocked());
+        check(!s.borrow().input_blocked(), "file operation timed out")?;
+    }
     Ok(())
+}
+
+/// Pumps the browser's workers (place additions, dir listings, imports) until `done` or `secs`.
+fn browse_until(s: &Studio1, secs: f32, done: impl Fn(&Studio) -> bool) {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs_f32(secs);
+    loop {
+        let mut st = s.borrow_mut();
+        st.browser.poll_prefs_io();
+        crate::browser_files::poll();
+        st.poll_browser_import();
+        if done(&*st) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < end,
+            "the browser's worker did not finish"
+        );
+        st.tick();
+        drop(st);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
 }
 
 /// Picks a tool with its button in the bar (digits would play notes while the keys play).
@@ -454,6 +482,14 @@ fn drag_file(s: &Studio1, w: &mut Window, cx: &mut App) -> Done {
     check(showing(s), "the files are not shown")?;
     press(s, Hit::Browser(BrowserHit::LocAdd), w, cx)?;
     answer(s, FileRequest::Place, &dir)?;
+    // The place is added and the folder's rows are read on workers: wait for
+    // the file to show.
+    browse_until(s, 15.0, |s| {
+        s.browser
+            .rows()
+            .iter()
+            .any(|r| matches!(r, crate::browser::BRow::File { name: n, .. } if n == WAV))
+    });
     let before = tracks(s);
     let (from, to) = read(s, w, |s, g| {
         let i = crate::import_shots::file_row(s, g, WAV).ok_or("the file is not in the list")?;
@@ -472,6 +508,13 @@ fn drag_file(s: &Studio1, w: &mut Window, cx: &mut App) -> Done {
         s.borrow().browser.file_drag.is_none(),
         "the drag did not end",
     )?;
+    // The drop's `clip.import` runs on the song's owner: the track lands later.
+    browse_until(s, 15.0, |s| {
+        s.project()
+            .tracks
+            .iter()
+            .any(|(k, t)| !before.contains(k) && !t.clips.is_empty())
+    });
     let t = made(s, &before)?;
     memo(|m| m.audio = Some(t));
     let p = s.borrow().project();
