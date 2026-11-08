@@ -19,6 +19,8 @@ impl<T> Default for Touch<T> {
 }
 
 impl<T> Touch<T> {
+    // Native touch presses are currently supplied only by the Windows input path.
+    #[cfg(any(windows, test))]
     pub fn press(&mut self, event: T, position: (f32, f32), now: Instant) {
         self.pending = Some((event, position, now));
         self.consumed = false;
