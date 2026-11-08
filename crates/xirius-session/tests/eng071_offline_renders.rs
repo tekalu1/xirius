@@ -15,7 +15,7 @@ const PID: PluginId = PluginId(1);
 fn each_offline_render_plays_the_instance_it_opened() {
     xirius_test_vst3::fixture_marker();
     let dll = xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
-    assert!(dll.is_file());
+    assert!(dll.exists(), "a DLL on Windows, a bundle on macOS");
     let entries = probe(&dll).unwrap();
     let uid = entries[0].uid.clone();
     let catalog = Arc::new(Catalog {

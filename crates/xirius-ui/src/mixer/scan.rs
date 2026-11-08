@@ -424,7 +424,7 @@ mod menu_io_tests {
         let root = tempfile::tempdir().unwrap();
         let mut s = home(root.path());
         let deadline = Instant::now() + Duration::from_secs(20);
-        while s.mixer.scan.job.is_none() {
+        while !s.mixer.scan.running() {
             s.tick();
             assert!(Instant::now() < deadline);
             std::thread::yield_now();

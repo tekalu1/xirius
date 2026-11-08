@@ -46,6 +46,7 @@ fn pull(host: &mut SessionHost, audio: &mut AudioEngine) -> f32 {
         audio.render(&mut out, 2);
         peak = out.iter().fold(peak, |m, x| m.max(x.abs()));
         host.poll();
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
     peak
 }

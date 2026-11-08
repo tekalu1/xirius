@@ -146,7 +146,14 @@ fn processing_ends_with_the_attach_row_and_its_key_opens_the_list() {
     assert_eq!(all.last().map(String::as_str), Some(ADD), "{all:?}");
     let add = row(&s, ADD);
     assert!(add.enabled);
-    assert_eq!(add.key, "Ctrl+M");
+    assert_eq!(
+        add.key,
+        if cfg!(target_os = "macos") {
+            "⌘M"
+        } else {
+            "Ctrl+M"
+        }
+    );
     // The row opens the list of the ARA plugins, under their makers.
     choose(&mut s, &g, ADD);
     assert!(picking(&s), "{:?}", s.error);
@@ -377,8 +384,22 @@ fn an_attached_clip_edits_and_detaches_by_the_plugins_name() {
     let detach = format!("{NAME}を外す");
     let all = labels(&s);
     assert!(!all.iter().any(|l| l == ADD), "{all:?}");
-    assert_eq!(row(&s, &edit).key, "Ctrl+M");
-    assert_eq!(row(&s, &detach).key, "Ctrl+Alt+M");
+    assert_eq!(
+        row(&s, &edit).key,
+        if cfg!(target_os = "macos") {
+            "⌘M"
+        } else {
+            "Ctrl+M"
+        }
+    );
+    assert_eq!(
+        row(&s, &detach).key,
+        if cfg!(target_os = "macos") {
+            "⌥⌘M"
+        } else {
+            "Ctrl+Alt+M"
+        }
+    );
     // 編集 opens the plugin's window, for that clip.
     choose(&mut s, &g, &edit);
     assert_eq!(s.ara.opened, [(UID.to_string(), vec![c])]);

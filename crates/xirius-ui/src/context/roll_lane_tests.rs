@@ -176,8 +176,22 @@ fn a_controller_point_takes_a_value_and_is_copied_cut_and_deleted_with_the_selec
     let (x, y) = point_at(&s, &g, i, 480, 90);
     assert!(s.scene_context(&g, x, y));
     assert_eq!(labels(&s), ["編集", "MIDI"]);
-    assert_eq!(key(&s, "切り取り"), "Ctrl+X");
-    assert_eq!(key(&s, "コピー"), "Ctrl+C");
+    assert_eq!(
+        key(&s, "切り取り"),
+        if cfg!(target_os = "macos") {
+            "⌘X"
+        } else {
+            "Ctrl+X"
+        }
+    );
+    assert_eq!(
+        key(&s, "コピー"),
+        if cfg!(target_os = "macos") {
+            "⌘C"
+        } else {
+            "Ctrl+C"
+        }
+    );
     assert_eq!(key(&s, "削除"), "Del / Backspace");
     assert_eq!(s.roll.points.iter().copied().collect::<Vec<_>>(), [480]);
 
@@ -283,7 +297,14 @@ fn the_empty_part_of_a_lane_adds_a_point_pastes_and_clears_the_lane() {
     assert!(s.scene_context(&g, x, y));
     assert_eq!(labels(&s), ["編集", "MIDI"]);
     assert!(!enabled(&s, "貼り付け"));
-    assert_eq!(key(&s, "貼り付け"), "Ctrl+V");
+    assert_eq!(
+        key(&s, "貼り付け"),
+        if cfg!(target_os = "macos") {
+            "⌘V"
+        } else {
+            "Ctrl+V"
+        }
+    );
     let n = steps(&s);
     assert!(choose(&mut s, &g, "ここにポイントを追加"));
     assert_eq!(steps(&s), n + 1);

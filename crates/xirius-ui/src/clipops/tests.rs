@@ -294,14 +294,70 @@ fn every_new_key_is_a_row_with_its_chip_and_runs_the_same_command() {
     key(&mut s, &g, "c", ctrl());
     let rows = s.palette_rows(&g);
     for (name, chip) in [
-        ("edit.copy", "Ctrl+C"),
-        ("edit.cut", "Ctrl+X"),
-        ("edit.paste", "Ctrl+V"),
-        ("select.all", "Ctrl+A"),
-        ("select.clear", "Ctrl+D"),
-        ("select.invert", "Ctrl+I"),
-        ("select.on-tracks", "Ctrl+Shift+A"),
-        ("select.in-loop", "Alt+L"),
+        (
+            "edit.copy",
+            if cfg!(target_os = "macos") {
+                "⌘C"
+            } else {
+                "Ctrl+C"
+            },
+        ),
+        (
+            "edit.cut",
+            if cfg!(target_os = "macos") {
+                "⌘X"
+            } else {
+                "Ctrl+X"
+            },
+        ),
+        (
+            "edit.paste",
+            if cfg!(target_os = "macos") {
+                "⌘V"
+            } else {
+                "Ctrl+V"
+            },
+        ),
+        (
+            "select.all",
+            if cfg!(target_os = "macos") {
+                "⌘A"
+            } else {
+                "Ctrl+A"
+            },
+        ),
+        (
+            "select.clear",
+            if cfg!(target_os = "macos") {
+                "⌘D"
+            } else {
+                "Ctrl+D"
+            },
+        ),
+        (
+            "select.invert",
+            if cfg!(target_os = "macos") {
+                "⌘I"
+            } else {
+                "Ctrl+I"
+            },
+        ),
+        (
+            "select.on-tracks",
+            if cfg!(target_os = "macos") {
+                "⇧⌘A"
+            } else {
+                "Ctrl+Shift+A"
+            },
+        ),
+        (
+            "select.in-loop",
+            if cfg!(target_os = "macos") {
+                "⌥L"
+            } else {
+                "Alt+L"
+            },
+        ),
     ] {
         let r = rows.iter().find(|r| r.name == name).expect(name);
         assert!(

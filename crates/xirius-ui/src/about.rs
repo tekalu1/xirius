@@ -1011,10 +1011,20 @@ fn rest(cells: &mut Vec<Cell>, v: &View, mut y: f32, offset: usize) {
                     "download",
                     Act::SourceRelease,
                 );
+                let last_x = x + w + w2 + Space::X2.px() * 2.0;
+                let last_w = Space::X2.px() * 3.0
+                    + Layout::ICON_SIZE
+                    + text_width("ライセンス文", FontSize::Small);
+                let (last_x, last_y) = if last_x + last_w > x + room {
+                    y += BUTTON_H + Space::X2.px();
+                    (x, y)
+                } else {
+                    (last_x, y)
+                };
                 button(
                     cells,
-                    x + w + w2 + Space::X2.px() * 2.0,
-                    y,
+                    last_x,
+                    last_y,
                     "ライセンス文",
                     "file",
                     Act::License(item),
@@ -1905,7 +1915,12 @@ impl Studio {
         };
         let key = self.update.key.clone();
         if self.transport.is_windowed() {
-            match crate::ancillary_io::submit(move || installer.hold_with(&key)) {
+            match crate::ancillary_io::submit(move || {
+                #[cfg(any(test, feature = "loading-probe"))]
+                xirius_core::io_test::before("update_hold", &installer.path)
+                    .map_err(|e| e.to_string())?;
+                installer.hold_with(&key)
+            }) {
                 Ok(job) => {
                     self.update.holding = Some((job, std::time::Instant::now()));
                     self.toast = Some(crate::toast::Toast {
@@ -2457,7 +2472,7 @@ pub(crate) mod tests {
         ] {
             assert!(a.contains(&act), "{act:?}");
         }
-        // The three buttons of the source row fit the panel side by side.
+        // The source actions fit the panel, wrapping if the native font needs more room.
         let last = cells
             .iter()
             .find(|c| c.action == Some(Action::About(Act::License(Item::Lame))))
@@ -3877,7 +3892,19 @@ used {} {}
             s.run_command("track.add.audio", serde_json::json!({"name":"pending"}));
             s.transport.bind_window();
             let started = Started::default();
-            started.arm(&mut s, root);
+            let installer_path = started.arm(&mut s, root);
+            let release = crate::browser_io_tests::Release::new();
+            let gate = release.0.clone();
+            let _observe = xirius_core::io_test::observe(std::sync::Arc::new(move |op, path| {
+                if op == "update_hold" && path == installer_path {
+                    drop(
+                        gate.1
+                            .wait_while(gate.0.lock().unwrap(), |done| !*done)
+                            .unwrap(),
+                    );
+                }
+                Ok(())
+            }));
             match way {
                 Way::Caption => s.close_knock.set(true),
                 Way::Button => {
@@ -3914,6 +3941,7 @@ used {} {}
                     // An × pressed while it waits starts nothing twice.
                     s.close_knock.set(true);
                     knocked = true;
+                    release.release();
                 }
                 if s.take_window_ask() == Some(WindowAsk::Quit) && s.close_now() {
                     break;

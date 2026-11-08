@@ -176,7 +176,14 @@ fn a_press_on_an_empty_lane_opens_its_menu_and_a_row_runs_by_the_command() {
     );
     // Nothing was copied: paste is dim, and the row keeps its place.
     assert!(!enabled(&s, "貼り付け"));
-    assert_eq!(key(&s, "貼り付け"), "Ctrl+V");
+    assert_eq!(
+        key(&s, "貼り付け"),
+        if cfg!(target_os = "macos") {
+            "⌘V"
+        } else {
+            "Ctrl+V"
+        }
+    );
     assert!(enabled(&s, "MIDI クリップを作成"));
     let keys = track(&s, "Keys");
     let before = s.project().tracks[&keys].clips.len();
@@ -246,7 +253,14 @@ fn a_row_with_rows_below_opens_them_in_its_place_and_goes_back() {
     let rows = all_labels(&s);
     assert_eq!(rows[0], "戻る");
     assert!(rows.contains(&"すべて選択".to_string()));
-    assert_eq!(key(&s, "すべて選択"), "Ctrl+A");
+    assert_eq!(
+        key(&s, "すべて選択"),
+        if cfg!(target_os = "macos") {
+            "⌘A"
+        } else {
+            "Ctrl+A"
+        }
+    );
     assert!(choose(&mut s, &g, "戻る"));
     assert_eq!(labels(&s)[0], "貼り付け");
     // Every row of the second level has a command behind it.

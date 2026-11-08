@@ -149,7 +149,14 @@ fn the_strip_names_a_row_and_the_arrow_says_what_it_does_now() {
     let (mut s, _) = studio();
     let open = crate::hover_tip::folded_text(&s, Hit::Fold).expect("the arrow's tip when open");
     assert!(open.starts_with("トラック一覧を畳む"), "{open}");
-    assert!(open.contains("Ctrl+Shift+L"), "{open}");
+    assert!(
+        open.contains(if cfg!(target_os = "macos") {
+            "⇧⌘L"
+        } else {
+            "Ctrl+Shift+L"
+        }),
+        "{open}"
+    );
     assert!(fold_key(&mut s));
     let project = s.project();
     let (id, track) = project.tracks.iter().next().expect("a track");
@@ -159,7 +166,14 @@ fn the_strip_names_a_row_and_the_arrow_says_what_it_does_now() {
     );
     let arrow = crate::hover_tip::folded_text(&s, Hit::Fold).expect("the arrow's tip");
     assert!(arrow.starts_with("トラック一覧を広げる"), "{arrow}");
-    assert!(arrow.contains("Ctrl+Shift+L"), "{arrow}");
+    assert!(
+        arrow.contains(if cfg!(target_os = "macos") {
+            "⇧⌘L"
+        } else {
+            "Ctrl+Shift+L"
+        }),
+        "{arrow}"
+    );
 }
 
 #[test]

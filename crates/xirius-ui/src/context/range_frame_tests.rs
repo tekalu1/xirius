@@ -233,7 +233,14 @@ fn the_menu_of_the_range_puts_the_frame_round_it_and_a_press_elsewhere_takes_it_
             Some("自由変形"),
             "{rows:?}"
         );
-        assert_eq!(super::tests::key(&s, "自由変形"), "Alt+T");
+        assert_eq!(
+            super::tests::key(&s, "自由変形"),
+            if cfg!(target_os = "macos") {
+                "⌥T"
+            } else {
+                "Alt+T"
+            }
+        );
         let n = steps(&s);
         assert!(choose(&mut s, &g, "自由変形"));
         assert_eq!(steps(&s), n, "the frame changes nothing yet");

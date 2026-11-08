@@ -207,9 +207,22 @@ fn a_prefetched_track_sounds_the_same_sample_for_sample() {
         play(&mut direct, callbacks, frames, &mut a);
         play(&mut ahead, callbacks, frames, &mut b);
         assert_eq!(direct.prefetch(0), None, "switched off");
-        let status = ahead.prefetch(0).expect("a prefetching track");
+        // Publication of the block and its statistics are separate atomic writes.
+        // Wait for statistics too; 100-frame callbacks do not divide 10_240 exactly.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let status = loop {
+            let status = ahead.prefetch(0).expect("a prefetching track");
+            if status.rendered_frames >= (callbacks * frames) as u64 {
+                break status;
+            }
+            assert!(std::time::Instant::now() < deadline, "{status:?}");
+            std::thread::yield_now();
+        };
         assert!(status.lent, "{status:?}");
-        assert!(status.rendered_frames >= 10_240, "{status:?}");
+        assert!(
+            status.rendered_frames >= (callbacks * frames) as u64,
+            "{status:?}"
+        );
         assert_eq!(status.discards, 0, "nothing was edited: {status:?}");
         assert!(a.iter().any(|s| s.abs() > 0.01), "the song is not silent");
         assert_eq!(a.len(), b.len());

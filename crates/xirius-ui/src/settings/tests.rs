@@ -114,7 +114,14 @@ fn the_gear_ctrl_comma_and_the_palette_open_general() {
         .into_iter()
         .find(|r| r.name == crate::palette::SETTINGS.0)
         .expect("the settings' row");
-    assert_eq!(row.key.as_deref(), Some("Ctrl+,"));
+    assert_eq!(
+        row.key.as_deref(),
+        Some(if cfg!(target_os = "macos") {
+            "⌘,"
+        } else {
+            "Ctrl+,"
+        })
+    );
     assert!(s.run_row(&g, &row));
     assert_eq!(
         s.settings.as_ref().map(|u| u.section),

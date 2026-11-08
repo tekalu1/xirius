@@ -1,3 +1,6 @@
+// Deliberately raises an access violation; recovery uses Windows SEH.
+#![cfg(target_os = "windows")]
+
 //! An ARA plugin that faults (PLG-058): the app's crash filter hands the fault to the ARA
 //! containment first, the plugin's thread ends, the app goes on, and the clips play their files
 //! until the plugin is opened again. Its own process: the fault is process-wide state.

@@ -161,5 +161,12 @@ fn a_live_render_without_a_splitter_keeps_its_bits() {
         r.extend(out.iter().skip(1).step_by(2));
     }
     assert!(l.iter().any(|s| *s != 0.0));
-    assert_eq!(hash(&l, &r), 0x9720_2473_1a83_1079, "{:#x}", hash(&l, &r));
+    // Native floating-point math is not required to produce identical bits across OSes.
+    // The original Windows reference remains unchanged; Apple Silicon has its own baseline.
+    let expected = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        0xb258_392d_6b88_b039
+    } else {
+        0x9720_2473_1a83_1079
+    };
+    assert_eq!(hash(&l, &r), expected, "{:#x}", hash(&l, &r));
 }

@@ -72,7 +72,14 @@ fn a_note_has_the_rows_of_the_mock_and_is_selected_alone() {
         ]
     );
     assert_eq!(key(&s, "ノートを複製"), "D");
-    assert_eq!(key(&s, "ノートをミュート"), "Shift+M");
+    assert_eq!(
+        key(&s, "ノートをミュート"),
+        if cfg!(target_os = "macos") {
+            "⇧M"
+        } else {
+            "Shift+M"
+        }
+    );
     assert_eq!(key(&s, "ノートを削除"), "Del / Backspace");
     let c = s.roll_ctx(&g).unwrap();
     let only = c.notes()[1].id;

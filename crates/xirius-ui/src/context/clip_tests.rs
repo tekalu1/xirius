@@ -78,7 +78,14 @@ fn a_midi_clip_has_its_own_rows_in_the_order_of_the_mock() {
         ]
     );
     assert_eq!(key(&s, "クリップを複製"), "D");
-    assert_eq!(key(&s, "コピー"), "Ctrl+C");
+    assert_eq!(
+        key(&s, "コピー"),
+        if cfg!(target_os = "macos") {
+            "⌘C"
+        } else {
+            "Ctrl+C"
+        }
+    );
     assert_eq!(key(&s, "クリップを削除"), "Del / Backspace");
     // The press made the clip the selection.
     assert_eq!(s.arrange.clips.len(), 1);
@@ -588,17 +595,52 @@ fn an_audio_clip_starts_with_following_the_tempo_and_groups_processing_and_bounc
             crate::clip_ara::ADD
         ]
     );
-    assert_eq!(key(&s, crate::clip_ara::ADD), "Ctrl+M");
-    assert_eq!(key(&s, "逆再生"), "Ctrl+R");
-    assert_eq!(key(&s, "ノーマライズ"), "Alt+N");
+    assert_eq!(
+        key(&s, crate::clip_ara::ADD),
+        if cfg!(target_os = "macos") {
+            "⌘M"
+        } else {
+            "Ctrl+M"
+        }
+    );
+    assert_eq!(
+        key(&s, "逆再生"),
+        if cfg!(target_os = "macos") {
+            "⌘R"
+        } else {
+            "Ctrl+R"
+        }
+    );
+    assert_eq!(
+        key(&s, "ノーマライズ"),
+        if cfg!(target_os = "macos") {
+            "⌥N"
+        } else {
+            "Alt+N"
+        }
+    );
     assert!(press_on(&mut s, &g, "Vocal", 0));
     assert!(choose(&mut s, &g, "バウンス"));
     assert_eq!(
         labels(&s),
         ["戻る", "クリップをバウンス", "新しいトラックにバウンス"]
     );
-    assert_eq!(key(&s, "クリップをバウンス"), "Ctrl+B");
-    assert_eq!(key(&s, "新しいトラックにバウンス"), "Ctrl+Alt+B");
+    assert_eq!(
+        key(&s, "クリップをバウンス"),
+        if cfg!(target_os = "macos") {
+            "⌘B"
+        } else {
+            "Ctrl+B"
+        }
+    );
+    assert_eq!(
+        key(&s, "新しいトラックにバウンス"),
+        if cfg!(target_os = "macos") {
+            "⌥⌘B"
+        } else {
+            "Ctrl+Alt+B"
+        }
+    );
 }
 
 #[test]

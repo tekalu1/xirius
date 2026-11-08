@@ -106,13 +106,48 @@ fn the_right_press_on_a_section_opens_its_menu_in_the_order_of_the_mock() {
     assert!(s.context_open());
     assert_eq!(s.arrange.section, Some(s.project().sections[1].id));
     assert_eq!(labels(&s), ["編集", "選択", "時間", "表示", "書き出し"]);
-    assert_eq!(key(&s, "複製"), "Alt+D");
+    assert_eq!(
+        key(&s, "複製"),
+        if cfg!(target_os = "macos") {
+            "⌥D"
+        } else {
+            "Alt+D"
+        }
+    );
     assert_eq!(key(&s, "セクションをループ"), "P");
-    assert_eq!(key(&s, "切り取り"), "Ctrl+X");
-    assert_eq!(key(&s, "コピー"), "Ctrl+C");
-    assert_eq!(key(&s, "貼り付け"), "Ctrl+V");
+    assert_eq!(
+        key(&s, "切り取り"),
+        if cfg!(target_os = "macos") {
+            "⌘X"
+        } else {
+            "Ctrl+X"
+        }
+    );
+    assert_eq!(
+        key(&s, "コピー"),
+        if cfg!(target_os = "macos") {
+            "⌘C"
+        } else {
+            "Ctrl+C"
+        }
+    );
+    assert_eq!(
+        key(&s, "貼り付け"),
+        if cfg!(target_os = "macos") {
+            "⌘V"
+        } else {
+            "Ctrl+V"
+        }
+    );
     assert_eq!(key(&s, "削除"), "Del / Backspace");
-    assert_eq!(key(&s, "時間を削除"), "Ctrl+Alt+D");
+    assert_eq!(
+        key(&s, "時間を削除"),
+        if cfg!(target_os = "macos") {
+            "⌥⌘D"
+        } else {
+            "Ctrl+Alt+D"
+        }
+    );
     // Nothing was copied.
     assert!(!enabled(&s, "貼り付け"));
 }
@@ -200,7 +235,14 @@ fn copy_then_paste_on_the_empty_band_puts_a_section_there() {
     assert!(press_section(&mut s, &g, 15));
     assert_eq!(labels(&s), ["編集", "時間"]);
     assert!(enabled(&s, "貼り付け"));
-    assert_eq!(key(&s, "貼り付け"), "Ctrl+V");
+    assert_eq!(
+        key(&s, "貼り付け"),
+        if cfg!(target_os = "macos") {
+            "⌘V"
+        } else {
+            "Ctrl+V"
+        }
+    );
     let n = steps(&s);
     assert!(choose(&mut s, &g, "貼り付け"));
     assert_eq!(steps(&s), n + 1);
@@ -325,8 +367,22 @@ fn the_loop_menu_has_the_loop_rows_and_the_time_rows() {
     assert_eq!(labels(&s), ["編集", "選択", "時間", "書き出し"]);
     // The loop's key is the pad's slash alone, not "NumPad/ / /".
     assert_eq!(key(&s, "ループ"), "NumPad/");
-    assert_eq!(key(&s, "時間を挿入"), "Ctrl+Alt+I");
-    assert_eq!(key(&s, "時間を削除"), "Ctrl+Alt+D");
+    assert_eq!(
+        key(&s, "時間を挿入"),
+        if cfg!(target_os = "macos") {
+            "⌥⌘I"
+        } else {
+            "Ctrl+Alt+I"
+        }
+    );
+    assert_eq!(
+        key(&s, "時間を削除"),
+        if cfg!(target_os = "macos") {
+            "⌥⌘D"
+        } else {
+            "Ctrl+Alt+D"
+        }
+    );
     // The loop is over the Verse's bars only in part: the new section needs free bars.
     assert!(!enabled(&s, "セクションにする"));
     let n = steps(&s);

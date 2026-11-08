@@ -2086,7 +2086,14 @@ mod tests {
         let long = Row {
             name: "note.quantize",
             label: "ノート".repeat(40),
-            key: Some("Ctrl+Shift+Z".into()),
+            key: Some(
+                (if cfg!(target_os = "macos") {
+                    "⇧⌘Z"
+                } else {
+                    "Ctrl+Shift+Z"
+                })
+                .into(),
+            ),
             icon: "grid",
             enabled: true,
             reason: String::new(),

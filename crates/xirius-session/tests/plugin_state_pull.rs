@@ -114,7 +114,7 @@ fn graph_and_save_captures_complete_independently_when_a_third_request_is_cancel
     while !save.ready() {
         audio.render(&mut buffer, 2);
         assert!(std::time::Instant::now() < deadline);
-        std::thread::yield_now();
+        std::thread::sleep(std::time::Duration::from_millis(6));
     }
     assert!(
         xirius_session::host::collect_pulled_states(&mut s, &mut host, &save, &RunOptions::human())
@@ -133,7 +133,7 @@ fn graph_and_save_captures_complete_independently_when_a_third_request_is_cancel
         audio.render(&mut buffer, 2);
         host.poll();
         assert!(std::time::Instant::now() < deadline);
-        std::thread::yield_now();
+        std::thread::sleep(std::time::Duration::from_millis(6));
     }
     assert!(swapped);
     assert!(!host.take_state_transfer_failed());
@@ -321,7 +321,7 @@ fn a_live_timeline_edit_keeps_the_remote_slot_and_its_unreported_patch() {
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     while link.take_latency_change() != Some(128) {
         assert!(std::time::Instant::now() < deadline);
-        std::thread::yield_now();
+        std::thread::sleep(std::time::Duration::from_millis(6));
     }
     let root = tempfile::tempdir().unwrap();
     let wav = root.path().join("unrelated.wav");
@@ -344,7 +344,7 @@ fn a_live_timeline_edit_keeps_the_remote_slot_and_its_unreported_patch() {
             "material edits do not replace plugins"
         );
         assert!(std::time::Instant::now() < deadline);
-        std::thread::yield_now();
+        std::thread::sleep(std::time::Duration::from_millis(6));
     }
     assert!(Arc::ptr_eq(&link, &host.plugins().link(id).unwrap()));
     assert_eq!(
@@ -381,7 +381,7 @@ fn a_live_timeline_edit_keeps_the_remote_slot_and_its_unreported_patch() {
         audio.render(&mut buffer, 2);
         host.poll();
         assert!(std::time::Instant::now() < deadline, "live graph watchdog");
-        std::thread::yield_now();
+        std::thread::sleep(std::time::Duration::from_millis(6));
     }
     assert!(host.poll().playing, "graph publication preserves playback");
     pull_plugin_states(&mut s, &mut host, &RunOptions::human(), PULL_WAIT).unwrap();
@@ -397,7 +397,7 @@ fn a_live_timeline_edit_keeps_the_remote_slot_and_its_unreported_patch() {
     while !before_reset.ready() || !after_reset.ready() {
         audio.render(&mut buffer, 2);
         assert!(std::time::Instant::now() < deadline);
-        std::thread::yield_now();
+        std::thread::sleep(std::time::Duration::from_millis(6));
     }
     for pull in [&before_reset, &after_reset] {
         let collected = xirius_session::host::collect_pulled_states(
@@ -420,7 +420,7 @@ fn a_live_timeline_edit_keeps_the_remote_slot_and_its_unreported_patch() {
         audio.render(&mut buffer, 2);
         host.poll();
         assert!(std::time::Instant::now() < deadline);
-        std::thread::yield_now();
+        std::thread::sleep(std::time::Duration::from_millis(6));
     }
     let passive = collect_plugin_states(&mut s, &mut host, &RunOptions::human()).unwrap();
     assert!(
@@ -478,7 +478,7 @@ fn a_plugin_that_was_never_created_keeps_its_saved_state_after_silent_continuati
             std::time::Instant::now() < deadline,
             "missing plugin watchdog"
         );
-        std::thread::yield_now();
+        std::thread::sleep(std::time::Duration::from_millis(6));
     }
     let (mut host, _audio, failures) = starting.finish_prepared(s.project(), |_, _| {}).unwrap();
     assert_eq!(failures.len(), 1);

@@ -402,13 +402,34 @@ fn an_effect_is_copied_and_pasted_from_the_plus_row_of_another_channel() {
     let comp = add_effect(&mut s, vocal, "Comp");
     assert!(press(&mut s, &g, MixerHit::AddInsert(keys)));
     assert_eq!(labels(&s), ["編集", "機器"]);
-    assert_eq!(super::tests::key(&s, "貼り付け"), "Ctrl+V");
+    assert_eq!(
+        super::tests::key(&s, "貼り付け"),
+        if cfg!(target_os = "macos") {
+            "⌘V"
+        } else {
+            "Ctrl+V"
+        }
+    );
     assert!(!enabled(&s, "貼り付け"));
     s.popup = None;
     s.ctx = None;
     assert!(press(&mut s, &g, MixerHit::Open(vocal, comp)));
-    assert_eq!(super::tests::key(&s, "切り取り"), "Ctrl+X");
-    assert_eq!(super::tests::key(&s, "コピー"), "Ctrl+C");
+    assert_eq!(
+        super::tests::key(&s, "切り取り"),
+        if cfg!(target_os = "macos") {
+            "⌘X"
+        } else {
+            "Ctrl+X"
+        }
+    );
+    assert_eq!(
+        super::tests::key(&s, "コピー"),
+        if cfg!(target_os = "macos") {
+            "⌘C"
+        } else {
+            "Ctrl+C"
+        }
+    );
     assert!(choose(&mut s, &g, "コピー"));
     let b = insert_count(&s, keys);
     assert!(press(&mut s, &g, MixerHit::AddInsert(keys)));
@@ -498,7 +519,14 @@ fn empty_mixer_pastes_tracks_and_channel_width_changes_the_hit_rectangles() {
     let last = last_channel(&s, &g);
     let (x, y) = (last.right() + 15.0, last.y + 60.0);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(super::tests::key(&s, "貼り付け"), "Ctrl+V");
+    assert_eq!(
+        super::tests::key(&s, "貼り付け"),
+        if cfg!(target_os = "macos") {
+            "⌘V"
+        } else {
+            "Ctrl+V"
+        }
+    );
     let before = s.project();
     assert!(choose(&mut s, &g, "貼り付け"));
     assert_eq!(s.project().tracks.len(), before.tracks.len() + 1);

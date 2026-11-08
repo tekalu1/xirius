@@ -1,3 +1,6 @@
+// Deliberately raises an access violation; recovery uses Windows SEH.
+#![cfg(target_os = "windows")]
+
 //! PLG-058: a plugin that faults or hangs on the ARA thread does not take the process down.
 //! A test binary of its own: the last-chance filter is the process's.
 

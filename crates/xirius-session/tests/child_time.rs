@@ -123,6 +123,8 @@ fn a_plugin_in_its_own_process_reads_as_the_time_it_took_there() {
         while !enough(&timings) && Instant::now() < deadline {
             host.poll();
             audio.render(&mut buffer, 2);
+            // Pace the simulated callback so the child can return its timed blocks.
+            std::thread::sleep(Duration::from_millis(6));
         }
         let read = timings.reading(pid.0).expect("a reading");
         assert!(read.blocks >= 4, "remote {remote}: {read:?}");

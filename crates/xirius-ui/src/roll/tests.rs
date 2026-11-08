@@ -793,7 +793,25 @@ fn feel_10_menu_shortcuts_and_clipboard_keep_muting() {
         .into_iter()
         .map(|r| r.key)
         .collect();
-    for key in ["D", "Shift+M", "Ctrl+X", "Ctrl+C", "Del / Backspace"] {
+    for key in [
+        "D",
+        if cfg!(target_os = "macos") {
+            "⇧M"
+        } else {
+            "Shift+M"
+        },
+        if cfg!(target_os = "macos") {
+            "⌘X"
+        } else {
+            "Ctrl+X"
+        },
+        if cfg!(target_os = "macos") {
+            "⌘C"
+        } else {
+            "Ctrl+C"
+        },
+        "Del / Backspace",
+    ] {
         assert!(keys.iter().any(|k| k == key), "{key}");
     }
     assert!(s.context_choose(&g, "ノートをミュート"));

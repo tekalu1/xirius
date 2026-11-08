@@ -17,7 +17,7 @@ use xirius_session::{
 fn automation_on_the_delayed_and_compensated_tracks_follows_the_audio_after_seek() {
     xirius_test_vst3::fixture_marker();
     let dll = xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
-    assert!(dll.is_file());
+    assert!(dll.exists(), "a DLL on Windows, a bundle on macOS");
     let entries = probe(&dll).unwrap();
     let uid = entries[0].uid.clone();
     let catalog = Arc::new(Catalog {

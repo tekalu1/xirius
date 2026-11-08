@@ -411,11 +411,18 @@ fn key_022_settings_commands_share_the_cli_and_mcp_and_external_reload() {
     let export = c.call("keymap_export", json!({"format":"toml"}));
     assert!(export["text"].as_str().unwrap().contains("F8"));
     c.call("keymap_reset", json!({}));
+    let conflicts = c.call("keymap_conflicts", json!({}));
+    // macOS reports preset shortcuts reserved by the OS (e.g. Cmd+M) as warnings.
+    // Reset must remove user conflicts while retaining these useful warnings.
     assert!(
-        c.call("keymap_conflicts", json!({}))
+        conflicts
             .as_array()
             .unwrap()
-            .is_empty()
+            .iter()
+            .all(|issue| cfg!(target_os = "macos")
+                && issue["kind"] == "reserved"
+                && issue["severity"] == "warning"),
+        "{conflicts}"
     );
 }
 

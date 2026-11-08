@@ -429,7 +429,14 @@ fn the_room_under_the_last_row_adds_pastes_and_folds() {
     let (x, y) = under_the_rows(&s, &g);
     assert!(s.scene_context(&g, x, y));
     assert_eq!(labels(&s), ["編集", "トラック", "表示"]);
-    assert_eq!(key(&s, "貼り付け"), "Ctrl+V");
+    assert_eq!(
+        key(&s, "貼り付け"),
+        if cfg!(target_os = "macos") {
+            "⌘V"
+        } else {
+            "Ctrl+V"
+        }
+    );
     // Nothing was copied.
     assert!(!enabled(&s, "貼り付け"));
     let n = steps(&s);

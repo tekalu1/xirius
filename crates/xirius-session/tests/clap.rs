@@ -151,6 +151,8 @@ fn settles_at(host: &mut SessionHost, audio: &mut AudioEngine, level: f32) {
         );
         host.poll();
         audio.render(&mut buffer, 2);
+        // A 256-frame callback at 48 kHz leaves time for the child process.
+        std::thread::sleep(Duration::from_millis(6));
         if buffer.iter().all(|v| (v - level).abs() < 1e-4) {
             run += 1;
         } else {
@@ -197,6 +199,8 @@ fn a_clap_plugin_plays_with_its_state_and_an_edit_comes_into_the_song() {
     let collected = loop {
         let mut buffer = [0.0f32; 256 * 2];
         audio.render(&mut buffer, 2);
+        // A 256-frame callback at 48 kHz leaves time for the child process.
+        std::thread::sleep(Duration::from_millis(6));
         host.poll();
         let c = collect_plugin_states(&mut s, &mut host, &RunOptions::human()).unwrap();
         if let Some(r) = c.result {
@@ -274,6 +278,8 @@ fn edt_134_the_names_a_clap_plugin_gives_its_keys_reach_the_loader_and_follow_it
         );
         let mut buffer = [0.0f32; 256 * 2];
         audio.render(&mut buffer, 2);
+        // A 256-frame callback at 48 kHz leaves time for the child process.
+        std::thread::sleep(Duration::from_millis(6));
         host.poll();
         std::thread::sleep(Duration::from_millis(5));
     }
