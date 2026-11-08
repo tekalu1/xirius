@@ -289,7 +289,7 @@ pub struct Popup {
     pub recent: Vec<crate::keep::RecentSong>,
     /// The rows of a right-click menu.
     pub ctx: Vec<crate::context::Row>,
-    pub ctx_parents: Vec<(Vec<crate::context::Row>, usize)>,
+    pub ctx_parents: Vec<(Vec<crate::context::Row>, usize, usize)>,
     /// What a right-click menu's name box shows, while it asks for a name.
     pub ask: Option<String>,
     pub ctx_query: Option<String>,
@@ -636,11 +636,32 @@ pub struct PopupLayout {
 }
 
 impl PopupLayout {
+    pub fn contains(&self, x: f32, y: f32) -> bool {
+        if self.panels.is_empty() {
+            self.rect.contains(x, y)
+        } else {
+            self.panels.iter().any(|(r, _)| r.contains(x, y))
+        }
+    }
     /// The cell under a point that a press can use, or that has a tip to show.
     pub fn item_at(&self, x: f32, y: f32) -> Option<usize> {
-        self.cells
+        let (start, end) = if self.panels.is_empty() {
+            (0, self.cells.len())
+        } else {
+            let depth = self.panels.iter().rposition(|(r, _)| r.contains(x, y))?;
+            (
+                if depth == 0 {
+                    0
+                } else {
+                    self.panels[depth - 1].1
+                },
+                self.panels[depth].1,
+            )
+        };
+        self.cells[start..end]
             .iter()
             .rposition(|c| (c.live() || !c.tip.is_empty()) && c.rect.contains(x, y))
+            .map(|i| start + i)
     }
 }
 

@@ -360,6 +360,7 @@ pub struct Row {
 #[derive(Clone, Debug, Default)]
 pub struct State {
     pub parent_rows: Vec<usize>,
+    pub parent_offsets: Vec<usize>,
     pub hover_pending: Option<(usize, usize, std::time::Instant)>,
     pub last_pointer: Option<(f32, f32)>,
     pub cursor: Option<usize>,
@@ -667,6 +668,7 @@ impl Studio {
             });
         self.ctx = Some(State {
             parent_rows: Vec::new(),
+            parent_offsets: Vec::new(),
             hover_pending: None,
             last_pointer: None,
             cursor: None,
@@ -696,6 +698,25 @@ impl Studio {
         self.ctx.as_ref().map(State::rows).unwrap_or_default()
     }
 
+    /// Path through the current live tree, used by window-driven menu probes.
+    pub(crate) fn context_path(&self, label: &str) -> Option<Vec<usize>> {
+        fn find(items: &[Item], label: &str) -> Option<Vec<usize>> {
+            if let Some(i) = items.iter().position(|i| i.label == label) {
+                return Some(vec![i]);
+            }
+            for (i, item) in items.iter().enumerate() {
+                if let Run::Sub(children) = &item.run
+                    && let Some(mut rest) = find(children, label)
+                {
+                    rest.insert(0, i);
+                    return Some(rest);
+                }
+            }
+            None
+        }
+        find(&self.ctx.as_ref()?.items, label)
+    }
+
     /// Whether a context menu is open.
     pub fn context_open(&self) -> bool {
         self.popup.as_ref().map(|p| p.kind) == Some(PopupKind::Context)
@@ -711,6 +732,7 @@ impl Studio {
             return false;
         }
         if let Run::Sub(rows) = item.run.clone() {
+            let offset = self.popup.as_ref().map_or(0, |p| p.offset);
             if let Some(popup) = &mut self.popup {
                 popup.offset = 0;
             }
@@ -719,6 +741,7 @@ impl Studio {
             next.extend(rows);
             st.trail.push(std::mem::replace(&mut st.items, next));
             st.parent_rows.push(i);
+            st.parent_offsets.push(offset);
             st.hover_pending = None;
             st.cursors.push(st.cursor.take());
             st.search = None;
@@ -727,23 +750,8 @@ impl Studio {
             return true;
         }
         if item.run == Run::Back {
-            if let Some(popup) = &mut self.popup {
-                popup.offset = 0;
-            }
-            let st = self.ctx.as_mut().expect("the menu is open");
-            if let Some(up) = st.trail.pop() {
-                st.parent_rows.pop();
-                st.hover_pending = None;
-                st.cursor = st.cursors.pop().flatten();
-                st.items = up;
-                st.search = if st.trail.is_empty() {
-                    search::Search::of(&st.items)
-                } else {
-                    None
-                };
-                st.field = None;
-            }
-            self.refresh_popup();
+            let depth = self.ctx.as_ref().unwrap().trail.len().saturating_sub(1);
+            self.context_restore(depth);
             return true;
         }
         if matches!(item.run, Run::Ask(..) | Run::AskNumber(..)) {

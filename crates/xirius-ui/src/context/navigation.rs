@@ -41,6 +41,7 @@ impl Studio {
                     state.cursor = Some(selectable[next]);
                 }
                 self.refresh_popup();
+                self.context_reveal_cursor(g);
             }
             "enter" | "right" => {
                 if let Some(i) = state.cursor.or_else(|| selectable.first().copied())
@@ -69,6 +70,27 @@ impl Studio {
             _ => return false,
         }
         true
+    }
+
+    fn context_reveal_cursor(&mut self, g: &Geometry) {
+        let Some(row) = self.ctx.as_ref().and_then(|s| s.cursor) else {
+            return;
+        };
+        let Some(popup) = self.popup.as_mut() else {
+            return;
+        };
+        let cells = super::cells(&popup.ctx, super::width(&popup.ctx));
+        let Some(cell) = cells.iter().find(|c| matches!(c.action, Some(crate::popup::Action::Ctx(i) | crate::popup::Action::Field(i, _)) if i == row)) else { return };
+        let step = xirius_design::Layout::MENU_ROW_H;
+        let pad = xirius_design::Layout::POPUP_PAD;
+        let room = g.size.1 - 8.0 - if popup.ctx_query.is_some() { 40.0 } else { 0.0 };
+        let offset = popup.offset as f32 * step;
+        if cell.rect.y - offset < pad {
+            popup.offset = ((cell.rect.y - pad) / step).floor().max(0.0) as usize;
+        } else if cell.rect.bottom() - offset > room - pad {
+            popup.offset = ((cell.rect.bottom() - room + pad) / step).ceil().max(0.0) as usize;
+        }
+        popup.offset = popup.offset.min(popup.max_offset(g.size));
     }
 }
 

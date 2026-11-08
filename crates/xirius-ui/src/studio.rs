@@ -1353,7 +1353,7 @@ impl Studio {
     pub fn hit(&self, g: &Geometry, x: f32, y: f32) -> Hit {
         if let Some(p) = &self.popup {
             let l = p.layout(g.size);
-            if l.rect.contains(x, y) {
+            if l.contains(x, y) {
                 return l.item_at(x, y).map_or(Hit::PopupBody, Hit::Item);
             }
         }
@@ -2274,7 +2274,7 @@ impl Studio {
                                 cursor: s.parent_rows.get(depth).copied(),
                                 ..Default::default()
                             };
-                            (parent.rows(), s.parent_rows[depth])
+                            (parent.rows(), s.parent_rows[depth], s.parent_offsets[depth])
                         })
                         .collect()
                 })

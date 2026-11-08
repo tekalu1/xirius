@@ -166,6 +166,11 @@ impl Screen {
         cx.notify();
     }
     fn right_pressed(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.context_touch.waiting() {
+            let _ = self
+                .context_touch
+                .poll(std::time::Instant::now() + crate::context::touch::HOLD);
+        }
         self.studio.borrow_mut().view_read.cleanup.want_open = false;
         window.focus(&self.focus, cx);
         let mut s = self.studio.borrow_mut();
@@ -200,6 +205,9 @@ impl Screen {
         }
     }
     fn moved(&mut self, ev: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if ev.pressed_button.is_none() {
+            let _ = self.context_touch.release();
+        }
         if let Some(press) = self.context_touch.moved(in_body(ev.position)) {
             self.replaying_touch = true;
             self.pressed(&press, window, cx);
@@ -339,6 +347,7 @@ impl Screen {
     /// The pointer left the window without a last move: nothing is under it,
     /// so the hover goes (a button pressed last would stay lit otherwise).
     fn exited(&mut self, _ev: &MouseExitEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let _ = self.context_touch.release();
         let mut studio = self.studio.borrow_mut();
         if studio.hover != Hit::None {
             studio.hover = Hit::None;

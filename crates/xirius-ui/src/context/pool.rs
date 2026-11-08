@@ -207,6 +207,7 @@ mod tests {
         s.song.open(&dir).unwrap();
         s.bind_window_io();
         s.open_pool_menu(Rect::default());
+        s.ask_text(None, "整理", false);
         let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
         loop {
             s.tick();
@@ -223,22 +224,17 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         let g = s.geometry(1280.0, 800.0);
-        s.ask_text(None, "整理", false);
         assert!(
             s.context_rows()
                 .iter()
                 .any(|r| r.enabled && r.label == "使われていない録音を整理…")
         );
         s.ask_key("escape");
-        let index = s
-            .ctx
-            .as_ref()
-            .unwrap()
-            .items
-            .iter()
-            .position(|item| item.label == "使われていない録音を整理…")
-            .unwrap();
-        assert!(s.context_pick(&g, index));
+        assert!(crate::context::tests::choose(
+            &mut s,
+            &g,
+            "使われていない録音を整理…"
+        ));
         while s.popup.as_ref().is_none_or(|p| p.cleanup.is_none()) {
             s.tick();
             assert!(

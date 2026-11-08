@@ -162,7 +162,7 @@ impl Studio {
         };
         let now = self.roll_drum();
         let clip = target.clip.id.to_string();
-        let mut items: Vec<_> = xirius_core::drum::MAPS
+        let maps: Vec<_> = xirius_core::drum::MAPS
             .iter()
             .map(|(map, label)| {
                 let args = serde_json::json!({ "clip": clip, "map": map });
@@ -170,11 +170,17 @@ impl Studio {
                     .on(now.as_deref() == Some(*map))
             })
             .collect();
+        let mut items = vec![crate::context::Item::sub("ドラムマップ", maps)];
         if let Some(ctx) = self.roll_ctx(g) {
             items.extend(self.drum_row_items(&ctx));
         }
         let r = g.roll_map();
-        self.open_context(items, r.x, r.bottom() - xirius_design::Layout::TOP_BAR_H);
+        self.open_classified(
+            "other-36",
+            items,
+            r.x,
+            r.bottom() - xirius_design::Layout::TOP_BAR_H,
+        );
         true
     }
 

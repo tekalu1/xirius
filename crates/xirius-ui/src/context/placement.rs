@@ -20,12 +20,17 @@ struct Route {
 fn routes() -> &'static [Route] {
     static ROUTES: OnceLock<Vec<Route>> = OnceLock::new();
     ROUTES.get_or_init(|| {
-        let before: Vec<Value> =
+        let mut before: Vec<Value> =
             serde_json::from_str(include_str!("../../tests/context_menus/inventory.json"))
                 .expect("approved inventory");
-        let after: Vec<Value> =
+        let mut after: Vec<Value> =
             serde_json::from_str(include_str!("../../tests/context_menus/mapping.json"))
                 .expect("approved mapping");
+        let supplemental: Vec<Value> =
+            serde_json::from_str(include_str!("../../tests/context_menus/supplemental.json"))
+                .expect("live inventory additions");
+        before.extend(supplemental.clone());
+        after.extend(supplemental);
         after
             .iter()
             .map(|to| {
@@ -78,6 +83,38 @@ fn same_path(a: &[String], b: &[String]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(a, b)| normalized(a) == normalized(b))
 }
 
+// The reviewed inventory used a few descriptive captions instead of the live
+// command labels. These aliases are lookup-only; the displayed operation is retained.
+fn lookup_path(target: &str, path: &[String]) -> Vec<String> {
+    let mut out = path.to_vec();
+    for part in &mut out {
+        let alias = match (target, part.as_str()) {
+            ("other-21", "ループの始まりをここに") => "ループ開始を設定",
+            ("other-18", "出力先を設定") => "出力",
+            ("other-21", "ループの終わりをここに") => "ループ終了を設定",
+            ("other-22", "ループ") => "ループ切替",
+            ("other-22", "ループ範囲のものを選択") => "ループ内選択",
+            ("other-24", "セクションのものを選択") => "セクションを選択",
+            ("other-26", "テンポポイントを削除") => "テンポを削除",
+            ("other-27", "テンポの変化をすべて削除") => "テンポをクリア",
+            ("other-41", "ノートを削除") => "削除",
+            ("other-49", "トラックを複製") => "トラックを複製（設定だけ）",
+            ("other-50", "ミックスダウンを書き出す…") => "ミックスダウン",
+            ("other-73", "工場出荷のプリセットを読み込み直す") => {
+                "標準プリセットを復元"
+            }
+            ("other-76", "場所名を変更") => "名前を変更",
+            ("multi-audio", "クロスフェードを作成") => "クロスフェード",
+            _ => continue,
+        };
+        *part = alias.into();
+    }
+    if target == "other-19" && out.first().is_some_and(|s| s == "中のトラックにも塗る") {
+        out.insert(0, "色".into());
+    }
+    out
+}
+
 fn target_matches(route: &str, target: &str) -> bool {
     route == target
         || match target {
@@ -87,6 +124,57 @@ fn target_matches(route: &str, target: &str) -> bool {
             "insert" | "flow-plugin" => route == "insert-states",
             _ => false,
         }
+}
+
+fn command_of(item: &Item) -> &str {
+    match &item.run {
+        Run::Cmd(c, _) | Run::Key(c) | Run::Ask(c, ..) | Run::AskNumber(c, ..) => {
+            if *c == "plugin.copy_to" {
+                "plugin.copy"
+            } else {
+                c
+            }
+        }
+        Run::Field(kind, ..) => kind.command(),
+        Run::Do(super::Act::Lane(..)) => "auto.lane.show",
+        Run::Do(super::Act::AraAttach(..)) => "clip.ara.attach",
+        Run::Do(super::Act::Preset(..)) => "plugin.preset.load",
+        Run::Do(super::Act::InsertRecent(..)) => "plugin.recent",
+        Run::Legacy(
+            crate::popup::PopupKind::InstMenu(crate::instrument::menu::Menu::Preset(..)),
+            _,
+            action,
+        ) if matches!(action.as_ref(), crate::popup::Action::Pick(to) if to.starts_with(crate::instrument::menu::LOAD)) => {
+            "instrument.preset.load"
+        }
+        Run::Legacy(
+            crate::popup::PopupKind::InstMenu(crate::instrument::menu::Menu::Params(..)),
+            ..,
+        ) => "auto.lane.show",
+        _ => "",
+    }
+}
+
+fn dynamic_command(route: &Route) -> &str {
+    if !route.command.is_empty() {
+        return &route.command;
+    }
+    match route.id.as_str() {
+        "other-18:002" => "track.output.set",
+        "other-20:004" | "other-69:003" => "track.preset.add",
+        "other-31:000" | "other-48:033" | "other-49:027" | "other-50:005" | "other-59:010" => {
+            "auto.lane.show"
+        }
+        "other-36:000" => "roll.drum.hide",
+        "other-36:001" => "roll.drum.rename",
+        "other-48:029" => "track.preset.apply",
+        "other-54:000" => "send.target.set",
+        "other-55:000" => "send.add",
+        "other-56:001" => "plugin.recent",
+        "other-59:001" => "instrument.preset.load",
+        "other-67:002" => "control.unassign",
+        _ => "unclassified dynamic rule",
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -136,6 +224,8 @@ pub fn organize(target: &str, items: Vec<Item>) -> Result<Vec<Item>, Missing> {
         }
     }
     collect(items, &[], &mut leaves, &mut marks);
+    #[cfg(test)]
+    let original: Vec<Item> = leaves.iter().map(|(_, i)| i.clone()).collect();
     let mut direct = Vec::new();
     let mut groups: [Vec<Item>; 12] = std::array::from_fn(|_| Vec::new());
     for (path, mut item) in leaves {
@@ -143,16 +233,8 @@ pub fn organize(target: &str, items: Vec<Item>) -> Result<Vec<Item>, Missing> {
             .iter()
             .filter(|r| target_matches(&r.target, target))
             .collect();
-        let command = match &item.run {
-            Run::Cmd(c, _) | Run::Key(c) | Run::Ask(c, ..) | Run::AskNumber(c, ..) => *c,
-            _ => "",
-        };
-        let command = if command == "plugin.copy_to" {
-            "plugin.copy"
-        } else {
-            command
-        };
-        let mut lookup = path.clone();
+        let command = command_of(&item);
+        let mut lookup = lookup_path(target, &path);
         let empty = matches!(&item.run, Run::Sub(children) if children.is_empty());
         if let Run::Cmd("control.assign" | "control.unassign", args) = &item.run
             && let Some(control) = args["control"].as_str().and_then(|s| s.strip_prefix('k'))
@@ -162,19 +244,28 @@ pub fn organize(target: &str, items: Vec<Item>) -> Result<Vec<Item>, Missing> {
         let route = candidates
             .iter()
             .copied()
-            .find(|r| same_path(&r.before, &lookup))
+            .find(|r| {
+                same_path(&r.before, &lookup)
+                    && (r.command.is_empty() || command.is_empty() || r.command == command)
+            })
             .or_else(|| {
                 candidates.iter().copied().find(|r| {
-                    (r.dynamic || matches!(item.run, Run::Do(super::Act::Preset(..))))
-                        && same_path(
-                            &r.before[..r.before.len() - 1],
-                            if empty {
-                                &path
+                    (r.dynamic || empty || matches!(item.run, Run::Do(super::Act::Preset(..))))
+                        && if empty {
+                            same_path(&r.before[..r.before.len() - 1], &lookup)
+                        } else {
+                            lookup.len() >= r.before.len()
+                                && same_path(
+                                    &r.before[..r.before.len() - 1],
+                                    &lookup[..r.before.len() - 1],
+                                )
+                        }
+                        && (empty
+                            || if r.dynamic {
+                                dynamic_command(r) == command
                             } else {
-                                &path[..path.len() - 1]
-                            },
-                        )
-                        && (r.command.is_empty() || command.is_empty() || r.command == command)
+                                matches!(item.run, Run::Do(super::Act::Preset(..)))
+                            })
                 })
             })
             .ok_or_else(|| Missing {
@@ -191,7 +282,9 @@ pub fn organize(target: &str, items: Vec<Item>) -> Result<Vec<Item>, Missing> {
         if item.swatch.is_none() {
             // Only the approved operation renames. Ledger descriptions of generated
             // candidates (e.g. a renamed Macro knob) are not their display labels.
-            item.label = if item.label.ends_with("名を変更…") || item.label.ends_with("名を変更")
+            item.label = if item.label.ends_with("名を変更…")
+                || item.label.ends_with("名を変更")
+                || item.label == "名前を変更"
             {
                 "名前を変更…".into()
             } else if item.label == "別のチャンネルへ写す" {
@@ -221,10 +314,135 @@ pub fn organize(target: &str, items: Vec<Item>) -> Result<Vec<Item>, Missing> {
     for (category, items) in Category::ALL.into_iter().zip(groups) {
         entries.extend(items.into_iter().map(|i| Entry::new(category, i)));
     }
-    layout::build(entries).map_err(|_| Missing {
+    let result = layout::build(entries).map_err(|_| Missing {
         target: target.into(),
         path: vec!["root exceeds 12 rows".into()],
-    })
+    })?;
+    #[cfg(test)]
+    verify_live_tree(target, &original, &result);
+    Ok(result)
+}
+
+/// Every real builder call in the unit suite checks the moved live payloads, not a
+/// reconstruction of operations from JSON. Dynamic rules may produce several candidates.
+#[cfg(test)]
+fn verify_live_tree(target: &str, original: &[Item], result: &[Item]) {
+    fn leaves<'a>(items: &'a [Item], out: &mut Vec<&'a Item>) {
+        for item in items {
+            if let Run::Sub(children) = &item.run
+                && !children.is_empty()
+            {
+                assert!(
+                    item.enabled,
+                    "disabled category hides its reasons: {}",
+                    item.label
+                );
+                leaves(children, out);
+            } else {
+                out.push(item);
+            }
+        }
+    }
+    assert!(result.len() <= 12, "{target}: root row budget");
+    let order: Vec<_> = result
+        .iter()
+        .filter_map(|i| {
+            if i.ledger_id.is_some() {
+                return None;
+            }
+            Category::ALL.into_iter().position(|c| c.label() == i.label)
+        })
+        .collect();
+    assert!(
+        order.windows(2).all(|p| p[0] < p[1]),
+        "{target}: category order"
+    );
+    let mut moved = Vec::new();
+    leaves(result, &mut moved);
+    assert_eq!(
+        original.len(),
+        moved.len(),
+        "{target}: missing or duplicate leaves"
+    );
+    let mut remaining = original.to_vec();
+    for item in moved {
+        let id = item
+            .ledger_id
+            .as_ref()
+            .expect("an operation without classification");
+        assert!(
+            routes()
+                .iter()
+                .any(|r| &r.id == id && target_matches(&r.target, target)),
+            "{target}: unknown ledger identity {id}"
+        );
+        let n = remaining
+            .iter()
+            .position(|old| {
+                old.run == item.run
+                    && old.key == item.key
+                    && old.enabled == item.enabled
+                    && old.reason == item.reason
+                    && old.on == item.on
+                    && old.selects == item.selects
+                    && old.swatch == item.swatch
+            })
+            .unwrap_or_else(|| panic!("{target}: changed or duplicated operation {}", item.label));
+        remaining.remove(n);
+    }
+    assert!(remaining.is_empty(), "{target}: unreachable operations");
+    fn paths(items: &[Item], path: &mut Vec<String>, ids: &mut Vec<String>) {
+        for item in items {
+            if let Some(id) = &item.ledger_id {
+                let route = routes().iter().find(|r| &r.id == id).unwrap();
+                let empty = matches!(&item.run, Run::Sub(rows) if rows.is_empty());
+                let parent_count = route.after.len() - if empty { 2 } else { 1 };
+                assert_eq!(
+                    &route.after[..parent_count],
+                    path.as_slice(),
+                    "{id}: approved destination"
+                );
+                ids.push(id.clone());
+            } else if let Run::Sub(children) = &item.run {
+                path.push(item.label.clone());
+                paths(children, path, ids);
+                path.pop();
+            }
+        }
+    }
+    let mut ids = Vec::new();
+    paths(result, &mut Vec::new(), &mut ids);
+    // The workspace suite aggregates coverage across real scene fixtures. This is
+    // test-only output, and contains rule IDs, never project paths or plugin data.
+    if let Some(directory) = std::env::var_os("XIRIUS_CONTEXT_COVERAGE_DIR") {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let file = std::path::PathBuf::from(directory).join(format!(
+            "{}-{}.json",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(
+            file,
+            serde_json::to_vec(&serde_json::json!({"target": target, "ids": ids})).unwrap(),
+        )
+        .expect("write context coverage");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn an_added_unclassified_operation_fails() {
+        let mut s = crate::studio::Studio::sample();
+        let item = s.ctx_as(
+            "Unclassified operation",
+            "marker.add",
+            serde_json::json!({"at": 0}),
+        );
+        assert!(organize("audio", vec![item]).is_err());
+    }
 }
 
 fn insert(items: &mut Vec<Item>, parents: &[String], leaf: Item, marks: &BTreeMap<String, usize>) {

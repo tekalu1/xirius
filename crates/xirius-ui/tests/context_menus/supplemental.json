@@ -1,0 +1,32 @@
+[
+  {
+    "id": "other-36:live-map",
+    "key": "other-36",
+    "source": "crates/xirius-ui/src/roll/bridge.rs",
+    "asis": ["ドラムマップ", "全マップ"],
+    "tobe": ["表示", "ドラムマップ", "全マップ"],
+    "category": "表示",
+    "command": "roll.view",
+    "dynamic": true
+  },
+  {
+    "id": "midi:live-range-bounce",
+    "key": "midi",
+    "source": "crates/xirius-ui/src/context/clip.rs",
+    "asis": ["バウンス", "選択範囲をバウンス"],
+    "tobe": ["書き出し", "バウンス", "選択範囲をバウンス"],
+    "category": "書き出し",
+    "command": "clip.bounce",
+    "dynamic": false
+  },
+  {
+    "id": "other-82:live-rewrite",
+    "key": "other-82",
+    "source": "crates/xirius-ui/src/context/export.rs",
+    "asis": ["書き直す"],
+    "tobe": ["書き出し", "書き直す"],
+    "category": "書き出し",
+    "command": "",
+    "dynamic": false
+  }
+]

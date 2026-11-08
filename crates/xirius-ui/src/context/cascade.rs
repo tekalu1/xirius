@@ -33,8 +33,8 @@ pub fn layout(popup: &Popup, viewport: (f32, f32)) -> PopupLayout {
         let mut panel = popup.clone();
         panel.ctx_parents.clear();
         let ancestor = popup.ctx_parents.get(depth);
-        if let Some((rows, _)) = ancestor {
-            panel.offset = 0;
+        if let Some((rows, _, offset)) = ancestor {
+            panel.offset = *offset;
             panel.ctx = rows.clone();
             panel.ctx_query = (depth == 0).then(String::new);
             panel.ctx_search = false;
@@ -48,7 +48,7 @@ pub fn layout(popup: &Popup, viewport: (f32, f32)) -> PopupLayout {
             }
             placed.rect = rect;
         }
-        if let Some((_, selected)) = ancestor {
+        if let Some((_, selected, _)) = ancestor {
             let row = placed
                 .cells
                 .iter()
@@ -102,10 +102,12 @@ pub fn toward_child(from: (f32, f32), to: (f32, f32), child: Rect) -> bool {
 impl Studio {
     pub(crate) fn context_restore(&mut self, depth: usize) {
         let Some(state) = &mut self.ctx else { return };
+        let mut offset = self.popup.as_ref().map_or(0, |p| p.offset);
         while state.trail.len() > depth {
             state.items = state.trail.pop().unwrap();
             state.cursor = state.cursors.pop().flatten();
             state.parent_rows.pop();
+            offset = state.parent_offsets.pop().unwrap_or(0);
         }
         state.search = if depth == 0 {
             super::search::Search::of(&state.items)
@@ -115,7 +117,7 @@ impl Studio {
         state.field = None;
         state.hover_pending = None;
         if let Some(popup) = &mut self.popup {
-            popup.offset = 0;
+            popup.offset = offset;
         }
         self.refresh_popup();
     }

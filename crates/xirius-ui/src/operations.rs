@@ -176,6 +176,7 @@ pub fn of_hit(hit: Hit) -> Option<(&'static str, &'static str)> {
 /// AI, quantize, about) is named by the panel: its parts are that panel's and appear nowhere else.
 pub fn of_action(action: &Action) -> &'static str {
     match action {
+        Action::CtxAncestor(_, action) => of_action(action),
         Action::OpenNoteEdit(_) => "noteedit.open",
         Action::EditValue(..) => "noteedit.value",
         Action::Link => "view.link",
