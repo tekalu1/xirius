@@ -21,6 +21,11 @@ struct Song {
 
 impl Song {
     fn new() -> Song {
+        Self::with_tracks(&[])
+    }
+
+    /// Prepare all armed tracks in one session before starting any CLI process.
+    fn with_tracks(tracks: &[(&str, Option<&str>)]) -> Song {
         let dir = std::env::temp_dir().join(format!(
             "xirius-cli-record-{}-{}",
             std::process::id(),
@@ -36,6 +41,9 @@ impl Song {
         let r = run(&mut s, "track.add.audio", json!({"name": "Vox"}));
         let vox = r.data["id"].as_str().unwrap().to_string();
         run(&mut s, "track.arm", json!({"ids": [vox], "on": true}));
+        for &(name, input) in tracks {
+            Self::arm(&mut s, name, input);
+        }
         s.save().unwrap();
         Song { dir }
     }
@@ -56,8 +64,7 @@ impl Song {
 
     /// Adds an armed audio track `name` (input `input`) or, with `input` `None`, an armed
     /// instrument track.
-    fn arm(&self, name: &str, input: Option<&str>) {
-        let mut s = xirius_core::Session::open(&self.dir).unwrap();
+    fn arm(s: &mut xirius_core::Session, name: &str, input: Option<&str>) {
         let human = xirius_core::session::RunOptions::human();
         let run = |s: &mut xirius_core::Session, name: &str, args: Value| {
             s.run(name, args.as_object().unwrap(), &human).unwrap()
@@ -67,17 +74,12 @@ impl Song {
         } else {
             "track.add.instrument"
         };
-        let r = run(&mut s, kind, json!({"name": name}));
+        let r = run(s, kind, json!({"name": name}));
         let id = r.data["id"].as_str().unwrap().to_string();
-        run(&mut s, "track.arm", json!({"ids": [id], "on": true}));
+        run(s, "track.arm", json!({"ids": [id], "on": true}));
         if let Some(input) = input {
-            run(
-                &mut s,
-                "track.input.set",
-                json!({"ids": [id], "input": input}),
-            );
+            run(s, "track.input.set", json!({"ids": [id], "input": input}));
         }
-        s.save().unwrap();
     }
 
     /// A file of MIDI messages for `--midi-script`.
@@ -278,9 +280,7 @@ fn mcp_records_on_its_silent_player_and_one_undo_takes_it_out() {
 
 #[test]
 fn play_records_audio_tracks_and_midi_from_a_script_at_once() {
-    let s = Song::new();
-    s.arm("Gtr", Some("In 1"));
-    s.arm("Keys", None);
+    let s = Song::with_tracks(&[("Gtr", Some("In 1")), ("Keys", None)]);
     let script = s.midi_script();
     let r = s.play_with(
         &["--midi-script", script.to_str().unwrap()],
@@ -334,8 +334,7 @@ fn play_records_audio_tracks_and_midi_from_a_script_at_once() {
 
 #[test]
 fn mcp_records_midi_from_a_script() {
-    let s = Song::new();
-    s.arm("Keys", None);
+    let s = Song::with_tracks(&[("Keys", None)]);
     let script = s.midi_script();
     let mut child = s
         .cmd(&[
@@ -509,8 +508,7 @@ record.stop
 
 #[test]
 fn an_assigned_pad_is_left_out_of_the_recorded_clip() {
-    let s = Song::new();
-    s.arm("Keys", None);
+    let s = Song::with_tracks(&[("Keys", None)]);
     let config = s.dir.join("config");
     std::fs::create_dir_all(&config).unwrap();
     let pitches = |clip: &Value| -> Vec<i64> {
@@ -538,7 +536,6 @@ fn an_assigned_pad_is_left_out_of_the_recorded_clip() {
         .output()
         .unwrap();
     assert!(r.status.success(), "{}{}", text(&r.stdout), text(&r.stderr));
-    let s2 = Song::new();
-    s2.arm("Keys", None);
+    let s2 = Song::with_tracks(&[("Keys", None)]);
     assert_eq!(pitches(&play_pad(&s2, &config)), [60]);
 }

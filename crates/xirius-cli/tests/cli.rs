@@ -656,7 +656,7 @@ fn mcp_reports_protocol_mistakes() {
 
 #[test]
 fn mcp_http_listens_on_loopback_and_wants_its_token() {
-    use std::io::{BufRead, BufReader, Read};
+    use std::io::{BufRead, BufReader};
     use std::net::TcpStream;
 
     let s = Song::new();
@@ -696,7 +696,9 @@ fn mcp_http_listens_on_loopback_and_wants_its_token() {
         )
         .unwrap();
         let mut out = String::new();
-        c.read_to_string(&mut out).unwrap();
+        // Only the status is under test. A rejected request can close with a reset
+        // after its status on Unix when the server leaves the request body unread.
+        BufReader::new(c).read_line(&mut out).unwrap();
         out
     };
     let none = post("");
