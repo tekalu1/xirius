@@ -599,6 +599,7 @@ impl CpalInput {
 
     /// An input fed by a thread of someone else's: `ring` holds `channels`-interleaved frames,
     /// and `stop` ends that thread when this goes.
+    #[cfg(any(windows, test))]
     pub(crate) fn from_parts(
         rx: Consumer<f32>,
         stop: Arc<AtomicBool>,
@@ -623,6 +624,7 @@ impl CpalInput {
         self.lost.clone()
     }
 
+    #[cfg(windows)]
     pub(crate) fn stop_now(&self) {
         self.owner.request_stop();
     }

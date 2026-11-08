@@ -119,6 +119,56 @@ fn disk_space(directory: &Path) -> io::Result<u64> {
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 
+#[cfg(windows)]
+fn reserve(file: &File, size: i64, _previous: u64) -> io::Result<()> {
+    let info = FILE_ALLOCATION_INFO {
+        AllocationSize: size,
+    };
+    // SAFETY: owned file and valid metadata structure.
+    if unsafe {
+        SetFileInformationByHandle(
+            file.as_raw_handle(),
+            FileAllocationInfo,
+            (&info as *const FILE_ALLOCATION_INFO).cast(),
+            size_of::<FILE_ALLOCATION_INFO>() as u32,
+        )
+    } == 0
+    {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+#[cfg(target_os = "macos")]
+fn reserve(file: &File, size: i64, previous: u64) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let mut store = libc::fstore_t {
+        fst_flags: libc::F_ALLOCATEALL,
+        fst_posmode: libc::F_PEOFPOSMODE,
+        fst_offset: 0,
+        fst_length: size - previous as i64,
+        fst_bytesalloc: 0,
+    };
+    // SAFETY: owned fd and writable fstore_t. F_PREALLOCATE does not change logical EOF.
+    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_PREALLOCATE, &mut store) } == -1 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+#[cfg(target_os = "macos")]
+fn disk_space(directory: &Path) -> io::Result<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let name = std::ffi::CString::new(directory.as_os_str().as_bytes())?;
+    let mut info = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: NUL-terminated path and writable output structure.
+    if unsafe { libc::statvfs(name.as_ptr(), info.as_mut_ptr()) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    let info = unsafe { info.assume_init() };
+    Ok(u64::from(info.f_bavail).saturating_mul(info.f_frsize))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,54 +254,4 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"take");
         std::fs::remove_file(path).unwrap();
     }
-}
-
-#[cfg(windows)]
-fn reserve(file: &File, size: i64, _previous: u64) -> io::Result<()> {
-    let info = FILE_ALLOCATION_INFO {
-        AllocationSize: size,
-    };
-    // SAFETY: owned file and valid metadata structure.
-    if unsafe {
-        SetFileInformationByHandle(
-            file.as_raw_handle(),
-            FileAllocationInfo,
-            (&info as *const FILE_ALLOCATION_INFO).cast(),
-            size_of::<FILE_ALLOCATION_INFO>() as u32,
-        )
-    } == 0
-    {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
-}
-#[cfg(target_os = "macos")]
-fn reserve(file: &File, size: i64, previous: u64) -> io::Result<()> {
-    use std::os::fd::AsRawFd;
-    let mut store = libc::fstore_t {
-        fst_flags: libc::F_ALLOCATEALL,
-        fst_posmode: libc::F_PEOFPOSMODE,
-        fst_offset: 0,
-        fst_length: size - previous as i64,
-        fst_bytesalloc: 0,
-    };
-    // SAFETY: owned fd and writable fstore_t. F_PREALLOCATE does not change logical EOF.
-    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_PREALLOCATE, &mut store) } == -1 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
-}
-#[cfg(target_os = "macos")]
-fn disk_space(directory: &Path) -> io::Result<u64> {
-    use std::os::unix::ffi::OsStrExt;
-    let name = std::ffi::CString::new(directory.as_os_str().as_bytes())?;
-    let mut info = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-    // SAFETY: NUL-terminated path and writable output structure.
-    if unsafe { libc::statvfs(name.as_ptr(), info.as_mut_ptr()) } == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    let info = unsafe { info.assume_init() };
-    Ok(u64::from(info.f_bavail).saturating_mul(info.f_frsize))
 }
