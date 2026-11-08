@@ -131,7 +131,8 @@ impl Event {
     }
     pub fn open(text: &str) -> io::Result<Self> {
         let mapping = Mapping::open(&format!("event-{text}"))?;
-        if mapping.len() != std::mem::size_of::<AtomicU32>() {
+        // Darwin reports the page-rounded size through fstat.
+        if mapping.len() < std::mem::size_of::<AtomicU32>() {
             return Err(io::Error::other("invalid event mapping"));
         }
         Ok(Self(mapping))

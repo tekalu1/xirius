@@ -2503,6 +2503,8 @@ mod tests {
     /// UI-282: a download of another window (its `.part` belongs to a live process) is left
     /// alone; one left by a dead process is cleaned up.
     #[test]
+    // Windows-only: the installer identifies Windows processes by executable name.
+    #[cfg(windows)]
     fn a_live_process_that_is_not_xirius_does_not_hold_a_part() {
         // PID 4 is Windows' System process, and 9 is read as 8 (the low bits are ignored):
         // neither is a window writing a download.
@@ -2515,6 +2517,8 @@ mod tests {
     }
 
     #[test]
+    // Windows-only: live installer downloads use Windows process ownership checks.
+    #[cfg(windows)]
     fn a_part_of_a_live_window_is_not_cleaned_up() {
         let (_, public) = keypair();
         let tmp = scratch("livepart");
@@ -2536,6 +2540,8 @@ mod tests {
     }
 
     #[test]
+    // Windows-only: NSIS arguments and the Windows per-user installation path.
+    #[cfg(windows)]
     fn the_installer_runs_silently_and_asks_for_xirius() {
         let tmp = scratch("install");
         let setup = tmp.path().join(setup_name("1.0.1"));

@@ -203,7 +203,8 @@ impl SharedRings {
             return Err(io::Error::other("not a xirius sandbox mapping"));
         }
         #[cfg(target_os = "macos")]
-        if rings.mapping.len() != Self::size(h.capacity as usize) {
+        // Darwin rounds a POSIX shared-memory object up to whole pages.
+        if rings.mapping.len() < Self::size(h.capacity as usize) {
             return Err(io::Error::other("invalid sandbox mapping length"));
         }
         rings.mask = h.capacity as usize - 1;
