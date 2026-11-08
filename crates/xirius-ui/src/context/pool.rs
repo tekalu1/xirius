@@ -151,9 +151,71 @@ impl Studio {
         }
     }
 
+    /// Refresh the stored menu item after the cleanup worker has answered.
+    pub(crate) fn refresh_cleanup_row(&mut self) {
+        let index = self.ctx.as_ref().and_then(|ctx| {
+            ctx.items
+                .iter()
+                .position(|item| item.label == "使われていない録音を整理…")
+        });
+        if let Some(index) = index {
+            let row = self.cleanup_row();
+            self.ctx.as_mut().unwrap().items[index] = row;
+        }
+        self.refresh_popup();
+    }
+
     /// Opens the 「…」 under its button.
     pub(crate) fn open_pool_menu(&mut self, at: Rect) {
         let rows = self.pool_menu_items();
         self.open_context(rows, at.x, at.bottom());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windowed_cleanup_menu_enables_after_the_read_without_reopening() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = crate::pool_shots::make_song(temp.path());
+        let mut s = Studio::sample();
+        s.song.open(&dir).unwrap();
+        s.bind_window_io();
+        s.open_pool_menu(Rect::default());
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            s.tick();
+            if s.context_rows()
+                .iter()
+                .any(|row| row.label == "使われていない録音を整理…" && row.enabled)
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < end,
+                "cleanup row stayed disabled"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let g = s.geometry(1280.0, 800.0);
+        let index = s
+            .ctx
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .position(|item| item.label == "使われていない録音を整理…")
+            .unwrap();
+        assert!(s.context_pick(&g, index));
+        while s.popup.as_ref().is_none_or(|p| p.cleanup.is_none()) {
+            s.tick();
+            assert!(
+                std::time::Instant::now() < end,
+                "cleanup dialog did not open"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 }

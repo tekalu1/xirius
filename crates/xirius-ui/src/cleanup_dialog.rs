@@ -269,7 +269,7 @@ impl Studio {
             self.view_read.cleanup.want_open = false;
             self.show_cleanup(result);
         } else if self.ctx.is_some() {
-            self.refresh_popup();
+            self.refresh_cleanup_row();
         }
         true
     }
