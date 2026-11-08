@@ -383,22 +383,7 @@ fn press(p: (f32, f32), button: MouseButton, window: &mut Window, cx: &mut App) 
 }
 
 fn choose(studio: &Rc<RefCell<Studio>>, label: &str, window: &mut Window, cx: &mut App) {
-    let p = {
-        let s = studio.borrow();
-        let g = crate::screen::geometry(&s, window);
-        let layout = s.popup.as_ref().expect("menu").layout(g.size);
-        let cell = layout
-            .cells
-            .iter()
-            .find(|c| c.text == label && !matches!(c.look, crate::popup::Look::Input))
-            .unwrap_or_else(|| panic!("missing row {label}"));
-        assert!(cell.live(), "disabled row {label}");
-        (
-            cell.rect.x + cell.rect.w / 2.0,
-            cell.rect.y + cell.rect.h / 2.0,
-        )
-    };
-    press(p, MouseButton::Left, window, cx);
+    crate::ctx_shots::choose(studio, label, window, cx);
 }
 
 fn remember(s: &Studio) {
@@ -522,7 +507,7 @@ fn play(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) 
         10 => {
             marker_press(studio, window, cx);
             remember(&studio.borrow());
-            choose(studio, "マーカー名を変更", window, cx);
+            choose(studio, "名前を変更…", window, cx);
             type_number(studio, "Bridge");
             assert_eq!(studio.borrow().project().markers[0].name, "Bridge");
         }
@@ -1052,7 +1037,7 @@ fn play(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) 
             };
             press(p, MouseButton::Right, window, cx);
             remember(&studio.borrow());
-            choose(studio, "クリップ名を変更", window, cx);
+            choose(studio, "名前を変更…", window, cx);
             type_number(studio, "Lead");
         }
         92 => {

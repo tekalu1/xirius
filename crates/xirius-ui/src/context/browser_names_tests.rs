@@ -52,7 +52,7 @@ fn the_words_the_matrix_and_the_table_disagreed_on_are_the_tables() {
             assert!(label.contains("名を変更"), "{}: 「{label}」", d.name);
         }
     }
-    assert_eq!(s.label_of("location.rename"), "場所名を変更");
+    assert_eq!(s.label_of("location.rename"), "名前を変更…");
     assert_eq!(s.label_of("location.remove"), "場所を外す");
     // The strings that were in the sources before are gone from them.
     for (file, src) in SOURCES {

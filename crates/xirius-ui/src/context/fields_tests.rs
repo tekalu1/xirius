@@ -91,7 +91,7 @@ fn an_audio_clip_starts_with_its_four_fields_and_then_following_the_tempo() {
             "クリップを分割"
         ]
     );
-    assert_eq!(rows[6], "クリップ名を変更", "{rows:?}");
+    assert_eq!(rows[6], "名前を変更…", "{rows:?}");
     assert_eq!(said(&s, Kind::Speed), "100%");
     assert_eq!(said(&s, Kind::Semis), "0");
     let layout = s.popup.as_ref().unwrap().layout(g.size);

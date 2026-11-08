@@ -58,7 +58,11 @@ fn the_rename_rows_say_what_the_registry_says() {
     let rename = s.label_of("clip.rename");
     let x = clip_mid(&s, &g, "Keys", 0);
     assert!(s.scene_context(&g, x.0, x.1));
-    assert!(labels(&s).contains(&rename), "{:?}", labels(&s));
+    assert!(
+        super::tests::all_labels(&s).contains(&rename),
+        "{:?}",
+        labels(&s)
+    );
 
     let marker = s.label_of("marker.rename");
     s.song
@@ -67,7 +71,11 @@ fn the_rename_rows_say_what_the_registry_says() {
     let id = s.project().markers[0].id;
     let r = s.marker_rect(&g, id).unwrap();
     assert!(s.scene_context(&g, r.x + 4.0, r.y + 4.0));
-    assert!(labels(&s).contains(&marker), "{:?}", labels(&s));
+    assert!(
+        super::tests::all_labels(&s).contains(&marker),
+        "{:?}",
+        labels(&s)
+    );
 }
 
 #[test]

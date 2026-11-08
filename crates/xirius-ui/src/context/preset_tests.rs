@@ -135,7 +135,7 @@ fn saving_a_track_as_a_preset_asks_for_the_name_and_marks_the_track() {
     // Nothing to apply or update before the first preset.
     assert!(press_head(&mut s, &g, vocal));
     assert!(!enabled(&s, "トラックのプリセットを適用"));
-    assert!(!labels(&s).contains(&"トラックのプリセットを更新".to_string()));
+    assert!(!super::tests::all_labels(&s).contains(&"トラックのプリセットを更新".to_string()));
     save_through_menu(&mut s, &g, vocal, "ボーカル");
     assert_eq!(
         s.notice_text(),
@@ -150,11 +150,11 @@ fn saving_a_track_as_a_preset_asks_for_the_name_and_marks_the_track() {
     assert_eq!(list[0]["name"], "ボーカル");
     // Now the track offers the update, and the others the apply.
     assert!(press_head(&mut s, &g, vocal));
-    assert!(labels(&s).contains(&"トラックのプリセットを更新".to_string()));
+    assert!(super::tests::all_labels(&s).contains(&"トラックのプリセットを更新".to_string()));
     let guitar = track(&s, "Guitar");
     assert!(press_head(&mut s, &g, guitar));
     assert!(enabled(&s, "トラックのプリセットを適用"));
-    assert!(!labels(&s).contains(&"トラックのプリセットを更新".to_string()));
+    assert!(!super::tests::all_labels(&s).contains(&"トラックのプリセットを更新".to_string()));
 }
 
 #[test]

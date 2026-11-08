@@ -68,28 +68,20 @@ fn a_track_has_its_rows_in_the_order_of_the_mock() {
     assert_eq!(
         labels(&s),
         [
-            "トラック名を変更",
-            "色",
-            "トラックを複製",
-            "下にトラックを追加",
-            "エフェクトを追加…",
-            "スプリッターを追加",
+            "名前を変更…",
             "チャンネルエディターを開く",
-            "トラックのプリセットとして保存…",
-            "トラックのプリセットを適用",
-            "オートメーションを表示",
-            "フォルダーにまとめる",
-            "新しいトラックにバウンス",
-            "トラックをフリーズ",
-            "書き出す",
-            "コピー",
-            "トラックを削除",
+            "編集",
+            "トラック",
+            "機器",
+            "オートメーション",
+            "表示",
+            "書き出し",
         ]
     );
     // The press made the track the selection.
     assert_eq!(s.selected_row, Some(RowKind::Track(track(&s, "Vocal"))));
     // A row with rows under it shows no key.
-    assert_eq!(key(&s, "書き出す"), "");
+    assert_eq!(key(&s, "書き出し"), "");
 }
 
 #[test]
@@ -98,7 +90,7 @@ fn renaming_asks_for_the_name_in_the_menu_and_one_undo_takes_it_back() {
     let vocal = track(&s, "Vocal");
     assert!(press_track(&mut s, &g, "Vocal"));
     let n = steps(&s);
-    assert!(choose(&mut s, &g, "トラック名を変更"));
+    assert!(choose(&mut s, &g, "名前を変更…"));
     // The menu stays open as a box that starts with the name.
     assert!(s.context_open());
     assert_eq!(s.ask_field().map(|f| f.text()), Some("Vocal".to_string()));
@@ -118,13 +110,13 @@ fn escape_and_an_empty_name_leave_the_name_alone() {
     let vocal = track(&s, "Vocal");
     let n = steps(&s);
     assert!(press_track(&mut s, &g, "Vocal"));
-    assert!(choose(&mut s, &g, "トラック名を変更"));
+    assert!(choose(&mut s, &g, "名前を変更…"));
     type_name(&mut s, "Lead");
     assert_eq!(s.ask_key("escape"), Some(true));
     assert!(!s.context_open());
     assert!(s.ask_field().is_none());
     assert!(press_track(&mut s, &g, "Vocal"));
-    assert!(choose(&mut s, &g, "トラック名を変更"));
+    assert!(choose(&mut s, &g, "名前を変更…"));
     type_name(&mut s, "  ");
     s.ask_key("enter");
     assert!(!s.context_open());
@@ -300,7 +292,7 @@ fn a_press_on_a_row_outside_the_selection_makes_it_the_only_one() {
     s.arrange.tracks = vec![RowKind::Track(vocal), RowKind::Track(guitar)];
     assert!(press_track(&mut s, &g, "Keys"));
     assert_eq!(s.arrange.tracks, [RowKind::Track(track(&s, "Keys"))]);
-    assert!(labels(&s).contains(&"トラック名を変更".to_string()));
+    assert!(super::tests::all_labels(&s).contains(&"名前を変更…".to_string()));
 }
 
 #[test]
@@ -311,7 +303,7 @@ fn the_output_of_several_rows_is_chosen_for_all_of_them_in_one_step() {
     assert!(press_row(&mut s, &g, RowKind::Track(vocal)));
     let n = steps(&s);
     assert!(choose(&mut s, &g, "出力先を設定"));
-    assert!(labels(&s).contains(&"マスター".to_string()));
+    assert!(super::tests::all_labels(&s).contains(&"マスター".to_string()));
     assert!(choose(&mut s, &g, "マスター"));
     assert_eq!(steps(&s), n + 1);
     assert_eq!(
@@ -327,7 +319,7 @@ fn a_folder_has_its_rows_in_the_order_of_the_mock() {
     assert_eq!(
         labels(&s),
         [
-            "フォルダー名を変更",
+            "名前を変更…",
             "色",
             "中のトラックにも塗る",
             "中のトラックを選択",
@@ -345,7 +337,7 @@ fn a_folder_is_renamed_in_the_menu() {
     let f = folder(&s, "Rhythm");
     assert!(press_folder(&mut s, &g, "Rhythm"));
     let n = steps(&s);
-    assert!(choose(&mut s, &g, "フォルダー名を変更"));
+    assert!(choose(&mut s, &g, "名前を変更…"));
     assert_eq!(s.ask_field().map(|f| f.text()), Some("Rhythm".to_string()));
     type_name(&mut s, "Beats");
     s.ask_key("enter");
@@ -396,7 +388,7 @@ fn choosing_the_tracks_inside_a_folder_selects_them() {
     // With the rows lit, the next press offers the menu of several rows.
     let drums = track(&s, "Drums");
     assert!(press_row(&mut s, &g, RowKind::Track(drums)));
-    assert!(labels(&s).contains(&"新しいバスへまとめる".to_string()));
+    assert!(super::tests::all_labels(&s).contains(&"新しいバスへまとめる".to_string()));
 }
 
 #[test]
@@ -493,7 +485,7 @@ fn a_press_on_a_row_does_not_open_the_menu_of_the_room_under_the_rows() {
     let (mut s, g) = studio();
     let (x, y) = row_mid(&s, &g, RowKind::Track(track(&s, "Vocal")));
     assert!(s.scene_context(&g, x, y));
-    assert!(!labels(&s).contains(&"貼り付け".to_string()));
+    assert!(!super::tests::all_labels(&s).contains(&"貼り付け".to_string()));
 }
 
 #[test]
@@ -512,7 +504,7 @@ fn the_snowflake_freezes_the_track_on_a_thread_and_lets_it_go() {
     assert_eq!(steps(&s), n + 1);
     // The menu now lets it go.
     assert!(press_track(&mut s, &g, "Vocal"));
-    assert!(labels(&s).contains(&"フリーズを解除".to_string()));
+    assert!(super::tests::all_labels(&s).contains(&"フリーズを解除".to_string()));
     s.popup = None;
     assert!(s.press(&g, hit));
     assert!(s.project().tracks[&vocal].frozen.is_none());
@@ -537,7 +529,7 @@ fn the_colour_row_shows_the_tracks_colour_and_its_squares_check_the_current_one(
     let now = crate::draw::track_color(&s.project().tracks[&vocal]);
     assert!(press_track(&mut s, &g, "Vocal"));
     assert_eq!(mark_of(&s, &g, "色"), Some(now));
-    assert_eq!(mark_of(&s, &g, "トラック名を変更"), None);
+    assert_eq!(mark_of(&s, &g, "名前を変更…"), None);
     assert!(choose(&mut s, &g, "色"));
     let layout = s.popup.as_ref().unwrap().layout(g.size);
     let squares: Vec<_> = layout

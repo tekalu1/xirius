@@ -292,7 +292,7 @@ fn a_row_off_the_lane_head_is_still_the_track_menu() {
     let t = two_lanes(&mut s, &g, "Bass");
     let (x, y) = crate::arrange::probe::row_mid(&s, &g, RowKind::Track(t));
     assert!(s.scene_context(&g, x, y));
-    assert!(labels(&s).contains(&"トラック名を変更".to_string()));
+    assert!(super::tests::all_labels(&s).contains(&"名前を変更…".to_string()));
 }
 
 #[test]

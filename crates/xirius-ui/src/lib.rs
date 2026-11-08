@@ -380,6 +380,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("crash-entry", crash_entry_shots::SHOTS),
     ("ctx", ctx_shots::CTX),
     ("ctx2", ctx2_shots::CTX2),
+    ("ctx-v2", ctx_shots::CTX_V2),
     ("ctxfolder", ctxfolder_shots::CTXFOLDER),
     ("ctxnames", ctxnames_shots::CTXNAMES),
     ("ctxshape", ctxshape_shots::CTXSHAPE),

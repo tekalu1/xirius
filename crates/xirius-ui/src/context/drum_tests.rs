@@ -193,7 +193,7 @@ fn the_name_of_a_drum_row_has_its_name_hiding_and_place_in_its_menu() {
         [
             "同じ高さのノートを選択",
             "鍵盤の表示",
-            "名前を変更",
+            "名前を変更…",
             "隠す",
             "上へ移動",
             "下へ移動"
@@ -205,7 +205,7 @@ fn the_name_of_a_drum_row_has_its_name_hiding_and_place_in_its_menu() {
     assert_eq!(rows(&s, &g)[all.len() - 2], 36);
 
     name_menu(&mut s, &g, 36);
-    assert!(choose(&mut s, &g, "名前を変更"));
+    assert!(choose(&mut s, &g, "名前を変更…"));
     for _ in 0..10 {
         s.ask_key("backspace");
     }

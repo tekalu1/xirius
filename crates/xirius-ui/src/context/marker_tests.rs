@@ -14,7 +14,7 @@ fn ruler_add_and_marker_rows_run_and_undo() {
     assert_eq!(
         labels(&s),
         [
-            "マーカー名を変更",
+            "名前を変更…",
             "次のマーカーまでをループに",
             "色",
             "マーカーを削除"

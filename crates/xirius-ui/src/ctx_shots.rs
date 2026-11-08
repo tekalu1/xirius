@@ -21,6 +21,42 @@ const fn staged(n: u8) -> Act {
     Act::Stage(Play::Window(play), n)
 }
 
+/// The approved six targets, plus cascading choices and a deep search result.
+pub const CTX_V2: &[Shot] = &[
+    Shot {
+        name: "v2-audio",
+        acts: &[Act::Reset, staged(0), staged(13)],
+    },
+    Shot {
+        name: "v2-midi",
+        acts: &[Act::Reset, staged(0), staged(10)],
+    },
+    Shot {
+        name: "v2-track",
+        acts: &[Act::Reset, staged(0), staged(20)],
+    },
+    Shot {
+        name: "v2-insert",
+        acts: &[Act::Reset, staged(80), staged(88)],
+    },
+    Shot {
+        name: "v2-note",
+        acts: &[Act::Reset, staged(60), staged(61)],
+    },
+    Shot {
+        name: "v2-empty",
+        acts: &[Act::Reset, staged(0), staged(1)],
+    },
+    Shot {
+        name: "v2-cascade",
+        acts: &[Act::Reset, staged(0), staged(13), staged(200)],
+    },
+    Shot {
+        name: "v2-search",
+        acts: &[Act::Reset, staged(80), staged(88), staged(201)],
+    },
+];
+
 pub const CTX: &[Shot] = &[
     // S01: an empty stretch of the Keys lane, pressed with the right button.
     Shot {
@@ -72,7 +108,7 @@ pub const CTX: &[Shot] = &[
         name: "c10-track-lanes",
         acts: &[staged(21)],
     },
-    // "トラック名を変更" chosen: the menu is a box with the name in it.
+    // "名前を変更…" chosen: the menu is a box with the name in it.
     Shot {
         name: "c11-track-rename",
         acts: &[Act::Reset, staged(0), staged(20), staged(22), staged(23)],
@@ -349,7 +385,7 @@ pub const CTX: &[Shot] = &[
         name: "c66-browser-folder-menu",
         acts: &[Act::Reset, staged(0), staged(110), staged(113)],
     },
-    // S43: the tab of a place, then "場所名を変更" chosen.
+    // S43: the tab of a place, then "名前を変更…" chosen.
     Shot {
         name: "c67-browser-tab-menu",
         acts: &[Act::Reset, staged(0), staged(110), staged(114)],
@@ -378,7 +414,7 @@ pub const CTX: &[Shot] = &[
         name: "c72-mixer-plugin-duplicated",
         acts: &[Act::Reset, staged(80), staged(88), staged(96)],
     },
-    // "別のチャンネルへ写す" then Keys chosen: the effect is on Keys too.
+    // "別のチャンネルへコピー" then Keys chosen: the effect is on Keys too.
     Shot {
         name: "c73-mixer-plugin-copied-to",
         acts: &[Act::Reset, staged(80), staged(88), staged(98), staged(97)],
@@ -420,16 +456,6 @@ fn press(p: (f32, f32), button: MouseButton, window: &mut Window, cx: &mut App) 
     );
 }
 
-/// The middle of the row `label` of the menu that is open, in the body's own coordinates.
-fn cell(studio: &Rc<RefCell<Studio>>, window: &Window, label: &str) -> Option<(f32, f32)> {
-    let s = studio.borrow();
-    let g = crate::screen::geometry(&s, window);
-    let layout = s.popup.as_ref()?.layout(g.size);
-    let c = layout.cells.iter().find(|c| c.text == label)?;
-    Some((c.rect.x + c.rect.w / 2.0, c.rect.y + c.rect.h / 2.0))
-}
-
-/// A spot of the empty lane of `name` at bar `bar`.
 fn lane(s: &Studio, g: &Geometry, name: &str, bar: i64) -> (f32, f32) {
     let t = track(s, name);
     (
@@ -438,14 +464,58 @@ fn lane(s: &Studio, g: &Geometry, name: &str, bar: i64) -> (f32, f32) {
     )
 }
 
-fn choose(studio: &Rc<RefCell<Studio>>, label: &str, window: &mut Window, cx: &mut App) {
-    match cell(studio, window, label) {
-        Some(p) => press(p, MouseButton::Left, window, cx),
-        None => eprintln!("no row {label} in the open menu"),
+pub(crate) fn choose(studio: &Rc<RefCell<Studio>>, label: &str, window: &mut Window, cx: &mut App) {
+    for _ in 0..8 {
+        let path = studio
+            .borrow()
+            .context_path(label)
+            .unwrap_or_else(|| panic!("no operation {label}"));
+        let row = path[0];
+        let point = loop {
+            let mut s = studio.borrow_mut();
+            let g = crate::screen::geometry(&s, window);
+            let popup = s.popup.as_mut().expect("menu");
+            let layout = popup.layout(g.size);
+            if let Some(c) = layout
+                .cells
+                .iter()
+                .find(|c| c.action == Some(crate::popup::Action::Ctx(row)))
+            {
+                break (c.rect.x + c.rect.w / 2.0, c.rect.y + c.rect.h / 2.0);
+            }
+            assert!(
+                popup.offset < popup.max_offset(g.size),
+                "unreachable row {label}"
+            );
+            popup.offset += 1;
+        };
+        press(point, MouseButton::Left, window, cx);
+        if path.len() == 1 {
+            return;
+        }
     }
+    panic!("menu path too deep: {label}");
 }
 
 fn play(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) {
+    if stage == 200 {
+        choose(studio, "色", window, cx);
+        assert_eq!(studio.borrow().popup.as_ref().unwrap().ctx_parents.len(), 2);
+        return;
+    }
+    if stage == 201 {
+        for key in ["d", "e", "f", "a", "u", "l", "t"] {
+            window.dispatch_keystroke(gpui::Keystroke::parse(key).unwrap(), cx);
+        }
+        assert!(
+            studio
+                .borrow()
+                .context_rows()
+                .iter()
+                .any(|r| r.label == "Default" && r.path.contains("プリセット"))
+        );
+        return;
+    }
     if stage == 0 {
         let mut s = studio.borrow_mut();
         let g = crate::screen::geometry(&s, window);
@@ -574,7 +644,7 @@ fn column(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut
     match stage {
         20 => right(row_spot(studio, window, track_row("Vocal")), window, cx),
         21 => choose(studio, "オートメーションを表示", window, cx),
-        22 => choose(studio, "トラック名を変更", window, cx),
+        22 => choose(studio, "名前を変更…", window, cx),
         23 => {
             let mut s = studio.borrow_mut();
             for _ in 0..16 {
@@ -809,7 +879,7 @@ fn mixer(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut 
         // The compressor is duplicated, and an effect is copied onto Keys from the menu.
         96 => choose(studio, "プラグインを複製", window, cx),
         97 => choose(studio, "Keys", window, cx),
-        98 => choose(studio, "別のチャンネルへ写す", window, cx),
+        98 => choose(studio, "別のチャンネルへコピー", window, cx),
         _ => {}
     }
 }
@@ -1148,7 +1218,7 @@ fn browse(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut
                 right(p, window, cx);
             }
         }
-        115 => choose(studio, "場所名を変更", window, cx),
+        115 => choose(studio, "名前を変更…", window, cx),
         _ => {}
     }
 }

@@ -20,6 +20,10 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
+
+import context_catalog
 
 # The integration tests that open windows, by package.
 WINDOW_TESTS = {
@@ -100,12 +104,20 @@ def main():
             print("set " + ", ".join(missing) + " to the plugins' files", file=sys.stderr)
             return 1
     failed = []
+    coverage = tempfile.TemporaryDirectory(prefix="xirius-context-catalog-")
+    environment = os.environ.copy()
+    if not args.plugins:
+        environment["XIRIUS_CONTEXT_COVERAGE_DIR"] = coverage.name
     for command in plugin_commands() if args.plugins else commands():
         print("$ " + " ".join(command), flush=True)
         if args.list:
             continue
-        if subprocess.run(command).returncode != 0:
+        if subprocess.run(command, env=environment).returncode != 0:
             failed.append(" ".join(command))
+    if not args.plugins and not args.list:
+        if not context_catalog.check(coverage.name, Path(__file__).resolve().parent.parent):
+            failed.append("context menu live catalog coverage")
+    coverage.cleanup()
     if failed:
         print("failed:\n  " + "\n  ".join(failed), file=sys.stderr)
         return 1

@@ -65,22 +65,16 @@ fn a_midi_clip_has_its_own_rows_in_the_order_of_the_mock() {
     assert_eq!(
         labels(&s),
         [
-            "トランスポーズ",
             "ピアノロールで開く",
-            "クリップ名を変更",
             "クリップを分割",
             "クリップを複製",
-            "クリップをミュート",
-            "ループ範囲を設定",
-            "色",
-            "クオンタイズ",
-            "処理",
-            "バウンス",
-            "選択範囲を書き出す…",
-            "MIDI ファイルとして書き出す…",
-            "切り取り",
-            "コピー",
-            "クリップを削除",
+            "編集",
+            "クリップ",
+            "オーディオ",
+            "MIDI",
+            "時間",
+            "表示",
+            "書き出し",
         ]
     );
     assert_eq!(key(&s, "クリップを複製"), "D");
@@ -94,7 +88,7 @@ fn a_midi_clip_has_its_own_rows_in_the_order_of_the_mock() {
 fn an_audio_clip_has_the_fade_and_gain_rows_dim_until_there_is_something_to_take_back() {
     let (mut s, g) = studio();
     assert!(press_on(&mut s, &g, "Vocal", 0));
-    let rows = labels(&s);
+    let rows = super::tests::all_labels(&s);
     assert!(rows.contains(&"フェードを削除".to_string()), "{rows:?}");
     assert!(rows.contains(&"ゲインを戻す".to_string()));
     assert!(!rows.contains(&"ピアノロールで開く".to_string()));
@@ -408,7 +402,7 @@ fn audio_and_midi_names_are_entered_from_the_menu_and_undo_once() {
     for name in ["Vocal", "Keys"] {
         let before = s.project();
         assert!(press_on(&mut s, &g, name, 0));
-        assert!(choose(&mut s, &g, "クリップ名を変更"));
+        assert!(choose(&mut s, &g, "名前を変更…"));
         for _ in 0..60 {
             s.ask_key("backspace");
         }
@@ -856,7 +850,7 @@ fn a_range_splits_the_clips_in_it_at_both_ends_from_its_own_menu() {
     s.arrange.range = Some((from, to));
     let x = s.tick_x(&g, c.start + c.length + 480);
     assert!(s.scene_context(&g, x, y));
-    assert!(labels(&s).contains(&"範囲の両端で分割".to_string()));
+    assert!(super::tests::all_labels(&s).contains(&"範囲の両端で分割".to_string()));
     s.popup = None;
     s.arrange.clips.insert((keys, c.id));
     assert!(s.scene_context(&g, x, y));

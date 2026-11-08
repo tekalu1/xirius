@@ -23,9 +23,9 @@ fn a_send_target_list_excludes_feedback_buses() {
     add_send(&mut s, b, a);
     assert!(press(&mut s, &g, MixerHit::SendPre(a, id)));
     assert!(choose(&mut s, &g, "送り先"));
-    assert!(!labels(&s).contains(&"A".to_string()));
-    assert!(!labels(&s).contains(&"B".to_string()));
-    assert!(labels(&s).contains(&"C".to_string()));
+    assert!(!super::tests::all_labels(&s).contains(&"A".to_string()));
+    assert!(!super::tests::all_labels(&s).contains(&"B".to_string()));
+    assert!(super::tests::all_labels(&s).contains(&"C".to_string()));
 }
 
 /// The sample song with the mixer open.
@@ -107,7 +107,7 @@ fn a_channel_head_has_its_rows_and_the_press_selects_the_track() {
             "エフェクトを追加…",
             "スプリッターを追加",
             "チャンネルエディターを開く",
-            "トラック名を変更",
+            "名前を変更…",
             "色",
             "トラックを複製",
             "トラックの列で表示",
@@ -172,7 +172,7 @@ fn a_bus_head_adds_the_sources_row_and_it_selects_who_plays_into_it() {
         s.geometry(W, H)
     };
     assert!(press_head(&mut s, &g, bus));
-    assert!(labels(&s).contains(&"送っているチャンネルを選択".to_string()));
+    assert!(super::tests::all_labels(&s).contains(&"送っているチャンネルを選択".to_string()));
     assert!(!enabled(&s, "送っているチャンネルを選択"));
     s.popup = None;
     s.ctx = None;
@@ -339,7 +339,7 @@ fn a_send_resets_its_level_shows_its_bus_and_comes_off_in_one_step() {
     assert!(s.run_command("send.set", json!({ "id": send.to_string(), "level": -9.0 })));
     let n = steps(&s);
     assert!(press(&mut s, &g, MixerHit::SendLevel(vocal, send)));
-    assert!(labels(&s).contains(&"0 dB に戻す".to_string()));
+    assert!(super::tests::all_labels(&s).contains(&"0 dB に戻す".to_string()));
     assert!(choose(&mut s, &g, "0 dB に戻す"));
     assert_eq!(s.project().tracks[&vocal].sends[0].level_db, 0.0);
     assert_eq!(steps(&s), n + 1);
@@ -382,7 +382,7 @@ fn an_effect_has_its_rows_and_a_duplicate_is_one_step() {
             "無効にする",
             "プラグインを複製",
             "別のチャンネルへ移動",
-            "別のチャンネルへ写す",
+            "別のチャンネルへコピー",
             "エフェクトを後ろに追加…",
             "スプリッターを後ろに追加",
             "エフェクトを追加…",
@@ -441,7 +441,7 @@ fn an_effect_is_copied_to_another_channel_and_removed() {
     let comp = add_effect(&mut s, vocal, "Comp");
     let b = insert_count(&s, keys);
     assert!(press(&mut s, &g, MixerHit::Open(vocal, comp)));
-    assert!(choose(&mut s, &g, "別のチャンネルへ写す"));
+    assert!(choose(&mut s, &g, "別のチャンネルへコピー"));
     assert!(choose(&mut s, &g, "Keys"));
     assert_eq!(insert_count(&s, keys), b + 1);
     assert!(press(&mut s, &g, MixerHit::Open(vocal, comp)));
@@ -574,7 +574,7 @@ fn empty_mixer_pastes_tracks_and_channel_width_changes_the_hit_rectangles() {
     let edge = last_channel(&s, &g);
     assert!(s.scene_context(&g, edge.right() + 15.0, edge.y + 60.0));
     assert!(
-        labels(&s).contains(&"チャンネルの幅".to_string()),
+        super::tests::all_labels(&s).contains(&"チャンネルの幅".to_string()),
         "after undo: {:?}",
         labels(&s)
     );
@@ -584,7 +584,7 @@ fn empty_mixer_pastes_tracks_and_channel_width_changes_the_hit_rectangles() {
     s.mixer.scroll = s.mixer_max_scroll(&g);
     assert!(s.scene_context(&g, g.drawer_body.right() - 2.0, last.y + 60.0));
     assert!(
-        labels(&s).contains(&"チャンネルの幅".to_string()),
+        super::tests::all_labels(&s).contains(&"チャンネルの幅".to_string()),
         "wide: {:?}",
         labels(&s)
     );
@@ -635,7 +635,7 @@ fn unavailable_send_targets_keep_their_place_in_the_list() {
     add_send(&mut s, t, second);
     assert!(press(&mut s, &g, MixerHit::SendPre(t, sid)));
     assert!(choose(&mut s, &g, "送り先"));
-    assert!(labels(&s).contains(&"Second".to_string()));
+    assert!(super::tests::all_labels(&s).contains(&"Second".to_string()));
     assert!(!enabled(&s, "Second"));
     let before = s.project();
     assert!(!choose(&mut s, &g, "Second"));

@@ -34,8 +34,8 @@ pub(super) fn labels(s: &Studio) -> Vec<String> {
 
 /// Whether the row named `label` can be chosen.
 pub(super) fn enabled(s: &Studio, label: &str) -> bool {
-    s.context_rows()
-        .iter()
+    all_items(s)
+        .into_iter()
         .find(|r| r.label == label)
         .unwrap_or_else(|| panic!("no row {label}: {:?}", labels(s)))
         .enabled
@@ -43,20 +43,66 @@ pub(super) fn enabled(s: &Studio, label: &str) -> bool {
 
 /// The key shown on the row named `label`.
 pub(super) fn key(s: &Studio, label: &str) -> String {
-    s.context_rows()
-        .iter()
+    all_items(s)
+        .into_iter()
         .find(|r| r.label == label)
         .unwrap_or_else(|| panic!("no row {label}: {:?}", labels(s)))
         .key
         .clone()
 }
 
+pub(super) fn all_items(s: &Studio) -> Vec<&super::Item> {
+    fn walk<'a>(items: &'a [super::Item], out: &mut Vec<&'a super::Item>) {
+        for item in items {
+            out.push(item);
+            if let super::Run::Sub(children) = &item.run {
+                walk(children, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(state) = &s.ctx {
+        walk(&state.items, &mut out);
+    }
+    out
+}
+
+pub(super) fn all_labels(s: &Studio) -> Vec<String> {
+    all_items(s)
+        .into_iter()
+        .filter(|i| !matches!(i.run, super::Run::Gap))
+        .map(|i| i.label.clone())
+        .collect()
+}
+
+fn path_to(items: &[super::Item], label: &str) -> Option<Vec<usize>> {
+    if let Some(i) = items.iter().position(|i| i.label == label) {
+        return Some(vec![i]);
+    }
+    for (i, item) in items.iter().enumerate() {
+        if let super::Run::Sub(children) = &item.run
+            && let Some(mut path) = path_to(children, label)
+        {
+            path.insert(0, i);
+            return Some(path);
+        }
+    }
+    None
+}
+
 /// Presses the cell of the row named `label`, where the pop-over draws it.
 pub(super) fn choose(s: &mut Studio, g: &Geometry, label: &str) -> bool {
+    let path = path_to(&s.ctx.as_ref().expect("a menu is open").items, label)
+        .unwrap_or_else(|| panic!("no operation {label}: {:?}", all_labels(s)));
+    for (depth, &row) in path[..path.len() - 1].iter().enumerate() {
+        let row = row + if depth == 0 { 0 } else { 2 };
+        assert!(s.context_pick(g, row), "ancestor of {label}");
+    }
     let layout = s.popup.as_ref().expect("a menu is open").layout(g.size);
     let cell = layout
         .cells
         .iter()
+        .rev()
         .find(|c| c.text == label && !matches!(c.look, crate::popup::Look::Input))
         .unwrap_or_else(|| panic!("no cell {label}"));
     let (x, y) = (
@@ -93,13 +139,7 @@ fn a_press_on_an_empty_lane_opens_its_menu_and_a_row_runs_by_the_command() {
     assert!(s.context_open());
     assert_eq!(
         labels(&s),
-        [
-            "貼り付け",
-            "MIDI クリップを作成",
-            "再生位置を移動",
-            "マーカーを追加",
-            "選択"
-        ]
+        ["貼り付け", "MIDI クリップを作成", "選択", "時間"]
     );
     // Nothing was copied: paste is dim, and the row keeps its place.
     assert!(!enabled(&s, "貼り付け"));

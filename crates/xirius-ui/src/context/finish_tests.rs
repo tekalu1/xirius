@@ -11,7 +11,7 @@ fn middle_click_opens_tools_and_middle_drag_only_scrolls() {
     let n = s.song.steps();
     assert!(s.middle_down(&g, x, y));
     assert!(s.middle_up(&g));
-    assert!(labels(&s).contains(&"消しゴムツール".to_string()));
+    assert!(super::tests::all_labels(&s).contains(&"消しゴムツール".to_string()));
     assert!(choose(&mut s, &g, "消しゴムツール"));
     assert_eq!(s.tool, Tool::Eraser);
     assert_eq!(s.song.steps(), n);

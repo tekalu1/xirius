@@ -140,7 +140,7 @@ fn a_clip_that_is_not_selected_is_the_whole_selection_and_lets_the_points_go() {
     clip_and_point(&mut s, &g, 1);
     let (x, y) = clip_mid(&s, &g, "Drums", 0);
     assert!(s.scene_context(&g, x, y));
-    assert!(labels(&s).contains(&"クリップを複製".to_string()));
+    assert!(super::tests::all_labels(&s).contains(&"クリップを複製".to_string()));
     assert!(s.arrange.points.is_empty());
     assert_eq!(s.arrange.clips.len(), 1);
 }
@@ -302,7 +302,7 @@ fn a_note_that_is_not_selected_is_the_whole_selection_and_lets_the_points_go() {
     notes_and_point(&mut s, &g, index);
     let (x, y) = note_at(&s, &g, 2);
     assert!(s.scene_context(&g, x, y));
-    assert!(labels(&s).contains(&"ノートを複製".to_string()));
+    assert!(super::tests::all_labels(&s).contains(&"ノートを複製".to_string()));
     assert!(s.roll.points.is_empty());
     assert_eq!(s.roll.selected.len(), 1);
 }

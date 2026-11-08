@@ -455,7 +455,7 @@ fn a_file_goes_on_a_new_track_or_the_selected_audio_track_in_one_step() {
             "選んだトラックに置く",
             "お気に入り",
             "エクスプローラーで表示",
-            "名前を変更",
+            "名前を変更…",
             "ごみ箱へ",
         ]
     );
@@ -569,7 +569,7 @@ fn a_folder_becomes_a_tab_and_is_dim_once_it_is() {
             "お気に入り",
             "エクスプローラーで表示",
             "新しいフォルダー",
-            "名前を変更",
+            "名前を変更…",
             "ごみ箱へ",
         ]
     );
@@ -595,17 +595,17 @@ fn a_tab_is_renamed_or_taken_away_but_the_songs_is_not() {
     press_tab(&mut s, &g, 0);
     assert_eq!(
         labels(&s),
-        ["場所名を変更", "エクスプローラーで表示", "場所を外す"]
+        ["名前を変更…", "エクスプローラーで表示", "場所を外す"]
     );
-    assert!(!enabled(&s, "場所名を変更"));
+    assert!(!enabled(&s, "名前を変更…"));
     assert!(!enabled(&s, "場所を外す"));
     s.popup = None;
     s.ctx = None;
     // A place.
     press_tab(&mut s, &g, 1);
-    assert!(enabled(&s, "場所名を変更"));
+    assert!(enabled(&s, "名前を変更…"));
     assert!(enabled(&s, "場所を外す"));
-    assert!(choose(&mut s, &g, "場所名を変更"));
+    assert!(choose(&mut s, &g, "名前を変更…"));
     assert!(s.ask_field().is_some(), "the menu asks for a name");
     for c in s.ask_field().unwrap().value.clone().chars() {
         let _ = c;
@@ -636,7 +636,7 @@ fn a_name_a_tab_already_has_is_refused_and_the_old_name_stays() {
     let first = s.browser.places[0].name.clone();
     let g = s.geometry(g.size.0, g.size.1);
     press_tab(&mut s, &g, 2);
-    assert!(choose(&mut s, &g, "場所名を変更"));
+    assert!(choose(&mut s, &g, "名前を変更…"));
     for _ in 0..40 {
         s.ask_key("backspace");
     }
@@ -741,8 +741,8 @@ fn a_rename_of_a_used_file_points_its_clips_at_the_new_name_in_one_step() {
     assert_eq!(audio_clips(&s, &old).len(), 1);
     let steps0 = steps(&s);
     press_file(&mut s, &g, "loop_120bpm.wav");
-    assert!(enabled(&s, "名前を変更"));
-    assert!(choose(&mut s, &g, "名前を変更"));
+    assert!(enabled(&s, "名前を変更…"));
+    assert!(choose(&mut s, &g, "名前を変更…"));
     assert_eq!(
         s.ask_field().unwrap().value,
         "loop_120bpm",
@@ -792,7 +792,7 @@ fn an_undo_the_disk_cannot_follow_keeps_the_clips_on_the_new_name_and_says_why()
     press_file(&mut s, &g, "loop_120bpm.wav");
     assert!(choose(&mut s, &g, "新しいトラックに置く"));
     press_file(&mut s, &g, "loop_120bpm.wav");
-    assert!(choose(&mut s, &g, "名前を変更"));
+    assert!(choose(&mut s, &g, "名前を変更…"));
     type_name(&mut s, "groove");
     std::fs::write(&old, b"another").unwrap();
 
@@ -824,7 +824,7 @@ fn a_folder_is_renamed_and_a_name_in_use_is_refused() {
     let (mut s, g, top, _tmp) = files("rename-dir");
     let steps0 = steps(&s);
     press_dir(&mut s, &g, "Drums");
-    assert!(choose(&mut s, &g, "名前を変更"));
+    assert!(choose(&mut s, &g, "名前を変更…"));
     assert_eq!(s.ask_field().unwrap().value, "Drums");
     type_name(&mut s, "Loops");
     assert!(
@@ -837,7 +837,7 @@ fn a_folder_is_renamed_and_a_name_in_use_is_refused() {
     assert!(top.join("Drums").is_dir());
     s.error = None;
     press_dir(&mut s, &g, "Drums");
-    assert!(choose(&mut s, &g, "名前を変更"));
+    assert!(choose(&mut s, &g, "名前を変更…"));
     type_name(&mut s, "Kit");
     assert_eq!(s.error, None);
     assert!(top.join("Kit/kick_01.wav").is_file());
@@ -937,14 +937,14 @@ fn the_folder_of_the_open_song_is_not_renamed_or_binned() {
     s.song.save_as(&top.join("曲")).unwrap();
     crate::browser_files::forget();
     press_dir(&mut s, &g, "曲");
-    assert!(!enabled(&s, "名前を変更"));
+    assert!(!enabled(&s, "名前を変更…"));
     assert!(
-        reason(&s, "名前を変更").contains("開いている曲"),
+        reason(&s, "名前を変更…").contains("開いている曲"),
         "{}",
-        reason(&s, "名前を変更")
+        reason(&s, "名前を変更…")
     );
     assert!(!enabled(&s, "ごみ箱へ"));
     close(&mut s);
     press_dir(&mut s, &g, "Drums");
-    assert!(enabled(&s, "名前を変更"), "a folder beside it is free");
+    assert!(enabled(&s, "名前を変更…"), "a folder beside it is free");
 }
