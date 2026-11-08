@@ -190,7 +190,11 @@ impl Studio {
             self.refresh_popup();
         } else {
             self.poll_io();
-            if let Some(ui) = &mut self.settings {
+            // Some CLI commands return a whole settings listing. It is not a
+            // one-line UI notice (and GPUI rejects newlines in shape_line).
+            if !result.message.contains(['\n', '\r'])
+                && let Some(ui) = &mut self.settings
+            {
                 let undo = ui.toast.take().and_then(|toast| toast.undo);
                 ui.tell(result.message.clone(), undo);
             }
