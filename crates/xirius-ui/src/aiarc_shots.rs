@@ -93,6 +93,7 @@ pub(crate) fn click(rect: Rect, window: &mut Window, cx: &mut App) {
 }
 
 fn play(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) {
+    crate::shot::run_for(&mut studio.borrow_mut(), 10.0, |s| !s.input_blocked());
     let size = window.viewport_size();
     let g = studio.borrow().geometry(
         f32::from(size.width),

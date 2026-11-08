@@ -136,13 +136,15 @@ pub(crate) fn ready(s: &mut Studio) {
     );
     let id = id(s);
     crate::shot::run_for(s, 15.0, |s| {
-        s.transport.host().is_some_and(|h| {
-            h.plugins().reports().iter().any(|r| {
-                r.id == id
-                    && r.status.latency == xirius_engine::server::DEFAULT_LATENCY + 192
-                    && !r.status.crashed
+        !s.sound_preparing()
+            && s.error.is_none()
+            && s.transport.host().is_some_and(|h| {
+                h.plugins().reports().iter().any(|r| {
+                    r.id == id
+                        && r.status.latency == xirius_engine::server::DEFAULT_LATENCY + 192
+                        && !r.status.crashed
+                })
             })
-        })
     });
     assert!(s.error.is_none(), "{:?}", s.error);
     let reports = s.transport.host().unwrap().plugins().reports();

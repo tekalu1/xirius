@@ -296,6 +296,7 @@ pub fn play(
 ) {
     let (dir, name) = shot.unwrap_or((Path::new("."), "plugin"));
     let mut s = studio.borrow_mut();
+    crate::shot::run_for(&mut s, 15.0, |s| !s.input_blocked());
     let g = crate::screen::geometry(&s, window);
     let Some(t) = track_named(&s, "Keys") else {
         eprintln!("plugin: no Keys track");

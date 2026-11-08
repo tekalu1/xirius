@@ -182,6 +182,17 @@ fn open_cleanup(s: &Studio1, w: &mut Window, cx: &mut App) {
     click(mid(more), w, cx);
     let at = cell(s, &g, "使われていない録音を整理…");
     click(at, w, cx);
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while s
+        .borrow()
+        .popup
+        .as_ref()
+        .is_none_or(|p| p.cleanup.is_none())
+    {
+        assert!(std::time::Instant::now() < end, "cleanup read timed out");
+        s.borrow_mut().poll_cleanup_read();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
 }
 
 fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) {
@@ -209,6 +220,7 @@ fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) {
                 cx,
             );
             s.borrow_mut().follow_browser();
+            crate::pool_shots::settle_pool(&mut s.borrow_mut());
             let g = geometry(s, w);
             let view = s.borrow().browser.layout(g.panel).view.expect("the order");
             click(mid(view), w, cx);
@@ -288,6 +300,7 @@ fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) {
             assert_eq!(trashed(), ["Gtr_take2.wav", "Vocal_02.wav", "Vocal_03.wav"]);
             assert!(song.join(VOCAL_1).is_file(), "a used take stays");
             s.borrow_mut().follow_browser();
+            crate::pool_shots::settle_pool(&mut s.borrow_mut());
             let g = geometry(s, w);
             assert!(
                 !files(s, &g)
