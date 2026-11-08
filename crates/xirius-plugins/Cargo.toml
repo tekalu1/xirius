@@ -47,6 +47,9 @@ windows-sys = { version = "0.61", features = [
 tempfile = "3"
 xirius-test-clap = { path = "../xirius-test-clap" }
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+xirius-test-vst3 = { path = "../xirius-test-vst3" }
+
 # The version information of the programs (LIC-022, packaging/windows/version_info.rs).
 [target.'cfg(windows)'.build-dependencies]
 embed-resource = "3"
