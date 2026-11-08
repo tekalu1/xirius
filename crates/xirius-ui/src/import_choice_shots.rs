@@ -158,13 +158,11 @@ fn play(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) 
                 .len();
             let r = row(&studio.borrow(), g.size, index);
             crate::aiarc_shots::click(r, window, cx);
-            crate::shot::run_for(&mut studio.borrow_mut(), 10.0, |s| !s.input_blocked());
             assert!(studio.borrow().palette.is_none());
             assert_eq!(studio.borrow().project().tempo[0].bpm, 120.0);
             assert_eq!(imported_length(&studio.borrow()), Some(1920));
         }
         4 => {
-            crate::shot::run_for(&mut studio.borrow_mut(), 10.0, |s| !s.input_blocked());
             assert_eq!(imported_length(&studio.borrow()), None);
             xirius_session::peaks::wait();
             std::fs::remove_file(fixture()).unwrap();
