@@ -36,7 +36,7 @@ WORKFLOW = ".github/workflows/rust.yml"
 BRANCH = "main"
 # The names of rust.yml's jobs as GitHub shows them (`check (${{ matrix.os }})` per OS).
 # scripts/test_release_ci_gate.py reads rust.yml and checks they are still there.
-REQUIRED_JOBS = ["check (windows-latest)", "cargo-deny", "gitleaks"]
+REQUIRED_JOBS = ["check (windows-latest)", "check (macos-latest)", "cargo-deny", "gitleaks"]
 
 RED = {"failure", "timed_out", "action_required", "startup_failure"}
 API = "https://api.github.com"

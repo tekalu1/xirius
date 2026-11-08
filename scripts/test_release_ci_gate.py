@@ -71,6 +71,15 @@ class DecideTests(unittest.TestCase):
         state, why = self.decide([run()], {1: jobs()})
         self.assertEqual(state, "pass", why)
 
+    def test_macos_is_required_and_failure_blocks_windows_release(self):
+        name = "check (macos-latest)"
+        self.assertIn(name, gate.REQUIRED_JOBS)
+        missing = jobs(names=[n for n in gate.REQUIRED_JOBS if n != name])
+        self.assertEqual(self.decide([run()], {1: missing})[0], "unusable")
+        red = jobs()
+        next(j for j in red if j["name"] == name)["conclusion"] = "failure"
+        self.assertEqual(self.decide([run()], {1: red})[0], "red")
+
     def test_no_run_is_missing(self):
         self.assertEqual(self.decide([], {})[0], "missing")
 

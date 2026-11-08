@@ -12,7 +12,7 @@
   - workflow が `.github/workflows/rust.yml`（id と path が一致し、`active`）。
   - `push` で起動し、枝は `main`、同じリポジトリ（fork でない）。
   - 最新の attempt で、run の結論が `success`、すべての job が `success`。
-  - 必須の job（`REQUIRED_JOBS`: `check (windows-latest)`・`cargo-deny`・`gitleaks`）が
+  - 必須の job（`REQUIRED_JOBS`: `check (windows-latest)`・`check (macos-latest)`・`cargo-deny`・`gitleaks`）が
     ちょうど 1 つずつある。
 - **赤なら止める**: run か job（必須でないものも）が `failure`・`timed_out`・`action_required`・
   `startup_failure` なら、すぐに止めます。run がまだ走っていても、終わった job が赤なら止めます。
@@ -32,6 +32,8 @@
   `publish` の前に `ci-gate` を置いていることも確かめます。
 
 ## 理由
+
+- macOS の check も必須です。Windows の配布でも、Mac のビルド・試験を壊した commit は公開しません。
 
 - 人の承認を外すと、公開の前に中身を見る人がいなくなります。その代わりに、配る commit そのものを
   main の CI が通したことを、機械で確かめます。同じ commit・同じ workflow・同じ runner の結果だけを
