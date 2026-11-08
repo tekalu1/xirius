@@ -139,6 +139,9 @@ impl Studio {
 
     /// Gives the keys to the menu's search box (it keeps the search box's composition clear).
     pub(crate) fn context_search(&mut self) {
+        if self.ctx.as_ref().is_some_and(|s| !s.trail.is_empty()) {
+            self.context_restore(0);
+        }
         if let Some(st) = self.ctx.as_mut() {
             st.field = None;
             st.turn = super::fields::WheelTurn::default();

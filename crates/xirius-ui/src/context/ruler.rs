@@ -37,7 +37,7 @@ impl Studio {
             _ => self.ruler_items(at),
         };
         self.open_classified(
-            if grip.is_some() {
+            if matches!(grip, Some(LoopGrip::Start | LoopGrip::End | LoopGrip::Body)) {
                 "other-22"
             } else {
                 "other-21"

@@ -604,7 +604,10 @@ impl Studio {
     /// Reads the values of the fields from the song again. 「トランスポーズをノートに反映」 is
     /// possible only while a value is not 0, so it is read again too (UI-311, UI-313).
     fn fields_again(&mut self) {
-        let write_args = self.ctx.as_ref().and_then(|st| write_args(&st.items));
+        let write_args = self
+            .ctx
+            .as_ref()
+            .and_then(|st| write_args(st.trail.first().unwrap_or(&st.items)));
         let write = write_args.as_ref().map(|args| {
             self.song
                 .check("clip.transpose.write", args.clone())
@@ -628,8 +631,16 @@ impl Studio {
         for item in st.items.iter_mut() {
             reread_fields(item, &p, write, at_zero);
         }
+        for parent in &mut st.trail {
+            for item in parent {
+                reread_fields(item, &p, write, at_zero);
+            }
+        }
         if let Some(search) = st.search.as_mut() {
             for item in search.pool.iter_mut() {
+                reread_fields(item, &p, write, at_zero);
+            }
+            for item in &mut search.index {
                 reread_fields(item, &p, write, at_zero);
             }
         }
@@ -697,16 +708,19 @@ impl Studio {
                 Some(true)
             }
             "escape" => {
-                // Nothing typed: Esc leaves the field and shuts the menu, as it did before the
-                // field took the keys (P2-1 of review 15). Half-typed: it only gives the typing
-                // up, as UI-312 says.
+                // Cancel an edit first; otherwise return to the parent surface or clear
+                // the root query before closing the root.
                 let typed = !t.fresh || !t.marked.is_empty();
                 if let Some(st) = self.ctx.as_mut() {
                     st.field = None;
                 }
                 if !typed {
-                    self.ctx = None;
-                    self.popup = None;
+                    let depth = self.ctx.as_ref().map_or(0, |s| s.trail.len());
+                    if depth > 0 {
+                        self.context_restore(depth - 1);
+                    } else {
+                        let _ = self.ask_key("escape");
+                    }
                 }
                 self.close_wheel_group();
                 self.refresh_popup();

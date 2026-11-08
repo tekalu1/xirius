@@ -89,6 +89,7 @@ fn lookup_path(target: &str, path: &[String]) -> Vec<String> {
     let mut out = path.to_vec();
     for part in &mut out {
         let alias = match (target, part.as_str()) {
+            ("other-19", "まとめを解く") => "フォルダーを展開",
             ("other-21", "ループの始まりをここに") => "ループ開始を設定",
             ("other-18", "出力先を設定") => "出力",
             ("other-21", "ループの終わりをここに") => "ループ終了を設定",
@@ -138,7 +139,7 @@ fn command_of(item: &Item) -> &str {
         Run::Field(kind, ..) => kind.command(),
         Run::Do(super::Act::Lane(..)) => "auto.lane.show",
         Run::Do(super::Act::AraAttach(..)) => "clip.ara.attach",
-        Run::Do(super::Act::Preset(..)) => "plugin.preset.load",
+        Run::Do(super::Act::Preset(..)) => "plugin.preset.choose",
         Run::Do(super::Act::InsertRecent(..)) => "plugin.recent",
         Run::Legacy(
             crate::popup::PopupKind::InstMenu(crate::instrument::menu::Menu::Preset(..)),
@@ -265,6 +266,7 @@ pub fn organize(target: &str, items: Vec<Item>) -> Result<Vec<Item>, Missing> {
                                 dynamic_command(r) == command
                             } else {
                                 matches!(item.run, Run::Do(super::Act::Preset(..)))
+                                    && r.command == "plugin.preset.choose"
                             })
                 })
             })
@@ -397,12 +399,13 @@ fn verify_live_tree(target: &str, original: &[Item], result: &[Item]) {
                 let route = routes().iter().find(|r| &r.id == id).unwrap();
                 let empty = matches!(&item.run, Run::Sub(rows) if rows.is_empty());
                 let parent_count = route.after.len() - if empty { 2 } else { 1 };
-                assert_eq!(
-                    &route.after[..parent_count],
-                    path.as_slice(),
+                assert!(
+                    same_path(&route.after[..parent_count], path.as_slice()),
                     "{id}: approved destination"
                 );
-                ids.push(id.clone());
+                if !empty {
+                    ids.push(id.clone());
+                }
             } else if let Run::Sub(children) = &item.run {
                 path.push(item.label.clone());
                 paths(children, path, ids);
@@ -430,6 +433,30 @@ fn verify_live_tree(target: &str, original: &[Item], result: &[Item]) {
     }
 }
 
+fn insert(items: &mut Vec<Item>, parents: &[String], leaf: Item, marks: &BTreeMap<String, usize>) {
+    let Some((parent, rest)) = parents.split_first() else {
+        items.push(leaf);
+        return;
+    };
+    let parent = if parent == "別のチャンネルへ写す" {
+        "別のチャンネルへコピー"
+    } else {
+        parent.as_str()
+    };
+    let index = items
+        .iter()
+        .position(|i| i.label == parent && matches!(i.run, Run::Sub(_)))
+        .unwrap_or_else(|| {
+            let mut group = Item::sub(parent, Vec::new()).enabled(true);
+            group.mark = marks.get(parent).copied();
+            items.push(group);
+            items.len() - 1
+        });
+    if let Run::Sub(children) = &mut items[index].run {
+        insert(children, rest, leaf, marks);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,24 +469,5 @@ mod tests {
             serde_json::json!({"at": 0}),
         );
         assert!(organize("audio", vec![item]).is_err());
-    }
-}
-
-fn insert(items: &mut Vec<Item>, parents: &[String], leaf: Item, marks: &BTreeMap<String, usize>) {
-    let Some((parent, rest)) = parents.split_first() else {
-        items.push(leaf);
-        return;
-    };
-    let index = items
-        .iter()
-        .position(|i| i.label == *parent && matches!(i.run, Run::Sub(_)))
-        .unwrap_or_else(|| {
-            let mut group = Item::sub(parent, Vec::new()).enabled(true);
-            group.mark = marks.get(parent).copied();
-            items.push(group);
-            items.len() - 1
-        });
-    if let Run::Sub(children) = &mut items[index].run {
-        insert(children, rest, leaf, marks);
     }
 }
