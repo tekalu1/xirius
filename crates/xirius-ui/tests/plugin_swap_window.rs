@@ -15,6 +15,7 @@
 //! nothing is typed or clicked through the OS.
 
 use std::collections::HashMap;
+mod support;
 use std::process::{Command, Stdio};
 
 /// One `plugin-check <shot> <what> k=v …` line of a stage.
@@ -47,7 +48,9 @@ fn the_window_follows_the_plugin_through_each_swap() {
         .prefix("xirius-ui-plugin-swap-")
         .tempdir()
         .unwrap();
+    support::sample_audio(dir.path());
     let child = Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+        .current_dir(dir.path())
         .args(["--park", "--silent", "--script", "plugin-swap", "--shot"])
         .arg(dir.path())
         .env("XIRIUS_EDITOR_OFFSCREEN", "1")

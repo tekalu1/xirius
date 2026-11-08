@@ -73,6 +73,7 @@ pub const SHOTS: &[Shot] = &[
             Plugin(5),
             Press(Tab(DrawerTab::Mixer)),
             Press(Strip(Part::Insert, "Vocal")),
+            Press(Strip(Part::Insert, "Vocal")),
             Plugin(9),
         ],
     },
@@ -88,6 +89,7 @@ pub const SHOTS: &[Shot] = &[
             Plugin(3),
             Plugin(2),
             Press(Tab(DrawerTab::Mixer)),
+            Press(Strip(Part::Insert, "Keys")),
             Press(Strip(Part::Insert, "Keys")),
             Plugin(9),
         ],
@@ -105,6 +107,7 @@ pub const SHOTS: &[Shot] = &[
             Plugin(5),
             Plugin(6),
             Press(Tab(DrawerTab::Mixer)),
+            Press(Strip(Part::Insert, "Vocal")),
             Press(Strip(Part::Insert, "Vocal")),
             Plugin(9),
         ],
@@ -368,5 +371,12 @@ pub fn play(
             report(&s, name, window);
         }
     }
+    // Fixture edits may start the player or load an insert asynchronously.
+    // The next scripted press is delivered only when that work has settled.
+    if matches!(stage, 1 | 2 | 4 | 5 | 6) {
+        s.prepare_song();
+    }
+    crate::shot::run_for(&mut s, 15.0, |s| !s.input_blocked());
+    assert!(!s.input_blocked(), "plugin fixture did not settle");
     window.refresh();
 }

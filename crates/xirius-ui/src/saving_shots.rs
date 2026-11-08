@@ -196,6 +196,21 @@ fn begin(n: u8, studio: &Rc<RefCell<Studio>>, _window: &mut Window, _cx: &mut Ap
             assert!(s.run_command("project.save-as", json!({"path":root.join("original")})));
             crate::shot::run_for(&mut s, 10.0, |s| !s.input_blocked());
             assert!(s.song.is_saved() && s.error.is_none(), "{:?}", s.error);
+            // Relative sample media now resolves under the saved song.
+            let silence = vec![0.0; 48_000];
+            for file in ["vocal_take1.wav", "guitar_di.wav"] {
+                xirius_session::export::write_wav(
+                    &root.join("original").join(file),
+                    &silence,
+                    &silence,
+                    48_000,
+                    16,
+                )
+                .unwrap();
+            }
+            s.prepare_song();
+            crate::shot::run_for(&mut s, 15.0, |s| !s.input_blocked());
+            assert!(!s.input_blocked(), "save fixture player did not start");
             let project = s.song.project();
             s.keep.sync(&project);
             *state = Some(State {
@@ -273,6 +288,7 @@ pub(crate) fn ready(studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut 
                     click(studio, window, cx, Target::Mute("Drums"));
                     assert_eq!(*studio.borrow().project(), *original, "edits blocked");
                     key(window, cx, "space");
+                    crate::shot::run_for(&mut studio.borrow_mut(), 10.0, |s| s.transport.playing);
                     assert!(studio.borrow().transport.playing);
                     key(window, cx, "space");
                     assert!(!studio.borrow().transport.playing);
