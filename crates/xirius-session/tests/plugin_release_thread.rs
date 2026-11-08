@@ -1,3 +1,5 @@
+// Windows-only: opens and pumps native HWND plugin editors; NSView is stage 3.
+#![cfg(windows)]
 //! A plugin in the app is terminated on the thread that made it, not on the output's thread,
 //! when the song's player goes (ARC-044). iZotope Trash 2 ties a hidden window to the thread
 //! that made it, and when another thread released it, the DLL was gone before the window

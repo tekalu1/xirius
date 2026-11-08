@@ -1,3 +1,5 @@
+// Windows-only: opens and pumps native HWND plugin editors; NSView is stage 3.
+#![cfg(windows)]
 //! A plugin whose window is open moves to another host process (its isolation changes): the
 //! window opens on the new instance, in the new host, when the new mix comes in (ENG-070).
 //! Until then the old window stays, and the window counts as open, so the screen does not take

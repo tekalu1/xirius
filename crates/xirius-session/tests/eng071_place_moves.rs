@@ -1,3 +1,5 @@
+// Windows-only: opens and pumps native HWND plugin editors; NSView is stage 3.
+#![cfg(windows)]
 //! A plugin moves between the app's process and a plugin host process, or between hosts, while
 //! a new mix for it is on its way (ENG-071):
 //!

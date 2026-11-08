@@ -225,12 +225,6 @@ mod relay_tests {
         });
         use std::io::{Seek, SeekFrom};
         let before = host.out.stream_position().unwrap();
-        #[cfg(target_os = "macos")]
-        if unsafe { libc::kill(parent_pid as libc::pid_t, 0) } != 0
-            && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
-        {
-            break;
-        }
         host.poll();
         let mut output = host.out.try_clone().unwrap();
         output.seek(SeekFrom::Start(before)).unwrap();
@@ -249,12 +243,6 @@ mod relay_tests {
             .header()
             .host_blocks
             .store(2, Ordering::Release);
-        #[cfg(target_os = "macos")]
-        if unsafe { libc::kill(parent_pid as libc::pid_t, 0) } != 0
-            && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
-        {
-            break;
-        }
         host.poll();
         output.seek(SeekFrom::Start(before)).unwrap();
         let mut captured = false;

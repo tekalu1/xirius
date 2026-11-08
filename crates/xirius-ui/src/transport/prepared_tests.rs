@@ -601,15 +601,21 @@ fn retry_discards_a_material_failure_that_returns_after_the_new_player_is_ready(
 }
 
 #[test]
+// Windows-only: inspects a private DLL via GetModuleHandle/GetProcAddress.
+#[cfg(windows)]
 fn retry_reuses_healthy_sdk_and_materials_while_only_the_failed_decode_waits() {
     retained_retry(false);
 }
 
 #[test]
+// Windows-only: inspects a private DLL via GetModuleHandle/GetProcAddress.
+#[cfg(windows)]
 fn cancelling_a_retained_retry_discards_its_late_decode_and_closes_the_song() {
     retained_retry(true);
 }
 
+// Windows-only: inspects a private DLL via GetModuleHandle/GetProcAddress.
+#[cfg(windows)]
 fn retained_retry(cancel: bool) {
     use std::os::windows::ffi::OsStrExt;
     use std::sync::atomic::AtomicUsize;

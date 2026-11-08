@@ -400,8 +400,9 @@ fn process_shutdown_keeps_pumping_until_preferences_finish_or_report_failure() {
             "browser_review_tests::preference_shutdown_child",
             "--nocapture",
         ])
-        .env("XIRIUS_PREFS_SHUTDOWN_TEST", tmp.path())
-        .creation_flags(0x08000000);
+        .env("XIRIUS_PREFS_SHUTDOWN_TEST", tmp.path());
+        #[cfg(windows)]
+        cmd.creation_flags(0x08000000);
         if fail {
             cmd.env("XIRIUS_PREFS_FAIL_TEST", "1");
         }

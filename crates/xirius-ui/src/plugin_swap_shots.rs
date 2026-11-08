@@ -103,6 +103,7 @@ struct Label {
 }
 
 impl Label {
+    #[cfg(any(windows, test))]
     fn parse(text: &str) -> Option<Label> {
         let w: Vec<&str> = text.split_whitespace().collect();
         match w.as_slice() {

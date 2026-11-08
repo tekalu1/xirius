@@ -162,3 +162,9 @@ impl Editor {
         match *self {}
     }
 }
+
+impl Drop for Editor {
+    fn drop(&mut self) {
+        match *self {}
+    }
+}

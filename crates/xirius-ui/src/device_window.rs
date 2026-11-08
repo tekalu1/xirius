@@ -32,6 +32,8 @@ impl Windows {
     }
 
     pub(crate) fn raise(&self, studio: &Studio) {
+        #[cfg(not(windows))]
+        let _ = studio;
         #[cfg(windows)]
         for title in studio
             .instruments
@@ -189,6 +191,8 @@ impl Windows {
 }
 
 fn show(title: &str) {
+    #[cfg(not(windows))]
+    let _ = title;
     #[cfg(windows)]
     if let Some(hwnd) = crate::park::own_handle(title) {
         if std::env::var_os(xirius_vst3::OFFSCREEN_ENV).is_some() {

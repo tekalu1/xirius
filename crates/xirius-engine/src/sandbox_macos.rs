@@ -156,3 +156,25 @@ impl Event {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_signals_coalesce_and_the_owner_removes_the_name() {
+        let name = format!("event-test-{}", std::process::id());
+        let owner = Event::create(&name).unwrap();
+        let reader = Event::open(&name).unwrap();
+        assert!(!reader.wait(0));
+        owner.set();
+        owner.set();
+        assert!(reader.wait(0));
+        assert!(!reader.wait(0));
+        drop(owner);
+        assert!(Event::open(&name).is_err());
+        // Unlinking the name does not invalidate an already-open mapping.
+        reader.set();
+        assert!(reader.wait(0));
+    }
+}

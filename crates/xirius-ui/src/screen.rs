@@ -124,7 +124,9 @@ struct Screen {
     fixed_theme: Option<xirius_design::Theme>,
     /// This window's handle once the tools' cursors are set up on it (`pointer_os`), and how
     /// many frames have looked for it.
+    #[cfg(windows)]
     pointer_window: Option<isize>,
+    #[cfg(windows)]
     pointer_looks: u8,
     /// The MCP server an outside AI reaches the song through; it stops with
     /// the window.
@@ -2679,7 +2681,9 @@ pub fn run(opts: Options) {
                             focus,
                             background,
                             fixed_theme,
+                            #[cfg(windows)]
                             pointer_window: None,
+                            #[cfg(windows)]
                             pointer_looks: 0,
                             _ai_server,
                             files_dragged: false,

@@ -1,3 +1,5 @@
+// Windows-only: tests Win32 DLL timers and module handles during Save As.
+#![cfg(windows)]
 //! Save As reaches the file picker's Studio entry, with no window or devices.
 use crate::studio::{FileRequest, Studio};
 use std::process::{Command, Stdio};
