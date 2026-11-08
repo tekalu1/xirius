@@ -22,6 +22,12 @@ pub const SHOTS: &[Shot] = &[
 ];
 
 fn check(_: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, _: &mut App) {
+    crate::shot::run_for(&mut studio.borrow_mut(), 10.0, |s| {
+        s.popup
+            .as_ref()
+            .and_then(|p| p.about.as_ref())
+            .is_some_and(|about| about.crashes.is_some())
+    });
     let s = studio.borrow();
     let g = crate::screen::geometry(&s, window);
     let popup = s.popup.as_ref().unwrap();

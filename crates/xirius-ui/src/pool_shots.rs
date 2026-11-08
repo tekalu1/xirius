@@ -319,6 +319,20 @@ fn notice(s: &Studio1) -> String {
     s.borrow().notice_text().unwrap_or_default().to_string()
 }
 
+pub(crate) fn settle_pool(s: &mut Studio) {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        s.follow_pool();
+        let at = std::sync::Arc::as_ptr(&s.project()) as usize;
+        if s.browser.pool_read.is_some_and(|(read, _)| read == at) {
+            return;
+        }
+        assert!(std::time::Instant::now() < end, "pool read timed out");
+        s.tick();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
 fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) {
     let root = root();
     match n {
@@ -333,6 +347,7 @@ fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) {
             let tab = crate::browser::rail_button(g.rail, RailTab::SongFiles);
             click(mid(tab), w, cx);
             s.borrow_mut().follow_browser();
+            settle_pool(&mut s.borrow_mut());
             let g = geometry(s, w);
             // The pointer leaves the rail, whose tip would cover the headings.
             hover(
@@ -405,6 +420,7 @@ fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) {
             assert_eq!(s.borrow().error, None);
             assert_eq!(notice(s), "Bass.wav ほか 1 個の場所を指定しました");
             s.borrow_mut().follow_browser();
+            settle_pool(&mut s.borrow_mut());
             assert_eq!(s.borrow().browser.pool_missing(), 0, "the dot is gone");
         }
         4 => {
@@ -431,6 +447,7 @@ fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) {
             // Pad.wav, and Bass.wav and Gtr.wav where stage 3 found them.
             assert_eq!(notice(s), "ファイル 3 個を曲のフォルダーにコピーしました");
             s.borrow_mut().follow_browser();
+            settle_pool(&mut s.borrow_mut());
             assert!(s.borrow().browser.pool.iter().all(|e| !e.external));
         }
         6 => {

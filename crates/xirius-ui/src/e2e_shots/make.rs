@@ -200,6 +200,8 @@ pub(super) fn answer(s: &Studio1, want: FileRequest, path: &Path) -> Result<(), 
         format!("the screen asked for {asked:?}, not {want:?}"),
     )?;
     s.borrow_mut().finish_file_request(want, path);
+    crate::shot::run_for(&mut s.borrow_mut(), 30.0, |s| !s.input_blocked());
+    check(!s.borrow().input_blocked(), "file operation timed out")?;
     Ok(())
 }
 
