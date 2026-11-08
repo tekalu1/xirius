@@ -130,7 +130,9 @@ fn the_knob_menu_has_add_learn_remove_and_its_lane() {
     let (mut s, g, t, _) = delay();
     knob_menu(&mut s, &g, t, 7);
     let all = crate::context::tests::all_labels(&s);
-    assert_eq!(all[..4], [ADD, LEARN, REMOVE, "名前を変更"]);
+    for label in [ADD, LEARN, REMOVE, "名前を変更…"] {
+        assert!(all.iter().any(|name| name == label), "{label}");
+    }
     assert!(all.contains(&"オートメーションを表示".to_string()));
     assert!(all.contains(&"MIDI 学習".to_string()));
     assert!(!row_enabled(&s, LEARN), "nothing was touched yet");
@@ -152,7 +154,7 @@ fn the_knob_menu_has_add_learn_remove_and_its_lane() {
     let cell = s.channel_view(&g).unwrap().macros.unwrap().cells[7];
     let (x, y) = mid(cell);
     assert!(s.channel_right(&g, x, y));
-    assert_eq!(labels(&s)[..3], [ADD, LEARN, REMOVE]);
+    assert_eq!(labels(&s), ["編集", "MIDI", "オートメーション"]);
     pick(&mut s, &g, ADD);
     assert_eq!(
         s.popup.as_ref().map(|p| p.kind),
@@ -213,7 +215,7 @@ fn learn_takes_the_parameter_the_device_moved_last() {
         json!({ "id": id.to_string(), "param": "mix", "value": 0.3 }),
     ));
     knob_menu(&mut s, &g, t, 4);
-    let learn = labels(&s)
+    let learn = crate::context::tests::all_labels(&s)
         .into_iter()
         .find(|l| l.starts_with(LEARN))
         .unwrap();

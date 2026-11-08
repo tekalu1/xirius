@@ -120,7 +120,17 @@ fn processing(s: &mut Studio, g: &Geometry) {
     s.ctx = None;
     let (x, y) = clip_mid(s, g, "Vocal", 0);
     assert!(s.scene_context(g, x, y));
-    assert!(s.context_choose(g, "オーディオ"));
+    let attached = s
+        .selected_clip
+        .is_some_and(|(_, c)| s.project().ara.clips.contains_key(&c));
+    assert!(s.context_choose(
+        g,
+        if attached {
+            "クリップ"
+        } else {
+            "オーディオ"
+        }
+    ));
 }
 
 fn labels(s: &Studio) -> Vec<String> {

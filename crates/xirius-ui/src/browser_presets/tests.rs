@@ -113,22 +113,11 @@ fn uid(name: &str) -> &'static str {
 
 /// Presses the cell of the open menu's row `label`.
 fn choose(s: &mut Studio, g: &Geometry, label: &str) -> bool {
-    let layout = s.popup.as_ref().expect("a menu is open").layout(g.size);
-    let cell = layout
-        .cells
-        .iter()
-        .find(|c| c.text == label)
-        .unwrap_or_else(|| panic!("no cell {label}"));
-    let hit = s.hit(
-        g,
-        cell.rect.x + cell.rect.w / 2.0,
-        cell.rect.y + cell.rect.h / 2.0,
-    );
-    s.press(g, hit)
+    crate::context::tests::choose(s, g, label)
 }
 
 fn menu_labels(s: &Studio) -> Vec<String> {
-    s.context_rows().iter().map(|r| r.label.clone()).collect()
+    crate::context::tests::all_labels(s)
 }
 
 #[test]
@@ -444,7 +433,14 @@ fn the_factory_presets_come_back_from_the_browsers_menus() {
     let (_, x, y) = preset(&s, &g, "4 分のピンポン");
     assert!(s.lib_context(&g, x, y));
     let labels = menu_labels(&s);
-    assert_eq!(labels[0], "読み込む");
+    assert!(labels.contains(&"読み込む".to_string()));
+    assert_eq!(
+        s.context_rows()
+            .iter()
+            .map(|r| r.label.as_str())
+            .collect::<Vec<_>>(),
+        ["機器", "表示"]
+    );
     assert!(labels.contains(&"お気に入り".to_string()));
     assert!(choose(&mut s, &g, "工場出荷のプリセットを読み込み直す"));
     s.refresh_presets();

@@ -233,10 +233,11 @@ pub fn organize(target: &str, items: Vec<Item>) -> Result<Vec<Item>, Missing> {
     let mut direct = Vec::new();
     let mut groups: [Vec<Item>; 12] = std::array::from_fn(|_| Vec::new());
     for (path, mut item) in leaves {
-        let candidates: Vec<_> = routes()
+        let mut candidates: Vec<_> = routes()
             .iter()
             .filter(|r| target_matches(&r.target, target))
             .collect();
+        candidates.sort_by_key(|route| route.target != target);
         let command = command_of(&item);
         let mut lookup = lookup_path(target, &path);
         let empty = matches!(&item.run, Run::Sub(children) if children.is_empty());
@@ -396,6 +397,16 @@ fn verify_live_tree(target: &str, original: &[Item], result: &[Item]) {
                     && old.on == item.on
                     && old.selects == item.selects
                     && old.swatch == item.swatch
+                    && (old.label == item.label
+                        || (item.label == "名前を変更…"
+                            && (old.label.ends_with("名を変更")
+                                || old.label.ends_with("名を変更…")
+                                || old.label == "名前を変更"))
+                        || (old.label == "別のチャンネルへ写す"
+                            && item.label == "別のチャンネルへコピー")
+                        || (target == "note"
+                            && old.label == "今のグリッド"
+                            && item.label == "クオンタイズ（今のグリッド）"))
             })
             .unwrap_or_else(|| panic!("{target}: changed or duplicated operation {}", item.label));
         remaining.remove(n);

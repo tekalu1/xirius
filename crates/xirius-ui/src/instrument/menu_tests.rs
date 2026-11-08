@@ -124,15 +124,9 @@ fn open_presets_and_replace_go_where_the_row_says() {
         .filter(|r| !r.gap && r.label != "戻る")
         .map(|r| r.label)
         .collect();
-    assert_eq!(
-        labels,
-        [
-            "Default",
-            "上書き保存",
-            "名前を付けて保存…",
-            "ブラウザーに表示"
-        ]
-    );
+    assert_eq!(labels, ["Default", "上書き保存", "名前を付けて保存…"]);
+    s.context_restore(0);
+    assert!(s.context_path("ブラウザーに表示").is_some());
     pick(&mut s, &g, "Default");
     assert_eq!(window::preset_of(&plugin(&s, t)), Some("Default"));
     // 差し替える… is the instrument picker.

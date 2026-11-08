@@ -767,7 +767,10 @@ impl Studio {
         // A row that already puts all of it back (a filter opened) stands for the defaults.
         let same =
             |set: &[(usize, f64)]| set.len() == back.len() && back.iter().all(|b| set.contains(b));
-        if !pt.menu.iter().flatten().any(|c| same(&c.set)) {
+        // The approved Delay menu names reset separately from its 18 beat choices.
+        if (def.uid == "delay" && !pt.menu.is_empty())
+            || !pt.menu.iter().flatten().any(|c| same(&c.set))
+        {
             if !items.is_empty() {
                 items.push(Item::gap());
             }

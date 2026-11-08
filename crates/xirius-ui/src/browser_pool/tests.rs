@@ -612,7 +612,10 @@ fn the_keys_go_from_row_to_row_fold_open_rename_and_open_the_menu() {
     // Shift+F10 opens the selected file's menu.
     assert!(key(&mut t, "f10", Mods::shift()));
     assert!(t.s.context_open());
-    assert_eq!(labels(&t.s)[0], "新しいトラックに置く");
+    assert_eq!(
+        labels(&t.s),
+        ["編集", "選択", "トラック", "表示", "ファイル"]
+    );
     assert!(t.s.mapped_key(&t.g, "escape", None, Mods::NONE));
     assert!(!t.s.context_open());
     assert!(key(&mut t, "menu", Mods::NONE));

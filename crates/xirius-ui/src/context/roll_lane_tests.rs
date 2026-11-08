@@ -345,7 +345,7 @@ fn the_tab_changes_the_controller_hides_the_lane_and_clears_its_points() {
     assert!(!enabled(&s, "CC11"));
     assert!(enabled(&s, "CC1"));
     assert!(super::tests::all_labels(&s).contains(&"CC2".to_string()));
-    assert!(choose(&mut s, &g, "番号で選ぶ · CC74"));
+    assert!(choose(&mut s, &g, "CC74"));
     assert_eq!(s.roll.lanes[i].kind, LaneKind::Ctrl(CtrlKind::Cc(74)));
 
     // Hide: gone, and gone for good while the song changes.

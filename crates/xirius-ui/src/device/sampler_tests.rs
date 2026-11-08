@@ -1855,7 +1855,10 @@ fn ui_333_the_filter_point_chooses_its_type_and_opens() {
         .instrument_center(&g, id, Part::Point(2, 0))
         .expect("the filter");
     assert!(s.instrument_right(&g, x, y));
-    let rows = menu(&s);
+    let rows: Vec<_> = crate::context::tests::all_labels(&s)
+        .into_iter()
+        .filter(|s| s != "機器")
+        .collect();
     assert_eq!(
         &rows[..4],
         ["LP", "BP", "HP", "フィルターを開く（かけない）"]

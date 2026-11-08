@@ -621,15 +621,14 @@ fn a_press_on_the_badge_opens_explains_or_offers_the_restart() {
     assert_eq!(labels(&s), ["オーディオ"]);
     assert!(choose(&mut s, &g, "オーディオ"));
     assert_eq!(labels(&s), ["戻る", "編集", "再起動", "外す"]);
-    let rows = s.context_rows();
-    assert!(rows[0].title && !rows[0].enabled);
+    assert!(s.context_rows()[0].enabled, "the parent remains reachable");
     let edit = row(&s, "編集");
     assert!(!edit.enabled);
     assert_eq!(edit.reason, DOWN);
     assert!(row(&s, "再起動").enabled && row(&s, "外す").enabled);
-    // 「編集」 and the name do nothing.
+    // Disabled editing does nothing; the old decorative title is not an operation.
     choose(&mut s, &g, "編集");
-    choose(&mut s, &g, NAME);
+    assert!(s.context_path(NAME).is_none());
     assert_eq!(s.ara.opened.len(), 1);
     // Nor do the clip's 「〈名前〉で編集」 or Ctrl+M (the double click is the same opening).
     processing(&mut s, &g);

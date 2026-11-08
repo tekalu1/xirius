@@ -1144,10 +1144,6 @@ mod tests {
         for n in 0..3 {
             assert!(Play::Laid(play_reverb).without_window(&mut s, &g, n));
         }
-        let rows = s.context_rows();
-        assert!(
-            rows.iter().any(|r| r.label == "Decay を 4 s に"),
-            "the decays"
-        );
+        assert!(s.context_path("Decay を 4 s に").is_some(), "the decays");
     }
 }

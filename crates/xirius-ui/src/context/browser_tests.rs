@@ -283,6 +283,10 @@ fn an_effect_has_favourite_and_hide_too() {
     assert!(!names(&s).contains(&"EQ"));
     s.browser.set_show_hidden(true);
     assert!(names(&s).contains(&"EQ"));
+    press_item(&mut s, &g, "EQ");
+    assert!(enabled(&s, "一覧に戻す"));
+    assert!(choose(&mut s, &g, "一覧に戻す"));
+    assert!(!s.browser.hidden.contains("EQ"));
 }
 
 // ---------------------------------------------------------- S40 the blank of a list

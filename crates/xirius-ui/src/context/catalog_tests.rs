@@ -28,6 +28,7 @@ fn saved_presets_frozen_heads_and_existing_bus_candidates() {
         .unwrap();
     let items = s.head_items(&g, vocal);
     super::placement::organize("other-48", items).unwrap();
+    assert!(s.row_context(&g, RowKind::Track(vocal), 100.0, 300.0));
     assert!(s.run_command("track.add.bus", json!({"name":"Catalog bus","into":"root"})));
     s.arrange.tracks = vec![RowKind::Track(vocal), RowKind::Track(keys)];
     assert!(s.row_context(&g, RowKind::Track(keys), 100.0, 300.0));
