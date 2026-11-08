@@ -26,12 +26,12 @@ impl Drop for Uninit {
     }
 }
 
-fn uia() -> (IUIAutomation, Uninit) {
+fn uia() -> (Uninit, IUIAutomation) {
     unsafe {
         CoInitializeEx(None, COINIT_MULTITHREADED).ok().unwrap();
         let a: IUIAutomation =
             CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).unwrap();
-        (a, Uninit)
+        (Uninit, a)
     }
 }
 
@@ -91,7 +91,18 @@ fn read(a: &IUIAutomation, root: &IUIAutomationElement) -> Vec<(String, i32, Opt
     out
 }
 
-fn launch(env: Option<(&str, &str)>) -> (Child, tempfile::TempDir) {
+struct AppChild {
+    child: Child,
+    _tmp: tempfile::TempDir,
+}
+impl Drop for AppChild {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn launch(env: Option<(&str, &str)>) -> AppChild {
     let tmp = tempfile::Builder::new()
         .prefix("xirius-uia-")
         .tempdir()
@@ -118,7 +129,10 @@ fn launch(env: Option<(&str, &str)>) -> (Child, tempfile::TempDir) {
     if let Some((k, v)) = env {
         cmd.env(k, v);
     }
-    (cmd.spawn().unwrap(), tmp)
+    AppChild {
+        child: cmd.spawn().unwrap(),
+        _tmp: tmp,
+    }
 }
 
 /// The window, then its UIA subtree once the nodes are in it.
@@ -145,10 +159,11 @@ const RADIO_BUTTON: i32 = 50013;
 
 #[test]
 fn the_track_list_is_a_tree_of_named_items_to_uia() {
-    let (a, _uninit) = uia();
-    let (mut child, _tmp) = launch(None);
-    let rows = tree_of(&child, &a, "Keys");
-    child.kill().unwrap();
+    let (_uninit, a) = uia();
+    let mut child = launch(None);
+    let rows = tree_of(&child.child, &a, "Keys");
+    child.child.kill().unwrap();
+    child.child.wait().unwrap();
     let names: Vec<&str> = rows
         .iter()
         .filter(|(_, ty, _)| *ty == TREE_ITEM)
@@ -165,10 +180,11 @@ fn the_track_list_is_a_tree_of_named_items_to_uia() {
 
 #[test]
 fn the_input_rows_read_as_radios_with_selection_to_uia() {
-    let (a, _uninit) = uia();
-    let (mut child, _tmp) = launch(Some(("XIRIUS_OPEN_SECTION", "audio")));
-    let rows = tree_of(&child, &a, "In 1");
-    child.kill().unwrap();
+    let (_uninit, a) = uia();
+    let mut child = launch(Some(("XIRIUS_OPEN_SECTION", "audio")));
+    let rows = tree_of(&child.child, &a, "In 1");
+    child.child.kill().unwrap();
+    child.child.wait().unwrap();
     let radios: Vec<_> = rows
         .iter()
         .filter(|(n, ty, _)| *ty == RADIO_BUTTON && n.starts_with("In "))
@@ -192,10 +208,11 @@ fn the_input_rows_read_as_radios_with_selection_to_uia() {
 /// was open (the real window; the Audio test above runs on a fixture with two inputs).
 #[test]
 fn the_midi_page_has_uia_children_with_state() {
-    let (a, _uninit) = uia();
-    let (mut child, _tmp) = launch(Some(("XIRIUS_OPEN_SECTION", "midi")));
-    let rows = tree_of(&child, &a, "PC のキーボード");
-    child.kill().unwrap();
+    let (_uninit, a) = uia();
+    let mut child = launch(Some(("XIRIUS_OPEN_SECTION", "midi")));
+    let rows = tree_of(&child.child, &a, "PC のキーボード");
+    child.child.kill().unwrap();
+    child.child.wait().unwrap();
     assert!(
         rows.iter()
             .any(|(n, _, t)| n == "PC のキーボード" && t.is_some()),
