@@ -29,6 +29,9 @@ pub const QUIET: &[Shot] = &[
 ];
 
 fn check(n: u8, studio: &Rc<RefCell<Studio>>, _: &mut Window, _: &mut App) {
+    if n == 0 {
+        studio.borrow_mut().prepare_song();
+    }
     crate::shot::run_for(&mut studio.borrow_mut(), 15.0, |s| {
         !s.sound_preparing() && s.transport.playing == (n == 1)
     });

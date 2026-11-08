@@ -223,6 +223,10 @@ pub(crate) fn ready(studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut 
         let Some(state) = state.as_mut() else {
             return true;
         };
+        // A completed transient state stays ready until the next shot begins.
+        if state.reported {
+            return true;
+        }
         assert!(
             state.entered.elapsed() < Duration::from_secs(30),
             "save window stage {} timed out",
