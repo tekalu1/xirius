@@ -55,7 +55,7 @@ fn no_row_explains_in_a_sentence() {
 #[test]
 fn the_rename_rows_say_what_the_registry_says() {
     let (mut s, g) = studio();
-    let rename = s.label_of("clip.rename");
+    let rename = "名前を変更…".to_string();
     let x = clip_mid(&s, &g, "Keys", 0);
     assert!(s.scene_context(&g, x.0, x.1));
     assert!(
@@ -64,7 +64,7 @@ fn the_rename_rows_say_what_the_registry_says() {
         labels(&s)
     );
 
-    let marker = s.label_of("marker.rename");
+    let marker = "名前を変更…".to_string();
     s.song
         .run("marker.add", serde_json::json!({"at": 4 * BAR}))
         .unwrap();

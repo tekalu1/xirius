@@ -13,13 +13,18 @@ use crate::studio::{Geometry, Hit, Studio};
 fn open(s: &mut Studio, g: &Geometry, i: usize) {
     let (x, y) = clip_mid(s, g, "Vocal", i);
     assert!(s.scene_context(g, x, y));
+    assert!(super::tests::choose(s, g, "オーディオ"));
 }
 
-/// Opens the menu of the `i`-th clip of `name`.
+/// Opens the menu and explicitly chooses the clip's transpose editor.
 fn press_on(s: &mut Studio, g: &Geometry, name: &str, i: usize) -> bool {
     s.popup = None;
     let (x, y) = clip_mid(s, g, name, i);
-    s.scene_context(g, x, y)
+    let opened = s.scene_context(g, x, y);
+    if opened {
+        focus(s, g, Kind::Semis);
+    }
+    opened
 }
 
 fn process(s: &Studio, i: usize) -> AudioProcess {
@@ -32,12 +37,21 @@ fn process(s: &Studio, i: usize) -> AudioProcess {
 
 /// What the field of `kind` says.
 fn said(s: &Studio, kind: Kind) -> String {
-    let row = s
+    if let Some(row) = s
         .context_rows()
         .into_iter()
         .find_map(|r| r.field.filter(|f| f.kind == kind))
-        .expect("the menu has the field");
-    row.text
+    {
+        return row.text;
+    }
+    let root = s.ctx.as_ref().unwrap().trail.first().expect("root");
+    super::search::find(root, "")
+        .into_iter()
+        .find_map(|(i, _)| match i.run {
+            super::Run::Field(k, _, value) if k == kind => Some(kind.text(value)),
+            _ => None,
+        })
+        .expect("the menu has the field")
 }
 
 /// Presses the cell of the open menu whose action is `action`, through the window's hit test.
@@ -59,6 +73,13 @@ fn press(s: &mut Studio, g: &Geometry, action: &Action) -> bool {
 
 /// Presses the field of `kind`.
 fn focus(s: &mut Studio, g: &Geometry, kind: Kind) {
+    if s.context_path(kind.label()).is_none() {
+        s.context_restore(0);
+    }
+    let path = s.context_path(kind.label()).expect("field path");
+    for (depth, &row) in path[..path.len() - 1].iter().enumerate() {
+        assert!(s.context_pick(g, row + if depth == 0 { 0 } else { 2 }));
+    }
     let i = s
         .context_rows()
         .iter()
@@ -76,22 +97,14 @@ fn type_in(s: &mut Studio, text: &str) {
 }
 
 #[test]
-fn an_audio_clip_starts_with_its_four_fields_and_then_following_the_tempo() {
+fn audio_values_and_clip_transpose_live_in_their_approved_categories() {
     let (mut s, g) = studio();
     open(&mut s, &g, 0);
     let rows = labels(&s);
     assert_eq!(
-        rows[..6],
-        [
-            "テンポ",
-            "速さ",
-            "トランスポーズ",
-            "微調整",
-            "曲のテンポに合わせる",
-            "クリップを分割"
-        ]
+        rows[..5],
+        ["戻る", "テンポ", "速さ", "微調整", "曲のテンポに合わせる",]
     );
-    assert_eq!(rows[6], "名前を変更…", "{rows:?}");
     assert_eq!(said(&s, Kind::Speed), "100%");
     assert_eq!(said(&s, Kind::Semis), "0");
     let layout = s.popup.as_ref().unwrap().layout(g.size);
@@ -100,7 +113,7 @@ fn an_audio_clip_starts_with_its_four_fields_and_then_following_the_tempo() {
         .iter()
         .filter(|c| c.look == Look::Field)
         .collect();
-    assert_eq!(fields.len(), 4);
+    assert_eq!(fields.len(), 3);
     // The fields stand in one column, inside the menu.
     assert!(fields.windows(2).all(|w| w[0].rect.x == w[1].rect.x));
     assert!(
@@ -122,6 +135,8 @@ fn an_audio_clip_starts_with_its_four_fields_and_then_following_the_tempo() {
         .find(|c| c.look == Look::Field && c.text == "100%")
         .expect("the speed shows its %");
     assert_eq!(speed.spoken, "速さ 100%");
+    focus(&mut s, &g, Kind::Semis);
+    let layout = s.popup.as_ref().unwrap().layout(g.size);
     let semis = layout
         .cells
         .iter()
@@ -334,17 +349,13 @@ fn the_search_box_takes_the_keys_and_the_label_gives_them_back() {
             .is_some_and(|c| c.on),
         "the caret is the search box's now"
     );
-    let label = layout
-        .cells
-        .iter()
-        .find(|c| c.look == Look::Note && c.text == "トランスポーズ")
-        .expect("the field's label")
-        .clone();
-    assert!(click(&mut s, &label));
-    assert!(
-        s.field_typing().is_some_and(|t| t.row == 0),
-        "the label gives the field the keys"
-    );
+    s.ask_text(None, "トランスポーズ", false);
+    let rows = s.context_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].label, "トランスポーズ");
+    assert_eq!(rows[0].path, "クリップ");
+    assert!(s.context_pick(&g, 0));
+    assert!(s.field_typing().is_some());
 }
 
 fn semis(s: &Studio) -> i8 {
@@ -356,7 +367,7 @@ fn the_menu_opens_with_the_first_field_taking_the_keys_and_the_ime_writes_there(
     let (mut s, g) = studio();
     assert!(press_on(&mut s, &g, "Keys", 0));
     // The field takes the keys as the menu opens, so the caret is already there (UI-313).
-    assert!(s.field_typing().is_some_and(|t| t.row == 0 && t.fresh));
+    assert!(s.field_typing().is_some_and(|t| t.row == 2 && t.fresh));
     // The IME composes 「５」: the field keeps it, and the search box keeps none of it.
     s.ask_text(None, "５", true);
     let t = s.field_typing().expect("the field");
@@ -367,10 +378,7 @@ fn the_menu_opens_with_the_first_field_taking_the_keys_and_the_ime_writes_there(
             .unwrap()
             .search
             .as_ref()
-            .unwrap()
-            .field
-            .marked
-            .is_empty()
+            .is_none_or(|search| search.field.marked.is_empty())
     );
     // The commit is the field's, and Enter sets the clip's value.
     s.ask_text(None, "５", false);
@@ -382,10 +390,7 @@ fn the_menu_opens_with_the_first_field_taking_the_keys_and_the_ime_writes_there(
             .unwrap()
             .search
             .as_ref()
-            .unwrap()
-            .field
-            .marked
-            .is_empty()
+            .is_none_or(|search| search.field.marked.is_empty())
     );
 }
 
@@ -407,7 +412,10 @@ fn escape_shuts_the_menu_when_nothing_is_typed_and_only_drops_the_typing_otherwi
             .is_some_and(|t| t.fresh && t.marked.is_empty())
     );
     assert!(s.field_keys(&g, "escape", None, crate::tools::Mods::NONE));
-    assert!(!s.context_open(), "nothing typed: Esc shuts the menu");
+    assert!(s.context_open(), "Esc returns to the parent");
+    assert!(s.ctx.as_ref().unwrap().trail.is_empty());
+    assert_eq!(s.ask_key("escape"), Some(true));
+    assert!(!s.context_open());
 
     assert!(press_on(&mut s, &g, "Keys", 0));
     s.ask_text(None, "5", false);
@@ -480,7 +488,7 @@ fn a_wheel_over_a_menu_field_changes_it_and_does_not_move_the_list() {
     let mut now = std::time::Instant::now();
     let mut turn = |s: &mut Studio, px: f32| {
         now += std::time::Duration::from_millis(10);
-        s.context_field_wheel_at(&g, 0, px, false, false, now)
+        s.context_field_wheel_at(&g, 2, px, false, false, now)
     };
     assert!(turn(&mut s, 60.0));
     assert_eq!(semis(&s), 1);
@@ -546,9 +554,10 @@ fn the_window_delivers_wheel_turns_to_midi_and_audio_transpose_cells() {
 }
 
 #[test]
-fn an_audio_menu_opens_on_the_transpose_not_the_tempo() {
+fn the_clip_category_opens_the_transpose_editor() {
     let (mut s, g) = studio();
     open(&mut s, &g, 0);
+    focus(&mut s, &g, Kind::Semis);
     let t = s.field_typing().expect("a field takes the keys");
     assert_eq!(t.row, 2, "the transpose, after the tempo and the speed");
     assert_eq!(s.context_rows()[2].label, "トランスポーズ");
@@ -561,10 +570,12 @@ fn a_turn_left_in_one_field_does_not_move_the_next_field() {
     let mut now = std::time::Instant::now();
     // 40 px in the transpose leaves a fraction there. Moving to the fine tune starts its own
     // turn: its 20 px is not the rest of the transpose's notch (P3-1 of review 15).
+    focus(&mut s, &g, Kind::Semis);
     now += std::time::Duration::from_millis(10);
     assert!(s.context_field_wheel_at(&g, 2, 40.0, false, false, now));
     now += std::time::Duration::from_millis(10);
-    assert!(s.context_field_wheel_at(&g, 3, 20.0, false, false, now));
+    focus(&mut s, &g, Kind::Cents);
+    assert!(s.context_field_wheel_at(&g, 4, 20.0, false, false, now));
     let p = process(&s, 0);
     assert_eq!((p.semis, p.cents), (0, 0));
 }

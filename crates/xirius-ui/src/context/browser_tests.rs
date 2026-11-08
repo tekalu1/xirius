@@ -87,7 +87,7 @@ fn names(s: &Studio) -> Vec<&'static str> {
 
 /// Which rows are on, by label.
 fn on(s: &Studio, label: &str) -> bool {
-    s.context_rows()
+    super::tests::all_rows(s)
         .iter()
         .find(|r| r.label == label)
         .unwrap_or_else(|| panic!("no row {label}: {:?}", labels(s)))
@@ -104,22 +104,13 @@ fn the_menu_of_an_instrument_follows_the_selected_track() {
     press_item(&mut s, &g, "Sampler");
     assert!(s.context_open());
     assert_eq!(s.browser.selected_item, Some("Sampler"));
-    assert_eq!(
-        labels(&s),
-        [
-            "新しいトラックで使う",
-            "選んだトラックのインストゥルメントにする",
-            "お気に入り",
-            "隠す",
-            "ファイルの場所を表示",
-        ]
-    );
+    assert_eq!(labels(&s), ["トラック", "表示"]);
     assert!(enabled(&s, "新しいトラックで使う"));
     assert!(enabled(&s, "選んだトラックのインストゥルメントにする"));
     assert!(on(&s, "お気に入り"), "Sampler is a favourite");
     assert!(!enabled(&s, "ファイルの場所を表示"), "1.0");
     let gaps = s.context_rows().iter().filter(|r| r.gap).count();
-    assert_eq!(gaps, 1);
+    assert_eq!(gaps, 0);
     // An audio track takes no instrument.
     let vocal = first_of(&s, TrackKind::Audio);
     s.selected_row = Some(RowKind::Track(vocal));
@@ -183,7 +174,7 @@ fn favourite_and_hide_change_the_list() {
     s.browser.search = "dex".into();
     assert_eq!(names(&s), ["Dexed"]);
     press_item(&mut s, &g, "Dexed");
-    assert_eq!(labels(&s)[3], "一覧に戻す");
+    assert!(super::tests::all_labels(&s).contains(&"一覧に戻す".into()));
     assert!(choose(&mut s, &g, "一覧に戻す"));
     s.browser.search.clear();
     assert!(names(&s).contains(&"Dexed"));
@@ -228,17 +219,7 @@ fn an_effect_goes_to_the_channel_a_new_bus_or_the_master_in_one_step() {
     // No channel selected: that row is dim, the others are not.
     s.selected_row = None;
     press_item(&mut s, &g, "EQ");
-    assert_eq!(
-        labels(&s),
-        [
-            "選んだチャンネルに追加",
-            "新しいバスに追加",
-            "マスターに追加",
-            "お気に入り",
-            "隠す",
-            "ファイルの場所を表示",
-        ]
-    );
+    assert_eq!(labels(&s), ["機器", "表示"]);
     assert!(!enabled(&s, "選んだチャンネルに追加"));
     assert!(enabled(&s, "新しいバスに追加"));
     assert!(enabled(&s, "マスターに追加"));
@@ -319,16 +300,7 @@ fn the_blank_of_a_list_opens_folds_and_shows_the_hidden() {
     let (x, y) = centre(&s, &g, BrowserHit::Group(i));
     assert!(s.lib_context(&g, x, y));
     s.settle_browser_menu();
-    assert_eq!(
-        labels(&s),
-        [
-            "すべて開く",
-            "すべて畳む",
-            "隠したものを表示",
-            "プラグインを再スキャン",
-            "工場出荷のプリセットを読み込み直す",
-        ]
-    );
+    assert_eq!(labels(&s), ["機器", "表示"]);
     let items = |s: &Studio| {
         s.browser
             .rows()
@@ -448,17 +420,7 @@ fn a_file_goes_on_a_new_track_or_the_selected_audio_track_in_one_step() {
     let (mut s, g, top, _tmp) = files("file");
     let wav = top.join("Loops/loop_120bpm.wav");
     press_file(&mut s, &g, "loop_120bpm.wav");
-    assert_eq!(
-        labels(&s),
-        [
-            "新しいトラックに置く",
-            "選んだトラックに置く",
-            "お気に入り",
-            "エクスプローラーで表示",
-            "名前を変更…",
-            "ごみ箱へ",
-        ]
-    );
+    assert_eq!(labels(&s), ["編集", "トラック", "表示", "ファイル"]);
     assert_eq!(
         s.browser.selected_file.as_deref().map(Path::new),
         Some(wav.as_path())
@@ -562,17 +524,7 @@ fn a_folder_becomes_a_tab_and_is_dim_once_it_is() {
     let (mut s, g, top, _tmp) = files("dir");
     let steps0 = steps(&s);
     press_dir(&mut s, &g, "Drums");
-    assert_eq!(
-        labels(&s),
-        [
-            "場所のタブに追加",
-            "お気に入り",
-            "エクスプローラーで表示",
-            "新しいフォルダー",
-            "名前を変更…",
-            "ごみ箱へ",
-        ]
-    );
+    assert_eq!(labels(&s), ["編集", "表示", "ファイル"]);
     assert!(enabled(&s, "場所のタブに追加"));
     let places = s.browser.places.len();
     assert!(choose(&mut s, &g, "場所のタブに追加"));
@@ -593,10 +545,7 @@ fn a_tab_is_renamed_or_taken_away_but_the_songs_is_not() {
     let (mut s, g, top, _tmp) = files("tab");
     // The song's tab.
     press_tab(&mut s, &g, 0);
-    assert_eq!(
-        labels(&s),
-        ["名前を変更…", "エクスプローラーで表示", "場所を外す"]
-    );
+    assert_eq!(labels(&s), ["編集", "表示"]);
     assert!(!enabled(&s, "名前を変更…"));
     assert!(!enabled(&s, "場所を外す"));
     s.popup = None;
@@ -719,7 +668,7 @@ fn type_name(s: &mut Studio, text: &str) {
 
 /// What a dim row says it is dim for.
 fn reason(s: &Studio, label: &str) -> String {
-    s.context_rows()
+    super::tests::all_rows(&s)
         .into_iter()
         .find(|r| r.label == label)
         .unwrap_or_else(|| panic!("no row {label}"))
@@ -904,20 +853,21 @@ fn the_recycle_bin_asks_once_and_what_the_song_uses_is_dim() {
     press_file(&mut s, &g, "kick_01.wav");
     assert!(choose(&mut s, &g, "新しいトラックに置く"));
     press_file(&mut s, &g, "kick_01.wav");
-    assert!(!enabled(&s, "ごみ箱へ"));
+    super::tests::disabled_descendants(&s, "ごみ箱へ");
     assert!(
-        reason(&s, "ごみ箱へ").contains("使用中"),
+        reason(&s, "ファイルをごみ箱へ").contains("使用中"),
         "{}",
-        reason(&s, "ごみ箱へ")
+        reason(&s, "ファイルをごみ箱へ")
     );
-    assert!(!choose(&mut s, &g, "ごみ箱へ"));
+    assert!(choose(&mut s, &g, "ごみ箱へ"));
+    assert!(!choose(&mut s, &g, "ファイルをごみ箱へ"));
     close(&mut s);
     press_dir(&mut s, &g, "Drums");
-    assert!(!enabled(&s, "ごみ箱へ"));
+    super::tests::disabled_descendants(&s, "ごみ箱へ");
     assert!(
-        reason(&s, "ごみ箱へ").contains("中のファイル"),
+        reason(&s, "フォルダーをごみ箱へ").contains("中のファイル"),
         "{}",
-        reason(&s, "ごみ箱へ")
+        reason(&s, "フォルダーをごみ箱へ")
     );
     close(&mut s);
     assert!(top.join("Drums/kick_01.wav").is_file());
@@ -943,7 +893,7 @@ fn the_folder_of_the_open_song_is_not_renamed_or_binned() {
         "{}",
         reason(&s, "名前を変更…")
     );
-    assert!(!enabled(&s, "ごみ箱へ"));
+    super::tests::disabled_descendants(&s, "ごみ箱へ");
     close(&mut s);
     press_dir(&mut s, &g, "Drums");
     assert!(enabled(&s, "名前を変更…"), "a folder beside it is free");

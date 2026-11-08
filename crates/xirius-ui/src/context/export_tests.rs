@@ -103,17 +103,7 @@ fn panel_open(s: &Studio) -> bool {
 fn a_finished_export_has_the_rows_of_the_matrix_and_the_old_ones_can_be_written_again() {
     let (mut s, g, dir, _tmp) = exported("rows");
     menu(&mut s, &g);
-    assert_eq!(
-        labels(&s),
-        [
-            "聴く",
-            "書き直す",
-            "同じ設定で書き出しを開く",
-            "曲に取り込む",
-            "エクスプローラーで表示",
-            "ごみ箱へ"
-        ]
-    );
+    assert_eq!(labels(&s), ["表示", "書き出し", "ファイル"]);
     assert!(enabled(&s, "聴く"));
     assert!(enabled(&s, "エクスプローラーで表示"));
     assert!(!enabled(&s, "書き直す"), "the song has not changed");
@@ -590,10 +580,7 @@ fn a_stale_stem_is_written_again_alone_from_its_own_row() {
     // The menu of the file that did not change cannot write it again.
     let (x, y) = file_at(&s, &g, &card.kids[1].name);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(
-        labels(&s),
-        ["聴く", "書き直す", "曲に取り込む", "エクスプローラーで表示"]
-    );
+    assert_eq!(labels(&s), ["表示", "書き出し"]);
     assert!(enabled(&s, "聴く"));
     assert!(!enabled(&s, "書き直す"));
     s.ctx = None;

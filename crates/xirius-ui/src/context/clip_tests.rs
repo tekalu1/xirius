@@ -121,8 +121,7 @@ fn mute_is_one_step_and_shows_a_check_once_the_clip_is_muted() {
     assert_eq!(steps(&s), n + 1);
     assert!(s.project().tracks[&keys].clips[0].muted);
     assert!(press_on(&mut s, &g, "Keys", 0));
-    let row = s
-        .context_rows()
+    let row = super::tests::all_rows(&s)
         .into_iter()
         .find(|r| r.label == "クリップをミュート")
         .unwrap();
@@ -196,23 +195,17 @@ fn the_transpose_field_sets_the_clips_value_and_the_notes_stay_as_written() {
     assert!(press_on(&mut s, &g, "Keys", 0));
     // The field comes first, as on an audio clip, and the write row sits with the note
     // operations inside 「クオンタイズ」, where it cannot be mistaken for the field (UI-313).
-    let rows = labels(&s);
-    assert_eq!(rows[..2], ["トランスポーズ", "ピアノロールで開く"]);
-    assert!(choose(&mut s, &g, "クオンタイズ"));
     assert_eq!(
-        labels(&s),
-        [
-            "戻る",
-            "今のグリッド",
-            "50%",
-            "元に戻す",
-            "トランスポーズをノートに反映"
-        ]
+        labels(&s)[..3],
+        ["ピアノロールで開く", "クリップを分割", "クリップを複製"]
     );
-    assert!(!enabled(&s, "トランスポーズをノートに反映"));
+    assert!(choose(&mut s, &g, "クオンタイズ"));
+    assert_eq!(labels(&s), ["戻る", "今のグリッド", "50%", "元に戻す"]);
     assert!(choose(&mut s, &g, "戻る"));
+    assert!(!enabled(&s, "トランスポーズをノートに反映"));
 
     // 12 typed into the field is the clip's value: the notes do not move.
+    assert!(choose(&mut s, &g, "クリップ"));
     let field = s
         .context_rows()
         .iter()
@@ -229,7 +222,7 @@ fn the_transpose_field_sets_the_clips_value_and_the_notes_stay_as_written() {
         .find_map(|r| r.field.map(|f| f.text))
         .expect("the field shows the clip's value");
     assert_eq!(said, "+12");
-    assert!(choose(&mut s, &g, "クオンタイズ"));
+    assert!(choose(&mut s, &g, "MIDI"));
     assert!(enabled(&s, "トランスポーズをノートに反映"));
 
     // Writing it into the notes keeps the sound and clears the value; one undo brings both back.
@@ -257,7 +250,14 @@ fn the_transpose_field_shows_what_was_typed_and_the_menu_stays_after_enter() {
             .find_map(|r| r.field.map(|f| f.text))
     };
     assert!(press_on(&mut s, &g, "Keys", 0));
-    assert_eq!(said(&s).as_deref(), Some("0"));
+    assert_eq!(
+        super::tests::all_rows(&s)
+            .into_iter()
+            .find_map(|r| r.field.map(|f| f.text))
+            .as_deref(),
+        Some("0")
+    );
+    assert!(choose(&mut s, &g, "クリップ"));
     let field = s
         .context_rows()
         .iter()
@@ -275,6 +275,8 @@ fn the_transpose_field_shows_what_was_typed_and_the_menu_stays_after_enter() {
 
     // Nothing is half typed now: one Escape closes the menu (P2-1 of review 15).
     assert_eq!(s.field_key(&g, "escape", None, false), Some(true));
+    assert!(s.context_open());
+    assert_eq!(s.ask_key("escape"), Some(true));
     assert!(!s.context_open());
 }
 
@@ -299,7 +301,7 @@ fn several_clips_get_the_rows_that_fit_all_of_them() {
     // A press on one of the selected clips keeps the selection.
     assert!(press_on(&mut s, &g, "Keys", 0));
     assert_eq!(s.arrange.clips.len(), 2);
-    let rows = labels(&s);
+    let rows = super::tests::all_labels(&s);
     // Audio and MIDI together: no row that fits only one kind, none for a single clip. The
     // transpose field fits both, so it is there; writing it into the notes is for MIDI only.
     for gone in [
@@ -311,7 +313,7 @@ fn several_clips_get_the_rows_that_fit_all_of_them() {
     ] {
         assert!(!rows.contains(&gone.to_string()), "{gone}");
     }
-    assert_eq!(rows[0], "トランスポーズ");
+    assert!(rows.contains(&"トランスポーズ".to_string()));
     assert!(rows.contains(&"クリップを複製".to_string()));
 
     // Values that differ show 「—」; a value typed there goes to every clip of the selection.
@@ -334,6 +336,7 @@ fn several_clips_get_the_rows_that_fit_all_of_them() {
             .find_map(|r| r.field.map(|f| f.text))
             .expect("the transpose field")
     };
+    assert!(choose(&mut s, &g, "クリップ"));
     assert_eq!(said(&s), "—");
     let field = s
         .context_rows()
@@ -560,15 +563,25 @@ fn shift_f10_and_the_menu_key_open_the_selected_clips_menu() {
 fn an_audio_clip_starts_with_following_the_tempo_and_groups_processing_and_bouncing() {
     let (mut s, g) = studio();
     assert!(press_on(&mut s, &g, "Vocal", 0));
-    let rows = labels(&s);
-    assert_eq!(rows[4], "曲のテンポに合わせる", "{rows:?}");
-    assert!(rows.contains(&"処理".to_string()), "{rows:?}");
+    let rows = super::tests::all_labels(&s);
+    assert_eq!(
+        labels(&s)[..3],
+        ["クリップを分割", "クリップを複製", "クリップを削除"]
+    );
+    assert!(rows.contains(&"曲のテンポに合わせる".into()));
+    assert!(rows.contains(&"オーディオ".to_string()), "{rows:?}");
     assert!(rows.contains(&"バウンス".to_string()), "{rows:?}");
-    assert!(choose(&mut s, &g, "処理"));
+    assert!(choose(&mut s, &g, "オーディオ"));
     assert_eq!(
         labels(&s),
         [
             "戻る",
+            "テンポ",
+            "速さ",
+            "微調整",
+            "曲のテンポに合わせる",
+            "フェードを削除",
+            "ゲインを戻す",
             "ノーマライズ",
             "逆再生",
             "テンポを検出",
@@ -602,8 +615,7 @@ fn following_the_tempo_is_one_step_and_shows_a_check() {
     };
     assert!(follows(&s));
     assert!(press_on(&mut s, &g, "Vocal", 0));
-    let row = s
-        .context_rows()
+    let row = super::tests::all_rows(&s)
         .into_iter()
         .find(|r| r.label == "曲のテンポに合わせる")
         .unwrap();
@@ -626,7 +638,7 @@ fn reversing_from_the_menu_is_one_step_and_a_frozen_track_offers_to_unfreeze() {
     };
     assert!(press_on(&mut s, &g, "Vocal", 0));
     let n = steps(&s);
-    assert!(choose(&mut s, &g, "処理"));
+    assert!(choose(&mut s, &g, "オーディオ"));
     assert!(choose(&mut s, &g, "逆再生"), "{:?}", s.error);
     assert_eq!(steps(&s), n + 1);
     assert!(reversed(&s));
@@ -638,15 +650,15 @@ fn reversing_from_the_menu_is_one_step_and_a_frozen_track_offers_to_unfreeze() {
         )
         .unwrap();
     assert!(press_on(&mut s, &g, "Vocal", 0));
-    assert!(!enabled(&s, "処理"));
+    assert!(!enabled(&s, "オーディオ"));
     let why = |s: &Studio, label: &str| {
-        s.context_rows()
+        super::tests::all_rows(&s)
             .into_iter()
             .find(|r| r.label == label)
             .unwrap()
             .reason
     };
-    assert_eq!(why(&s, "処理"), crate::toast::FROZEN);
+    assert_eq!(why(&s, "オーディオ"), crate::toast::FROZEN);
     assert!(choose(&mut s, &g, "バウンス"));
     assert!(!enabled(&s, "クリップをバウンス"));
     assert_eq!(why(&s, "クリップをバウンス"), crate::toast::FROZEN);
@@ -798,7 +810,7 @@ fn a_normalize_raises_the_gain_and_says_by_how_much_over_the_clip_for_a_moment()
         _ => unreachable!(),
     };
     assert!(press_on(&mut s, &g, "Vocal", 0));
-    assert!(choose(&mut s, &g, "処理"));
+    assert!(choose(&mut s, &g, "オーディオ"));
     assert!(choose(&mut s, &g, "ノーマライズ"), "{:?}", s.error);
     let raised = gain(&s);
     assert!(raised > 0.0, "{raised}");
@@ -831,7 +843,7 @@ fn a_range_has_time_rows_that_run_the_song_commands() {
     s.arrange.range = Some((gap, gap + 7680));
     let x = s.tick_x(&g, gap + 3840);
     assert!(s.scene_context(&g, x, y));
-    let rows = labels(&s);
+    let rows = super::tests::all_labels(&s);
     assert!(rows.contains(&"時間を挿入".to_string()), "{rows:?}");
     assert!(rows.contains(&"時間を削除".to_string()));
     let n = steps(&s);
@@ -874,7 +886,7 @@ fn a_range_deletes_or_duplicates_what_lies_in_it_from_its_own_menu() {
     s.popup = None;
     s.arrange.clips.insert((keys, c.id));
     assert!(s.scene_context(&g, x, y));
-    let rows = labels(&s);
+    let rows = super::tests::all_labels(&s);
     assert!(rows.contains(&"範囲の中身を複製".to_string()), "{rows:?}");
     assert!(rows.contains(&"範囲の中身を削除".to_string()));
     let n = steps(&s);

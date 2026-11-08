@@ -229,7 +229,7 @@ fn quantize_runs_to_the_grid_and_at_half_strength() {
     let (x, y) = note_at(&s, &g, 0);
     assert!(s.scene_context(&g, x, y));
     assert!(choose(&mut s, &g, "クオンタイズ"));
-    assert_eq!(labels(&s), ["戻る", "今のグリッド", "50%"]);
+    assert_eq!(labels(&s), ["戻る", "50%"]);
     assert_eq!(key(&s, "今のグリッド"), "Q");
     assert!(choose(&mut s, &g, "50%"));
     let half = notes(&s, &g)[0].start;
@@ -246,16 +246,7 @@ fn the_empty_grid_pastes_selects_inverts_and_sets_the_grid() {
     let (mut s, g) = roll();
     let (x, y) = empty_at(&s, &g);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(
-        labels(&s),
-        [
-            "貼り付け",
-            "すべて選択",
-            "選択を反転",
-            "グリッド",
-            "消しゴムツール"
-        ]
-    );
+    assert_eq!(labels(&s), ["編集", "選択", "表示"]);
     // Nothing was copied yet.
     assert!(!enabled(&s, "貼り付け"));
     assert!(choose(&mut s, &g, "すべて選択"));
@@ -296,7 +287,7 @@ fn a_press_on_the_ruler_above_the_grid_opens_the_rulers_menu_not_the_rolls() {
     let v = s.roll.view(&c);
     // The ruler above the grid has the arrangement's ruler menu (2026-11-05).
     assert!(s.roll_context(&g, v.grid.x + 20.0, v.grid.y - 6.0));
-    assert_eq!(labels(&s)[0], "ここから再生");
+    assert_eq!(labels(&s)[0], "時間");
 }
 
 /// KEY-025: the key on a row is the keymap's now, so a remap shows and an unbound row has none.

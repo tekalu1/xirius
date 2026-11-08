@@ -109,18 +109,7 @@ fn the_insert_heading_menu_has_its_rows_in_order() {
     let (mut s, g) = mix();
     let vocal = track(&s, "Vocal");
     assert!(press(&mut s, &g, MixerHit::Heading(vocal, Area::Insert)));
-    assert_eq!(
-        labels(&s),
-        [
-            "インサートをコピー",
-            "インサートを貼り付け",
-            "インサートを後ろに貼り付け",
-            "エフェクトを追加…",
-            "スプリッターを追加",
-            "チャンネルの設定をコピー",
-            "チャンネルの設定を貼り付け",
-        ]
-    );
+    assert_eq!(labels(&s), ["編集", "機器"]);
     assert_eq!(key(&s, "インサートをコピー"), "Ctrl+C");
     assert_eq!(key(&s, "インサートを貼り付け"), "Ctrl+V");
     assert!(enabled(&s, "インサートをコピー"));
@@ -164,14 +153,14 @@ fn the_head_the_name_and_the_rows_add_with_the_same_words() {
     let comp = add_effect(&mut s, vocal, "Compressor");
     // the strip's name
     assert!(press_name(&mut s, &g, keys));
-    let got = labels(&s);
+    let got = super::tests::all_labels(&s);
     let at = got.iter().position(|l| l == ADDS[0]).expect("the adds");
     assert_eq!(got[at..at + 4], ADDS);
     assert!(enabled(&s, "レイヤーを追加…"));
     close(&mut s);
     // an audio track has no layers
     assert!(press_name(&mut s, &g, vocal));
-    let got = labels(&s);
+    let got = super::tests::all_labels(&s);
     let at = got.iter().position(|l| l == ADDS[1]).expect("the adds");
     assert_eq!(got[at..at + 3], ADDS[1..]);
     assert!(!got.iter().any(|l| l == ADDS[0]));
@@ -182,7 +171,7 @@ fn the_head_the_name_and_the_rows_add_with_the_same_words() {
     close(&mut s);
     // an effect's row adds after itself, then the same rows (an audio track has no layers)
     assert!(press(&mut s, &g, MixerHit::Open(vocal, comp)));
-    let got = labels(&s);
+    let got = super::tests::all_labels(&s);
     let at = got
         .iter()
         .position(|l| l == "エフェクトを後ろに追加…")
@@ -195,7 +184,7 @@ fn the_head_the_name_and_the_rows_add_with_the_same_words() {
     s.scroll.1 = s.tree().row_of(RowKind::Track(keys)).unwrap().y;
     let (x, y) = crate::arrange::probe::row_mid(&s, &g, RowKind::Track(keys));
     assert!(s.scene_context(&g, x, y));
-    let got = labels(&s);
+    let got = super::tests::all_labels(&s);
     let at = got.iter().position(|l| l == ADDS[0]).expect("the adds");
     assert_eq!(got[at..at + 4], ADDS);
 }
@@ -330,7 +319,7 @@ fn a_splitter_and_a_branch_added_grow_the_strip_and_the_editor_alike() {
     );
     // the splitter's row adds a branch
     assert!(press(&mut s, &g, MixerHit::Fold(vocal, id)));
-    let got = labels(&s);
+    let got = super::tests::all_labels(&s);
     assert_eq!(got[0], "分岐を追加");
     assert_eq!(
         got[1..3],

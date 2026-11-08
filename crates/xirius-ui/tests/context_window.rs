@@ -42,9 +42,24 @@ fn six_targets_cascade_and_search_in_both_themes() {
             std::fs::create_dir_all(&directory).unwrap();
             command.env(name, directory);
         }
-        let output = command.output().unwrap();
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(output.status.success(), "light={light}: {stderr}");
+        let log = root.join("stderr.log");
+        command.stdout(std::process::Stdio::null());
+        command.stderr(std::fs::File::create(&log).unwrap());
+        let mut child = command.spawn().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if std::time::Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("context capture timed out: light={light}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        let stderr = std::fs::read_to_string(log).unwrap();
+        assert!(status.success(), "light={light}: {stderr}");
         for target in [
             "audio", "midi", "track", "insert", "note", "empty", "cascade", "search",
         ] {

@@ -22,7 +22,7 @@ fn ticks(s: &Studio, t: TrackId, target: &AutoTarget) -> Vec<i64> {
 }
 
 fn on(s: &Studio) -> Vec<String> {
-    s.context_rows()
+    super::tests::all_rows(s)
         .into_iter()
         .filter(|r| r.on)
         .map(|r| r.label)
@@ -90,16 +90,7 @@ fn a_point_has_the_rows_of_the_mock() {
     let t = two_lanes(&mut s, &g, "Bass");
     let (x, y) = point_xy(&s, &g, t, 0, 1);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(
-        labels(&s),
-        [
-            "値を入力…",
-            "次のポイントまでの形",
-            "切り取り",
-            "コピー",
-            "削除"
-        ]
-    );
+    assert_eq!(labels(&s), ["編集", "オートメーション"]);
     assert!(enabled(&s, "次のポイントまでの形"));
     // Pressing a point that was not selected selected it alone.
     let vol = AutoTarget::Volume;
@@ -114,7 +105,7 @@ fn the_last_point_has_no_line_after_it() {
     let t = two_lanes(&mut s, &g, "Bass");
     let (x, y) = point_xy(&s, &g, t, 0, 2);
     assert!(s.scene_context(&g, x, y));
-    assert!(!enabled(&s, "次のポイントまでの形"));
+    super::tests::disabled_descendants(&s, "次のポイントまでの形");
 }
 
 #[test]
@@ -197,16 +188,7 @@ fn a_press_on_a_line_adds_a_point_on_it_and_shapes_it() {
     let vol = AutoTarget::Volume;
     let (x, y) = mid_line(&s, &g, t, 0);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(
-        labels(&s),
-        [
-            "ここにポイントを追加",
-            "この線の形",
-            "貼り付け",
-            "ループの中のポイントを削除",
-            "すべてのポイントを削除"
-        ]
-    );
+    assert_eq!(labels(&s), ["編集", "オートメーション"]);
     // Nothing was copied.
     assert!(!enabled(&s, "貼り付け"));
     assert!(enabled(&s, "この線の形"));
@@ -262,10 +244,7 @@ fn the_head_of_a_lane_adds_a_lane_hides_it_and_clears_it() {
     let row = *s.tree().row_of(RowKind::Track(t)).unwrap();
     let (x, y) = (g.column.x + 20.0, s.lane_top(&g, &row, 0) + 24.0);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(
-        labels(&s),
-        ["レーンを追加", "このレーンを隠す", "すべてのポイントを削除"]
-    );
+    assert_eq!(labels(&s), ["オートメーション"]);
     // The lanes this track can still take are the rows below.
     assert!(choose(&mut s, &g, "レーンを追加"));
     assert!(labels(&s).len() > 1);
@@ -304,7 +283,7 @@ fn a_range_over_a_lane_makes_that_lane_a_line_and_leaves_the_others() {
     s.arrange.range = Some((tk[0], tk[2]));
     let (x, y) = mid_line(&s, &g, t, 0);
     assert!(s.scene_context(&g, x, y));
-    let rows = labels(&s);
+    let rows = super::tests::all_labels(&s);
     for want in [
         "コピー",
         "切り取り",
@@ -343,7 +322,7 @@ fn a_range_over_the_tempo_row_has_the_shape_rows_but_no_curve() {
     s.arrange.range = Some((bar, 3 * bar));
     let x = s.tick_x(&g, bar + bar / 2);
     assert!(s.scene_context(&g, x, g.tempo.y + 4.0));
-    let rows = labels(&s);
+    let rows = super::tests::all_labels(&s);
     assert!(rows.contains(&"範囲を直線にする".to_string()), "{rows:?}");
     assert!(!rows.contains(&"範囲をカーブにする".to_string()));
     let n = steps(&s);

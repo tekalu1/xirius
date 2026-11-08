@@ -51,7 +51,7 @@ fn cc1(s: &Studio, g: &Geometry) -> Vec<(i64, i32)> {
 
 /// The labels of the rows that are lit.
 fn lit(s: &Studio) -> Vec<String> {
-    s.context_rows()
+    super::tests::all_rows(s)
         .into_iter()
         .filter(|r| r.on)
         .map(|r| r.label)
@@ -104,7 +104,7 @@ fn a_key_selects_the_notes_of_its_height_and_is_dim_where_there_are_none() {
     let x = f.keys.x + f.keys.w / 2.0;
 
     assert!(s.scene_context(&g, x, v.y(61) + v.row_h / 2.0));
-    assert_eq!(labels(&s), ["同じ高さのノートを選択", "鍵盤の表示"]);
+    assert_eq!(labels(&s), ["選択", "表示"]);
     assert!(!enabled(&s, "同じ高さのノートを選択"));
 
     assert!(s.scene_context(&g, x, v.y(62) + v.row_h / 2.0));
@@ -132,7 +132,7 @@ fn a_velocity_bar_takes_a_typed_value_and_evens_out_or_slopes_the_selected_bars(
     // Pressing a bar selects it alone; a typed value sets it.
     let (x, y) = at(&notes(&s, &g)[2]);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(labels(&s), ["値を入力…", "揃える"]);
+    assert_eq!(labels(&s), ["MIDI"]);
     assert_eq!(s.roll.selected.len(), 1);
     assert!(choose(&mut s, &g, "値を入力…"));
     for _ in 0..4 {
@@ -167,7 +167,7 @@ fn a_velocity_bar_takes_a_typed_value_and_evens_out_or_slopes_the_selected_bars(
 
     // Even already: nothing to slope.
     assert!(s.scene_context(&g, x, y));
-    assert!(!enabled(&s, "揃える"));
+    super::tests::disabled_descendants(&s, "揃える");
 }
 
 #[test]
@@ -175,16 +175,7 @@ fn a_controller_point_takes_a_value_and_is_copied_cut_and_deleted_with_the_selec
     let (mut s, g, i) = with_cc1();
     let (x, y) = point_at(&s, &g, i, 480, 90);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(
-        labels(&s),
-        [
-            "値を入力…",
-            "次のポイントまでの形",
-            "切り取り",
-            "コピー",
-            "削除"
-        ]
-    );
+    assert_eq!(labels(&s), ["編集", "MIDI"]);
     assert_eq!(key(&s, "切り取り"), "Ctrl+X");
     assert_eq!(key(&s, "コピー"), "Ctrl+C");
     assert_eq!(key(&s, "削除"), "Del / Backspace");
@@ -267,7 +258,7 @@ fn the_last_point_has_no_next_one_and_the_pedal_has_steps_only() {
     let (mut s, g, i) = with_cc1();
     let (x, y) = point_at(&s, &g, i, 960, 40);
     assert!(s.scene_context(&g, x, y));
-    assert!(!enabled(&s, "次のポイントまでの形"));
+    super::tests::disabled_descendants(&s, "次のポイントまでの形");
 
     // CC64 is a step and nothing else, so the row has nothing to offer and is dim.
     let c = s.roll_ctx(&g).unwrap();
@@ -282,7 +273,7 @@ fn the_last_point_has_no_next_one_and_the_pedal_has_steps_only() {
     s.resized(&g);
     let (x, y) = point_at(&s, &g, i, 0, 100);
     assert!(s.scene_context(&g, x, y));
-    assert!(!enabled(&s, "次のポイントまでの形"));
+    super::tests::disabled_descendants(&s, "次のポイントまでの形");
 }
 
 #[test]
@@ -290,10 +281,7 @@ fn the_empty_part_of_a_lane_adds_a_point_pastes_and_clears_the_lane() {
     let (mut s, g, i) = with_cc1();
     let (x, y) = lane_empty_at(&s, &g, i, 1440);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(
-        labels(&s),
-        ["ここにポイントを追加", "貼り付け", "すべてのポイントを削除"]
-    );
+    assert_eq!(labels(&s), ["編集", "MIDI"]);
     assert!(!enabled(&s, "貼り付け"));
     assert_eq!(key(&s, "貼り付け"), "Ctrl+V");
     let n = steps(&s);
@@ -332,10 +320,7 @@ fn the_tab_changes_the_controller_hides_the_lane_and_clears_its_points() {
     let (mut s, g, i) = with_cc1();
     let (x, y) = tab_at(&s, &g, i);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(
-        labels(&s),
-        ["種類を変更", "このレーンを隠す", "すべてのポイントを削除"]
-    );
+    assert_eq!(labels(&s), ["MIDI", "表示"]);
     assert!(choose(&mut s, &g, "種類を変更"));
     assert_eq!(
         labels(&s),
@@ -346,13 +331,7 @@ fn the_tab_changes_the_controller_hides_the_lane_and_clears_its_points() {
             "CC11",
             "CC64",
             "アフタータッチ",
-            "番号で選ぶ · CC2",
-            "番号で選ぶ · CC7",
-            "番号で選ぶ · CC10",
-            "番号で選ぶ · CC71",
-            "番号で選ぶ · CC74",
-            "番号で選ぶ · CC91",
-            "番号で選ぶ · CC93"
+            "番号で選ぶ"
         ]
     );
     let n = steps(&s);

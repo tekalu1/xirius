@@ -165,17 +165,7 @@ fn the_menu_of_a_take_row_uses_the_take_over_a_stretch_and_unpacks_it() {
         .id;
     let bar = Some((2 * BAR, 3 * BAR));
     assert!(s.take_context_over(id, bar, 400.0, 400.0));
-    assert_eq!(
-        labels(&s),
-        [
-            "このテイクを使用",
-            "選択範囲にこのテイクを使用",
-            "テイクを新しいトラックに展開",
-            "最後の周を取り消す",
-            "未使用のテイクをすべて削除",
-            "テイクを削除",
-        ]
-    );
+    assert_eq!(labels(&s), ["クリップ"]);
     // Without a stretch under the pointer or chosen, the row says why it cannot run.
     assert!(s.take_context_over(id, None, 400.0, 400.0));
     assert!(!super::tests::enabled(&s, "選択範囲にこのテイクを使用"));
@@ -266,16 +256,14 @@ fn the_macro_controls_have_lanes_of_their_own_in_the_automation_list() {
     assert!(choose(&mut s, &g, "オートメーションを表示"));
     // a list of their own after the channel's rows, flattened in the second level
     let rows = labels(&s);
-    let first = rows
-        .iter()
-        .position(|r| r == "マクロコントロール · Macro 1");
+    let first = rows.iter().position(|r| r == "Macro 1");
     assert_eq!(
         first,
         rows.iter().position(|r| r == "ミュート").map(|i| i + 1)
     );
-    assert!(rows.contains(&"マクロコントロール · Macro 8".to_string()));
+    assert!(rows.contains(&"Macro 8".to_string()));
     assert!(!rows.iter().any(|r| r.contains("Button")), "{rows:?}");
-    assert!(choose(&mut s, &g, "マクロコントロール · Macro 1"));
+    assert!(choose(&mut s, &g, "Macro 1"));
     let k1: xirius_core::auto::AutoTarget = "control:k1".parse().unwrap();
     assert!(
         s.project().tracks[&t]

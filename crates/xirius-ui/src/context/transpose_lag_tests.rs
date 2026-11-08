@@ -268,6 +268,7 @@ fn transpose_lag_midi() {
     s.popup = None;
     let (x, y) = clip_mid(&s, &g, "Keys", 0);
     assert!(s.scene_context(&g, x, y));
+    assert!(super::tests::choose(&mut s, &g, "クリップ"));
     let i = menu_semis(&s);
     eprintln!(" clip menu:");
     notches(&mut s, 12, |s, now| {
@@ -357,6 +358,7 @@ fn a_turn_of_the_menus_transpose_is_one_step_and_one_undo() {
     let clip = first_clip(&s, "Keys", true);
     let (x, y) = clip_mid(&s, &g, "Keys", 0);
     assert!(s.scene_context(&g, x, y));
+    assert!(super::tests::choose(&mut s, &g, "クリップ"));
     let i = menu_semis(&s);
     let steps = s.song.steps();
     let mut now = Instant::now();

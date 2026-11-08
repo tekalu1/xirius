@@ -15,7 +15,7 @@ use crate::studio::{Geometry, Studio};
 
 /// What the dim row says when the pointer rests on it.
 fn reason(s: &Studio, label: &str) -> String {
-    s.context_rows()
+    super::tests::all_rows(s)
         .into_iter()
         .find(|r| r.label == label)
         .map(|r| r.reason)
@@ -71,7 +71,7 @@ fn a_point_pressed_inside_clips_and_points_shows_what_both_kinds_have() {
     let p = clip_and_point(&mut s, &g, 1);
     let (x, y) = point_xy(&s, &g, p.lane, 0, 1);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(labels(&s), ["切り取り", "コピー", "削除"]);
+    assert_eq!(labels(&s), ["編集"]);
     assert!(!enabled(&s, "切り取り"));
     assert!(!enabled(&s, "コピー"));
     assert!(enabled(&s, "削除"));
@@ -90,7 +90,7 @@ fn a_clip_pressed_inside_clips_and_points_shows_the_same_rows() {
     let p = clip_and_point(&mut s, &g, 1);
     let (x, y) = clip_mid(&s, &g, "Keys", 0);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(labels(&s), ["切り取り", "コピー", "削除"]);
+    assert_eq!(labels(&s), ["編集"]);
     assert!(!enabled(&s, "切り取り"));
     // The press kept both kinds.
     assert_eq!(s.arrange.clips.len(), 1);
@@ -119,16 +119,7 @@ fn a_point_that_is_not_selected_is_the_whole_selection_and_leaves_the_clips() {
     let p = clip_and_point(&mut s, &g, 1);
     let (x, y) = point_xy(&s, &g, p.lane, 0, 0);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(
-        labels(&s),
-        [
-            "値を入力…",
-            "次のポイントまでの形",
-            "切り取り",
-            "コピー",
-            "削除"
-        ]
-    );
+    assert_eq!(labels(&s), ["編集", "オートメーション"]);
     assert!(s.arrange.clips.is_empty());
     assert!(!s.arrange.points.has(p.lane, &AutoTarget::Volume, p.tick));
     assert_eq!(s.arrange.points.ticks().len(), 1);
@@ -219,7 +210,7 @@ fn a_point_pressed_inside_notes_and_points_shows_what_both_kinds_have() {
     notes_and_point(&mut s, &g, index);
     let (x, y) = point_at(&s, &g, index, 480, 90);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(labels(&s), ["切り取り", "コピー", "ノートを削除"]);
+    assert_eq!(labels(&s), ["編集"]);
     assert!(!enabled(&s, "切り取り"));
     assert!(!enabled(&s, "コピー"));
     assert!(enabled(&s, "ノートを削除"));
@@ -234,7 +225,7 @@ fn a_note_pressed_inside_notes_and_points_shows_the_same_rows() {
     notes_and_point(&mut s, &g, index);
     let (x, y) = note_at(&s, &g, 1);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(labels(&s), ["切り取り", "コピー", "ノートを削除"]);
+    assert_eq!(labels(&s), ["編集"]);
     assert_eq!(s.roll.selected.len(), 2);
     assert_eq!(s.roll.points.len(), 1);
 }
@@ -282,16 +273,7 @@ fn a_point_that_is_not_selected_is_the_whole_selection_and_leaves_the_notes() {
     notes_and_point(&mut s, &g, index);
     let (x, y) = point_at(&s, &g, index, 960, 40);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(
-        labels(&s),
-        [
-            "値を入力…",
-            "次のポイントまでの形",
-            "切り取り",
-            "コピー",
-            "削除"
-        ]
-    );
+    assert_eq!(labels(&s), ["編集", "MIDI"]);
     assert!(s.roll.selected.is_empty());
     assert_eq!(s.roll.points.iter().copied().collect::<Vec<_>>(), [960]);
 }

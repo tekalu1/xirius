@@ -41,6 +41,24 @@ pub(super) fn enabled(s: &Studio, label: &str) -> bool {
         .enabled
 }
 
+pub(super) fn disabled_descendants(s: &Studio, label: &str) {
+    fn check(item: &super::Item) {
+        if let super::Run::Sub(children) = &item.run {
+            assert!(item.enabled, "category remains reachable");
+            for child in children {
+                check(child);
+            }
+        } else {
+            assert!(!item.enabled, "{} must stay disabled", item.label);
+        }
+    }
+    let item = all_items(s)
+        .into_iter()
+        .find(|i| i.label == label)
+        .expect("category");
+    check(item);
+}
+
 /// The key shown on the row named `label`.
 pub(super) fn key(s: &Studio, label: &str) -> String {
     all_items(s)
@@ -75,6 +93,14 @@ pub(super) fn all_labels(s: &Studio) -> Vec<String> {
         .collect()
 }
 
+pub(super) fn all_rows(s: &Studio) -> Vec<super::Row> {
+    super::State {
+        items: all_items(s).into_iter().cloned().collect(),
+        ..Default::default()
+    }
+    .rows()
+}
+
 fn path_to(items: &[super::Item], label: &str) -> Option<Vec<usize>> {
     if let Some(i) = items.iter().position(|i| i.label == label) {
         return Some(vec![i]);
@@ -92,8 +118,15 @@ fn path_to(items: &[super::Item], label: &str) -> Option<Vec<usize>> {
 
 /// Presses the cell of the row named `label`, where the pop-over draws it.
 pub(super) fn choose(s: &mut Studio, g: &Geometry, label: &str) -> bool {
-    let path = path_to(&s.ctx.as_ref().expect("a menu is open").items, label)
-        .unwrap_or_else(|| panic!("no operation {label}: {:?}", all_labels(s)));
+    let path = if let Some(state) = &s.ctx {
+        if path_to(&state.items, label).is_none() && !state.trail.is_empty() {
+            s.context_restore(0);
+        }
+        path_to(&s.ctx.as_ref().unwrap().items, label)
+            .unwrap_or_else(|| panic!("no operation {label}: {:?}", all_labels(s)))
+    } else {
+        vec![0]
+    };
     for (depth, &row) in path[..path.len() - 1].iter().enumerate() {
         let row = row + if depth == 0 { 0 } else { 2 };
         assert!(s.context_pick(g, row), "ancestor of {label}");
@@ -210,7 +243,7 @@ fn a_row_with_rows_below_opens_them_in_its_place_and_goes_back() {
     assert!(s.scene_context(&g, x, y));
     assert!(choose(&mut s, &g, "選択"));
     assert!(s.context_open());
-    let rows = labels(&s);
+    let rows = all_labels(&s);
     assert_eq!(rows[0], "戻る");
     assert!(rows.contains(&"すべて選択".to_string()));
     assert_eq!(key(&s, "すべて選択"), "Ctrl+A");

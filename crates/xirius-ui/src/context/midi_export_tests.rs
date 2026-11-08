@@ -1,4 +1,4 @@
-//! UI-281: the track's "書き出す" row has its stem and the MIDI file under it, and a MIDI clip has
+//! UI-281: the track's "書き出し" row has its stem and the MIDI file under it, and a MIDI clip has
 //! "MIDI ファイルとして書き出す…", which opens the panel on the MIDI kind over the clips' span.
 
 use super::tests::{choose, enabled, labels, studio};
@@ -33,13 +33,13 @@ fn export_open(s: &Studio) -> bool {
 fn the_export_row_of_a_track_has_its_stem_and_its_midi_file() {
     let (mut s, g) = studio();
     assert!(press_track(&mut s, &g, "Keys"));
-    assert!(choose(&mut s, &g, "書き出す"));
+    assert!(choose(&mut s, &g, "書き出し"));
     assert_eq!(labels(&s), ["戻る", STEM, MIDI]);
     assert!(enabled(&s, STEM) && enabled(&s, MIDI));
     // An audio track has no notes to write.
     s.popup = None;
     assert!(press_track(&mut s, &g, "Vocal"));
-    assert!(choose(&mut s, &g, "書き出す"));
+    assert!(choose(&mut s, &g, "書き出し"));
     assert!(enabled(&s, STEM));
     assert!(!enabled(&s, MIDI));
 }
@@ -52,7 +52,7 @@ fn the_midi_row_of_a_track_opens_the_panel_on_that_track_over_the_song() {
     s.export.each = true;
     let n = s.song.steps();
     assert!(press_track(&mut s, &g, "Keys"));
-    assert!(choose(&mut s, &g, "書き出す"));
+    assert!(choose(&mut s, &g, "書き出し"));
     assert!(choose(&mut s, &g, MIDI));
     assert!(export_open(&s));
     assert!(s.export.midi && !s.export.stems);
@@ -67,7 +67,7 @@ fn the_stem_row_of_a_track_still_opens_the_stems() {
     let (mut s, g) = studio();
     let vocal = track(&s, "Vocal");
     assert!(press_track(&mut s, &g, "Vocal"));
-    assert!(choose(&mut s, &g, "書き出す"));
+    assert!(choose(&mut s, &g, "書き出し"));
     assert!(choose(&mut s, &g, STEM));
     assert!(export_open(&s));
     assert!(s.export.stems && !s.export.midi);

@@ -29,7 +29,10 @@ fn choose_swatch(s: &mut Studio, g: &Geometry, n: usize) -> bool {
     let cell = layout
         .cells
         .iter()
-        .filter(|c| matches!(c.look, Look::Swatch(_)))
+        .filter(|c| {
+            matches!(c.look, Look::Swatch(_))
+                && matches!(c.action, Some(crate::popup::Action::Ctx(_)))
+        })
         .nth(n)
         .expect("a colour square");
     let hit = s.hit(
@@ -211,8 +214,7 @@ fn the_lanes_menu_shows_a_lane_and_makes_it_when_the_track_has_none() {
     // The row of a lane that is on says so.
     assert!(press_track(&mut s, &g, "Vocal"));
     assert!(choose(&mut s, &g, "オートメーションを表示"));
-    let on = s
-        .context_rows()
+    let on = super::tests::all_rows(&s)
         .into_iter()
         .find(|r| r.label == "パン")
         .unwrap()
@@ -248,7 +250,7 @@ fn the_stems_row_opens_the_export_with_the_track_picked() {
     let vocal = track(&s, "Vocal");
     assert!(press_track(&mut s, &g, "Vocal"));
     let n = steps(&s);
-    assert!(choose(&mut s, &g, "書き出す"));
+    assert!(choose(&mut s, &g, "書き出し"));
     assert!(choose(&mut s, &g, "このトラックのステム…"));
     assert_eq!(s.popup.as_ref().map(|p| p.kind), Some(PopupKind::Export));
     assert!(s.export.stems);
@@ -263,18 +265,7 @@ fn several_rows_have_the_rows_that_fit_all_of_them() {
     let (vocal, guitar) = (track(&s, "Vocal"), track(&s, "Guitar"));
     s.arrange.tracks = vec![RowKind::Track(vocal), RowKind::Track(guitar)];
     assert!(press_row(&mut s, &g, RowKind::Track(guitar)));
-    assert_eq!(
-        labels(&s),
-        [
-            "新しいバスへまとめる",
-            "出力先を設定",
-            "フォルダーにまとめる",
-            "色",
-            "トラックを複製",
-            "ステムを書き出す…",
-            "トラックを削除",
-        ]
-    );
+    assert_eq!(labels(&s), ["編集", "トラック", "表示", "書き出し"]);
     // The press kept the selection.
     assert_eq!(s.arrange.tracks.len(), 2);
     let n = steps(&s);
@@ -302,7 +293,7 @@ fn the_output_of_several_rows_is_chosen_for_all_of_them_in_one_step() {
     s.arrange.tracks = vec![RowKind::Track(vocal), RowKind::Track(guitar)];
     assert!(press_row(&mut s, &g, RowKind::Track(vocal)));
     let n = steps(&s);
-    assert!(choose(&mut s, &g, "出力先を設定"));
+    assert!(choose(&mut s, &g, "出力"));
     assert!(super::tests::all_labels(&s).contains(&"マスター".to_string()));
     assert!(choose(&mut s, &g, "マスター"));
     assert_eq!(steps(&s), n + 1);
@@ -316,19 +307,7 @@ fn the_output_of_several_rows_is_chosen_for_all_of_them_in_one_step() {
 fn a_folder_has_its_rows_in_the_order_of_the_mock() {
     let (mut s, g) = studio();
     assert!(press_folder(&mut s, &g, "Rhythm"));
-    assert_eq!(
-        labels(&s),
-        [
-            "名前を変更…",
-            "色",
-            "中のトラックにも塗る",
-            "中のトラックを選択",
-            "フォルダーを複製",
-            "ステムを書き出す",
-            "まとめを解く",
-            "フォルダーを削除",
-        ]
-    );
+    assert_eq!(labels(&s), ["編集", "選択", "トラック", "表示", "書き出し"]);
 }
 
 #[test]
@@ -449,7 +428,7 @@ fn the_room_under_the_last_row_adds_pastes_and_folds() {
     let (mut s, g) = studio();
     let (x, y) = under_the_rows(&s, &g);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(labels(&s), ["トラックを追加", "貼り付け", "フォルダー"]);
+    assert_eq!(labels(&s), ["編集", "トラック", "表示"]);
     assert_eq!(key(&s, "貼り付け"), "Ctrl+V");
     // Nothing was copied.
     assert!(!enabled(&s, "貼り付け"));
@@ -528,6 +507,7 @@ fn the_colour_row_shows_the_tracks_colour_and_its_squares_check_the_current_one(
     let vocal = track(&s, "Vocal");
     let now = crate::draw::track_color(&s.project().tracks[&vocal]);
     assert!(press_track(&mut s, &g, "Vocal"));
+    assert!(choose(&mut s, &g, "表示"));
     assert_eq!(mark_of(&s, &g, "色"), Some(now));
     assert_eq!(mark_of(&s, &g, "名前を変更…"), None);
     assert!(choose(&mut s, &g, "色"));
@@ -535,7 +515,10 @@ fn the_colour_row_shows_the_tracks_colour_and_its_squares_check_the_current_one(
     let squares: Vec<_> = layout
         .cells
         .iter()
-        .filter(|c| matches!(c.look, Look::Swatch(_)))
+        .filter(|c| {
+            matches!(c.look, Look::Swatch(_))
+                && matches!(c.action, Some(crate::popup::Action::Ctx(_)))
+        })
         .collect();
     assert_eq!(squares.len(), 16);
     let checked: Vec<_> = squares.iter().filter(|c| c.on).collect();
@@ -553,5 +536,6 @@ fn the_colour_row_shows_the_tracks_colour_and_its_squares_check_the_current_one(
     // Choosing another colour moves the mark when the menu is opened again.
     assert!(choose_swatch(&mut s, &g, (now + 5) % 16));
     assert!(press_track(&mut s, &g, "Vocal"));
+    assert!(choose(&mut s, &g, "表示"));
     assert_eq!(mark_of(&s, &g, "色"), Some((now + 5) % 16));
 }
