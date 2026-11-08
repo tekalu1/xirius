@@ -220,7 +220,7 @@ fn browse_until(s: &Studio1, secs: f32, done: impl Fn(&Studio) -> bool) {
         st.browser.poll_prefs_io();
         crate::browser_files::poll();
         st.poll_browser_import();
-        if done(&*st) {
+        if done(&st) {
             return;
         }
         assert!(
