@@ -1,4 +1,4 @@
-// Windows-only: Win32 desktop capture; macOS native editors are stage 3.
+// Windows-only: inspects SEH exception filters and Win32 module addresses.
 #![cfg(target_os = "windows")]
 //! Optional, device-free investigation of the installed Trash 2 exception filter.
 use std::sync::Arc;

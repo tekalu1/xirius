@@ -1,4 +1,4 @@
-// Windows-only: Win32 timers and message pumping; macOS native editors are stage 3.
+// Windows-only: the fixture installs Win32 timers and requires message pumping.
 #![cfg(target_os = "windows")]
 //! A DLL timer can outlive the last plugin. Run it in a child to contain the old crash.
 use std::os::windows::ffi::OsStrExt;

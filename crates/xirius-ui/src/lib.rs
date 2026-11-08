@@ -232,6 +232,8 @@ pub mod plugin_crash_shots;
 pub mod plugin_down_shots;
 pub mod plugin_fixture_shots;
 pub mod plugin_keys;
+// Windows-only: these scenarios send Win32 messages to native plugin editor windows.
+#[cfg(windows)]
 pub mod plugin_keys_shots;
 pub mod plugin_recovery_shots;
 pub mod plugin_reload_shots;
@@ -450,6 +452,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("plugin-crash", plugin_crash_shots::SHOTS),
     ("plugin-down", plugin_down_shots::SHOTS),
     ("plugin-fixture", plugin_fixture_shots::SHOTS),
+    #[cfg(windows)]
     ("plugin-keys", plugin_keys_shots::SHOTS),
     ("plugin-recovery", plugin_recovery_shots::SHOTS),
     ("plugin-reload", plugin_reload_shots::SHOTS),

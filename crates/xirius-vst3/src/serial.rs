@@ -19,7 +19,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+#[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     IsGUIThread, MSG, PM_NOREMOVE, PM_QS_SENDMESSAGE, PeekMessageW,
 };
@@ -37,9 +39,8 @@ const REPORT_EVERY: Duration = Duration::from_secs(30);
 
 /// A thread holding or waiting for the turn.
 struct Job {
-    /// By Win32 id (also valid while thread-locals are torn down, unlike
-    /// `std::thread::current`).
-    thread: u32,
+    /// Native identity, valid even while thread-locals are being torn down.
+    thread: usize,
     what: &'static str,
     bundle: PathBuf,
     since: Instant,
@@ -98,7 +99,7 @@ pub(crate) fn turn_within(
 
 fn wait(what: &'static str, bundle: &Path, limit: Option<Duration>) -> Result<Turn, Error> {
     // SAFETY: a plain query about the calling thread.
-    let me = unsafe { GetCurrentThreadId() };
+    let me = thread_id();
     let job = || Job {
         thread: me,
         what,
@@ -146,7 +147,7 @@ fn wait(what: &'static str, bundle: &Path, limit: Option<Duration>) -> Result<Tu
         }
         // Looked at every time: a plugin may give this thread its first window while it waits.
         // SAFETY: a plain query about the calling thread.
-        let gui = unsafe { IsGUIThread(0) } != 0;
+        let gui = is_gui_thread();
         let every = if gui { PUMP_EVERY } else { LOOK_EVERY };
         state = FREED
             .wait_timeout(state, every)
@@ -193,6 +194,7 @@ pub fn turn_report() -> Option<String> {
 /// Runs the window procedures for messages other threads sent to this thread's windows,
 /// leaving posted messages in the queue.
 fn answer_sent_messages() {
+    #[cfg(windows)]
     // SAFETY: `msg` is an out-struct owned here; PeekMessage delivers sent messages itself.
     unsafe {
         let mut msg: MSG = std::mem::zeroed();
@@ -203,6 +205,35 @@ fn answer_sent_messages() {
             0,
             PM_NOREMOVE | PM_QS_SENDMESSAGE,
         );
+    }
+}
+
+fn thread_id() -> usize {
+    #[cfg(windows)]
+    // SAFETY: plain query, including during thread-local teardown.
+    unsafe {
+        GetCurrentThreadId() as usize
+    }
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn pthread_self() -> *mut std::ffi::c_void;
+        }
+        // SAFETY: pthread_self returns this live thread's opaque identity.
+        unsafe { pthread_self() as usize }
+    }
+}
+
+fn is_gui_thread() -> bool {
+    #[cfg(windows)]
+    // SAFETY: plain query, preserving Windows sent-message pumping.
+    unsafe {
+        IsGUIThread(0) != 0
+    }
+    // NSView hosting and its run-loop integration belong to stage 3.
+    #[cfg(not(windows))]
+    {
+        false
     }
 }
 
@@ -226,6 +257,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Barrier, mpsc};
 
+    #[cfg(windows)]
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DestroyWindow, HWND_MESSAGE, SMTO_NORMAL, SendMessageTimeoutW, WM_NULL,
     };
@@ -264,6 +296,8 @@ mod tests {
     /// The holder sends to a window of a thread that waits for the turn. Without answering
     /// sent messages while waiting, both would wait for each other.
     #[test]
+    // Windows-only: creates a Win32 message-only window and sends WM_NULL.
+    #[cfg(windows)]
     fn a_waiting_thread_with_a_window_answers_messages_sent_to_it() {
         let held = turn("load", here());
         let (tx, rx) = mpsc::channel();
