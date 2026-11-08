@@ -273,6 +273,8 @@ mod tests {
             let root = tempfile::tempdir().unwrap();
             let dir = root.path().join("song");
             let mut s = Studio::new(Song::empty());
+            // Keep this gate about external-file adoption, not the browser's owner job.
+            s.browser.open = false;
             s.song.save_as(&dir).unwrap();
             let mut other = xirius_core::session::Session::open(&dir).unwrap();
             other

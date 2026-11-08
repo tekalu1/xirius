@@ -104,6 +104,98 @@ fn preset_save_dialog_starts_without_fx_and_requires_a_second_overwrite_press() 
     assert!(crate::io_command::handles("browser.preset.list"));
 }
 
+#[test]
+fn reading_the_track_index_preserves_the_screens_error_and_history() {
+    let (mut s, _) = studio();
+    s.error = Some("音声の入力を確認してください".into());
+    let before = s.song().steps();
+    assert!(s.run_command("browser.preset.list", json!({})));
+    assert_eq!(s.error.as_deref(), Some("音声の入力を確認してください"));
+    assert_eq!(s.song().steps(), before);
+    assert!(
+        s.browser
+            .track_library
+            .as_ref()
+            .is_some_and(|es| !es.is_empty())
+    );
+}
+
+#[test]
+fn the_owner_reads_the_index_without_closing_the_save_dialog_or_clearing_errors() {
+    let (mut s, _) = studio();
+    let keys = track(&s, "Keys");
+    assert!(s.run_command(
+        "browser.preset.save",
+        json!({
+            "track": keys.to_string(), "kind":"track", "name":"Folder test", "folder":"Keys/Soft"
+        })
+    ));
+    s.open_track_preset_save(
+        "browser.preset.save",
+        json!({"kind":"instrument"}),
+        "Warm",
+        "Sampler",
+        false,
+        String::new(),
+    );
+    s.error = Some("入力を確認してください".into());
+    let before = s.song().steps();
+    s.bind_window_io();
+    assert!(s.run_command("browser.preset.list", json!({})));
+    assert!(s.context_open());
+    assert_eq!(s.error.as_deref(), Some("入力を確認してください"));
+    s.wait_for_save();
+    assert!(s.context_open());
+    assert_eq!(s.ask_field().map(|f| f.text()), Some("Warm".into()));
+    assert_eq!(s.error.as_deref(), Some("入力を確認してください"));
+    assert_eq!(s.song().steps(), before);
+    assert_eq!(
+        s.ctx
+            .as_ref()
+            .unwrap()
+            .ask
+            .as_ref()
+            .unwrap()
+            .preset
+            .as_ref()
+            .unwrap()
+            .folders,
+        ["Keys", "Keys/Soft"]
+    );
+    assert!(
+        s.browser
+            .track_library
+            .as_ref()
+            .is_some_and(|es| !es.is_empty())
+    );
+}
+
+#[test]
+fn indexed_device_disclosure_and_star_keep_their_rows_during_a_scan() {
+    let (mut s, g) = studio();
+    assert!(s.run_command("browser.preset.list", json!({})));
+    for scanning in [false, true] {
+        s.browser.scanning = scanning;
+        let (i, open) = device(&s, &g, "Compressor");
+        assert_eq!(open, Some(true));
+        let layout = s.browser.layout(g.panel);
+        s.browser.scroll = layout.rows[i].y;
+        let layout = s.browser.layout(g.panel);
+        let hit = BrowserHit::Disclose(i);
+        let at = s.browser.center_of(&layout, hit).unwrap();
+        assert_eq!(s.browser.hit(&layout, at.0, at.1), Some(hit));
+        s.press(&g, Hit::Browser(hit));
+        assert_eq!(device(&s, &g, "Compressor").1, Some(false));
+        s.press(&g, Hit::Browser(hit));
+        let fav = s.browser.favourites.contains("device:compressor");
+        s.press(&g, Hit::Browser(BrowserHit::Fav(i)));
+        assert_eq!(s.browser.favourites.contains("device:compressor"), !fav);
+        let (i, _) = device(&s, &g, "Compressor");
+        s.press(&g, Hit::Browser(BrowserHit::Fav(i)));
+        assert_eq!(s.browser.favourites.contains("device:compressor"), fav);
+    }
+}
+
 /// The sample song with the browser on the effects and the factory presets read.
 fn studio() -> (Studio, Geometry) {
     let mut s = Studio::sample();
@@ -240,7 +332,7 @@ fn a_device_shows_its_presets_under_it_when_its_arrow_is_pressed() {
 #[test]
 fn a_device_with_only_its_default_has_no_arrow() {
     let (mut s, g) = studio();
-    s.browser.press_rail(RailTab::Instruments);
+    s.press(&g, Hit::Browser(BrowserHit::Loc(0)));
     assert_eq!(device(&s, &g, "Sampler").1, None);
     assert_eq!(device(&s, &g, "Drum Kit").1, None);
 }
@@ -411,7 +503,7 @@ fn an_instrument_preset_loads_on_the_chosen_instrument_track_or_a_new_one() {
     );
     assert_ne!(samples(&s, keys), kept);
     s.refresh_presets();
-    s.browser.press_rail(RailTab::Instruments);
+    s.press(&g, Hit::Browser(BrowserHit::Loc(0)));
     assert_eq!(device(&s, &g, "Sampler").1, Some(false));
     disclose(&mut s, &g, "Sampler");
     assert_eq!(presets_under(&s, &g, uid("Sampler")), ["柔らかい鍵盤"]);

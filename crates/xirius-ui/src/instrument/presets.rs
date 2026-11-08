@@ -225,6 +225,16 @@ impl Studio {
     /// (BRW-017), so a preset saved, renamed or deleted elsewhere (the CLI) shows; true when
     /// the list changed.
     pub(crate) fn poll_presets(&mut self) -> bool {
+        // A background index read must not take the owner away from opening, saving,
+        // preparing sound or an explicit command sequence. Home has no visible browser.
+        if self.home_shown()
+            || self.opening.is_some()
+            || self.saving.is_some()
+            || self.sound_preparing()
+            || self.macro_run.is_some()
+        {
+            return false;
+        }
         if ((self.browser.open && self.browser.is_track_browser())
             || !self.instruments.open.is_empty()
             || !self.mixer.editors.is_empty())
@@ -278,8 +288,11 @@ impl Studio {
                 .and_then(|es| {
                     let p = self.project();
                     let x = p.tracks.get(&t)?.inserts.iter().find(|x| x.id == id)?;
-                    es.iter()
-                        .find(|e| e.source == "User" && e.device == x.uid && e.name == name)
+                    es.iter().find(|e| {
+                        e.source == "User"
+                            && e.device == x.builtin().map_or(x.uid.as_str(), |d| d.uid)
+                            && e.name == name
+                    })
                 })
                 .cloned()
         {
@@ -329,6 +342,10 @@ impl Studio {
     /// no preset of the device has, the tag's with a number (empty at Default; the next
     /// number when it ends in one, `Bass 2` → `Bass 3`), so Enter saves a new one.
     pub(crate) fn save_preset_as(&mut self, id: PluginId) -> bool {
+        if self.browser.track_library.is_none() {
+            // design-lint: allow(ui-blocking-io) BRW-017: refresh the save destinations through the song owner's dispatcher.
+            self.run_command("browser.preset.list", json!({}));
+        }
         let Some((t, _)) = self.device_place(id) else {
             return false;
         };
@@ -355,11 +372,15 @@ impl Studio {
         let x = p.tracks[&t].inserts.iter().find(|x| x.id == id).unwrap();
         let include_fx = self.instruments.presets.saved.as_ref().is_some_and(|es| {
             es.iter().any(|e| {
-                e.device == x.uid && x.preset.as_deref() == Some(e.name.as_str()) && e.has_fx
+                e.device == x.builtin().map_or(x.uid.as_str(), |d| d.uid)
+                    && x.preset.as_deref() == Some(e.name.as_str())
+                    && e.has_fx
             })
         }) || self.browser.track_library.as_ref().is_some_and(|es| {
             es.iter().any(|e| {
-                e.device == x.uid && x.preset.as_deref() == Some(e.name.as_str()) && e.has_fx
+                e.device == x.builtin().map_or(x.uid.as_str(), |d| d.uid)
+                    && x.preset.as_deref() == Some(e.name.as_str())
+                    && e.has_fx
             })
         });
         let fx_names = xirius_core::chain_preset::Chain::capture(

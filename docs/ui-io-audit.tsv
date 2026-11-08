@@ -61,7 +61,7 @@ crates/xirius-ui/src/browser_prefs_save.rs	lock	5
 crates/xirius-ui/src/browser_prefs_save.rs	places :: load	1
 crates/xirius-ui/src/browser_prefs_save.rs	places :: save	1
 crates/xirius-ui/src/browser_prefs_save.rs	wait	1
-crates/xirius-ui/src/browser_presets.rs	run_command	1
+crates/xirius-ui/src/browser_presets.rs	run_command	4
 crates/xirius-ui/src/channel/mod.rs	run_command	9
 crates/xirius-ui/src/channel/preset.rs	run	1
 crates/xirius-ui/src/channel/preset.rs	run_command	4
@@ -81,8 +81,9 @@ crates/xirius-ui/src/clipops.rs	run	1
 crates/xirius-ui/src/console.rs	std :: fs :: OpenOptions :: new	1
 crates/xirius-ui/src/console.rs	write	1
 crates/xirius-ui/src/context/ask.rs	arrange_run	1
+crates/xirius-ui/src/context/ask.rs	run_command	1
 crates/xirius-ui/src/context/browser.rs	arrange_run	2
-crates/xirius-ui/src/context/browser.rs	run_command	1
+crates/xirius-ui/src/context/browser.rs	run_command	2
 crates/xirius-ui/src/context/export.rs	run_command	1
 crates/xirius-ui/src/context/fields.rs	arrange_run	1
 crates/xirius-ui/src/context/key_more.rs	arrange_run	5
@@ -136,10 +137,10 @@ crates/xirius-ui/src/instrument/kit_drag.rs	std :: fs :: metadata	1
 crates/xirius-ui/src/instrument/menu.rs	arrange_run	1
 crates/xirius-ui/src/instrument/mod.rs	run_command	3
 crates/xirius-ui/src/instrument/presets.rs	run	1
-crates/xirius-ui/src/instrument/presets.rs	run_command	1
+crates/xirius-ui/src/instrument/presets.rs	run_command	4
 crates/xirius-ui/src/instrument/spots.rs	is_dir	1
 crates/xirius-ui/src/instrument/spots.rs	run_command	5
-crates/xirius-ui/src/instrument/window.rs	run_command	4
+crates/xirius-ui/src/instrument/window.rs	run_command	6
 crates/xirius-ui/src/keep.rs	std :: fs :: remove_dir_all	1
 crates/xirius-ui/src/key_rows.rs	arrange_run	1
 crates/xirius-ui/src/key_rows.rs	seek	1
@@ -245,7 +246,7 @@ crates/xirius-ui/src/start/rig.rs	lock	2
 crates/xirius-ui/src/start/rig.rs	set	1
 crates/xirius-ui/src/studio.rs	arrange_run	3
 crates/xirius-ui/src/studio.rs	lock	3
-crates/xirius-ui/src/studio.rs	run_command	3
+crates/xirius-ui/src/studio.rs	run_command	4
 crates/xirius-ui/src/studio.rs	seek	1
 crates/xirius-ui/src/tidy.rs	join	3
 crates/xirius-ui/src/tidy.rs	recv_timeout	1

@@ -503,6 +503,8 @@ fn the_browser_lists_what_could_not_be_used_and_tries_one_again() {
 
     // Pressing a row's button scans that bundle again, and only that: the rest stays cached.
     let i = bad_row(&s, &g).expect("a row on the list");
+    // Expanded preset folders can put the scan failures below the visible list.
+    s.browser.scroll = s.browser.layout(g.panel).rows[i].y;
     let center = s
         .center_of(&g, Hit::Browser(BrowserHit::Retry(i)))
         .expect("the retry button is on its row");

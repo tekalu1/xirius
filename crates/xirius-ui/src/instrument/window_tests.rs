@@ -967,6 +967,23 @@ fn save_as_over_a_name_asks_first() {
             s.ask_key("backspace");
         }
         s.ask_text(None, name, false);
+        assert_eq!(s.ask_field().unwrap().text(), name);
+        let ask = s.ctx.as_ref().unwrap().ask.as_ref().unwrap();
+        assert!(ask.preset.is_some(), "preset form missing");
+        assert!(!ask.preset.as_ref().unwrap().overwrite);
+        assert_eq!(ask.args["kind"], "fx");
+        assert_eq!(ask.preset.as_ref().unwrap().folder, "");
+        let entry = s
+            .browser
+            .track_library
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|e| e.name == name && e.source == "User")
+            .unwrap();
+        assert_eq!(entry.category, xirius_core::track_browser::Category::Fx);
+        assert_eq!(entry.device, insert(s, id).builtin().unwrap().uid);
+        assert!(entry.folder.is_empty(), "folder: {:?}", entry.folder);
         s.ask_key("enter");
     };
     // The name in other letter case is the same file: it asks, and Escape leaves it.

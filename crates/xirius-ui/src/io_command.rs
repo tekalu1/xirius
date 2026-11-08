@@ -110,6 +110,10 @@ impl Studio {
         raw: &serde_json::Map<String, serde_json::Value>,
         result: &xirius_core::session::RunResult,
     ) {
+        if name == "browser.preset.list" {
+            self.track_browser_answer(name, &result.data);
+            return;
+        }
         if name == "plugin.rescan"
             && let Some(asked) = self.scan_sent()
         {

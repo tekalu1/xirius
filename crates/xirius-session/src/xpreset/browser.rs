@@ -63,6 +63,11 @@ fn describe(
         let (p, _) = TrackPreset::parse(&value)?;
         (p.name, Category::Track, String::new(), String::new(), false)
     };
+    // Legacy snapshots may use a built-in's display name as its uid. The index
+    // groups those files with the same canonical device without rewriting them.
+    let device = xirius_params::find(&device)
+        .map(|d| d.uid.to_string())
+        .unwrap_or(device);
     let device_name = xirius_params::find(&device)
         .map(|d| d.name.to_string())
         .or_else(|| catalog.find(&device).map(|e| e.name.clone()))
@@ -148,7 +153,7 @@ fn scan(root: &Path, at: &Path, catalog: &Catalog, out: &mut Vec<Item>, depth: u
                     .collect()
             })
             .unwrap_or(folder);
-        if let Ok(item) = describe(
+        if let Ok(mut item) = describe(
             v,
             format!("preset:{file}"),
             Some(file),
@@ -156,6 +161,23 @@ fn scan(root: &Path, at: &Path, catalog: &Catalog, out: &mut Vec<Item>, depth: u
             folder,
             catalog,
         ) {
+            // The old on-disk kind/device directories are index keys, not User folders.
+            // Strip only the exact layout written by the legacy saver.
+            if item.value.get("browser_folder").is_none() {
+                let prefix = if let Some(kind) = kind_of_value(&item.value) {
+                    vec![kind.name().to_string()]
+                } else if let Ok((preset, _)) = DevicePreset::parse(&item.value, None) {
+                    vec![
+                        kind_name(preset.kind).to_string(),
+                        file_name(&item.entry.device),
+                    ]
+                } else {
+                    Vec::new()
+                };
+                if !prefix.is_empty() && item.entry.folder.starts_with(&prefix) {
+                    item.entry.folder.drain(..prefix.len());
+                }
+            }
             out.push(item);
         }
     }
@@ -286,7 +308,9 @@ pub(crate) fn run(
         };
         return Ok((
             Output::with(
-                if item.entry.has_fx {
+                if target == "new" {
+                    "プリセットのトラックを追加"
+                } else if item.entry.has_fx {
                     "インストゥルメントと FX を置き換え"
                 } else {
                     "プリセットを適用"
@@ -376,7 +400,15 @@ pub(crate) fn run(
         let tid: TrackId = a.id("track")?;
         let kind = a.opt_str("kind").unwrap_or("instrument");
         if kind == "track" {
-            TrackPreset::snapshot(project, tid, &name)?.to_value()
+            let mut preset = TrackPreset::snapshot(project, tid, &name)?;
+            for x in &mut preset.inserts {
+                for sample in &mut x.samples {
+                    if let Some(path) = sample_path(sample, song).filter(|p| p.is_file()) {
+                        *sample = keep_sample(dir, &path, dry)?;
+                    }
+                }
+            }
+            preset.to_value()
         } else if let Some(kind) = ChainKind::of(kind).or_else(|| {
             (kind == "instrument" && a.flag("include_fx")).then_some(ChainKind::Instrument)
         }) {
@@ -497,7 +529,14 @@ fn as_track(value: &Value) -> CmdResult<TrackPreset> {
         return TrackPreset::parse(value).map(|(p, _)| p);
     }
     let (name, chain) = if kind_of_value(value).is_some() {
-        let (p, _) = ChainPreset::parse(value, None)?;
+        let (mut p, _) = ChainPreset::parse(value, None)?;
+        if p.kind == ChainKind::Instrument {
+            for device in &mut p.chain.devices {
+                if device.kind == PluginKind::Instrument {
+                    device.preset = Some(p.name.clone());
+                }
+            }
+        }
         (p.name, p.chain)
     } else {
         let (p, _) = DevicePreset::parse(value, None)?;

@@ -154,7 +154,7 @@ pub fn text(s: &Studio, hit: Hit) -> Option<String> {
         if let Hit::Browser(
             crate::browser::BrowserHit::Item(i) | crate::browser::BrowserHit::Preset(i),
         ) = hit
-            && let Some(e) = s.browser.track_rows().get(i).and_then(|r| r.entry.as_ref())
+            && let Some(e) = s.browser.track_row(i).and_then(|r| r.entry)
         {
             return Some(format!(
                 "{} · {} · {}{}",
@@ -567,8 +567,7 @@ mod tests {
         assert_eq!(
             tips,
             [
-                "インストゥルメント  F6",
-                "エフェクト  F7",
+                "トラックブラウザー  F6",
                 "ファイル  F9",
                 "プール",
                 "インスペクター  F4"

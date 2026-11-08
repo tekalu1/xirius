@@ -380,6 +380,10 @@ impl Studio {
         name: &str,
         raw: serde_json::Map<String, serde_json::Value>,
     ) {
+        if name == "browser.preset.list" {
+            self.background_io_on_worker(name, raw);
+            return;
+        }
         if let Some(error) = self.io_device_change_error(name, &raw) {
             self.error = Some(error);
             return;
@@ -409,14 +413,22 @@ impl Studio {
     /// to the worker: nothing on the screen is closed or cleared for it, as nothing is saved.
     /// Only if it outlasts the veil do the keys and the roll let go, as for a save.
     pub(crate) fn rescan_on_worker(&mut self, raw: serde_json::Map<String, serde_json::Value>) {
-        let command: SaveCommand = ("plugin.rescan".into(), raw, RunOptions::human(), false);
+        self.background_io_on_worker("plugin.rescan", raw);
+    }
+
+    fn background_io_on_worker(
+        &mut self,
+        name: &str,
+        raw: serde_json::Map<String, serde_json::Value>,
+    ) {
+        let command: SaveCommand = (name.into(), raw, RunOptions::human(), false);
         let progress = Arc::new(SaveProgress::default());
         let work =
             Work::Writing(self.save_worker(None, false, progress.clone(), Some(command.clone())));
         self.saving = Some(Saving {
             device_entry: None,
             palette_query: None,
-            operation: Some(crate::io_command::label("plugin.rescan")),
+            operation: Some(crate::io_command::label(name)),
             mcp: None,
             command: Some(command),
             work,

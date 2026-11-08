@@ -28,8 +28,8 @@ pub const RAIL_TIPS: &[Shot] = &[
         acts: &[Act::Reset, hover(crate::browser::RailTab::Instruments)],
     },
     Shot {
-        name: "rt02-effects",
-        acts: &[hover(crate::browser::RailTab::Effects)],
+        name: "rt02-inspector",
+        acts: &[hover(crate::browser::RailTab::Inspector)],
     },
     Shot {
         name: "rt03-files",
@@ -314,8 +314,8 @@ mod tests {
     #[test]
     fn rail_tips_hover_each_button_and_say_its_tab_and_key() {
         let expect = [
-            "インストゥルメント  F6",
-            "エフェクト  F7",
+            "トラックブラウザー  F6",
+            "インスペクター  F4",
             "ファイル  F9",
             "プール",
         ];

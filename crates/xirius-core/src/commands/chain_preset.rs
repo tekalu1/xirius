@@ -3,8 +3,6 @@
 //! of the rack (or takes the instrument's seat with its FX), and its macros land on the
 //! track's — in one step of the history.
 
-use std::collections::HashSet;
-
 use serde_json::json;
 
 use super::rack::{chain_mut, height, insert_at, place, plugins_in, rack_of};

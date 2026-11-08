@@ -88,6 +88,8 @@ fn a_live_material_update_keeps_recording_and_mix_commands_responsive() {
         )
         .unwrap();
     let id: xirius_core::id::TrackId = track.as_str().unwrap().parse().unwrap();
+    // The direct Session calls below measure audio preparation with the browser closed.
+    s.browser.open = false;
     s.song.toggle_arm(id).unwrap();
     s.transport.mode = OutputMode::Silent { paced: true };
     s.transport.bind_window();

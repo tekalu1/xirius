@@ -44,6 +44,8 @@ mod menu_io_tests {
                     ..ScanOptions::default()
                 }));
                 let ui = std::thread::current().id();
+                // This gate observes menu reads; do not start an unrelated browser index job.
+                s.browser.open = false;
                 let release = crate::browser_io_tests::Release::new();
                 let gate = release.0.clone();
                 let cache = s.song.plugin_cache().to_owned();

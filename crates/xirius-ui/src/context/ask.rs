@@ -26,7 +26,7 @@ pub struct Ask {
     pub number: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PresetSave {
     pub name: String,
     pub folder: String,
@@ -222,6 +222,30 @@ impl Studio {
     }
 
     pub(crate) fn preset_save_pick(&mut self, i: usize) -> bool {
+        use xirius_core::track_browser::Category;
+        let category = self
+            .ctx
+            .as_ref()
+            .and_then(|s| s.ask.as_ref())
+            .and_then(|a| {
+                if a.name == "browser.preset.copy" {
+                    return self
+                        .browser
+                        .track_library
+                        .as_ref()?
+                        .iter()
+                        .find(|e| Some(e.id.as_str()) == a.args["entry"].as_str())
+                        .map(|e| e.category);
+                }
+                Some(match a.args["kind"].as_str().unwrap_or("instrument") {
+                    "instrument" | "instrument-fx" => Category::Instrument,
+                    "multi-instrument" => Category::MultiInstrument,
+                    "fx" => Category::Fx,
+                    "fx-chain" => Category::FxChain,
+                    "track" => Category::Track,
+                    _ => return None,
+                })
+            });
         let device = self
             .ctx
             .as_ref()
@@ -243,7 +267,7 @@ impl Studio {
                     .values()
                     .flat_map(|t| &t.inserts)
                     .find(|x| x.id == id)
-                    .map(|x| x.uid.clone())
+                    .map(|x| x.builtin().map_or(x.uid.as_str(), |d| d.uid).to_owned())
             });
         let Some(ask) = self.ctx.as_mut().and_then(|s| s.ask.as_mut()) else {
             return false;
@@ -262,9 +286,9 @@ impl Studio {
                 ask.input = Field::new(
                     FieldId::Search,
                     if save.folder_focus {
-                        &save.folder
+                        save.folder.clone()
                     } else {
-                        &save.name
+                        save.name.clone()
                     },
                 );
             }
@@ -282,6 +306,7 @@ impl Studio {
                 let exists = self.browser.track_library.as_ref().is_some_and(|es| {
                     es.iter().any(|e| {
                         e.source == "User"
+                            && category.is_none_or(|c| e.category == c)
                             && device.as_ref().is_none_or(|d| &e.device == d)
                             && e.name.eq_ignore_ascii_case(save.name.trim())
                             && e.folder.join("/") == save.folder.replace('\\', "/")
@@ -314,7 +339,7 @@ impl Studio {
             5 => {
                 save.folder.clear();
                 save.folder_focus = false;
-                ask.input = Field::new(FieldId::Search, &save.name);
+                ask.input = Field::new(FieldId::Search, save.name.clone());
                 save.overwrite = false;
             }
             6 => save.folder_page = save.folder_page.saturating_sub(6),
@@ -328,7 +353,7 @@ impl Studio {
                     save.folder = folder.clone();
                 }
                 save.folder_focus = false;
-                ask.input = Field::new(FieldId::Search, &save.name);
+                ask.input = Field::new(FieldId::Search, save.name.clone());
                 save.overwrite = false;
             }
             _ => return false,

@@ -327,19 +327,16 @@ pub const SCRIPT: &[Shot] = &[
         ],
     },
     Shot {
-        name: "28-browser-views",
-        acts: &[
-            Key("escape"),
-            Press(Target::Browser(BrowserHit::ViewButton)),
-        ],
+        name: "28-browser-instruments",
+        acts: &[Key("escape"), Press(Target::Browser(BrowserHit::Loc(0)))],
     },
     Shot {
-        name: "29-browser-vendor",
-        acts: &[Press(Target::PopupText("ベンダー別"))],
+        name: "29-browser-tracks",
+        acts: &[Press(Target::Browser(BrowserHit::Loc(2)))],
     },
     Shot {
         name: "30-effects",
-        acts: &[Press(Target::Rail(RailTab::Effects))],
+        acts: &[Press(Target::Browser(BrowserHit::Loc(1)))],
     },
     Shot {
         name: "31-files",

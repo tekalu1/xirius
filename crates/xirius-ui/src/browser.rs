@@ -607,8 +607,16 @@ impl Browser {
     }
 
     pub fn track_rows(&self) -> Vec<xirius_core::track_browser::Row> {
+        let entries: Vec<_> = self
+            .track_library
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .filter(|e| self.show_hidden || !self.hidden.contains(e.device_name.as_str()))
+            .cloned()
+            .collect();
         xirius_core::track_browser::tree(
-            self.track_library.as_deref().unwrap_or_default(),
+            &entries,
             if self.track_kind {
                 "tracks"
             } else {
@@ -618,6 +626,11 @@ impl Browser {
             &self.closed_groups.iter().cloned().collect(),
             &self.favourites,
         )
+    }
+
+    pub fn track_row(&self, index: usize) -> Option<xirius_core::track_browser::Row> {
+        let index = index.checked_sub(usize::from(self.scanning))?;
+        self.track_rows().into_iter().nth(index)
     }
 
     pub fn new() -> Browser {
@@ -888,7 +901,7 @@ impl Browser {
     /// The rows of the list, with no positions yet.
     pub fn rows(&self) -> Vec<BRow> {
         if self.is_track_browser() && self.track_library.is_some() {
-            return self
+            let mut rows: Vec<_> = self
                 .track_rows()
                 .into_iter()
                 .map(|r| match r.entry {
@@ -932,6 +945,11 @@ impl Browser {
                     },
                 })
                 .collect();
+            if self.scanning {
+                rows.insert(0, BRow::Scanning);
+            }
+            rows.extend(self.bad_rows());
+            return rows;
         }
         match self.tab {
             RailTab::Files => self.file_rows(),
@@ -1263,7 +1281,7 @@ impl Browser {
                         Some(BrowserHit::Fav(i))
                     } else if presets.is_some() && {
                         let arrow = if self.is_track_browser() && self.track_library.is_some() {
-                            let depth = self.track_rows().get(i).map_or(0, |r| r.depth);
+                            let depth = self.track_row(i).map_or(0, |r| r.depth);
                             Rect::new(r.x + Space::X2.px() + depth as f32 * 10.0, r.y, 16.0, r.h)
                         } else {
                             self.disclose_rect(r)
@@ -1425,7 +1443,19 @@ impl Browser {
             BrowserHit::Item(i) | BrowserHit::Preset(i) => {
                 row(i).map(|r| (r.x + r.w / 3.0, r.y + r.h / 2.0))
             }
-            BrowserHit::Disclose(i) => row(i).map(|r| mid(self.disclose_rect(r))),
+            BrowserHit::Disclose(i) => row(i).map(|r| {
+                if self.is_track_browser() && self.track_library.is_some() {
+                    let depth = self.track_row(i).map_or(0, |r| r.depth);
+                    mid(Rect::new(
+                        r.x + Space::X2.px() + depth as f32 * 10.0,
+                        r.y,
+                        16.0,
+                        r.h,
+                    ))
+                } else {
+                    mid(self.disclose_rect(r))
+                }
+            }),
             BrowserHit::Fav(i) => row(i).map(|r| mid(self.fav_rect(r))),
             BrowserHit::Audition => l.rows.iter().find_map(|p| match p.row {
                 BRow::Audition { depth, .. } => {
@@ -1804,6 +1834,11 @@ fn paint_panel(
                 _ => None,
             }),
     );
+    let indexed = if browser.is_track_browser() {
+        browser.track_rows()
+    } else {
+        Vec::new()
+    };
     pen.mask(l.list, |pen| {
         // One 60px selection face, including when its file row is scrolled out.
         for i in 0..l.rows.len() {
@@ -1822,6 +1857,8 @@ fn paint_panel(
                 r,
                 preview_face(browser, l, i).is_some(),
                 motion,
+                i.checked_sub(usize::from(browser.scanning))
+                    .and_then(|i| indexed.get(i)),
             );
         }
     });
@@ -1880,11 +1917,9 @@ fn paint_row(
     r: Rect,
     has_preview: bool,
     motion: xirius_design::Motion,
+    indexed: Option<&xirius_core::track_browser::Row>,
 ) {
-    if browser.is_track_browser()
-        && browser.track_library.is_some()
-        && let Some(row) = browser.track_rows().get(i)
-    {
+    if let Some(row) = indexed {
         let c = pen.c;
         let star = browser.fav_rect(r);
         let selected = row.entry.as_ref().is_some_and(|e| {
@@ -2010,6 +2045,9 @@ fn paint_row(
                 Align::Left,
             );
             // The count in a small chip after the name.
+            if browser.is_track_browser() && browser.track_library.is_some() {
+                return;
+            }
             let chip = Rect::new(
                 r.x + pad + 14.0 + Space::X2.px() + w + Space::X2.px(),
                 r.y + (r.h - 16.0) / 2.0,
@@ -2584,7 +2622,7 @@ mod tests {
         b.press_rail(RailTab::Effects);
         b.set_view(View::Vendor);
         assert!(names(&b.rows()).contains(&"[Valhalla DSP 1]".to_string()));
-        b.press_rail(RailTab::Instruments);
+        b.tab = RailTab::Instruments;
         assert_eq!(b.view(), View::Kind, "instruments keep their own view");
         assert!(!names(&b.rows()).contains(&"EQ".to_string()));
     }
@@ -2731,9 +2769,10 @@ mod tests {
     }
 
     #[test]
-    fn the_view_button_is_on_every_tab_but_the_files() {
+    fn track_browser_has_kind_buttons_and_song_files_keep_the_view_button() {
         let mut b = example();
-        assert!(layout(&b).view.is_some());
+        assert!(layout(&b).view.is_none());
+        assert_eq!(layout(&b).tabs.len(), 3);
         b.press_rail(RailTab::Files);
         let l = layout(&b);
         assert!(l.view.is_none());

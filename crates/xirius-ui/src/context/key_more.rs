@@ -87,9 +87,12 @@ impl Studio {
             }
             "browser.tab" => {
                 if text(args, "tab") == Some("tracks") {
+                    let query = self.browser.search.clone();
+                    self.press(g, crate::studio::Hit::Rail(RailTab::Instruments));
                     self.browser.tab = RailTab::Instruments;
                     self.browser.track_kind = true;
                     self.browser.open = true;
+                    self.browser.search = query;
                     self.rebuild(g);
                     return Some(true);
                 }
@@ -99,9 +102,12 @@ impl Studio {
                 if matches!(tab, RailTab::Instruments | RailTab::Effects) {
                     let same =
                         self.browser.open && self.browser.tab == tab && !self.browser.track_kind;
+                    let query = self.browser.search.clone();
+                    self.press(g, crate::studio::Hit::Rail(tab));
                     self.browser.tab = tab;
                     self.browser.track_kind = false;
                     self.browser.open = !same;
+                    self.browser.search = query;
                     self.rebuild(g);
                     return Some(true);
                 }

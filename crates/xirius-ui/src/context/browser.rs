@@ -356,6 +356,29 @@ impl Studio {
 
     /// S40: the blank of an instrument or effect list, and a group's header.
     fn list_items(&mut self) -> Vec<Item> {
+        if self.browser.track_library.is_some() && self.browser.is_track_browser() {
+            return vec![
+                Item::sub(
+                    "表示",
+                    vec![
+                        act("すべて開く", BrowseAct::Groups(true)),
+                        act("すべて畳む", BrowseAct::Groups(false)),
+                        self.ctx_do(
+                            "view.browser.hidden",
+                            Act::Browse(BrowseAct::ShowHidden(!self.browser.show_hidden)),
+                        )
+                        .on(self.browser.show_hidden),
+                    ],
+                ),
+                Item::sub(
+                    "ファイル",
+                    vec![
+                        self.ctx_do("plugin.rescan", Act::Browse(BrowseAct::Rescan))
+                            .enabled(!self.browser.scanning),
+                    ],
+                ),
+            ];
+        }
         let grouped = !self.browser.groups().is_empty();
         let shown = self.browser.show_hidden;
         let scanning = self.browser.scanning;

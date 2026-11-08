@@ -784,6 +784,80 @@ GitHub のリリースから新しいバージョンがあるかを確認しま�
 | `limit` | — | `{"maximum":100000.0,"minimum":0.0,"type":"integer"}` | 最大件数（既定は 100） |
 | `query` | — | `{"type":"string"}` | 名前・ベンダー・カテゴリーに含まれる文字列 |
 
+## `browser.preset.apply`
+
+ブラウザーのプリセットを適用
+
+プリセットを指定の場所へ適用します（取り消し 1 回）
+
+事前条件: AI の権限が編集以上（読み取りではプレビューのみ）。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 実行結果の step で確認。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `at` | — | `{"type":"string"}` | エフェクトとチェーンを入れる場所（track・after:<機器>・branch:<分岐か層>[:<位置>]） |
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `entry` | 必須 | `{"type":"string"}` | 一覧の entry id |
+| `of` | — | `{"type":"string"}` | プリセットを読み込むプラグイン（plugin の ID） |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `target` | — | `{"enum":["track","instrument","insert","effect","new"],"type":"string"}` | 適用先 |
+| `track` | — | `{"type":"string"}` | 適用先トラック（track の ID） |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
+## `browser.preset.copy`
+
+User にコピー
+
+元の範囲を保ち、プリセットを User にコピーします
+
+事前条件: AI の権限が保存以上、またはユーザーの承認。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 実行結果の step で確認。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `entry` | 必須 | `{"type":"string"}` | 一覧の entry id |
+| `folder` | — | `{"type":"string"}` | User 内のフォルダー |
+| `name` | 必須 | `{"type":"string"}` | 名前 |
+| `overwrite` | — | `{"type":"boolean"}` | 同名を上書き保存 |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `source` | — | `{"enum":["User"],"type":"string"}` | 保存先 |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
+## `browser.preset.favourite`
+
+お気に入りを切り替え
+
+機器かプリセットへのお気に入り参照を切り替えます
+
+事前条件: AI の権限が保存以上、またはユーザーの承認。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 実行結果の step で確認。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `entry` | 必須 | `{"type":"string"}` | 一覧の entry id |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
+## `browser.preset.list`
+
+トラックブラウザー
+
+トラックブラウザーの一覧と検索結果を返します
+
+事前条件: AI の権限が読み取り以上。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 記録なし。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `query` | — | `{"type":"string"}` | 名前・機器・メーカー・出所・フォルダーを空白区切りの AND で検索 |
+| `tab` | — | `{"enum":["instruments","effects","tracks"],"type":"string"}` | 種類 |
+
 ## `browser.preset.load`
 
 ブラウザーのプリセットを読み込む
@@ -800,6 +874,30 @@ GitHub のリリースから新しいバージョンがあるかを確認しま�
 | `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
 | `preset` | 必須 | `{"type":"string"}` | プリセットの名前 |
 | `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
+
+## `browser.preset.save`
+
+ブラウザーのプリセットを保存
+
+トラックの部分木を User に保存します
+
+事前条件: AI の権限が保存以上、またはユーザーの承認。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 実行結果の step で確認。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
+| `folder` | — | `{"type":"string"}` | User 内のフォルダー |
+| `include_fx` | — | `{"type":"boolean"}` | 音源の後段 FX を含める |
+| `kind` | — | `{"enum":["instrument","fx","instrument-fx","multi-instrument","fx-chain","track"],"type":"string"}` | 保存範囲 |
+| `name` | 必須 | `{"type":"string"}` | 名前 |
+| `of` | — | `{"type":"string"}` | 機器・分岐・レイヤー（plugin\|rack node の ID） |
+| `overwrite` | — | `{"type":"boolean"}` | 同名を上書き保存 |
+| `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
+| `source` | — | `{"enum":["User"],"type":"string"}` | 保存先 |
+| `track` | 必須 | `{"type":"string"}` | トラック（track の ID） |
 | `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
 
 ## `browser.put`
@@ -849,7 +947,7 @@ GitHub のリリースから新しいバージョンがあるかを確認しま�
 
 | 引数 | 必須 | 型・範囲・既定値 | 内容 |
 |---|---|---|---|
-| `tab` | 必須 | `{"enum":["instruments","effects","files","song_files","inspector"],"type":"string"}` | 面 |
+| `tab` | 必須 | `{"enum":["instruments","effects","tracks","files","song_files","inspector"],"type":"string"}` | 面 |
 
 ## `browser.use`
 
@@ -8709,6 +8807,20 @@ PC のキーボードで演奏するのを入・切します
 | 引数 | 必須 | 型・範囲・既定値 | 内容 |
 |---|---|---|---|
 
+## `view.preset-copy`
+
+User にコピー…
+
+User へコピーするプリセットの保存窓を開きます
+
+事前条件: AI の権限が読み取り以上。指定した ID が存在し、引数が次の型・範囲に一致すること。
+
+履歴: 記録なし。アイコン: `prompt`。
+
+| 引数 | 必須 | 型・範囲・既定値 | 内容 |
+|---|---|---|---|
+| `entry` | 必須 | `{"type":"string"}` | ブラウザーの項目 |
+
 ## `view.record-panel`
 
 録音パネルを表示
@@ -8996,26 +9108,4 @@ PC のキーボードで演奏するのを入・切します
 |---|---|---|---|
 | `by` | — | `{"type":"number"}` | 段数（×1・×2・×4 を上下） |
 | `to` | — | `{"type":"number"}` | 倍率（1・2・4） |
-
-# トラックブラウザー — 承認済み（2026-11-08）
-
-共通索引はプリセットの保存範囲でインストゥルメント・マルチ・FX・FX チェーン・トラックを分類する。
-画面は検索欄、インストゥルメント／FX／トラックの横ボタン、機器と Factory／User／フォルダーの木の順。
-メーカーは機器行の補助表示と検索対象。検索は空白区切りの AND で親を残し、検索中は枝を開く。
-お気に入りは索引 ID への参照。Factory は読むだけで、User へコピーして編集する。
-保存窓の「FX を含める」は新規時オフ、既存のコピーでは元の範囲を保持する。
-FX 付きは +FX と表示し、音源と全インサートを置換する。FX 無しは既存 FX を残す。
-センド・音量・パン・色まで保存する用途のためトラックの種類も残す。試聴は設けない。
-
-`browser.preset.list --tab instruments|effects|tracks --query <語>` は共通索引と木を返す。
-`browser.preset.favourite --entry <id>` は参照を切り替える。
-`browser.preset.save --track <id> --kind <範囲> --of <機器> --name <名前> --include_fx --folder <フォルダー>`
-は User に保存する。同名は `--overwrite` を明示する。
-`browser.preset.copy --entry <id> --name <名前> --folder <フォルダー>` は範囲を保持して User に写す。
-`browser.preset.apply --entry <id> --target track|instrument|insert|effect|new` は落とし先の意味を指定する。
-既存トラックへの適用には `--track`、FX の位置には `--at`、置換対象には `--of` を指定する。
-これらは登録済みコマンドから CLI と MCP に共通に公開し、画面のディスク操作は曲の所有者へ渡す。
-
-保存形式は DevicePreset / ChainPreset / TrackPreset を維持し、索引で統合する。
-読み込みに伴う元ファイルの自動変換・上書きは行わない。プラグイン不足でも状態・配線・マクロ参照を保持する。
 

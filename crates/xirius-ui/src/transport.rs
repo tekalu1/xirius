@@ -1800,6 +1800,10 @@ impl Studio {
         // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         match self.song.run(command, args) {
             Ok(data) => {
+                if command == "browser.preset.list" {
+                    self.track_browser_answer(command, &data);
+                    return true;
+                }
                 self.error = None;
                 self.after_edit();
                 if let Some(args) = &preset {
@@ -4041,6 +4045,8 @@ mod tests {
     #[test]
     fn what_was_said_while_the_player_started_goes_once_it_is_up() {
         let mut s = windowed_empty();
+        // Isolate the player's notice from the browser's independent owner request.
+        s.browser.open = false;
         assert!(s.toggle_play());
         assert_eq!(s.error.as_deref(), Some(PREPARING));
         let deadline = Instant::now() + Duration::from_secs(30);

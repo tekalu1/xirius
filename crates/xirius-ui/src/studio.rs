@@ -1690,11 +1690,7 @@ impl Studio {
                 if let crate::browser::BrowserHit::Fav(i) = hit
                     && self.browser.is_track_browser()
                     && self.browser.track_library.is_some()
-                    && let Some(e) = self
-                        .browser
-                        .track_rows()
-                        .get(i)
-                        .and_then(|r| r.entry.clone())
+                    && let Some(e) = self.browser.track_row(i).and_then(|r| r.entry)
                 {
                     // design-lint: allow(ui-blocking-io) BRW-017: favourites are written on the song owner through io_command::handles.
                     self.run_command(
@@ -3630,11 +3626,10 @@ mod tests {
     #[test]
     fn browser_tabs_views_search_and_panels_keep_their_own_state() {
         let mut s = studio();
-        click(&mut s, Hit::Browser(BrowserHit::ViewButton));
-        choose(&mut s, Action::View(browser::View::Vendor));
-        assert_eq!(s.browser.view(), browser::View::Vendor);
-        click(&mut s, Hit::Rail(RailTab::Effects));
-        assert_eq!(s.browser.view(), browser::View::Kind);
+        click(&mut s, Hit::Browser(BrowserHit::Loc(2)));
+        assert!(s.browser.track_kind);
+        click(&mut s, Hit::Browser(BrowserHit::Loc(1)));
+        assert_eq!(s.browser.tab, RailTab::Effects);
         click(&mut s, Hit::Browser(BrowserHit::Search));
         let g = geometry(&s);
         assert!(s.typed(&g, "r", Some("reverb")));

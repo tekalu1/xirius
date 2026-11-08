@@ -163,3 +163,16 @@ VST 共通バーからの電源・プリセット読込・Sidechain の3か所�
 `Studio::run_command` に変更した。設定の永続化は既存の所有者ワーカーへ渡し、
 fixture は完了を待ってから画面を検査する。集計の `run` 1件を `run_command` 1件へ
 置き換えたもので、窓のスレッドに新しい I/O を追加していない。
+
+### トラックブラウザー（BRW-017、2026-11-08）
+
+共通索引・お気に入り・保存・Factory から User へのコピー・適用の
+`browser.preset.*` は `io_command::handles` で曲の所有者へ渡す。
+保存時のプラグイン状態は同じ `captures` 境界で問い合わせる。
+`browser_presets.rs`、`context/ask.rs`、`context/browser.rs`、
+`instrument/presets.rs`、`instrument/window.rs`、`studio.rs` に追加した `run_command` は
+この経路であり、画面側は完了した索引を受け取り木を組み立てる。
+保存窓を開く際の索引更新も同じ経路を使い、画面からファイルを読まない。
+名前・新しいフォルダーの入力は既存の Ask / Field / ImeTarget を共有する。
+`every_session_command_the_screen_sends_reaches_the_owner` と共通索引・保存・
+適用の試験で入口を確認し、`ui-io-audit.tsv` を更新した。

@@ -1,12 +1,8 @@
-//! The presets of the built-in devices in the browser (BRW-017): the rows under a device,
-//! loading one by a drop on a track, Enter or a double click, and the device window's
-//! ブラウザーに表示.
+//! Track-browser presets (BRW-017): the shared index, device-window selection and drops.
 //!
-//! The rows come from the same read as the window's list (`preset.list --values`, read again
-//! when the files change), so the list and the windows never disagree. Loading puts the
-//! preset on the track's device of that kind (the last one of an effect); on a track
-//! without one, the device goes in with the preset as one step (`preset.load` with
-//! `device`). On no track at all it is two: the new track, then the preset.
+//! The song owner reads the shared index through `browser.preset.list`; the legacy
+//! device-window list remains readable through `preset.list --values`. Indexed drops
+//! use `browser.preset.apply`, including new-track creation, as a single undoable edit.
 
 use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
@@ -31,9 +27,39 @@ pub struct HeldPreset {
 impl Studio {
     pub(crate) fn track_browser_answer(&mut self, name: &str, data: &serde_json::Value) {
         if name == "browser.preset.list"
-            && let Ok(entries) = serde_json::from_value(data["entries"].clone())
+            && let Ok(entries) = serde_json::from_value::<Vec<xirius_core::track_browser::Entry>>(
+                data["entries"].clone(),
+            )
         {
+            if let Some((uid, name)) = &self.browser.selected_preset
+                && let Some(entry) = entries
+                    .iter()
+                    .find(|e| e.device == *uid && e.name == *name && e.file.is_some())
+            {
+                self.browser.selected_preset =
+                    Some((crate::browser::intern(&entry.id), entry.name.clone()));
+                self.browser.reveal = true;
+            }
+            let folders = entries
+                .iter()
+                .filter(|e| e.source == "User")
+                .flat_map(|e| (1..=e.folder.len()).map(move |n| e.folder[..n].join("/")))
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect();
             self.browser.track_library = Some(entries);
+            if let Some(save) = self
+                .ctx
+                .as_mut()
+                .and_then(|s| s.ask.as_mut())
+                .and_then(|a| a.preset.as_mut())
+            {
+                save.folders = folders;
+                save.folder_page = save
+                    .folder_page
+                    .min(save.folders.len().saturating_sub(1) / 6 * 6);
+                self.refresh_popup();
+            }
         }
         if matches!(name, "browser.preset.list" | "browser.preset.favourite")
             && let Ok(favourites) = serde_json::from_value::<std::collections::BTreeSet<String>>(

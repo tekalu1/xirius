@@ -24,6 +24,12 @@ struct Rig {
     s: Session,
 }
 
+impl Drop for Rig {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
 fn rig(tag: &str) -> Rig {
     let dir = std::env::temp_dir().join(format!("xirius-chains-{}-{tag}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -79,6 +85,12 @@ fn browser_saves_subtrees_copies_factory_and_applies_in_one_step() {
         json!({"entry": entry}),
     );
     assert!(fav["favourites"].as_array().unwrap().contains(&entry));
+    let unfav = run(
+        &mut r.s,
+        "browser.preset.favourite",
+        json!({"entry": entry}),
+    );
+    assert!(!unfav["favourites"].as_array().unwrap().contains(&entry));
     let target = instrument(&mut r.s, "Target", "Sampler");
     plugin(&mut r.s, &target, "Delay");
     step(
@@ -92,6 +104,13 @@ fn browser_saves_subtrees_copies_factory_and_applies_in_one_step() {
         "browser.preset.apply",
         json!({"entry": entry, "target": "new"}),
     );
+    let made =
+        r.s.project()
+            .tracks
+            .values()
+            .find(|t| t.name == "Warm")
+            .unwrap();
+    assert_eq!(made.inserts[0].preset.as_deref(), Some("Warm"));
     let plain = run(
         &mut r.s,
         "browser.preset.save",
@@ -122,6 +141,72 @@ fn run(s: &mut Session, n: &str, a: Value) -> Value {
 }
 
 #[test]
+fn browser_saving_a_layer_keeps_only_its_fx_tree_and_internal_macros() {
+    let mut r = rig("browser-layer-scope");
+    let t = instrument(&mut r.s, "Stack", "Sampler");
+    run(
+        &mut r.s,
+        "rack.layer.add",
+        json!({"track":t,"name":"Drum Kit","uid":"drum-kit"}),
+    );
+    let x = track(&r.s, &t);
+    let Some(Source::Multi { layers, .. }) = &x.rack.as_ref().unwrap().source else {
+        panic!("multi source");
+    };
+    let layer = layers[0].id.to_string();
+    let inst = layers[0].instrument.to_string();
+    let split = run(
+        &mut r.s,
+        "rack.split.add",
+        json!({"track":t,"at":format!("layer:{layer}")}),
+    );
+    let branch = split["branches"][0].as_str().unwrap();
+    let eq = plugin(&mut r.s, &t, "EQ");
+    run(&mut r.s, "rack.node.move", json!({"id":eq,"to":branch}));
+    plugin(&mut r.s, &t, "Reverb");
+    run(
+        &mut r.s,
+        "control.assign",
+        json!({"track":t,"control":"k1","target":format!("param:{eq}:low_gain")}),
+    );
+    run(
+        &mut r.s,
+        "control.assign",
+        json!({"track":t,"control":"k2","target":"volume"}),
+    );
+    let saved = run(
+        &mut r.s,
+        "browser.preset.save",
+        json!({"track":t,"of":inst,"kind":"instrument","include_fx":true,"name":"Layer"}),
+    );
+    let raw: Value =
+        serde_json::from_slice(&std::fs::read(saved["file"].as_str().unwrap()).unwrap()).unwrap();
+    let (preset, _) = xirius_core::chain_preset::ChainPreset::parse(&raw, None).unwrap();
+    assert_eq!(
+        preset
+            .chain
+            .devices
+            .iter()
+            .map(|d| d.uid.as_str())
+            .collect::<Vec<_>>(),
+        ["sampler", "eq"]
+    );
+    assert!(matches!(
+        preset.chain.rack.fx.as_slice(),
+        [RackNode::Split(_)]
+    ));
+    assert_eq!(preset.chain.controls.get(ControlId::Knob(0)).maps.len(), 1);
+    assert!(
+        preset
+            .chain
+            .controls
+            .get(ControlId::Knob(1))
+            .maps
+            .is_empty()
+    );
+}
+
+#[test]
 fn browser_reads_legacy_files_and_places_fx_at_each_destination() {
     let mut r = rig("browser-fx-targets");
     let source = audio(&mut r.s, "Source");
@@ -143,6 +228,18 @@ fn browser_reads_legacy_files_and_places_fx_at_each_destination() {
         .find(|e| e["name"] == "Legacy EQ")
         .unwrap()["id"]
         .clone();
+    assert!(
+        list["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == entry)
+            .unwrap()["folder"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "legacy kind/device directories are not user folders"
+    );
     let target = audio(&mut r.s, "Target");
     let delay = plugin(&mut r.s, &target, "Delay");
     step(
