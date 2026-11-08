@@ -193,7 +193,31 @@ impl Studio {
 
     /// Opens the plugin menu under `anchor`.
     pub(crate) fn open_plugin_menu(&mut self, t: TrackId, id: PluginId, anchor: Rect) {
-        self.open_popup(PopupKind::Plugin(t, id), anchor);
+        use crate::context::Item;
+        use crate::popup::Action;
+        let Some(view) = self.plugin_view(t, id) else {
+            return;
+        };
+        if !view.crashed {
+            let items = self.plugin_items(t, id);
+            self.open_classified("insert", items, anchor.x, anchor.bottom());
+            return;
+        }
+        let kind = PopupKind::Plugin(t, id);
+        let mut items = vec![
+            Item::legacy("再起動", kind, anchor, Action::Plugin(PlugAct::Restart)),
+            Item::legacy("外す", kind, anchor, Action::Plugin(PlugAct::Remove)),
+        ];
+        if view.suggest {
+            items.push(Item::legacy(
+                "専用で動かす",
+                kind,
+                anchor,
+                Action::Plugin(PlugAct::Mode(PluginIsolation::Dedicated)),
+            ));
+        }
+        items.push(Item::sub("動かす場所", self.plugin_process_items(t, id)));
+        self.open_classified("other-60", items, anchor.x, anchor.bottom());
     }
 
     pub(crate) fn plugin_view(&mut self, t: TrackId, id: PluginId) -> Option<PluginView> {

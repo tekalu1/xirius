@@ -31,6 +31,17 @@ impl Studio {
         };
         // The keys the rows run are the roll's own.
         self.focus_arrange(false);
+        let target = match &spot {
+            Spot::Note | Spot::Point if self.roll.mixed(&ctx) => "other-41",
+            Spot::Note => "note",
+            Spot::Grid => "other-33",
+            Spot::Keys(_) if ctx.drum.is_some() => "other-35",
+            Spot::Keys(_) => "other-34",
+            Spot::Bar => "other-37",
+            Spot::Point => "other-38",
+            Spot::Lane { .. } => "other-39",
+            Spot::Tab(_) => "other-40",
+        };
         let items = match spot {
             Spot::Note | Spot::Point if self.roll.mixed(&ctx) => {
                 let delete = self.ctx_key(g, "note.delete");
@@ -44,7 +55,7 @@ impl Studio {
             Spot::Lane { tick, value } => self.ctrl_lane_items(g, &ctx, tick, value),
             Spot::Tab(index) => self.tab_items(&ctx, index),
         };
-        self.open_context(items, x, y);
+        self.open_classified(target, items, x, y);
         true
     }
 

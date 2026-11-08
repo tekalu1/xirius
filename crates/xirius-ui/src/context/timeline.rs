@@ -27,12 +27,12 @@ impl Studio {
         match self.arrange_spot(g, x, y) {
             Spot::Space(RowKind::Track(_)) if self.in_range(g, x) => {
                 let items = self.range_items();
-                self.open_context(items, x, y);
+                self.open_classified("other-16", items, x, y);
                 true
             }
             Spot::Space(RowKind::Track(t)) => {
                 let items = self.lane_items(g, t, x);
-                self.open_context(items, x, y);
+                self.open_classified("empty", items, x, y);
                 true
             }
             Spot::Clip { track, clip, .. }

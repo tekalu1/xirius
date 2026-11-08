@@ -47,7 +47,12 @@ impl Studio {
         let color = Item::colors("既定", "marker.color.set", json!({"ids": [id]}), true);
         let mut delete = self.ctx_cmd("marker.delete", json!({"ids": [id]}));
         delete.key = self.key_display("arrange", "clip.delete");
-        self.open_context(vec![rename, loop_to, color, Item::gap(), delete], x, y);
+        self.open_classified(
+            "other-23",
+            vec![rename, loop_to, color, Item::gap(), delete],
+            x,
+            y,
+        );
         true
     }
 }

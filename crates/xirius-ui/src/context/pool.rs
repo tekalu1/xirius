@@ -191,7 +191,7 @@ impl Studio {
     /// Opens the 「…」 under its button.
     pub(crate) fn open_pool_menu(&mut self, at: Rect) {
         let rows = self.pool_menu_items();
-        self.open_context(rows, at.x, at.bottom());
+        self.open_classified("other-79", rows, at.x, at.bottom());
     }
 }
 

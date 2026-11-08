@@ -531,7 +531,7 @@ impl Studio {
         };
         self.perf.picked = Some(id);
         let items = self.cpu_items(t, id);
-        self.open_context(items, x, y);
+        self.open_classified("other-68", items, x, y);
         true
     }
 }

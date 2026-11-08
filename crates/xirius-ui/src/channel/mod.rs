@@ -1206,7 +1206,16 @@ impl Studio {
             // the editor's cards are plug-ins and splitters
             Pick::Branch(_) => return,
         };
-        self.open_context(items, x, y);
+        self.open_classified(
+            if matches!(pick, Pick::Plugin(_)) {
+                "flow-plugin"
+            } else {
+                "other-65"
+            },
+            items,
+            x,
+            y,
+        );
     }
 
     /// A row of a splitter's mode list: the splitter takes the mode.
@@ -1434,7 +1443,7 @@ impl Studio {
             Some(Part::Pan(n)) => self.channel_value_menu(t, n, Which::Pan, x, y),
             Some(Part::AddBranch(id)) => {
                 if let Some(item) = self.branch_item(t, id) {
-                    self.open_context(vec![item], x, y);
+                    self.open_classified("other-66", vec![item], x, y);
                 }
             }
             _ => {}
@@ -1446,7 +1455,16 @@ impl Studio {
     fn channel_value_menu(&mut self, t: TrackId, n: NodeId, which: Which, x: f32, y: f32) {
         let items = self.branch_value_items(t, n, which, Place::Editor);
         if !items.is_empty() {
-            self.open_context(items, x, y);
+            self.open_classified(
+                if which == Which::Gain {
+                    "other-63"
+                } else {
+                    "other-64"
+                },
+                items,
+                x,
+                y,
+            );
         }
     }
 

@@ -38,7 +38,7 @@ impl Studio {
         items.extend(self.range_shapes(&with(&place, json!({ "from": from, "to": to })), frame));
         items.push(Item::gap());
         items.extend(self.range_time(from, to));
-        self.open_context(items, x, y);
+        self.open_classified("other-32", items, x, y);
         true
     }
 
@@ -51,7 +51,7 @@ impl Studio {
         let mut items = self.range_shapes(&place, Act::RangeFrame(None, from, to));
         items.push(Item::gap());
         items.extend(self.range_time(from, to));
-        self.open_context(items, x, y);
+        self.open_classified("other-28", items, x, y);
         true
     }
 

@@ -196,6 +196,13 @@ impl Studio {
             .export_file_at(g, x, y)
             .map(|(_, kid)| kid)
             .filter(|k| !k.path.is_empty());
+        let target = if card.state != State::Done {
+            "other-81"
+        } else if file.is_some() {
+            "other-82"
+        } else {
+            "other-80"
+        };
         let items = if let Some(kid) = file.filter(|_| card.state == State::Done) {
             self.export_file_items(&card, &kid, anchor)
         } else if card.state == State::Done {
@@ -208,7 +215,7 @@ impl Studio {
                 row(&card, anchor, "一覧から削除", Row::Trash),
             ]
         };
-        self.open_context(items, x, y);
+        self.open_classified(target, items, x, y);
         true
     }
 

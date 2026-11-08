@@ -38,7 +38,8 @@ impl Studio {
         let mut delete = self.ctx_cmd("take.delete", a.clone());
         delete.key = self.key_display("arrange", "clip.delete");
         self.input_map.context_delete = Some(("take.delete", a));
-        self.open_context(
+        self.open_classified(
+            "other-14",
             vec![
                 activate,
                 selection,

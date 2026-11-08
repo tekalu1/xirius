@@ -30,7 +30,7 @@ impl Studio {
         };
         self.select_section(section);
         let items = self.section_items(g, &s);
-        self.open_context(items, x, y);
+        self.open_classified("other-24", items, x, y);
         true
     }
 
@@ -53,7 +53,7 @@ impl Studio {
             .labelled("貼り付け");
         paste.key = self.menu_key("edit.paste");
         let items = vec![Item::sub("セクションを追加", names), paste];
-        self.open_context(items, x, y);
+        self.open_classified("other-25", items, x, y);
         true
     }
 

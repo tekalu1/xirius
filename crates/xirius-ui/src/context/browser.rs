@@ -156,6 +156,35 @@ impl Studio {
         }
         let files = self.browser.tab == RailTab::Files;
         let pool = self.browser.tab == RailTab::SongFiles;
+        let target = match &hit {
+            Some(BrowserHit::Pool(i) | BrowserHit::PoolCount(i)) => {
+                if matches!(
+                    l.rows.get(*i).map(|p| &p.row),
+                    Some(BRow::Pool { missing: true, .. })
+                ) {
+                    "other-78"
+                } else {
+                    "other-77"
+                }
+            }
+            Some(BrowserHit::PoolMenu) => "other-79",
+            Some(h @ (BrowserHit::Preset(_) | BrowserHit::Fav(_)))
+                if self.preset_row(g, *h).is_some() =>
+            {
+                "other-72"
+            }
+            Some(BrowserHit::Item(i) | BrowserHit::Fav(i)) => {
+                if self.browser_item(g, *i).is_some_and(|i| i.effect) {
+                    "other-71"
+                } else {
+                    "other-70"
+                }
+            }
+            Some(BrowserHit::File(_)) => "other-74",
+            Some(BrowserHit::Dir(_)) => "other-75",
+            Some(BrowserHit::Loc(_) | BrowserHit::LocRemove(_)) => "other-76",
+            _ => "other-73",
+        };
         let rows = match hit {
             Some(BrowserHit::Pool(i) | BrowserHit::PoolCount(i)) => {
                 let Some(rows) = self.pool_row_items(g, i) else {
@@ -224,7 +253,7 @@ impl Studio {
                 return false;
             }
         };
-        self.open_context(rows, x, y);
+        self.open_classified(target, rows, x, y);
         true
     }
 

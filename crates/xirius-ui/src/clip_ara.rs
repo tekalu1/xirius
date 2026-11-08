@@ -522,7 +522,7 @@ impl Studio {
                 };
                 self.select_clip_here(track, clip);
                 let items = self.ara_down_menu(track, clip);
-                self.open_context(items, at.x, at.bottom());
+                self.open_classified("other-61", items, at.x, at.bottom());
                 true
             }
             Some(Badge::Failed(why)) => {

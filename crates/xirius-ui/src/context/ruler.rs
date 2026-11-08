@@ -36,7 +36,16 @@ impl Studio {
             Some(LoopGrip::Start | LoopGrip::End | LoopGrip::Body) => self.loop_items(g),
             _ => self.ruler_items(at),
         };
-        self.open_context(items, x, y);
+        self.open_classified(
+            if grip.is_some() {
+                "other-22"
+            } else {
+                "other-21"
+            },
+            items,
+            x,
+            y,
+        );
         true
     }
 

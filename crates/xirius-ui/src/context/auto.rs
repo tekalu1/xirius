@@ -44,7 +44,7 @@ impl Studio {
         if self.clips_and_points_selected() {
             let delete = self.mixed_delete();
             let items = self.mixed_items(g, delete);
-            self.open_context(items, x, y);
+            self.open_classified("other-17", items, x, y);
             return true;
         }
         let ticks = self
@@ -89,7 +89,7 @@ impl Studio {
             Item::gap(),
             Item::act("削除", &self.menu_key("clip.delete"), Act::DeletePoints),
         ];
-        self.open_context(items, x, y);
+        self.open_classified("other-29", items, x, y);
         true
     }
 
@@ -163,7 +163,12 @@ impl Studio {
             "auto.clear",
             json!({ "track": tid, "target": tgt }),
         );
-        self.open_context(vec![add, shape, paste, Item::gap(), in_loop, all], x, y);
+        self.open_classified(
+            "other-30",
+            vec![add, shape, paste, Item::gap(), in_loop, all],
+            x,
+            y,
+        );
         true
     }
 
@@ -182,7 +187,7 @@ impl Studio {
             "auto.clear",
             json!({ "track": track.to_string(), "target": target.to_string() }),
         );
-        self.open_context(vec![add, hide, Item::gap(), clear], x, y);
+        self.open_classified("other-31", vec![add, hide, Item::gap(), clear], x, y);
         true
     }
 

@@ -199,6 +199,12 @@ pub fn view(p: &Project, presets: &Presets, menu: Menu) -> (Vec<Choice>, String)
 impl Studio {
     pub(crate) fn open_inst_menu(&mut self, menu: Menu, anchor: Rect) {
         self.instruments.menu_at = Some(anchor);
+        if matches!(menu, Menu::Row(..)) {
+            self.refresh_presets();
+            let items = self.instrument_context_items(menu, anchor);
+            self.open_classified("other-59", items, anchor.x, anchor.bottom());
+            return;
+        }
         match menu {
             Menu::Preset(..) => {
                 self.refresh_presets();
@@ -216,6 +222,46 @@ impl Studio {
             _ => {}
         }
         self.open_popup(PopupKind::InstMenu(menu), anchor);
+    }
+
+    fn instrument_context_items(&mut self, menu: Menu, anchor: Rect) -> Vec<crate::context::Item> {
+        use crate::context::Item;
+        let (choices, current) = self.inst_menu_view(menu);
+        choices
+            .into_iter()
+            .filter(|c| c.to != GAP)
+            .map(|choice| {
+                let enabled = !choice.to.starts_with(OFF);
+                let to = choice.to.strip_prefix(OFF).unwrap_or(&choice.to);
+                let children = match (menu, to) {
+                    (Menu::Row(t, id), "preset") => {
+                        Some(self.instrument_context_items(Menu::Preset(t, id), anchor))
+                    }
+                    (Menu::Row(t, id), "auto") => {
+                        Some(self.instrument_context_items(Menu::Params(t, id), anchor))
+                    }
+                    (Menu::Row(t, id), "process") => Some(self.plugin_process_items(t, id)),
+                    _ => None,
+                };
+                let mut item = if let Some(children) = children {
+                    Item::sub(&choice.label, children)
+                } else {
+                    Item::legacy(
+                        &choice.label,
+                        PopupKind::InstMenu(menu),
+                        anchor,
+                        Action::Pick(choice.to.clone()),
+                    )
+                    .on(choice.to == current)
+                }
+                .enabled(enabled);
+                item.key = look(menu, to).1.into();
+                if !enabled {
+                    item.reason = crate::disabled_reason::label(&choice.label).into();
+                }
+                item
+            })
+            .collect()
     }
 
     pub(crate) fn inst_menu_view(&self, menu: Menu) -> (Vec<Choice>, String) {

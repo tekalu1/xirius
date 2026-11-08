@@ -75,6 +75,32 @@ impl Studio {
         {
             self.select_row(Some(RowKind::Track(t)));
         }
+        let target = match &spot {
+            Spot::Head(t) if t.is_master() => "other-50",
+            Spot::Head(t)
+                if self
+                    .project()
+                    .tracks
+                    .get(t)
+                    .is_some_and(|t| t.kind == TrackKind::Bus) =>
+            {
+                "other-49"
+            }
+            Spot::Head(_) => "other-48",
+            Spot::Fader(_) => "other-51",
+            Spot::Pan(_) => "other-52",
+            Spot::SendLevel(..) => "other-53",
+            Spot::Send(..) => "other-54",
+            Spot::AddSend(_) => "other-55",
+            Spot::Plugin(..) => "insert",
+            Spot::AddInsert(_) => "other-56",
+            Spot::InsertHeading(_) => "other-57",
+            Spot::InstrumentHeading(_) => "other-58",
+            Spot::Split(..) => "other-62",
+            Spot::Value(_, _, Which::Gain) => "other-63",
+            Spot::Value(..) => "other-64",
+            Spot::Empty => "other-69",
+        };
         let items = match spot {
             Spot::Head(t) => self.head_items(g, t),
             Spot::Fader(t) => self.fader_items(t),
@@ -93,7 +119,7 @@ impl Studio {
         if items.is_empty() {
             return false;
         }
-        self.open_context(items, x, y);
+        self.open_classified(target, items, x, y);
         true
     }
 

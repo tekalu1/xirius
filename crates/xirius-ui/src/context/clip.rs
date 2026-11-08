@@ -130,7 +130,7 @@ impl Studio {
         if self.clips_and_points_selected() {
             let delete = self.mixed_delete();
             let items = self.mixed_items(g, delete);
-            self.open_context(items, x, y);
+            self.open_classified("other-17", items, x, y);
             return true;
         }
         let at = self.ctx_tick(g, x);
@@ -203,7 +203,14 @@ impl Studio {
         if let Some(restart) = self.ara_restart_row(&got.ids) {
             items.splice(0..0, [restart, Item::gap()]);
         }
-        self.open_context(items, x, y);
+        let target = match (got.ids.len() == 1, got.audio > 0, got.midi > 0) {
+            (true, true, false) => "audio",
+            (true, false, true) => "midi",
+            (_, true, false) => "multi-audio",
+            (_, false, true) => "multi-midi",
+            _ => "multi-mixed",
+        };
+        self.open_classified(target, items, x, y);
         true
     }
 

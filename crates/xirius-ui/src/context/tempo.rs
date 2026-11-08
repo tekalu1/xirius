@@ -14,14 +14,14 @@ impl Studio {
         let Some(items) = self.tempo_point_items(i) else {
             return false;
         };
-        self.open_context(items, x, y);
+        self.open_classified("other-26", items, x, y);
         true
     }
 
     /// The right press in the tempo row, off the points.
     pub(crate) fn tempo_row_context(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
         let items = self.tempo_row_items(g, x);
-        self.open_context(items, x, y);
+        self.open_classified("other-27", items, x, y);
         true
     }
 

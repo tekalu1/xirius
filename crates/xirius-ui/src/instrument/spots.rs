@@ -141,7 +141,7 @@ impl Studio {
             let all = json!({ "id": id.to_string(), "all": true });
             items.push(self.ctx_as("すべてのサンプルを外す", "plugin.samples.remove", all));
         }
-        self.open_context(items, x, y);
+        self.open_classified("other-43", items, x, y);
     }
 
     /// 「サンプルを置き換え…」 and 「ブラウザーで表示」 for the file `file` of `plugin`.
@@ -174,7 +174,7 @@ impl Studio {
                 self.instruments.pick(id, file, 0);
                 let one = json!({ "id": id.to_string(), "index": file + 1 });
                 let items = vec![self.ctx_as("このゾーンを外す", "plugin.samples.remove", one)];
-                self.open_context(items, x, y);
+                self.open_classified("other-44", items, x, y);
             }
             Mark::Layer(j) => {
                 let files = sampler::pad_files(def, plugin, w.pick.min(PADS - 1));
@@ -183,7 +183,7 @@ impl Studio {
                 };
                 let one = json!({ "id": id.to_string(), "index": file + 1 });
                 let item = self.ctx_as("このレイヤーを外す", "plugin.samples.remove", one);
-                self.open_context(vec![item.enabled(files.len() > 1)], x, y);
+                self.open_classified("other-44", vec![item.enabled(files.len() > 1)], x, y);
             }
             Mark::Name => self.sample_menu(i, x, y),
             _ => {}
@@ -239,7 +239,7 @@ impl Studio {
                 ..empty_bank
             },
         ];
-        self.open_context(items, x, y);
+        self.open_classified("other-42", items, x, y);
     }
 
     /// Where the sample `name` is on the disk: as it is, or under the song's folder.

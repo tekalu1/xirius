@@ -697,7 +697,7 @@ impl Studio {
                     None => Item::gap(),
                 })
                 .collect();
-            self.open_context(items, x, y);
+            self.open_classified("graph-85", items, x, y);
             return;
         }
         let Some(band) = super::eq::band_of(def, k) else {
@@ -767,7 +767,20 @@ impl Studio {
             let reset = self.ctx_as("既定に戻す", "plugin.param.set", set_args(&back));
             items.push(crate::auto_lock::gate(reset, held));
         }
-        self.open_context(items, x, y);
+        let target = if def.uid == "eq" {
+            match at.1 {
+                0 | 1 => "graph-81",
+                2 | 3 => "graph-82",
+                _ => "graph-83",
+            }
+        } else if def.uid == "delay" && !pt.menu.is_empty() {
+            "graph-85"
+        } else if !pt.menu.is_empty() {
+            "graph-84"
+        } else {
+            "graph-86"
+        };
+        self.open_classified(target, items, x, y);
     }
 
     /// A controller's knob learnt for a parameter moves it (0..=127 over the
@@ -1192,7 +1205,7 @@ impl Studio {
             Item::gap(),
         ];
         items.extend(self.midi_rows(target));
-        self.open_context(items, x, y);
+        self.open_classified("other-45", items, x, y);
         true
     }
 }

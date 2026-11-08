@@ -78,7 +78,7 @@ impl Studio {
             Item::gap(),
         ];
         items.extend(self.midi_rows(Target::Control(t.to_string(), id.to_string())));
-        self.open_context(items, x, y);
+        self.open_classified("other-67", items, x, y);
     }
 
     /// Opens the list of targets under knob `k` wherever it shows: the macro window, else the

@@ -80,7 +80,16 @@ impl Studio {
             ([_], RowKind::Folder(f)) => self.folder_items(f),
             _ => self.rows_items(&rows),
         };
-        self.open_context(items, x, y);
+        let target = if matches!(self.hit(g, x, y), Hit::HeadFader(_)) {
+            "other-51"
+        } else {
+            match (rows.len(), kind) {
+                (1, RowKind::Track(_)) => "track",
+                (1, RowKind::Folder(_)) => "other-19",
+                _ => "other-18",
+            }
+        };
+        self.open_classified(target, items, x, y);
         true
     }
 
@@ -111,7 +120,7 @@ impl Studio {
             paste,
             Item::sub("フォルダー", folders).enabled(has_folders),
         ];
-        self.open_context(items, x, y);
+        self.open_classified("other-20", items, x, y);
         true
     }
 
