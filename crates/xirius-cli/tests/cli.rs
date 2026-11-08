@@ -448,10 +448,13 @@ fn the_song_survives_between_runs_and_versions_work() {
 fn mcp_exchange(song: &Path, extra: &[&str], lines: &[Value]) -> Vec<Value> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_xirius"))
         .env_remove("XIRIUS_SONG")
+        .env("XIRIUS_CONFIG_DIR", song.join("config"))
+        .env("XIRIUS_PLUGIN_CACHE", song.join("plugins.json"))
         .arg("--song")
         .arg(song)
         .args(extra)
-        .arg("mcp")
+        // Protocol tests never need a speaker or a real MIDI endpoint.
+        .args(["mcp", "--no-device", "--midi-in", "none"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
