@@ -171,6 +171,40 @@ pub const LIB: [LibItem; 7] = [
     fx("Delay", OWN, BUILT_IN, "空間"),
 ];
 
+/// The approved kind buttons; the track waveform differs from the rail's arrangement.
+pub(crate) const TRACK_BROWSER_ICONS: [&str; 3] = ["keys", "effects", "audio"];
+
+impl Browser {
+    /// Devices and their presets share the existing library icon, including favourites.
+    pub(crate) fn entry_icon(&self, entry: &xirius_core::track_browser::Entry) -> &'static str {
+        use xirius_core::track_browser::Category;
+        match entry.category {
+            Category::MultiInstrument => "layers",
+            Category::FxChain => "cable",
+            Category::Track => "audio",
+            Category::Instrument | Category::Fx => {
+                let name = xirius_params::find(&entry.device)
+                    .map_or(entry.device_name.as_str(), |def| def.name);
+                self.items
+                    .as_deref()
+                    .unwrap_or(&LIB)
+                    .iter()
+                    .find(|item| {
+                        item.name == name && item.effect == (entry.category == Category::Fx)
+                    })
+                    .map_or(
+                        if entry.category == Category::Fx {
+                            "effects"
+                        } else {
+                            "keys"
+                        },
+                        |item| item.icon,
+                    )
+            }
+        }
+    }
+}
+
 /// A scanned name as `&'static str`, like the built-in ones. Each distinct name
 /// is kept once, so scanning again does not grow it.
 pub(crate) fn intern(text: &str) -> &'static str {
@@ -909,11 +943,7 @@ impl Browser {
                         item: LibItem {
                             name: intern(&e.name),
                             effect: e.category.tab() == "effects",
-                            icon: if e.category.tab() == "effects" {
-                                "effects"
-                            } else {
-                                "keys"
-                            },
+                            icon: self.entry_icon(&e),
                             vendor: intern(&e.vendor),
                             format: if xirius_params::find(&e.device).is_some() {
                                 BUILT_IN
@@ -1749,11 +1779,7 @@ fn paint_panel(
             if i == selected {
                 pen.round(*r, c.sel, Radius::S);
             }
-            pen.icon(
-                ["keys", "effects", "arrange"][i],
-                icon_box(*r),
-                c.ink_strong,
-            );
+            pen.icon(TRACK_BROWSER_ICONS[i], icon_box(*r), c.ink_strong);
         }
     }
     if browser.tab == RailTab::Files {
@@ -1946,11 +1972,7 @@ fn paint_row(
         }
         let name_x = if let Some(e) = &row.entry {
             pen.icon(
-                if e.category.tab() == "effects" {
-                    "effects"
-                } else {
-                    "arrange"
-                },
+                browser.entry_icon(e),
                 Rect::new(x + 16.0, r.y + 8.0, 12.0, 12.0),
                 c.ink,
             );

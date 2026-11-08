@@ -12,6 +12,80 @@ use crate::instrument::menu::{Menu, SHOW};
 use crate::studio::Hit;
 
 #[test]
+fn indexed_rows_and_drag_use_device_and_subtree_icons() {
+    use xirius_core::track_browser::{Category, Entry};
+    let (mut s, g) = studio();
+    for (category, device, device_name, icon) in [
+        (Category::Instrument, uid("Sampler"), "Sampler", "keys"),
+        (Category::Instrument, uid("Drum Kit"), "Drum Kit", "drum"),
+        (Category::Fx, uid("EQ"), "EQ", "effects"),
+        (Category::Fx, uid("Reverb"), "Reverb", "effects"),
+        (
+            Category::Instrument,
+            "missing-plugin",
+            "Absent Synth",
+            "keys",
+        ),
+        (Category::MultiInstrument, "", "", "layers"),
+        (Category::FxChain, "", "", "cable"),
+        (Category::Track, "", "", "audio"),
+    ] {
+        let mut entry = Entry {
+            id: "preset:icon-test".into(),
+            name: "Unrelated preset name".into(),
+            category,
+            device: device.into(),
+            device_name: device_name.into(),
+            vendor: "Xirius".into(),
+            source: "User".into(),
+            folder: vec![],
+            file: Some("icon-test.xpreset".into()),
+            has_fx: false,
+            fx_names: vec![],
+        };
+        assert_eq!(s.browser.entry_icon(&entry), icon);
+        entry.has_fx = true;
+        assert_eq!(
+            s.browser.entry_icon(&entry),
+            icon,
+            "+FX does not change the device"
+        );
+        s.browser.tab = if category.tab() == "effects" {
+            RailTab::Effects
+        } else {
+            RailTab::Instruments
+        };
+        s.browser.track_kind = category == Category::Track;
+        s.browser.track_library = Some(vec![entry.clone()]);
+        s.browser.favourites.insert(entry.id.clone());
+        let layout = s.browser.layout(g.panel);
+        let index = layout
+            .rows
+            .iter()
+            .position(|r| matches!(r.row, BRow::Preset { .. }))
+            .unwrap();
+        assert!(s.preset_grab(&g, index, 0.0, 0.0, 1));
+        assert_eq!(s.browser.drag.as_ref().unwrap().icon, icon);
+        if matches!(category, Category::Instrument | Category::Fx) {
+            entry.file = None;
+            entry.name = device_name.into();
+            s.browser.track_library = Some(vec![entry]);
+            assert!(
+                s.browser
+                    .rows()
+                    .iter()
+                    .any(|r| matches!(r, BRow::Item { item, .. } if item.icon == icon))
+            );
+        }
+    }
+    assert_eq!(
+        crate::browser::TRACK_BROWSER_ICONS,
+        ["keys", "effects", "audio"]
+    );
+    assert_eq!(RailTab::Instruments.icon(), "arrange");
+}
+
+#[test]
 fn track_browser_kind_buttons_keep_query_and_have_one_rail_entry() {
     let (mut s, g) = studio();
     assert_eq!(

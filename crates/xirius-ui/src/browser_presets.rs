@@ -271,15 +271,21 @@ impl Studio {
         else {
             return false;
         };
-        let drag_name = if let Some(e) = self
+        let (drag_name, drag_icon) = if let Some(e) = self
             .browser
             .track_library
             .as_ref()
             .and_then(|es| es.iter().find(|e| e.id == device))
         {
-            crate::browser::intern(&e.name)
+            (crate::browser::intern(&e.name), self.browser.entry_icon(e))
         } else if let Some(def) = xirius_params::find(device) {
-            def.name
+            (
+                def.name,
+                crate::browser::LIB
+                    .iter()
+                    .find(|item| item.name == def.name)
+                    .map_or(if effect { "effects" } else { "keys" }, |item| item.icon),
+            )
         } else {
             return false;
         };
@@ -291,7 +297,7 @@ impl Studio {
         }
         self.browser.drag = Some(LibDrag {
             name: drag_name,
-            icon: if effect { "effects" } else { "keys" },
+            icon: drag_icon,
             from: (x, y),
             at: (x, y),
             moved: false,
