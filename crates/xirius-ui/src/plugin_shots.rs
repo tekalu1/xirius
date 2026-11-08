@@ -217,13 +217,25 @@ fn capture_windows(s: &mut Studio, shot: &str, dir: &Path) {
             None => {
                 let t = Instant::now();
                 let mut hwnd = None;
+                let mut place = "host";
                 while hwnd.is_none() && t.elapsed() < HOST_WAIT {
-                    hwnd = crate::park::any_window(&title);
+                    s.tick();
+                    // Owned in-process editors use the plugin name as their caption.
+                    // Where::Host also covers that asynchronous owner now.
+                    let local_title = title.split(" · ").next().unwrap_or(&title);
+                    if let Some(local) = crate::park::own_handle(local_title)
+                        .or_else(|| crate::park::own_handle(&title))
+                    {
+                        hwnd = Some(local);
+                        place = "app";
+                    } else {
+                        hwnd = crate::park::any_window(&title);
+                    }
                     if hwnd.is_none() {
                         std::thread::sleep(Duration::from_millis(50));
                     }
                 }
-                (hwnd, "host", false)
+                (hwnd, place, false)
             }
         };
         let Some(hwnd) = hwnd else {
