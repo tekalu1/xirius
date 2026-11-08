@@ -2379,12 +2379,17 @@ pub fn run(opts: Options) {
                 // `start_keeping`, which can swap the song (and its io) for the one the
                 // last window left.
                 let open = std::env::var("XIRIUS_OPEN_SECTION").ok();
-                if open.as_deref() == Some("audio") {
+                if open.as_deref() == Some("sample") {
+                    let mut s = studio.borrow_mut();
+                    crate::shot::run_for(&mut s, 15.0, |s| !s.input_blocked());
+                    s.open_sample();
+                } else if open.as_deref() == Some("audio") {
                     let mut s = studio.borrow_mut();
                     crate::audioset_shots::fixture(&mut s);
                     s.open_settings(crate::settings::Section::Audio);
                     // An input is chosen so the radios' selection is real (UI-080).
                     assert!(
+                        // design-lint: allow(ui-blocking-io) UI-322: explicit UIA fixture; run_command queues settings on the owner and the harness waits below.
                         s.run_command("audio.input.select", serde_json::json!({ "channel": 1 }),)
                     );
                     crate::shot::run_for(&mut s, 10.0, |s| s.saving.is_none());
