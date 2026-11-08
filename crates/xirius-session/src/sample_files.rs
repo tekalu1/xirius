@@ -131,7 +131,7 @@ fn load(cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Plan> {
                 .collect::<Vec<_>>()
         ),
     );
-    for key in ["pad", "layers", "replace"] {
+    for key in ["pad", "layers", "replace", "browse"] {
         if let Some(v) = args.0.get(key).filter(|v| !v.is_null()) {
             add.insert(key.into(), v.clone());
         }
@@ -150,14 +150,21 @@ fn load(cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Plan> {
             x.samples.clear();
         }
         let layers = args.flag("layers");
-        let pads = kit_estimate(&x, &names, from, layers);
+        let (groups, pads) = if args.flag("browse") {
+            xirius_core::commands::samples::kit_browse(
+                &used_pads(x.builtin().unwrap(), &x),
+                from.unwrap_or(0),
+                names.len(),
+            )
+        } else {
+            (
+                kit_groups(&names, layers),
+                kit_estimate(&x, &names, from, layers),
+            )
+        };
         if !pads.is_empty() {
             data["pads"] = json!(pads.iter().map(|p| PAD_NAMES[*p]).collect::<Vec<_>>());
-            let placed: usize = kit_groups(&names, layers)
-                .iter()
-                .take(pads.len())
-                .map(|g| g.files.len())
-                .sum();
+            let placed: usize = groups.iter().take(pads.len()).map(|g| g.files.len()).sum();
             left_out = names.len() - placed;
             data["left_out"] = json!(left_out);
         }

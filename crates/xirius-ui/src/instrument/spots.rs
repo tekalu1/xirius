@@ -106,9 +106,10 @@ impl Studio {
                 );
             }
             Mark::Browse => {
-                if !(self.browser.open && self.browser.tab == RailTab::Files) {
-                    self.browser.press_rail(RailTab::Files);
-                }
+                self.file_request = Some(FileRequest::BrowseSamples(
+                    id,
+                    (def.uid == "drum-kit").then_some(w.pick.min(PADS - 1)),
+                ));
             }
             Mark::Name => self.sample_menu(i, spot.r.x, spot.r.bottom()),
             Mark::Drop | Mark::Title | Mark::Pad(_) => {}
@@ -281,6 +282,17 @@ impl Studio {
             .map(|p| json!({ "path": p.to_string_lossy() }))
             .collect();
         let args = match request {
+            FileRequest::BrowseSamples(id, pad) => {
+                if list.is_empty() {
+                    return;
+                }
+                let mut args = json!({ "id": id.to_string(), "paths": list });
+                if let Some(pad) = pad {
+                    args["pad"] = json!(PAD_NAMES[pad.min(PADS - 1)]);
+                    args["browse"] = json!(true);
+                }
+                args
+            }
             FileRequest::Sample(id, file) => {
                 let Some(first) = list.first() else { return };
                 json!({ "id": id.to_string(), "path": first["path"], "index": file + 1 })

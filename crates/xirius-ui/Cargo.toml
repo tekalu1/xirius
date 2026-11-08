@@ -38,6 +38,7 @@ xirius-vst3 = { path = "../xirius-vst3" }
 xirius-mcp = { path = "../xirius-mcp" }
 # The settings (SET-001): the screen changes them through the same commands as the CLI.
 xirius-prefs = { path = "../xirius-prefs" }
+rfd = "0.17.2"
 serde_json = "1"
 unicode-segmentation = "1"
 # The tools' cursors (pointer_os.rs) are bitmaps made for the system and handed to the window.

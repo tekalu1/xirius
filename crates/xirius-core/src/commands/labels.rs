@@ -693,6 +693,7 @@ pub fn argument(name: &str) -> &str {
         "bank" => "バンク",
         "all" => "すべて",
         "layers" => "レイヤーにまとめる",
+        "browse" => "空きパッドへ順に配置",
         "clear" | "remove" => "削除",
         "restore" | "reset" => "リセット",
         "pre" => "プリフェーダー",

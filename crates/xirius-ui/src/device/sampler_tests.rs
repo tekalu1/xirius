@@ -96,14 +96,14 @@ fn ui_333_an_empty_sampler_is_the_drop_plane_and_browse_opens_the_files() {
     assert_eq!(drop.text, DROP_LABEL);
     assert_eq!(browse.text, BROWSE_LABEL);
     assert!(drop.r.contains(browse.r.x, browse.r.y));
-    // Browse opens the files; a second press keeps them open.
     s.browser.open = false;
-    press_spot(&mut s, &g, t, id, Mark::Browse);
-    assert!(s.browser.open);
-    assert_eq!(s.browser.tab, RailTab::Files);
-    press_spot(&mut s, &g, t, id, Mark::Browse);
-    assert!(s.browser.open);
-    assert_eq!(s.browser.tab, RailTab::Files);
+    for _ in 0..2 {
+        press_spot(&mut s, &g, t, id, Mark::Browse);
+        assert_eq!(
+            s.file_request.take(),
+            Some(crate::studio::FileRequest::BrowseSamples(id, None))
+        );
+    }
 }
 
 /// N-smp-6 (UI-333): files of one root (no note in their names) and a zone off the keys can
@@ -2637,4 +2637,68 @@ fn ui_333_a_window_another_device_takes_ends_its_sweep_on_the_zone_turned() {
     assert!(s.instruments.sweep.is_none());
     assert_eq!(zone(&s, 0), first, "the first zone stays");
     assert_ne!(zone(&s, 1)[k], second[k], "the turn went to the second");
+}
+
+#[test]
+fn browse_selection_runs_on_owner_and_skips_occupied_pads() {
+    use crate::studio::FileRequest;
+    for (name, from, count, expected) in [
+        ("Drum Kit", Some(0), 1, vec![0]),
+        ("Drum Kit", Some(0), 3, vec![0, 2, 3]),
+        ("Drum Kit", Some(126), 3, vec![126, 127]),
+        ("Sampler", None, 3, vec![]),
+    ] {
+        let (dir, files) = wavs(&["Kick_v1.wav", "Kick_v2.wav", "Hat.wav"]);
+        let (mut s, g, t, id) = window(name);
+        if from == Some(0) {
+            assert!(s.run_command(
+                "plugin.samples.add",
+                json!({
+                    "id": id.to_string(), "file": "keep.wav", "pad": "A2"
+                })
+            ));
+        }
+        if let Some(pad) = from {
+            s.instruments.pick(id, pad, 0);
+        }
+        press_spot(&mut s, &g, t, id, Mark::Browse);
+        let request = s.file_request.take().unwrap();
+        assert_eq!(request, FileRequest::BrowseSamples(id, from));
+        // Selection may move while the asynchronous picker is open: its destination stays.
+        s.instruments.pick(id, 9, 0);
+        s.song.save_as(&dir.path().join("song")).unwrap();
+        s.bind_window_io();
+        s.finish_picked(request.clone(), &[]);
+        assert!(s.saving.is_none(), "cancel does not start an owner job");
+        s.finish_picked(request, &files[..count]);
+        assert!(s.saving.is_some(), "selection must reach the owner");
+        s.wait_for_save();
+        assert!(s.error.is_none(), "{:?}", s.error);
+        let x = plugin(&s, t);
+        if name == "Drum Kit" {
+            let def = x.builtin().unwrap();
+            for (i, pad) in expected.iter().enumerate() {
+                let assigned = sampler::pad_files(def, &x, *pad);
+                assert_eq!(assigned.len(), 1);
+                assert!(
+                    x.samples[assigned[0]]
+                        .ends_with(files[i].file_name().unwrap().to_str().unwrap())
+                );
+            }
+            if from == Some(0) {
+                let kept = sampler::pad_files(def, &x, 1);
+                assert_eq!(x.samples[kept[0]], "keep.wav");
+            } else {
+                assert!(
+                    s.notice_text().is_some_and(|t| t.contains('1')),
+                    "{:?}",
+                    s.notice_text()
+                );
+                assert_eq!(x.samples.len(), 2);
+            }
+        } else {
+            assert_eq!(x.samples.len(), 3);
+            assert_eq!(sampler::zones(&x.samples).len(), 3);
+        }
+    }
 }

@@ -40,6 +40,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
                     "layers",
                     "ドラムキットで、全部を 1 つのパッドのレイヤーにする（--pad があればそのパッドへ足す）",
                 ),
+                ArgDef::flag("browse", "選択パッドから空きパッドへ 1 ファイルずつ入れる"),
                 ArgDef::flag("replace", "今のサンプルを外してから読み込む"),
                 ArgDef::int(
                     "index",
@@ -83,6 +84,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
                     "layers",
                     "ドラムキットで、全部を 1 つのパッドのレイヤーにする（--pad があればそのパッドへ足す）",
                 ),
+                ArgDef::flag("browse", "選択パッドから空きパッドへ 1 ファイルずつ入れる"),
                 ArgDef::flag("replace", "今のサンプルを外してから足す"),
             ],
             add,
@@ -220,6 +222,23 @@ pub fn kit_pads(
     }
 }
 
+/// Browse keeps the selected pad and skips occupied pads after it. Each selection is
+/// one sound, even when filenames resemble velocity layers.
+pub fn kit_browse(used: &[bool; PADS], from: usize, count: usize) -> (Vec<KitGroup>, Vec<usize>) {
+    let from = from.min(PADS - 1);
+    let groups = (0..count)
+        .map(|i| KitGroup {
+            files: vec![i],
+            round_robin: false,
+        })
+        .collect();
+    let pads = (from..PADS)
+        .filter(|p| *p == from || !used[*p])
+        .take(count)
+        .collect();
+    (groups, pads)
+}
+
 /// The pads of `pads` whose files a drop takes the place of: the ones that have files, but
 /// not the one it adds layers to.
 pub fn kit_replaced(used: &[bool; PADS], pads: &[usize], layers: bool) -> Vec<usize> {
@@ -325,8 +344,13 @@ fn add(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
             json!({ "plugin": id.to_string(), "first": first + 1, "count": names.len() }),
         ));
     }
-    let groups = kit_groups(&names, layers);
-    let pads = kit_pads(&used_pads(def, x), start, groups.len(), layers);
+    let (groups, pads) = if a.flag("browse") {
+        kit_browse(&used_pads(def, x), start.unwrap_or(0), names.len())
+    } else {
+        let groups = kit_groups(&names, layers);
+        let pads = kit_pads(&used_pads(def, x), start, groups.len(), layers);
+        (groups, pads)
+    };
     if pads.is_empty() {
         return Err(CmdError::range("空いたパッドがありません"));
     }

@@ -876,6 +876,8 @@ pub enum FileRequest {
     Sample(xirius_core::id::PluginId, usize),
     /// Audio files added to a Drum Kit's pad as its layers (UI-334).
     PadSamples(xirius_core::id::PluginId, usize),
+    /// Browse into zones, or the chosen pad followed by empty pads.
+    BrowseSamples(xirius_core::id::PluginId, Option<usize>),
 }
 
 /// Quarter notes per pixel row in the roll: the roll shows this many px per beat.
@@ -2703,6 +2705,7 @@ impl Studio {
                 | FileRequest::MediaFolder
                 | FileRequest::Sample(..)
                 | FileRequest::PadSamples(..)
+                | FileRequest::BrowseSamples(..)
         ) {
             return self.finish_picked(request, &[path.to_path_buf()]);
         }
@@ -2753,7 +2756,8 @@ impl Studio {
             | FileRequest::LocateFolder
             | FileRequest::MediaFolder
             | FileRequest::Sample(..)
-            | FileRequest::PadSamples(..) => Ok(()),
+            | FileRequest::PadSamples(..)
+            | FileRequest::BrowseSamples(..) => Ok(()),
         };
         if let Err(e) = result {
             self.error = Some(e);

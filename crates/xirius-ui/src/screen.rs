@@ -400,6 +400,8 @@ impl Screen {
                 || studio.channel_press(&g, x, y, ev.click_count as u32)
                 || studio.instrument_press(&g, x, y, ev.click_count as u32, mods(ev.modifiers)))
         {
+            drop(studio);
+            self.files(cx);
             cx.notify();
             return;
         }
@@ -890,6 +892,7 @@ impl Screen {
                 | FileRequest::MediaFolder
                 | FileRequest::Sample(..)
                 | FileRequest::PadSamples(..)
+                | FileRequest::BrowseSamples(..)
         ) {
             return self.pick(request, cx);
         }
@@ -1021,12 +1024,38 @@ impl Screen {
 
     /// Asks the OS's file window for audio files or for a folder (UI-017, BRW-005).
     fn pick(&mut self, request: FileRequest, cx: &mut Context<Self>) {
+        if matches!(request, FileRequest::BrowseSamples(..)) {
+            let intent = self.studio.borrow_mut().begin_picker();
+            let mut dialog = rfd::AsyncFileDialog::new()
+                .set_title("サンプルを選ぶ")
+                .add_filter("音声ファイル", xirius_session::decode::EXTENSIONS);
+            if let Some(dir) = self.studio.borrow().song().dir() {
+                dialog = dialog.set_directory(dir);
+            }
+            let picker = dialog.pick_files();
+            cx.spawn(async move |this, cx| {
+                let paths = picker.await;
+                let _ = this.update(cx, |this, cx| {
+                    let mut studio = this.studio.borrow_mut();
+                    if studio.accept_picker(intent)
+                        && let Some(paths) = paths
+                    {
+                        let paths: Vec<_> = paths.iter().map(|f| f.path().to_path_buf()).collect();
+                        studio.finish_picked(request, &paths);
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+            return;
+        }
         let files = matches!(
             request,
             FileRequest::Audio
                 | FileRequest::Locate(_)
                 | FileRequest::Sample(..)
                 | FileRequest::PadSamples(..)
+                | FileRequest::BrowseSamples(..)
         );
         let prompt = match request {
             FileRequest::Audio => "取り込む",
@@ -1041,7 +1070,10 @@ impl Screen {
         let picker = cx.prompt_for_paths(gpui::PathPromptOptions {
             files,
             directories: !files,
-            multiple: matches!(request, FileRequest::Audio | FileRequest::PadSamples(..)),
+            multiple: matches!(
+                request,
+                FileRequest::Audio | FileRequest::PadSamples(..) | FileRequest::BrowseSamples(..)
+            ),
             prompt: Some(prompt.into()),
         });
         cx.spawn(async move |this, cx| {
