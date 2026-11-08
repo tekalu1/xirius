@@ -111,12 +111,7 @@ fn launch(env: Option<(&str, &str)>) -> AppChild {
     // folder would decide which song opens and would be written on close).
     let keep = tmp.path().join("keep");
     std::fs::create_dir_all(&keep).unwrap();
-    // `open: "sample"`: the sample song, whose track list the tree is read from.
-    std::fs::write(
-        keep.join("recent.json"),
-        r#"{"songs": [], "open": "sample"}"#,
-    )
-    .unwrap();
+    // Startup now shows Home; explicitly request the sample for the track tree.
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_xirius-ui"));
     cmd.args(["--park", "--silent"])
         .env("XIRIUS_CONFIG_DIR", tmp.path().join("prefs"))
@@ -128,6 +123,8 @@ fn launch(env: Option<(&str, &str)>) -> AppChild {
         .env("XIRIUS_TRACK_PRESETS", tmp.path().join("presets"));
     if let Some((k, v)) = env {
         cmd.env(k, v);
+    } else {
+        cmd.env("XIRIUS_OPEN_SECTION", "sample");
     }
     AppChild {
         child: cmd.spawn().unwrap(),

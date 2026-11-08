@@ -25,6 +25,8 @@ impl AudioInput for Signal {
 
 /// Deliberately unequal driver reports; none are computed from the mock's buffer formula.
 pub fn fixture(s: &mut Studio) {
+    crate::shot::run_for(s, 15.0, |s| !s.input_blocked());
+    assert!(!s.input_blocked(), "startup did not finish");
     s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
     let devices = vec![
         Device {
