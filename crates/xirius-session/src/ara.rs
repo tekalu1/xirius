@@ -54,6 +54,19 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// A frame defers contended work; headless collection may wait for its owner.
+fn archive_lock<T>(m: &Mutex<T>, wait: bool) -> Option<MutexGuard<'_, T>> {
+    if wait {
+        Some(lock(m))
+    } else {
+        match m.try_lock() {
+            Ok(g) => Some(g),
+            Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => None,
+        }
+    }
+}
+
 fn registered() -> &'static Mutex<HashMap<String, (String, MakeLoader)>> {
     static MAP: OnceLock<Mutex<HashMap<String, (String, MakeLoader)>>> = OnceLock::new();
     MAP.get_or_init(Default::default)
@@ -530,6 +543,10 @@ impl Doc {
     /// Takes the archive asked for when it has come (with `wait`, waiting at most
     /// [`STORE_WAIT`]). Whether it is still on its way.
     fn receive(&self, asked: &mut Option<Stored>, wait: bool) -> bool {
+        // Reserve the destination before consuming a reply, so contention cannot lose it.
+        let Some(mut stored) = archive_lock(&self.stored, wait) else {
+            return true;
+        };
         while let Some(rx) = asked.as_ref() {
             let got = if wait {
                 rx.recv_timeout(STORE_WAIT)
@@ -544,7 +561,7 @@ impl Doc {
                 Err(false) | Ok(None) => {}
                 Ok(Some((bytes, id))) => {
                     let a = xirius_ara::Archive::new(&self.plugin, &id, &bytes);
-                    *lock(&self.stored) = Some(xirius_core::ara::Archive {
+                    *stored = Some(xirius_core::ara::Archive {
                         version: a.version,
                         plugin: a.plugin,
                         archive_id: a.archive_id,
@@ -565,7 +582,7 @@ impl Doc {
     /// the song is written, and waited for at most [`STORE_WAIT`]; without, an edit asks for it
     /// and a later call takes it.
     fn archive(&self, wait: bool) -> Option<xirius_core::ara::Archive> {
-        let mut asked = lock(&self.asked);
+        let mut asked = archive_lock(&self.asked, wait)?;
         // An edit made while the plugin wrote the archive asks again; a few rounds at most.
         for round in 0..3 {
             self.ask(&mut asked, wait && round == 0);
@@ -574,7 +591,7 @@ impl Doc {
             }
         }
         drop(asked);
-        lock(&self.stored).clone()
+        archive_lock(&self.stored, wait)?.clone()
     }
 }
 
@@ -731,7 +748,10 @@ impl Held {
     /// edits.
     pub fn release(&self, p: &Project) {
         let used: BTreeSet<&str> = p.ara.clips.values().map(|r| r.plugin.as_str()).collect();
-        lock(&self.docs).retain(|k, d| {
+        let Some(mut docs) = archive_lock(&self.docs, false) else {
+            return;
+        };
+        docs.retain(|k, d| {
             if used.contains(k.as_str()) {
                 d.leaving.store(false, Ordering::Release);
                 return true;
@@ -739,15 +759,23 @@ impl Held {
             if !self.live || d.key.2 != 0 {
                 return false;
             }
-            let mut asked = lock(&d.asked);
+            let Some(mut asked) = archive_lock(&d.asked, false) else {
+                return true;
+            };
             if !d.leaving.swap(true, Ordering::AcqRel) {
                 d.ask(&mut asked, true);
             }
             if d.receive(&mut asked, false) {
                 return true;
             }
-            if let Some(a) = lock(&d.stored).clone() {
-                lock(&self.left).insert(k.clone(), a);
+            let Some(stored) = archive_lock(&d.stored, false) else {
+                return true;
+            };
+            if let Some(a) = stored.clone() {
+                let Some(mut left) = archive_lock(&self.left, false) else {
+                    return true;
+                };
+                left.insert(k.clone(), a);
             }
             false
         });
@@ -979,11 +1007,17 @@ impl Held {
 
     /// The documents of the song's plugins whose archives the song keeps.
     fn kept(&self, p: &Project) -> Vec<Arc<Doc>> {
-        lock(&self.docs)
-            .values()
-            .filter(|d| d.key.2 == 0 && p.ara.clips.values().any(|r| r.plugin == d.plugin))
-            .cloned()
-            .collect()
+        self.kept_when(p, true).unwrap_or_default()
+    }
+
+    fn kept_when(&self, p: &Project, wait: bool) -> Option<Vec<Arc<Doc>>> {
+        Some(
+            archive_lock(&self.docs, wait)?
+                .values()
+                .filter(|d| d.key.2 == 0 && p.ara.clips.values().any(|r| r.plugin == d.plugin))
+                .cloned()
+                .collect(),
+        )
     }
 
     /// As if each plugin of `p` told it changed its document ([`Service::mark_changed`]): the
@@ -1011,16 +1045,24 @@ impl Held {
     /// document let go of is not waited for: its archive is no longer the song's.
     pub fn take_arrived(&self, p: &Project) -> bool {
         self.release(p);
-        self.kept(p)
-            .iter()
-            .fold(false, |on, d| d.receive(&mut lock(&d.asked), false) | on)
+        let Some(docs) = self.kept_when(p, false) else {
+            return true;
+        };
+        docs.iter().fold(false, |on, d| {
+            let pending = match archive_lock(&d.asked, false) {
+                Some(mut asked) => d.receive(&mut asked, false),
+                None => true,
+            };
+            pending | on
+        })
     }
 
     /// The archives of the plugins whose documents changed and differ from the song's: those
     /// that have come, or with `wait` also those on their way.
     pub fn archives(&self, p: &Project, wait: bool) -> Vec<xirius_core::ara::Archive> {
         let mut out: Vec<_> = self
-            .kept(p)
+            .kept_when(p, wait)
+            .unwrap_or_default()
             .iter()
             .filter_map(|d| d.archive(wait))
             .filter(|a| p.ara.archives.get(&a.plugin) != Some(a))
@@ -1046,11 +1088,17 @@ pub fn take_archives(
     wait: bool,
 ) -> xirius_core::CmdResult<bool> {
     let archives = held.archives(session.project(), wait);
-    for doc in held.kept(session.project()) {
+    for doc in held.kept_when(session.project(), wait).unwrap_or_default() {
         if archives.iter().any(|a| a.plugin == doc.plugin) {
             session.forget_ara_cache(&doc.plugin);
-        } else if let Some(cached) = doc.service.analysis_archive() {
-            let mut seen = lock(&doc.analysis_seen);
+        } else if let Some(cached) = if wait {
+            doc.service.analysis_archive()
+        } else {
+            doc.service.try_analysis_archive()
+        } {
+            let Some(mut seen) = archive_lock(&doc.analysis_seen, wait) else {
+                continue;
+            };
             if seen.as_ref().is_some_and(|old| Arc::ptr_eq(old, &cached)) {
                 continue;
             }
@@ -1079,6 +1127,50 @@ pub fn take_archives(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The owner releases only after the frame returns. The timeout prevents a deadlocked test.
+    fn while_locked<T: Send>(mutex: &Mutex<T>, frame: impl FnOnce()) {
+        std::thread::scope(|scope| {
+            let (entered_tx, entered) = mpsc::channel();
+            let (release, release_rx) = mpsc::channel();
+            let owner = scope.spawn(move || {
+                let _guard = lock(mutex);
+                entered_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(10)).is_ok()
+            });
+            entered.recv_timeout(Duration::from_secs(30)).unwrap();
+            frame();
+            let _ = release.send(());
+            assert!(owner.join().unwrap(), "frame waited for the lock owner");
+        });
+    }
+
+    #[test]
+    fn a_frame_defers_archive_locks_owned_by_another_collector() {
+        let doc = Doc::start(
+            (None, "fake:archive-locks".into(), 0),
+            "Fake ARA".into(),
+            xirius_ara::fake::loader(Default::default()),
+            None,
+        );
+        while_locked(&doc.asked, || assert!(doc.archive(false).is_none()));
+        let (reply, rx) = mpsc::channel();
+        reply
+            .send(Some((vec![1, 2, 3], "test-archive".into())))
+            .unwrap();
+        *lock(&doc.asked) = Some(rx);
+        while_locked(&doc.stored, || assert!(doc.archive(false).is_none()));
+        assert!(
+            doc.archive(false).is_some(),
+            "contention lost the ready reply"
+        );
+        let held = Held::default();
+        while_locked(&held.docs, || {
+            let p = Project::new("song");
+            assert!(held.archives(&p, false).is_empty());
+            assert!(held.take_arrived(&p), "contention looked like completion");
+        });
+    }
 
     fn rendered(offset: f64, duration: f64, value: f32) -> Rendered {
         let n = (duration * 10.0) as usize;

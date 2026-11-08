@@ -428,6 +428,15 @@ impl Service {
         lock(&self.shared.analysis_archive).clone()
     }
 
+    /// The analysis cache when its publisher is not holding it; otherwise a later frame retries.
+    pub fn try_analysis_archive(&self) -> Option<CachedArchive> {
+        match self.shared.analysis_archive.try_lock() {
+            Ok(cache) => cache.clone(),
+            Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner().clone(),
+            Err(std::sync::TryLockError::WouldBlock) => None,
+        }
+    }
+
     pub fn store(&self, limit: Duration) -> Option<(Vec<u8>, String)> {
         self.store_later()?.recv_timeout(limit).ok().flatten()
     }
@@ -435,7 +444,12 @@ impl Service {
     /// Asks the plugin for its archive without waiting: the answer of [`Service::store`] comes
     /// on the receiver when the plugin's thread has it. `None` when it crashed or is gone.
     pub fn store_later(&self) -> Option<Stored> {
-        if self.crashed().is_some() {
+        if self
+            .shared
+            .crashed
+            .try_lock()
+            .is_ok_and(|why| why.is_some())
+        {
             return None;
         }
         let (tx, rx) = mpsc::channel();
@@ -448,7 +462,12 @@ impl Service {
     /// Explicit save requests also populate [`Service::analysis_archive`] from completed
     /// analysis, even when the reply is `None`; that cache does not mark an edit.
     pub fn store_changed_later(&self) -> Option<Stored> {
-        if self.crashed().is_some() {
+        if self
+            .shared
+            .crashed
+            .try_lock()
+            .is_ok_and(|why| why.is_some())
+        {
             return None;
         }
         let (tx, rx) = mpsc::channel();
