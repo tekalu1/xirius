@@ -153,14 +153,36 @@ impl Studio {
 
     /// Refresh the stored menu item after the cleanup worker has answered.
     pub(crate) fn refresh_cleanup_row(&mut self) {
-        let index = self.ctx.as_ref().and_then(|ctx| {
-            ctx.items
-                .iter()
-                .position(|item| item.label == "使われていない録音を整理…")
+        fn contains(items: &[Item]) -> bool {
+            items.iter().any(|item| {
+                item.label == "使われていない録音を整理…"
+                    || matches!(&item.run, super::Run::Sub(children) if contains(children))
+            })
+        }
+        fn update(items: &mut [Item], row: &Item) {
+            for item in items {
+                if item.label == row.label {
+                    *item = row.clone();
+                } else if let super::Run::Sub(children) = &mut item.run {
+                    update(children, row);
+                }
+            }
+        }
+        let present = self.ctx.as_ref().is_some_and(|ctx| {
+            contains(&ctx.items)
+                || ctx.search.as_ref().is_some_and(|s| contains(&s.pool))
+                || ctx.trail.iter().any(|items| contains(items))
         });
-        if let Some(index) = index {
+        if present {
             let row = self.cleanup_row();
-            self.ctx.as_mut().unwrap().items[index] = row;
+            let ctx = self.ctx.as_mut().unwrap();
+            update(&mut ctx.items, &row);
+            if let Some(search) = &mut ctx.search {
+                update(&mut search.pool, &row);
+            }
+            for items in &mut ctx.trail {
+                update(items, &row);
+            }
         }
         self.refresh_popup();
     }
@@ -200,6 +222,13 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         let g = s.geometry(1280.0, 800.0);
+        s.ask_text(None, "整理", false);
+        assert!(
+            s.context_rows()
+                .iter()
+                .any(|r| r.enabled && r.label == "使われていない録音を整理…")
+        );
+        s.ask_key("escape");
         let index = s
             .ctx
             .as_ref()
