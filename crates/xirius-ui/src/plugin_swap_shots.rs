@@ -142,7 +142,13 @@ fn real() -> Option<PathBuf> {
 /// [`REAL_ENV`].
 fn setup(s: &mut Studio, n: u8) {
     let Some(bundle) = real() else {
-        return prepare(s, n);
+        prepare(s, n);
+        // Prepare after this fixture's final isolation choice. Other callers
+        // of prepare still choose their mode before starting the player.
+        s.prepare_song();
+        crate::shot::run_for(s, 15.0, |s| !s.sound_preparing());
+        assert!(!s.sound_preparing(), "{:?}", s.preparing);
+        return;
     };
     let entries = xirius_plugins::probe(&bundle)
         .unwrap_or_else(|e| panic!("{}: not a VST3 plugin: {e}", bundle.display()));

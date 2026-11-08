@@ -127,10 +127,6 @@ pub(crate) fn prepare(s: &mut Studio, _: u8) {
     s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
     s.drawer_open = true;
     s.tab = crate::studio::DrawerTab::Mixer;
-    // The following Play press must play, rather than only start preparation.
-    s.prepare_song();
-    crate::shot::run_for(s, 15.0, |s| !s.sound_preparing());
-    assert!(!s.sound_preparing(), "{:?}", s.preparing);
 }
 
 pub(crate) fn ready(s: &mut Studio) {
