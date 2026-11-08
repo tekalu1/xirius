@@ -161,7 +161,7 @@ impl Studio {
         let g = self.geometry(p.size.0, p.size.1);
         let changed = self.lib_context(&g, p.at.0, p.at.1);
         if p.rename && self.context_open() {
-            self.context_choose(&g, "名前を変更");
+            self.context_choose(&g, "名前を変更…");
         }
         self.browser_menu_io.applying = false;
         changed

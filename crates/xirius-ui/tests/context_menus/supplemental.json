@@ -64,5 +64,140 @@
     "category": "書き出し",
     "command": "range.bounce",
     "dynamic": false
+  },
+  {
+    "id": "graph-limiter:000",
+    "key": "graph-limiter",
+    "source": "crates/xirius-ui/src/device/input.rs",
+    "asis": [
+      "Ceiling を -0.1 dB に"
+    ],
+    "tobe": [
+      "機器",
+      "Ceiling を -0.1 dB に"
+    ],
+    "category": "機器",
+    "command": "plugin.param.set",
+    "dynamic": false
+  },
+  {
+    "id": "graph-limiter:001",
+    "key": "graph-limiter",
+    "source": "crates/xirius-ui/src/device/input.rs",
+    "asis": [
+      "Ceiling を -0.3 dB に"
+    ],
+    "tobe": [
+      "機器",
+      "Ceiling を -0.3 dB に"
+    ],
+    "category": "機器",
+    "command": "plugin.param.set",
+    "dynamic": false
+  },
+  {
+    "id": "graph-limiter:002",
+    "key": "graph-limiter",
+    "source": "crates/xirius-ui/src/device/input.rs",
+    "asis": [
+      "Ceiling を -1.0 dB に"
+    ],
+    "tobe": [
+      "機器",
+      "Ceiling を -1.0 dB に"
+    ],
+    "category": "機器",
+    "command": "plugin.param.set",
+    "dynamic": false
+  },
+  {
+    "id": "graph-limiter:003",
+    "key": "graph-limiter",
+    "source": "crates/xirius-ui/src/device/input.rs",
+    "asis": [
+      "既定に戻す"
+    ],
+    "tobe": [
+      "機器",
+      "既定に戻す"
+    ],
+    "category": "機器",
+    "command": "plugin.param.set",
+    "dynamic": false
+  },
+  {
+    "id": "graph-reverb:000",
+    "key": "graph-reverb",
+    "source": "crates/xirius-ui/src/device/input.rs",
+    "asis": [
+      "Decay を 0.8 s に"
+    ],
+    "tobe": [
+      "機器",
+      "Decay を 0.8 s に"
+    ],
+    "category": "機器",
+    "command": "plugin.param.set",
+    "dynamic": false
+  },
+  {
+    "id": "graph-reverb:001",
+    "key": "graph-reverb",
+    "source": "crates/xirius-ui/src/device/input.rs",
+    "asis": [
+      "Decay を 1.5 s に"
+    ],
+    "tobe": [
+      "機器",
+      "Decay を 1.5 s に"
+    ],
+    "category": "機器",
+    "command": "plugin.param.set",
+    "dynamic": false
+  },
+  {
+    "id": "graph-reverb:002",
+    "key": "graph-reverb",
+    "source": "crates/xirius-ui/src/device/input.rs",
+    "asis": [
+      "Decay を 2.5 s に"
+    ],
+    "tobe": [
+      "機器",
+      "Decay を 2.5 s に"
+    ],
+    "category": "機器",
+    "command": "plugin.param.set",
+    "dynamic": false
+  },
+  {
+    "id": "graph-reverb:003",
+    "key": "graph-reverb",
+    "source": "crates/xirius-ui/src/device/input.rs",
+    "asis": [
+      "Decay を 4 s に"
+    ],
+    "tobe": [
+      "機器",
+      "Decay を 4 s に"
+    ],
+    "category": "機器",
+    "command": "plugin.param.set",
+    "dynamic": false
+  },
+  {
+    "id": "graph-reverb:004",
+    "key": "graph-reverb",
+    "source": "crates/xirius-ui/src/device/input.rs",
+    "asis": [
+      "既定に戻す"
+    ],
+    "tobe": [
+      "機器",
+      "既定に戻す"
+    ],
+    "category": "機器",
+    "command": "plugin.param.set",
+    "dynamic": false
   }
 ]

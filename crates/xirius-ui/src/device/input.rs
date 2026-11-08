@@ -782,6 +782,10 @@ impl Studio {
             }
         } else if def.uid == "delay" && !pt.menu.is_empty() {
             "graph-85"
+        } else if def.uid == "limiter" && !pt.menu.is_empty() {
+            "graph-limiter"
+        } else if def.uid == "reverb" && !pt.menu.is_empty() {
+            "graph-reverb"
         } else if !pt.menu.is_empty() {
             "graph-84"
         } else {

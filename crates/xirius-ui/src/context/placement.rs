@@ -89,6 +89,9 @@ fn lookup_path(target: &str, path: &[String]) -> Vec<String> {
     let mut out = path.to_vec();
     for part in &mut out {
         let alias = match (target, part.as_str()) {
+            ("other-67", label) if label == "学習" || label.starts_with("学習: ") => {
+                "学習（最近触ったターゲット）"
+            }
             ("other-19", "まとめを解く") => "フォルダーを展開",
             ("other-21", "ループの始まりをここに") => "ループ開始を設定",
             ("other-18", "出力先を設定") => "出力",
@@ -101,7 +104,7 @@ fn lookup_path(target: &str, path: &[String]) -> Vec<String> {
             ("other-41", "ノートを削除") => "削除",
             ("other-49", "トラックを複製") => "トラックを複製（設定だけ）",
             ("other-50", "ミックスダウンを書き出す…") => "ミックスダウン",
-            ("other-73", "工場出荷のプリセットを読み込み直す") => {
+            ("other-72" | "other-73", "工場出荷のプリセットを読み込み直す") => {
                 "標準プリセットを復元"
             }
             ("other-76", "場所名を変更") => "名前を変更",
@@ -193,15 +196,15 @@ pub fn organize(target: &str, items: Vec<Item>) -> Result<Vec<Item>, Missing> {
         items: Vec<Item>,
         path: &[String],
         out: &mut Vec<(Vec<String>, Item)>,
-        marks: &mut BTreeMap<String, usize>,
+        marks: &mut BTreeMap<String, (Option<usize>, String)>,
     ) {
         for item in items {
             if matches!(item.run, Run::Gap | Run::Title | Run::Back) {
                 continue;
             }
             let mut here = path.to_vec();
-            if let Some(mark) = item.mark {
-                marks.insert(item.label.clone(), mark);
+            if matches!(item.run, Run::Sub(_)) {
+                marks.insert(item.label.clone(), (item.mark, item.key.clone()));
             }
             here.push(
                 item.swatch
@@ -367,6 +370,7 @@ fn verify_live_tree(target: &str, original: &[Item], result: &[Item]) {
         "{target}: missing or duplicate leaves"
     );
     let mut remaining = original.to_vec();
+    let mut fixed = std::collections::BTreeSet::new();
     for item in moved {
         let id = item
             .ledger_id
@@ -378,6 +382,10 @@ fn verify_live_tree(target: &str, original: &[Item], result: &[Item]) {
                 .any(|r| &r.id == id && target_matches(&r.target, target)),
             "{target}: unknown ledger identity {id}"
         );
+        let route = routes().iter().find(|r| &r.id == id).unwrap();
+        if !route.dynamic && !matches!(item.run, Run::Do(super::Act::Preset(..))) {
+            assert!(fixed.insert(id), "{target}: duplicate fixed operation {id}");
+        }
         let n = remaining
             .iter()
             .position(|old| {
@@ -427,13 +435,22 @@ fn verify_live_tree(target: &str, original: &[Item], result: &[Item]) {
         ));
         std::fs::write(
             file,
-            serde_json::to_vec(&serde_json::json!({"target": target, "ids": ids})).unwrap(),
+            serde_json::to_vec(&serde_json::json!({
+                "target": target, "ids": ids, "root_rows": result.len(),
+                "missing": remaining.len(), "duplicate": 0, "unreachable": 0
+            }))
+            .unwrap(),
         )
         .expect("write context coverage");
     }
 }
 
-fn insert(items: &mut Vec<Item>, parents: &[String], leaf: Item, marks: &BTreeMap<String, usize>) {
+fn insert(
+    items: &mut Vec<Item>,
+    parents: &[String],
+    leaf: Item,
+    marks: &BTreeMap<String, (Option<usize>, String)>,
+) {
     let Some((parent, rest)) = parents.split_first() else {
         items.push(leaf);
         return;
@@ -448,7 +465,10 @@ fn insert(items: &mut Vec<Item>, parents: &[String], leaf: Item, marks: &BTreeMa
         .position(|i| i.label == parent && matches!(i.run, Run::Sub(_)))
         .unwrap_or_else(|| {
             let mut group = Item::sub(parent, Vec::new()).enabled(true);
-            group.mark = marks.get(parent).copied();
+            if let Some((mark, key)) = marks.get(parent) {
+                group.mark = *mark;
+                group.key = key.clone();
+            }
             items.push(group);
             items.len() - 1
         });

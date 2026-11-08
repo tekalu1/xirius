@@ -199,7 +199,27 @@ impl Studio {
             return;
         };
         if !view.crashed {
-            let items = self.plugin_items(t, id);
+            let mut items = self.plugin_items(t, id);
+            // This entry point previously included process choices even for built-ins.
+            // Preserve the original action (including its non-window undo behavior).
+            let modes = [
+                PluginIsolation::InProcess,
+                PluginIsolation::Shared,
+                PluginIsolation::Dedicated,
+            ];
+            let mut choices = self.plugin_process_items(t, id);
+            for (item, mode) in choices.iter_mut().zip(modes) {
+                item.run = crate::context::Run::Legacy(
+                    PopupKind::Plugin(t, id),
+                    anchor,
+                    Box::new(Action::Plugin(PlugAct::Mode(mode))),
+                );
+            }
+            if let Some(item) = items.iter_mut().find(|item| item.label == "動かす場所") {
+                item.run = crate::context::Run::Sub(choices);
+            } else {
+                items.push(Item::sub("動かす場所", choices));
+            }
             self.open_classified("insert", items, anchor.x, anchor.bottom());
             return;
         }
@@ -402,6 +422,28 @@ mod tests {
     }
 
     fn press_cell(s: &mut Studio, g: &Geometry, act: PlugAct) {
+        if s.ctx.is_some()
+            && s.popup
+                .as_ref()
+                .is_some_and(|p| p.kind == PopupKind::Context)
+        {
+            let label = match act {
+                PlugAct::Open => "画面を開く",
+                PlugAct::Restart => "再起動",
+                PlugAct::Remove => "外す",
+                PlugAct::Mode(PluginIsolation::InProcess) => "アプリ内",
+                PlugAct::Mode(PluginIsolation::Shared) => "共有",
+                PlugAct::Mode(PluginIsolation::Dedicated) => "専用で動かす",
+            };
+            let label = if s.context_path(label).is_some() {
+                label
+            } else {
+                "専用"
+            };
+            assert!(crate::context::tests::choose(s, g, label));
+            return;
+        }
+
         let layout = s.popup.as_ref().expect("the plugin menu").layout(g.size);
         let i = layout
             .cells
@@ -495,16 +537,10 @@ mod tests {
         crash(&mut s, id, true);
         let (x, y) = s.mixer_center(&g, MixerHit::Open(t, id)).unwrap();
         assert!(s.context_press(&g, x, y));
-        let v = s.popup.as_ref().unwrap().plugin.clone().unwrap();
-        assert!(v.crashed && v.suggest);
-        let layout = s.popup.as_ref().unwrap().layout(g.size);
-        let offer = layout
-            .cells
-            .iter()
-            .filter(|c| c.action == Some(Action::Plugin(PlugAct::Mode(PluginIsolation::Dedicated))))
-            .count();
-        assert_eq!(offer, 2, "the offer and the 専用 segment");
-        assert!(layout.cells.iter().any(|c| c.text == "専用で動かす"));
+        assert!(s.health.crashed(id) && s.health.suggests(id));
+        let rows = crate::context::tests::all_rows(&s);
+        assert!(rows.iter().any(|r| r.label == "専用で動かす" && r.enabled));
+        assert!(rows.iter().any(|r| r.label == "専用" && r.enabled));
         press_cell(&mut s, &g, PlugAct::Mode(PluginIsolation::Dedicated));
         assert_eq!(
             s.project().tracks[&t].inserts.last().unwrap().isolation,
@@ -526,29 +562,26 @@ mod tests {
         let (mut s, g, t, id) = with_effect();
         let (x, y) = s.mixer_center(&g, MixerHit::Open(t, id)).unwrap();
         assert!(s.context_press(&g, x, y));
-        assert_eq!(s.popup.as_ref().unwrap().kind, PopupKind::Plugin(t, id));
-        let layout = s.popup.as_ref().unwrap().layout(g.size);
-        assert!(
-            layout
-                .cells
-                .iter()
-                .any(|c| c.action == Some(Action::Plugin(PlugAct::Open)))
+        assert_eq!(s.popup.as_ref().unwrap().kind, PopupKind::Context);
+        assert!(s.context_path("画面を開く").is_some());
+        assert!(s.context_choose(&g, "動かす場所"));
+        let rows = s.context_rows();
+        let modes: Vec<_> = rows
+            .iter()
+            .filter(|r| !r.gap && r.label != "戻る")
+            .collect();
+        assert_eq!(
+            modes.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(),
+            ["アプリ内", "共有", "専用"]
         );
-        let lit: Vec<_> = layout
-            .cells
-            .iter()
-            .filter(|c| c.look == Look::Segment && c.on)
-            .map(|c| c.text.as_str())
-            .collect();
-        assert_eq!(lit, ["アプリ内"]);
-        let modes: Vec<_> = layout
-            .cells
-            .iter()
-            .filter(|c| c.look == Look::Segment)
-            .map(|c| c.text.as_str())
-            .collect();
-        assert_eq!(modes, ["アプリ内", "共有", "専用"]);
-        assert!(layout.cells.iter().any(|c| c.text == "動かす場所"));
+        assert_eq!(
+            modes
+                .iter()
+                .filter(|r| r.on)
+                .map(|r| r.label.as_str())
+                .collect::<Vec<_>>(),
+            ["アプリ内"]
+        );
         press_cell(&mut s, &g, PlugAct::Mode(PluginIsolation::Shared));
         assert_eq!(
             s.project().tracks[&t].inserts.last().unwrap().isolation,
@@ -568,12 +601,12 @@ mod tests {
         let id = s.project().tracks[&t].inserts.last().unwrap().id;
         let (x, y) = s.mixer_center(&g, MixerHit::Open(t, id)).unwrap();
         assert!(s.context_press(&g, x, y));
-        let layout = s.popup.as_ref().unwrap().layout(g.size);
-        let live: Vec<_> = layout
-            .cells
-            .iter()
-            .filter(|c| c.look == Look::Segment && c.live())
-            .map(|c| c.text.as_str())
+        assert!(s.context_choose(&g, "動かす場所"));
+        let live: Vec<_> = s
+            .context_rows()
+            .into_iter()
+            .filter(|r| r.enabled && r.label != "戻る" && !r.gap)
+            .map(|r| r.label)
             .collect();
         assert_eq!(live, ["アプリ内"]);
     }
@@ -603,26 +636,25 @@ mod tests {
         crash(&mut s, id, true);
         let (x, y) = s.mixer_center(&g, MixerHit::Open(t, id)).unwrap();
         assert!(s.context_press(&g, x, y));
-        let layout = s.popup.as_ref().unwrap().layout(g.size);
-        let segments = |keep: fn(&crate::popup::Cell) -> bool| -> Vec<String> {
-            layout
-                .cells
-                .iter()
-                .filter(|c| c.look == Look::Segment && keep(c))
-                .map(|c| c.text.clone())
-                .collect()
-        };
-        assert_eq!(segments(|c| c.live()), ["アプリ内"]);
+        let all = crate::context::tests::all_rows(&s);
+        assert!(!all.iter().any(|r| r.label == "専用で動かす"));
+        assert!(s.context_choose(&g, "動かす場所"));
+        let modes = s.context_rows();
         assert_eq!(
-            segments(|c| c.on),
-            ["アプリ内"],
-            "where it runs, not the song's 共有"
+            modes
+                .iter()
+                .filter(|r| r.enabled && r.label != "戻る" && !r.gap)
+                .map(|r| r.label.as_str())
+                .collect::<Vec<_>>(),
+            ["アプリ内"]
         );
-        assert!(
-            !layout.cells.iter().any(
-                |c| c.action == Some(Action::Plugin(PlugAct::Mode(PluginIsolation::Dedicated)))
-            ),
-            "no 専用で動かす"
+        assert_eq!(
+            modes
+                .iter()
+                .filter(|r| r.on)
+                .map(|r| r.label.as_str())
+                .collect::<Vec<_>>(),
+            ["アプリ内"]
         );
     }
 
