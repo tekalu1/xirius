@@ -49,7 +49,7 @@ pub const CTX_V2: &[Shot] = &[
     },
     Shot {
         name: "v2-search",
-        acts: &[Act::Reset, staged(80), staged(88), staged(201)],
+        acts: &[Act::Reset, staged(0), staged(13), staged(201)],
     },
     Shot {
         name: "v2-track",
@@ -499,20 +499,27 @@ pub(crate) fn choose(studio: &Rc<RefCell<Studio>>, label: &str, window: &mut Win
 
 fn play(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) {
     if stage == 200 {
-        choose(studio, "色", window, cx);
-        assert_eq!(studio.borrow().popup.as_ref().unwrap().ctx_parents.len(), 2);
+        choose(studio, "オーディオ", window, cx);
+        assert_eq!(studio.borrow().popup.as_ref().unwrap().ctx_parents.len(), 1);
         return;
     }
     if stage == 201 {
-        for key in ["d", "e", "f", "a", "u", "l", "t"] {
-            window.dispatch_keystroke(gpui::Keystroke::parse(key).unwrap(), cx);
+        for character in "ノーマライズ".chars() {
+            window.dispatch_keystroke(
+                gpui::Keystroke {
+                    key: character.to_string(),
+                    key_char: Some(character.to_string()),
+                    ..Default::default()
+                },
+                cx,
+            );
         }
         assert!(
             studio
                 .borrow()
                 .context_rows()
                 .iter()
-                .any(|r| r.label == "Default" && r.path.contains("プリセット"))
+                .any(|r| r.label == "ノーマライズ" && r.path.contains("オーディオ"))
         );
         return;
     }
