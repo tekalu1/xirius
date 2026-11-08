@@ -433,6 +433,8 @@ pub enum Look {
     /// A small heading.
     Label,
     Row,
+    /// A search leaf and its category path on the second line.
+    ContextResult(String),
     Chip,
     /// The tray a row of [`Look::Segment`]s sits in.
     Tray,
@@ -1419,6 +1421,30 @@ pub(crate) fn paint_cell(pen: &mut Pen, cell: &Cell, hot: bool) {
     let strong = if cell.enabled { c.ink_strong } else { c.ink };
     let soft = c.ink;
     match &cell.look {
+        Look::ContextResult(path) => {
+            if cell.on || cell.cursor {
+                pen.round(r, c.sel, Radius::S);
+            } else if hot {
+                pen.round(r, c.hover, Radius::S);
+            }
+            let mut first = cell.clone();
+            first.look = Look::Row;
+            first.rect.h = 24.0;
+            first.on = false;
+            first.cursor = false;
+            paint_cell(pen, &first, false);
+            let room = Rect::new(r.x + pad, r.y + 24.0, r.w - pad * 2.0, r.h - 24.0);
+            pen.mask(room, |pen| {
+                pen.text(
+                    path,
+                    FontSize::Caption,
+                    Weight::Regular,
+                    soft,
+                    room,
+                    Align::Left,
+                );
+            });
+        }
         Look::Xp(x) => crate::export::paint_cell(pen, cell, x, hot),
         Look::Ai(x) => crate::ai::paint_cell(pen, cell, x, hot),
         Look::Auto(a) => crate::autovalue::paint_cell(pen, cell, *a),

@@ -28,9 +28,11 @@ pub mod clip;
 pub mod export;
 pub mod fields;
 pub(crate) mod key_more;
+pub mod layout;
 pub mod marker;
 pub mod mixed;
 pub mod mixer;
+mod navigation;
 mod next_prev;
 mod pool;
 mod preset;
@@ -329,6 +331,8 @@ impl Item {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
     pub label: String,
+    pub path: String,
+    pub cursor: bool,
     pub key: String,
     pub enabled: bool,
     pub on: bool,
@@ -346,6 +350,8 @@ pub struct Row {
 /// The menu that is open.
 #[derive(Clone, Debug, Default)]
 pub struct State {
+    pub cursor: Option<usize>,
+    pub cursors: Vec<Option<usize>>,
     pub search: Option<search::Search>,
     pub items: Vec<Item>,
     /// The menus above this one (a row opened it).
@@ -367,7 +373,14 @@ impl State {
             .iter()
             .enumerate()
             .map(|(n, i)| Row {
+                cursor: self.cursor == Some(n),
                 label: i.label.clone(),
+                path: self
+                    .search
+                    .as_ref()
+                    .and_then(|s| s.paths.get(n))
+                    .cloned()
+                    .unwrap_or_default(),
                 key: i.key.clone(),
                 enabled: i.enabled,
                 on: i.on,
@@ -448,7 +461,12 @@ pub fn cells(rows: &[Row], w: f32) -> Vec<Cell> {
             }
             continue;
         }
-        let r = Rect::new(pad, y, w - pad * 2.0, Layout::MENU_ROW_H);
+        let height = if row.path.is_empty() {
+            Layout::MENU_ROW_H
+        } else {
+            44.0
+        };
+        let r = Rect::new(pad, y, w - pad * 2.0, height);
         if row.title {
             cells.push(Cell::new(r, Look::Label).text(row.label.clone()));
             y += Layout::MENU_ROW_H;
@@ -467,7 +485,11 @@ pub fn cells(rows: &[Row], w: f32) -> Vec<Cell> {
         }
         let mut cell = Cell::new(r, Look::Row)
             .text(row.label.clone())
-            .mark(row.mark);
+            .mark(row.mark)
+            .cur(row.cursor);
+        if !row.path.is_empty() {
+            cell.look = Look::ContextResult(row.path.clone());
+        }
         if row.sub {
             cell = cell.icon("chevron-right");
         } else {
@@ -479,7 +501,7 @@ pub fn cells(rows: &[Row], w: f32) -> Vec<Cell> {
             cell.off().tip(&row.reason)
         };
         cells.push(cell);
-        y += Layout::MENU_ROW_H;
+        y += height;
     }
     cells
 }
@@ -603,6 +625,8 @@ impl Studio {
                     .position(|i| i.enabled && matches!(i.run, Run::Field(..)))
             });
         self.ctx = Some(State {
+            cursor: None,
+            cursors: Vec::new(),
             search: search::Search::of(&items),
             items,
             trail: Vec::new(),
@@ -647,6 +671,7 @@ impl Studio {
             let mut next = vec![Item::back(), Item::gap()];
             next.extend(rows);
             st.trail.push(std::mem::replace(&mut st.items, next));
+            st.cursors.push(st.cursor.take());
             st.search = search::Search::of(&st.items);
             st.field = None;
             self.refresh_popup();
@@ -655,6 +680,7 @@ impl Studio {
         if item.run == Run::Back {
             let st = self.ctx.as_mut().expect("the menu is open");
             if let Some(up) = st.trail.pop() {
+                st.cursor = st.cursors.pop().flatten();
                 st.items = up;
                 st.search = search::Search::of(&st.items);
                 st.field = None;

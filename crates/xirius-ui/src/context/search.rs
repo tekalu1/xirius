@@ -1,4 +1,4 @@
-//! Long lists use the menu's input field to filter their rows.
+//! Search all descendants without changing the operation or its enabled state.
 use super::{Item, Run};
 use crate::settings::{FieldId, field::Field};
 use crate::studio::Studio;
@@ -7,19 +7,56 @@ use crate::studio::Studio;
 pub struct Search {
     pub field: Field,
     pub pool: Vec<Item>,
+    pub paths: Vec<String>,
 }
 impl Search {
     pub fn of(items: &[Item]) -> Option<Search> {
-        (items
-            .iter()
-            .filter(|i| !matches!(i.run, Run::Back | Run::Gap | Run::Title) && i.swatch.is_none())
-            .count()
-            > 10)
-            .then(|| Search {
-                field: Field::new(FieldId::Search, String::new()),
-                pool: items.to_vec(),
-            })
+        Some(Search {
+            field: Field::new(FieldId::Search, String::new()),
+            pool: items.to_vec(),
+            paths: Vec::new(),
+        })
     }
+}
+
+/// The path is separate from the label, so picking a result executes the original leaf.
+pub fn find(items: &[Item], query: &str) -> Vec<(Item, String)> {
+    fn visit(items: &[Item], path: &[String], query: &str, out: &mut Vec<(Item, String)>) {
+        for item in items {
+            if let Run::Sub(children) = &item.run {
+                let mut next = path.to_vec();
+                next.push(item.label.clone());
+                let start = out.len();
+                visit(children, &next, query, out);
+                if !item.enabled {
+                    for (leaf, _) in &mut out[start..] {
+                        leaf.enabled = false;
+                        if leaf.reason.is_empty() {
+                            leaf.reason = item.reason.clone();
+                        }
+                    }
+                }
+            } else if !matches!(item.run, Run::Gap | Run::Title | Run::Back) {
+                let breadcrumb = path.join(" › ");
+                if format!("{} {breadcrumb}", item.label)
+                    .to_lowercase()
+                    .contains(query)
+                {
+                    out.push((
+                        item.clone(),
+                        if breadcrumb.is_empty() {
+                            "直下".into()
+                        } else {
+                            breadcrumb
+                        },
+                    ));
+                }
+            }
+        }
+    }
+    let mut found = Vec::new();
+    visit(items, &[], &query.trim().to_lowercase(), &mut found);
+    found
 }
 
 impl Studio {
@@ -33,29 +70,18 @@ impl Studio {
         if st.ask.is_some() {
             return;
         }
-        let Some(search) = st.search.as_ref() else {
+        let Some(search) = st.search.as_mut() else {
             return;
         };
         let query = search.field.value.trim().to_lowercase();
+        st.cursor = None;
         st.items = if query.is_empty() {
+            search.paths.clear();
             search.pool.clone()
         } else {
-            let mut found = Vec::new();
-            let mut gap = false;
-            for item in &search.pool {
-                if matches!(item.run, Run::Gap) {
-                    gap = !found.is_empty();
-                } else if matches!(item.run, Run::Back)
-                    || item.label.to_lowercase().contains(&query)
-                {
-                    if gap {
-                        found.push(Item::gap());
-                    }
-                    found.push(item.clone());
-                    gap = false;
-                }
-            }
-            found
+            let (items, paths) = find(&search.pool, &query).into_iter().unzip();
+            search.paths = paths;
+            items
         };
     }
 }
@@ -66,7 +92,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn filtering_keeps_the_separator_before_the_delete_group() {
+    fn results_are_leaves_without_group_separators() {
         let mut s = Studio::sample();
         let mut rows: Vec<_> = (0..12)
             .map(|n| s.ctx_as(&format!("Marker {n}"), "marker.add", json!({"at":n*3840})))
@@ -77,7 +103,58 @@ mod tests {
         s.ask_text(None, "marker", false);
         let items = &s.ctx.as_ref().unwrap().items;
         assert_eq!(items.last().unwrap().label, "Delete marker");
-        assert!(matches!(items[items.len() - 2].run, Run::Gap));
-        assert!(!matches!(items[0].run, Run::Gap));
+        assert!(items.iter().all(|i| !matches!(i.run, Run::Gap)));
+    }
+
+    #[test]
+    fn deep_results_keep_arguments_shortcut_and_disabled_reason() {
+        let mut leaf = Item::ask(
+            "名前を変更…",
+            "clip.rename",
+            json!({"id":"c7"}),
+            "name",
+            "old",
+        );
+        leaf.key = "F2".into();
+        leaf.enabled = false;
+        leaf.reason = "フリーズ中".into();
+        let tree = vec![Item::sub(
+            "編集",
+            vec![Item::sub("対象", vec![leaf.clone()])],
+        )];
+        let found = find(&tree, "編集");
+        assert_eq!(found, vec![(leaf.clone(), "編集 › 対象".into())]);
+        assert_eq!(find(&tree, "名前")[0].0, leaf);
+        assert!(find(&tree, "見つからない").is_empty());
+    }
+
+    #[test]
+    fn disabled_parent_never_turns_into_an_executable_result() {
+        let leaf = Item::ask(
+            "名前を変更…",
+            "clip.rename",
+            json!({"id":"c7"}),
+            "name",
+            "old",
+        );
+        let mut parent = Item::sub("編集", vec![leaf]).enabled(false);
+        parent.reason = "対象なし".into();
+        let found = find(&[parent], "名前");
+        assert!(!found[0].0.enabled);
+        assert_eq!(found[0].0.reason, "対象なし");
+    }
+
+    #[test]
+    fn root_search_is_always_present_and_escape_clears_before_closing() {
+        let mut s = Studio::sample();
+        let row = s.ctx_as("マーカーを追加", "marker.add", json!({"at":0}));
+        s.open_context(vec![row], 400.0, 300.0);
+        assert_eq!(s.context_query().as_deref(), Some(""));
+        s.ask_text(None, "マーカー", false);
+        s.ask_key("escape");
+        assert!(s.context_open());
+        assert_eq!(s.context_query().as_deref(), Some(""));
+        s.ask_key("escape");
+        assert!(!s.context_open());
     }
 }

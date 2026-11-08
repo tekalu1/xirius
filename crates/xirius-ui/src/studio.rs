@@ -2624,6 +2624,9 @@ impl Studio {
     }
 
     pub fn typed(&mut self, g: &Geometry, key: &str, ch: Option<&str>) -> bool {
+        if self.context_navigation(g, key) {
+            return true;
+        }
         if let Some(done) = self.ask_key(key) {
             return done;
         }

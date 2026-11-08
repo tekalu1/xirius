@@ -159,6 +159,15 @@ impl Studio {
         }
         match key {
             "escape" => {
+                if self.ctx.as_ref().is_some_and(|s| s.ask.is_none())
+                    && let Some(search) = self.ctx.as_mut().and_then(|s| s.search.as_mut())
+                    && !search.field.value.is_empty()
+                {
+                    search.field = Field::new(FieldId::Search, String::new());
+                    self.filter_context();
+                    self.refresh_popup();
+                    return Some(true);
+                }
                 self.close_wheel_group();
                 self.ctx = None;
                 self.popup = None;
