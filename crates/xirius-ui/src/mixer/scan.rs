@@ -422,15 +422,32 @@ mod menu_io_tests {
     #[test]
     fn a_new_song_made_during_the_automatic_scan_is_left_clear() {
         let root = tempfile::tempdir().unwrap();
+        let release = crate::browser_io_tests::Release::new();
+        let gate = release.0.clone();
+        let cache = root.path().join("catalog.json");
+        // An empty scan can finish between frames. Hold its worker after the job is
+        // created, so New is pressed after the owner answers and while scanning.
+        let _observe = xirius_core::io_test::observe(Arc::new(move |op, path| {
+            if op == "plugin_scan" && path == cache {
+                drop(
+                    gate.1
+                        .wait_while(gate.0.lock().unwrap(), |done| !*done)
+                        .unwrap(),
+                );
+            }
+            Ok(())
+        }));
         let mut s = home(root.path());
         let deadline = Instant::now() + Duration::from_secs(20);
-        while !s.mixer.scan.running() {
+        while s.mixer.scan.job.is_none() {
             s.tick();
             assert!(Instant::now() < deadline);
             std::thread::yield_now();
         }
         // 新規 on the start screen, as its button does.
+        assert!(!s.input_blocked(), "the owner has returned the scan job");
         s.start_leaving(crate::saving::Leave::New);
+        release.release();
         let deadline = Instant::now() + Duration::from_secs(20);
         while s.home_shown()
             || s.saving.is_some()

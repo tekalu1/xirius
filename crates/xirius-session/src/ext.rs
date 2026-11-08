@@ -1627,6 +1627,8 @@ impl SessionExt {
         std::thread::Builder::new()
             .name(id.clone())
             .spawn(move || {
+                #[cfg(feature = "test-io")]
+                let _ = xirius_core::io_test::before("plugin_scan", &opts.cache);
                 let pr = worker.progress.clone();
                 let r = scan_seeing(
                     &opts,
