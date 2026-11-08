@@ -18,8 +18,10 @@
 //! app needs, and a stack overflow.
 
 use std::cell::Cell;
+use std::sync::Arc;
+#[cfg(windows)]
+use std::sync::Once;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Once};
 use std::time::{Duration, Instant};
 
 #[cfg(windows)]
@@ -42,6 +44,7 @@ const ILLEGAL_INSTRUCTION: u32 = 0xC000_001D;
 const PRIVILEGED_INSTRUCTION: u32 = 0xC000_0096;
 const INTEGER_DIVIDE_BY_ZERO: u32 = 0xC000_0094;
 const IN_PAGE_ERROR: u32 = 0xC000_0006;
+#[cfg(windows)]
 const CONTINUE_SEARCH: i32 = 0;
 
 thread_local! {
@@ -320,7 +323,9 @@ struct WatchState {
     started: AtomicU64,
     limit_ms: AtomicU64,
     origin: Instant,
+    #[cfg(windows)]
     thread: AtomicUsize,
+    #[cfg(windows)]
     thread_id: AtomicU32,
 }
 
@@ -349,7 +354,9 @@ impl Watch {
             started: AtomicU64::new(0),
             limit_ms: AtomicU64::new(limit.as_millis() as u64),
             origin: Instant::now(),
+            #[cfg(windows)]
             thread: AtomicUsize::new(0),
+            #[cfg(windows)]
             thread_id: AtomicU32::new(0),
         }));
         Arc::new(Watch { state })

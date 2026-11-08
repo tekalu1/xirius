@@ -8,6 +8,10 @@ pub mod builtin;
 pub mod clap_plugin;
 pub mod click;
 pub mod control;
+#[cfg(windows)]
+pub mod crash;
+#[cfg(target_os = "macos")]
+#[path = "crash_macos.rs"]
 pub mod crash;
 pub mod device;
 pub mod device_owner;

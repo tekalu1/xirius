@@ -531,7 +531,7 @@ pub unsafe fn string(s: *const c_char) -> String {
         .into_owned()
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "x86_64"))]
 mod tests {
     use super::*;
 

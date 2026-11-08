@@ -8341,6 +8341,7 @@ dependencies = [
  "cpal",
  "embed-resource",
  "hound",
+ "libc",
  "midir",
  "rtrb",
  "tempfile",

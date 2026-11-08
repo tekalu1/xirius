@@ -10,11 +10,14 @@
 use std::io;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
+#[cfg(windows)]
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0};
+#[cfg(windows)]
 use windows_sys::Win32::System::Memory::{
     CreateFileMappingW, FILE_MAP_ALL_ACCESS, MEMORY_MAPPED_VIEW_ADDRESS, MapViewOfFile,
     OpenFileMappingW, PAGE_READWRITE, UnmapViewOfFile,
 };
+#[cfg(windows)]
 use windows_sys::Win32::System::Threading::{
     CreateEventW, EVENT_MODIFY_STATE, OpenEventW, SYNCHRONIZATION_SYNCHRONIZE, SetEvent,
     WaitForSingleObject,
@@ -90,13 +93,17 @@ pub enum Ring {
     Out = 1,
 }
 
+#[cfg(windows)]
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
 
 /// The shared memory of one instance.
 pub struct SharedRings {
+    #[cfg(windows)]
     mapping: HANDLE,
+    #[cfg(target_os = "macos")]
+    mapping: macos::Mapping,
     view: *mut u8,
     mask: usize,
 }
@@ -122,6 +129,7 @@ impl SharedRings {
         assert!(capacity.is_power_of_two());
         let size = Self::size(capacity);
         // SAFETY: a pagefile-backed mapping; the name is NUL-terminated.
+        #[cfg(windows)]
         let mapping = unsafe {
             CreateFileMappingW(
                 INVALID_HANDLE_VALUE,
@@ -132,7 +140,17 @@ impl SharedRings {
                 wide(name).as_ptr(),
             )
         };
+        #[cfg(windows)]
         let rings = Self::map(mapping, capacity)?;
+        #[cfg(target_os = "macos")]
+        let rings = {
+            let mapping = macos::Mapping::create(name, size)?;
+            SharedRings {
+                view: mapping.pointer(),
+                mapping,
+                mask: capacity - 1,
+            }
+        };
         // SAFETY: the view is at least RING_OFFSET bytes, page-aligned, and nobody else has it.
         unsafe {
             (rings.view as *mut Header).write(Header {
@@ -164,16 +182,35 @@ impl SharedRings {
     /// Opens memory made by [`SharedRings::create`] and checks its header.
     pub fn open(name: &str) -> io::Result<SharedRings> {
         // SAFETY: the name is NUL-terminated.
+        #[cfg(windows)]
         let mapping = unsafe { OpenFileMappingW(FILE_MAP_ALL_ACCESS, 0, wide(name).as_ptr()) };
+        #[cfg(windows)]
         let mut rings = Self::map(mapping, 0)?;
+        #[cfg(target_os = "macos")]
+        let mut rings = {
+            let mapping = macos::Mapping::open(name)?;
+            if mapping.len() < RING_OFFSET {
+                return Err(io::Error::other("short sandbox mapping"));
+            }
+            SharedRings {
+                view: mapping.pointer(),
+                mapping,
+                mask: 0,
+            }
+        };
         let h = rings.header();
         if h.magic != MAGIC || h.version != VERSION || !(h.capacity as usize).is_power_of_two() {
             return Err(io::Error::other("not a xirius sandbox mapping"));
+        }
+        #[cfg(target_os = "macos")]
+        if rings.mapping.len() != Self::size(h.capacity as usize) {
+            return Err(io::Error::other("invalid sandbox mapping length"));
         }
         rings.mask = h.capacity as usize - 1;
         Ok(rings)
     }
 
+    #[cfg(windows)]
     fn map(mapping: HANDLE, capacity: usize) -> io::Result<SharedRings> {
         if mapping.is_null() {
             return Err(io::Error::last_os_error());
@@ -319,6 +356,7 @@ impl SharedRings {
     }
 }
 
+#[cfg(windows)]
 impl Drop for SharedRings {
     fn drop(&mut self) {
         // SAFETY: we own the view and the handle.
@@ -331,75 +369,85 @@ impl Drop for SharedRings {
     }
 }
 
-/// A named auto-reset event.
-pub struct Event(HANDLE);
+#[cfg(target_os = "macos")]
+#[path = "sandbox_macos.rs"]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::Event;
+#[cfg(windows)]
+pub use windows_events::Event;
+#[cfg(windows)]
+mod windows_events {
+    use super::*;
+    /// A named auto-reset event.
+    pub struct Event(HANDLE);
 
-unsafe impl Send for Event {}
-unsafe impl Sync for Event {}
+    unsafe impl Send for Event {}
+    unsafe impl Sync for Event {}
 
-impl Event {
-    pub fn create(name: &str) -> io::Result<Event> {
-        let name = wide(name);
-        // SAFETY: the name is NUL-terminated.
-        let h = unsafe {
-            CreateEventW(
-                std::ptr::null(),
-                0,
-                0,
-                if name.len() == 1 {
-                    std::ptr::null()
-                } else {
-                    name.as_ptr()
-                },
-            )
-        };
-        Self::checked(h)
-    }
+    impl Event {
+        pub fn create(name: &str) -> io::Result<Event> {
+            let name = wide(name);
+            // SAFETY: the name is NUL-terminated.
+            let h = unsafe {
+                CreateEventW(
+                    std::ptr::null(),
+                    0,
+                    0,
+                    if name.len() == 1 {
+                        std::ptr::null()
+                    } else {
+                        name.as_ptr()
+                    },
+                )
+            };
+            Self::checked(h)
+        }
 
-    pub fn open(name: &str) -> io::Result<Event> {
-        // SAFETY: the name is NUL-terminated.
-        let h = unsafe {
-            OpenEventW(
-                EVENT_MODIFY_STATE | SYNCHRONIZATION_SYNCHRONIZE,
-                0,
-                wide(name).as_ptr(),
-            )
-        };
-        Self::checked(h)
-    }
+        pub fn open(name: &str) -> io::Result<Event> {
+            // SAFETY: the name is NUL-terminated.
+            let h = unsafe {
+                OpenEventW(
+                    EVENT_MODIFY_STATE | SYNCHRONIZATION_SYNCHRONIZE,
+                    0,
+                    wide(name).as_ptr(),
+                )
+            };
+            Self::checked(h)
+        }
 
-    fn checked(h: HANDLE) -> io::Result<Event> {
-        if h.is_null() {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(Event(h))
+        fn checked(h: HANDLE) -> io::Result<Event> {
+            if h.is_null() {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(Event(h))
+            }
+        }
+
+        pub fn handle(&self) -> HANDLE {
+            self.0
+        }
+
+        /// Does not block; safe to call on the audio thread.
+        pub fn set(&self) {
+            // SAFETY: a valid event handle.
+            unsafe { SetEvent(self.0) };
+        }
+
+        /// True when signalled within `ms`.
+        pub fn wait(&self, ms: u32) -> bool {
+            // SAFETY: a valid event handle.
+            unsafe { WaitForSingleObject(self.0, ms) == WAIT_OBJECT_0 }
         }
     }
 
-    pub fn handle(&self) -> HANDLE {
-        self.0
-    }
-
-    /// Does not block; safe to call on the audio thread.
-    pub fn set(&self) {
-        // SAFETY: a valid event handle.
-        unsafe { SetEvent(self.0) };
-    }
-
-    /// True when signalled within `ms`.
-    pub fn wait(&self, ms: u32) -> bool {
-        // SAFETY: a valid event handle.
-        unsafe { WaitForSingleObject(self.0, ms) == WAIT_OBJECT_0 }
+    impl Drop for Event {
+        fn drop(&mut self) {
+            // SAFETY: we own the handle.
+            unsafe { CloseHandle(self.0) };
+        }
     }
 }
-
-impl Drop for Event {
-    fn drop(&mut self) {
-        // SAFETY: we own the handle.
-        unsafe { CloseHandle(self.0) };
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

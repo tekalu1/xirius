@@ -170,7 +170,10 @@ impl Sandbox {
 /// `--dedicated`), as an instrument track or as an effect on a sine-synth track. The bundle is
 /// not loaded in this process.
 fn sandbox_mix(a: &Args) -> Result<(MixSpec, Sandbox), BoxError> {
-    let host = std::env::current_exe()?.with_file_name("xirius-plugin-host.exe");
+    let host = std::env::current_exe()?.with_file_name(format!(
+        "xirius-plugin-host{}",
+        std::env::consts::EXE_SUFFIX
+    ));
     let mut servers = vec![PluginServer::new(Some(host.clone()))];
     let mut tracks = Vec::new();
     let mut links = Vec::new();
@@ -220,6 +223,7 @@ fn sandbox_mix(a: &Args) -> Result<(MixSpec, Sandbox), BoxError> {
 }
 
 /// CPU time (user + kernel) of a process so far.
+#[cfg(windows)]
 fn process_cpu(pid: u32) -> Option<Duration> {
     use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
     use windows_sys::Win32::System::Threading::{
@@ -684,4 +688,9 @@ fn main() -> Result<(), BoxError> {
         }
         other => Err(format!("unknown command {other}").into()),
     }
+}
+
+#[cfg(not(windows))]
+fn process_cpu(_pid: u32) -> Option<Duration> {
+    None
 }

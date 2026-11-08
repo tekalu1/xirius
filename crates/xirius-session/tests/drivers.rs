@@ -499,3 +499,23 @@ fn a_watched_input_that_stops_says_why() {
     host.watch_start(Input::Device).unwrap();
     assert_eq!(host.input_lost(), None);
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn coreaudio_uses_cpal_for_input_and_output_with_the_requested_buffer() {
+    let system = Drivers::system();
+    assert!(system.exclusive_in.is_none() && system.exclusive_out.is_none());
+    let calls = Arc::new(Calls::default());
+    let d = drivers(&calls, true, true);
+    let (_host, audio) = engine();
+    let p = prefs("coreaudio");
+    let opened = Output::open(OutputMode::Device, audio, &p, &d).unwrap();
+    let (_input, notice) = open_input(48_000, &p, "Interface".into(), &d).unwrap();
+    assert!(opened.notice.is_none() && notice.is_none());
+    assert_eq!(calls.exclusive.load(Ordering::SeqCst), 0);
+    assert_eq!(calls.shared.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        *calls.asked.lock().unwrap(),
+        vec![("Interface".into(), Some(64)); 2]
+    );
+}

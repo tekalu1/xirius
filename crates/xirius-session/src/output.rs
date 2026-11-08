@@ -397,7 +397,11 @@ impl Output {
             },
             (_, _) => (audio, None),
         };
-        let output = (drivers.shared_out)(audio, device, None)?;
+        // CoreAudio accepts a requested buffer; WASAPI shared owns its period.
+        let shared_buffer = (prefs.text("audio.driver") == "coreaudio")
+            .then_some(buffer)
+            .flatten();
+        let output = (drivers.shared_out)(audio, device, shared_buffer)?;
         Ok(Opened {
             output: Some(output),
             notice,
@@ -529,5 +533,8 @@ pub fn open_input(
             Err(e) => notice = Some(fallback_notice("入力", &e)),
         }
     }
-    (drivers.shared_in)(rate, device, None).map(|i| (i, notice))
+    let shared_buffer = (prefs.text("audio.driver") == "coreaudio")
+        .then_some(buffer)
+        .flatten();
+    (drivers.shared_in)(rate, device, shared_buffer).map(|i| (i, notice))
 }

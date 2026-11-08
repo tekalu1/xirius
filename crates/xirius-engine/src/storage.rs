@@ -2,8 +2,10 @@
 //! the readable file length, so a crash repair never mistakes reserved zeros for a take.
 use std::fs::File;
 use std::io;
+#[cfg(windows)]
 use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
     FILE_ALLOCATION_INFO, FileAllocationInfo, GetDiskFreeSpaceExW, SetFileInformationByHandle,
 };
@@ -42,20 +44,7 @@ impl Reservation {
             .checked_mul(self.chunk)
             .and_then(|n| i64::try_from(n).ok())
             .ok_or_else(|| io::Error::other("recording allocation is too large"))?;
-        let info = FILE_ALLOCATION_INFO {
-            AllocationSize: size,
-        };
-        // SAFETY: this writer owns a valid file handle; the SDK structure has its stated size.
-        if unsafe {
-            SetFileInformationByHandle(
-                file.as_raw_handle(),
-                FileAllocationInfo,
-                (&info as *const FILE_ALLOCATION_INFO).cast(),
-                size_of::<FILE_ALLOCATION_INFO>() as u32,
-            )
-        } == 0
-        {
-            let error = io::Error::last_os_error();
+        if let Err(error) = reserve(file, size, self.allocated) {
             self.low |= is_disk_full(&error);
             return Err(error);
         }
@@ -91,9 +80,17 @@ impl Reservation {
 }
 
 pub(crate) fn is_disk_full(error: &io::Error) -> bool {
-    matches!(error.raw_os_error(), Some(39 | 112))
+    #[cfg(windows)]
+    {
+        matches!(error.raw_os_error(), Some(39 | 112))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        matches!(error.raw_os_error(), Some(libc::ENOSPC | libc::EDQUOT))
+    }
 }
 
+#[cfg(windows)]
 fn disk_space(directory: &Path) -> io::Result<u64> {
     // UNC shares require the trailing directory separator too.
     let name: Vec<u16> = directory
@@ -119,12 +116,14 @@ fn disk_space(directory: &Path) -> io::Result<u64> {
     }
 }
 
+#[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
+    #[cfg(windows)]
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_STANDARD_INFO, FileStandardInfo, GetFileInformationByHandleEx,
     };
@@ -139,23 +138,26 @@ mod tests {
         let mut reservation = Reservation::new(&path, 48_000 * 8);
         reservation.ensure(&file, 92).unwrap();
         assert!(reservation.allocated() >= 48_000 * 8 * 60);
-        let mut standard: FILE_STANDARD_INFO = unsafe { std::mem::zeroed() };
-        // SAFETY: valid handle and a writable SDK metadata record.
-        assert_ne!(
-            unsafe {
-                GetFileInformationByHandleEx(
-                    file.as_raw_handle(),
-                    FileStandardInfo,
-                    (&mut standard as *mut FILE_STANDARD_INFO).cast(),
-                    size_of::<FILE_STANDARD_INFO>() as u32,
-                )
-            },
-            0
-        );
-        assert!(
-            standard.AllocationSize >= 48_000 * 8 * 60,
-            "disk blocks are actually reserved"
-        );
+        #[cfg(windows)]
+        {
+            let mut standard: FILE_STANDARD_INFO = unsafe { std::mem::zeroed() };
+            // SAFETY: valid handle and a writable SDK metadata record.
+            assert_ne!(
+                unsafe {
+                    GetFileInformationByHandleEx(
+                        file.as_raw_handle(),
+                        FileStandardInfo,
+                        (&mut standard as *mut FILE_STANDARD_INFO).cast(),
+                        size_of::<FILE_STANDARD_INFO>() as u32,
+                    )
+                },
+                0
+            );
+            assert!(
+                standard.AllocationSize >= 48_000 * 8 * 60,
+                "disk blocks are actually reserved"
+            );
+        }
         assert_eq!(file.metadata().unwrap().len(), 0);
         file.write_all(b"take").unwrap();
         assert_eq!(file.metadata().unwrap().len(), 4);
@@ -202,4 +204,54 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"take");
         std::fs::remove_file(path).unwrap();
     }
+}
+
+#[cfg(windows)]
+fn reserve(file: &File, size: i64, _previous: u64) -> io::Result<()> {
+    let info = FILE_ALLOCATION_INFO {
+        AllocationSize: size,
+    };
+    // SAFETY: owned file and valid metadata structure.
+    if unsafe {
+        SetFileInformationByHandle(
+            file.as_raw_handle(),
+            FileAllocationInfo,
+            (&info as *const FILE_ALLOCATION_INFO).cast(),
+            size_of::<FILE_ALLOCATION_INFO>() as u32,
+        )
+    } == 0
+    {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+#[cfg(target_os = "macos")]
+fn reserve(file: &File, size: i64, previous: u64) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let mut store = libc::fstore_t {
+        fst_flags: libc::F_ALLOCATEALL,
+        fst_posmode: libc::F_PEOFPOSMODE,
+        fst_offset: 0,
+        fst_length: size - previous as i64,
+        fst_bytesalloc: 0,
+    };
+    // SAFETY: owned fd and writable fstore_t. F_PREALLOCATE does not change logical EOF.
+    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_PREALLOCATE, &mut store) } == -1 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+#[cfg(target_os = "macos")]
+fn disk_space(directory: &Path) -> io::Result<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let name = std::ffi::CString::new(directory.as_os_str().as_bytes())?;
+    let mut info = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: NUL-terminated path and writable output structure.
+    if unsafe { libc::statvfs(name.as_ptr(), info.as_mut_ptr()) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    let info = unsafe { info.assume_init() };
+    Ok(info.f_bavail.saturating_mul(info.f_frsize))
 }

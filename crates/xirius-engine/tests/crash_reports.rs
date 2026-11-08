@@ -1,3 +1,5 @@
+// Windows-only: SEH, minidumps and Windows delete-on-close semantics.
+#![cfg(windows)]
 //! Real panic and access-violation children leave discoverable logs and minidumps.
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};

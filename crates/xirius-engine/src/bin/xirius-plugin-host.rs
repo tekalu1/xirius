@@ -18,27 +18,34 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Write};
+#[cfg(windows)]
 use std::os::windows::io::FromRawHandle;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
 use windows_sys::Win32::Foundation::{
     DUPLICATE_SAME_ACCESS, DuplicateHandle, EXCEPTION_ACCESS_VIOLATION, HANDLE, WAIT_OBJECT_0,
 };
+#[cfg(windows)]
 use windows_sys::Win32::System::Console::{
     GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
 };
+#[cfg(windows)]
 use windows_sys::Win32::System::Diagnostics::Debug::{
     EXCEPTION_CONTINUE_SEARCH, EXCEPTION_POINTERS, RaiseException, SEM_FAILCRITICALERRORS,
     SEM_NOGPFAULTERRORBOX, SetErrorMode, SetUnhandledExceptionFilter,
 };
+#[cfg(windows)]
 use windows_sys::Win32::System::ErrorReporting::{WER_FAULT_REPORTING_NO_UI, WerSetFlags};
+#[cfg(windows)]
 use windows_sys::Win32::System::Threading::{
     AvSetMmThreadCharacteristicsW, GetCurrentProcess, OpenProcess, PROCESS_SYNCHRONIZE,
     WaitForSingleObject,
 };
+#[cfg(windows)]
 use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
@@ -56,6 +63,7 @@ use formats::{Audio, Loaded};
 const CAPTURE_BLOCKS: u64 = 2;
 const CAPTURE_WAIT: Duration = Duration::from_millis(300);
 
+#[cfg(windows)]
 unsafe extern "C" {
     fn _dup2(from: i32, to: i32) -> i32;
 }
@@ -213,6 +221,12 @@ mod relay_tests {
         });
         use std::io::{Seek, SeekFrom};
         let before = host.out.stream_position().unwrap();
+        #[cfg(target_os = "macos")]
+        if unsafe { libc::kill(parent_pid as libc::pid_t, 0) } != 0
+            && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        {
+            break;
+        }
         host.poll();
         let mut output = host.out.try_clone().unwrap();
         output.seek(SeekFrom::Start(before)).unwrap();
@@ -231,6 +245,12 @@ mod relay_tests {
             .header()
             .host_blocks
             .store(2, Ordering::Release);
+        #[cfg(target_os = "macos")]
+        if unsafe { libc::kill(parent_pid as libc::pid_t, 0) } != 0
+            && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        {
+            break;
+        }
         host.poll();
         output.seek(SeekFrom::Start(before)).unwrap();
         let mut captured = false;
@@ -298,6 +318,7 @@ impl Drop for InPlugin {
 }
 
 /// Marks the instance the crashing thread was in, then lets the process go down.
+#[cfg(windows)]
 unsafe extern "system" fn on_crash(exception: *const EXCEPTION_POINTERS) -> i32 {
     let (header, epoch) = IN_PLUGIN
         .try_with(Cell::get)
@@ -315,6 +336,7 @@ unsafe extern "system" fn on_crash(exception: *const EXCEPTION_POINTERS) -> i32 
 
 /// Takes stdout for the messages and points everything else that writes to stdout (the C
 /// runtime's descriptor 1 and the standard handle plugins load with) at stderr.
+#[cfg(windows)]
 fn take_stdout() -> File {
     // SAFETY: plain handle calls on this process's own handles.
     unsafe {
@@ -950,6 +972,7 @@ fn run_audio(
     up: mpsc::Sender<()>,
 ) -> Audio {
     let h = rings.header();
+    #[cfg(windows)]
     if h.offline == 0 {
         let mut task = 0u32;
         let name: Vec<u16> = "Pro Audio".encode_utf16().chain(Some(0)).collect();
@@ -1023,7 +1046,14 @@ fn run_audio(
             let kind = fault.kind.load(Ordering::Acquire);
             if kind != 0 && blocks >= fault.at.load(Ordering::Acquire) {
                 if kind == 1 {
+                    #[cfg(target_os = "macos")]
+                    {
+                        h.faulted
+                            .store(h.ready_epoch.load(Ordering::Acquire), Ordering::Release);
+                        std::process::exit(1);
+                    }
                     // SAFETY: raises a real access violation, as a crashing plugin would.
+                    #[cfg(windows)]
                     unsafe {
                         RaiseException(EXCEPTION_ACCESS_VIOLATION as u32, 1, 0, std::ptr::null())
                     };
@@ -1043,6 +1073,7 @@ fn main() {
     }
     // A crash must not put a dialog in front of the user; the engine notices it by itself.
     // SAFETY: no preconditions.
+    #[cfg(windows)]
     unsafe {
         SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
         WerSetFlags(WER_FAULT_REPORTING_NO_UI);
@@ -1077,7 +1108,9 @@ fn main() {
         std::process::exit(2);
     };
     // SAFETY: no preconditions; a null handle is checked below.
+    #[cfg(windows)]
     let parent = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, parent_pid) };
+    #[cfg(windows)]
     if parent.is_null() {
         eprintln!("xirius-plugin-host: {}", io::Error::last_os_error());
         std::process::exit(2);
@@ -1133,14 +1166,33 @@ fn main() {
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
+        #[cfg(target_os = "macos")]
+        if unsafe { libc::kill(parent_pid as libc::pid_t, 0) } != 0
+            && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        {
+            break;
+        }
         host.poll();
         let _ = host.out.flush();
         // SAFETY: a valid process handle.
+        #[cfg(windows)]
         if unsafe { WaitForSingleObject(parent, 0) } == WAIT_OBJECT_0 {
             break;
         }
     }
     for (_, inst) in host.instances.drain() {
         inst.close();
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn take_stdout() -> File {
+    use std::os::fd::FromRawFd;
+    // SAFETY: duplicate protocol output before redirecting plugin stdout to stderr.
+    unsafe {
+        let fd = libc::dup(libc::STDOUT_FILENO);
+        assert!(fd >= 0, "cannot duplicate protocol stdout");
+        assert!(libc::dup2(libc::STDERR_FILENO, libc::STDOUT_FILENO) >= 0);
+        File::from_raw_fd(fd)
     }
 }

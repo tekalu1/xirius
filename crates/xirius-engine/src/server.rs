@@ -27,6 +27,7 @@ use crate::plugin_updates::{Field, Origin, Stamp, UpdateGate};
 use crate::rt_lock::Mutex;
 use std::collections::HashMap;
 use std::io;
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -43,6 +44,7 @@ use crate::sandbox::{
 };
 use crate::wire::{self, Fault, FromHost, Gesture, OpenSlot, Opened, ToHost};
 
+#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const CONTROL_QUEUE: usize = 256;
 /// How long the host may take to open one plugin.
@@ -73,7 +75,12 @@ pub fn find_host() -> Option<PathBuf> {
     let dir = exe.parent()?;
     [dir, dir.parent()?]
         .iter()
-        .map(|d| d.join("xirius-plugin-host.exe"))
+        .map(|d| {
+            d.join(format!(
+                "xirius-plugin-host{}",
+                std::env::consts::EXE_SUFFIX
+            ))
+        })
         .find(|p| p.is_file())
 }
 
@@ -2041,7 +2048,10 @@ impl Inner {
         } else {
             Stdio::null()
         };
-        let mut child = Command::new(host)
+        let mut command = Command::new(host);
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
+        let mut child = command
             .arg("--parent")
             .arg(std::process::id().to_string())
             .arg("--protocol")
@@ -2049,7 +2059,6 @@ impl Inner {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(stderr)
-            .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| format!("{}: {e}", host.display()))?;
         let stdin = child.stdin.take().ok_or("no stdin")?;
