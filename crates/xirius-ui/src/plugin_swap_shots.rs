@@ -3,7 +3,8 @@
 //! and its window is opened as a person opens it, from its row in the mixer. Then, with the
 //! window open, the value is moved in the window (which changes the plugin's latency), a track
 //! is added, the plugin is moved to the shared host, into the app's process and back to a host
-//! of its own: each makes a new mix with a new instance. After each the window must show the
+//! of its own. An unrelated track addition retains the playing instance; latency and
+//! isolation changes replace it. After each the window must show the
 //! new instance, with the value moved in it. Last, the window is closed while a new mix that
 //! moves the plugin is on its way, once to the shared host and once into the app: it must not
 //! open again when the new mix plays.
@@ -259,7 +260,14 @@ fn stage(s: &mut Studio, n: u8) {
                 value(s, "1") == Some(MOVED) && latency(s) == Some(DEFAULT_LATENCY + 128)
             });
             assert_eq!(value(s, "1"), Some(MOVED), "the moved value is in the song");
-            assert_eq!(latency(s), Some(DEFAULT_LATENCY + 128));
+            assert_eq!(
+                latency(s),
+                Some(DEFAULT_LATENCY + 128),
+                "playing={}, pending={}, error={:?}",
+                s.transport.playing,
+                s.transport.host().is_some_and(|h| h.swap_pending()),
+                s.error,
+            );
             let seen = follow(s, "swap02-latency", at, |w| {
                 w.label
                     .is_some_and(|l| l.delay == 128 && l.instance != before.instance)
@@ -270,15 +278,18 @@ fn stage(s: &mut Studio, n: u8) {
             let at = Instant::now();
             assert!(s.run_command("track.add.audio", json!({"name":"Swap"})));
             let before = before.unwrap();
-            // The test VST3's new window is the one whose label names the new instance: a
-            // window found before it has drawn its label is not taken for it.
+            crate::shot::run_for(s, WAIT.as_secs_f32(), |s| {
+                !s.input_blocked() && s.transport.host().is_some_and(|h| !h.swap_pending())
+            });
+            assert!(s.transport.host().is_some_and(|h| !h.swap_pending()));
+            // Live graph updates retain unchanged tracks and their plugin instances.
             let seen = follow(s, "swap03-track-added", at, |w| {
                 w.pid == before.pid
                     && match before.label.filter(|_| !real) {
                         Some(b) => w
                             .label
-                            .is_some_and(|l| l.delay == 128 && l.instance != b.instance),
-                        None => w.hwnd != before.hwnd,
+                            .is_some_and(|l| l.delay == 128 && l.instance == b.instance),
+                        None => w.hwnd == before.hwnd,
                     }
             });
             if !real {
@@ -384,7 +395,7 @@ fn closed(s: &mut Studio, shot: &str, mode: &str) {
     loop {
         let gone = old_server.has_let_go(&old_link);
         s.tick();
-        opened |= !s.mixer.editors.is_empty() || crate::park::any_window(&title).is_some();
+        opened |= !s.mixer.editors.is_empty() || editor_window(&title).is_some();
         if gone {
             break;
         }
@@ -392,7 +403,7 @@ fn closed(s: &mut Studio, shot: &str, mode: &str) {
         std::thread::sleep(Duration::from_millis(10));
     }
     s.tick();
-    opened |= !s.mixer.editors.is_empty() || crate::park::any_window(&title).is_some();
+    opened |= !s.mixer.editors.is_empty() || editor_window(&title).is_some();
     let new_open = s.transport.host().is_some_and(|h| {
         h.plugin_statuses()
             .iter()
@@ -479,6 +490,12 @@ fn title(s: &Studio) -> String {
         .unwrap_or_else(|| format!("{} · Vocal", x.name))
 }
 
+fn editor_window(title: &str) -> Option<isize> {
+    // The in-process owner captions its frame with the plugin name only.
+    crate::park::own_handle(title.split(" · ").next().unwrap_or(title))
+        .or_else(|| crate::park::any_window(title))
+}
+
 /// Waits, ticking the studio, until the plugin's window is open and `done`; then takes its
 /// picture and checks that it is the studio's one window, off every screen and not in front.
 /// `at` is when the window was asked to change: how long it took goes to stderr.
@@ -493,14 +510,11 @@ fn follow(s: &mut Studio, shot: &str, at: Instant, done: impl Fn(&Seen) -> bool)
             .iter()
             .find(|e| e.id == id)
             .map(|e| e.title.clone());
-        let seen = title
-            .as_deref()
-            .and_then(crate::park::any_window)
-            .map(|hwnd| Seen {
-                hwnd,
-                pid: window_pid(hwnd),
-                label: label_of(hwnd),
-            });
+        let seen = title.as_deref().and_then(editor_window).map(|hwnd| Seen {
+            hwnd,
+            pid: window_pid(hwnd),
+            label: label_of(hwnd),
+        });
         last = seen.or(last);
         if let Some(seen) = seen
             && done(&seen)

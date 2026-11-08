@@ -118,8 +118,13 @@ fn the_window_follows_the_plugin_through_each_swap() {
     for (s, before) in [(latency, open), (added, latency)] {
         assert_eq!(s.n("delay"), 128, "the value moved in the window");
         assert_eq!(s.n("pid"), before.n("pid"), "the same host");
-        assert_ne!(s.n("instance"), before.n("instance"), "a new instance");
     }
+    assert_ne!(latency.n("instance"), open.n("instance"), "latency rebuild");
+    assert_eq!(
+        added.n("instance"),
+        latency.n("instance"),
+        "unchanged track retained"
+    );
     for s in [shared, inprocess, dedicated] {
         assert_eq!(s.n("delay"), 128, "the value moved in the window");
         assert_eq!(s.n("pid"), s.n("window-pid"), "the window of the instance");
