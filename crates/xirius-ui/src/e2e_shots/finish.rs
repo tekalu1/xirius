@@ -131,10 +131,13 @@ pub(super) fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) -> Done {
             ))
         }
         32 => {
+            crate::shot::run_for(&mut s.borrow_mut(), 30.0, |s| !s.input_blocked());
             memo(|m| m.full = Some(song_json(s)));
             let mut steps = 0;
             while s.borrow().song.can_undo() && steps < MOST_STEPS {
                 keys("ctrl-z", w, cx);
+                crate::shot::run_for(&mut s.borrow_mut(), 30.0, |s| !s.input_blocked());
+                check(!s.borrow().input_blocked(), "undo did not finish")?;
                 steps += 1;
             }
             memo(|m| m.steps = steps);
@@ -159,6 +162,8 @@ pub(super) fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) -> Done {
             let mut steps = 0;
             while s.borrow().song.can_redo() && steps < MOST_STEPS {
                 keys("ctrl-y", w, cx);
+                crate::shot::run_for(&mut s.borrow_mut(), 30.0, |s| !s.input_blocked());
+                check(!s.borrow().input_blocked(), "redo did not finish")?;
                 steps += 1;
             }
             let undone = memo(|m| m.steps);
@@ -188,6 +193,8 @@ fn export(s: &Studio1, format: &str, w: &mut Window, cx: &mut App) -> Result<(),
 }
 
 fn wait_export(s: &Studio1) -> Result<(), String> {
+    crate::shot::run_for(&mut s.borrow_mut(), 60.0, |s| !s.input_blocked());
+    check(!s.borrow().input_blocked(), "export request did not finish")?;
     crate::shot::run_for(&mut s.borrow_mut(), 60.0, |s| !s.export.running());
     let view = s.borrow().export_view();
     let card = view.cards.first().ok_or("no card")?;
