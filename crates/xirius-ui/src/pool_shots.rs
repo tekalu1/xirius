@@ -281,6 +281,13 @@ fn menu_row(s: &Studio1, g: &Geometry, label: &str) -> (f32, f32) {
 
 /// The labels of the menu that is open, without its gaps.
 fn labels(s: &Studio1) -> Vec<String> {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !s.borrow().context_open() {
+        assert!(std::time::Instant::now() < end, "file menu read timed out");
+        s.borrow_mut().poll_browser_menu();
+        s.borrow_mut().tick();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     s.borrow()
         .context_rows()
         .into_iter()
@@ -313,6 +320,7 @@ fn answer(s: &Studio1, want: &FileRequest, paths: &[PathBuf]) {
     let asked = s.borrow_mut().file_request.take();
     assert_eq!(asked.as_ref(), Some(want));
     s.borrow_mut().finish_picked(asked.unwrap(), paths);
+    crate::shot::run_for(&mut s.borrow_mut(), 15.0, |s| !s.input_blocked());
 }
 
 fn notice(s: &Studio1) -> String {
@@ -374,6 +382,7 @@ fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) {
             let at = pool_mid(&s.borrow(), &g, "Vocal_01.wav");
             click(at, w, cx);
             let key = root.join("曲").join(VOCAL_1);
+            crate::shot::run_for(&mut s.borrow_mut(), 15.0, |s| !s.input_blocked());
             let selected = s.borrow().browser.selected_file.clone().unwrap();
             assert_eq!(Path::new(&selected), key);
             right_click(at, w, cx);
@@ -445,6 +454,7 @@ fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) {
             click(at, w, cx);
             assert_eq!(s.borrow().error, None);
             // Pad.wav, and Bass.wav and Gtr.wav where stage 3 found them.
+            crate::shot::run_for(&mut s.borrow_mut(), 15.0, |s| !s.input_blocked());
             assert_eq!(notice(s), "ファイル 3 個を曲のフォルダーにコピーしました");
             s.borrow_mut().follow_browser();
             settle_pool(&mut s.borrow_mut());
@@ -467,7 +477,6 @@ fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) {
             let selected = s.borrow().browser.selected_file.clone().unwrap();
             assert_eq!(Path::new(&selected), root.join("曲").join(VOCAL_1));
             keys("shift-f10", w, cx);
-            assert!(s.borrow().context_open());
             assert_eq!(labels(s)[0], "新しいトラックに置く");
             keys("escape", w, cx);
         }
@@ -479,6 +488,13 @@ fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) {
             let from = pool_mid(&s.borrow(), &g, "Kick.wav");
             let to = (g.lanes.x + g.lanes.w * 0.6, g.lanes.bottom() - 30.0);
             drag(from, to, w, cx);
+            let end = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            while s.borrow().project().tracks.len() == tracks {
+                assert!(std::time::Instant::now() < end, "pool drop did not finish");
+                s.borrow_mut().poll_browser_import();
+                s.borrow_mut().tick();
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
             assert_eq!(s.borrow().error, None);
             assert_eq!(s.borrow().project().tracks.len(), tracks + 1);
             assert_eq!(using(&s.borrow(), KICK), 2);

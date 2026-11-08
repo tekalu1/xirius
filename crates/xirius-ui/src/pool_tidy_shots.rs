@@ -180,6 +180,20 @@ fn open_cleanup(s: &Studio1, w: &mut Window, cx: &mut App) {
     let g = geometry(s, w);
     let more = s.borrow().browser.layout(g.panel).more.expect("the 「…」");
     click(mid(more), w, cx);
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !s
+        .borrow()
+        .context_rows()
+        .iter()
+        .any(|row| row.label == "使われていない録音を整理…" && row.enabled)
+    {
+        assert!(
+            std::time::Instant::now() < end,
+            "cleanup menu read timed out"
+        );
+        s.borrow_mut().tick();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     let at = cell(s, &g, "使われていない録音を整理…");
     click(at, w, cx);
     let end = std::time::Instant::now() + std::time::Duration::from_secs(15);
@@ -191,6 +205,7 @@ fn open_cleanup(s: &Studio1, w: &mut Window, cx: &mut App) {
     {
         assert!(std::time::Instant::now() < end, "cleanup read timed out");
         s.borrow_mut().poll_cleanup_read();
+        s.borrow_mut().tick();
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
@@ -293,6 +308,7 @@ fn play(n: u8, s: &Studio1, w: &mut Window, cx: &mut App) {
             click(at, w, cx);
             assert!(s.borrow().popup.is_none());
             assert_eq!(s.borrow().error, None);
+            crate::shot::run_for(&mut s.borrow_mut(), 15.0, |s| !s.input_blocked());
             assert_eq!(
                 s.borrow().notice_text(),
                 Some("使われていない録音 3 個をごみ箱に移動しました")
