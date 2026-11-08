@@ -79,10 +79,33 @@ impl Studio {
             }
             "range.from-clips" => self.range_from_clips(),
             "browser.search" => self.browser_search(g),
+            "view.preset-copy" => {
+                let Some(id) = text(args, "entry") else {
+                    return Some(false);
+                };
+                self.browse_run(super::browser::BrowseAct::CopyPreset(id.to_string()))
+            }
             "browser.tab" => {
+                if text(args, "tab") == Some("tracks") {
+                    self.browser.tab = RailTab::Instruments;
+                    self.browser.track_kind = true;
+                    self.browser.open = true;
+                    self.rebuild(g);
+                    return Some(true);
+                }
                 let Some(tab) = text(args, "tab").and_then(RailTab::from_name) else {
                     return Some(false);
                 };
+                if matches!(tab, RailTab::Instruments | RailTab::Effects) {
+                    let same =
+                        self.browser.open && self.browser.tab == tab && !self.browser.track_kind;
+                    self.browser.tab = tab;
+                    self.browser.track_kind = false;
+                    self.browser.open = !same;
+                    self.rebuild(g);
+                    return Some(true);
+                }
+                self.browser.track_kind = false;
                 self.press(g, crate::studio::Hit::Rail(tab))
             }
             "view.browser.sort" => self.browser_sort(g, args),

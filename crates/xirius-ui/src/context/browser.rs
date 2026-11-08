@@ -32,6 +32,7 @@ pub enum FxTarget {
 /// What a row of a browser menu does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BrowseAct {
+    CopyPreset(String),
     /// An instrument on a new track.
     UseNew(&'static str),
     /// An instrument in place of the selected track's.
@@ -245,6 +246,11 @@ impl Studio {
                 };
                 self.dir_items(&PathBuf::from(key))
             }
+            Some(BrowserHit::Loc(_) | BrowserHit::LocRemove(_))
+                if self.browser.is_track_browser() =>
+            {
+                return false;
+            }
             Some(BrowserHit::Loc(i) | BrowserHit::LocRemove(i)) => self.place_items(i),
             Some(BrowserHit::Group(_)) if !files && !pool => self.list_items(),
             None if !files && !pool && l.list.contains(x, y) => self.list_items(),
@@ -260,7 +266,12 @@ impl Studio {
     /// S38: an instrument.
     fn instrument_items(&mut self, name: &'static str) -> Vec<Item> {
         let b = &self.browser;
-        let (fav, hidden) = (b.favourites.contains(name), b.hidden.contains(name));
+        let key = b
+            .track_library
+            .as_ref()
+            .and_then(|es| es.iter().find(|e| e.file.is_none() && e.name == name))
+            .map_or(name, |e| e.id.as_str());
+        let (fav, hidden) = (b.favourites.contains(key), b.hidden.contains(name));
         let here = self.selected_track_of(TrackKind::Instrument).is_some();
         vec![
             act("新しいトラックで使う", BrowseAct::UseNew(name)),
@@ -283,7 +294,12 @@ impl Studio {
     /// S39: an effect.
     fn effect_items(&mut self, name: &'static str) -> Vec<Item> {
         let b = &self.browser;
-        let (fav, hidden) = (b.favourites.contains(name), b.hidden.contains(name));
+        let key = b
+            .track_library
+            .as_ref()
+            .and_then(|es| es.iter().find(|e| e.file.is_none() && e.name == name))
+            .map_or(name, |e| e.id.as_str());
+        let (fav, hidden) = (b.favourites.contains(key), b.hidden.contains(name));
         let found = self.effect_pick(name).is_some();
         let channel = matches!(self.selected_row, Some(RowKind::Track(_)));
         vec![
@@ -306,6 +322,25 @@ impl Studio {
 
     /// A preset row of a built-in device (BRW-017).
     fn preset_row_items(&mut self, device: &'static str, name: &str) -> Vec<Item> {
+        if let Some(e) = self
+            .browser
+            .track_library
+            .as_ref()
+            .and_then(|es| es.iter().find(|e| e.id == device))
+        {
+            return vec![
+                act("読み込む", BrowseAct::LoadPreset(device, name.to_string())),
+                Item::new(
+                    "お気に入り",
+                    Run::Cmd("browser.preset.favourite", json!({"entry": e.id})),
+                )
+                .on(self.browser.favourites.contains(&e.id)),
+                Item::sub(
+                    "ファイル",
+                    vec![act("User にコピー…", BrowseAct::CopyPreset(e.id.clone()))],
+                ),
+            ];
+        }
         let key = crate::browser::preset_key(device, name);
         let fav = self.browser.favourites.contains(&key);
         vec![
@@ -540,6 +575,19 @@ impl Studio {
                 None => false,
             },
             BrowseAct::Favourite(name, on) => {
+                if let Some(id) = self
+                    .browser
+                    .track_library
+                    .as_ref()
+                    .and_then(|es| es.iter().find(|e| e.file.is_none() && e.name == name))
+                    .map(|e| e.id.clone())
+                {
+                    if self.browser.favourites.contains(&id) != on {
+                        // design-lint: allow(ui-blocking-io) BRW-017: favourites are written on the song owner through io_command::handles.
+                        self.run_command("browser.preset.favourite", json!({"entry": id}));
+                    }
+                    return true;
+                }
                 if self.browser.favourites.contains(name) != on {
                     self.browser.toggle_favourite(name);
                 }
@@ -548,6 +596,25 @@ impl Studio {
             BrowseAct::FavouritePreset(key, on) => {
                 if self.browser.favourites.contains(&key) != on {
                     self.browser.toggle_favourite(&key);
+                }
+                true
+            }
+            BrowseAct::CopyPreset(id) => {
+                if let Some(e) = self
+                    .browser
+                    .track_library
+                    .as_ref()
+                    .and_then(|es| es.iter().find(|e| e.id == id))
+                    .cloned()
+                {
+                    self.open_track_preset_save(
+                        "browser.preset.copy",
+                        json!({"entry": e.id}),
+                        &e.name,
+                        e.category.label(),
+                        e.has_fx,
+                        e.fx_names.join(" · "),
+                    );
                 }
                 true
             }

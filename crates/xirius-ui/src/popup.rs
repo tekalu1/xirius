@@ -292,6 +292,7 @@ pub struct Popup {
     pub ctx_parents: Vec<(Vec<crate::context::Row>, usize, usize)>,
     /// What a right-click menu's name box shows, while it asks for a name.
     pub ask: Option<String>,
+    pub preset_save: Option<crate::context::ask::PresetSave>,
     pub ctx_query: Option<String>,
     /// The search box of a right-click menu takes the keys now (no value's field does).
     pub ctx_search: bool,
@@ -340,6 +341,7 @@ impl Popup {
             ctx: Vec::new(),
             ctx_parents: Vec::new(),
             ask: None,
+            preset_save: None,
             ctx_query: None,
             ctx_search: false,
             skipped: None,
@@ -446,6 +448,7 @@ pub enum Look {
     Row,
     /// A search leaf and its category path on the second line.
     ContextResult(String),
+    Check,
     Chip,
     /// The tray a row of [`Look::Segment`]s sits in.
     Tray,
@@ -737,6 +740,13 @@ impl Popup {
                     Layout::MENU_W,
                 ),
             ),
+            PopupKind::Context if self.preset_save.is_some() => (
+                280.0,
+                crate::context::ask::preset_cells(
+                    self.preset_save.as_ref().unwrap(),
+                    self.ask.as_deref().unwrap_or_default(),
+                ),
+            ),
             PopupKind::Context => match &self.ask {
                 Some(text) => (
                     Layout::MENU_W,
@@ -846,11 +856,11 @@ impl Popup {
         x = x.clamp(4.0, (size.0 - width - 4.0).max(4.0));
         // Above the anchor when there is no room under it (the mixer's rows).
         let below = self.anchor.bottom() + ANCHOR_GAP;
-        if self.kind == PopupKind::Cleanup {
+        if self.kind == PopupKind::Cleanup || self.preset_save.is_some() {
             // In the middle of the window, over the veil.
             x = ((size.0 - width) / 2.0).max(4.0);
         }
-        let y = if self.kind == PopupKind::Cleanup {
+        let y = if self.kind == PopupKind::Cleanup || self.preset_save.is_some() {
             ((size.1 - height) / 2.0).max(4.0)
         } else if self.kind == PopupKind::Skipped {
             // Over the toast at the foot of the window, which stays.
@@ -1556,6 +1566,29 @@ pub(crate) fn paint_cell(pen: &mut Pen, cell: &Cell, hot: bool) {
                 c.ink,
                 Rect::new(r.x, r.y, r.w - pad, r.h),
                 Align::Right,
+            );
+        }
+        Look::Check => {
+            if hot {
+                pen.round(r, c.hover, Radius::S);
+            }
+            let box_r = Rect::new(r.x + pad, r.y + (r.h - 16.0) / 2.0, 16.0, 16.0);
+            pen.round(box_r, c.ink, Radius::Xs);
+            pen.round(
+                Rect::new(box_r.x + 1.0, box_r.y + 1.0, 14.0, 14.0),
+                if cell.on { c.sel } else { c.well },
+                Radius::Xs,
+            );
+            if cell.on {
+                pen.icon("check", box_r, strong);
+            }
+            pen.text(
+                &cell.text,
+                FontSize::Small,
+                Weight::Regular,
+                strong,
+                Rect::new(box_r.right() + pad, r.y, r.w - 32.0, r.h),
+                Align::Left,
             );
         }
         Look::Row => {

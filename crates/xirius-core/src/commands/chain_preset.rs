@@ -152,9 +152,48 @@ pub(super) fn put(
                 )));
             }
             let t = p.track_mut(tid)?;
-            let taken: Vec<PluginId> = t.inserts.iter().map(|x| x.id).collect();
+            let keep_fx = chain.rack.fx.is_empty();
+            let old_rack = t
+                .rack
+                .clone()
+                .unwrap_or_else(|| crate::rack::Rack::serial(t));
+            let taken: Vec<PluginId> = if keep_fx {
+                crate::rack::Rack {
+                    source: old_rack.source,
+                    fx: Vec::new(),
+                }
+                .flatten_order()
+            } else {
+                t.inserts.iter().map(|x| x.id).collect()
+            };
             gone_keys = take_off(t, &taken);
-            t.inserts = chain.devices;
+            if keep_fx {
+                chain.rack.fx = old_rack.fx;
+                t.inserts.extend(chain.devices);
+                t.controls.retarget(|target| match target {
+                    AutoTarget::Param(id, _) if taken.contains(id) => None,
+                    _ => Some(target.clone()),
+                });
+                let laned = t
+                    .automation
+                    .iter()
+                    .filter_map(|l| match l.target {
+                        AutoTarget::Control(c) => Some(c),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                merge(
+                    &mut t.controls,
+                    &chain.controls,
+                    &laned,
+                    &name,
+                    &mut rows,
+                    &mut moved,
+                );
+                chain.controls = t.controls.clone();
+            } else {
+                t.inserts = chain.devices;
+            }
             t.rack = Some(chain.rack);
             let page = t.controls.page.take();
             let xy = t.controls.xy;
@@ -163,7 +202,9 @@ pub(super) fn put(
                 xy,
                 ..chain.controls
             };
-            drop_control_lanes(t, &mut rows);
+            if !keep_fx {
+                drop_control_lanes(t, &mut rows);
+            }
         }
     }
     // Its devices' values and maps of older keys under the song's, as a song is read and a

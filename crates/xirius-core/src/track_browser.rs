@@ -48,6 +48,8 @@ pub struct Entry {
     pub folder: Vec<String>,
     pub file: Option<String>,
     pub has_fx: bool,
+    #[serde(default)]
+    pub fx_names: Vec<String>,
 }
 
 impl Entry {
@@ -280,6 +282,7 @@ mod tests {
             folder: vec!["Keys".into()],
             file: Some("one.xpreset".into()),
             has_fx: true,
+            fx_names: vec!["EQ".into()],
         }
     }
     #[test]

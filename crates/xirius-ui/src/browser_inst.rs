@@ -231,7 +231,15 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
                 });
             }
             let name = &studio.project().tracks[&t].name;
-            if d.preset.is_some() {
+            if d.preset.as_ref().is_some_and(|held| {
+                studio
+                    .browser
+                    .track_library
+                    .as_ref()
+                    .is_some_and(|es| es.iter().any(|e| e.id == held.device && e.has_fx))
+            }) {
+                "インストゥルメントと FX を置き換え".to_string()
+            } else if d.preset.is_some() {
                 format!("{name} に読み込む")
             } else {
                 format!("{name} のインストゥルメントにする")

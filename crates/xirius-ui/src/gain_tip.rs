@@ -32,6 +32,7 @@ pub fn text(db: f64) -> String {
 impl Studio {
     /// A command ran from the screen: a normalize leaves its tip.
     pub(crate) fn after_command(&mut self, command: &str, data: &Value) {
+        self.track_browser_answer(command, data);
         self.after_file_command(command, data);
         if matches!(command, "prefs.set" | "prefs.reset") {
             self.apply_edit_prefs();

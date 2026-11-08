@@ -30,7 +30,15 @@ pub const DEFAULT_PRESET: &str = "Default";
 /// The kinds of one device a `.xpreset` may hold (the chains are [`crate::chain_preset`]).
 pub const KINDS: [&str; 2] = ["fx", "instrument"];
 
-const KEYS: [&str; 6] = ["format", "version", "kind", "name", "saved_at", "devices"];
+const KEYS: [&str; 7] = [
+    "format",
+    "version",
+    "kind",
+    "name",
+    "saved_at",
+    "devices",
+    "browser_folder",
+];
 const DEVICE_KEYS: [&str; 8] = [
     "ref", "name", "kind", "format", "uid", "params", "state", "samples",
 ];

@@ -29,6 +29,40 @@ pub struct HeldPreset {
 }
 
 impl Studio {
+    pub(crate) fn track_browser_answer(&mut self, name: &str, data: &serde_json::Value) {
+        if name == "browser.preset.list"
+            && let Ok(entries) = serde_json::from_value(data["entries"].clone())
+        {
+            self.browser.track_library = Some(entries);
+        }
+        if matches!(name, "browser.preset.list" | "browser.preset.favourite")
+            && let Ok(favourites) = serde_json::from_value::<std::collections::BTreeSet<String>>(
+                data["favourites"].clone(),
+            )
+        {
+            self.browser.favourites.retain(|id| {
+                !id.starts_with("device:")
+                    && !id.starts_with("preset:")
+                    && !id.starts_with("factory:")
+            });
+            self.browser.favourites.extend(favourites);
+        }
+        if matches!(
+            name,
+            "browser.preset.save"
+                | "browser.preset.copy"
+                | "preset.save"
+                | "preset.remove"
+                | "preset.rename"
+                | "preset.factory.restore"
+                | "track.preset.save"
+                | "track.preset.update"
+                | "track.preset.remove"
+                | "track.preset.rename"
+        ) {
+            self.browser.track_library = None;
+        }
+    }
     /// The browser's rows take the preset files as last read (the device's `Default` is
     /// its knobs' defaults, not a file, and has no row).
     pub(crate) fn sync_browser_presets(&mut self) {
@@ -38,7 +72,10 @@ impl Studio {
                 by_device.entry(s.device).or_default().push(s.name.clone());
             }
         }
-        self.browser.presets = by_device;
+        if self.browser.presets != by_device {
+            self.browser.track_library = None;
+            self.browser.presets = by_device;
+        }
     }
 
     /// The built-in device `uid` on track `t`: the track's instrument that is it (a multi's
@@ -63,6 +100,18 @@ impl Studio {
     /// with it when the track has none (an instrument in place of the track's), one step.
     /// The track is selected.
     pub fn load_browser_preset(&mut self, t: TrackId, uid: &str, name: &str) -> bool {
+        if self
+            .browser
+            .track_library
+            .as_ref()
+            .is_some_and(|es| es.iter().any(|e| e.id == uid))
+        {
+            // design-lint: allow(ui-blocking-io) BRW-017: the guarded dispatcher sends preset I/O to the song owner via io_command::handles.
+            return self.run_command(
+                "browser.preset.apply",
+                json!({"track": t.to_string(), "entry": uid, "target": "track"}),
+            );
+        }
         let Some(def) = xirius_params::find(uid) else {
             return false;
         };
@@ -113,6 +162,18 @@ impl Studio {
 
     /// A new instrument track playing the device `uid`, then its preset `name` (two steps).
     pub fn preset_on_new_track(&mut self, uid: &str, name: &str) -> bool {
+        if self
+            .browser
+            .track_library
+            .as_ref()
+            .is_some_and(|es| es.iter().any(|e| e.id == uid))
+        {
+            // design-lint: allow(ui-blocking-io) BRW-017: the guarded dispatcher sends preset I/O to the song owner via io_command::handles.
+            return self.run_command(
+                "browser.preset.apply",
+                json!({"entry": uid, "target": "new"}),
+            );
+        }
         let Some(def) = xirius_params::find(uid) else {
             return false;
         };
@@ -131,7 +192,26 @@ impl Studio {
         let Some((uid, name)) = self.browser.selected_preset.clone() else {
             return false;
         };
-        let effect = xirius_params::find(uid).is_some_and(|d| d.kind == Kind::Effect);
+        let effect = self
+            .browser
+            .track_library
+            .as_ref()
+            .and_then(|es| es.iter().find(|e| e.id == uid))
+            .map_or_else(
+                || xirius_params::find(uid).is_some_and(|d| d.kind == Kind::Effect),
+                |e| e.category.tab() == "effects",
+            );
+        if self.browser.track_library.as_ref().is_some_and(|es| {
+            es.iter()
+                .any(|e| e.id == uid && e.category == xirius_core::track_browser::Category::Track)
+        }) {
+            return match self.selected_row {
+                Some(RowKind::Track(t)) if t != TrackId::MASTER => {
+                    self.load_browser_preset(t, uid, &name)
+                }
+                _ => self.preset_on_new_track(uid, &name),
+            };
+        }
         if effect {
             let t = match self.selected_row {
                 Some(RowKind::Track(t)) => t,
@@ -165,7 +245,16 @@ impl Studio {
         else {
             return false;
         };
-        let Some(def) = xirius_params::find(device) else {
+        let drag_name = if let Some(e) = self
+            .browser
+            .track_library
+            .as_ref()
+            .and_then(|es| es.iter().find(|e| e.id == device))
+        {
+            crate::browser::intern(&e.name)
+        } else if let Some(def) = xirius_params::find(device) {
+            def.name
+        } else {
             return false;
         };
         self.mixer.browser_fx_focus = true;
@@ -175,7 +264,7 @@ impl Studio {
             return self.load_selected_preset();
         }
         self.browser.drag = Some(LibDrag {
-            name: def.name,
+            name: drag_name,
             icon: if effect { "effects" } else { "keys" },
             from: (x, y),
             at: (x, y),
@@ -192,6 +281,21 @@ impl Studio {
     /// What dropping a preset at a point does: an effect's goes on a track the effects
     /// would (the mixer's strips, the track rows), an instrument's as an instrument would.
     pub fn preset_drop_at(&self, g: &Geometry, x: f32, y: f32, effect: bool) -> Drop {
+        if let Some(held) = self.browser.drag.as_ref().and_then(|d| d.preset.as_ref())
+            && self
+                .browser
+                .track_library
+                .as_ref()
+                .is_some_and(|es| es.iter().any(|e| e.id == held.device))
+        {
+            let Some(args) = self.track_preset_drop_args(g, x, y, held.device) else {
+                return Drop::Nothing;
+            };
+            return args["track"]
+                .as_str()
+                .and_then(|t| t.parse().ok())
+                .map_or(Drop::New, Drop::Replace);
+        }
         if !effect {
             return self.lib_drop_at(g, x, y);
         }
@@ -203,6 +307,18 @@ impl Studio {
 
     /// Letting go of a held preset that moved.
     pub(crate) fn preset_drop(&mut self, g: &Geometry, x: f32, y: f32, held: &HeldPreset) {
+        if self
+            .browser
+            .track_library
+            .as_ref()
+            .is_some_and(|es| es.iter().any(|e| e.id == held.device))
+        {
+            if let Some(args) = self.track_preset_drop_args(g, x, y, held.device) {
+                // design-lint: allow(ui-blocking-io) BRW-017: the guarded dispatcher sends preset I/O to the song owner via io_command::handles.
+                self.run_command("browser.preset.apply", args);
+            }
+            return;
+        }
         match self.preset_drop_at(g, x, y, held.effect) {
             Drop::Replace(t) => {
                 self.load_browser_preset(t, held.device, &held.name);
@@ -212,6 +328,98 @@ impl Studio {
             }
             Drop::Nothing => {}
         }
+    }
+
+    fn track_preset_drop_args(
+        &self,
+        g: &Geometry,
+        x: f32,
+        y: f32,
+        id: &str,
+    ) -> Option<serde_json::Value> {
+        use crate::mixer::{MixerHit, flow::Pick};
+        use xirius_core::track_browser::Category;
+        let e = self
+            .browser
+            .track_library
+            .as_ref()?
+            .iter()
+            .find(|e| e.id == id)?;
+        let effect = e.category.tab() == "effects";
+        let mut args = json!({"entry": id, "target": "track"});
+        if let Some(hit) = self.mixer_hit(g, x, y) {
+            let t = hit.track();
+            if !effect
+                && e.category != Category::Track
+                && self.project().tracks.get(&t)?.kind != TrackKind::Instrument
+            {
+                return None;
+            }
+            args["track"] = json!(t.to_string());
+            match hit {
+                MixerHit::Open(_, p) | MixerHit::Bypass(_, p) => {
+                    let project = self.project();
+                    let plugin = project.tracks.get(&t)?.inserts.iter().find(|x| x.id == p)?;
+                    if plugin.kind == xirius_core::model::PluginKind::Instrument {
+                        if effect || e.category == Category::Track {
+                            return None;
+                        }
+                        args["target"] = json!("instrument");
+                    } else {
+                        if !effect {
+                            return None;
+                        }
+                        args["target"] = json!("effect");
+                        args["of"] = json!(p.to_string());
+                    }
+                }
+                MixerHit::After(_, pick) => {
+                    if !effect {
+                        return None;
+                    }
+                    args["target"] = json!("insert");
+                    args["at"] = json!(match pick {
+                        Pick::Plugin(p) => format!("after:{p}"),
+                        Pick::Split(n) => format!("after:{n}"),
+                        Pick::Branch(n) => format!("branch:{n}"),
+                    });
+                }
+                MixerHit::AddInstrument(_) => {
+                    if effect || e.category == Category::Track {
+                        return None;
+                    }
+                    args["target"] = json!("instrument");
+                }
+                MixerHit::AddInsert(_) => {
+                    if !effect {
+                        return None;
+                    }
+                    args["target"] = json!("insert");
+                }
+                MixerHit::Strip(_) => {}
+                _ => return None,
+            }
+            return Some(args);
+        }
+        if !g.column.contains(x, y) && !g.lanes.contains(x, y) {
+            return None;
+        }
+        if let Some(RowKind::Track(t)) = self
+            .tree()
+            .row_at(y - g.column.y + self.scroll.1)
+            .map(|r| r.kind)
+        {
+            if !effect
+                && e.category != Category::Track
+                && self.project().tracks.get(&t)?.kind != TrackKind::Instrument
+            {
+                return None;
+            }
+            args["track"] = json!(t.to_string());
+        } else {
+            args["target"] = json!("new");
+        }
+        Some(args)
     }
 
     /// The device window's ブラウザーに表示: the browser opens on the device's tab with the
@@ -233,7 +441,18 @@ impl Studio {
                     .get(def.uid)
                     .is_some_and(|all| all.iter().any(|x| x == n))
             })
-            .map(|n| (def.uid, n.to_string()));
+            .map(|n| {
+                let id = self
+                    .browser
+                    .track_library
+                    .as_ref()
+                    .and_then(|es| {
+                        es.iter()
+                            .find(|e| e.device == def.uid && e.name == n && e.file.is_some())
+                    })
+                    .map_or(def.uid, |e| crate::browser::intern(&e.id));
+                (id, n.to_string())
+            });
         self.browser.show_device(tab, def.name, row);
         self.mixer.browser_fx_focus = true;
         true

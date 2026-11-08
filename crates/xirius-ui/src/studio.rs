@@ -1687,6 +1687,22 @@ impl Studio {
             }
             Hit::Inspector(part) => self.inspector_press(g, part),
             Hit::Browser(hit) => {
+                if let crate::browser::BrowserHit::Fav(i) = hit
+                    && self.browser.is_track_browser()
+                    && self.browser.track_library.is_some()
+                    && let Some(e) = self
+                        .browser
+                        .track_rows()
+                        .get(i)
+                        .and_then(|r| r.entry.clone())
+                {
+                    // design-lint: allow(ui-blocking-io) BRW-017: favourites are written on the song owner through io_command::handles.
+                    self.run_command(
+                        "browser.preset.favourite",
+                        serde_json::json!({"entry": e.id}),
+                    );
+                    return true;
+                }
                 let l = self.browser.layout(g.panel);
                 match self.browser.press(&l, hit) {
                     BrowserEffect::ChooseView => {
@@ -2280,6 +2296,11 @@ impl Studio {
                 })
                 .unwrap_or_default();
             p.ask = ask;
+            p.preset_save = self
+                .ctx
+                .as_ref()
+                .and_then(|s| s.ask.as_ref())
+                .and_then(|a| a.preset.clone());
             p.ctx_query = query;
             p.ctx_search = self.ctx.as_ref().is_some_and(|s| s.field.is_none());
         }

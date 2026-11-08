@@ -218,6 +218,7 @@ pub const LABELS: &[(&str, &str)] = &[
     ("browser.preset.favourite", "お気に入りを切り替え"),
     ("browser.preset.save", "プリセットを保存"),
     ("browser.preset.copy", "User にコピー"),
+    ("view.preset-copy", "User にコピー…"),
     ("preset.remove", "プリセットを削除"),
     ("preset.rename", "プリセット名を変更"),
     (

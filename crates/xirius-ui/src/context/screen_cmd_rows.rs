@@ -329,6 +329,17 @@ impl Studio {
                 else {
                     return Some(false);
                 };
+                if self
+                    .browser
+                    .track_library
+                    .as_ref()
+                    .is_some_and(|es| es.iter().any(|e| e.id == device))
+                {
+                    return Some(self.browse_run(BrowseAct::LoadPreset(
+                        crate::browser::intern(device),
+                        preset.to_string(),
+                    )));
+                }
                 let Some(def) = xirius_params::find(device) else {
                     return Some(false);
                 };

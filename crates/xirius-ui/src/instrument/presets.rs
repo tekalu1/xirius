@@ -30,6 +30,8 @@ const EVERY: Duration = Duration::from_millis(500);
 /// A preset file of a built-in device.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Saved {
+    pub has_fx: bool,
+    pub chain: bool,
     /// The device's uid.
     pub device: &'static str,
     pub name: String,
@@ -154,6 +156,8 @@ impl Presets {
                     .filter_map(|(k, v)| Some((k.clone(), v.as_f64()?)))
                     .collect();
                 Some(Saved {
+                    has_fx: r["has_fx"] == true,
+                    chain: r["chain"] == true,
                     device: def.uid,
                     name: r["name"].as_str()?.to_string(),
                     params,
@@ -221,6 +225,17 @@ impl Studio {
     /// (BRW-017), so a preset saved, renamed or deleted elsewhere (the CLI) shows; true when
     /// the list changed.
     pub(crate) fn poll_presets(&mut self) -> bool {
+        if ((self.browser.open && self.browser.is_track_browser())
+            || !self.instruments.open.is_empty()
+            || !self.mixer.editors.is_empty())
+            && self.browser.track_library.is_none()
+        {
+            self.browser.track_library = Some(Vec::new());
+            // design-lint: allow(ui-blocking-io) BRW-017: the file index is read on the song owner through io_command::handles.
+            if !self.run_command("browser.preset.list", json!({})) {
+                self.browser.track_library = None;
+            }
+        }
         let listed = self.browser.open
             && matches!(
                 self.browser.tab,
@@ -255,6 +270,31 @@ impl Studio {
         let Some((t, kind)) = self.device_place(id) else {
             return false;
         };
+        if overwrite
+            && let Some(e) = self
+                .browser
+                .track_library
+                .as_ref()
+                .and_then(|es| {
+                    let p = self.project();
+                    let x = p.tracks.get(&t)?.inserts.iter().find(|x| x.id == id)?;
+                    es.iter()
+                        .find(|e| e.source == "User" && e.device == x.uid && e.name == name)
+                })
+                .cloned()
+        {
+            // design-lint: allow(ui-blocking-io) BRW-017: the file save is handled by the song owner through io_command::handles.
+            return self.run_command("browser.preset.save", json!({"track": t.to_string(), "of": id.to_string(), "kind": xirius_core::xpreset::kind_name(kind), "name": name, "include_fx": e.has_fx, "folder": e.folder.join("/"), "overwrite": true}));
+        }
+        if overwrite
+            && self
+                .browser
+                .track_library
+                .as_ref()
+                .is_some_and(|es| es.iter().any(|e| e.source == "Factory" && e.name == name))
+        {
+            return self.save_preset_as(id);
+        }
         // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         self.run_command(
             "preset.save",
@@ -312,7 +352,41 @@ impl Studio {
                     .unwrap_or(n)
             })
             .unwrap_or_default();
-        self.ask_save_name("名前を付けて保存…", id, None, &initial);
+        let x = p.tracks[&t].inserts.iter().find(|x| x.id == id).unwrap();
+        let include_fx = self.instruments.presets.saved.as_ref().is_some_and(|es| {
+            es.iter().any(|e| {
+                e.device == x.uid && x.preset.as_deref() == Some(e.name.as_str()) && e.has_fx
+            })
+        }) || self.browser.track_library.as_ref().is_some_and(|es| {
+            es.iter().any(|e| {
+                e.device == x.uid && x.preset.as_deref() == Some(e.name.as_str()) && e.has_fx
+            })
+        });
+        let fx_names = xirius_core::chain_preset::Chain::capture(
+            &p.tracks[&t],
+            xirius_core::chain_preset::ChainKind::Instrument,
+            Some(xirius_core::id::AnyId::Plugin(id)),
+        )
+        .ok()
+        .map(|(c, _)| {
+            c.devices
+                .iter()
+                .filter(|x| x.kind == PluginKind::Effect)
+                .map(|x| x.name.as_str())
+                .collect::<Vec<_>>()
+                .join(" · ")
+        })
+        .unwrap_or_default();
+        let scope = format!(
+            "{} · {}",
+            if x.kind == PluginKind::Instrument {
+                "インストゥルメント"
+            } else {
+                "FX"
+            },
+            x.name
+        );
+        self.open_track_preset_save("browser.preset.save", json!({"track": t.to_string(), "of": id.to_string(), "kind": xirius_core::xpreset::kind_name(x.kind)}), &initial, &scope, include_fx, fx_names);
         true
     }
 

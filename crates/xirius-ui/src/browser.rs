@@ -37,9 +37,8 @@ pub enum RailTab {
 }
 
 impl RailTab {
-    pub const ALL: [RailTab; 5] = [
+    pub const ALL: [RailTab; 4] = [
         RailTab::Instruments,
-        RailTab::Effects,
         RailTab::Files,
         RailTab::SongFiles,
         RailTab::Inspector,
@@ -47,7 +46,7 @@ impl RailTab {
 
     pub fn icon(self) -> &'static str {
         match self {
-            RailTab::Instruments => "keys",
+            RailTab::Instruments => "arrange",
             RailTab::Effects => "effects",
             RailTab::Files => "file",
             RailTab::SongFiles => "pool",
@@ -57,7 +56,7 @@ impl RailTab {
 
     pub fn label(self) -> &'static str {
         match self {
-            RailTab::Instruments => "インストゥルメント",
+            RailTab::Instruments => "トラックブラウザー",
             RailTab::Effects => "エフェクト",
             RailTab::Files => "ファイル",
             RailTab::SongFiles => "プール",
@@ -314,6 +313,8 @@ fn group_name(item: &LibItem, view: View) -> &'static str {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Browser {
+    pub track_library: Option<Vec<xirius_core::track_browser::Entry>>,
+    pub track_kind: bool,
     /// Is the panel next to the rail shown?
     pub open: bool,
     pub tab: RailTab,
@@ -601,8 +602,28 @@ pub fn text_width(s: &str, size: FontSize) -> f32 {
 pub const AUDITION_H: f32 = 32.0;
 
 impl Browser {
+    pub fn is_track_browser(&self) -> bool {
+        matches!(self.tab, RailTab::Instruments | RailTab::Effects)
+    }
+
+    pub fn track_rows(&self) -> Vec<xirius_core::track_browser::Row> {
+        xirius_core::track_browser::tree(
+            self.track_library.as_deref().unwrap_or_default(),
+            if self.track_kind {
+                "tracks"
+            } else {
+                self.tab.name()
+            },
+            &self.search,
+            &self.closed_groups.iter().cloned().collect(),
+            &self.favourites,
+        )
+    }
+
     pub fn new() -> Browser {
         Browser {
+            track_library: None,
+            track_kind: false,
             open: true,
             tab: RailTab::Instruments,
             instrument_view: View::Kind,
@@ -683,6 +704,11 @@ impl Browser {
 
     /// A press on a rail button: a second press on the open tab shuts the panel.
     pub fn press_rail(&mut self, tab: RailTab) {
+        let tab = if tab == RailTab::Instruments && self.is_track_browser() {
+            self.tab
+        } else {
+            tab
+        };
         self.prefs_selection_changed();
         if self.tab != tab {
             self.pool_heading = None;
@@ -772,6 +798,15 @@ impl Browser {
 
     /// Shows or hides the presets under a built-in device.
     pub fn toggle_device(&mut self, name: &'static str) {
+        if let Some(e) = self
+            .track_library
+            .as_ref()
+            .and_then(|es| es.iter().find(|e| e.file.is_none() && e.name == name))
+        {
+            let key = format!("device/{}", e.device);
+            self.toggle_group(&key);
+            return;
+        }
         if !self.open_devices.remove(name) {
             self.open_devices.insert(name);
         }
@@ -792,6 +827,10 @@ impl Browser {
         }
         self.open = true;
         self.tab = tab;
+        self.track_kind = false;
+        if self.track_library.is_some() {
+            self.closed_groups.clear();
+        }
         self.search.clear();
         self.typing = false;
         if self.view() == View::Favourites {
@@ -848,6 +887,52 @@ impl Browser {
 
     /// The rows of the list, with no positions yet.
     pub fn rows(&self) -> Vec<BRow> {
+        if self.is_track_browser() && self.track_library.is_some() {
+            return self
+                .track_rows()
+                .into_iter()
+                .map(|r| match r.entry {
+                    Some(e) if e.file.is_none() => BRow::Item {
+                        item: LibItem {
+                            name: intern(&e.name),
+                            effect: e.category.tab() == "effects",
+                            icon: if e.category.tab() == "effects" {
+                                "effects"
+                            } else {
+                                "keys"
+                            },
+                            vendor: intern(&e.vendor),
+                            format: if xirius_params::find(&e.device).is_some() {
+                                BUILT_IN
+                            } else {
+                                "plugin"
+                            },
+                            kind: e.category.label(),
+                        },
+                        vendor_text: true,
+                        fav: r.favourite,
+                        selected: self.selected_item == Some(e.name.as_str()),
+                        presets: r.branch.then_some(r.open),
+                    },
+                    Some(e) => BRow::Preset {
+                        device: intern(&e.id),
+                        name: e.name.clone(),
+                        effect: e.category.tab() == "effects",
+                        fav: r.favourite,
+                        selected: self
+                            .selected_preset
+                            .as_ref()
+                            .is_some_and(|(d, _)| *d == e.id),
+                    },
+                    None => BRow::Group {
+                        key: r.key,
+                        name: intern(&r.label),
+                        count: 0,
+                        open: r.open,
+                    },
+                })
+                .collect();
+        }
         match self.tab {
             RailTab::Files => self.file_rows(),
             RailTab::SongFiles => self.pool_rows(),
@@ -984,6 +1069,19 @@ impl Browser {
 
     /// Opens (`true`) or folds every group of the list.
     pub fn fold_groups(&mut self, open: bool) {
+        if self.is_track_browser() && self.track_library.is_some() {
+            if open {
+                self.closed_groups.clear();
+            } else {
+                self.closed_groups.extend(
+                    self.track_rows()
+                        .into_iter()
+                        .filter(|r| r.branch)
+                        .map(|r| r.key),
+                );
+            }
+            return;
+        }
         for key in self.groups() {
             if open {
                 self.closed_groups.remove(&key);
@@ -1004,9 +1102,10 @@ impl Browser {
         let corner = Rect::new(panel.right() - pad - button, y, button, button);
         // The song-files tab has its 「…」 in the corner and the order's button before it.
         let beside = Rect::new(corner.x - Space::X1.px() - button, y, button, button);
-        let view = (!files).then_some(if pool { beside } else { corner });
+        let view =
+            (!files && !self.is_track_browser()).then_some(if pool { beside } else { corner });
         let more = pool.then_some(corner);
-        let buttons = if files {
+        let buttons = if files || self.is_track_browser() {
             0.0
         } else if pool {
             2.0
@@ -1021,6 +1120,18 @@ impl Browser {
         let mut add = None;
         let mut remove = None;
         let mut crumbs = Vec::new();
+        if self.is_track_browser() {
+            let w = Layout::BROWSER_ROW_H;
+            for i in 0..3 {
+                tabs.push(Rect::new(
+                    panel.x + pad + (w + Space::X2.px()) * i as f32,
+                    y,
+                    w,
+                    Layout::BROWSER_ROW_H,
+                ));
+            }
+            y += Layout::BROWSER_ROW_H + Space::X1.px();
+        }
         if files {
             // The tabs share the width when they are too many for it; the plus is last.
             let locs = self.locations();
@@ -1070,6 +1181,9 @@ impl Browser {
         let mut at = 0.0;
         for row in self.rows() {
             let h = match &row {
+                BRow::Group { .. } if self.is_track_browser() && self.track_library.is_some() => {
+                    Layout::BROWSER_ROW_H
+                }
                 BRow::Group { .. } => Layout::BROWSER_GROUP_H,
                 BRow::Audition { .. } => AUDITION_H,
                 BRow::Scanning => SCAN_H,
@@ -1147,7 +1261,15 @@ impl Browser {
                 BRow::Item { presets, .. } => {
                     if self.fav_rect(r).contains(x, y) {
                         Some(BrowserHit::Fav(i))
-                    } else if presets.is_some() && self.disclose_rect(r).contains(x, y) {
+                    } else if presets.is_some() && {
+                        let arrow = if self.is_track_browser() && self.track_library.is_some() {
+                            let depth = self.track_rows().get(i).map_or(0, |r| r.depth);
+                            Rect::new(r.x + Space::X2.px() + depth as f32 * 10.0, r.y, 16.0, r.h)
+                        } else {
+                            self.disclose_rect(r)
+                        };
+                        arrow.contains(x, y)
+                    } {
                         Some(BrowserHit::Disclose(i))
                     } else {
                         Some(BrowserHit::Item(i))
@@ -1390,6 +1512,15 @@ impl Browser {
                     self.select_pool(&key, missing);
                 }
             }
+            BrowserHit::Loc(i) if self.is_track_browser() => {
+                self.track_kind = i == 2;
+                self.tab = if i == 1 {
+                    RailTab::Effects
+                } else {
+                    RailTab::Instruments
+                };
+                self.scroll = 0.0;
+            }
             BrowserHit::Loc(i) => self.set_location(i),
             BrowserHit::LocRemove(i) => {
                 if let Err(e) = self.remove_place(i) {
@@ -1412,6 +1543,12 @@ impl Browser {
 
     /// A typed character or key in the search box. Returns true when it was used.
     pub fn typed(&mut self, key: &str, ch: Option<&str>) -> bool {
+        if key == "escape" && self.open && self.is_track_browser() && !self.search.is_empty() {
+            self.search.clear();
+            self.typing = false;
+            self.scroll = 0.0;
+            return true;
+        }
         if !self.typing {
             return false;
         }
@@ -1473,7 +1610,8 @@ pub fn paint(
     pen.round(rail, c.surface_2, Radius::M);
     for tab in RailTab::ALL {
         let r = rail_button(rail, tab);
-        let active = browser.open && browser.tab == tab;
+        let active = browser.open
+            && (browser.tab == tab || (tab == RailTab::Instruments && browser.is_track_browser()));
         if active {
             pen.round(r, c.sel, Radius::S);
         }
@@ -1569,6 +1707,25 @@ fn paint_panel(
         pen.icon("more", icon_box(m), c.ink_strong);
     }
 
+    if browser.is_track_browser() {
+        let selected = if browser.track_kind {
+            2
+        } else if browser.tab == RailTab::Effects {
+            1
+        } else {
+            0
+        };
+        for (i, r) in l.tabs.iter().enumerate() {
+            if i == selected {
+                pen.round(*r, c.sel, Radius::S);
+            }
+            pen.icon(
+                ["keys", "effects", "arrange"][i],
+                icon_box(*r),
+                c.ink_strong,
+            );
+        }
+    }
     if browser.tab == RailTab::Files {
         let locs = browser.locations();
         for (i, r) in l.tabs.iter().enumerate() {
@@ -1724,6 +1881,99 @@ fn paint_row(
     has_preview: bool,
     motion: xirius_design::Motion,
 ) {
+    if browser.is_track_browser()
+        && browser.track_library.is_some()
+        && let Some(row) = browser.track_rows().get(i)
+    {
+        let c = pen.c;
+        let star = browser.fav_rect(r);
+        let selected = row.entry.as_ref().is_some_and(|e| {
+            browser
+                .selected_preset
+                .as_ref()
+                .is_some_and(|(id, _)| *id == e.id)
+                || browser.selected_item == Some(e.name.as_str())
+        });
+        if selected {
+            pen.round(r, c.sel, Radius::S);
+        }
+        let x = r.x + Space::X2.px() + row.depth as f32 * 10.0;
+        if row.branch {
+            pen.icon(
+                if row.open {
+                    "chevron-down"
+                } else {
+                    "chevron-right"
+                },
+                Rect::new(x, r.y + 8.0, 12.0, 12.0),
+                c.ink,
+            );
+        }
+        let name_x = if let Some(e) = &row.entry {
+            pen.icon(
+                if e.category.tab() == "effects" {
+                    "effects"
+                } else {
+                    "arrange"
+                },
+                Rect::new(x + 16.0, r.y + 8.0, 12.0, 12.0),
+                c.ink,
+            );
+            x + 32.0
+        } else {
+            x + 16.0
+        };
+        let name_r = Rect::new(name_x, r.y, (star.x - name_x).max(0.0), r.h);
+        let badge = row.entry.as_ref().is_some_and(|e| e.has_fx);
+        let vendor = row
+            .entry
+            .as_ref()
+            .filter(|e| e.file.is_none())
+            .map(|e| e.vendor.as_str())
+            .unwrap_or_default();
+        let meta = if badge { "+FX" } else { vendor };
+        let meta_w = if meta.is_empty() {
+            0.0
+        } else {
+            text_width(meta, FontSize::Micro).min(64.0) + 8.0
+        };
+        pen.mask(
+            Rect::new(name_r.x, name_r.y, (name_r.w - meta_w).max(0.0), name_r.h),
+            |pen| {
+                pen.text(
+                    &row.label,
+                    FontSize::Small,
+                    Weight::Regular,
+                    c.ink_strong,
+                    name_r,
+                    Align::Left,
+                );
+            },
+        );
+        if !meta.is_empty() {
+            if badge {
+                pen.round(
+                    Rect::new(star.x - meta_w, r.y + 5.0, meta_w, r.h - 10.0),
+                    c.hover,
+                    Radius::S,
+                );
+            }
+            pen.mask(Rect::new(star.x - meta_w, r.y, meta_w, r.h), |pen| {
+                pen.text(
+                    meta,
+                    FontSize::Micro,
+                    Weight::Regular,
+                    c.ink,
+                    Rect::new(star.x - meta_w, r.y, meta_w, r.h),
+                    Align::Right,
+                );
+            });
+        }
+        if row.entry.is_some() {
+            paint_star(pen, star, row.favourite, hover == Some(BrowserHit::Fav(i)));
+        }
+        return;
+    }
     let c = pen.c;
     let pad = Space::X2.px();
     let inner = Rect::new(r.x + Space::X1.px(), r.y, r.w - Space::X1.px() * 2.0, r.h);

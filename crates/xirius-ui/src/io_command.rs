@@ -18,6 +18,7 @@ pub(crate) fn handles(name: &str) -> bool {
             || xirius_session::track_preset::NAMES.contains(&name)
             || xirius_session::preset::NAMES.contains(&name)
             || xirius_session::xpreset::NAMES.contains(&name)
+            || xirius_session::xpreset::browser::NAMES.contains(&name)
             || xirius_session::sample_files::NAMES.contains(&name)
             || xirius_session::import::NAMES.contains(&name)
             || xirius_session::clip_audio::NAMES.contains(&name)
@@ -46,6 +47,7 @@ pub(crate) fn captures(name: &str) -> bool {
             | "track.preset.save"
             | "track.preset.update"
             | "preset.save"
+            | "browser.preset.save"
             | "version.save"
             | "project.save"
             | "project.save-as"
@@ -115,6 +117,7 @@ impl Studio {
             return;
         }
         self.error = None;
+        self.track_browser_answer(name, &result.data);
         self.after_edit();
         if xirius_session::sample_files::NAMES.contains(&name) {
             self.after_command(name, &result.data);

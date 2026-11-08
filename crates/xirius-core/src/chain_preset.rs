@@ -25,8 +25,16 @@ use crate::xpreset::FORMAT;
 /// The version this writes.
 pub const VERSION: u32 = 1;
 
-const KEYS: [&str; 8] = [
-    "format", "version", "kind", "name", "saved_at", "devices", "rack", "controls",
+const KEYS: [&str; 9] = [
+    "format",
+    "version",
+    "kind",
+    "name",
+    "saved_at",
+    "devices",
+    "rack",
+    "controls",
+    "browser_folder",
 ];
 
 /// The kinds of chain a preset may hold.

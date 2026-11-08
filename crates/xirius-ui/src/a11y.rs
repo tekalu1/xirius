@@ -198,6 +198,57 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
         return home_marks(s, g);
     }
     if let Some(p) = &s.popup {
+        if p.preset_save.is_some() {
+            use crate::popup::{Action, Look};
+            return p
+                .layout(g.size)
+                .cells
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    let role = match c.look {
+                        Look::Input => accesskit::Role::TextInput,
+                        Look::Check => accesskit::Role::CheckBox,
+                        _ if c.live() => accesskit::Role::Button,
+                        _ => accesskit::Role::Label,
+                    };
+                    let mut node = accesskit::Node::new(role);
+                    node.set_label(if c.look == Look::Input {
+                        if c.action == Some(Action::Ctx(2)) {
+                            "新しいフォルダー".to_string()
+                        } else {
+                            "プリセット名".to_string()
+                        }
+                    } else {
+                        c.text.clone()
+                    });
+                    if c.look == Look::Input {
+                        node.set_value(c.text.clone());
+                    }
+                    if c.look == Look::Check {
+                        node.set_toggled(if c.on {
+                            accesskit::Toggled::True
+                        } else {
+                            accesskit::Toggled::False
+                        });
+                    }
+                    if !c.enabled {
+                        node.set_disabled();
+                    }
+                    node.set_bounds(bounds(c.rect));
+                    Mark {
+                        key: format!("preset-save-{i}"),
+                        children: Vec::new(),
+                        node,
+                        fold: None,
+                        pick: None,
+                        press: c.live().then_some(Hit::Item(i)),
+                        turn: None,
+                        edge: None,
+                    }
+                })
+                .collect();
+        }
         // The value fields at the head of a clip's menu: a screen reader reads the name, the
         // value and the unit, which the field itself does not draw (UI-311).
         if p.kind == crate::popup::PopupKind::Context
@@ -878,12 +929,49 @@ fn preset_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     }
     let l = s.browser.layout(g.panel);
     let mut out = Vec::new();
+    for (i, r) in l.tabs.iter().enumerate() {
+        let mut node = accesskit::Node::new(accesskit::Role::Button);
+        node.set_label(["インストゥルメント", "FX", "トラック"][i]);
+        node.set_bounds(bounds(*r));
+        out.push(Mark {
+            key: format!("track-browser-kind-{i}"),
+            children: Vec::new(),
+            node,
+            fold: None,
+            pick: None,
+            press: Some(Hit::Browser(BrowserHit::Loc(i))),
+            turn: None,
+            edge: None,
+        });
+    }
     for (i, p) in l.rows.iter().enumerate() {
         let r = s.browser.row_rect(&l, p);
         if r.bottom() <= l.list.y || r.y >= l.list.bottom() {
             continue;
         }
         let (key, role, label, press) = match &p.row {
+            BRow::Group {
+                key, name, open, ..
+            } if s.browser.track_library.is_some() => {
+                let mut node = accesskit::Node::new(accesskit::Role::TreeItem);
+                node.set_expanded(*open);
+                (
+                    format!("track-browser-{key}"),
+                    node,
+                    name.to_string(),
+                    BrowserHit::Group(i),
+                )
+            }
+            BRow::Item {
+                item,
+                presets: None,
+                ..
+            } if s.browser.track_library.is_some() => (
+                format!("track-browser-device-{}", item.name),
+                accesskit::Node::new(accesskit::Role::ListItem),
+                item.name.to_string(),
+                BrowserHit::Item(i),
+            ),
             BRow::Item {
                 item,
                 presets: Some(open),
@@ -906,7 +994,13 @@ fn preset_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             } => {
                 let mut node = accesskit::Node::new(accesskit::Role::ListItem);
                 node.set_selected(*selected);
-                let device_name = xirius_params::find(device).map_or(*device, |d| d.name);
+                let device_name = s
+                    .browser
+                    .track_library
+                    .as_ref()
+                    .and_then(|es| es.iter().find(|e| e.id == *device))
+                    .map(|e| e.device_name.as_str())
+                    .unwrap_or_else(|| xirius_params::find(device).map_or(*device, |d| d.name));
                 (
                     format!("preset-{device}-{name}"),
                     node,

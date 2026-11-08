@@ -23,7 +23,8 @@ use crate::rack::Rack;
 /// (PLG-065) keeps the rack — splits, branches, layers — and the macros too.
 pub const VERSION: u32 = 2;
 
-const KEYS: [&str; 11] = [
+const KEYS: [&str; 12] = [
+    "browser_folder",
     "version",
     "saved_at",
     "name",

@@ -11,6 +11,99 @@ use crate::instrument::Pick;
 use crate::instrument::menu::{Menu, SHOW};
 use crate::studio::Hit;
 
+#[test]
+fn track_browser_kind_buttons_keep_query_and_have_one_rail_entry() {
+    let (mut s, g) = studio();
+    assert_eq!(
+        RailTab::ALL
+            .iter()
+            .filter(|&&t| matches!(t, RailTab::Instruments | RailTab::Effects))
+            .count(),
+        1
+    );
+    s.browser.search = "warm user".into();
+    let l = s.browser.layout(g.panel);
+    assert_eq!(l.tabs.len(), 3);
+    assert!(l.view.is_none());
+    for i in [0, 1, 2] {
+        s.press(&g, Hit::Browser(BrowserHit::Loc(i)));
+        assert_eq!(s.browser.search, "warm user");
+        assert_eq!(s.browser.track_kind, i == 2);
+    }
+    assert!(!s.browser.typing, "the kind buttons leave text entry");
+    assert!(s.browser.typed("escape", None));
+    assert!(s.browser.search.is_empty());
+}
+
+#[test]
+fn preset_save_dialog_starts_without_fx_and_requires_a_second_overwrite_press() {
+    use xirius_core::track_browser::{Category, Entry};
+    let (mut s, _) = studio();
+    s.browser.track_library = Some(vec![Entry {
+        id: "preset:test".into(),
+        name: "Warm".into(),
+        category: Category::Instrument,
+        device: "sampler".into(),
+        device_name: "Sampler".into(),
+        vendor: "Xirius".into(),
+        source: "User".into(),
+        folder: Vec::new(),
+        file: Some("test.xpreset".into()),
+        has_fx: false,
+        fx_names: Vec::new(),
+    }]);
+    s.open_track_preset_save(
+        "browser.preset.save",
+        json!({"kind":"instrument"}),
+        "Warm",
+        "Sampler",
+        false,
+        "EQ · Reverb".into(),
+    );
+    assert!(
+        !s.ctx
+            .as_ref()
+            .unwrap()
+            .ask
+            .as_ref()
+            .unwrap()
+            .preset
+            .as_ref()
+            .unwrap()
+            .include_fx
+    );
+    s.preset_save_pick(1);
+    assert!(
+        s.ctx
+            .as_ref()
+            .unwrap()
+            .ask
+            .as_ref()
+            .unwrap()
+            .preset
+            .as_ref()
+            .unwrap()
+            .include_fx
+    );
+    s.preset_save_pick(3);
+    assert!(
+        s.ctx
+            .as_ref()
+            .unwrap()
+            .ask
+            .as_ref()
+            .unwrap()
+            .preset
+            .as_ref()
+            .unwrap()
+            .overwrite
+    );
+    s.preset_save_pick(4);
+    assert!(s.popup.is_none());
+    assert!(crate::io_command::handles("browser.preset.save"));
+    assert!(crate::io_command::handles("browser.preset.list"));
+}
+
 /// The sample song with the browser on the effects and the factory presets read.
 fn studio() -> (Studio, Geometry) {
     let mut s = Studio::sample();

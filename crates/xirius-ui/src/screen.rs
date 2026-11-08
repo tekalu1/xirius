@@ -1578,7 +1578,13 @@ impl EntityInputHandler for Screen {
             ));
         }
         if let Some(f) = studio.ask_field() {
-            let at = studio.popup.as_ref()?.layout(g.size).cells.first()?.rect;
+            let layout = studio.popup.as_ref()?.layout(g.size);
+            let at = layout
+                .cells
+                .iter()
+                .find(|c| c.look == crate::popup::Look::Input && c.on)
+                .or_else(|| layout.cells.first())?
+                .rect;
             let mut pen = Pen {
                 window,
                 cx,

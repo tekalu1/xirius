@@ -240,6 +240,13 @@ fn stored(dir: &Path) -> (Vec<Entry>, Vec<Skipped>) {
 }
 
 fn files_in(d: &Path) -> Vec<PathBuf> {
+    files_below(d, 0)
+}
+
+fn files_below(d: &Path, depth: usize) -> Vec<PathBuf> {
+    if depth > 16 {
+        return Vec::new();
+    }
     let mut v: Vec<PathBuf> = std::fs::read_dir(d)
         .into_iter()
         .flatten()
@@ -249,7 +256,7 @@ fn files_in(d: &Path) -> Vec<PathBuf> {
     let nested: Vec<PathBuf> = v
         .iter()
         .filter(|p| p.is_dir() && !p.is_symlink())
-        .flat_map(|p| files_in(p))
+        .flat_map(|p| files_below(p, depth + 1))
         .collect();
     v.extend(nested);
     v.sort();
@@ -1274,6 +1281,7 @@ fn list(
             {
                 r.insert("params".into(), json!(x.params));
                 r.insert("has_fx".into(), json!(!p.chain.rack.fx.is_empty()));
+                r.insert("chain".into(), json!(true));
             }
             presets.push(Value::Object(r));
         }

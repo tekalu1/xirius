@@ -2088,6 +2088,32 @@ impl Studio {
         };
         // The session's load sets what the file holds, the samples too (H-pre-1); Default is
         // the device as it comes, with no sample.
+        if self.instruments.presets.saved.as_ref().is_some_and(|es| {
+            es.iter()
+                .any(|e| e.device == def.uid && e.name == preset && e.chain)
+        }) {
+            if let Some(entry) = self
+                .browser
+                .track_library
+                .as_ref()
+                .and_then(|es| {
+                    es.iter()
+                        .find(|e| e.device == def.uid && e.name == preset && e.file.is_some())
+                })
+                .map(|e| e.id.clone())
+            {
+                // design-lint: allow(ui-blocking-io) BRW-017: the owner loads the same subtree as a browser drop.
+                return self.run_command(
+                    "browser.preset.apply",
+                    json!({"entry":entry,"track":t.to_string(),"target":"instrument"}),
+                );
+            }
+            // design-lint: allow(ui-blocking-io) BRW-017: legacy chain loading goes through the owner, without the device-only --of option.
+            return self.run_command(
+                "preset.load",
+                json!({"track":t.to_string(),"preset":preset,"device":def.uid}),
+            );
+        }
         if self.instruments.presets.saved.is_some() || preset == DEFAULT {
             // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             return self.run_command(

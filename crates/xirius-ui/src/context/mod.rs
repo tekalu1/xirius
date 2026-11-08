@@ -725,6 +725,14 @@ impl Studio {
     /// Chooses row `i` of the menu that is open. A row with rows below opens them in
     /// the menu's place; any other closes the menu and runs.
     pub(crate) fn context_pick(&mut self, g: &Geometry, i: usize) -> bool {
+        if self
+            .ctx
+            .as_ref()
+            .and_then(|s| s.ask.as_ref())
+            .is_some_and(|a| a.preset.is_some())
+        {
+            return self.preset_save_pick(i);
+        }
         let Some(item) = self.ctx.as_ref().and_then(|s| s.items.get(i)).cloned() else {
             return false;
         };

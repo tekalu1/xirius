@@ -143,6 +143,7 @@ pub fn act_command(act: &Act) -> (&'static str, Value) {
                     None => json!({}),
                 },
             ),
+            BrowseAct::CopyPreset(id) => ("view.preset-copy", json!({"entry": id})),
             BrowseAct::Hide(n, on) => ("browser.hide", on_off(json!({"item": n}), *on)),
             BrowseAct::Fx(target, n) => (
                 "browser.fx",

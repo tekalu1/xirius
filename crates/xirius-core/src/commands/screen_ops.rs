@@ -48,6 +48,7 @@ pub const NAMES: &[&str] = &[
     "range.from-clips",
     "browser.search",
     "browser.tab",
+    "view.preset-copy",
     "mixer.bank",
     "transport.panic",
     "view.pc-keyboard",
@@ -376,12 +377,24 @@ pub(super) fn defs() -> Vec<CommandDef> {
             vec![],
         ),
         screen(
+            "view.preset-copy",
+            "User へコピーするプリセットの保存窓を開きます",
+            vec![ArgDef::text("entry", "ブラウザーの項目").req()],
+        ),
+        screen(
             "browser.tab",
             "ブラウザーかインスペクターをその面で開きます（その面が開いていれば閉じます）",
             vec![
                 ArgDef::choice(
                     "tab",
-                    &["instruments", "effects", "files", "song_files", "inspector"],
+                    &[
+                        "instruments",
+                        "effects",
+                        "tracks",
+                        "files",
+                        "song_files",
+                        "inspector",
+                    ],
                     "面",
                 )
                 .req(),

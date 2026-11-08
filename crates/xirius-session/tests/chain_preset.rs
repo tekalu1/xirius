@@ -121,11 +121,126 @@ fn run(s: &mut Session, n: &str, a: Value) -> Value {
         .data
 }
 
+#[test]
+fn browser_reads_legacy_files_and_places_fx_at_each_destination() {
+    let mut r = rig("browser-fx-targets");
+    let source = audio(&mut r.s, "Source");
+    let eq = plugin(&mut r.s, &source, "EQ");
+    run(
+        &mut r.s,
+        "preset.save",
+        json!({"track":source,"kind":"fx","of":eq,"name":"Legacy EQ"}),
+    );
+    let list = run(
+        &mut r.s,
+        "browser.preset.list",
+        json!({"tab":"effects","query":"legacy eq"}),
+    );
+    let entry = list["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["name"] == "Legacy EQ")
+        .unwrap()["id"]
+        .clone();
+    let target = audio(&mut r.s, "Target");
+    let delay = plugin(&mut r.s, &target, "Delay");
+    step(
+        &mut r.s,
+        "browser.preset.apply",
+        json!({"entry":entry,"track":target,"target":"insert","at":format!("after:{delay}")}),
+    );
+    assert_eq!(uids(&r.s, &target), ["delay", "eq"]);
+    step(
+        &mut r.s,
+        "browser.preset.apply",
+        json!({"entry":entry,"track":target,"target":"effect","of":delay}),
+    );
+    assert_eq!(uids(&r.s, &target), ["eq", "eq"]);
+    step(
+        &mut r.s,
+        "browser.preset.apply",
+        json!({"entry":entry,"track":target,"target":"track"}),
+    );
+    assert_eq!(uids(&r.s, &target), ["eq", "eq", "eq"]);
+    step(
+        &mut r.s,
+        "browser.preset.apply",
+        json!({"entry":entry,"target":"new"}),
+    );
+    assert!(
+        !fails(
+            &mut r.s,
+            "browser.preset.apply",
+            json!({"entry":entry,"track":target,"target":"instrument"})
+        )
+        .is_empty()
+    );
+    run(
+        &mut r.s,
+        "browser.preset.save",
+        json!({"track":target,"kind":"track","name":"Channel"}),
+    );
+    let list = run(&mut r.s, "browser.preset.list", json!({"tab":"tracks"}));
+    let channel = list["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["name"] == "Channel")
+        .unwrap()["id"]
+        .clone();
+    step(
+        &mut r.s,
+        "browser.preset.apply",
+        json!({"entry":channel,"track":source,"target":"track"}),
+    );
+    assert_eq!(uids(&r.s, &source), ["eq", "eq", "eq"]);
+}
+
 fn fails(s: &mut Session, n: &str, a: Value) -> String {
     match s.run_value(n, a, &RunOptions::human()) {
         Ok(o) => panic!("{n} went through: {:?}", o.data),
         Err(e) => e.message,
     }
+}
+
+#[test]
+fn browser_missing_device_retains_opaque_state_and_original_file() {
+    let mut r = rig("browser-missing-state");
+    let t = audio(&mut r.s, "Source");
+    let eq = plugin(&mut r.s, &t, "EQ");
+    let saved = run(
+        &mut r.s,
+        "preset.save",
+        json!({"track":t,"kind":"fx","of":eq,"name":"Unavailable"}),
+    );
+    let path = Path::new(saved["file"].as_str().unwrap());
+    let mut value: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    value["devices"][0]["uid"] = json!("org.example.unavailable");
+    value["devices"][0]["format"] = json!("clap");
+    value["devices"][0]["state"] = json!("AAECAwQ=");
+    value["devices"][0]["params"] = json!({"opaque-parameter":0.42});
+    let bytes = serde_json::to_vec(&value).unwrap();
+    std::fs::write(path, &bytes).unwrap();
+    let list = run(&mut r.s, "browser.preset.list", json!({"tab":"effects"}));
+    let entry = list["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["name"] == "Unavailable")
+        .unwrap()["id"]
+        .clone();
+    let target = audio(&mut r.s, "Target");
+    step(
+        &mut r.s,
+        "browser.preset.apply",
+        json!({"entry":entry,"track":target}),
+    );
+    let x = track(&r.s, &target);
+    assert_eq!(x.inserts[0].uid, "org.example.unavailable");
+    assert_eq!(x.inserts[0].state.as_deref(), Some("AAECAwQ="));
+    assert_eq!(x.inserts[0].params["opaque-parameter"], 0.42);
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
 }
 
 /// Runs an edit and checks it is one undo step there and back.

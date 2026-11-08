@@ -42,7 +42,7 @@ fn describe(
             cat,
             instrument.map(|d| d.uid.clone()).unwrap_or_default(),
             instrument.map(|d| d.name.clone()).unwrap_or_default(),
-            !p.chain.rack.fx.is_empty(),
+            kind == ChainKind::Instrument && !p.chain.rack.fx.is_empty(),
         )
     } else if let Ok((p, _)) = DevicePreset::parse(&value, None) {
         (
@@ -57,9 +57,16 @@ fn describe(
             false,
         )
     } else {
+        if !value["inserts"].is_array() {
+            return Err(CmdError::invalid("プリセットの機器が見つかりません"));
+        }
         let (p, _) = TrackPreset::parse(&value)?;
         (p.name, Category::Track, String::new(), String::new(), false)
     };
+    let device_name = xirius_params::find(&device)
+        .map(|d| d.name.to_string())
+        .or_else(|| catalog.find(&device).map(|e| e.name.clone()))
+        .unwrap_or(device_name);
     let vendor = if xirius_params::find(&device).is_some() {
         "Xirius".into()
     } else {
@@ -80,6 +87,18 @@ fn describe(
             folder,
             file,
             has_fx,
+            fx_names: if has_fx {
+                ChainPreset::parse(&value, None)?
+                    .0
+                    .chain
+                    .devices
+                    .iter()
+                    .filter(|d| d.kind == PluginKind::Effect)
+                    .map(|d| d.name.clone())
+                    .collect()
+            } else {
+                Vec::new()
+            },
         },
         value,
     })
@@ -145,7 +164,9 @@ fn scan(root: &Path, at: &Path, catalog: &Catalog, out: &mut Vec<Item>, depth: u
 fn index(dir: &Path, tracks: &Path, catalog: &Catalog) -> Vec<Item> {
     let mut out = Vec::new();
     scan(dir, dir, catalog, &mut out, 0);
-    scan(tracks, tracks, catalog, &mut out, 0);
+    if !tracks.starts_with(dir) {
+        scan(tracks, tracks, catalog, &mut out, 0);
+    }
     for (def, name, bytes) in factory_set() {
         if let Ok(v) = serde_json::from_slice(&bytes)
             && let Ok(item) = describe(
@@ -157,6 +178,9 @@ fn index(dir: &Path, tracks: &Path, catalog: &Catalog) -> Vec<Item> {
                 catalog,
             )
         {
+            // Earlier versions seeded bundled files beside User files. Keep reading them,
+            // but show the unchanged bundled value once, under read-only Factory.
+            out.retain(|old| old.value != item.value);
             out.push(item);
         }
     }
@@ -220,6 +244,22 @@ pub(crate) fn run(
         }
         let mut value = item.value.clone();
         resolve_samples(&mut value, dir);
+        // A device-only instrument replaces the source tree, retaining the destination's
+        // inserts. Reuse the same atomic rack edit as an instrument with FX.
+        if item.entry.category == Category::Instrument && kind_of_value(&value).is_none() {
+            let p = as_track(&value)?;
+            value = ChainPreset {
+                name: p.name,
+                kind: ChainKind::Instrument,
+                saved_at: p.saved_at,
+                chain: Chain {
+                    devices: p.inserts,
+                    rack: p.rack.unwrap(),
+                    controls: p.controls,
+                },
+            }
+            .to_value();
+        }
         let mut args = json!({"preset": value.to_string()});
         let edit = if target == "new" {
             let preset = as_track(&value)?;
@@ -274,6 +314,7 @@ pub(crate) fn run(
                 folder: Vec::new(),
                 file: None,
                 has_fx: false,
+                fx_names: Vec::new(),
             });
         }
         for e in &catalog.entries {
@@ -292,6 +333,7 @@ pub(crate) fn run(
                 folder: Vec::new(),
                 file: None,
                 has_fx: false,
+                fx_names: Vec::new(),
             });
         }
         let query = a.opt_str("query").unwrap_or_default();
@@ -354,7 +396,21 @@ pub(crate) fn run(
             }
             .to_value()
         } else {
-            let x = plugin_on(project, tid, a.id("of")?)?;
+            let x = match a.opt_id::<PluginId>("of")? {
+                Some(id) => plugin_on(project, tid, id)?,
+                None if kind == "instrument" => project
+                    .track(tid)?
+                    .inserts
+                    .iter()
+                    .find(|x| x.kind == PluginKind::Instrument)
+                    .ok_or_else(|| {
+                        CmdError::not_found("このトラックにインストゥルメントがありません")
+                    })?,
+                None => return Err(CmdError::invalid("--of に機器を指定してください")),
+            };
+            if (kind == "instrument") != (x.kind == PluginKind::Instrument) {
+                return Err(CmdError::invalid("保存する機器の種類が違います"));
+            }
             let mut preset = DevicePreset::capture(x, &name, Some(now_ms()));
             if let Some(samples) = preset.device.samples.as_mut() {
                 for s in samples {
@@ -384,28 +440,61 @@ pub(crate) fn run(
     let at = destination(dir, a)?
         .join(format!("{:?}", item.entry.category))
         .join(file_name(&item.entry.device));
-    let path = at.join(format!("{}.xpreset", file_name(&name)));
+    let path = items
+        .iter()
+        .find(|i| {
+            i.entry.source == "User"
+                && i.entry.category == item.entry.category
+                && i.entry.device == item.entry.device
+                && i.entry.name.eq_ignore_ascii_case(&name)
+                && i.entry.folder
+                    == value["browser_folder"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+        })
+        .and_then(|i| i.entry.file.as_ref())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| at.join(format!("{}.xpreset", file_name(&name))));
     if path.exists() && !a.flag("overwrite") {
         return Err(CmdError::conflict(
             "同じ名前があります。上書き保存を選んでください",
         ));
     }
     if !dry {
-        std::fs::create_dir_all(&at).map_err(io)?;
+        std::fs::create_dir_all(path.parent().unwrap()).map_err(io)?;
         atomic_write(&path, &to_bytes(&value)?)?;
     }
+    let edits = if !dry && command == "browser.preset.save" && a.opt_str("kind") != Some("track") {
+        if let Some(id) = a.opt_str("of").filter(|id| id.parse::<PluginId>().is_ok()) {
+            vec![(
+                "plugin.preset.load".to_string(),
+                json!({"id": id, "preset": name, "values": []})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )]
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
     Ok((
         Output::with(
             "プリセットを保存しました",
             json!({"file": path.to_string_lossy(), "name": name, "has_fx": item.entry.has_fx}),
         ),
-        Vec::new(),
+        edits,
     ))
 }
 
 fn as_track(value: &Value) -> CmdResult<TrackPreset> {
-    if let Ok((p, _)) = TrackPreset::parse(value) {
-        return Ok(p);
+    if value["inserts"].is_array() {
+        return TrackPreset::parse(value).map(|(p, _)| p);
     }
     let (name, chain) = if kind_of_value(value).is_some() {
         let (p, _) = ChainPreset::parse(value, None)?;

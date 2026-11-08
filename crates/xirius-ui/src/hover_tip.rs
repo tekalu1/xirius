@@ -145,6 +145,26 @@ pub fn popup(pen: &mut Pen, s: &Studio, g: &Geometry) {
 }
 
 pub fn text(s: &Studio, hit: Hit) -> Option<String> {
+    if s.browser.is_track_browser() {
+        if let Hit::Browser(crate::browser::BrowserHit::Loc(i)) = hit {
+            return ["インストゥルメント", "FX", "トラック"]
+                .get(i)
+                .map(|s| s.to_string());
+        }
+        if let Hit::Browser(
+            crate::browser::BrowserHit::Item(i) | crate::browser::BrowserHit::Preset(i),
+        ) = hit
+            && let Some(e) = s.browser.track_rows().get(i).and_then(|r| r.entry.as_ref())
+        {
+            return Some(format!(
+                "{} · {} · {}{}",
+                e.name,
+                e.device_name,
+                e.vendor,
+                if e.has_fx { " · +FX" } else { "" }
+            ));
+        }
+    }
     let label = match hit {
         Hit::RollView(false) => Some("鍵盤の表示"),
         Hit::RollView(true) => Some("ドラムの表示"),
