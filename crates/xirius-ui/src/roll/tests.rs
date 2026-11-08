@@ -789,7 +789,10 @@ fn feel_10_menu_shortcuts_and_clipboard_keep_muting() {
     let (mut s, g) = setup();
     let p = at(&s, &g, 0, Zone::Body);
     assert!(s.scene_context(&g, p.0, p.1));
-    let keys: Vec<_> = s.context_rows().into_iter().map(|r| r.key).collect();
+    let keys: Vec<_> = crate::context::tests::all_rows(&s)
+        .into_iter()
+        .map(|r| r.key)
+        .collect();
     for key in ["D", "Shift+M", "Ctrl+X", "Ctrl+C", "Del / Backspace"] {
         assert!(keys.iter().any(|k| k == key), "{key}");
     }

@@ -4,6 +4,74 @@ use crate::arrange::probe::track;
 use serde_json::json;
 
 #[test]
+fn saved_presets_frozen_heads_and_existing_bus_candidates() {
+    use crate::tree::RowKind;
+    let (mut s, g) = studio();
+    let vocal = track(&s, "Vocal");
+    let keys = track(&s, "Keys");
+    s.song
+        .run(
+            "track.preset.save",
+            json!({"track":vocal.to_string(),"name":"Catalog vocal"}),
+        )
+        .unwrap();
+    for t in [vocal, keys] {
+        assert!(s.row_context(&g, RowKind::Track(t), 100.0, 300.0));
+        let items = s.head_items(&g, t);
+        super::placement::organize("other-48", items).unwrap();
+    }
+    s.song
+        .run(
+            "track.freeze.apply",
+            json!({"tracks":[{"id":vocal.to_string(),"file":"frozen.wav","start":0}]}),
+        )
+        .unwrap();
+    let items = s.head_items(&g, vocal);
+    super::placement::organize("other-48", items).unwrap();
+    assert!(s.run_command("track.add.bus", json!({"name":"Catalog bus","into":"root"})));
+    s.arrange.tracks = vec![RowKind::Track(vocal), RowKind::Track(keys)];
+    assert!(s.row_context(&g, RowKind::Track(keys), 100.0, 300.0));
+}
+
+#[test]
+fn disabled_insert_and_instrument_splitter_states() {
+    let (mut s, _g) = studio();
+    let t = track(&s, "Keys");
+    assert!(s.set_instrument(t, &crate::instrument::Pick::built_in("Sampler")));
+    assert!(s.run_command("plugin.add", json!({"track":t.to_string(),"name":"EQ"})));
+    let id = s.project().tracks[&t].inserts.last().unwrap().id;
+    assert!(s.run_command("plugin.deactivate", json!({"ids":[id.to_string()]})));
+    let items = s.plugin_items(t, id);
+    super::placement::organize("insert", items).unwrap();
+    let items = s.cpu_items(t, id);
+    super::placement::organize("other-68", items).unwrap();
+    s.song
+        .run("rack.split.add", json!({"track":t.to_string()}))
+        .unwrap();
+    let p = s.project();
+    let xirius_core::rack::RackNode::Split(split) =
+        p.tracks[&t].rack.as_ref().unwrap().fx.last().unwrap()
+    else {
+        panic!("split")
+    };
+    let branch = split.branches[0].id;
+    let split = split.id;
+    let items = s.split_items(t, split);
+    super::placement::organize("other-62", items).unwrap();
+    assert!(s.run_command("rack.node.move", json!({"id":id,"to":branch})));
+    let items = s.plugin_items(t, id);
+    super::placement::organize("insert", items).unwrap();
+    s.song
+        .run(
+            "track.freeze.apply",
+            json!({"tracks":[{"id":t.to_string(),"file":"frozen.wav","start":0}]}),
+        )
+        .unwrap();
+    let items = s.cpu_items(t, id);
+    super::placement::organize("other-68", items).unwrap();
+}
+
+#[test]
 fn audio_and_midi_take_stacks_keep_every_state_operation() {
     for name in ["Vocal", "Keys"] {
         let (mut s, g) = studio();

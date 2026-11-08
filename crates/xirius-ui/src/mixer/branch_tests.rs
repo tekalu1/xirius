@@ -141,8 +141,8 @@ fn mix_045_the_level_row_is_typed_and_stepped_as_a_knob() {
     assert!(branch(&s, t, b[1]).2);
     assert!(s.scene_context(&g, x, y));
     let rows: Vec<String> = s.context_rows().into_iter().map(|r| r.label).collect();
-    assert_eq!(rows, ["値を入力…", "0 dB に戻す"]);
-    assert!(s.context_pick(&g, 1));
+    assert_eq!(rows, ["機器"]);
+    assert!(s.context_choose(&g, "0 dB に戻す"));
     assert_eq!(branch(&s, t, b[1]).0, 0.0);
     // Esc lets the keys go
     s.mixer.value_focus = Some(strip(t, b[1], Which::Gain));

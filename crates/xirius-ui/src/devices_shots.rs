@@ -958,8 +958,7 @@ mod tests {
             assert!(Play::Laid(play_delay).without_window(&mut s, &g, n));
         }
         assert_eq!(s.instruments.open.len(), 1);
-        let rows = s.context_rows();
-        assert!(rows.iter().any(|r| r.label == "1/8 D"), "the Beats menu");
+        assert!(s.context_path("1/8 D").is_some(), "the Beats menu");
     }
 
     #[test]

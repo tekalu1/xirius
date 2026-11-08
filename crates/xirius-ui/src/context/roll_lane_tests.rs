@@ -344,7 +344,7 @@ fn the_tab_changes_the_controller_hides_the_lane_and_clears_its_points() {
     assert!(choose(&mut s, &g, "種類を変更"));
     assert!(!enabled(&s, "CC11"));
     assert!(enabled(&s, "CC1"));
-    assert!(super::tests::all_labels(&s).contains(&"番号で選ぶ · CC2".to_string()));
+    assert!(super::tests::all_labels(&s).contains(&"CC2".to_string()));
     assert!(choose(&mut s, &g, "番号で選ぶ · CC74"));
     assert_eq!(s.roll.lanes[i].kind, LaneKind::Ctrl(CtrlKind::Cc(74)));
 

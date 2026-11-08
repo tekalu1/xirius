@@ -100,6 +100,16 @@ fn panel_open(s: &Studio) -> bool {
 }
 
 #[test]
+fn failed_export_keeps_reopen_and_remove_operations() {
+    let (mut s, g, _dir, _tmp) = exported("failed-menu");
+    s.popup.as_mut().unwrap().export.as_mut().unwrap().cards[0].state = State::Failed;
+    menu(&mut s, &g);
+    assert_eq!(labels(&s), ["編集", "書き出し"]);
+    assert!(enabled(&s, "同じ設定で書き出しを開く"));
+    assert!(enabled(&s, "一覧から削除"));
+}
+
+#[test]
 fn a_finished_export_has_the_rows_of_the_matrix_and_the_old_ones_can_be_written_again() {
     let (mut s, g, dir, _tmp) = exported("rows");
     menu(&mut s, &g);

@@ -154,13 +154,9 @@ fn ui_329_the_beats_box_and_its_point_offer_each_note_straight_dotted_and_triple
     // A right press on the point: a row sets the note and its feel at once.
     let (px, py) = s.instrument_center(&g, id, Part::Point(0, 0)).unwrap();
     assert!(s.instrument_right(&g, px, py));
-    let at = s
-        .context_rows()
-        .iter()
-        .position(|r| r.label == "1/16 T")
-        .expect("the row");
+
     let before = s.song().steps();
-    assert!(s.context_pick(&g, at));
+    assert!(s.context_choose(&g, "1/16 T"));
     assert_eq!(s.song().steps(), before + 1);
     assert_eq!(plain(&s, t, "division"), 1.0);
     assert_eq!(plain(&s, t, "feel"), 2.0);

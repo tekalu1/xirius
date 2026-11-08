@@ -153,12 +153,8 @@ fn ui_328_a_right_press_on_the_ceiling_sets_it_from_its_menu() {
     let (mut s, g, t, id) = lim_window();
     let (x, y) = s.instrument_center(&g, id, Part::Point(0, 1)).unwrap();
     assert!(s.instrument_right(&g, x, y));
-    let at = s
-        .context_rows()
-        .iter()
-        .position(|r| r.label == "Ceiling を -1.0 dB に")
-        .expect("the row");
-    assert!(s.context_pick(&g, at));
+
+    assert!(s.context_choose(&g, "Ceiling を -1.0 dB に"));
     assert!((plain(&s, t, "ceiling") - -1.0).abs() < 1e-6);
 }
 

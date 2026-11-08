@@ -385,8 +385,7 @@ fn the_fader_with_a_lane_in_read_does_not_move_as_the_mixer_s_does_not() {
     // The menu keeps its rows, greyed out with the reason.
     assert!(s.scene_context(&g, x, y));
     for label in ["0 dB に戻す", "値を入力…"] {
-        let row = s
-            .context_rows()
+        let row = crate::context::tests::all_rows(&s)
             .into_iter()
             .find(|r| r.label == label)
             .unwrap_or_else(|| panic!("no {label}"));
@@ -402,7 +401,7 @@ fn the_right_click_menu_has_the_value_field_and_zero_db() {
     set(&mut s, t, -7.0);
     let (x, y) = mid(&s, &g, t);
     assert!(s.scene_context(&g, x, y));
-    let rows = s.context_rows();
+    let rows = crate::context::tests::all_rows(&s);
     for label in ["0 dB に戻す", "値を入力…"] {
         let row = rows
             .iter()
@@ -559,12 +558,8 @@ fn the_menu_has_the_keys_and_its_value_field_takes_the_number() {
     assert_eq!((volume(&s, t), s.song.steps()), (-7.0, before));
     // 「値を入力…」, the number, Enter: the volume is the typed one, in one step, and the head's
     // own field did not open on the way.
-    let row = s
-        .context_rows()
-        .iter()
-        .position(|r| r.label == "値を入力…")
-        .expect("the value field");
-    assert!(s.context_pick(&g, row));
+
+    assert!(s.context_choose(&g, "値を入力…"));
     assert_eq!(s.ime_target(), Some(crate::interaction::ImeTarget::Ask));
     // The box opens with the value it has; it is cleared, as a person would, before the number.
     for _ in 0..8 {
@@ -577,12 +572,8 @@ fn the_menu_has_the_keys_and_its_value_field_takes_the_number() {
     assert_eq!(s.song.steps(), before + 1);
     // Esc in the menu's field leaves the value.
     assert!(s.scene_context(&g, x, y));
-    let row = s
-        .context_rows()
-        .iter()
-        .position(|r| r.label == "値を入力…")
-        .unwrap();
-    assert!(s.context_pick(&g, row));
+
+    assert!(s.context_choose(&g, "値を入力…"));
     for _ in 0..8 {
         press_key(&mut s, &g, "backspace");
     }
@@ -612,12 +603,8 @@ fn a_field_open_in_the_head_goes_with_the_menu_that_opens_over_it() {
     // The menu's value field opens with that -5, not the -7 the song had when the press came;
     // Enter without a change puts back what it has, adding no step of history.
     let steps = s.song.steps();
-    let row = s
-        .context_rows()
-        .iter()
-        .position(|r| r.label == "値を入力…")
-        .expect("the value field");
-    assert!(s.context_pick(&g, row));
+
+    assert!(s.context_choose(&g, "値を入力…"));
     let opened = s.ask_field().map(|f| f.value.clone()).unwrap_or_default();
     assert_eq!(opened.parse::<f64>().ok(), Some(-5.0), "{opened}");
     press_key(&mut s, &g, "enter");
@@ -645,13 +632,15 @@ fn the_menus_value_field_opens_with_the_value_the_fader_shows_over_a_lane() {
     assert_eq!(s.head_fader_value(t), Some(-24.0));
     let (x, y) = mid(&s, &g, t);
     assert!(s.scene_context(&g, x, y));
-    let row = s
-        .context_rows()
-        .iter()
-        .position(|r| r.label == "値を入力…")
-        .expect("the value field");
-    assert!(s.context_rows()[row].enabled);
-    assert!(s.context_pick(&g, row));
+
+    assert!(
+        crate::context::tests::all_rows(&s)
+            .iter()
+            .find(|r| r.label == "値を入力…")
+            .unwrap()
+            .enabled
+    );
+    assert!(s.context_choose(&g, "値を入力…"));
     let opened = s.ask_field().map(|f| f.value.clone()).unwrap_or_default();
     assert_eq!(opened.parse::<f64>().ok(), Some(-24.0), "{opened}");
 }

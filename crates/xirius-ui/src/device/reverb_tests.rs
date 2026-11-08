@@ -242,12 +242,8 @@ fn ui_330_the_tails_point_offers_the_usual_decays_and_its_wheel_the_damping() {
     );
     let (px, py) = s.instrument_center(&g, id, Part::Point(0, 1)).unwrap();
     assert!(s.instrument_right(&g, px, py));
-    let at = s
-        .context_rows()
-        .iter()
-        .position(|r| r.label == "Decay を 4 s に")
-        .expect("the row");
-    assert!(s.context_pick(&g, at));
+
+    assert!(s.context_choose(&g, "Decay を 4 s に"));
     assert!((plain(&s, t, "decay") - 4.0).abs() < 1e-6);
     let x = fx(&s, t);
     let pts = s.instruments.points_of(r, &x, def, 0);

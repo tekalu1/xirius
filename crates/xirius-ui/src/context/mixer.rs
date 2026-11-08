@@ -246,7 +246,7 @@ impl Studio {
 
     // ------------------------------------------------------------ S27 S35 S36 a head
 
-    fn head_items(&mut self, g: &Geometry, t: TrackId) -> Vec<Item> {
+    pub(super) fn head_items(&mut self, g: &Geometry, t: TrackId) -> Vec<Item> {
         let p = self.project();
         let Some(track) = p.tracks.get(&t) else {
             return Vec::new();
@@ -816,7 +816,7 @@ impl Studio {
 
     /// The menu of a splitter's row: 「分岐を追加」 but on a channel split, whose branches are
     /// L and R.
-    fn split_items(&mut self, t: TrackId, id: NodeId) -> Vec<Item> {
+    pub(super) fn split_items(&mut self, t: TrackId, id: NodeId) -> Vec<Item> {
         let mut rows: Vec<Item> = self.branch_item(t, id).into_iter().collect();
         rows.extend(self.after_items(t, Pick::Split(id)));
         rows.push(Item::gap());

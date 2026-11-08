@@ -28,32 +28,32 @@ pub const CTX_V2: &[Shot] = &[
         acts: &[Act::Reset, staged(0), staged(13)],
     },
     Shot {
-        name: "v2-midi",
-        acts: &[Act::Reset, staged(0), staged(10)],
-    },
-    Shot {
-        name: "v2-track",
-        acts: &[Act::Reset, staged(0), staged(20)],
-    },
-    Shot {
-        name: "v2-insert",
-        acts: &[Act::Reset, staged(80), staged(88)],
-    },
-    Shot {
-        name: "v2-note",
-        acts: &[Act::Reset, staged(60), staged(61)],
+        name: "v2-cascade",
+        acts: &[Act::Reset, staged(0), staged(13), staged(200)],
     },
     Shot {
         name: "v2-empty",
         acts: &[Act::Reset, staged(0), staged(1)],
     },
     Shot {
-        name: "v2-cascade",
-        acts: &[Act::Reset, staged(0), staged(13), staged(200)],
+        name: "v2-insert",
+        acts: &[Act::Reset, staged(80), staged(88)],
+    },
+    Shot {
+        name: "v2-midi",
+        acts: &[Act::Reset, staged(0), staged(10)],
+    },
+    Shot {
+        name: "v2-note",
+        acts: &[Act::Reset, staged(60), staged(61)],
     },
     Shot {
         name: "v2-search",
         acts: &[Act::Reset, staged(80), staged(88), staged(201)],
+    },
+    Shot {
+        name: "v2-track",
+        acts: &[Act::Reset, staged(0), staged(20)],
     },
 ];
 

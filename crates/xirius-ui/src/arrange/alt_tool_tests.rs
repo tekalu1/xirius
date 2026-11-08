@@ -119,7 +119,16 @@ fn pick_row(s: &mut Studio, g: &Geometry, label: &str) {
         .iter()
         .position(|r| !r.gap && r.label == label)
         .unwrap_or_else(|| panic!("no row {label}"));
-    let p = s.center_of(g, Hit::Item(i)).expect("the row on screen");
+    let layout = s.popup.as_ref().unwrap().layout(g.size);
+    let cell = layout
+        .cells
+        .iter()
+        .find(|c| c.action == Some(crate::popup::Action::Ctx(i)))
+        .unwrap();
+    let p = (
+        cell.rect.x + cell.rect.w / 2.0,
+        cell.rect.y + cell.rect.h / 2.0,
+    );
     click(s, g, p);
     assert!(s.popup.is_none(), "the menu stays open");
     s.settings_reload();

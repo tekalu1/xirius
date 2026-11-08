@@ -230,14 +230,15 @@ fn quantize_runs_to_the_grid_and_at_half_strength() {
     assert!(s.scene_context(&g, x, y));
     assert!(choose(&mut s, &g, "クオンタイズ"));
     assert_eq!(labels(&s), ["戻る", "50%"]);
-    assert_eq!(key(&s, "今のグリッド"), "Q");
+    s.context_restore(0);
+    assert_eq!(key(&s, "クオンタイズ（今のグリッド）"), "Q");
     assert!(choose(&mut s, &g, "50%"));
     let half = notes(&s, &g)[0].start;
     assert!(half < 1000 && half > 960, "{half}");
 
     assert!(s.scene_context(&g, x, y));
     assert!(choose(&mut s, &g, "クオンタイズ"));
-    assert!(choose(&mut s, &g, "今のグリッド"));
+    assert!(choose(&mut s, &g, "クオンタイズ（今のグリッド）"));
     assert_eq!(notes(&s, &g)[0].start % 240, 0);
 }
 

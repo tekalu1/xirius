@@ -300,6 +300,10 @@ mod tests {
 
     /// Presses the popup's button that says `text`, where it is on screen.
     fn press(s: &mut Studio, g: &Geometry, text: &str) {
+        if s.ctx.is_some() && s.context_path(text).is_some() {
+            assert!(crate::context::tests::choose(s, g, text));
+            return;
+        }
         let layout = s.popup.as_ref().expect("a popup").layout(g.size);
         let i = layout
             .cells

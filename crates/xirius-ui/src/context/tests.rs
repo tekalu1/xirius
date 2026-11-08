@@ -69,7 +69,7 @@ pub(super) fn key(s: &Studio, label: &str) -> String {
         .clone()
 }
 
-pub(super) fn all_items(s: &Studio) -> Vec<&super::Item> {
+pub(crate) fn all_items(s: &Studio) -> Vec<&super::Item> {
     fn walk<'a>(items: &'a [super::Item], out: &mut Vec<&'a super::Item>) {
         for item in items {
             out.push(item);

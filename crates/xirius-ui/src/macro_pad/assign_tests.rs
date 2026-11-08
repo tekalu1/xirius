@@ -57,7 +57,7 @@ fn labels(s: &Studio) -> Vec<String> {
 }
 
 fn row_enabled(s: &Studio, label: &str) -> bool {
-    s.context_rows()
+    crate::context::tests::all_rows(s)
         .iter()
         .find(|r| r.label == label)
         .unwrap_or_else(|| panic!("no row {label}: {:?}", labels(s)))
@@ -66,12 +66,11 @@ fn row_enabled(s: &Studio, label: &str) -> bool {
 
 /// Chooses the row that starts with `label`.
 fn pick(s: &mut Studio, g: &Geometry, label: &str) {
-    let i = s
-        .context_rows()
-        .iter()
-        .position(|r| !r.gap && r.label.starts_with(label))
-        .unwrap_or_else(|| panic!("no row {label}: {:?}", labels(s)));
-    assert!(s.context_pick(g, i));
+    let name = crate::context::tests::all_labels(s)
+        .into_iter()
+        .find(|name| name.starts_with(label))
+        .expect("operation");
+    assert!(crate::context::tests::choose(s, g, &name));
 }
 
 fn maps(s: &Studio, t: TrackId, k: u8) -> Vec<AutoTarget> {
@@ -97,7 +96,7 @@ fn a_device_knob_gives_itself_to_a_macro_in_one_step() {
     let (mut s, g, t, id) = delay();
     let (x, y) = s.instrument_center(&g, id, Part::Knob(0)).unwrap();
     assert!(s.instrument_right(&g, x, y));
-    let all = labels(&s);
+    let all = crate::context::tests::all_labels(&s);
     let at = all.iter().position(|l| l == MACRO_ASSIGN).expect("the row");
     assert_eq!(all[at - 1], "オートメーションを表示");
     let n = s.song().steps();
@@ -130,7 +129,7 @@ fn a_device_knob_gives_itself_to_a_macro_in_one_step() {
 fn the_knob_menu_has_add_learn_remove_and_its_lane() {
     let (mut s, g, t, _) = delay();
     knob_menu(&mut s, &g, t, 7);
-    let all = labels(&s);
+    let all = crate::context::tests::all_labels(&s);
     assert_eq!(all[..4], [ADD, LEARN, REMOVE, "名前を変更"]);
     assert!(all.contains(&"オートメーションを表示".to_string()));
     assert!(all.contains(&"MIDI 学習".to_string()));

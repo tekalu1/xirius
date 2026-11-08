@@ -19,6 +19,16 @@ fn studio() -> (Studio, Geometry) {
     (s, g)
 }
 
+#[test]
+fn context_catalog_splitter_card_keeps_add_and_remove() {
+    let (mut s, _g) = studio();
+    let (t, split, _) = vocal(&mut s);
+    s.channel_menu(t, crate::mixer::flow::Pick::Split(split), 600.0, 300.0);
+    let labels = crate::context::tests::all_labels(&s);
+    assert!(labels.contains(&"分岐を追加".into()));
+    assert!(labels.contains(&"スプリッターを外す".into()));
+}
+
 fn add(s: &mut Studio, t: TrackId, name: &str) -> PluginId {
     assert!(s.run_command("plugin.add", json!({"track":t,"name":name})));
     s.project().tracks[&t].inserts.last().unwrap().id
@@ -195,8 +205,8 @@ fn mix_045_the_plus_has_its_name_its_tip_and_its_menu() {
     // A right press on the ＋ offers 「分岐を追加」; so does the splitter's menu.
     assert!(s.channel_right(&g, x, y));
     let rows: Vec<String> = s.context_rows().into_iter().map(|r| r.label).collect();
-    assert_eq!(rows, ["分岐を追加"]);
-    assert!(s.context_pick(&g, 0));
+    assert_eq!(rows, ["機器"]);
+    assert!(s.context_choose(&g, "分岐を追加"));
     assert_eq!(split(&s, t, sp).unwrap().branches.len(), 3);
 }
 
@@ -440,15 +450,15 @@ fn mix_045_a_heads_pan_is_dragged_typed_and_put_back() {
     // the menu's 「既定に戻す」
     assert!(s.channel_right(&g, x, y));
     let rows: Vec<String> = s.context_rows().into_iter().map(|r| r.label).collect();
-    assert_eq!(rows, ["値を入力…", "既定に戻す"]);
-    assert!(s.context_pick(&g, 1));
+    assert_eq!(rows, ["機器"]);
+    assert!(s.context_choose(&g, "既定に戻す"));
     assert_eq!(levels(&s, t, b[0]).1, 0.0);
     // the level's menu, and its 「値を入力…」 opens the field
     let (lx, ly) = mid(hp.level);
     assert!(s.channel_right(&g, lx, ly));
     let rows: Vec<String> = s.context_rows().into_iter().map(|r| r.label).collect();
-    assert_eq!(rows, ["値を入力…", "0 dB に戻す"]);
-    assert!(s.context_pick(&g, 0));
+    assert_eq!(rows, ["機器"]);
+    assert!(s.context_choose(&g, "値を入力…"));
     assert_eq!(
         s.mixer.value_entry.as_ref().map(|e| e.focus),
         Some(editor(t, b[0], Which::Gain))

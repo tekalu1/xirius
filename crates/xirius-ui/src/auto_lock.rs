@@ -188,8 +188,7 @@ mod tests {
             // The menu keeps its rows, greyed out with the reason.
             assert!(s.scene_context(&g, x, y));
             for label in [reset, "値を入力…"] {
-                let row = s
-                    .context_rows()
+                let row = crate::context::tests::all_rows(&s)
                     .into_iter()
                     .find(|r| r.label == label)
                     .unwrap_or_else(|| panic!("{hit:?}: no {label}"));
@@ -245,8 +244,7 @@ mod tests {
             assert!(s.mixer.drag.is_none());
             assert!(!s.knob_move(hit, 10));
             assert!(s.scene_context(&g, x, y));
-            let row = s
-                .context_rows()
+            let row = crate::context::tests::all_rows(&s)
                 .into_iter()
                 .find(|r| r.label == "0 dB に戻す")
                 .expect("its reset");

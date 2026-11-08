@@ -12,8 +12,16 @@ def check(directory, root):
     expected = {row["id"]: row for row in json.loads(fixture.read_text(encoding="utf-8"))}
     expected.update({row["id"]: row for row in json.loads(fixture.with_name("supplemental.json").read_text(encoding="utf-8"))})
     seen = set()
+    trees = 0
+    maximum = 0
     for file in Path(directory).glob("*.json"):
-        seen.update(json.loads(file.read_text(encoding="utf-8"))["ids"])
+        tree = json.loads(file.read_text(encoding="utf-8"))
+        seen.update(tree["ids"])
+        trees += 1
+        maximum = max(maximum, tree["root_rows"])
+        if tree["root_rows"] > 12 or any(tree[key] for key in ("missing", "duplicate", "unreachable")):
+            print(f"Context catalog: invalid live tree {file.name}")
+            return False
     missing = sorted(set(expected) - seen)
     unknown = sorted(seen - set(expected))
     if missing or unknown:
@@ -23,5 +31,6 @@ def check(directory, root):
         for identity in unknown:
             print(f"  unknown {identity}")
         return False
-    print(f"Context catalog: all {len(expected)} live rules covered; missing=0, unknown=0")
+    print(f"Context catalog: all {len(expected)} live rules covered in {trees} trees; "
+          f"root_max={maximum}, missing=0, duplicate=0, unreachable=0, unknown=0")
     return True

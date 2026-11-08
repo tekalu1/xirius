@@ -193,7 +193,7 @@ fn the_right_press_on_a_row_opens_its_menu() {
     let at = cell_of(&s, &g, Action::Cpu(CAct::Pick(id)));
     assert!(s.cpu_context(&g, at.x + 80.0, at.y + 6.0));
     assert_eq!(s.popup.as_ref().map(|p| p.kind), Some(PopupKind::Context));
-    let rows = s.context_rows();
+    let rows = crate::context::tests::all_rows(&s);
     let names: Vec<String> = rows.iter().map(|r| r.label.clone()).collect();
     assert!(names.iter().any(|n| n == "画面を開く"), "{names:?}");
     assert!(names.iter().any(|n| n == "無効にする"), "{names:?}");

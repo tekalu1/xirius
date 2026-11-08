@@ -2560,7 +2560,7 @@ mod tests {
         let n = c.notes()[0];
         let v = s.roll.view(&c);
         assert!(s.scene_context(&g, v.x(n.start) + 6.0, v.y(n.pitch) + v.row_h / 2.0));
-        let rows = s.context_rows();
+        let rows = crate::context::tests::all_rows(&s);
         for (label, name) in [
             ("ノートを複製", "note.duplicate"),
             ("ノートをミュート", "note.mute"),

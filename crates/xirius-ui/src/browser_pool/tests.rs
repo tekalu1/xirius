@@ -117,7 +117,7 @@ fn labels(s: &Studio) -> Vec<String> {
 }
 
 fn row_of(s: &Studio, label: &str) -> crate::context::Row {
-    s.context_rows()
+    crate::context::tests::all_rows(s)
         .into_iter()
         .find(|r| r.label == label)
         .unwrap_or_else(|| panic!("no row {label}: {:?}", labels(s)))
@@ -401,16 +401,9 @@ fn a_used_files_menu_puts_selects_reveals_renames_and_keeps_it_from_the_bin() {
     menu_of(&mut t, "Vocal_01.wav");
     assert_eq!(
         labels(&t.s),
-        [
-            "新しいトラックに置く",
-            "選んだトラックに置く",
-            "使っているクリップを選択",
-            "エクスプローラーで表示",
-            "名前を変更",
-            "ごみ箱へ",
-        ]
+        ["編集", "選択", "トラック", "表示", "ファイル"]
     );
-    let bin = row_of(&t.s, "ごみ箱へ");
+    let bin = row_of(&t.s, "ファイルをごみ箱へ");
     assert!(
         bin.reason.contains("Vocal_01.wav") && bin.reason.contains("使用中"),
         "{}",
@@ -425,16 +418,7 @@ fn a_used_files_menu_puts_selects_reveals_renames_and_keeps_it_from_the_bin() {
 fn an_unused_take_has_no_select_row_and_goes_to_the_bin() {
     let mut t = song("unused");
     menu_of(&mut t, "Vocal_02.wav");
-    assert_eq!(
-        labels(&t.s),
-        [
-            "新しいトラックに置く",
-            "選んだトラックに置く",
-            "エクスプローラーで表示",
-            "名前を変更",
-            "ごみ箱へ",
-        ]
-    );
+    assert_eq!(labels(&t.s), ["編集", "トラック", "表示", "ファイル"]);
     assert!(row_of(&t.s, "ごみ箱へ").enabled);
     assert!(t.s.context_choose(&t.g, "ごみ箱へ"));
     assert!(t.s.context_choose(&t.g, "ファイルをごみ箱へ"));
@@ -450,7 +434,9 @@ fn an_unused_take_has_no_select_row_and_goes_to_the_bin() {
 fn an_outside_file_is_copied_in_from_its_row_and_the_window_says_so() {
     let mut t = song("collect");
     menu_of(&mut t, "Pad.wav");
-    assert!(labels(&t.s).contains(&"曲のフォルダーにコピー".to_string()));
+    assert!(
+        crate::context::tests::all_labels(&t.s).contains(&"曲のフォルダーにコピー".to_string())
+    );
     let steps = t.s.song.steps();
     assert!(t.s.context_choose(&t.g, "曲のフォルダーにコピー"));
     assert_eq!(t.s.error, None);
@@ -466,7 +452,9 @@ fn an_outside_file_is_copied_in_from_its_row_and_the_window_says_so() {
     assert!(rows(&t.s, &t.g).contains(&"Pad.wav 1".to_string()));
     // A file inside the song has no copy row.
     menu_of(&mut t, "Kick.wav");
-    assert!(!labels(&t.s).contains(&"曲のフォルダーにコピー".to_string()));
+    assert!(
+        !crate::context::tests::all_labels(&t.s).contains(&"曲のフォルダーにコピー".to_string())
+    );
 }
 
 #[test]
@@ -493,7 +481,7 @@ fn copying_many_files_counts_them() {
 fn a_missing_files_menu_only_points_it_and_selects_its_clips() {
     let mut t = song("missing");
     menu_of(&mut t, "Bass.wav");
-    assert_eq!(labels(&t.s), ["場所を指定…", "使っているクリップを選択"]);
+    assert_eq!(labels(&t.s), ["選択", "ファイル"]);
 }
 
 #[test]
@@ -538,15 +526,7 @@ fn pointing_one_file_names_it_alone() {
 fn the_dots_menu_looks_for_the_missing_in_a_folder_and_dims_what_has_nothing_to_do() {
     let mut t = song("more");
     more(&mut t);
-    assert_eq!(
-        labels(&t.s),
-        [
-            "見つからないファイルを探す…",
-            "外部のファイルを曲のフォルダーにコピー",
-            "曲のフォルダーをエクスプローラーで表示",
-            "使われていない録音を整理…",
-        ]
-    );
+    assert_eq!(labels(&t.s), ["表示", "ファイル"]);
     assert!(t.s.context_choose(&t.g, "見つからないファイルを探す…"));
     let folder = t.root.path().join("見つけた");
     answer(&mut t, FileRequest::LocateFolder, &[folder]);

@@ -855,11 +855,10 @@ fn ui_326_the_points_menu_switches_its_band_and_the_reader_hears_it() {
     let (mut s, g, t, id) = eq_window();
     let (x, y) = s.instrument_center(&g, id, Part::Point(0, 3)).unwrap();
     assert!(s.instrument_right(&g, x, y));
-    let labels: Vec<_> = s
-        .context_rows()
+    let labels: Vec<_> = crate::context::tests::all_rows(&s)
         .iter()
         .map(|r| r.label.clone())
-        .filter(|l| !l.is_empty())
+        .filter(|l| !l.is_empty() && l != "機器")
         .collect();
     let mut want: Vec<String> = xirius_params::EQ_BANDS[3]
         .types
@@ -895,7 +894,11 @@ fn ui_326_the_points_menu_switches_its_band_and_the_reader_hears_it() {
     // The menu now turns it back on.
     let (x, y) = s.instrument_center(&g, id, Part::Point(0, 3)).unwrap();
     assert!(s.instrument_right(&g, x, y));
-    assert!(s.context_rows().iter().any(|r| r.label == "バンドをオン"));
+    assert!(
+        crate::context::tests::all_rows(&s)
+            .iter()
+            .any(|r| r.label == "バンドをオン")
+    );
     s.popup = None;
     assert!(s.undo(&g));
     assert_eq!(plain(&s, t, "b4_on"), 1.0);

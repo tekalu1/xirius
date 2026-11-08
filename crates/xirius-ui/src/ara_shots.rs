@@ -120,7 +120,7 @@ fn processing(s: &mut Studio, g: &Geometry) {
     s.ctx = None;
     let (x, y) = clip_mid(s, g, "Vocal", 0);
     assert!(s.scene_context(g, x, y));
-    assert!(s.context_choose(g, "処理"));
+    assert!(s.context_choose(g, "オーディオ"));
 }
 
 fn labels(s: &Studio) -> Vec<String> {

@@ -2,10 +2,9 @@
 
 use xirius_core::auto::AutoTarget;
 
-use super::menu::Menu;
 use super::*;
 use crate::mixer::MixerHit;
-use crate::popup::{Action, Cell, PopupKind};
+use crate::popup::{Action, PopupKind};
 use crate::studio::{DrawerTab, Geometry};
 use crate::tools::Mods;
 use crate::tree::RowKind;
@@ -40,46 +39,51 @@ fn right_press(s: &mut Studio, g: &Geometry, t: TrackId, id: PluginId) {
     assert!(s.context_press(g, x, y));
 }
 
-/// The rows of the open menu as they are drawn.
-fn rows(s: &Studio, g: &Geometry) -> Vec<Cell> {
-    s.popup.as_ref().expect("a menu").layout(g.size).cells
-}
-
 fn pick(s: &mut Studio, g: &Geometry, to: &str) {
-    s.popup_action(g, Action::Pick(to.into()));
+    let label = match to {
+        "open" => "画面を開く",
+        "preset" => "プリセット",
+        "replace" => "差し替える…",
+        "reload" => "再起動",
+        "auto" => "オートメーションを表示",
+        "remove" => "プラグインを削除",
+        "process" => "動かす場所",
+        "Default" => "Default",
+        _ => "",
+    };
+    let label = if label.is_empty() {
+        crate::context::tests::all_items(s)
+            .into_iter()
+            .find_map(|item| {
+                matches!(&item.run, crate::context::Run::Legacy(_, _, action)
+                if **action == Action::Pick(to.into()))
+                .then(|| item.label.clone())
+            })
+            .expect("legacy operation retained")
+    } else {
+        label.to_owned()
+    };
+    assert!(crate::context::tests::choose(s, g, &label));
 }
 
 #[test]
 fn the_instrument_row_has_its_own_menu_with_keys_and_groups() {
     let (mut s, g, t, id) = studio();
     right_press(&mut s, &g, t, id);
-    let popup = s.popup.as_ref().unwrap();
-    assert_eq!(popup.kind, PopupKind::InstMenu(Menu::Row(t, id)));
-    let cells = rows(&s, &g);
-    let shown: Vec<(&str, &str, bool)> = cells
-        .iter()
-        .map(|c| (c.text.as_str(), c.hint.as_str(), c.enabled))
-        .collect();
-    assert_eq!(
-        shown,
-        [
-            // The list menu's search box is the first row (UI-320).
-            ("", "", true),
-            ("画面を開く", "Shift+F11", true),
-            ("プリセット", "", true),
-            ("差し替える…", "", true),
-            ("再起動", "", true),
-            ("オートメーションを表示", "A", true),
-            ("コピー", "Ctrl+C", false),
-            ("プラグインを削除", "Del", true),
-        ]
-    );
-    // Space, not lines, between the four groups.
-    let gaps: Vec<f32> = cells
-        .windows(2)
-        .map(|w| w[1].rect.y - w[0].rect.bottom())
-        .collect();
-    assert_eq!(gaps.iter().filter(|d| **d > 0.5).count(), 3);
+    assert_eq!(s.popup.as_ref().unwrap().kind, PopupKind::Context);
+    let rows = crate::context::tests::all_rows(&s);
+    for (label, key, enabled) in [
+        ("画面を開く", "Shift+F11", true),
+        ("プリセット", "", true),
+        ("差し替える…", "", true),
+        ("再起動", "", true),
+        ("オートメーションを表示", "A", true),
+        ("コピー", "Ctrl+C", false),
+        ("プラグインを削除", "Del", true),
+    ] {
+        let row = rows.iter().find(|r| r.label == label).expect(label);
+        assert_eq!((&*row.key, row.enabled), (key, enabled), "{label}");
+    }
     // An effect keeps the plugin menu.
     assert!(s.run_command(
         "plugin.add",
@@ -88,7 +92,7 @@ fn the_instrument_row_has_its_own_menu_with_keys_and_groups() {
     let eq = s.project().tracks[&t].inserts[1].id;
     s.popup = None;
     right_press(&mut s, &g, t, eq);
-    assert_eq!(s.popup.as_ref().unwrap().kind, PopupKind::Plugin(t, eq));
+    assert_eq!(s.popup.as_ref().unwrap().kind, PopupKind::Context);
 }
 
 #[test]
@@ -106,11 +110,20 @@ fn open_presets_and_replace_go_where_the_row_says() {
     let anchor = s.popup.as_ref().unwrap().anchor;
     pick(&mut s, &g, "preset");
     let popup = s.popup.as_ref().expect("the presets");
-    assert_eq!(popup.kind, PopupKind::InstMenu(Menu::Preset(t, id)));
+    assert_eq!(popup.kind, PopupKind::Context);
     assert_eq!(popup.anchor, anchor);
     // The Sampler has only its Default (PLG-064), then the saves under it.
-    assert_eq!(popup.current(), format!("{}Default", super::menu::LOAD));
-    let labels: Vec<String> = popup.choices().into_iter().map(|c| c.label).collect();
+    assert!(
+        s.context_rows()
+            .iter()
+            .any(|r| r.label == "Default" && r.on)
+    );
+    let labels: Vec<String> = s
+        .context_rows()
+        .into_iter()
+        .filter(|r| !r.gap && r.label != "戻る")
+        .map(|r| r.label)
+        .collect();
     assert_eq!(
         labels,
         [
@@ -145,8 +158,12 @@ fn automation_shows_a_lane_of_the_picked_parameter_in_one_step() {
     right_press(&mut s, &g, t, id);
     pick(&mut s, &g, "auto");
     let popup = s.popup.as_ref().expect("the parameters");
-    assert_eq!(popup.kind, PopupKind::InstMenu(Menu::Params(t, id)));
-    let cs = popup.choices();
+    assert_eq!(popup.kind, PopupKind::Context);
+    let cs: Vec<_> = s
+        .context_rows()
+        .into_iter()
+        .filter(|r| !r.gap && r.label != "戻る")
+        .collect();
     let names: Vec<&str> = cs.iter().map(|c| c.label.as_str()).collect();
     let def = plugin(&s, t).builtin().unwrap();
     let want: Vec<&str> = def.params.iter().map(|p| p.label).collect();
@@ -198,15 +215,17 @@ fn another_makers_instrument_has_no_presets_here() {
     assert!(s.set_instrument(t, &pad));
     let id = plugin(&s, t).id;
     right_press(&mut s, &g, t, id);
-    let cells = rows(&s, &g);
-    let preset = cells.iter().find(|c| c.text == "プリセット").unwrap();
+    let cells = crate::context::tests::all_rows(&s);
+    let preset = cells.iter().find(|c| c.label == "プリセット").unwrap();
     assert!(!preset.enabled);
     // It keeps nothing yet: no parameter to follow.
     pick(&mut s, &g, "auto");
-    let cells = rows(&s, &g);
-    assert_eq!(cells.len(), 2);
-    assert_eq!(cells[1].text, "パラメーターがありません");
-    assert!(!cells[1].enabled);
+    let cells = crate::context::tests::all_rows(&s);
+    let empty = cells
+        .iter()
+        .find(|r| r.label == "パラメーターがありません")
+        .unwrap();
+    assert!(!empty.enabled);
 }
 
 #[test]
@@ -242,17 +261,11 @@ fn an_external_instrument_opens_the_effective_process_choices_from_its_row() {
         .set("prefs.set", json!({"key":key,"value":"dedicated"}))
         .unwrap();
     right_press(&mut s, &g, t, id);
-    assert!(
-        rows(&s, &g)
-            .iter()
-            .any(|c| c.action == Some(Action::Pick("process".into())))
-    );
+    assert!(s.context_path("動かす場所").is_some());
+    assert!(s.context_choose(&g, "機器"));
     let marks = crate::a11y::marks(&s, &g);
     assert!(marks.iter().any(|m| m.node.label() == Some("動かす場所")));
     self::pick(&mut s, &g, "process");
-    assert_eq!(s.popup.as_ref().unwrap().kind, PopupKind::Plugin(t, id));
-    assert_eq!(
-        s.popup.as_ref().unwrap().plugin.as_ref().unwrap().mode,
-        xirius_core::model::PluginIsolation::Dedicated
-    );
+    assert_eq!(s.popup.as_ref().unwrap().kind, PopupKind::Context);
+    assert!(s.context_rows().iter().any(|r| r.label == "専用" && r.on));
 }

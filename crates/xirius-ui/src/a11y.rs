@@ -1851,6 +1851,7 @@ mod tests {
         let g = s.geometry(1600.0, 900.0);
         let (x, y) = crate::arrange::probe::clip_mid(&s, &g, "Keys", 0);
         assert!(s.scene_context(&g, x, y));
+        assert!(s.context_choose(&g, "クリップ"));
         let nodes: Vec<accesskit::Node> = marks(&s, &g).into_iter().map(|m| m.node).collect();
         assert!(
             nodes.iter().any(|n| n.role() == accesskit::Role::SpinButton

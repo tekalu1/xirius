@@ -1731,15 +1731,7 @@ fn ui_333_the_sample_name_and_a_zone_have_their_menus() {
         s.error
     );
     press_spot(&mut s, &g, t, id, Mark::Name);
-    assert_eq!(
-        menu(&s),
-        [
-            "サンプルを置き換え…",
-            "ブラウザーで表示",
-            "このゾーンを外す",
-            "すべてのサンプルを外す"
-        ]
-    );
+    assert_eq!(menu(&s), ["機器", "表示"]);
     assert!(!live_row(&s, "ブラウザーで表示"), "no tab holds it");
     // Another file in the zone's place: one step, the zone's start as it was.
     let w = s.instruments.open[0];
@@ -1772,7 +1764,7 @@ fn ui_333_the_sample_name_and_a_zone_have_their_menus() {
     let other = 1 - w.pick;
     right_spot(&mut s, &g, t, id, Mark::Zone(other));
     assert_eq!(s.instruments.open[0].pick, other);
-    assert_eq!(menu(&s), ["このゾーンを外す"]);
+    assert_eq!(menu(&s), ["機器"]);
     choose(&mut s, &g, "このゾーンを外す");
     assert_eq!(plugin(&s, t).samples.len(), 1);
     // All of them.
@@ -1792,15 +1784,7 @@ fn ui_334_a_pad_and_a_layer_have_their_menus() {
     let (x, y) = s.instrument_center(&g, id, Part::Pad(37)).expect("A2");
     assert!(s.instrument_right(&g, x, y));
     assert_eq!(s.instruments.open[0].pick, 1);
-    assert_eq!(
-        menu(&s),
-        [
-            "サンプルを置き換え…",
-            "サンプルを足す…",
-            "パッドを空にする",
-            "バンクを空にする"
-        ]
-    );
+    assert_eq!(menu(&s), ["機器"]);
     assert!(!live_row(&s, "サンプルを置き換え…"));
     assert!(!live_row(&s, "パッドを空にする"));
     // Two files added: the layers of A2, in one step.
@@ -1835,21 +1819,14 @@ fn ui_334_a_pad_and_a_layer_have_their_menus() {
     // A layer's right press does not choose it; it takes it away.
     right_spot(&mut s, &g, t, id, Mark::Layer(2));
     assert_eq!(s.instruments.open[0].layer, 0);
-    assert_eq!(menu(&s), ["このレイヤーを外す"]);
+    assert_eq!(menu(&s), ["機器"]);
     assert!(live_row(&s, "このレイヤーを外す"));
     choose(&mut s, &g, "このレイヤーを外す");
     let k = plugin(&s, t);
     assert_eq!(sampler::pad_files(def, &k, 1), [0, 1]);
     // The name's menu, a Drum Kit's: its layer, not the zone or all.
     press_spot(&mut s, &g, t, id, Mark::Name);
-    assert_eq!(
-        menu(&s),
-        [
-            "サンプルを置き換え…",
-            "ブラウザーで表示",
-            "このレイヤーを外す"
-        ]
-    );
+    assert_eq!(menu(&s), ["機器", "表示"]);
     // B1 has a file too; A's bank emptied leaves it.
     let b1 = json!({
         "id": id.to_string(),

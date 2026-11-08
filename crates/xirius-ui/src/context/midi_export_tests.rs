@@ -34,7 +34,7 @@ fn the_export_row_of_a_track_has_its_stem_and_its_midi_file() {
     let (mut s, g) = studio();
     assert!(press_track(&mut s, &g, "Keys"));
     assert!(choose(&mut s, &g, "書き出し"));
-    assert_eq!(labels(&s), ["戻る", STEM, MIDI]);
+    assert_eq!(labels(&s), ["戻る", "新しいトラックにバウンス", STEM, MIDI]);
     assert!(enabled(&s, STEM) && enabled(&s, MIDI));
     // An audio track has no notes to write.
     s.popup = None;

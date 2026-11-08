@@ -446,6 +446,7 @@ fn the_folders_row_folds_every_folder_and_opens_them_again() {
     let (x, y) = under_the_rows(&s, &g);
     assert!(s.scene_context(&g, x, y));
     let n = steps(&s);
+    assert!(choose(&mut s, &g, "表示"));
     assert!(choose(&mut s, &g, "フォルダー"));
     assert!(choose(&mut s, &g, "すべて畳む"));
     assert_eq!(steps(&s), n);
@@ -454,6 +455,7 @@ fn the_folders_row_folds_every_folder_and_opens_them_again() {
     // The rows shrank; press the room under them now.
     let (x, y) = under_the_rows(&s, &g);
     assert!(s.scene_context(&g, x, y));
+    assert!(choose(&mut s, &g, "表示"));
     assert!(choose(&mut s, &g, "フォルダー"));
     assert!(choose(&mut s, &g, "すべて開く"));
     assert!(all.iter().all(|f| !s.is_collapsed(*f)));

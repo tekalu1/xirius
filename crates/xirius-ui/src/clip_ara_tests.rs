@@ -57,6 +57,27 @@ fn attach(s: &mut Studio, clip: ClipId) {
         .unwrap();
 }
 
+#[test]
+fn context_catalog_attached_and_crashed_audio_in_mixed_selection() {
+    let (mut s, g) = studio();
+    let (t, c) = vocal(&s);
+    attach(&mut s, c);
+    let mt = track(&s, "Keys");
+    let mc = s.project().tracks[&mt].clips[0].id;
+    for crashed in [false, true] {
+        let mut state = report(c, Phase::Ready, 1.0);
+        if crashed {
+            state.crashed = Some("stopped".into());
+        }
+        s.ara.fake = Some(vec![state]);
+        s.poll_ara();
+        s.arrange.clips = [(t, c)].into_iter().collect();
+        assert!(s.clip_context(&g, t, c, 600.0, 300.0));
+        s.arrange.clips = [(t, c), (mt, mc)].into_iter().collect();
+        assert!(s.clip_context(&g, mt, mc, 600.0, 300.0));
+    }
+}
+
 fn report(clip: ClipId, phase: Phase, progress: f32) -> Report {
     Report {
         plugin: UID.into(),
@@ -92,7 +113,18 @@ fn processing(s: &mut Studio, g: &Geometry) {
     s.popup = None;
     let (x, y) = clip_mid(s, g, "Vocal", 0);
     assert!(s.scene_context(g, x, y));
-    choose(s, g, "オーディオ");
+    let attached = s
+        .selected_clip
+        .is_some_and(|(_, c)| s.project().ara.clips.contains_key(&c));
+    choose(
+        s,
+        g,
+        if attached {
+            "クリップ"
+        } else {
+            "オーディオ"
+        },
+    );
 }
 
 /// Presses the cell of the open menu's row named `label`.
@@ -586,7 +618,9 @@ fn a_press_on_the_badge_opens_explains_or_offers_the_restart() {
     assert!(s.toast_shown().is_none() && s.popup.is_none());
     let hit = s.hit(&g, x, y);
     s.press(&g, hit);
-    assert_eq!(labels(&s), [NAME, "編集", "再起動", "外す"]);
+    assert_eq!(labels(&s), ["オーディオ"]);
+    assert!(choose(&mut s, &g, "オーディオ"));
+    assert_eq!(labels(&s), ["戻る", "編集", "再起動", "外す"]);
     let rows = s.context_rows();
     assert!(rows[0].title && !rows[0].enabled);
     let edit = row(&s, "編集");

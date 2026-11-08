@@ -320,6 +320,9 @@ fn external_reads_preserve_palette_search_forms_and_menu_composition() {
             assert!(s.palette_key(&g, "escape", Mods::NONE));
         } else {
             assert_eq!(s.ask_key("escape"), Some(true));
+            if s.context_open() {
+                assert_eq!(s.ask_key("escape"), Some(true));
+            }
         }
         assert!(!s.human_interaction_active());
         let retry = request(&mut s, "track.list", json!({}), RunOptions::human());
