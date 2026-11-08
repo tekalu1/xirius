@@ -46,7 +46,7 @@
 - 欠け・`cancelled` でも止めるのは、release の中に CI の代わりになる試験が無いためです
   （release で試験をやり直す道を作ると、CI と同じものを二重に持つことになります）。
   `rust.yml` には `paths-ignore` が無く、main への push は取り消さない（`concurrency` の
-  `cancel-in-progress` は PR だけ）ので、ふつうの手順で run が無くなることはありません。
+  `cancel-in-progress` は PR と手動起動だけ）ので、ふつうの手順で run が無くなることはありません。
 - 採らなかった案:
   - 承認を外して、CI を見ずに公開する（赤い commit が配られる）。
   - CI の終わりを待たずに、その時点の結果だけを見る（走っている途中の commit が配られる）。
