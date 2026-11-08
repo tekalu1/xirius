@@ -84,6 +84,8 @@ fn every_buffer_uses_the_driver_report_and_never_the_mock_formula() {
 }
 
 #[test]
+// Windows-only: switches between the two WASAPI choices, absent from CoreAudio's menu.
+#[cfg(windows)]
 fn shared_mode_leaves_the_buffer_to_windows_and_offers_no_size() {
     let (mut s, g) = setup();
     let sizes: Vec<Do> = xirius_engine::devices::BUFFERS

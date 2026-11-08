@@ -3447,6 +3447,8 @@ mod tests {
 
     /// Stand-in drivers: the exclusive one refuses (and gives the engine back) or opens; both
     /// give a silent output, so no sound device is opened.
+    // Stand-in for the Windows default WASAPI-exclusive test below.
+    #[cfg(windows)]
     fn drivers(exclusive_opens: bool, asked: &Arc<std::sync::Mutex<Vec<&'static str>>>) -> Drivers {
         use xirius_session::output::{Refused, SilentOutput};
         let (a, b) = (asked.clone(), asked.clone());
@@ -3515,6 +3517,7 @@ mod tests {
         let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
         let mut s = studio(OutputMode::Device);
         s.transport.set_drivers(held(&free, &lost, &asked));
+        choose_mock_exclusive(&mut s);
         let g = s.geometry(1440.0, 860.0);
         s.press(&g, Hit::Bar(BarButton::Play));
         // Not a silent player: nothing plays, and the screen says why.
@@ -3568,6 +3571,7 @@ mod tests {
         let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
         let mut s = studio(OutputMode::Device);
         s.transport.set_drivers(held(&free, &lost, &asked));
+        choose_mock_exclusive(&mut s);
         let g = s.geometry(1440.0, 860.0);
         s.press(&g, Hit::Bar(BarButton::Play));
         assert!(until(&mut s, |s| s.playhead > 200), "plays");
@@ -3594,6 +3598,20 @@ mod tests {
         assert_eq!(s.notice_text(), Some(REOPENED));
         assert!(s.error.is_none() && s.transport.is_live() && !s.transport.playing);
         assert_eq!(s.playhead, at);
+    }
+
+    fn choose_mock_exclusive(s: &mut Studio) {
+        // These device-loss tests exercise a stand-in exclusive driver on either OS.
+        // Do not depend on the platform's default (CoreAudio on Mac).
+        let value = serde_json::json!("wasapi-exclusive");
+        s.song
+            .settings()
+            .lock()
+            .unwrap()
+            .prefs
+            .set("audio.driver", &value)
+            .unwrap();
+        s.transport.io_prefs.set("audio.driver", &value).unwrap();
     }
 
     /// Stand-in drivers whose output opens, and whose input is refused with what `refuse`
@@ -3846,6 +3864,8 @@ mod tests {
     }
 
     #[test]
+    // Windows-only: WASAPI exclusive is the Windows default; Mac defaults to CoreAudio.
+    #[cfg(windows)]
     fn play_opens_the_device_exclusively_by_default_and_says_when_it_had_to_share() {
         // The settings' default is exclusive: it opens, and nothing is said.
         let asked = Arc::new(std::sync::Mutex::new(Vec::new()));

@@ -135,6 +135,7 @@ fn review_replacing_or_losing_an_engine_cancels_its_preview_port() {
         close();
         let (_tmp, top) = place("lifetime");
         let mut s = studio(OutputMode::Device, &top);
+        choose_mock_exclusive(&mut s);
         let mut drivers = xirius_session::output::Drivers::system();
         drivers.exclusive_out = Some(Arc::new(|audio, _, _| {
             Ok(xirius_session::output::Output::Silent(
@@ -406,6 +407,19 @@ fn place(name: &str) -> (tempfile::TempDir, PathBuf) {
 /// How long a wait for the player may take before the test gives up: far over what it needs,
 /// for a machine busy with a parallel build.
 const GUARD: Duration = Duration::from_secs(60);
+
+fn choose_mock_exclusive(s: &mut Studio) {
+    // The tests supply their own silent exclusive driver, independently of the OS default.
+    let value = serde_json::json!("wasapi-exclusive");
+    s.song
+        .settings()
+        .lock()
+        .unwrap()
+        .prefs
+        .set("audio.driver", &value)
+        .unwrap();
+    s.transport.io_prefs.set("audio.driver", &value).unwrap();
+}
 
 fn studio(mode: OutputMode, top: &Path) -> Studio {
     // Device preparation reports missing sample-song files instead of silently
@@ -915,6 +929,7 @@ fn exclusive_preview_uses_the_prepared_song_output() {
     let opens = Arc::new(AtomicUsize::new(0));
     let count = opens.clone();
     let mut s = studio(OutputMode::Device, &top);
+    choose_mock_exclusive(&mut s);
     let mut drivers = Drivers::system();
     drivers.exclusive_out = Some(Arc::new(move |audio, _, _| {
         count.fetch_add(1, SeqCst);
