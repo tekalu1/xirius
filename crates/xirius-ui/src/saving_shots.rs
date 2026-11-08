@@ -191,10 +191,11 @@ fn begin(n: u8, studio: &Rc<RefCell<Studio>>, _window: &mut Window, _cx: &mut Ap
             wav.resize(bytes as usize + 44, 0);
             let audio = root.join("silence.wav");
             std::fs::write(&audio, wav).unwrap();
-            s.song
-                .run("clip.import.place", json!({"file":audio,"length":1920}))
-                .unwrap();
-            s.song.save_as(&root.join("original")).unwrap();
+            assert!(s.run_command("clip.import.place", json!({"file":audio,"length":1920})));
+            crate::shot::run_for(&mut s, 10.0, |s| !s.input_blocked());
+            assert!(s.run_command("project.save-as", json!({"path":root.join("original")})));
+            crate::shot::run_for(&mut s, 10.0, |s| !s.input_blocked());
+            assert!(s.song.is_saved() && s.error.is_none(), "{:?}", s.error);
             let project = s.song.project();
             s.keep.sync(&project);
             *state = Some(State {

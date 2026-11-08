@@ -2384,10 +2384,11 @@ pub fn run(opts: Options) {
                     crate::audioset_shots::fixture(&mut s);
                     s.open_settings(crate::settings::Section::Audio);
                     // An input is chosen so the radios' selection is real (UI-080).
-                    let _ = s
-                        .song
-                        // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
-                        .run("audio.input.select", serde_json::json!({ "channel": 1 }));
+                    assert!(
+                        s.run_command("audio.input.select", serde_json::json!({ "channel": 1 }),)
+                    );
+                    crate::shot::run_for(&mut s, 10.0, |s| s.saving.is_none());
+                    assert!(s.saving.is_none() && s.error.is_none(), "{:?}", s.error);
                 } else if open.as_deref() == Some("midi") {
                     studio
                         .borrow_mut()

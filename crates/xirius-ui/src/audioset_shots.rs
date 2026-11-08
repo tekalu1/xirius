@@ -64,12 +64,12 @@ pub fn fixture(s: &mut Studio) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .replace(Box::new(Simulated::new(devices, reports, Box::new(Signal))));
-    s.song
-        .set(
-            "audio.set",
-            serde_json::json!({"key":"buffer","value":"128"}),
-        )
-        .unwrap();
+    assert!(s.run_command(
+        "audio.set",
+        serde_json::json!({"key":"buffer","value":"128"}),
+    ));
+    crate::shot::run_for(s, 10.0, |s| s.saving.is_none());
+    assert!(s.saving.is_none() && s.error.is_none(), "{:?}", s.error);
     s.song
         .io
         .lock()
