@@ -104,9 +104,10 @@ fn lookup_path(target: &str, path: &[String]) -> Vec<String> {
             ("other-41", "ノートを削除") => "削除",
             ("other-49", "トラックを複製") => "トラックを複製（設定だけ）",
             ("other-50", "ミックスダウンを書き出す…") => "ミックスダウン",
-            ("other-72" | "other-73", "工場出荷のプリセットを読み込み直す") => {
-                "標準プリセットを復元"
-            }
+            (
+                "other-72" | "other-73" | "track-browser-device-preset" | "track-browser-blank",
+                "工場出荷のプリセットを読み込み直す",
+            ) => "標準プリセットを復元",
             ("other-76", "場所名を変更") => "名前を変更",
             ("multi-audio", "クロスフェードを作成") => "クロスフェード",
             _ => continue,
@@ -122,6 +123,8 @@ fn lookup_path(target: &str, path: &[String]) -> Vec<String> {
 fn target_matches(route: &str, target: &str) -> bool {
     route == target
         || match target {
+            "track-browser-device-preset" => route == "other-72",
+            "track-browser-blank" => route == "other-73",
             "audio" | "multi-audio" => matches!(route, "audio-states" | "other-15"),
             "midi" | "multi-midi" | "multi-mixed" => matches!(route, "midi-states" | "other-15"),
             "track" | "other-48" => route == "track-states",

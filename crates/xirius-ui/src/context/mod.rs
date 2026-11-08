@@ -1007,6 +1007,8 @@ mod tempo_tests;
 #[cfg(test)]
 pub(crate) mod tests;
 #[cfg(test)]
+mod track_browser_tests;
+#[cfg(test)]
 mod track_tests;
 #[cfg(test)]
 mod transpose_lag_tests;

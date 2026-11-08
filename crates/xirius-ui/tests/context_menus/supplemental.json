@@ -199,5 +199,65 @@
     "category": "機器",
     "command": "plugin.param.set",
     "dynamic": false
+  },
+  {
+    "id": "track-browser-device-preset:copy",
+    "key": "track-browser-device-preset",
+    "source": "crates/xirius-ui/src/context/browser.rs",
+    "asis": [
+      "User にコピー…"
+    ],
+    "tobe": [
+      "機器",
+      "User にコピー…"
+    ],
+    "category": "機器",
+    "command": "",
+    "dynamic": false
+  },
+  {
+    "id": "track-browser-track-preset:load",
+    "key": "track-browser-track-preset",
+    "source": "crates/xirius-ui/src/context/browser.rs",
+    "asis": [
+      "読み込む"
+    ],
+    "tobe": [
+      "トラック",
+      "読み込む"
+    ],
+    "category": "トラック",
+    "command": "",
+    "dynamic": false
+  },
+  {
+    "id": "track-browser-track-preset:copy",
+    "key": "track-browser-track-preset",
+    "source": "crates/xirius-ui/src/context/browser.rs",
+    "asis": [
+      "User にコピー…"
+    ],
+    "tobe": [
+      "トラック",
+      "User にコピー…"
+    ],
+    "category": "トラック",
+    "command": "",
+    "dynamic": false
+  },
+  {
+    "id": "track-browser-track-preset:favourite",
+    "key": "track-browser-track-preset",
+    "source": "crates/xirius-ui/src/context/browser.rs",
+    "asis": [
+      "お気に入り"
+    ],
+    "tobe": [
+      "表示",
+      "お気に入り"
+    ],
+    "category": "表示",
+    "command": "browser.preset.favourite",
+    "dynamic": false
   }
 ]

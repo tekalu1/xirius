@@ -172,9 +172,21 @@ impl Studio {
             Some(h @ (BrowserHit::Preset(_) | BrowserHit::Fav(_)))
                 if self.preset_row(g, *h).is_some() =>
             {
-                "other-72"
+                let (id, _) = self.preset_row(g, *h).unwrap();
+                match self
+                    .browser
+                    .track_library
+                    .as_ref()
+                    .and_then(|es| es.iter().find(|e| e.id == id))
+                {
+                    Some(e) if e.category == xirius_core::track_browser::Category::Track => {
+                        "track-browser-track-preset"
+                    }
+                    Some(_) => "track-browser-device-preset",
+                    None => "other-72",
+                }
             }
-            Some(BrowserHit::Item(i) | BrowserHit::Fav(i)) => {
+            Some(BrowserHit::Item(i) | BrowserHit::Fav(i) | BrowserHit::Disclose(i)) => {
                 if self.browser_item(g, *i).is_some_and(|i| i.effect) {
                     "other-71"
                 } else {
@@ -184,6 +196,9 @@ impl Studio {
             Some(BrowserHit::File(_)) => "other-74",
             Some(BrowserHit::Dir(_)) => "other-75",
             Some(BrowserHit::Loc(_) | BrowserHit::LocRemove(_)) => "other-76",
+            _ if self.browser.is_track_browser() && self.browser.track_library.is_some() => {
+                "track-browser-blank"
+            }
             _ => "other-73",
         };
         let rows = match hit {
@@ -328,18 +343,27 @@ impl Studio {
             .as_ref()
             .and_then(|es| es.iter().find(|e| e.id == device))
         {
-            return vec![
+            let mut rows = vec![
                 act("読み込む", BrowseAct::LoadPreset(device, name.to_string())),
                 Item::new(
                     "お気に入り",
                     Run::Cmd("browser.preset.favourite", json!({"entry": e.id})),
                 )
                 .on(self.browser.favourites.contains(&e.id)),
-                Item::sub(
-                    "ファイル",
-                    vec![act("User にコピー…", BrowseAct::CopyPreset(e.id.clone()))],
-                ),
+                act("User にコピー…", BrowseAct::CopyPreset(e.id.clone())),
             ];
+            if matches!(
+                e.category,
+                xirius_core::track_browser::Category::Instrument
+                    | xirius_core::track_browser::Category::Fx
+            ) && let Some(def) = xirius_params::find(&e.device)
+            {
+                rows.push(self.ctx_do(
+                    "preset.factory.restore",
+                    Act::Browse(BrowseAct::FactoryRestore(Some(def.uid))),
+                ));
+            }
+            return rows;
         }
         let key = crate::browser::preset_key(device, name);
         let fav = self.browser.favourites.contains(&key);
@@ -356,30 +380,11 @@ impl Studio {
 
     /// S40: the blank of an instrument or effect list, and a group's header.
     fn list_items(&mut self) -> Vec<Item> {
-        if self.browser.track_library.is_some() && self.browser.is_track_browser() {
-            return vec![
-                Item::sub(
-                    "表示",
-                    vec![
-                        act("すべて開く", BrowseAct::Groups(true)),
-                        act("すべて畳む", BrowseAct::Groups(false)),
-                        self.ctx_do(
-                            "view.browser.hidden",
-                            Act::Browse(BrowseAct::ShowHidden(!self.browser.show_hidden)),
-                        )
-                        .on(self.browser.show_hidden),
-                    ],
-                ),
-                Item::sub(
-                    "ファイル",
-                    vec![
-                        self.ctx_do("plugin.rescan", Act::Browse(BrowseAct::Rescan))
-                            .enabled(!self.browser.scanning),
-                    ],
-                ),
-            ];
-        }
-        let grouped = !self.browser.groups().is_empty();
+        let grouped = if self.browser.track_library.is_some() && self.browser.is_track_browser() {
+            self.browser.track_rows().iter().any(|row| row.branch)
+        } else {
+            !self.browser.groups().is_empty()
+        };
         let shown = self.browser.show_hidden;
         let scanning = self.browser.scanning;
         vec![
