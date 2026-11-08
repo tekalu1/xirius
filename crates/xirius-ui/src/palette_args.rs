@@ -1110,6 +1110,9 @@ mod tests {
     }
 
     #[test]
+    // Windows-only: constructing GPUI's native platform on a test worker is allowed there.
+    // Mac's window-free CoreText path is tested in fonts_macos; native app parity is stage 3.
+    #[cfg(windows)]
     fn result_wrap_matches_native_paint_font_for_wide_narrow_and_japanese_text() {
         use xirius_design::{FontSize, Weight};
         let native = std::sync::Arc::new(gpui::TextSystem::new(

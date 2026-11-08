@@ -70,6 +70,8 @@ libc = "0.2"
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
 core-foundation-sys = "0.8"
+# Window-free text measurement on test/worker threads, without constructing NSApplication.
+core-text = "21"
 
 # The window icon and the version information (LIC-022, packaging/windows/version_info.rs).
 [target.'cfg(windows)'.build-dependencies]

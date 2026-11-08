@@ -10,6 +10,10 @@ use std::borrow::Cow;
 
 use gpui::App;
 
+#[cfg(target_os = "macos")]
+#[path = "fonts_macos.rs"]
+mod macos;
+
 macro_rules! embed {
     ($($name:literal),* $(,)?) => {
         &[$(($name, include_bytes!(concat!("../../../assets/fonts/", $name)) as &[u8])),*]
@@ -70,6 +74,12 @@ pub(crate) fn measure(
 ) -> f32 {
     METRICS.with(|slot| {
         let mut slot = slot.borrow_mut();
+        // GPUI's MacPlatform must be constructed on the main thread, even headless.
+        // An app with loaded fonts uses GPUI below; window-free callers use CoreText directly.
+        #[cfg(target_os = "macos")]
+        if slot.is_none() {
+            return macos::measure(text, size, weight);
+        }
         let system = slot.get_or_insert_with(|| {
             let system = std::sync::Arc::new(gpui::TextSystem::new(
                 gpui_platform::current_platform(false).text_system(),
