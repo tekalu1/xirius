@@ -17,11 +17,11 @@
 - **赤なら止める**: run か job（必須でないものも）が `failure`・`timed_out`・`action_required`・
   `startup_failure` なら、すぐに止めます。run がまだ走っていても、終わった job が赤なら止めます。
   同じ commit の run が複数あれば、1 つでも赤なら止めます。
-- **走っていれば待つ**: 30 秒ごとに見て、上限は 40 分（`ci-gate` の job の上限は 50 分）。
+- **走っていれば待つ**: 30 秒ごとに見て、上限は 90 分（`ci-gate` の job の上限は 100 分）。
   run がまだ無いときも、初めの 5 分は待ちます（タグと main を続けて push すると、run が
   できるより先に release が始まるため）。
 - **それ以外も止める**: run が無い（5 分を過ぎた）、`cancelled`・`skipped`・`neutral`、job の
-  欠け・重複、40 分を過ぎた、API の失敗が 5 回続いた。判定できないときは公開しない側にします。
+  欠け・重複、90 分を過ぎた、API の失敗が 5 回続いた。判定できないときは公開しない側にします。
 - **権限**: `ci-gate` は鍵を持たず、書く権限も持ちません（`actions: read`・`contents: read`）。
   GitHub の API へは GET だけを送ります。
 - **同じ commit**: `sign` は、タグの checkout の commit が、`build` の作った commit と `ci-gate` の
@@ -41,8 +41,8 @@
 - 赤で止めるのは、CI が赤い commit を配らないためです。フレークかどうかは release からは
   分かりません。CI を再実行して最新の attempt が揃って成功すれば、release を再実行して公開できます。
 - 待つのは、タグと main をほぼ同時に push するのがふつうの手順で、CI は release の build より
-  遅れて終わることがあるためです。40 分は `rust.yml` の Windows の job（キャッシュの無いときも
-  含む）が終わるのに足りる長さです。
+  遅れて終わることがあるためです。Windows と macOS の全体試験、キャッシュ無しのビルド、runner の待ち時間を
+  見込んで上限を 90 分にしています。失敗が確定すれば上限を待たずに止めます。
 - 欠け・`cancelled` でも止めるのは、release の中に CI の代わりになる試験が無いためです
   （release で試験をやり直す道を作ると、CI と同じものを二重に持つことになります）。
   `rust.yml` には `paths-ignore` が無く、main への push は取り消さない（`concurrency` の
@@ -59,7 +59,7 @@
 | 理由 | 対処 |
 |---|---|
 | run か job が赤（`failure` など） | `rust.yml` の run を直すか再実行し、揃って成功したら、release の run の **Re-run failed jobs** |
-| まだ走っていた（40 分を過ぎた） | CI が終わってから **Re-run failed jobs** |
+| まだ走っていた（90 分を過ぎた） | CI が終わってから **Re-run failed jobs** |
 | run が無い | タグが main の push の commit に付いているか確かめる。まとめて push した途中の commit には run が無いので、タグを main の先頭（run のある commit）に付け直す |
 | `cancelled`・job の欠け | `rust.yml` の run を再実行してから **Re-run failed jobs** |
 | API の失敗が続いた | 時間を置いて **Re-run failed jobs** |

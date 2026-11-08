@@ -192,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--repo", required=True, help="owner/name")
     p.add_argument("--sha", required=True, help="the commit the tag points to")
     p.add_argument("--tag", default="", help="only for the messages")
-    p.add_argument("--wait-minutes", type=float, default=40)
+    p.add_argument("--wait-minutes", type=float, default=90)
     p.add_argument("--missing-grace-minutes", type=float, default=5)
     p.add_argument("--interval-seconds", type=float, default=30)
     p.add_argument("--request-timeout-seconds", type=float, default=20)

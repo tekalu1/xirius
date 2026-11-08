@@ -124,7 +124,7 @@ class DecideTests(unittest.TestCase):
 
 
 class LoopTests(unittest.TestCase):
-    def loop(self, answers, wait=40 * 60, grace=5 * 60, interval=30, tries=5):
+    def loop(self, answers, wait=90 * 60, grace=5 * 60, interval=30, tries=5):
         """Runs the loop over `answers` (a state or an ApiError per ask); returns the result
         and how many times it asked."""
         now = [0.0]
@@ -157,8 +157,8 @@ class LoopTests(unittest.TestCase):
     def test_a_run_that_never_ends_stops_at_the_limit(self):
         ok, why, asked = self.loop(["wait"])
         self.assertFalse(ok)
-        self.assertIn("40 minutes", why)
-        self.assertEqual(asked, 40 * 60 // 30 + 1)
+        self.assertIn("90 minutes", why)
+        self.assertEqual(asked, 90 * 60 // 30 + 1)
 
     def test_no_run_is_waited_for_a_while_and_then_stops(self):
         ok, why, asked = self.loop(["missing"])
@@ -201,7 +201,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("python scripts/release_ci_gate.py", text)
         self.assertRegex(text, r"(?ms)^  sign:\n    needs: \[build, ci-gate\]")
         self.assertRegex(text, r"(?ms)^  publish:\n    needs: \[build, ci-gate, sign\]")
-        self.assertRegex(text, r"--wait-minutes 40\b")
+        self.assertRegex(text, r"--wait-minutes 90\b")
+        self.assertIn("timeout-minutes: 100", text)
 
 
 if __name__ == "__main__":

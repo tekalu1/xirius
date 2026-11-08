@@ -6,7 +6,7 @@ name: release
 #
 # - 版のタグ（v1.0.0）を main の commit に push したときだけ動き、人の手を待たずに公開まで進む。
 # - 公開の前に ci-gate の job が、同じ commit の main への push で走った rust.yml の run の成功を
-#   GitHub の API（GET だけ）で確かめる。走っている途中なら待ち（40 分まで）、赤・見つからない・
+#   GitHub の API（GET だけ）で確かめる。走っている途中なら待ち（90 分まで）、赤・見つからない・
 #   取り消されたなら署名も公開もしない（docs/release-ci-gate.md）。
 # - プレリリースの版（v1.0.1-beta.1）は GitHub の pre-release として出し、latest にしない。
 #   正式版は latest にする（LIC-040。安定版のアプリは /releases/latest だけを読む）。
@@ -112,8 +112,8 @@ jobs:
   ci-gate:
     if: github.repository == 'tekalu1/xirius' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner
     runs-on: ubuntu-latest
-    # A little longer than the wait (--wait-minutes 40).
-    timeout-minutes: 50
+    # A little longer than the wait (--wait-minutes 90).
+    timeout-minutes: 100
     permissions:
       actions: read
       contents: read
@@ -138,7 +138,7 @@ jobs:
           sha=$(git rev-parse "refs/tags/$TAG^{commit}")
           git merge-base --is-ancestor "$sha" origin/main
           python scripts/release_ci_gate.py --repo "$GITHUB_REPOSITORY" --sha "$sha" --tag "$TAG" \
-            --wait-minutes 40 --missing-grace-minutes 5 --interval-seconds 30
+            --wait-minutes 90 --missing-grace-minutes 5 --interval-seconds 30
 
   # The only job with the key. It starts only after main's CI said yes to the commit. The
   # environment's rule (only `v*` tags may deploy to it) is set in the repository's settings,
