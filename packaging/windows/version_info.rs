@@ -20,7 +20,7 @@ const PRODUCT: &str = "Xirius";
 /// it is, in a few words of ASCII), and `icon` (a path from the crate's folder) as the first
 /// icon, which is also the one GPUI gives the window.
 #[allow(dead_code)]
-fn version_info(bins: &[(&str, &str)], icon: Option<&str>) {
+fn version_info(_bins: &[(&str, &str)], icon: Option<&str>) {
     println!("cargo:rerun-if-changed=../../packaging/windows/version_info.rs");
     if let Some(icon) = icon {
         println!("cargo:rerun-if-changed={icon}");
@@ -36,7 +36,7 @@ fn version_info(bins: &[(&str, &str)], icon: Option<&str>) {
             let path = path.to_string_lossy().replace('\\', "/");
             path.strip_prefix("//?/").unwrap_or(&path).to_string()
         });
-        for (bin, description) in bins {
+        for (bin, description) in _bins {
             let rc = out.join(format!("{bin}-version.rc"));
             std::fs::write(&rc, resource(bin, description, &version, icon.as_deref())).unwrap();
             embed_resource::compile_for(&rc, [bin], embed_resource::NONE)

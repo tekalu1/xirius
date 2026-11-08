@@ -38,7 +38,7 @@ jobs:
       - name: fmt
         run: cargo fmt --all --check
       - name: clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --keep-going -- -D warnings
       # The tests that open real windows need a desktop of a known size; they are run on a PC
       # before a release (scripts/ci_tests.py has the list).
       - name: test
