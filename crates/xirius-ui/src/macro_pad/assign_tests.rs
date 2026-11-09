@@ -32,6 +32,7 @@ fn delay() -> (Studio, Geometry, TrackId, PluginId) {
         .unwrap()
         .id;
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     (s, g, t, id)
 }
 

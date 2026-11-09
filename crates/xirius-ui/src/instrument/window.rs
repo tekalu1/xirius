@@ -345,6 +345,7 @@ impl Analyser {
 /// The open windows, the last on top.
 #[derive(Debug, Default)]
 pub struct Windows {
+    pub(crate) positions: crate::device_window::Positions,
     /// A detached view still owns the same Win and PluginId; only its surface changes.
     pub(crate) detached: std::collections::HashSet<PluginId>,
     pub(crate) detached_target: Option<PluginId>,
@@ -782,10 +783,8 @@ impl Windows {
         }
     }
 
-    /// The `i`th window's frame on the screen `g`. The face in the mixer's
-    /// drawer is where the drawer puts it, and nothing while the drawer shows
-    /// something else (MIX-046); a window is [`Self::rect`].
-    pub fn frame(&self, i: usize, g: &Geometry) -> Rect {
+    /// The local frame of this surface's device; other surfaces have no frame here.
+    pub fn frame(&self, i: usize, _g: &Geometry) -> Rect {
         if self.detached_channel {
             return Rect::default();
         }
@@ -802,16 +801,8 @@ impl Windows {
                 Rect::default()
             };
         }
-        if self.detached.contains(&id) {
-            return Rect::default();
-        }
-        if !self.open[i].docked {
-            return self.rect(i, g.size);
-        }
-        if !g.panels.mixer || g.drawer_body.h <= 0.0 {
-            return Rect::default();
-        }
-        self.dock_split(i, g).panel
+        // Built-in device faces belong to their independent surface only.
+        Rect::default()
     }
 
     /// The `i`th window's frame on a screen of `size`.
@@ -1406,6 +1397,7 @@ impl Studio {
         let shown = (0, 0, None);
         if let Some(i) = ins.dock_slot().filter(|&i| ins.open[i].plugin == id) {
             ins.open[i].docked = false;
+            ins.detached.insert(id);
             ins.raise(i);
             ins.flash = Some((id, std::time::Instant::now()));
             return;
@@ -1473,6 +1465,8 @@ impl Studio {
                 }
             }
         }
+        ins.detached.insert(id);
+        ins.prune(&p);
         ins.flash = Some((id, std::time::Instant::now()));
     }
 
@@ -1789,10 +1783,15 @@ impl Studio {
                 };
                 // The frame stays where it is: its corner keeps on the screen.
                 let r = self.instruments.frame(i, g);
-                let want = (
-                    (from.0 + x - pointer.0).min(g.size.0 - r.x),
-                    (from.1 + y - pointer.1).min(g.size.1 - r.y - title_bar::BAR_H),
-                );
+                let want = (from.0 + x - pointer.0, from.1 + y - pointer.1);
+                let want = if self.instruments.detached_target == Some(w.plugin) {
+                    want
+                } else {
+                    (
+                        want.0.min(g.size.0 - r.x),
+                        want.1.min(g.size.1 - r.y - title_bar::BAR_H),
+                    )
+                };
                 let body = fit_of(def, want, Some(plugin));
                 if body == w.body {
                     return true;

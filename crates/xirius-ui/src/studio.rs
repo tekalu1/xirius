@@ -1989,6 +1989,10 @@ impl Studio {
         ch: Option<&str>,
         mods: Mods,
     ) -> bool {
+        if self.instruments.detached_target.is_some() {
+            return self.device_key(g, key, mods)
+                || (key == "tab" && !mods.ctrl && !mods.alt && self.device_enter(!mods.shift));
+        }
         self.inspector_follow(g);
         // Esc during a press on a device's window lets go of it first, whatever else has the
         // keys (the macro pad's focus, the grip's).
@@ -2703,7 +2707,7 @@ impl Studio {
             }
             return false;
         }
-        self.browser.typed(key, ch)
+        self.instruments.detached_target.is_none() && self.browser.typed(key, ch)
     }
 
     /// Nonblocking file-dialog and script entry. Synchronous fixtures have an

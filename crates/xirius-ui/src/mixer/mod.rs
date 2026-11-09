@@ -1974,6 +1974,7 @@ impl Studio {
             // (L2-ui-1).
             self.device_sweep_end();
             self.instruments.open.retain(|w| w.plugin != id);
+            self.instruments.detached.remove(&id);
             crate::instrument::window::forget_turns(self);
             return true;
         }

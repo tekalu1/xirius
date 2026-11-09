@@ -3,7 +3,7 @@
 use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
 
-use super::window::{CASCADE, FLASH, Part};
+use super::window::{FLASH, Part};
 use crate::studio::{Geometry, Studio};
 
 /// The sample song with an EQ, a Compressor and a Delay on Keys.
@@ -36,9 +36,11 @@ fn shown(s: &Studio) -> Vec<PluginId> {
     s.instruments.open.iter().map(|w| w.plugin).collect()
 }
 
-fn press(s: &mut Studio, g: &Geometry, id: PluginId, part: Part) {
-    let (x, y) = s.instrument_center(g, id, part).expect("in sight");
-    assert!(s.instrument_down(g, x, y));
+fn press(s: &mut Studio, _g: &Geometry, id: PluginId, part: Part) {
+    crate::device_window::test_surface(s, id, |s, local| {
+        let (x, y) = s.instrument_center(local, id, part).expect("in sight");
+        assert!(s.instrument_down(local, x, y));
+    });
 }
 
 #[test]
@@ -63,7 +65,11 @@ fn ui_323_a_pinned_window_stays_and_the_next_opens_a_step_on() {
     s.show_instrument(t, comp);
     assert_eq!(shown(&s), [eq, comp]);
     let (a, b) = (s.instruments.frame(0, &g), s.instruments.frame(1, &g));
-    assert_eq!((b.x - a.x, b.y - a.y), (CASCADE, CASCADE));
+    assert_eq!((a.w, b.w), (0.0, 0.0), "neither view is embedded in main");
+    assert_eq!(
+        (s.instruments.open[0].seat, s.instruments.open[1].seat),
+        (0, 1)
+    );
     // The Compressor's window is not pinned: the Delay takes its place.
     s.show_instrument(t, delay);
     assert_eq!(shown(&s), [eq, delay]);

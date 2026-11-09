@@ -15,6 +15,8 @@ use gpui::{
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use xirius_core::id::PluginId;
 
+pub(crate) type Positions = Rc<RefCell<HashMap<PluginId, Bounds<gpui::Pixels>>>>;
+
 #[derive(Default)]
 pub(crate) struct Windows {
     open: HashMap<PluginId, WindowHandle<DeviceWindow>>,
@@ -65,6 +67,20 @@ impl Windows {
         }
     }
     pub(crate) fn sync(&mut self, studio: &Rc<RefCell<Studio>>, main: &Window, cx: &mut App) {
+        // Migrate views created by older entry points without recreating a device.
+        {
+            let mut s = studio.borrow_mut();
+            let ids: Vec<_> = s
+                .instruments
+                .open
+                .iter_mut()
+                .map(|w| {
+                    w.docked = false;
+                    w.plugin
+                })
+                .collect();
+            s.instruments.detached.extend(ids);
+        }
         self.sync_channel(studio, main, cx);
         let wanted: Vec<_> = {
             let s = studio.borrow();
@@ -83,19 +99,56 @@ impl Windows {
             false
         });
         for win in wanted {
-            if self.open.contains_key(&win.plugin) {
+            if let Some(handle) = self.open.get(&win.plugin) {
+                let handle = *handle;
+                // Updating this entity during Screen::render would register it as a
+                // main-window dependency. Notify after drawing to avoid a feedback loop.
+                cx.defer(move |cx| {
+                    let _ = handle.update(cx, |_, _, cx| cx.notify());
+                });
                 continue;
             }
             let shared = studio.clone();
             let id = win.plugin;
             let title = format!("Xirius · {id}");
             let origin = main.bounds().origin;
+            let positions = studio.borrow().instruments.positions.clone();
+            let remembered = positions.borrow().get(&id).copied();
+            let initial = remembered.unwrap_or_else(|| {
+                Bounds::new(
+                    point(
+                        origin.x + px(40.0 + 24.0 * win.seat as f32),
+                        origin.y + px(60.0 + 24.0 * win.seat as f32),
+                    ),
+                    size(px(win.body.0), px(win.body.1 + crate::title_bar::BAR_H)),
+                )
+            });
+            let initial = if std::env::var_os(xirius_vst3::OFFSCREEN_ENV).is_some() {
+                initial
+            } else {
+                cx.displays()
+                    .into_iter()
+                    .find(|d| d.bounds().contains(&initial.origin))
+                    .or_else(|| main.display(cx))
+                    .map_or(initial, |display| {
+                        fit_bounds(initial, display.visible_bounds())
+                    })
+            };
+            if let Some(w) = studio
+                .borrow_mut()
+                .instruments
+                .open
+                .iter_mut()
+                .find(|w| w.plugin == id)
+            {
+                w.body = (
+                    initial.size.width.into(),
+                    f32::from(initial.size.height) - crate::title_bar::BAR_H,
+                );
+            }
             let result = cx.open_window(
                 WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
-                        point(origin.x + px(40.0), origin.y + px(60.0)),
-                        size(px(win.body.0), px(win.body.1 + crate::title_bar::BAR_H)),
-                    ))),
+                    window_bounds: Some(WindowBounds::Windowed(initial)),
                     titlebar: Some(TitlebarOptions {
                         title: Some(title.clone().into()),
                         appears_transparent: true,
@@ -105,7 +158,7 @@ impl Windows {
                     focus: false,
                     show: false,
                     is_minimizable: false,
-                    is_resizable: false,
+                    is_resizable: true,
                     ..Default::default()
                 },
                 move |window, cx| {
@@ -118,7 +171,9 @@ impl Windows {
                     let focus = cx.focus_handle();
                     window.focus(&focus, cx);
                     show(&title);
-                    cx.new(|cx| DeviceWindow::new(shared, Some(id), focus, window, cx))
+                    cx.new(|cx| {
+                        DeviceWindow::new(shared, Some(id), Some(positions), focus, window, cx)
+                    })
                 },
             );
             match result {
@@ -127,7 +182,7 @@ impl Windows {
                 }
                 Err(error) => {
                     let mut s = studio.borrow_mut();
-                    s.instruments.detached.remove(&id);
+                    s.close_device_view(id);
                     s.error = Some(format!("独立ウィンドウを開けません: {error}"));
                 }
             }
@@ -142,7 +197,10 @@ impl Windows {
             }
             return;
         }
-        if self.channel.is_some() {
+        if let Some(handle) = self.channel {
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, _, cx| cx.notify());
+            });
             return;
         }
         let shared = studio.clone();
@@ -174,7 +232,7 @@ impl Windows {
                 window.focus(&focus, cx);
                 window.resize(size(px(800.0), px(600.0)));
                 show("Xirius · Channel Editor");
-                cx.new(|cx| DeviceWindow::new(shared, None, focus, window, cx))
+                cx.new(|cx| DeviceWindow::new(shared, None, None, focus, window, cx))
             },
         );
         match result {
@@ -225,6 +283,49 @@ struct DeviceWindow {
     focus: FocusHandle,
     popup: Option<Popup>,
     _activation: gpui::Subscription,
+    _bounds: gpui::Subscription,
+}
+
+fn fit_bounds(
+    mut bounds: Bounds<gpui::Pixels>,
+    work: Bounds<gpui::Pixels>,
+) -> Bounds<gpui::Pixels> {
+    bounds.size.width = bounds.size.width.min(work.size.width);
+    bounds.size.height = bounds.size.height.min(work.size.height);
+    bounds.origin.x = bounds.origin.x.clamp(
+        work.origin.x,
+        work.origin.x + work.size.width - bounds.size.width,
+    );
+    bounds.origin.y = bounds.origin.y.clamp(
+        work.origin.y,
+        work.origin.y + work.size.height - bounds.size.height,
+    );
+    bounds
+}
+
+fn surface_geometry(s: &Studio, width: f32, height: f32) -> Geometry {
+    s.settled_geometry(width, height)
+}
+
+/// The work area wins when a device's natural minimum is larger than the display.
+/// Use this after fitting native input as well as before requesting a resize.
+fn bounded_body(body: (f32, f32), work: Option<(f32, f32)>) -> (f32, f32) {
+    work.map_or(body, |(width, height)| {
+        (
+            body.0.min(width),
+            body.1.min((height - crate::title_bar::BAR_H).max(0.0)),
+        )
+    })
+}
+
+fn work_size(window: &Window, cx: &App) -> Option<(f32, f32)> {
+    if std::env::var_os(xirius_vst3::OFFSCREEN_ENV).is_some() {
+        return None;
+    }
+    window.display(cx).map(|display| {
+        let work = display.visible_bounds();
+        (work.size.width.into(), work.size.height.into())
+    })
 }
 
 fn scope(s: &mut Studio, id: Option<PluginId>) -> (Option<PluginId>, bool, bool) {
@@ -252,10 +353,31 @@ fn restore(s: &mut Studio, old: (Option<PluginId>, bool, bool)) {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn test_surface<R>(
+    s: &mut Studio,
+    id: PluginId,
+    f: impl FnOnce(&mut Studio, &Geometry) -> R,
+) -> R {
+    let body = s
+        .instruments
+        .open
+        .iter()
+        .find(|w| w.plugin == id)
+        .unwrap()
+        .body;
+    let old = scope(s, Some(id));
+    let g = surface_geometry(s, body.0, body.1 + crate::title_bar::BAR_H);
+    let result = f(s, &g);
+    restore(s, old);
+    result
+}
+
 impl DeviceWindow {
     fn new(
         studio: Rc<RefCell<Studio>>,
         id: Option<PluginId>,
+        positions: Option<Positions>,
         focus: FocusHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -265,12 +387,48 @@ impl DeviceWindow {
                 cx.refresh_windows();
             }
         });
+        let bounds = cx.observe_window_bounds(window, move |view, window, cx| {
+            if let Some(id) = view.id {
+                if let Some(positions) = &positions {
+                    positions.borrow_mut().insert(id, window.bounds());
+                }
+                let viewport = window.viewport_size();
+                let mut s = view.studio.borrow_mut();
+                let p = s.project();
+                let definition = s
+                    .instruments
+                    .open
+                    .iter()
+                    .find(|w| w.plugin == id)
+                    .and_then(|w| crate::instrument::window::live(&p, w))
+                    .map(|(_, plugin, def)| (plugin, def));
+                if let Some((plugin, def)) = definition {
+                    let body = bounded_body(
+                        crate::instrument::window::fit_of(
+                            def,
+                            (
+                                viewport.width.into(),
+                                f32::from(viewport.height) - crate::title_bar::BAR_H,
+                            ),
+                            Some(plugin),
+                        ),
+                        work_size(window, cx),
+                    );
+                    if let Some(w) = s.instruments.open.iter_mut().find(|w| w.plugin == id) {
+                        w.body = body;
+                    }
+                    s.instruments.sizes.insert(def.uid, body);
+                }
+            }
+            cx.notify();
+        });
         Self {
             studio,
             id,
             focus,
             popup: None,
             _activation: activation,
+            _bounds: bounds,
         }
     }
     /// Input and painting share the very same Win. Only the coordinate system and
@@ -280,7 +438,9 @@ impl DeviceWindow {
         let old = scope(&mut s, self.id);
         std::mem::swap(&mut s.popup, &mut self.popup);
         let viewport = window.viewport_size();
-        let g = s.geometry(viewport.width.into(), viewport.height.into());
+        // This surface has its own viewport. Main-window geometry owns the shared
+        // ViewMotion keys and viewport_size; using it here restarts those transitions.
+        let g = surface_geometry(&s, viewport.width.into(), viewport.height.into());
         let result = f(&mut s, &g);
         std::mem::swap(&mut s.popup, &mut self.popup);
         restore(&mut s, old);
@@ -300,20 +460,23 @@ impl Render for DeviceWindow {
         if !live {
             window.defer(cx, |window, _| window.remove_window());
         }
-        if let Some(w) = self
-            .studio
-            .borrow()
-            .instruments
-            .open
-            .iter()
-            .find(|w| Some(w.plugin) == self.id)
         {
-            let wanted = size(px(w.body.0), px(w.body.1 + crate::title_bar::BAR_H));
-            if window.viewport_size() != wanted {
-                window.resize(wanted);
+            let mut s = self.studio.borrow_mut();
+            if let Some(w) = s
+                .instruments
+                .open
+                .iter_mut()
+                .find(|w| Some(w.plugin) == self.id)
+            {
+                w.body = bounded_body(w.body, work_size(window, cx));
+                let wanted = size(px(w.body.0), px(w.body.1 + crate::title_bar::BAR_H));
+                if window.viewport_size() != wanted {
+                    window.resize(wanted);
+                }
             }
         }
-        window.request_animation_frame();
+        // Main-window state updates and local input invalidate this surface.
+        // An idle editor must not run an independent perpetual render loop.
         let entity = cx.entity();
         let body = canvas(
             |_, _, _| (),
@@ -334,7 +497,7 @@ impl Render for DeviceWindow {
                     let old = scope(&mut s, view.id);
                     std::mem::swap(&mut s.popup, &mut view.popup);
                     let viewport = window.viewport_size();
-                    let g = s.geometry(viewport.width.into(), viewport.height.into());
+                    let g = surface_geometry(&s, viewport.width.into(), viewport.height.into());
                     let mut pen = Pen {
                         window,
                         cx,
@@ -700,11 +863,15 @@ fn accessible_for(
             continue;
         }
         if let Some((track, plugin, def)) = crate::instrument::window::live(&p, w) {
-            places.push((
-                crate::instrument::menu::Menu::Destination(w.track, w.plugin),
-                s.instruments
-                    .part_rect(r, &p, track, plugin, def, Part::Destination),
-            ));
+            let destination = s
+                .instruments
+                .part_rect(r, &p, track, plugin, def, Part::Destination);
+            if destination.w > 0.0 {
+                places.push((
+                    crate::instrument::menu::Menu::Destination(w.track, w.plugin),
+                    destination,
+                ));
+            }
         }
     }
     if s.instruments.detached_target.is_none()
@@ -785,5 +952,94 @@ pub(crate) fn paint_tip(pen: &mut Pen, s: &Studio, g: &Geometry) {
             b,
             crate::studio::Rect::new(0.0, 0.0, g.size.0, g.size.1),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_work_area_smaller_than_the_device_minimum_is_a_stable_resize_target() {
+        let def = &xirius_params::SAMPLER;
+        let work = Some((200.0, 150.0));
+        let mut body = (800.0, 600.0);
+        for _ in 0..12 {
+            let rendered = bounded_body(body, work);
+            let observed =
+                bounded_body(crate::instrument::window::fit_of(def, rendered, None), work);
+            assert_eq!(rendered, observed);
+            body = observed;
+        }
+    }
+
+    #[test]
+    fn remembered_bounds_fit_the_current_work_area() {
+        let work = Bounds::new(point(px(100.0), px(50.0)), size(px(1200.0), px(800.0)));
+        let old = Bounds::new(point(px(2000.0), px(-500.0)), size(px(700.0), px(500.0)));
+        let fitted = fit_bounds(old, work);
+        assert_eq!(fitted.origin, point(px(600.0), px(50.0)));
+        assert_eq!(fitted.size, old.size);
+        assert_eq!(
+            fit_bounds(Bounds::new(old.origin, size(px(2000.0), px(1500.0))), work),
+            work
+        );
+    }
+
+    #[test]
+    fn an_independent_device_can_grow_beyond_its_current_viewport() {
+        use crate::instrument::{Pick, current, window::Part};
+        let mut s = Studio::sample();
+        let track = s
+            .project()
+            .tracks
+            .values()
+            .find(|t| t.name == "Keys")
+            .unwrap()
+            .id;
+        assert!(s.set_instrument(track, &Pick::built_in(crate::instrument::DEFAULT)));
+        let id = current(&s.project().tracks[&track]).unwrap().id;
+        s.show_instrument(track, id);
+        let before = s.instruments.open[0].body;
+        let old = scope(&mut s, Some(id));
+        let g = surface_geometry(&s, before.0, before.1 + crate::title_bar::BAR_H);
+        let (x, y) = s.instrument_center(&g, id, Part::Resize).unwrap();
+        assert!(s.instrument_down(&g, x, y));
+        assert!(s.instrument_moved(&g, x + 120.0, y + 80.0, false));
+        s.instrument_up();
+        assert!(s.instruments.open[0].body.0 > before.0);
+        assert!(s.instruments.open[0].body.1 > before.1);
+        restore(&mut s, old);
+    }
+
+    #[test]
+    fn independent_surfaces_leave_main_viewport_and_animation_targets_untouched() {
+        let mut s = Studio::sample();
+        s.motion.enabled.set(true);
+        let main = s.geometry(1280.0, 800.0);
+        // Start a real panel transition before opening differently sized editors.
+        s.browser.open = !s.browser.open;
+        s.geometry(1280.0, 800.0);
+        let motion = format!("{:?}", s.motion);
+        let viewport = s.viewport_size.get();
+        let id = PluginId(1);
+        for _ in 0..6 {
+            for (target, width, height) in [
+                (Some(id), 360.0, 440.0),
+                (None, 900.0, 600.0),
+                (Some(id), 750.0, 720.0),
+            ] {
+                let old = scope(&mut s, target);
+                let local = surface_geometry(&s, width, height);
+                assert_eq!(local.size, (width, height));
+                restore(&mut s, old);
+                assert_eq!(s.viewport_size.get(), viewport);
+                assert_eq!(format!("{:?}", s.motion), motion);
+                assert_eq!(s.instruments.detached_target, None);
+                assert!(!s.instruments.detached_channel);
+            }
+        }
+        assert_eq!(s.geometry(1280.0, 800.0).size, main.size);
+        assert_eq!(format!("{:?}", s.motion), motion);
     }
 }

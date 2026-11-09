@@ -169,10 +169,16 @@ pub fn layout(r: Rect, track: &str, device: &str, seats: Seats<'_>) -> Bar {
     rx -= BTN + GAP;
     let pin = Rect::new(rx - BTN, cy, BTN, BTN);
     rx -= BTN + GAP;
-    let destination = Rect::new(rx - BTN, cy, BTN, BTN);
-    rx -= BTN + GAP;
-    // In a compact bar the channel editor is in the destination menu.
-    let channel = (seats.channel && r.w >= 520.0).then(|| Rect::new(rx - BTN, cy, BTN, BTN));
+    // Only the Channel Editor has a display destination. Built-in devices
+    // always have their own window and use this space for their preset group.
+    let destination = if device.is_empty() {
+        let seat = Rect::new(rx - BTN, cy, BTN, BTN);
+        rx -= BTN + GAP;
+        seat
+    } else {
+        Rect::default()
+    };
+    let channel = seats.channel.then(|| Rect::new(rx - BTN, cy, BTN, BTN));
     if channel.is_some() {
         rx -= BTN + GAP;
     }
@@ -468,17 +474,19 @@ pub fn paint(pen: &mut Pen, r: Rect, v: &View<'_>) {
     if let Some(b) = bar.channel {
         pen.icon("route", icon_box(b), c.ink);
     }
-    let destination = bar.destination;
-    pen.icon(
-        "popout",
-        Rect::new(destination.x + 2.0, destination.y + 6.0, 16.0, 16.0),
-        c.ink,
-    );
-    pen.icon(
-        "chevron-down",
-        Rect::new(destination.x + 20.0, destination.y + 11.0, 6.0, 6.0),
-        c.ink,
-    );
+    if bar.destination.w > 0.0 {
+        let destination = bar.destination;
+        pen.icon(
+            "popout",
+            Rect::new(destination.x + 2.0, destination.y + 6.0, 16.0, 16.0),
+            c.ink,
+        );
+        pen.icon(
+            "chevron-down",
+            Rect::new(destination.x + 20.0, destination.y + 11.0, 6.0, 6.0),
+            c.ink,
+        );
+    }
     if v.popout {
         pen.icon("pin", icon_box(bar.pin), c.line[0]);
     } else if v.pinned {
@@ -779,16 +787,10 @@ mod tests {
             assert!(b.tag.right() <= b.space.x + GAP + 0.01);
             let sidechain = b.sidechain.unwrap();
             assert!(b.space.right() <= sidechain.x + 0.01);
-            if let Some(channel) = b.channel {
-                assert!(w >= 520.0);
-                assert!(sidechain.right() + GAP <= channel.x + 0.01);
-                assert!(channel.right() <= b.destination.x + GAP + 0.01);
-            } else {
-                assert!(w < 520.0);
-                assert!(sidechain.right() + GAP <= b.destination.x + 0.01);
-            }
-            assert_eq!(b.destination.w, BTN);
-            assert!(b.destination.right() <= b.pin.x + GAP + 0.01);
+            let channel = b.channel.expect("the channel editor has its own seat");
+            assert!(sidechain.right() + GAP <= channel.x + 0.01);
+            assert!(channel.right() <= b.pin.x + GAP + 0.01);
+            assert_eq!(b.destination.w, 0.0);
             assert!(b.pin.right() <= b.close.x + GAP + 0.01);
             assert_eq!(b.close.right(), r.right() - PAD);
             // The buttons are 28s and keep their width at any size.

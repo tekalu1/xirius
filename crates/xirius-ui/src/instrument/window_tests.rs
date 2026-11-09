@@ -39,12 +39,14 @@ fn plugin(s: &Studio, t: TrackId) -> Plugin {
 
 /// Presses the keys button at the head of the track, as a click does.
 fn press_keys(s: &mut Studio, g: &Geometry, t: TrackId) -> bool {
+    s.instruments.detached_target = None;
     let (x, y) = s.center_of(g, Hit::Keys(t)).expect("on screen");
     assert_eq!(s.hit(g, x, y), Hit::Keys(t));
     s.press(g, Hit::Keys(t))
 }
 
-fn at(s: &Studio, g: &Geometry, id: PluginId, part: Part) -> (f32, f32) {
+fn at(s: &mut Studio, g: &Geometry, id: PluginId, part: Part) -> (f32, f32) {
+    s.instruments.detached_target = Some(id);
     s.instrument_center(g, id, part).expect("in sight")
 }
 
@@ -54,13 +56,13 @@ fn the_keys_button_opens_the_instruments_window() {
     assert!(press_keys(&mut s, &g, t));
     assert!(s.instruments.is_open(id));
     // The window takes the clicks over it: nothing under it is hit.
-    let (x, y) = at(&s, &g, id, Part::Body);
+    let (x, y) = at(&mut s, &g, id, Part::Body);
     assert_eq!(s.hit(&g, x, y), Hit::None);
     // Pressing again keeps the one window.
     assert!(press_keys(&mut s, &g, t));
     assert_eq!(s.instruments.open.len(), 1);
     // Its close button shuts it.
-    let (x, y) = at(&s, &g, id, Part::Close);
+    let (x, y) = at(&mut s, &g, id, Part::Close);
     assert!(s.instrument_down(&g, x, y));
     assert!(!s.instruments.is_open(id));
 }
@@ -114,11 +116,12 @@ fn a_knob_turns_while_dragged_and_is_one_step_when_let_go() {
     let (mut s, g, t, id) = studio();
     fill(&mut s, id);
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     let before = s.song().steps();
     let (cutoff, spec) = plugin(&s, t).builtin().unwrap().param("cutoff").unwrap();
     // It starts open (20 kHz), at the top of its sweep: down closes it.
     assert_eq!(values(&plugin(&s, t))[cutoff], 1.0);
-    let (x, y) = at(&s, &g, id, Part::Knob(cutoff));
+    let (x, y) = at(&mut s, &g, id, Part::Knob(cutoff));
     assert!(s.instrument_down(&g, x, y));
     assert!(s.instrument_moved(&g, x, y + 30.0, false));
     assert!(s.instrument_moved(&g, x, y + 60.0, false));
@@ -132,7 +135,7 @@ fn a_knob_turns_while_dragged_and_is_one_step_when_let_go() {
     assert_eq!(text(spec, now), spec.text(spec.to_plain(0.6)));
     assert_eq!(preset_of(&plugin(&s, t)), None);
     // A press that does not turn it puts nothing in.
-    let (x, y) = at(&s, &g, id, Part::Knob(cutoff));
+    let (x, y) = at(&mut s, &g, id, Part::Knob(cutoff));
     assert!(s.instrument_down(&g, x, y));
     assert!(s.instrument_up());
     assert_eq!(s.song().steps(), before + 1);
@@ -146,9 +149,10 @@ fn a_stepped_knob_lands_on_its_steps() {
     let (mut s, g, t, id) = studio();
     fill(&mut s, id);
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     // The transposition is in whole semitones: a drag lands on one of them.
     let (sound, spec) = plugin(&s, t).builtin().unwrap().param("transpose").unwrap();
-    let (x, y) = at(&s, &g, id, Part::Knob(sound));
+    let (x, y) = at(&mut s, &g, id, Part::Knob(sound));
     assert!(s.instrument_down(&g, x, y));
     assert!(s.instrument_moved(&g, x, y - 40.0, false));
     assert!(s.instrument_up());
@@ -164,11 +168,12 @@ fn a_preset_sets_every_knob_in_one_step() {
     let (mut s, g, t, id) = studio();
     fill(&mut s, id);
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     assert_eq!(preset_of(&plugin(&s, t)), Some("Default"));
     nudge(&mut s, &g, id, "cutoff");
     nudge(&mut s, &g, id, "attack");
     assert_eq!(preset_of(&plugin(&s, t)), None);
-    let (x, y) = at(&s, &g, id, Part::Preset);
+    let (x, y) = at(&mut s, &g, id, Part::Preset);
     assert!(s.instrument_down(&g, x, y));
     let popup = s.popup.as_ref().expect("the presets");
     assert!(matches!(popup.kind, PopupKind::InstMenu(_)));
@@ -202,7 +207,8 @@ fn a_preset_sets_every_knob_in_one_step() {
 fn the_bar_drags_the_window_and_it_stays_in_reach() {
     let (mut s, g, t, id) = studio();
     s.show_instrument(t, id);
-    let (x, y) = at(&s, &g, id, Part::Head);
+    s.instruments.detached_target = Some(id);
+    let (x, y) = at(&mut s, &g, id, Part::Head);
     let before = s.instruments.frame(0, &g);
     assert!(s.instrument_down(&g, x, y));
     assert!(s.instrument_moved(&g, x + 40.0, y + 25.0, false));
@@ -218,7 +224,7 @@ fn the_bar_drags_the_window_and_it_stays_in_reach() {
         "{after:?} {before:?}"
     );
     // Dragged far off, a strip of it stays on the screen.
-    let (x, y) = at(&s, &g, id, Part::Head);
+    let (x, y) = at(&mut s, &g, id, Part::Head);
     assert!(s.instrument_down(&g, x, y));
     assert!(s.instrument_moved(&g, x + 5000.0, y + 5000.0, false));
     assert!(s.instrument_up());
@@ -235,6 +241,7 @@ fn the_bar_drags_the_window_and_it_stays_in_reach() {
         assert!(s.set_instrument(d, &Pick::built_in("Drum Kit")));
         let did = current(&s.project().tracks[&d]).unwrap().id;
         s.show_instrument(d, did);
+        s.instruments.detached_target = Some(did);
         assert_eq!(s.instruments.open.last().unwrap().plugin, did);
     }
 }
@@ -243,6 +250,7 @@ fn the_bar_drags_the_window_and_it_stays_in_reach() {
 fn the_window_closes_when_its_instrument_goes() {
     let (mut s, g, t, id) = studio();
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     assert!(s.remove_instrument(t));
     let (x, y) = (g.size.0 / 2.0, 100.0);
     s.instrument_down(&g, x, y);
@@ -254,7 +262,8 @@ fn the_window_closes_when_its_instrument_goes() {
 fn a_window_whose_device_went_takes_no_pointer() {
     let (mut s, g, t, id) = studio();
     s.show_instrument(t, id);
-    let r = s.instruments.rect(0, g.size);
+    s.instruments.detached_target = Some(id);
+    let r = s.instruments.frame(0, &g);
     let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
     assert!(s.instruments.at(&s.project(), &g, x, y).is_some());
     let w = s.instruments.open[0];
@@ -335,7 +344,7 @@ fn a_built_in_effect_opens_from_the_mixer_and_its_knob_is_undone() {
     let start = values(&fx_of(&s))[k];
     assert_eq!(start, spec.default_norm());
     let before = s.song().steps();
-    let (x, y) = at(&s, &g, fx.id, Part::Knob(k));
+    let (x, y) = at(&mut s, &g, fx.id, Part::Knob(k));
     assert!(s.instrument_down(&g, x, y));
     assert!(s.instrument_moved(&g, x, y + 30.0, false));
     assert!(s.instrument_up());
@@ -369,6 +378,7 @@ fn the_bars_parts_are_in_sight_at_1280_and_360() {
     // is wider than the bar's narrow width: ‹ › show.
     let (mut s, _, t, id) = studio();
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     for w in [1280.0, 360.0] {
         let g = s.geometry(w, 700.0);
         for part in [
@@ -409,6 +419,7 @@ fn the_steps_hide_on_a_narrow_bar_and_walk_the_presets_on_a_wide_one() {
     ));
     let eq = added(&s, t, "EQ");
     s.show_instrument(t, eq);
+    s.instruments.detached_target = Some(eq);
     let fx_of = |s: &Studio| {
         s.project().tracks[&t]
             .inserts
@@ -419,15 +430,15 @@ fn the_steps_hide_on_a_narrow_bar_and_walk_the_presets_on_a_wide_one() {
     };
     // EQ's window is wider than the bar's narrow width: the ‹ › show.
     assert_eq!(preset_of(&fx_of(&s)), Some("Default"));
-    let (x, y) = at(&s, &g, eq, Part::NextPreset);
+    let (x, y) = at(&mut s, &g, eq, Part::NextPreset);
     assert!(s.instrument_down(&g, x, y));
     assert_eq!(preset_of(&fx_of(&s)), Some("ボーカルを明るく"));
-    let (x, y) = at(&s, &g, eq, Part::NextPreset);
+    let (x, y) = at(&mut s, &g, eq, Part::NextPreset);
     s.instrument_down(&g, x, y);
     assert_eq!(preset_of(&fx_of(&s)), Some("低域を締める"));
     // ‹ steps back and wraps at the ends.
     for want in ["ボーカルを明るく", "Default", "電話の声"] {
-        let (x, y) = at(&s, &g, eq, Part::PrevPreset);
+        let (x, y) = at(&mut s, &g, eq, Part::PrevPreset);
         s.instrument_down(&g, x, y);
         assert_eq!(preset_of(&fx_of(&s)), Some(want));
     }
@@ -437,9 +448,10 @@ fn the_steps_hide_on_a_narrow_bar_and_walk_the_presets_on_a_wide_one() {
 fn the_power_toggles_the_plugins_bypass() {
     let (mut s, g, t, id) = studio();
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     assert!(plugin(&s, t).runs());
     for want in [true, false] {
-        let (x, y) = at(&s, &g, id, Part::Power);
+        let (x, y) = at(&mut s, &g, id, Part::Power);
         assert!(s.instrument_down(&g, x, y));
         assert_eq!(plugin(&s, t).bypass, want);
     }
@@ -452,11 +464,12 @@ fn the_power_toggles_the_plugins_bypass() {
 fn the_pin_marks_the_window() {
     let (mut s, g, t, id) = studio();
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     assert!(!s.instruments.open[0].pinned);
-    let (x, y) = at(&s, &g, id, Part::Pin);
+    let (x, y) = at(&mut s, &g, id, Part::Pin);
     assert!(s.instrument_down(&g, x, y));
     assert!(s.instruments.open[0].pinned);
-    let (x, y) = at(&s, &g, id, Part::Pin);
+    let (x, y) = at(&mut s, &g, id, Part::Pin);
     assert!(s.instrument_down(&g, x, y));
     assert!(!s.instruments.open[0].pinned);
 }
@@ -470,9 +483,11 @@ fn the_sidechain_seat_is_only_on_the_devices_that_take_a_key() {
     ));
     let comp = added(&s, t, "Compressor");
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     // Pinned, so the Compressor opens beside it (UI-323).
     s.instruments.open[0].pinned = true;
     s.show_instrument(t, comp);
+    s.instruments.detached_target = Some(comp);
     let p = s.project();
     for (plugin_id, takes) in [(comp, true), (id, false)] {
         let i = s
@@ -542,6 +557,7 @@ fn compressor(s: &mut Studio, t: TrackId) -> PluginId {
     ));
     let comp = added(s, t, "Compressor");
     s.show_instrument(t, comp);
+    s.instruments.detached_target = Some(comp);
     comp
 }
 
@@ -575,8 +591,9 @@ fn an_effects_preset_list_checks_the_preset_it_is_at() {
     ));
     let comp = added(&s, t, "Compressor");
     s.show_instrument(t, comp);
+    s.instruments.detached_target = Some(comp);
     assert!(s.load_preset(comp, "ドラムをまとめる"));
-    let (x, y) = at(&s, &g, comp, Part::Preset);
+    let (x, y) = at(&mut s, &g, comp, Part::Preset);
     assert!(s.instrument_down(&g, x, y));
     let popup = s.popup.as_ref().expect("the presets");
     assert_eq!(
@@ -612,6 +629,7 @@ fn the_tag_keeps_its_preset_in_a_song_opened_again() {
     let t2 = keys(&s);
     assert_eq!(t2, t);
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     assert_eq!(
         s.instruments.tag_of(&insert(&s, id)),
         ("ドラムをまとめる".to_string(), false)
@@ -740,6 +758,7 @@ fn an_old_songs_compressor_opens_at_its_preset() {
     assert!(s.error.is_none(), "{:?}", s.error);
     let _ = std::fs::remove_dir_all(&dir);
     s.show_instrument(t, comp);
+    s.instruments.detached_target = Some(comp);
     let x = insert(&s, comp);
     assert_eq!(x.params.len(), old.len(), "the old knobs only");
     assert_eq!(texts(&x), before);
@@ -761,6 +780,7 @@ fn a_preset_leaves_the_sidechain_knobs_where_they_are() {
     ));
     let comp = added(&s, t, "Compressor");
     s.show_instrument(t, comp);
+    s.instruments.detached_target = Some(comp);
     let set = [
         ("gain", "6"),
         ("filter", "on"),
@@ -1170,9 +1190,11 @@ fn a_window_that_takes_a_wider_device_in_takes_its_width() {
     ));
     let lim = added(&s, t, "Limiter");
     s.show_instrument(t, lim);
+    s.instruments.detached_target = Some(lim);
     assert_eq!(s.instruments.open.len(), 1);
     let narrow = s.instruments.open[0].body.0;
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     assert_eq!(
         s.instruments.open.len(),
         1,

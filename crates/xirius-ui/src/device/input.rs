@@ -812,6 +812,19 @@ impl Studio {
 
     /// The keys of the control that has them, or of the value being typed.
     pub(crate) fn device_key(&mut self, g: &Geometry, key: &str, mods: Mods) -> bool {
+        let Some(target) = self.instruments.detached_target else {
+            return false;
+        };
+        if self.instruments.focus.is_some_and(|(id, _)| id != target)
+            || self.instruments.edge.is_some_and(|(id, _)| id != target)
+            || self
+                .instruments
+                .entry
+                .as_ref()
+                .is_some_and(|e| e.plugin != target)
+        {
+            return false;
+        }
         // Esc during a press lets go of what it holds, taking nothing in (L-par-3).
         if key == "escape" && self.instrument_cancel() {
             return true;
@@ -902,8 +915,7 @@ impl Studio {
                 let order = self.device_stops(track, plugin, def, &values);
                 let at = order.iter().position(|s| s.k == k).unwrap_or(0);
                 self.device_sweep_end();
-                // Past the window's last control (before its first) the keys go on round
-                // the screen: the window is the stop after its last place (L2-ui-5).
+                // Tab stays on this native surface, including at either end.
                 let next = if mods.shift {
                     at.checked_sub(1)
                 } else {
@@ -913,7 +925,7 @@ impl Studio {
                     Some(&stop) => self.device_stop(track, plugin, def, stop, !mods.shift),
                     None => {
                         self.device_blur();
-                        self.focus_round(g, !mods.shift);
+                        self.device_enter(!mods.shift);
                     }
                 }
                 return true;
@@ -1144,7 +1156,13 @@ impl Studio {
     /// Tab from the screen's last place (Shift+Tab from its first) goes into the window on
     /// top: the keys go to its first stop (back: its last) (M-ui-4). False with no window.
     pub(crate) fn device_enter(&mut self, ahead: bool) -> bool {
-        let Some(w) = self.instruments.open.last().copied() else {
+        let Some(w) = self
+            .instruments
+            .open
+            .iter()
+            .find(|w| Some(w.plugin) == self.instruments.detached_target)
+            .copied()
+        else {
             return false;
         };
         if w.docked && self.docked().is_none() {

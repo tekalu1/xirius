@@ -47,6 +47,7 @@ fn eq_window() -> (Studio, Geometry, TrackId, PluginId) {
     ));
     let id = fx(&s, t).id;
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     assert!(s.instruments.is_open(id));
     (s, g, t, id)
 }
@@ -267,11 +268,11 @@ fn tab_round(w: f32) {
             seen.push(band);
         }
         ahead.push(s.instruments.focus);
-        if s.instruments.focus.is_none() {
+        if s.instruments.focus == start {
             break;
         }
     }
-    assert_eq!(s.instruments.focus, None, "{w}: out in one turn");
+    assert_eq!(s.instruments.focus, start, "{w}: wrapped in one turn");
     seen.sort_unstable();
     assert_eq!(seen, (0..eq::NAMES.len()).collect::<Vec<_>>(), "{w}");
     // Back in the same way.

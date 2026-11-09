@@ -31,6 +31,7 @@ fn window(name: &str) -> (Studio, Geometry, TrackId, PluginId) {
     assert!(s.set_instrument(t, &Pick::built_in(name)), "{:?}", s.error);
     let id = plugin(&s, t).id;
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     assert!(s.instruments.is_open(id));
     (s, g, t, id)
 }
@@ -42,7 +43,7 @@ fn plugin(s: &Studio, t: TrackId) -> Plugin {
 fn body(s: &Studio, g: &Geometry, t: TrackId) -> Body {
     let x = plugin(s, t);
     let def = s.instruments.def_of(&x).unwrap();
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, g);
     s.instruments.body(r, &x, def)
 }
 
@@ -457,7 +458,7 @@ fn ui_334_layers_choose_the_wave_and_files_dropped_on_a_pad_go_there() {
         Some(x.samples[2].as_str())
     );
     // Off the window, a drop is not the window's.
-    assert!(!s.window_drop(&g, 1.0, 1.0, &files));
+    assert!(!s.window_drop(&g, -1.0, -1.0, &files));
 }
 
 /// Empty files named `names` in a folder of their own.
@@ -857,6 +858,36 @@ fn ui_334_the_edge_between_velocity_layers_drags_and_steps() {
     // Another press lets the keys go.
     press_spot(&mut s, &g, t, id, Mark::Layer(0));
     assert_eq!(s.instruments.edge, None);
+}
+
+#[test]
+fn a_velocity_edge_cannot_be_edited_from_another_device_surface() {
+    let (_dir, files) = wavs(&["Soft.wav", "Hard.wav"]);
+    let (mut s, g, t, id) = window("Drum Kit");
+    s.instruments.drop_layers = true;
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).unwrap();
+    assert!(s.window_drop(&g, x, y, &files));
+    s.instruments.open[0].pinned = true;
+    assert!(s.run_command("plugin.add", json!({"track": t, "name": "EQ"})));
+    let eq = s.project().tracks[&t]
+        .inserts
+        .iter()
+        .find(|p| p.name == "EQ")
+        .unwrap()
+        .id;
+    s.show_instrument(t, eq);
+    s.instruments.detached_target = Some(id);
+    press_spot(&mut s, &g, t, id, Mark::Edge(0));
+    s.instrument_up();
+    assert!(s.field_keys(&g, "left", None, Mods::NONE));
+    let before = ranges(&s, t, 0);
+    s.device_focus_lost();
+    crate::device_window::test_surface(&mut s, eq, |s, local| {
+        assert!(!s.field_keys(local, "right", None, Mods::NONE));
+    });
+    assert_eq!(ranges(&s, t, 0), before);
+    assert!(s.field_keys(&g, "right", None, Mods::NONE));
+    assert_ne!(ranges(&s, t, 0), before);
 }
 
 /// Low 18, 19 (UI-334): a pad of more than 128 layers draws (the last ones without a width),
@@ -1442,6 +1473,7 @@ fn ui_333_a_window_opened_again_does_not_turn_over_what_changed_while_it_was_shu
     assert!(!s.instruments.is_open(id));
     assert!(s.undo(&g));
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     assert!(!reversed(&s));
     assert_eq!(
         turn(&s, t0 + Duration::from_millis(10)),
@@ -1992,7 +2024,7 @@ fn ui_334_a_drag_shows_the_pads_it_fills() {
     let v = s.instruments.preview.clone().unwrap();
     assert_eq!(v.text, "2 pads, A1–A2");
     // Off the window, and once the drag leaves: nothing.
-    assert!(s.window_drag(&g, 1.0, 1.0, &files, false));
+    assert!(s.window_drag(&g, -1.0, -1.0, &files, false));
     assert!(s.instruments.preview.is_none());
     s.window_drag(&g, x, y, &files, false);
     s.drop_hover(false);
@@ -2298,7 +2330,7 @@ fn a_folder_held_is_read_only_over_a_drum_kit_and_once() {
     let folder = [dir.path().to_path_buf()];
     let (mut s, g, t, id) = window("Drum Kit");
     let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).expect("A1");
-    s.window_drag(&g, 1.0, 1.0, &folder, false);
+    s.window_drag(&g, -1.0, -1.0, &folder, false);
     assert!(!s.instruments.dragged.read(), "read off the kit");
     assert!(s.window_drag(&g, x, y, &folder, false));
     assert!(s.instruments.dragged.read());
@@ -2608,6 +2640,7 @@ fn ui_333_a_window_another_device_takes_ends_its_sweep_on_the_zone_turned() {
     assert!(s.run_command("plugin.add", json!({"track": vocal, "name": "EQ"})));
     let eq = s.project().tracks[&vocal].inserts.last().unwrap().id;
     s.show_instrument(vocal, eq);
+    s.instruments.detached_target = Some(eq);
     assert!(!s.instruments.is_open(id), "the EQ took the window in");
     assert!(s.instruments.sweep.is_none());
     assert_eq!(zone(&s, 0), first, "the first zone stays");

@@ -26,6 +26,7 @@ fn played(device: &str) -> (Studio, Geometry, TrackId, PluginId) {
     let id = current(&s.project().tracks[&t]).unwrap().id;
     give_sample(&mut s, id);
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     assert!(s.instruments.is_open(id));
     let g = s.geometry(1600.0, 1000.0);
     (s, g, t, id)
@@ -201,6 +202,7 @@ fn sample_io_transition(device: &str, fail: bool, remove: bool) {
         .collect();
     xirius_session::export::write_wav(&file, &wave, &wave, 48_000, 16).unwrap();
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     s.bind_window_io();
     s.prepare_song();
     let deadline = Instant::now() + Duration::from_secs(60);
@@ -223,7 +225,7 @@ fn sample_io_transition(device: &str, fail: bool, remove: bool) {
         let w = s.instruments.open[0];
         let p = s.project();
         let (_, plugin, def) = super::window::live(&p, &w).unwrap();
-        let r = s.instruments.rect(0, g.size);
+        let r = s.instruments.frame(0, &g);
         let b = s.instruments.body(r, plugin, def);
         let r = b
             .spots
@@ -368,6 +370,7 @@ fn plg_066_closing_the_window_ends_the_note() {
 
     // The mixer's button closing it does the same.
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     let (x, y) = s.instrument_center(&g, id, Part::Key(65)).unwrap();
     assert!(s.instrument_down(&g, x, y));
     wait_sounding(&mut s, id, |n| n > 0);

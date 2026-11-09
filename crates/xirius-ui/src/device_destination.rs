@@ -4,14 +4,8 @@ use crate::studio::Studio;
 use xirius_core::id::PluginId;
 
 fn destinations(plugin: &xirius_core::model::Plugin) -> Vec<Choice> {
-    let rows: &[(&str, &str)] = if plugin.format == "vst3" {
+    let rows: &[(&str, &str)] = if plugin.format == "vst3" || plugin.builtin().is_some() {
         &[("external", "独立ウィンドウ")]
-    } else if plugin.builtin().is_some() {
-        &[
-            ("mixer", "ミキサーに戻す"),
-            ("internal", "画面内"),
-            ("external", "独立ウィンドウ"),
-        ]
     } else {
         &[]
     };
@@ -50,65 +44,23 @@ impl Studio {
         if plugin.builtin().is_none() {
             return (Vec::new(), String::new());
         }
-        let now = if self.instruments.detached.contains(&id) {
-            "external"
-        } else if self
-            .instruments
-            .open
-            .iter()
-            .any(|w| w.plugin == id && w.docked)
-        {
-            "mixer"
-        } else {
-            "internal"
-        };
-        let mut choices = destinations(plugin);
-        if self
-            .instruments
-            .open
-            .iter()
-            .any(|w| w.plugin == id && w.body.0 < 520.0)
-        {
-            choices.push(Choice {
-                to: "channel".into(),
-                label: "チャンネルエディター".into(),
-            });
-        }
-        (choices, now.into())
+        (destinations(plugin), "external".into())
     }
 
     pub(crate) fn move_device_view(&mut self, id: PluginId, destination: &str) {
         if !matches!(destination, "mixer" | "internal" | "external") {
             return;
         }
-        let Some(win) = self
-            .instruments
-            .open
-            .iter()
-            .find(|w| w.plugin == id)
-            .copied()
-        else {
+        if !self.instruments.is_open(id) {
             return;
-        };
-        // Finish a gesture before changing its coordinate system, preserving one undo step.
+        }
+        // Older callers may still ask for a docked or internal view. The device and
+        // its editing state stay intact; only the presentation is migrated.
         self.instrument_up();
         self.device_sweep_end();
-        if destination == "external" {
-            self.instruments.detached.insert(id);
-        } else {
-            self.instruments.detached.remove(&id);
-        }
-        if destination == "mixer" {
-            self.instruments
-                .open
-                .retain(|w| !w.docked || w.plugin == id);
-            self.mixer.chosen = Some((win.track, crate::mixer::flow::Pick::Plugin(id)));
-            self.mixer.lead = Some(win.track);
-            self.drawer_open = true;
-            self.tab = crate::studio::DrawerTab::Mixer;
-        }
+        self.instruments.detached.insert(id);
         if let Some(w) = self.instruments.open.iter_mut().find(|w| w.plugin == id) {
-            w.docked = destination == "mixer";
+            w.docked = false;
         }
     }
 }
@@ -117,6 +69,78 @@ impl Studio {
 mod tests {
     use super::*;
     use crate::instrument::{Pick, current};
+
+    #[test]
+    fn every_builtin_opens_independently_from_plugin_and_mixer_entry_points() {
+        use crate::mixer::{MixerHit, flow::Pick as Row};
+        use crate::studio::DrawerTab;
+        for name in [
+            "Sampler",
+            "Drum Kit",
+            "EQ",
+            "Compressor",
+            "Limiter",
+            "Reverb",
+            "Delay",
+        ] {
+            let mut s = Studio::sample();
+            s.drawer_open = true;
+            s.tab = DrawerTab::Mixer;
+            let track = s
+                .project()
+                .tracks
+                .values()
+                .find(|t| t.name == "Keys")
+                .unwrap()
+                .id;
+            assert!(
+                s.run_command(
+                    "plugin.add",
+                    serde_json::json!({"track": track, "name": name})
+                ),
+                "{name}: {:?}",
+                s.error
+            );
+            let id = s.project().tracks[&track].inserts.last().unwrap().id;
+            let before = serde_json::to_value(&s.project().tracks[&track].inserts).unwrap();
+            s.instruments.open.clear();
+            assert!(s.open_plugin(track, id));
+            assert!(s.instruments.detached.contains(&id), "{name}");
+            let g = s.geometry(1600.0, 1000.0);
+            assert_eq!(s.instruments.frame(0, &g).w, 0.0);
+            s.close_device_view(id);
+            // The actual row press/release path also opens an independent view.
+            let (x, y) = s.mixer_center(&g, MixerHit::Open(track, id)).unwrap();
+            s.chosen_press(&g, x, y);
+            assert!(s.chain_down(&g, x, y));
+            assert!(s.fx_up(&g, x, y, false));
+            assert_eq!(s.mixer.chosen, Some((track, Row::Plugin(id))));
+            assert!(s.instruments.detached.contains(&id), "{name}");
+            assert!(s.mixer_split(&g).is_none());
+            s.show_instrument(track, id);
+            assert_eq!(
+                s.instruments.open.iter().filter(|w| w.plugin == id).count(),
+                1
+            );
+            s.instruments.detached_target = Some(id);
+            let local = s.settled_geometry(700.0, 500.0);
+            let (x, y) = s
+                .instrument_center(&local, id, crate::instrument::window::Part::Close)
+                .unwrap();
+            assert!(s.instrument_down(&local, x, y));
+            s.instruments.detached_target = None;
+            s.resized(&g);
+            s.tick();
+            assert!(
+                !s.instruments.is_open(id),
+                "closing {name} must not reopen it"
+            );
+            assert_eq!(
+                serde_json::to_value(&s.project().tracks[&track].inserts).unwrap(),
+                before
+            );
+        }
+    }
 
     #[test]
     fn vst_destinations_offer_only_an_independent_window() {
@@ -172,7 +196,8 @@ mod tests {
                     .unwrap()
                     .pinned
             );
-            assert_eq!(s.device_destinations(id).1, place);
+            assert_eq!(s.device_destinations(id).1, "external");
+            assert!(!s.instruments.open[0].docked);
             assert_eq!(
                 serde_json::to_value(&s.project().tracks[&t].inserts).unwrap(),
                 before

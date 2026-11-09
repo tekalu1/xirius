@@ -66,6 +66,7 @@ fn drag(s: &mut Studio, g: &Geometry, id: PluginId, dx: f32, dy: f32) {
 fn ui_331_the_corner_is_a_part_of_its_own() {
     let (mut s, g, t, [eq, _]) = two();
     s.show_instrument(t, eq);
+    s.instruments.detached_target = Some(eq);
     let r = s.instruments.frame(0, &g);
     let p = s.project();
     let at = |x, y| s.instruments.at(&p, &g, x, y).map(|h| h.1);
@@ -85,6 +86,7 @@ fn ui_331_the_corner_is_a_part_of_its_own() {
 fn ui_331_a_bigger_window_grows_the_curve_and_keeps_the_knobs() {
     let (mut s, g, t, [eq, _]) = two();
     s.show_instrument(t, eq);
+    s.instruments.detached_target = Some(eq);
     let r0 = s.instruments.frame(0, &g);
     let b0 = body(&s, &g);
     let steps = s.song().steps();
@@ -114,21 +116,23 @@ fn ui_331_a_bigger_window_grows_the_curve_and_keeps_the_knobs() {
 fn ui_331_it_goes_no_smaller_than_the_device_and_its_controls() {
     let (mut s, g, t, [eq, _]) = two();
     s.show_instrument(t, eq);
+    s.instruments.detached_target = Some(eq);
     drag(&mut s, &g, eq, -900.0, -900.0);
     let def = xirius_params::find("eq").unwrap();
     let (w, h) = s.instruments.open[0].body;
     assert_eq!(w, eq::MIN_W);
     assert_eq!((w, h), layout::size(def, eq::MIN_W), "the narrow layout");
-    // Nor past the screen's edge.
+    // Independent sizing is not capped by the main screen's viewport.
     drag(&mut s, &g, eq, 5000.0, 5000.0);
     let r = s.instruments.frame(0, &g);
-    assert!(r.right() <= g.size.0 + 0.5 && r.bottom() <= g.size.1 + 0.5);
+    assert!(r.w > g.size.0 && r.h > g.size.1);
 }
 
 #[test]
 fn ui_331_a_compressor_grows_its_history_and_its_meters() {
     let (mut s, g, t, [_, comp]) = two();
     s.show_instrument(t, comp);
+    s.instruments.detached_target = Some(comp);
     assert_eq!(s.instruments.open[0].body.0, compressor::NATURAL_W);
     let b0 = body(&s, &g);
     drag(&mut s, &g, comp, 120.0, 100.0);
@@ -162,19 +166,23 @@ fn ui_331_a_compressor_grows_its_history_and_its_meters() {
 fn ui_331_each_kind_opens_at_the_size_it_was_left_at() {
     let (mut s, g, t, [eq, comp]) = two();
     s.show_instrument(t, eq);
+    s.instruments.detached_target = Some(eq);
     drag(&mut s, &g, eq, 160.0, 80.0);
     let grown = s.instruments.open[0].body;
     // The Compressor takes the window in at its own size.
     s.show_instrument(t, comp);
+    s.instruments.detached_target = Some(comp);
     assert_eq!(s.instruments.open[0].body.0, compressor::NATURAL_W);
     // The EQ comes back at the size it was left at.
     s.show_instrument(t, eq);
+    s.instruments.detached_target = Some(eq);
     assert_eq!(s.instruments.open[0].body, grown);
     // So does a closed one opened again.
     let (x, y) = s.instrument_center(&g, eq, Part::Close).unwrap();
     assert!(s.instrument_down(&g, x, y));
     assert!(s.instruments.open.is_empty());
     s.show_instrument(t, eq);
+    s.instruments.detached_target = Some(eq);
     assert_eq!(s.instruments.open[0].body, grown);
     let r = s.instruments.frame(0, &g);
     assert_eq!(r.h, title_bar::BAR_H + grown.1);

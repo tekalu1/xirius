@@ -33,6 +33,7 @@ fn cmp_window() -> (Studio, Geometry, TrackId, PluginId) {
     ));
     let id = fx(&s, t).id;
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     assert!(s.instruments.is_open(id));
     (s, g, t, id)
 }
@@ -203,7 +204,7 @@ fn ui_327_the_history_keeps_four_seconds_and_the_readouts_their_most() {
 fn ui_327_the_input_and_output_read_plus_and_red_over_full_scale() {
     let (s, g, t, _) = cmp_window();
     let x = fx(&s, t);
-    let r = s.instruments.rect(0, g.size);
+    let r = s.instruments.frame(0, &g);
     let b = s.instruments.body(r, &x, x.builtin().unwrap());
     let mut d = Dynamics::default();
     d.feed(([1.2, 0.3], [1.1, 0.9]), 3.0, Instant::now(), SPAN);
