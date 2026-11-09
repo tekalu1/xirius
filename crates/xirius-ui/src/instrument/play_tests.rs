@@ -69,6 +69,25 @@ fn sounding(s: &Studio, id: PluginId) -> Option<u32> {
     Some(probe.sounding())
 }
 
+/// Waits until the host's report shows no held keys for `id`: the probe
+/// snapshot trails the note-off reaching the graph, so a single read races.
+fn wait_released(s: &mut Studio, id: PluginId) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        s.transport.poll();
+        s.poll_probes();
+        if s.instruments
+            .midi_pressed
+            .get(&id)
+            .is_none_or(Vec::is_empty)
+        {
+            return;
+        }
+        assert!(Instant::now() < deadline, "a released key stayed held");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 /// Waits until the voices of `id` meet `predicate`, with a guard for an engine that stops.
 fn wait_sounding(s: &mut Studio, id: PluginId, predicate: impl Fn(u32) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(60);
@@ -140,13 +159,7 @@ fn sampler_mouse_and_midi_channels_share_pcm_without_releasing_each_other() {
     assert_eq!(s.instruments.note, None);
     s.poll_live_midi();
     wait_sounding(&mut s, id, |n| n == 0);
-    s.poll_probes();
-    assert!(
-        s.instruments
-            .midi_pressed
-            .get(&id)
-            .is_none_or(Vec::is_empty)
-    );
+    wait_released(&mut s, id);
     assert!(s.live_midi.sent.contains(&(t, NoteKind::Off { pitch: 60 })));
 }
 
@@ -191,13 +204,7 @@ fn disconnecting_one_live_port_preserves_the_other_ports_pedal_and_audio() {
         );
         std::thread::sleep(Duration::from_millis(5));
     }
-    s.poll_probes();
-    assert!(
-        s.instruments
-            .midi_pressed
-            .get(&id)
-            .is_none_or(Vec::is_empty)
-    );
+    wait_released(&mut s, id);
     s.midi_ports_now(Vec::new());
     wait_sounding(&mut s, id, |n| n == 0);
 }

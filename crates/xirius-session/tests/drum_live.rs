@@ -77,6 +77,39 @@ fn tone(path: &std::path::Path, amp: f32) {
     w.finalize().unwrap();
 }
 
+/// The test's private fixture path. Windows gets a copy beside the temp files
+/// so its gate files stay private; on macOS the fixture is already a signed
+/// per-process bundle directory, which `fs::copy` cannot clone, so it loads in
+/// place.
+fn fixture(tmp: &std::path::Path) -> std::path::PathBuf {
+    let original =
+        xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
+    #[cfg(target_os = "macos")]
+    {
+        let _ = tmp;
+        original
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let dll = tmp.join(original.file_name().unwrap());
+        std::fs::copy(&original, &dll).unwrap();
+        dll
+    }
+}
+
+/// The binary `dlopen` needs inside a fixture path: the bundle's executable on
+/// macOS, the file itself elsewhere.
+fn fixture_binary(path: &std::path::Path) -> std::path::PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        path.join("Contents/MacOS/Fixture")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        path.to_path_buf()
+    }
+}
+
 fn capture(h: &mut SessionHost, a: &mut AudioEngine) -> xirius_session::plugins::StatePull {
     let receipt = h.begin_pull_states();
     let end = Instant::now() + Duration::from_secs(15);
@@ -94,13 +127,10 @@ fn scenario(kept: bool) {
     tone(&file, 0.8);
     tone(&other, 0.4);
     xirius_test_vst3::fixture_marker();
-    let original =
-        xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
-    let dll = tmp.path().join(original.file_name().unwrap());
-    std::fs::copy(&original, &dll).unwrap();
+    let dll = fixture(tmp.path());
     // SAFETY: only this private, built test fixture is loaded; the library
     // outlives the queried function and all instances used below.
-    let module = unsafe { libloading::Library::new(&dll).unwrap() };
+    let module = unsafe { libloading::Library::new(fixture_binary(&dll)).unwrap() };
     let creations = unsafe {
         module
             .get::<unsafe extern "system" fn() -> u32>(b"FixtureCreations")
@@ -484,10 +514,7 @@ fn keyed_route_case(placement: usize, automated: bool) {
     tone(&hit, 0.8);
     tone(&changed, 0.4);
     xirius_test_vst3::fixture_marker();
-    let original =
-        xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
-    let dll = tmp.path().join(original.file_name().unwrap());
-    std::fs::copy(original, &dll).unwrap();
+    let dll = fixture(tmp.path());
     let entries = xirius_plugins::probe(&dll).unwrap();
     let mut s = Session::with_registry(
         Project::new("keyed live route"),
@@ -717,10 +744,7 @@ fn failed_latency_case(before: bool) {
     }
     writer.finalize().unwrap();
     xirius_test_vst3::fixture_marker();
-    let original =
-        xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
-    let dll = tmp.path().join(original.file_name().unwrap());
-    std::fs::copy(original, &dll).unwrap();
+    let dll = fixture(tmp.path());
     let entries = xirius_plugins::probe(&dll).unwrap();
     let pid = PluginId(200);
     let mut p = Project::new("failed latency rebuild");

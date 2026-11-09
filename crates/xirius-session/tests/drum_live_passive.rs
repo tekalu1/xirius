@@ -22,12 +22,28 @@ fn run(s: &mut Session, name: &str, args: Value) -> Value {
     .data
 }
 
-fn check(other_capture: bool) {
-    let tmp = tempfile::tempdir().unwrap();
+/// The test's private fixture path. Windows gets a copy beside the temp files;
+/// on macOS the fixture is already a per-process bundle directory, which
+/// `fs::copy` cannot clone, so it is used in place.
+fn fixture(tmp: &std::path::Path) -> std::path::PathBuf {
     let original =
         xirius_test_vst3::fixture_path(std::env::current_exe().unwrap().parent().unwrap());
-    let dll = tmp.path().join(original.file_name().unwrap());
-    std::fs::copy(&original, &dll).unwrap();
+    #[cfg(target_os = "macos")]
+    {
+        let _ = tmp;
+        original
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let dll = tmp.join(original.file_name().unwrap());
+        std::fs::copy(&original, &dll).unwrap();
+        dll
+    }
+}
+
+fn check(other_capture: bool) {
+    let tmp = tempfile::tempdir().unwrap();
+    let dll = fixture(tmp.path());
     let entries = xirius_plugins::probe(&dll).unwrap();
     let mut s = Session::with_registry(
         Project::new("passive drum edit"),
