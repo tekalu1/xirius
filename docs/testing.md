@@ -1,6 +1,7 @@
 # Running tests
 
-Install cargo-nextest **0.9.151**, then run `python scripts/ci_tests.py`.
+Install cargo-nextest **0.9.151** (for example, `cargo install -j6 cargo-nextest --version 0.9.151 --locked`),
+then run `python scripts/ci_tests.py`.
 This is the local and CI entrypoint. It prepares normal executables and plugin fixtures,
 runs the window-free workspace tests, checks the small default-feature configurations,
 runs doctests, and checks the complete context-menu catalog. Cargo builds use six jobs.

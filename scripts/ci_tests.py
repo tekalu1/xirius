@@ -193,7 +193,7 @@ def main():
     if args.archive:
         nextest_version()
         prepare()
-        run(["cargo", "nextest", "archive", "--locked", "-j", "6", *nextest_targets(),
+        run(["cargo", "nextest", "archive", "--locked", "--build-jobs", "6", *nextest_targets(),
              "--archive-file", str(args.archive)])
         return 0
     if args.partition and not args.coverage_dir:
