@@ -440,22 +440,45 @@ fn verify_live_tree(target: &str, original: &[Item], result: &[Item]) {
     // The workspace suite aggregates coverage across real scene fixtures. This is
     // test-only output, and contains rule IDs, never project paths or plugin data.
     if let Some(directory) = std::env::var_os("XIRIUS_CONTEXT_COVERAGE_DIR") {
-        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::atomic::AtomicUsize;
         static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let file = std::path::PathBuf::from(directory).join(format!(
-            "{}-{}.json",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::write(
-            file,
-            serde_json::to_vec(&serde_json::json!({
+        write_coverage(
+            std::path::Path::new(&directory),
+            &NEXT,
+            &serde_json::to_vec(&serde_json::json!({
                 "target": target, "ids": ids, "root_rows": result.len(),
                 "missing": remaining.len(), "duplicate": 0, "unreachable": 0
             }))
             .unwrap(),
         )
         .expect("write context coverage");
+    }
+}
+
+#[cfg(test)]
+fn write_coverage(
+    directory: &std::path::Path,
+    next: &std::sync::atomic::AtomicUsize,
+    bytes: &[u8],
+) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::Ordering;
+    loop {
+        let file = directory.join(format!(
+            "{}-{}.json",
+            std::process::id(),
+            next.fetch_add(1, Ordering::Relaxed)
+        ));
+        // A process ID can be reused within one run. Never replace an earlier observation.
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(file)
+        {
+            Ok(mut file) => return file.write_all(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
     }
 }
 
@@ -494,6 +517,23 @@ fn insert(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reused_process_counters_preserve_every_coverage_record() {
+        use std::sync::atomic::AtomicUsize;
+        let dir = tempfile::tempdir().unwrap();
+        let first = br#"{"ids":["first"]}"#;
+        let second = br#"{"ids":["second"]}"#;
+        write_coverage(dir.path(), &AtomicUsize::new(0), first).unwrap();
+        write_coverage(dir.path(), &AtomicUsize::new(0), second).unwrap();
+        let mut records: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|p| std::fs::read(p.unwrap().path()).unwrap())
+            .collect();
+        records.sort();
+        assert_eq!(records, vec![first.to_vec(), second.to_vec()]);
+    }
+
     #[test]
     fn an_added_unclassified_operation_fails() {
         let mut s = crate::studio::Studio::sample();
