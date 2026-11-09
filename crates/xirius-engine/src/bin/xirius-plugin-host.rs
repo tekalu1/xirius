@@ -1060,6 +1060,14 @@ fn run_audio(
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!(
+            "xirius-plugin-host {} protocol {}",
+            env!("CARGO_PKG_VERSION"),
+            wire::PROTOCOL
+        );
+        return;
+    }
     if let Err(e) = xirius_engine::crash::install("plugin-host", false) {
         eprintln!("クラッシュの記録先を準備できません: {e}");
     }

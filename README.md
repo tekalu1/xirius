@@ -44,7 +44,9 @@ in this release.
 
 ## Tests
 
-`cargo test --workspace` runs everything that holds on a busy machine (a parallel build): the
+Install the pinned nextest version and follow [Running tests](docs/testing.md).
+
+`python scripts/ci_tests.py` runs everything that holds on a busy machine (a parallel build): the
 tests wait on what happened, not on a time. The tests whose point is keeping up with real time
 are `#[ignore]`d; run them on a quiet machine:
 

@@ -49,27 +49,39 @@ pub(crate) fn id(s: &Studio) -> PluginId {
         .id
 }
 
-/// The `xirius-plugin-host` the plugins run in, built when the test run did not: `cargo test -p
-/// xirius-ui` builds this package's executables only, and without the host a plugin never loads.
-/// It is built even when one is there: a host from an older build speaks an older protocol, and
-/// every plugin of the run would fail to open (cargo does nothing when it is up to date).
+/// Tests use the host prepared with the other executables by scripts/ci_tests.py.
 #[cfg(test)]
 pub(crate) fn require_plugin_host() {
-    static BUILT: std::sync::Once = std::sync::Once::new();
-    BUILT.call_once(|| {
-        let mut build = std::process::Command::new(
-            std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()),
-        );
-        build.args(["build", "-p", "xirius-engine", "--bin", "xirius-plugin-host"]);
-        if !cfg!(debug_assertions) {
-            build.arg("--release");
-        }
-        let built = build.status().is_ok_and(|status| status.success());
-        assert!(
-            built && xirius_engine::server::find_host().is_some(),
-            "xirius-plugin-host is not built, and `cargo build -p xirius-engine --bin xirius-plugin-host` did not make it"
-        );
-    });
+    let host = xirius_engine::server::find_host()
+        .expect("prepare test executables with python scripts/ci_tests.py --prepare");
+    let exe = std::env::current_exe().unwrap();
+    let profile = exe.parent().unwrap().parent().unwrap();
+    let expected = profile.join(format!(
+        "xirius-plugin-host{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    assert_eq!(
+        host.canonicalize().unwrap(),
+        expected.canonicalize().unwrap(),
+        "the host must belong to this test build"
+    );
+    let mut command = std::process::Command::new(host);
+    command.arg("--version");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let output = command.output().expect("read prepared host version");
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        format!(
+            "xirius-plugin-host {} protocol {}",
+            env!("CARGO_PKG_VERSION"),
+            xirius_engine::wire::PROTOCOL
+        )
+    );
 }
 
 pub(crate) fn prepare(s: &mut Studio, _: u8) {

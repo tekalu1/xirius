@@ -175,5 +175,5 @@ let d = div().border_1(); // design-lint: allow(border) 同じ行にも書ける
 
 `.github/workflows/rust.yml`:
 
-- Windows・macOS: `cargo fmt --check`・`cargo clippy --workspace --all-targets -- -D warnings`・`cargo test --workspace`・`cargo run -p xirius-design-lint`。
+- Windows・macOS: `cargo fmt --check`・`cargo clippy --workspace --all-targets -- -D warnings`・`python scripts/ci_tests.py`・`cargo run -p xirius-design-lint`。
 - `cargo-deny`（`deny.toml`）: ライセンスの許可の一覧は `docs/licenses.md` に合わせる。依存の条件と例外は同じ文書にまとめる。

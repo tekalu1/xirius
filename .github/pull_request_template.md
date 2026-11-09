@@ -10,7 +10,7 @@ Plan items:
 
 - [ ] `cargo fmt --check`
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings`
-- [ ] `cargo test --workspace`
+- [ ] `python scripts/ci_tests.py`
 - [ ] `cargo run -p xirius-design-lint` (when the screen changed)
 - [ ] `python scripts/plan.py check` (when `docs/plan.toml` changed)
 

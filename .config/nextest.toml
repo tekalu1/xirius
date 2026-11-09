@@ -1,0 +1,17 @@
+nextest-version = "0.9.151"
+
+[profile.default]
+archive.include = [
+    { path = "debug/xirius-plugin-host.exe", relative-to = "target", on-missing = "ignore" },
+    { path = "debug/xirius-plugin-host", relative-to = "target", on-missing = "ignore" },
+    { path = "debug/deps/xirius_test_vst3.dll", relative-to = "target", on-missing = "ignore" },
+    { path = "debug/deps/xirius_test_clap.dll", relative-to = "target", on-missing = "ignore" },
+    { path = "debug/deps/libxirius_test_vst3.dylib", relative-to = "target", on-missing = "ignore" },
+    { path = "debug/deps/libxirius_test_clap.dylib", relative-to = "target", on-missing = "ignore" },
+]
+
+[profile.ci]
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"

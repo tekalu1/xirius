@@ -194,7 +194,10 @@ class WorkflowTests(unittest.TestCase):
                 expanded |= {n.replace("${{ matrix.os }}", o.strip()) for o in oses[1].split(",")}
             else:
                 expanded.add(n)
-        self.assertEqual(expanded, set(gate.REQUIRED_JOBS))
+        # Build and shard jobs feed the stable aggregate names used by the release gate.
+        self.assertTrue(set(gate.REQUIRED_JOBS) <= expanded)
+        self.assertIn("needs: [build, test]", text)
+        self.assertIn("--expected-shards 4", text)
 
     def test_the_release_runs_the_gate_before_signing_and_publishing(self):
         text = (HERE.parent / ".github/workflows/release.yml").read_text(encoding="utf-8")

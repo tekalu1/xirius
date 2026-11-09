@@ -107,13 +107,15 @@ before they get there:
 
 ## Before sending a change
 
+Install the pinned nextest version and follow [Running tests](docs/testing.md).
+
 The commit message starts with the id of the plan item in `docs/plan.toml` that the change
 carries (`UI-012: …`). A change from outside does not need one; the id is added when the change
 is taken in.
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace`
+- `python scripts/ci_tests.py`
 - `cargo run -p xirius-design-lint`
 - `cargo deny check`
 - `python scripts/plan.py check` when `docs/plan.toml` changes
