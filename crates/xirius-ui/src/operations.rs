@@ -692,18 +692,22 @@ mod tests {
     }
 
     #[test]
-    fn no_operation_is_on_the_screen_in_two_places_but_the_approved_ones() {
+    fn the_screen_scan_matches_approved_placements_and_documentation() {
         let found = found();
-        let bad = unapproved(&found);
+        no_operation_is_on_the_screen_in_two_places_but_the_approved_ones(&found);
+        the_scan_sees_the_whole_screen_and_the_approved_list_has_no_dead_entry(&found);
+        the_list_in_docs_is_what_the_scan_found(&found);
+    }
+
+    fn no_operation_is_on_the_screen_in_two_places_but_the_approved_ones(found: &[Found]) {
+        let bad = unapproved(found);
         assert!(
             bad.is_empty(),
             "an operation in 2 places that no approved mock draws twice: {bad:#?}"
         );
     }
 
-    #[test]
-    fn the_scan_sees_the_whole_screen_and_the_approved_list_has_no_dead_entry() {
-        let found = found();
+    fn the_scan_sees_the_whole_screen_and_the_approved_list_has_no_dead_entry(found: &[Found]) {
         let ops: BTreeSet<&str> = found.iter().map(|f| f.op).collect();
         for want in [
             "transport.play",
@@ -757,9 +761,8 @@ mod tests {
         assert_eq!(unapproved(&found).len(), 2);
     }
 
-    #[test]
-    fn the_list_in_docs_is_what_the_scan_found() {
-        let text = document(&found());
+    fn the_list_in_docs_is_what_the_scan_found(found: &[Found]) {
+        let text = document(found);
         let path = doc_path();
         if std::env::var_os("XIRIUS_WRITE_OPERATIONS").is_some() {
             std::fs::write(&path, &text).unwrap();

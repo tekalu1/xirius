@@ -956,9 +956,7 @@ impl Song {
     }
 
     pub(crate) fn sample_project() -> Project {
-        let mut b = Builder {
-            session: Session::new(SAMPLE_NAME),
-        };
+        let mut b = Builder::new();
         b.build();
         b.session.project().clone()
     }
@@ -979,9 +977,7 @@ impl Song {
         trash: Option<Trash>,
         carried: Option<(xirius_prefs::Shared, xirius_session::audio_settings::Shared)>,
     ) -> Song {
-        let mut b = Builder {
-            session: Session::new(SAMPLE_NAME),
-        };
+        let mut b = Builder::new();
         b.build();
         let mut song = Song::start(b.session, scan, trash, carried);
         song.sample = true;
@@ -1132,6 +1128,13 @@ struct Builder {
 }
 
 impl Builder {
+    fn new() -> Self {
+        let mut session = Session::new(SAMPLE_NAME);
+        // Construction consumes command data, never edit hashes; Song::start also opts out.
+        session.hash_people_edits(false);
+        Self { session }
+    }
+
     fn run(&mut self, command: &str, args: Value) -> Value {
         // design-lint: allow(ui-blocking-io) PRJ-031 review: sample/bootstrap builder on a private in-memory Session, before live callbacks.
         match self.session.run_value(command, args, &RunOptions::human()) {
@@ -1341,6 +1344,43 @@ mod tests {
             .find(|t| t.name == name)
             .unwrap_or_else(|| panic!("no track {name}"))
             .id
+    }
+
+    #[test]
+    fn building_without_edit_hashes_preserves_the_project_and_initial_undo() {
+        let mut hashed = Builder {
+            session: Session::new(SAMPLE_NAME),
+        };
+        hashed.build();
+        let mut unhashed = Builder::new();
+        unhashed.build();
+        assert_eq!(hashed.session.project(), unhashed.session.project());
+        assert_eq!(Song::sample_project(), *hashed.session.project());
+        let mut song = Song::sample();
+        assert_eq!(song.project().as_ref(), hashed.session.project());
+        assert!(song.is_sample());
+        assert_eq!(song.steps(), 0);
+        assert!(!song.can_undo());
+        let original = song.project();
+        let id = track_named(&original, "Drums");
+        song.toggle_mute(id).unwrap();
+        assert_eq!(song.steps(), 1);
+        assert!(song.undo());
+        assert_eq!(song.project(), original);
+        let result = song
+            .session
+            .run_value(
+                "track.mute",
+                json!({"ids": [id.to_string()]}),
+                &RunOptions::ai("Assistant"),
+            )
+            .unwrap();
+        assert_eq!(
+            result.data["state_hash"],
+            json!({
+                "before": original.content_hash(), "after": song.project().content_hash()
+            })
+        );
     }
 
     #[test]
