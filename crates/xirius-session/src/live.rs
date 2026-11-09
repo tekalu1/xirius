@@ -104,6 +104,12 @@ impl SessionHost {
     }
     /// Sends a live input to the track's routing or one named instrument within it.
     pub fn live_input(&mut self, track: TrackId, input: xirius_engine::performance::Input) -> bool {
+        // Same admission rule as `note`: while the requested source failed,
+        // new note-ons are refused but releases and controllers still reach
+        // the accepted graph.
+        if !self.live_note_allowed(track, &input.kind) {
+            return false;
+        }
         if input.source & xirius_engine::performance::MOUSE != 0 {
             return self.mouse_input(track, input);
         }
