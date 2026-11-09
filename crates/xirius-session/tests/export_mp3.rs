@@ -450,7 +450,7 @@ fn main() {
     for &&(name, needs_lame, test) in &picked {
         if needs_lame && let Some(why) = &lame {
             // An explicitly selected test must not turn a missing encoder into a pass.
-            if exact || only_ignored {
+            if exact || only_ignored || filters.iter().any(|filter| !filter.is_empty()) {
                 eprintln!("{name}: required encoder unavailable: {why}");
                 failed.push(name);
                 continue;

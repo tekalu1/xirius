@@ -180,13 +180,14 @@ class LoopTests(unittest.TestCase):
 
 
 class WorkflowTests(unittest.TestCase):
-    """The required jobs are rust.yml's jobs, and the release waits on rust.yml."""
+    """The required jobs are a subset of rust.yml jobs; release waits on their gate."""
 
     def test_rust_yml_has_the_required_jobs(self):
         text = (HERE.parent / gate.WORKFLOW).read_text(encoding="utf-8")
         self.assertRegex(text, r"(?m)^  push:\n    branches: \[main\]")
         names = set(re.findall(r"(?m)^    name: (.+)$", text))
-        oses = re.search(r"(?m)^        os: \[(.*)\]$", text)
+        aggregate = text.split("  check:\n", 1)[1].split("  deny:", 1)[0]
+        oses = re.search(r"(?m)^        os: \[(.*)\]$", aggregate)
         self.assertIsNotNone(oses, "the check job's matrix of OSes")
         expanded = set()
         for n in names:
@@ -196,8 +197,6 @@ class WorkflowTests(unittest.TestCase):
                 expanded.add(n)
         # Build and shard jobs feed the stable aggregate names used by the release gate.
         self.assertTrue(set(gate.REQUIRED_JOBS) <= expanded)
-        self.assertIn("needs: [build, test]", text)
-        self.assertIn("--expected-shards 4", text)
 
     def test_the_release_runs_the_gate_before_signing_and_publishing(self):
         text = (HERE.parent / ".github/workflows/release.yml").read_text(encoding="utf-8")

@@ -66,6 +66,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: tests-${{ matrix.os }}
+          overwrite: true
           path: tests.tar.zst
           compression-level: 0
           retention-days: 3
@@ -95,12 +96,14 @@ jobs:
         if: always()
         with:
           name: coverage-${{ matrix.os }}-${{ matrix.shard }}
+          overwrite: true
           path: coverage
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: junit-${{ matrix.os }}-${{ matrix.shard }}
+          overwrite: true
           path: target/nextest/ci/junit.xml
           if-no-files-found: error
 

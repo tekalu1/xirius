@@ -68,7 +68,7 @@ class CoverageTests(unittest.TestCase):
                 self.assertTrue(ci_tests.check_shards(tmp, 4))
 
     def test_release_checks_depend_on_build_and_all_shards(self):
-        workflow = (Path(__file__).resolve().parent.parent / ".github/workflows/rust.yml").read_text()
+        workflow = (Path(__file__).resolve().parent.parent / ".github/workflows/rust.yml").read_text(encoding="utf-8")
         aggregate = workflow.split("  check:\n", 1)[1].split("  deny:", 1)[0]
         self.assertIn("needs: [build, test]", aggregate)
         self.assertIn("if: always()", aggregate)

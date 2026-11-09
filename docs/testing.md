@@ -18,14 +18,19 @@ These are additional builds, not part of a claim that every configuration builds
 `docs/ara-verification.md`. Tests opening real windows remain excluded by the lists in
 `scripts/ci_tests.py` and must run on a desktop of known size before release.
 MP3 tests list encoder-dependent cases as ignored when LAME is absent. Explicitly executing
-one of those cases without the encoder fails; it cannot be reported as a successful test.
+one of those cases with a nonempty name substring filter, `--exact`, or `--ignored` without
+the encoder fails; it cannot be reported as a successful test. Listing remains successful.
 Build LAME with `scripts/build-lame.ps1` or `scripts/build-lame.sh` to exercise those cases.
 
 For a focused UI test, first run `python scripts/ci_tests.py --prepare`. Reload tests require
 the host beside the test build, with the same package version and wire protocol; tests never
-invoke Cargo to create it. For restricted local environments, `XIRIUS_TEST_TRASH_DIR` lets
-export-action tests use an injected file-moving callback. Without it, CI retains the real
-recycle-bin check. Keep signing-test temporary directories outside any Git checkout; the
+invoke Cargo to create it. Version/protocol checks do not detect an older host from the same
+version: rerun preparation after engine or host changes. This command prepares debug artifacts;
+they cannot be used for release tests, which need matching release artifacts.
+For restricted local environments, `XIRIUS_TEST_TRASH_DIR` lets export-action tests use an
+injected file-moving callback. The directory must be on the same volume as the test exports
+under the checkout's `target/`, because the callback uses `std::fs::rename`. Without it,
+Windows CI retains the real recycle-bin check. Keep signing-test temporary directories outside any Git checkout; the
 production key-generation guard still refuses paths inside a repository.
 
 ## CI stages

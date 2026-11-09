@@ -1,4 +1,5 @@
-//! Export audition hears the written file; import is a single history step; trash uses the OS.
+//! Export audition hears the written file; import is a single history step.
+//! Trash uses the OS unless a test file-moving callback is injected.
 use serde_json::json;
 use std::{
     path::{Path, PathBuf},

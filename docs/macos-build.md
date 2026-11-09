@@ -3,6 +3,8 @@
 macOS は段階 1・2（ビルド、窓を開かない試験、通常 CI）の対象です。
 Rust は `rust-toolchain.toml` の版を使い、Xcode Command Line Tools が必要です。
 
+試験には cargo-nextest `0.9.151` が必要です。準備と実行は [試験の手順](testing.md) を参照してください。
+
 ```sh
 cargo clippy --workspace --all-targets -- -D warnings
 python3 scripts/ci_tests.py
