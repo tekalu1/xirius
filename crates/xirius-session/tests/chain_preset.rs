@@ -42,11 +42,122 @@ fn rig(tag: &str) -> Rig {
         },
         ExtExtras {
             presets: Some(dir.clone()),
+            places_file: Some(dir.join("browser.json")),
             track_presets: Some(dir.join("tracks")),
             ..ExtExtras::default()
         },
     );
     Rig { dir, s }
+}
+
+#[test]
+fn favourite_notifications_use_names_and_custom_stores_do_not_import_global_favourites() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("browser.json");
+    let mut s = Session::with_registry(Project::new("isolated"), shared_registry());
+    commands::attach_with(
+        &mut s,
+        ExtConfig {
+            output: OutputMode::Silent { paced: false },
+            ..ExtConfig::default()
+        },
+        ExtExtras {
+            places_file: Some(file.clone()),
+            track_presets: Some(root.path().join("tracks")),
+            ..ExtExtras::default()
+        },
+    );
+    for id in [
+        "device:sampler",
+        "preset:missing-private-location",
+        "device:uninstalled",
+    ] {
+        let out = s
+            .run_value(
+                "browser.preset.favourite",
+                json!({"entry": id, "on": true}),
+                &RunOptions::human(),
+            )
+            .unwrap();
+        assert!(!out.message.contains(id), "{}", out.message);
+        if id == "device:sampler" {
+            assert!(out.message.contains("Sampler"));
+        }
+        assert!(
+            out.data["favourites"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(id))
+        );
+        let saved = xirius_session::places::load(&file).unwrap();
+        assert!(
+            !saved.legacy_favourites_imported,
+            "a custom store without a preset root has no legacy source"
+        );
+    }
+    let before = xirius_session::places::load(&file).unwrap().favourites;
+    for command in ["browser.preset.list", "location.list"] {
+        run(&mut s, command, json!({}));
+        let saved = xirius_session::places::load(&file).unwrap();
+        assert!(!saved.legacy_favourites_imported);
+        assert_eq!(saved.favourites, before);
+    }
+}
+
+#[test]
+fn factory_favourite_removal_clears_legacy_alias_and_survives_reopening() {
+    let mut r = rig("factory-favourite-alias");
+    let list = run(&mut r.s, "browser.preset.list", json!({}));
+    let entry = list["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["source"] == "Factory")
+        .unwrap();
+    let id = entry["id"].as_str().unwrap().to_owned();
+    let alias = format!(
+        "preset:{}/{}",
+        entry["device"].as_str().unwrap(),
+        entry["name"].as_str().unwrap()
+    );
+    let file = r.dir.join("browser.json");
+    let mut prefs = xirius_session::places::load(&file).unwrap();
+    prefs
+        .favourites
+        .extend([id.clone(), alias.clone(), "device:uninstalled".into()]);
+    xirius_session::places::save(&file, &prefs).unwrap();
+    for on in [false, true, true, false] {
+        let mut args = json!({"entry": id});
+        args[if on { "on" } else { "off" }] = json!(true);
+        run(&mut r.s, "browser.preset.favourite", args);
+        let saved = xirius_session::places::load(&file).unwrap();
+        assert_eq!(saved.favourites.contains(&id), on);
+        assert!(!saved.favourites.contains(&alias));
+        assert!(saved.favourites.contains("device:uninstalled"));
+        let list = run(&mut r.s, "browser.preset.list", json!({}));
+        assert_eq!(
+            list["favourites"].as_array().unwrap().contains(&json!(id)),
+            on
+        );
+    }
+    let mut reopened = Session::with_registry(Project::new("reopened"), shared_registry());
+    commands::attach_with(
+        &mut reopened,
+        ExtConfig {
+            output: OutputMode::Silent { paced: false },
+            ..ExtConfig::default()
+        },
+        ExtExtras {
+            presets: Some(r.dir.clone()),
+            places_file: Some(file),
+            track_presets: Some(r.dir.join("tracks")),
+            ..ExtExtras::default()
+        },
+    );
+    let list = run(&mut reopened, "browser.preset.list", json!({}));
+    let saved = list["favourites"].as_array().unwrap();
+    assert!(!saved.contains(&json!(id)) && !saved.contains(&json!(alias)));
+    assert!(saved.contains(&json!("device:uninstalled")));
 }
 
 #[test]
@@ -91,6 +202,36 @@ fn browser_saves_subtrees_copies_factory_and_applies_in_one_step() {
         json!({"entry": entry}),
     );
     assert!(!unfav["favourites"].as_array().unwrap().contains(&entry));
+    let prefs_file = r.dir.join("browser.json");
+    let mut prefs = xirius_session::places::load(&prefs_file).unwrap();
+    let old = "preset:sampler/Warm";
+    prefs.favourites.insert(old.into());
+    xirius_session::places::save(&prefs_file, &prefs).unwrap();
+    let removed = run(
+        &mut r.s,
+        "browser.preset.favourite",
+        json!({"entry": entry}),
+    );
+    assert!(
+        !removed["favourites"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(old))
+    );
+    assert!(
+        !xirius_session::places::load(&prefs_file)
+            .unwrap()
+            .favourites
+            .contains(old)
+    );
+    let restored = run(&mut r.s, "browser.preset.favourite", json!({"entry": old}));
+    assert!(restored["favourites"].as_array().unwrap().contains(&entry));
+    assert!(
+        !restored["favourites"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(old))
+    );
     let target = instrument(&mut r.s, "Target", "Sampler");
     plugin(&mut r.s, &target, "Delay");
     step(

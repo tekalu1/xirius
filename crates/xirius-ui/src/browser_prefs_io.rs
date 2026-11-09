@@ -56,6 +56,95 @@ mod tests {
     }
 
     #[test]
+    fn removing_a_default_before_legacy_import_cannot_restore_it() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("browser.json");
+        let legacy = root.path().join(".browser-favourites.json");
+        std::fs::write(&legacy, r#"["device:sampler","device:delay"]"#).unwrap();
+        let mut browser = Browser::default();
+        browser.start_prefs(file.clone());
+        browser.prefs_io.legacy = Some(legacy);
+        browser.toggle_favourite("Sampler");
+        browser.settle_prefs_io();
+        assert!(!browser.is_favourite("Sampler"));
+        assert!(browser.is_favourite("Delay"));
+        let saved = places::load(&file).unwrap();
+        assert!(saved.legacy_favourites_imported);
+        assert!(!saved.favourites.contains("Sampler"));
+        assert!(!saved.favourites.contains("device:sampler"));
+        let mut restarted = Browser::default();
+        restarted.use_prefs_fixture(file).unwrap();
+        assert!(!restarted.is_favourite("Sampler"));
+    }
+
+    #[test]
+    fn a_failed_import_write_reports_failure_and_retries_the_pending_removal() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("browser.json");
+        let legacy = root.path().join(".browser-favourites.json");
+        places::save(&file, &Prefs::first_run(None)).unwrap();
+        std::fs::write(&legacy, r#"["device:sampler","device:delay"]"#).unwrap();
+        let fail = Arc::new(AtomicBool::new(true));
+        let gate = fail.clone();
+        let target = file.clone();
+        let _observe = xirius_core::io_test::observe(Arc::new(move |op, path| {
+            if op == "prefs_write" && path == target && gate.load(Ordering::SeqCst) {
+                Err(std::io::Error::other("preference write failed"))
+            } else {
+                Ok(())
+            }
+        }));
+        let mut browser = Browser::default();
+        browser.start_prefs(file.clone());
+        browser.prefs_io.legacy = Some(legacy);
+        browser.toggle_favourite("Sampler");
+        browser.settle_prefs_io();
+        assert!(browser.prefs_error.is_some());
+        assert!(!browser.is_favourite("Sampler"));
+        assert!(!places::load(&file).unwrap().legacy_favourites_imported);
+        fail.store(false, Ordering::SeqCst);
+        browser.toggle_favourite("Added");
+        browser.settle_prefs_io();
+        let saved = places::load(&file).unwrap();
+        assert!(saved.legacy_favourites_imported);
+        assert!(!saved.favourites.contains("Sampler"));
+        assert!(!saved.favourites.contains("device:sampler"));
+        assert!(saved.favourites.contains("device:delay"));
+        assert!(saved.favourites.contains("Added"));
+        assert!(browser.prefs_error.is_none());
+    }
+
+    #[test]
+    fn a_recovered_import_read_clears_only_its_own_error() {
+        for unrelated in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let file = root.path().join("browser.json");
+            let legacy = root.path().join(".browser-favourites.json");
+            std::fs::write(&legacy, "broken").unwrap();
+            let mut browser = Browser::default();
+            browser.start_prefs(file);
+            browser.prefs_io.legacy = Some(legacy.clone());
+            browser.settle_prefs_io();
+            assert!(browser.prefs_error.is_some());
+            if unrelated {
+                browser.prefs_error = Some("other failure".into());
+            }
+            std::fs::write(&legacy, r#"["device:delay"]"#).unwrap();
+            browser.prefs_io.at = None;
+            browser.settle_prefs_io();
+            assert!(browser.is_favourite("Delay"));
+            assert_eq!(
+                browser.prefs_error.as_deref(),
+                unrelated.then_some("other failure")
+            );
+        }
+    }
+
+    #[test]
     fn a_late_place_add_keeps_later_navigation_and_file_selection() {
         for moved in [false, true] {
             let root = tempfile::tempdir().unwrap();
@@ -113,6 +202,8 @@ struct Pending {
 
 #[derive(Default)]
 pub(crate) struct PrefsIo {
+    pub(crate) favourite_edits: std::collections::BTreeMap<String, bool>,
+    pub(crate) legacy: Option<PathBuf>,
     jobs: ReadJobs<u64, Reply>,
     pending: Option<Pending>,
     edits: u64,
@@ -123,6 +214,8 @@ pub(crate) struct PrefsIo {
     save: Option<crate::browser_prefs_save::Ticket>,
     pub(crate) base: Option<Prefs>,
     failed_save: bool,
+    save_error: Option<String>,
+    load_error: Option<String>,
 }
 impl crate::browser::Browser {
     pub(crate) fn prefs_selection_changed(&mut self) {
@@ -155,10 +248,16 @@ impl crate::browser::Browser {
             // design-lint: allow(ui-blocking-io) PRJ-031 review: first_run(None) constructs memory defaults without inspecting any home directory.
             .unwrap_or_else(|| Prefs::first_run(None));
         self.prefs_io.failed_save = false;
-        self.prefs_io.save = self
-            .prefs_file
-            .as_deref()
-            .map(|file| crate::browser_prefs_save::submit(file, base, prefs));
+        let favourite_edits = std::mem::take(&mut self.prefs_io.favourite_edits);
+        self.prefs_io.save = self.prefs_file.as_deref().map(|file| {
+            crate::browser_prefs_save::submit(
+                file,
+                base,
+                prefs,
+                self.prefs_io.legacy.clone(),
+                favourite_edits,
+            )
+        });
     }
     pub(crate) fn add_place_later(&mut self, path: PathBuf) -> bool {
         if self.prefs_io.adds.len() >= 64 {
@@ -177,9 +276,16 @@ impl crate::browser::Browser {
                 Ok(()) => {
                     self.prefs_io.base = Some(self.prefs());
                     self.prefs_io.failed_save = false;
+                    if let Some(previous) = self.prefs_io.save_error.take()
+                        && self.prefs_error.as_ref() == Some(&previous)
+                    {
+                        self.prefs_error = None;
+                        changed = true;
+                    }
                 }
                 Err(e) => {
                     self.prefs_io.failed_save = true;
+                    self.prefs_io.save_error = Some(e.clone());
                     self.prefs_error = Some(e);
                     changed = true;
                 }
@@ -216,7 +322,13 @@ impl crate::browser::Browser {
                             let local = current != snapshot;
                             let disk = p.clone();
                             let p = crate::browser_prefs_save::merge(&snapshot, &current, p);
-                            changed = p != current;
+                            changed |= p != current;
+                            if let Some(previous) = self.prefs_io.load_error.take()
+                                && self.prefs_error.as_ref() == Some(&previous)
+                            {
+                                self.prefs_error = None;
+                                changed = true;
+                            }
                             self.apply(p);
                             self.prefs_io.base = Some(disk);
                             if local {
@@ -241,6 +353,9 @@ impl crate::browser::Browser {
                         }
                     },
                     Err(e) => {
+                        if matches!(action, Action::Load) {
+                            self.prefs_io.load_error = Some(e.clone());
+                        }
                         self.prefs_error = Some(e);
                         changed = true;
                     }
@@ -269,6 +384,7 @@ impl crate::browser::Browser {
         let file = self.prefs_file.clone();
         let path = file.clone();
         let work = action.clone();
+        let legacy = self.prefs_io.legacy.clone();
         self.prefs_io.next += 1;
         let key = self.prefs_io.next;
         let read = move || {
@@ -285,8 +401,13 @@ impl crate::browser::Browser {
             )
             .map_err(|e| e.to_string())?;
             match work {
-                // design-lint: allow(ui-blocking-io) PRJ-031 review: worker-only browser transaction/read helper or cleanup read_view; UI only submits and polls.
-                Action::Load => places::load(path.as_deref().expect("preference path")),
+                Action::Load => {
+                    let file = path.as_deref().expect("preference path");
+                    places::transaction(file, || {
+                        // design-lint: allow(ui-blocking-io) BRW-001: worker-only prefs read; the UI only submits and polls.
+                        places::load_migrated(file, legacy.as_deref(), true)
+                    })
+                }
                 Action::Add(path, _) => {
                     let mut prefs = prefs;
                     prefs.add_place(&path, None)?;

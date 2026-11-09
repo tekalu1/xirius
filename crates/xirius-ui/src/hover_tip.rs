@@ -145,6 +145,11 @@ pub fn popup(pen: &mut Pen, s: &Studio, g: &Geometry) {
 }
 
 pub fn text(s: &Studio, hit: Hit) -> Option<String> {
+    if s.browser.tab == crate::browser::RailTab::Files
+        && let Hit::Browser(crate::browser::BrowserHit::Loc(i)) = hit
+    {
+        return s.browser.locations().get(i).map(|place| place.name.clone());
+    }
     if s.browser.is_track_browser() {
         if let Hit::Browser(crate::browser::BrowserHit::Loc(i)) = hit {
             return ["インストゥルメント", "FX", "トラック"]
@@ -460,6 +465,29 @@ fn roll_control(s: &Studio, g: &Geometry) -> Option<(&'static str, Rect)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn location_tabs_reveal_the_full_name_without_changing_kind_tooltips() {
+        let mut s = Studio::sample();
+        s.browser.tab = crate::browser::RailTab::Files;
+        for name in [
+            "Orchestral instruments and recorded performances",
+            "録音素材とプリセットの長い日本語フォルダー名",
+        ] {
+            s.browser.places = vec![xirius_session::places::Place {
+                name: name.into(),
+                path: "fixtures/audio".into(),
+            }];
+            assert_eq!(
+                text(&s, Hit::Browser(crate::browser::BrowserHit::Loc(1))).as_deref(),
+                Some(name)
+            );
+        }
+        s.browser.tab = crate::browser::RailTab::Instruments;
+        assert_eq!(
+            text(&s, Hit::Browser(crate::browser::BrowserHit::Loc(1))).as_deref(),
+            Some("FX")
+        );
+    }
     /// The mark after a track's name is under the pointer and says its two values (UI-312).
     #[test]
     fn the_tracks_mark_says_the_values_it_stands_for() {

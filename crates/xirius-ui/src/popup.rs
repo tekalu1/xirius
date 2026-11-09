@@ -1967,21 +1967,30 @@ pub(crate) fn paint_cell(pen: &mut Pen, cell: &Cell, hot: bool) {
             } else {
                 (cell.text.as_str(), c.ink_strong)
             };
-            let w = pen.text(
-                text,
-                FontSize::Small,
-                Weight::Regular,
-                ink,
-                Rect::new(tx, r.y, r.w, r.h),
-                Align::Left,
-            );
-            let caret = if cell.text.is_empty() { 0.0 } else { w };
-            if cell.on {
-                pen.fill(
-                    Rect::new(tx + caret + 1.0, r.y + 8.0, 1.5, r.h - 16.0),
-                    c.ink_strong,
+            let field = Rect::new(tx, r.y, (r.right() - pad - tx).max(0.0), r.h);
+            let width = pen.measure(text, FontSize::Small, Weight::Regular);
+            let offset = if cell.on && !cell.text.is_empty() {
+                (width + 3.0 - field.w).max(0.0)
+            } else {
+                0.0
+            };
+            pen.mask(field, |pen| {
+                pen.text(
+                    text,
+                    FontSize::Small,
+                    Weight::Regular,
+                    ink,
+                    Rect::new(tx - offset, r.y, field.w + offset, r.h),
+                    Align::Left,
                 );
-            }
+                if cell.on {
+                    let caret = if cell.text.is_empty() { 0.0 } else { width };
+                    pen.fill(
+                        Rect::new(tx - offset + caret + 1.0, r.y + 8.0, 1.5, r.h - 16.0),
+                        c.ink_strong,
+                    );
+                }
+            });
         }
     }
 }

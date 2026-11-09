@@ -1641,6 +1641,34 @@ impl Plan {
     }
 
     /// Queues a note for the track's source in the next block. Returns false if dropped.
+    pub fn push_live_input(&mut self, track: usize, input: crate::performance::Input) -> bool {
+        let Some(Some(t)) = self.tracks.get_mut(track) else {
+            return false;
+        };
+        if let Some(p) = &mut t.prefetch {
+            p.set_hot(true);
+            if p.is_lent() {
+                Self::release_track(t);
+            }
+        }
+        t.chain.as_mut().is_some_and(|c| c.source.live_input(input))
+    }
+
+    pub fn release_live_inputs(&mut self) {
+        for track in self.tracks.iter_mut().flatten() {
+            if let Some(prefetch) = &mut track.prefetch {
+                prefetch.set_hot(true);
+                if prefetch.is_lent() {
+                    Self::release_track(track);
+                }
+            }
+            if let Some(chain) = &mut track.chain {
+                chain.source.release_live_inputs();
+            }
+        }
+    }
+
+    /// Queues a note for the track's source in the next block. Returns false if dropped.
     pub fn push_event(&mut self, track: usize, event: NoteEvent) -> bool {
         #[cfg(test)]
         self.pushed.push((track, event));

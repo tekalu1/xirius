@@ -96,7 +96,7 @@ fn indexed_presets_keep_payloads_and_use_shared_categories() {
             let items = all_items(&s);
             assert!(items.iter().any(|i| matches!(&i.run, Run::Do(Act::Browse(BrowseAct::LoadPreset(id, name))) if *id == entry.id && *name == entry.name)));
             assert!(items.iter().any(|i| matches!(&i.run, Run::Do(Act::Browse(BrowseAct::CopyPreset(id))) if *id == entry.id)));
-            assert!(items.iter().any(|i| matches!(&i.run, Run::Cmd("browser.preset.favourite", args) if args["entry"] == entry.id) && i.on == favourite));
+            assert!(items.iter().any(|i| matches!(&i.run, Run::Do(Act::Browse(BrowseAct::FavouritePreset(id, on))) if *id == entry.id && *on != favourite) && i.on == favourite));
             if matches!(entry.category, Category::Instrument | Category::Fx) {
                 assert!(items.iter().any(|i| matches!(&i.run, Run::Do(Act::Browse(BrowseAct::FactoryRestore(Some(uid)))) if *uid == entry.device)));
             }

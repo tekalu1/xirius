@@ -590,8 +590,34 @@ impl Studio {
     /// let go here. A held key or pad ends its note, a knob or a point goes in as one step.
     /// True when something was held.
     pub(crate) fn device_focus_lost(&mut self) -> bool {
-        let held = self.instrument_up();
-        self.window_note_off() || held
+        let target = self.instruments.detached_target;
+        let scrolling = self
+            .instruments
+            .keyboard_drag
+            .is_some_and(|(id, _)| target.is_none_or(|t| t == id));
+        if scrolling {
+            self.instruments.keyboard_drag = None;
+        }
+        let held = if self
+            .instruments
+            .grab
+            .as_ref()
+            .is_some_and(|g| target.is_none_or(|t| t == g.plugin()))
+        {
+            self.instrument_up()
+        } else {
+            false
+        };
+        let note = if self
+            .instruments
+            .note
+            .is_some_and(|n| target.is_none_or(|t| t == n.plugin))
+        {
+            self.window_note_off()
+        } else {
+            false
+        };
+        note || held || scrolling
     }
 
     /// A sweep goes into the song (one step). Also before anything that reads or moves the
@@ -632,6 +658,25 @@ impl Studio {
         fine: bool,
     ) -> bool {
         let p = self.auto_shown();
+        for (i, w) in self.instruments.open.iter().enumerate() {
+            if self.instruments.detached_channel
+                || self.instruments.detached_target != Some(w.plugin)
+            {
+                continue;
+            }
+            let Some((_, plugin, def)) = crate::instrument::window::live(&p, w) else {
+                continue;
+            };
+            let body = self
+                .instruments
+                .body(self.instruments.frame(i, g), plugin, def);
+            if let Some(k) = body.keyboard.filter(|k| k.view.contains(x, y)) {
+                let scroll =
+                    (k.scroll - notches as f32 * 40.0).clamp(0.0, (k.extent - k.view.w).max(0.0));
+                self.instruments.keyboard_scroll.insert(w.plugin, scroll);
+                return true;
+            }
+        }
         let Some((i, part)) = self.instruments.at(&p, g, x, y) else {
             return false;
         };
@@ -812,6 +857,19 @@ impl Studio {
 
     /// The keys of the control that has them, or of the value being typed.
     pub(crate) fn device_key(&mut self, g: &Geometry, key: &str, mods: Mods) -> bool {
+        let Some(target) = self.instruments.detached_target else {
+            return false;
+        };
+        if self.instruments.focus.is_some_and(|(id, _)| id != target)
+            || self.instruments.edge.is_some_and(|(id, _)| id != target)
+            || self
+                .instruments
+                .entry
+                .as_ref()
+                .is_some_and(|e| e.plugin != target)
+        {
+            return false;
+        }
         // Esc during a press lets go of what it holds, taking nothing in (L-par-3).
         if key == "escape" && self.instrument_cancel() {
             return true;
@@ -902,8 +960,7 @@ impl Studio {
                 let order = self.device_stops(track, plugin, def, &values);
                 let at = order.iter().position(|s| s.k == k).unwrap_or(0);
                 self.device_sweep_end();
-                // Past the window's last control (before its first) the keys go on round
-                // the screen: the window is the stop after its last place (L2-ui-5).
+                // Tab stays on this native surface, including at either end.
                 let next = if mods.shift {
                     at.checked_sub(1)
                 } else {
@@ -913,7 +970,7 @@ impl Studio {
                     Some(&stop) => self.device_stop(track, plugin, def, stop, !mods.shift),
                     None => {
                         self.device_blur();
-                        self.focus_round(g, !mods.shift);
+                        self.device_enter(!mods.shift);
                     }
                 }
                 return true;
@@ -1144,7 +1201,13 @@ impl Studio {
     /// Tab from the screen's last place (Shift+Tab from its first) goes into the window on
     /// top: the keys go to its first stop (back: its last) (M-ui-4). False with no window.
     pub(crate) fn device_enter(&mut self, ahead: bool) -> bool {
-        let Some(w) = self.instruments.open.last().copied() else {
+        let Some(w) = self
+            .instruments
+            .open
+            .iter()
+            .find(|w| Some(w.plugin) == self.instruments.detached_target)
+            .copied()
+        else {
             return false;
         };
         if w.docked && self.docked().is_none() {

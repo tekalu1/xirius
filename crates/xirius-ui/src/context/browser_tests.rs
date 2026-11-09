@@ -159,10 +159,10 @@ fn favourite_and_hide_change_the_list() {
     let (mut s, g) = studio();
     press_item(&mut s, &g, "Sampler");
     assert!(choose(&mut s, &g, "お気に入り"));
-    assert!(!s.browser.favourites.contains("Sampler"));
+    assert!(!s.browser.is_favourite("Sampler"));
     press_item(&mut s, &g, "Sampler");
     assert!(choose(&mut s, &g, "お気に入り"));
-    assert!(s.browser.favourites.contains("Sampler"));
+    assert!(s.browser.is_favourite("Sampler"));
     // Hidden: out of the list, but a search finds it.
     let steps0 = steps(&s);
     press_item(&mut s, &g, "Dexed");

@@ -237,6 +237,10 @@ impl SessionHost {
             return None;
         }
         let candidate = update.ready.as_mut().unwrap();
+        if !self.flush_mouse_releases() {
+            self.graph_work = Some(update);
+            return None;
+        }
         let plan = candidate.plan.take().unwrap();
         if let Err(Command::SwapPlan(plan)) = self.controller.send(Command::SwapPlan(plan)) {
             candidate.plan = Some(plan);

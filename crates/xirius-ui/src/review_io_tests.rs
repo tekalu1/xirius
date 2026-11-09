@@ -200,6 +200,7 @@ fn device_knob_handoff(detached: bool) {
     let fx = s.project().tracks[&t].inserts[0].clone();
     let (k, _) = fx.builtin().unwrap().param("feedback").unwrap();
     s.show_instrument(t, fx.id);
+    s.instruments.detached_target = Some(fx.id);
     if detached {
         s.move_device_view(fx.id, "external");
         s.instruments.detached_target = Some(fx.id);
@@ -655,11 +656,19 @@ fn command_and_browser_writer_rebase_under_one_transaction_in_both_orders() {
                 &file,
                 base.clone(),
                 next.clone(),
+                None,
+                Default::default(),
             ));
         }
         entered.recv_timeout(Duration::from_secs(30)).unwrap();
         if command_first {
-            ticket = Some(crate::browser_prefs_save::submit(&file, base, next));
+            ticket = Some(crate::browser_prefs_save::submit(
+                &file,
+                base,
+                next,
+                None,
+                Default::default(),
+            ));
         } else {
             call = Some(request(
                 &mut s,

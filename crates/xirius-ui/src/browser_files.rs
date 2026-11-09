@@ -535,6 +535,11 @@ impl Browser {
     /// What the browser keeps, as it is now.
     pub fn prefs(&self) -> Prefs {
         Prefs {
+            legacy_favourites_imported: self
+                .prefs_io
+                .base
+                .as_ref()
+                .is_some_and(|p| p.legacy_favourites_imported),
             favourites: self.favourites.clone(),
             hidden: self.hidden.clone(),
             show_hidden: self.show_hidden,
@@ -576,10 +581,46 @@ impl Browser {
     }
 
     pub fn toggle_favourite(&mut self, name: &str) {
-        if !self.favourites.remove(name) {
-            self.favourites.insert(name.to_string());
+        let (id, aliases) = self.favourite_keys(name);
+        let on = !self
+            .favourites
+            .iter()
+            .any(|key| key == &id || aliases.contains(key));
+        for key in aliases.into_iter().chain(std::iter::once(id.clone())) {
+            self.favourites.remove(&key);
+            self.prefs_io.favourite_edits.insert(key, false);
         }
+        if on {
+            self.favourites.insert(id.clone());
+        }
+        self.prefs_io.favourite_edits.insert(id, on);
         self.save_prefs();
+    }
+
+    pub(crate) fn favourite_keys(&self, name: &str) -> (String, Vec<String>) {
+        let entries = self.track_library.as_deref().unwrap_or_default();
+        let id = xirius_core::track_browser::favourite_id(name, entries);
+        if let Some(entry) = entries.iter().find(|e| e.id == id) {
+            let aliases = entry
+                .legacy_keys()
+                .into_iter()
+                .filter(|old| xirius_core::track_browser::favourite_id(old, entries) == id)
+                .collect();
+            return (id, aliases);
+        }
+        if let Some((old, id)) = self
+            .device_ids
+            .iter()
+            .find(|(old, id)| old.as_str() == name || id.as_str() == name)
+        {
+            return (id.clone(), vec![old.clone()]);
+        }
+        (id, Vec::new())
+    }
+
+    pub(crate) fn is_favourite(&self, name: &str) -> bool {
+        let (id, aliases) = self.favourite_keys(name);
+        self.favourites.contains(&id) || aliases.iter().any(|key| self.favourites.contains(key))
     }
 
     /// Leaves an instrument or an effect out of the lists, or puts it back.
@@ -696,6 +737,7 @@ impl Browser {
             }
             forget();
             self.loc = i;
+            self.location_scroll = None;
             self.path.clear();
             self.selected_file = None;
             self.playing = None;

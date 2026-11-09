@@ -8,7 +8,111 @@ use xirius_engine::processor::NoteKind;
 
 use crate::host::SessionHost;
 
+pub(crate) struct MouseInput {
+    track: TrackId,
+    input: xirius_engine::performance::Input,
+    releasing: bool,
+}
+
 impl SessionHost {
+    /// A slot is reserved before accepting each window press, so its release
+    /// can never be lost to command-queue pressure. No on is retried.
+    pub(crate) fn flush_mouse_releases(&mut self) -> bool {
+        let mut i = 0;
+        while i < self.mouse_inputs.len() {
+            if !self.mouse_inputs[i].releasing {
+                i += 1;
+                continue;
+            }
+            let held = &self.mouse_inputs[i];
+            if let Some(track) = self.track_index(held.track) {
+                let input = held.input;
+                if self
+                    .try_live_command(Command::LiveInput { track, input })
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+            self.mouse_inputs.swap_remove(i);
+        }
+        true
+    }
+
+    fn mouse_input(&mut self, track: TrackId, input: xirius_engine::performance::Input) -> bool {
+        let ready = self.flush_mouse_releases();
+        let found = self.mouse_inputs.iter().position(|h| {
+            h.track == track && h.input.source == input.source && h.input.plugin == input.plugin
+        });
+        match input.kind {
+            NoteKind::On { .. } => {
+                if !ready
+                    || found.is_some()
+                    || self.mouse_inputs.len() == self.mouse_inputs.capacity()
+                {
+                    return false;
+                }
+                let Some(index) = self.track_index(track) else {
+                    return false;
+                };
+                if self
+                    .try_live_command(Command::LiveInput {
+                        track: index,
+                        input,
+                    })
+                    .is_err()
+                {
+                    return false;
+                }
+                self.mouse_inputs.push(MouseInput {
+                    track,
+                    input,
+                    releasing: false,
+                });
+                true
+            }
+            NoteKind::Off { pitch } => {
+                let Some(i) = found else {
+                    return true;
+                };
+                if !matches!(self.mouse_inputs[i].input.kind, NoteKind::On { pitch: p, .. } | NoteKind::Off { pitch: p } if p == pitch)
+                {
+                    return false;
+                }
+                self.mouse_inputs[i].input.kind = input.kind;
+                self.mouse_inputs[i].releasing = true;
+                self.flush_mouse_releases();
+                true
+            }
+            _ => self
+                .track_index(track)
+                .is_some_and(|track| self.send(Command::LiveInput { track, input })),
+        }
+    }
+    pub fn release_missing_record_ports(&mut self, now: &[String]) {
+        let missing = self
+            .recording
+            .as_ref()
+            .map(|recording| recording.missing_ports(now))
+            .unwrap_or_default();
+        for port in missing {
+            self.send(Command::ReleaseMidiPort(port));
+        }
+    }
+    pub fn release_live_inputs(&mut self) -> bool {
+        self.send(Command::ReleaseLiveInputs)
+    }
+    /// Sends a live input to the track's routing or one named instrument within it.
+    pub fn live_input(&mut self, track: TrackId, input: xirius_engine::performance::Input) -> bool {
+        if input.source & xirius_engine::performance::MOUSE != 0 {
+            return self.mouse_input(track, input);
+        }
+        match self.track_index(track) {
+            Some(track) => self.send(Command::LiveInput { track, input }),
+            None => false,
+        }
+    }
+
     /// Plays `kind` on the instrument of `track` at the start of the next block. False when the
     /// track is not among the engine's or the engine's queue is full.
     pub fn note(&mut self, track: TrackId, kind: NoteKind) -> bool {

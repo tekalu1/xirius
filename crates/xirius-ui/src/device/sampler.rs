@@ -21,7 +21,7 @@ use xirius_params::{BuiltinDef, PADS, Scope, bare_id, pad_key};
 use super::control::{self, DIAL_SM, Look, NAME_H, SEG_H, TOGGLE_H, VALUE_H};
 use super::graph::{self, Axis, Choice, Drive, Point, View};
 use super::layout::{Body, MS_FOOT, Mark, Name, PAD, Shape, Slot, Spot};
-use super::play::{self, HIGH, KEYS_H, LOW};
+use super::play::{self, HIGH, LOW};
 use crate::draw::{Align, Pen};
 use crate::studio::Rect;
 
@@ -558,7 +558,25 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
     b.main = 0;
     y += WAVE_H + GAP;
     y = voice(def, &mut b, PAD, y, inner) + GAP;
-    let keys = play::keys(Rect::new(PAD, y + ZONE_H + 4.0, inner, KEYS_H));
+    let keyboard = play::Keyboard::new(
+        Rect::new(PAD, y + ZONE_H + 4.0, inner, play::Keyboard::HEIGHT),
+        0.0,
+    );
+    b.keys = keyboard.keys.clone();
+    b.keyboard = Some(keyboard);
+    place_zones(&mut b, files, pick);
+    b.h = y + ZONE_H + 4.0 + play::Keyboard::HEIGHT + PAD;
+    b
+}
+
+/// Reflow zones against the same scrolled viewport used for paint and key input.
+pub fn place_zones(b: &mut Body, files: &[String], pick: usize) {
+    let Some(keyboard) = b.keyboard.as_ref() else {
+        return;
+    };
+    let (left, right) = (keyboard.view.x, keyboard.view.right());
+    let y = keyboard.view.y - ZONE_H - 4.0;
+    b.spots.retain(|s| !matches!(s.mark, Mark::Zone(_)));
     // Every zone can be chosen (N-smp-6): its keys' place on the columns of the white keys,
     // one off the keys a sliver at their edge, and zones left the same keys side by side in theirs.
     let mut groups: Vec<(Vec<Zone>, f32, f32)> = Vec::new();
@@ -566,16 +584,15 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
         match groups.last_mut() {
             Some((g, _, _)) if (g[0].lo, g[0].hi) == (z.lo, z.hi) => g.push(z),
             _ => {
-                let (x0, x1) = zone_x(&keys, z.lo, z.hi);
-                groups.push((vec![z], x0, x1));
+                let (x0, x1) = zone_x(&b.keys, z.lo, z.hi);
+                groups.push((
+                    vec![z],
+                    x0.clamp(left, right - ZONE_MIN),
+                    x1.clamp(left + ZONE_MIN, right),
+                ));
             }
         }
     }
-    let right = keys
-        .iter()
-        .rfind(|k| !k.black)
-        .map_or(PAD + inner, |k| k.r.right());
-    let left = keys.iter().find(|k| !k.black).map_or(PAD, |k| k.r.x);
     spread(&mut groups, (left, right));
     let placed = groups.into_iter().flat_map(|(g, x0, x1)| {
         let share = (x1 - x0) / g.len() as f32;
@@ -588,8 +605,10 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
         // The gap parts a zone from the next: one at the keys' right keeps its width (the
         // mock's).
         let gap = if x1 >= right - 0.5 { 0.0 } else { ZONE_GAP };
+        let x0 = x0.clamp(left, right);
+        let width = (x1 - x0 - gap).max(4.0).min(right - x0);
         let mut spot = Spot::new(
-            Rect::new(x0, y, (x1 - x0 - gap).max(4.0), ZONE_H),
+            Rect::new(x0, y, width, ZONE_H),
             Mark::Zone(z.file),
             stem(&files[z.file]),
         );
@@ -598,9 +617,6 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
         spot.dot = true;
         b.spots.push(spot);
     }
-    b.keys = keys;
-    b.h = y + ZONE_H + 4.0 + KEYS_H + PAD;
-    b
 }
 
 /// Where a zone of the keys `lo..=hi` sits over `keys`: from the left of its lowest key to
@@ -1515,6 +1531,14 @@ pub fn zone_strip(body: &Body) -> Option<Rect> {
         .spots
         .iter()
         .find(|s| matches!(s.mark, Mark::Zone(_)))?;
+    if let Some(keyboard) = &body.keyboard {
+        return Some(Rect::new(
+            keyboard.view.x,
+            zone.r.y,
+            keyboard.view.w,
+            zone.r.h,
+        ));
+    }
     let (k0, k1) = body.keys.iter().fold((f32::MAX, f32::MIN), |(a, b), k| {
         (a.min(k.r.x), b.max(k.r.right()))
     });
@@ -1607,18 +1631,23 @@ pub fn paint_spots(pen: &mut Pen, body: &Body, hot: Option<usize>) {
                 );
             }
             Mark::Zone(_) | Mark::Layer(_) => {
-                let face = if s.on {
-                    c.fill
-                } else if over {
-                    c.clip
-                } else {
-                    c.surface_3
-                };
-                pen.round(r, face, Radius::Clip);
-                let ink = if s.on { c.on_fill } else { c.ink };
-                let t = span_text(s);
-                let text = pen.fit(&s.text, FontSize::Micro, SPAN_WEIGHT, t.w);
-                pen.text(&text, FontSize::Micro, SPAN_WEIGHT, ink, t, Align::Left);
+                let clip = zone_strip(body)
+                    .filter(|_| matches!(s.mark, Mark::Zone(_)))
+                    .unwrap_or(r);
+                pen.mask(clip, |pen| {
+                    let face = if s.on {
+                        c.fill
+                    } else if over {
+                        c.clip
+                    } else {
+                        c.surface_3
+                    };
+                    pen.round(r, face, Radius::Clip);
+                    let ink = if s.on { c.on_fill } else { c.ink };
+                    let t = span_text(s);
+                    let text = pen.fit(&s.text, FontSize::Micro, SPAN_WEIGHT, t.w);
+                    pen.text(&text, FontSize::Micro, SPAN_WEIGHT, ink, t, Align::Left);
+                });
             }
             Mark::Edge(_) => {
                 let line = Rect::new(r.x + r.w / 2.0 - 1.0, r.y + (r.h - 18.0) / 2.0, 2.0, 18.0);
@@ -1755,11 +1784,13 @@ pub fn paint_spots(pen: &mut Pen, body: &Body, hot: Option<usize>) {
                 let mid = (k.r.x + k.r.w / 2.0)
                     .clamp(r.x + d / 2.0, (r.right() - d / 2.0).max(r.x + d / 2.0));
                 let dot = Rect::new(mid - d / 2.0, r.bottom() - d - 2.0, d, d);
-                pen.round(
-                    dot,
-                    if s.on { c.on_fill } else { c.ink_strong },
-                    Radius::Pill,
-                );
+                pen.mask(zone_strip(body).unwrap_or(r), |pen| {
+                    pen.round(
+                        dot,
+                        if s.on { c.on_fill } else { c.ink_strong },
+                        Radius::Pill,
+                    )
+                });
             }
         }
     }

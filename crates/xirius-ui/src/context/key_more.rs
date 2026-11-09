@@ -268,6 +268,9 @@ impl Studio {
 
     /// The keys go to the next (or the previous) part that is shown.
     fn focus_step(&mut self, g: &Geometry, forward: bool) -> bool {
+        if self.instruments.detached_target.is_some() {
+            return self.device_enter(forward);
+        }
         let shown = self.shown_places();
         let n = shown.len();
         let i = shown.iter().position(|p| *p == self.place()).unwrap_or(0);
@@ -284,18 +287,6 @@ impl Studio {
             (i + n - 1) % n
         }];
         self.place_set(g, to)
-    }
-
-    /// The keys come out of the device window on round: to the screen's first place going
-    /// on, its last going back (L2-ui-5).
-    pub(crate) fn focus_round(&mut self, g: &Geometry, forward: bool) {
-        let shown = self.shown_places();
-        let to = if forward {
-            shown[0]
-        } else {
-            shown[shown.len() - 1]
-        };
-        self.place_set(g, to);
     }
 
     fn place_set(&mut self, g: &Geometry, to: Place) -> bool {
@@ -369,6 +360,10 @@ impl Studio {
     /// Every note that sounds ends: the keys held, the roll's, and what the player plays.
     fn panic(&mut self) -> bool {
         self.pc_keys_release();
+        self.release_midi();
+        self.window_note_off();
+        self.channel_note_off();
+        self.transport.release_live_inputs();
         let at = self.playhead;
         // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
         self.seek(at);

@@ -26,6 +26,7 @@ fn played(device: &str) -> (Studio, Geometry, TrackId, PluginId) {
     let id = current(&s.project().tracks[&t]).unwrap().id;
     give_sample(&mut s, id);
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     assert!(s.instruments.is_open(id));
     let g = s.geometry(1600.0, 1000.0);
     (s, g, t, id)
@@ -90,6 +91,115 @@ fn last_sent(s: &Studio) -> Option<(TrackId, NoteKind)> {
 fn clips_in_song(s: &Studio) -> usize {
     let p = s.project();
     p.tracks.values().map(|t| t.clips.len()).sum()
+}
+
+#[test]
+fn sampler_mouse_and_midi_channels_share_pcm_without_releasing_each_other() {
+    use xirius_engine::record::MockMidi;
+    let (mut s, g, t, id) = played(DEFAULT);
+    let (x, y) = s.instrument_center(&g, id, Part::Key(60)).unwrap();
+    assert!(s.instrument_down(&g, x, y));
+    wait_sounding(&mut s, id, |n| n > 0);
+    s.live_midi_input(Box::new(MockMidi::with_ports(
+        vec!["Keys".into()],
+        vec![
+            (0, 0, [0x90, 60, 100]),
+            (300, 0, [0x91, 60, 100]),
+            (600, 0, [0x80, 60, 0]),
+            (900, 0, [0x81, 60, 0]),
+        ],
+    )));
+    s.poll_live_midi();
+    s.poll_live_midi();
+    assert!(s.instrument_up());
+    s.poll_live_midi();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        s.transport.poll();
+        s.poll_probes();
+        let output = s
+            .transport
+            .take_levels()
+            .get(&xirius_session::host::Strip::Master)
+            .map(|level| level.peak);
+        if s.instruments
+            .midi_pressed
+            .get(&id)
+            .is_some_and(|keys| keys.contains(&60))
+            && output.is_some_and(|peak| peak.iter().any(|v| *v > 0.001))
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the remaining MIDI channel must reach the final output: {:?}",
+            s.error
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(s.instruments.note, None);
+    s.poll_live_midi();
+    wait_sounding(&mut s, id, |n| n == 0);
+    s.poll_probes();
+    assert!(
+        s.instruments
+            .midi_pressed
+            .get(&id)
+            .is_none_or(Vec::is_empty)
+    );
+    assert!(s.live_midi.sent.contains(&(t, NoteKind::Off { pitch: 60 })));
+}
+
+#[test]
+fn disconnecting_one_live_port_preserves_the_other_ports_pedal_and_audio() {
+    use xirius_engine::record::MockMidi;
+    let (mut s, g, _, id) = played(DEFAULT);
+    // Prepare the exact playing route before MIDI arrives, as the mouse path does.
+    let (x, y) = s.instrument_center(&g, id, Part::Key(60)).unwrap();
+    s.instrument_down(&g, x, y);
+    wait_sounding(&mut s, id, |n| n > 0);
+    s.instrument_up();
+    s.midi_ports_now(vec!["A".into(), "B".into()]);
+    s.live_midi_input(Box::new(MockMidi::with_ports(
+        vec!["A".into(), "B".into()],
+        vec![
+            (0, 0, [0x90, 60, 100]),
+            (0, 1, [0x90, 60, 100]),
+            (0, 0, [0xb0, 64, 127]),
+            (0, 1, [0xb0, 64, 127]),
+            (0, 0, [0x80, 60, 0]),
+            (0, 1, [0x80, 60, 0]),
+        ],
+    )));
+    s.poll_live_midi();
+    wait_sounding(&mut s, id, |n| n > 0);
+    s.midi_ports_now(vec!["A".into()]);
+    s.poll_live_midi();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        s.transport.poll();
+        if s.transport
+            .take_levels()
+            .get(&xirius_session::host::Strip::Master)
+            .is_some_and(|v| v.peak.iter().any(|p| *p > 0.001))
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "A must continue after B disconnect"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    s.poll_probes();
+    assert!(
+        s.instruments
+            .midi_pressed
+            .get(&id)
+            .is_none_or(Vec::is_empty)
+    );
+    s.midi_ports_now(Vec::new());
+    wait_sounding(&mut s, id, |n| n == 0);
 }
 
 #[test]
@@ -201,6 +311,7 @@ fn sample_io_transition(device: &str, fail: bool, remove: bool) {
         .collect();
     xirius_session::export::write_wav(&file, &wave, &wave, 48_000, 16).unwrap();
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     s.bind_window_io();
     s.prepare_song();
     let deadline = Instant::now() + Duration::from_secs(60);
@@ -223,7 +334,7 @@ fn sample_io_transition(device: &str, fail: bool, remove: bool) {
         let w = s.instruments.open[0];
         let p = s.project();
         let (_, plugin, def) = super::window::live(&p, &w).unwrap();
-        let r = s.instruments.rect(0, g.size);
+        let r = s.instruments.frame(0, &g);
         let b = s.instruments.body(r, plugin, def);
         let r = b
             .spots
@@ -332,23 +443,27 @@ fn plg_066_a_black_key_wins_over_the_white_one_under_it() {
 }
 
 #[test]
-fn plg_066_leaving_the_key_ends_the_note_and_coming_back_does_not_play_it() {
+fn plg_066_drag_changes_keys_once_and_leaving_the_keyboard_ends_the_note() {
     let (mut s, g, t, id) = played(DEFAULT);
     let (x, y) = s.instrument_center(&g, id, Part::Key(60)).unwrap();
     assert!(s.instrument_down(&g, x, y));
     wait_sounding(&mut s, id, |n| n > 0);
     let sent = s.live_midi.sent.len();
 
-    // Onto the next key: the note held ends, the next does not start.
+    // Onto the next key: release the old note before sounding the next.
     let (nx, ny) = s.instrument_center(&g, id, Part::Key(62)).unwrap();
     assert!(s.instrument_moved(&g, nx, ny, false));
-    assert_eq!(s.live_midi.sent.len(), sent + 1);
-    assert_eq!(last_sent(&s), Some((t, NoteKind::Off { pitch: 60 })));
-    // Back onto it, and out of the window: nothing more.
-    assert!(s.instrument_moved(&g, x, y, false));
+    assert_eq!(s.live_midi.sent.len(), sent + 2);
+    assert_eq!(s.live_midi.sent[sent], (t, NoteKind::Off { pitch: 60 }));
+    assert!(matches!(last_sent(&s), Some((tt, NoteKind::On { pitch: 62, .. })) if tt == t));
+    assert!(s.instrument_moved(&g, nx, ny, false));
+    assert_eq!(s.live_midi.sent.len(), sent + 2);
     assert!(s.instrument_moved(&g, 2.0, 2.0, false));
+    assert_eq!(last_sent(&s), Some((t, NoteKind::Off { pitch: 62 })));
+    // Returning after leaving the keyboard does not restart a note.
+    assert!(s.instrument_moved(&g, x, y, false));
     assert!(s.instrument_up());
-    assert_eq!(s.live_midi.sent.len(), sent + 1);
+    assert_eq!(s.live_midi.sent.len(), sent + 3);
     wait_sounding(&mut s, id, |n| n == 0);
 }
 
@@ -368,6 +483,7 @@ fn plg_066_closing_the_window_ends_the_note() {
 
     // The mixer's button closing it does the same.
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     let (x, y) = s.instrument_center(&g, id, Part::Key(65)).unwrap();
     assert!(s.instrument_down(&g, x, y));
     wait_sounding(&mut s, id, |n| n > 0);

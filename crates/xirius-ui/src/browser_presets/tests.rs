@@ -12,6 +12,34 @@ use crate::instrument::menu::{Menu, SHOW};
 use crate::studio::Hit;
 
 #[test]
+fn late_index_and_favourite_replies_never_replace_newer_preferences() {
+    for reply_first in [false, true] {
+        for command in ["browser.preset.list", "browser.preset.favourite"] {
+            let (mut s, _) = studio();
+            let root = tempfile::tempdir().unwrap();
+            let file = root.path().join("browser.json");
+            s.browser.use_prefs_fixture(file.clone()).unwrap();
+            let reply = json!({"entries":[], "favourites":["device:sampler", "preset:old"]});
+            if reply_first {
+                s.track_browser_answer(command, &reply);
+            }
+            s.browser.toggle_favourite("Sampler");
+            s.browser.toggle_favourite("preset:new");
+            if !reply_first {
+                s.track_browser_answer(command, &reply);
+            }
+            s.browser.settle_prefs_io();
+            assert!(!s.browser.is_favourite("Sampler"));
+            assert!(s.browser.is_favourite("preset:new"));
+            assert!(!s.browser.is_favourite("preset:old"));
+            let saved = xirius_session::places::load(&file).unwrap();
+            assert!(saved.favourites.contains("preset:new"));
+            assert!(!saved.favourites.contains("device:sampler"));
+        }
+    }
+}
+
+#[test]
 fn indexed_rows_and_drag_use_device_and_subtree_icons() {
     use xirius_core::track_browser::{Category, Entry};
     let (mut s, g) = studio();

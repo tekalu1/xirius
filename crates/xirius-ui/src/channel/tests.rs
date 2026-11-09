@@ -850,6 +850,102 @@ fn multi(s: &mut Studio) -> (TrackId, Vec<xirius_core::rack::Layer>) {
 }
 
 #[test]
+fn multi_performance_pointer_reaches_pcm_and_release_keeps_external_midi() {
+    for release in ["up", "escape", "blur"] {
+        multi_pointer_release(release);
+    }
+}
+
+fn multi_pointer_release(release: &str) {
+    use std::time::{Duration, Instant};
+    use xirius_engine::record::MockMidi;
+    let mut s = Studio::new(crate::song::Song::empty());
+    s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
+    assert!(s.start_midi());
+    let t = s.pc_target().unwrap();
+    crate::instrument::play_tests::give_track_sample(&mut s, t);
+    assert!(s.run_command("rack.layer.add", json!({"track":t,"name":"Sampler"})));
+    s.open_channel(t);
+    let g = s.geometry(1600.0, 1000.0);
+    let keyboard = s.channel_view(&g).unwrap().keyboard.unwrap();
+    let key = keyboard.keys.iter().find(|k| k.pitch == 48).unwrap();
+    let point = (key.r.x + key.r.w / 2.0, key.r.bottom() - 8.0);
+    assert!(s.channel_press(&g, point.0, point.1, 1));
+    assert_eq!(s.channel.as_ref().unwrap().mouse_note.unwrap().0, 48);
+    s.live_midi_input(Box::new(MockMidi::with_ports(
+        vec!["Keys".into()],
+        vec![(0, 0, [0x90, 48, 100]), (300, 0, [0x80, 48, 0])],
+    )));
+    s.poll_live_midi();
+    let host = s.transport.host_mut().unwrap();
+    let mut queued = 0;
+    while host
+        .controller()
+        .send(xirius_engine::Command::MasterGain(1.0))
+        .is_ok()
+    {
+        queued += 1;
+        assert!(queued < 100_000, "bounded pressure setup");
+    }
+    assert!(queued > 0);
+    match release {
+        "up" => {
+            s.channel_up(&g);
+        }
+        "escape" => {
+            assert!(s.field_keys(&g, "escape", None, crate::tools::Mods::default()));
+        }
+        "blur" => {
+            assert!(s.main_focus_lost());
+        }
+        _ => unreachable!(),
+    }
+    assert!(
+        s.channel.as_ref().unwrap().mouse_note.is_none(),
+        "{release}"
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        s.transport.poll();
+        s.poll_probes();
+        let audible = s
+            .transport
+            .take_levels()
+            .get(&xirius_session::host::Strip::Master)
+            .is_some_and(|v| v.peak.iter().any(|p| *p > 0.001));
+        if audible
+            && s.instruments
+                .multi_pressed
+                .get(&t)
+                .is_some_and(|k| k.contains(&48))
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "external MIDI must survive the mouse release: {:?}",
+            s.error
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    s.poll_live_midi();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        s.transport.poll();
+        s.poll_probes();
+        if s.instruments
+            .multi_pressed
+            .get(&t)
+            .is_none_or(Vec::is_empty)
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
 fn a_multi_instrument_has_the_key_figure_when_the_window_is_wide() {
     let (mut s, g) = studio();
     let (_, layers) = multi(&mut s);

@@ -1,5 +1,15 @@
 [
   {
+    "id": "other-59:load-preset-file",
+    "key": "other-59",
+    "source": "crates/xirius-ui/src/instrument/menu.rs",
+    "asis": ["プリセット", "ファイルから読み込む…"],
+    "tobe": ["機器", "プリセット", "ファイルから読み込む…"],
+    "category": "機器",
+    "command": "preset.load",
+    "dynamic": false
+  },
+  {
     "id": "other-36:live-map",
     "key": "other-36",
     "source": "crates/xirius-ui/src/roll/bridge.rs",

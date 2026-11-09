@@ -92,3 +92,181 @@ fn a_track_the_engine_does_not_have_takes_no_note() {
     let (mut host, _audio, _) = SessionHost::start(s.project(), HostConfig::default()).unwrap();
     assert!(!host.note(TrackId(999_999), NoteKind::Off { pitch: 60 }));
 }
+
+#[test]
+fn held_sampler_survives_an_unrelated_track_graph_change_in_audio_and_snapshot() {
+    for multi in [false, true] {
+        held_graph_change(multi);
+    }
+}
+
+fn held_graph_change(multi: bool) {
+    use std::time::{Duration, Instant};
+    use xirius_engine::performance::{Input, midi_source};
+    let mut s = song();
+    let t = add(&mut s, json!({ "instrument": "Sampler", "arm": true }));
+    let tmp = tempfile::Builder::new()
+        .prefix("xirius-held-graph-")
+        .tempdir()
+        .unwrap();
+    tone(&mut s, t, tmp.path());
+    if multi {
+        s.run_value(
+            "rack.layer.add",
+            json!({ "track": t, "name": "Sampler" }),
+            &RunOptions::human(),
+        )
+        .unwrap();
+    }
+    let id = s.project().tracks[&t].inserts[0].id;
+    let (mut host, mut audio, warnings) =
+        SessionHost::start(s.project(), HostConfig::default()).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let input = |kind| Input {
+        source: midi_source(0, 2),
+        plugin: None,
+        kind,
+    };
+    assert!(host.live_input(
+        t,
+        input(NoteKind::On {
+            pitch: 60,
+            velocity: 0.8
+        })
+    ));
+    assert!(peak(&mut audio, 480) > 0.01);
+    assert_eq!(host.plugins().pressed_keys(id), vec![60]);
+    if multi {
+        assert_eq!(host.plugins().multi_pressed_keys(t), vec![60]);
+    }
+    add(&mut s, json!({ "instrument": "Sampler" }));
+    host.set_windowed();
+    host.sync_later(s.project());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while host.swap_pending() {
+        assert_eq!(
+            host.plugins().pressed_keys(id),
+            vec![60],
+            "the accepted graph remains visible while building"
+        );
+        host.step_swap();
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        peak(&mut audio, 480) > 0.01,
+        "the kept instrument continues sounding after the actual swap"
+    );
+    assert_eq!(host.plugins().pressed_keys(id), vec![60]);
+    if multi {
+        assert_eq!(host.plugins().multi_pressed_keys(t), vec![60]);
+    }
+    assert!(host.live_input(t, input(NoteKind::Off { pitch: 60 })));
+    peak(&mut audio, 48_000);
+    assert!(peak(&mut audio, 480) < 1e-4);
+    assert!(host.plugins().pressed_keys(id).is_empty());
+    if multi {
+        assert!(host.plugins().multi_pressed_keys(t).is_empty());
+    }
+}
+
+#[test]
+fn mouse_release_survives_host_command_pressure_without_stopping_midi() {
+    use xirius_engine::Command;
+    use xirius_engine::performance::{Input, MOUSE, midi_source};
+    for multi in [false, true] {
+        for midi in [false, true] {
+            let mut s = song();
+            let t = add(&mut s, json!({"instrument":"Sampler"}));
+            let tmp = tempfile::Builder::new()
+                .prefix("xirius-release-")
+                .tempdir()
+                .unwrap();
+            tone(&mut s, t, tmp.path());
+            let id = s.project().tracks[&t].inserts[0].id;
+            if multi {
+                s.run_value(
+                    "rack.layer.add",
+                    json!({"track":t,"name":"Sampler"}),
+                    &RunOptions::human(),
+                )
+                .unwrap();
+            }
+            let (mut host, mut audio, _) =
+                SessionHost::start(s.project(), HostConfig::default()).unwrap();
+            let mouse = |kind| Input {
+                source: MOUSE | id.0,
+                plugin: if multi { None } else { Some(id.0) },
+                kind,
+            };
+            let on = NoteKind::On {
+                pitch: 60,
+                velocity: 0.8,
+            };
+            assert!(host.live_input(t, mouse(on)));
+            if midi {
+                assert!(host.live_input(
+                    t,
+                    Input {
+                        source: midi_source(0, 0),
+                        plugin: None,
+                        kind: on
+                    }
+                ));
+            }
+            assert!(peak(&mut audio, 480) > 0.01);
+            let mut queued = 0;
+            while host.controller().send(Command::MasterGain(1.0)).is_ok() {
+                queued += 1;
+            }
+            assert!(queued >= 1024);
+            assert!(host.live_input(t, mouse(NoteKind::Off { pitch: 60 })));
+            assert!(
+                !host.live_input(t, mouse(on)),
+                "a new on must not overtake its release"
+            );
+            let other = add(&mut s, json!({"instrument":"Sampler"}));
+            s.run_value(
+                "track.move",
+                json!({"ids":[other],"by":-1}),
+                &RunOptions::human(),
+            )
+            .unwrap();
+            host.set_windowed();
+            host.sync_later(s.project());
+            host.step_swap();
+            peak(&mut audio, 480);
+            host.poll();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while host.swap_pending() {
+                host.step_swap();
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            peak(&mut audio, 24000);
+            let heard = peak(&mut audio, 480);
+            if midi {
+                assert!(heard > 0.01, "another source remains audible");
+                assert_eq!(host.plugins().pressed_keys(id), vec![60]);
+                assert!(host.live_input(
+                    t,
+                    Input {
+                        source: midi_source(0, 0),
+                        plugin: None,
+                        kind: NoteKind::Off { pitch: 60 }
+                    }
+                ));
+                peak(&mut audio, 24000);
+            } else {
+                assert!(heard < 1e-4, "queued mouse release was delivered: {heard}");
+            }
+            assert!(peak(&mut audio, 480) < 1e-4);
+            assert!(
+                host.live_input(t, mouse(on)),
+                "the reserved release slot is reusable"
+            );
+            assert!(peak(&mut audio, 480) > 0.01);
+            assert!(host.live_input(t, mouse(NoteKind::Off { pitch: 60 })));
+        }
+    }
+}

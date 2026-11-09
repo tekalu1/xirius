@@ -23,6 +23,43 @@ impl Studio {
     /// Merely opening a field owns it,
     /// including an empty field or an unfinished IME composition.
     pub(crate) fn ime_target(&self) -> Option<ImeTarget> {
+        if self.instruments.detached_target.is_some() || self.instruments.detached_channel {
+            return if self.ask_field().is_some() {
+                Some(ImeTarget::Ask)
+            } else if self.popup.as_ref().is_some_and(|p| p.pick.is_some()) {
+                Some(ImeTarget::Pick)
+            } else if self.instruments.entry.as_ref().is_some_and(|e| {
+                Some(e.plugin) == self.instruments.detached_target
+                    || (self.instruments.detached_channel
+                        && self.channel.as_ref().is_some_and(|c| {
+                            self.project()
+                                .tracks
+                                .get(&c.track)
+                                .is_some_and(|t| t.inserts.iter().any(|p| p.id == e.plugin))
+                        }))
+            }) {
+                Some(ImeTarget::Device)
+            } else if self.instruments.detached_channel
+                && self
+                    .head_fader
+                    .entry
+                    .as_ref()
+                    .is_some_and(|e| self.channel.as_ref().is_some_and(|c| c.track == e.track))
+            {
+                Some(ImeTarget::Head)
+            } else if self.instruments.detached_channel
+                && self.mixer.value_entry.as_ref().is_some_and(|e| {
+                    self.channel
+                        .as_ref()
+                        .is_some_and(|c| c.track == e.focus.track)
+                        && e.focus.place == crate::branch_value::Place::Editor
+                })
+            {
+                Some(ImeTarget::Branch)
+            } else {
+                None
+            };
+        }
         if self.ask_field().is_some() {
             Some(ImeTarget::Ask)
         } else if self.input_map.name.is_some() {

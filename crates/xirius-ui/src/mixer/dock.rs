@@ -16,7 +16,7 @@ use super::flow::Pick;
 use super::{MASTER_GAP, MixerHit, STRIP_GAP, WIDE_W};
 use crate::a11y::{Mark, bounds};
 use crate::draw::{Align, Pen};
-use crate::instrument::window::{Win, is_built_in, live};
+use crate::instrument::window::{is_built_in, live};
 use crate::paint::Colors;
 use crate::studio::{Geometry, Hit, Rect, Studio};
 
@@ -139,7 +139,7 @@ impl Studio {
 
     /// The row picked on a strip comes into the face, when it is a built-in device: a window
     /// of it comes into the drawer too.
-    pub(crate) fn dock_follow(&mut self, g: &Geometry) {
+    pub(crate) fn dock_follow(&mut self, _g: &Geometry) {
         if !self.mixer_shown() {
             return;
         }
@@ -157,50 +157,8 @@ impl Studio {
         if !is_built_in(plugin) || self.health.crashed(id) {
             return;
         }
-        let Some(def) = plugin.builtin() else {
-            return;
-        };
-        // Shown already: in the face, or in a window of its own.
-        if self.instruments.is_open(id) {
-            return;
-        }
-        if let Some(i) = self.instruments.dock_slot()
-            && self
-                .instruments
-                .note
-                .is_some_and(|n| n.plugin == self.instruments.open[i].plugin)
-        {
-            self.window_note_off();
-        }
-        let ins = &mut self.instruments;
-        let size = |w: f32| crate::device::layout::size_of(def, w, Some(plugin));
-        let natural = size(crate::device::layout::natural_w(def));
-        let w = ins.dock_w.unwrap_or(natural.0);
-        // Under the strips it takes the height the face has at its smallest width.
-        let tall = size(crate::device::layout::min_w(def)).1;
-        let win = Win {
-            track: t,
-            plugin: id,
-            knobs: def.params.len(),
-            body: (w, tall),
-            at: None,
-            pinned: false,
-            seat: 0,
-            placed_w: natural.0,
-            pick: 0,
-            layer: 0,
-            bank: None,
-            filled: !plugin.samples.is_empty(),
-            docked: true,
-        };
-        match ins.dock_slot() {
-            Some(i) => ins.open[i] = win,
-            None => ins.open.insert(0, win),
-        }
-        // The channel the device is on stays in sight beside the face.
-        if let Some(off) = self.strip_offset(g, t) {
-            let right = off + self.width_of(g, t) + 2.0 * STRIP_GAP - self.mixer_view(g).w;
-            self.mixer.scroll = self.mixer_scroll(g).max(right).min(off).max(0.0);
+        if !self.instruments.is_open(id) {
+            self.show_instrument(t, id);
         }
     }
 

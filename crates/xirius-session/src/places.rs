@@ -30,7 +30,10 @@ pub const NAMES: [&str; 7] = [
 
 /// One read/modify/write boundary shared by command and browser writer owners.
 /// Call only on a worker: a stopped transaction must never hold a UI callback.
-pub fn transaction<T, E>(file: &Path, operation: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
+pub fn transaction<T>(
+    file: &Path,
+    operation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
     use std::sync::{Arc, Mutex, OnceLock, Weak};
     type Lanes = std::collections::HashMap<PathBuf, Weak<Mutex<()>>>;
     static LANES: OnceLock<Mutex<Lanes>> = OnceLock::new();
@@ -50,6 +53,11 @@ pub fn transaction<T, E>(file: &Path, operation: impl FnOnce() -> Result<T, E>) 
         }
     };
     let _guard = lane.lock().unwrap_or_else(|e| e.into_inner());
+    // Keep a stable lock file: replacing the JSON must not replace the lock held
+    // by another process. The process-local lane also serializes shared handles.
+    let lock = xirius_core::store::open_lock(&file.with_extension("json.lock"))
+        .map_err(|e| e.to_string())?;
+    lock.lock().map_err(|e| e.to_string())?;
     operation()
 }
 
@@ -63,6 +71,8 @@ pub struct Place {
 /// What the browser keeps.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Prefs {
+    /// The obsolete preset-browser store has been imported exactly once.
+    pub legacy_favourites_imported: bool,
     pub favourites: BTreeSet<String>,
     /// Left out of the lists; a search still finds them.
     pub hidden: BTreeSet<String>,
@@ -97,6 +107,7 @@ impl Prefs {
             })
             .unwrap_or_default();
         Prefs {
+            legacy_favourites_imported: false,
             favourites: ["Sampler", "EQ", "Vital"].map(String::from).into(),
             hidden: BTreeSet::new(),
             show_hidden: false,
@@ -149,6 +160,7 @@ pub fn load(path: &Path) -> Result<Prefs, String> {
         })
         .unwrap_or_default();
     Ok(Prefs {
+        legacy_favourites_imported: v["legacy_favourites_imported"].as_bool().unwrap_or(false),
         favourites: names(&v["favourites"]),
         hidden: names(&v["hidden"]),
         show_hidden: v["show_hidden"].as_bool().unwrap_or(false),
@@ -161,6 +173,7 @@ pub fn save(path: &Path, prefs: &Prefs) -> Result<(), String> {
     #[cfg(feature = "test-io")]
     xirius_core::io_test::before("prefs_write", path).map_err(|e| e.to_string())?;
     let v = json!({
+        "legacy_favourites_imported": prefs.legacy_favourites_imported,
         "favourites": prefs.favourites,
         "hidden": prefs.hidden,
         "show_hidden": prefs.show_hidden,
@@ -298,17 +311,126 @@ pub fn run(
     args: &Args,
     dry: bool,
 ) -> CmdResult<Output> {
-    transaction(file, || run_locked(file, song, name, args, dry))
+    run_with_legacy(file, None, song, name, args, dry)
 }
 
-fn run_locked(
+/// Run a browser command against its canonical store, importing legacy data first.
+pub fn run_with_legacy(
     file: &Path,
+    legacy: Option<&Path>,
     song: Option<&Path>,
     name: &str,
     args: &Args,
     dry: bool,
 ) -> CmdResult<Output> {
-    let mut prefs = load(file).map_err(CmdError::io)?;
+    if dry {
+        let prefs = load_migrated(file, legacy, false).map_err(CmdError::io)?;
+        return run_locked(file, prefs, song, name, args, true);
+    }
+    transaction(file, || {
+        let prefs = load_migrated(file, legacy, !dry)?;
+        Ok(run_locked(file, prefs, song, name, args, dry))
+    })
+    .map_err(CmdError::io)?
+}
+
+/// Unambiguous legacy display names across built-in and scanned devices.
+pub fn device_names(
+    catalog: &xirius_plugins::Catalog,
+) -> std::collections::BTreeMap<String, String> {
+    let mut candidates = std::collections::BTreeMap::<String, BTreeSet<String>>::new();
+    for (name, uid) in xirius_params::BUILTINS
+        .iter()
+        .map(|d| (d.name, d.uid))
+        .chain(
+            catalog
+                .entries
+                .iter()
+                .map(|e| (e.name.as_str(), e.uid.as_str())),
+        )
+    {
+        candidates
+            .entry(name.into())
+            .or_default()
+            .insert(format!("device:{uid}"));
+    }
+    candidates
+        .into_iter()
+        .filter(|(_, ids)| ids.len() == 1)
+        .map(|(name, ids)| (name, ids.into_iter().next().unwrap()))
+        .collect()
+}
+
+/// Resolve legacy names only when the complete device catalog makes them unique.
+pub(crate) fn device_args(args: &Args, catalog: &xirius_plugins::Catalog) -> Args {
+    let mut resolved = args.clone();
+    let Some(item) = args.opt_str("item") else {
+        return resolved;
+    };
+    let names = device_names(catalog);
+    let id = names
+        .get(item)
+        .or_else(|| xirius_params::find(item).and_then(|def| names.get(def.name)))
+        .map(String::as_str)
+        .unwrap_or(item);
+    let aliases: Vec<_> = names
+        .iter()
+        .filter(|(_, key)| key.as_str() == id)
+        .map(|(name, _)| name)
+        .collect();
+    if args.opt_str("label").is_none() {
+        let label = xirius_params::BUILTINS
+            .iter()
+            .find(|d| format!("device:{}", d.uid) == id)
+            .map(|d| d.name)
+            .or_else(|| {
+                catalog
+                    .entries
+                    .iter()
+                    .find(|e| format!("device:{}", e.uid) == id)
+                    .map(|e| e.name.as_str())
+            });
+        resolved.0.insert("label".into(), json!(label));
+    }
+    resolved.0.insert("item".into(), json!(id));
+    resolved.0.insert("aliases".into(), json!(aliases));
+    resolved
+}
+
+/// Import the former store before applying any edit. Call inside a transaction.
+pub fn load_migrated(file: &Path, legacy: Option<&Path>, persist: bool) -> Result<Prefs, String> {
+    let mut prefs = load(file)?;
+    if prefs.legacy_favourites_imported {
+        return Ok(prefs);
+    }
+    let Some(legacy) = legacy else {
+        return Ok(prefs);
+    };
+    let imported = match std::fs::read(legacy) {
+        Ok(bytes) => {
+            let old: BTreeSet<String> =
+                serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", legacy.display()))?;
+            prefs.favourites.extend(old);
+            true
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(e) => return Err(format!("{}: {e}", legacy.display())),
+    };
+    prefs.legacy_favourites_imported = true;
+    if persist && (imported || file.try_exists().map_err(|e| e.to_string())?) {
+        save(file, &prefs)?;
+    }
+    Ok(prefs)
+}
+
+fn run_locked(
+    file: &Path,
+    mut prefs: Prefs,
+    song: Option<&Path>,
+    name: &str,
+    args: &Args,
+    dry: bool,
+) -> CmdResult<Output> {
     let message = match name {
         "location.list" => {
             let n = prefs.places.len() + 1;
@@ -318,27 +440,55 @@ fn run_locked(
             ));
         }
         "browser.favorite" | "browser.hide" => {
-            let item = args.str("item")?.trim().to_string();
+            let mut item = args.str("item")?.trim().to_string();
             if item.is_empty() {
                 return Err(CmdError::invalid("--item が空です"));
             }
             let fav = name == "browser.favorite";
+            // A name is said back as it was given; a canonical `kind:` id that
+            // resolved to nothing falls back to the generic wording (BRW-001).
+            let label = args
+                .opt_str("label")
+                .or_else(|| {
+                    xirius_params::find(item.strip_prefix("device:").unwrap_or(&item))
+                        .map(|def| def.name)
+                })
+                .or_else(|| (!fav || !item.contains(':')).then_some(item.as_str()));
+            let subject = label.map_or_else(String::new, |label| format!("「{label}」を"));
+            let mut aliases = if fav {
+                names(args.0.get("aliases").unwrap_or(&Value::Null))
+            } else {
+                BTreeSet::new()
+            };
+            if fav
+                && !args.0.contains_key("aliases")
+                && let Some(def) =
+                    xirius_params::find(item.strip_prefix("device:").unwrap_or(&item))
+            {
+                aliases.insert(def.name.to_string());
+                item = format!("device:{}", def.uid);
+            }
             let set = if fav {
                 &mut prefs.favourites
             } else {
                 &mut prefs.hidden
             };
-            let on = args.toggle()?.unwrap_or(!set.contains(&item));
+            let on = args
+                .toggle()?
+                .unwrap_or(!(set.contains(&item) || aliases.iter().any(|key| set.contains(key))));
+            for alias in aliases {
+                set.remove(&alias);
+            }
             if on {
                 set.insert(item.clone());
             } else {
                 set.remove(&item);
             }
             match (fav, on) {
-                (true, true) => format!("「{item}」をお気に入りにしました"),
-                (true, false) => format!("「{item}」をお気に入りから外しました"),
-                (false, true) => format!("「{item}」を隠しました（検索では見つかります）"),
-                (false, false) => format!("「{item}」を再び表示しました"),
+                (true, true) => format!("{subject}お気に入りにしました"),
+                (true, false) => format!("{subject}お気に入りから外しました"),
+                (false, true) => format!("{subject}隠しました（検索では見つかります）"),
+                (false, false) => format!("{subject}再び表示しました"),
             }
         }
         "view.browser.hidden" => {

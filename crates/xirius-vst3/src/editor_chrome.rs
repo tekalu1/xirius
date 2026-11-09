@@ -7,11 +7,10 @@ use xirius_design::{Font, FontSize, Pair, Surface, Theme, ink, surface};
 
 pub(crate) const HEIGHT: f32 = 36.0;
 /// The approved compact bar retains all three preset controls at this width.
-pub(crate) const MIN_WIDTH: f32 = 412.0;
+pub(crate) const MIN_WIDTH: f32 = 360.0;
 const BUTTON: f32 = 28.0;
 pub(crate) const POWER: usize = 1;
 pub(crate) const PRESET: usize = 2;
-pub(crate) const DESTINATION: usize = 3;
 pub(crate) const PIN: usize = 4;
 pub(crate) const CLOSE: usize = 5;
 pub(crate) const CHANNEL: usize = 6;
@@ -36,7 +35,6 @@ impl Controls {
         let labels = [
             (POWER, "電源"),
             (PRESET, "プリセット"),
-            (DESTINATION, "表示先"),
             (PIN, "ピン留め"),
             (CLOSE, "閉じる"),
             (CHANNEL, "チャンネルエディター"),
@@ -142,27 +140,21 @@ impl Controls {
 
 fn seat(id: usize, width: f32, bar: &EditorBar) -> Option<(f32, f32)> {
     let right = width - 4.0;
-    let compact = width < 520.0;
     Some(match id {
         POWER => (4.0, BUTTON),
         CLOSE => (right - BUTTON, BUTTON),
         PIN => (right - 58.0, BUTTON),
-        DESTINATION => (right - 88.0, BUTTON),
-        CHANNEL if !compact => (right - 118.0, BUTTON),
-        SIDECHAIN if bar.sidechain => (right - if compact { 118.0 } else { 148.0 }, BUTTON),
+        CHANNEL => (right - 88.0, BUTTON),
+        SIDECHAIN if bar.sidechain => (right - 118.0, BUTTON),
         PRESET | PREVIOUS | NEXT => {
-            let end = right
-                - 90.0
-                - if compact { 0.0 } else { 30.0 }
-                - if bar.sidechain { 30.0 } else { 0.0 };
-            let w = (width * 0.34)
-                .clamp(108.0, 220.0)
-                .min((end - 110.0).max(36.0));
+            let end = right - 90.0 - if bar.sidechain { 30.0 } else { 0.0 };
+            let w = 220.0_f32.min((end - width / 2.0 - 2.0).max(0.0) * 2.0);
+            let start = (width - w) / 2.0;
             let step = 24.0;
             match id {
-                PREVIOUS => (end - w, step),
-                NEXT => (end - step, step),
-                PRESET => (end - w + step, (w - 2.0 * step).max(20.0)),
+                PREVIOUS => (start, step),
+                NEXT => (start + w - step, step),
+                PRESET => (start + step, (w - 2.0 * step).max(0.0)),
                 _ => return None,
             }
         }
@@ -245,7 +237,7 @@ pub(crate) fn paint(
                     .resolve(theme)
                     .surface
             } else {
-                Surface::S2.strong_text().resolve(theme).surface
+                Surface::S0.strong_text().resolve(theme).surface
             };
             let brush = CreateSolidBrush(color(face.to_rgb_u32()));
             let previous_brush = SelectObject(dc, brush);
@@ -293,27 +285,24 @@ pub(crate) fn paint(
         let old_font = SelectObject(dc, font);
         if control == Some(PRESET) {
             let mut text_r = r;
-            let chevron = true;
-            text_r.left += ((if chevron { 24.0 } else { 10.0 }) * scale).round() as i32;
-            text_r.right -= (6.0 * scale).round() as i32;
-            if chevron {
-                let face = color(
-                    Surface::S2
-                        .strong_text()
-                        .resolve(theme)
-                        .surface
-                        .to_rgb_u32(),
-                );
-                crate::editor_icons::paint(
-                    dc,
-                    12,
-                    8.0 * scale,
-                    9.0 * scale,
-                    scale * 10.0 / 16.0,
-                    ink,
-                    face,
-                );
-            }
+            text_r.left += (6.0 * scale).round() as i32;
+            text_r.right -= (24.0 * scale).round() as i32;
+            let face = color(
+                Surface::S0
+                    .strong_text()
+                    .resolve(theme)
+                    .surface
+                    .to_rgb_u32(),
+            );
+            crate::editor_icons::paint(
+                dc,
+                12,
+                (w - 18.0) * scale,
+                9.0 * scale,
+                scale * 10.0 / 16.0,
+                ink,
+                face,
+            );
             let text = wide(label);
             DrawTextW(
                 dc,
@@ -411,20 +400,15 @@ pub(crate) fn paint(
             } else {
                 fill
             };
-            if id == DESTINATION {
-                crate::editor_icons::paint(dc, id, 2.0 * scale, 6.0 * scale, scale, ink, face);
-                crate::editor_icons::paint(
-                    dc,
-                    12,
-                    20.0 * scale,
-                    11.0 * scale,
-                    scale * 6.0 / 16.0,
-                    ink,
-                    face,
-                );
-            } else {
-                crate::editor_icons::paint(dc, id, 6.0 * scale, 6.0 * scale, scale, ink, face);
-            }
+            crate::editor_icons::paint(
+                dc,
+                id,
+                (w - 16.0) / 2.0 * scale,
+                6.0 * scale,
+                scale,
+                ink,
+                face,
+            );
         }
         SelectObject(dc, old_font);
         DeleteObject(font);
@@ -437,19 +421,11 @@ pub(crate) fn paint(
 
 pub(crate) fn command(hwnd: HWND, id: usize, bar: &EditorBar) -> Option<EditorAction> {
     match id {
-        PREVIOUS | NEXT if bar.presets.len() > 1 => {
-            let current = bar
-                .presets
-                .iter()
-                .position(|p| p == &bar.preset)
-                .unwrap_or(0);
-            let next = if id == NEXT {
-                (current + 1) % bar.presets.len()
-            } else {
-                (current + bar.presets.len() - 1) % bar.presets.len()
-            };
-            Some(EditorAction::PresetSelect(bar.presets[next].clone()))
-        }
+        PREVIOUS | NEXT if bar.presets.len() > 1 => Some(if id == NEXT {
+            EditorAction::PresetNext
+        } else {
+            EditorAction::PresetPrevious
+        }),
         POWER => Some(EditorAction::Power),
         PIN => Some(EditorAction::Pin),
         CHANNEL => Some(EditorAction::Channel),
@@ -460,65 +436,16 @@ pub(crate) fn command(hwnd: HWND, id: usize, bar: &EditorBar) -> Option<EditorAc
             }
             None
         }
-        PRESET | DESTINATION => {
-            // SAFETY: a local native popup; it only returns an action for asynchronous delivery.
+        PRESET => {
+            let mut at = RECT::default();
+            // SAFETY: the control belongs to this editor's GUI thread; no other process is called.
             unsafe {
-                let menu = CreatePopupMenu();
-                if id == PRESET {
-                    for (index, name) in bar.presets.iter().enumerate() {
-                        AppendMenuW(
-                            menu,
-                            MF_STRING | if name == &bar.preset { MF_CHECKED } else { 0 },
-                            100 + index,
-                            wide(name).as_ptr(),
-                        );
-                    }
-                    if !bar.presets.is_empty() {
-                        AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
-                    }
-                }
-                let mut frame = RECT::default();
-                GetClientRect(hwnd, &mut frame);
-                let scale =
-                    windows_sys::Win32::UI::HiDpi::GetDpiForWindow(hwnd).max(96) as f32 / 96.0;
-                let labels: &[(usize, &str)] = if id == PRESET {
-                    &[(1, "プリセットを読み込む…"), (2, "プリセットを保存…")]
-                } else if frame.right as f32 / scale < 520.0 {
-                    &[(3, "独立ウィンドウ"), (4, "チャンネルエディター")]
-                } else {
-                    &[(3, "独立ウィンドウ")]
-                };
-                for &(key, label) in labels {
-                    AppendMenuW(
-                        menu,
-                        MF_STRING | if key == 3 { MF_CHECKED } else { 0 },
-                        key,
-                        wide(label).as_ptr(),
-                    );
-                }
-                let mut at = RECT::default();
-                GetWindowRect(GetDlgItem(hwnd, id as i32), &mut at);
-                let chosen = TrackPopupMenu(
-                    menu,
-                    TPM_RETURNCMD | TPM_NONOTIFY,
-                    at.left,
-                    at.bottom,
-                    0,
-                    hwnd,
-                    std::ptr::null(),
-                );
-                DestroyMenu(menu);
-                match chosen {
-                    1 => Some(EditorAction::PresetOpen),
-                    2 => Some(EditorAction::PresetSave),
-                    4 => Some(EditorAction::Channel),
-                    n if n >= 100 && id == PRESET => bar
-                        .presets
-                        .get((n - 100) as usize)
-                        .cloned()
-                        .map(EditorAction::PresetSelect),
-                    _ => None,
-                }
+                GetWindowRect(GetDlgItem(hwnd, PRESET as i32), &mut at);
+                Some(EditorAction::PresetMenu {
+                    x: at.left,
+                    y: at.bottom,
+                    dpi: windows_sys::Win32::UI::HiDpi::GetDpiForWindow(hwnd).max(96),
+                })
             }
         }
         _ => None,
@@ -529,9 +456,9 @@ pub(crate) fn command(hwnd: HWND, id: usize, bar: &EditorBar) -> Option<EditorAc
 mod tests {
     use super::*;
     #[test]
-    fn compact_bar_retains_preset_steps_destination_pin_and_close_without_overlap() {
+    fn compact_bar_centers_presets_and_retains_controls_without_overlap() {
         let bar = EditorBar::default();
-        let mut rectangles: Vec<_> = [POWER, PREVIOUS, PRESET, NEXT, DESTINATION, PIN, CLOSE]
+        let mut rectangles: Vec<_> = [POWER, PREVIOUS, PRESET, NEXT, CHANNEL, PIN, CLOSE]
             .into_iter()
             .map(|id| seat(id, MIN_WIDTH, &bar).unwrap())
             .collect();
@@ -542,11 +469,13 @@ mod tests {
                 .iter()
                 .all(|(x, w)| *x >= 0.0 && x + w <= MIN_WIDTH)
         );
-        assert!(seat(CHANNEL, MIN_WIDTH, &bar).is_none());
+        assert!(seat(CHANNEL, MIN_WIDTH, &bar).is_some());
+        let (x, w) = seat(PRESET, MIN_WIDTH, &bar).unwrap();
+        assert_eq!(x + w / 2.0, MIN_WIDTH / 2.0);
         assert!(seat(SIDECHAIN, MIN_WIDTH, &bar).is_none());
     }
     #[test]
-    fn preset_steps_wrap_and_keep_the_selected_name_in_the_async_action() {
+    fn preset_steps_send_direction_without_resolving_an_asynchronous_label() {
         let mut bar = EditorBar {
             preset: "Default".into(),
             presets: vec!["Default".into(), "Room".into(), "Hall".into()],
@@ -554,11 +483,11 @@ mod tests {
         };
         assert_eq!(
             command(std::ptr::null_mut(), PREVIOUS, &bar),
-            Some(EditorAction::PresetSelect("Hall".into()))
+            Some(EditorAction::PresetPrevious)
         );
         assert_eq!(
             command(std::ptr::null_mut(), NEXT, &bar),
-            Some(EditorAction::PresetSelect("Room".into()))
+            Some(EditorAction::PresetNext)
         );
         bar.presets.clear();
         assert_eq!(command(std::ptr::null_mut(), NEXT, &bar), None);

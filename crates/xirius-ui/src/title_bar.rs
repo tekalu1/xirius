@@ -153,6 +153,7 @@ pub fn takes_sidechain(def: &BuiltinDef) -> bool {
 /// editor's bar).
 pub fn layout(r: Rect, track: &str, device: &str, seats: Seats<'_>) -> Bar {
     let narrow = r.w < NARROW;
+    let compact_device = r.w < 600.0 && !device.is_empty();
     let cy = r.y + (r.h - BTN) / 2.0;
     let btn = |x: f32| Rect::new(x, cy, BTN, BTN);
     let mut x = r.x + PAD;
@@ -169,15 +170,24 @@ pub fn layout(r: Rect, track: &str, device: &str, seats: Seats<'_>) -> Bar {
     rx -= BTN + GAP;
     let pin = Rect::new(rx - BTN, cy, BTN, BTN);
     rx -= BTN + GAP;
-    let destination = Rect::new(rx - BTN, cy, BTN, BTN);
-    rx -= BTN + GAP;
-    // In a compact bar the channel editor is in the destination menu.
-    let channel = (seats.channel && r.w >= 520.0).then(|| Rect::new(rx - BTN, cy, BTN, BTN));
-    if channel.is_some() {
+    // Only the Channel Editor has a display destination. Built-in devices
+    // always have their own window and use this space for their preset group.
+    let destination = if device.is_empty() {
+        let seat = Rect::new(rx - BTN, cy, BTN, BTN);
         rx -= BTN + GAP;
+        seat
+    } else {
+        Rect::default()
+    };
+    let channel_w = if compact_device { 24.0 } else { BTN };
+    let channel = seats
+        .channel
+        .then(|| Rect::new(rx - channel_w, cy, channel_w, BTN));
+    if channel.is_some() {
+        rx -= channel_w + GAP;
     }
     // The seat: the on button, then «name ▾» (the name gone while narrow).
-    let named = !narrow && !seats.source.is_empty();
+    let named = !narrow && !compact_device && !seats.source.is_empty();
     let src_w = if named {
         (SC_SRC_L
             + estimated_text_width(seats.source, FontSize::Small)
@@ -186,15 +196,18 @@ pub fn layout(r: Rect, track: &str, device: &str, seats: Seats<'_>) -> Bar {
             + CHEV
             + SC_SRC_R)
             .min(SC_SRC_MAX)
+    } else if compact_device {
+        CHEV
     } else {
         SC_SRC_L + CHEV + SC_SRC_R
     };
-    let seat_w = SC_ON_W + src_w;
+    let on_w = if compact_device { 20.0 } else { SC_ON_W };
+    let seat_w = on_w + src_w;
     let sidechain = seats
         .sidechain
         .then(|| Rect::new(rx - seat_w, cy, seat_w, BTN));
-    let sidechain_on = sidechain.map(|s| Rect::new(s.x, cy, SC_ON_W, BTN));
-    let sidechain_list = sidechain.map(|s| Rect::new(s.x + SC_ON_W, cy, src_w, BTN));
+    let sidechain_on = sidechain.map(|s| Rect::new(s.x, cy, on_w, BTN));
+    let sidechain_list = sidechain.map(|s| Rect::new(s.x + on_w, cy, src_w, BTN));
     let sidechain_name = sidechain_list.filter(|_| named).map(|l| {
         Rect::new(
             l.x + SC_SRC_L,
@@ -258,7 +271,7 @@ pub fn layout(r: Rect, track: &str, device: &str, seats: Seats<'_>) -> Bar {
         BTN,
     );
 
-    Bar {
+    let mut bar = Bar {
         power,
         name,
         name_text,
@@ -276,7 +289,47 @@ pub fn layout(r: Rect, track: &str, device: &str, seats: Seats<'_>) -> Bar {
         destination,
         pin,
         close,
+    };
+    if !device.is_empty() {
+        let center = r.x + r.w / 2.0;
+        let width =
+            GROUP_BASIS.min(((rx - GAP - center).max(0.0) * 2.0).min(r.w - 2.0 * (BTN + PAD)));
+        let group = Rect::new(center - width / 2.0, cy, width, BTN);
+        bar.prev = Some(Rect::new(group.x, cy, STEP_W, BTN));
+        bar.next = Some(Rect::new(group.right() - STEP_W, cy, STEP_W, BTN));
+        bar.tag = Rect::new(group.x + STEP_W, cy, (width - 2.0 * STEP_W).max(0.0), BTN);
+        bar.chevron = Some(Rect::new(
+            if bar.tag.w < TAG_L + TAG_R + CHEV + TAG_GAP {
+                bar.tag.x + (bar.tag.w - CHEV) / 2.0
+            } else {
+                bar.tag.right() - TAG_R - CHEV
+            },
+            cy + (BTN - CHEV) / 2.0,
+            CHEV,
+            CHEV,
+        ));
+        bar.tag_text = Rect::new(
+            bar.tag.x + TAG_L,
+            cy,
+            (bar.tag.w - TAG_L - TAG_R - CHEV - TAG_GAP).max(0.0),
+            BTN,
+        );
+        bar.name.w = bar.name.w.min((group.x - GROUP_ML - bar.name.x).max(0.0));
+        let lead = NAME_L + ICON + NAME_GAP;
+        bar.name_text = Rect::new(
+            bar.name.x + lead,
+            cy,
+            (bar.name.w - lead - NAME_R).max(0.0),
+            BTN,
+        );
+        bar.space = Rect::new(
+            group.right() + GAP,
+            cy,
+            (rx - group.right() - GAP).max(0.0),
+            BTN,
+        );
     }
+    bar
 }
 
 /// What a bar paints with, behind the same [`layout`]'s seats.
@@ -407,7 +460,7 @@ pub fn paint(pen: &mut Pen, r: Rect, v: &View<'_>) {
     if let Some(b) = bar.next {
         pen.icon("chevron-right", icon_box(b), step_ink(v.steps.1));
     }
-    pen.round(bar.tag, c.surface_2, Radius::S);
+    pen.round(bar.tag, c.surface_0, Radius::S);
     if let Some(chev) = bar.chevron {
         pen.icon("chevron-down", chev, c.ink);
     }
@@ -422,7 +475,7 @@ pub fn paint(pen: &mut Pen, r: Rect, v: &View<'_>) {
             bar.tag_text,
             Align::Left,
         );
-        if v.modified {
+        if v.modified && bar.tag_text.w >= DOT + DOT_GAP {
             pen.round(
                 Rect::new(
                     dot_x(bar.tag_text, shown_w),
@@ -458,7 +511,11 @@ pub fn paint(pen: &mut Pen, r: Rect, v: &View<'_>) {
             );
         }
         let chev = Rect::new(
-            list.right() - SC_SRC_R - CHEV,
+            if bar.sidechain_name.is_some() {
+                list.right() - SC_SRC_R - CHEV
+            } else {
+                list.x + (list.w - CHEV) / 2.0
+            },
             list.y + (list.h - CHEV) / 2.0,
             CHEV,
             CHEV,
@@ -468,17 +525,19 @@ pub fn paint(pen: &mut Pen, r: Rect, v: &View<'_>) {
     if let Some(b) = bar.channel {
         pen.icon("route", icon_box(b), c.ink);
     }
-    let destination = bar.destination;
-    pen.icon(
-        "popout",
-        Rect::new(destination.x + 2.0, destination.y + 6.0, 16.0, 16.0),
-        c.ink,
-    );
-    pen.icon(
-        "chevron-down",
-        Rect::new(destination.x + 20.0, destination.y + 11.0, 6.0, 6.0),
-        c.ink,
-    );
+    if bar.destination.w > 0.0 {
+        let destination = bar.destination;
+        pen.icon(
+            "popout",
+            Rect::new(destination.x + 2.0, destination.y + 6.0, 16.0, 16.0),
+            c.ink,
+        );
+        pen.icon(
+            "chevron-down",
+            Rect::new(destination.x + 20.0, destination.y + 11.0, 6.0, 6.0),
+            c.ink,
+        );
+    }
     if v.popout {
         pen.icon("pin", icon_box(bar.pin), c.line[0]);
     } else if v.pinned {
@@ -737,6 +796,48 @@ mod tests {
         source: "Kick +1",
     };
 
+    #[test]
+    fn reachable_compact_widths_keep_every_control_inside_and_separate() {
+        for width in [316.0, 320.0, 360.0, 379.0, 380.0, 416.0, 600.0, 1280.0] {
+            for sidechain in [false, true] {
+                let r = Rect::new(0.0, 0.0, width, BAR_H);
+                let b = layout(
+                    r,
+                    "長いトラック名",
+                    "Long device name",
+                    Seats { sidechain, ..SEATS },
+                );
+                inside(&b, r);
+                let mut controls: Vec<_> = [
+                    b.power,
+                    b.prev,
+                    Some(b.tag),
+                    b.next,
+                    b.sidechain_on,
+                    b.sidechain_list,
+                    b.channel,
+                    Some(b.pin),
+                    Some(b.close),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                controls.sort_by(|a, b| a.x.total_cmp(&b.x));
+                assert!(
+                    controls.iter().all(|q| q.w >= CHEV),
+                    "{width}: {controls:?}"
+                );
+                assert!(
+                    controls.windows(2).all(|q| q[0].right() <= q[1].x + 0.01),
+                    "{width}: {controls:?}"
+                );
+                assert_eq!(b.tag.x + b.tag.w / 2.0, width / 2.0);
+                let chevron = b.chevron.unwrap();
+                assert!(chevron.x >= b.tag.x && chevron.right() <= b.tag.right());
+            }
+        }
+    }
+
     /// Every part is inside the bar and none of them overlap.
     fn inside(b: &Bar, r: Rect) {
         for q in [
@@ -779,16 +880,10 @@ mod tests {
             assert!(b.tag.right() <= b.space.x + GAP + 0.01);
             let sidechain = b.sidechain.unwrap();
             assert!(b.space.right() <= sidechain.x + 0.01);
-            if let Some(channel) = b.channel {
-                assert!(w >= 520.0);
-                assert!(sidechain.right() + GAP <= channel.x + 0.01);
-                assert!(channel.right() <= b.destination.x + GAP + 0.01);
-            } else {
-                assert!(w < 520.0);
-                assert!(sidechain.right() + GAP <= b.destination.x + 0.01);
-            }
-            assert_eq!(b.destination.w, BTN);
-            assert!(b.destination.right() <= b.pin.x + GAP + 0.01);
+            let channel = b.channel.expect("the channel editor has its own seat");
+            assert!(sidechain.right() + GAP <= channel.x + 0.01);
+            assert!(channel.right() <= b.pin.x + GAP + 0.01);
+            assert_eq!(b.destination.w, 0.0);
             assert!(b.pin.right() <= b.close.x + GAP + 0.01);
             assert_eq!(b.close.right(), r.right() - PAD);
             // The buttons are 28s and keep their width at any size.
@@ -802,7 +897,7 @@ mod tests {
     }
 
     #[test]
-    fn the_steps_hide_and_the_tag_shrinks_under_the_narrow_width() {
+    fn device_presets_keep_steps_and_chevron_centered_at_narrow_width() {
         let wide = layout(
             Rect::new(0.0, 0.0, NARROW, BAR_H),
             "Vocal",
@@ -816,10 +911,11 @@ mod tests {
             "Compressor",
             SEATS,
         );
-        assert!(just.prev.is_none() && just.next.is_none());
+        assert!(just.prev.is_some() && just.next.is_some());
+        assert_eq!(just.tag.x + just.tag.w / 2.0, (NARROW - 1.0) / 2.0);
         assert!(just.tag.w >= GROUP_MIN_NARROW);
         assert!(wide.chevron.is_some());
-        assert!(just.chevron.is_none(), "the ▾ folds with the ‹ ›");
+        assert!(just.chevron.is_some());
     }
 
     #[test]
@@ -833,7 +929,7 @@ mod tests {
         );
         inside(&b, r);
         // The name stops where the tag keeps its least; nothing overlaps.
-        assert!(b.tag.w >= GROUP_MIN_NARROW - 0.01, "{:?}", b.tag);
+        assert!(b.tag.w >= CHEV, "{:?}", b.tag);
         assert!(b.name.right() + GAP + GROUP_ML <= b.tag.x + 0.01);
         assert!(b.space.w >= SPACE_MIN_NARROW, "{:?}", b.space);
         assert!(b.tag.right() <= b.space.x + 0.01);
@@ -860,19 +956,20 @@ mod tests {
     ];
 
     #[test]
-    fn the_narrow_windows_keep_the_device_name_whole() {
-        // The 3-column windows are 316 wide and take no key: no seat. (A
-        // seat's window cuts the name at its narrowest, as the mock does.)
+    fn the_narrow_windows_ellipsize_names_to_keep_centered_preset_controls() {
+        // Centering the preset group reserves both sides independently.
+        // At 316 the device name may be ellipsized, but stays left aligned.
         {
             let seats = Seats {
                 sidechain: false,
                 ..SEATS
             };
-            for (device, w) in SEMIBOLD_14 {
+            for (device, _) in SEMIBOLD_14 {
                 let r = Rect::new(0.0, 0.0, 316.0, BAR_H);
                 let b = layout(r, "Vocal", device, seats);
                 inside(&b, r);
-                assert!(b.name_text.w >= w, "{device} ({w}) in {:?}", b.name_text);
+                assert!(b.name_text.w > 0.0);
+                assert!(b.name_text.right() <= b.prev.unwrap().x);
                 // The tag keeps two 14 wide characters readable.
                 assert!(b.tag_text.w >= 28.0, "{device}: {:?}", b.tag_text);
             }
@@ -898,8 +995,8 @@ mod tests {
             match fit {
                 NameFit::Both => {}
                 NameFit::TrackCut(room) => assert!(room >= track_min && room < track_w),
-                // The device alone is whole: it fits the room by the test above.
-                NameFit::DeviceOnly => assert!(dev_w <= name_room(device)),
+                // The device alone is ellipsized when the centered group needs the room.
+                NameFit::DeviceOnly => assert!(name_room(device) < track_min + sep_room + dev_w),
             }
         }
         assert_eq!(
@@ -946,20 +1043,24 @@ mod tests {
 
     #[test]
     fn the_changed_mark_stands_a_space_off_the_name() {
-        let r = Rect::new(0.0, 0.0, 316.0, BAR_H);
-        let b = layout(r, "Vocal", "Compressor", SEATS);
-        let t = b.tag_text;
-        let room = preset_room(t, true);
-        assert_eq!(room, t.w - DOT_GAP - DOT);
-        assert_eq!(preset_room(t, false), t.w);
-        // Two wide characters keep whole with the mark even at 316.
-        assert!(room >= 28.0, "{t:?}");
-        // Whatever the shown width up to the room, the dot keeps the gap
-        // and stays inside the name's zone.
-        for shown in [0.0, 12.0, room / 2.0, room] {
-            let x = dot_x(t, shown);
-            assert_eq!(x - (t.x + shown), Space::X2.px());
-            assert!(x + DOT <= t.right() + 0.01, "{shown}");
+        for width in [316.0, 320.0, 360.0] {
+            let r = Rect::new(0.0, 0.0, width, BAR_H);
+            let b = layout(r, "Vocal", "Compressor", SEATS);
+            let t = b.tag_text;
+            let room = preset_room(t, true);
+            assert_eq!(room, (t.w - DOT_GAP - DOT).max(0.0));
+            assert_eq!(preset_room(t, false), t.w);
+            if t.w < DOT + DOT_GAP {
+                assert_eq!(room, 0.0, "the compact tag paints only its chevron");
+                continue;
+            }
+            // Whatever the shown width up to the room, the dot keeps the gap
+            // and stays inside the name's zone.
+            for shown in [0.0, 12.0, room / 2.0, room] {
+                let x = dot_x(t, shown);
+                assert_eq!(x - (t.x + shown), Space::X2.px());
+                assert!(x + DOT <= t.right() + 0.01, "{shown}");
+            }
         }
     }
 
@@ -999,10 +1100,14 @@ mod tests {
             let b = layout(r, "Bass", "Compressor", SEATS);
             inside(&b, r);
             assert!(b.sidechain_name.is_none(), "{w}");
-            assert_eq!(b.sidechain_list.unwrap().w, bare);
+            assert_eq!(b.sidechain_list.unwrap().w, CHEV);
             // the name and the tag keep clear of it, the tag two characters
             assert!(b.tag.right() <= b.sidechain.unwrap().x + 0.01, "{w}");
-            assert!(b.tag_text.w >= 28.0, "{w}: {:?}", b.tag_text);
+            if w >= 360.0 {
+                assert!(b.tag_text.w >= 28.0, "{w}: {:?}", b.tag_text);
+            } else {
+                assert!(b.tag.w >= CHEV && b.prev.is_some() && b.next.is_some());
+            }
         }
     }
 

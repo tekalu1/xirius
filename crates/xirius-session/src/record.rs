@@ -250,6 +250,7 @@ pub(crate) struct Active {
     audio: Vec<TrackId>,
     /// The instrument tracks and the MIDI port each takes (`None`: every port).
     pub(crate) midi: Vec<(TrackId, Option<usize>)>,
+    ports: Vec<String>,
     /// What the engine's thru plays, as last sent: the track values are followed while the
     /// take records (UI-312).
     pub(crate) thru: Vec<xirius_engine::record::Thru>,
@@ -271,6 +272,13 @@ pub(crate) struct Active {
 }
 
 impl Active {
+    pub(crate) fn missing_ports(&self, now: &[String]) -> Vec<usize> {
+        self.ports
+            .iter()
+            .enumerate()
+            .filter_map(|(i, name)| (!now.contains(name)).then_some(i))
+            .collect()
+    }
     /// Why the input device recorded from stopped by itself, once it has.
     pub(crate) fn input_lost(&self) -> Option<String> {
         self.lost.as_ref()?.get()
@@ -672,6 +680,7 @@ impl SessionHost {
             warnings,
         };
         self.recording = Some(Active {
+            ports,
             offsets_ms: [audio_offset, midi_offset],
             recorder,
             audio,

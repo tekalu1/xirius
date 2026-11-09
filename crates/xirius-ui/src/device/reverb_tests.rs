@@ -32,6 +32,7 @@ fn rev_window() -> (Studio, Geometry, TrackId, PluginId) {
     ));
     let id = fx(&s, t).id;
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     assert!(s.instruments.is_open(id));
     (s, g, t, id)
 }

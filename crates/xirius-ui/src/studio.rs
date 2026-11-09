@@ -1692,11 +1692,7 @@ impl Studio {
                     && self.browser.track_library.is_some()
                     && let Some(e) = self.browser.track_row(i).and_then(|r| r.entry)
                 {
-                    // design-lint: allow(ui-blocking-io) BRW-017: favourites are written on the song owner through io_command::handles.
-                    self.run_command(
-                        "browser.preset.favourite",
-                        serde_json::json!({"entry": e.id}),
-                    );
+                    self.browser.toggle_favourite(&e.id);
                     return true;
                 }
                 let l = self.browser.layout(g.panel);
@@ -1921,6 +1917,7 @@ impl Studio {
             .as_ref()
             .is_some_and(|w| !raw.tracks.contains_key(&w.track))
         {
+            self.channel_note_off();
             self.channel = None;
         }
         if self
@@ -1989,10 +1986,50 @@ impl Studio {
         ch: Option<&str>,
         mods: Mods,
     ) -> bool {
+        if self.instruments.detached_target.is_some() {
+            return self.device_key(g, key, mods)
+                || (key == "tab" && !mods.ctrl && !mods.alt && self.device_enter(!mods.shift));
+        }
+        if self.instruments.detached_channel {
+            let Some(track) = self.channel.as_ref().map(|c| c.track) else {
+                return false;
+            };
+            let head = self
+                .head_fader
+                .entry
+                .as_ref()
+                .map(|e| e.track)
+                .into_iter()
+                .chain(self.head_fader.focus)
+                .collect::<Vec<_>>();
+            if !head.is_empty()
+                && head.iter().all(|t| *t == track)
+                && self.head_fader_key(key, mods)
+            {
+                return true;
+            }
+            let branch = self
+                .mixer
+                .value_entry
+                .as_ref()
+                .map(|e| e.focus)
+                .into_iter()
+                .chain(self.mixer.value_focus)
+                .collect::<Vec<_>>();
+            if !branch.is_empty()
+                && branch
+                    .iter()
+                    .all(|f| f.track == track && f.place == crate::branch_value::Place::Editor)
+                && self.value_key(key, mods)
+            {
+                return true;
+            }
+            return false;
+        }
         self.inspector_follow(g);
         // Esc during a press on a device's window lets go of it first, whatever else has the
         // keys (the macro pad's focus, the grip's).
-        if key == "escape" && self.instrument_cancel() {
+        if key == "escape" && (self.instrument_cancel() || self.channel_main_cancel()) {
             return true;
         }
         // Esc while waiting for a controller's knob, or while its clash asks, ends the wait first
@@ -2703,7 +2740,9 @@ impl Studio {
             }
             return false;
         }
-        self.browser.typed(key, ch)
+        self.instruments.detached_target.is_none()
+            && !self.instruments.detached_channel
+            && self.browser.typed(key, ch)
     }
 
     /// Nonblocking file-dialog and script entry. Synchronous fixtures have an

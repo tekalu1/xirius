@@ -1103,6 +1103,8 @@ impl Studio {
         // With no list open, Enter on the preset the browser's keys are on loads it
         // (BRW-017).
         if key == "enter"
+            && self.instruments.detached_target.is_none()
+            && !self.instruments.detached_channel
             && self.browser.open
             && matches!(
                 self.browser.tab,
@@ -1118,6 +1120,8 @@ impl Studio {
         // With no list open, Enter on the effect the browser's keys are on
         // puts it on the chosen track (else the master), as it did before.
         if key == "enter"
+            && self.instruments.detached_target.is_none()
+            && !self.instruments.detached_channel
             && self.browser.open
             && self.browser.tab == crate::browser::RailTab::Effects
             && self.popup.is_none()
@@ -1152,6 +1156,9 @@ impl Studio {
     /// The list whose search box has the keyboard: a list menu's, or the
     /// settings' open list (UI-338).
     pub(crate) fn pick_typing(&self) -> Option<&PickList> {
+        if self.instruments.detached_target.is_some() || self.instruments.detached_channel {
+            return self.popup.as_ref()?.pick.as_ref();
+        }
         self.popup
             .as_ref()
             .and_then(|p| p.pick.as_ref())
@@ -1160,6 +1167,9 @@ impl Studio {
     }
 
     fn pick_typing_mut(&mut self) -> Option<&mut PickList> {
+        if self.instruments.detached_target.is_some() || self.instruments.detached_channel {
+            return self.popup.as_mut()?.pick.as_mut();
+        }
         if self.popup.as_ref().is_some_and(|p| p.pick.is_some()) {
             return self.popup.as_mut()?.pick.as_mut();
         }

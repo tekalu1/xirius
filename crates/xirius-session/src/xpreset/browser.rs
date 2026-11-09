@@ -209,13 +209,6 @@ fn index(dir: &Path, tracks: &Path, catalog: &Catalog) -> Vec<Item> {
     out
 }
 
-fn favourites(dir: &Path) -> BTreeSet<String> {
-    std::fs::read(dir.join(".browser-favourites.json"))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
-}
-
 fn destination(dir: &Path, a: &Args) -> CmdResult<PathBuf> {
     if a.opt_str("source").is_some_and(|s| s != "User") {
         return Err(CmdError::invalid("保存先は User を選んでください"));
@@ -243,6 +236,8 @@ fn destination(dir: &Path, a: &Args) -> CmdResult<PathBuf> {
 pub(crate) fn run(
     dir: &Path,
     tracks: &Path,
+    prefs_file: &Path,
+    legacy: Option<&Path>,
     song: Option<&Path>,
     project: &Project,
     catalog: &Catalog,
@@ -251,7 +246,7 @@ pub(crate) fn run(
     dry: bool,
 ) -> CmdResult<(Output, Edits)> {
     let items = index(dir, tracks, catalog);
-    let mut fav = favourites(dir);
+
     if command == "browser.preset.apply" {
         let item = items
             .iter()
@@ -321,6 +316,14 @@ pub(crate) fn run(
         ));
     }
     if command == "browser.preset.list" {
+        let read = || crate::places::load_migrated(prefs_file, legacy, !dry);
+        let fav = if dry {
+            read()
+        } else {
+            crate::places::transaction(prefs_file, read)
+        }
+        .map_err(CmdError::io)?
+        .favourites;
         let mut entries: Vec<_> = items.into_iter().map(|i| i.entry).collect();
         for def in xirius_params::BUILTINS.iter().copied() {
             entries.push(Indexed {
@@ -372,21 +375,38 @@ pub(crate) fn run(
         ));
     }
     if command == "browser.preset.favourite" {
-        let id = a.str("entry")?;
-        if !fav.remove(id) {
-            fav.insert(id.into());
+        let entries: Vec<_> = items.iter().map(|item| item.entry.clone()).collect();
+        let id = xirius_core::track_browser::favourite_id(a.str("entry")?, &entries);
+        let aliases: Vec<_> = entries
+            .iter()
+            .find(|entry| entry.id == id)
+            .into_iter()
+            .flat_map(Indexed::legacy_keys)
+            .filter(|old| xirius_core::track_browser::favourite_id(old, &entries) == id)
+            .collect();
+        let label = entries
+            .iter()
+            .find(|entry| entry.id == id)
+            .map(|entry| entry.name.as_str());
+        let mut raw = json!({"item": id, "aliases": aliases, "label": label});
+        if let Some(on) = a.toggle()? {
+            raw[if on { "on" } else { "off" }] = json!(true);
         }
-        if !dry {
-            std::fs::create_dir_all(dir).map_err(io)?;
-            atomic_write(
-                &dir.join(".browser-favourites.json"),
-                &to_bytes(&json!(fav))?,
-            )?;
-        }
-        return Ok((
-            Output::with("お気に入りを変更しました", json!({"favourites": fav})),
-            Vec::new(),
-        ));
+        let resolved = Args(raw.as_object().unwrap().clone());
+        let resolved = if id.starts_with("device:") {
+            crate::places::device_args(&resolved, catalog)
+        } else {
+            resolved
+        };
+        let output = crate::places::run_with_legacy(
+            prefs_file,
+            legacy,
+            song,
+            "browser.favorite",
+            &resolved,
+            dry,
+        )?;
+        return Ok((output, Vec::new()));
     }
     let name = preset_name(a, "name")?;
     let mut value = if command == "browser.preset.copy" {

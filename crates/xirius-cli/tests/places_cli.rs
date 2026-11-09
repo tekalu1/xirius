@@ -43,6 +43,9 @@ impl Home {
         let mut c = Command::new(env!("CARGO_BIN_EXE_xirius"));
         c.env_remove("XIRIUS_SONG")
             .env("XIRIUS_BROWSER_FILE", self.file())
+            .env("XIRIUS_PRESETS", self.dir.join("presets"))
+            .env("XIRIUS_TRACK_PRESETS", self.dir.join("tracks"))
+            .env("XIRIUS_PLUGIN_CACHE", self.dir.join("plugins.json"))
             .env("USERPROFILE", self.dir.join("home"))
             .env("HOME", self.dir.join("home"))
             .current_dir(std::env::temp_dir());

@@ -7,7 +7,6 @@ use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::Plugin;
 
-use crate::context::key_more::Place;
 use crate::instrument::window::{Part, values};
 use crate::studio::{Geometry, Studio};
 use crate::tools::Mods;
@@ -29,6 +28,7 @@ fn delay() -> (Studio, Geometry, TrackId, PluginId) {
     ));
     let id = fx(&s, t).id;
     s.show_instrument(t, id);
+    s.instruments.detached_target = Some(id);
     assert!(s.instruments.is_open(id));
     (s, g, t, id)
 }
@@ -51,6 +51,7 @@ fn context_catalog_covers_builtin_graphs_and_delay_candidates() {
             .clone();
         let def = plugin.builtin().unwrap();
         s.show_instrument(track, plugin.id);
+        s.instruments.detached_target = Some(plugin.id);
         let frame = s.instruments.frame(0, &g);
         let body = s.instruments.body(frame, &plugin, def);
         for (graph, plane) in body.graphs.iter().enumerate() {
@@ -337,54 +338,34 @@ fn ui_324_tab_in_a_typed_value_puts_it_in_and_goes_on() {
     assert_ne!(to, (id, k), "on to the next");
 }
 
-/// M-ui-4: Tab past the screen's last place goes into the window on top, and Shift+Tab
-/// before its first, to the window's last control; Esc gives the keys back, and Tab past
-/// the window's last control (before its first) goes on round the screen (L2-ui-5).
+/// Tab wraps within the native device surface; main's logical focus stays put.
 #[test]
-fn ui_324_tab_from_the_screen_goes_into_the_window_on_top() {
+fn ui_324_tab_wraps_within_the_independent_window() {
     let (mut s, g, _, id) = delay();
     s.device_blur();
-    let mut n = 0;
-    while s.instruments.focus.is_none() {
-        assert!(s.run_binding(&g, "view.focus --way next"));
-        n += 1;
-        assert!(n <= 4, "the window is a stop");
-    }
+    let main_place = s.place();
+    assert!(s.field_keys(&g, "tab", None, Mods::NONE));
     let first = s.instruments.focus.unwrap();
     assert_eq!(first.0, id);
-    assert!(s.field_keys(&g, "escape", None, Mods::NONE));
-    assert_eq!(s.instruments.focus, None);
-    let mut n = 0;
-    while s.instruments.focus.is_none() {
-        assert!(s.run_binding(&g, "view.focus --way prev"));
-        n += 1;
-        assert!(n <= 4);
-    }
-    let last = s.instruments.focus.unwrap();
-    assert_ne!(last, first);
-    // From the last, Tab goes out to the screen's first place, and Shift+Tab from there
-    // back in to the last.
-    assert!(s.field_keys(&g, "tab", None, Mods::NONE));
-    assert_eq!(s.instruments.focus, None);
-    assert_eq!(s.place(), Place::Arrange);
-    assert!(s.run_binding(&g, "view.focus --way prev"));
-    assert_eq!(s.instruments.focus, Some(last));
-    // Before the first, Shift+Tab goes out to the screen's last place.
-    s.device_blur();
-    assert!(s.device_enter(true));
     let shift = Mods {
         shift: true,
         ..Mods::NONE
     };
     assert!(s.field_keys(&g, "tab", None, shift));
-    assert_eq!(s.instruments.focus, None);
-    // Esc gives the keys back where they were: Tab goes on round, not back in.
-    assert!(s.device_enter(true));
+    let last = s.instruments.focus.unwrap();
+    assert_ne!(last, first);
+    assert!(s.field_keys(&g, "tab", None, Mods::NONE));
+    assert_eq!(s.instruments.focus, Some(first));
+    assert!(s.field_keys(&g, "right", None, Mods::NONE));
+    assert_eq!(s.place(), main_place);
     assert!(s.field_keys(&g, "escape", None, Mods::NONE));
-    let at = s.place();
-    assert!(s.run_binding(&g, "view.focus --way next"));
-    assert_eq!(s.instruments.focus, None, "not back into the window");
-    assert_ne!(s.place(), at);
+    // The first Esc cancels the pending arrow sweep; the second releases focus.
+    assert!(s.field_keys(&g, "escape", None, Mods::NONE));
+    assert_eq!(s.instruments.focus, None);
+    assert!(!s.field_keys(&g, "right", None, Mods::NONE));
+    assert_eq!(s.place(), main_place);
+    assert!(s.field_keys(&g, "tab", None, shift));
+    assert_eq!(s.instruments.focus, Some(last));
 }
 
 #[test]

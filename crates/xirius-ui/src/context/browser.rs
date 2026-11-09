@@ -286,7 +286,7 @@ impl Studio {
             .as_ref()
             .and_then(|es| es.iter().find(|e| e.file.is_none() && e.name == name))
             .map_or(name, |e| e.id.as_str());
-        let (fav, hidden) = (b.favourites.contains(key), b.hidden.contains(name));
+        let (fav, hidden) = (b.is_favourite(key), b.hidden.contains(name));
         let here = self.selected_track_of(TrackKind::Instrument).is_some();
         vec![
             act("新しいトラックで使う", BrowseAct::UseNew(name)),
@@ -314,7 +314,7 @@ impl Studio {
             .as_ref()
             .and_then(|es| es.iter().find(|e| e.file.is_none() && e.name == name))
             .map_or(name, |e| e.id.as_str());
-        let (fav, hidden) = (b.favourites.contains(key), b.hidden.contains(name));
+        let (fav, hidden) = (b.is_favourite(key), b.hidden.contains(name));
         let found = self.effect_pick(name).is_some();
         let channel = matches!(self.selected_row, Some(RowKind::Track(_)));
         vec![
@@ -345,11 +345,11 @@ impl Studio {
         {
             let mut rows = vec![
                 act("読み込む", BrowseAct::LoadPreset(device, name.to_string())),
-                Item::new(
+                act(
                     "お気に入り",
-                    Run::Cmd("browser.preset.favourite", json!({"entry": e.id})),
+                    BrowseAct::FavouritePreset(e.id.clone(), !self.browser.is_favourite(&e.id)),
                 )
-                .on(self.browser.favourites.contains(&e.id)),
+                .on(self.browser.is_favourite(&e.id)),
                 act("User にコピー…", BrowseAct::CopyPreset(e.id.clone())),
             ];
             if matches!(
@@ -366,7 +366,7 @@ impl Studio {
             return rows;
         }
         let key = crate::browser::preset_key(device, name);
-        let fav = self.browser.favourites.contains(&key);
+        let fav = self.browser.is_favourite(&key);
         vec![
             act("読み込む", BrowseAct::LoadPreset(device, name.to_string())),
             act("お気に入り", BrowseAct::FavouritePreset(key, !fav)).on(fav),
@@ -610,19 +610,18 @@ impl Studio {
                     .and_then(|es| es.iter().find(|e| e.file.is_none() && e.name == name))
                     .map(|e| e.id.clone())
                 {
-                    if self.browser.favourites.contains(&id) != on {
-                        // design-lint: allow(ui-blocking-io) BRW-017: favourites are written on the song owner through io_command::handles.
-                        self.run_command("browser.preset.favourite", json!({"entry": id}));
+                    if self.browser.is_favourite(&id) != on {
+                        self.browser.toggle_favourite(&id);
                     }
                     return true;
                 }
-                if self.browser.favourites.contains(name) != on {
+                if self.browser.is_favourite(name) != on {
                     self.browser.toggle_favourite(name);
                 }
                 true
             }
             BrowseAct::FavouritePreset(key, on) => {
-                if self.browser.favourites.contains(&key) != on {
+                if self.browser.is_favourite(&key) != on {
                     self.browser.toggle_favourite(&key);
                 }
                 true
@@ -663,7 +662,7 @@ impl Studio {
             }
             BrowseAct::FavouriteFile(path, on) => {
                 let key = format!("file:{}", path.display());
-                if self.browser.favourites.contains(&key) != on {
+                if self.browser.is_favourite(&key) != on {
                     self.browser.toggle_favourite(&key);
                 }
                 true

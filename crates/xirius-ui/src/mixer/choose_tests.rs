@@ -91,17 +91,21 @@ fn click_row(s: &mut Studio, g: &Geometry, t: TrackId, id: PluginId) {
 }
 
 #[test]
-fn a_press_picks_a_row_and_a_press_on_the_picked_row_opens_it() {
+fn a_press_picks_and_opens_a_row_and_the_next_toggles_its_view() {
     let (mut s, g) = studio();
     let t = track(&s, "Guitar");
     let eq = add(&mut s, t, "EQ");
     s.instruments.open.clear();
     click_row(&mut s, &g, t, eq);
     assert_eq!(s.mixer.chosen, Some((t, Pick::Plugin(eq))));
-    // its face shows beside the strips (MIX-046), not as a window
-    assert_eq!(s.docked().map(|i| s.instruments.open[i].plugin), Some(eq));
+    // Selecting a built-in row opens its independent view immediately.
+    assert_eq!(s.docked(), None);
+    assert!(s.instruments.is_open(eq));
+    click_row(&mut s, &g, t, eq);
+    assert!(!s.instruments.is_open(eq));
     click_row(&mut s, &g, t, eq);
     assert!(s.instruments.is_open(eq));
+    assert_eq!(s.instruments.open.len(), 1);
     assert_eq!(s.docked(), None);
     s.instruments.open.clear();
     // a press elsewhere lets the row go
@@ -218,6 +222,9 @@ fn the_keys_move_pick_open_and_take_away_the_picked_row() {
     assert_eq!(s.mixer.chosen, Some((t, Pick::Plugin(delay))));
     assert!(key(&mut s, &g, "space", false));
     assert!(s.project().tracks[&t].inserts[0].bypass);
+    assert!(s.instruments.is_open(delay));
+    assert!(key(&mut s, &g, "enter", false));
+    assert!(!s.instruments.is_open(delay));
     assert!(key(&mut s, &g, "enter", false));
     assert!(s.instruments.is_open(delay));
     s.instruments.open.clear();

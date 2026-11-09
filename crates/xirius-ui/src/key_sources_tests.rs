@@ -34,6 +34,7 @@ fn studio() -> (Studio, Geometry, TrackId, TrackId, PluginId) {
     let comp = builtin(&mut s, bass, "compressor");
     s.instruments.open.clear();
     s.show_instrument(bass, comp);
+    s.instruments.detached_target = Some(comp);
     (s, g, drums, bass, comp)
 }
 
@@ -135,6 +136,7 @@ fn a_channel_the_key_would_loop_back_from_shows_the_loop_and_takes_nothing() {
     add(&mut s, drum_comp, bass);
     s.instruments.open.clear();
     s.show_instrument(bass, comp);
+    s.instruments.detached_target = Some(comp);
     seat_press(&mut s, &g, comp, Part::Sources);
     let list = s.popup.as_ref().unwrap().pick.clone().unwrap();
     let row = list.groups[0]

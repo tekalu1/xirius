@@ -305,7 +305,10 @@ impl<'ast> Visit<'ast> for Scanner {
         let name = parts.last().map(String::as_str).unwrap_or("");
         if parts.starts_with(&["std".into(), "fs".into()])
             || (parts.iter().any(|p| p == "places")
-                && matches!(name, "load" | "save" | "run" | "first_run" | "default"))
+                && matches!(
+                    name,
+                    "load" | "load_migrated" | "save" | "run" | "first_run" | "default"
+                ))
             || (parts.iter().any(|p| p == "cleanup") && matches!(name, "unused" | "run" | "tidy"))
             || matches!(
                 name,

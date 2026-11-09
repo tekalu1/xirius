@@ -12,7 +12,7 @@ use xirius_vst3::{Caption, PluginState};
 
 /// The version of these messages and of the shared memory's layout together. Bump it with
 /// any change to either.
-pub const PROTOCOL: u32 = 13;
+pub const PROTOCOL: u32 = 14;
 /// Starts the encoded [`FromHost::Hello`], so a stray first message is not taken for one.
 const HELLO_MAGIC: u32 = u32::from_le_bytes(*b"XPHH");
 
@@ -667,8 +667,14 @@ impl FromHost {
             }
             FromHost::EditorAction { slot, action } => {
                 o.u8(10).u32(*slot).u8(action.tag());
-                if let xirius_vst3::EditorAction::PresetSelect(name) = action {
-                    o.str(name);
+                match action {
+                    xirius_vst3::EditorAction::PresetSelect(name) => {
+                        o.str(name);
+                    }
+                    xirius_vst3::EditorAction::PresetMenu { x, y, dpi } => {
+                        o.u32(*x as u32).u32(*y as u32).u32(*dpi);
+                    }
+                    _ => {}
                 }
             }
             FromHost::EditorPosition {
@@ -757,6 +763,11 @@ impl FromHost {
                 slot: i.u32()?,
                 action: match i.u8()? {
                     6 => xirius_vst3::EditorAction::PresetSelect(i.str()?),
+                    7 => xirius_vst3::EditorAction::PresetMenu {
+                        x: i.u32()? as i32,
+                        y: i.u32()? as i32,
+                        dpi: i.u32()?,
+                    },
                     tag => xirius_vst3::EditorAction::from_byte(tag)
                         .ok_or_else(|| bad("editor action"))?,
                 },
@@ -930,6 +941,22 @@ mod tests {
             FromHost::EditorAction {
                 slot: 4,
                 action: xirius_vst3::EditorAction::PresetSelect("My preset".into()),
+            },
+            FromHost::EditorAction {
+                slot: 4,
+                action: xirius_vst3::EditorAction::PresetPrevious,
+            },
+            FromHost::EditorAction {
+                slot: 4,
+                action: xirius_vst3::EditorAction::PresetNext,
+            },
+            FromHost::EditorAction {
+                slot: 4,
+                action: xirius_vst3::EditorAction::PresetMenu {
+                    x: -1200,
+                    y: -400,
+                    dpi: 168,
+                },
             },
             FromHost::Hello {
                 protocol: PROTOCOL,

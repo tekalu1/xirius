@@ -21,6 +21,14 @@ pub enum EditorAction {
     Channel = 4,
     Sidechain = 5,
     PresetSelect(String) = 6,
+    /// Physical screen position of the frame control; opening the host list never waits for IPC.
+    PresetMenu {
+        x: i32,
+        y: i32,
+        dpi: u32,
+    } = 7,
+    PresetPrevious = 8,
+    PresetNext = 9,
 }
 
 impl EditorAction {
@@ -33,6 +41,9 @@ impl EditorAction {
             Self::Channel => 4,
             Self::Sidechain => 5,
             Self::PresetSelect(_) => 6,
+            Self::PresetMenu { .. } => 7,
+            Self::PresetPrevious => 8,
+            Self::PresetNext => 9,
         }
     }
     pub fn from_byte(value: u8) -> Option<Self> {
@@ -43,6 +54,8 @@ impl EditorAction {
             3 => Self::Pin,
             4 => Self::Channel,
             5 => Self::Sidechain,
+            8 => Self::PresetPrevious,
+            9 => Self::PresetNext,
             _ => return None,
         })
     }

@@ -1760,6 +1760,12 @@ impl Render for Screen {
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
             }
         }
+        // Independent device windows use the same queued file requests. Resolve
+        // them after drawing, just as a main-window input callback does.
+        if self.studio.borrow().file_request.is_some() {
+            let screen = cx.entity();
+            cx.defer(move |cx| screen.update(cx, |this, cx| this.files(cx)));
+        }
         // input held for a copy or a paste whose song has gone is not given to the next one
         if self.studio.borrow().take_held_input_dropped() {
             self.pending_save_input.forget();
@@ -2257,6 +2263,10 @@ fn step(run: &Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
         if !r.parked && r.place == Place::Parked {
             r.parked = park(WINDOW_TITLE, PARK_AT, PARK_AT);
         }
+        // Parking alone is a one-time placement, not a screenshot/benchmark loop.
+        if r.parked && r.driver.is_none() && r.roll_bench.is_none() && r.mixer_bench.is_none() {
+            return;
+        }
     }
     let mut quit = false;
     let (events, finished) = {
@@ -2418,6 +2428,8 @@ pub fn run(opts: Options) {
                 s.os_files = true;
                 // The places, favourites and hidden things kept from the last run (BRW-005).
                 s.browser.start_prefs(xirius_session::places::path());
+                s.browser.prefs_io.legacy =
+                    Some(xirius_session::xpreset::dir().join(".browser-favourites.json"));
                 // Off the window's thread: the device's channels (its format only) and,
                 // from then on, the MIDI ports plugged in and out (ENG-001).
                 s.read_input_channels();
@@ -2665,7 +2677,7 @@ pub fn run(opts: Options) {
                                 if !window.is_window_active() {
                                     this.last_caps = None;
                                     // The release will not come here (M-ui-3).
-                                    if this.studio.borrow_mut().device_focus_lost() {
+                                    if this.studio.borrow_mut().main_focus_lost() {
                                         cx.notify();
                                     }
                                 }

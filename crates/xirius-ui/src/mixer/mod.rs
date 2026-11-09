@@ -632,6 +632,7 @@ pub struct Mixer {
     pub(crate) fake_load: Option<crate::loading::FakeLoad>,
     pub(crate) editors: Vec<OpenEditor>,
     pub(crate) editor_pins: std::collections::HashSet<PluginId>,
+    pub(crate) preset_menu: Option<(TrackId, PluginId, i32, i32, u32)>,
     pub(crate) editor_bars: std::collections::HashMap<PluginId, xirius_vst3::EditorBar>,
     pub(crate) editor_positions: std::collections::HashMap<PluginId, (i32, i32)>,
     /// The plugins found by the last scan; read when a list first needs it.
@@ -1974,6 +1975,7 @@ impl Studio {
             // (L2-ui-1).
             self.device_sweep_end();
             self.instruments.open.retain(|w| w.plugin != id);
+            self.instruments.detached.remove(&id);
             crate::instrument::window::forget_turns(self);
             return true;
         }

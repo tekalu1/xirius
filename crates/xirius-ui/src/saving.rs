@@ -677,7 +677,10 @@ impl Studio {
                     .session()
                     .execution_targets(name, raw)
                     .iter()
-                    .any(|(name, _)| xirius_session::places::NAMES.contains(&name.as_str()))
+                    .any(|(name, _)| {
+                        xirius_session::places::NAMES.contains(&name.as_str())
+                            || name == "browser.preset.favourite"
+                    })
             })
             .map(|_| self.song.places_path());
         let mut session = self.song.take_session_for_save();

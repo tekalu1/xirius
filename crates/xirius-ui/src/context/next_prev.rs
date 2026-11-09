@@ -2,7 +2,7 @@
 //! and the previous preset of the plugin window on top (Presets › Next). They take no arguments:
 //! they step from what is selected and shown.
 
-use xirius_core::id::TrackId;
+use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::Plugin;
 
 use crate::studio::{DrawerTab, Geometry, Studio};
@@ -46,21 +46,49 @@ impl Studio {
     /// The tag's ‹ › of the window just pressed call it too (UI-322): the press brings the window
     /// to the top first.
     pub(crate) fn step_preset(&mut self, forward: bool) -> bool {
-        self.refresh_presets();
         let p = self.project();
-        let presets = &self.instruments.presets;
-        let Some((id, list, now)) = self.instruments.open.iter().rev().find_map(|w| {
+        let Some(id) = self.instruments.open.iter().rev().find_map(|w| {
             let plugin = p
                 .tracks
                 .values()
                 .flat_map(|t| &t.inserts)
                 .find(|x| x.id == w.plugin)?;
-            let def = Plugin::builtin(plugin)?;
-            Some((w.plugin, presets.names(def), presets.origin(plugin)))
+            Plugin::builtin(plugin)?;
+            Some(w.plugin)
         }) else {
             return false;
         };
+        self.step_device_preset(id, forward)
+    }
+
+    /// Resolve a frame's direction against the current owner state, not its asynchronous label.
+    pub(crate) fn step_device_preset(&mut self, id: PluginId, forward: bool) -> bool {
+        self.refresh_presets();
+        let p = self.project();
+        let Some(plugin) = p
+            .tracks
+            .values()
+            .flat_map(|t| &t.inserts)
+            .find(|p| p.id == id)
+        else {
+            return false;
+        };
+        let presets = &self.instruments.presets;
+        let list = plugin.builtin().map_or_else(
+            || {
+                presets
+                    .external
+                    .get(&plugin.uid.to_ascii_lowercase())
+                    .cloned()
+                    .unwrap_or_default()
+            },
+            |def| presets.names(def),
+        );
+        let now = presets.origin(plugin);
         let n = list.len();
+        if n == 0 {
+            return false;
+        }
         let i = match (list.iter().position(|x| Some(x) == now.as_ref()), forward) {
             (None, true) => 0,
             (None, false) => n - 1,
