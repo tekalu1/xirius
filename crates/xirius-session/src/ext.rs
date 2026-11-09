@@ -293,6 +293,14 @@ impl Job {
         self.end(&ended);
     }
 
+    /// Deletion must follow the final write, even when the UI already sees a done state.
+    fn remove_record(&self) {
+        let _write = self.disk_gate.lock().unwrap();
+        if let Some(disk) = &self.disk {
+            disk.remove(&self.id);
+        }
+    }
+
     fn end(&self, st: &JobState) {
         let Some(d) = &self.disk else {
             return;
@@ -1229,7 +1237,9 @@ impl SessionExt {
         for f in &files {
             (self.trash)(f).map_err(CmdError::conflict)?;
         }
-        if let Some(d) = cx.dir {
+        if let Some(job) = self.job(id) {
+            job.remove_record();
+        } else if let Some(d) = cx.dir {
             Store::of_song(d).remove(id);
         }
         self.jobs.retain(|j| j.id != id);
@@ -2126,7 +2136,22 @@ mod io_tests {
         for _ in 0..32 {
             assert_eq!(job.to_json()["state"], "done");
         }
+        // Deleting a completed job must wait for its final record, then remove it.
+        // Otherwise the final write can recreate a record after export.delete returns.
+        let deleting = job.clone();
+        let (done_tx, done_rx) = mpsc::channel();
+        let (started_tx, started_rx) = mpsc::channel();
+        let delete = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            deleting.remove_record();
+            done_tx.send(()).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(20)).unwrap();
+        assert!(done_rx.recv_timeout(Duration::from_millis(100)).is_err());
         drop(release);
         worker.join().unwrap();
+        done_rx.recv_timeout(Duration::from_secs(20)).unwrap();
+        delete.join().unwrap();
+        assert!(Store::of_song(root.path()).read(&job.id).is_none());
     }
 }
