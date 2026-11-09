@@ -518,6 +518,13 @@ impl Part {
 }
 
 impl SessionExt {
+    fn legacy_browser_favourites(&self) -> Option<PathBuf> {
+        self.presets
+            .clone()
+            .or_else(|| self.places_file.is_none().then(crate::xpreset::dir))
+            .map(|p| p.join(".browser-favourites.json"))
+    }
+
     pub fn new(config: ExtConfig) -> SessionExt {
         SessionExt::with(config, ExtExtras::default())
     }
@@ -1864,6 +1871,7 @@ impl Extension for SessionExt {
                         .clone()
                         .or_else(|| self.presets.as_ref().map(|p| p.join("browser.json")))
                         .unwrap_or_else(places::path),
+                    self.legacy_browser_favourites().as_deref(),
                     cx.dir,
                     cx.project,
                     &catalog,
@@ -1992,11 +2000,7 @@ impl Extension for SessionExt {
                     .clone()
                     .or_else(|| self.presets.as_ref().map(|p| p.join("browser.json")))
                     .unwrap_or_else(places::path),
-                self.presets
-                    .clone()
-                    .or_else(|| self.places_file.is_none().then(crate::xpreset::dir))
-                    .map(|p| p.join(".browser-favourites.json"))
-                    .as_deref(),
+                self.legacy_browser_favourites().as_deref(),
                 cx.dir,
                 n,
                 &if n == "browser.favorite" {

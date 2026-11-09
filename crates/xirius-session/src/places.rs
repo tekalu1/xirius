@@ -378,7 +378,20 @@ pub(crate) fn device_args(args: &Args, catalog: &xirius_plugins::Catalog) -> Arg
         .filter(|(_, key)| key.as_str() == id)
         .map(|(name, _)| name)
         .collect();
-    resolved.0.insert("label".into(), json!(item));
+    if args.opt_str("label").is_none() {
+        let label = xirius_params::BUILTINS
+            .iter()
+            .find(|d| format!("device:{}", d.uid) == id)
+            .map(|d| d.name)
+            .or_else(|| {
+                catalog
+                    .entries
+                    .iter()
+                    .find(|e| format!("device:{}", e.uid) == id)
+                    .map(|e| e.name.as_str())
+            });
+        resolved.0.insert("label".into(), json!(label));
+    }
     resolved.0.insert("item".into(), json!(id));
     resolved.0.insert("aliases".into(), json!(aliases));
     resolved
@@ -432,7 +445,14 @@ fn run_locked(
                 return Err(CmdError::invalid("--item が空です"));
             }
             let fav = name == "browser.favorite";
-            let label = args.opt_str("label").unwrap_or(&item).to_string();
+            let label = args
+                .opt_str("label")
+                .or_else(|| {
+                    xirius_params::find(item.strip_prefix("device:").unwrap_or(&item))
+                        .map(|def| def.name)
+                })
+                .or_else(|| (!fav).then_some(item.as_str()));
+            let subject = label.map_or_else(String::new, |label| format!("「{label}」を"));
             let mut aliases = if fav {
                 names(args.0.get("aliases").unwrap_or(&Value::Null))
             } else {
@@ -463,10 +483,10 @@ fn run_locked(
                 set.remove(&item);
             }
             match (fav, on) {
-                (true, true) => format!("「{label}」をお気に入りにしました"),
-                (true, false) => format!("「{label}」をお気に入りから外しました"),
-                (false, true) => format!("「{label}」を隠しました（検索では見つかります）"),
-                (false, false) => format!("「{label}」を再び表示しました"),
+                (true, true) => format!("{subject}お気に入りにしました"),
+                (true, false) => format!("{subject}お気に入りから外しました"),
+                (false, true) => format!("{subject}隠しました（検索では見つかります）"),
+                (false, false) => format!("{subject}再び表示しました"),
             }
         }
         "view.browser.hidden" => {

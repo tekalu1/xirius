@@ -82,7 +82,11 @@ pub(super) fn defs() -> Vec<CommandDef> {
         session(
             "browser.preset.favourite",
             "機器かプリセットへのお気に入り参照を切り替えます",
-            vec![ArgDef::text("entry", "一覧の entry id").req()],
+            [
+                vec![ArgDef::text("entry", "一覧の entry id").req()],
+                on_off().to_vec(),
+            ]
+            .concat(),
             Risk::Guarded,
             false,
         ),

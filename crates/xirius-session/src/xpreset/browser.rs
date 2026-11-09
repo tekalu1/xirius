@@ -237,6 +237,7 @@ pub(crate) fn run(
     dir: &Path,
     tracks: &Path,
     prefs_file: &Path,
+    legacy: Option<&Path>,
     song: Option<&Path>,
     project: &Project,
     catalog: &Catalog,
@@ -315,13 +316,7 @@ pub(crate) fn run(
         ));
     }
     if command == "browser.preset.list" {
-        let read = || {
-            crate::places::load_migrated(
-                prefs_file,
-                Some(&dir.join(".browser-favourites.json")),
-                !dry,
-            )
-        };
+        let read = || crate::places::load_migrated(prefs_file, legacy, !dry);
         let fav = if dry {
             read()
         } else {
@@ -389,19 +384,23 @@ pub(crate) fn run(
             .flat_map(Indexed::legacy_keys)
             .filter(|old| xirius_core::track_browser::favourite_id(old, &entries) == id)
             .collect();
-        let mut raw = json!({"item": id, "aliases": aliases});
+        let label = entries
+            .iter()
+            .find(|entry| entry.id == id)
+            .map(|entry| entry.name.as_str());
+        let mut raw = json!({"item": id, "aliases": aliases, "label": label});
         if let Some(on) = a.toggle()? {
-            raw["on"] = json!(on);
+            raw[if on { "on" } else { "off" }] = json!(true);
         }
         let resolved = Args(raw.as_object().unwrap().clone());
-        let resolved = if id.starts_with("preset:") {
-            resolved
-        } else {
+        let resolved = if id.starts_with("device:") {
             crate::places::device_args(&resolved, catalog)
+        } else {
+            resolved
         };
         let output = crate::places::run_with_legacy(
             prefs_file,
-            Some(&dir.join(".browser-favourites.json")),
+            legacy,
             song,
             "browser.favorite",
             &resolved,
