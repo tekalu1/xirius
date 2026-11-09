@@ -1857,7 +1857,19 @@ impl Extension for SessionExt {
                     .unwrap_or_else(crate::track_preset::dir);
                 let catalog = self.catalog();
                 let (output, edits) = crate::xpreset::browser::run(
-                    &dir, &tracks, cx.dir, cx.project, &catalog, n, args, dry,
+                    &dir,
+                    &tracks,
+                    &self
+                        .places_file
+                        .clone()
+                        .or_else(|| self.presets.as_ref().map(|p| p.join("browser.json")))
+                        .unwrap_or_else(places::path),
+                    cx.dir,
+                    cx.project,
+                    &catalog,
+                    n,
+                    args,
+                    dry,
                 )?;
                 self.pending.extend(edits);
                 Ok(output)
@@ -1974,11 +1986,24 @@ impl Extension for SessionExt {
                 self.pending.extend(plan.edits);
                 Ok(plan.output)
             }
-            n if places::NAMES.contains(&n) => places::run(
-                &self.places_file.clone().unwrap_or_else(places::path),
+            n if places::NAMES.contains(&n) => places::run_with_legacy(
+                &self
+                    .places_file
+                    .clone()
+                    .or_else(|| self.presets.as_ref().map(|p| p.join("browser.json")))
+                    .unwrap_or_else(places::path),
+                self.presets
+                    .clone()
+                    .or_else(|| self.places_file.is_none().then(crate::xpreset::dir))
+                    .map(|p| p.join(".browser-favourites.json"))
+                    .as_deref(),
                 cx.dir,
                 n,
-                args,
+                &if n == "browser.favorite" {
+                    places::device_args(args, &self.catalog())
+                } else {
+                    args.clone()
+                },
                 dry,
             ),
             n if reveal::NAMES.contains(&n) => reveal::run(cx.dir, args, dry),

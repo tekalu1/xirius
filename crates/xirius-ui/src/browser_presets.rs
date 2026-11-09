@@ -61,18 +61,6 @@ impl Studio {
                 self.refresh_popup();
             }
         }
-        if matches!(name, "browser.preset.list" | "browser.preset.favourite")
-            && let Ok(favourites) = serde_json::from_value::<std::collections::BTreeSet<String>>(
-                data["favourites"].clone(),
-            )
-        {
-            self.browser.favourites.retain(|id| {
-                !id.starts_with("device:")
-                    && !id.starts_with("preset:")
-                    && !id.starts_with("factory:")
-            });
-            self.browser.favourites.extend(favourites);
-        }
         if matches!(
             name,
             "browser.preset.save"

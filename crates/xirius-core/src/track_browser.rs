@@ -53,6 +53,16 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// Old browser keys remain readable; new edits use the indexed ID.
+    pub fn legacy_keys(&self) -> Vec<String> {
+        if self.id.starts_with("device:") {
+            vec![self.name.clone()]
+        } else if !self.device.is_empty() {
+            vec![format!("preset:{}/{}", self.device, self.name)]
+        } else {
+            Vec::new()
+        }
+    }
     pub fn matches(&self, query: &str) -> bool {
         let haystack = format!(
             "{} {} {} {} {}",
@@ -66,6 +76,20 @@ impl Entry {
         query
             .split_whitespace()
             .all(|word| haystack.contains(&word.to_lowercase()))
+    }
+}
+
+/// Resolve only unambiguous old references; retain unknown keys for missing plugins.
+pub fn favourite_id(key: &str, entries: &[Entry]) -> String {
+    if entries.iter().any(|e| e.id == key) {
+        return key.into();
+    }
+    let mut matches = entries
+        .iter()
+        .filter(|e| e.legacy_keys().iter().any(|old| old == key));
+    match (matches.next(), matches.next()) {
+        (Some(entry), None) => entry.id.clone(),
+        _ => key.into(),
     }
 }
 
@@ -89,6 +113,11 @@ pub fn tree(
     closed: &BTreeSet<String>,
     favourites: &BTreeSet<String>,
 ) -> Vec<Row> {
+    let canonical: BTreeSet<_> = favourites
+        .iter()
+        .map(|key| favourite_id(key, entries))
+        .collect();
+    let favourites = &canonical;
     let hits: Vec<&Entry> = entries
         .iter()
         .filter(|e| e.category.tab() == tab && e.matches(query))
@@ -284,6 +313,41 @@ mod tests {
             has_fx: true,
             fx_names: vec!["EQ".into()],
         }
+    }
+    #[test]
+    fn legacy_keys_resolve_only_to_one_index_entry_and_survive_filtering() {
+        let e = preset();
+        let old = "preset:sampler/Warm piano";
+        assert_eq!(favourite_id(old, std::slice::from_ref(&e)), e.id);
+        let favourites = BTreeSet::from([old.into()]);
+        for query in ["", "warm sampler", "USER keys"] {
+            assert!(
+                tree(
+                    std::slice::from_ref(&e),
+                    "instruments",
+                    query,
+                    &BTreeSet::new(),
+                    &favourites
+                )
+                .iter()
+                .any(|row| row.entry.as_ref() == Some(&e) && row.favourite)
+            );
+        }
+        assert!(
+            tree(
+                std::slice::from_ref(&e),
+                "effects",
+                "",
+                &BTreeSet::new(),
+                &favourites
+            )
+            .is_empty()
+        );
+        let mut duplicate = e.clone();
+        duplicate.id = "preset/two".into();
+        assert_eq!(favourite_id(old, &[e, duplicate]), old);
+        assert_eq!(favourite_id("Missing device", &[]), "Missing device");
+        assert_eq!(favourites, BTreeSet::from([old.into()]));
     }
     #[test]
     fn and_search_keeps_parents_and_opens_only_populated_branches() {

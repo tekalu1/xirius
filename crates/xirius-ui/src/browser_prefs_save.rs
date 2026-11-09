@@ -103,6 +103,7 @@ pub(crate) fn merge(base: &Prefs, new: &Prefs, mut disk: Prefs) -> Prefs {
     disk
 }
 struct Save {
+    legacy: Option<PathBuf>,
     intent: Intent,
     revision: u64,
     tickets: Vec<Ticket>,
@@ -123,8 +124,7 @@ struct Writer {
 /// This read/modify/write transaction uses the dedicated writer, never a read slot or the UI.
 fn write(file: &Path, save: &Save) -> Result {
     places::transaction(file, || {
-        // design-lint: allow(ui-blocking-io) PRJ-031 review: worker-only browser transaction/read helper or cleanup read_view; UI only submits and polls.
-        let mut current = places::load(file)?;
+        let mut current = places::load_migrated(file, save.legacy.as_deref(), true)?;
         save.intent.apply(&mut current);
         // design-lint: allow(ui-blocking-io) PRJ-031 review: worker-only browser transaction/read helper or cleanup read_view; UI only submits and polls.
         places::save(file, &current)
@@ -176,7 +176,13 @@ fn writer() -> &'static Arc<Writer> {
     })
 }
 /// Latest snapshot per file; accepting a change does not need a read-queue slot.
-pub(crate) fn submit(file: &Path, base: Prefs, prefs: Prefs) -> Ticket {
+pub(crate) fn submit(
+    file: &Path,
+    base: Prefs,
+    prefs: Prefs,
+    legacy: Option<PathBuf>,
+    favourites: std::collections::BTreeMap<String, bool>,
+) -> Ticket {
     let ticket = Ticket(Arc::new(Mutex::new(None)));
     // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
     let mut s = writer().state.lock().unwrap_or_else(|e| e.into_inner());
@@ -185,13 +191,17 @@ pub(crate) fn submit(file: &Path, base: Prefs, prefs: Prefs) -> Ticket {
     let edits = s.dirty.entry(file.to_path_buf()).or_default();
     edits.0 = revision;
     edits.1.include(&base, &prefs);
+    // Explicit off survives an initial read/import that had not reached the UI.
+    edits.1.favourites.extend(favourites);
     let intent = edits.1.clone();
     let save = s.queued.entry(file.to_path_buf()).or_insert_with(|| Save {
+        legacy: legacy.clone(),
         intent: intent.clone(),
         revision,
         tickets: Vec::new(),
     });
     save.intent = intent;
+    save.legacy = legacy;
     save.revision = revision;
     // Superseded subscribers complete when the newest snapshot has been written.
     save.tickets.retain(|t| Arc::strong_count(&t.0) > 1);

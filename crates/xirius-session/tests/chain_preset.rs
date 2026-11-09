@@ -42,6 +42,7 @@ fn rig(tag: &str) -> Rig {
         },
         ExtExtras {
             presets: Some(dir.clone()),
+            places_file: Some(dir.join("browser.json")),
             track_presets: Some(dir.join("tracks")),
             ..ExtExtras::default()
         },
@@ -91,6 +92,36 @@ fn browser_saves_subtrees_copies_factory_and_applies_in_one_step() {
         json!({"entry": entry}),
     );
     assert!(!unfav["favourites"].as_array().unwrap().contains(&entry));
+    let prefs_file = r.dir.join("browser.json");
+    let mut prefs = xirius_session::places::load(&prefs_file).unwrap();
+    let old = "preset:sampler/Warm";
+    prefs.favourites.insert(old.into());
+    xirius_session::places::save(&prefs_file, &prefs).unwrap();
+    let removed = run(
+        &mut r.s,
+        "browser.preset.favourite",
+        json!({"entry": entry}),
+    );
+    assert!(
+        !removed["favourites"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(old))
+    );
+    assert!(
+        !xirius_session::places::load(&prefs_file)
+            .unwrap()
+            .favourites
+            .contains(old)
+    );
+    let restored = run(&mut r.s, "browser.preset.favourite", json!({"entry": old}));
+    assert!(restored["favourites"].as_array().unwrap().contains(&entry));
+    assert!(
+        !restored["favourites"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(old))
+    );
     let target = instrument(&mut r.s, "Target", "Sampler");
     plugin(&mut r.s, &target, "Delay");
     step(

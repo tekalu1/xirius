@@ -316,7 +316,7 @@ fn lane_rel(lane: u32) -> String {
 
 /// Opens (making it when missing) a file used only for its OS lock. Lock files are never
 /// removed: removing one another process has open would let a third lock a new file.
-pub(crate) fn open_lock(path: &Path) -> std::io::Result<File> {
+pub fn open_lock(path: &Path) -> std::io::Result<File> {
     crate::session::opening::before("lock", path)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;

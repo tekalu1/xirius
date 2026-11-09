@@ -1692,11 +1692,7 @@ impl Studio {
                     && self.browser.track_library.is_some()
                     && let Some(e) = self.browser.track_row(i).and_then(|r| r.entry)
                 {
-                    // design-lint: allow(ui-blocking-io) BRW-017: favourites are written on the song owner through io_command::handles.
-                    self.run_command(
-                        "browser.preset.favourite",
-                        serde_json::json!({"entry": e.id}),
-                    );
+                    self.browser.toggle_favourite(&e.id);
                     return true;
                 }
                 let l = self.browser.layout(g.panel);

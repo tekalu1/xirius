@@ -394,6 +394,7 @@ pub struct Browser {
     pub scroll: f32,
     /// The built-in items and what the scan found; `None` shows the built-in [`LIB`].
     items: Option<Vec<LibItem>>,
+    pub(crate) device_ids: BTreeMap<String, String>,
     /// A plugin scan is running: the list says so on top.
     pub scanning: bool,
     /// The scan was asked to stop and is ending.
@@ -700,6 +701,7 @@ impl Browser {
             playing: None,
             scroll: 0.0,
             items: None,
+            device_ids: xirius_session::places::device_names(&Catalog::default()),
             scanning: false,
             scan_stopping: false,
             scan_done: 0,
@@ -722,6 +724,7 @@ impl Browser {
 
     /// The list is the built-in items and these plugins from now on.
     pub fn set_plugins(&mut self, catalog: &Catalog) {
+        self.device_ids = xirius_session::places::device_names(catalog);
         let mut items: Vec<LibItem> = LIB
             .iter()
             .filter(|x| x.format == BUILT_IN)
@@ -791,7 +794,7 @@ impl Browser {
             .copied()
             .collect();
         if self.view() == View::Favourites {
-            items.retain(|x| self.favourites.contains(x.name) || self.has_favourite_preset(x));
+            items.retain(|x| self.is_favourite(x.name) || self.has_favourite_preset(x));
         }
         items.sort_by_key(|x| x.name);
         items
@@ -820,10 +823,8 @@ impl Browser {
     }
 
     fn has_favourite_preset(&self, item: &LibItem) -> bool {
-        self.presets_of(item).is_some_and(|(uid, all)| {
-            all.iter()
-                .any(|n| self.favourites.contains(&preset_key(uid, n)))
-        })
+        self.presets_of(item)
+            .is_some_and(|(uid, all)| all.iter().any(|n| self.is_favourite(&preset_key(uid, n))))
     }
 
     /// The presets an item has under it, and whether they show: the user opened it, or a
@@ -1034,7 +1035,7 @@ impl Browser {
             let mut rows = vec![BRow::Item {
                 item,
                 vendor_text: view != View::Vendor,
-                fav: self.favourites.contains(item.name),
+                fav: self.is_favourite(item.name),
                 selected: self.selected_item == Some(item.name),
                 presets: shown.as_ref().map(|s| s.2),
             }];
@@ -1042,7 +1043,7 @@ impl Browser {
                 rows.extend(names.into_iter().map(|name| {
                     BRow::Preset {
                         device: uid,
-                        fav: self.favourites.contains(&preset_key(uid, &name)),
+                        fav: self.is_favourite(&preset_key(uid, &name)),
                         selected: self
                             .selected_preset
                             .as_ref()

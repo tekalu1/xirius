@@ -17,6 +17,135 @@ fn args(v: serde_json::Value) -> Args {
 }
 
 #[test]
+fn independent_processes_serialize_the_same_preference_file() {
+    const WORKER: &str = "XIRIUS_PLACES_LOCK_TEST";
+    if let Some(root) = std::env::var_os(WORKER) {
+        let root = PathBuf::from(root);
+        std::fs::write(root.join("started"), "ready").unwrap();
+        run(
+            &root.join("browser.json"),
+            None,
+            "browser.favorite",
+            &args(json!({"item":"Child","on":true})),
+            false,
+        )
+        .unwrap();
+        std::fs::write(root.join("finished"), "done").unwrap();
+        return;
+    }
+    let root = folder("process-lock");
+    let file = root.path().join("browser.json");
+    let mut child = None;
+    transaction(&file, || {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "places::tests::independent_processes_serialize_the_same_preference_file",
+            ])
+            .env(WORKER, root.path());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+        }
+        child = Some(command.spawn().unwrap());
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while !root.path().join("started").exists() {
+            assert!(std::time::Instant::now() < end, "child startup watchdog");
+            std::thread::yield_now();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert!(
+            !root.path().join("finished").exists(),
+            "child bypassed transaction lock"
+        );
+        let mut prefs = load(&file)?;
+        prefs.favourites.insert("Parent".into());
+        save(&file, &prefs)
+    })
+    .unwrap();
+    let mut child = child.unwrap();
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success());
+            break;
+        }
+        assert!(std::time::Instant::now() < end, "child completion watchdog");
+        std::thread::yield_now();
+    }
+    let prefs = load(&file).unwrap();
+    assert!(prefs.favourites.contains("Parent"));
+    assert!(prefs.favourites.contains("Child"));
+}
+
+#[test]
+fn legacy_favourites_import_once_and_removal_survives_restart() {
+    let root = folder("legacy");
+    let file = root.path().join("browser.json");
+    let legacy = root.path().join(".browser-favourites.json");
+    let mut prefs = Prefs::first_run(None);
+    prefs.favourites.insert("device:delay".into());
+    save(&file, &prefs).unwrap();
+    std::fs::write(&legacy, r#"["device:sampler","preset:track"]"#).unwrap();
+    run_with_legacy(
+        &file,
+        Some(&legacy),
+        None,
+        "browser.favorite",
+        &args(json!({"item":"device:sampler","on":false})),
+        false,
+    )
+    .unwrap();
+    let first = load(&file).unwrap();
+    assert!(first.legacy_favourites_imported);
+    assert!(first.favourites.contains("device:delay"));
+    assert!(first.favourites.contains("preset:track"));
+    assert!(!first.favourites.contains("device:sampler"));
+    assert!(!first.favourites.contains("Sampler"));
+    let restarted = transaction(&file, || load_migrated(&file, Some(&legacy), true)).unwrap();
+    assert_eq!(first, restarted);
+}
+
+#[test]
+fn failed_legacy_read_is_not_marked_imported_and_can_be_retried() {
+    let root = folder("legacy-error");
+    let file = root.path().join("browser.json");
+    let legacy = root.path().join(".browser-favourites.json");
+    save(&file, &Prefs::first_run(None)).unwrap();
+    std::fs::write(&legacy, "broken").unwrap();
+    assert!(transaction(&file, || load_migrated(&file, Some(&legacy), true)).is_err());
+    assert!(!load(&file).unwrap().legacy_favourites_imported);
+    std::fs::write(&legacy, r#"["device:delay"]"#).unwrap();
+    assert!(
+        transaction(&file, || load_migrated(&file, Some(&legacy), true))
+            .unwrap()
+            .favourites
+            .contains("device:delay")
+    );
+}
+
+#[test]
+fn a_dry_run_does_not_commit_the_legacy_import() {
+    let root = folder("legacy-dry");
+    let file = root.path().join("browser.json");
+    let legacy = root.path().join(".browser-favourites.json");
+    std::fs::write(&legacy, r#"["device:delay"]"#).unwrap();
+    run_with_legacy(
+        &file,
+        Some(&legacy),
+        None,
+        "browser.favorite",
+        &args(json!({"item":"device:delay","on":false})),
+        true,
+    )
+    .unwrap();
+    assert!(!file.exists());
+    assert!(!file.with_extension("json.lock").exists());
+}
+
+#[test]
 fn a_first_run_has_the_downloads_and_music_there_are_and_three_favourites() {
     let home_tmp = folder("home");
     let home = home_tmp.path().to_path_buf();
@@ -116,7 +245,7 @@ fn the_commands_change_the_file_and_a_dry_run_does_not() {
     )
     .unwrap();
     assert_eq!(out.message, "「Delay」をお気に入りにしました");
-    assert!(load(&file).unwrap().favourites.contains("Delay"));
+    assert!(load(&file).unwrap().favourites.contains("device:delay"));
     // Without --on/--off it flips; --on keeps it on.
     run(
         &file,
@@ -130,7 +259,7 @@ fn the_commands_change_the_file_and_a_dry_run_does_not() {
     let on = json!({ "item": "Delay", "on": true });
     run(&file, None, "browser.favorite", &args(on.clone()), false).unwrap();
     run(&file, None, "browser.favorite", &args(on), false).unwrap();
-    assert!(load(&file).unwrap().favourites.contains("Delay"));
+    assert!(load(&file).unwrap().favourites.contains("device:delay"));
 
     run(
         &file,
@@ -206,4 +335,37 @@ fn the_commands_change_the_file_and_a_dry_run_does_not() {
     assert!(load(&file).unwrap().places.is_empty());
     assert!(dir.is_dir());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn ambiguous_legacy_device_names_survive_explicit_id_edits() {
+    let root = folder("duplicate-device-names");
+    let file = root.path().join("browser.json");
+    let legacy = root.path().join(".browser-favourites.json");
+    std::fs::write(&legacy, r#"["Shared","Sampler"]"#).unwrap();
+    let entries = [("a", "Shared"), ("b", "Shared"), ("c", "Sampler")].into_iter().map(|(uid, name)| {
+        serde_json::from_value(json!({"uid":uid,"name":name,"vendor":"","kind":"instrument","format":"vst3","category":"","version":"","path":"fixture.vst3"})).unwrap()
+    }).collect();
+    let catalog = xirius_plugins::Catalog {
+        entries,
+        failures: vec![],
+    };
+    for id in ["device:a", "device:c", "device:sampler"] {
+        for on in [true, false] {
+            let resolved = device_args(&args(json!({"item":id,"on":on})), &catalog);
+            run_with_legacy(
+                &file,
+                Some(&legacy),
+                None,
+                "browser.favorite",
+                &resolved,
+                false,
+            )
+            .unwrap();
+            let saved = load(&file).unwrap();
+            assert!(saved.favourites.contains("Shared"));
+            assert!(saved.favourites.contains("Sampler"));
+            assert_eq!(saved.favourites.contains(id), on);
+        }
+    }
 }
