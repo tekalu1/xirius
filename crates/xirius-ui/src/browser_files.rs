@@ -737,6 +737,7 @@ impl Browser {
             }
             forget();
             self.loc = i;
+            self.location_scroll = None;
             self.path.clear();
             self.selected_file = None;
             self.playing = None;

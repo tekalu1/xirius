@@ -376,6 +376,7 @@ pub struct Browser {
     /// The song's folder, once it is saved.
     pub song_dir: Option<PathBuf>,
     pub loc: usize,
+    pub(crate) location_scroll: Option<f32>,
     /// The folder the file list shows, from the location's folder.
     pub path: Vec<String>,
     /// Open folders of the tree, by their paths.
@@ -617,6 +618,9 @@ pub struct BrowserLayout {
     /// The 「…」 of the pool, where the view button sits on the other tabs.
     pub more: Option<Rect>,
     pub tabs: Vec<Rect>,
+    pub tab_clip: Option<Rect>,
+    pub tab_offset: f32,
+    pub tab_max_scroll: f32,
     /// The cross on the selected tab (not on the song's).
     pub remove: Option<Rect>,
     pub add: Option<Rect>,
@@ -690,6 +694,7 @@ impl Browser {
             places: Vec::new(),
             song_dir: None,
             loc: 0,
+            location_scroll: None,
             path: Vec::new(),
             open_dirs: HashSet::new(),
             selected_item: None,
@@ -1166,6 +1171,9 @@ impl Browser {
         y += button + Space::X1.px();
 
         let mut tabs = Vec::new();
+        let mut tab_clip = None;
+        let mut tab_offset = 0.0;
+        let mut tab_max_scroll = 0.0;
         let mut add = None;
         let mut remove = None;
         let mut crumbs = Vec::new();
@@ -1182,11 +1190,18 @@ impl Browser {
             y += Layout::BROWSER_ROW_H + Space::X1.px();
         }
         if files {
-            // The tabs share the width when they are too many for it; the plus is last.
+            // Preserve readable prefixes; overflowing tabs scroll before the fixed plus.
             let locs = self.locations();
-            let gap = Space::X1.px();
-            let room = (panel.w - pad * 2.0 - 24.0 - gap * locs.len() as f32).max(0.0);
-            let fair = room / locs.len() as f32;
+            let room = (panel.w - pad * 2.0 - 24.0).max(0.0);
+            let close_room = if locs.get(self.loc).is_some_and(|l| !l.song) {
+                TAB_CROSS + 4.0
+            } else {
+                0.0
+            };
+            let gap = Space::X1
+                .px()
+                .min((room - close_room).max(0.0) / locs.len() as f32);
+            let fair = (room - close_room - gap * locs.len() as f32).max(0.0) / locs.len() as f32;
             let mut x = panel.x + pad;
             for (i, l) in locs.iter().enumerate() {
                 let cross = if i == self.loc && !l.song {
@@ -1194,8 +1209,9 @@ impl Browser {
                 } else {
                     0.0
                 };
+                let reserve = if cross > 0.0 { close_room } else { 0.0 };
                 let w = (text_width(&l.name, FontSize::Caption) + pad + cross)
-                    .min(fair.max(cross + pad));
+                    .min(fair.max(Layout::BROWSER_ROW_H * 2.0) + reserve);
                 let r = Rect::new(x, y, w, Layout::BROWSER_ROW_H);
                 if cross > 0.0 {
                     remove = Some(Rect::new(
@@ -1208,7 +1224,28 @@ impl Browser {
                 tabs.push(r);
                 x += w + gap;
             }
-            add = Some(Rect::new(x, y, 24.0, Layout::BROWSER_ROW_H));
+            let clip = Rect::new(panel.x + pad, y, room, Layout::BROWSER_ROW_H);
+            tab_max_scroll = (x - clip.right()).max(0.0);
+            let automatic = tabs
+                .get(self.loc)
+                .map_or(0.0, |r| (r.right() - clip.right()).max(0.0));
+            tab_offset = self
+                .location_scroll
+                .unwrap_or(automatic)
+                .clamp(0.0, tab_max_scroll);
+            for r in &mut tabs {
+                r.x -= tab_offset;
+            }
+            if let Some(r) = &mut remove {
+                r.x -= tab_offset;
+            }
+            tab_clip = Some(clip);
+            add = Some(Rect::new(
+                x.min(clip.right()),
+                y,
+                24.0,
+                Layout::BROWSER_ROW_H,
+            ));
             y += Layout::BROWSER_ROW_H + Space::X1.px();
             if !self.path.is_empty() {
                 let mut x = panel.x + pad;
@@ -1248,6 +1285,9 @@ impl Browser {
             view,
             more,
             tabs,
+            tab_clip,
+            tab_offset,
+            tab_max_scroll,
             remove,
             add,
             crumbs,
@@ -1255,6 +1295,10 @@ impl Browser {
             rows,
             content_h: at,
         }
+    }
+
+    pub(crate) fn scroll_locations(&mut self, l: &BrowserLayout, delta: f32) {
+        self.location_scroll = Some((l.tab_offset - delta).clamp(0.0, l.tab_max_scroll));
     }
 
     pub fn max_scroll(&self, l: &BrowserLayout) -> f32 {
@@ -1285,10 +1329,11 @@ impl Browser {
         if l.more.is_some_and(|r| r.contains(x, y)) {
             return Some(BrowserHit::PoolMenu);
         }
-        if l.remove.is_some_and(|r| r.contains(x, y)) {
+        let in_tabs = l.tab_clip.is_none_or(|r| r.contains(x, y));
+        if in_tabs && l.remove.is_some_and(|r| r.contains(x, y)) {
             return Some(BrowserHit::LocRemove(self.loc));
         }
-        if let Some(i) = l.tabs.iter().position(|r| r.contains(x, y)) {
+        if in_tabs && let Some(i) = l.tabs.iter().position(|r| r.contains(x, y)) {
             return Some(BrowserHit::Loc(i));
         }
         if l.add.is_some_and(|r| r.contains(x, y)) {
@@ -1456,6 +1501,14 @@ impl Browser {
     pub fn center_of(&self, l: &BrowserLayout, hit: BrowserHit) -> Option<(f32, f32)> {
         let mid = |r: Rect| (r.x + r.w / 2.0, r.y + r.h / 2.0);
         let row = |i: usize| l.rows.get(i).map(|p| self.row_rect(l, p));
+        let tab_mid = |r: Rect| {
+            let Some(clip) = l.tab_clip else {
+                return Some(mid(r));
+            };
+            let left = r.x.max(clip.x);
+            let right = r.right().min(clip.right());
+            (left < right).then_some(((left + right) / 2.0, r.y + r.h / 2.0))
+        };
         let at = match hit {
             BrowserHit::Search => Some(mid(l.search)),
             BrowserHit::ViewButton => l.view.map(mid),
@@ -1466,8 +1519,8 @@ impl Browser {
                 .get(i)
                 .and_then(|p| self.pool_count_rect(self.row_rect(l, p), &p.row))
                 .map(mid),
-            BrowserHit::Loc(i) => l.tabs.get(i).copied().map(mid),
-            BrowserHit::LocRemove(i) => l.remove.filter(|_| i == self.loc).map(mid),
+            BrowserHit::Loc(i) => l.tabs.get(i).copied().and_then(tab_mid),
+            BrowserHit::LocRemove(i) => l.remove.filter(|_| i == self.loc).and_then(tab_mid),
             BrowserHit::LocAdd => l.add.map(mid),
             BrowserHit::Crumb(i) => l.crumbs.get(i).map(|(_, r)| mid(*r)),
             BrowserHit::Group(i) | BrowserHit::Dir(i) | BrowserHit::File(i) => row(i).map(mid),
@@ -1785,44 +1838,53 @@ fn paint_panel(
     }
     if browser.tab == RailTab::Files {
         let locs = browser.locations();
-        for (i, r) in l.tabs.iter().enumerate() {
-            let on = browser.loc == i;
-            let hot = hover == Some(BrowserHit::Loc(i));
-            if on {
-                pen.round(*r, c.sel, Radius::S);
-            } else if hot {
-                pen.round(*r, c.hover, Radius::S);
-            }
-            let text_r = match l.remove.filter(|_| on) {
-                Some(x) => Rect::new(r.x, r.y, x.x - r.x, r.h),
-                None => *r,
-            };
-            pen.mask(text_r, |pen| {
-                pen.text(
-                    &locs[i].name,
-                    FontSize::Caption,
-                    Weight::Medium,
-                    if on || hot {
-                        pen.c.ink_strong
-                    } else {
-                        pen.c.ink
-                    },
-                    text_r,
-                    Align::Center,
+        pen.mask(l.tab_clip.expect("file tabs"), |pen| {
+            for (i, r) in l.tabs.iter().enumerate() {
+                let on = browser.loc == i;
+                let hot = hover == Some(BrowserHit::Loc(i));
+                if on {
+                    pen.round(*r, c.sel, Radius::S);
+                } else if hot {
+                    pen.round(*r, c.hover, Radius::S);
+                }
+                let text_r = match l.remove.filter(|_| on) {
+                    Some(x) => Rect::new(r.x, r.y, x.x - r.x, r.h),
+                    None => *r,
+                };
+                let text_r = Rect::new(
+                    text_r.x + Space::X1.px(),
+                    text_r.y,
+                    (text_r.w - Space::X1.px() * 2.0).max(0.0),
+                    text_r.h,
                 );
-            });
-        }
-        if let Some(x) = l.remove {
-            let hot = hover == Some(BrowserHit::LocRemove(browser.loc));
-            if hot {
-                pen.round(x, c.hover, Radius::Xs);
+                pen.mask(text_r, |pen| {
+                    let label = pen.fit(&locs[i].name, FontSize::Caption, Weight::Medium, text_r.w);
+                    pen.text(
+                        &label,
+                        FontSize::Caption,
+                        Weight::Medium,
+                        if on || hot {
+                            pen.c.ink_strong
+                        } else {
+                            pen.c.ink
+                        },
+                        text_r,
+                        Align::Left,
+                    );
+                });
             }
-            pen.icon(
-                "close",
-                Rect::new(x.x + 2.0, x.y + 2.0, x.w - 4.0, x.h - 4.0),
-                if hot { c.ink_strong } else { c.ink },
-            );
-        }
+            if let Some(x) = l.remove {
+                let hot = hover == Some(BrowserHit::LocRemove(browser.loc));
+                if hot {
+                    pen.round(x, c.hover, Radius::Xs);
+                }
+                pen.icon(
+                    "close",
+                    Rect::new(x.x + 2.0, x.y + 2.0, x.w - 4.0, x.h - 4.0),
+                    if hot { c.ink_strong } else { c.ink },
+                );
+            }
+        });
         if let Some(a) = l.add {
             if hover == Some(BrowserHit::LocAdd) {
                 pen.round(a, c.hover, Radius::S);
@@ -2830,6 +2892,54 @@ mod tests {
                 assert!(r.right() <= p.right(), "{tab:?} tab {r:?}");
             }
             assert!(l.list.y > l.search.bottom());
+        }
+    }
+
+    #[test]
+    fn long_location_tabs_keep_close_and_add_inside_narrow_panels() {
+        let mut b = example();
+        b.press_rail(RailTab::Files);
+        for count in [2, 8, 24] {
+            b.places = (0..count)
+                .map(|i| xirius_session::places::Place {
+                    name: format!("{i}-Very long folder name 日本語の長いフォルダー名"),
+                    path: PathBuf::from(format!("fixtures/folder-{i}")),
+                })
+                .collect();
+            b.loc = count;
+            for width in [180.0, 240.0, 360.0, 640.0] {
+                let l = b.layout(Rect::new(40.0, 0.0, width, 700.0));
+                let add = l.add.unwrap();
+                let close = l.remove.unwrap();
+                assert!(add.right() <= l.panel.right(), "{count} {width} {add:?}");
+                assert!(close.right() <= add.x);
+                assert_eq!(close.w, TAB_CROSS);
+                assert_eq!(add.w, 24.0);
+                assert!(l.tabs[count].w - TAB_CROSS >= Layout::BROWSER_ROW_H * 2.0);
+                assert!(l.tabs[count].x >= l.tab_clip.unwrap().x);
+                assert_eq!(
+                    b.hit(&l, add.x + add.w / 2.0, add.y + add.h / 2.0),
+                    Some(BrowserHit::LocAdd)
+                );
+                assert_eq!(
+                    b.hit(&l, close.x + close.w / 2.0, close.y + close.h / 2.0),
+                    Some(BrowserHit::LocRemove(count))
+                );
+                assert!(l.tabs.windows(2).all(|r| r[0].right() <= r[1].x));
+                b.scroll_locations(&l, f32::MAX);
+                let first = b.layout(l.panel);
+                assert_eq!(first.tab_offset, 0.0);
+                if first.tabs[count].x >= first.tab_clip.unwrap().right() {
+                    assert_eq!(b.center_of(&first, BrowserHit::Loc(count)), None);
+                    assert_eq!(b.center_of(&first, BrowserHit::LocRemove(count)), None);
+                }
+                let r = first.tabs[0];
+                assert_eq!(
+                    b.hit(&first, r.x + r.w / 2.0, r.y + r.h / 2.0),
+                    Some(BrowserHit::Loc(0))
+                );
+                b.location_scroll = None;
+            }
         }
     }
 

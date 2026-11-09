@@ -144,8 +144,12 @@ impl Studio {
             if self.browser.tab == crate::browser::RailTab::Inspector {
                 return self.inspector_wheel(g, (x, y), field_px, mods.shift, control);
             }
-            self.browser.scroll -= dy;
             let l = self.browser.layout(g.panel);
+            if l.tab_clip.is_some_and(|r| r.contains(x, y)) {
+                self.browser.scroll_locations(&l, field_px);
+                return true;
+            }
+            self.browser.scroll -= dy;
             self.browser.clamp_scroll(&l);
         } else if control {
             // Ctrl + wheel over the rows: taller tracks; with Shift: the time axis.
@@ -186,6 +190,39 @@ mod tests {
     fn roll_middle(s: &Studio, g: &Geometry) -> (f32, f32) {
         let body = s.roll_ctx(g).expect("the roll").body;
         (body.x + body.w / 2.0, body.y + body.h / 2.0)
+    }
+
+    #[test]
+    fn overflowing_location_tabs_scroll_without_moving_the_file_list() {
+        let mut s = Studio::sample();
+        s.browser.open = true;
+        s.browser.press_rail(crate::browser::RailTab::Files);
+        s.browser.places = (0..8)
+            .map(|i| xirius_session::places::Place {
+                name: format!("Recorded instruments {i}"),
+                path: std::path::PathBuf::from(format!("fixtures/{i}")),
+            })
+            .collect();
+        let g = s.geometry(1280.0, 800.0);
+        let l = s.browser.layout(g.panel);
+        let clip = l.tab_clip.unwrap();
+        let at = (clip.x + 10.0, clip.y + clip.h / 2.0);
+        let before = s.browser.scroll;
+        assert!(s.window_wheel(&g, at, 0.0, -120.0, Mods::NONE, false));
+        assert!(s.browser.layout(g.panel).tab_offset > 0.0);
+        assert_eq!(s.browser.scroll, before);
+        assert!(s.window_wheel(&g, at, 120.0, 0.0, Mods::NONE, false));
+        assert_eq!(s.browser.layout(g.panel).tab_offset, 0.0);
+        s.browser.set_location(8);
+        let l = s.browser.layout(g.panel);
+        let (x, y) = s
+            .browser
+            .center_of(&l, crate::browser::BrowserHit::LocRemove(8))
+            .unwrap();
+        assert_eq!(
+            s.browser.hit(&l, x, y),
+            Some(crate::browser::BrowserHit::LocRemove(8))
+        );
     }
 
     #[test]
