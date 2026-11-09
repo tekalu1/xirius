@@ -3403,9 +3403,12 @@ used {} {}
 
     /// A checked installer in `root`'s download folder, and the key it is signed with (UI-282).
     pub(crate) fn signed_installer(root: &std::path::Path) -> (update::Installer, String) {
+        signed_installer_bytes(root, b"the installer")
+    }
+
+    fn signed_installer_bytes(root: &std::path::Path, body: &[u8]) -> (update::Installer, String) {
         use ed25519_dalek::Signer;
 
-        let body: &'static [u8] = b"the installer";
         let version = newer_version();
         let name = update::setup_name(version);
         let manifest = format!(
@@ -4002,9 +4005,14 @@ used {} {}
         s.run_command("track.add.audio", serde_json::json!({"name":"pending"}));
         let started = Started::default();
         started.arm(&mut s, &root);
-        // The installer: this test program again, as the test below's other half.
+        // Sign the exact executable that will run the installer half of this test.
+        let body = std::fs::read(std::env::current_exe().unwrap()).unwrap();
+        let (installer, key) = signed_installer_bytes(&root, &body);
+        let program = installer.path.clone();
+        s.update.key = key;
+        s.update.ready = Some(installer);
         s.update.pending = Some(update::Install {
-            program: std::env::current_exe().unwrap(),
+            program,
             args: vec![
                 "--exact".into(),
                 "about::tests::ui_282_installer_child".into(),
@@ -4080,12 +4088,12 @@ used {} {}
             JobObjectExtendedLimitInformation, SetInformationJobObject,
         };
 
-        // From a job that lets nothing leave and kills what is in it, the installer is refused
-        // (`update::KILLING_JOB`, tested in xirius-session); there is nothing to see here.
-        if !may_leave_jobs() && update::job_kills_on_close() {
-            eprintln!("この試験の環境では、インストーラーは起動を断られます（KILLING_JOB）");
-            return;
-        }
+        // Refusing an installer in a killing job is covered in xirius-session. This test
+        // must actually launch one; an unsupported runner must not be reported as a pass.
+        assert!(
+            may_leave_jobs() || !update::job_kills_on_close(),
+            "unsupported test environment: KILLING_JOB prevents installer launch; run through nextest"
+        );
         let tmp = scratch("outlives");
         let root = tmp.path();
         // A job this test runs in that lets nothing leave would keep the installer in ours as

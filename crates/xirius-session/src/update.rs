@@ -2587,8 +2587,9 @@ mod tests {
 
         fn hidden(path: &Path) -> std::process::Child {
             let mut c = std::process::Command::new(path);
-            c.args(["/c", "ping -n 20 127.0.0.1 >nul"])
-                .stdin(std::process::Stdio::null())
+            // Keep cmd alive on its own input pipe, without a grandchild process.
+            c.args(["/d", "/q"])
+                .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .creation_flags(0x0800_0000);
