@@ -21,7 +21,7 @@ use crate::midi_out::MidiOutput;
 use crate::mixer::{MeterReading, MixSpec, NodeId, Plan, PlanError, PlanShape};
 use crate::monitor::InputState;
 use crate::processor::{NoteEvent, NoteKind, ProcessSetup};
-use crate::record::{AudioInput, Capture, MAX_INPUT_CHANNELS, MidiInput, note_of};
+use crate::record::{AudioInput, Capture, MAX_INPUT_CHANNELS, MidiInput};
 use crate::stats::Stats;
 use crate::timeline::Timeline;
 use crate::tone::Tone;
@@ -105,6 +105,12 @@ pub enum Command {
         track: usize,
         kind: NoteKind,
     },
+    LiveInput {
+        track: usize,
+        input: crate::performance::Input,
+    },
+    ReleaseLiveInputs,
+    ReleaseMidiPort(usize),
     SwapPlan(Box<Plan>),
     /// The audio input read every block (`None`: none). The old one goes back through the
     /// garbage queue.
@@ -398,6 +404,7 @@ impl AudioEngine {
 
     fn let_go_capture(&mut self) {
         if let Some(mut c) = self.capture.take() {
+            c.release_inputs(&mut self.plan);
             c.finish();
             self.hand_back(Garbage::Capture(c));
         }
@@ -471,6 +478,20 @@ impl AudioEngine {
             Command::Note { track, kind } => {
                 plan.push_event(track, NoteEvent { offset: 0, kind });
             }
+            Command::LiveInput { track, input } => {
+                plan.push_live_input(track, input);
+            }
+            Command::ReleaseLiveInputs => {
+                if let Some(capture) = &mut self.capture {
+                    capture.release_inputs(plan);
+                }
+                plan.release_live_inputs();
+            }
+            Command::ReleaseMidiPort(port) => {
+                if let Some(capture) = &mut self.capture {
+                    capture.release_port(port, plan);
+                }
+            }
             Command::SwapPlan(mut new) => {
                 new.take_kept_from(plan);
                 // Notes the tracks that were not carried over still hold on a MIDI port end.
@@ -486,6 +507,9 @@ impl AudioEngine {
                 }
             }
             Command::SetMidiInput(input) => {
+                if let Some(capture) = &mut self.capture {
+                    capture.release_inputs(plan);
+                }
                 if let Some(old) = std::mem::replace(&mut self.midi_in, input) {
                     self.hand_back(Garbage::MidiInput(old));
                 }
@@ -608,8 +632,13 @@ impl AudioEngine {
                 midi.read_ports(n, &mut |offset, port, msg| {
                     if let Some(c) = capture {
                         c.midi(offset, port, msg);
-                        if let Some(kind) = note_of(msg) {
-                            c.thru_note(kind, port, plan);
+                        if let Some(kind) = crate::performance::message(msg) {
+                            c.thru_input(
+                                kind,
+                                port,
+                                crate::performance::midi_source(port, msg[0] & 15),
+                                plan,
+                            );
                         }
                     }
                 });

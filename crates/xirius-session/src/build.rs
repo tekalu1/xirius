@@ -404,6 +404,7 @@ impl Builder {
             let t = &p.tracks[id];
             if let Some(index) = kept.get(id) {
                 self.plugins.keep_built(t.inserts.iter().map(|x| x.id));
+                self.plugins.keep_pressed_track(t.id);
                 self.timed.extend(t.inserts.iter().map(|x| x.id.0));
                 tracks.push(TrackSlot::Keep(*index));
                 track(t.id, true);
@@ -898,7 +899,18 @@ impl Builder {
     ) -> Box<dyn Processor> {
         let source = self.instrument_for(t, inst, warnings);
         match inst {
-            Some(x) if x.runs() => self.timed(x.id.0, source),
+            Some(x) if x.runs() => {
+                let instrument =
+                    xirius_engine::performance::Instrument::new(x.id.0, self.timed(x.id.0, source));
+                let instrument = if x.builtin().is_none() {
+                    instrument.with_native_pedal()
+                } else {
+                    instrument
+                };
+                self.plugins.register_pressed(x.id, &instrument.pressed);
+                Box::new(instrument)
+            }
+            None => Box::new(xirius_engine::performance::Instrument::new(0, source)),
             _ => source,
         }
     }
@@ -954,7 +966,9 @@ impl Builder {
             }
             specs.push(spec);
         }
-        Box::new(MultiProc::new(node, specs))
+        let multi = MultiProc::new(node, specs);
+        self.plugins.register_multi_pressed(t.id, &multi.pressed);
+        Box::new(multi)
     }
 
     fn instrument_for(

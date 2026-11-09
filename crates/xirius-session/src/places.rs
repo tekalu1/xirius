@@ -445,13 +445,15 @@ fn run_locked(
                 return Err(CmdError::invalid("--item が空です"));
             }
             let fav = name == "browser.favorite";
+            // A name is said back as it was given; a canonical `kind:` id that
+            // resolved to nothing falls back to the generic wording (BRW-001).
             let label = args
                 .opt_str("label")
                 .or_else(|| {
                     xirius_params::find(item.strip_prefix("device:").unwrap_or(&item))
                         .map(|def| def.name)
                 })
-                .or_else(|| (!fav).then_some(item.as_str()));
+                .or_else(|| (!fav || !item.contains(':')).then_some(item.as_str()));
             let subject = label.map_or_else(String::new, |label| format!("「{label}」を"));
             let mut aliases = if fav {
                 names(args.0.get("aliases").unwrap_or(&Value::Null))

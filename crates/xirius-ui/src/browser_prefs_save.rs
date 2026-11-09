@@ -124,6 +124,7 @@ struct Writer {
 /// This read/modify/write transaction uses the dedicated writer, never a read slot or the UI.
 fn write(file: &Path, save: &Save) -> Result {
     places::transaction(file, || {
+        // design-lint: allow(ui-blocking-io) BRW-001: dedicated writer transaction; the UI only queues and polls.
         let mut current = places::load_migrated(file, save.legacy.as_deref(), true)?;
         save.intent.apply(&mut current);
         // design-lint: allow(ui-blocking-io) PRJ-031 review: worker-only browser transaction/read helper or cleanup read_view; UI only submits and polls.

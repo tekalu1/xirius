@@ -289,23 +289,25 @@ mod tests {
         let params = |s: &Studio| current(&s.project().tracks[&t]).unwrap().params.clone();
         let (before, steps) = (params(&s), s.song.steps());
 
-        let (x, y) = s.instrument_center(&g, plugin.id, Part::Knob(0)).unwrap();
-        hover(&mut s, &g, x, y);
-        assert_eq!(tip(&s, &g), Some(REASON));
-        assert!(blocked(&s, &g));
-        assert!(s.instrument_down(&g, x, y));
-        assert!(!s.instrument_moved(&g, x, y - 40.0, false));
-        assert!(!s.instrument_up());
-        assert_eq!((params(&s), s.song.steps()), (before, steps));
+        crate::device_window::with_surface(&mut s, plugin.id, |s, g| {
+            let (x, y) = s.instrument_center(g, plugin.id, Part::Knob(0)).unwrap();
+            hover(s, g, x, y);
+            assert_eq!(tip(s, g), Some(REASON));
+            assert!(blocked(s, g));
+            assert!(s.instrument_down(g, x, y));
+            assert!(!s.instrument_moved(g, x, y - 40.0, false));
+            assert!(!s.instrument_up());
+            assert_eq!((params(s), s.song.steps()), (before, steps));
 
-        // The knob next to it has no lane: it turns, in one step.
-        let (x, y) = s.instrument_center(&g, plugin.id, Part::Knob(1)).unwrap();
-        hover(&mut s, &g, x, y);
-        assert_ne!(tip(&s, &g), Some(REASON));
-        assert!(!blocked(&s, &g));
-        assert!(s.instrument_down(&g, x, y));
-        assert!(s.instrument_moved(&g, x, y - 40.0, false));
-        assert!(s.instrument_up());
-        assert_eq!(s.song.steps(), steps + 1);
+            // The knob next to it has no lane: it turns, in one step.
+            let (x, y) = s.instrument_center(g, plugin.id, Part::Knob(1)).unwrap();
+            hover(s, g, x, y);
+            assert_ne!(tip(s, g), Some(REASON));
+            assert!(!blocked(s, g));
+            assert!(s.instrument_down(g, x, y));
+            assert!(s.instrument_moved(g, x, y - 40.0, false));
+            assert!(s.instrument_up());
+            assert_eq!(s.song.steps(), steps + 1);
+        });
     }
 }

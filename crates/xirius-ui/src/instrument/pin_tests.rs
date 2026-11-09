@@ -37,7 +37,7 @@ fn shown(s: &Studio) -> Vec<PluginId> {
 }
 
 fn press(s: &mut Studio, _g: &Geometry, id: PluginId, part: Part) {
-    crate::device_window::test_surface(s, id, |s, local| {
+    crate::device_window::with_surface(s, id, |s, local| {
         let (x, y) = s.instrument_center(local, id, part).expect("in sight");
         assert!(s.instrument_down(local, x, y));
     });

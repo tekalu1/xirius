@@ -2677,7 +2677,7 @@ pub fn run(opts: Options) {
                                 if !window.is_window_active() {
                                     this.last_caps = None;
                                     // The release will not come here (M-ui-3).
-                                    if this.studio.borrow_mut().device_focus_lost() {
+                                    if this.studio.borrow_mut().main_focus_lost() {
                                         cx.notify();
                                     }
                                 }

@@ -404,6 +404,7 @@ impl crate::browser::Browser {
                 Action::Load => {
                     let file = path.as_deref().expect("preference path");
                     places::transaction(file, || {
+                        // design-lint: allow(ui-blocking-io) BRW-001: worker-only prefs read; the UI only submits and polls.
                         places::load_migrated(file, legacy.as_deref(), true)
                     })
                 }

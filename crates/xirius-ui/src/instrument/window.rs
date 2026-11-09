@@ -218,7 +218,7 @@ pub(crate) enum Grab {
 }
 
 impl Grab {
-    fn plugin(&self) -> PluginId {
+    pub(crate) fn plugin(&self) -> PluginId {
         match *self {
             Grab::Move { plugin, .. }
             | Grab::Size { plugin, .. }
@@ -288,6 +288,7 @@ pub enum Part {
 pub(crate) struct Held {
     pub plugin: PluginId,
     pub track: TrackId,
+    pub direct: bool,
     /// The key's own note, as it lights.
     pub pitch: u8,
     /// The note sent, after the track's transpose: `None` when that took it off the keyboard.
@@ -345,6 +346,10 @@ impl Analyser {
 /// The open windows, the last on top.
 #[derive(Debug, Default)]
 pub struct Windows {
+    pub(crate) keyboard_drag: Option<(PluginId, play::ScrollDrag)>,
+    pub(crate) midi_pressed: HashMap<PluginId, Vec<u8>>,
+    pub(crate) multi_pressed: HashMap<TrackId, Vec<u8>>,
+    pub(crate) keyboard_scroll: HashMap<PluginId, f32>,
     pub(crate) positions: crate::device_window::Positions,
     /// A detached view still owns the same Win and PluginId; only its surface changes.
     pub(crate) detached: std::collections::HashSet<PluginId>,
@@ -640,6 +645,17 @@ impl Windows {
             Some(plugin),
             w.map_or((0, 0, None), |w| (w.pick, w.layer, w.bank)),
         );
+        if let Some(keyboard) = &mut b.keyboard {
+            *keyboard = play::Keyboard::new(
+                keyboard.view,
+                self.keyboard_scroll
+                    .get(&plugin.id)
+                    .copied()
+                    .unwrap_or((14.0 * play::Keyboard::PITCH - keyboard.view.w / 2.0).max(0.0)),
+            );
+            b.keys = keyboard.keys.clone();
+            crate::device::sampler::place_zones(&mut b, &plugin.samples, w.map_or(0, |w| w.pick));
+        }
         // The edge held or moved by the keys shows it.
         for s in &mut b.spots {
             if let layout::Mark::Edge(j) = s.mark {
@@ -880,7 +896,7 @@ impl Windows {
             if let Some(n) = sampler::spot_at(&b, x, y) {
                 return Some((i, Part::Spot(n)));
             }
-            if let Some(pitch) = play::key_at(&b.keys, x, y) {
+            if let Some(pitch) = b.keyboard.as_ref().and_then(|k| k.key_at(x, y)) {
                 return Some((i, Part::Key(pitch)));
             }
             if let Some(pitch) = play::key_at(&b.pads, x, y) {
@@ -1500,6 +1516,26 @@ impl Studio {
     ) -> bool {
         self.instruments.prune(&self.project());
         let p = self.auto_shown();
+        for (i, w) in self.instruments.open.iter().enumerate() {
+            if self.instruments.detached_target != Some(w.plugin) {
+                continue;
+            }
+            let Some((_, plugin, def)) = live(&p, w) else {
+                continue;
+            };
+            let body = self
+                .instruments
+                .body(self.instruments.frame(i, g), plugin, def);
+            if let Some(drag) = body.keyboard.and_then(|k| k.scroll_press(x, y)) {
+                let id = w.plugin;
+                self.window_note_off();
+                self.instruments
+                    .keyboard_scroll
+                    .insert(id, drag.position(x));
+                self.instruments.keyboard_drag = Some((id, drag));
+                return true;
+            }
+        }
         let Some((i, part)) = self.instruments.at(&p, g, x, y) else {
             self.device_blur();
             return false;
@@ -1743,6 +1779,24 @@ impl Studio {
 
     /// The pointer moves while a window or a knob is held. `fine` turns slower.
     pub fn instrument_moved(&mut self, g: &Geometry, x: f32, y: f32, fine: bool) -> bool {
+        if self.instruments.detached_target.is_some_and(|target| {
+            self.instruments
+                .grab
+                .as_ref()
+                .is_some_and(|grab| grab.plugin() != target)
+                || self
+                    .instruments
+                    .keyboard_drag
+                    .is_some_and(|(id, _)| id != target)
+        }) {
+            return false;
+        }
+        if let Some((id, drag)) = self.instruments.keyboard_drag {
+            self.instruments
+                .keyboard_scroll
+                .insert(id, drag.position(x));
+            return true;
+        }
         match self.instruments.grab {
             Some(Grab::Move {
                 plugin,
@@ -1851,13 +1905,50 @@ impl Studio {
                 true
             }
             Some(Grab::Note { plugin, pitch }) => {
-                // Off the key or pad held, its note ends; coming back does not play it again.
                 let p = self.auto_shown();
-                let on = self.instruments.at(&p, g, x, y).is_some_and(|(i, part)| {
-                    self.instruments.open[i].plugin == plugin
-                        && matches!(part, Part::Key(k) | Part::Pad(k) if k == pitch)
+                let next = self.instruments.at(&p, g, x, y).and_then(|(i, part)| {
+                    (self.instruments.open[i].plugin == plugin).then_some(part)
                 });
-                if !on {
+                if let Some(Part::Key(next)) = next {
+                    // Once the pointer has left the keyboard, a new press is required.
+                    if next != pitch
+                        && self.instruments.note.is_some()
+                        && let Some(w) = self
+                            .instruments
+                            .open
+                            .iter()
+                            .find(|w| w.plugin == plugin)
+                            .copied()
+                    {
+                        self.window_note_on(w, next, super::keys::VELOCITY);
+                    }
+                } else if matches!(next, Some(Part::Pad(k)) if k == pitch) {
+                    // A held pad remains on until its pointer leaves it.
+                } else if self
+                    .instruments
+                    .open
+                    .iter()
+                    .find(|w| w.plugin == plugin)
+                    .is_some_and(|w| {
+                        let Some((_, x0, def)) = live(&p, w) else {
+                            return false;
+                        };
+                        if def.uid != "sampler" {
+                            return false;
+                        }
+                        let i = self
+                            .instruments
+                            .open
+                            .iter()
+                            .position(|v| v.plugin == plugin)
+                            .unwrap();
+                        let body = self.instruments.body(self.instruments.frame(i, g), x0, def);
+                        body.keyboard
+                            .is_some_and(|k| k.view.contains(x, y) && y < k.view.y + 92.0)
+                    })
+                {
+                    // A one-pixel key seam is still inside the keyboard.
+                } else {
                     self.window_note_off();
                 }
                 true
@@ -1871,6 +1962,21 @@ impl Studio {
     /// song. A knob or a point sounds its value again, a window goes back to its place and
     /// size, a note stops.
     pub(crate) fn instrument_cancel(&mut self) -> bool {
+        if self.instruments.detached_target.is_some_and(|target| {
+            self.instruments
+                .grab
+                .as_ref()
+                .is_some_and(|grab| grab.plugin() != target)
+                || self
+                    .instruments
+                    .keyboard_drag
+                    .is_some_and(|(id, _)| id != target)
+        }) {
+            return false;
+        }
+        if self.instruments.keyboard_drag.take().is_some() {
+            return true;
+        }
         let Some(grab) = self.instruments.grab.take() else {
             return false;
         };
@@ -1896,6 +2002,21 @@ impl Studio {
     }
 
     pub fn instrument_up(&mut self) -> bool {
+        if self.instruments.detached_target.is_some_and(|target| {
+            self.instruments
+                .grab
+                .as_ref()
+                .is_some_and(|grab| grab.plugin() != target)
+                || self
+                    .instruments
+                    .keyboard_drag
+                    .is_some_and(|(id, _)| id != target)
+        }) {
+            return false;
+        }
+        if self.instruments.keyboard_drag.take().is_some() {
+            return true;
+        }
         let Some(grab) = self.instruments.grab.take() else {
             return false;
         };
@@ -1996,6 +2117,22 @@ impl Studio {
         };
         let plugins = host.plugins();
         let p = self.project();
+        let pressed: HashMap<_, _> = self
+            .instruments
+            .open
+            .iter()
+            .map(|w| (w.plugin, plugins.pressed_keys(w.plugin)))
+            .collect();
+        let multi_pressed: HashMap<_, _> = self
+            .channel
+            .as_ref()
+            .map(|w| (w.track, plugins.multi_pressed_keys(w.track)))
+            .into_iter()
+            .collect();
+        let keys_changed = self.instruments.midi_pressed != pressed
+            || self.instruments.multi_pressed != multi_pressed;
+        self.instruments.midi_pressed = pressed;
+        self.instruments.multi_pressed = multi_pressed;
         let shown = self
             .instruments
             .poll_with(&p, rate, now, |id| plugins.stock_probe(id));
@@ -2005,7 +2142,7 @@ impl Studio {
             .into_iter()
             .filter_map(|id| plugins.stock_probe(id).map(|probe| (id, probe)))
             .collect();
-        shown | self.poll_gr(&p, &probes) | lit
+        shown | self.poll_gr(&p, &probes) | lit | keys_changed
     }
 
     /// A key or a pad of the window `w` was pressed: its note plays on the window's track as
@@ -2015,12 +2152,26 @@ impl Studio {
         let p = self.project();
         let kind = NoteKind::On { pitch, velocity };
         let heard = crate::midi_live::heard(&p, w.track, kind);
+        let direct = live(&p, &w).is_some_and(|(_, _, def)| def.uid == "sampler");
         if let Some(kind) = heard {
-            self.live_note(&p, w.track, kind);
+            if direct {
+                self.owned_note(
+                    &p,
+                    w.track,
+                    xirius_engine::performance::Input {
+                        source: xirius_engine::performance::MOUSE | w.plugin.0,
+                        plugin: Some(w.plugin.0),
+                        kind,
+                    },
+                );
+            } else {
+                self.live_note(&p, w.track, kind);
+            }
         }
         self.instruments.note = Some(Held {
             plugin: w.plugin,
             track: w.track,
+            direct,
             pitch,
             heard: match heard {
                 Some(NoteKind::On { pitch, .. }) => Some(pitch),
@@ -2040,7 +2191,19 @@ impl Studio {
         };
         if let Some(pitch) = held.heard {
             let p = self.project();
-            self.live_note(&p, held.track, NoteKind::Off { pitch });
+            if held.direct {
+                self.owned_note(
+                    &p,
+                    held.track,
+                    xirius_engine::performance::Input {
+                        source: xirius_engine::performance::MOUSE | held.plugin.0,
+                        plugin: Some(held.plugin.0),
+                        kind: NoteKind::Off { pitch },
+                    },
+                );
+            } else {
+                self.live_note(&p, held.track, NoteKind::Off { pitch });
+            }
         }
         true
     }
@@ -2439,7 +2602,15 @@ fn paint_window(
             Some(Part::Pad(k)) => Some(k),
             _ => None,
         };
-        play::paint_keys(pen, &body.keys, down, play::key_names(body.w));
+        if let Some(keyboard) = &body.keyboard {
+            let mut pressed = ins
+                .midi_pressed
+                .get(&plugin.id)
+                .cloned()
+                .unwrap_or_default();
+            pressed.extend(down);
+            keyboard.paint(pen, &pressed);
+        }
         let lit = ins.lit_pads(plugin.id, std::time::Instant::now());
         play::paint_pads(pen, &body.pads, &body.spots, &lit, pad);
         let spot = match hot {

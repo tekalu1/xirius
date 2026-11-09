@@ -770,10 +770,19 @@ pub struct OpenTime {
     pub apart: bool,
 }
 
+/// Exactly one snapshot per instrument/track in a selected graph, without owning its audio.
+#[derive(Clone, Default)]
+struct PressedBindings {
+    instruments: HashMap<PluginId, std::sync::Weak<xirius_engine::performance::Pressed>>,
+    multis: HashMap<xirius_core::id::TrackId, std::sync::Weak<xirius_engine::performance::Pressed>>,
+}
+
 /// Opens plugins for a build. Bundles stay loaded between builds, so a rebuild after an edit
 /// does not load the DLL again; a plugin in a host process keeps its link across builds.
 #[derive(Default)]
 pub struct PluginLoader {
+    pressed: PressedBindings,
+    building_pressed: Option<PressedBindings>,
     editor_contexts: Arc<Mutex<HashMap<PluginId, EditorContext>>>,
     intents: HashMap<PluginId, Option<Plugin>>,
     pending_owned: HashMap<PluginId, PendingOwned>,
@@ -989,7 +998,9 @@ impl PluginLoader {
         let (dir, rate, tempo, process_setup) =
             (self.dir.clone(), self.rate, self.tempo, self.process_setup);
         let clap_names = self.clap_names.clone();
+        let pressed = self.pressed.clone();
         Ok(move || Self {
+            pressed,
             editor_contexts,
             intents,
             threaded_local: true,
@@ -1057,6 +1068,59 @@ impl PluginLoader {
         }
     }
 
+    pub fn pressed_keys(&self, id: PluginId) -> Vec<u8> {
+        self.pressed
+            .instruments
+            .get(&id)
+            .and_then(std::sync::Weak::upgrade)
+            .map_or_else(Vec::new, |s| s.notes())
+    }
+
+    pub fn multi_pressed_keys(&self, track: xirius_core::id::TrackId) -> Vec<u8> {
+        self.pressed
+            .multis
+            .get(&track)
+            .and_then(std::sync::Weak::upgrade)
+            .map_or_else(Vec::new, |s| s.notes())
+    }
+
+    pub(crate) fn register_pressed(
+        &mut self,
+        id: PluginId,
+        state: &Arc<xirius_engine::performance::Pressed>,
+    ) {
+        self.building_pressed
+            .get_or_insert_with(PressedBindings::default)
+            .instruments
+            .insert(id, Arc::downgrade(state));
+    }
+
+    pub(crate) fn register_multi_pressed(
+        &mut self,
+        track: xirius_core::id::TrackId,
+        state: &Arc<xirius_engine::performance::Pressed>,
+    ) {
+        self.building_pressed
+            .get_or_insert_with(PressedBindings::default)
+            .multis
+            .insert(track, Arc::downgrade(state));
+    }
+
+    pub(crate) fn keep_pressed_track(&mut self, track: xirius_core::id::TrackId) {
+        if let Some(state) = self.pressed.multis.get(&track) {
+            self.building_pressed
+                .get_or_insert_with(PressedBindings::default)
+                .multis
+                .insert(track, state.clone());
+        }
+    }
+
+    fn promote_pressed(&mut self) {
+        if let Some(pressed) = self.building_pressed.take() {
+            self.pressed = pressed;
+        }
+    }
+
     /// The catalogue to look plugins up in. Without one, the standard cache is read when a
     /// plugin is first needed.
     pub fn set_catalog(&mut self, catalog: Option<Arc<Catalog>>) {
@@ -1092,6 +1156,7 @@ impl PluginLoader {
 
     /// Called when a build starts.
     pub fn begin_build(&mut self) {
+        self.building_pressed = Some(PressedBindings::default());
         self.fresh.clear();
         self.fresh_stock.clear();
         self.fresh_locals.clear();
@@ -1102,6 +1167,12 @@ impl PluginLoader {
     /// meters without opening a replacement or taking another audio lease.
     pub(crate) fn keep_built(&mut self, ids: impl IntoIterator<Item = PluginId>) {
         for id in ids {
+            if let Some(state) = self.pressed.instruments.get(&id) {
+                self.building_pressed
+                    .get_or_insert_with(PressedBindings::default)
+                    .instruments
+                    .insert(id, state.clone());
+            }
             if self.remotes.contains_key(&id) {
                 self.fresh.push(id);
             }
@@ -3274,6 +3345,7 @@ impl PluginLoader {
     /// this process has it opened by the screen ([`PluginLoader::window_moved_in`]) once the
     /// old host has let go ([`PluginLoader::settle_following`]).
     pub fn promote_opened(&mut self) {
+        self.promote_pressed();
         for local in self.locals.values() {
             if let Some(owned) = &local.owned {
                 owned.resume_edits();
@@ -3325,6 +3397,7 @@ impl PluginLoader {
     /// instances it took over from are let go of now (ENG-071). A builder used for several
     /// renders, as for the stems, would keep the first render's instances otherwise.
     pub fn built_offline(&mut self) {
+        self.promote_pressed();
         self.leaving.clear();
     }
 
@@ -3401,6 +3474,65 @@ impl PluginLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pressed_bindings_follow_kept_tracks_without_unioning_candidates_or_retired_graphs() {
+        use xirius_core::id::TrackId;
+        use xirius_engine::performance::Pressed;
+        let id = PluginId(7);
+        let track = TrackId(8);
+        let old = Arc::new(Pressed::default());
+        old.publish([60].into_iter());
+        let old_multi = Arc::new(Pressed::default());
+        old_multi.publish([48].into_iter());
+        let mut active = PluginLoader::default();
+        active.begin_build();
+        active.register_pressed(id, &old);
+        active.register_multi_pressed(track, &old_multi);
+        active.promote_opened();
+
+        let mut kept = active.live_copy().unwrap()();
+        kept.begin_build();
+        kept.keep_built([id]);
+        kept.keep_pressed_track(track);
+        assert_eq!(kept.pressed_keys(id), vec![60]);
+        old.publish([60, 62].into_iter());
+        assert_eq!(active.pressed_keys(id), vec![60, 62]);
+        kept.promote_opened();
+        assert_eq!(kept.pressed_keys(id), vec![60, 62]);
+        assert_eq!(kept.multi_pressed_keys(track), vec![48]);
+
+        let replacement = Arc::new(Pressed::default());
+        replacement.publish([72].into_iter());
+        let replacement_multi = Arc::new(Pressed::default());
+        replacement_multi.publish([55].into_iter());
+        let mut discarded = kept.live_copy().unwrap()();
+        discarded.begin_build();
+        discarded.register_pressed(id, &replacement);
+        discarded.register_multi_pressed(track, &replacement_multi);
+        assert_eq!(
+            discarded.pressed_keys(id),
+            vec![60, 62],
+            "candidate is not active yet"
+        );
+        drop(discarded);
+        assert_eq!(kept.pressed_keys(id), vec![60, 62]);
+
+        kept.begin_build();
+        kept.register_pressed(id, &replacement);
+        kept.register_multi_pressed(track, &replacement_multi);
+        kept.promote_opened();
+        assert_eq!(kept.pressed_keys(id), vec![72]);
+        assert_eq!(kept.multi_pressed_keys(track), vec![55]);
+        old.publish([63].into_iter());
+        old_multi.publish([49].into_iter());
+        assert_eq!(
+            kept.pressed_keys(id),
+            vec![72],
+            "retired graph is still alive but excluded"
+        );
+        assert_eq!(kept.multi_pressed_keys(track), vec![55]);
+    }
 
     #[test]
     fn editor_context_follows_background_rebuilds_without_opening_a_view() {

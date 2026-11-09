@@ -74,6 +74,16 @@ pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry, over: bool) {
     if let Some(k) = &v.keys {
         paint_keys(pen, w, t, k);
     }
+    if let Some(k) = &v.keyboard {
+        let mut pressed = s
+            .instruments
+            .multi_pressed
+            .get(&w.track)
+            .cloned()
+            .unwrap_or_default();
+        pressed.extend(w.mouse_note.map(|n| n.0));
+        k.paint(pen, &pressed);
+    }
 }
 
 /// The key range figure: the chosen layer's header, the boxes over the map and the keyboard.

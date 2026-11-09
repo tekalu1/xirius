@@ -313,7 +313,9 @@ impl Windows {
             move |window, cx| {
                 let closing = shared.clone();
                 window.on_window_should_close(cx, move |_, _| {
-                    closing.borrow_mut().channel = None;
+                    let mut s = closing.borrow_mut();
+                    s.channel_note_off();
+                    s.channel = None;
                     true
                 });
                 let focus = cx.focus_handle();
@@ -442,8 +444,9 @@ fn restore(s: &mut Studio, old: (Option<PluginId>, bool, bool)) {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn test_surface<R>(
+/// Runs `f` with the Studio scoped to `id`'s independent surface: the pointer paths
+/// then see its frame exactly as the real `DeviceWindow`'s render does.
+pub(crate) fn with_surface<R>(
     s: &mut Studio,
     id: PluginId,
     f: impl FnOnce(&mut Studio, &Geometry) -> R,
@@ -477,8 +480,17 @@ impl DeviceWindow {
                 cx.notify();
                 return;
             }
-            if !window.is_window_active() && view.studio.borrow_mut().device_focus_lost() {
-                cx.refresh_windows();
+            if !window.is_window_active() {
+                let changed = view.with(window, |s, _| {
+                    if s.instruments.detached_channel {
+                        s.channel_note_off()
+                    } else {
+                        s.device_focus_lost()
+                    }
+                });
+                if changed {
+                    cx.refresh_windows();
+                }
             }
         });
         let bounds = cx.observe_window_bounds(window, move |view, window, cx| {
@@ -758,8 +770,9 @@ impl Render for DeviceWindow {
                     this.with(window, |s, g| {
                         if s.instruments.detached_channel {
                             s.channel_up(g);
+                        } else {
+                            s.instrument_up();
                         }
-                        s.instrument_up();
                     });
                     cx.refresh_windows();
                 }),
@@ -770,8 +783,9 @@ impl Render for DeviceWindow {
                     this.with(window, |s, g| {
                         if s.instruments.detached_channel {
                             s.channel_up(g);
+                        } else {
+                            s.instrument_up();
                         }
-                        s.instrument_up();
                     });
                     cx.refresh_windows();
                 }),
@@ -828,7 +842,11 @@ impl Render for DeviceWindow {
                             g,
                             x,
                             y,
-                            f64::from(f32::from(delta.y)) / 20.0,
+                            f64::from(if f32::from(delta.x).abs() > f32::from(delta.y).abs() {
+                                f32::from(delta.x)
+                            } else {
+                                f32::from(delta.y)
+                            }) / 20.0,
                             e.modifiers.shift,
                         );
                     }
@@ -852,6 +870,17 @@ fn device_key_event(
         return;
     }
     let picking = s.ime_pick_field().is_some();
+    if !picking
+        && s.popup.is_none()
+        && k.key == "escape"
+        && s.instruments.detached_channel
+        && s.channel
+            .as_ref()
+            .is_some_and(|w| w.mouse_note.is_some() || w.keyboard_drag.is_some())
+    {
+        s.channel_note_off();
+        return;
+    }
     // Empty devices have no parameter stop; Tab still belongs to this window.
     if k.key == "tab" && !m.ctrl && !m.alt {
         return;

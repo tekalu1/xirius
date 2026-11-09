@@ -176,3 +176,12 @@ fixture は完了を待ってから画面を検査する。集計の `run` 1件�
 名前・新しいフォルダーの入力は既存の Ask / Field / ImeTarget を共有する。
 `every_session_command_the_screen_sends_reaches_the_owner` と共通索引・保存・
 適用の試験で入口を確認し、`ui-io-audit.tsv` を更新した。
+
+### 設定の移行読み込みと独立窓のプリセット境界（BRW-001 / UI-337、2026-11-09）
+
+`places::load` は移行を含む `places::load_migrated` に変わり、呼び名を監査名へ
+加えて `browser_prefs_io.rs`・`browser_prefs_save.rs` の両行を `places :: load_migrated`
+として集計した。経路・直列化・worker への引渡しは変わらない。
+`context/browser.rs`・`studio.rs` で減った `run_command` と `instrument/window.rs` で
+増えた 1 件は、プリセット一覧・ファイルの読み込みを独立窓の経路に集めた結果であり、
+いずれも既存の守られた UI dispatcher と所有者への引渡しである。

@@ -89,13 +89,7 @@ impl LayerProc {
 
     /// Whether the note `pitch` at `velocity` (0..=1) is this layer's, and as which note.
     fn takes(&self, pitch: u8, velocity: f32) -> Option<u8> {
-        let v = ((velocity * 127.0).round() as i32).clamp(1, 127) as u8;
-        let keys = self.keys.0..=self.keys.1;
-        let vels = self.velocity.0..=self.velocity.1;
-        if !keys.contains(&pitch) || !vels.contains(&v) {
-            return None;
-        }
-        self.moved(pitch)
+        layer_pitch(self.keys, self.velocity, self.transpose, pitch, velocity)
     }
 
     /// `pitch` moved by the transpose; `None` when that leaves 0..=127.
@@ -119,18 +113,40 @@ impl LayerProc {
     }
 }
 
+/// The same range and transpose decision used by the engine and pressed-key display.
+pub fn layer_pitch(
+    keys: (u8, u8),
+    velocities: (u8, u8),
+    transpose: i8,
+    pitch: u8,
+    velocity: f32,
+) -> Option<u8> {
+    let v = ((velocity * 127.0).round() as i32).clamp(1, 127) as u8;
+    let keys = keys.0..=keys.1;
+    let vels = velocities.0..=velocities.1;
+    if !keys.contains(&pitch) || !vels.contains(&v) {
+        return None;
+    }
+    u8::try_from(i16::from(pitch) + i16::from(transpose))
+        .ok()
+        .filter(|p| *p <= 127)
+}
+
 /// The multi-instrument source.
 pub struct MultiProc {
+    pub pressed: Arc<crate::performance::Pressed>,
     node: u64,
     layers: Vec<LayerProc>,
     /// For each note played in, the layers its note-on reached (bit `i`: layer `i`).
     held: [u64; 128],
+    live_held: Vec<(u64, u8, u64)>,
     latency: u32,
 }
 
 impl MultiProc {
     pub fn new(node: u64, layers: Vec<LayerSpec>) -> MultiProc {
         MultiProc {
+            pressed: Arc::default(),
             node,
             layers: layers
                 .into_iter()
@@ -157,6 +173,7 @@ impl MultiProc {
                 })
                 .collect(),
             held: [0; 128],
+            live_held: Vec::with_capacity(EVENTS),
             latency: 0,
         }
     }
@@ -249,6 +266,78 @@ impl MultiProc {
 }
 
 impl Processor for MultiProc {
+    fn release_live_inputs(&mut self) {
+        self.live_held.clear();
+        self.pressed.publish(std::iter::empty());
+        for layer in &mut self.layers {
+            layer.instrument.release_live_inputs();
+        }
+    }
+    fn live_input(&mut self, input: crate::performance::Input) -> bool {
+        if input.plugin.is_some() {
+            return self
+                .layers
+                .iter_mut()
+                .any(|l| l.instrument.live_input(input));
+        }
+        match input.kind {
+            NoteKind::On { pitch, velocity } => {
+                if self.live_held.len() == self.live_held.capacity() {
+                    // Reset the bounded input history before accepting another press:
+                    // an untracked on would let its off consume an older press.
+                    self.release_live_inputs();
+                }
+                let mut reached = 0;
+                for (i, l) in self.layers.iter_mut().enumerate() {
+                    if let Some(pitch) = l.takes(pitch, velocity)
+                        && l.instrument.live_input(crate::performance::Input {
+                            kind: NoteKind::On { pitch, velocity },
+                            ..input
+                        })
+                    {
+                        reached |= 1 << i;
+                    }
+                }
+                self.live_held.push((input.source, pitch, reached));
+            }
+            NoteKind::Off { pitch } => {
+                let Some(at) = self
+                    .live_held
+                    .iter()
+                    .rposition(|h| h.0 == input.source && h.1 == pitch)
+                else {
+                    return true;
+                };
+                let (_, _, reached) = self.live_held.swap_remove(at);
+                for (i, l) in self.layers.iter_mut().enumerate() {
+                    if reached & (1 << i) != 0
+                        && let Some(pitch) = l.moved(pitch)
+                    {
+                        l.instrument.live_input(crate::performance::Input {
+                            kind: NoteKind::Off { pitch },
+                            ..input
+                        });
+                    }
+                }
+            }
+            NoteKind::Control { number, .. } => {
+                if matches!(number, 120 | 123) {
+                    self.live_held.retain(|h| h.0 != input.source);
+                }
+                for l in &mut self.layers {
+                    l.instrument.live_input(input);
+                }
+            }
+        }
+        self.pressed.publish(
+            self.live_held
+                .iter()
+                .filter(|h| h.0 != 0 && h.0 & crate::performance::MOUSE == 0)
+                .map(|h| h.1),
+        );
+        true
+    }
+
     fn name(&self) -> &str {
         "Multi Instrument"
     }

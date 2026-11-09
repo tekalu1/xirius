@@ -47,6 +47,63 @@ fn body(s: &Studio, g: &Geometry, t: TrackId) -> Body {
     s.instruments.body(r, &x, def)
 }
 
+#[test]
+fn scrolled_zone_faces_hits_and_drop_strip_stay_in_the_keyboard_viewport() {
+    let (mut s, g, t, id) = window("Sampler");
+    add(
+        &mut s,
+        id,
+        &["Sub C0.wav", "Piano C2.wav", "Piano C4.wav", "Bell C8.wav"],
+    );
+    let x = plugin(&s, t);
+    let def = s.instruments.def_of(&x).unwrap();
+    for width in [520.0, 780.0, 1280.0] {
+        s.instruments.open[0].body = layout::size_of(def, width, Some(&x));
+        for scroll in [0.0, 10000.0] {
+            s.instruments.keyboard_scroll.insert(id, scroll);
+            let b = body(&s, &g, t);
+            let view = b.keyboard.as_ref().unwrap().view;
+            let strip = sampler::zone_strip(&b).unwrap();
+            assert_eq!((strip.x, strip.w), (view.x, view.w));
+            for f in 0..4 {
+                let spot = b.spots.iter().find(|s| s.mark == Mark::Zone(f)).unwrap();
+                assert!(spot.r.x >= view.x && spot.r.right() <= view.right() + 0.01);
+                assert!(spot.r.w >= 4.0);
+                let at = (spot.r.x + spot.r.w / 2.0, spot.r.y + spot.r.h / 2.0);
+                assert_eq!(
+                    sampler::spot_at(&b, at.0, at.1).map(|i| b.spots[i].mark),
+                    Some(Mark::Zone(f))
+                );
+                let (_, drop) = sampler::drop_on(&b, false, strip, at.0, at.1).unwrap();
+                assert_eq!(drop, strip);
+            }
+            assert_ne!(
+                sampler::drop_on(&b, false, strip, strip.right() + 1.0, strip.y + 1.0)
+                    .unwrap()
+                    .0,
+                sampler::DropOn::Zones
+            );
+        }
+    }
+}
+
+#[test]
+fn cancelling_another_device_does_not_take_the_keyboard_scroll_drag() {
+    let (mut s, g, t, id) = window("Sampler");
+    add(&mut s, id, &["Piano C3.wav"]);
+    let b = body(&s, &g, t);
+    let keyboard = b.keyboard.unwrap();
+    let thumb = keyboard.thumb();
+    let drag = keyboard.scroll_press(thumb.x + 1.0, thumb.y + 1.0).unwrap();
+    s.instruments.keyboard_drag = Some((id, drag));
+    s.instruments.detached_target = Some(PluginId(id.0 + 100));
+    assert!(!s.instrument_cancel());
+    assert!(s.instruments.keyboard_drag.is_some());
+    s.instruments.detached_target = Some(id);
+    assert!(s.instrument_cancel());
+    assert!(s.instruments.keyboard_drag.is_none());
+}
+
 /// The first spot that is `mark`.
 fn spot(s: &Studio, g: &Geometry, t: TrackId, mark: Mark) -> usize {
     body(s, g, t)
@@ -193,10 +250,10 @@ fn n3_smp_1_zones_that_meet_at_a_black_key_meet_on_its_line() {
     let b = body(&s, &g, t);
     let zone = |f: usize| b.spots[spot(&s, &g, t, Mark::Zone(f))].r;
     let (sub, low, high, bell) = (zone(0), zone(1), zone(2), zone(3));
-    let (first, last) = (b.keys[0].r, b.keys.iter().rfind(|k| !k.black).unwrap().r);
-    assert!((sub.x - first.x).abs() < 0.01 && sub.w < 8.0, "{sub:?}");
+    let view = b.keyboard.as_ref().unwrap().view;
+    assert!((sub.x - view.x).abs() < 0.01 && sub.w < 8.0, "{sub:?}");
     assert!(
-        (bell.right() - last.right()).abs() < 0.01 && bell.w < 8.0,
+        (bell.right() - view.right()).abs() < 0.01 && bell.w < 8.0,
         "{bell:?}"
     );
     assert!(sub.right() <= low.x && low.right() <= high.x && high.right() <= bell.x);
@@ -882,7 +939,7 @@ fn a_velocity_edge_cannot_be_edited_from_another_device_surface() {
     assert!(s.field_keys(&g, "left", None, Mods::NONE));
     let before = ranges(&s, t, 0);
     s.device_focus_lost();
-    crate::device_window::test_surface(&mut s, eq, |s, local| {
+    crate::device_window::with_surface(&mut s, eq, |s, local| {
         assert!(!s.field_keys(local, "right", None, Mods::NONE));
     });
     assert_eq!(ranges(&s, t, 0), before);
@@ -1010,10 +1067,8 @@ fn zones_past_the_keys_right_pack_back_and_the_last_keeps_its_width() {
     let files = ["A C7.wav", "B D7.wav", "C E7.wav", "D F7.wav", "E G7.wav"];
     add(&mut s, id, &files);
     let b = body(&s, &g, t);
-    let (left, right) = (
-        b.keys[0].r.x,
-        b.keys.iter().rfind(|k| !k.black).unwrap().r.right(),
-    );
+    let view = b.keyboard.as_ref().unwrap().view;
+    let (left, right) = (view.x, view.right());
     let zones: Vec<Rect> = (0..files.len())
         .map(|f| b.spots[spot(&s, &g, t, Mark::Zone(f))].r)
         .collect();

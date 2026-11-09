@@ -25,8 +25,9 @@ pub struct LiveMidi {
     /// nothing sounded). The off uses the sent pitch, whatever the track's transpose is by
     /// then; the tracks are kept all the same, so a track that did not sound does not make the
     /// note look stale (UI-312).
-    held: BTreeMap<(usize, u8), HeldNotes>,
-    routed: BTreeMap<usize, Vec<TrackId>>,
+    held: BTreeMap<(usize, u8, u8), HeldNotes>,
+    repeats: BTreeMap<(usize, u8, u8), u32>,
+    routed: BTreeMap<(usize, u8), Vec<TrackId>>,
     pub resume: bool,
     /// The knobs and pads of the controller (OPS-007).
     pub assign: crate::midi_assign::Assign,
@@ -60,6 +61,38 @@ pub(crate) fn heard(
 }
 
 impl Studio {
+    fn midi_note(
+        &mut self,
+        p: &xirius_core::model::Project,
+        track: TrackId,
+        port: usize,
+        channel: u8,
+        kind: NoteKind,
+    ) {
+        self.owned_note(
+            p,
+            track,
+            xirius_engine::performance::Input {
+                source: xirius_engine::performance::midi_source(port, channel),
+                plugin: None,
+                kind,
+            },
+        );
+    }
+
+    pub(crate) fn owned_note(
+        &mut self,
+        p: &xirius_core::model::Project,
+        track: TrackId,
+        input: xirius_engine::performance::Input,
+    ) {
+        #[cfg(test)]
+        self.live_midi.sent.push((track, input.kind));
+        if let Err(e) = self.transport.live_input(p, self.song.dir(), track, input) {
+            self.error = Some(e);
+        }
+    }
+
     /// Plays `kind` on `track`, keeping it for the tests to read (UI-312).
     pub(crate) fn live_note(
         &mut self,
@@ -99,18 +132,56 @@ impl Studio {
 
     pub fn release_midi(&mut self) {
         let p = self.project();
-        for tracks in std::mem::take(&mut self.live_midi.routed).values() {
-            for &track in tracks {
-                self.live_note(&p, track, NoteKind::control(64, 0));
+        self.live_midi.repeats.clear();
+        for ((port, channel), tracks) in std::mem::take(&mut self.live_midi.routed) {
+            for track in tracks {
+                self.midi_note(&p, track, port, channel, NoteKind::control(123, 0));
             }
         }
-        for (_, notes) in std::mem::take(&mut self.live_midi.held) {
+        for ((port, channel, _), notes) in std::mem::take(&mut self.live_midi.held) {
             for (track, pitch) in notes {
                 if let Some(pitch) = pitch {
-                    self.live_note(&p, track, NoteKind::Off { pitch });
+                    self.midi_note(&p, track, port, channel, NoteKind::Off { pitch });
                 }
             }
         }
+    }
+
+    pub(crate) fn release_missing_midi_ports(&mut self, now: &[String]) -> bool {
+        let Some(input) = &self.live_midi.input else {
+            return false;
+        };
+        let ports = input.ports();
+        let removed: Vec<_> = ports
+            .iter()
+            .enumerate()
+            .filter_map(|(i, name)| (!now.contains(name)).then_some(i))
+            .collect();
+        let p = self.project();
+        let routes: Vec<_> = self
+            .live_midi
+            .routed
+            .iter()
+            .filter(|((port, _), _)| removed.contains(port))
+            .map(|(key, tracks)| (*key, tracks.clone()))
+            .collect();
+        for ((port, channel), tracks) in routes {
+            for track in tracks {
+                self.midi_note(&p, track, port, channel, NoteKind::control(123, 0));
+            }
+        }
+        self.live_midi
+            .routed
+            .retain(|(port, _), _| !removed.contains(port));
+        self.live_midi
+            .held
+            .retain(|(port, _, _), _| !removed.contains(port));
+        self.live_midi
+            .repeats
+            .retain(|(port, _, _), _| !removed.contains(port));
+        // Removal does not require replacing still-connected port owners. Keep
+        // their original indices and MIDI connections until a port is added.
+        !now.is_empty() && now.iter().all(|name| ports.contains(name))
     }
 
     pub fn poll_live_midi(&mut self) -> bool {
@@ -160,43 +231,50 @@ impl Studio {
             .prefs
             .clone();
         let p = self.project();
+        let known = self
+            .midi_ports
+            .has_seen_list()
+            .then(|| self.midi_ports.known().to_vec());
         let targets = |port: usize| -> Vec<TrackId> {
             let name = ports.get(port);
+            if name.is_some_and(|n| known.as_ref().is_some_and(|ports| !ports.contains(n))) {
+                return Vec::new();
+            }
             if name.is_some_and(|n| !prefs.bool(&format!("midi.inputs.{n}"))) {
                 return Vec::new();
             }
             crate::input_follow::armed_instruments(&p, name.map(String::as_str))
         };
         // Release sustain as well as notes when a port or its destination changes.
-        let mut left: Vec<TrackId> = Vec::new();
-        for (port, tracks) in &self.live_midi.routed {
-            if *tracks != targets(*port) {
-                left.extend(tracks.iter().copied());
+        let mut left = Vec::new();
+        for (&(port, channel), tracks) in &self.live_midi.routed {
+            if *tracks != targets(port) {
+                left.extend(tracks.iter().map(|&track| (port, channel, track)));
             }
         }
-        for track in left {
-            self.live_note(&p, track, NoteKind::control(64, 0));
+        for (port, channel, track) in left {
+            self.midi_note(&p, track, port, channel, NoteKind::control(123, 0));
         }
         self.live_midi
             .routed
-            .retain(|&port, tracks| *tracks == targets(port));
+            .retain(|&(port, _), tracks| *tracks == targets(port));
         // A switched-off port or a new selection releases held notes on their original track,
         // at the pitch that was sent there (UI-312).
         let stale: Vec<_> = self
             .live_midi
             .held
             .iter()
-            .filter(|((port, _), notes)| {
+            .filter(|((port, _, _), notes)| {
                 let now = targets(*port);
                 notes.len() != now.len() || notes.iter().zip(&now).any(|((t, _), n)| t != n)
             })
             .map(|(k, _)| *k)
             .collect();
-        for key in stale {
+        for key @ (port, channel, _) in stale {
             if let Some(notes) = self.live_midi.held.remove(&key) {
                 for (track, pitch) in notes {
                     if let Some(pitch) = pitch {
-                        self.live_note(&p, track, NoteKind::Off { pitch });
+                        self.midi_note(&p, track, port, channel, NoteKind::Off { pitch });
                     }
                 }
             }
@@ -206,7 +284,7 @@ impl Studio {
             .live_midi
             .held
             .iter()
-            .filter_map(|(&(port, pitch), notes)| {
+            .filter_map(|(&(port, channel, pitch), notes)| {
                 // Only a track that sounded can be taken off the keyboard; one that could not
                 // play the key at all is not a reason to stop the others (UI-312).
                 let out = notes.iter().any(|(track, sent)| {
@@ -215,21 +293,28 @@ impl Studio {
                             xirius_session::build::playable(t.transpose, pitch).is_none()
                         })
                 });
-                out.then_some((port, pitch))
+                out.then_some((port, channel, pitch))
             })
             .collect();
-        for key in lost {
+        for key @ (port, channel, _) in lost {
+            let repeats = self.live_midi.repeats.remove(&key).unwrap_or(1);
             if let Some(notes) = self.live_midi.held.remove(&key) {
                 for (track, sent) in notes {
                     if let Some(sent) = sent {
-                        self.live_note(&p, track, NoteKind::Off { pitch: sent });
+                        for _ in 0..repeats {
+                            self.midi_note(&p, track, port, channel, NoteKind::Off { pitch: sent });
+                        }
                     }
                 }
             }
         }
         changed |= !messages.is_empty();
+        self.live_midi
+            .repeats
+            .retain(|key, _| self.live_midi.held.contains_key(key));
         let map = self.midimap();
         for (port, msg) in messages {
+            let channel = msg[0] & 15;
             if let Some(name) = ports.get(port)
                 && prefs.bool(&format!("midi.inputs.{name}"))
             {
@@ -244,13 +329,36 @@ impl Studio {
             if self.midi_take(&map, ports.get(port).map(String::as_str), msg) {
                 continue;
             }
-            let Some(kind) = note_of(msg) else {
+            let Some(kind) = xirius_engine::performance::message(msg) else {
                 continue;
             };
             let tracks = targets(port);
-            self.live_midi.routed.insert(port, tracks.clone());
+            self.live_midi
+                .routed
+                .insert((port, channel), tracks.clone());
             match kind {
-                NoteKind::On { pitch, .. } => {
+                NoteKind::On { pitch, velocity } => {
+                    let key = (port, channel, pitch);
+                    if let Some(notes) = self.live_midi.held.get(&key).cloned() {
+                        let count = self.live_midi.repeats.entry(key).or_insert(1);
+                        *count = count.saturating_add(1);
+                        for (track, sent) in notes {
+                            if let Some(pitch) = sent {
+                                let velocity = match heard(&p, track, kind) {
+                                    Some(NoteKind::On { velocity, .. }) => velocity,
+                                    _ => velocity,
+                                };
+                                self.midi_note(
+                                    &p,
+                                    track,
+                                    port,
+                                    channel,
+                                    NoteKind::On { pitch, velocity },
+                                );
+                            }
+                        }
+                        continue;
+                    }
                     // Every track the note went to is kept, with what it heard (if anything),
                     // so the off can use the shipped pitch and the stale test can compare the
                     // destinations alone (UI-312).
@@ -264,20 +372,35 @@ impl Studio {
                             (track, heard)
                         })
                         .collect();
-                    self.live_midi.held.insert((port, pitch), sent);
+                    self.live_midi.held.insert(key, sent);
+                    self.live_midi.repeats.insert(key, 1);
                 }
                 NoteKind::Off { pitch } => {
-                    let notes = self
-                        .live_midi
-                        .held
-                        .remove(&(port, pitch))
-                        .unwrap_or_default();
+                    let key = (port, channel, pitch);
+                    let count = self.live_midi.repeats.entry(key).or_insert(1);
+                    *count = count.saturating_sub(1);
+                    let notes = if *count == 0 {
+                        self.live_midi.repeats.remove(&key);
+                        self.live_midi.held.remove(&key).unwrap_or_default()
+                    } else {
+                        self.live_midi.held.get(&key).cloned().unwrap_or_default()
+                    };
                     for (track, sent) in notes {
                         if let Some(sent) = sent {
-                            self.live_note(&p, track, NoteKind::Off { pitch: sent });
+                            self.midi_note(&p, track, port, channel, NoteKind::Off { pitch: sent });
                         }
                     }
                     continue;
+                }
+                NoteKind::Control {
+                    number: 120 | 123, ..
+                } => {
+                    self.live_midi
+                        .held
+                        .retain(|&(p, c, _), _| p != port || c != channel);
+                    self.live_midi
+                        .repeats
+                        .retain(|&(p, c, _), _| p != port || c != channel);
                 }
                 _ => {}
             }
@@ -285,7 +408,7 @@ impl Studio {
                 let Some(kind) = heard(&p, track, kind) else {
                     continue;
                 };
-                self.live_note(&p, track, kind);
+                self.midi_note(&p, track, port, channel, kind);
             }
         }
         changed
@@ -357,7 +480,11 @@ mod tests {
             )));
             s.poll_live_midi();
             let want = if follow { vec![keys] } else { Vec::new() };
-            assert_eq!(s.live_midi.routed.get(&0), Some(&want), "follow {follow}");
+            assert_eq!(
+                s.live_midi.routed.get(&(0, 0)),
+                Some(&want),
+                "follow {follow}"
+            );
         }
     }
 

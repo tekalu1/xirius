@@ -1917,6 +1917,7 @@ impl Studio {
             .as_ref()
             .is_some_and(|w| !raw.tracks.contains_key(&w.track))
         {
+            self.channel_note_off();
             self.channel = None;
         }
         if self
@@ -2028,7 +2029,7 @@ impl Studio {
         self.inspector_follow(g);
         // Esc during a press on a device's window lets go of it first, whatever else has the
         // keys (the macro pad's focus, the grip's).
-        if key == "escape" && self.instrument_cancel() {
+        if key == "escape" && (self.instrument_cancel() || self.channel_main_cancel()) {
             return true;
         }
         // Esc while waiting for a controller's knob, or while its clash asks, ends the wait first

@@ -27,6 +27,7 @@ pub mod mixer;
 pub mod monitor;
 pub mod multi;
 mod parallel;
+pub mod performance;
 pub mod plugin;
 pub mod plugin_updates;
 pub mod prefetch;

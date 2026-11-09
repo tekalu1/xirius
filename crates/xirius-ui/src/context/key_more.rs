@@ -360,6 +360,10 @@ impl Studio {
     /// Every note that sounds ends: the keys held, the roll's, and what the player plays.
     fn panic(&mut self) -> bool {
         self.pc_keys_release();
+        self.release_midi();
+        self.window_note_off();
+        self.channel_note_off();
+        self.transport.release_live_inputs();
         let at = self.playhead;
         // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
         self.seek(at);

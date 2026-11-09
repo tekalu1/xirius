@@ -256,11 +256,13 @@ fn width(s: &mut Studio, id: PluginId, w: f32) {
     }
 }
 
-fn press(s: &mut Studio, g: &Geometry, id: PluginId, part: Part) {
-    if let Some((x, y)) = s.instrument_center(g, id, part) {
-        s.instrument_press(g, x, y, 1, Mods::NONE);
-        s.instrument_up();
-    }
+fn press(s: &mut Studio, id: PluginId, part: Part) {
+    crate::device_window::with_surface(s, id, |s, g| {
+        if let Some((x, y)) = s.instrument_center(g, id, part) {
+            s.instrument_press(g, x, y, 1, Mods::NONE);
+            s.instrument_up();
+        }
+    });
 }
 
 fn param(s: &Studio, id: PluginId, name: &str) -> Option<usize> {
@@ -273,8 +275,7 @@ fn param(s: &Studio, id: PluginId, name: &str) -> Option<usize> {
     Some(x.builtin()?.param(name)?.0)
 }
 
-fn play_eq(s: &mut Studio, g: &Geometry, n: u8) {
-    let g = &s.geometry(g.size.0, g.size.1);
+fn play_eq(s: &mut Studio, _: &Geometry, n: u8) {
     if n == 0 {
         open_device(s, "EQ");
         return;
@@ -285,17 +286,17 @@ fn play_eq(s: &mut Studio, g: &Geometry, n: u8) {
     match n {
         1 => {
             if let Some(k) = param(s, id, "high_freq") {
-                press(s, g, id, Part::Knob(k));
+                press(s, id, Part::Knob(k));
             }
             width(s, id, eq::MIN_W + 60.0);
         }
-        2 => press(s, g, id, Part::Spectrum),
+        2 => press(s, id, Part::Spectrum),
         3 => {
             if let Some(k) = param(s, id, "b4_on") {
-                press(s, g, id, Part::Knob(k));
+                press(s, id, Part::Knob(k));
             }
             if let Some(k) = param(s, id, "b3_type") {
-                press(s, g, id, Part::Knob(k));
+                press(s, id, Part::Knob(k));
             }
         }
         _ => {}
@@ -404,8 +405,7 @@ fn hear_a_mix(s: &mut Studio, id: PluginId) {
     }
 }
 
-fn play_delay(s: &mut Studio, g: &Geometry, n: u8) {
-    let g = &s.geometry(g.size.0, g.size.1);
+fn play_delay(s: &mut Studio, _: &Geometry, n: u8) {
     if n == 0 {
         open_device(s, "Delay");
         return;
@@ -417,17 +417,18 @@ fn play_delay(s: &mut Studio, g: &Geometry, n: u8) {
         1 => width(s, id, delay::MIN_W + 60.0),
         2 => {
             let k = xirius_params::DELAY.param("division").map(|(k, _)| k);
-            if let Some((x, y)) = k.and_then(|k| s.instrument_center(g, id, Part::Knob(k))) {
-                s.instrument_press(g, x, y, 1, Mods::NONE);
-                s.instrument_up();
-            }
+            crate::device_window::with_surface(s, id, |s, g| {
+                if let Some((x, y)) = k.and_then(|k| s.instrument_center(g, id, Part::Knob(k))) {
+                    s.instrument_press(g, x, y, 1, Mods::NONE);
+                    s.instrument_up();
+                }
+            });
         }
         _ => {}
     }
 }
 
-fn play_limiter(s: &mut Studio, g: &Geometry, n: u8) {
-    let g = &s.geometry(g.size.0, g.size.1);
+fn play_limiter(s: &mut Studio, _: &Geometry, n: u8) {
     if n == 0 {
         if let Some(id) = open_device(s, "Limiter") {
             let six = xirius_params::LIMITER
@@ -446,9 +447,11 @@ fn play_limiter(s: &mut Studio, g: &Geometry, n: u8) {
     match n {
         1 => width(s, id, limiter::MIN_W + 60.0),
         2 => {
-            if let Some((x, y)) = s.instrument_center(g, id, Part::Point(0, 1)) {
-                s.instrument_right(g, x, y);
-            }
+            crate::device_window::with_surface(s, id, |s, g| {
+                if let Some((x, y)) = s.instrument_center(g, id, Part::Point(0, 1)) {
+                    s.instrument_right(g, x, y);
+                }
+            });
         }
         _ => {}
     }
@@ -456,39 +459,39 @@ fn play_limiter(s: &mut Studio, g: &Geometry, n: u8) {
 
 /// Drags the corner of `id`'s window by `(dx, dy)` and leaves the pointer
 /// on it.
-fn grow(s: &mut Studio, g: &Geometry, id: PluginId, dx: f32, dy: f32) {
-    if let Some((x, y)) = s.instrument_center(g, id, Part::Resize) {
-        s.instrument_press(g, x, y, 1, Mods::NONE);
-        s.instrument_moved(g, x + dx, y + dy, false);
-        s.instrument_up();
-        s.instrument_hover(g, x + dx, y + dy);
-    }
+fn grow(s: &mut Studio, id: PluginId, dx: f32, dy: f32) {
+    crate::device_window::with_surface(s, id, |s, g| {
+        if let Some((x, y)) = s.instrument_center(g, id, Part::Resize) {
+            s.instrument_press(g, x, y, 1, Mods::NONE);
+            s.instrument_moved(g, x + dx, y + dy, false);
+            s.instrument_up();
+            s.instrument_hover(g, x + dx, y + dy);
+        }
+    });
 }
 
-fn play_size(s: &mut Studio, g: &Geometry, n: u8) {
-    let g = &s.geometry(g.size.0, g.size.1);
+fn play_size(s: &mut Studio, _: &Geometry, n: u8) {
     match n {
         0 => {
             if let Some(id) = open_device(s, "EQ") {
-                grow(s, g, id, 240.0, 160.0);
+                grow(s, id, 240.0, 160.0);
             }
         }
         1 => {
             if let Some(id) = open_device(s, "Compressor") {
                 hear_a_beat(s, id);
-                grow(s, g, id, 200.0, 140.0);
+                grow(s, id, 200.0, 140.0);
             }
         }
         _ => {}
     }
 }
 
-fn play_pin(s: &mut Studio, g: &Geometry, n: u8) {
-    let g = &s.geometry(g.size.0, g.size.1);
+fn play_pin(s: &mut Studio, _: &Geometry, n: u8) {
     match n {
         0 => {
             if let Some(id) = open_device(s, "EQ") {
-                press(s, g, id, Part::Pin);
+                press(s, id, Part::Pin);
             }
         }
         1 => {
@@ -512,8 +515,7 @@ fn settle(s: &mut Studio) {
 
 /// The shots' own folder of presets has the factory set, and 「いつもの」 saved from the
 /// Compressor before its threshold moved.
-fn play_presets(s: &mut Studio, g: &Geometry, n: u8) {
-    let g = &s.geometry(g.size.0, g.size.1);
+fn play_presets(s: &mut Studio, _: &Geometry, n: u8) {
     match n {
         0 => {
             s.run_command("preset.factory.restore", json!({}));
@@ -547,9 +549,11 @@ fn play_presets(s: &mut Studio, g: &Geometry, n: u8) {
         1 => {
             if let Some(id) = s.instruments.open.last().map(|w| w.plugin) {
                 s.popup = None;
-                if let Some((x, y)) = s.instrument_center(g, id, Part::Preset) {
-                    s.instrument_down(g, x, y);
-                }
+                crate::device_window::with_surface(s, id, |s, g| {
+                    if let Some((x, y)) = s.instrument_center(g, id, Part::Preset) {
+                        s.instrument_down(g, x, y);
+                    }
+                });
             }
         }
         2 => {
@@ -851,6 +855,7 @@ fn play_notes(s: &mut Studio, _: &Geometry, n: u8) {
     s.instruments.note = Some(crate::instrument::window::Held {
         plugin: id,
         track: t,
+        direct: false,
         pitch: if n == 3 { 38 } else { pitch },
         heard: None,
     });
@@ -884,8 +889,7 @@ fn reverse_loop(s: &mut Studio, t: TrackId, id: PluginId) {
     }
 }
 
-fn play_reverb(s: &mut Studio, g: &Geometry, n: u8) {
-    let g = &s.geometry(g.size.0, g.size.1);
+fn play_reverb(s: &mut Studio, _: &Geometry, n: u8) {
     if n == 0 {
         open_device(s, "Reverb");
         return;
@@ -896,9 +900,11 @@ fn play_reverb(s: &mut Studio, g: &Geometry, n: u8) {
     match n {
         1 => width(s, id, reverb::MIN_W + 60.0),
         2 => {
-            if let Some((x, y)) = s.instrument_center(g, id, Part::Point(0, 1)) {
-                s.instrument_right(g, x, y);
-            }
+            crate::device_window::with_surface(s, id, |s, g| {
+                if let Some((x, y)) = s.instrument_center(g, id, Part::Point(0, 1)) {
+                    s.instrument_right(g, x, y);
+                }
+            });
         }
         _ => {}
     }

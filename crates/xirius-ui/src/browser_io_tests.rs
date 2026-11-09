@@ -418,8 +418,10 @@ fn preference_loading_preserves_edits_made_while_the_read_is_held() {
     b.reload_prefs();
     entered.recv_timeout(Duration::from_secs(15)).unwrap();
     b.toggle_favourite("local edit");
-    written.recv_timeout(Duration::from_secs(15)).unwrap();
+    // The write is serialized behind the held read's transaction: it lands once
+    // the read is let go (BRW-001).
     release.release();
+    written.recv_timeout(Duration::from_secs(15)).unwrap();
     b.settle_prefs_io();
     assert_eq!(b.places, prefs.places);
     assert!(b.favourites.contains("local edit"));

@@ -154,6 +154,12 @@ pub trait Processor: Send {
     fn multi(&self) -> Option<&crate::multi::MultiProc> {
         None
     }
+
+    /// Queues a source-owned note without borrowing a controller or allocating.
+    fn live_input(&mut self, _input: crate::performance::Input) -> bool {
+        false
+    }
+    fn release_live_inputs(&mut self) {}
 }
 
 /// A processor made ready before its plan (ENG-064): `prepare` with the setup it was readied
@@ -221,5 +227,12 @@ impl Processor for Readied {
 
     fn multi(&self) -> Option<&crate::multi::MultiProc> {
         self.inner.multi()
+    }
+
+    fn live_input(&mut self, input: crate::performance::Input) -> bool {
+        self.inner.live_input(input)
+    }
+    fn release_live_inputs(&mut self) {
+        self.inner.release_live_inputs();
     }
 }

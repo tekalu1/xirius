@@ -2,7 +2,7 @@ use serde_json::json;
 use xirius_core::id::{PluginId, TrackId};
 
 use super::*;
-use crate::device_window::test_surface;
+use crate::device_window::with_surface;
 use crate::instrument::window::Part;
 use crate::mixer::MixerHit;
 use crate::studio::DrawerTab;
@@ -43,7 +43,7 @@ fn click_row(s: &mut Studio, g: &Geometry, t: TrackId, id: PluginId) {
 }
 
 fn press(s: &mut Studio, id: PluginId, part: Part) {
-    test_surface(s, id, |s, g| {
+    with_surface(s, id, |s, g| {
         let (x, y) = s.instrument_center(g, id, part).unwrap();
         assert!(s.instrument_press(g, x, y, 1, Mods::NONE));
         s.instrument_up();
@@ -69,7 +69,7 @@ fn a_picked_device_leaves_the_whole_drawer_for_the_strips_at_every_width() {
         assert!(s.instruments.detached.contains(&eq));
         assert_eq!(s.instruments.open[0].track, t);
         assert_eq!(s.instruments.frame(0, &g), Rect::default());
-        test_surface(&mut s, eq, |s, local| {
+        with_surface(&mut s, eq, |s, local| {
             let (x, y) = s.instrument_center(local, eq, Part::Knob(0)).unwrap();
             assert!(s.instruments.frame(0, local).contains(x, y));
         });
@@ -114,7 +114,7 @@ fn changing_the_main_tab_does_not_hide_or_recreate_the_device() {
     let w = s.instruments.open[0];
     assert_eq!((w.pick, w.layer), (3, 1));
     assert_eq!(s.instruments.focus, Some((eq, 2)));
-    test_surface(&mut s, eq, |s, g| {
+    with_surface(&mut s, eq, |s, g| {
         assert!(s.instrument_center(g, eq, Part::Close).is_some());
     });
 }
@@ -129,7 +129,7 @@ fn a_local_knob_drag_is_one_undoable_edit() {
         .unwrap()
         .clone();
     let steps = s.song().steps();
-    test_surface(&mut s, eq, |s, g| {
+    with_surface(&mut s, eq, |s, g| {
         let p = s.project();
         let plugin = p.tracks[&t].inserts.iter().find(|p| p.id == eq).unwrap();
         let k = plugin.builtin().unwrap().param("output").unwrap().0;
@@ -155,7 +155,7 @@ fn independent_resize_does_not_take_space_from_the_mixer() {
     let (mut s, g, _, eq) = picked(1600.0);
     let mixer = s.mixer_body(&g);
     let before = s.instruments.open[0].body;
-    test_surface(&mut s, eq, |s, local| {
+    with_surface(&mut s, eq, |s, local| {
         let (x, y) = s.instrument_center(local, eq, Part::Resize).unwrap();
         assert!(s.instrument_down(local, x, y));
         assert!(s.instrument_moved(local, x + 100.0, y + 60.0, false));
@@ -199,7 +199,7 @@ fn files_held_over_an_independent_drum_kit_reach_its_pads() {
     let t = track(&s, "Vocal");
     let kit = add(&mut s, t, "Drum Kit");
     click_row(&mut s, &g, t, kit);
-    test_surface(&mut s, kit, |s, g| {
+    with_surface(&mut s, kit, |s, g| {
         let i = s
             .instruments
             .open

@@ -840,6 +840,8 @@ User にコピー
 |---|---|---|---|
 | `dry_run` | — | `{"type":"boolean"}` | 曲は変更せず、変更内容だけを返します |
 | `entry` | 必須 | `{"type":"string"}` | 一覧の entry id |
+| `off` | — | `{"type":"boolean"}` | オフ |
+| `on` | — | `{"type":"boolean"}` | オン（省略時は現在の状態を切り替え） |
 | `request_key` | — | `{"type":"string"}` | 再送時にも同じ操作キーを使います |
 | `wait_ms` | — | `{"maximum":30000,"minimum":0,"type":"integer"}` | 結果を待つ時間。0 は受付後すぐに返します |
 

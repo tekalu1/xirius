@@ -220,7 +220,33 @@ struct Latency {
     position: UnsafeCell<usize>,
 }
 impl Class for Latency {
-    type Interfaces = (IComponent, IAudioProcessor, IEditController, IUnitInfo);
+    type Interfaces = (
+        IComponent,
+        IAudioProcessor,
+        IEditController,
+        IUnitInfo,
+        IMidiMapping,
+    );
+}
+impl IMidiMappingTrait for Latency {
+    unsafe fn getMidiControllerAssignment(
+        &self,
+        bus: i32,
+        channel: i16,
+        number: i16,
+        id: *mut ParamID,
+    ) -> tresult {
+        if bus == 0 && channel == 0 && number == 64 && !id.is_null() {
+            // The continuous damper value is observable as the fixture's sample delay.
+            // SAFETY: the SDK caller supplies a writable parameter ID.
+            unsafe {
+                *id = 1;
+            }
+            kResultOk
+        } else {
+            kResultFalse
+        }
+    }
 }
 impl IPluginBaseTrait for Latency {
     unsafe fn initialize(&self, _: *mut FUnknown) -> tresult {

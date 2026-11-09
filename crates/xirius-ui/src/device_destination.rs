@@ -22,8 +22,26 @@ impl Studio {
         if self.instruments.note.is_some_and(|n| n.plugin == id) {
             self.window_note_off();
         }
-        self.instrument_up();
-        self.device_sweep_end();
+        if self
+            .instruments
+            .grab
+            .as_ref()
+            .is_some_and(|g| g.plugin() == id)
+        {
+            let target = self.instruments.detached_target.replace(id);
+            self.instrument_up();
+            self.instruments.detached_target = target;
+        }
+        if self
+            .instruments
+            .keyboard_drag
+            .is_some_and(|(plugin, _)| plugin == id)
+        {
+            self.instruments.keyboard_drag = None;
+        }
+        if self.instruments.sweep.is_some_and(|s| s.plugin == id) {
+            self.device_sweep_end();
+        }
         self.instruments.open.retain(|w| w.plugin != id);
         self.instruments.detached.remove(&id);
         crate::instrument::window::forget_turns(self);

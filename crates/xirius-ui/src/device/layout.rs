@@ -185,6 +185,7 @@ pub struct Body {
     pub main: usize,
     /// A Sampler's keyboard and a Drum Kit's pads (PLG-066).
     pub keys: Vec<Key>,
+    pub keyboard: Option<super::play::Keyboard>,
     pub pads: Vec<Key>,
     /// A Sampler's and a Drum Kit's other parts (UI-333, UI-334).
     pub spots: Vec<Spot>,
@@ -217,6 +218,7 @@ impl Body {
             meters: self.meters.into_iter().map(m).collect(),
             levels: self.levels.into_iter().map(|l| l.at(dx, dy)).collect(),
             tempo: self.tempo.map(m),
+            keyboard: self.keyboard.map(|k| k.at(dx, dy)),
             keys: self
                 .keys
                 .into_iter()
@@ -303,6 +305,11 @@ impl Body {
             if under(&k.r) {
                 k.r.y += dy;
             }
+        }
+        if let Some(k) = &mut self.keyboard
+            && under(&k.view)
+        {
+            *k = k.clone().at(0.0, dy);
         }
         for s in &mut self.spots {
             if under(&s.r) {

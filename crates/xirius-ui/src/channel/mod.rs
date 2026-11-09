@@ -207,6 +207,9 @@ pub struct ChannelWin {
     pub macros: bool,
     /// How far the flow is scrolled down and right.
     pub scroll: (f32, f32),
+    pub keyboard_scroll: f32,
+    pub keyboard_drag: Option<crate::device::play::ScrollDrag>,
+    pub mouse_note: Option<(u8, Option<u8>)>,
     /// Where the pointer is, over it or not.
     pub pointer: Option<(f32, f32)>,
     pub hot: Option<Part>,
@@ -225,6 +228,9 @@ impl ChannelWin {
             top: true,
             macros: false,
             scroll: (0.0, 0.0),
+            keyboard_scroll: 0.0,
+            keyboard_drag: None,
+            mouse_note: None,
             pointer: None,
             hot: None,
             chosen: None,
@@ -247,6 +253,7 @@ pub struct View {
     pub flow: Flow,
     /// A multi-instrument's key range figure, under the body, when the window is wide enough.
     pub keys: Option<keys::Keys>,
+    pub keyboard: Option<crate::device::play::Keyboard>,
     /// The macro row, under the toolbar, while Macro Controls is on.
     pub macros: Option<MacroRow>,
 }
@@ -356,10 +363,15 @@ pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
         0.0
     };
     let macro_h = if w.macros { MACRO_H } else { 0.0 };
+    let piano_h = if multi {
+        crate::device::play::Keyboard::HEIGHT + 16.0
+    } else {
+        0.0
+    };
     let height = if w.detached_surface {
         size.1
     } else {
-        (BAR_H + tool_h + macro_h + probe.h + panel_h).min((size.1 - ROOM_Y).max(200.0))
+        (BAR_H + tool_h + macro_h + probe.h + panel_h + piano_h).min((size.1 - ROOM_Y).max(200.0))
     };
     let (x, y) = if w.detached_surface {
         (0.0, 0.0)
@@ -388,7 +400,7 @@ pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
         r.x,
         toolbar.bottom() + macro_h,
         r.w,
-        (r.h - BAR_H - tool_h - macro_h - panel_h).max(0.0),
+        (r.h - BAR_H - tool_h - macro_h - panel_h - piano_h).max(0.0),
     );
     let keys = (panel_h > 0.0).then(|| {
         let held = match &w.grab {
@@ -420,6 +432,17 @@ pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
         body,
         flow,
         keys,
+        keyboard: multi.then(|| {
+            crate::device::play::Keyboard::new(
+                Rect::new(
+                    r.x + 8.0,
+                    body.bottom() + panel_h + 8.0,
+                    r.w - 16.0,
+                    crate::device::play::Keyboard::HEIGHT,
+                ),
+                w.keyboard_scroll,
+            )
+        }),
         macros,
     })
 }
@@ -836,6 +859,21 @@ pub fn crossed(from: &[f64], i: usize, dx: f32) -> Vec<f64> {
 }
 
 impl Studio {
+    pub(crate) fn channel_main_cancel(&mut self) -> bool {
+        let Some(w) = self.channel.as_ref().filter(|w| !w.detached) else {
+            return false;
+        };
+        let held = w.mouse_note.is_some() || w.keyboard_drag.is_some();
+        if held {
+            self.channel_note_off();
+        }
+        held
+    }
+
+    pub(crate) fn main_focus_lost(&mut self) -> bool {
+        self.device_focus_lost() | self.channel_main_cancel()
+    }
+
     /// The open channel editor as it is laid out.
     pub fn channel_view(&self, g: &Geometry) -> Option<View> {
         let w = self.channel.as_ref()?;
@@ -848,11 +886,80 @@ impl Studio {
         v
     }
 
+    fn channel_note_on(&mut self, pitch: u8) {
+        self.channel_note_off();
+        let Some(track) = self.channel.as_ref().map(|w| w.track) else {
+            return;
+        };
+        let p = self.project();
+        let heard = crate::midi_live::heard(
+            &p,
+            track,
+            xirius_engine::NoteKind::On {
+                pitch,
+                velocity: crate::instrument::keys::VELOCITY,
+            },
+        );
+        if let Some(kind) = heard {
+            self.owned_note(
+                &p,
+                track,
+                xirius_engine::performance::Input {
+                    source: xirius_engine::performance::MOUSE | (1 << 62) | track.0,
+                    plugin: None,
+                    kind,
+                },
+            );
+        }
+        if let Some(w) = &mut self.channel {
+            w.mouse_note = Some((
+                pitch,
+                match heard {
+                    Some(xirius_engine::NoteKind::On { pitch, .. }) => Some(pitch),
+                    _ => None,
+                },
+            ));
+        }
+    }
+
+    pub(crate) fn channel_note_off(&mut self) -> bool {
+        if let Some(w) = &mut self.channel {
+            w.keyboard_drag = None;
+        }
+        let Some((track, (_, heard))) = self
+            .channel
+            .as_mut()
+            .and_then(|w| w.mouse_note.take().map(|n| (w.track, n)))
+        else {
+            return false;
+        };
+        if let Some(pitch) = heard {
+            let p = self.project();
+            self.owned_note(
+                &p,
+                track,
+                xirius_engine::performance::Input {
+                    source: xirius_engine::performance::MOUSE | (1 << 62) | track.0,
+                    plugin: None,
+                    kind: xirius_engine::NoteKind::Off { pitch },
+                },
+            );
+        }
+        true
+    }
+
     /// Opens the channel editor of `t`: the open one comes to the top; another track's takes
     /// its place unless its pin is down.
     pub fn open_channel(&mut self, t: TrackId) {
         if !self.project().tracks.contains_key(&t) {
             return;
+        }
+        if self
+            .channel
+            .as_ref()
+            .is_some_and(|w| w.track != t && !w.pinned)
+        {
+            self.channel_note_off();
         }
         match &mut self.channel {
             Some(w) if w.track == t || w.pinned => {
@@ -887,9 +994,26 @@ impl Studio {
             return false;
         }
         let Some(v) = self.channel_view(g) else {
+            self.channel_note_off();
             self.channel = None;
             return false;
         };
+        if let Some(keyboard) = &v.keyboard
+            && keyboard.view.contains(x, y)
+        {
+            if let Some(drag) = keyboard.scroll_press(x, y) {
+                self.channel_note_off();
+                if let Some(w) = &mut self.channel {
+                    w.keyboard_scroll = drag.position(x);
+                    w.keyboard_drag = Some(drag);
+                }
+                return true;
+            }
+            if let Some(pitch) = keyboard.key_at(x, y) {
+                self.channel_note_on(pitch);
+            }
+            return true;
+        }
         // the window's ground takes the press: it does not reach what is under it
         let Some(part) = part_at(&v, x, y) else {
             return true;
@@ -905,7 +1029,10 @@ impl Studio {
                 crate::instrument::menu::Menu::ChannelDestination(t),
                 v.bar.destination,
             ),
-            Part::Close => self.channel = None,
+            Part::Close => {
+                self.channel_note_off();
+                self.channel = None;
+            }
             Part::Pin => w.pinned = !w.pinned,
             Part::Preset => self.open_inst_menu(crate::instrument::menu::Menu::Chain(t), v.bar.tag),
             Part::PrevPreset | Part::NextPreset => {
@@ -1231,6 +1358,26 @@ impl Studio {
 
     /// The pointer moves with something of the window held.
     pub fn channel_moved(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
+        if let Some(w) = &mut self.channel
+            && let Some(drag) = w.keyboard_drag
+        {
+            w.keyboard_scroll = drag.position(x);
+            return true;
+        }
+        if let Some((pitch, _)) = self.channel.as_ref().and_then(|w| w.mouse_note) {
+            match self
+                .channel_view(g)
+                .and_then(|v| v.keyboard)
+                .and_then(|k| k.key_at(x, y))
+            {
+                Some(next) if next != pitch => self.channel_note_on(next),
+                None => {
+                    self.channel_note_off();
+                }
+                _ => {}
+            }
+            return true;
+        }
         let Some(grab) = self.channel.as_ref().and_then(|w| w.grab.clone()) else {
             return false;
         };
@@ -1318,6 +1465,10 @@ impl Studio {
     /// editor's card drag, the mixer's grip and bar are let go without a drop, and a pad held
     /// in the macro window ends where it was.
     pub fn let_go_drags(&mut self) {
+        if let Some(w) = &mut self.channel {
+            w.keyboard_drag = None;
+        }
+        self.channel_note_off();
         if let Some(w) = self.channel.as_mut() {
             w.grab = None;
         }
@@ -1327,6 +1478,16 @@ impl Studio {
     }
 
     pub fn channel_up(&mut self, g: &Geometry) -> bool {
+        if self
+            .channel
+            .as_mut()
+            .is_some_and(|w| w.keyboard_drag.take().is_some())
+        {
+            return true;
+        }
+        if self.channel_note_off() {
+            return true;
+        }
         let Some(grab) = self.channel.as_mut().and_then(|w| w.grab.take()) else {
             return false;
         };
@@ -1499,6 +1660,17 @@ impl Studio {
 
     /// A turn of the wheel over the flow scrolls it (Shift: sideways).
     pub fn channel_wheel(&mut self, g: &Geometry, x: f32, y: f32, dx: f32, dy: f32) -> bool {
+        if let Some(k) = self
+            .channel_view(g)
+            .and_then(|v| v.keyboard)
+            .filter(|k| k.view.contains(x, y))
+        {
+            if let Some(w) = &mut self.channel {
+                w.keyboard_scroll = (k.scroll - if dx != 0.0 { dx } else { dy })
+                    .clamp(0.0, (k.extent - k.view.w).max(0.0));
+            }
+            return true;
+        }
         if !self.over_channel(g, x, y) {
             return false;
         }

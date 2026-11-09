@@ -31,6 +31,9 @@ pub struct Ports {
 }
 
 impl Ports {
+    pub(crate) fn has_seen_list(&self) -> bool {
+        self.known.is_some()
+    }
     /// The ports as last listed (none before the first list).
     pub fn known(&self) -> &[String] {
         self.known.as_deref().unwrap_or_default()
@@ -123,6 +126,10 @@ impl Studio {
     /// them in an open port list. The first list is taken without a word. True when
     /// something on screen changed.
     pub fn midi_ports_now(&mut self, now: Vec<String>) -> bool {
+        let keep_connections = self.release_missing_midi_ports(&now);
+        if let Some(host) = self.transport.host_mut() {
+            host.release_missing_record_ports(&now);
+        }
         self.song
             .io
             // design-lint: allow(ui-blocking-io) PRJ-030/031: memory-only snapshot/queue; producers release this mutex before I/O.
@@ -130,7 +137,7 @@ impl Studio {
             .unwrap_or_else(|e| e.into_inner())
             .view
             .ports = now.clone();
-        if self.can_open_live_midi() && self.midi_ports.known() != now {
+        if self.can_open_live_midi() && self.midi_ports.known() != now && !keep_connections {
             self.release_midi();
             self.invalidate_midi_open();
             self.live_midi.resume = !now.is_empty();

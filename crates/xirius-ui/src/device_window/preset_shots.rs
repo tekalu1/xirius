@@ -6,87 +6,87 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_COMMAND};
 
 pub const SHOTS: &[Shot] = &[
     Shot {
-        name: "preset-editor",
+        name: "preset-01-editor",
         acts: &[Act::Stage(Play::Window(stage), 0)],
     },
     Shot {
-        name: "preset-request",
+        name: "preset-02-request",
         acts: &[Act::Stage(Play::Window(stage), 1)],
     },
     Shot {
-        name: "preset-search",
+        name: "preset-03-search",
         acts: &[Act::Stage(Play::Window(stage), 2)],
     },
     Shot {
-        name: "preset-selected",
+        name: "preset-04-selected",
         acts: &[Act::Stage(Play::Window(stage), 3)],
     },
     Shot {
-        name: "preset-loaded",
+        name: "preset-05-loaded",
         acts: &[Act::Stage(Play::Window(stage), 4)],
     },
     Shot {
-        name: "preset-arrows",
+        name: "preset-06-arrows",
         acts: &[Act::Stage(Play::Window(stage), 5)],
     },
     Shot {
-        name: "preset-next-loaded",
+        name: "preset-07-next-loaded",
         acts: &[Act::Stage(Play::Window(stage), 6)],
     },
     Shot {
-        name: "preset-previous",
+        name: "preset-08-previous",
         acts: &[Act::Stage(Play::Window(stage), 7)],
     },
     Shot {
-        name: "preset-previous-loaded",
+        name: "preset-09-previous-loaded",
         acts: &[Act::Stage(Play::Window(stage), 8)],
     },
     Shot {
-        name: "preset-reopen",
+        name: "preset-10-reopen",
         acts: &[Act::Stage(Play::Window(stage), 9)],
     },
     Shot {
-        name: "preset-current-and-escape",
+        name: "preset-11-current-and-escape",
         acts: &[Act::Stage(Play::Window(stage), 10)],
     },
     Shot {
-        name: "preset-save-as",
+        name: "preset-12-save-as",
         acts: &[Act::Stage(Play::Window(stage), 11)],
     },
     Shot {
-        name: "preset-save-name",
+        name: "preset-13-save-name",
         acts: &[Act::Stage(Play::Window(stage), 12)],
     },
     Shot {
-        name: "preset-save-submit",
+        name: "preset-14-save-submit",
         acts: &[Act::Stage(Play::Window(stage), 13)],
     },
     Shot {
-        name: "preset-saved-file",
+        name: "preset-15-saved-file",
         acts: &[Act::Stage(Play::Window(stage), 14)],
     },
     Shot {
-        name: "preset-open-request",
+        name: "preset-16-open-request",
         acts: &[Act::Stage(Play::Window(stage), 15)],
     },
     Shot {
-        name: "preset-overwrite",
+        name: "preset-17-overwrite",
         acts: &[Act::Stage(Play::Window(stage), 16)],
     },
     Shot {
-        name: "preset-overwrite-saved",
+        name: "preset-18-overwrite-saved",
         acts: &[Act::Stage(Play::Window(stage), 17)],
     },
     Shot {
-        name: "preset-file-request",
+        name: "preset-19-file-request",
         acts: &[Act::Stage(Play::Window(stage), 18)],
     },
     Shot {
-        name: "preset-file-open",
+        name: "preset-20-file-open",
         acts: &[Act::Stage(Play::Window(stage), 19)],
     },
     Shot {
-        name: "preset-file-restored",
+        name: "preset-21-file-restored",
         acts: &[Act::Stage(Play::Window(stage), 20)],
     },
 ];

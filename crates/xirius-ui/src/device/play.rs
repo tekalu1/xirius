@@ -17,6 +17,46 @@ pub const FIRST_PAD: u8 = 36;
 /// The pads of a bank: four rows of four.
 pub const PADS: usize = 16;
 pub const KEYS_H: f32 = 56.0;
+
+#[cfg(test)]
+mod keyboard_tests {
+    use super::*;
+
+    #[test]
+    fn piano_keeps_targets_and_every_note_reachable_at_narrow_widths() {
+        for width in [316.0, 320.0, 360.0, 1280.0] {
+            let k = Keyboard::new(Rect::new(12.0, 20.0, width, Keyboard::HEIGHT), 0.0);
+            assert_eq!(k.keys.len(), usize::from(HIGH - LOW + 1));
+            for key in &k.keys {
+                assert_eq!(key.r.w, if key.black { 24.0 } else { 39.0 });
+                let scroll = (key.r.x - k.view.x - width / 2.0).max(0.0);
+                let moved = Keyboard::new(k.view, scroll);
+                let target = moved.keys.iter().find(|p| p.pitch == key.pitch).unwrap();
+                let x = target.r.x + target.r.w / 2.0;
+                let y = target.r.y + if target.black { 20.0 } else { 70.0 };
+                assert_eq!(moved.key_at(x, y), Some(key.pitch));
+            }
+            for x in 0..width.min(k.extent) as usize {
+                assert!(
+                    k.key_at(k.view.x + x as f32 + 0.5, 90.0).is_some(),
+                    "a seam must not release a drag"
+                );
+            }
+            assert_eq!(k.key_at(k.view.x - 1.0, 90.0), None);
+            assert_eq!(k.key_at(k.view.x + 2.0, k.view.y + 93.0), None);
+        }
+    }
+
+    #[test]
+    fn scrollbar_drag_reaches_both_ends_without_shrinking_keys() {
+        let k = Keyboard::new(Rect::new(10.0, 10.0, 320.0, Keyboard::HEIGHT), 0.0);
+        let thumb = k.thumb();
+        let drag = k.scroll_press(thumb.x + 5.0, thumb.y + 2.0).unwrap();
+        assert_eq!(drag.position(-100.0), 0.0);
+        assert_eq!(drag.position(10000.0), k.extent - k.view.w);
+        assert!(k.scroll_press(20.0, 30.0).is_none());
+    }
+}
 /// A black key's size, over the line between two white keys.
 const BLACK_W: f32 = 8.0;
 const BLACK_H: f32 = 34.0;
@@ -38,6 +78,128 @@ pub struct Key {
     pub pitch: u8,
     pub r: Rect,
     pub black: bool,
+}
+
+/// A playable piano keeps its targets large; the viewport scrolls across its range.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Keyboard {
+    pub view: Rect,
+    pub keys: Vec<Key>,
+    pub scroll: f32,
+    pub extent: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScrollDrag {
+    rail: Rect,
+    thumb: f32,
+    offset: f32,
+    range: f32,
+}
+
+impl ScrollDrag {
+    pub fn position(self, x: f32) -> f32 {
+        let travel = self.rail.w - self.thumb;
+        if travel <= 0.0 {
+            return 0.0;
+        }
+        ((x - self.rail.x - self.offset) / travel).clamp(0.0, 1.0) * self.range
+    }
+}
+
+impl Keyboard {
+    pub const HEIGHT: f32 = 104.0;
+    pub const PITCH: f32 = 40.0;
+
+    pub fn new(view: Rect, scroll: f32) -> Self {
+        let extent = (LOW..=HIGH).filter(|&p| !is_black_key(p)).count() as f32 * Self::PITCH + 1.0;
+        let scroll = scroll.clamp(0.0, (extent - view.w).max(0.0));
+        let mut keys = keys(Rect::new(view.x - scroll, view.y, extent, 92.0));
+        for k in &mut keys {
+            if k.black {
+                k.r.x -= 8.0;
+                k.r.w = 24.0;
+                k.r.h = 58.0;
+            }
+        }
+        Self {
+            view,
+            keys,
+            scroll,
+            extent,
+        }
+    }
+
+    pub fn key_at(&self, x: f32, y: f32) -> Option<u8> {
+        if !self.view.contains(x, y) || y >= self.view.y + 92.0 {
+            return None;
+        }
+        // Fill the one-pixel seams with the adjoining white key. Black keys win first.
+        self.keys
+            .iter()
+            .rev()
+            .find(|k| {
+                let mut r = k.r;
+                if !k.black {
+                    r.x -= 1.0;
+                    r.w += 2.0;
+                }
+                r.contains(x, y)
+            })
+            .map(|k| k.pitch)
+    }
+
+    pub fn rail(&self) -> Rect {
+        Rect::new(self.view.x, self.view.y + 96.0, self.view.w, 6.0)
+    }
+
+    pub fn scroll_press(&self, x: f32, y: f32) -> Option<ScrollDrag> {
+        let rail = self.rail();
+        let hit = Rect::new(rail.x, rail.y - 4.0, rail.w, rail.h + 8.0);
+        if self.extent <= self.view.w || !hit.contains(x, y) {
+            return None;
+        }
+        let thumb = self.thumb();
+        Some(ScrollDrag {
+            rail,
+            thumb: thumb.w,
+            range: self.extent - self.view.w,
+            offset: if x >= thumb.x && x <= thumb.right() {
+                x - thumb.x
+            } else {
+                thumb.w / 2.0
+            },
+        })
+    }
+
+    pub fn thumb(&self) -> Rect {
+        let rail = self.rail();
+        let width = (rail.w * self.view.w / self.extent).min(rail.w).max(24.0);
+        let range = (self.extent - self.view.w).max(0.0);
+        let x = if range > 0.0 {
+            self.scroll / range * (rail.w - width)
+        } else {
+            0.0
+        };
+        Rect::new(rail.x + x, rail.y, width, rail.h)
+    }
+
+    pub fn at(self, dx: f32, dy: f32) -> Self {
+        Self::new(
+            Rect::new(self.view.x + dx, self.view.y + dy, self.view.w, self.view.h),
+            self.scroll,
+        )
+    }
+
+    pub fn paint(&self, pen: &mut Pen, held: &[u8]) {
+        pen.mask(self.view, |pen| {
+            paint_held_keys(pen, &self.keys, held, true)
+        });
+        if self.extent > self.view.w {
+            pen.round(self.rail(), pen.c.surface_3, Radius::Xs);
+            pen.round(self.thumb(), pen.c.scroll_thumb[0], Radius::Xs);
+        }
+    }
 }
 
 /// The keys from [`LOW`] to [`HIGH`] in the frame `r`: the white ones a line apart, then the
@@ -107,6 +269,10 @@ pub fn pad_name(pitch: u8) -> &'static str {
 
 /// The keyboard, `down` the key held: the white keys' C named while `names` ([`key_names`]).
 pub fn paint_keys(pen: &mut Pen, keys: &[Key], down: Option<u8>, names: bool) {
+    paint_held_keys(pen, keys, &down.into_iter().collect::<Vec<_>>(), names);
+}
+
+fn paint_held_keys(pen: &mut Pen, keys: &[Key], down: &[u8], names: bool) {
     let (Some(first), Some(last)) = (keys.first(), keys.iter().rfind(|k| !k.black)) else {
         return;
     };
@@ -119,7 +285,7 @@ pub fn paint_keys(pen: &mut Pen, keys: &[Key], down: Option<u8>, names: bool) {
     );
     pen.round(frame, c.key_black, Radius::Clip);
     for k in keys {
-        let lit = down == Some(k.pitch);
+        let lit = down.contains(&k.pitch);
         let face = match (lit, k.black) {
             (true, _) => c.fill,
             (false, true) => c.key_black,

@@ -873,36 +873,126 @@ pub struct Capture {
     /// The notes the thru sent, by `(track, the key's own pitch)`: the pitch that was really
     /// sent. The off uses it, and a value changed while the key is held stops it first
     /// (UI-312). A fixed array: the audio thread must not allocate.
-    held: [(usize, u8, u8); 128],
+    held: [(usize, u8, u8, u64); 128],
     held_len: usize,
     /// The notes a value change already stopped, by `(track, the key's own pitch)`: their
     /// later off is not sent again at the new value's pitch (UI-312).
-    stopped: [(usize, u8); 128],
+    stopped: [(usize, u8, u64); 128],
     stopped_len: usize,
+    /// Rejected presses still have matching offs; count them separately from cancellations.
+    rejected: [(usize, u8, u64, u32); 128],
+    rejected_len: usize,
+    sources: [(usize, u64); 128],
+    sources_len: usize,
+    disconnected: [Option<usize>; 128],
 }
 
 impl Capture {
-    fn note_off(&mut self, track: usize, pitch: u8, plan: &mut crate::mixer::Plan) {
-        plan.push_event(
-            track,
-            NoteEvent {
-                offset: 0,
-                kind: NoteKind::Off { pitch },
-            },
-        );
+    fn reject_press(&mut self, track: usize, pitch: u8, source: u64) -> bool {
+        if let Some(r) = self.rejected[..self.rejected_len]
+            .iter_mut()
+            .find(|r| (r.0, r.1, r.2) == (track, pitch, source))
+        {
+            if let Some(count) = r.3.checked_add(1) {
+                r.3 = count;
+                return true;
+            }
+            return false;
+        }
+        if self.rejected_len == self.rejected.len() {
+            return false;
+        }
+        self.rejected[self.rejected_len] = (track, pitch, source, 1);
+        self.rejected_len += 1;
+        true
     }
 
-    fn remember_stopped(&mut self, track: usize, own: u8) {
+    fn take_rejected(&mut self, track: usize, pitch: u8, source: u64) -> bool {
+        let Some(i) = self.rejected[..self.rejected_len]
+            .iter()
+            .position(|r| (r.0, r.1, r.2) == (track, pitch, source))
+        else {
+            return false;
+        };
+        self.rejected[i].3 -= 1;
+        if self.rejected[i].3 == 0 {
+            self.rejected_len -= 1;
+            self.rejected[i] = self.rejected[self.rejected_len];
+        }
+        true
+    }
+
+    pub(crate) fn release_port(&mut self, port: usize, plan: &mut crate::mixer::Plan) {
+        if !self.disconnected.contains(&Some(port))
+            && let Some(slot) = self.disconnected.iter_mut().find(|p| p.is_none())
+        {
+            *slot = Some(port);
+        }
+        let belongs = |source: u64| {
+            source > 0
+                && source & crate::performance::MOUSE == 0
+                && (source - 1) >> 4 == port as u64
+        };
+        let mut i = 0;
+        while i < self.sources_len {
+            let (track, source) = self.sources[i];
+            if belongs(source) {
+                Self::deliver(track, source, NoteKind::control(123, 0), plan);
+                self.sources_len -= 1;
+                self.sources[i] = self.sources[self.sources_len];
+            } else {
+                i += 1;
+            }
+        }
+        let mut i = 0;
+        while i < self.held_len {
+            let (track, own, _, source) = self.held[i];
+            if belongs(source) {
+                self.remember_stopped(track, own, source);
+                self.held_len -= 1;
+                self.held[i] = self.held[self.held_len];
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    pub(crate) fn release_inputs(&mut self, plan: &mut crate::mixer::Plan) {
+        for i in 0..self.thru.len() {
+            self.stop_held(self.thru[i].track, plan);
+        }
+    }
+
+    fn deliver(track: usize, source: u64, kind: NoteKind, plan: &mut crate::mixer::Plan) {
+        if source == 0 {
+            plan.push_event(track, NoteEvent { offset: 0, kind });
+        } else {
+            plan.push_live_input(
+                track,
+                crate::performance::Input {
+                    source,
+                    plugin: None,
+                    kind,
+                },
+            );
+        }
+    }
+
+    fn note_off(&mut self, track: usize, source: u64, pitch: u8, plan: &mut crate::mixer::Plan) {
+        Self::deliver(track, source, NoteKind::Off { pitch }, plan);
+    }
+
+    fn remember_stopped(&mut self, track: usize, own: u8, source: u64) {
         if self.stopped_len < self.stopped.len() {
-            self.stopped[self.stopped_len] = (track, own);
+            self.stopped[self.stopped_len] = (track, own, source);
             self.stopped_len += 1;
         }
     }
 
-    fn take_stopped(&mut self, track: usize, own: u8) -> bool {
+    fn take_stopped(&mut self, track: usize, own: u8, source: u64) -> bool {
         let mut i = 0;
         while i < self.stopped_len {
-            if self.stopped[i] == (track, own) {
+            if self.stopped[i] == (track, own, source) {
                 self.stopped_len -= 1;
                 self.stopped[i] = self.stopped[self.stopped_len];
                 return true;
@@ -914,12 +1004,23 @@ impl Capture {
 
     /// Stops the notes `track` holds at the pitch that was sent there (UI-312).
     fn stop_held(&mut self, track: usize, plan: &mut crate::mixer::Plan) {
+        let mut source_index = 0;
+        while source_index < self.sources_len {
+            let (target, source) = self.sources[source_index];
+            if target == track {
+                Self::deliver(track, source, NoteKind::control(123, 0), plan);
+                self.sources_len -= 1;
+                self.sources[source_index] = self.sources[self.sources_len];
+            } else {
+                source_index += 1;
+            }
+        }
         let mut i = 0;
         while i < self.held_len {
             if self.held[i].0 == track {
-                let (_, own, sent) = self.held[i];
-                self.note_off(track, sent, plan);
-                self.remember_stopped(track, own);
+                let (_, own, sent, source) = self.held[i];
+                self.note_off(track, source, sent, plan);
+                self.remember_stopped(track, own, source);
                 self.held_len -= 1;
                 self.held[i] = self.held[self.held_len];
                 continue;
@@ -947,11 +1048,33 @@ impl Capture {
 
     /// One message from the input, through the tracks that monitor it: the note sent to each is
     /// kept so its off uses the same pitch (UI-312).
-    pub(crate) fn thru_note(&mut self, kind: NoteKind, port: usize, plan: &mut crate::mixer::Plan) {
+    #[cfg(test)]
+    fn thru_note(&mut self, kind: NoteKind, port: usize, plan: &mut crate::mixer::Plan) {
+        self.thru_input(kind, port, 0, plan);
+    }
+
+    pub(crate) fn thru_input(
+        &mut self,
+        kind: NoteKind,
+        port: usize,
+        source: u64,
+        plan: &mut crate::mixer::Plan,
+    ) {
+        if self.disconnected.contains(&Some(port)) || self.disconnected.iter().all(Option::is_some)
+        {
+            return;
+        }
         for i in 0..self.thru.len() {
             let t = self.thru[i];
             if t.port.is_some_and(|p| p != port) {
                 continue;
+            }
+            if source != 0 && !self.sources[..self.sources_len].contains(&(t.track, source)) {
+                if self.sources_len == self.sources.len() {
+                    continue;
+                }
+                self.sources[self.sources_len] = (t.track, source);
+                self.sources_len += 1;
             }
             match kind {
                 NoteKind::On { pitch, .. } => {
@@ -963,30 +1086,45 @@ impl Capture {
                         continue;
                     };
                     // A new press of a key a value change stopped is a new note.
-                    self.take_stopped(t.track, pitch);
+                    self.take_stopped(t.track, pitch, source);
                     if self.held_len >= self.held.len() {
                         // It could never be let go: do not sound it, and keep its off silent.
-                        self.remember_stopped(t.track, pitch);
+                        if !self.reject_press(t.track, pitch, source) {
+                            // Bounded history exhaustion is an explicit panic boundary.
+                            for i in 0..self.thru.len() {
+                                self.stop_held(self.thru[i].track, plan);
+                            }
+                            self.rejected_len = 0;
+                        }
                         continue;
                     }
-                    self.held[self.held_len] = (t.track, pitch, heard);
+                    self.held[self.held_len] = (t.track, pitch, heard, source);
                     self.held_len += 1;
-                    plan.push_event(
+                    Self::deliver(
                         t.track,
-                        NoteEvent {
-                            offset: 0,
-                            kind: NoteKind::On {
-                                pitch: heard,
-                                velocity,
-                            },
+                        source,
+                        NoteKind::On {
+                            pitch: heard,
+                            velocity,
                         },
+                        plan,
                     );
                 }
                 NoteKind::Off { pitch } => {
+                    // An on rejected at capacity must not consume a previously
+                    // accepted press of the same key.
+                    if self.take_rejected(t.track, pitch, source)
+                        || self.take_stopped(t.track, pitch, source)
+                    {
+                        continue;
+                    }
                     let mut sent = None;
                     let mut j = 0;
                     while j < self.held_len {
-                        if self.held[j].0 == t.track && self.held[j].1 == pitch {
+                        if self.held[j].0 == t.track
+                            && self.held[j].1 == pitch
+                            && self.held[j].3 == source
+                        {
                             sent = Some(self.held[j].2);
                             self.held_len -= 1;
                             self.held[j] = self.held[self.held_len];
@@ -995,16 +1133,30 @@ impl Capture {
                         j += 1;
                     }
                     if let Some(pitch) = sent {
-                        self.note_off(t.track, pitch, plan);
-                    } else if self.take_stopped(t.track, pitch) {
-                        // Already stopped when the value changed: not again at the new height.
+                        self.note_off(t.track, source, pitch, plan);
                     } else if let Some(NoteKind::Off { pitch }) = t.heard(kind) {
-                        self.note_off(t.track, pitch, plan);
+                        self.note_off(t.track, source, pitch, plan);
                     }
+                }
+                other @ NoteKind::Control {
+                    number: 120 | 123, ..
+                } => {
+                    let mut j = 0;
+                    while j < self.held_len {
+                        let (track, own, _, owner) = self.held[j];
+                        if track == t.track && owner == source {
+                            self.remember_stopped(track, own, source);
+                            self.held_len -= 1;
+                            self.held[j] = self.held[self.held_len];
+                        } else {
+                            j += 1;
+                        }
+                    }
+                    Self::deliver(t.track, source, other, plan);
                 }
                 other => {
                     if let Some(kind) = t.heard(other) {
-                        plan.push_event(t.track, NoteEvent { offset: 0, kind });
+                        Self::deliver(t.track, source, kind, plan);
                     }
                 }
             }
@@ -1268,10 +1420,15 @@ impl Recorder {
             tail,
             closing: None,
             thru: spec.thru.clone(),
-            held: [(0, 0, 0); 128],
+            held: [(0, 0, 0, 0); 128],
             held_len: 0,
-            stopped: [(0, 0); 128],
+            stopped: [(0, 0, 0); 128],
             stopped_len: 0,
+            rejected: [(0, 0, 0, 0); 128],
+            rejected_len: 0,
+            sources: [(0, 0); 128],
+            sources_len: 0,
+            disconnected: [None; 128],
         });
         let mut spec = spec;
         let mut first = 0;
@@ -2023,6 +2180,48 @@ mod thru_tests {
     use super::*;
 
     #[test]
+    fn source_panic_frees_capture_capacity_without_releasing_another_source() {
+        for number in [120, 123] {
+            let (_rec, mut capture) = capture_with(vec![Thru {
+                track: 0,
+                port: None,
+                transpose: 0,
+                velocity: 0,
+            }]);
+            let mut plan = empty_plan();
+            let on = NoteKind::On {
+                pitch: 60,
+                velocity: 0.8,
+            };
+            let a = crate::performance::midi_source(0, 0);
+            let b = crate::performance::midi_source(1, 3);
+            capture.thru_input(on, 1, b, &mut plan);
+            for pitch in 0..127 {
+                capture.thru_input(
+                    NoteKind::On {
+                        pitch,
+                        velocity: 0.8,
+                    },
+                    0,
+                    a,
+                    &mut plan,
+                );
+            }
+            assert_eq!(capture.held_len, 128);
+            capture.thru_input(NoteKind::control(number, 0), 0, a, &mut plan);
+            assert_eq!(capture.held_len, 1);
+            assert_eq!(capture.held[0].3, crate::performance::midi_source(1, 3));
+            capture.thru_input(on, 0, a, &mut plan);
+            assert_eq!(capture.held_len, 2);
+            capture.thru_input(NoteKind::Off { pitch: 60 }, 1, b, &mut plan);
+            assert_eq!(capture.held_len, 1);
+            assert_eq!(capture.held[0].3, a);
+            capture.thru_input(NoteKind::Off { pitch: 60 }, 0, a, &mut plan);
+            assert_eq!(capture.held_len, 0);
+        }
+    }
+
+    #[test]
     fn the_thru_plays_the_tracks_transpose_and_velocity() {
         let thru = Thru {
             track: 0,
@@ -2283,15 +2482,28 @@ mod thru_tests {
             .filter(|(_, e)| matches!(e.kind, NoteKind::On { .. }))
             .count();
         assert_eq!(ons, 128);
-        capture.thru_note(
-            NoteKind::On {
-                pitch: 60,
-                velocity: 100.0 / 127.0,
-            },
-            0,
-            &mut plan,
-        );
+        for _ in 0..2 {
+            capture.thru_note(
+                NoteKind::On {
+                    pitch: 60,
+                    velocity: 100.0 / 127.0,
+                },
+                0,
+                &mut plan,
+            );
+        }
+        for _ in 0..2 {
+            capture.thru_note(NoteKind::Off { pitch: 60 }, 0, &mut plan);
+            assert_eq!(
+                capture.held_len, 128,
+                "the rejected press cannot release the old one"
+            );
+        }
         capture.thru_note(NoteKind::Off { pitch: 60 }, 0, &mut plan);
+        assert_eq!(
+            capture.held_len, 127,
+            "the accepted press can still be released"
+        );
         assert_eq!(
             plan.pushed
                 .iter()

@@ -145,9 +145,11 @@ fn move_in_window(start: Option<f64>, windowed: bool) {
         .simulate_edit(&link, 1, &[0.5]);
 
     // A frame of the screen: the poll, the window's edits into the song, a step of the swap.
+    // The new latency can be heard before the pending edit is taken into the song
+    // (they arrive as their own messages), so the frames go on until both are seen.
     let mut taken = false;
     let deadline = Instant::now() + Duration::from_secs(30);
-    while latency(&host) != Some(base + 128) && Instant::now() < deadline {
+    while (latency(&host) != Some(base + 128) || !taken) && Instant::now() < deadline {
         audio.render(&mut buffer, 2);
         host.poll();
         taken |= collect_plugin_states(&mut s, &mut host, &opts)

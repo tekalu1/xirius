@@ -210,6 +210,7 @@ mod live_graph;
 mod material;
 
 pub struct SessionHost {
+    pub(crate) mouse_inputs: Vec<crate::live::MouseInput>,
     material: Option<material::Update>,
     material_dirty: bool,
     graph_work: Option<live_graph::Update>,
@@ -378,6 +379,7 @@ impl SessionHost {
         let (audio, controller) = create(plan, engine);
         let tmap = TempoMap::from_project(p);
         let mut host = SessionHost {
+            mouse_inputs: Vec::with_capacity(128),
             material: None,
             material_dirty: false,
             graph_work: None,
@@ -456,6 +458,10 @@ impl SessionHost {
         mut track: impl FnMut(TrackId, bool),
         cancelled: impl Fn() -> bool,
     ) -> Result<Vec<crate::build::PreparationFailure>, String> {
+        if !self.flush_mouse_releases() {
+            audio.render(&mut [], 0);
+            self.flush_mouse_releases();
+        }
         let keep = self.builder.retry_materials(p);
         let hosted: Vec<_> = crate::starting::hosted(p)
             .into_iter()
@@ -543,6 +549,7 @@ impl SessionHost {
 
     /// Takes in what the engine reported: the position, whether it plays and the levels.
     pub fn poll(&mut self) -> Status {
+        self.flush_mouse_releases();
         self.input_retirement_ready();
         let status = &mut self.status;
         let levels = &mut self.levels;
@@ -1003,6 +1010,10 @@ impl SessionHost {
         }
     }
 
+    pub(crate) fn try_live_command(&mut self, command: Command) -> Result<(), Command> {
+        self.controller.send(command)
+    }
+
     pub fn play(&mut self) -> bool {
         self.send(Command::Play)
     }
@@ -1333,6 +1344,10 @@ impl SessionHost {
     }
 
     fn swap_all(&mut self, p: &Project, report: &mut SyncReport) {
+        if !self.flush_mouse_releases() {
+            report.deferred += 1;
+            return;
+        }
         let built = self.builder.build(p, Select::All);
         report.warnings.extend(built.warnings);
         let swapped = self.controller.swap(built.spec);

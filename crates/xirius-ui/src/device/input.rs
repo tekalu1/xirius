@@ -590,8 +590,34 @@ impl Studio {
     /// let go here. A held key or pad ends its note, a knob or a point goes in as one step.
     /// True when something was held.
     pub(crate) fn device_focus_lost(&mut self) -> bool {
-        let held = self.instrument_up();
-        self.window_note_off() || held
+        let target = self.instruments.detached_target;
+        let scrolling = self
+            .instruments
+            .keyboard_drag
+            .is_some_and(|(id, _)| target.is_none_or(|t| t == id));
+        if scrolling {
+            self.instruments.keyboard_drag = None;
+        }
+        let held = if self
+            .instruments
+            .grab
+            .as_ref()
+            .is_some_and(|g| target.is_none_or(|t| t == g.plugin()))
+        {
+            self.instrument_up()
+        } else {
+            false
+        };
+        let note = if self
+            .instruments
+            .note
+            .is_some_and(|n| target.is_none_or(|t| t == n.plugin))
+        {
+            self.window_note_off()
+        } else {
+            false
+        };
+        note || held || scrolling
     }
 
     /// A sweep goes into the song (one step). Also before anything that reads or moves the
@@ -632,6 +658,25 @@ impl Studio {
         fine: bool,
     ) -> bool {
         let p = self.auto_shown();
+        for (i, w) in self.instruments.open.iter().enumerate() {
+            if self.instruments.detached_channel
+                || self.instruments.detached_target != Some(w.plugin)
+            {
+                continue;
+            }
+            let Some((_, plugin, def)) = crate::instrument::window::live(&p, w) else {
+                continue;
+            };
+            let body = self
+                .instruments
+                .body(self.instruments.frame(i, g), plugin, def);
+            if let Some(k) = body.keyboard.filter(|k| k.view.contains(x, y)) {
+                let scroll =
+                    (k.scroll - notches as f32 * 40.0).clamp(0.0, (k.extent - k.view.w).max(0.0));
+                self.instruments.keyboard_scroll.insert(w.plugin, scroll);
+                return true;
+            }
+        }
         let Some((i, part)) = self.instruments.at(&p, g, x, y) else {
             return false;
         };

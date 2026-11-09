@@ -872,6 +872,32 @@ impl Transport {
         }
     }
 
+    pub(crate) fn live_input(
+        &mut self,
+        p: &Project,
+        dir: Option<PathBuf>,
+        track: TrackId,
+        input: xirius_engine::performance::Input,
+    ) -> Result<(), String> {
+        if self.player.is_none()
+            && let Some(d) = &self.down
+        {
+            return Err(d.said.clone());
+        }
+        let player = self.ensure(p, dir)?;
+        if player.host.live_input(track, input) {
+            Ok(())
+        } else {
+            Err("インストゥルメントにノートを送れませんでした".into())
+        }
+    }
+
+    pub(crate) fn release_live_inputs(&mut self) {
+        if let Some(player) = &mut self.player {
+            player.host.release_live_inputs();
+        }
+    }
+
     pub(crate) fn suspend_for_export(&mut self) {
         self.pause();
         self.pending_output = None;

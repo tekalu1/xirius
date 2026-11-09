@@ -389,6 +389,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("dawproject", dawproject_shots::SHOTS),
     ("dawproject-reference", dawproject_reference_shots::SHOTS),
     ("dblclick", dblclick_shots::SHOTS),
+    ("device-input", device_window::input_shots::SHOTS),
     ("devices", devices_shots::SHOTS),
     ("draw-length", draw_length_shots::SHOTS),
     ("drawer", drawer_shots::DRAWER),
@@ -419,6 +420,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("instrument-menu", fixed_screens_shots::INSTRUMENT_MENU),
     ("keep", keep_shots::KEEP),
     ("key-sources", key_sources_shots::SHOTS),
+    ("keyboard-input", device_window::input_shots::KEYBOARD_SHOTS),
     ("keymap", keymap_shots::SHOTS),
     ("keys-rest", keys_rest_shots::SHOTS),
     ("keys-view-menu", keys_view_menu_shots::SHOTS),
@@ -454,6 +456,8 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("plugin-fixture", plugin_fixture_shots::SHOTS),
     #[cfg(windows)]
     ("plugin-keys", plugin_keys_shots::SHOTS),
+    #[cfg(windows)]
+    ("plugin-presets", device_window::preset_shots::SHOTS),
     ("plugin-recovery", plugin_recovery_shots::SHOTS),
     ("plugin-reload", plugin_reload_shots::SHOTS),
     ("plugin-swap", plugin_swap_shots::SHOTS),
@@ -479,9 +483,6 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("rollruler", rollruler_shots::ROLL_RULER),
     ("ruler-drag", ruler_drag_shots::SHOTS),
     ("saving", saving_shots::SHOTS),
-    ("device-input", device_window::input_shots::SHOTS),
-    #[cfg(windows)]
-    ("plugin-presets", device_window::preset_shots::SHOTS),
     ("screencmd", screencmd_shots::SHOTS),
     ("settings", settings::shots::SHOTS),
     ("side", side_shots::SIDE),
