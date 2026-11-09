@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use xirius_core::error::{CmdError, CmdResult};
+use xirius_core::error::{CmdError, CmdResult, PluginStateFailure};
 use xirius_core::session::{RunOptions, RunResult, SaveProgress, Session};
 
 use crate::studio::{FileRequest, Geometry, Rect, Studio};
@@ -44,6 +44,12 @@ pub(crate) struct Saving {
     /// The keys and the roll still held when the veil comes are let go then, as a save lets
     /// them go when it starts: a release after the veil does not reach them (PLG-021).
     let_go_at_veil: bool,
+    /// State collection alone cannot clear a failure before its writes finish.
+    captured_states: bool,
+    explicit_retry: bool,
+    /// A save started before a newer failure cannot acknowledge that failure.
+    retry_generation: u64,
+    graph_retry: Option<xirius_session::host::GraphRetry>,
 }
 
 struct McpSave {
@@ -97,6 +103,9 @@ impl Saving {
 }
 
 pub fn failure_text(error: &CmdError) -> String {
+    if let Some(reason) = error.save_reason {
+        return format!("保存できません（{}）", plugin_failure_reason(reason));
+    }
     use std::io::ErrorKind::*;
     match error.io_kind {
         Some(StorageFull | QuotaExceeded) => "ディスクの空きが足りないため保存できません".into(),
@@ -108,6 +117,21 @@ pub fn failure_text(error: &CmdError) -> String {
             || "保存できません".into(),
             |os| format!("保存できません（{os}）"),
         ),
+    }
+}
+
+fn plugin_failure_reason(reason: PluginStateFailure) -> &'static str {
+    match reason {
+        PluginStateFailure::Timeout => {
+            "プラグインの状態取得が時間内に完了しません。未保存の変更が残っています"
+        }
+        PluginStateFailure::Capture => {
+            "プラグインの状態を取得できません。未保存の変更が残っています"
+        }
+        PluginStateFailure::Transfer => {
+            "プラグインの状態を引き継げません。未保存の変更が残っています"
+        }
+        PluginStateFailure::EditPending => ARA_LATE_LEAVING,
     }
 }
 
@@ -130,7 +154,19 @@ impl Studio {
     }
     pub(crate) fn save_failed(&mut self, error: &CmdError) {
         let first = self.keep.failed.is_none();
-        let text = failure_text(error);
+        if let Some(reason) = error.save_reason {
+            self.keep.plugin_state_failed = true;
+            self.keep.plugin_state_reason = Some(reason);
+            self.keep.plugin_failure_generation += 1;
+        }
+        let mut text = failure_text(error);
+        if self.keep.plugin_state_failed
+            && error.save_reason.is_none()
+            && let Some(reason) = self.keep.plugin_state_reason
+        {
+            // A later disk failure must not replace the still-unsaved plugin reason.
+            text = format!("{}。{text}", plugin_failure_reason(reason));
+        }
         self.keep.failed = Some(text.clone());
         if first {
             self.toast = Some(Toast {
@@ -149,11 +185,17 @@ impl Studio {
         }
     }
 
+    pub(crate) fn plugin_save_failed(&mut self, reason: PluginStateFailure) {
+        self.save_failed(&CmdError::io(plugin_failure_reason(reason)).with_save_reason(reason));
+        self.error = Some(plugin_failure_reason(reason).into());
+    }
+
     pub(crate) fn save_succeeded(&mut self) {
         if self.keep.plugin_state_failed {
             return;
         }
         self.keep.failed = None;
+        self.keep.plugin_state_reason = None;
         if self.toast.as_ref().is_some_and(|t| {
             t.also
                 .as_ref()
@@ -372,6 +414,10 @@ impl Studio {
             record_error: None,
             cancel_hover: false,
             let_go_at_veil: false,
+            captured_states: false,
+            explicit_retry: false,
+            graph_retry: None,
+            retry_generation: self.keep.plugin_failure_generation,
         });
     }
 
@@ -443,6 +489,10 @@ impl Studio {
             record_error: None,
             cancel_hover: false,
             let_go_at_veil: true,
+            captured_states: false,
+            explicit_retry: false,
+            graph_retry: None,
+            retry_generation: self.keep.plugin_failure_generation,
         });
     }
 
@@ -550,6 +600,23 @@ impl Studio {
             .flatten();
         let progress = Arc::new(SaveProgress::default());
         progress.simulate_slow_disk(self.save_test_delay);
+        let retry_command = command
+            .clone()
+            .or_else(|| mcp.as_ref().and_then(McpSave::command));
+        let explicit_retry = if let Some((name, raw, _, _)) = &retry_command {
+            self.song
+                .session()
+                .execution_targets(name, raw)
+                .iter()
+                .any(|(name, _)| {
+                    matches!(
+                        name.as_str(),
+                        "project.save" | "project.save-as" | "version.save"
+                    )
+                })
+        } else {
+            mcp.is_none() && leaving.is_none()
+        };
         let pull = capture
             .then(|| {
                 self.transport
@@ -589,6 +656,10 @@ impl Studio {
             record_error: None,
             cancel_hover: false,
             let_go_at_veil: false,
+            captured_states: false,
+            explicit_retry,
+            graph_retry: self.transport.host().and_then(|h| h.failed_graph_retry()),
+            retry_generation: self.keep.plugin_failure_generation,
         });
     }
 
@@ -694,9 +765,9 @@ impl Studio {
                     return true;
                 }
                 pull.quarantine();
-                Some("プラグインの状態を取得できません。未保存の変更が残っています".into())
+                Some(PluginStateFailure::Timeout)
             } else {
-                pull.error()
+                pull.error().map(|_| PluginStateFailure::Capture)
             };
             // The ARA plugins' archives come over the frames, never waited for here (PLG-036).
             // One late is left out of a plain save, which the song goes back to unsaved for when
@@ -707,13 +778,14 @@ impl Studio {
                     return true;
                 }
                 if save.leaving.is_some() || save.close_when_done {
-                    error = Some(ARA_LATE_LEAVING.into());
+                    error = Some(PluginStateFailure::EditPending);
                 } else {
                     ara_late = true;
                 }
             }
-            let collected = if let Some(error) = error {
-                Err(CmdError::io(error))
+            let retry_source = self.auto_heard(&self.project());
+            let collected = if let Some(reason) = error {
+                Err(CmdError::io(plugin_failure_reason(reason)).with_save_reason(reason))
             } else if let Some(host) = self.transport.host_mut() {
                 xirius_session::host::collect_pulled_states(
                     self.song.session_mut(),
@@ -722,8 +794,22 @@ impl Studio {
                     &xirius_core::session::RunOptions::human(),
                 )
                 .map(|_| ())
+                .map_err(|error| {
+                    if error.io_kind.is_some() {
+                        // Keep an existing OS classification, without its command/path context.
+                        let text = failure_text(&error);
+                        CmdError {
+                            message: text,
+                            ..error
+                        }
+                    } else {
+                        let reason = PluginStateFailure::Capture;
+                        CmdError::io(plugin_failure_reason(reason)).with_save_reason(reason)
+                    }
+                })
             } else {
-                Err(CmdError::io("プラグインの状態を取得できません"))
+                let reason = PluginStateFailure::Capture;
+                Err(CmdError::io(plugin_failure_reason(reason)).with_save_reason(reason))
             };
             let mut save = self.saving.take().unwrap();
             if let Err(error) = collected {
@@ -746,8 +832,19 @@ impl Studio {
                 }
                 return true;
             }
-            self.keep.plugin_state_failed = false;
-            if ara_late {
+            save.captured_states = !ara_late;
+            if save.captured_states
+                && save.retry_generation == self.keep.plugin_failure_generation
+                && let Some(retry) = &save.graph_retry
+            {
+                let captured = self.project();
+                if let Some(current) = self.transport.host_mut().and_then(|host| {
+                    host.reconcile_graph_retry_after_capture(retry, &retry_source, &captured)
+                }) {
+                    save.graph_retry = Some(current);
+                }
+            }
+            if ara_late && !self.keep.plugin_state_failed {
                 self.toast = Some(Toast {
                     info: true,
                     ..Toast::plain(ARA_LATE.into())
@@ -793,6 +890,29 @@ impl Studio {
             self.finish_take();
         }
         let failures = self.song.session().take_write_failures();
+        if save.captured_states
+            && save.explicit_retry
+            && committed
+            && failures.is_empty()
+            && save.retry_generation == self.keep.plugin_failure_generation
+        {
+            if let Some(retry) = save.graph_retry {
+                let saved = self.auto_heard(&self.project());
+                if self
+                    .transport
+                    .host_mut()
+                    .is_some_and(|h| h.retry_failed_graph_after_save(retry.clone(), &saved))
+                {
+                    self.keep.graph_retry = Some((retry, save.retry_generation));
+                }
+            } else if self.keep.graph_retry.is_none()
+                && self.transport.host().is_none_or(|h| !h.has_failed_graph())
+            {
+                self.keep.plugin_state_failed = false;
+                self.keep.plugin_state_reason = None;
+                self.save_succeeded();
+            }
+        }
         if let Err(error) = &result {
             self.fail_macro(error.to_string());
         }
@@ -827,7 +947,7 @@ impl Studio {
                 match result {
                     Ok(_) => {
                         self.song.mark_draft(true);
-                        self.keep.failed = None;
+                        self.save_succeeded();
                         if let Some(dir) = self.song.record_dir() {
                             self.keep.remember(
                                 &dir,
@@ -1217,6 +1337,24 @@ mod tests {
         let mut error = CmdError::from(std::io::Error::new(Other, "OS reason"));
         error.message = "C:/private/song: OS reason".into();
         assert_eq!(failure_text(&error), "保存できません（OS reason）");
+        let private = "C:/private/song/project.json: external plugin failure";
+        assert_eq!(failure_text(&CmdError::io(private)), "保存できません");
+        for reason in [
+            PluginStateFailure::Timeout,
+            PluginStateFailure::Capture,
+            PluginStateFailure::Transfer,
+            PluginStateFailure::EditPending,
+        ] {
+            let error = CmdError::io(private)
+                .with_save_reason(reason)
+                .with_context(private);
+            assert!(error.io_kind.is_none() && error.os_message.is_none());
+            assert_eq!(
+                failure_text(&error),
+                format!("保存できません（{}）", plugin_failure_reason(reason))
+            );
+            assert!(!failure_text(&error).contains("private"));
+        }
     }
 
     #[test]

@@ -32,6 +32,17 @@ pub struct CmdError {
     pub io_kind: Option<std::io::ErrorKind>,
     #[serde(skip)]
     pub os_message: Option<String>,
+    /// A local, bounded save explanation; never an external plugin's text or path.
+    #[serde(skip)]
+    pub save_reason: Option<PluginStateFailure>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PluginStateFailure {
+    Timeout,
+    Capture,
+    Transfer,
+    EditPending,
 }
 
 impl CmdError {
@@ -41,6 +52,7 @@ impl CmdError {
             message: message.into(),
             io_kind: None,
             os_message: None,
+            save_reason: None,
         }
     }
     pub fn invalid(message: impl Into<String>) -> Self {
@@ -57,6 +69,11 @@ impl CmdError {
     }
     pub fn io(message: impl Into<String>) -> Self {
         Self::new(ErrorCode::Io, message)
+    }
+
+    pub fn with_save_reason(mut self, reason: PluginStateFailure) -> Self {
+        self.save_reason = Some(reason);
+        self
     }
 
     /// Adds command context without losing the original OS kind or text.

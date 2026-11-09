@@ -265,6 +265,9 @@ impl Latency {
             STATE_AWAY.fetch_add(1, Ordering::Relaxed);
         }
         state_gate();
+        if STATE_FAIL.load(Ordering::Acquire) != 0 {
+            return kResultFalse;
+        }
         let Some(stream) = (unsafe { vst3::ComRef::from_raw(state) }) else {
             return kInvalidArgument;
         };
@@ -749,6 +752,7 @@ static EXITED: AtomicU32 = AtomicU32::new(0);
 static TERMINATED: AtomicU32 = AtomicU32::new(0);
 static TERMINATED_AWAY: AtomicU32 = AtomicU32::new(0);
 static STATE_AWAY: AtomicU32 = AtomicU32::new(0);
+static STATE_FAIL: AtomicU32 = AtomicU32::new(0);
 static STATE_ENTERED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static STATE_RELEASE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static OPEN_ENTERED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -791,6 +795,12 @@ pub unsafe extern "system" fn FixtureStateGate(entered: usize, release: usize) {
 #[unsafe(no_mangle)]
 pub extern "system" fn FixtureStateAway() -> u32 {
     STATE_AWAY.load(Ordering::Relaxed)
+}
+
+/// Reject SDK snapshots in a private fixture DLL until the caller resets it.
+#[unsafe(no_mangle)]
+pub extern "system" fn FixtureStateFailure(fail: u32) {
+    STATE_FAIL.store(fail, Ordering::Release);
 }
 
 #[cfg(not(target_os = "windows"))]

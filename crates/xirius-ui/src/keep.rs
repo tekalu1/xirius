@@ -61,6 +61,9 @@ pub struct Keep {
     pub failed: Option<String>,
     /// A disk checkpoint cannot stand in for an unavailable plugin snapshot.
     pub(crate) plugin_state_failed: bool,
+    pub(crate) plugin_state_reason: Option<xirius_core::error::PluginStateFailure>,
+    pub(crate) plugin_failure_generation: u64,
+    pub(crate) graph_retry: Option<(xirius_session::host::GraphRetry, u64)>,
     /// Automatic save points made, for the tests.
     pub autosaves: u32,
     auto_pending: bool,
@@ -105,7 +108,9 @@ impl Keep {
 
     /// The song was opened or made new: what it is now is not an edit.
     pub fn sync(&mut self, project: &Arc<Project>) {
+        self.graph_retry = None;
         self.plugin_state_failed = false;
+        self.plugin_state_reason = None;
         self.seen = Some(project.clone());
         self.flash_until = 0;
         self.failed = None;
@@ -113,7 +118,9 @@ impl Keep {
     }
 
     pub(crate) fn sync_open(&mut self, project: &Arc<Project>, dir: Option<PathBuf>, draft: bool) {
+        self.graph_retry = None;
         self.plugin_state_failed = false;
+        self.plugin_state_reason = None;
         self.seen = Some(project.clone());
         self.flash_until = 0;
         self.failed = None;
@@ -447,7 +454,7 @@ impl Studio {
         {
             match self.song.keep_draft_checked(&dir) {
                 Ok(()) => {
-                    self.keep.failed = None;
+                    self.save_succeeded();
                     self.keep.remember(&dir, &self.project().name, true, now);
                 }
                 Err(e) => self.save_failed(&e),
@@ -1153,6 +1160,47 @@ mod tests {
     fn a_song_with_nothing_done_has_nothing_to_lose() {
         let (s, _, _tmp) = kept("nothing");
         assert_eq!(s.keep.mark(&s.song, 1000), SaveMark::Saved);
+    }
+
+    #[test]
+    fn draft_success_preserves_plugin_failure_and_clears_an_ordinary_failure() {
+        use xirius_core::error::PluginStateFailure;
+        for windowed in [false, true] {
+            for plugin_failure in [false, true] {
+                let (mut s, _, _tmp) = kept("draft-reason");
+                if windowed {
+                    s.transport.bind_window();
+                }
+                if plugin_failure {
+                    s.plugin_save_failed(PluginStateFailure::Transfer);
+                } else {
+                    s.save_failed(&xirius_core::CmdError::io("fixture write failure"));
+                }
+                let reason = s.keep.failed.clone();
+                s.song
+                    .run("track.add.audio", json!({"name":"Draft"}))
+                    .unwrap();
+                s.keep_edit(1000);
+                if windowed {
+                    s.keep_beat(1000);
+                    assert!(s.saving.is_some());
+                    s.wait_for_save();
+                }
+                assert!(s.song.is_draft());
+                assert!(s.song.record_dir().unwrap().join("project.json").exists());
+                if plugin_failure {
+                    assert_eq!(s.keep.failed, reason);
+                    assert_eq!(
+                        s.keep.plugin_state_reason,
+                        Some(PluginStateFailure::Transfer)
+                    );
+                    assert_eq!(s.save_mark(), SaveMark::Failed);
+                } else {
+                    assert!(s.keep.failed.is_none());
+                    assert!(!s.keep.plugin_state_failed);
+                }
+            }
+        }
     }
 
     #[test]

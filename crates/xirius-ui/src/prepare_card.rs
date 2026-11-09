@@ -273,15 +273,34 @@ impl Studio {
     /// more to do, so the frames keep coming.
     pub(crate) fn poll_swap(&mut self) -> bool {
         let (busy, said) = self.transport.step_swap();
-        if self
+        let state_failed = self
             .transport
             .host_mut()
-            .is_some_and(|host| host.take_state_transfer_failed())
-        {
-            self.keep.plugin_state_failed = true;
-        }
-        if !said.is_empty() {
+            .is_some_and(|host| host.take_state_transfer_failed());
+        if state_failed {
+            self.plugin_save_failed(xirius_core::error::PluginStateFailure::Transfer);
+        } else if !said.is_empty() {
             self.error = Some(said.join("。"));
+        }
+        if let Some((retry, generation)) = &self.keep.graph_retry {
+            if *generation != self.keep.plugin_failure_generation {
+                self.keep.graph_retry = None;
+            } else if self
+                .transport
+                .host()
+                .is_some_and(|h| h.graph_retry_applied(retry))
+            {
+                self.keep.graph_retry = None;
+                self.keep.plugin_state_failed = false;
+                self.keep.plugin_state_reason = None;
+                self.save_succeeded();
+            } else if self
+                .transport
+                .host()
+                .is_none_or(|h| !h.graph_retry_current(retry))
+            {
+                self.keep.graph_retry = None;
+            }
         }
         busy
     }
