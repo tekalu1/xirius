@@ -24,23 +24,36 @@ struct Candidate {
     builder: Builder,
     built: crate::build::Built,
     plan: Option<Box<Plan>>,
+    kept_plugins: std::collections::BTreeSet<PluginId>,
 }
 
 impl SessionHost {
     pub(super) fn step_live_graph(&mut self) -> Option<SyncReport> {
         if self.graph_work.is_none() {
             let pending = self.pending.take()?;
-            if self.graph_failed.as_ref() == Some(&self.song) {
-                return None;
+            let mut warnings = pending.warnings;
+            if self.failed_graph_retry().is_some() {
+                self.graph_latency_pending |= pending.latency;
+                return (!warnings.is_empty()).then_some(SyncReport {
+                    warnings,
+                    ..Default::default()
+                });
             }
             let source = self.song.clone();
-            let latency = pending.latency;
+            let latency = std::mem::take(&mut self.graph_latency_pending) || pending.latency;
             let target = pending.target;
             let make = match self.builder.live_copy() {
                 Ok(make) => make,
                 Err(error) => {
+                    self.graph_latency_pending |= latency;
+                    self.graph_retry = None;
+                    self.graph_failed = Some(GraphRetry(Arc::new(GraphFailure {
+                        target: source,
+                        error: error.clone(),
+                    })));
+                    warnings.push(error);
                     return Some(SyncReport {
-                        warnings: vec![error],
+                        warnings,
                         ..Default::default()
                     });
                 }
@@ -52,9 +65,6 @@ impl SessionHost {
             let snapshot = target.clone();
             let work = Job::spawn("live-graph", move || {
                 let mut builder = make();
-                if let Err(error) = builder.plugins_mut().capture_for_live_build(&snapshot) {
-                    return Ok(Outcome::Failed { error, state: true });
-                }
                 let graph = Graph::of(&snapshot);
                 let scope = Scope::new(&snapshot, Select::All);
                 let structure = Structure::of(&snapshot, &graph, &scope);
@@ -80,6 +90,12 @@ impl SessionHost {
                     .filter(|(id, _)| keep.contains_key(id))
                     .flat_map(|(_, t)| t.inserts.iter().map(|x| x.id))
                     .collect();
+                if let Err(error) = builder
+                    .plugins_mut()
+                    .capture_for_live_build(&snapshot, &kept_plugins)
+                {
+                    return Ok(Outcome::Failed { error, state: true });
+                }
                 let setup = shape.setup;
                 for (owner, plugin) in crate::starting::hosted(&snapshot) {
                     if !kept_plugins.contains(&plugin.id) {
@@ -116,6 +132,7 @@ impl SessionHost {
                         builder,
                         built,
                         plan: Some(Box::new(plan)),
+                        kept_plugins,
                     }))),
                     Err(error) => Ok(Outcome::Failed {
                         error: error.to_string(),
@@ -134,15 +151,25 @@ impl SessionHost {
                     })
                 }
                 Err(error) => {
+                    self.graph_latency_pending |= latency;
+                    self.graph_retry = None;
+                    self.graph_failed = Some(GraphRetry(Arc::new(GraphFailure {
+                        target: self.song.clone(),
+                        error: error.clone(),
+                    })));
+                    warnings.push(error);
                     return Some(SyncReport {
-                        warnings: vec![error],
+                        warnings,
                         ..Default::default()
                     });
                 }
             }
             // Publication is a later poll, even for an empty/instant plan.
             // This gives queued latency/model changes a defined handoff point.
-            return None;
+            return (!warnings.is_empty()).then_some(SyncReport {
+                warnings,
+                ..Default::default()
+            });
         }
         let mut update = self.graph_work.take().unwrap();
         if update.source != self.song {
@@ -174,8 +201,14 @@ impl SessionHost {
             match result {
                 Ok(Outcome::Ready(candidate)) => update.ready = Some(*candidate),
                 Ok(Outcome::Failed { error, state }) => {
+                    self.graph_latency_pending |=
+                        update.latency || self.pending.as_ref().is_some_and(|p| p.latency);
                     self.state_transfer_failed |= state;
-                    self.graph_failed = Some(update.source);
+                    self.graph_retry = None;
+                    self.graph_failed = Some(GraphRetry(Arc::new(GraphFailure {
+                        target: update.source,
+                        error: error.clone(),
+                    })));
                     self.pending = None;
                     return Some(SyncReport {
                         warnings: vec![error],
@@ -183,6 +216,14 @@ impl SessionHost {
                     });
                 }
                 Err(error) => {
+                    self.graph_latency_pending |=
+                        update.latency || self.pending.as_ref().is_some_and(|p| p.latency);
+                    self.graph_retry = None;
+                    self.graph_failed = Some(GraphRetry(Arc::new(GraphFailure {
+                        target: update.source,
+                        error: error.clone(),
+                    })));
+                    self.pending = None;
                     return Some(SyncReport {
                         warnings: vec![error],
                         ..Default::default()
@@ -202,7 +243,12 @@ impl SessionHost {
             self.graph_work = Some(update);
             return None;
         }
-        let Candidate { builder, built, .. } = update.ready.take().unwrap();
+        let Candidate {
+            builder,
+            built,
+            kept_plugins,
+            ..
+        } = update.ready.take().unwrap();
         let visible: Vec<_> = self
             .builder
             .plugins()
@@ -210,7 +256,9 @@ impl SessionHost {
             .into_iter()
             .filter_map(|(id, _, status)| status.editor_open.then_some(id))
             .collect();
-        let old = std::mem::replace(&mut self.builder, builder);
+        let mut old = std::mem::replace(&mut self.builder, builder);
+        let carried = old.plugins_mut().take_carried_for(&kept_plugins);
+        self.builder.plugins_mut().carry(carried);
         self.builder.plugins_mut().promote_opened();
         for id in visible {
             if !self
@@ -247,6 +295,9 @@ impl SessionHost {
         let late_latency = self.pending.take().is_some_and(|pending| pending.latency);
         self.latency_dirty |= late_latency;
         self.graph_failed = None;
+        if let Some(retry) = &mut self.graph_retry {
+            retry.applied = retry.target == update.source;
+        }
         self.params.clear();
         let p = self.song.clone();
         self.send_transport(&p);

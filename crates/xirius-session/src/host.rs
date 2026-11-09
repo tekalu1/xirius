@@ -117,6 +117,23 @@ pub struct Collected {
     pub params: Vec<ParamEvent>,
 }
 
+/// A particular failed live plan. A save retry may keep this ticket while it
+/// captures and writes; it cannot retry a later failure, even at the same model.
+#[derive(Clone, Debug)]
+pub struct GraphRetry(Arc<GraphFailure>);
+
+#[derive(Debug)]
+struct GraphFailure {
+    target: Project,
+    error: String,
+}
+
+struct ActiveGraphRetry {
+    failure: GraphRetry,
+    target: Project,
+    applied: bool,
+}
+
 /// The longest a meter waits for the engine to say it took a new mix.
 const SWAP_WAIT: std::time::Duration = std::time::Duration::from_millis(250);
 
@@ -213,11 +230,15 @@ pub struct SessionHost {
     material: Option<material::Update>,
     material_dirty: bool,
     graph_work: Option<live_graph::Update>,
-    graph_failed: Option<Project>,
+    graph_failed: Option<GraphRetry>,
+    graph_retry: Option<ActiveGraphRetry>,
     state_transfer_failed: bool,
     live: BTreeMap<TrackId, bool>,
     song: Project,
     latency_dirty: bool,
+    /// Rebuild debt retained across failed attempts and suppressed polls.
+    /// Unlike latency_dirty, this never schedules work on its own.
+    graph_latency_pending: bool,
     /// A new mix whose plugins are opening ([`SessionHost::step_swap`]).
     pending: Option<PendingSwap>,
     /// A change of latency builds its mix without waiting for the plugins too.
@@ -382,6 +403,7 @@ impl SessionHost {
             material_dirty: false,
             graph_work: None,
             graph_failed: None,
+            graph_retry: None,
             state_transfer_failed: false,
             live: p
                 .tracks
@@ -390,6 +412,7 @@ impl SessionHost {
                 .collect(),
             song: p.clone(),
             latency_dirty: false,
+            graph_latency_pending: false,
             pending: None,
             nonblocking: false,
             windowed: false,
@@ -818,7 +841,7 @@ impl SessionHost {
     }
 
     /// The song as the engine was last given it.
-    pub(crate) fn song(&self) -> &Project {
+    pub fn song(&self) -> &Project {
         &self.song
     }
 
@@ -1127,9 +1150,260 @@ impl SessionHost {
             });
         }
         self.graph_failed = None;
-        self.begin_swap(self.heard_now(), SwapKind::Latency, Vec::new());
+        let target = if self.windowed {
+            self.song.clone()
+        } else {
+            self.heard_now()
+        };
+        self.begin_swap(target, SwapKind::Latency, Vec::new());
     }
 
+    /// Ticket for an explicit retry. Autosave, polling and played keys must not
+    /// request retries. Saving and applying a live graph are separate outcomes.
+    pub fn failed_graph_retry(&self) -> Option<GraphRetry> {
+        self.graph_failed
+            .as_ref()
+            .filter(|f| f.0.target == self.song)
+            .cloned()
+    }
+
+    /// A failure stays unresolved until a replacement plan is published, even
+    /// when an intervening edit has made its retry ticket obsolete.
+    pub fn has_failed_graph(&self) -> bool {
+        self.graph_failed.is_some()
+    }
+
+    /// Rebind the same unresolved failure after successful save-state collection.
+    /// This does not retry. The caller supplies the project immediately before
+    /// collection and the collected project, so unrelated edits or a newer
+    /// failure cannot be acknowledged by an older save. Rebinding invalidates
+    /// all copies of the old ticket, including a delayed completion.
+    pub fn reconcile_graph_retry_after_capture(
+        &mut self,
+        retry: &GraphRetry,
+        source: &Project,
+        captured: &Project,
+    ) -> Option<GraphRetry> {
+        if &retry.0.target != source
+            || &self.song != captured
+            || !self
+                .graph_failed
+                .as_ref()
+                .is_some_and(|f| Arc::ptr_eq(&f.0, &retry.0))
+        {
+            return None;
+        }
+        if source == captured {
+            return Some(retry.clone());
+        }
+        let current = GraphRetry(Arc::new(GraphFailure {
+            target: captured.clone(),
+            error: retry.0.error.clone(),
+        }));
+        self.graph_failed = Some(current.clone());
+        Some(current)
+    }
+
+    /// Consume the still-current failure once. Keep the SDK owners and use a
+    /// normal sync (not a forced latency/process rebuild). A stale save's ticket
+    /// cannot clear a newer failure or override an edit made while saving.
+    pub fn retry_failed_graph(&mut self, retry: GraphRetry) -> bool {
+        self.retry_failed_graph_after_save(retry, &self.song.clone())
+    }
+
+    /// As `retry_failed_graph`, with the project returned by a complete explicit
+    /// save. Collecting files can relink samples; it must publish those saved
+    /// paths. The failed source must still match before accepting that target.
+    /// The caller must check save success and its failure generation first.
+    pub fn retry_failed_graph_after_save(&mut self, retry: GraphRetry, saved: &Project) -> bool {
+        if self.graph_work.is_some()
+            || self.material.is_some()
+            || retry.0.target != self.song
+            || !self
+                .graph_failed
+                .as_ref()
+                .is_some_and(|f| Arc::ptr_eq(&f.0, &retry.0))
+        {
+            return false;
+        }
+        // A real SDK latency change may already be queued by state collection.
+        // Preserve it; rejecting it would strand this failed target forever.
+        // A retry itself never requests a forced latency refresh.
+        let latency =
+            self.graph_latency_pending || self.pending.as_ref().is_some_and(|p| p.latency);
+        let mut warnings = self
+            .pending
+            .as_mut()
+            .map(|p| std::mem::take(&mut p.warnings))
+            .unwrap_or_default();
+        self.graph_failed = None;
+        warnings.extend(self.sync_later(saved).warnings);
+        self.graph_retry = Some(ActiveGraphRetry {
+            failure: retry,
+            target: saved.clone(),
+            applied: false,
+        });
+        let latency = latency || self.pending.as_ref().is_some_and(|p| p.latency);
+        if let Some(pending) = &mut self.pending {
+            warnings.append(&mut pending.warnings);
+        }
+        let target = if self.windowed {
+            self.song.clone()
+        } else {
+            self.heard_now()
+        };
+        self.begin_swap(target, SwapKind::Sync, warnings);
+        self.pending.as_mut().unwrap().latency |= latency;
+        true
+    }
+
+    /// True only after this retry's unchanged target was accepted by the live
+    /// queue. Disk save completion alone is not a live publication receipt.
+    pub fn graph_retry_applied(&self, retry: &GraphRetry) -> bool {
+        self.graph_retry_current(retry)
+            && self
+                .graph_retry
+                .as_ref()
+                .is_some_and(|current| current.applied)
+    }
+
+    /// A superseding target or failure invalidates a pending acknowledgment.
+    /// The UI drops that acknowledgment, retaining its failure notice until a
+    /// new complete explicit save retries or acknowledges the current target.
+    pub fn graph_retry_current(&self, retry: &GraphRetry) -> bool {
+        self.graph_failed.is_none()
+            && self.graph_retry.as_ref().is_some_and(|current| {
+                current.target == self.song && Arc::ptr_eq(&current.failure.0, &retry.0)
+            })
+    }
+
+    pub(crate) fn failed_graph_error(&self) -> Option<&str> {
+        self.graph_failed
+            .as_ref()
+            .filter(|f| f.0.target == self.song)
+            .map(|f| f.0.error.as_str())
+    }
+
+    /// Compare the requested source and its downstream plan with the accepted
+    /// plan, not just the first instrument (Multi and insert routes matter).
+    pub(crate) fn live_plan_matches(&self, track: TrackId) -> bool {
+        use crate::graph::NodeShape;
+        use xirius_engine::Output;
+
+        fn slot(g: &Graph, id: TrackId) -> Option<(bool, usize)> {
+            g.track_index(id)
+                .map(|i| (false, i))
+                .or_else(|| g.bus_index(id).map(|i| (true, i)))
+        }
+        fn node(s: &Structure, at: (bool, usize)) -> Option<&NodeShape> {
+            if at.0 {
+                s.buses.get(at.1)
+            } else {
+                s.tracks.get(at.1)
+            }
+        }
+        fn feeders(s: &Structure, bus: usize) -> std::collections::BTreeSet<TrackId> {
+            s.tracks
+                .iter()
+                .chain(&s.buses)
+                .filter(|n| n.output == Output::Bus(bus) || n.sends.iter().any(|(b, _)| *b == bus))
+                .map(|n| n.id)
+                .collect()
+        }
+
+        let graph = Graph::of(&self.song);
+        let next = Structure::of(&self.song, &graph, &Scope::new(&self.song, Select::All));
+        // Follow the played route downstream. Key taps instead follow their
+        // signal upstream, including every contributor to a tapped bus. A key
+        // does not depend on unrelated master inputs or on every song insert.
+        let mut work = vec![(track, true, false)];
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some((id, downstream, signal)) = work.pop() {
+            if !seen.insert((id, downstream, signal)) {
+                continue;
+            }
+            let (inserts, rack) = if id == TrackId::MASTER {
+                if next.master_inserts != self.structure.master_inserts
+                    || next.master_rack != self.structure.master_rack
+                {
+                    return false;
+                }
+                (&next.master_inserts, next.master_rack.as_ref())
+            } else {
+                let Some(at) = slot(&graph, id) else {
+                    return false;
+                };
+                // KeyFrom and bus outputs embed indices; equal IDs alone are
+                // insufficient when a preceding track or bus was removed.
+                if slot(&self.graph, id) != Some(at) {
+                    return false;
+                }
+                let Some(n) = node(&next, at) else {
+                    return false;
+                };
+                if node(&self.structure, at) != Some(n) {
+                    return false;
+                }
+                if signal {
+                    if at.0 {
+                        let incoming = feeders(&next, at.1);
+                        if incoming != feeders(&self.structure, at.1) {
+                            return false;
+                        }
+                        work.extend(incoming.into_iter().map(|id| (id, false, true)));
+                    } else {
+                        let Some(t) = self.song.tracks.get(&id) else {
+                            return false;
+                        };
+                        if !self
+                            .tracks
+                            .get(&id)
+                            .is_some_and(|old| old.matches(&self.song, t))
+                            || self.tempo.0 != self.song.ppq
+                            || self.tempo.1 != self.song.tempo
+                        {
+                            return false;
+                        }
+                    }
+                }
+                if downstream {
+                    let mut buses: Vec<_> = n.sends.iter().map(|(b, _)| *b).collect();
+                    match n.output {
+                        Output::Master => work.push((TrackId::MASTER, true, false)),
+                        Output::Bus(b) => buses.push(b),
+                        Output::Keys => {}
+                    }
+                    for b in buses {
+                        let Some(id) = graph.buses.get(b) else {
+                            return false;
+                        };
+                        work.push((*id, true, false));
+                    }
+                }
+                (&n.inserts, n.rack.as_ref())
+            };
+            // Match the builder's keyed effect row. Multi layer effects do not
+            // receive graph keys; their declared sources are not dependencies.
+            let layered = rack.map(crate::rack_row::layered).unwrap_or_default();
+            for x in inserts.iter().filter(|x| {
+                x.kind == xirius_core::model::PluginKind::Effect
+                    && x.runs()
+                    && !layered.contains(&x.id.0)
+            }) {
+                for key in x.sidechain.iter().flat_map(|sc| &sc.sources) {
+                    let requested = slot(&graph, key.track);
+                    if requested != slot(&self.graph, key.track) {
+                        return false;
+                    }
+                    // The builder ignores unresolved sources too (key_source).
+                    if requested.is_some() {
+                        work.push((key.track, false, true));
+                    }
+                }
+            }
+        }
+        true
+    }
     /// Sends the recording's thru the track values it should play with now (UI-312).
     fn sync_thru(&mut self, p: &Project, report: &mut SyncReport) {
         let Some(rec) = &self.recording else {
@@ -2097,6 +2371,41 @@ mod tests {
     use super::*;
     use xirius_core::id::SendId;
     use xirius_core::model::{KeyMode, KeySource, PluginIsolation, PluginKind, Sidechain};
+
+    #[test]
+    fn a_ready_live_plan_waits_for_queue_space_without_rebuilding_or_losing_retry() {
+        let p = Project::new("live queue");
+        let (mut host, mut audio, _) = SessionHost::start(&p, HostConfig::default()).unwrap();
+        host.set_windowed();
+        host.graph_failed = Some(GraphRetry(Arc::new(GraphFailure {
+            target: p.clone(),
+            error: "fixture failure".into(),
+        })));
+        let ticket = host.failed_graph_retry().unwrap();
+        host.begin_swap(p.clone(), SwapKind::Latency, Vec::new());
+        assert!(host.retry_failed_graph(ticket.clone()));
+        assert!(
+            host.pending.as_ref().unwrap().latency,
+            "a real pending latency update is retained"
+        );
+        assert!(!host.retry_failed_graph(ticket.clone()));
+        assert!(!host.graph_retry_applied(&ticket));
+        host.step_swap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !host.graph_work.as_ref().unwrap().work_ready() {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        while host.controller.send(Command::Stop).is_ok() {}
+        assert!(host.step_swap().is_none());
+        assert!(host.graph_work.is_some(), "keep the prepared candidate");
+        assert!(!host.graph_retry_applied(&ticket));
+        audio.render(&mut [0.0; 512], 2);
+        assert!(host.step_swap().unwrap().swapped);
+        assert!(!host.swap_pending());
+        assert!(host.failed_graph_retry().is_none());
+        assert!(host.graph_retry_applied(&ticket));
+    }
 
     #[test]
     fn latency_reported_during_a_live_build_is_kept_for_the_following_plan() {

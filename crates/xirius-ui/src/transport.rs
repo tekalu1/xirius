@@ -458,7 +458,10 @@ impl Transport {
         }
         let held = self.not_ready.contains(&track);
         let player = self.ensure(p, dir)?;
-        Ok(!held && player.host.instrument_ready(track))
+        player
+            .host
+            .instrument_status(track)
+            .map(|ready| !held && ready)
     }
 
     /// Opens the sound device the way `drivers` say, from the next player on.
@@ -865,6 +868,9 @@ impl Transport {
             return Err(d.said.clone());
         }
         let player = self.ensure(p, dir)?;
+        if matches!(kind, NoteKind::On { .. }) {
+            player.host.instrument_status(track)?;
+        }
         if player.host.note(track, kind) {
             Ok(())
         } else {

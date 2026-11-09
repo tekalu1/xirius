@@ -1014,16 +1014,21 @@ impl PluginLoader {
     pub(crate) fn capture_for_live_build(
         &mut self,
         target: &xirius_core::model::Project,
+        kept: &std::collections::BTreeSet<PluginId>,
     ) -> Result<(), String> {
         let basis = self.state_basis();
         let wanted = crate::starting::hosted(target)
             .into_iter()
-            .filter(|(_, next)| basis.get(&next.id).is_some_and(|old| old.accepts(next)))
+            .filter(|(_, next)| {
+                !kept.contains(&next.id) && basis.get(&next.id).is_some_and(|old| old.accepts(next))
+            })
             .map(|(_, next)| next.id)
             .collect();
         let receipt = self.begin_pull_states_matching(Some(&wanted), false);
         let receipt = Self::wait_for_pull(receipt, crate::host::PULL_WAIT)?;
-        let mut edits = self.current_edits(target, Some(&receipt))?;
+        // A retained processor also retains its editor mailbox. Do not drain it
+        // into a candidate that may be abandoned, even when wanted is empty.
+        let mut edits = self.current_edits_matching(target, Some(&receipt), Some(&wanted))?;
         for edit in &mut edits {
             edit.origin = Origin::Transfer;
         }
@@ -2569,7 +2574,7 @@ impl PluginLoader {
 
     /// Edits made in the plugins' editors since the last call.
     pub fn take_edits(&mut self) -> Vec<RemoteEdit> {
-        self.take_edits_with_pull(None)
+        self.take_edits_with_pull(None, None)
             .expect("ordinary edit reports have no capture receipt")
     }
 
@@ -2652,6 +2657,19 @@ impl PluginLoader {
         self.carried.extend(edits);
     }
 
+    /// Move retained edits only when the candidate is published. Cloning these
+    /// at worker launch would replay edits collected while the worker ran.
+    pub(crate) fn take_carried_for(
+        &mut self,
+        ids: &std::collections::BTreeSet<PluginId>,
+    ) -> Vec<RemoteEdit> {
+        let (take, keep) = std::mem::take(&mut self.carried)
+            .into_iter()
+            .partition(|e| ids.contains(&e.plugin));
+        self.carried = keep;
+        take
+    }
+
     pub fn take_pulled_edits(&mut self, pull: &StatePull) -> Result<Vec<RemoteEdit>, String> {
         if !pull.ready() {
             return Err("プラグインの状態を取得中です".into());
@@ -2659,7 +2677,7 @@ impl PluginLoader {
         if let Some(error) = pull.error() {
             return Err(error);
         }
-        self.take_edits_with_pull(Some(pull))
+        self.take_edits_with_pull(Some(pull), None)
     }
 
     fn state_basis(&self) -> HashMap<PluginId, StateIntent> {
@@ -2688,15 +2706,28 @@ impl PluginLoader {
         target: &xirius_core::model::Project,
         pull: Option<&StatePull>,
     ) -> Result<Vec<RemoteEdit>, String> {
+        self.current_edits_matching(target, pull, None)
+    }
+
+    fn current_edits_matching(
+        &mut self,
+        target: &xirius_core::model::Project,
+        pull: Option<&StatePull>,
+        only: Option<&HashSet<PluginId>>,
+    ) -> Result<Vec<RemoteEdit>, String> {
         if let Some(pull) = pull {
             pull.reconcile(target);
         }
         let passive = self.state_basis();
-        let basis = pull.map_or(&passive, |pull| &pull.basis);
-        let mut edits = match pull {
-            Some(pull) => self.take_pulled_edits(pull)?,
-            None => self.take_edits(),
-        };
+        if let Some(pull) = pull {
+            if !pull.ready() {
+                return Err("プラグインの状態を取得中です".into());
+            }
+            if let Some(error) = pull.error() {
+                return Err(error);
+            }
+        }
+        let mut edits = self.take_edits_with_pull(pull, only)?;
         let current: HashMap<_, _> = crate::starting::hosted(target)
             .into_iter()
             .map(|(_, p)| (p.id, p))
@@ -2730,8 +2761,14 @@ impl PluginLoader {
                     )
                 });
             }
+            // A capture needs this request's basis. Passive editor reports
+            // outside a selective pull still use their live instance's basis.
+            let basis = pull.and_then(|p| p.basis.get(&edit.plugin)).or_else(|| {
+                (edit.origin != Origin::Capture)
+                    .then(|| passive.get(&edit.plugin))
+                    .flatten()
+            });
             basis
-                .get(&edit.plugin)
                 .zip(current.get(&edit.plugin))
                 .is_some_and(|(old, now)| old.reconcile(now, edit))
         });
@@ -2744,13 +2781,18 @@ impl PluginLoader {
     fn take_edits_with_pull(
         &mut self,
         pull: Option<&StatePull>,
+        only: Option<&HashSet<PluginId>>,
     ) -> Result<Vec<RemoteEdit>, String> {
-        let mut out = std::mem::take(&mut self.carried);
+        let selected = |id: &PluginId| only.is_none_or(|ids| ids.contains(id));
+        let (mut out, retained) = std::mem::take(&mut self.carried)
+            .into_iter()
+            .partition(|e| selected(&e.plugin));
+        self.carried = retained;
         if let Some(pull) = pull {
             for (id, capture) in pull
                 .owned
                 .iter()
-                .filter(|(id, _)| !pull.ignored.borrow().contains(id))
+                .filter(|(id, _)| selected(id) && !pull.ignored.borrow().contains(id))
             {
                 if let Some(snapshot) = capture.take() {
                     let snapshot = snapshot?;
@@ -2774,15 +2816,18 @@ impl PluginLoader {
                 }
             }
         }
-        for (id, l) in &mut self.locals {
+        for (id, l) in self.locals.iter_mut().filter(|(id, _)| selected(id)) {
             out.extend(l.take(*id, false));
         }
         let mut remotes: Vec<(&PluginId, &Remote)> = self
             .remotes
             .iter()
-            .filter(|(id, _)| !self.leaving.contains_key(id))
+            .filter(|(id, _)| selected(id) && !self.leaving.contains_key(id))
             .collect();
         for (id, l) in &mut self.leaving {
+            if !selected(id) {
+                continue;
+            }
             match l {
                 Leaving::Remote(r) => remotes.push((id, r)),
                 Leaving::Local(l, _) => out.extend(l.take(*id, false)),
@@ -3642,6 +3687,96 @@ mod tests {
             link.update_gate().stamp(),
             restored,
             "accepted state is an observation, not another explicit change"
+        );
+    }
+
+    #[test]
+    fn selective_transfer_retains_passive_edits_and_does_not_invent_capture_receipts() {
+        use xirius_core::{
+            id::{Node, TrackId},
+            model::{Project, Track, TrackKind},
+        };
+        let plugin = Plugin {
+            id: PluginId(42),
+            name: "Fixture".into(),
+            kind: PluginKind::Effect,
+            format: "vst3".into(),
+            uid: "fixture".into(),
+            bypass: false,
+            deactivated: false,
+            params: Default::default(),
+            state: Some("old".into()),
+            sidechain: None,
+            preset: None,
+            samples: Vec::new(),
+            isolation: PluginIsolation::Shared,
+        };
+        let mut p = Project::new("retained editor");
+        let track = TrackId(3);
+        let mut row = Track::new(track, TrackKind::Audio, "fixture");
+        row.inserts.push(plugin.clone());
+        p.root.push(Node::Track(track));
+        p.tracks.insert(track, Arc::new(row));
+        let mut loader = PluginLoader::new(None);
+        let link = PluginLink::new();
+        loader.remotes.insert(
+            plugin.id,
+            Remote {
+                link: link.clone(),
+                server: PluginServer::new(None),
+                placement: PluginIsolation::Shared,
+                owner: String::new(),
+                applied: plugin.clone(),
+            },
+        );
+        let edit = |origin| RemoteEdit {
+            origin,
+            stamp: link.update_gate().stamp(),
+            plugin: plugin.id,
+            state: Some("editor patch".into()),
+            params: vec![],
+        };
+        loader.carry(vec![edit(Origin::Editor)]);
+        let kept = [plugin.id].into_iter().collect();
+        loader.capture_for_live_build(&p, &kept).unwrap();
+        assert_eq!(
+            loader.carried.len(),
+            1,
+            "empty wanted must not drain retained edits"
+        );
+        assert_eq!(loader.carried[0].origin, Origin::Editor);
+        let moved = loader.take_carried_for(&kept);
+        assert_eq!(
+            moved.len(),
+            1,
+            "publication transfers the retained carry exactly once"
+        );
+        assert!(loader.take_carried_for(&kept).is_empty());
+        loader.carry(moved);
+        let empty = HashSet::new();
+        let pull = loader.begin_pull_states_matching(Some(&empty), false);
+        let edits = loader.current_edits(&p, Some(&pull)).unwrap();
+        assert_eq!(
+            edits.len(),
+            1,
+            "passive uses live basis outside selective pull"
+        );
+        assert_eq!(edits[0].state.as_deref(), Some("editor patch"));
+        loader.carry(vec![edit(Origin::Capture)]);
+        assert!(
+            loader.current_edits(&p, Some(&pull)).unwrap().is_empty(),
+            "a capture outside this request has no receipt basis"
+        );
+        loader.carry(vec![edit(Origin::Editor)]);
+        let mut reset = p.clone();
+        Arc::make_mut(reset.tracks.get_mut(&track).unwrap()).inserts[0].state = None;
+        loader.advance_intents(&p, &reset);
+        assert!(
+            loader
+                .current_edits(&reset, Some(&pull))
+                .unwrap()
+                .is_empty(),
+            "an explicit reset still wins over the retained editor"
         );
     }
 
