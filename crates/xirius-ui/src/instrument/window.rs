@@ -2075,6 +2075,23 @@ impl Studio {
     /// for a Sampler or a Drum Kit, its samples. The device keeps the preset's name for its
     /// tag.
     pub fn load_preset(&mut self, id: PluginId, preset: &str) -> bool {
+        if let Some(track) = self
+            .project()
+            .tracks
+            .values()
+            .find(|t| {
+                t.inserts
+                    .iter()
+                    .any(|p| p.id == id && p.builtin().is_none())
+            })
+            .map(|t| t.id)
+        {
+            // design-lint: allow(ui-blocking-io) UI-337: preset loading is queued to the song owner, never awaited by the editor GUI.
+            return self.run_command(
+                "preset.load",
+                json!({"track":track,"of":id,"preset":preset}),
+            );
+        }
         let p = self.project();
         let Some((t, def)) = p.tracks.values().find_map(|t| {
             t.inserts

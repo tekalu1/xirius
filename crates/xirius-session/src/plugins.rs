@@ -852,6 +852,7 @@ struct OwnedPreload {
 struct EditorContext {
     area: Option<xirius_vst3::EditorArea>,
     bar: Option<xirius_vst3::EditorBar>,
+    caption: Option<xirius_vst3::Caption>,
 }
 struct PendingOwned {
     job: crate::background::Job<OwnedPreload>,
@@ -3039,6 +3040,17 @@ impl PluginLoader {
         open: bool,
         caption: Option<xirius_vst3::Caption>,
     ) -> Result<(), String> {
+        let caption = {
+            let mut contexts = self
+                .editor_contexts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let context = contexts.entry(id).or_default();
+            if caption.is_some() {
+                context.caption = caption;
+            }
+            context.caption
+        };
         if let Some(local) = self.playing_local(id)
             && let Some(owned) = &local.owned
         {
@@ -3180,6 +3192,12 @@ impl PluginLoader {
 
     /// Gives the open window of `id` new caption colours.
     pub fn set_caption(&self, id: PluginId, caption: xirius_vst3::Caption) {
+        self.editor_contexts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(id)
+            .or_default()
+            .caption = Some(caption);
         if let Some(local) = self.playing_local(id)
             && let Some(owned) = &local.owned
         {
@@ -3405,6 +3423,12 @@ mod tests {
         };
         loader.editor_bar(id, bar.clone());
         loader.editor_area(id, area);
+        let caption = xirius_vst3::Caption {
+            dark: false,
+            fill: 0xf4f4fa,
+            text: 0x141830,
+        };
+        loader.set_caption(id, caption);
         let building = loader.live_copy().unwrap()();
         let snapshot = building
             .editor_contexts
@@ -3415,9 +3439,19 @@ mod tests {
             .unwrap();
         assert_eq!(snapshot.area, Some(area));
         assert_eq!(snapshot.bar, Some(bar.clone()));
+        assert_eq!(snapshot.caption, Some(caption));
         let mut changed = bar;
         changed.pinned = false;
         loader.editor_bar(id, changed.clone());
+        let changed_caption = xirius_vst3::Caption {
+            dark: true,
+            ..caption
+        };
+        loader.set_caption(id, changed_caption);
+        assert_eq!(
+            building.editor_contexts.lock().unwrap()[&id].caption,
+            Some(changed_caption)
+        );
         assert_eq!(
             building.editor_contexts.lock().unwrap()[&id].bar,
             Some(changed)

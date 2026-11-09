@@ -124,7 +124,15 @@ fn open_presets_and_replace_go_where_the_row_says() {
         .filter(|r| !r.gap && r.label != "戻る")
         .map(|r| r.label)
         .collect();
-    assert_eq!(labels, ["Default", "上書き保存", "名前を付けて保存…"]);
+    assert_eq!(
+        labels,
+        [
+            "Default",
+            "上書き保存",
+            "名前を付けて保存…",
+            "ファイルから読み込む…"
+        ]
+    );
     s.context_restore(0);
     assert!(s.context_path("ブラウザーに表示").is_some());
     pick(&mut s, &g, "Default");
@@ -199,7 +207,7 @@ fn remove_leaves_the_row_to_pick_an_instrument() {
 }
 
 #[test]
-fn another_makers_instrument_has_no_presets_here() {
+fn external_instruments_have_host_preset_actions_without_parameter_metadata() {
     let (mut s, g, t, _) = studio();
     let pad = Pick {
         name: "Pad Synth".into(),
@@ -211,7 +219,12 @@ fn another_makers_instrument_has_no_presets_here() {
     right_press(&mut s, &g, t, id);
     let cells = crate::context::tests::all_rows(&s);
     let preset = cells.iter().find(|c| c.label == "プリセット").unwrap();
-    assert!(!preset.enabled);
+    assert!(preset.enabled);
+    assert!(
+        cells
+            .iter()
+            .any(|c| c.label == "ファイルから読み込む…" && c.enabled)
+    );
     // It keeps nothing yet: no parameter to follow.
     pick(&mut s, &g, "auto");
     let cells = crate::context::tests::all_rows(&s);

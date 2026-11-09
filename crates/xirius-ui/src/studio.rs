@@ -1989,6 +1989,42 @@ impl Studio {
             return self.device_key(g, key, mods)
                 || (key == "tab" && !mods.ctrl && !mods.alt && self.device_enter(!mods.shift));
         }
+        if self.instruments.detached_channel {
+            let Some(track) = self.channel.as_ref().map(|c| c.track) else {
+                return false;
+            };
+            let head = self
+                .head_fader
+                .entry
+                .as_ref()
+                .map(|e| e.track)
+                .into_iter()
+                .chain(self.head_fader.focus)
+                .collect::<Vec<_>>();
+            if !head.is_empty()
+                && head.iter().all(|t| *t == track)
+                && self.head_fader_key(key, mods)
+            {
+                return true;
+            }
+            let branch = self
+                .mixer
+                .value_entry
+                .as_ref()
+                .map(|e| e.focus)
+                .into_iter()
+                .chain(self.mixer.value_focus)
+                .collect::<Vec<_>>();
+            if !branch.is_empty()
+                && branch
+                    .iter()
+                    .all(|f| f.track == track && f.place == crate::branch_value::Place::Editor)
+                && self.value_key(key, mods)
+            {
+                return true;
+            }
+            return false;
+        }
         self.inspector_follow(g);
         // Esc during a press on a device's window lets go of it first, whatever else has the
         // keys (the macro pad's focus, the grip's).
@@ -2703,7 +2739,9 @@ impl Studio {
             }
             return false;
         }
-        self.instruments.detached_target.is_none() && self.browser.typed(key, ch)
+        self.instruments.detached_target.is_none()
+            && !self.instruments.detached_channel
+            && self.browser.typed(key, ch)
     }
 
     /// Nonblocking file-dialog and script entry. Synchronous fixtures have an

@@ -110,7 +110,10 @@ impl Presets {
     /// again.
     pub fn tag_of(&self, plugin: &Plugin) -> (String, bool) {
         let Some(def) = plugin.builtin() else {
-            return (UNKNOWN.into(), false);
+            return (
+                plugin.preset.clone().unwrap_or_else(|| UNKNOWN.into()),
+                false,
+            );
         };
         if let Some(name) = plugin.preset.as_deref() {
             let off = match self.values_of(def, name) {
@@ -269,7 +272,7 @@ impl Studio {
         p.tracks.values().find_map(|t| {
             t.inserts
                 .iter()
-                .find(|x| x.id == id && x.builtin().is_some())
+                .find(|x| x.id == id)
                 .map(|x| (t.id, x.kind))
         })
     }
@@ -324,18 +327,24 @@ impl Studio {
     /// The device's preset named `name`, letter case aside (as the session finds it).
     fn preset_named(&self, id: PluginId, name: &str) -> Option<String> {
         let p = self.project();
-        let def = p
+        let plugin = p
             .tracks
             .values()
             .flat_map(|t| &t.inserts)
-            .find(|x| x.id == id)?
-            .builtin()?;
+            .find(|x| x.id == id)?;
+        let names = plugin.builtin().map_or_else(
+            || {
+                self.instruments
+                    .presets
+                    .external
+                    .get(&plugin.uid.to_ascii_lowercase())
+                    .cloned()
+                    .unwrap_or_default()
+            },
+            |def| self.instruments.presets.names(def),
+        );
         let fold = |s: &str| s.trim().to_lowercase();
-        self.instruments
-            .presets
-            .names(def)
-            .into_iter()
-            .find(|n| fold(n) == fold(name))
+        names.into_iter().find(|n| fold(n) == fold(name))
     }
 
     /// 名前を付けて保存…: the box for the name under the list's tag. It starts with a name

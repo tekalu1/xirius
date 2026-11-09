@@ -853,6 +853,61 @@ mod capture_tests {
         }
     }
     #[test]
+    fn preset_requests_keep_the_anchor_and_are_consumed_once_from_the_host_queue() {
+        use xirius_vst3::EditorAction;
+        let (server, link, _, _) = fixture();
+        let request = EditorAction::PresetMenu {
+            x: -32000,
+            y: 92,
+            dpi: 168,
+        };
+        server.inner.dispatch(
+            0,
+            FromHost::EditorAction {
+                slot: 99,
+                action: request.clone(),
+            },
+        );
+        assert!(link.take_editor_actions().is_empty());
+        server.inner.dispatch(
+            0,
+            FromHost::EditorAction {
+                slot: 2,
+                action: request.clone(),
+            },
+        );
+        server.inner.dispatch(
+            0,
+            FromHost::EditorAction {
+                slot: 2,
+                action: EditorAction::PresetSelect("Clean".into()),
+            },
+        );
+        assert_eq!(
+            link.take_editor_actions(),
+            vec![request, EditorAction::PresetSelect("Clean".into())]
+        );
+        assert!(link.take_editor_actions().is_empty());
+    }
+
+    #[test]
+    fn changed_caption_is_sent_and_retained_for_editor_replacement() {
+        let (server, link, _, messages) = fixture();
+        server.open_editor(&link, "Effect", None);
+        let _ = messages.try_iter().collect::<Vec<_>>();
+        let caption = Caption {
+            dark: false,
+            fill: 0xf4f4fa,
+            text: 0x141830,
+        };
+        server.set_caption(&link, caption);
+        assert_eq!(link.editor(), Some(("Effect".into(), Some(caption))));
+        assert!(messages.try_iter().any(|m| matches!(m,
+            ToHost::SetCaption { caption: actual, .. } if actual == caption
+        )));
+    }
+
+    #[test]
     fn current_editor_actions_supersede_ancestors_during_successive_replacements() {
         let (server, link, old, _messages) = fixture();
         close_old(&server, &link, true);
@@ -1889,6 +1944,9 @@ impl PluginServer {
 
     /// Gives the open window of the plugin new caption colours (the app's theme changed).
     pub fn set_caption(&self, link: &PluginLink, caption: Caption) {
+        if let Some((_, current)) = &mut link.lock().editor {
+            *current = Some(caption);
+        }
         self.with_slot(link, |o| {
             Some(ToHost::SetCaption {
                 slot: o.slot,

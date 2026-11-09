@@ -185,6 +185,7 @@ fn a_preset_sets_every_knob_in_one_step() {
             "Default",
             "上書き保存",
             "名前を付けて保存…",
+            "ファイルから読み込む…",
             "ブラウザーに表示"
         ]
     );
@@ -411,7 +412,7 @@ fn the_bars_parts_are_in_sight_at_1280_and_360() {
 }
 
 #[test]
-fn the_steps_hide_on_a_narrow_bar_and_walk_the_presets_on_a_wide_one() {
+fn the_preset_arrows_walk_and_wrap_the_presets() {
     let (mut s, g, t, _) = studio();
     assert!(s.run_command(
         "plugin.add",
@@ -1134,7 +1135,12 @@ fn the_saves_stay_under_a_filtered_list() {
     let foot: Vec<String> = list.footer.iter().map(|r| r.label.clone()).collect();
     assert_eq!(
         foot,
-        ["上書き保存", "名前を付けて保存…", "ブラウザーに表示"]
+        [
+            "上書き保存",
+            "名前を付けて保存…",
+            "ファイルから読み込む…",
+            "ブラウザーに表示"
+        ]
     );
 }
 

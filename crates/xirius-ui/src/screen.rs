@@ -1760,6 +1760,12 @@ impl Render for Screen {
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
             }
         }
+        // Independent device windows use the same queued file requests. Resolve
+        // them after drawing, just as a main-window input callback does.
+        if self.studio.borrow().file_request.is_some() {
+            let screen = cx.entity();
+            cx.defer(move |cx| screen.update(cx, |this, cx| this.files(cx)));
+        }
         // input held for a copy or a paste whose song has gone is not given to the next one
         if self.studio.borrow().take_held_input_dropped() {
             self.pending_save_input.forget();

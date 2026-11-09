@@ -76,7 +76,7 @@ fn edit_of(frame: HWND) -> HWND {
     found
 }
 
-fn frame(s: &Studio) -> HWND {
+pub(crate) fn frame(s: &Studio) -> HWND {
     let id = crate::plugin_reload_shots::id(s);
     if let Some(editor) = s.mixer.editors.iter().find(|e| e.id == id) {
         match &editor.at {
@@ -91,20 +91,41 @@ fn frame(s: &Studio) -> HWND {
         .host()
         .and_then(|h| h.plugins().server_of(id))
         .and_then(|h| h.pid())
+        .or_else(|| {
+            s.project()
+                .tracks
+                .values()
+                .flat_map(|t| &t.inserts)
+                .find(|p| {
+                    p.id == id && p.isolation == xirius_core::model::PluginIsolation::InProcess
+                })
+                .map(|_| std::process::id())
+        })
     else {
         return std::ptr::null_mut();
     };
-    // SAFETY: enumerate only the editor class, accepting a window solely from our host PID.
+    let Some(title) = (if pid == std::process::id() {
+        s.project()
+            .tracks
+            .values()
+            .flat_map(|t| &t.inserts)
+            .find(|p| p.id == id)
+            .map(|p| wide(&p.name))
+    } else {
+        s.mixer
+            .editors
+            .iter()
+            .find(|e| e.id == id)
+            .map(|e| wide(&e.title))
+    }) else {
+        return std::ptr::null_mut();
+    };
+    // SAFETY: only this fixture's editor title/class in its app or host PID.
     unsafe {
         let class = wide("XiriusPluginEditor");
         let mut after = std::ptr::null_mut();
         loop {
-            let hwnd = FindWindowExW(
-                std::ptr::null_mut(),
-                after,
-                class.as_ptr(),
-                std::ptr::null(),
-            );
+            let hwnd = FindWindowExW(std::ptr::null_mut(), after, class.as_ptr(), title.as_ptr());
             if hwnd.is_null() {
                 return hwnd;
             }

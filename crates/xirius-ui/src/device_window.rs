@@ -17,14 +17,22 @@ use xirius_core::id::PluginId;
 
 pub(crate) type Positions = Rc<RefCell<HashMap<PluginId, Bounds<gpui::Pixels>>>>;
 
+pub(crate) mod input_shots;
+#[cfg(windows)]
+pub(crate) mod preset_shots;
+
 #[derive(Default)]
 pub(crate) struct Windows {
     open: HashMap<PluginId, WindowHandle<DeviceWindow>>,
     channel: Option<WindowHandle<DeviceWindow>>,
+    preset: Option<WindowHandle<DeviceWindow>>,
 }
 
 impl Windows {
     pub(crate) fn close(&mut self, cx: &mut App) {
+        if let Some(handle) = self.preset.take() {
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+        }
         if let Some(handle) = self.channel.take() {
             let _ = handle.update(cx, |_, window, _| window.remove_window());
         }
@@ -82,6 +90,7 @@ impl Windows {
             s.instruments.detached.extend(ids);
         }
         self.sync_channel(studio, main, cx);
+        self.sync_preset(studio, main, cx);
         let wanted: Vec<_> = {
             let s = studio.borrow();
             s.instruments
@@ -189,6 +198,85 @@ impl Windows {
         }
     }
 
+    fn sync_preset(&mut self, studio: &Rc<RefCell<Studio>>, main: &Window, cx: &mut App) {
+        let request = studio.borrow_mut().mixer.preset_menu.take();
+        let Some((track, id, x, y, dpi)) = request else {
+            if let Some(handle) = self.preset {
+                cx.defer(move |cx| {
+                    let _ = handle.update(cx, |_, _, cx| cx.notify());
+                });
+            }
+            return;
+        };
+        if let Some(handle) = self.preset.take() {
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+        }
+        let scale = dpi.max(96) as f32 / 96.0;
+        let mut initial = Bounds::new(
+            point(px(x as f32 / scale), px(y as f32 / scale)),
+            size(px(332.0), px(420.0)),
+        );
+        if std::env::var_os(xirius_vst3::OFFSCREEN_ENV).is_none()
+            && let Some(display) = cx
+                .displays()
+                .into_iter()
+                .find(|d| d.bounds().contains(&initial.origin))
+                .or_else(|| main.display(cx))
+        {
+            initial = fit_bounds(initial, display.visible_bounds());
+        }
+        let shared = studio.clone();
+        let parked = std::env::var_os(xirius_vst3::OFFSCREEN_ENV).is_some();
+        if parked && let Some(display) = main.display(cx) {
+            // GPUI replaces an off-display initial rectangle with its defaults.
+            // Create hidden on the display, then park before showing it.
+            initial.origin = display.visible_bounds().origin;
+        }
+        let result = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(initial)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Presets".into()),
+                    appears_transparent: true,
+                    ..Default::default()
+                }),
+                window_decorations: Some(WindowDecorations::Client),
+                focus: !parked,
+                show: !parked,
+                is_minimizable: false,
+                is_resizable: false,
+                ..Default::default()
+            },
+            move |window, cx| {
+                let focus = cx.focus_handle();
+                window.focus(&focus, cx);
+                if parked {
+                    show("Presets");
+                }
+                cx.new(|cx| {
+                    let mut view = DeviceWindow::new(shared, Some(id), None, focus, window, cx);
+                    view.menu_only = true;
+                    view.with(window, |s, _| {
+                        s.open_inst_menu(
+                            crate::instrument::menu::Menu::Preset(track, id),
+                            crate::studio::Rect {
+                                x: 6.0,
+                                y: 0.0,
+                                w: 320.0,
+                                h: 0.0,
+                            },
+                        )
+                    });
+                    view
+                })
+            },
+        );
+        match result {
+            Ok(handle) => self.preset = Some(handle),
+            Err(error) => studio.borrow_mut().error = Some(error.to_string()),
+        }
+    }
+
     fn sync_channel(&mut self, studio: &Rc<RefCell<Studio>>, main: &Window, cx: &mut App) {
         let wanted = studio.borrow().channel.as_ref().is_some_and(|w| w.detached);
         if !wanted {
@@ -282,6 +370,7 @@ struct DeviceWindow {
     id: Option<PluginId>,
     focus: FocusHandle,
     popup: Option<Popup>,
+    menu_only: bool,
     _activation: gpui::Subscription,
     _bounds: gpui::Subscription,
 }
@@ -383,11 +472,19 @@ impl DeviceWindow {
         cx: &mut Context<Self>,
     ) -> Self {
         let activation = cx.observe_window_activation(window, |view, window, cx| {
+            if !window.is_window_active() && view.menu_only {
+                view.popup = None;
+                cx.notify();
+                return;
+            }
             if !window.is_window_active() && view.studio.borrow_mut().device_focus_lost() {
                 cx.refresh_windows();
             }
         });
         let bounds = cx.observe_window_bounds(window, move |view, window, cx| {
+            if view.menu_only {
+                return;
+            }
             if let Some(id) = view.id {
                 if let Some(positions) = &positions {
                     positions.borrow_mut().insert(id, window.bounds());
@@ -427,6 +524,7 @@ impl DeviceWindow {
             id,
             focus,
             popup: None,
+            menu_only: false,
             _activation: activation,
             _bounds: bounds,
         }
@@ -450,7 +548,17 @@ impl DeviceWindow {
 
 impl Render for DeviceWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let live = {
+        let live = if self.menu_only {
+            self.popup.is_some()
+                && self.id.is_some_and(|id| {
+                    self.studio
+                        .borrow()
+                        .mixer
+                        .editors
+                        .iter()
+                        .any(|e| e.id == id)
+                })
+        } else {
             let s = self.studio.borrow();
             self.id.map_or_else(
                 || s.channel.as_ref().is_some_and(|w| w.detached),
@@ -459,6 +567,16 @@ impl Render for DeviceWindow {
         };
         if !live {
             window.defer(cx, |window, _| window.remove_window());
+        }
+        if self.menu_only
+            && let Some(popup) = &self.popup
+        {
+            let area = work_size(window, cx).unwrap_or((332.0, 420.0));
+            let rect = popup.layout((area.0.min(332.0), area.1.min(420.0))).rect;
+            let wanted = size(px(rect.x + rect.w + 6.0), px(rect.y + rect.h + 6.0));
+            if window.viewport_size() != wanted {
+                window.resize(wanted);
+            }
         }
         {
             let mut s = self.studio.borrow_mut();
@@ -504,7 +622,9 @@ impl Render for DeviceWindow {
                         c: &colors,
                         origin: (0.0, 0.0),
                     };
-                    if view.id.is_some() {
+                    if view.menu_only {
+                        s.refresh_popup();
+                    } else if view.id.is_some() {
                         crate::instrument::window::paint(&mut pen, &s, &g);
                     } else {
                         crate::channel::paint::paint(&mut pen, &s, &g, true);
@@ -657,35 +777,25 @@ impl Render for DeviceWindow {
                 }),
             )
             .on_key_down(cx.listener(|this, e: &gpui::KeyDownEvent, window, cx| {
-                this.with(window, |s, g| {
+                let native = crate::native_key::take();
+                let pasted = this.with(window, |s, _| {
                     let k = &e.keystroke;
-                    if s.field_keys(g, &k.key, k.key_char.as_deref(), modifiers(k.modifiers)) {
-                        return;
-                    }
                     let m = modifiers(k.modifiers);
-                    let picking = s.ime_pick_field().is_some();
-                    // The list receives letters through the IME, just as in Screen.
-                    if picking
-                        && !m.ctrl
-                        && !m.alt
-                        && k.key_char
-                            .as_deref()
-                            .is_some_and(|c| !c.is_empty() && !c.chars().any(char::is_control))
-                    {
-                        return;
+                    if s.ime_pick_field().is_some() && m.ctrl && !m.alt && k.key == "v" {
+                        if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
+                            s.pick_paste(&text);
+                        }
+                        true
+                    } else {
+                        false
                     }
-                    if !s.device_key(g, &k.key, m)
-                        && !s.typed(
-                            g,
-                            &k.key,
-                            if picking { None } else { k.key_char.as_deref() },
-                        )
-                        && !m.ctrl
-                        && !m.alt
-                        && !m.shift
-                    {
-                        s.pc_key_down(&k.key, e.is_held);
-                    }
+                });
+                if pasted {
+                    cx.refresh_windows();
+                    return;
+                }
+                this.with(window, |s, g| {
+                    device_key_event(s, g, e, native.as_ref());
                 });
                 cx.refresh_windows();
             }))
@@ -728,6 +838,65 @@ impl Render for DeviceWindow {
             .child(body)
             .children(marks)
     }
+}
+
+fn device_key_event(
+    s: &mut Studio,
+    g: &Geometry,
+    event: &gpui::KeyDownEvent,
+    native: Option<&crate::native_key::Native>,
+) {
+    let k = &event.keystroke;
+    let m = modifiers(k.modifiers);
+    if s.popup.is_none() && s.field_keys(g, &k.key, k.key_char.as_deref(), m) {
+        return;
+    }
+    let picking = s.ime_pick_field().is_some();
+    // Empty devices have no parameter stop; Tab still belongs to this window.
+    if k.key == "tab" && !m.ctrl && !m.alt {
+        return;
+    }
+    // Search text arrives through the input handler, never as a song shortcut.
+    if picking && k.key == "space" && !m.ctrl && !m.alt {
+        return;
+    }
+    if picking
+        && !m.ctrl
+        && !m.alt
+        && k.key_char
+            .as_deref()
+            .is_some_and(|c| !c.is_empty() && !c.chars().any(char::is_control))
+    {
+        return;
+    }
+    let key = native.and_then(|n| n.key.as_deref()).unwrap_or(&k.key);
+    let character = native
+        .and_then(|n| n.character.as_deref())
+        .or(k.key_char.as_deref());
+    let code = native.and_then(|n| n.code.as_deref());
+    let keypad = key != k.key;
+    if (s.popup.is_none() && s.device_key(g, &k.key, m))
+        || (!keypad
+            && !m.ctrl
+            && s.typed(
+                g,
+                &k.key,
+                if picking { None } else { k.key_char.as_deref() },
+            ))
+        || (s.popup.is_none()
+            && !keypad
+            && !m.ctrl
+            && !m.alt
+            && !m.shift
+            && s.pc_key_down(&k.key, event.is_held))
+    {
+        return;
+    }
+    // Song commands may rebuild the main layout. They must never use this
+    // surface's dimensions or write its viewport into the shared ViewMotion.
+    let (width, height) = s.viewport_size.get();
+    let main = s.settled_geometry(width, height);
+    s.mapped_key_code(&main, key, character, m, code);
 }
 
 fn modifiers(m: gpui::Modifiers) -> Mods {
@@ -775,12 +944,14 @@ impl gpui::EntityInputHandler for DeviceWindow {
         _: &mut Context<Self>,
     ) -> Option<std::ops::Range<usize>> {
         let mut s = self.studio.borrow_mut();
+        let old = scope(&mut s, self.id);
         let previous = std::mem::replace(&mut s.popup, self.popup.clone());
         let result = s
             .ime_pick_field()
             .or_else(|| s.ime_field().cloned())
             .and_then(|f| f.marked_range());
         s.popup = previous;
+        restore(&mut s, old);
         result
     }
     fn unmark_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1041,5 +1212,130 @@ mod tests {
         }
         assert_eq!(s.geometry(1280.0, 800.0).size, main.size);
         assert_eq!(format!("{:?}", s.motion), motion);
+    }
+
+    #[test]
+    fn independent_shortcuts_do_not_inherit_the_main_browser_context() {
+        let mut s = Studio::sample();
+        let main = s.geometry(1280.0, 800.0);
+        s.browser.open = true;
+        s.input_map.browser_focus = true;
+        assert_eq!(s.input_context(&main), "browser");
+        let old = scope(&mut s, Some(PluginId(1)));
+        assert_eq!(s.input_context(&main), "global");
+        restore(&mut s, old);
+        assert_eq!(s.input_context(&main), "browser");
+    }
+
+    #[test]
+    fn tab_in_an_empty_device_does_not_advance_main_focus_or_layout() {
+        let mut s = Studio::sample();
+        s.geometry(1280.0, 800.0);
+        s.input_map.browser_focus = true;
+        let viewport = s.viewport_size.get();
+        let motion = format!("{:?}", s.motion);
+        let old = scope(&mut s, Some(PluginId(1)));
+        let local = surface_geometry(&s, 360.0, 240.0);
+        for key in ["tab", "shift-tab"] {
+            device_key_event(
+                &mut s,
+                &local,
+                &gpui::KeyDownEvent {
+                    keystroke: gpui::Keystroke::parse(key).unwrap(),
+                    is_held: false,
+                    prefer_character_input: false,
+                },
+                None,
+            );
+            assert!(s.input_map.browser_focus);
+            assert_eq!(s.instruments.focus, None);
+            assert_eq!(s.viewport_size.get(), viewport);
+            assert_eq!(format!("{:?}", s.motion), motion);
+        }
+        restore(&mut s, old);
+    }
+
+    #[test]
+    fn channel_window_keeps_local_values_but_ignores_main_text_and_browser_enter() {
+        use crate::settings::{Field, FieldId};
+        let mut s = Studio::sample();
+        let track = s
+            .project()
+            .tracks
+            .values()
+            .find(|t| t.name == "Keys")
+            .unwrap()
+            .id;
+        s.open_channel(track);
+        s.input_map.name = Some(crate::track_name::Name {
+            track,
+            field: Field::new(FieldId::Search, "Main".into()),
+        });
+        s.browser.open = true;
+        s.browser.tab = crate::browser::RailTab::Effects;
+        s.browser.selected_item = Some("Reverb");
+        s.mixer.browser_fx_focus = true;
+        let old = scope(&mut s, None);
+        let local = surface_geometry(&s, 800.0, 600.0);
+        assert_eq!(s.ime_target(), None);
+        s.ime_replace(None, "ignored", false);
+        assert_eq!(s.input_map.name.as_ref().unwrap().field.text(), "Main");
+        assert!(!s.pick_typed(&local, "enter", None));
+        let viewport = s.viewport_size.get();
+        let motion = format!("{:?}", s.motion);
+        for key in ["enter", "escape", "backspace", "tab"] {
+            device_key_event(
+                &mut s,
+                &local,
+                &gpui::KeyDownEvent {
+                    keystroke: gpui::Keystroke::parse(key).unwrap(),
+                    is_held: false,
+                    prefer_character_input: false,
+                },
+                None,
+            );
+            assert_eq!(s.input_map.name.as_ref().unwrap().field.text(), "Main");
+            assert_eq!(s.viewport_size.get(), viewport);
+            assert_eq!(format!("{:?}", s.motion), motion);
+        }
+        s.head_fader.entry = Some(crate::head_fader::Entry {
+            track,
+            field: Field::new(FieldId::Search, "-3".into()),
+            fresh: false,
+        });
+        assert_eq!(s.ime_target(), Some(crate::interaction::ImeTarget::Head));
+        s.ime_replace(None, ".5", false);
+        assert_eq!(s.head_fader.entry.as_ref().unwrap().field.text(), "-3.5");
+        restore(&mut s, old);
+    }
+
+    #[test]
+    fn independent_ime_does_not_edit_a_main_field_or_another_device() {
+        use crate::settings::{Field, FieldId};
+        let mut s = Studio::sample();
+        s.input_map.name = Some(crate::track_name::Name {
+            track: xirius_core::id::TrackId::MASTER,
+            field: Field::new(FieldId::Search, "Main".into()),
+        });
+        s.instruments.entry = Some(crate::device::input::Entry {
+            plugin: PluginId(2),
+            k: 0,
+            field: Field::new(FieldId::Search, "Other".into()),
+            fresh: false,
+        });
+        let old = scope(&mut s, Some(PluginId(1)));
+        assert_eq!(s.ime_target(), None);
+        s.ime_replace(None, "ignored", false);
+        assert_eq!(s.input_map.name.as_ref().unwrap().field.text(), "Main");
+        assert_eq!(s.instruments.entry.as_ref().unwrap().field.text(), "Other");
+        s.instruments.entry.as_mut().unwrap().plugin = PluginId(1);
+        assert_eq!(s.ime_target(), Some(crate::interaction::ImeTarget::Device));
+        s.ime_replace(None, " local", false);
+        assert_eq!(
+            s.instruments.entry.as_ref().unwrap().field.text(),
+            "Other local"
+        );
+        restore(&mut s, old);
+        assert_eq!(s.ime_target(), Some(crate::interaction::ImeTarget::Name));
     }
 }

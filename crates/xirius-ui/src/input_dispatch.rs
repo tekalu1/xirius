@@ -49,7 +49,11 @@ pub fn bits(m: Mods) -> u8 {
 
 impl Studio {
     pub fn input_context(&self, g: &Geometry) -> &'static str {
-        if self
+        if self.instruments.detached_target.is_some() || self.instruments.detached_channel {
+            // A focused device window does not inherit a browser/roll selection
+            // in the main window. Its local fields have already handled input.
+            "global"
+        } else if self
             .popup
             .as_ref()
             .is_some_and(|p| p.kind == crate::popup::PopupKind::Export)
@@ -161,8 +165,12 @@ impl Studio {
         mods: Mods,
         code: Option<&str>,
     ) -> bool {
-        self.view_read.cleanup.want_open = false;
-        self.cancel_browser_menu();
+        let detached =
+            self.instruments.detached_target.is_some() || self.instruments.detached_channel;
+        if !detached {
+            self.view_read.cleanup.want_open = false;
+            self.cancel_browser_menu();
+        }
         if self.unsaved_key(key)
             || self.prepare_key(key)
             || self.opening_key(key)
@@ -173,33 +181,38 @@ impl Studio {
         if self.macro_run.is_some() && !self.macro_stepping {
             return true;
         }
-        if self.name_key(key, mods) {
-            return true;
-        }
-        if self.rec_key(key) {
-            return true;
-        }
-        if self.comp_key(key, mods) {
-            return true;
-        }
-        if self.settings.is_some() {
-            return self.settings_key(key, mods);
-        }
-        if self.palette.is_some() {
-            return self.palette_key(g, key, mods);
-        }
-        if self.bar_key(key, character, mods) {
-            return true;
-        }
-        if self.drag_space(key, true) {
-            return true;
-        }
-        if self.pool_key(g, key, mods) {
-            return true;
+        if !detached {
+            if self.name_key(key, mods) {
+                return true;
+            }
+            if self.rec_key(key) {
+                return true;
+            }
+            if self.comp_key(key, mods) {
+                return true;
+            }
+            if self.settings.is_some() {
+                return self.settings_key(key, mods);
+            }
+            if self.palette.is_some() {
+                return self.palette_key(g, key, mods);
+            }
+            if self.bar_key(key, character, mods) {
+                return true;
+            }
+            if self.drag_space(key, true) {
+                return true;
+            }
+            if self.pool_key(g, key, mods) {
+                return true;
+            }
         }
         if key == "escape" {
             if self.popup.take().is_some() {
                 self.close_wheel_group();
+                return true;
+            }
+            if detached {
                 return true;
             }
             // Waiting for a controller's knob ends first (OPS-007).

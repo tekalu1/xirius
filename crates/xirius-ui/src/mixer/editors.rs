@@ -369,7 +369,7 @@ impl Studio {
     /// song. True when the song changed.
     pub fn poll_editors(&mut self) -> bool {
         self.poll_editor_bar();
-        let keys = self.poll_editor_keys();
+        let keys = self.poll_editor_keys() | self.mixer.preset_menu.is_some();
         // Remember the host's word once it opens a window, so a later close is not waited out.
         let open_in_host: Vec<PluginId> = self
             .transport
@@ -487,6 +487,9 @@ impl Studio {
                     }
                 }
                 EditorAction::Channel => self.open_channel(track),
+                EditorAction::PresetMenu { x, y, dpi } => {
+                    self.mixer.preset_menu = Some((track, id, x, y, dpi));
+                }
                 EditorAction::PresetOpen => {
                     self.file_request = Some(crate::studio::FileRequest::PresetOpen(id))
                 }
@@ -499,6 +502,9 @@ impl Studio {
                         "preset.load",
                         serde_json::json!({"track":track, "of":id, "preset":preset}),
                     );
+                }
+                EditorAction::PresetPrevious | EditorAction::PresetNext => {
+                    self.step_device_preset(id, action == EditorAction::PresetNext);
                 }
                 EditorAction::Sidechain => {
                     if let Some(sc) = p

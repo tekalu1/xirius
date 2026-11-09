@@ -30,6 +30,7 @@ pub const FOOT: &str = "@";
 /// The preset list's rows under it (UI-332).
 pub const SAVE: &str = "@save";
 pub const SAVE_AS: &str = "@save-as";
+pub const OPEN: &str = "@open";
 pub const SHOW: &str = "@show";
 /// What a preset's row starts with, before its name (a name is anything but empty and
 /// Default: `-`, `@save` and `off:x` are names too).
@@ -136,18 +137,30 @@ pub fn view(p: &Project, presets: &Presets, menu: Menu) -> (Vec<Choice>, String)
             // The device's presets, the ✓ on the one its tag names (the knobs
             // off it or not), then 上書き保存 / 名前を付けて保存… / ブラウザーに表示
             // under them.
-            let Some((x, def)) = device_of(p, id).and_then(|x| Some((x, x.builtin()?))) else {
+            let Some(x) = device_of(p, id) else {
                 return (Vec::new(), String::new());
             };
-            let list = presets.names(def);
+            let list = x.builtin().map_or_else(
+                || {
+                    presets
+                        .external
+                        .get(&x.uid.to_ascii_lowercase())
+                        .cloned()
+                        .unwrap_or_default()
+                },
+                |def| presets.names(def),
+            );
             let (name, off) = presets.tag_of(x);
             let mut rows: Vec<Choice> =
                 list.iter().map(|n| row(&format!("{LOAD}{n}"), n)).collect();
             // Over a preset's file once the knobs moved off it, or again when its file is
             // gone; never over Default, nor while the tag knows no preset (—).
-            let save = off && name != super::window::DEFAULT && presets.origin(x).is_some();
+            let save = (off || x.builtin().is_none())
+                && name != super::window::DEFAULT
+                && presets.origin(x).is_some();
             rows.push(row(if save { SAVE } else { "off:@save" }, "上書き保存"));
             rows.push(row(SAVE_AS, "名前を付けて保存…"));
+            rows.push(row(OPEN, "ファイルから読み込む…"));
             rows.push(row(SHOW, "ブラウザーに表示"));
             let now = presets
                 .origin(x)
@@ -159,8 +172,7 @@ pub fn view(p: &Project, presets: &Presets, menu: Menu) -> (Vec<Choice>, String)
             let built_in = plugin_of(p, t, id).is_some_and(is_built_in);
             let mut rows = vec![
                 row("open", "画面を開く"),
-                // Only the built-in instrument's presets are known here.
-                row(if built_in { "preset" } else { "off:preset" }, "プリセット"),
+                row("preset", "プリセット"),
                 row("replace", "差し替える…"),
                 row("reload", "再起動"),
                 row(GAP, ""),
@@ -311,6 +323,9 @@ impl Studio {
                 }
             }
             Menu::Preset(_, id) => match to {
+                OPEN => {
+                    self.file_request = Some(crate::studio::FileRequest::PresetOpen(id));
+                }
                 SAVE => {
                     let p = self.project();
                     if let Some(name) =
@@ -327,11 +342,11 @@ impl Studio {
                     let Some(x) = device_of(&p, id) else {
                         return;
                     };
-                    let Some(def) = x.builtin() else {
-                        return;
-                    };
                     let origin = self.instruments.presets.origin(x);
-                    self.show_preset_in_browser(def.uid, origin.as_deref());
+                    self.show_preset_in_browser(
+                        x.builtin().map_or(x.uid.as_str(), |d| d.uid),
+                        origin.as_deref(),
+                    );
                 }
                 _ => {
                     if let Some(name) = to.strip_prefix(LOAD) {

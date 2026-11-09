@@ -479,6 +479,9 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("rollruler", rollruler_shots::ROLL_RULER),
     ("ruler-drag", ruler_drag_shots::SHOTS),
     ("saving", saving_shots::SHOTS),
+    ("device-input", device_window::input_shots::SHOTS),
+    #[cfg(windows)]
+    ("plugin-presets", device_window::preset_shots::SHOTS),
     ("screencmd", screencmd_shots::SHOTS),
     ("settings", settings::shots::SHOTS),
     ("side", side_shots::SIDE),
