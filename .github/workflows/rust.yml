@@ -63,7 +63,7 @@ jobs:
         run: python scripts/ci_tests.py --doctest
       - name: build and archive
         run: python scripts/ci_tests.py --archive tests.tar.zst
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tests-${{ matrix.os }}
           overwrite: true
@@ -92,14 +92,14 @@ jobs:
           name: tests-${{ matrix.os }}
       - name: run shard without building
         run: python scripts/ci_tests.py --run-archive tests.tar.zst --partition slice:${{ matrix.shard }}/4 --coverage-dir coverage
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage-${{ matrix.os }}-${{ matrix.shard }}
           overwrite: true
           path: coverage
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: junit-${{ matrix.os }}-${{ matrix.shard }}
