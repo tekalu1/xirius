@@ -400,15 +400,13 @@ fn main() {
     let mut filters = Vec::new();
     let mut skips = Vec::new();
     let mut exact = false;
+    let mut list = false;
+    let mut only_ignored = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
-            "--list" => {
-                for (name, ..) in TESTS {
-                    println!("{name}: test");
-                }
-                return;
-            }
+            "--list" => list = true,
+            "--ignored" => only_ignored = true,
             "--exact" => exact = true,
             "--skip" => skips.extend(args.next()),
             "--test-threads" | "--format" | "--color" | "--logfile" | "--shuffle-seed" | "-Z" => {
@@ -418,9 +416,10 @@ fn main() {
             _ => filters.push(a),
         }
     }
+    let lame = mp3::load(None).err();
     let picked: Vec<_> = TESTS
         .iter()
-        .filter(|(name, ..)| {
+        .filter(|(name, needs_lame, _)| {
             let hit = |f: &String| {
                 if exact {
                     name == f
@@ -428,10 +427,19 @@ fn main() {
                     name.contains(f.as_str())
                 }
             };
-            (filters.is_empty() || filters.iter().any(hit)) && !skips.iter().any(hit)
+            (filters.is_empty() || filters.iter().any(hit))
+                && !skips.iter().any(hit)
+                && (!only_ignored || (*needs_lame && lame.is_some()))
         })
         .collect();
-    let lame = mp3::load(None).err();
+    if list {
+        for &&(name, needs_lame, _) in &picked {
+            if !only_ignored || (needs_lame && lame.is_some()) {
+                println!("{name}: test");
+            }
+        }
+        return;
+    }
     let script = if cfg!(windows) {
         "scripts/build-lame.ps1"
     } else {
@@ -441,6 +449,12 @@ fn main() {
     let (mut passed, mut ignored, mut failed) = (0, 0, Vec::new());
     for &&(name, needs_lame, test) in &picked {
         if needs_lame && let Some(why) = &lame {
+            // An explicitly selected test must not turn a missing encoder into a pass.
+            if exact || only_ignored {
+                eprintln!("{name}: required encoder unavailable: {why}");
+                failed.push(name);
+                continue;
+            }
             println!(
                 "test {name} ... ignored, {} が無いため（{script} で作れる）: {why}",
                 mp3::LAME_FILE

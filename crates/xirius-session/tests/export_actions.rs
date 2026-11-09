@@ -6,7 +6,11 @@ use std::{
     time::{Duration, Instant},
 };
 use xirius_core::{Session, model::Project, session::RunOptions};
-use xirius_session::{commands, ext::ExtConfig, output::OutputMode};
+use xirius_session::{
+    commands,
+    ext::{ExtConfig, ExtExtras},
+    output::OutputMode,
+};
 
 fn run(s: &mut Session, name: &str, data: serde_json::Value) -> serde_json::Value {
     s.run(name, data.as_object().unwrap(), &RunOptions::human())
@@ -40,7 +44,7 @@ fn fixture(tag: &str) -> (Session, PathBuf, String) {
     }
     wav.finalize().unwrap();
     let mut s = Session::with_registry(Project::new("actions"), commands::shared_registry());
-    commands::attach(
+    commands::attach_with(
         &mut s,
         ExtConfig {
             output: OutputMode::Silent { paced: true },
@@ -50,6 +54,18 @@ fn fixture(tag: &str) -> (Session, PathBuf, String) {
                 cache: dir.join("plugins.json"),
                 ..Default::default()
             },
+        },
+        ExtExtras {
+            trash: std::env::var_os("XIRIUS_TEST_TRASH_DIR").map(|root| {
+                let root =
+                    PathBuf::from(root).join(format!("export-actions-{}", std::process::id()));
+                Arc::new(move |path: &Path| {
+                    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+                    std::fs::rename(path, root.join(path.file_name().unwrap()))
+                        .map_err(|e| e.to_string())
+                }) as xirius_session::cleanup::Trash
+            }),
+            ..Default::default()
         },
     );
     s.save_as(dir.join("song")).unwrap();
@@ -128,7 +144,7 @@ fn audition_reaches_the_silent_output_and_import_is_one_undo() {
 }
 
 #[test]
-fn delete_moves_the_written_file_to_the_real_recycle_bin() {
+fn delete_moves_the_written_file_through_trash_and_removes_its_record() {
     let (mut s, dir, job) = fixture("trash");
     let original = std::fs::canonicalize(dir.join("export.wav")).unwrap();
     let bytes = std::fs::read(&original).unwrap();
@@ -136,8 +152,16 @@ fn delete_moves_the_written_file_to_the_real_recycle_bin() {
     let since = std::time::SystemTime::now();
     run(&mut s, "export.delete", json!({"job":job}));
     assert!(!dir.join("export.wav").exists());
-    #[cfg(windows)]
-    verify_recycled(&original, &bytes, since);
+    if let Some(root) = std::env::var_os("XIRIUS_TEST_TRASH_DIR") {
+        let moved = PathBuf::from(root)
+            .join(format!("export-actions-{}", std::process::id()))
+            .join(original.file_name().unwrap());
+        assert_eq!(std::fs::read(&moved).unwrap(), bytes);
+        std::fs::remove_file(moved).unwrap();
+    } else {
+        #[cfg(windows)]
+        verify_recycled(&original, &bytes, since);
+    }
     #[cfg(not(windows))]
     let _ = (&original, &bytes, since);
     assert_eq!(
