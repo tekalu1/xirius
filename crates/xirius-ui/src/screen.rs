@@ -2257,6 +2257,10 @@ fn step(run: &Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
         if !r.parked && r.place == Place::Parked {
             r.parked = park(WINDOW_TITLE, PARK_AT, PARK_AT);
         }
+        // Parking alone is a one-time placement, not a screenshot/benchmark loop.
+        if r.parked && r.driver.is_none() && r.roll_bench.is_none() && r.mixer_bench.is_none() {
+            return;
+        }
     }
     let mut quit = false;
     let (events, finished) = {
