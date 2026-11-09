@@ -206,10 +206,10 @@ fn files_held_over_an_independent_drum_kit_reach_its_pads() {
             .iter()
             .position(|w| w.plugin == kit)
             .unwrap();
-        let r = s.instruments.frame(i, &g);
+        let r = s.instruments.frame(i, g);
         let head = crate::title_bar::BAR_H;
         let (x, y) = (r.x + r.w / 2.0, r.y + head + (r.h - head) / 2.0);
-        let (id, on, lit) = s.drop_target(&g, x, y).expect("the face takes the files");
+        let (id, on, lit) = s.drop_target(g, x, y).expect("the face takes the files");
         assert_eq!((id, on), (kit, crate::device::sampler::DropOn::Plane));
         assert!(r.contains(lit.x, lit.y) && lit.w > 0.0, "the face lights");
         let dir = tempfile::tempdir().unwrap();
@@ -233,9 +233,9 @@ fn files_held_over_an_independent_drum_kit_reach_its_pads() {
         assert!(samples(s).is_empty());
         // Held over the face first, as the OS drags them: the face lights (the fifth review's
         // low 10).
-        assert!(s.files_moved(&g, x, y, &files, false));
+        assert!(s.files_moved(g, x, y, &files, false));
         assert_eq!(s.instruments.drop_on.map(|d| (d.0, d.1)), Some((kit, on)));
-        assert!(s.drop_files(&g, x, y, &files), "{:?}", s.error);
+        assert!(s.drop_files(g, x, y, &files), "{:?}", s.error);
         let got = samples(s);
         assert_eq!(got.len(), 2, "{got:?}");
         assert!(got[0].ends_with("Kick.wav") && got[1].ends_with("Snare.wav"));
