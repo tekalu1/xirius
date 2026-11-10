@@ -13,6 +13,8 @@ use crate::studio::Rect;
 
 /// The search field's height (the command palette's is 48).
 pub const HEIGHT: f32 = 28.0;
+/// What a right-click menu's search row takes from the list under it: the field and a gap.
+pub const MENU_ROOM: f32 = HEIGHT + 8.0;
 /// The focus ring's width.
 pub const RING: f32 = 2.0;
 /// The ✖'s hit box.

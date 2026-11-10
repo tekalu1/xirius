@@ -133,7 +133,13 @@ fn a_scrolling_child_without_back_reaches_both_ends() {
     let row_h = xirius_design::Layout::MENU_ROW_H;
     let visible = |s: &Studio| {
         let p = s.popup.as_ref().unwrap();
-        let room = g.size.1 - 8.0 - if p.ctx_query.is_some() { 40.0 } else { 0.0 };
+        let room = g.size.1
+            - 8.0
+            - if p.ctx_query.is_some() {
+                crate::search_box::MENU_ROOM
+            } else {
+                0.0
+            };
         let layout = p.layout(g.size);
         let cells: Vec<_> = layout
             .cells
@@ -182,4 +188,26 @@ fn a_scrolling_child_without_back_reaches_both_ends() {
     assert_eq!(offset, 0);
     let top = cells.iter().map(|(_, r)| r.y).fold(f32::MAX, f32::min);
     assert_eq!(top, first.1.y, "the first row is where it was");
+}
+
+#[test]
+fn the_menu_search_row_is_as_tall_as_every_search_field() {
+    use super::Item;
+    use serde_json::json;
+    let (mut s, _) = studio();
+    let g = s.geometry(1440.0, 900.0);
+    s.resized(&g);
+    let items: Vec<Item> = (0..30)
+        .map(|n| s.ctx_as(&format!("行 {n}"), "marker.add", json!({"at": n * 3840})))
+        .collect();
+    s.open_context(items, 100.0, 40.0);
+    let p = s.popup.as_ref().unwrap();
+    assert!(p.ctx_query.is_some(), "a long menu has the search row");
+    let search = p
+        .layout(g.size)
+        .cells
+        .iter()
+        .find(|c| c.action == Some(Action::CtxSearch))
+        .map(|c| c.rect.h);
+    assert_eq!(search, Some(crate::search_box::HEIGHT));
 }

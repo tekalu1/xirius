@@ -372,7 +372,13 @@ impl Popup {
                 let cells = crate::context::cells(&rows, crate::context::width(&rows));
                 let height = cells.iter().map(|c| c.rect.bottom()).fold(0.0f32, f32::max)
                     + Layout::POPUP_PAD;
-                let room = size.1 - 8.0 - if self.ctx_query.is_some() { 40.0 } else { 0.0 };
+                let room = size.1
+                    - 8.0
+                    - if self.ctx_query.is_some() {
+                        crate::search_box::MENU_ROOM
+                    } else {
+                        0.0
+                    };
                 ((height - room).max(0.0) / Layout::MENU_ROW_H).ceil() as usize
             }
             PopupKind::History => {
@@ -821,7 +827,13 @@ impl Popup {
                 None => {
                     let w = crate::context::width(&self.ctx);
                     let mut cells = crate::context::cells(&self.ctx, w);
-                    let room = size.1 - 8.0 - if self.ctx_query.is_some() { 40.0 } else { 0.0 };
+                    let room = size.1
+                        - 8.0
+                        - if self.ctx_query.is_some() {
+                            crate::search_box::MENU_ROOM
+                        } else {
+                            0.0
+                        };
                     let scroll = self.offset.min(self.max_offset(size)) as f32 * Layout::MENU_ROW_H;
                     for cell in &mut cells {
                         cell.rect.y -= scroll;
@@ -832,10 +844,11 @@ impl Popup {
                     });
                     if let Some(query) = &self.ctx_query {
                         for cell in &mut cells {
-                            cell.rect.y += 40.0;
+                            cell.rect.y += crate::search_box::MENU_ROOM;
                         }
                         let mut input = crate::context::ask::cells(query, w);
                         input[0].icon = Some("search");
+                        input[0].rect.h = crate::search_box::HEIGHT;
                         if let Some(f) = &self.ctx_field {
                             input[0] = input[0].clone().field(f.clone());
                         }

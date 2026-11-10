@@ -103,7 +103,13 @@ impl Studio {
         let Some(cell) = cells.iter().find(|c| matches!(c.action, Some(crate::popup::Action::Ctx(i) | crate::popup::Action::Field(i, _)) if i == row)) else { return };
         let step = xirius_design::Layout::MENU_ROW_H;
         let pad = xirius_design::Layout::POPUP_PAD;
-        let room = g.size.1 - 8.0 - if popup.ctx_query.is_some() { 40.0 } else { 0.0 };
+        let room = g.size.1
+            - 8.0
+            - if popup.ctx_query.is_some() {
+                crate::search_box::MENU_ROOM
+            } else {
+                0.0
+            };
         let offset = popup.offset as f32 * step;
         if cell.rect.y - offset < pad {
             popup.offset = ((cell.rect.y - pad) / step).floor().max(0.0) as usize;
