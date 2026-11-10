@@ -194,11 +194,14 @@ impl Screen {
             cx.notify();
             return;
         }
-        if s.cpu_context(&g, x, y)
-            || s.lib_context(&g, x, y)
-            || s.scene_context(&g, x, y)
-            || (s.roll_input(&g).is_none() && s.context_press(&g, x, y))
+        // What the start screen covers is not drawn: its menus do not open.
+        if !s.home_shown()
+            && (s.cpu_context(&g, x, y) || s.lib_context(&g, x, y) || s.scene_context(&g, x, y))
         {
+            cx.notify();
+            return;
+        }
+        if s.roll_input(&g).is_none() && s.context_press(&g, x, y) {
             cx.notify();
         }
     }
@@ -273,73 +276,7 @@ impl Screen {
             }
             return;
         }
-        let pointer_tip = crate::hover_tip::pointer_tip(&studio, &g);
-        studio.input_map.pointer = (x, y);
-        if studio.context_open() {
-            studio.context_hover(&g, x, y, std::time::Instant::now());
-            studio.hover = studio.hit(&g, x, y);
-            cx.notify();
-            return;
-        }
-        if pointer_tip != crate::hover_tip::pointer_tip(&studio, &g) {
-            cx.notify();
-        }
-        if studio.bar_move(y, ev.modifiers.shift) {
-            cx.notify();
-            return;
-        }
-        if studio.zoom_box_move(x, y)
-            || studio.mixer_bar_move(&g, x)
-            || studio.edge_move(&g, y)
-            || studio.side_move(&g, x)
-            || studio.pan_move(&g, x, y)
-            || studio.ruler_drag_move(&g, x, y)
-        {
-            cx.notify();
-            return;
-        }
-        if studio.edge_hover(&g, x, y) | studio.side_hover(&g, x, y) {
-            cx.notify();
-        }
-        if studio.mixer.level_drag.is_some() || studio.mixer.key_drag.is_some() {
-            if studio.level_move(x, ev.modifiers.shift) {
-                cx.notify();
-            }
-            return;
-        }
-        if studio.mixer.drag.is_some() {
-            if studio.drag_move_at(x, y, ev.modifiers.shift) {
-                cx.notify();
-            }
-            return;
-        }
-        if studio.insert_drag_move(x, y, ev.modifiers.shift)
-            || studio.name_drag_move(x, y)
-            || studio.fx_move(x, y)
-            || studio.lib_move(x, y)
-        {
-            cx.notify();
-            return;
-        }
-        if studio.instrument_moved(&g, x, y, ev.modifiers.shift) {
-            cx.notify();
-            return;
-        }
-        if studio.instrument_hover(&g, x, y) {
-            cx.notify();
-        }
-        if let Some(ctx) = studio.roll_input(&g) {
-            let out = studio.roll.moved(&ctx, x, y, mods(ev.modifiers));
-            if studio.apply_roll(&g, out) {
-                cx.notify();
-            }
-        }
-        if studio.arrange_move(&g, x, y, mods(ev.modifiers)) {
-            cx.notify();
-        }
-        let hit = studio.hit(&g, x, y);
-        if hit != studio.hover {
-            studio.hover = hit;
+        if studio.window_moved(&g, x, y, mods(ev.modifiers)) {
             cx.notify();
         }
     }
@@ -439,98 +376,14 @@ impl Screen {
             self.files(cx);
             return;
         }
-        // A press past the dialogs, the settings and the palette takes the keys from what had
-        // them.
-        studio.press_keys(&g, x, y);
-        // The windows that float over the screen take a press before what is under them.
-        if studio.popup.is_none()
-            && (studio.value_press(&g, x, y, ev.click_count as u32, mods(ev.modifiers))
-                || studio.instrument_press(&g, x, y, ev.click_count as u32, mods(ev.modifiers)))
-        {
-            drop(studio);
-            self.files(cx);
-            cx.notify();
-            return;
-        }
-        if studio.cpu_down(&g, x, y, ev.click_count as u32) {
-            cx.notify();
-            return;
-        }
-        if studio.name_press(&g, x, y, ev.click_count as u32) {
-            cx.notify();
-            return;
-        }
-        if studio.bar_down(&g, x, y, ev.click_count as u32) {
-            cx.notify();
-            return;
-        }
-        if studio.mixer_bar_down(&g, x, y) {
-            cx.notify();
-            return;
-        }
-        if studio.zoom_box_down(&g, x, y, mods(ev.modifiers)) {
-            cx.notify();
-            return;
-        }
-        if studio.edge_down(&g, x, y, ev.click_count as u32)
-            || studio.side_down(&g, x, y, ev.click_count as u32)
-        {
-            cx.notify();
-            return;
-        }
-        studio.name_drag_down(&g, x, y);
-        studio.insert_drag_down(&g, x, y);
-        if studio.chain_down(&g, x, y) {
-            cx.notify();
-            drop(studio);
-            self.files(cx);
-            return;
-        }
-        studio.ruler_drag_down(&g, x, y, mods(ev.modifiers));
-        if studio.roll_press(&g, x, y, mods(ev.modifiers), ev.click_count as u32) {
-            cx.notify();
-            return;
-        }
-        if ev.click_count == 2 && studio.arrange_open(&g, x, y, mods(ev.modifiers)) {
-            cx.notify();
-            return;
-        }
-        studio.arrange.clicks = ev.click_count as u32;
-        if studio.arrange_down(&g, x, y, mods(ev.modifiers)) {
-            if ev.click_count == 2 {
-                studio.arrange_open(&g, x, y, mods(ev.modifiers));
-            }
-            cx.notify();
-            return;
-        }
-        let hit = studio.hit(&g, x, y);
-        if studio.popup.is_none()
-            && studio.head_fader_down(&g, hit, x, ev.click_count as u32, mods(ev.modifiers))
-        {
-            cx.notify();
-            return;
-        }
-        let menu = studio.popup.is_some();
-        // A file row is held before its press: the press closes the band under the row
-        // selected before, and the rows below it move up.
-        let file_row = matches!(
-            hit,
-            Hit::Browser(
-                crate::browser::BrowserHit::File(_)
-                    | crate::browser::BrowserHit::Pool(_)
-                    | crate::browser::BrowserHit::PoolCount(_)
-            )
-        );
-        let held = !menu && file_row && studio.lib_grab(&g, hit, x, y, ev.click_count);
-        let pressed = studio.press(&g, hit);
-        let grabbed =
-            held || (!menu && !file_row && studio.lib_grab(&g, hit, x, y, ev.click_count));
-        let level = studio.level_down(&g, hit, x);
-        if level || studio.drag_begin(&g, hit, y) || pressed || grabbed {
-            cx.notify();
-        }
+        let out = studio.window_press(&g, x, y, ev.click_count as u32, mods(ev.modifiers));
         drop(studio);
-        self.files(cx);
+        if out.notify {
+            cx.notify();
+        }
+        if out.files {
+            self.files(cx);
+        }
     }
 
     /// The middle button holds the view under it (EDT-068).
@@ -539,7 +392,7 @@ impl Screen {
         window.focus(&self.focus, cx);
         let mut studio = self.studio.borrow_mut();
         studio.pointer_held = true;
-        if studio.input_blocked() {
+        if studio.input_blocked() || studio.home_shown() {
             return;
         }
         let g = geometry(&studio, window);
@@ -779,43 +632,7 @@ impl Screen {
         }
         let g = geometry(&studio, window);
         let (x, y) = in_body(ev.position);
-        if studio.mixer_bar_up() {
-            cx.notify();
-            return;
-        }
-        if studio.zoom_box_up(&g, x, y) {
-            cx.notify();
-            return;
-        }
-        studio.ruler_drag_up();
-        if ev.modifiers.alt && studio.replace_file_up(&g, x, y) {
-            cx.notify();
-            return;
-        }
-        if studio.level_up()
-            || studio.insert_drag_up(&g, x, y, ev.modifiers.shift)
-            || studio.name_drag_up(&g, x, y)
-            || studio.fx_up(&g, x, y, ev.modifiers.alt)
-            || studio.lib_up(&g, x, y)
-        {
-            cx.notify();
-            return;
-        }
-        if studio.instrument_up() {
-            cx.notify();
-            return;
-        }
-        if studio.drag_end() {
-            cx.notify();
-            return;
-        }
-        if let Some(ctx) = studio.roll_ctx(&g) {
-            let out = studio.roll.up(&ctx, x, y, mods(ev.modifiers));
-            if studio.apply_roll(&g, out) {
-                cx.notify();
-            }
-        }
-        if studio.arrange_up(&g, x, y, mods(ev.modifiers)) {
+        if studio.window_released(&g, x, y, mods(ev.modifiers)) {
             cx.notify();
         }
     }

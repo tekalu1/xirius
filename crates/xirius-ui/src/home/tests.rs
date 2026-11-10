@@ -112,8 +112,8 @@ fn songs_list_newest_first_with_the_sample_last_and_the_top_row_chosen() {
         Spot::Button(Button::Open),
         Spot::Button(Button::Dawproject),
         Spot::Search,
-        Spot::Row(0),
-        Spot::Row(2),
+        row_spot(&s, &g, 0),
+        row_spot(&s, &g, 2),
     ] {
         let (x, y) = s.center_of(&g, Hit::Home(spot)).unwrap();
         assert_eq!(s.hit(&g, x, y), Hit::Home(spot));
@@ -175,10 +175,10 @@ fn the_arrows_home_and_end_walk_the_list_and_enter_opens_the_row() {
 #[test]
 fn a_double_press_on_a_row_opens_it_and_a_single_one_chooses_it() {
     let (mut s, g, _tmp) = kept(&["a"]);
-    assert!(s.press(&g, Hit::Home(Spot::Row(1))));
+    assert!(s.press(&g, row_hit(&s, &g, 1)));
     assert_eq!(home(&s).pick.selected, 1);
     assert!(s.opening.is_none(), "one press only chooses");
-    assert!(s.press(&g, Hit::Home(Spot::Row(1))));
+    assert!(s.press(&g, row_hit(&s, &g, 1)));
     assert!(s.opening.is_some(), "the second press opens the sample");
     s.wait_for_open_for_test();
     assert!(s.song.is_sample());
@@ -666,7 +666,7 @@ fn the_start_screen_does_not_watch_the_inputs() {
 fn the_strip_over_the_start_screen_goes_with_the_next_press() {
     let (mut s, g, _tmp) = kept(&[]);
     s.error = Some("開けません".into());
-    assert!(s.press(&g, Hit::Home(Spot::Row(0))));
+    assert!(s.press(&g, row_hit(&s, &g, 0)));
     assert!(s.error.is_none() && s.home_shown());
     s.error = Some("開けません".into());
     s.home.as_mut().unwrap().focus = Focus::Button(Button::Open);
@@ -710,4 +710,153 @@ fn closing_to_the_start_screen_starts_no_sound_behind_it() {
     }
     assert!(s.home_shown() && s.transport.host().is_none());
     assert!(s.error.is_none(), "{:?}", s.error);
+}
+
+// ---------------------------------------------------------------- hidden parts under the list
+
+/// The press flow the screen runs for a press on the body, `clicks` being the click count.
+fn body_press(s: &mut Studio, g: &Geometry, (x, y): (f32, f32), clicks: u32) {
+    s.window_press(g, x, y, clicks, Mods::NONE);
+}
+
+/// What the start screen lies over must not move: no tempo point, no step, no draft.
+fn assert_nothing_under(s: &mut Studio, tempo: usize) {
+    assert_eq!(s.project().tempo.len(), tempo, "no tempo point is added");
+    assert_eq!(s.song.steps(), 0, "the empty song has no step");
+    s.keep_beat(10_000);
+    s.home_tick();
+    assert!(
+        s.keep.listed().iter().all(|r| !r.draft),
+        "no draft is made of the empty song"
+    );
+}
+
+fn row_spot(s: &Studio, g: &Geometry, i: usize) -> Spot {
+    let l = s.home_layout(g).unwrap();
+    let at = l.rows.iter().position(|(k, _)| *k == i).unwrap();
+    Spot::Row(i, l.row_keys[at])
+}
+
+fn row_hit(s: &Studio, g: &Geometry, i: usize) -> Hit {
+    Hit::Home(row_spot(s, g, i))
+}
+
+fn centre(r: Rect) -> (f32, f32) {
+    (r.x + r.w / 2.0, r.y + r.h / 2.0)
+}
+
+/// The first row lies over the hidden tempo band; a double press on it opens its song at once
+/// and adds no tempo point.
+#[test]
+fn a_double_press_on_the_first_row_opens_it_and_leaves_the_song_under_alone() {
+    let (mut s, g, tmp) = kept(&["a", "b"]);
+    let at = centre(s.home_layout(&g).unwrap().rows[0].1);
+    assert_eq!(
+        s.arrange_spot(&g, at.0, at.1),
+        crate::arrange::Spot::TempoGap,
+        "the tempo band is under the first row"
+    );
+    let tempo = s.project().tempo.len();
+    body_press(&mut s, &g, at, 1);
+    body_press(&mut s, &g, at, 2);
+    assert_nothing_under(&mut s, tempo);
+    assert!(s.opening.is_some(), "the row's song starts to open");
+    s.wait_for_open_for_test();
+    assert_eq!(s.song.dir(), Some(tmp.path().join("b")));
+}
+
+/// A single press with the pen tool picked draws nothing on the hidden tempo band.
+#[test]
+fn a_press_on_the_first_row_with_the_pen_adds_no_tempo_point() {
+    let (mut s, g, _tmp) = kept(&["a", "b"]);
+    s.tool = crate::tools::Tool::Draw;
+    let at = centre(s.home_layout(&g).unwrap().rows[0].1);
+    let tempo = s.project().tempo.len();
+    body_press(&mut s, &g, at, 1);
+    s.window_released(&g, at.0, at.1, Mods::NONE);
+    assert_nothing_under(&mut s, tempo);
+    assert_eq!(home(&s).pick.selected, 0);
+}
+
+/// The search box, the buttons of the left column and the last row each take their press,
+/// wherever the hidden parts under them reach.
+#[test]
+fn the_search_box_the_buttons_and_the_last_row_take_their_presses() {
+    let (mut s, g, _tmp) = kept(&["a", "b", "c"]);
+    let tempo = s.project().tempo.len();
+    let l = s.home_layout(&g).unwrap();
+    let search = centre(l.search.unwrap());
+    body_press(&mut s, &g, search, 1);
+    assert_eq!(home(&s).focus, Focus::Search);
+    for (button, want) in [
+        (Button::Open, FileRequest::Open),
+        (Button::Dawproject, FileRequest::OpenDawproject),
+    ] {
+        s.file_request = None;
+        body_press(&mut s, &g, centre(l.button(button)), 1);
+        assert_eq!(s.file_request, Some(want), "{button:?} takes its press");
+    }
+    for g in [g, s.geometry(960.0, 600.0), s.geometry(1280.0, 420.0)] {
+        let l = s.home_layout(&g).unwrap();
+        let (i, r) = *l.rows.last().unwrap();
+        let before = s.mixer.bar_grab;
+        body_press(&mut s, &g, centre(r), 1);
+        assert_eq!(home(&s).pick.selected, i, "the last row is chosen");
+        assert_eq!(s.mixer.bar_grab, before, "the drawer bar did not take it");
+        assert!(s.drawer_size.drag.is_none() && s.side_size.drag.is_none());
+    }
+    assert_nothing_under(&mut s, tempo);
+}
+
+/// Moving and letting go over the start screen reach nothing under it either.
+#[test]
+fn moving_and_letting_go_over_the_start_screen_reach_nothing_under_it() {
+    let (mut s, g, _tmp) = kept(&["a", "b"]);
+    let at = centre(s.home_layout(&g).unwrap().rows[0].1);
+    s.mixer.bar_grab = Some(0.0);
+    assert!(s.window_moved(&g, at.0, at.1, Mods::NONE));
+    assert_eq!(s.hover, row_hit(&s, &g, 0), "the row is hovered");
+    s.window_released(&g, at.0, at.1, Mods::NONE);
+    assert_eq!(s.mixer.bar_grab, None, "a grip is let go");
+    assert!(s.arrange.drag.is_none());
+}
+
+/// Without the start screen the tempo band works as it did.
+#[test]
+fn the_tempo_band_still_takes_a_double_press_without_the_start_screen() {
+    let mut s = Studio::new(Song::empty());
+    let g = s.geometry(1280.0, 720.0);
+    assert!(!s.home_shown());
+    let tempo = s.project().tempo.len();
+    let at = (g.tempo.x + g.tempo.w / 2.0, g.tempo.y + 4.0);
+    body_press(&mut s, &g, at, 1);
+    s.window_released(&g, at.0, at.1, Mods::NONE);
+    body_press(&mut s, &g, at, 2);
+    s.window_released(&g, at.0, at.1, Mods::NONE);
+    assert_eq!(s.project().tempo.len(), tempo + 1);
+}
+
+/// A press lands on the row it was made on even when the list was built again between the
+/// press's read of the row and its handling: a draft put first moves every row down.
+#[test]
+fn a_press_after_the_list_was_built_again_opens_the_row_that_was_pressed() {
+    let (mut s, g, tmp) = kept(&["a", "b"]);
+    let at = centre(s.home_layout(&g).unwrap().rows[0].1);
+    let hit = s.hit(&g, at.0, at.1);
+    assert_eq!(hit, row_hit(&s, &g, 0));
+    // A newer song arrives before the press is handled: the row under the pointer moved down.
+    let path = tmp.path().join("c");
+    Song::empty().save_as(&path).unwrap();
+    s.keep.remember(&path, "c", false, 100);
+    s.keep.settle_recent();
+    s.keep.poll_recent();
+    s.press(&g, hit);
+    s.press(&g, hit);
+    assert!(s.opening.is_some());
+    s.wait_for_open_for_test();
+    assert_eq!(
+        s.song.dir(),
+        Some(tmp.path().join("b")),
+        "the pressed row opened"
+    );
 }

@@ -166,7 +166,7 @@ pub fn of_hit(hit: Hit) -> Option<(&'static str, &'static str)> {
             Spot::Device => ("home.no_device", "audio.no_device.menu"),
             // Typing there only filters the list.
             Spot::Search => return None,
-            Spot::Row(_) => ("home.recent", "song.open_recent"),
+            Spot::Row(..) => ("home.recent", "song.open_recent"),
         },
     };
     Some(m)

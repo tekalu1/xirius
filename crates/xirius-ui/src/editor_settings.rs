@@ -163,6 +163,9 @@ impl Studio {
         mods: crate::tools::Mods,
         clicks: u32,
     ) -> bool {
+        if self.home_shown() {
+            return false;
+        }
         let Some(mut ctx) = self.roll_input(g) else {
             return false;
         };

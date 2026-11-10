@@ -713,7 +713,7 @@ pub fn home_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             accesskit::Role::ListItem,
             label,
             *r,
-            Some(Spot::Row(*i)),
+            Some(Spot::Row(*i, crate::home::row_key(row.act.as_ref()))),
         );
         item.node.set_selected(*i == home.pick.selected);
         list.children.push(item);

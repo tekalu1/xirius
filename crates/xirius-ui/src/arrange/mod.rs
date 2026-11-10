@@ -935,6 +935,10 @@ impl Studio {
     /// A press. True when it was used here; otherwise it goes on to
     /// [`Studio::press`] (which selects the row or moves the playhead).
     pub fn arrange_down(&mut self, g: &Geometry, x: f32, y: f32, mods: Mods) -> bool {
+        // The start screen covers the arrangement: it is not there to press.
+        if self.home_shown() {
+            return false;
+        }
         // The ruler's click and the mixer (which come through [`Studio::press`]) read the
         // modifiers of this press, also the one that closes a menu.
         self.arrange.mods = mods;

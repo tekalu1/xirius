@@ -56,6 +56,22 @@ pub const SEARCH_NAME: &str = "最近の曲を検索";
 /// Two presses on the same row this close together open it.
 const DOUBLE: Duration = Duration::from_millis(500);
 
+/// What a row opens, as a number a [`Spot`] can carry.
+pub type RowKey = u64;
+
+/// The key of a row with this action: the same for the same song or the sample, whatever
+/// place the row has in the list.
+pub fn row_key(act: Option<&Action>) -> RowKey {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    match act {
+        Some(Action::Pick(dir)) => (1u8, dir).hash(&mut h),
+        Some(Action::OpenSample) => 2u8.hash(&mut h),
+        _ => 0u8.hash(&mut h),
+    }
+    h.finish()
+}
+
 /// A button of the left column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Button {
@@ -107,8 +123,10 @@ pub enum Spot {
     /// 「オーディオデバイスなし」: its menu.
     Device,
     Search,
-    /// A row of the list, counting the rows the search lets through.
-    Row(usize),
+    /// A row of the list: its place among the rows the search lets through, and its key
+    /// (what it opens). A press finds its row again by the key, so a list built again
+    /// between the pointer's read and the press does not move it to another song.
+    Row(usize, RowKey),
 }
 
 /// The start screen's state.
@@ -123,7 +141,7 @@ pub struct Home {
     /// The person moved the keys: the first choice (the top row, or 新規) is theirs now.
     touched: bool,
     /// The last press on a row: when, and which.
-    click: Option<(Instant, usize)>,
+    click: Option<(Instant, RowKey)>,
 }
 
 impl Default for Home {
@@ -228,6 +246,8 @@ pub struct HomeLayout {
     pub search: Option<Rect>,
     /// Each row that shows, by its place among the rows the search lets through.
     pub rows: Vec<(usize, Rect)>,
+    /// The key of each of `rows`, in the same order.
+    pub row_keys: Vec<RowKey>,
     /// The window size the list is measured at (its scroll keeps to it).
     pub list_size: (f32, f32),
 }
@@ -336,6 +356,11 @@ impl HomeLayout {
             .filter(|c| matches!(c.look, Look::Row))
             .enumerate()
             .map(|(k, c)| (first + k, c.rect))
+            .collect::<Vec<(usize, Rect)>>();
+        let shown = home.pick.visible();
+        let row_keys = rows
+            .iter()
+            .map(|(i, _)| row_key(shown.get(*i).and_then(|r| r.act.as_ref())))
             .collect();
         HomeLayout {
             buttons,
@@ -345,6 +370,7 @@ impl HomeLayout {
             cells,
             search,
             rows,
+            row_keys,
             list_size,
         }
     }
@@ -370,7 +396,7 @@ impl HomeLayout {
             Spot::Button(b) => Some(self.button(b)),
             Spot::Device => self.no_device,
             Spot::Search => self.search,
-            Spot::Row(i) => self.rows.iter().find(|(k, _)| *k == i).map(|(_, r)| *r),
+            Spot::Row(i, _) => self.rows.iter().find(|(k, _)| *k == i).map(|(_, r)| *r),
         }
     }
 
@@ -380,7 +406,12 @@ impl HomeLayout {
             .map(Spot::Button)
             .chain(self.no_device.map(|_| Spot::Device))
             .chain(self.search.map(|_| Spot::Search))
-            .chain(self.rows.iter().map(|(i, _)| Spot::Row(*i)))
+            .chain(
+                self.rows
+                    .iter()
+                    .zip(&self.row_keys)
+                    .map(|((i, _), key)| Spot::Row(*i, *key)),
+            )
             .find(|s| self.rect(*s).is_some_and(|r| r.contains(x, y)))
     }
 }
@@ -513,18 +544,28 @@ impl Studio {
                     home.touched = true;
                 }
             }
-            Spot::Row(i) => {
+            Spot::Row(_, key) => {
                 let now = Instant::now();
                 let Some(home) = self.home.as_mut() else {
                     return false;
                 };
+                // The row pressed is found again by its key: the list may have been built
+                // again since the pointer was read, and its places moved.
+                let Some(i) = home
+                    .pick
+                    .nav()
+                    .iter()
+                    .position(|r| row_key(r.act.as_ref()) == key)
+                else {
+                    return true;
+                };
                 let twice = home
                     .click
-                    .is_some_and(|(at, k)| k == i && now.duration_since(at) < DOUBLE);
+                    .is_some_and(|(at, k)| k == key && now.duration_since(at) < DOUBLE);
                 home.pick.selected = i;
                 home.focus = Focus::List;
                 home.touched = true;
-                home.click = (!twice).then_some((now, i));
+                home.click = (!twice).then_some((now, key));
                 if twice {
                     self.home_open_chosen();
                 }
@@ -712,7 +753,7 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
                 .rows
                 .iter()
                 .find(|(_, r)| *r == cell.rect)
-                .is_some_and(|(i, _)| hover == Some(Spot::Row(*i))),
+                .is_some_and(|(i, _)| matches!(hover, Some(Spot::Row(h, _)) if h == *i)),
             _ => false,
         };
         crate::popup::paint_cell(pen, cell, hot);

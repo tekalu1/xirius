@@ -50,7 +50,7 @@ impl Studio {
     /// A press at (x, y) with `mods` held. Never takes the press: the click goes on.
     pub fn ruler_drag_down(&mut self, g: &Geometry, x: f32, y: f32, mods: Mods) {
         self.ruler_grab = None;
-        if self.popup.is_some() || self.palette.is_some() {
+        if self.popup.is_some() || self.palette.is_some() || self.home_shown() {
             return;
         }
         let Some(place) = self.ruler_place(g, x, y) else {

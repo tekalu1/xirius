@@ -255,6 +255,7 @@ mod prepare_card_tests;
 pub mod prepare_shots;
 #[cfg(feature = "loading-probe")]
 mod prepared_shots;
+pub(crate) mod press_flow;
 pub mod quantize_import;
 pub mod quantize_panel;
 pub mod quiet_shots;

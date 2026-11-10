@@ -17,6 +17,10 @@ impl Studio {
     /// clip under it. Only the Arrow tool opens (the Cut, Eraser and Mute tools
     /// already acted on the first press).
     pub fn arrange_open(&mut self, g: &Geometry, x: f32, y: f32, mods: Mods) -> bool {
+        // The start screen covers the arrangement: it is not there to open.
+        if self.home_shown() {
+            return false;
+        }
         let spot = self.arrange_spot(g, x, y);
         // A double click on a section is its name box (the edge is the length's).
         if let Spot::Section {
