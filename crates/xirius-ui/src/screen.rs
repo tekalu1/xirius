@@ -2293,6 +2293,7 @@ fn step(run: &Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
             #[cfg(windows)]
             {
                 crate::device_window::drag_shots::ready(&studio, window, cx)
+                    && crate::device_window::verify_shots::ready(&studio, window, cx)
             }
             #[cfg(not(windows))]
             {

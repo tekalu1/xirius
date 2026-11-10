@@ -22,6 +22,8 @@ pub(crate) mod drag_shots;
 pub(crate) mod input_shots;
 #[cfg(windows)]
 pub(crate) mod preset_shots;
+#[cfg(windows)]
+pub(crate) mod verify_shots;
 
 #[derive(Default)]
 pub(crate) struct Windows {

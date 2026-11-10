@@ -416,7 +416,7 @@ struct Link {
 }
 
 /// How long a busy machine may take to draw a frame or to show a window change.
-const PATIENCE: Duration = Duration::from_secs(30);
+pub(super) const PATIENCE: Duration = Duration::from_secs(30);
 
 impl Link {
     fn ask(&self, want: Want) -> Option<Ack> {
@@ -440,7 +440,7 @@ impl Link {
     }
 }
 
-fn find(title: &str) -> Option<isize> {
+pub(super) fn find(title: &str) -> Option<isize> {
     let deadline = Instant::now() + PATIENCE;
     while Instant::now() < deadline {
         if let Some(h) = crate::park::own_handle(title) {
@@ -451,7 +451,7 @@ fn find(title: &str) -> Option<isize> {
     None
 }
 
-fn rect(hwnd: isize) -> [i32; 4] {
+pub(super) fn rect(hwnd: isize) -> [i32; 4] {
     let mut r = RECT {
         left: 0,
         top: 0,
@@ -463,24 +463,24 @@ fn rect(hwnd: isize) -> [i32; 4] {
     [r.left, r.top, r.right - r.left, r.bottom - r.top]
 }
 
-fn origin(hwnd: isize) -> (i32, i32) {
+pub(super) fn origin(hwnd: isize) -> (i32, i32) {
     let mut p = POINT { x: 0, y: 0 };
     // SAFETY: as above.
     unsafe { ClientToScreen(hwnd as _, &mut p) };
     (p.x, p.y)
 }
 
-fn lparam(x: i32, y: i32) -> isize {
+pub(super) fn lparam(x: i32, y: i32) -> isize {
     (((y & 0xFFFF) as isize) << 16) | ((x & 0xFFFF) as isize)
 }
 
-fn zoomed(hwnd: isize) -> bool {
+pub(super) fn zoomed(hwnd: isize) -> bool {
     // SAFETY: as above.
     unsafe { IsZoomed(hwnd as _) != 0 }
 }
 
 /// The screen point of a logical point of the window.
-fn screen(hwnd: isize, scale: f32, x: f32, y: f32) -> isize {
+pub(super) fn screen(hwnd: isize, scale: f32, x: f32, y: f32) -> isize {
     let (ox, oy) = origin(hwnd);
     lparam(
         ox + (x * scale).round() as i32,
