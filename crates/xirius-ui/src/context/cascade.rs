@@ -27,34 +27,45 @@ fn overlap(a: Rect, b: Rect) -> f32 {
     (a.right().min(b.right()) - a.x.max(b.x)).max(0.0)
 }
 
-/// Whether a child panel at depth 1 or more shows its "戻る" row (R6). Beside its parent the
-/// parent is the way back, so the row is dropped and the child's first row lines up with the
-/// parent row that opened it; a child that covers more than half of the parent keeps it.
-pub fn back_shown(popup: &Popup, viewport: (f32, f32)) -> bool {
-    popup.ctx.first().is_none_or(|i| !i.back)
-        || popup
-            .layout(viewport)
-            .cells
-            .iter()
-            .any(|c| c.action == Some(Action::Ctx(0)))
+/// Marks the "戻る" row of a panel, and the gap after it, as not there (R6).
+pub fn hide_back(rows: &mut [crate::context::Row]) {
+    if let Some(first) = rows.first_mut().filter(|r| r.back) {
+        first.hidden = true;
+        if let Some(gap) = rows.get_mut(1).filter(|r| r.gap) {
+            gap.hidden = true;
+        }
+    }
 }
 
-/// Drops the "戻る" cell and the gap after it, lifting the rest of the panel by their height.
-fn without_back(placed: &mut PopupLayout) {
-    let lift = xirius_design::Layout::MENU_ROW_H + xirius_design::Space::X2.px();
-    placed.cells.retain(|c| c.action != Some(Action::Ctx(0)));
-    for cell in &mut placed.cells {
-        cell.rect.y -= lift;
+/// Whether the deepest panel shows its "戻る" row (R6). Beside its parent the parent is the way
+/// back, so the row is dropped and the child's first row lines up with the parent row that
+/// opened it; a child that covers more than half of the parent keeps it.
+pub fn back_shown(popup: &Popup, viewport: (f32, f32)) -> bool {
+    popup.ctx.first().is_none_or(|i| !i.back) || !place(popup, viewport).1
+}
+
+/// The panel's rows as the screen has them: the hidden "戻る" row marked (the scroll counts
+/// only the rows that are drawn).
+pub fn shown_rows(popup: &Popup, viewport: (f32, f32)) -> Vec<crate::context::Row> {
+    let mut rows = popup.ctx.clone();
+    if !popup.ctx_parents.is_empty() && !back_shown(popup, viewport) {
+        hide_back(&mut rows);
     }
-    placed.rect.h -= lift;
+    rows
 }
 
 pub fn layout(popup: &Popup, viewport: (f32, f32)) -> PopupLayout {
+    place(popup, viewport).0
+}
+
+/// The cascade, and whether its deepest panel has dropped its "戻る" row.
+fn place(popup: &Popup, viewport: (f32, f32)) -> (PopupLayout, bool) {
     let mut out = PopupLayout {
         rect: Rect::default(),
         cells: Vec::new(),
         panels: Vec::new(),
     };
+    let mut hidden = false;
     let mut parent: Option<(Rect, Rect)> = None;
     for depth in 0..=popup.ctx_parents.len() {
         let mut panel = popup.clone();
@@ -67,17 +78,13 @@ pub fn layout(popup: &Popup, viewport: (f32, f32)) -> PopupLayout {
             panel.ctx_search = false;
         }
         let mut placed = panel.single_layout(viewport);
+        hidden = false;
         if let Some((parent, row)) = parent {
-            let has_back = panel.ctx.first().is_some_and(|i| i.back)
-                && panel.offset == 0
-                && placed
-                    .cells
-                    .iter()
-                    .any(|c| c.action == Some(Action::Ctx(0)));
             let mut rect = child_rect(parent, row, (placed.rect.w, placed.rect.h), viewport);
-            if has_back {
-                let mut bare = placed.clone();
-                without_back(&mut bare);
+            if panel.ctx.first().is_some_and(|i| i.back) {
+                let mut bare = panel.clone();
+                hide_back(&mut bare.ctx);
+                let bare = bare.single_layout(viewport);
                 // The first row sits level with the parent row, not the panel's top edge.
                 let mut at = row;
                 at.y -= xirius_design::Layout::POPUP_PAD;
@@ -85,6 +92,7 @@ pub fn layout(popup: &Popup, viewport: (f32, f32)) -> PopupLayout {
                 if overlap(parent, beside) * 2.0 <= parent.w {
                     placed = bare;
                     rect = beside;
+                    hidden = true;
                 }
             }
             for cell in &mut placed.cells {
@@ -121,7 +129,7 @@ pub fn layout(popup: &Popup, viewport: (f32, f32)) -> PopupLayout {
             )
         };
     }
-    out
+    (out, hidden)
 }
 
 /// Inside the triangle from the previous pointer to the child's facing edge.

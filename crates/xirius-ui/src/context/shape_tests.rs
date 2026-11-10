@@ -109,3 +109,70 @@ fn a_child_over_its_parent_keeps_the_back_row() {
         "戻る is shown"
     );
 }
+
+/// A child panel that scrolls, beside its parent (no "戻る"): ↓ walks to the last row and the
+/// panel's top and bottom edges land where the rows end, with no row hidden and no empty line.
+#[test]
+fn a_scrolling_child_without_back_reaches_both_ends() {
+    use super::Item;
+    use serde_json::json;
+    let (mut s, _) = studio();
+    let g = s.geometry(1440.0, 360.0);
+    s.resized(&g);
+    let many: Vec<Item> = (0..30)
+        .map(|n| s.ctx_as(&format!("行 {n}"), "marker.add", json!({"at": n * 3840})))
+        .collect();
+    let items = vec![
+        s.ctx_as("先頭", "marker.add", json!({"at": 0})),
+        Item::sub("多い", many),
+        s.ctx_as("末尾", "marker.add", json!({"at": 1})),
+    ];
+    s.open_context(items, 100.0, 40.0);
+    assert!(choose(&mut s, &g, "多い"));
+    let pad = xirius_design::Layout::POPUP_PAD;
+    let row_h = xirius_design::Layout::MENU_ROW_H;
+    let visible = |s: &Studio| {
+        let p = s.popup.as_ref().unwrap();
+        let room = g.size.1 - 8.0 - if p.ctx_query.is_some() { 40.0 } else { 0.0 };
+        let layout = p.layout(g.size);
+        let cells: Vec<_> = layout
+            .cells
+            .iter()
+            .filter_map(|c| match &c.action {
+                Some(Action::Ctx(i)) => Some((*i, c.rect)),
+                _ => None,
+            })
+            .collect();
+        (cells, room, p.offset, p.max_offset(g.size))
+    };
+    // Entered: the "戻る" row is hidden and the panel is at offset 0 (a panel as tall as the
+    // window cannot line up with its parent row; that is the unscrolled tests' business).
+    let (cells, _, offset, max) = visible(&s);
+    assert_eq!(offset, 0);
+    assert!(max > 0, "the panel scrolls");
+    assert!(!cells.iter().any(|(i, _)| *i == 0), "戻る is hidden");
+    let first = cells.iter().find(|(i, _)| *i == 2).expect("1st row").clone();
+    // ↓ through every row: the cursor row is always drawn.
+    for _ in 0..30 {
+        assert!(s.context_navigation(&g, "down"));
+        let cursor = s.ctx.as_ref().unwrap().cursor.expect("cursor");
+        let (cells, room, _, _) = visible(&s);
+        let cell = cells.iter().find(|(i, _)| *i == cursor);
+        let cell = cell.unwrap_or_else(|| panic!("cursor row {cursor} is drawn"));
+        assert!(cell.1.bottom() <= room, "cursor {cursor} bottom {} room {room}", cell.1.bottom());
+    }
+    // The last row is the cursor: the list is at its end, flush with the bottom edge.
+    let (cells, room, offset, max) = visible(&s);
+    assert_eq!(offset, max, "scrolled to the end");
+    let last = cells.iter().map(|(_, r)| r.bottom()).fold(0.0, f32::max);
+    assert!(last <= room);
+    assert!(last + row_h > room - pad - 2.0, "no empty line below the last row");
+    // ↑ back to the top: the first row is drawn at the top edge, offset 0.
+    for _ in 0..29 {
+        assert!(s.context_navigation(&g, "up"));
+    }
+    let (cells, _, offset, _) = visible(&s);
+    assert_eq!(offset, 0);
+    let top = cells.iter().map(|(_, r)| r.y).fold(f32::MAX, f32::min);
+    assert_eq!(top, first.1.y, "the first row is where it was");
+}

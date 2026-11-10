@@ -365,7 +365,8 @@ impl Popup {
     pub fn max_offset(&self, size: (f32, f32)) -> usize {
         match self.kind {
             PopupKind::Context => {
-                let cells = crate::context::cells(&self.ctx, crate::context::width(&self.ctx));
+                let rows = crate::context::cascade::shown_rows(self, size);
+                let cells = crate::context::cells(&rows, crate::context::width(&rows));
                 let height = cells.iter().map(|c| c.rect.bottom()).fold(0.0f32, f32::max)
                     + Layout::POPUP_PAD;
                 let room = size.1 - 8.0 - if self.ctx_query.is_some() { 40.0 } else { 0.0 };

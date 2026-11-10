@@ -351,6 +351,8 @@ pub struct Row {
     pub title: bool,
     /// The row that goes back to the parent menu.
     pub back: bool,
+    /// Not drawn and not counted for the scroll: a "戻る" row (and its gap) beside the parent.
+    pub hidden: bool,
     pub swatch: Option<usize>,
     pub mark: Option<usize>,
     pub reason: String,
@@ -403,6 +405,7 @@ impl State {
                 gap: matches!(i.run, Run::Gap),
                 title: matches!(i.run, Run::Title),
                 back: matches!(i.run, Run::Back),
+                hidden: false,
                 swatch: i.swatch,
                 mark: i.mark,
                 field: match &i.run {
@@ -456,6 +459,9 @@ pub fn cells(rows: &[Row], w: f32) -> Vec<Cell> {
     let mut y = pad;
     let mut column = 0;
     for (i, row) in rows.iter().enumerate() {
+        if row.hidden {
+            continue;
+        }
         if row.gap {
             // No line between groups (design rules): room.
             y += Space::X2.px();

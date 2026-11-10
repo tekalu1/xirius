@@ -89,7 +89,8 @@ impl Studio {
         let Some(popup) = self.popup.as_mut() else {
             return;
         };
-        let cells = super::cells(&popup.ctx, super::width(&popup.ctx));
+        let rows = super::cascade::shown_rows(popup, g.size);
+        let cells = super::cells(&rows, super::width(&rows));
         let Some(cell) = cells.iter().find(|c| matches!(c.action, Some(crate::popup::Action::Ctx(i) | crate::popup::Action::Field(i, _)) if i == row)) else { return };
         let step = xirius_design::Layout::MENU_ROW_H;
         let pad = xirius_design::Layout::POPUP_PAD;
