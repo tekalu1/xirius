@@ -292,6 +292,20 @@ fn the_list_clear_shows_with_text_empties_it_and_the_list_stays() {
 }
 
 #[test]
+fn the_add_list_rows_carry_the_typed_words_so_the_match_is_bold() {
+    let (mut s, g) = insert_list();
+    assert!(s.fx_typed("r", Some("reverb")));
+    let layout = s.popup.as_ref().unwrap().layout(g.size);
+    let rows: Vec<_> = layout
+        .cells
+        .iter()
+        .filter(|c| !c.foot && !c.is_search() && c.look == crate::popup::Look::Row)
+        .collect();
+    assert!(!rows.is_empty());
+    assert!(rows.iter().all(|c| c.query == "reverb"));
+}
+
+#[test]
 fn the_list_down_up_and_zero_matches() {
     let (mut s, _g) = insert_list();
     assert!(s.fx_typed("down", None));

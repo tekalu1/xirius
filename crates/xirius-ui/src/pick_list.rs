@@ -762,6 +762,9 @@ pub fn cells(pick: &PickList, w: f32, size: (f32, f32)) -> Vec<Cell> {
             if !row.enabled {
                 cell = disabled(cell, row);
             }
+            if typed {
+                cell.query = query.clone();
+            }
             if !row.tip.is_empty() {
                 cell = cell.tip(row.tip.clone());
             } else if crate::browser::text_width(&row.label, FontSize::Small)
