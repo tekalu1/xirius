@@ -43,10 +43,14 @@ pub const SHOTS: &[Shot] = &[
         name: "sf05-rename",
         acts: &[Act::Reset, stage(4)],
     },
-    // A track's menu with words in its search.
+    // A track's menu with words in its search: Japanese, and Latin letters under a group.
     Shot {
         name: "sf06-menu-search",
         acts: &[Act::Reset, stage(5)],
+    },
+    Shot {
+        name: "sf06-menu-search-latin",
+        acts: &[Act::Reset, stage(19)],
     },
     // Down from the field: the first row has the ring.
     Shot {
@@ -58,10 +62,39 @@ pub const SHOTS: &[Shot] = &[
         name: "sf08-add-list",
         acts: &[Act::Reset, stage(7)],
     },
-    // The start screen's search, with words.
+    // The add list's caret after several letters, Japanese, a mix, and inside the words.
+    Shot {
+        name: "sf08-add-list-word",
+        acts: &[Act::Reset, stage(20)],
+    },
+    Shot {
+        name: "sf08-add-list-japanese",
+        acts: &[Act::Reset, stage(21)],
+    },
+    Shot {
+        name: "sf08-add-list-mixed",
+        acts: &[Act::Reset, stage(22)],
+    },
+    Shot {
+        name: "sf08-add-list-caret-inside",
+        acts: &[Act::Reset, stage(23)],
+    },
+    // The start screen's search: with words, all selected, nothing found, and down once.
     Shot {
         name: "sf09-home",
         acts: &[Act::Reset, stage(8)],
+    },
+    Shot {
+        name: "sf09-home-select-all",
+        acts: &[Act::Reset, stage(16)],
+    },
+    Shot {
+        name: "sf09-home-nothing-found",
+        acts: &[Act::Reset, stage(17)],
+    },
+    Shot {
+        name: "sf09-home-down",
+        acts: &[Act::Reset, stage(18)],
     },
     // The shortcuts' search in the settings.
     Shot {
@@ -107,6 +140,14 @@ fn browser(s: &mut Studio) {
     s.input_map.browser_focus = true;
 }
 
+/// Reverb among the favourites, as it is for a search that answers it.
+fn favourite_reverb(s: &mut Studio) {
+    let (id, _) = s.browser.favourite_keys("Reverb");
+    if !s.browser.favourites.contains(&id) {
+        s.browser.toggle_favourite("Reverb");
+    }
+}
+
 fn insert_list(s: &mut Studio, g: &Geometry) {
     s.drawer_open = true;
     s.tab = DrawerTab::Mixer;
@@ -127,6 +168,8 @@ fn insert_list(s: &mut Studio, g: &Geometry) {
 fn keys_page(s: &mut Studio, g: &Geometry) {
     s.open_settings(Section::Keys);
     s.settings_do(g, Do::Sub(Sub::Keyboard), Rect::default());
+    // The name search, not the capture of a key press.
+    s.settings_do(g, Do::KeyMode(false), Rect::default());
 }
 
 fn play(s: &mut Studio, g: &Geometry, n: u8) {
@@ -177,14 +220,19 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
         }
         1 => {
             browser(s);
+            favourite_reverb(s);
             s.browser.search.set("Rev".into());
             s.browser.search.select_all();
         }
         2 => {
             browser(s);
+            favourite_reverb(s);
             s.browser.search.set("Rev".into());
         }
-        3 => browser(s),
+        3 => {
+            browser(s);
+            favourite_reverb(s);
+        }
         4 => {
             let t = s
                 .project()
@@ -200,12 +248,13 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
                 });
             }
         }
-        5 | 6 => {
-            if n == 5 {
+        5 | 19 | 6 => {
+            if n == 5 || n == 19 {
                 track_menu(s, g);
-                s.ask_text(None, "く", false);
+                s.ask_text(None, if n == 5 { "コピー" } else { "midi" }, false);
             } else {
                 browser(s);
+                favourite_reverb(s);
                 s.browser.search.set("Rev".into());
                 let g = &s.geometry(g.size.0, g.size.1);
                 s.browser_list_key(g, "down", Mods::NONE);
@@ -219,20 +268,53 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             home(s, g);
             s.pick_text(None, "夜", false);
         }
+        20..=23 => {
+            insert_list(s, g);
+            let word = ["reverb", "夜の", "Ab夜c", "Reverb"][usize::from(n) - 20];
+            s.pick_text(None, word, false);
+            if n == 23 {
+                for _ in 0..3 {
+                    s.fx_typed("left", None);
+                }
+            }
+        }
+        16 => {
+            home(s, g);
+            s.pick_text(None, "Dem", false);
+            if let Some(h) = s.home.as_mut() {
+                h.pick.field.select_all();
+            }
+        }
+        17 => {
+            home(s, g);
+            s.pick_text(None, "qqqqqq", false);
+        }
+        18 => {
+            home(s, g);
+            if let Some(h) = s.home.as_mut() {
+                h.focus = crate::home::Focus::Search;
+            }
+            s.home_key(g, "down", Mods::NONE);
+        }
         9 => {
             keys_page(s, g);
             s.settings_text(None, "clip", false);
         }
         10 => {
             s.open_palette(g);
-            s.ime_replace(None, "mute", false);
+            s.ime_replace(None, "ミュート", false);
         }
         11 => {
             browser(s);
             s.browser.tab = RailTab::Instruments;
             s.browser.search.set("qqqqqq".into());
         }
-        12 => home(s, g),
+        12 => {
+            home(s, g);
+            if let Some(h) = s.home.as_mut() {
+                h.focus = crate::home::Focus::Search;
+            }
+        }
         13 => s.open_palette(g),
         14 => insert_list(s, g),
         15 => keys_page(s, g),
@@ -267,6 +349,9 @@ fn remember(s: &mut Studio) {
 }
 
 fn home(s: &mut Studio, g: &Geometry) {
+    // The start screen shows over a song with nothing in it.
+    *s = Studio::new(crate::song::Song::empty());
+    s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
     s.resized(g);
     remember(s);
     s.home = Some(crate::home::Home::default());
