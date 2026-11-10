@@ -1923,7 +1923,7 @@ impl Render for Screen {
 
 /// An empty box over a control that is only painted, carrying its accessible node (UI-298):
 /// it takes no pointer, and a screen reader's press on a count of takes opens the take rows.
-fn mark(m: crate::a11y::Mark, studio: Rc<RefCell<Studio>>) -> gpui::Stateful<gpui::Div> {
+pub(crate) fn mark(m: crate::a11y::Mark, studio: Rc<RefCell<Studio>>) -> gpui::Stateful<gpui::Div> {
     let n = &m.node;
     let b = n.bounds().unwrap_or_default();
     let mut el = div()

@@ -186,6 +186,12 @@ pub(crate) fn bounds(r: Rect) -> accesskit::Rect {
     )
 }
 
+/// `r` as an independent window's own surface has it: from its own (0, 0), without the
+/// main window's top bar in front.
+pub(crate) fn local_bounds(r: Rect) -> accesskit::Rect {
+    accesskit::Rect::new(r.x as f64, r.y as f64, r.right() as f64, r.bottom() as f64)
+}
+
 /// The marks of what shows now (UI-298). An open list of effects or instruments has its search
 /// box: an Edit named 「検索」, whose value is what was typed. Otherwise each clip's count of
 /// takes on screen is a Button named 「テイク N」 that opens the take rows, expanded while they
@@ -475,7 +481,6 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     out.extend(inspector_marks(s, g));
     out.extend(instrument_marks(s, g));
     out.extend(crate::channel::marks(s, g));
-    out.extend(crate::macro_pad::marks(s));
     out.extend(flow_marks(s, g));
     out.extend(device_marks(s, g));
     out.extend(audition_mark(s, g));

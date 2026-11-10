@@ -347,3 +347,54 @@ fn a_press_on_the_window_stays_in_it_and_one_elsewhere_takes_the_keys() {
     assert!(!s.macro_pad.as_ref().unwrap().focused);
     assert!(!s.macro_key("right", crate::tools::Mods::default()));
 }
+
+#[test]
+fn the_main_windows_tree_has_no_macro_marks_and_the_macro_windows_has_them_locally() {
+    let (mut s, g) = studio();
+    let t = track(&s, "Vocal");
+    s.open_macros(t);
+    let main = crate::a11y::marks(&s, &g);
+    fn keys(m: &crate::a11y::Mark, out: &mut Vec<String>) {
+        out.push(m.key.clone());
+        for c in &m.children {
+            keys(c, out);
+        }
+    }
+    let mut seen = Vec::new();
+    for m in &main {
+        keys(m, &mut seen);
+    }
+    assert!(
+        seen.iter().all(|k| !k.starts_with("macros")),
+        "the main window's tree holds no Macro Controls mark: {seen:?}"
+    );
+    let own = marks(&s);
+    assert_eq!(own.len(), 1);
+    let root = own[0].node.bounds().unwrap();
+    assert_eq!(
+        (root.x0, root.y0),
+        (0.0, 0.0),
+        "the window's own coordinates"
+    );
+    assert_eq!(
+        (root.x1 as f32, root.y1 as f32),
+        (W, H),
+        "the root is the whole window"
+    );
+    for c in &own[0].children {
+        let b = c.node.bounds().unwrap();
+        assert!(
+            b.x0 >= 0.0 && b.y0 >= 0.0 && b.x1 <= f64::from(W) && b.y1 <= f64::from(H),
+            "{} lies inside the window's own surface: {b:?}",
+            c.key
+        );
+    }
+    let pad = own[0]
+        .children
+        .iter()
+        .find(|c| c.key == "macros-pad")
+        .unwrap();
+    let v = s.macro_view().unwrap();
+    let b = pad.node.bounds().unwrap();
+    assert_eq!((b.x0 as f32, b.y0 as f32), (v.pad.x, v.pad.y));
+}

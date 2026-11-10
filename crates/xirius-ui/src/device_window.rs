@@ -563,6 +563,14 @@ impl Render for DeviceWindow {
                 window.resize(wanted);
             }
         }
+        if self.macros {
+            // The window is exactly its panel: whatever size the system gave it, the surface
+            // is brought to the content's.
+            let wanted = size(px(crate::macro_pad::W), px(crate::macro_pad::H));
+            if window.viewport_size() != wanted {
+                window.resize(wanted);
+            }
+        }
         if self.id.is_none() && !self.menu_only && !self.macros {
             // The least width follows the layers: one added while it is open widens the least.
             let least = {
@@ -684,6 +692,12 @@ impl Render for DeviceWindow {
                 },
             );
             Colors::new(theme).surface_1
+        };
+        // The Macro Controls' marks belong to this window's own tree, in its own coordinates.
+        let marks = if self.macros {
+            crate::macro_pad::marks(&self.studio.borrow())
+        } else {
+            Vec::new()
         };
         div()
             .size_full()
@@ -910,6 +924,11 @@ impl Render for DeviceWindow {
                 cx.refresh_windows();
             }))
             .child(body)
+            .children(
+                marks
+                    .into_iter()
+                    .map(|m| crate::screen::mark(m, self.studio.clone())),
+            )
             .children(drags.into_iter().map(|r| {
                 div()
                     .absolute()

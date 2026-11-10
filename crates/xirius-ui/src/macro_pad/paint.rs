@@ -56,7 +56,10 @@ pub fn paint(pen: &mut Pen, s: &Studio) {
         return;
     };
     let c = pen.c;
-    pen.floating(v.r, c.paper, Radius::M);
+    // The window is the panel: square, no shadow, no margin. The bar's square fill goes under
+    // the shared bar, so its rounded top corners leave no other colour showing.
+    pen.fill(v.r, c.paper);
+    pen.fill(v.bar_rect(), c.surface_1);
     title_bar::paint_with(
         pen,
         v.bar_rect(),

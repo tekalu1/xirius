@@ -547,9 +547,9 @@ impl Studio {
     }
 }
 
-/// The reader's marks of the macro window.
+/// The reader's marks of the macro window, in the window's own coordinates (its own tree).
 pub fn marks(s: &Studio) -> Vec<crate::a11y::Mark> {
-    use crate::a11y::{Mark, bounds};
+    use crate::a11y::{Mark, local_bounds as bounds};
     use gpui::accesskit;
     let Some(w) = &s.macro_pad else {
         return Vec::new();

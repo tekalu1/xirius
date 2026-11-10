@@ -299,3 +299,41 @@ fn the_macro_controls_are_not_drawn_or_placed_inside_the_screen() {
         "device_window.rs opens the Macro Controls through `independent::open`, not resizable"
     );
 }
+
+/// The Macro Controls' accessibility marks live in their own window's tree (window-local
+/// coordinates), not in the main window's.
+#[test]
+fn the_macro_controls_marks_are_in_their_own_windows_tree() {
+    let files = all();
+    let get = |n: &str| {
+        files
+            .iter()
+            .find(|(f, _)| f == n)
+            .map(|(_, c)| c.clone())
+            .unwrap()
+    };
+    assert!(
+        !get("a11y.rs").contains("macro_pad::marks"),
+        "the main window's marks do not include the Macro Controls'"
+    );
+    assert!(
+        get("device_window.rs").contains("macro_pad::marks"),
+        "the Macro window builds its own marks"
+    );
+}
+
+/// The Macro Controls' panel is the whole window: no shadow, round corners or margin of an
+/// in-screen floating panel are drawn inside it.
+#[test]
+fn the_macro_controls_panel_fills_its_window() {
+    let files = all();
+    let paint = files
+        .iter()
+        .find(|(f, _)| f == "macro_pad/paint.rs")
+        .map(|(_, c)| c.clone())
+        .unwrap();
+    assert!(
+        !paint.contains("pen.floating(") && paint.contains("pen.fill(v.r, c.paper)"),
+        "the panel is a plain fill of the window's whole surface"
+    );
+}
