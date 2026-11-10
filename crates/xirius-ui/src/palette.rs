@@ -1415,6 +1415,7 @@ pub fn paint(pen: &mut Pen, palette: &Palette, g: &Geometry) {
                 *r,
                 row.enabled && *i == palette.selected,
                 row.enabled && palette.hover == Some(*i),
+                &palette.field.value,
             );
         }
     });
@@ -1567,7 +1568,7 @@ pub fn row_parts(
     }
 }
 
-fn paint_row(pen: &mut Pen, row: &Row, r: Rect, selected: bool, hover: bool) {
+fn paint_row(pen: &mut Pen, row: &Row, r: Rect, selected: bool, hover: bool, query: &str) {
     let c = pen.c;
     if selected {
         pen.round(r, c.sel, Radius::S);
@@ -1586,16 +1587,26 @@ fn paint_row(pen: &mut Pen, row: &Row, r: Rect, selected: bool, hover: bool) {
     };
     pen.icon(row.icon, parts.icon, icon);
     let room = parts.chip.map_or(parts.op.x, |k| k.x) - parts.label.x;
-    pen.mask(parts.label, |pen| {
-        pen.text(
-            &row.label,
-            FontSize::Body,
-            Weight::Regular,
-            strong,
-            Rect::new(parts.label.x, r.y, room.max(parts.label.w), r.h),
-            Align::Left,
-        );
-    });
+    pen.mask(
+        Rect::new(
+            parts.label.x,
+            parts.label.y,
+            room.max(parts.label.w),
+            parts.label.h,
+        ),
+        |pen| {
+            // The part the words match is bold (600), in the same ink.
+            crate::search_box::paint_matched(
+                pen,
+                &row.label,
+                query,
+                FontSize::Body,
+                Weight::Regular,
+                strong,
+                Rect::new(parts.label.x, r.y, room.max(parts.label.w), r.h),
+            );
+        },
+    );
     if let (Some(k), Some(chip)) = (row.key.as_deref(), parts.chip) {
         pen.round(chip, c.surface_3, Radius::Xs);
         pen.text(
