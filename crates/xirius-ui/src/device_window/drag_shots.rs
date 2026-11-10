@@ -337,10 +337,11 @@ pub(crate) fn ready(studio: &Rc<RefCell<Studio>>, _: &mut Window, cx: &mut App) 
                             cx.refresh_windows();
                         }
                         Step::Open if there.is_some() => {
-                            let h = there.unwrap();
-                            let title = h
-                                .update(cx, |_, window, _| window.window_title())
-                                .unwrap_or_default();
+                            let title = if which == 0 {
+                                format!("Xirius · {id}")
+                            } else {
+                                "Xirius · Channel Editor".to_string()
+                            };
                             let _ = acks.send(Ack::Reopened(title));
                             *job = None;
                         }
@@ -430,7 +431,6 @@ impl Link {
         let until = self.frames.load(Ordering::Acquire) + n;
         let deadline = Instant::now() + PATIENCE;
         while self.frames.load(Ordering::Acquire) < until && Instant::now() < deadline {
-            // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
             std::thread::sleep(Duration::from_millis(5));
         }
     }
@@ -448,7 +448,6 @@ fn find(title: &str) -> Option<isize> {
         if let Some(h) = crate::park::own_handle(title) {
             return Some(h);
         }
-        // design-lint: allow(ui-blocking-io) PRJ-031: offline/startup or explicit screenshot/benchmark harness, outside live Studio callbacks.
         std::thread::sleep(Duration::from_millis(50));
     }
     None
@@ -610,7 +609,7 @@ fn run(link: &Link) -> Value {
         link.frames(15);
         let again = find(&title).map(rect).unwrap_or_default();
         reopened.push(json!({
-            "window": NAMES[k], "before": placed, "after": again,
+            "window": NAMES[k], "title": title, "before": placed, "after": again,
             "same_place": placed[..2] == again[..2],
             "same_size": placed[2..] == again[2..],
         }));
@@ -632,12 +631,10 @@ fn write(report: &Value) {
         return;
     };
     let dir = std::path::Path::new(&dir);
-    // design-lint: allow(ui-blocking-io) PRJ-031: drag-probe worker output.
     let _ = std::fs::write(
         dir.join("drag.json"),
         serde_json::to_string_pretty(report).unwrap_or_default(),
     );
-    // design-lint: allow(ui-blocking-io) PRJ-031: drag-probe worker output.
     let _ = std::fs::write(dir.join("drag.md"), markdown(report));
 }
 

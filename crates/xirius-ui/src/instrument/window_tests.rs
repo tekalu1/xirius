@@ -1237,3 +1237,36 @@ fn a_body_that_cannot_fit_spills_the_least() {
     let w = fit_w(800.0, 400.0, 100.0, |w| (w - 400.0) / 40.0 + 100.3);
     assert!((407.0..=408.0).contains(&w), "{w}");
 }
+
+/// UI-337: the rects the window registers as its drag handle are exactly the points a press takes
+/// as the head, over the whole bar and a margin around it.
+#[test]
+fn the_drag_rects_are_the_head_and_only_the_head() {
+    let (mut s, g, t, id) = studio();
+    assert!(press_keys(&mut s, &g, t));
+    s.instruments.detached_target = Some(id);
+    let p = s.project().clone();
+    let (i, frame, bar) = s.instruments.surface_bar(&p, &g).unwrap();
+    let rects = s.instruments.drag_rects(&p, &g);
+    assert!(!rects.is_empty());
+    let (x0, y0) = (frame.x - 4.0, frame.y - 4.0);
+    let mut heads = 0;
+    let mut y = y0;
+    while y < frame.y + crate::title_bar::BAR_H + 8.0 {
+        let mut x = x0;
+        while x < frame.right() + 4.0 {
+            let head = s.instruments.at(&p, &g, x, y) == Some((i, Part::Head));
+            let inside = rects.iter().any(|r| r.contains(x, y));
+            assert_eq!(head, inside, "at ({x}, {y})");
+            heads += usize::from(head);
+            x += 0.5;
+        }
+        y += 0.5;
+    }
+    assert!(heads > 0);
+    // No button is a drag handle.
+    for (name, r) in bar.buttons() {
+        let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+        assert!(!rects.iter().any(|d| d.contains(cx, cy)), "{name}");
+    }
+}

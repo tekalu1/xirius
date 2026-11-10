@@ -9,8 +9,8 @@ use crate::{
 };
 use gpui::{
     App, Bounds, Context, FocusHandle, IntoElement, MouseButton, Render, TitlebarOptions, Window,
-    WindowBounds, WindowDecorations, WindowHandle, WindowOptions, canvas, div, point, prelude::*,
-    px, size,
+    WindowBounds, WindowControlArea, WindowDecorations, WindowHandle, WindowOptions, canvas, div,
+    point, prelude::*, px, size,
 };
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use xirius_core::id::PluginId;
@@ -669,6 +669,22 @@ impl Render for DeviceWindow {
         let marks = self.with(window, |s, g| {
             accessible_for(&shared, s, g, 0.0, Some(owner))
         });
+        // The bar's empty parts, which the system moves the window by (UI-337). They come from the
+        // very functions the press hit test uses, so the two cannot drift. The Presets popup has no
+        // bar.
+        let drags = if self.menu_only {
+            Vec::new()
+        } else {
+            self.with(window, |s, g| {
+                if s.instruments.detached_channel {
+                    s.channel_view(g)
+                        .map(|v| crate::channel::drag_rects(&v))
+                        .unwrap_or_default()
+                } else {
+                    s.instruments.drag_rects(&s.auto_shown(), g)
+                }
+            })
+        };
         let background = {
             let s = self.studio.borrow();
             let theme = s.caption.map_or_else(
@@ -722,7 +738,12 @@ impl Render for DeviceWindow {
                         false
                     });
                     if drag {
-                        window.start_window_move();
+                        if e.click_count >= 2 {
+                            // A double click on the bar does nothing: the system would maximise.
+                            cx.stop_propagation();
+                        } else {
+                            window.start_window_move();
+                        }
                     }
                     cx.refresh_windows();
                 }),
@@ -857,6 +878,15 @@ impl Render for DeviceWindow {
             }))
             .child(body)
             .children(marks)
+            .children(drags.into_iter().map(|r| {
+                div()
+                    .absolute()
+                    .left(px(r.x))
+                    .top(px(r.y))
+                    .w(px(r.w))
+                    .h(px(r.h))
+                    .window_control_area(WindowControlArea::Drag)
+            }))
     }
 }
 

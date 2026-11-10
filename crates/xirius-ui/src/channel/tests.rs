@@ -1538,3 +1538,31 @@ fn the_tag_takes_the_chain_again_only_when_it_changed() {
         "the old track's own"
     );
 }
+
+/// UI-337: the channel editor's drag rects are exactly the points a press takes as its head.
+#[test]
+fn the_drag_rects_are_the_head_and_only_the_head() {
+    let (mut s, g) = studio();
+    vocal(&mut s);
+    let v = s.channel_view(&g).unwrap();
+    let rects = drag_rects(&v);
+    assert!(!rects.is_empty());
+    let mut heads = 0;
+    let mut y = v.r.y - 4.0;
+    while y < v.r.y + BAR_H + 8.0 {
+        let mut x = v.r.x - 4.0;
+        while x < v.r.right() + 4.0 {
+            let head = part_at(&v, x, y) == Some(Part::Head);
+            let inside = rects.iter().any(|r| r.contains(x, y));
+            assert_eq!(head, inside, "at ({x}, {y})");
+            heads += usize::from(head);
+            x += 0.5;
+        }
+        y += 0.5;
+    }
+    assert!(heads > 0);
+    for (name, r) in v.bar.buttons() {
+        let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+        assert!(!rects.iter().any(|d| d.contains(cx, cy)), "{name}");
+    }
+}

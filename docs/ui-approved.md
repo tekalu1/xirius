@@ -863,6 +863,8 @@ SamplerとMulti Instrumentは同じ演奏鍵盤を使う。ピアノの黒白配
 
 VST3 は独立ウィンドウで開く。ドロワー内への VST 埋め込みと CLAP GUI は今回の対象外。VST3 の枠とビューはプラグインを持つ GUI スレッド・プロセス内にまとめ、位置・テーマ・プリセット・バイパス・ピン・表示順を非同期で合わせる。対応できない製品は標準タイトル＋共通バー（B）またはプラグインの浮動窓へ戻し、検証報告に製品名と理由を残す。
 
+不具合修正（UI-337 の範囲、2026-11-10）。Sampler・Drum Kit・内蔵FX・Channel Editor の独立ウィンドウは、バーの空いた部分（電源・名前・プリセット・CE・ピン・×などのボタン以外）をつかんで移動できる。Windows では、その空きの矩形を `WindowControlArea::Drag` としてウィンドウへ登録し（矩形は押下のヒット判定と同じ関数 `drag_rects` から作り、ずれない）、ボタンの上は従来どおり押下が働いて窓は動かない。空きのバーの二重クリックでは何も起きない（最大化しない。1 回目の押下は従来どおり伝える）。macOS は従来の `start_window_move` のままで変えない。Presets の小さな窓（バーなし）は移動できなくてよい。VST3 のエディター窓とメイン画面は変えない。守る試験は `tests/detached_window.rs`（実窓の WM_NCHITTEST・二重クリック・移動とサイズ）、`tests/drag_areas.rs`（Client 装飾の窓は Drag 登録か許可の一覧に載せる、CI で走る）、`instrument::window_tests::the_drag_rects_are_the_head_and_only_the_head`、`channel::tests::the_drag_rects_are_the_head_and_only_the_head`。
+
 ## トラックブラウザー — 承認済み（2026-11-08）
 
 左レールのインストゥルメント・エフェクト・プリセットの入口を「トラックブラウザー」に統合する。

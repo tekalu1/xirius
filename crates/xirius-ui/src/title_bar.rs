@@ -156,7 +156,7 @@ impl Bar {
             ("close", Some(self.close)),
         ]
         .into_iter()
-        .filter_map(|(name, r)| r.map(|r| (name, r)))
+        .filter_map(|(name, r)| r.filter(|r| r.w > 0.0 && r.h > 0.0).map(|r| (name, r)))
         .collect()
     }
 }
