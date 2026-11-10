@@ -365,7 +365,14 @@ pub(crate) fn run(
         }
         let query = a.opt_str("query").unwrap_or_default();
         let tab = a.opt_str("tab").unwrap_or("instruments");
-        let rows = xirius_core::track_browser::tree(&entries, tab, query, &BTreeSet::new(), &fav);
+        let rows = xirius_core::track_browser::tree(
+            &entries,
+            tab,
+            query,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &fav,
+        );
         return Ok((
             Output::with(
                 "トラックブラウザー",

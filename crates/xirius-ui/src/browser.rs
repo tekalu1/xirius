@@ -382,6 +382,11 @@ pub struct Browser {
     /// Open folders of the tree, by their paths.
     pub(crate) open_dirs: HashSet<String>,
     pub selected_item: Option<&'static str>,
+    /// The row the press chose, by its key and its entry's id: the same device or preset on
+    /// two places of the list is selected on that one only.
+    pub(crate) selected_row: Option<(String, String)>,
+    /// The favourite devices the user opened (they start folded), by their row's key.
+    pub(crate) opened_groups: HashSet<String>,
     /// The preset files of the built-in devices, by the device's uid (BRW-017).
     pub presets: BTreeMap<&'static str, Vec<String>>,
     /// The built-in devices whose presets the list shows under them, by name.
@@ -663,6 +668,7 @@ impl Browser {
             },
             &self.search,
             &self.closed_groups.iter().cloned().collect(),
+            &self.opened_groups.iter().cloned().collect(),
             &self.favourites,
         )
     }
@@ -698,6 +704,8 @@ impl Browser {
             path: Vec::new(),
             open_dirs: HashSet::new(),
             selected_item: None,
+            selected_row: None,
+            opened_groups: HashSet::new(),
             presets: BTreeMap::new(),
             open_devices: HashSet::new(),
             selected_preset: None,
@@ -912,6 +920,7 @@ impl Browser {
                 self.selected_preset = None;
             }
         }
+        self.selected_row = None;
         self.reveal = true;
     }
 
@@ -945,11 +954,11 @@ impl Browser {
                 .track_rows()
                 .into_iter()
                 .map(|r| match r.entry {
-                    Some(e) if e.file.is_none() => BRow::Item {
+                    Some(ref e) if e.file.is_none() => BRow::Item {
                         item: LibItem {
                             name: intern(&e.name),
                             effect: e.category.tab() == "effects",
-                            icon: self.entry_icon(&e),
+                            icon: self.entry_icon(e),
                             vendor: intern(&e.vendor),
                             format: if xirius_params::find(&e.device).is_some() {
                                 BUILT_IN
@@ -960,10 +969,11 @@ impl Browser {
                         },
                         vendor_text: true,
                         fav: r.favourite,
-                        selected: self.selected_item == Some(e.name.as_str()),
+                        selected: self.selected_item == Some(e.name.as_str())
+                            && self.is_selected_row(&r),
                         presets: r.branch.then_some(r.open),
                     },
-                    Some(e) => BRow::Preset {
+                    Some(ref e) => BRow::Preset {
                         device: intern(&e.id),
                         name: e.name.clone(),
                         effect: e.category.tab() == "effects",
@@ -971,7 +981,8 @@ impl Browser {
                         selected: self
                             .selected_preset
                             .as_ref()
-                            .is_some_and(|(d, _)| *d == e.id),
+                            .is_some_and(|(d, _)| *d == e.id)
+                            && self.is_selected_row(&r),
                     },
                     None => BRow::Group {
                         key: r.key,
@@ -1095,6 +1106,26 @@ impl Browser {
         rows
     }
 
+    /// Whether a row is the one a press chose, among the rows of the same entry.
+    fn is_selected_row(&self, row: &xirius_core::track_browser::Row) -> bool {
+        match (&self.selected_row, &row.entry) {
+            (Some((key, id)), Some(e)) if *id == e.id => *key == row.key,
+            _ => true,
+        }
+    }
+
+    /// Folds or unfolds the row with this key. A favourite device starts folded and is kept
+    /// open in its own set, so the same device in the list below does not follow it.
+    fn toggle_row(&mut self, key: &str) {
+        if key.starts_with("favourites/device/") {
+            if !self.opened_groups.remove(key) {
+                self.opened_groups.insert(key.to_string());
+            }
+        } else {
+            self.toggle_group(key);
+        }
+    }
+
     /// Whether a group of the list is folded.
     pub(crate) fn is_folded(&self, key: &str) -> bool {
         self.closed_groups.contains(key)
@@ -1126,7 +1157,15 @@ impl Browser {
         if self.is_track_browser() && self.track_library.is_some() {
             if open {
                 self.closed_groups.clear();
+                let favourite_devices: Vec<_> = self
+                    .track_rows()
+                    .into_iter()
+                    .filter(|r| r.branch && r.key.starts_with("favourites/device/"))
+                    .map(|r| r.key)
+                    .collect();
+                self.opened_groups.extend(favourite_devices);
             } else {
+                self.opened_groups.clear();
                 self.closed_groups.extend(
                     self.track_rows()
                         .into_iter()
@@ -1589,6 +1628,7 @@ impl Browser {
                 if let Some(BRow::Item { item, .. }) = row(i) {
                     self.selected_item = Some(item.name);
                     self.selected_preset = None;
+                    self.selected_row = self.track_row(i).and_then(|r| Some((r.key, r.entry?.id)));
                 }
             }
             BrowserHit::Fav(i) => match row(i) {
@@ -1600,13 +1640,17 @@ impl Browser {
             },
             BrowserHit::Disclose(i) => {
                 if let Some(BRow::Item { item, .. }) = row(i) {
-                    self.toggle_device(item.name);
+                    match self.track_row(i).filter(|_| self.track_library.is_some()) {
+                        Some(r) => self.toggle_row(&r.key),
+                        None => self.toggle_device(item.name),
+                    }
                 }
             }
             BrowserHit::Preset(i) => {
                 if let Some(BRow::Preset { device, name, .. }) = row(i) {
                     self.selected_preset = Some((device, name));
                     self.selected_item = None;
+                    self.selected_row = self.track_row(i).and_then(|r| Some((r.key, r.entry?.id)));
                 }
             }
             BrowserHit::Dir(i) => {
@@ -2012,11 +2056,12 @@ fn paint_row(
         let c = pen.c;
         let star = browser.fav_rect(r);
         let selected = row.entry.as_ref().is_some_and(|e| {
-            browser
+            (browser
                 .selected_preset
                 .as_ref()
                 .is_some_and(|(id, _)| *id == e.id)
-                || browser.selected_item == Some(e.name.as_str())
+                || browser.selected_item == Some(e.name.as_str()))
+                && browser.is_selected_row(row)
         });
         if selected {
             pen.round(r, c.sel, Radius::S);

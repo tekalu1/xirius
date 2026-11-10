@@ -298,6 +298,73 @@ fn indexed_device_disclosure_and_star_keep_their_rows_during_a_scan() {
     }
 }
 
+/// Every row of the device `name` with whether its presets show, in list order.
+fn device_rows(s: &Studio, g: &Geometry, name: &str) -> Vec<(usize, Option<bool>, bool)> {
+    rows(s, g)
+        .into_iter()
+        .filter_map(|(i, r)| match r {
+            BRow::Item {
+                item,
+                presets,
+                selected,
+                ..
+            } if item.name == name => Some((i, presets, selected)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_favourite_device_unfolds_and_is_chosen_on_its_own_row() {
+    let (mut s, g) = studio();
+    assert!(s.run_command("browser.preset.list", json!({})));
+    s.browser.toggle_favourite("Reverb");
+    let at = device_rows(&s, &g, "Reverb");
+    assert_eq!(at.len(), 2, "the favourite and the list");
+    // The favourite starts folded; the list's device is open.
+    assert_eq!(at[0].1, Some(false));
+    assert_eq!(at[1].1, Some(true));
+    let preset_rows = |s: &Studio| {
+        rows(s, &g)
+            .iter()
+            .filter(|(_, r)| matches!(r, BRow::Preset { .. }))
+            .count()
+    };
+    let listed = preset_rows(&s);
+    assert!(listed > 0);
+    // Unfolding the favourite adds its presets and leaves the list's device alone.
+    s.press(&g, Hit::Browser(BrowserHit::Disclose(at[0].0)));
+    let after = device_rows(&s, &g, "Reverb");
+    assert_eq!(after[0].1, Some(true));
+    assert_eq!(after[1].1, Some(true));
+    assert!(preset_rows(&s) > listed);
+    // Folding the list's device leaves the favourite's open.
+    s.press(&g, Hit::Browser(BrowserHit::Disclose(after[1].0)));
+    let after = device_rows(&s, &g, "Reverb");
+    assert_eq!((after[0].1, after[1].1), (Some(true), Some(false)));
+    s.press(&g, Hit::Browser(BrowserHit::Disclose(after[1].0)));
+    // Only the pressed row is chosen.
+    let at = device_rows(&s, &g, "Reverb");
+    s.press(&g, Hit::Browser(BrowserHit::Item(at[0].0)));
+    let chosen: Vec<_> = device_rows(&s, &g, "Reverb").iter().map(|r| r.2).collect();
+    assert_eq!(chosen, [true, false]);
+    let at = device_rows(&s, &g, "Reverb");
+    s.press(&g, Hit::Browser(BrowserHit::Item(at[1].0)));
+    let chosen: Vec<_> = device_rows(&s, &g, "Reverb").iter().map(|r| r.2).collect();
+    assert_eq!(chosen, [false, true]);
+}
+
+#[test]
+fn a_search_opens_the_favourite_device_beside_its_place() {
+    let (mut s, g) = studio();
+    assert!(s.run_command("browser.preset.list", json!({})));
+    s.browser.toggle_favourite("Reverb");
+    s.browser.search = "ホール".into();
+    let at = device_rows(&s, &g, "Reverb");
+    assert_eq!(at.len(), 2);
+    assert!(at.iter().all(|r| r.1 == Some(true)));
+}
+
 /// The sample song with the browser on the effects and the factory presets read.
 fn studio() -> (Studio, Geometry) {
     let mut s = Studio::sample();

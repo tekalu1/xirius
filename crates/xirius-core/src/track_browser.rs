@@ -105,12 +105,14 @@ pub struct Row {
 }
 
 /// Build only populated branches. Search expands ancestors without changing the user's
-/// stored expansion state. Favourite rows point at exactly the same entry IDs.
+/// stored expansion state. Favourite rows point at exactly the same entry IDs. A favourite
+/// device starts folded: it is open only while its key is in `opened`.
 pub fn tree(
     entries: &[Entry],
     tab: &str,
     query: &str,
     closed: &BTreeSet<String>,
+    opened: &BTreeSet<String>,
     favourites: &BTreeSet<String>,
 ) -> Vec<Row> {
     let canonical: BTreeSet<_> = favourites
@@ -123,14 +125,37 @@ pub fn tree(
         .filter(|e| e.category.tab() == tab && e.matches(query))
         .collect();
     let mut rows = Vec::new();
-    let fav: Vec<_> = hits
+    // A favourite device shows for a search its presets answer too, like its place below.
+    let fav: Vec<_> = entries
         .iter()
-        .copied()
-        .filter(|e| favourites.contains(&e.id))
+        .filter(|e| e.category.tab() == tab && favourites.contains(&e.id))
+        .filter(|e| e.matches(query) || (e.file.is_none() && !presets_of(&hits, e).is_empty()))
         .collect();
     if !fav.is_empty() && branch(&mut rows, "favourites", "お気に入り", 0, query, closed) {
         for e in fav {
-            leaf(&mut rows, e, 1, favourites);
+            if e.file.is_none() {
+                // A favourite device unfolds like the one in the list below, with a fold of
+                // its own, and starts folded.
+                let children = presets_of(&hits, e);
+                device_row(
+                    &mut rows,
+                    &e.device_name,
+                    Some(e),
+                    &format!("favourites/device/{}", e.device),
+                    1,
+                    false,
+                    &children,
+                    (query, closed, opened, favourites),
+                );
+            } else {
+                leaf(
+                    &mut rows,
+                    e,
+                    &format!("favourites/preset/{}", e.id),
+                    1,
+                    favourites,
+                );
+            }
         }
     }
     let kinds: &[Category] = match tab {
@@ -168,34 +193,69 @@ pub fn tree(
                 let device = entries
                     .iter()
                     .find(|e| e.file.is_none() && &e.device == uid && e.category == kind);
-                let device_key = format!("device/{uid}");
-                let open = !query.trim().is_empty() || !closed.contains(&device_key);
-                rows.push(Row {
-                    key: device_key.clone(),
-                    label: name.clone(),
+                device_row(
+                    &mut rows,
+                    name,
+                    device,
+                    &format!("device/{uid}"),
                     depth,
-                    open,
-                    branch: !children.is_empty(),
-                    entry: device.cloned(),
-                    favourite: device.is_some_and(|e| favourites.contains(&e.id)),
-                });
-                if open {
-                    locations(
-                        &mut rows,
-                        &children,
-                        &device_key,
-                        depth + 1,
-                        query,
-                        closed,
-                        favourites,
-                    );
-                }
+                    true,
+                    &children,
+                    (query, closed, opened, favourites),
+                );
             }
         } else {
             locations(&mut rows, &found, &key, depth, query, closed, favourites);
         }
     }
     rows
+}
+
+/// The preset files of a device entry among the hits.
+fn presets_of<'a>(hits: &[&'a Entry], device: &Entry) -> Vec<&'a Entry> {
+    hits.iter()
+        .copied()
+        .filter(|e| e.device == device.device && e.category == device.category && e.file.is_some())
+        .collect()
+}
+
+/// A device row and, while it is open, its presets by place and folder. The fold is kept
+/// under `key`, so the same device in two places folds on its own in each. A row that does
+/// not start open (`open_at_first` false) is open only while `opened` has its key.
+#[allow(clippy::too_many_arguments)]
+fn device_row(
+    rows: &mut Vec<Row>,
+    name: &str,
+    device: Option<&Entry>,
+    key: &str,
+    depth: usize,
+    open_at_first: bool,
+    children: &[&Entry],
+    (query, closed, opened, favourites): (
+        &str,
+        &BTreeSet<String>,
+        &BTreeSet<String>,
+        &BTreeSet<String>,
+    ),
+) {
+    let folded = if open_at_first {
+        closed.contains(key)
+    } else {
+        !opened.contains(key)
+    };
+    let open = !query.trim().is_empty() || !folded;
+    rows.push(Row {
+        key: key.into(),
+        label: name.into(),
+        depth,
+        open,
+        branch: !children.is_empty(),
+        entry: device.cloned(),
+        favourite: device.is_some_and(|e| favourites.contains(&e.id)),
+    });
+    if open {
+        locations(rows, children, key, depth + 1, query, closed, favourites);
+    }
 }
 
 fn branch(
@@ -219,9 +279,9 @@ fn branch(
     open
 }
 
-fn leaf(rows: &mut Vec<Row>, e: &Entry, depth: usize, favourites: &BTreeSet<String>) {
+fn leaf(rows: &mut Vec<Row>, e: &Entry, key: &str, depth: usize, favourites: &BTreeSet<String>) {
     rows.push(Row {
-        key: e.id.clone(),
+        key: key.into(),
         label: e.name.clone(),
         depth,
         open: false,
@@ -292,7 +352,7 @@ fn folders(
         .collect();
     leaves.sort_by_key(|e| e.name.to_lowercase());
     for e in leaves {
-        leaf(rows, e, depth, favourites);
+        leaf(rows, e, &e.id, depth, favourites);
     }
 }
 
@@ -327,6 +387,7 @@ mod tests {
                     "instruments",
                     query,
                     &BTreeSet::new(),
+                    &BTreeSet::new(),
                     &favourites
                 )
                 .iter()
@@ -338,6 +399,7 @@ mod tests {
                 std::slice::from_ref(&e),
                 "effects",
                 "",
+                &BTreeSet::new(),
                 &BTreeSet::new(),
                 &favourites
             )
@@ -355,7 +417,14 @@ mod tests {
         assert!(e.matches("PIANO Xirius user keys sampler"));
         assert!(!e.matches("piano factory"));
         let closed = BTreeSet::from(["device/sampler".into()]);
-        let rows = tree(&[e], "instruments", "piano keys", &closed, &BTreeSet::new());
+        let rows = tree(
+            &[e],
+            "instruments",
+            "piano keys",
+            &closed,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        );
         assert_eq!(
             rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(),
             [
@@ -378,6 +447,7 @@ mod tests {
             "instruments",
             "",
             &BTreeSet::new(),
+            &BTreeSet::new(),
             &fav,
         );
         assert_eq!(
@@ -386,10 +456,97 @@ mod tests {
         );
         let closed = BTreeSet::from(["device/sampler".into()]);
         assert!(
-            !tree(&[e], "instruments", "", &closed, &BTreeSet::new())
-                .iter()
-                .any(|r| r.label == "User")
+            !tree(
+                &[e],
+                "instruments",
+                "",
+                &closed,
+                &BTreeSet::new(),
+                &BTreeSet::new()
+            )
+            .iter()
+            .any(|r| r.label == "User")
         );
-        assert!(tree(&[], "tracks", "", &closed, &fav).is_empty());
+        assert!(tree(&[], "tracks", "", &closed, &BTreeSet::new(), &fav).is_empty());
+    }
+    fn device() -> Entry {
+        Entry {
+            id: "device/sampler".into(),
+            name: "Sampler".into(),
+            file: None,
+            source: String::new(),
+            folder: Vec::new(),
+            has_fx: false,
+            fx_names: Vec::new(),
+            ..preset()
+        }
+    }
+    fn labels(rows: &[Row]) -> Vec<&str> {
+        rows.iter().map(|r| r.label.as_str()).collect()
+    }
+    #[test]
+    fn a_favourite_device_has_its_presets_and_starts_folded() {
+        let entries = [device(), preset()];
+        let fav = BTreeSet::from([device().id]);
+        let none = BTreeSet::new();
+        let rows = tree(&entries, "instruments", "", &none, &none, &fav);
+        let at = rows.iter().find(|r| r.key == "favourites/device/sampler");
+        let at = at.expect("the favourite device row");
+        assert!(at.branch && !at.open && at.favourite && at.depth == 1);
+        assert_eq!(
+            labels(&rows),
+            [
+                "お気に入り",
+                "Sampler",
+                "インストゥルメント",
+                "Sampler",
+                "User",
+                "Keys",
+                "Warm piano"
+            ]
+        );
+    }
+    #[test]
+    fn a_favourite_device_folds_on_its_own() {
+        let entries = [device(), preset()];
+        let fav = BTreeSet::from([device().id]);
+        let none = BTreeSet::new();
+        let opened = BTreeSet::from(["favourites/device/sampler".into()]);
+        let rows = tree(&entries, "instruments", "", &none, &opened, &fav);
+        assert_eq!(
+            labels(&rows),
+            [
+                "お気に入り",
+                "Sampler",
+                "User",
+                "Keys",
+                "Warm piano",
+                "インストゥルメント",
+                "Sampler",
+                "User",
+                "Keys",
+                "Warm piano"
+            ]
+        );
+        // Folding the list's device leaves the favourite's open, and the other way round.
+        let closed = BTreeSet::from(["device/sampler".into()]);
+        let rows = tree(&entries, "instruments", "", &closed, &opened, &fav);
+        assert_eq!(
+            labels(&rows).iter().filter(|l| **l == "Warm piano").count(),
+            1
+        );
+        assert!(rows[1].open && !rows[6].open);
+        let rows = tree(&entries, "instruments", "", &none, &none, &fav);
+        assert!(!rows[1].open && rows[3].open);
+    }
+    #[test]
+    fn a_search_opens_the_favourite_device_that_has_a_hit() {
+        let entries = [device(), preset()];
+        let fav = BTreeSet::from([device().id]);
+        let none = BTreeSet::new();
+        let rows = tree(&entries, "instruments", "warm", &none, &none, &fav);
+        let at = rows.iter().find(|r| r.key == "favourites/device/sampler");
+        assert!(at.is_some_and(|r| r.open));
+        assert_eq!(rows.iter().filter(|r| r.label == "Warm piano").count(), 2);
     }
 }
