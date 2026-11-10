@@ -110,6 +110,12 @@ pub(crate) fn open<V: Render + 'static>(
         },
         move |window, cx| {
             let view = build(window, cx);
+            if parked && !menu_only {
+                // A window created hidden keeps the system's default size until GPUI applies
+                // its initial placement, which only an activation does (and a parked window
+                // is never activated). Size it now, so a test sees the size it asked for.
+                window.resize(initial.size);
+            }
             set_owner(&title);
             if !menu_only || parked {
                 show(&title);
