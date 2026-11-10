@@ -84,6 +84,14 @@ pub const CTX_V2: &[Shot] = &[
         ],
     },
     Shot {
+        name: "v2-pad",
+        acts: &[Act::Reset, staged(80), staged(210), staged(211)],
+    },
+    Shot {
+        name: "v2-cpu-plugin",
+        acts: &[Act::Reset, staged(80), staged(220), staged(221)],
+    },
+    Shot {
         name: "v2-edge-left",
         acts: &[Act::Reset, staged(0), staged(202), staged(200)],
     },
@@ -457,6 +465,18 @@ fn at(p: (f32, f32)) -> gpui::Point<gpui::Pixels> {
     point(px(p.0), px(p.1 + Layout::TOP_BAR_H))
 }
 
+/// Draws the window again after the studio was changed from here (a move with no effect).
+fn refresh(window: &mut Window, cx: &mut App) {
+    window.dispatch_event(
+        PlatformInput::MouseMove(MouseMoveEvent {
+            position: point(px(1.0), px(1.0)),
+            pressed_button: None,
+            modifiers: Modifiers::default(),
+        }),
+        cx,
+    );
+}
+
 fn press(p: (f32, f32), button: MouseButton, window: &mut Window, cx: &mut App) {
     let p = at(p);
     window.dispatch_event(
@@ -547,6 +567,9 @@ fn play(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut A
         let (x, y) = clip_spot(studio, window, "Guitar");
         press((x + 150.0, y), MouseButton::Right, window, cx);
         return;
+    }
+    if (210..=221).contains(&stage) {
+        return mixer(stage, studio, window, cx);
     }
     if stage == 201 {
         studio.borrow_mut().ask_text(None, "ノーマライズ", false);
@@ -928,6 +951,63 @@ fn mixer(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut 
         96 => choose(studio, "プラグインを複製", window, cx),
         97 => choose(studio, "Keys", window, cx),
         98 => choose(studio, "別のチャンネルへコピー", window, cx),
+        // A Drum Kit stands in Keys' place and its window is open; the right button on a pad.
+        210 => {
+            let mut s = studio.borrow_mut();
+            let t = track(&s, "Keys");
+            assert!(s.set_instrument(t, &crate::instrument::Pick::built_in("Drum Kit")));
+            let id = crate::instrument::current(&s.project().tracks[&t])
+                .unwrap()
+                .id;
+            s.show_instrument(t, id);
+            s.instruments.detached_target = Some(id);
+        }
+        211 => {
+            let mut s = studio.borrow_mut();
+            let t = track(&s, "Keys");
+            let id = crate::instrument::current(&s.project().tracks[&t])
+                .unwrap()
+                .id;
+            let g = crate::screen::geometry(&s, window);
+            let p = s.instrument_center(&g, id, crate::instrument::window::Part::Pad(37));
+            if let Some((x, y)) = p {
+                s.instrument_right(&g, x, y);
+            }
+            drop(s);
+            refresh(window, cx);
+        }
+        // The CPU list with a plugin that takes time, and the right button on its row.
+        220 => {
+            let mut s = studio.borrow_mut();
+            let id = s.project().tracks[&track(&s, "Vocal")].inserts[0].id;
+            s.perf.fake = Some(crate::cpu_list::Fake {
+                load: 0.3,
+                xruns: 0,
+                loads: std::collections::BTreeMap::from([(id, 0.2)]),
+            });
+            s.poll_perf_now();
+            let g = crate::screen::geometry(&s, window);
+            s.press(&g, crate::studio::Hit::Bar(crate::topbar::BarButton::Cpu));
+        }
+        221 => {
+            let mut s = studio.borrow_mut();
+            let t = track(&s, "Vocal");
+            let id = s.project().tracks[&t].inserts[0].id;
+            let g = crate::screen::geometry(&s, window);
+            let layout = s.popup.as_ref().unwrap().layout(g.size);
+            let at = layout
+                .cells
+                .iter()
+                .find(|c| {
+                    c.action == Some(crate::popup::Action::Cpu(crate::cpu_list::CAct::Pick(id)))
+                })
+                .map(|c| (c.rect.x + 80.0, c.rect.y + 6.0));
+            if let Some((x, y)) = at {
+                s.cpu_context(&g, x, y);
+            }
+            drop(s);
+            refresh(window, cx);
+        }
         _ => {}
     }
 }

@@ -151,7 +151,11 @@ fn a_scrolling_child_without_back_reaches_both_ends() {
     assert_eq!(offset, 0);
     assert!(max > 0, "the panel scrolls");
     assert!(!cells.iter().any(|(i, _)| *i == 0), "戻る is hidden");
-    let first = cells.iter().find(|(i, _)| *i == 2).expect("1st row").clone();
+    let first = cells
+        .iter()
+        .find(|(i, _)| *i == 2)
+        .expect("1st row")
+        .clone();
     // ↓ through every row: the cursor row is always drawn.
     for _ in 0..30 {
         assert!(s.context_navigation(&g, "down"));
@@ -159,14 +163,21 @@ fn a_scrolling_child_without_back_reaches_both_ends() {
         let (cells, room, _, _) = visible(&s);
         let cell = cells.iter().find(|(i, _)| *i == cursor);
         let cell = cell.unwrap_or_else(|| panic!("cursor row {cursor} is drawn"));
-        assert!(cell.1.bottom() <= room, "cursor {cursor} bottom {} room {room}", cell.1.bottom());
+        assert!(
+            cell.1.bottom() <= room,
+            "cursor {cursor} bottom {} room {room}",
+            cell.1.bottom()
+        );
     }
     // The last row is the cursor: the list is at its end, flush with the bottom edge.
     let (cells, room, offset, max) = visible(&s);
     assert_eq!(offset, max, "scrolled to the end");
     let last = cells.iter().map(|(_, r)| r.bottom()).fold(0.0, f32::max);
     assert!(last <= room);
-    assert!(last + row_h > room - pad - 2.0, "no empty line below the last row");
+    assert!(
+        last + row_h > room - pad - 2.0,
+        "no empty line below the last row"
+    );
     // ↑ back to the top: the first row is drawn at the top edge, offset 0.
     for _ in 0..29 {
         assert!(s.context_navigation(&g, "up"));
