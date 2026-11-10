@@ -335,7 +335,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 if c.look == crate::popup::Look::Input && c.icon == Some("search") {
                     let mut node = accesskit::Node::new(accesskit::Role::TextInput);
                     node.set_label("検索");
-                    node.set_value(pick.query.clone());
+                    node.set_value(pick.field.value.clone());
                     node.set_bounds(bounds(c.rect));
                     return Some(Mark {
                         key: "search".into(),
@@ -689,7 +689,7 @@ pub fn home_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             r,
             Some(Spot::Search),
         );
-        m.node.set_value(home.pick.query.clone());
+        m.node.set_value(home.pick.field.value.clone());
         out.push(m);
     }
     let rows = home.pick.nav();

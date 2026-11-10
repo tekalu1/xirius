@@ -1192,7 +1192,7 @@ fn bare(rect: Rect, icon: &'static str, act: Act) -> Cell {
 
 /// The panel's cells from (0, 0) = its top-left corner; `naming` is the name
 /// being typed.
-pub fn cells(v: &View, naming: Option<&str>) -> Vec<Cell> {
+pub fn cells(v: &View, naming: Option<&crate::settings::field::Field>) -> Vec<Cell> {
     let mut cells = Vec::new();
     // Head: what to write, and close.
     seg(
@@ -1479,7 +1479,7 @@ pub fn cells(v: &View, naming: Option<&str>) -> Vec<Cell> {
                 editing,
             },
         )
-        .text(naming.unwrap_or(&v.name))
+        .field_or_text(naming, &v.name)
         .act(Action::Xp(Act::EditName)),
     );
     y += ROW_H + GAP;
@@ -1934,7 +1934,7 @@ pub fn paint_cell(pen: &mut Pen, cell: &Cell, look: &XpLook, hot: bool) {
             pen.round(
                 r,
                 if *editing {
-                    c.well
+                    c.field
                 } else if hot {
                     c.hover
                 } else {
@@ -1951,6 +1951,21 @@ pub fn paint_cell(pen: &mut Pen, cell: &Cell, look: &XpLook, hot: bool) {
             let mut x = tx;
             pen.mask(room, |pen| {
                 if *editing {
+                    if let Some(f) = &cell.field {
+                        f.paint(
+                            pen,
+                            room,
+                            crate::settings::field::Look {
+                                size: FontSize::Small,
+                                weight: Weight::Regular,
+                                ink: c.ink_strong,
+                                placeholder: "",
+                                placeholder_ink: c.ink,
+                                focused: true,
+                            },
+                        );
+                        return;
+                    }
                     x += pen.text(
                         &cell.text,
                         FontSize::Small,
@@ -1994,7 +2009,7 @@ pub fn paint_cell(pen: &mut Pen, cell: &Cell, look: &XpLook, hot: bool) {
                     rest = &rest[plain.len() + t.len()..];
                 }
             });
-            if *editing {
+            if *editing && cell.field.is_none() {
                 pen.fill(
                     Rect::new(x.min(room.right()) + 1.0, r.y + 7.0, 1.5, r.h - 14.0),
                     c.ink_strong,
@@ -2525,7 +2540,7 @@ impl Studio {
             return;
         }
         if let Some(name) = p.naming.take() {
-            let name = name.trim().to_string();
+            let name = name.value.trim().to_string();
             if !name.is_empty() {
                 self.export.set_name(name);
             }
@@ -2675,7 +2690,10 @@ impl Studio {
             Act::EditName => {
                 let name = x.name().to_string();
                 if let Some(pop) = &mut self.popup {
-                    pop.naming = Some(name);
+                    pop.naming = Some(crate::settings::field::Field::selected(
+                        crate::settings::FieldId::Search,
+                        name,
+                    ));
                 }
             }
             Act::Go => {
@@ -3010,7 +3028,10 @@ mod tests {
 
         // A stems name has to tell the files apart.
         act(&mut s, &g, Act::EditName);
-        s.popup.as_mut().unwrap().naming = Some("mix".into());
+        s.popup.as_mut().unwrap().naming = Some(crate::settings::field::Field::new(
+            crate::settings::FieldId::Search,
+            "mix".into(),
+        ));
         assert!(s.typed(&g, "enter", None));
         let v = view(&s);
         assert_eq!(v.name, "mix");

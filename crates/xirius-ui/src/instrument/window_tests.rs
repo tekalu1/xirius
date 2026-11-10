@@ -1114,7 +1114,7 @@ fn the_saves_stay_under_a_filtered_list() {
     let id = compressor(&mut s, t);
     let (choices, now) = s.inst_menu_view(Menu::Preset(t, id));
     let mut list = super::menu::pick(Menu::Preset(t, id), choices, &now);
-    list.query = "ドラム".into();
+    list.field.set("ドラム".to_string());
     let rows: Vec<String> = list.visible().iter().map(|r| r.label.clone()).collect();
     assert_eq!(rows, ["ドラムをまとめる"]);
     let foot: Vec<String> = list.footer.iter().map(|r| r.label.clone()).collect();

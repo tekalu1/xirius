@@ -664,7 +664,14 @@ fn stage(n: u8, studio: &Rc<RefCell<Studio>>, _: &mut Window, cx: &mut App) {
                 cx,
             );
             assert_eq!(
-                view.popup.as_ref().unwrap().pick.as_ref().unwrap().query,
+                view.popup
+                    .as_ref()
+                    .unwrap()
+                    .pick
+                    .as_ref()
+                    .unwrap()
+                    .field
+                    .value,
                 "No matching preset"
             );
         })
@@ -682,7 +689,8 @@ fn stage(n: u8, studio: &Rc<RefCell<Studio>>, _: &mut Window, cx: &mut App) {
                 .pick
                 .as_ref()
                 .unwrap()
-                .query
+                .field
+                .value
                 .is_empty()
         );
         key(studio, id, "down", cx);

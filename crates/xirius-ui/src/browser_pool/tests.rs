@@ -207,15 +207,15 @@ fn a_heading_folds_and_a_search_keeps_the_files_it_names() {
     let r = rows(&t.s, &t.g);
     assert!(r.contains(&"[インポート 4]".to_string()));
     assert!(!r.iter().any(|x| x.starts_with("Kick")), "{r:?}");
-    t.s.browser.search = "vocal".into();
+    t.s.browser.search.set("vocal".into());
     assert_eq!(
         rows(&t.s, &t.g),
         ["[録音 2]", "Vocal_01.wav 2", "Vocal_02.wav 0"]
     );
     // The search opens a folded heading with a hit.
-    t.s.browser.search = "kick".into();
+    t.s.browser.search.set("kick".into());
     assert_eq!(rows(&t.s, &t.g), ["[インポート 1]", "Kick.wav 1"]);
-    t.s.browser.search = "nothing-has-this".into();
+    t.s.browser.search.set("nothing-has-this".into());
     assert!(rows(&t.s, &t.g).is_empty());
 }
 
@@ -281,9 +281,9 @@ fn the_order_button_lists_the_files_by_name_with_their_kinds_icons() {
     assert_eq!(icon("Synth.wav"), "freeze");
     assert_eq!(icon("Bass.wav"), "alert", "a missing file still says so");
     // A search keeps the order.
-    t.s.browser.search = "wav".into();
+    t.s.browser.search.set("wav".into());
     assert_eq!(rows(&t.s, &t.g).len(), 8);
-    t.s.browser.search = "vocal".into();
+    t.s.browser.search.set("vocal".into());
     assert_eq!(rows(&t.s, &t.g), ["Vocal_01.wav 2", "Vocal_02.wav 0"]);
     t.s.browser.search.clear();
     // ↑↓ go from file to file; ← has no heading to go up to.

@@ -123,13 +123,13 @@ fn track_browser_kind_buttons_keep_query_and_have_one_rail_entry() {
             .count(),
         1
     );
-    s.browser.search = "warm user".into();
+    s.browser.search.set("warm user".into());
     let l = s.browser.layout(g.panel);
     assert_eq!(l.tabs.len(), 3);
     assert!(l.view.is_none());
     for i in [0, 1, 2] {
         s.press(&g, Hit::Browser(BrowserHit::Loc(i)));
-        assert_eq!(s.browser.search, "warm user");
+        assert_eq!(s.browser.search.value, "warm user");
         assert_eq!(s.browser.track_kind, i == 2);
     }
     assert!(!s.browser.typing, "the kind buttons leave text entry");
@@ -359,7 +359,7 @@ fn a_search_opens_the_favourite_device_beside_its_place() {
     let (mut s, g) = studio();
     assert!(s.run_command("browser.preset.list", json!({})));
     s.browser.toggle_favourite("Reverb");
-    s.browser.search = "ホール".into();
+    s.browser.search.set("ホール".into());
     let at = device_rows(&s, &g, "Reverb");
     assert_eq!(at.len(), 2);
     assert!(at.iter().all(|r| r.1 == Some(true)));
@@ -509,7 +509,7 @@ fn a_device_with_only_its_default_has_no_arrow() {
 #[test]
 fn a_search_shows_the_presets_it_finds_under_their_devices() {
     let (mut s, g) = studio();
-    s.browser.search = "ホール".into();
+    s.browser.search.set("ホール".into());
     let shown: Vec<String> = rows(&s, &g)
         .into_iter()
         .filter_map(|(_, r)| match r {
@@ -520,7 +520,7 @@ fn a_search_shows_the_presets_it_finds_under_their_devices() {
         .collect();
     assert_eq!(shown, ["Reverb", "  ホール"]);
     // The case of the letters does not count, as in the list menus.
-    s.browser.search = "REV".into();
+    s.browser.search.set("REV".into());
     assert_eq!(device(&s, &g, "Reverb").1, Some(false), "found by its name");
     s.browser.search.clear();
     assert_eq!(
@@ -724,7 +724,7 @@ fn show_in_browser_chooses_the_presets_row_and_brings_it_into_view() {
     assert!(s.load_preset(id, "ボーカルのプレート"));
     // The browser was elsewhere, searching, scrolled, the group folded.
     s.browser.press_rail(RailTab::Files);
-    s.browser.search = "xyz".into();
+    s.browser.search.set("xyz".into());
     s.browser.scroll = 400.0;
     s.inst_menu_pick(Menu::Preset(keys, id), SHOW);
     assert!(s.browser.open);

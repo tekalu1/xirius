@@ -125,7 +125,10 @@ fn a_file_for_each_track_needs_the_track_in_its_name() {
     let (mut s, g, _dir, _tmp) = saved("name");
     act(&mut s, &g, Act::Each(true));
     act(&mut s, &g, Act::EditName);
-    s.popup.as_mut().unwrap().naming = Some("notes".into());
+    s.popup.as_mut().unwrap().naming = Some(crate::settings::field::Field::new(
+        crate::settings::FieldId::Search,
+        "notes".into(),
+    ));
     assert!(s.typed(&g, "enter", None));
     let v = view(&s);
     assert_eq!(v.name, "notes");

@@ -257,7 +257,7 @@ pub struct Popup {
     pub selected: Option<usize>,
     pub detail: Option<VersionDetail>,
     /// The name being typed for a new version.
-    pub naming: Option<String>,
+    pub naming: Option<crate::settings::field::Field>,
     pub now_ms: u64,
     /// The palette index of the track's colour (Color popups).
     pub color: Option<usize>,
@@ -292,6 +292,8 @@ pub struct Popup {
     pub ctx_parents: Vec<(Vec<crate::context::Row>, usize, usize)>,
     /// What a right-click menu's name box shows, while it asks for a name.
     pub ask: Option<String>,
+    /// The field behind the menu's name box or its search box, for painting and the pointer.
+    pub ctx_field: Option<crate::settings::field::Field>,
     pub preset_save: Option<crate::context::ask::PresetSave>,
     pub ctx_query: Option<String>,
     /// The search box of a right-click menu takes the keys now (no value's field does).
@@ -341,6 +343,7 @@ impl Popup {
             ctx: Vec::new(),
             ctx_parents: Vec::new(),
             ask: None,
+            ctx_field: None,
             preset_save: None,
             ctx_query: None,
             ctx_search: false,
@@ -408,12 +411,14 @@ impl Popup {
             return false;
         };
         match key {
-            "backspace" => {
-                name.pop();
+            "left" | "right" | "home" | "end" | "backspace" | "delete" => {
+                name.key(key, false, false);
             }
             "escape" => self.naming = None,
             _ => match ch {
-                Some(c) if !c.is_empty() && !c.chars().any(char::is_control) => name.push_str(c),
+                Some(c) if !c.is_empty() && !c.chars().any(char::is_control) => {
+                    name.insert(c);
+                }
                 _ => return false,
             },
         }
@@ -537,6 +542,8 @@ pub struct Cell {
     /// What a screen reader says for it, when that is more than its text (a value field keeps
     /// its unit there, UI-311). Empty: its text.
     pub spoken: String,
+    /// The field the cell draws and edits, when it is one.
+    pub field: Option<Box<crate::settings::field::Field>>,
 }
 
 impl Cell {
@@ -556,12 +563,45 @@ impl Cell {
             action: None,
             tip: String::new(),
             spoken: String::new(),
+            field: None,
         }
     }
 
     pub(crate) fn mark(mut self, color: Option<usize>) -> Cell {
         self.mark = color;
         self
+    }
+
+    /// A text field in the cell: its text, and what it draws itself from.
+    pub(crate) fn field(mut self, field: crate::settings::field::Field) -> Cell {
+        self.text = field.text();
+        self.field = Some(Box::new(field));
+        self
+    }
+
+    /// Where a field's text goes in the cell (after its icon, or inside the export name's box).
+    pub(crate) fn text_room(&self) -> Rect {
+        let r = self.rect;
+        let pad = Space::X2.px();
+        match self.look {
+            Look::Xp(_) => Rect::new(r.x + 10.0, r.y, (r.w - 20.0).max(0.0), r.h),
+            _ => {
+                let tx = r.x + pad + Layout::ICON_SIZE + pad;
+                Rect::new(tx, r.y, (r.right() - pad - tx).max(0.0), r.h)
+            }
+        }
+    }
+
+    /// The field being edited, or the plain text while there is none.
+    pub(crate) fn field_or_text(
+        self,
+        field: Option<&crate::settings::field::Field>,
+        text: &str,
+    ) -> Cell {
+        match field {
+            Some(f) => self.field(f.clone()),
+            None => self.text(text),
+        }
     }
 
     pub(crate) fn text(mut self, text: impl Into<String>) -> Cell {
@@ -717,7 +757,7 @@ impl Popup {
             PopupKind::Export => match &self.export {
                 Some(v) => (
                     crate::export::W,
-                    crate::export::cells(v, self.naming.as_deref()),
+                    crate::export::cells(v, self.naming.as_ref()),
                 ),
                 None => (crate::export::W, Vec::new()),
             },
@@ -737,7 +777,7 @@ impl Popup {
                 Layout::MENU_W,
                 crate::autovalue::value_cells(
                     self.auto.as_ref(),
-                    self.naming.as_deref(),
+                    self.naming.as_ref().map(|f| f.value.as_str()),
                     Layout::MENU_W,
                 ),
             ),
@@ -749,10 +789,13 @@ impl Popup {
                 ),
             ),
             PopupKind::Context => match &self.ask {
-                Some(text) => (
-                    Layout::MENU_W,
-                    crate::context::ask::cells(text, Layout::MENU_W),
-                ),
+                Some(text) => {
+                    let mut cells = crate::context::ask::cells(text, Layout::MENU_W);
+                    if let Some(f) = &self.ctx_field {
+                        cells[0] = cells[0].clone().field(f.clone());
+                    }
+                    (Layout::MENU_W, cells)
+                }
                 None => {
                     let w = crate::context::width(&self.ctx);
                     let mut cells = crate::context::cells(&self.ctx, w);
@@ -771,6 +814,9 @@ impl Popup {
                         }
                         let mut input = crate::context::ask::cells(query, w);
                         input[0].icon = Some("search");
+                        if let Some(f) = &self.ctx_field {
+                            input[0] = input[0].clone().field(f.clone());
+                        }
                         input[0] = input[0].clone().act(Action::CtxSearch).on(self.ctx_search);
                         input.extend(cells);
                         cells = input;
@@ -1132,7 +1178,7 @@ impl Popup {
             Some(name) => {
                 cells.push(
                     Cell::new(head, Look::Input)
-                        .text(name.clone())
+                        .field(name.clone())
                         .icon("saved")
                         .on(true),
                 );
@@ -1953,7 +1999,7 @@ pub(crate) fn paint_cell(pen: &mut Pen, cell: &Cell, hot: bool) {
             );
         }
         Look::Input => {
-            pen.round(r, c.well, Radius::S);
+            pen.round(r, c.field, Radius::S);
             pen.icon(cell.icon.unwrap_or("saved"), icon_at(r, r.x + pad), c.ink);
             let tx = r.x + pad + Layout::ICON_SIZE + pad;
             let (text, ink) = if cell.text.is_empty() {
@@ -1969,6 +2015,21 @@ pub(crate) fn paint_cell(pen: &mut Pen, cell: &Cell, hot: bool) {
                 (cell.text.as_str(), c.ink_strong)
             };
             let field = Rect::new(tx, r.y, (r.right() - pad - tx).max(0.0), r.h);
+            if let Some(f) = &cell.field {
+                f.paint(
+                    pen,
+                    field,
+                    crate::settings::field::Look {
+                        size: FontSize::Small,
+                        weight: Weight::Regular,
+                        ink: c.ink_strong,
+                        placeholder: text,
+                        placeholder_ink: ink,
+                        focused: cell.on,
+                    },
+                );
+                return;
+            }
             let width = pen.measure(text, FontSize::Small, Weight::Regular);
             let offset = if cell.on && !cell.text.is_empty() {
                 (width + 3.0 - field.w).max(0.0)
@@ -2489,12 +2550,15 @@ mod tests {
     #[test]
     fn naming_a_version_turns_the_button_into_an_input_that_takes_typing() {
         let mut p = versions_popup();
-        p.naming = Some(String::new());
+        p.naming = Some(crate::settings::field::Field::new(
+            crate::settings::FieldId::Search,
+            String::new(),
+        ));
         assert!(p.typing());
         assert!(p.typed("a", Some("a")));
         assert!(p.typed("b", Some("b")));
         assert!(p.typed("backspace", None));
-        assert_eq!(p.naming.as_deref(), Some("a"));
+        assert_eq!(p.naming.as_ref().map(|f| f.value.as_str()), Some("a"));
         assert_eq!(p.layout((1440.0, 860.0)).cells[0].look, Look::Input);
         assert!(p.typed("escape", None));
         assert!(!p.typing());

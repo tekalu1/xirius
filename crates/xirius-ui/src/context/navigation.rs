@@ -19,6 +19,15 @@ impl Studio {
         {
             return false;
         }
+        // With words in the search box, ← and → move inside it.
+        if matches!(key, "left" | "right")
+            && state
+                .search
+                .as_ref()
+                .is_some_and(|s| !s.field.value.is_empty())
+        {
+            return false;
+        }
         // A "戻る" row that is not shown cannot take the cursor (R6); ← and Esc still use it.
         let back_hidden = self
             .popup

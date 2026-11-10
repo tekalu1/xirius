@@ -1730,8 +1730,8 @@ impl Studio {
                 }
                 "enter" if f.id == FieldId::MacroPick => self.settings_macro_enter(),
                 "enter" | "tab" => self.settings_commit_field(),
-                "backspace" => {
-                    f.backspace();
+                "left" | "right" | "home" | "end" | "backspace" | "delete" => {
+                    f.key(key, false, false);
                     if f.id == FieldId::Search {
                         ui.query = f.text();
                     }

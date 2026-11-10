@@ -181,7 +181,7 @@ fn favourite_and_hide_change_the_list() {
     assert_eq!(s.browser.selected_item, None);
     assert_eq!(s.notice_text(), Some("「Dexed」を隠しました"));
     assert_eq!(steps(&s), steps0, "the song does not change");
-    s.browser.search = "dex".into();
+    s.browser.search.set("dex".into());
     assert_eq!(names(&s), ["Dexed"]);
     press_item(&mut s, &g, "Dexed");
     assert!(super::tests::all_labels(&s).contains(&"一覧に戻す".into()));

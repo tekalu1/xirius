@@ -195,16 +195,16 @@ fn typing_goes_to_the_search_and_esc_clears_it() {
     );
     s.pick_text(None, "ban", false);
     assert_eq!(home(&s).focus, Focus::Search);
-    assert_eq!(home(&s).pick.query, "ban");
+    assert_eq!(home(&s).pick.field.value, "ban");
     assert_eq!(labels(&s), ["banana"]);
     assert!(
         s.human_interaction_active(),
         "what is typed is someone's work"
     );
     assert!(s.home_key(&g, "backspace", NONE));
-    assert_eq!(home(&s).pick.query, "ba");
+    assert_eq!(home(&s).pick.field.value, "ba");
     assert!(s.home_key(&g, "escape", NONE));
-    assert_eq!(home(&s).pick.query, "");
+    assert_eq!(home(&s).pick.field.value, "");
     assert_eq!(labels(&s).len(), 3);
     // Without a query Esc is the key map's (nothing to clear).
     assert!(!s.home_key(&g, "escape", NONE));

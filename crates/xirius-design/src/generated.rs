@@ -13,6 +13,10 @@ macro_rules! palette_tokens {
             surface_3: c(0x2a2b32), c(0xdcdee8);
             surface_hover: c(0x222329), c(0xf4f5f9);
             surface_sel: c(0x2a2b32), c(0xe3e5ed);
+            /// 文字を入れる欄の地。値は今は meter_well と同じだが、メーターの色を変えても欄が巻き込まれないよう別の名前にする。
+            surface_field: c(0x0c0d11), c(0xd7dae4);
+            /// 欄の中で選んだ文字の面。行の選択（surface_sel）とも主ボタンの塗りとも別。上の文字は `ink_on_text_sel`。
+            surface_text_sel: c(0x465082), c(0xaab4e0);
             /// クリップの面。中立。トラックの色は面に塗らず、中身（ノート・波形）にだけ使う。
             surface_clip: c(0x35373f), c(0xd5d8e4);
             /// 選んだクリップの面。枠を引かず、クリップの面との明るさの差で示す（ダークは明るく、ライトは暗く）。トラックの色の中身が 3:1 を保てる幅に留める。
@@ -48,6 +52,8 @@ macro_rules! palette_tokens {
             ink_alert: c(0xff7a70), c(0xa92a22);
             ink_ai: c(0xb48cff), c(0x6a3cc8);
             ink_on_fill: c(0xf4f5ff), c(0xf4f5ff);
+            /// 欄の中で選んだ文字（`surface_text_sel`）の上の文字。
+            ink_on_text_sel: c(0xf4f6ff), c(0x0f1330);
             /// トラックの色で塗った面（アレンジのセクション）の上の文字。
             ink_on_track: c(0x0d0f16), c(0xffffff);
             // ---- 文字ではない色（図形・フォーカスの輪）。3:1 以上 ----

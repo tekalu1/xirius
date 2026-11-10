@@ -266,7 +266,7 @@ fn palette(s: &Rc<RefCell<Studio>>, w: &mut Window, cx: &mut App, command: &str)
     {
         let mut s = s.borrow_mut();
         let p = s.palette.as_mut().expect("palette opened by button");
-        p.query = command.into();
+        p.field.set(command.into());
     }
     let p = read(s, w, |s, g| {
         let p = s.palette.as_ref().unwrap();

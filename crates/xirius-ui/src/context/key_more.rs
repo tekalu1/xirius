@@ -161,7 +161,7 @@ impl Studio {
             && let Some(field) = palette.form.as_mut().and_then(|f| f.fields.first_mut())
         {
             field.value = value.to_string();
-            palette.query = value.to_string();
+            palette.field.set(value.to_string());
         }
         true
     }

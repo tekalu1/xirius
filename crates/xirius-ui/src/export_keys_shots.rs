@@ -97,7 +97,10 @@ mod tests {
         for stems in [false, true] {
             s.export_action(crate::export::Act::Mode(stems));
             if !stems {
-                s.popup.as_mut().unwrap().naming = Some("Short mix".into());
+                s.popup.as_mut().unwrap().naming = Some(crate::settings::field::Field::new(
+                    crate::settings::FieldId::Search,
+                    "Short mix".into(),
+                ));
             }
             assert!(key(&mut s, "enter", false));
             stage(&mut s, 1);

@@ -492,7 +492,7 @@ fn the_browser_lists_what_could_not_be_used_and_tries_one_again() {
     let _ = n;
 
     // A search leaves it out; clearing the search brings it back.
-    s.browser.search = "kHs".into();
+    s.browser.search.set("kHs".to_string());
     assert!(
         s.browser
             .rows()

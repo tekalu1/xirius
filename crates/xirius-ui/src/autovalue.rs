@@ -216,7 +216,10 @@ impl Studio {
         }
         self.open_popup(PopupKind::AutoValue(at), Rect::new(x, y, 0.0, 0.0));
         if let Some(p) = &mut self.popup {
-            p.naming = Some(String::new());
+            p.naming = Some(crate::settings::field::Field::new(
+                crate::settings::FieldId::Value,
+                String::new(),
+            ));
         }
         true
     }
@@ -228,13 +231,15 @@ impl Studio {
             return None;
         };
         let p = self.popup.as_mut()?;
-        let typed = p.naming.get_or_insert_with(String::new);
+        let typed = p.naming.get_or_insert_with(|| {
+            crate::settings::field::Field::new(crate::settings::FieldId::Value, String::new())
+        });
         match key {
             "escape" => {
                 self.popup = None;
             }
             "enter" => {
-                let typed = typed.trim().to_string();
+                let typed = typed.value.trim().to_string();
                 self.popup = None;
                 if let Some((target, pt)) = self.auto_point(at)
                     && !typed.is_empty()

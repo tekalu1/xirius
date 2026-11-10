@@ -19,6 +19,7 @@ use xirius_session::recent::RecentSong;
 use crate::draw::{Align, Pen};
 use crate::pick_list::{PickKey, PickList, PickRow};
 use crate::popup::{Action, Cell, Look};
+use crate::settings::field::Look as FieldLook;
 use crate::studio::{FileRequest, Geometry, Hit, Rect, Studio};
 use crate::tools::Mods;
 
@@ -173,8 +174,7 @@ impl Home {
         );
         self.songs = songs.to_vec();
         let mut list = PickList::of(rows);
-        list.query = std::mem::take(&mut self.pick.query);
-        list.marked = std::mem::take(&mut self.pick.marked);
+        list.field = self.pick.field.clone();
         list.offset = self.pick.offset;
         list.selected = kept
             .flatten()
@@ -182,8 +182,7 @@ impl Home {
             .unwrap_or(0);
         self.pick = list;
         if !self.has_songs() {
-            self.pick.query.clear();
-            self.pick.marked.clear();
+            self.pick.field.clear();
         }
         if !self.touched {
             self.focus = if self.has_songs() {
@@ -636,11 +635,11 @@ impl Studio {
                 home.focus = Focus::List;
                 home.touched = true;
             }
-            "backspace" if home.has_songs() && !home.pick.query.is_empty() => {
+            "backspace" if home.has_songs() && !home.pick.field.value.is_empty() => {
                 home.pick.key("backspace", None, size);
                 home.focus = Focus::Search;
             }
-            "escape" if !home.pick.query.is_empty() => {
+            "escape" if !home.pick.field.value.is_empty() => {
                 home.pick.key("escape", None, size);
             }
             _ => return false,
@@ -669,8 +668,7 @@ impl Studio {
 
     /// The start screen's search with nothing typed: it waits for keys, nobody is busy in it.
     pub(crate) fn home_typing_idle(&self) -> bool {
-        self.home_typing()
-            .is_some_and(|p| p.query.is_empty() && p.marked.is_empty())
+        self.home_typing().is_some_and(|p| p.field.is_empty())
     }
 }
 
@@ -753,42 +751,19 @@ fn paint_search(pen: &mut Pen, home: &Home, r: Rect) {
     );
     pen.icon("search", icon, c.ink);
     let tx = icon.right() + Space::X1.px();
-    let text = format!("{}{}", home.pick.query, home.pick.marked);
     let room = Rect::new(tx, r.y, (r.right() - pad - tx).max(0.0), r.h);
-    let mut w = 0.0;
-    pen.mask(room, |pen| {
-        if text.is_empty() {
-            pen.text(
-                SEARCH,
-                FontSize::Small,
-                Weight::Regular,
-                c.ink_on_toggle,
-                room,
-                Align::Left,
-            );
-        } else {
-            w = pen.text(
-                &text,
-                FontSize::Small,
-                Weight::Regular,
-                c.ink_strong,
-                room,
-                Align::Left,
-            );
-        }
-    });
-    if home.focus == Focus::Search {
-        let caret_h = r.h - 2.0 * Space::X2.px();
-        pen.fill(
-            Rect::new(
-                (tx + w + 1.0).min(room.right()),
-                r.y + (r.h - caret_h) / 2.0,
-                1.5,
-                caret_h,
-            ),
-            c.ink_strong,
-        );
-    }
+    home.pick.field.paint(
+        pen,
+        room,
+        FieldLook {
+            size: FontSize::Small,
+            weight: Weight::Regular,
+            ink: c.ink_strong,
+            placeholder: SEARCH,
+            placeholder_ink: c.ink_on_toggle,
+            focused: home.focus == Focus::Search,
+        },
+    );
 }
 
 /// A button of the left column: 新規 filled, the others on the paper until the pointer is

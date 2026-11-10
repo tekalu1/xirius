@@ -16,6 +16,8 @@
 //!   under the search box scroll.
 
 use crate::popup::{Action, Cell, Choice, Look, Popup, PopupKind, PopupLayout};
+use crate::settings::FieldId;
+use crate::settings::field::Field;
 use crate::studio::{Geometry, Rect, Studio};
 use xirius_design::{FontSize, Layout, Space};
 
@@ -153,8 +155,9 @@ impl PickGroup {
 /// scroll).
 #[derive(Clone, Debug, PartialEq)]
 pub struct PickList {
-    /// In the search box; kept while `refill` builds the rows again.
-    pub query: String,
+    /// The search box; what is typed is kept while `refill` builds the rows again, and what the
+    /// IME is still composing is shown, not yet filtering.
+    pub field: Field,
     /// The row the ↑↓ keys are on, counting the rows the search lets
     /// through.
     pub selected: usize,
@@ -171,9 +174,6 @@ pub struct PickList {
     pub current: String,
     /// The icon every row uses unless a row names its own.
     pub icon: Option<&'static str>,
-    /// What the IME is still composing after `query` (shown, not yet
-    /// filtering).
-    pub marked: String,
     /// Opened and not yet scrolled: the list shows the cursor's row (the
     /// current one) wherever it is (UI-338). The first key or wheel turn
     /// settles the scroll there.
@@ -199,7 +199,7 @@ impl PickList {
     /// One unnamed group of `rows`.
     pub fn of(rows: Vec<PickRow>) -> PickList {
         PickList {
-            query: String::new(),
+            field: Field::new(FieldId::Search, String::new()),
             selected: 0,
             offset: 0,
             groups: vec![PickGroup::new("", rows)],
@@ -207,7 +207,6 @@ impl PickList {
             empty: NO_MATCH.to_string(),
             current: String::new(),
             icon: None,
-            marked: String::new(),
             fresh: false,
             keyed: false,
         }
@@ -280,7 +279,7 @@ impl PickList {
 
     /// Lowercase of the typed words (names match without case).
     fn query(&self) -> String {
-        self.query.to_lowercase()
+        self.field.value.to_lowercase()
     }
 
     /// The rows the query lets through, flattened in show order.
@@ -331,7 +330,7 @@ impl PickList {
             }
             h += n as f32 * Layout::MENU_ROW_H;
         }
-        if h == 0.0 && !self.query.is_empty() {
+        if h == 0.0 && !self.field.value.is_empty() {
             // Nothing matches: the status in two rows' room.
             Layout::MENU_ROW_H * 2.0
         } else {
@@ -472,8 +471,7 @@ impl PickList {
 
     /// Esc's first job: the words go (its second shuts the list).
     fn clear_query(&mut self) {
-        self.query.clear();
-        self.marked.clear();
+        self.field.clear();
         self.retarget();
     }
 
@@ -534,38 +532,30 @@ impl PickList {
         self.fresh = false;
     }
 
-    /// The search box as a text field: the IME's view of it.
-    pub fn field(&self) -> crate::settings::field::Field {
-        let mut f = crate::settings::field::Field::new(
-            crate::settings::FieldId::Search,
-            self.query.clone(),
-        );
-        f.marked = self.marked.clone();
-        f
-    }
-
-    /// Text the IME (or a paste) puts in the search box: `marked` while it
-    /// is still being composed. New words move the cursor to the top.
-    pub fn put_text(&mut self, range: Option<std::ops::Range<usize>>, text: &str, marked: bool) {
-        let mut f = self.field();
-        if marked {
-            f.mark_text(range, text);
-        } else {
-            f.replace_text(range, text);
-        }
-        self.marked = f.marked;
-        if f.value != self.query {
-            self.query = f.value;
+    /// Runs an edit of the search box; new words move the cursor to the top.
+    pub fn edit(&mut self, edit: impl FnOnce(&mut Field)) {
+        let before = self.field.value.clone();
+        edit(&mut self.field);
+        if self.field.value != before {
             self.retarget();
         }
     }
 
+    /// Text the IME (or a paste) puts in the search box: `marked` while it
+    /// is still being composed.
+    pub fn put_text(&mut self, range: Option<std::ops::Range<usize>>, text: &str, marked: bool) {
+        self.edit(|f| {
+            if marked {
+                f.mark_text(range, text);
+            } else {
+                f.replace_text(range, text);
+            }
+        });
+    }
+
     /// The IME let go of what it was composing: it stays, typed.
     pub fn unmark(&mut self) {
-        if !self.marked.is_empty() {
-            let text = std::mem::take(&mut self.marked);
-            self.put_text(None, &text, false);
-        }
+        self.edit(Field::unmark);
     }
 
     /// A key in the list at the window `size`: ↑↓ walk the rows that run,
@@ -573,11 +563,11 @@ impl PickList {
     /// Backspace takes a letter back, and a typed letter `ch` searches.
     pub fn key(&mut self, key: &str, ch: Option<&str>, size: (f32, f32)) -> PickKey {
         // While the IME is composing, its keys are its own.
-        if !self.marked.is_empty() {
+        if !self.field.marked.is_empty() {
             return PickKey::Done;
         }
         match key {
-            "escape" if self.query.is_empty() => PickKey::Shut,
+            "escape" if self.field.is_empty() => PickKey::Shut,
             "escape" => {
                 self.clear_query();
                 PickKey::Done
@@ -605,10 +595,10 @@ impl PickList {
                 keep_on_screen(self, size);
                 PickKey::Done
             }
-            "backspace" => {
-                if self.query.pop().is_some() {
-                    self.retarget();
-                }
+            "left" | "right" | "home" | "end" | "backspace" | "delete" => {
+                self.edit(|f| {
+                    f.key(key, false, false);
+                });
                 PickKey::Done
             }
             _ => match ch.filter(|c| !c.chars().any(char::is_control)) {
@@ -711,7 +701,7 @@ pub fn cells(pick: &PickList, w: f32, size: (f32, f32)) -> Vec<Cell> {
     let typed = !query.is_empty();
     let mut out = vec![
         Cell::new(Rect::new(pad, pad, w - pad * 2.0, row_h), Look::Input)
-            .text(format!("{}{}", pick.query, pick.marked))
+            .field(pick.field.clone())
             .icon("search")
             .on(true),
     ];
@@ -1164,7 +1154,7 @@ impl Studio {
             .or_else(|| self.home_typing())
     }
 
-    fn pick_typing_mut(&mut self) -> Option<&mut PickList> {
+    pub(crate) fn pick_typing_mut(&mut self) -> Option<&mut PickList> {
         if self.instruments.own_surface() {
             return self.popup.as_mut()?.pick.as_mut();
         }
@@ -1196,7 +1186,7 @@ impl Studio {
     }
 
     /// A settings' list is laid out at its box: its cells follow the words.
-    fn pick_relayout(&mut self) {
+    pub(crate) fn pick_relayout(&mut self) {
         if let Some(m) = self.settings.as_mut().and_then(|u| u.menu.as_mut()) {
             m.hover = None;
             m.relayout();
@@ -1209,20 +1199,6 @@ impl Studio {
             pick.unmark();
         }
         self.pick_relayout();
-    }
-
-    /// Ctrl+V in the list's search box: the clipboard's text goes in, on
-    /// one line (UI-338). False with no list open.
-    pub(crate) fn pick_paste(&mut self, text: &str) -> bool {
-        let line: String = text.lines().collect::<Vec<_>>().join(" ");
-        match self.pick_typing_mut() {
-            Some(pick) => {
-                pick.put_text(None, line.trim(), false);
-                self.pick_relayout();
-                true
-            }
-            None => false,
-        }
     }
 }
 
@@ -1279,7 +1255,7 @@ mod tests {
             && s.popup
                 .as_ref()
                 .and_then(|p| p.pick.as_ref())
-                .is_some_and(|p| p.query.is_empty());
+                .is_some_and(|p| p.field.value.is_empty());
         s.typed(g, "escape", None);
         if open && s.popup.is_none() {
             n += 1;
@@ -1356,14 +1332,14 @@ mod tests {
             ..PickList::of(Vec::new())
         };
         let mut q = pick.clone();
-        q.query = "eq".into();
+        q.field.set("eq".into());
         let l = cells(&q, 260.0, (1600.0, 1000.0));
         let texts: Vec<&str> = l.iter().map(|c| c.text.as_str()).collect();
         assert!(texts.contains(&"エフェクト") && !texts.contains(&"プラグイン"));
         // The footer stays.
         assert!(texts.contains(&"プラグインを再スキャン"));
         // Nothing matches: the status shows, the rows hide (the footer stays).
-        q.query = "zzz".into();
+        q.field.set("zzz".into());
         let l = cells(&q, 260.0, (1600.0, 1000.0));
         assert!(l.iter().any(|c| c.look == Look::Status));
         assert!(q.visible().is_empty());
@@ -1548,13 +1524,19 @@ mod tests {
 
         s.pick_text(None, "1/1", true);
         let pick = s.pick_typing().unwrap();
-        assert_eq!((pick.query.as_str(), pick.marked.as_str()), ("", "1/1"));
+        assert_eq!(
+            (pick.field.value.as_str(), pick.field.marked.as_str()),
+            ("", "1/1")
+        );
         assert_eq!(pick.visible().len(), all, "composing does not filter yet");
         assert_eq!(box_text(&s), "1/1");
 
         s.pick_text(None, "1/16", false);
         let pick = s.pick_typing().unwrap();
-        assert_eq!((pick.query.as_str(), pick.marked.as_str()), ("1/16", ""));
+        assert_eq!(
+            (pick.field.value.as_str(), pick.field.marked.as_str()),
+            ("1/16", "")
+        );
         assert!(pick.visible().iter().all(|r| r.label.contains("1/16")));
         assert!(pick.visible().len() < all);
         // The cursor is on a row the words let through.
@@ -1566,19 +1548,22 @@ mod tests {
         s.pick_text(None, "T", true);
         s.pick_unmark();
         let pick = s.pick_typing().unwrap();
-        assert_eq!((pick.query.as_str(), pick.marked.as_str()), ("1/16T", ""));
+        assert_eq!(
+            (pick.field.value.as_str(), pick.field.marked.as_str()),
+            ("1/16T", "")
+        );
 
         // Esc clears the words; a paste puts its text in, on one line.
         s.typed(&g, "escape", None);
-        assert!(s.pick_paste("1/8\r\n"));
-        assert_eq!(s.pick_typing().unwrap().query, "1/8");
+        s.text_paste("1/8\r\n");
+        assert_eq!(s.pick_typing().unwrap().field.value, "1/8");
         assert_eq!(box_text(&s), "1/8");
         // While the IME composes, its keys are its own (no row picked).
         s.pick_text(None, "x", true);
         assert!(s.typed(&g, "enter", None));
         assert!(s.popup.is_some());
         s.popup = None;
-        assert!(!s.pick_paste("1/4"), "no list open");
+        assert!(s.edit_text(|_| ()).is_none(), "no list open");
     }
 
     /// The list stays put while the cursor walks down (UI-338): twenty ↓

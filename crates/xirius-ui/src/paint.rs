@@ -100,6 +100,9 @@ pub struct Colors {
     pub hot: Hsla,
     pub over: Hsla,
     pub well: Hsla,
+    /// The ground of a text field, and a selected stretch of its text: (face, text on it).
+    pub field: Hsla,
+    pub text_sel: (Hsla, Hsla),
     /// The level meter's colour at 64 points up its scale: a meter is painted
     /// as slices of these, so the one value gradient is followed exactly.
     pub meter_ramp: [Hsla; METER_RAMP],
@@ -197,6 +200,8 @@ impl Colors {
             hot: paint(stops[1].color),
             over: paint(stops[2].color),
             well: paint(LevelMeter::well(theme)),
+            field: paint(Surface::Field.color(theme)),
+            text_sel: resolved(Pair::<surface::TextSel, ink::OnTextSel>::new(), theme),
             meter_ramp: std::array::from_fn(|i| {
                 paint(meter.color_at(i as f32 / (METER_RAMP - 1) as f32))
             }),

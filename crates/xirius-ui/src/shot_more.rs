@@ -167,7 +167,7 @@ mod tests {
         stage(&mut s, &g, 1);
         let p = s.popup.as_ref().expect("the value box");
         assert!(matches!(p.kind, PopupKind::AutoValue(_)));
-        assert_eq!(p.naming.as_deref(), Some("-6.5"));
+        assert_eq!(p.naming.as_ref().map(|f| f.value.as_str()), Some("-6.5"));
     }
 
     #[test]

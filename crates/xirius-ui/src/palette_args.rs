@@ -378,7 +378,7 @@ impl Palette {
             && !form.output
             && let Some(field) = form.fields.get_mut(self.selected)
         {
-            field.value = self.query.clone();
+            field.value = self.field.value.clone();
             form.error = None;
             self.rows = form.rows();
         }
@@ -387,13 +387,13 @@ impl Palette {
     pub fn choose_field(&mut self, next: usize) {
         self.store_field();
         self.selected = next.min(self.rows.len().saturating_sub(1));
-        self.query = self
+        let value = self
             .form
             .as_ref()
             .and_then(|f| f.fields.get(self.selected))
             .map(|f| f.value.clone())
             .unwrap_or_default();
-        self.marked.clear();
+        self.field.set(value);
     }
 
     pub fn cycle_field(&mut self) {
@@ -407,9 +407,9 @@ impl Palette {
             let next = field
                 .choices
                 .iter()
-                .position(|(v, _)| *v == self.query)
+                .position(|(v, _)| *v == self.field.value)
                 .map_or(0, |i| (i + 1) % field.choices.len());
-            self.query = field.choices[next].0.clone();
+            self.field.set(field.choices[next].0.clone());
             self.store_field();
         }
     }
@@ -445,7 +445,7 @@ impl Studio {
         form.fields[i].value = value.clone();
         form.error = None;
         if palette.selected == i {
-            palette.query = value;
+            palette.field.set(value);
         }
     }
 
@@ -475,11 +475,12 @@ impl Studio {
         };
         let form = Form::new(def, seed, &self.project());
         let mut palette = Palette::new(form.rows());
-        palette.query = form
-            .fields
-            .first()
-            .map(|f| f.value.clone())
-            .unwrap_or_default();
+        palette.field.set(
+            form.fields
+                .first()
+                .map(|f| f.value.clone())
+                .unwrap_or_default(),
+        );
         palette.form = Some(form);
         self.palette = Some(palette);
         true

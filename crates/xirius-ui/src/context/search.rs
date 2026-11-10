@@ -71,7 +71,7 @@ impl Studio {
     pub(crate) fn context_query(&self) -> Option<String> {
         self.ctx.as_ref()?.search.as_ref().map(|s| s.field.text())
     }
-    pub(super) fn filter_context(&mut self) {
+    pub(crate) fn filter_context(&mut self) {
         let Some(st) = self.ctx.as_mut() else {
             return;
         };

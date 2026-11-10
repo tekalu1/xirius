@@ -155,11 +155,7 @@ fn external_reads_preserve_settings_pick_search_and_inline_rename_composition() 
         }
         s.ime_replace(None, "held", false);
         s.ime_replace(None, "未確定", true);
-        let snapshot = |s: &Studio| {
-            s.ime_pick_field()
-                .or_else(|| s.ime_field().cloned())
-                .unwrap()
-        };
+        let snapshot = |s: &Studio| s.ime_field().cloned().unwrap();
         let before = snapshot(&s);
         assert_eq!(before.marked, "未確定");
         s.bind_window_io();
@@ -287,7 +283,7 @@ fn external_reads_preserve_palette_search_forms_and_menu_composition() {
         s.ime_replace(None, "未確定", true);
         let snapshot = |s: &Studio| {
             if let Some(p) = &s.palette {
-                (p.query.clone(), p.marked.clone())
+                (p.field.value.clone(), p.field.marked.clone())
             } else {
                 let f = s.ask_field().unwrap();
                 (f.value.clone(), f.marked.clone())
@@ -303,12 +299,15 @@ fn external_reads_preserve_palette_search_forms_and_menu_composition() {
         assert!(s.saving.is_none());
         assert_eq!(snapshot(&s), before);
         s.ime_unmark();
+        // Esc empties the words first, then closes.
         if target < 2 {
             assert!(s.palette_key(&g, "escape", Mods::NONE));
+            assert!(s.palette_key(&g, "escape", Mods::NONE));
         } else {
-            assert_eq!(s.ask_key("escape"), Some(true));
-            if s.context_open() {
-                assert_eq!(s.ask_key("escape"), Some(true));
+            for _ in 0..3 {
+                if s.ask_field().is_some() {
+                    assert_eq!(s.ask_key("escape"), Some(true));
+                }
             }
         }
         assert!(!s.human_interaction_active());

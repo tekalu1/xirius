@@ -41,6 +41,10 @@ pub enum Surface {
     S3,
     Hover,
     Sel,
+    /// 文字を入れる欄の地。
+    Field,
+    /// 欄の中で選んだ文字の面。上の文字は `OnTextSel` だけ。
+    TextSel,
     /// クリップの面（中立）。
     Clip,
     /// 選んだクリップの面。枠の代わりに明るさの差で選択を示す。
@@ -65,10 +69,12 @@ pub enum Ink {
     Alert,
     Ai,
     OnFill,
+    /// 欄の中で選んだ文字（`TextSel`）の上の文字。
+    OnTextSel,
 }
 
 impl Surface {
-    pub const ALL: [Surface; 14] = [
+    pub const ALL: [Surface; 16] = [
         Surface::Paper,
         Surface::S0,
         Surface::S1,
@@ -76,6 +82,8 @@ impl Surface {
         Surface::S3,
         Surface::Hover,
         Surface::Sel,
+        Surface::Field,
+        Surface::TextSel,
         Surface::Clip,
         Surface::ClipSel,
         Surface::TrackSel,
@@ -96,6 +104,8 @@ impl Surface {
             Surface::S3 => p.surface_3,
             Surface::Hover => p.surface_hover,
             Surface::Sel => p.surface_sel,
+            Surface::Field => p.surface_field,
+            Surface::TextSel => p.surface_text_sel,
             Surface::Clip => p.surface_clip,
             Surface::ClipSel => p.surface_clip_sel,
             Surface::TrackSel => p.surface_track_sel,
@@ -112,6 +122,7 @@ impl Surface {
             Surface::Fill | Surface::FillHover | Surface::Danger | Surface::DangerHover => {
                 Ink::OnFill
             }
+            Surface::TextSel => Ink::OnTextSel,
             _ => Ink::Body,
         };
         Readable { surface: self, ink }
@@ -123,6 +134,7 @@ impl Surface {
             Surface::Fill | Surface::FillHover | Surface::Danger | Surface::DangerHover => {
                 Ink::OnFill
             }
+            Surface::TextSel => Ink::OnTextSel,
             _ => Ink::Strong,
         };
         Readable { surface: self, ink }
@@ -139,7 +151,7 @@ impl Surface {
 }
 
 impl Ink {
-    pub const ALL: [Ink; 7] = [
+    pub const ALL: [Ink; 8] = [
         Ink::Strong,
         Ink::Body,
         Ink::Blue,
@@ -147,6 +159,7 @@ impl Ink {
         Ink::Alert,
         Ink::Ai,
         Ink::OnFill,
+        Ink::OnTextSel,
     ];
 
     /// 文字の色。外へは出さず、[`Readable`] を通して取る。
@@ -160,6 +173,7 @@ impl Ink {
             Ink::Alert => p.ink_alert,
             Ink::Ai => p.ink_ai,
             Ink::OnFill => p.ink_on_fill,
+            Ink::OnTextSel => p.ink_on_text_sel,
         }
     }
 
@@ -281,8 +295,8 @@ macro_rules! kinds {
 }
 
 kinds! {
-    surface: Paper, S0, S1, S2, S3, Hover, Sel, Clip, ClipSel, TrackSel, Fill, FillHover, Danger, DangerHover;
-    ink: Strong, Body, Blue, Mark, Alert, Ai, OnFill
+    surface: Paper, S0, S1, S2, S3, Hover, Sel, Field, TextSel, Clip, ClipSel, TrackSel, Fill, FillHover, Danger, DangerHover;
+    ink: Strong, Body, Blue, Mark, Alert, Ai, OnFill, OnTextSel
 }
 
 /// 許された組の一覧。ここが唯一の定義で、型・表・検査が全部ここから出る。
@@ -306,6 +320,10 @@ allowed_pairs! {
     S3: [Strong, Body, Blue, Mark, Alert, Ai];
     Hover: [Strong, Body, Blue, Mark, Alert, Ai];
     Sel: [Strong, Body, Blue, Mark, Alert, Ai];
+    // 欄の地。入れた文字（Strong）と空のときの案内（Body）だけ。
+    Field: [Strong, Body];
+    // 欄の中で選んだ文字。専用の文字の色だけ。
+    TextSel: [OnTextSel];
     // ダークの Mark は、クリップの面の上で 4.32:1（足りない）。
     Clip: [Strong, Body, Blue, Alert, Ai];
     // 明るくした分、Blue・Alert・Ai はダークで 4.5:1 に届かない。クリップの名前は Body。

@@ -352,8 +352,8 @@ fn ctrl_t_asks_for_a_time_and_its_enter_moves_the_playhead() {
     let to = s.project().time_map().format(bar(&s, 9));
     let palette = s.palette.as_mut().unwrap();
     assert_eq!(palette.form.as_ref().unwrap().fields[0].value, shown);
-    assert_eq!(palette.query, shown);
-    palette.query = to;
+    assert_eq!(palette.field.value, shown);
+    palette.field.set(to);
     assert!(s.palette_form_enter(&g));
     assert!(s.palette.is_none());
     assert_eq!(s.playhead, bar(&s, 9));

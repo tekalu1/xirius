@@ -24,6 +24,8 @@ use xirius_design::{FontSize, Layout, Radius, Space, Weight};
 
 use crate::draw::{Align, Pen};
 use crate::popup::Action;
+use crate::settings::FieldId;
+use crate::settings::field::{Field, Look};
 use crate::studio::{Geometry, Hit, Rect, Studio};
 use crate::tools::Mods;
 use crate::topbar::BarButton;
@@ -166,11 +168,9 @@ pub struct Palette {
     result_layout: std::cell::RefCell<Option<std::rc::Rc<crate::palette_args::ResultLayout>>>,
     pub result_all: bool,
     pub result_selected: bool,
-    /// What is typed: the list is filtered by it.
-    pub query: String,
-    /// What the IME is still composing after the query: shown in the field,
-    /// not searched for until it is put in.
-    pub marked: String,
+    /// The search field: what is typed in it filters the list; what the IME is still
+    /// composing is shown, not searched for until it is put in.
+    pub field: Field,
     /// The picked row, an index into [`Palette::hits`]; only a row that can
     /// run is picked.
     pub selected: usize,
@@ -214,8 +214,7 @@ impl Palette {
             result_layout: Default::default(),
             result_all: false,
             result_selected: false,
-            query: String::new(),
-            marked: String::new(),
+            field: Field::new(FieldId::Search, String::new()),
             selected: 0,
             offset: 0.0,
             hover: None,
@@ -232,7 +231,7 @@ impl Palette {
         if self.form.is_some() {
             return (0..self.rows.len()).collect();
         }
-        let q = self.query.trim().to_lowercase();
+        let q = self.field.value.trim().to_lowercase();
         let op = op_form(&q);
         let mut found: Vec<(bool, u8, usize)> = self
             .rows
@@ -476,7 +475,12 @@ impl Palette {
     }
 
     fn set_query(&mut self, query: String) {
-        self.query = query;
+        self.field.set(query);
+        self.queried();
+    }
+
+    /// The typed text changed: the list starts over (a form keeps it for the field it is of).
+    fn queried(&mut self) {
         if self.form.is_some() {
             self.store_field();
             return;
@@ -484,6 +488,15 @@ impl Palette {
         self.hover = None;
         self.offset = 0.0;
         self.selected = 0;
+    }
+
+    /// Runs an edit of the field; the list follows when the typed text changed.
+    pub fn edit(&mut self, edit: impl FnOnce(&mut Field)) {
+        let before = self.field.value.clone();
+        edit(&mut self.field);
+        if self.field.value != before {
+            self.queried();
+        }
     }
 }
 
@@ -511,108 +524,43 @@ pub(crate) fn printable(text: &str) -> String {
     text.chars().filter(|c| !c.is_control()).collect()
 }
 
-/// The field's side of the IME (GPUI's `EntityInputHandler`, which the
-/// screen hands on to these). Offsets are in UTF-16, as the IME counts.
-/// The caret is always at the end: the field is one line that is typed
-/// into and taken back with Backspace.
+/// The IME's side of the field. The field counts in UTF-16, as the IME does; a form's
+/// results and a finished form take no text.
 impl Palette {
-    /// What the field shows: the query, then what is being composed.
-    pub fn text(&self) -> String {
-        format!("{}{}", self.query, self.marked)
-    }
-
-    /// Part of the field's text, and the range it really is.
-    pub fn text_for_range(&self, range: Range<usize>) -> (String, Range<usize>) {
-        let text = self.text();
-        let a = byte_at(&text, range.start);
-        let b = byte_at(&text, range.end).max(a);
-        let real = utf16_len(&text[..a])..utf16_len(&text[..b]);
-        (text[a..b].to_string(), real)
-    }
-
-    /// The caret, at the end of the field.
-    pub fn selected_range(&self) -> Range<usize> {
-        let n = utf16_len(&self.text());
-        n..n
-    }
-
-    /// What the IME is composing, if anything.
-    pub fn marked_range(&self) -> Option<Range<usize>> {
-        (!self.marked.is_empty()).then(|| {
-            let a = utf16_len(&self.query);
-            a..a + utf16_len(&self.marked)
-        })
-    }
-
-    /// The bytes of [`Palette::text`] an edit replaces: the range given,
-    /// else what is being composed, else the caret.
-    fn target(&self, text: &str, range: Option<Range<usize>>) -> (usize, usize) {
-        let r = range
-            .or_else(|| self.marked_range())
-            .unwrap_or_else(|| self.selected_range());
-        let a = byte_at(text, r.start);
-        (a, byte_at(text, r.end).max(a))
+    fn takes_text(&self) -> bool {
+        !self
+            .form
+            .as_ref()
+            .is_some_and(|form| form.output || self.selected >= form.fields.len())
     }
 
     /// Text put in for good: a typed letter, or what the IME composed.
     pub fn replace_text(&mut self, range: Option<Range<usize>>, text: &str) {
-        if self
-            .form
-            .as_ref()
-            .is_some_and(|form| form.output || self.selected >= form.fields.len())
-        {
-            return;
-        }
-        let full = self.text();
-        let (a, b) = self.target(&full, range);
-        let query = format!("{}{}{}", &full[..a], printable(text), &full[b..]);
-        self.marked.clear();
-        if query != self.query {
-            self.set_query(query);
+        if self.takes_text() {
+            self.edit(|f| f.replace_text(range, text));
         }
     }
 
-    /// Text the IME is composing: shown under the caret, not searched for.
-    /// Empty text ends the composing with nothing put in.
+    /// Text the IME is composing: shown at the caret, not searched for. Empty text ends
+    /// the composing with nothing put in.
     pub fn mark_text(&mut self, range: Option<Range<usize>>, text: &str) {
-        let full = self.text();
-        let (a, b) = self.target(&full, range);
-        let query = format!("{}{}", &full[..a], &full[b..]);
-        self.marked = printable(text);
-        if query != self.query {
-            self.set_query(query);
-        }
+        self.edit(|f| f.mark_text(range, text));
     }
 
     /// The IME let go of what it was composing: it stays, as typed.
     pub fn unmark(&mut self) {
-        if !self.marked.is_empty() {
-            let query = self.text();
-            self.marked.clear();
-            self.set_query(query);
-        }
+        self.edit(Field::unmark);
     }
 
-    /// Where a range of the field's text is on the screen (body
-    /// coordinates), for the IME's window to sit by.
+    /// Where a range of the field's text is on the screen (body coordinates), for the IME's
+    /// window to sit by.
     pub fn text_bounds(
         &self,
         search: Rect,
         range: Range<usize>,
-        mut measure: impl FnMut(&str) -> f32,
+        measure: impl FnMut(&str) -> f32,
     ) -> Rect {
-        let text = self.text();
-        let field = field_of(search);
-        let a = byte_at(&text, range.start);
-        let b = byte_at(&text, range.end).max(a);
-        let x0 = measure(&text[..a]);
-        let x1 = measure(&text[..b]);
-        Rect::new(
-            field.x + x0,
-            search.y + Space::X3.px(),
-            (x1 - x0).max(1.5),
-            search.h - Space::X3.px() * 2.0,
-        )
+        self.field.text_bounds(field_of(search), range, measure)
     }
 }
 
@@ -1122,10 +1070,13 @@ impl Studio {
             return false;
         };
         // While the IME is composing, its keys are its own.
-        if !p.marked.is_empty() {
+        if !p.field.marked.is_empty() {
             return true;
         }
         match key {
+            "escape" if !p.field.is_empty() => p.edit(|f| {
+                f.clear();
+            }),
             "escape" => {
                 self.palette = None;
             }
@@ -1156,12 +1107,11 @@ impl Studio {
             "enter" => {
                 self.run_selected(g);
             }
-            "backspace" => {
-                let mut q = p.query.clone();
-                q.pop();
-                p.set_query(q);
-            }
-            _ => {}
+            // The field's own keys; Ctrl+C/X/V go through the clipboard, which the screen holds.
+            _ if mods.ctrl && matches!(key, "c" | "x" | "v") => {}
+            _ => p.edit(|f| {
+                f.key(key, mods.shift, mods.ctrl);
+            }),
         }
         if let Some(p) = &mut self.palette {
             p.reveal_result(g.size);
@@ -1506,62 +1456,37 @@ fn paint_search(pen: &mut Pen, palette: &Palette, r: Rect) {
         c.ink,
     );
     let field = field_of(r);
+    let form_field = palette
+        .form
+        .as_ref()
+        .and_then(|form| form.fields.get(palette.selected));
     pen.mask(field, |pen| {
-        let mut w = 0.0;
-        if palette.query.is_empty() && palette.marked.is_empty() {
+        // A field that picks from choices shows the choice's name; it takes no caret.
+        if let Some(shown) = form_field
+            .filter(|f| !f.choices.is_empty() && !palette.field.is_empty())
+            .map(|f| f.display(&palette.field.value))
+        {
             pen.text(
-                palette
-                    .form
-                    .as_ref()
-                    .and_then(|form| form.fields.get(palette.selected))
-                    .map(|field| field.label.as_str())
-                    .unwrap_or("操作を探す"),
-                FontSize::Lead,
-                Weight::Regular,
-                c.ink,
-                field,
-                Align::Left,
-            );
-        } else {
-            let displayed = palette
-                .form
-                .as_ref()
-                .and_then(|form| form.fields.get(palette.selected))
-                .filter(|field| !field.choices.is_empty())
-                .map(|field| field.display(&palette.query))
-                .unwrap_or_else(|| palette.query.clone());
-            w = pen.text(
-                &displayed,
+                &shown,
                 FontSize::Lead,
                 Weight::Regular,
                 c.ink_strong,
                 field,
                 Align::Left,
             );
+            return;
         }
-        // What the IME is still composing sits on the selection's face:
-        // shown, not yet searched for.
-        if !palette.marked.is_empty() {
-            let mw = pen.measure(&palette.marked, FontSize::Lead, Weight::Regular);
-            let inset = Space::X3.px();
-            pen.round(
-                Rect::new(field.x + w, r.y + inset, mw, r.h - inset * 2.0),
-                c.sel,
-                Radius::Xs,
-            );
-            pen.text(
-                &palette.marked,
-                FontSize::Lead,
-                Weight::Regular,
-                c.ink_strong,
-                Rect::new(field.x + w, r.y, field.w - w, r.h),
-                Align::Left,
-            );
-            w += mw;
-        }
-        pen.fill(
-            Rect::new(field.x + w + 1.0, r.y + 14.0, 1.5, r.h - 28.0),
-            c.ink_strong,
+        palette.field.paint(
+            pen,
+            field,
+            Look {
+                size: FontSize::Lead,
+                weight: Weight::Regular,
+                ink: c.ink_strong,
+                placeholder: form_field.map(|f| f.label.as_str()).unwrap_or("操作を探す"),
+                placeholder_ink: c.ink,
+                focused: true,
+            },
         );
     });
 }
@@ -1722,7 +1647,8 @@ pub const SHOTS: &[crate::shot::Shot] = {
         },
         Shot {
             name: "09-closed",
-            acts: &[Key("escape")],
+            // The first Esc empties the words, the second closes.
+            acts: &[Key("escape"), Key("escape")],
         },
         Shot {
             name: "10-nothing-picked",
@@ -2208,10 +2134,13 @@ mod tests {
         let p = s.palette.as_mut().unwrap();
         p.mark_text(None, "く");
         p.mark_text(None, "くおん");
-        assert_eq!((p.query.as_str(), p.marked.as_str()), ("", "くおん"));
-        assert_eq!(p.marked_range(), Some(0..3));
-        assert_eq!(p.selected_range(), 3..3);
-        assert_eq!(p.text_for_range(0..3), ("くおん".to_string(), 0..3));
+        assert_eq!(
+            (p.field.value.as_str(), p.field.marked.as_str()),
+            ("", "くおん")
+        );
+        assert_eq!(p.field.marked_range(), Some(0..3));
+        assert_eq!(p.field.selected_range(), 3..3);
+        assert_eq!(p.field.text_for_range(0..3), ("くおん".to_string(), 0..3));
         assert_eq!(names(&s).len(), all, "composing does not filter");
 
         // While composing, the keys are the IME's: Enter, Escape and the
@@ -2221,51 +2150,63 @@ mod tests {
             assert!(s.palette_key(&g, k, Mods::NONE));
         }
         let p = s.palette.as_mut().expect("still open");
-        assert_eq!((p.selected, p.marked.as_str()), (0, "くおん"));
+        assert_eq!((p.selected, p.field.marked.as_str()), (0, "くおん"));
         assert_eq!(s.song().steps(), steps);
 
         // The result goes in for good, in place of what was composed.
         let p = s.palette.as_mut().unwrap();
         p.mark_text(None, "クオンタイズ");
         p.replace_text(None, "クオンタイズ");
-        assert_eq!((p.query.as_str(), p.marked.as_str()), ("クオンタイズ", ""));
-        assert_eq!(p.marked_range(), None);
+        assert_eq!(
+            (p.field.value.as_str(), p.field.marked.as_str()),
+            ("クオンタイズ", "")
+        );
+        assert_eq!(p.field.marked_range(), None);
         assert!(names(&s).contains(&"note.quantize"));
         // Backspace takes a letter off again, now that nothing is composed.
         assert!(s.palette_key(&g, "backspace", Mods::NONE));
-        assert_eq!(s.palette.as_ref().unwrap().query, "クオンタイ");
+        assert_eq!(s.palette.as_ref().unwrap().field.value, "クオンタイ");
 
         // Composing called off: what was composed goes, the query stays.
         let p = s.palette.as_mut().unwrap();
         p.mark_text(None, "ず");
         p.replace_text(None, "");
-        assert_eq!((p.query.as_str(), p.marked.as_str()), ("クオンタイ", ""));
+        assert_eq!(
+            (p.field.value.as_str(), p.field.marked.as_str()),
+            ("クオンタイ", "")
+        );
         p.mark_text(None, "ず");
         p.mark_text(None, "");
-        assert_eq!((p.query.as_str(), p.marked.as_str()), ("クオンタイ", ""));
+        assert_eq!(
+            (p.field.value.as_str(), p.field.marked.as_str()),
+            ("クオンタイ", "")
+        );
         // Let go of: what was composed stays as typed.
         p.mark_text(None, "ズ");
         p.unmark();
-        assert_eq!((p.query.as_str(), p.marked.as_str()), ("クオンタイズ", ""));
+        assert_eq!(
+            (p.field.value.as_str(), p.field.marked.as_str()),
+            ("クオンタイズ", "")
+        );
 
         // A key's letter comes once, through the IME's door only.
         let p = s.palette.as_mut().unwrap();
         p.set_query(String::new());
         type_in(&mut s, &g, "mute");
-        assert_eq!(s.palette.as_ref().unwrap().query, "mute");
+        assert_eq!(s.palette.as_ref().unwrap().field.value, "mute");
 
         // Offsets are UTF-16: 𝄞 is two.
         let p = s.palette.as_mut().unwrap();
         p.set_query(String::new());
         p.replace_text(None, "a𝄞b\n");
-        assert_eq!(p.query, "a𝄞b", "control characters are not put in");
-        assert_eq!(p.selected_range(), 4..4);
-        assert_eq!(p.text_for_range(1..3), ("𝄞".to_string(), 1..3));
-        let (t, r) = p.text_for_range(2..9);
+        assert_eq!(p.field.value, "a𝄞b", "control characters are not put in");
+        assert_eq!(p.field.selected_range(), 4..4);
+        assert_eq!(p.field.text_for_range(1..3), ("𝄞".to_string(), 1..3));
+        let (t, r) = p.field.text_for_range(2..9);
         assert_eq!((t.as_str(), r), ("b", 3..4));
         // A range given replaces just that part.
         p.replace_text(Some(1..3), "x");
-        assert_eq!(p.query, "axb");
+        assert_eq!(p.field.value, "axb");
     }
 
     /// The IME's window sits by the caret: the bounds of a range of the
@@ -2280,9 +2221,10 @@ mod tests {
         let search = p.layout(g.size).search;
         let field = field_of(search);
         let w = |t: &str| t.chars().count() as f32 * 10.0;
-        let at = p.text_bounds(search, p.selected_range(), w);
-        assert_eq!(at.x, field.x + 70.0);
-        let marked = p.text_bounds(search, p.marked_range().unwrap(), w);
+        let at = p.text_bounds(search, p.field.selected_range(), w);
+        // The window sits at the start of what is being composed.
+        assert_eq!(at.x, field.x + 20.0);
+        let marked = p.text_bounds(search, p.field.marked_range().unwrap(), w);
         assert_eq!((marked.x, marked.w), (field.x + 20.0, 50.0));
         assert!(search.contains(marked.x, marked.y) && marked.bottom() <= search.bottom());
     }
@@ -2727,12 +2669,18 @@ mod tests {
                 }
                 "12-ime-composing" => {
                     let p = p.unwrap();
-                    assert_eq!((p.query.as_str(), p.marked.as_str()), ("", "ほぞん"));
+                    assert_eq!(
+                        (p.field.value.as_str(), p.field.marked.as_str()),
+                        ("", "ほぞん")
+                    );
                     assert_eq!(p.hits().len(), p.rows.len());
                 }
                 "13-ime-committed" => {
                     let p = p.unwrap();
-                    assert_eq!((p.query.as_str(), p.marked.as_str()), ("保存", ""));
+                    assert_eq!(
+                        (p.field.value.as_str(), p.field.marked.as_str()),
+                        ("保存", "")
+                    );
                     assert_eq!(names(&s)[0], "project.save");
                     assert!(names(&s).contains(&"version.save"));
                     assert!(p.on() < p.hits().len());

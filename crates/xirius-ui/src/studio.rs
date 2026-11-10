@@ -777,6 +777,8 @@ pub struct Studio {
     pub(crate) macro_stepping: bool,
     /// A mouse button is down in the window: something may be dragged (UI-289).
     pub(crate) pointer_held: bool,
+    /// A press that began inside a field of text: the move that follows selects.
+    pub(crate) text_drag: bool,
     /// The last press was a finger's or a pen's: a press and a drag are told apart further
     /// from where it began (UI-326, ARR-001).
     pub(crate) coarse_press: bool,
@@ -966,6 +968,7 @@ impl Studio {
             macro_run: None,
             macro_stepping: false,
             pointer_held: false,
+            text_drag: false,
             coarse_press: false,
             leaving_ready: false,
             save_test_delay: std::time::Duration::ZERO,
@@ -2293,6 +2296,7 @@ impl Studio {
         } else {
             None
         };
+        let ctx_field = self.ask_field().cloned();
         let mode = self.grid_mode();
         // The view and its choices the list menu builds on are set first.
         if let Some(p) = &mut self.popup {
@@ -2333,6 +2337,7 @@ impl Studio {
                 .and_then(|s| s.ask.as_ref())
                 .and_then(|a| a.preset.clone());
             p.ctx_query = query;
+            p.ctx_field = ctx_field;
             p.ctx_search = self.ctx.as_ref().is_some_and(|s| s.field.is_none());
         }
         p.history = self.song.history();
@@ -2610,7 +2615,10 @@ impl Studio {
             }
             Action::NameVersion => {
                 if p.has_dir {
-                    self.popup.as_mut().unwrap().naming = Some(String::new());
+                    self.popup.as_mut().unwrap().naming = Some(crate::settings::field::Field::new(
+                        crate::settings::FieldId::Search,
+                        String::new(),
+                    ));
                 }
             }
             Action::SelectVersion(i) => {
@@ -2728,7 +2736,7 @@ impl Studio {
                     return true;
                 }
                 if key == "enter" {
-                    let name = name.trim().to_string();
+                    let name = name.value.trim().to_string();
                     if !name.is_empty() {
                         self.version_with_plugin_states(name);
                     }
@@ -3919,7 +3927,7 @@ mod tests {
         assert!(s.mapped_key(&g, "s", None, all));
         let p = s.popup.as_ref().unwrap();
         assert_eq!(p.kind, PopupKind::Versions);
-        assert_eq!(p.naming.as_deref(), Some(""));
+        assert_eq!(p.naming.as_ref().map(|f| f.value.as_str()), Some(""));
         s.typed(&g, "a", Some("二稿"));
         s.typed(&g, "enter", None);
         assert_eq!(s.error, None);

@@ -861,7 +861,7 @@ impl Browser {
             list(&top);
         }
         let song_top = loc.song && self.path.is_empty();
-        let q = self.search.trim().to_lowercase();
+        let q = self.search.value.trim().to_lowercase();
         let mut rows = Vec::new();
         if q.is_empty() {
             self.tree_rows(&here, 0, song_top, &mut rows);

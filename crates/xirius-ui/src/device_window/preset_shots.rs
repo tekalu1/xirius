@@ -388,7 +388,14 @@ fn stage(n: u8, studio: &Rc<RefCell<Studio>>, _: &mut Window, cx: &mut App) {
         view.update(cx, |view, window, cx| {
             gpui::EntityInputHandler::replace_text_in_range(view, None, "Clean", window, cx);
             assert_eq!(
-                view.popup.as_ref().unwrap().pick.as_ref().unwrap().query,
+                view.popup
+                    .as_ref()
+                    .unwrap()
+                    .pick
+                    .as_ref()
+                    .unwrap()
+                    .field
+                    .value,
                 "Clean"
             );
         })

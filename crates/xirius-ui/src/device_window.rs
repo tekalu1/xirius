@@ -866,14 +866,7 @@ impl Render for DeviceWindow {
                 let pasted = this.with(window, |s, _| {
                     let k = &e.keystroke;
                     let m = modifiers(k.modifiers);
-                    if s.ime_pick_field().is_some() && m.ctrl && !m.alt && k.key == "v" {
-                        if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
-                            s.pick_paste(&text);
-                        }
-                        true
-                    } else {
-                        false
-                    }
+                    crate::screen::text_key_with_clipboard(s, &k.key, m, cx)
                 });
                 if pasted {
                     cx.refresh_windows();
@@ -955,7 +948,7 @@ fn device_key_event(
     if s.popup.is_none() && s.field_keys(g, &k.key, k.key_char.as_deref(), m) {
         return;
     }
-    let picking = s.ime_pick_field().is_some();
+    let picking = s.ime_picking();
     if !picking
         && s.popup.is_none()
         && k.key == "escape"
@@ -1028,7 +1021,7 @@ impl gpui::EntityInputHandler for DeviceWindow {
         _: &mut Context<Self>,
     ) -> Option<String> {
         self.with(window, |s, _| {
-            let field = s.ime_pick_field().or_else(|| s.ime_field().cloned())?;
+            let field = s.ime_field().cloned()?;
             let (text, real) = field.text_for_range(range);
             *adjusted = Some(real);
             Some(text)
@@ -1042,10 +1035,7 @@ impl gpui::EntityInputHandler for DeviceWindow {
     ) -> Option<gpui::UTF16Selection> {
         self.with(window, |s, _| {
             Some(gpui::UTF16Selection {
-                range: s
-                    .ime_pick_field()
-                    .or_else(|| s.ime_field().cloned())?
-                    .selected_range(),
+                range: s.ime_field()?.selected_range(),
                 reversed: false,
             })
         })
@@ -1058,10 +1048,7 @@ impl gpui::EntityInputHandler for DeviceWindow {
         let mut s = self.studio.borrow_mut();
         let old = scope_as(&mut s, self.id, self.macros);
         let previous = std::mem::replace(&mut s.popup, self.popup.clone());
-        let result = s
-            .ime_pick_field()
-            .or_else(|| s.ime_field().cloned())
-            .and_then(|f| f.marked_range());
+        let result = s.ime_field().cloned().and_then(|f| f.marked_range());
         s.popup = previous;
         restore(&mut s, old);
         result

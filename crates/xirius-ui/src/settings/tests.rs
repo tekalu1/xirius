@@ -1686,7 +1686,7 @@ fn settings_counted(s: &mut Studio, g: &Geometry, kind: &MenuKind) -> usize {
     }
     // 3: Esc clears the words, then shuts the list.
     s.settings_key("escape", none());
-    let cleared = open_pick(s).is_some_and(|(p, _)| p.query.is_empty());
+    let cleared = open_pick(s).is_some_and(|(p, _)| p.field.value.is_empty());
     s.settings_key("escape", none());
     if cleared && s.settings.as_ref().is_some_and(|u| u.menu.is_none()) {
         n += 1;

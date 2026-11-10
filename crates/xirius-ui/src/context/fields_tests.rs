@@ -467,6 +467,27 @@ fn a_letter_leaves_the_field_and_filters_the_search_box() {
     assert_eq!(semis(&s), 0);
 }
 
+#[test]
+fn the_search_box_keeps_the_arrows_until_it_has_words() {
+    let (mut s, g) = studio();
+    assert!(press_on(&mut s, &g, "Keys", 0));
+    s.ask_text(None, "くおん", false);
+    assert!(s.field_typing().is_none());
+    // With words in it the arrows move inside the box and the menu stays where it is.
+    let depth = s.ctx.as_ref().unwrap().trail.len();
+    assert!(s.typed(&g, "left", None));
+    assert_eq!(s.ask_field().unwrap().caret(), "くお".len());
+    assert!(s.typed(&g, "home", None));
+    assert_eq!(s.ask_field().unwrap().caret(), 0);
+    assert!(s.typed(&g, "right", None));
+    assert_eq!(s.ask_field().unwrap().caret(), "く".len());
+    assert_eq!(s.ctx.as_ref().unwrap().trail.len(), depth);
+    // Esc empties the words; the menu is still there.
+    assert!(s.typed(&g, "escape", None));
+    assert_eq!(s.context_query().unwrap_or_default(), "");
+    assert!(s.context_open());
+}
+
 fn field_cell(s: &Studio, g: &Geometry, kind: Kind) -> (f32, f32) {
     let layout = s.popup.as_ref().expect("a menu is open").layout(g.size);
     let cell = layout

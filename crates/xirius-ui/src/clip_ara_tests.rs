@@ -188,7 +188,8 @@ fn processing_ends_with_the_attach_row_and_its_key_opens_the_list() {
             .pick
             .as_ref()
             .unwrap()
-            .query
+            .field
+            .value
             .is_empty()
     );
     s.typed(&g, "escape", None);

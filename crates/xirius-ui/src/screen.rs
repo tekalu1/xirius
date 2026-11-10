@@ -218,6 +218,15 @@ impl Screen {
         if ev.pressed_button.is_none() {
             // A release outside the window that did not come here.
             studio.pointer_held = false;
+            studio.text_drag = false;
+        }
+        if studio.text_drag {
+            let g = geometry(&studio, window);
+            let (x, y) = in_body(ev.position);
+            if studio.text_drag_to(&g, x, y) {
+                cx.notify();
+                return;
+            }
         }
         if studio.opening.is_some() {
             let g = geometry(&studio, window);
@@ -386,6 +395,10 @@ impl Screen {
             || studio.opening_press(&g, x, y)
             || studio.saving_press(&g, x, y)
         {
+            cx.notify();
+            return;
+        }
+        if studio.text_press(&g, x, y, ev.click_count as u32, ev.modifiers.shift) {
             cx.notify();
             return;
         }
@@ -637,12 +650,9 @@ impl Screen {
             cx.notify();
             return;
         }
-        // Ctrl+V in a list's search box (the settings' too) pastes (UI-338).
         let picking = studio.pick_typing().is_some() && studio.ask_field().is_none();
-        if picking && m.ctrl && !m.alt && k.key == "v" {
-            if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
-                studio.pick_paste(&text);
-            }
+        // A field of text takes its editing keys first (Ctrl+A/Z/Y/C/X/V and the selecting keys).
+        if text_key_with_clipboard(&mut studio, &k.key, m, cx) {
             cx.notify();
             return;
         }
@@ -738,7 +748,11 @@ impl Screen {
             self.pressed(&press, window, cx);
             self.replaying_touch = false;
         }
-        self.studio.borrow_mut().pointer_held = false;
+        {
+            let mut s = self.studio.borrow_mut();
+            s.pointer_held = false;
+            s.text_drag = false;
+        }
         if consumed {
             return;
         }
@@ -1427,17 +1441,7 @@ impl EntityInputHandler for Screen {
         _: &mut Context<Self>,
     ) -> Option<String> {
         let studio = self.studio.borrow();
-        if let Some(f) = studio.ime_pick_field() {
-            let (text, real) = f.text_for_range(range);
-            *adjusted = Some(real);
-            return Some(text);
-        }
-        if let Some(f) = studio.ime_field() {
-            let (text, real) = f.text_for_range(range);
-            *adjusted = Some(real);
-            return Some(text);
-        }
-        let (text, real) = studio.palette.as_ref()?.text_for_range(range);
+        let (text, real) = studio.ime_field()?.text_for_range(range);
         *adjusted = Some(real);
         Some(text)
     }
@@ -1449,33 +1453,14 @@ impl EntityInputHandler for Screen {
         _: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
         let studio = self.studio.borrow();
-        if let Some(f) = studio.ime_pick_field() {
-            return Some(UTF16Selection {
-                range: f.selected_range(),
-                reversed: false,
-            });
-        }
-        if let Some(f) = studio.ime_field() {
-            return Some(UTF16Selection {
-                range: f.selected_range(),
-                reversed: false,
-            });
-        }
         Some(UTF16Selection {
-            range: studio.palette.as_ref()?.selected_range(),
+            range: studio.ime_field()?.selected_range(),
             reversed: false,
         })
     }
 
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
-        let studio = self.studio.borrow();
-        if let Some(f) = studio.ime_pick_field() {
-            return f.marked_range();
-        }
-        if let Some(f) = studio.ime_field() {
-            return f.marked_range();
-        }
-        studio.palette.as_ref()?.marked_range()
+        self.studio.borrow().ime_field()?.marked_range()
     }
 
     fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -1522,111 +1507,15 @@ impl EntityInputHandler for Screen {
             f32::from(element_bounds.size.width),
             f32::from(element_bounds.size.height),
         );
-        if let Some(f) = studio.ime_pick_field() {
-            // The search box is the list's first cell (UI-338).
-            let home = studio
-                .home_typing()
-                .and_then(|_| studio.home_layout(&g)?.search);
-            let at = match studio.popup.as_ref().filter(|p| p.pick.is_some()) {
-                Some(p) => p.layout(g.size).cells.first()?.rect,
-                None if home.is_some() => home?,
-                None => {
-                    studio
-                        .settings
-                        .as_ref()?
-                        .menu
-                        .as_ref()?
-                        .menu
-                        .layout
-                        .cells
-                        .first()?
-                        .rect
-                }
-            };
-            let mut pen = Pen {
-                window,
-                cx,
-                c: &self.colors,
-                origin: (0.0, 0.0),
-            };
-            let r = f.text_bounds(at, range, |t| {
-                pen.measure(t, FontSize::Small, Weight::Regular)
-            });
-            return Some(Bounds::new(
-                point(
-                    element_bounds.origin.x + px(r.x),
-                    element_bounds.origin.y + px(r.y),
-                ),
-                size(px(r.w), px(r.h)),
-            ));
-        }
-        if let Some(f) = studio.ask_field() {
-            let layout = studio.popup.as_ref()?.layout(g.size);
-            let at = layout
-                .cells
-                .iter()
-                .find(|c| c.look == crate::popup::Look::Input && c.on)
-                .or_else(|| layout.cells.first())?
-                .rect;
-            let mut pen = Pen {
-                window,
-                cx,
-                c: &self.colors,
-                origin: (0.0, 0.0),
-            };
-            let r = f.text_bounds(at, range, |t| {
-                pen.measure(t, FontSize::Small, Weight::Regular)
-            });
-            return Some(Bounds::new(
-                point(
-                    element_bounds.origin.x + px(r.x),
-                    element_bounds.origin.y + px(r.y),
-                ),
-                size(px(r.w), px(r.h)),
-            ));
-        }
-        if let Some(f) = studio.ime_field().filter(|_| {
-            matches!(
-                studio.ime_target(),
-                Some(
-                    crate::interaction::ImeTarget::Name
-                        | crate::interaction::ImeTarget::Settings
-                        | crate::interaction::ImeTarget::Head
-                )
-            )
-        }) {
-            let at = studio
-                .name_rect(&g)
-                .or_else(|| studio.head_fader_field_rect(&g))
-                .or_else(|| studio.settings_scene(&g).field)?;
-            let mut pen = Pen {
-                window,
-                cx,
-                c: &self.colors,
-                origin: (0.0, 0.0),
-            };
-            let r = f.text_bounds(at, range, |t| {
-                pen.measure(t, FontSize::Small, Weight::Regular)
-            });
-            return Some(Bounds::new(
-                point(
-                    element_bounds.origin.x + px(r.x),
-                    element_bounds.origin.y + px(r.y),
-                ),
-                size(px(r.w), px(r.h)),
-            ));
-        }
-        let p = studio.palette.as_ref()?;
-        let search = p.layout(g.size).search;
+        let f = studio.ime_field()?;
+        let (at, fsize, weight) = studio.text_place(&g)?;
         let mut pen = Pen {
             window,
             cx,
             c: &self.colors,
             origin: (0.0, 0.0),
         };
-        let r = p.text_bounds(search, range, |t| {
-            pen.measure(t, FontSize::Lead, Weight::Regular)
-        });
+        let r = f.text_bounds(at, range, |t| pen.measure(t, fsize, weight));
         Some(Bounds::new(
             point(
                 element_bounds.origin.x + px(r.x),
@@ -2743,4 +2632,32 @@ fn slider_turn(
         (_, Some(ActionData::Value(v))) => Turn::To(v.trim().parse().ok()?),
         _ => return None,
     })
+}
+
+/// Gives the keys to the field of text that has them; Ctrl+C / X / V go through the clipboard.
+/// True when the key was an editing key and is spent.
+pub(crate) fn text_key_with_clipboard(
+    studio: &mut Studio,
+    key: &str,
+    m: Mods,
+    cx: &mut gpui::App,
+) -> bool {
+    use crate::interaction::TextKey;
+    use gpui::ClipboardItem;
+    match studio.text_key(key, m) {
+        TextKey::Pass => false,
+        TextKey::Used => true,
+        TextKey::Copy(text) => {
+            if !text.is_empty() {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            }
+            true
+        }
+        TextKey::Paste => {
+            if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
+                studio.text_paste(&text);
+            }
+            true
+        }
+    }
 }

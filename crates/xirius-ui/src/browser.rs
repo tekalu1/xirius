@@ -21,6 +21,8 @@ use xirius_plugins::{Catalog, FailureKind};
 use xirius_design::{FontSize, Layout, Radius, Space, Weight};
 
 use crate::draw::{Align, Pen};
+use crate::settings::FieldId;
+use crate::settings::field::{Field, Look};
 use crate::studio::Rect;
 
 // ------------------------------------------------------------------ the rail
@@ -356,7 +358,7 @@ pub struct Browser {
     pub effect_view: View,
     /// How the song-files tab orders its files: by kind under headings, or by name (BRW-004).
     pub pool_view: View,
-    pub search: String,
+    pub search: Field,
     /// Is the search box taking key presses?
     pub typing: bool,
     pub favourites: BTreeSet<String>,
@@ -666,7 +668,7 @@ impl Browser {
             } else {
                 self.tab.name()
             },
-            &self.search,
+            &self.search.value,
             &self.closed_groups.iter().cloned().collect(),
             &self.opened_groups.iter().cloned().collect(),
             &self.favourites,
@@ -687,7 +689,7 @@ impl Browser {
             instrument_view: View::Kind,
             effect_view: View::Kind,
             pool_view: View::Kind,
-            search: String::new(),
+            search: Field::new(FieldId::Search, String::new()),
             typing: false,
             // design-lint: allow(ui-blocking-io) PRJ-031 review: first_run(None) constructs memory defaults without inspecting any home directory.
             favourites: xirius_session::places::Prefs::first_run(None).favourites,
@@ -789,7 +791,7 @@ impl Browser {
     }
 
     pub(crate) fn query(&self) -> String {
-        self.search.trim().to_lowercase()
+        self.search.value.trim().to_lowercase()
     }
 
     /// The instruments or effects the list shows now.
@@ -1703,7 +1705,6 @@ impl Browser {
     pub fn typed(&mut self, key: &str, ch: Option<&str>) -> bool {
         if key == "escape" && self.open && self.is_track_browser() && !self.search.is_empty() {
             self.search.clear();
-            self.typing = false;
             self.scroll = 0.0;
             return true;
         }
@@ -1712,16 +1713,17 @@ impl Browser {
         }
         match key {
             "escape" => {
-                self.search.clear();
-                self.typing = false;
+                if !self.search.clear() {
+                    self.typing = false;
+                }
             }
             "enter" => self.typing = false,
-            "backspace" => {
-                self.search.pop();
+            "left" | "right" | "home" | "end" | "backspace" | "delete" => {
+                self.search.key(key, false, false);
             }
             _ => match ch {
                 Some(c) if !c.is_empty() && !c.chars().any(char::is_control) => {
-                    self.search.push_str(c)
+                    self.search.insert(c);
                 }
                 _ => return false,
             },
@@ -1809,6 +1811,16 @@ fn icon_box(r: Rect) -> Rect {
     )
 }
 
+/// Where the search box's text goes: after the magnifier.
+pub fn search_text_rect(search: Rect) -> Rect {
+    Rect::new(
+        search.x + Space::X2.px() * 2.0 + Layout::ICON_SIZE,
+        search.y,
+        search.w - Layout::ICON_SIZE - Space::X2.px() * 3.0,
+        search.h,
+    )
+}
+
 fn paint_panel(
     pen: &mut Pen,
     browser: &Browser,
@@ -1818,7 +1830,7 @@ fn paint_panel(
 ) {
     let c = pen.c;
     // The search box: a sunken well with the magnifier and the typed text.
-    pen.round(l.search, c.well, Radius::S);
+    pen.round(l.search, c.field, Radius::S);
     let lens = Rect::new(
         l.search.x + Space::X2.px(),
         l.search.y + (l.search.h - Layout::ICON_SIZE) / 2.0,
@@ -1826,32 +1838,19 @@ fn paint_panel(
         Layout::ICON_SIZE,
     );
     pen.icon("search", lens, c.ink);
-    let text_r = Rect::new(
-        lens.right() + Space::X2.px(),
-        l.search.y,
-        l.search.w - lens.w - Space::X2.px() * 3.0,
-        l.search.h,
-    );
-    let (shown, ink) = if browser.search.is_empty() && !browser.typing {
-        ("検索", c.ink)
-    } else {
-        (browser.search.as_str(), c.ink_strong)
-    };
-    let w = pen.text(
-        shown,
-        FontSize::Small,
-        Weight::Regular,
-        ink,
+    let text_r = search_text_rect(l.search);
+    browser.search.paint(
+        pen,
         text_r,
-        Align::Left,
+        Look {
+            size: FontSize::Small,
+            weight: Weight::Regular,
+            ink: c.ink_strong,
+            placeholder: "検索",
+            placeholder_ink: c.ink,
+            focused: browser.typing,
+        },
     );
-    if browser.typing {
-        let caret_x = text_r.x + if browser.search.is_empty() { 0.0 } else { w } + 1.0;
-        pen.fill(
-            Rect::new(caret_x, l.search.y + 7.0, 1.5, l.search.h - 14.0),
-            c.ink_strong,
-        );
-    }
     if let Some(v) = l.view {
         if hover == Some(BrowserHit::ViewButton) {
             pen.round(v, c.hover, Radius::S);
@@ -2717,7 +2716,7 @@ mod tests {
         b.scanning = false;
         b.retrying = None;
         // A search leaves it out.
-        b.search = "a".into();
+        b.search.set("a".to_string());
         assert!(b.rows().iter().all(|r| !matches!(
             r,
             BRow::Bad { .. }
@@ -2847,9 +2846,12 @@ mod tests {
         }
         assert_eq!(names(&b.rows()), ["[シンセ 1]", "Surge XT"]);
         assert!(b.typed("backspace", None));
-        assert_eq!(b.search, "su");
+        assert_eq!(b.search.value, "su");
+        // The first Esc empties the words and stays; the second ends the input.
         assert!(b.typed("escape", None));
-        assert!(b.search.is_empty() && !b.typing);
+        assert!(b.search.is_empty() && b.typing);
+        assert!(b.typed("escape", None));
+        assert!(!b.typing);
         assert!(
             !b.typed("a", Some("a")),
             "no key goes to a box that is not focused"
@@ -2859,16 +2861,16 @@ mod tests {
     #[test]
     fn a_search_with_no_hit_says_so() {
         let mut b = example();
-        b.search = "zzz".into();
+        b.search.set("zzz".to_string());
         assert_eq!(names(&b.rows()), ["見つかりません"]);
     }
 
     #[test]
     fn the_search_matches_vendor_and_kind_too() {
         let mut b = example();
-        b.search = "digital".into();
+        b.search.set("digital".to_string());
         assert_eq!(names(&b.rows()), ["[シンセ 1]", "Dexed"]);
-        b.search = "ドラム".into();
+        b.search.set("ドラム".to_string());
         assert_eq!(names(&b.rows()), ["[ドラム 1]", "Drum Kit"]);
     }
 

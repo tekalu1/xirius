@@ -424,7 +424,7 @@ fn play(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) 
                 let mut s = studio.borrow_mut();
                 let g = crate::screen::geometry(&s, window);
                 let p = s.palette.as_mut().unwrap();
-                p.query = "clip.delete".into();
+                p.field.set("clip.delete".into());
                 p.selected = 0;
                 p.offset = 0.0;
                 let l = p.layout(g.size);

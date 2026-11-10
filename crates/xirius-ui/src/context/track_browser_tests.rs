@@ -58,7 +58,7 @@ fn indexed_presets_keep_payloads_and_use_shared_categories() {
             RailTab::Instruments
         };
         s.browser.track_kind = entry.category == Category::Track;
-        s.browser.search = entry.name.clone();
+        s.browser.search.set(entry.name.clone());
         s.browser.scroll = 0.0;
         for favourite in [false, true] {
             if favourite {
@@ -105,7 +105,7 @@ fn indexed_presets_keep_payloads_and_use_shared_categories() {
             RailTab::Instruments
         };
         s.browser.track_kind = false;
-        s.browser.search = entry.name.clone();
+        s.browser.search.set(entry.name.clone());
         s.browser.scroll = 0.0;
         let layout = s.browser.layout(g.panel);
         let placed = layout
@@ -142,7 +142,7 @@ fn indexed_presets_keep_payloads_and_use_shared_categories() {
             assert_eq!(s.ctx.as_ref().unwrap().items, before);
         }
     }
-    s.browser.search = "no matching preset".into();
+    s.browser.search.set("no matching preset".into());
     for scanning in [false, true] {
         s.browser.scanning = scanning;
         let layout = s.browser.layout(g.panel);

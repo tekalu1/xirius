@@ -304,7 +304,7 @@ pub fn stage(s: &mut Studio, g: &Geometry, stage: u8) {
             });
         }
         3 => {
-            s.browser.search = "kick".into();
+            s.browser.search.set("kick".into());
             s.browser.scroll = 0.0;
         }
         4 => {

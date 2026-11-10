@@ -392,7 +392,11 @@ impl Studio {
                 name,
                 args,
                 arg,
-                input: Field::new(FieldId::Search, initial),
+                input: if number {
+                    Field::new(FieldId::Search, initial)
+                } else {
+                    Field::selected(FieldId::Search, initial)
+                },
                 number,
             });
         }
@@ -411,7 +415,7 @@ impl Studio {
             .or_else(|| ctx.search.as_ref().map(|s| &s.field))
     }
 
-    fn ask_mut(&mut self) -> Option<&mut Field> {
+    pub(crate) fn ask_mut(&mut self) -> Option<&mut Field> {
         let ctx = self.ctx.as_mut()?;
         if let Some(a) = ctx.ask.as_mut() {
             Some(&mut a.input)
@@ -528,6 +532,12 @@ impl Studio {
                 } else {
                     self.ask_commit();
                 }
+            }
+            "left" | "right" | "home" | "end" | "delete" => {
+                if let Some(f) = self.ask_mut() {
+                    f.key(key, false, false);
+                }
+                self.refresh_popup();
             }
             "backspace" => {
                 if let Some(f) = self.ask_mut() {

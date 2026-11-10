@@ -1,5 +1,6 @@
 //! Inline track names own their text while the IME is editing it (KEY-002).
-use crate::draw::{Align, Pen};
+use crate::draw::Pen;
+use crate::settings::field::Look;
 use crate::settings::{Field, FieldId};
 use crate::studio::{Geometry, Hit, Rect, Studio};
 use crate::tools::Mods;
@@ -72,12 +73,12 @@ impl Studio {
         self.select_row(Some(RowKind::Track(t)));
         self.input_map.name = Some(Name {
             track: t,
-            field: Field::new(FieldId::Search, self.project().tracks[&t].name.clone()),
+            field: Field::selected(FieldId::Search, self.project().tracks[&t].name.clone()),
         });
         true
     }
 
-    pub fn name_key(&mut self, key: &str, _mods: Mods) -> bool {
+    pub fn name_key(&mut self, key: &str, mods: Mods) -> bool {
         let Some(name) = &mut self.input_map.name else {
             return false;
         };
@@ -86,7 +87,9 @@ impl Studio {
         }
         match key {
             "escape" => self.input_map.name = None,
-            "backspace" => name.field.backspace(),
+            "left" | "right" | "home" | "end" | "backspace" | "delete" => {
+                name.field.key(key, mods.shift, mods.ctrl);
+            }
             "enter" | "tab" => {
                 let name = self.input_map.name.take().expect("editing");
                 if !name.field.value.trim().is_empty() {
@@ -108,23 +111,18 @@ pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry) {
         return;
     };
     let name = s.input_map.name.as_ref().expect("editing");
-    pen.round(r, pen.c.surface_3, Radius::S);
-    let width = pen.text(
-        &name.field.text(),
-        FontSize::Small,
-        Weight::Regular,
-        pen.c.ink_strong,
+    pen.round(r, pen.c.field, Radius::S);
+    name.field.paint(
+        pen,
         r,
-        Align::Left,
-    );
-    pen.fill(
-        Rect::new(
-            (r.x + width + 1.0).min(r.right() - 2.0),
-            r.y + 4.0,
-            1.5,
-            r.h - 8.0,
-        ),
-        pen.c.ink_strong,
+        Look {
+            size: FontSize::Small,
+            weight: Weight::Regular,
+            ink: pen.c.ink_strong,
+            placeholder: "",
+            placeholder_ink: pen.c.ink,
+            focused: true,
+        },
     );
 }
 

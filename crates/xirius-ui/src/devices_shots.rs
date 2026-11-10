@@ -633,7 +633,7 @@ fn play_browser(s: &mut Studio, g: &Geometry, n: u8) {
             s.lib_move(to.0, to.1);
         }
         3 => {
-            s.browser.search = "ホール".into();
+            s.browser.search.set("ホール".into());
         }
         _ => {}
     }

@@ -179,9 +179,12 @@ fn the_value_box_of_a_point_opens_by_the_row_and_by_the_command() {
         &format!("auto.point.value --track {t} --target volume --at {at}")
     ));
     let open = |s: &Studio| {
-        s.popup
-            .as_ref()
-            .map(|p| (matches!(p.kind, PopupKind::AutoValue(_)), p.naming.clone()))
+        s.popup.as_ref().map(|p| {
+            (
+                matches!(p.kind, PopupKind::AutoValue(_)),
+                p.naming.as_ref().map(|f| f.value.clone()),
+            )
+        })
     };
     assert_eq!(open(&a).map(|o| o.0), Some(true), "the value box is open");
     let (x, y) = (120.0, 80.0);

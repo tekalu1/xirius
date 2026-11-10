@@ -124,7 +124,7 @@ fn blocked_navigation_and_wide_search_are_bounded_and_revisits_coalesce() {
         assert!(Instant::now() < until);
         std::thread::yield_now();
     }
-    b.search = "hit".into();
+    b.search.set("hit".into());
     b.rows();
     let (running, queued) = LISTS.with(|l| l.borrow().jobs.counts());
     assert!(running <= 4);
@@ -277,7 +277,7 @@ fn directory_and_file_links_match_the_main_branch_listing() {
     now.sort();
     assert_eq!(now, old);
     let mut b = b;
-    b.search = "hit".into();
+    b.search.set("hit".into());
     assert_eq!(
         names(&b).iter().filter(|n| n.as_str() == "hit.wav").count(),
         old.iter().filter(|(_, dir)| *dir).count()
@@ -498,9 +498,9 @@ fn the_search_finds_files_inside_closed_folders_of_the_place_only() {
     // Outside the place: not found.
     std::fs::write(root.join("kick_outside.wav"), b"").unwrap();
     let mut b = on(&top);
-    b.search = "KICK".into();
+    b.search.set("KICK".into());
     assert_eq!(names(&b), ["kick_01.wav", "kick_02.wav"]);
-    b.search = "zzz".into();
+    b.search.set("zzz".into());
     assert_eq!(names(&b), ["見つかりません"]);
 }
 

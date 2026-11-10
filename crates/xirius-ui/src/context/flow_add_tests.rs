@@ -314,7 +314,8 @@ fn the_insert_list_starts_with_the_splitter_and_its_keys_work() {
             .pick
             .as_ref()
             .unwrap()
-            .query
+            .field
+            .value
             .is_empty()
     );
     assert!(s.fx_typed("escape", None));
