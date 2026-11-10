@@ -349,6 +349,8 @@ pub struct Row {
     pub gap: bool,
     /// A small heading, not a row to choose.
     pub title: bool,
+    /// The row that goes back to the parent menu.
+    pub back: bool,
     pub swatch: Option<usize>,
     pub mark: Option<usize>,
     pub reason: String,
@@ -400,6 +402,7 @@ impl State {
                 sub: matches!(i.run, Run::Sub(_)),
                 gap: matches!(i.run, Run::Gap),
                 title: matches!(i.run, Run::Title),
+                back: matches!(i.run, Run::Back),
                 swatch: i.swatch,
                 mark: i.mark,
                 field: match &i.run {
@@ -1001,6 +1004,8 @@ mod screen_cmd_tests;
 mod screen_rows_tests;
 #[cfg(test)]
 mod section_tests;
+#[cfg(test)]
+mod shape_tests;
 #[cfg(test)]
 mod tempo_tests;
 #[cfg(test)]

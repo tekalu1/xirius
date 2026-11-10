@@ -22,6 +22,33 @@ pub fn child_rect(parent: Rect, row: Rect, size: (f32, f32), viewport: (f32, f32
     )
 }
 
+/// Width of `a` that `b` covers.
+fn overlap(a: Rect, b: Rect) -> f32 {
+    (a.right().min(b.right()) - a.x.max(b.x)).max(0.0)
+}
+
+/// Whether a child panel at depth 1 or more shows its "戻る" row (R6). Beside its parent the
+/// parent is the way back, so the row is dropped and the child's first row lines up with the
+/// parent row that opened it; a child that covers more than half of the parent keeps it.
+pub fn back_shown(popup: &Popup, viewport: (f32, f32)) -> bool {
+    popup.ctx.first().is_none_or(|i| !i.back)
+        || popup
+            .layout(viewport)
+            .cells
+            .iter()
+            .any(|c| c.action == Some(Action::Ctx(0)))
+}
+
+/// Drops the "戻る" cell and the gap after it, lifting the rest of the panel by their height.
+fn without_back(placed: &mut PopupLayout) {
+    let lift = xirius_design::Layout::MENU_ROW_H + xirius_design::Space::X2.px();
+    placed.cells.retain(|c| c.action != Some(Action::Ctx(0)));
+    for cell in &mut placed.cells {
+        cell.rect.y -= lift;
+    }
+    placed.rect.h -= lift;
+}
+
 pub fn layout(popup: &Popup, viewport: (f32, f32)) -> PopupLayout {
     let mut out = PopupLayout {
         rect: Rect::default(),
@@ -41,7 +68,25 @@ pub fn layout(popup: &Popup, viewport: (f32, f32)) -> PopupLayout {
         }
         let mut placed = panel.single_layout(viewport);
         if let Some((parent, row)) = parent {
-            let rect = child_rect(parent, row, (placed.rect.w, placed.rect.h), viewport);
+            let has_back = panel.ctx.first().is_some_and(|i| i.back)
+                && panel.offset == 0
+                && placed
+                    .cells
+                    .iter()
+                    .any(|c| c.action == Some(Action::Ctx(0)));
+            let mut rect = child_rect(parent, row, (placed.rect.w, placed.rect.h), viewport);
+            if has_back {
+                let mut bare = placed.clone();
+                without_back(&mut bare);
+                // The first row sits level with the parent row, not the panel's top edge.
+                let mut at = row;
+                at.y -= xirius_design::Layout::POPUP_PAD;
+                let beside = child_rect(parent, at, (bare.rect.w, bare.rect.h), viewport);
+                if overlap(parent, beside) * 2.0 <= parent.w {
+                    placed = bare;
+                    rect = beside;
+                }
+            }
             for cell in &mut placed.cells {
                 cell.rect.x += rect.x - placed.rect.x;
                 cell.rect.y += rect.y - placed.rect.y;

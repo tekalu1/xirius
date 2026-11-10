@@ -19,11 +19,21 @@ impl Studio {
         {
             return false;
         }
+        // A "戻る" row that is not shown cannot take the cursor (R6); ← and Esc still use it.
+        let back_hidden = self
+            .popup
+            .as_ref()
+            .is_some_and(|p| !super::cascade::back_shown(p, g.size));
+        let state = self.ctx.as_mut().unwrap();
         let selectable: Vec<_> = state
             .items
             .iter()
             .enumerate()
-            .filter(|(_, row)| row.enabled && !matches!(row.run, Run::Gap | Run::Title))
+            .filter(|(_, row)| {
+                row.enabled
+                    && !matches!(row.run, Run::Gap | Run::Title)
+                    && !(back_hidden && row.run == Run::Back)
+            })
             .map(|(i, _)| i)
             .collect();
         match key {

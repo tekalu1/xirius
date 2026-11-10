@@ -1,7 +1,7 @@
 //! The reviewed per-target routing table. This moves live Items, never recreates commands.
 use super::{
     Item, Run,
-    layout::{self, Category, Entry},
+    layout::{self, Category, Entry, Parent, Shape},
 };
 use serde_json::Value;
 use std::{collections::BTreeMap, sync::OnceLock};
@@ -190,20 +190,57 @@ pub struct Missing {
     pub path: Vec<String>,
 }
 
+/// One operation after the ledger has looked at it.
+struct Placed {
+    item: Item,
+    category: Category,
+    destination: Vec<String>,
+    /// The caller put it below a submenu, but the ledger keeps it on the root.
+    lift: bool,
+    gaps: usize,
+    titles: Vec<Item>,
+}
+
 /// An explicit target is required. Unknown rows are errors, rather than silently hidden.
+///
+/// The shape is decided here, from the rows alone (R1–R4): up to 12 root rows keep the
+/// caller's own order, gaps and submenus; more rows that span two or more categories become
+/// category groups.
 pub fn organize(target: &str, items: Vec<Item>) -> Result<Vec<Item>, Missing> {
+    let caller_rows = layout::root_rows(&items);
+    let caller = items.clone();
+    #[cfg(test)]
+    let caller_tree = items.clone();
     let mut leaves = Vec::new();
     let mut marks = BTreeMap::new();
     // Keep the recursive walk separate so no command payload is copied from the ledger.
+    struct Walk {
+        gaps: usize,
+        titles: Vec<Item>,
+    }
     fn collect(
         items: Vec<Item>,
         path: &[String],
-        out: &mut Vec<(Vec<String>, Item)>,
+        out: &mut Vec<(Vec<String>, Item, usize, Vec<Item>)>,
         marks: &mut BTreeMap<String, (Option<usize>, String)>,
+        walk: &mut Walk,
     ) {
         for item in items {
-            if matches!(item.run, Run::Gap | Run::Title | Run::Back) {
-                continue;
+            match item.run {
+                Run::Gap => {
+                    if path.is_empty() {
+                        walk.gaps += 1;
+                    }
+                    continue;
+                }
+                Run::Title => {
+                    if path.is_empty() {
+                        walk.titles.push(item);
+                    }
+                    continue;
+                }
+                Run::Back => continue,
+                _ => {}
             }
             let mut here = path.to_vec();
             if matches!(item.run, Run::Sub(_)) {
@@ -214,7 +251,9 @@ pub fn organize(target: &str, items: Vec<Item>) -> Result<Vec<Item>, Missing> {
                     .map_or_else(|| item.label.clone(), |n| format!("色 {:02}", n + 1)),
             );
             match item.run {
-                Run::Sub(ref children) if children.is_empty() => out.push((here, item)),
+                Run::Sub(ref children) if children.is_empty() => {
+                    out.push((here, item, walk.gaps, std::mem::take(&mut walk.titles)));
+                }
                 Run::Sub(mut children) => {
                     if !item.enabled {
                         for child in &mut children {
@@ -224,18 +263,32 @@ pub fn organize(target: &str, items: Vec<Item>) -> Result<Vec<Item>, Missing> {
                             }
                         }
                     }
-                    collect(children, &here, out, marks);
+                    let titles = std::mem::take(&mut walk.titles);
+                    let start = out.len();
+                    collect(children, &here, out, marks, walk);
+                    // Nested rows stand where their submenu stood.
+                    if let Some(first) = out.get_mut(start) {
+                        first.3.splice(0..0, titles);
+                    }
                 }
-                _ => out.push((here, item)),
+                _ => out.push((here, item, walk.gaps, std::mem::take(&mut walk.titles))),
             }
         }
     }
-    collect(items, &[], &mut leaves, &mut marks);
+    collect(
+        items,
+        &[],
+        &mut leaves,
+        &mut marks,
+        &mut Walk {
+            gaps: 0,
+            titles: Vec::new(),
+        },
+    );
     #[cfg(test)]
-    let original: Vec<Item> = leaves.iter().map(|(_, i)| i.clone()).collect();
-    let mut direct = Vec::new();
-    let mut groups: [Vec<Item>; 12] = std::array::from_fn(|_| Vec::new());
-    for (path, mut item) in leaves {
+    let original: Vec<Item> = leaves.iter().map(|(_, i, ..)| i.clone()).collect();
+    let mut placed = Vec::new();
+    for (path, mut item, gaps, titles) in leaves {
         let mut candidates: Vec<_> = routes()
             .iter()
             .filter(|r| target_matches(&r.target, target))
@@ -288,6 +341,9 @@ pub fn organize(target: &str, items: Vec<Item>) -> Result<Vec<Item>, Missing> {
         } else if route.dynamic {
             *destination.last_mut().unwrap() = item.label.clone();
         }
+        let quantize = target == "note"
+            && destination.len() == 1
+            && destination[0].starts_with("クオンタイズ（");
         if item.swatch.is_none() {
             // Only the approved operation renames. Ledger descriptions of generated
             // candidates (e.g. a renamed Macro knob) are not their display labels.
@@ -298,80 +354,257 @@ pub fn organize(target: &str, items: Vec<Item>) -> Result<Vec<Item>, Missing> {
                 "名前を変更…".into()
             } else if item.label == "別のチャンネルへ写す" {
                 "別のチャンネルへコピー".into()
-            } else if target == "note" && destination == ["クオンタイズ（今のグリッド）"]
-            {
+            } else if quantize {
                 destination[0].clone()
             } else {
                 item.label
             };
         }
-        if destination.len() == 1 {
-            direct.push((route.category, item));
-        } else {
-            insert(
-                &mut groups[route.category as usize],
-                &destination[1..destination.len() - 1],
-                item,
-                &marks,
-            );
+        placed.push(Placed {
+            item,
+            category: route.category,
+            lift: quantize && path.len() > 1,
+            destination,
+            gaps,
+            titles,
+        });
+    }
+    let mut spans: Vec<_> = placed.iter().map(|p| p.category).collect();
+    spans.sort();
+    spans.dedup();
+    let grouped = layout::shape(caller_rows, spans.len()) == Shape::Grouped;
+    // R4: many rows in one category are laid out by `build` too, without a group.
+    let result = if grouped || caller_rows > layout::ROOT_ROWS {
+        let entries = placed
+            .into_iter()
+            .map(|p| {
+                let parents = p
+                    .destination
+                    .get(1..p.destination.len() - 1)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|label| {
+                        let label = if label == "別のチャンネルへ写す" {
+                            "別のチャンネルへコピー"
+                        } else {
+                            label.as_str()
+                        };
+                        let (mark, key) = marks.get(label).cloned().unwrap_or_default();
+                        Parent {
+                            label: label.into(),
+                            mark,
+                            key,
+                        }
+                    })
+                    .collect();
+                Entry {
+                    category: p.category,
+                    direct: p.destination.len() == 1,
+                    item: p.item,
+                    parents,
+                    gaps: p.gaps,
+                    titles: p.titles,
+                }
+            })
+            .collect();
+        layout::build(entries).map_err(|_| Missing {
+            target: target.into(),
+            path: vec!["root exceeds 12 rows".into()],
+        })?
+    } else {
+        let mut rows = placed.into_iter().map(|p| (p.item, p.lift));
+        layout::collapse_gaps(rebuild(caller, &mut rows))
+    };
+    #[cfg(test)]
+    verify_live_tree(target, &original, &result, grouped);
+    #[cfg(test)]
+    verify_shape(target, &caller_tree, &result, grouped);
+    Ok(result)
+}
+
+/// The caller's own tree, with each operation replaced by its classified Item (same order).
+/// A row the ledger keeps on the root comes out of its submenu (only the note's quantize).
+fn rebuild(items: Vec<Item>, rows: &mut impl Iterator<Item = (Item, bool)>) -> Vec<Item> {
+    let mut out = Vec::new();
+    for mut item in items {
+        match item.run {
+            Run::Back => {}
+            Run::Gap | Run::Title => out.push(item),
+            Run::Sub(children) if !children.is_empty() => {
+                let (mut lifted, mut kept) = (Vec::new(), Vec::new());
+                for child in children {
+                    match child.run {
+                        Run::Back => {}
+                        Run::Gap | Run::Title => kept.push(child),
+                        Run::Sub(ref grand) if !grand.is_empty() => {
+                            let mut sub = child.clone();
+                            sub.run = Run::Sub(rebuild(grand.clone(), rows));
+                            kept.push(sub);
+                        }
+                        _ => {
+                            let (row, lift) =
+                                rows.next().expect("one classified row per operation");
+                            let list = if lift { &mut lifted } else { &mut kept };
+                            list.push(row);
+                        }
+                    }
+                }
+                out.extend(lifted);
+                if kept.iter().any(|i| !matches!(i.run, Run::Gap | Run::Title)) {
+                    item.run = Run::Sub(kept);
+                    out.push(item);
+                }
+            }
+            _ => out.push(rows.next().expect("one classified row per operation").0),
         }
     }
-    let mut entries: Vec<_> = direct
-        .into_iter()
-        .map(|(c, i)| Entry::new(c, i).direct())
-        .collect();
-    for (category, items) in Category::ALL.into_iter().zip(groups) {
-        entries.extend(items.into_iter().map(|i| Entry::new(category, i)));
-    }
-    let result = layout::build(entries).map_err(|_| Missing {
-        target: target.into(),
-        path: vec!["root exceeds 12 rows".into()],
-    })?;
-    #[cfg(test)]
-    verify_live_tree(target, &original, &result);
-    Ok(result)
+    out
 }
 
 /// Every real builder call in the unit suite checks the moved live payloads, not a
 /// reconstruction of operations from JSON. Dynamic rules may produce several candidates.
+/// The right-click menu shape rules (T1-T4, T10, T11, T13) on one organized tree.
 #[cfg(test)]
-fn verify_live_tree(target: &str, original: &[Item], result: &[Item]) {
-    fn leaves<'a>(items: &'a [Item], out: &mut Vec<&'a Item>) {
+fn verify_shape(target: &str, original: &[Item], result: &[Item], grouped: bool) {
+    fn names<'a>(items: &'a [Item], out: &mut Vec<&'a str>) {
         for item in items {
+            out.push(&item.label);
+            if let Run::Sub(children) = &item.run {
+                names(children, out);
+            }
+        }
+    }
+    let mut caller = Vec::new();
+    names(original, &mut caller);
+    let is_group = |i: &Item| {
+        matches!(&i.run, Run::Sub(_))
+            && !caller.contains(&i.label.as_str())
+            && layout::Category::ALL.iter().any(|c| c.label() == i.label)
+    };
+    let rows = |items: &[Item]| {
+        items
+            .iter()
+            .filter(|i| !matches!(i.run, Run::Gap | Run::Title | Run::Back))
+            .count()
+    };
+    let groups: Vec<&Item> = result.iter().filter(|i| is_group(i)).collect();
+    // T3: nothing to group when the menu fits one face (or sits in one category, R4).
+    assert!(
+        grouped || groups.is_empty(),
+        "{target}: category groups in a flat menu: {:?}",
+        groups.iter().map(|g| &g.label).collect::<Vec<_>>()
+    );
+    // T1: the root is never a single group.
+    assert!(
+        !(groups.len() == 1 && rows(result) == 1),
+        "{target}: root is a single group"
+    );
+    // T2/T13: a group holds at least 2 rows or entries.
+    for g in &groups {
+        let Run::Sub(children) = &g.run else { continue };
+        assert!(
+            rows(children) >= 2,
+            "{target}: group {} holds fewer than 2 rows",
+            g.label
+        );
+    }
+    // T4: the direct rows lead a grouped menu: at most 4, in table order.
+    if grouped {
+        let lead: Vec<&Item> = result
+            .iter()
+            .take_while(|i| !matches!(i.run, Run::Gap | Run::Title))
+            .collect();
+        let ranks: Vec<usize> = lead.iter().map(|i| layout::direct_rank(&i.label)).collect();
+        if ranks.iter().all(|r| *r < layout::DIRECT_ORDER.len()) {
+            assert!(ranks.len() <= 4, "{target}: more than 4 direct rows");
+            assert!(
+                ranks.windows(2).all(|w| w[0] <= w[1]),
+                "{target}: direct rows out of order"
+            );
+        }
+    }
+    // T10: no panel has two submenus of the same name.
+    fn twice(target: &str, items: &[Item]) {
+        let mut seen: Vec<&str> = Vec::new();
+        for item in items {
+            if let Run::Sub(children) = &item.run {
+                assert!(
+                    !seen.contains(&item.label.as_str()),
+                    "{target}: two submenus named {}",
+                    item.label
+                );
+                seen.push(&item.label);
+                twice(target, children);
+            }
+        }
+    }
+    twice(target, result);
+}
+
+#[cfg(test)]
+fn verify_live_tree(target: &str, original: &[Item], result: &[Item], grouped: bool) {
+    fn leaves<'a>(items: &'a [Item], grouped: bool, out: &mut Vec<&'a Item>) {
+        for item in items {
+            if matches!(item.run, Run::Gap | Run::Title) {
+                continue;
+            }
             if let Run::Sub(children) = &item.run
                 && !children.is_empty()
             {
                 assert!(
-                    item.enabled,
+                    item.enabled || !grouped || item.ledger_id.is_some(),
                     "disabled category hides its reasons: {}",
                     item.label
                 );
-                leaves(children, out);
+                leaves(children, grouped, out);
             } else {
                 out.push(item);
             }
         }
     }
-    assert!(result.len() <= 12, "{target}: root row budget");
-    let order: Vec<_> = result
+    let rows = result
         .iter()
-        .filter_map(|i| {
-            if i.ledger_id.is_some() {
-                return None;
-            }
-            Category::ALL.into_iter().position(|c| c.label() == i.label)
-        })
-        .collect();
-    assert!(
-        order.windows(2).all(|p| p[0] < p[1]),
-        "{target}: category order"
-    );
+        .filter(|i| !matches!(i.run, Run::Gap | Run::Title))
+        .count();
+    if grouped {
+        let order: Vec<_> = result
+            .iter()
+            .filter_map(|i| {
+                if i.ledger_id.is_some() {
+                    return None;
+                }
+                Category::ALL.into_iter().position(|c| c.label() == i.label)
+            })
+            .collect();
+        assert!(
+            order.windows(2).all(|p| p[0] < p[1]),
+            "{target}: category order"
+        );
+    }
     let mut moved = Vec::new();
-    leaves(result, &mut moved);
+    leaves(result, grouped, &mut moved);
     assert_eq!(
         original.len(),
         moved.len(),
         "{target}: missing or duplicate leaves"
+    );
+    let single_category = {
+        let mut categories: Vec<_> = moved
+            .iter()
+            .filter_map(|i| {
+                routes()
+                    .iter()
+                    .find(|r| Some(&r.id) == i.ledger_id.as_ref())
+            })
+            .map(|r| r.category)
+            .collect();
+        categories.sort();
+        categories.dedup();
+        categories.len() < 2
+    };
+    assert!(
+        rows <= layout::ROOT_ROWS || single_category,
+        "{target}: root row budget"
     );
     let mut remaining = original.to_vec();
     let mut fixed = std::collections::BTreeSet::new();
@@ -408,21 +641,27 @@ fn verify_live_tree(target: &str, original: &[Item], result: &[Item]) {
                         || (old.label == "別のチャンネルへ写す"
                             && item.label == "別のチャンネルへコピー")
                         || (target == "note"
-                            && old.label == "今のグリッド"
-                            && item.label == "クオンタイズ（今のグリッド）"))
+                            && item.label.starts_with("クオンタイズ（")
+                            && item.label.contains(&old.label)))
             })
             .unwrap_or_else(|| panic!("{target}: changed or duplicated operation {}", item.label));
         remaining.remove(n);
     }
     assert!(remaining.is_empty(), "{target}: unreachable operations");
-    fn paths(items: &[Item], path: &mut Vec<String>, ids: &mut Vec<String>) {
+    fn paths(items: &[Item], path: &mut Vec<String>, ids: &mut Vec<String>, grouped: bool) {
         for item in items {
             if let Some(id) = &item.ledger_id {
                 let route = routes().iter().find(|r| &r.id == id).unwrap();
                 let empty = matches!(&item.run, Run::Sub(rows) if rows.is_empty());
                 let parent_count = route.after.len() - if empty { 2 } else { 1 };
+                // A one-row category is not made (R3), so its row stands without the category.
                 assert!(
-                    same_path(&route.after[..parent_count], path.as_slice()),
+                    !grouped
+                        || same_path(&route.after[..parent_count], path.as_slice())
+                        || same_path(
+                            &route.after[1.min(parent_count)..parent_count],
+                            path.as_slice()
+                        ),
                     "{id}: approved destination"
                 );
                 if !empty {
@@ -430,13 +669,13 @@ fn verify_live_tree(target: &str, original: &[Item], result: &[Item]) {
                 }
             } else if let Run::Sub(children) = &item.run {
                 path.push(item.label.clone());
-                paths(children, path, ids);
+                paths(children, path, ids, grouped);
                 path.pop();
             }
         }
     }
     let mut ids = Vec::new();
-    paths(result, &mut Vec::new(), &mut ids);
+    paths(result, &mut Vec::new(), &mut ids, grouped);
     // The workspace suite aggregates coverage across real scene fixtures. This is
     // test-only output, and contains rule IDs, never project paths or plugin data.
     if let Some(directory) = std::env::var_os("XIRIUS_CONTEXT_COVERAGE_DIR") {
@@ -446,7 +685,7 @@ fn verify_live_tree(target: &str, original: &[Item], result: &[Item]) {
             std::path::Path::new(&directory),
             &NEXT,
             &serde_json::to_vec(&serde_json::json!({
-                "target": target, "ids": ids, "root_rows": result.len(),
+                "target": target, "ids": ids, "root_rows": rows,
                 "missing": remaining.len(), "duplicate": 0, "unreachable": 0
             }))
             .unwrap(),
@@ -479,38 +718,6 @@ fn write_coverage(
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),
         }
-    }
-}
-
-fn insert(
-    items: &mut Vec<Item>,
-    parents: &[String],
-    leaf: Item,
-    marks: &BTreeMap<String, (Option<usize>, String)>,
-) {
-    let Some((parent, rest)) = parents.split_first() else {
-        items.push(leaf);
-        return;
-    };
-    let parent = if parent == "別のチャンネルへ写す" {
-        "別のチャンネルへコピー"
-    } else {
-        parent.as_str()
-    };
-    let index = items
-        .iter()
-        .position(|i| i.label == parent && matches!(i.run, Run::Sub(_)))
-        .unwrap_or_else(|| {
-            let mut group = Item::sub(parent, Vec::new()).enabled(true);
-            if let Some((mark, key)) = marks.get(parent) {
-                group.mark = *mark;
-                group.key = key.clone();
-            }
-            items.push(group);
-            items.len() - 1
-        });
-    if let Run::Sub(children) = &mut items[index].run {
-        insert(children, rest, leaf, marks);
     }
 }
 
