@@ -72,8 +72,16 @@ pub const CTX_V2: &[Shot] = &[
         acts: &[Act::Reset, staged(60), staged(61)],
     },
     Shot {
-        name: "v2-pad",
-        acts: &[Act::Reset, staged(80), staged(210), staged(211)],
+        name: "v2-pad-a-open",
+        acts: &[Act::Reset, staged(80), staged(210)],
+    },
+    Shot {
+        name: "v2-pad-b-menu",
+        acts: &[staged(211)],
+    },
+    Shot {
+        name: "v2-pad-main",
+        acts: &[staged(212)],
     },
     Shot {
         name: "v2-search",
@@ -947,7 +955,9 @@ fn mixer(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut 
         96 => choose(studio, "プラグインを複製", window, cx),
         97 => choose(studio, "Keys", window, cx),
         98 => choose(studio, "別のチャンネルへコピー", window, cx),
-        // A Drum Kit stands in Keys' place and its window is open; the right button on a pad.
+        // A Drum Kit stands in Keys' place and its independent window is open; the right button on a
+        // pad is pressed in that window, and the window's picture is `v2-pad.bmp`. The three are
+        // shots of their own, so the window opens, the menu draws and the picture is taken in turn.
         210 => {
             let mut s = studio.borrow_mut();
             let t = track(&s, "Keys");
@@ -956,21 +966,27 @@ fn mixer(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut 
                 .unwrap()
                 .id;
             s.show_instrument(t, id);
-            s.instruments.detached_target = Some(id);
+            drop(s);
+            cx.refresh_windows();
         }
         211 => {
-            let mut s = studio.borrow_mut();
-            let t = track(&s, "Keys");
-            let id = crate::instrument::current(&s.project().tracks[&t])
+            let t = track(&studio.borrow(), "Keys");
+            let id = crate::instrument::current(&studio.borrow().project().tracks[&t])
                 .unwrap()
                 .id;
-            let g = crate::screen::geometry(&s, window);
-            let p = s.instrument_center(&g, id, crate::instrument::window::Part::Pad(37));
-            if let Some((x, y)) = p {
-                s.instrument_right(&g, x, y);
-            }
-            drop(s);
-            refresh(window, cx);
+            crate::device_window::input_shots::right_click(
+                studio,
+                id,
+                crate::instrument::window::Part::Pad(37),
+                cx,
+            );
+        }
+        212 => {
+            let t = track(&studio.borrow(), "Keys");
+            let id = crate::instrument::current(&studio.borrow().project().tracks[&t])
+                .unwrap()
+                .id;
+            crate::device_window::input_shots::capture_device(studio, id, "v2-pad.bmp", cx);
         }
         // The CPU list with a plugin that takes time, and the right button on its row.
         220 => {

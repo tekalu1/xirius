@@ -420,6 +420,51 @@ fn keyboard_stage(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: 
     );
 }
 
+/// The right button on `part` of the independent window of the device `id`, through the window's
+/// own listener (the menu opens inside that window).
+pub(crate) fn right_click(studio: &Rc<RefCell<Studio>>, id: PluginId, part: Part, cx: &mut App) {
+    let h = handle(studio, id, cx);
+    let at = h
+        .downcast::<DeviceWindow>()
+        .unwrap()
+        .update(cx, |v, w, _| {
+            v.with(w, |s, g| s.instrument_center(g, id, part))
+        })
+        .unwrap()
+        .expect("the part is in view");
+    h.update(cx, |_, window, cx| {
+        window.dispatch_event(
+            gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                button: MouseButton::Right,
+                position: point(px(at.0), px(at.1)),
+                modifiers: gpui::Modifiers::default(),
+                click_count: 1,
+                first_mouse: false,
+            }),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.refresh_windows();
+}
+
+/// The picture of the independent window of the device `id` as `name` in the shots' folder.
+pub(crate) fn capture_device(studio: &Rc<RefCell<Studio>>, id: PluginId, name: &str, cx: &mut App) {
+    let h = handle(studio, id, cx);
+    h.update(cx, |_, w, _| w.set_window_title("Xirius device capture"))
+        .unwrap();
+    #[cfg(target_os = "windows")]
+    {
+        // `PrintWindow` reads the window's own picture; no input is sent and nothing is raised.
+        let hwnd = crate::park::own_handle("Xirius device capture").unwrap();
+        let args: Vec<_> = std::env::args().collect();
+        let root = args.windows(2).find(|a| a[0] == "--shot").unwrap();
+        xirius_vst3::capture_window(hwnd, &std::path::Path::new(&root[1]).join(name)).unwrap();
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = name;
+}
+
 fn capture_keyboard(h: gpui::AnyWindowHandle, name: &str, cx: &mut App) {
     h.update(cx, |_, w, _| w.set_window_title("Xirius keyboard capture"))
         .unwrap();
