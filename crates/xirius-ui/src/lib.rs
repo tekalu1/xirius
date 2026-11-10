@@ -233,6 +233,7 @@ pub mod plugin_down_shots;
 pub mod plugin_fixture_shots;
 pub mod plugin_keys;
 pub mod search_box;
+pub mod search_field_shots;
 #[cfg(test)]
 mod search_field_tests;
 #[cfg(test)]
@@ -495,6 +496,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("ruler-drag", ruler_drag_shots::SHOTS),
     ("saving", saving_shots::SHOTS),
     ("screencmd", screencmd_shots::SHOTS),
+    ("search-field", search_field_shots::SHOTS),
     ("settings", settings::shots::SHOTS),
     ("side", side_shots::SIDE),
     ("small", shot_small::SMALL),
