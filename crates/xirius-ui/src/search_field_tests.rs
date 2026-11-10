@@ -181,6 +181,19 @@ fn nothing_found_says_one_phrase_and_the_match_is_found_without_case() {
 }
 
 #[test]
+fn nothing_found_is_said_in_the_track_browser_list_too() {
+    let (mut s, g) = browser();
+    s.browser.track_library = Some(Vec::new());
+    s.browser.search.set("qqqqqq".into());
+    let l = s.browser.layout(g.panel);
+    assert!(
+        l.rows
+            .iter()
+            .any(|p| matches!(p.row, BRow::Note(t) if t == NO_MATCH))
+    );
+}
+
+#[test]
 fn a_screen_reader_reads_the_browser_search_its_count_and_the_clear() {
     let (mut s, g) = browser();
     let marks = crate::a11y::marks(&s, &g);

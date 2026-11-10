@@ -1004,6 +1004,13 @@ impl Browser {
                     },
                 })
                 .collect();
+            if rows.is_empty() {
+                rows.push(BRow::Note(if self.query().is_empty() {
+                    "まだありません"
+                } else {
+                    "見つかりません"
+                }));
+            }
             if self.scanning {
                 rows.insert(0, BRow::Scanning);
             }
