@@ -355,6 +355,8 @@ pub struct Windows {
     pub(crate) detached: std::collections::HashSet<PluginId>,
     pub(crate) detached_target: Option<PluginId>,
     pub(crate) detached_channel: bool,
+    /// The Macro Controls' own window is the surface now (UI-337).
+    pub(crate) detached_macros: bool,
     pub open: Vec<Win>,
     pub(crate) grab: Option<Grab>,
     /// The control the keys move (UI-324): its plug-in and its parameter.
@@ -799,9 +801,15 @@ impl Windows {
         }
     }
 
+    /// Is the surface one of the independent windows (a device's, the Channel Editor's or the
+    /// Macro Controls'), not the main window?
+    pub(crate) fn own_surface(&self) -> bool {
+        self.detached_target.is_some() || self.detached_channel || self.detached_macros
+    }
+
     /// The local frame of this surface's device; other surfaces have no frame here.
     pub fn frame(&self, i: usize, _g: &Geometry) -> Rect {
-        if self.detached_channel {
+        if self.detached_channel || self.detached_macros {
             return Rect::default();
         }
         let id = self.open[i].plugin;

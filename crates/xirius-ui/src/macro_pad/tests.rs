@@ -35,8 +35,8 @@ fn knob(s: &Studio, t: TrackId, k: u8) -> f64 {
         .value
 }
 
-fn press(s: &mut Studio, g: &Geometry, (x, y): (f32, f32)) {
-    assert!(s.macro_press(g, x, y));
+fn press(s: &mut Studio, (x, y): (f32, f32)) {
+    assert!(s.macro_press(x, y));
     s.macro_up();
 }
 
@@ -93,11 +93,12 @@ fn the_channel_editor_shows_the_row_and_its_button_opens_the_window() {
 
 #[test]
 fn the_window_lays_out_four_by_two_and_the_pad() {
-    let (mut s, g) = studio();
+    let (mut s, _) = studio();
     let t = track(&s, "Vocal");
     s.open_macros(t);
-    let v = s.macro_view(&g).unwrap();
-    assert_eq!((v.r.w, v.r.h), (W, H));
+    let v = s.macro_view().unwrap();
+    // the whole of the window's own surface, from its corner
+    assert_eq!((v.r.x, v.r.y, v.r.w, v.r.h), (0.0, 0.0, W, H));
     assert_eq!((v.pad.w, v.pad.h), (SIDE, SIDE));
     assert_eq!(v.knobs[1].x - v.knobs[0].x, CELL);
     assert_eq!(v.knobs[4].y - v.knobs[0].y, CELL);
@@ -106,15 +107,15 @@ fn the_window_lays_out_four_by_two_and_the_pad() {
     assert!(v.picks[0].right() < v.picks[1].x);
     assert_eq!(v.picks[1].right(), v.pad.right());
     assert!(
-        v.bar.channel.is_some(),
-        "the bar links to the channel editor"
+        v.bar.channel.is_none(),
+        "the bar is the shared one: a title and the close"
     );
     assert!(v.r.bottom() >= v.picks[0].bottom());
 }
 
 #[test]
 fn unpinned_it_follows_the_chosen_track_and_pinned_it_stays() {
-    let (mut s, g) = studio();
+    let (mut s, _) = studio();
     let vocal = track(&s, "Vocal");
     let keys = track(&s, "Keys");
     // opened on Vocal while Keys is chosen, it shows Vocal until another track is chosen
@@ -128,8 +129,8 @@ fn unpinned_it_follows_the_chosen_track_and_pinned_it_stays() {
     s.macro_follow();
     assert_eq!(s.macro_track(), Some(keys));
     // the pin keeps what it shows now
-    let pin = mid(s.macro_view(&g).unwrap().bar.pin);
-    press(&mut s, &g, pin);
+    let pin = mid(s.macro_view().unwrap().bar.pin);
+    press(&mut s, pin);
     assert!(s.macro_pad.as_ref().unwrap().pinned);
     s.selected_row = Some(RowKind::Track(vocal));
     s.macro_follow();
@@ -137,12 +138,14 @@ fn unpinned_it_follows_the_chosen_track_and_pinned_it_stays() {
     // a pinned window is not taken by another track's button
     s.open_macros(vocal);
     assert_eq!(s.macro_track(), Some(keys));
-    // the channel button opens that track's editor
-    let ch = mid(s.macro_view(&g).unwrap().bar.channel.unwrap());
-    press(&mut s, &g, ch);
-    assert_eq!(s.channel.as_ref().unwrap().track, keys);
-    let close = mid(s.macro_view(&g).unwrap().bar.close);
-    press(&mut s, &g, close);
+    // the head moves the window (the system does, not the surface): a press on it does nothing
+    let head = drag_rects(&s.macro_view().unwrap())[0];
+    let (hx, hy) = mid(head);
+    assert_eq!(part_at(&s.macro_view().unwrap(), hx, hy), Some(Part::Head));
+    press(&mut s, (hx, hy));
+    assert!(s.channel.is_none() && s.macro_pad.is_some());
+    let close = mid(s.macro_view().unwrap().bar.close);
+    press(&mut s, close);
     assert!(s.macro_pad.is_none());
 }
 
@@ -151,13 +154,13 @@ fn the_pad_dragged_sets_both_knobs_in_one_step() {
     let (mut s, g) = studio();
     let t = track(&s, "Vocal");
     s.open_macros(t);
-    let v = s.macro_view(&g).unwrap();
+    let v = s.macro_view().unwrap();
     let undo = s.song().steps();
     let (x, y) = pad_point(v.pad, (0.2, 0.2));
-    assert!(s.macro_press(&g, x, y));
+    assert!(s.macro_press(x, y));
     assert!(s.macro_pad.as_ref().unwrap().focused);
     let (x, y) = pad_point(v.pad, (0.4, 0.7));
-    assert!(s.macro_moved(&g, x, y));
+    assert!(s.macro_moved(x, y));
     assert_eq!(s.song().steps(), undo, "nothing is written while held");
     let track = s.project().tracks[&t].clone();
     assert_eq!(s.pad_now(&track), (0.4, 0.7));
@@ -167,8 +170,8 @@ fn the_pad_dragged_sets_both_knobs_in_one_step() {
     assert!((knob(&s, t, 1) - 0.7).abs() < 1e-9);
     // off the pad, it holds to the edge
     let (x, y) = pad_point(v.pad, (0.5, 0.5));
-    assert!(s.macro_press(&g, x, y));
-    assert!(s.macro_moved(&g, v.pad.right() + 50.0, v.pad.y - 50.0));
+    assert!(s.macro_press(x, y));
+    assert!(s.macro_moved(v.pad.right() + 50.0, v.pad.y - 50.0));
     s.macro_up();
     assert_eq!((knob(&s, t, 0), knob(&s, t, 1)), (1.0, 1.0));
     // one undo takes back both
@@ -178,15 +181,15 @@ fn the_pad_dragged_sets_both_knobs_in_one_step() {
 
 #[test]
 fn a_release_a_dialog_takes_still_lets_the_pad_and_the_grip_go() {
-    let (mut s, g) = studio();
+    let (mut s, _) = studio();
     let t = track(&s, "Vocal");
     s.open_macros(t);
-    let v = s.macro_view(&g).unwrap();
+    let v = s.macro_view().unwrap();
     let undo = s.song().steps();
     let (x, y) = pad_point(v.pad, (0.2, 0.2));
-    assert!(s.macro_press(&g, x, y));
+    assert!(s.macro_press(x, y));
     let (x, y) = pad_point(v.pad, (0.6, 0.3));
-    assert!(s.macro_moved(&g, x, y));
+    assert!(s.macro_moved(x, y));
     s.mixer.grip_drag = Some((0.0, 0.0));
     s.mixer.bar_grab = Some(0.0);
     s.let_go_drags();
@@ -195,12 +198,12 @@ fn a_release_a_dialog_takes_still_lets_the_pad_and_the_grip_go() {
     // the pad ends where it was, for the track it was pressed for
     assert_eq!(s.song().steps(), undo + 1);
     assert!((knob(&s, t, 0) - 0.6).abs() < 1e-9);
-    assert!(!s.macro_moved(&g, x + 20.0, y));
+    assert!(!s.macro_moved(x + 20.0, y));
 }
 
 #[test]
 fn the_arrow_keys_move_the_pad_while_it_has_them() {
-    let (mut s, g) = studio();
+    let (mut s, _) = studio();
     let t = track(&s, "Vocal");
     s.open_macros(t);
     assert!(s.run_command("control.xy", json!({"track":t,"x":0.4,"y":0.7})));
@@ -209,9 +212,9 @@ fn the_arrow_keys_move_the_pad_while_it_has_them() {
         !s.macro_key("right", none),
         "not before the pad was pressed"
     );
-    let v = s.macro_view(&g).unwrap();
+    let v = s.macro_view().unwrap();
     let (x, y) = pad_point(v.pad, (0.4, 0.7));
-    press(&mut s, &g, (x, y));
+    press(&mut s, (x, y));
     let undo = s.song().steps();
     assert!(s.macro_key("right", none));
     assert!(s.macro_key("up", none));
@@ -235,8 +238,8 @@ fn a_pick_lists_the_eight_and_chooses_the_axis_knob() {
     let (mut s, g) = studio();
     let t = track(&s, "Vocal");
     s.open_macros(t);
-    let pick = mid(s.macro_view(&g).unwrap().picks[1]);
-    press(&mut s, &g, pick);
+    let pick = mid(s.macro_view().unwrap().picks[1]);
+    press(&mut s, pick);
     let popup = s.popup.as_ref().expect("the pick's list");
     assert_eq!(popup.kind, PopupKind::MacroAxis(t, 1));
     assert!(crate::pick_list::is(popup.kind), "a PickList (UI-320)");
@@ -251,9 +254,9 @@ fn a_pick_lists_the_eight_and_chooses_the_axis_knob() {
     assert!(s.popup_action(&g, act));
     assert!(s.popup.is_none());
     assert_eq!(s.project().tracks[&t].controls.xy, [1, 0]);
-    let v = s.macro_view(&g).unwrap();
+    let v = s.macro_view().unwrap();
     let (x, y) = pad_point(v.pad, (0.25, 0.75));
-    press(&mut s, &g, (x, y));
+    press(&mut s, (x, y));
     assert!((knob(&s, t, 1) - 0.25).abs() < 1e-9, "X now moves Macro 2");
     assert!((knob(&s, t, 0) - 0.75).abs() < 1e-9);
 }
@@ -264,7 +267,7 @@ fn a_reader_hears_the_knobs_the_pad_and_the_picks() {
     let t = track(&s, "Vocal");
     assert!(s.run_command("control.xy", json!({"track":t,"x":0.4,"y":0.7})));
     s.open_macros(t);
-    let marks = marks(&s, &g);
+    let marks = marks(&s);
     assert_eq!(marks.len(), 1);
     assert_eq!(marks[0].node.label(), Some("Vocal › Macro Controls"));
     let find = |label: &str| {
@@ -283,7 +286,6 @@ fn a_reader_hears_the_knobs_the_pad_and_the_picks() {
     );
     assert_eq!(find("Y").value(), Some("Macro 2"));
     assert!(find("ピン留め").toggled().is_some());
-    find(channel::NAME);
     find("閉じる");
     // the channel editor's row too
     s.open_channel(t);
@@ -300,18 +302,17 @@ fn a_reader_hears_the_knobs_the_pad_and_the_picks() {
 }
 
 #[test]
-fn the_window_takes_presses_over_the_channel_editor() {
-    let (mut s, g) = studio();
+fn the_window_is_laid_out_on_its_own_surface_whatever_the_channel_editor_is() {
+    let (mut s, _) = studio();
     let t = track(&s, "Vocal");
     s.open_channel(t);
     s.open_macros(t);
-    let v = s.macro_view(&g).unwrap();
+    let v = s.macro_view().unwrap();
     let (x, y) = mid(v.pad);
-    assert!(s.over_macros(&g, x, y));
-    assert!(s.macro_press(&g, x, y));
+    assert!(s.macro_press(x, y));
     s.macro_up();
-    // a press elsewhere takes the keys from the pad
-    assert!(!s.macro_press(&g, 2.0, 990.0));
+    // a press off the window takes the keys from the pad
+    assert!(!s.macro_press(2.0, H + 20.0));
     assert!(!s.macro_pad.as_ref().unwrap().focused);
 }
 
@@ -332,27 +333,18 @@ fn a_pinned_pad_whose_track_goes_closes_and_others_open_again() {
 
 #[test]
 fn a_press_on_the_window_stays_in_it_and_one_elsewhere_takes_the_keys() {
-    let (mut s, g) = studio();
+    let (mut s, _) = studio();
     let t = track(&s, "Vocal");
     s.open_macros(t);
-    let v = s.macro_view(&g).unwrap();
-    // its ground, between the parts: nothing under the window hears it
+    let v = s.macro_view().unwrap();
+    // its ground, between the parts, is the window's own
     let (x, y) = (v.r.x + 3.0, v.r.bottom() - 3.0);
     assert_eq!(part_at(&v, x, y), Some(Part::Body));
-    assert_eq!(s.hit(&g, x, y), crate::studio::Hit::None);
-    assert!(s.macro_press(&g, x, y));
-    press(&mut s, &g, mid(v.pad));
+    assert!(s.macro_press(x, y));
+    press(&mut s, mid(v.pad));
     assert!(s.macro_pad.as_ref().unwrap().focused);
-    // the screen begins every press with this (`screen.rs`, `pressed`)
-    let away = [
-        (g.lanes.x + 10.0, g.lanes.y + 4.0),
-        (g.lanes.right() - 10.0, g.lanes.bottom() - 4.0),
-    ];
-    let (ax, ay) = away
-        .into_iter()
-        .find(|&(x, y)| !v.r.contains(x, y))
-        .unwrap();
-    s.press_keys(&g, ax, ay);
+    // a press off the window (the main window's is not this surface's) lets the keys go
+    assert!(!s.macro_press(-4.0, -4.0));
     assert!(!s.macro_pad.as_ref().unwrap().focused);
     assert!(!s.macro_key("right", crate::tools::Mods::default()));
 }

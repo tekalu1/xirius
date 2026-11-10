@@ -214,10 +214,10 @@ fn ui_324_escape_during_a_drag_puts_nothing_in() {
     assert_eq!(value(&s, t, "feedback").1, start);
 }
 
-/// The macro pad keeping its focus does not take that Esc: the drag lets go, and the pad
-/// still has the keys.
+/// The Esc of a device window lets the drag go; the Macro Controls are a window of their own
+/// and do not take it.
 #[test]
-fn escape_during_a_drag_lets_go_before_the_macro_pad_takes_it() {
+fn escape_during_a_drag_lets_go_and_the_macro_pad_in_its_own_window_is_not_asked() {
     let (mut s, g, t, id) = delay();
     let (k, start) = value(&s, t, "feedback");
     s.open_macros(t);

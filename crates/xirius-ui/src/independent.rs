@@ -16,8 +16,7 @@ use xirius_core::id::PluginId;
 pub(crate) enum Kind {
     Device(PluginId),
     Channel,
-    /// Reserved for the Macro Controls (opened here once they are a window).
-    #[allow(dead_code)]
+    /// The Macro Controls: a window of a fixed size.
     Macros,
     Presets,
 }
@@ -27,7 +26,6 @@ pub(crate) enum Kind {
 pub(crate) enum Key {
     Device(PluginId),
     Channel,
-    #[allow(dead_code)]
     Macros,
 }
 

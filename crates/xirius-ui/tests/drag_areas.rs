@@ -81,3 +81,22 @@ fn macos_still_uses_start_window_move() {
     let text = std::fs::read_to_string(src().join("device_window.rs")).unwrap();
     assert!(text.contains("start_window_move"));
 }
+
+#[test]
+fn the_macro_controls_register_their_drag_areas_from_the_press_hit_test() {
+    let pad = std::fs::read_to_string(src().join("macro_pad/mod.rs")).unwrap();
+    // the Drag areas and the press are one test: `part_at` says "head" for both
+    assert!(
+        pad.contains("pub fn drag_rects") && pad.contains("part_at(v, x, y) == Some(Part::Head)"),
+        "the Macro Controls' drag areas must come from the same `part_at` head test as the press"
+    );
+    let text = std::fs::read_to_string(src().join("device_window.rs")).unwrap();
+    assert!(
+        text.contains("macro_pad::drag_rects"),
+        "the Macro Controls window must register `macro_pad::drag_rects` as Drag areas"
+    );
+    assert!(
+        text.contains("macro_pad::Part::Head"),
+        "a press on the Macro Controls' head starts the window move"
+    );
+}

@@ -408,33 +408,6 @@ fn moving_the_keys_to_the_arrangement_by_keyboard_lets_the_row_go() {
 }
 
 #[test]
-fn a_press_on_a_floating_window_keeps_the_name_being_typed() {
-    let mut s = Studio::sample();
-    let g = s.geometry(1440.0, 860.0);
-    s.resized(&g);
-    let crate::tree::RowKind::Track(t) = s.selected_row.unwrap() else {
-        panic!("track");
-    };
-    let row = s.tree().row_of(crate::tree::RowKind::Track(t)).unwrap();
-    let parts = crate::studio::RowParts::of(row);
-    let (x, y) = (
-        g.column.x + parts.name_x + 3.0,
-        g.column.y + row.y - s.scroll.1 + crate::studio::RowParts::LINE_1_Y + 3.0,
-    );
-    assert!(s.name_press(&g, x, y, 2));
-    let field = &mut s.input_map.name.as_mut().unwrap().field;
-    field.replace_text(None, "Lead");
-    s.open_macros(t);
-    let v = s.macro_view(&g).unwrap();
-    let (x, y) = (v.r.x + v.r.w / 2.0, v.r.y + v.r.h / 2.0);
-    assert!(s.over_float(&g, x, y));
-    // the screen begins every press past the dialogs with this (`screen.rs`, `pressed`)
-    s.press_keys(&g, x, y);
-    assert!(s.input_map.name.is_none(), "the name field closes");
-    assert!(s.project().tracks[&t].name.ends_with("Lead"));
-}
-
-#[test]
 fn alt_insert_adds_before_the_picked_row_and_at_a_branch_head() {
     let (mut s, g) = studio();
     let (t, sp, b, [eq, comp, _]) = vocal(&mut s);

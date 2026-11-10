@@ -81,19 +81,22 @@ impl Studio {
         self.open_classified("other-67", items, x, y);
     }
 
-    /// Opens the list of targets under knob `k` wherever it shows: the macro window, else the
-    /// channel editor's row.
+    /// Opens the list of targets under knob `k` where the surface shows it: the macro window's, or
+    /// the channel editor's row.
     pub(crate) fn pick_macro(&mut self, g: &Geometry, t: TrackId, k: u8) -> bool {
         let i = usize::from(k);
-        let anchor = self
-            .macro_view(g)
-            .filter(|v| v.track == t)
-            .and_then(|v| v.knobs.get(i).copied())
-            .or_else(|| {
-                let v = self.channel_view(g)?;
+        // each window asks for the list under its own knob: the macro window's surface has no
+        // channel editor in it, and the channel editor's has no macro window
+        let anchor = if self.instruments.detached_macros {
+            self.macro_view()
+                .filter(|v| v.track == t)
+                .and_then(|v| v.knobs.get(i).copied())
+        } else {
+            self.channel_view(g).and_then(|v| {
                 (self.channel.as_ref()?.track == t).then_some(())?;
                 v.macros.and_then(|r| r.cells.get(i).copied())
-            });
+            })
+        };
         let Some(anchor) = anchor else {
             return false;
         };
@@ -150,8 +153,8 @@ impl Studio {
     }
 
     /// A right press over the macro window: a knob's menu. True over the window.
-    pub(crate) fn macro_right(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
-        let Some(v) = self.macro_view(g) else {
+    pub(crate) fn macro_right(&mut self, x: f32, y: f32) -> bool {
+        let Some(v) = self.macro_view() else {
             return false;
         };
         match super::part_at(&v, x, y) {

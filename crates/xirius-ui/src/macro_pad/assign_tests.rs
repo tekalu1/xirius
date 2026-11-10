@@ -84,11 +84,13 @@ fn maps(s: &Studio, t: TrackId, k: u8) -> Vec<AutoTarget> {
         .collect()
 }
 
-/// Opens knob `k`'s menu in the macro window.
-fn knob_menu(s: &mut Studio, g: &Geometry, t: TrackId, k: u8) {
+/// Opens knob `k`'s menu in the macro window: the studio is scoped to its surface, as its
+/// window's view does, and stays so until a test leaves it.
+fn knob_menu(s: &mut Studio, t: TrackId, k: u8) {
     s.open_macros(t);
-    let (x, y) = mid(s.macro_view(g).unwrap().knobs[usize::from(k)]);
-    assert!(s.macro_right(g, x, y));
+    s.instruments.detached_macros = true;
+    let (x, y) = mid(s.macro_view().unwrap().knobs[usize::from(k)]);
+    assert!(s.macro_right(x, y));
     assert!(s.context_open());
 }
 
@@ -129,7 +131,7 @@ fn a_device_knob_gives_itself_to_a_macro_in_one_step() {
 #[test]
 fn the_knob_menu_has_add_learn_remove_and_its_lane() {
     let (mut s, g, t, _) = delay();
-    knob_menu(&mut s, &g, t, 7);
+    knob_menu(&mut s, t, 7);
     let all = crate::context::tests::all_labels(&s);
     for label in [ADD, LEARN, REMOVE, "名前を変更…"] {
         assert!(all.iter().any(|name| name == label), "{label}");
@@ -140,6 +142,7 @@ fn the_knob_menu_has_add_learn_remove_and_its_lane() {
     assert!(!row_enabled(&s, REMOVE), "Macro 8 has nothing");
     // the channel editor's row opens the same menu, and its list hangs under the row's knob
     s.macro_pad = None;
+    s.instruments.detached_macros = false;
     s.popup = None;
     s.open_channel(t);
     let v = s.channel_view(&g).unwrap();
@@ -166,7 +169,7 @@ fn the_knob_menu_has_add_learn_remove_and_its_lane() {
 #[test]
 fn the_list_gives_and_takes_back_and_shows_the_other_knobs_targets() {
     let (mut s, g, t, _) = delay();
-    knob_menu(&mut s, &g, t, 7);
+    knob_menu(&mut s, t, 7);
     pick(&mut s, &g, ADD);
     let popup = s.popup.as_ref().expect("the list");
     assert_eq!(popup.kind, PopupKind::MacroTargets(t, 7));
@@ -215,7 +218,7 @@ fn learn_takes_the_parameter_the_device_moved_last() {
         "plugin.param.set",
         json!({ "id": id.to_string(), "param": "mix", "value": 0.3 }),
     ));
-    knob_menu(&mut s, &g, t, 4);
+    knob_menu(&mut s, t, 4);
     let learn = crate::context::tests::all_labels(&s)
         .into_iter()
         .find(|l| l.starts_with(LEARN))
@@ -226,10 +229,10 @@ fn learn_takes_the_parameter_the_device_moved_last() {
     assert_eq!(s.song().steps(), n + 1);
     assert_eq!(maps(&s, t, 4), [AutoTarget::Param(id, "mix".into())]);
     // taken by Macro 5, it is not offered to another knob
-    knob_menu(&mut s, &g, t, 5);
+    knob_menu(&mut s, t, 5);
     assert!(!row_enabled(&s, LEARN));
     // and Macro 5's menu takes it back
-    knob_menu(&mut s, &g, t, 4);
+    knob_menu(&mut s, t, 4);
     assert!(row_enabled(&s, REMOVE));
     pick(&mut s, &g, REMOVE);
     pick(&mut s, &g, "Delay");

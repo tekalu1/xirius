@@ -1,7 +1,9 @@
 //! The macro controls (MIX-041): the row of Macro 1–8 under the channel editor's toolbar, and
 //! their own window with the eight in four columns of two at the left and one X/Y pad at the
 //! right. The pad moves the two knobs its picks under it choose. Without its pin the window
-//! shows the chosen channel's macros, as a device window does.
+//! shows the chosen channel's macros, as a device window does. The window is an independent
+//! one of a fixed size (UI-337, opened by `device_window`): its view is laid out from (0, 0) of
+//! its own surface, and the system moves it by the bar's empty part.
 
 pub mod assign;
 #[cfg(test)]
@@ -18,8 +20,8 @@ use xirius_session::autowrite::Phase;
 
 use crate::mixer::MixerHit;
 use crate::popup::PopupKind;
-use crate::studio::{Geometry, Rect, Studio};
-use crate::title_bar::{self, BAR_H, PlainBar};
+use crate::studio::{Rect, Studio};
+use crate::title_bar::{self, BAR_H, Bar, Seats};
 use crate::tools::Mods;
 use crate::tree::RowKind;
 
@@ -43,10 +45,6 @@ const PICK_R: f32 = 8.0;
 /// The window's size.
 pub const W: f32 = 3.0 * ROOM + 4.0 * CELL + SIDE;
 pub const H: f32 = BAR_H + TOP + SIDE + TOP + PICK_H + ROOM;
-/// How far a window's top stands from the screen's top, unless moved.
-const FROM_TOP: f32 = 96.0;
-/// How much of the window stays on the screen.
-const KEEP: f32 = 80.0;
 /// A dial and the lines under it: the value, then the name.
 pub const DIAL: f32 = 26.0;
 pub const DIAL_GAP: f32 = 4.0;
@@ -64,7 +62,6 @@ pub const AXES: [&str; 2] = ["X", "Y"];
 pub struct MacroWin {
     /// The track it shows while pinned, and while no track is chosen.
     pub track: TrackId,
-    pub at: Option<(f32, f32)>,
     pub pinned: bool,
     /// The pad has the keys: ←→↑↓ move it.
     pub focused: bool,
@@ -79,7 +76,6 @@ impl MacroWin {
     pub fn new(track: TrackId) -> MacroWin {
         MacroWin {
             track,
-            at: None,
             pinned: false,
             focused: false,
             seen: None,
@@ -92,10 +88,6 @@ impl MacroWin {
 /// What in the window is held.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Grab {
-    Move {
-        from: (f32, f32),
-        pointer: (f32, f32),
-    },
     /// The pad's point on the track it was pressed for: where it was and where it is now (0..1
     /// across and up).
     Pad {
@@ -110,8 +102,6 @@ pub(crate) enum Grab {
 pub enum Part {
     Close,
     Pin,
-    /// Opens the channel editor of the track.
-    Channel,
     Head,
     Knob(u8),
     Pad,
@@ -126,7 +116,7 @@ pub struct View {
     pub r: Rect,
     pub track: TrackId,
     pub name: String,
-    pub bar: PlainBar,
+    pub bar: Bar,
     pub knobs: [Rect; KNOBS],
     pub pad: Rect,
     pub picks: [Rect; 2],
@@ -156,17 +146,16 @@ pub fn pick_w(name: &str) -> f32 {
         + PICK_R
 }
 
-/// The window for the track `t` on a screen of `size`.
-pub fn view(t: &Track, w: &MacroWin, size: (f32, f32)) -> View {
-    let (x, y) = w.at.unwrap_or(((size.0 - W) / 2.0, FROM_TOP));
-    let r = Rect::new(
-        x.clamp(0.0, (size.0 - KEEP).max(0.0)),
-        y.clamp(0.0, (size.1 - BAR_H).max(0.0)),
-        W,
-        H,
-    );
+/// The window for the track `t`: the whole of its own surface, which is [`W`] by [`H`].
+pub fn view(t: &Track) -> View {
+    let r = Rect::new(0.0, 0.0, W, H);
     let name = t.shown_name().to_string();
-    let bar = title_bar::plain_layout_of(Rect::new(r.x, r.y, r.w, BAR_H), &name, Some(NAME));
+    let bar = title_bar::layout_plain(
+        Rect::new(r.x, r.y, r.w, BAR_H),
+        &name,
+        NAME,
+        Seats::default(),
+    );
     let top = r.y + BAR_H + TOP;
     let knobs = std::array::from_fn(|i| {
         let (col, row) = ((i % 4) as f32, (i / 4) as f32);
@@ -218,6 +207,14 @@ pub fn percent(v: f64) -> String {
     format!("{:.0} %", v * 100.0)
 }
 
+/// The parts of the bar that move the window (UI-337): what [`part_at`] calls the head. The
+/// system moves the window by them (`WindowControlArea::Drag`).
+pub fn drag_rects(v: &View) -> Vec<Rect> {
+    title_bar::drag_rects(v.bar_rect(), &v.bar, |x, y| {
+        part_at(v, x, y) == Some(Part::Head)
+    })
+}
+
 /// The part under the point.
 pub fn part_at(v: &View, x: f32, y: f32) -> Option<Part> {
     if !v.r.contains(x, y) {
@@ -228,8 +225,6 @@ pub fn part_at(v: &View, x: f32, y: f32) -> Option<Part> {
         Part::Close
     } else if b.pin.contains(x, y) {
         Part::Pin
-    } else if b.channel.is_some_and(|c| c.contains(x, y)) {
-        Part::Channel
     } else if v.bar_rect().contains(x, y) {
         Part::Head
     } else if v.pad.contains(x, y) {
@@ -257,11 +252,10 @@ impl Studio {
     }
 
     /// The macro window as it is laid out.
-    pub fn macro_view(&self, g: &Geometry) -> Option<View> {
-        let w = self.macro_pad.as_ref()?;
+    pub fn macro_view(&self) -> Option<View> {
         let t = self.macro_track()?;
         let p = self.project();
-        Some(view(p.tracks.get(&t)?, w, g.size))
+        Some(view(p.tracks.get(&t)?))
     }
 
     /// Before each frame: an unpinned window takes the track chosen since it last looked.
@@ -324,8 +318,8 @@ impl Studio {
     }
 
     /// A press: true when the window took it. A press elsewhere takes the keys from the pad.
-    pub fn macro_press(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
-        let Some(v) = self.macro_view(g) else {
+    pub fn macro_press(&mut self, x: f32, y: f32) -> bool {
+        let Some(v) = self.macro_view() else {
             return false;
         };
         let Some(part) = part_at(&v, x, y) else {
@@ -351,13 +345,8 @@ impl Studio {
                     _ => self.selected_clip.map(|(c, _)| c),
                 };
             }
-            Part::Channel => self.open_channel(t),
-            Part::Head => {
-                w.grab = Some(Grab::Move {
-                    from: (v.r.x, v.r.y),
-                    pointer: (x, y),
-                })
-            }
+            // the system moves the window by its head: the surface starts that
+            Part::Head => {}
             Part::Knob(i) => {
                 self.control_drag(t, ControlId::Knob(i), y);
             }
@@ -451,34 +440,26 @@ impl Studio {
     }
 
     /// The pointer moves with something of the window held.
-    pub fn macro_moved(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
+    pub fn macro_moved(&mut self, x: f32, y: f32) -> bool {
         let Some(grab) = self.macro_pad.as_ref().and_then(|w| w.grab) else {
             return false;
         };
-        match grab {
-            Grab::Move { from, pointer } => {
-                if let Some(w) = self.macro_pad.as_mut() {
-                    w.at = Some((from.0 + x - pointer.0, from.1 + y - pointer.1));
-                }
-            }
-            Grab::Pad { track, from, now } => {
-                let Some(v) = self.macro_view(g) else {
-                    return false;
-                };
-                let next = pad_values(v.pad, x, y);
-                if next == now {
-                    return true;
-                }
-                if let Some(w) = self.macro_pad.as_mut() {
-                    w.grab = Some(Grab::Pad {
-                        track,
-                        from,
-                        now: next,
-                    });
-                }
-                self.pad_to(track, next);
-            }
+        let Grab::Pad { track, from, now } = grab;
+        let Some(v) = self.macro_view() else {
+            return false;
+        };
+        let next = pad_values(v.pad, x, y);
+        if next == now {
+            return true;
         }
+        if let Some(w) = self.macro_pad.as_mut() {
+            w.grab = Some(Grab::Pad {
+                track,
+                from,
+                now: next,
+            });
+        }
+        self.pad_to(track, next);
         true
     }
 
@@ -488,21 +469,19 @@ impl Studio {
             return false;
         };
         // the track it was pressed for, whichever the window shows now
-        if let Grab::Pad {
+        let Grab::Pad {
             track: t,
             from,
             now,
-        } = grab
-        {
-            if self.pad_touch(t, Phase::End, now) {
-                return true;
-            }
-            if now == from {
-                let p = self.project();
-                self.transport.sync(&p, self.song().dir());
-            } else {
-                self.pad_set(t, now);
-            }
+        } = grab;
+        if self.pad_touch(t, Phase::End, now) {
+            return true;
+        }
+        if now == from {
+            let p = self.project();
+            self.transport.sync(&p, self.song().dir());
+        } else {
+            self.pad_set(t, now);
         }
         true
     }
@@ -516,8 +495,8 @@ impl Studio {
     }
 
     /// The pointer moved over the screen: what of the window it is on.
-    pub fn macro_hover(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
-        let hot = self.macro_view(g).and_then(|v| part_at(&v, x, y));
+    pub fn macro_hover(&mut self, x: f32, y: f32) -> bool {
+        let hot = self.macro_view().and_then(|v| part_at(&v, x, y));
         let Some(w) = self.macro_pad.as_mut() else {
             return false;
         };
@@ -526,11 +505,6 @@ impl Studio {
         }
         w.hot = hot;
         true
-    }
-
-    /// Is the window under the point?
-    pub(crate) fn over_macros(&self, g: &Geometry, x: f32, y: f32) -> bool {
-        self.macro_view(g).is_some_and(|v| v.r.contains(x, y))
     }
 
     /// The pad's keys while it has them: ←→↑↓ move it by a hundredth (Shift, a tenth), each
@@ -574,13 +548,13 @@ impl Studio {
 }
 
 /// The reader's marks of the macro window.
-pub fn marks(s: &Studio, g: &Geometry) -> Vec<crate::a11y::Mark> {
+pub fn marks(s: &Studio) -> Vec<crate::a11y::Mark> {
     use crate::a11y::{Mark, bounds};
     use gpui::accesskit;
     let Some(w) = &s.macro_pad else {
         return Vec::new();
     };
-    let Some(v) = s.macro_view(g) else {
+    let Some(v) = s.macro_view() else {
         return Vec::new();
     };
     let p = s.project();
@@ -611,12 +585,6 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<crate::a11y::Mark> {
         accesskit::Toggled::False
     });
     children.push(mark("macros-pin".into(), pin));
-    if let Some(c) = v.bar.channel {
-        children.push(mark(
-            "macros-channel".into(),
-            button(crate::channel::NAME, c),
-        ));
-    }
     children.push(mark("macros-close".into(), button("閉じる", v.bar.close)));
     for (i, cell) in v.knobs.iter().enumerate() {
         let id = ControlId::Knob(i as u8);

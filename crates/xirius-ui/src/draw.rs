@@ -633,7 +633,6 @@ pub fn paint_overlay(pen: &mut Pen, studio: &Studio, g: &Geometry) {
         .mixer
         .editor_paint_us
         .set(started.elapsed().as_micros() as u64);
-    crate::macro_pad::paint::paint(pen, studio, g);
     crate::browser_inst::paint(pen, studio, g);
     crate::fx_chain::paint_drag(pen, studio, g);
     crate::name_drag::paint(pen, studio, g);

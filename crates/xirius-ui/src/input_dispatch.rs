@@ -49,7 +49,7 @@ pub fn bits(m: Mods) -> u8 {
 
 impl Studio {
     pub fn input_context(&self, g: &Geometry) -> &'static str {
-        if self.instruments.detached_target.is_some() || self.instruments.detached_channel {
+        if self.instruments.own_surface() {
             // A focused device window does not inherit a browser/roll selection
             // in the main window. Its local fields have already handled input.
             "global"
@@ -165,8 +165,7 @@ impl Studio {
         mods: Mods,
         code: Option<&str>,
     ) -> bool {
-        let detached =
-            self.instruments.detached_target.is_some() || self.instruments.detached_channel;
+        let detached = self.instruments.own_surface();
         if !detached {
             self.view_read.cleanup.want_open = false;
             self.cancel_browser_menu();

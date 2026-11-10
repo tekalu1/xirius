@@ -665,18 +665,17 @@ mod tests {
             .unwrap()
             .id;
         assert!(s.run_command("auto.mode", json!({"ids":[t.to_string()],"mode":"latch"})));
-        let g = s.geometry(1600.0, 1000.0);
         s.open_macros(t);
-        let pad = s.macro_view(&g).unwrap().pad;
+        let pad = s.macro_view().unwrap().pad;
         s.arrange.writing = Some(Writing {
             pass: Pass::begin(&s.project(), 0),
             last: 0,
         });
         s.playhead = 0;
         s.transport.playing = true;
-        assert!(s.macro_press(&g, pad.x + pad.w * 0.25, pad.y + pad.h * 0.5));
+        assert!(s.macro_press(pad.x + pad.w * 0.25, pad.y + pad.h * 0.5));
         s.playhead = 960;
-        assert!(s.macro_moved(&g, pad.x + pad.w * 0.75, pad.y + pad.h * 0.25));
+        assert!(s.macro_moved(pad.x + pad.w * 0.75, pad.y + pad.h * 0.25));
         s.playhead = 1920;
         assert!(s.macro_up());
         s.transport.playing = false;
@@ -694,7 +693,7 @@ mod tests {
         // Read: the lanes hold the knobs, and the pad does not move by hand
         assert!(s.run_command("auto.mode", json!({"ids":[t.to_string()],"mode":"read"})));
         let steps = s.song().steps();
-        assert!(s.macro_press(&g, pad.x + 4.0, pad.bottom() - 4.0));
+        assert!(s.macro_press(pad.x + 4.0, pad.bottom() - 4.0));
         assert!(!s.macro_up(), "nothing was held");
         s.macro_pad.as_mut().unwrap().focused = true;
         assert!(s.macro_key("right", crate::tools::Mods::default()));

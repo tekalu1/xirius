@@ -23,7 +23,7 @@ impl Studio {
     /// Merely opening a field owns it,
     /// including an empty field or an unfinished IME composition.
     pub(crate) fn ime_target(&self) -> Option<ImeTarget> {
-        if self.instruments.detached_target.is_some() || self.instruments.detached_channel {
+        if self.instruments.own_surface() {
             return if self.ask_field().is_some() {
                 Some(ImeTarget::Ask)
             } else if self.popup.as_ref().is_some_and(|p| p.pick.is_some()) {

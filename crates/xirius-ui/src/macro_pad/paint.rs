@@ -7,7 +7,7 @@ use xirius_design::{FontSize, Radius, Weight};
 
 use super::{AXES, CHEV, DIAL_GAP, LINE_H, Part, View, dial_rect, knob_value, percent};
 use crate::draw::{Align, Pen};
-use crate::studio::{Geometry, Rect, Studio};
+use crate::studio::{Rect, Studio};
 use crate::title_bar;
 
 /// The dial's ring.
@@ -43,12 +43,12 @@ pub fn paint_knob(pen: &mut Pen, cell: Rect, v: f64, name: &str, hot: bool) {
     );
 }
 
-/// Paints the macro window: over every other window.
-pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry) {
+/// Paints the macro window's surface: the whole of its own window.
+pub fn paint(pen: &mut Pen, s: &Studio) {
     let Some(w) = &s.macro_pad else {
         return;
     };
-    let Some(v) = s.macro_view(g) else {
+    let Some(v) = s.macro_view() else {
         return;
     };
     let p = s.project();
@@ -57,13 +57,23 @@ pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry) {
     };
     let c = pen.c;
     pen.floating(v.r, c.paper, Radius::M);
-    title_bar::paint_plain_of(
+    title_bar::paint_with(
         pen,
         v.bar_rect(),
-        "macro",
-        &v.name,
-        Some(super::NAME),
-        w.pinned,
+        &v.bar,
+        &title_bar::View {
+            track: &v.name,
+            device: super::NAME,
+            icon: "macro",
+            powered: true,
+            preset: "",
+            modified: false,
+            steps: (true, true),
+            pinned: w.pinned,
+            popout: false,
+            keyed: false,
+            seats: title_bar::Seats::default(),
+        },
     );
     for (i, cell) in v.knobs.iter().enumerate() {
         let k = i as u8;

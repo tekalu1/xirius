@@ -37,14 +37,6 @@ pub const SHOTS: &[Shot] = &[
         name: "channel06",
         acts: &[Act::Reset, Act::Stage(Play::Laid(setup), 5)],
     },
-    Shot {
-        name: "channel07",
-        acts: &[Act::Reset, Act::Stage(Play::Laid(setup), 6)],
-    },
-    Shot {
-        name: "channel08",
-        acts: &[Act::Reset, Act::Stage(Play::Laid(setup), 7)],
-    },
 ];
 
 fn track(s: &Studio, name: &str) -> TrackId {
@@ -150,8 +142,8 @@ fn setup(s: &mut Studio, g: &Geometry, n: u8) {
                 w.chosen = Some(Pick::Plugin(strings));
             }
         }
-        // the macro row on, and the macro window to the editor's right with its point at 40 % 70 %
-        5..=7 => {
+        // the macro row on and the Macro Controls open (a window of its own, not in this shot)
+        5 => {
             for (k, v) in [0.4, 0.7, 0.25, 0.5, 0.1, 0.8, 0.3, 0.6]
                 .into_iter()
                 .enumerate()
@@ -162,32 +154,7 @@ fn setup(s: &mut Studio, g: &Geometry, n: u8) {
             if let Some(w) = s.channel.as_mut() {
                 w.macros = true;
             }
-            // beside the editor when the screen has the room, else over its lower part
-            let right = s.channel_view(g).map_or(0.0, |v| v.r.right());
-            let beside = right + 16.0 + crate::macro_pad::W <= g.size.0 - 12.0;
-            let at = if beside {
-                (right + 16.0, 56.0)
-            } else {
-                ((g.size.0 - crate::macro_pad::W - 12.0).max(0.0), 300.0)
-            };
             s.open_macros(vocal);
-            if let Some(w) = s.macro_pad.as_mut() {
-                w.at = Some(at);
-            }
-            if n == 5 {
-                return;
-            }
-            // Macro 3 has the volume and Reverb's mix was moved last: its menu, then its list
-            let args = json!({ "track": vocal, "control": "k3", "target": "volume" });
-            s.run_command("control.assign", args);
-            let args = json!({ "id": verb, "param": "mix", "value": 0.35 });
-            s.run_command("plugin.param.set", args);
-            let knob = s.macro_view(g).unwrap().knobs[2];
-            if n == 6 {
-                s.macro_knob_menu(vocal, 2, knob.x + knob.w / 2.0, knob.y + knob.h / 2.0);
-            } else {
-                s.pick_macro(g, vocal, 2);
-            }
         }
         _ => {}
     }

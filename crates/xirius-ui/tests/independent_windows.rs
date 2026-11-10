@@ -93,7 +93,7 @@ fn window_resize_is_called_in_few_places() {
 
 /// Structs that have both `at: Option<(f32, f32)>` and `pinned: bool` (a window of its own
 /// place and pin drawn inside the screen). The stages that make them windows empty this list.
-const PLACED_AND_PINNED: &[&str] = &["MacroWin", "Win"];
+const PLACED_AND_PINNED: &[&str] = &["Win"];
 
 #[test]
 fn the_own_place_and_pin_structs_do_not_grow() {
@@ -183,10 +183,6 @@ const OVERLAY: &[(&str, Class)] = &[
         Migrating("stage 1d: dead in-screen code"),
     ),
     ("crate::device_window::paint_tip", Transient),
-    (
-        "crate::macro_pad::paint::paint",
-        Migrating("stage 1c: Macro Controls is a window"),
-    ),
     ("crate::browser_inst::paint", Popover),
     ("crate::fx_chain::paint_drag", Transient),
     ("crate::name_drag::paint", Transient),
@@ -285,7 +281,40 @@ fn the_overlay_list_has_no_duplicates_and_few_migrating() {
         .filter(|(_, c)| matches!(c, Migrating(_)))
         .count();
     assert_eq!(
-        migrating, 4,
-        "the migrating surfaces are the 4 left to stages 1c/1d"
+        migrating, 3,
+        "the migrating surfaces are the 3 left to stage 1d"
+    );
+}
+
+/// The Macro Controls are a window of their own: nothing of an in-screen window is left of
+/// them (its place, its move grab, its paint in the main screen).
+#[test]
+fn the_macro_controls_are_not_drawn_or_placed_inside_the_screen() {
+    let files = all();
+    let get = |n: &str| {
+        files
+            .iter()
+            .find(|(f, _)| f == n)
+            .map(|(_, c)| c.clone())
+            .unwrap()
+    };
+    let pad = get("macro_pad/mod.rs");
+    assert!(
+        !pad.contains("Grab::Move") && !pad.contains("Move {"),
+        "the pad has no move grab"
+    );
+    assert!(
+        !pad.contains("at: Option<(f32, f32)>"),
+        "the pad has no place of its own"
+    );
+    let draw = get("draw.rs");
+    assert!(
+        !draw.contains("macro_pad::"),
+        "paint_overlay does not paint the Macro Controls"
+    );
+    let opened = get("device_window.rs");
+    assert!(
+        opened.contains("Kind::Macros") && opened.contains("resizable: false"),
+        "device_window.rs opens the Macro Controls through `independent::open`, not resizable"
     );
 }

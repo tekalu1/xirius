@@ -72,11 +72,6 @@ impl Studio {
         if !matches!(self.hit(g, x, y), Hit::Mixer(MixerHit::KeyLevel(..))) {
             self.mixer.key_focus = None;
         }
-        if !self.over_macros(g, x, y)
-            && let Some(w) = self.macro_pad.as_mut()
-        {
-            w.focused = false;
-        }
         if !self.over_instrument(g, x, y) {
             self.device_blur();
         }
@@ -94,7 +89,7 @@ impl Studio {
 
     /// Is one of the windows that float over the screen under the point?
     pub(crate) fn over_float(&self, g: &Geometry, x: f32, y: f32) -> bool {
-        self.over_macros(g, x, y) || self.over_instrument(g, x, y)
+        self.over_instrument(g, x, y)
     }
 
     /// A press let go: the rows take the height of what pressed (a touch, 32), so the press

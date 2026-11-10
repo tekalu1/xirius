@@ -95,10 +95,6 @@ impl Studio {
         if self.home_shown() {
             return self.home_wheel(g, x, y, notch);
         }
-        // The macro window takes the wheel from what is under it (MIX-041).
-        if self.over_macros(g, x, y) {
-            return true;
-        }
         // A device's window floats over the rest: its controls turn (UI-324).
         if notch != 0.0
             && self.device_wheel(g, x, y, f64::from(field_px / ZOOM_NOTCH_PX), mods.shift)

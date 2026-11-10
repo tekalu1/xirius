@@ -27,12 +27,16 @@ pub(crate) mod preset_shots;
 pub(crate) struct Windows {
     open: HashMap<PluginId, WindowHandle<DeviceWindow>>,
     channel: Option<WindowHandle<DeviceWindow>>,
+    macros: Option<WindowHandle<DeviceWindow>>,
     preset: Option<WindowHandle<DeviceWindow>>,
 }
 
 impl Windows {
     pub(crate) fn close(&mut self, cx: &mut App) {
         if let Some(handle) = self.preset.take() {
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+        }
+        if let Some(handle) = self.macros.take() {
             let _ = handle.update(cx, |_, window, _| window.remove_window());
         }
         if let Some(handle) = self.channel.take() {
@@ -59,6 +63,7 @@ impl Windows {
             s.instruments.detached.extend(ids);
         }
         self.sync_channel(studio, main, cx);
+        self.sync_macros(studio, main, cx);
         self.sync_preset(studio, main, cx);
         let wanted: Vec<_> = {
             let s = studio.borrow();
@@ -205,6 +210,72 @@ impl Windows {
         }
     }
 
+    /// The Macro Controls: a window of a fixed size, to the right of the Channel Editor.
+    fn sync_macros(&mut self, studio: &Rc<RefCell<Studio>>, main: &Window, cx: &mut App) {
+        let wanted = studio.borrow().macro_pad.is_some();
+        if !wanted {
+            if let Some(handle) = self.macros.take() {
+                let _ = handle.update(cx, |_, window, _| window.remove_window());
+            }
+            return;
+        }
+        if let Some(handle) = self.macros {
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, _, cx| cx.notify());
+            });
+            return;
+        }
+        let shared = studio.clone();
+        let positions = studio.borrow().instruments.positions.clone();
+        let (w, h) = (crate::macro_pad::W, crate::macro_pad::H);
+        // To the right of the Channel Editor where it is; else near the main window's corner.
+        // A place the person moved it to wins (`independent::open` takes the remembered one).
+        let origin = positions
+            .borrow()
+            .get(&Key::Channel)
+            .map(|b| point(b.origin.x + b.size.width + px(MACROS_GAP), b.origin.y))
+            .unwrap_or_else(|| main.bounds().origin + point(px(120.0), px(100.0)));
+        let spec = Spec {
+            kind: Kind::Macros,
+            title: "Xirius · Macro Controls".into(),
+            initial: Bounds::new(origin, size(px(w), px(h))),
+            min_size: None,
+            resizable: false,
+            positions: Some(positions.clone()),
+        };
+        let result = crate::independent::open(cx, main, spec, move |window, cx| {
+            let closing = shared.clone();
+            window.on_window_should_close(cx, move |_, _| {
+                closing.borrow_mut().macro_pad = None;
+                true
+            });
+            let focus = cx.focus_handle();
+            window.focus(&focus, cx);
+            // Remember the place it opened at, so a reopen finds it though it was never moved.
+            positions.borrow_mut().insert(Key::Macros, window.bounds());
+            cx.new(|cx| {
+                let mut view = DeviceWindow::new(
+                    shared,
+                    None,
+                    Some((positions, Key::Macros)),
+                    focus,
+                    window,
+                    cx,
+                );
+                view.macros = true;
+                view
+            })
+        });
+        match result {
+            Ok(handle) => self.macros = Some(handle),
+            Err(error) => {
+                let mut s = studio.borrow_mut();
+                s.macro_pad = None;
+                s.error = Some(format!("独立ウィンドウを開けません: {error}"));
+            }
+        }
+    }
+
     fn sync_channel(&mut self, studio: &Rc<RefCell<Studio>>, main: &Window, cx: &mut App) {
         let wanted = studio.borrow().channel.is_some();
         if !wanted {
@@ -284,6 +355,8 @@ impl Windows {
 
 /// The Channel Editor's least height (the toolbar and a little of the flow under the bar).
 const CHANNEL_MIN_H: f32 = 240.0;
+/// The gap between the Channel Editor and the Macro Controls opened beside it.
+const MACROS_GAP: f32 = 16.0;
 
 struct DeviceWindow {
     studio: Rc<RefCell<Studio>>,
@@ -291,6 +364,8 @@ struct DeviceWindow {
     focus: FocusHandle,
     popup: Option<Popup>,
     menu_only: bool,
+    /// The Macro Controls (`id` is `None` as for the Channel Editor).
+    macros: bool,
     _activation: gpui::Subscription,
     _bounds: gpui::Subscription,
 }
@@ -320,19 +395,29 @@ fn work_size(window: &Window, cx: &App) -> Option<(f32, f32)> {
     })
 }
 
-fn scope(s: &mut Studio, id: Option<PluginId>) -> (Option<PluginId>, bool) {
+type Scoped = (Option<PluginId>, bool, bool);
+
+fn scope(s: &mut Studio, id: Option<PluginId>) -> Scoped {
+    scope_as(s, id, false)
+}
+
+/// `macros`: the surface is the Macro Controls (`id` is `None`, which is not the Channel Editor).
+fn scope_as(s: &mut Studio, id: Option<PluginId>, macros: bool) -> Scoped {
     let old = (
         s.instruments.detached_target,
         s.instruments.detached_channel,
+        s.instruments.detached_macros,
     );
     s.instruments.detached_target = id;
-    s.instruments.detached_channel = id.is_none();
+    s.instruments.detached_channel = id.is_none() && !macros;
+    s.instruments.detached_macros = macros;
     old
 }
 
-fn restore(s: &mut Studio, old: (Option<PluginId>, bool)) {
+fn restore(s: &mut Studio, old: Scoped) {
     s.instruments.detached_target = old.0;
     s.instruments.detached_channel = old.1;
+    s.instruments.detached_macros = old.2;
 }
 
 /// Runs `f` with the Studio scoped to `id`'s independent surface: the pointer paths
@@ -373,7 +458,13 @@ impl DeviceWindow {
             }
             if !window.is_window_active() {
                 let changed = view.with(window, |s, _| {
-                    if s.instruments.detached_channel {
+                    if s.instruments.detached_macros {
+                        // the keys went to another window: the pad lets them go
+                        if let Some(w) = s.macro_pad.as_mut() {
+                            w.focused = false;
+                        }
+                        false
+                    } else if s.instruments.detached_channel {
                         s.channel_note_off()
                     } else {
                         s.device_focus_lost()
@@ -428,6 +519,7 @@ impl DeviceWindow {
             focus,
             popup: None,
             menu_only: false,
+            macros: false,
             _activation: activation,
             _bounds: bounds,
         }
@@ -436,7 +528,7 @@ impl DeviceWindow {
     /// popup belong to this surface; no song or audio instance is copied.
     fn with<R>(&mut self, window: &Window, f: impl FnOnce(&mut Studio, &Geometry) -> R) -> R {
         let mut s = self.studio.borrow_mut();
-        let old = scope(&mut s, self.id);
+        let old = scope_as(&mut s, self.id, self.macros);
         std::mem::swap(&mut s.popup, &mut self.popup);
         let viewport = window.viewport_size();
         // This surface has its own viewport. Main-window geometry owns the shared
@@ -461,6 +553,8 @@ impl Render for DeviceWindow {
                         .iter()
                         .any(|e| e.id == id)
                 })
+        } else if self.macros {
+            self.studio.borrow().macro_pad.is_some()
         } else {
             let s = self.studio.borrow();
             self.id.map_or_else(
@@ -481,7 +575,7 @@ impl Render for DeviceWindow {
                 window.resize(wanted);
             }
         }
-        if self.id.is_none() && !self.menu_only {
+        if self.id.is_none() && !self.menu_only && !self.macros {
             // The least width follows the layers: one added while it is open widens the least.
             let least = {
                 let s = self.studio.borrow();
@@ -530,7 +624,7 @@ impl Render for DeviceWindow {
                     );
                     let colors = Colors::new(theme);
                     let mut s = view.studio.borrow_mut();
-                    let old = scope(&mut s, view.id);
+                    let old = scope_as(&mut s, view.id, view.macros);
                     std::mem::swap(&mut s.popup, &mut view.popup);
                     let viewport = window.viewport_size();
                     let g = surface_geometry(&s, viewport.width.into(), viewport.height.into());
@@ -542,6 +636,8 @@ impl Render for DeviceWindow {
                     };
                     if view.menu_only {
                         s.refresh_popup();
+                    } else if view.macros {
+                        crate::macro_pad::paint::paint(&mut pen, &s);
                     } else if view.id.is_some() {
                         crate::instrument::window::paint(&mut pen, &s, &g);
                     } else {
@@ -580,7 +676,11 @@ impl Render for DeviceWindow {
             Vec::new()
         } else {
             self.with(window, |s, g| {
-                if s.instruments.detached_channel {
+                if s.instruments.detached_macros {
+                    s.macro_view()
+                        .map(|v| crate::macro_pad::drag_rects(&v))
+                        .unwrap_or_default()
+                } else if s.instruments.detached_channel {
                     s.channel_view(g)
                         .map(|v| crate::channel::drag_rects(&v))
                         .unwrap_or_default()
@@ -619,6 +719,17 @@ impl Render for DeviceWindow {
                                 .iter()
                                 .position(|c| c.rect.contains(x, y));
                             s.press(g, hit.map_or(Hit::None, Hit::Item));
+                            return false;
+                        }
+                        if s.instruments.detached_macros {
+                            let head = s
+                                .macro_view()
+                                .and_then(|v| crate::macro_pad::part_at(&v, x, y))
+                                == Some(crate::macro_pad::Part::Head);
+                            if head {
+                                return true;
+                            }
+                            s.macro_press(x, y);
                             return false;
                         }
                         if s.instruments.detached_channel {
@@ -667,7 +778,9 @@ impl Render for DeviceWindow {
                             return;
                         }
                         let (x, y) = (e.position.x.into(), e.position.y.into());
-                        if s.instruments.detached_channel {
+                        if s.instruments.detached_macros {
+                            s.macro_right(x, y);
+                        } else if s.instruments.detached_channel {
                             s.channel_right(g, x, y);
                         } else {
                             s.instrument_right(g, x, y);
@@ -688,6 +801,15 @@ impl Render for DeviceWindow {
                             .map_or(Hit::None, Hit::Item);
                         return;
                     }
+                    if s.instruments.detached_macros {
+                        if s.mixer.level_drag.is_some() || s.mixer.key_drag.is_some() {
+                            s.level_move(x, e.modifiers.shift);
+                            return;
+                        }
+                        s.macro_moved(x, y);
+                        s.macro_hover(x, y);
+                        return;
+                    }
                     if s.instruments.detached_channel {
                         if s.mixer.level_drag.is_some() || s.mixer.key_drag.is_some() {
                             s.level_move(x, e.modifiers.shift);
@@ -706,7 +828,11 @@ impl Render for DeviceWindow {
                 MouseButton::Left,
                 cx.listener(|this, _: &gpui::MouseUpEvent, window, cx| {
                     this.with(window, |s, g| {
-                        if s.instruments.detached_channel {
+                        if s.instruments.detached_macros {
+                            if !s.level_up() {
+                                s.macro_up();
+                            }
+                        } else if s.instruments.detached_channel {
                             if !s.level_up() {
                                 s.channel_up(g);
                             }
@@ -721,7 +847,11 @@ impl Render for DeviceWindow {
                 MouseButton::Left,
                 cx.listener(|this, _: &gpui::MouseUpEvent, window, cx| {
                     this.with(window, |s, g| {
-                        if s.instruments.detached_channel {
+                        if s.instruments.detached_macros {
+                            if !s.level_up() {
+                                s.macro_up();
+                            }
+                        } else if s.instruments.detached_channel {
                             if !s.level_up() {
                                 s.channel_up(g);
                             }
@@ -777,7 +907,9 @@ impl Render for DeviceWindow {
                         );
                         return;
                     }
-                    if s.instruments.detached_channel {
+                    if s.instruments.detached_macros {
+                        // the pad has no wheel; the values it holds are set by the pad
+                    } else if s.instruments.detached_channel {
                         s.channel_wheel(g, x, y, delta.x.into(), delta.y.into());
                     } else {
                         s.device_wheel(
@@ -921,7 +1053,7 @@ impl gpui::EntityInputHandler for DeviceWindow {
         _: &mut Context<Self>,
     ) -> Option<std::ops::Range<usize>> {
         let mut s = self.studio.borrow_mut();
-        let old = scope(&mut s, self.id);
+        let old = scope_as(&mut s, self.id, self.macros);
         let previous = std::mem::replace(&mut s.popup, self.popup.clone());
         let result = s
             .ime_pick_field()

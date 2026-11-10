@@ -1990,6 +1990,10 @@ impl Studio {
             return self.device_key(g, key, mods)
                 || (key == "tab" && !mods.ctrl && !mods.alt && self.device_enter(!mods.shift));
         }
+        if self.instruments.detached_macros {
+            // the Macro Controls' window has the pad's keys and no field
+            return self.macro_key(key, mods);
+        }
         if self.instruments.detached_channel {
             let Some(track) = self.channel.as_ref().map(|c| c.track) else {
                 return false;
@@ -2028,7 +2032,7 @@ impl Studio {
         }
         self.inspector_follow(g);
         // Esc during a press on a device's window lets go of it first, whatever else has the
-        // keys (the macro pad's focus, the grip's).
+        // keys (the grip's).
         if key == "escape" && self.instrument_cancel() {
             return true;
         }
@@ -2040,7 +2044,6 @@ impl Studio {
         }
         self.name_key(key, mods)
             || self.grip_key(g, key)
-            || self.macro_key(key, mods)
             || self.device_key(g, key, mods)
             || self.head_fader_key(key, mods)
             || self.value_key(key, mods)
@@ -2740,9 +2743,7 @@ impl Studio {
             }
             return false;
         }
-        self.instruments.detached_target.is_none()
-            && !self.instruments.detached_channel
-            && self.browser.typed(key, ch)
+        !self.instruments.own_surface() && self.browser.typed(key, ch)
     }
 
     /// Nonblocking file-dialog and script entry. Synchronous fixtures have an
