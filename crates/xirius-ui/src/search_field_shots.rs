@@ -64,8 +64,8 @@ pub const SHOTS: &[Shot] = &[
     },
     // The add list's caret after several letters, Japanese, a mix, and inside the words.
     Shot {
-        name: "sf08-add-list-word",
-        acts: &[Act::Reset, stage(20)],
+        name: "sf08-add-list-caret-inside",
+        acts: &[Act::Reset, stage(23)],
     },
     Shot {
         name: "sf08-add-list-japanese",
@@ -76,25 +76,25 @@ pub const SHOTS: &[Shot] = &[
         acts: &[Act::Reset, stage(22)],
     },
     Shot {
-        name: "sf08-add-list-caret-inside",
-        acts: &[Act::Reset, stage(23)],
+        name: "sf08-add-list-word",
+        acts: &[Act::Reset, stage(20)],
     },
-    // The start screen's search: with words, all selected, nothing found, and down once.
+    // The start screen's search: with words, down once, nothing found, and all selected.
     Shot {
         name: "sf09-home",
         acts: &[Act::Reset, stage(8)],
     },
     Shot {
-        name: "sf09-home-select-all",
-        acts: &[Act::Reset, stage(16)],
+        name: "sf09-home-down",
+        acts: &[Act::Reset, stage(18)],
     },
     Shot {
         name: "sf09-home-nothing-found",
         acts: &[Act::Reset, stage(17)],
     },
     Shot {
-        name: "sf09-home-down",
-        acts: &[Act::Reset, stage(18)],
+        name: "sf09-home-select-all",
+        acts: &[Act::Reset, stage(16)],
     },
     // The shortcuts' search in the settings.
     Shot {
