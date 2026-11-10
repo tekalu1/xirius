@@ -47,6 +47,37 @@ pub fn bits(m: Mods) -> u8 {
         | (u8::from(m.shift) * xirius_prefs::chord::SHIFT)
 }
 
+/// A key as the window read it, for [`Studio::song_key`].
+#[derive(Clone, Copy)]
+pub(crate) struct KeyIn<'a> {
+    /// GPUI's name of the key.
+    pub key: &'a str,
+    /// The name the system gives it (a key of the number pad differs from `key`).
+    pub mapped: &'a str,
+    pub key_char: Option<&'a str>,
+    pub character: Option<&'a str>,
+    pub code: Option<&'a str>,
+    pub mods: Mods,
+    pub held: bool,
+    /// A list's search box has the keys.
+    pub picking: bool,
+}
+
+/// What a key asks of the window once it has been dealt with.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct KeyOut {
+    pub notify: bool,
+    /// Files may have been asked for: the window looks.
+    pub files: bool,
+}
+
+impl KeyOut {
+    const NOTIFY: Self = Self {
+        notify: true,
+        files: false,
+    };
+}
+
 impl Studio {
     pub fn input_context(&self, g: &Geometry) -> &'static str {
         if self.instruments.own_surface() {
@@ -147,6 +178,51 @@ impl Studio {
 
     /// Logical characters take consumed Shift out of punctuation (JIS `+`), while physical
     /// bindings use the window's base key. The optional character comes from the window/IME.
+    /// A key that no ask, setting, palette or start-screen key took: what the song makes of it
+    /// (a field of a part, a letter of a list's search, a note of the PC keyboard, a key of
+    /// the key map). While the start screen shows, the song under it is not there to work on:
+    /// only the key map's window-wide commands run ([`crate::home::KEYS`]).
+    pub(crate) fn song_key(&mut self, g: &Geometry, k: KeyIn) -> KeyOut {
+        let KeyIn {
+            key,
+            mapped,
+            key_char,
+            character,
+            code,
+            mods: m,
+            held,
+            picking,
+        } = k;
+        let covered = self.home_covers_keys();
+        if !covered && self.field_keys(g, key, key_char, m) {
+            return KeyOut::NOTIFY;
+        }
+        // A list's search box (UI-338): its letters come through the IME
+        // (`EntityInputHandler` below), so the key brings none; a letter is
+        // still the list's, never a note or a shortcut.
+        if picking
+            && !m.ctrl
+            && !m.alt
+            && key_char.is_some_and(|c| !c.is_empty() && !c.chars().any(char::is_control))
+        {
+            return KeyOut::NOTIFY;
+        }
+        let keypad = mapped != key;
+        let ch = if picking { None } else { key_char };
+        let typed = !covered && !keypad && !m.ctrl && self.typed(g, key, ch);
+        let played = !covered
+            && !keypad
+            && !typed
+            && !m.ctrl
+            && !m.alt
+            && !m.shift
+            && self.pc_key_down(key, held);
+        KeyOut {
+            notify: typed || played || self.mapped_key_code(g, mapped, character, m, code),
+            files: true,
+        }
+    }
+
     pub fn mapped_key(
         &mut self,
         g: &Geometry,
@@ -180,7 +256,9 @@ impl Studio {
         if self.macro_run.is_some() && !self.macro_stepping {
             return true;
         }
-        if !detached {
+        // The start screen covers the song: the parts of it that take a key are not there.
+        let covered = self.home_covers_keys();
+        if !detached && !covered {
             if self.name_key(key, mods) {
                 return true;
             }
@@ -211,7 +289,7 @@ impl Studio {
                 self.close_wheel_group();
                 return true;
             }
-            if detached {
+            if detached || covered {
                 return true;
             }
             // Waiting for a controller's knob ends first (OPS-007).
@@ -275,9 +353,7 @@ impl Studio {
             return false;
         };
         // The start screen has no song to work on: only its own keys reach it (UI-350).
-        if self.home_shown()
-            && !crate::home::KEYS.contains(&command.split(' ').next().unwrap_or(""))
-        {
+        if self.home_shown() && !crate::home::is_window_command(&command) {
             return false;
         }
         self.run_binding(g, &command)

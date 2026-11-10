@@ -860,3 +860,407 @@ fn a_press_after_the_list_was_built_again_opens_the_row_that_was_pressed() {
         "the pressed row opened"
     );
 }
+
+// ---------------------------------------------------------------- right presses and keys
+
+/// A master strip with an effect on it, in the mixer: its insert row is a place a right press
+/// opens a menu on, with a song or without the start screen over it.
+fn with_insert_row(s: &mut Studio) -> xirius_core::id::TrackId {
+    s.drawer_open = true;
+    s.tab = crate::studio::DrawerTab::Mixer;
+    let t = xirius_core::id::TrackId::MASTER;
+    assert!(s.run_command(
+        "plugin.add",
+        serde_json::json!({ "track": t.to_string(), "name": "Echo", "kind": "effect",
+                "format": "vst3", "uid": "00000000000000000000000000000001" }),
+    ));
+    t
+}
+
+/// The places of the hidden song that have a menu: the insert row of the mixer, the arrangement,
+/// the ruler and the band of the tempo.
+fn menu_places(
+    s: &Studio,
+    g: &Geometry,
+    t: xirius_core::id::TrackId,
+) -> Vec<(&'static str, (f32, f32))> {
+    let id = s.project().tracks[&t].inserts.last().unwrap().id;
+    let row = s
+        .mixer_center(g, crate::mixer::MixerHit::Open(t, id))
+        .expect("the insert row is in sight");
+    vec![
+        ("insert row", row),
+        ("tempo band", centre(g.tempo)),
+        ("ruler", centre(g.ruler)),
+        ("arrangement", centre(g.lanes)),
+        ("section band", centre(g.section_band)),
+    ]
+}
+
+/// A right press over the start screen opens no menu of the song under it; without the start
+/// screen the insert row opens its menu as it did.
+#[test]
+fn a_right_press_over_the_start_screen_opens_no_menu_of_the_song_under_it() {
+    let (mut s, _, _tmp) = kept(&["a"]);
+    let t = with_insert_row(&mut s);
+    let g = s.geometry(1280.0, 720.0);
+    assert!(s.home_shown());
+    let places = menu_places(&s, &g, t);
+    // The places named, and every point of the window.
+    let mut points = places.iter().map(|(_, p)| *p).collect::<Vec<_>>();
+    for yi in 0..40 {
+        for xi in 0..64 {
+            points.push((xi as f32 * 20.0 + 5.0, yi as f32 * 18.0 + 5.0));
+        }
+    }
+    for (x, y) in points {
+        assert!(!s.window_right_press(&g, x, y), "a menu at {x},{y}");
+        assert!(s.popup.is_none() && s.ctx.is_none(), "a menu at {x},{y}");
+    }
+    // The entries themselves do nothing either.
+    for (name, (x, y)) in places {
+        assert!(!s.context_press(&g, x, y), "{name}");
+        assert!(!s.scene_context(&g, x, y), "{name}");
+        assert!(!s.cpu_context(&g, x, y), "{name}");
+        assert!(!s.lib_context(&g, x, y), "{name}");
+        assert!(!s.instrument_right(&g, x, y), "{name}");
+    }
+    assert!(s.popup.is_none());
+
+    // Without the start screen (a track is on the song) the insert row opens its menu.
+    let mut open = Studio::new(Song::empty());
+    let t = with_insert_row(&mut open);
+    assert!(open.run_command("track.add.audio", serde_json::json!({ "name": "T" })));
+    assert!(!open.home_shown());
+    let g = open.geometry(1280.0, 720.0);
+    let (x, y) = menu_places(&open, &g, t)[0].1;
+    assert!(open.window_right_press(&g, x, y));
+    assert!(open.popup.is_some(), "the menu of the insert row");
+}
+
+/// What a key of the song could change, in one line.
+fn song_state(s: &Studio) -> String {
+    format!(
+        "{} {} {:?} {:?} {} {} {} {:?} {:?} {}",
+        s.project().tracks.len(),
+        s.song.steps(),
+        s.selected_clip,
+        s.arrange.clips,
+        s.transport.playing,
+        s.pc_keys.on,
+        s.pc_keys.octave,
+        s.tool,
+        s.selected_row,
+        s.drawer_open,
+    )
+}
+
+/// A key as the window runs it: the start screen's own keys first, then the rest.
+fn key(s: &mut Studio, g: &Geometry, k: &str, m: Mods, ch: Option<&str>) -> bool {
+    if s.home_key(g, k, m) {
+        return true;
+    }
+    let picking = s.pick_typing().is_some() && s.ask_field().is_none();
+    let out = s.song_key(
+        g,
+        crate::input_dispatch::KeyIn {
+            key: k,
+            mapped: k,
+            key_char: ch,
+            character: ch,
+            code: None,
+            mods: m,
+            held: false,
+            picking,
+        },
+    );
+    out.notify
+}
+
+/// The keys that edit or run the song, and the letters of the PC keyboard, do nothing to the
+/// song under the start screen.
+#[test]
+fn the_songs_keys_and_the_pc_keyboard_do_nothing_under_the_start_screen() {
+    let (mut s, g, _tmp) = kept(&["a"]);
+    s.pc_keys.on = true;
+    let before = song_state(&s);
+    let ctrl = Mods::ctrl();
+    let shift = Mods {
+        shift: true,
+        ..Mods::NONE
+    };
+    let keys: Vec<(&str, Mods)> = vec![
+        ("delete", Mods::NONE),
+        ("v", ctrl),
+        ("c", ctrl),
+        ("x", ctrl),
+        ("a", ctrl),
+        ("z", ctrl),
+        ("y", ctrl),
+        (
+            "z",
+            Mods {
+                shift: true,
+                ..ctrl
+            },
+        ),
+        ("s", ctrl),
+        ("d", ctrl),
+        ("e", ctrl),
+        ("t", ctrl),
+        ("space", Mods::NONE),
+        ("enter", ctrl),
+        ("f4", Mods::NONE),
+        ("f10", shift),
+        ("left", Mods::NONE),
+        ("right", Mods::NONE),
+        ("tab", ctrl),
+        ("escape", Mods::NONE),
+    ];
+    for (k, m) in keys {
+        key(&mut s, &g, k, m, None);
+        assert_eq!(song_state(&s), before, "{k} {m:?}");
+        assert!(s.file_request.is_none() && s.popup.is_none(), "{k} {m:?}");
+    }
+    // Letters of the PC keyboard: with a search box in front of them they are the box's; with
+    // none (the first time) they are nobody's.
+    for first_time in [false, true] {
+        let (mut s, g, _tmp) = kept(if first_time { &[] } else { &["a"] });
+        s.pc_keys.on = true;
+        let before = song_state(&s);
+        for c in "asdfghjkl;zxcvbnmqwertyuiop1234567890".chars() {
+            let c = c.to_string();
+            key(&mut s, &g, &c, Mods::NONE, Some(&c));
+            assert_eq!(song_state(&s), before, "{c} first_time={first_time}");
+        }
+    }
+}
+
+/// Without the start screen the same keys reach the song.
+#[test]
+fn the_pc_keyboard_and_undo_work_without_the_start_screen() {
+    let mut s = Studio::sample();
+    s.pc_keys.on = true;
+    let g = s.geometry(1280.0, 720.0);
+    assert!(!s.home_shown());
+    let octave = s.pc_keys.octave;
+    assert!(key(&mut s, &g, "x", Mods::NONE, Some("x")));
+    assert_eq!(s.pc_keys.octave, octave + 1);
+    let tracks = s.project().tracks.len();
+    assert!(s.run_command("track.add.audio", serde_json::json!({ "name": "T" })));
+    assert_eq!(s.project().tracks.len(), tracks + 1);
+    assert!(key(&mut s, &g, "z", Mods::ctrl(), Some("z")));
+    assert_eq!(
+        s.project().tracks.len(),
+        tracks,
+        "Ctrl+Z took the track back"
+    );
+}
+
+/// What the start screen has of the keys stays: the arrows, Enter, Ctrl+N, Ctrl+O, the
+/// settings, the palette and the search box.
+#[test]
+fn the_start_screens_own_keys_still_work() {
+    let (mut s, g, _tmp) = kept(&["a", "b"]);
+    assert!(key(&mut s, &g, "down", NONE, None));
+    assert!(key(&mut s, &g, "up", NONE, None));
+    assert!(key(&mut s, &g, "tab", NONE, None));
+    // The search box takes typed text and lets Backspace and Esc clear it.
+    s.pick_text(None, "ab", false);
+    assert_eq!(home(&s).pick.field.value, "ab");
+    assert!(key(&mut s, &g, "backspace", NONE, None));
+    assert_eq!(home(&s).pick.field.value, "a");
+    assert!(key(&mut s, &g, "escape", NONE, None));
+    assert_eq!(home(&s).pick.field.value, "");
+    // Enter opens the row.
+    assert!(key(&mut s, &g, "enter", NONE, None));
+    assert!(s.opening.is_some());
+    s.wait_for_open_for_test();
+
+    let (mut s, g, _tmp) = kept(&["a"]);
+    assert!(key(&mut s, &g, "o", Mods::ctrl(), Some("o")));
+    assert_eq!(s.file_request, Some(FileRequest::Open));
+    s.file_request = None;
+    // Ctrl+, opens the settings, and Esc closes them again.
+    assert!(key(&mut s, &g, ",", Mods::ctrl(), Some(",")));
+    assert!(s.settings.is_some());
+    assert!(key(&mut s, &g, "escape", NONE, None));
+    assert!(s.settings.is_none() && s.home_shown());
+    // The key of the palette opens it, and Esc closes it.
+    let chord = {
+        let st = s.song.settings();
+        let st = st.lock().unwrap();
+        st.keymap
+            .keys_of("global", "view.palette")
+            .into_iter()
+            .next()
+            .expect("the palette has a key")
+    };
+    let (k, m) = chord_event(&chord);
+    assert!(key(&mut s, &g, &k, m, None));
+    assert!(s.palette.is_some(), "the palette opened");
+    assert!(key(&mut s, &g, "escape", NONE, None));
+    assert!(s.palette.is_none() && s.home_shown());
+    assert!(key(&mut s, &g, "n", Mods::ctrl(), Some("n")));
+    s.wait_for_open_for_test();
+    assert!(!s.home_shown(), "a new song");
+}
+
+/// A chord as the key and the modifiers of its event.
+fn chord_event(c: &xirius_prefs::Chord) -> (String, Mods) {
+    let bits = c.mods;
+    (
+        c.key.to_lowercase(),
+        Mods {
+            ctrl: bits & (xirius_prefs::chord::CTRL | xirius_prefs::chord::MOD) != 0,
+            shift: bits & xirius_prefs::chord::SHIFT != 0,
+            alt: bits & xirius_prefs::chord::ALT != 0,
+        },
+    )
+}
+
+/// Every command is the song's, and nothing for the start screen to take, until it is put in
+/// [`KEYS`]; a command that is new has to be looked at here. The heads that only work on the
+/// song are listed; the heads that have window-wide commands list each command.
+#[test]
+fn every_command_is_classified_as_the_songs_or_the_windows() {
+    use std::collections::BTreeSet;
+    let registry = xirius_core::Registry::standard();
+    let mut names: BTreeSet<String> = registry.all().iter().map(|d| d.name.to_string()).collect();
+    names.extend(
+        xirius_prefs::catalog::ENTRIES
+            .iter()
+            .filter_map(|e| e.command.split_whitespace().next())
+            .map(str::to_string),
+    );
+    // The heads whose every command works on the song, a part of it or what is shown of it.
+    const SONG: &[&str] = &[
+        "ai",
+        "auto",
+        "bounce",
+        "browser",
+        "cc",
+        "channel",
+        "clip",
+        "control",
+        "edit",
+        "export",
+        "file",
+        "folder",
+        "history",
+        "job",
+        "keymap",
+        "location",
+        "loop",
+        "macro",
+        "marker",
+        "midi",
+        "midimap",
+        "mixer",
+        "mousemap",
+        "note",
+        "ops",
+        "plugin",
+        "prefs",
+        "preset",
+        "quantize",
+        "rack",
+        "range",
+        "record",
+        "roll",
+        "section",
+        "select",
+        "send",
+        "snap",
+        "take",
+        "tempo",
+        "timesig",
+        "tool",
+        "track",
+        "transport",
+    ];
+    // The heads that have window-wide commands: each command is named, in [`KEYS`] or here.
+    const MIXED: &[&str] = &["app", "project", "version", "view"];
+    const SONGS_OWN: &[&str] = &[
+        "project.cleanup",
+        "project.close",
+        "project.get",
+        "project.rename",
+        "project.save",
+        "project.save-as",
+        "project.settings",
+        "version.list",
+        "version.open",
+        "version.restore",
+        "version.save",
+        "view.add-track",
+        "view.autoscroll",
+        "view.browser",
+        "view.browser.hidden",
+        "view.browser.sort",
+        "view.channel.editor",
+        "view.channel.width",
+        "view.cleanup",
+        "view.context-menu",
+        "view.dock",
+        "view.export",
+        "view.export-run",
+        "view.export-stems",
+        "view.export.close",
+        "view.focus",
+        "view.folders",
+        "view.grid",
+        "view.groove.import",
+        "view.instrument",
+        "view.lanes",
+        "view.link",
+        "view.mixer",
+        "view.page",
+        "view.pc-keyboard",
+        "view.preset-copy",
+        "view.record-panel",
+        "view.ruler",
+        "view.scale",
+        "view.scroll",
+        "view.snap",
+        "view.tracklist.collapse",
+        "view.zoom",
+        "view.zoom.data",
+        "view.zoom.full",
+        "view.zoom.loop",
+        "view.zoom.rect",
+        "view.zoom.redo",
+        "view.zoom.selection",
+        "view.zoom.store",
+        "view.zoom.time",
+        "view.zoom.toggle",
+        "view.zoom.undo",
+        "view.zoom.wave",
+    ];
+    let mut unclassified = Vec::new();
+    for name in &names {
+        let head = name.split('.').next().unwrap();
+        let known = if MIXED.contains(&head) {
+            KEYS.contains(&name.as_str()) || SONGS_OWN.contains(&name.as_str())
+        } else {
+            SONG.contains(&head)
+        };
+        if !known {
+            unclassified.push(name.clone());
+        }
+    }
+    assert!(
+        unclassified.is_empty(),
+        "a command with no class, the song's (SONG, SONGS_OWN) or the window's (KEYS): {unclassified:?}"
+    );
+    for k in KEYS {
+        assert!(names.contains(k), "{k} is no command");
+        assert!(!SONGS_OWN.contains(&k), "{k} is in both");
+        assert!(is_window_command(&format!("{k} --x y")));
+    }
+    for own in SONGS_OWN {
+        assert!(names.contains(*own), "{own} is not a command any more");
+        assert!(!is_window_command(own));
+    }
+    assert!(!is_window_command(""));
+}

@@ -526,6 +526,9 @@ impl Studio {
 
     /// A right press on a row of the open list: its menu.
     pub fn cpu_context(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
+        if self.home_shown() {
+            return false;
+        }
         let Some((t, id)) = self.cpu_row_at(g, x, y) else {
             return false;
         };

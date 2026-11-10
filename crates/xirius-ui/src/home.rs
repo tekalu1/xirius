@@ -43,9 +43,24 @@ const NARROW_GAP: f32 = 20.0;
 /// The sample's tag.
 const TAG_H: f32 = 16.0;
 const TAG_PAD: f32 = 6.0;
-/// The key map's commands the start screen takes: a new song, opening one, the settings and
-/// quitting (UI-350).
-pub const KEYS: [&str; 4] = ["project.new", "project.open", "view.settings", "app.quit"];
+/// The key map's commands that work on the window and the app, not on a song, so the start
+/// screen takes them: a new song, opening one, the settings, the palette, the full screen and
+/// quitting (UI-350). Every other command works on the song under the screen and does
+/// nothing while it shows. A command is in this list by name, so a command added later is a
+/// song's until it is put here.
+pub const KEYS: [&str; 6] = [
+    "project.new",
+    "project.open",
+    "view.settings",
+    "view.palette",
+    "view.fullscreen",
+    "app.quit",
+];
+
+/// Whether a binding (a command with its arguments) is one of [`KEYS`].
+pub fn is_window_command(binding: &str) -> bool {
+    KEYS.contains(&binding.split_whitespace().next().unwrap_or(""))
+}
 
 pub const SAMPLE_TAG: &str = "サンプル";
 pub const RECENT: &str = "最近の曲";
@@ -455,6 +470,17 @@ impl Studio {
     /// The start screen shows: the window has not opened a song yet (UI-350).
     pub fn home_shown(&self) -> bool {
         self.home.is_some() && self.start_shown()
+    }
+
+    /// The start screen has the keys: nothing drawn over it (a menu, the settings, the palette)
+    /// takes them, and no window of a device does. What the song under it would do with a key
+    /// is not done then.
+    pub(crate) fn home_covers_keys(&self) -> bool {
+        self.home_shown()
+            && self.popup.is_none()
+            && self.settings.is_none()
+            && self.palette.is_none()
+            && !self.instruments.own_surface()
     }
 
     /// The mixer, its grip and its docked faces paint: the start screen covers them all, so

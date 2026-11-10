@@ -91,6 +91,22 @@ impl Studio {
         self.press_at_hit(g, x, y, clicks, mods)
     }
 
+    /// A right press at (`x`, `y`) in the body that no dialog, setting or palette took: the
+    /// menu of what is there. The start screen covers the body, and what is under it is not
+    /// drawn: no menu of the song opens through it.
+    pub(crate) fn window_right_press(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
+        if self.home_shown() {
+            return false;
+        }
+        if self.popup.is_none() && self.instrument_right(g, x, y) {
+            return true;
+        }
+        if self.cpu_context(g, x, y) || self.lib_context(g, x, y) || self.scene_context(g, x, y) {
+            return true;
+        }
+        self.roll_input(g).is_none() && self.context_press(g, x, y)
+    }
+
     /// The press goes to what is drawn at the point.
     fn press_at_hit(&mut self, g: &Geometry, x: f32, y: f32, clicks: u32, mods: Mods) -> PressOut {
         let hit = self.hit(g, x, y);

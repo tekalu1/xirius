@@ -190,18 +190,7 @@ impl Screen {
             }
             return;
         }
-        if s.popup.is_none() && s.instrument_right(&g, x, y) {
-            cx.notify();
-            return;
-        }
-        // What the start screen covers is not drawn: its menus do not open.
-        if !s.home_shown()
-            && (s.cpu_context(&g, x, y) || s.lib_context(&g, x, y) || s.scene_context(&g, x, y))
-        {
-            cx.notify();
-            return;
-        }
-        if s.roll_input(&g).is_none() && s.context_press(&g, x, y) {
+        if s.window_right_press(&g, x, y) {
             cx.notify();
         }
     }
@@ -546,37 +535,26 @@ impl Screen {
             self.files(cx);
             return;
         }
-        if studio.field_keys(&g, &k.key, k.key_char.as_deref(), m) {
-            cx.notify();
-            return;
-        }
-        // A list's search box (UI-338): its letters come through the IME
-        // (`EntityInputHandler` below), so the key brings none; a letter is
-        // still the list's, never a note or a shortcut.
-        if picking
-            && !m.ctrl
-            && !m.alt
-            && k.key_char
-                .as_deref()
-                .is_some_and(|c| !c.is_empty() && !c.chars().any(char::is_control))
-        {
-            cx.notify();
-            return;
-        }
-        let keypad = key != k.key;
-        let ch = if picking { None } else { k.key_char.as_deref() };
-        let typed = !keypad && !m.ctrl && studio.typed(&g, &k.key, ch);
-        let played = !keypad
-            && !typed
-            && !m.ctrl
-            && !m.alt
-            && !m.shift
-            && studio.pc_key_down(&k.key, ev.is_held);
-        if typed || played || studio.mapped_key_code(&g, key, character, m, code) {
+        let out = studio.song_key(
+            &g,
+            crate::input_dispatch::KeyIn {
+                key: &k.key,
+                mapped: key,
+                key_char: k.key_char.as_deref(),
+                character,
+                code,
+                mods: m,
+                held: ev.is_held,
+                picking,
+            },
+        );
+        if out.notify {
             cx.notify();
         }
         drop(studio);
-        self.files(cx);
+        if out.files {
+            self.files(cx);
+        }
     }
 
     /// A key came up: a PC key that played a note lets it go (UI-074).

@@ -176,6 +176,10 @@ impl Studio {
 
     /// A right press: on a plugin's insert row, its menu.
     pub fn context_press(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
+        // The start screen covers the mixer: its rows are not there to press.
+        if self.home_shown() {
+            return false;
+        }
         let Some(MixerHit::Open(t, id) | MixerHit::Bypass(t, id)) = self.mixer_hit(g, x, y) else {
             return false;
         };

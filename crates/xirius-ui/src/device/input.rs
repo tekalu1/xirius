@@ -1212,6 +1212,10 @@ impl Studio {
     /// A right press on a window: on a control, its menu (back to the default,
     /// its automation lane, MIDI learn). True over any window.
     pub(crate) fn instrument_right(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
+        // The start screen covers the song: no window of a device is over it.
+        if self.home_shown() {
+            return false;
+        }
         let p = self.auto_shown();
         let Some((i, part)) = self.instruments.at(&p, g, x, y) else {
             return false;

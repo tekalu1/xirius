@@ -869,6 +869,10 @@ impl Studio {
     /// The right press at a point of the body: opens the menu of what is there. False when
     /// no scene claims the point.
     pub(crate) fn scene_context(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
+        // The start screen covers the song: what is under it is not drawn and has no menu.
+        if self.home_shown() {
+            return false;
+        }
         // A value typed in a head's field is put in before the menu is built from the song:
         // a row that offers the value (「値を入力…」) opens with the one the song has now.
         self.head_fader_blur();

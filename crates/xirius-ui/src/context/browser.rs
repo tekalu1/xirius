@@ -107,6 +107,9 @@ impl Studio {
     /// A right press on the browser: opens the menu of what is under the pointer. False
     /// when the point is not on the panel or has no menu.
     pub fn lib_context(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
+        if self.home_shown() {
+            return false;
+        }
         if !self.browser.open || !g.panel.contains(x, y) {
             return false;
         }
