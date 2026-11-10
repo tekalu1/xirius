@@ -3,6 +3,7 @@ use xirius_core::id::{NodeId, PluginId, TrackId};
 use xirius_core::rack::{RackNode, SplitMode};
 
 use super::*;
+use crate::device::play::{KeySpec, Keyboard};
 use crate::instrument::Pick as Add;
 use crate::studio::{Geometry, Studio};
 
@@ -868,7 +869,7 @@ fn multi_pointer_release(release: &str) {
     assert!(s.run_command("rack.layer.add", json!({"track":t,"name":"Sampler"})));
     s.open_channel(t);
     let g = s.geometry(1600.0, 1000.0);
-    let keyboard = s.channel_view(&g).unwrap().keyboard.unwrap();
+    let keyboard = s.channel_view(&g).unwrap().keys.unwrap().board;
     let key = keyboard.keys.iter().find(|k| k.pitch == 48).unwrap();
     let point = (key.r.x + key.r.w / 2.0, key.r.bottom() - 8.0);
     assert!(s.channel_press(&g, point.0, point.1, 1));
@@ -959,8 +960,9 @@ fn a_multi_instrument_has_the_key_figure_when_the_window_is_wide() {
     assert!(k.panel.bottom() <= v.r.bottom() + 0.5);
     // A full layer's box takes the whole map.
     assert!((k.boxes[0].rect.w - k.map.w).abs() < 0.5);
+    // Narrower than its least width the figure stays (it scrolls: see the narrow-width test).
     let narrow = s.geometry(700.0, 1000.0);
-    assert!(s.channel_view(&narrow).unwrap().keys.is_none());
+    assert!(s.channel_view(&narrow).unwrap().keys.is_some());
     // A track of one instrument has none.
     let vocal = track(&s, "Vocal");
     s.channel = Some(ChannelWin::new(vocal));
@@ -1006,8 +1008,8 @@ fn a_side_dragged_sets_the_layer_in_one_step() {
     let high = keys::grip(&b, keys::Edge::High);
     let (x, y) = mid(high);
     assert!(s.channel_press(&g, x, y, 1));
-    s.channel_moved(&g, keys::key_x(k.map, k.span, 80.0), y);
-    s.channel_moved(&g, keys::key_x(k.map, k.span, 60.0), y);
+    s.channel_moved(&g, k.board.edge(80), y);
+    s.channel_moved(&g, k.board.edge(60), y);
     // The box follows the pointer before it is let go; the layer does not change yet.
     let held = s.channel_view(&g).unwrap().keys.unwrap();
     assert_eq!(held.boxes[0].ranges.0, (0, 59));
@@ -1084,59 +1086,264 @@ fn the_transpose_field_is_dragged_up_and_down_and_sets_it_in_one_step() {
 
 #[test]
 fn a_side_does_not_pass_the_other() {
-    let map = Rect::new(0.0, 0.0, 128.0, 127.0);
+    let map = Rect::new(0.0, 0.0, 704.0, 127.0);
+    let board = Keyboard::new(
+        Rect::new(0.0, 0.0, 704.0, 64.0),
+        0.0,
+        KeySpec::full(704.0, 64.0),
+    );
     let from = ((40, 50), (20, 90));
+    let at = |note: u8| board.edge(note);
     assert_eq!(
-        keys::dragged(from, keys::Edge::Low, map, (0.0, 128.0), 100.0, 0.0),
+        keys::dragged(from, keys::Edge::Low, map, &board, at(100), 0.0),
         ((50, 50), (20, 90))
     );
     assert_eq!(
-        keys::dragged(from, keys::Edge::High, map, (0.0, 128.0), 0.0, 0.0),
+        keys::dragged(from, keys::Edge::High, map, &board, at(0), 0.0),
         ((40, 40), (20, 90))
     );
     assert_eq!(
-        keys::dragged(from, keys::Edge::Loud, map, (0.0, 128.0), 0.0, 127.0),
+        keys::dragged(from, keys::Edge::Loud, map, &board, 0.0, 127.0),
         ((40, 50), (20, 20))
     );
     assert_eq!(
-        keys::dragged(from, keys::Edge::Soft, map, (0.0, 128.0), 0.0, 0.0),
+        keys::dragged(from, keys::Edge::Soft, map, &board, 0.0, 0.0),
         ((40, 50), (90, 90))
     );
     assert_eq!(
-        keys::dragged(from, keys::Edge::Soft, map, (0.0, 128.0), 0.0, 200.0),
+        keys::dragged(from, keys::Edge::Soft, map, &board, 0.0, 200.0),
         ((40, 50), (1, 90))
     );
     assert_eq!(
-        keys::dragged(from, keys::Edge::High, map, (0.0, 128.0), 999.0, 0.0),
+        keys::dragged(from, keys::Edge::High, map, &board, 9999.0, 0.0),
         ((40, 127), (20, 90))
     );
 }
 
+/// The figure always spans C-2 to G8; the boxes' sides are the keyboard's key boundaries and a
+/// dragged side snaps to the nearest one.
 #[test]
-fn the_figure_shows_the_octaves_the_layers_take() {
-    let (mut s, _) = studio();
+fn the_figure_spans_every_key_and_its_boxes_sit_on_key_edges() {
+    let (mut s, g) = studio();
     let (t, layers) = multi(&mut s);
-    assert_eq!(keys::span(&layers), (0.0, 128.0));
-    for (l, keys) in layers.iter().zip(["E0-B1", "C2-C6", "C2-C6"]) {
+    let k = s.channel_view(&g).unwrap().keys.unwrap();
+    assert_eq!((k.board.spec.low, k.board.spec.high), (0, 127));
+    assert_eq!(k.board.keys.len(), 128);
+    // a layer of the whole range takes the map's width, from its left to its right
+    let b = &k.boxes[0].rect;
+    assert_eq!((b.x, b.right()), (k.map.x, k.map.right()));
+    assert_eq!(k.map.x, k.board.view.x);
+    assert_eq!(k.map.w, k.board.view.w);
+    for (l, keys) in layers.iter().zip(["E0-B1", "C2-C6", "C#3-F#4"]) {
         assert!(s.run_command(
             "rack.layer.set",
             json!({"id": l.id.to_string(), "keys": keys})
         ));
     }
-    // C0 to C6, as the mock shows them.
-    let layers = keys::layers(&s.project().tracks[&t]).to_vec();
-    assert_eq!(keys::span(&layers), (24.0, 73.0));
-    // Six octaves at the least, and no key past 127.
-    let mut high = layers.clone();
-    for l in &mut high {
-        l.keys = (120, 125);
+    // the layers do not move the keys
+    let moved = s.channel_view(&g).unwrap().keys.unwrap();
+    assert_eq!(moved.board, k.board);
+    let lays = keys::layers(&s.project().tracks[&t]).to_vec();
+    for (bx, l) in moved.boxes.iter().zip(&lays) {
+        assert_eq!(bx.rect.x, moved.board.edge(l.keys.0));
+        assert_eq!(bx.rect.right(), moved.board.edge(l.keys.1 + 1));
+        // what the top of the keyboard shows: a black key's own side, or a line between whites
+        for (note, edge) in [(l.keys.0, bx.rect.x), (l.keys.1 + 1, bx.rect.right())] {
+            let key = moved.board.keys.iter().find(|k| k.pitch == note);
+            if let Some(key) = key.filter(|k| k.black) {
+                assert_eq!(edge, key.r.x, "note {note}");
+            }
+        }
     }
-    assert_eq!(keys::span(&high), (48.0, 80.0));
-    let board = Rect::new(0.0, 0.0, 730.0, 64.0);
-    let (whites, blacks) = keys::key_rects(board, (24.0, 73.0));
-    assert_eq!((whites.len(), blacks.len()), (43, 30));
-    assert_eq!(whites[0], (24, Rect::new(0.0, 0.0, 15.0, 64.0)));
-    assert!((whites.last().unwrap().1.right() - 730.0).abs() < 0.01);
+}
+
+#[test]
+fn the_key_boundaries_follow_the_keyboard() {
+    let board = Keyboard::new(
+        Rect::new(8.0, 0.0, 704.0, 64.0),
+        0.0,
+        KeySpec::full(704.0, 64.0),
+    );
+    let key = |n: u8| *board.keys.iter().find(|k| k.pitch == n).unwrap();
+    assert_eq!(board.edge(0), 8.0, "the left end");
+    assert_eq!(board.edge(128), 8.0 + 704.0, "the right end");
+    for note in 0..=127u8 {
+        let k = key(note);
+        let want = if k.black {
+            k.r.x
+        } else if note > 0 && keys::black(note - 1) {
+            key(note - 1).r.right()
+        } else {
+            k.r.x - 1.0
+        };
+        assert_eq!(board.edge(note), want, "note {note}");
+    }
+    for note in 0..127u8 {
+        assert!(board.edge(note) < board.edge(note + 1), "note {note}");
+    }
+    // the nearest boundary to a point, in either direction
+    for note in 0..=127u8 {
+        let e = board.edge(note);
+        assert_eq!(board.nearest_edge(e), note);
+        assert_eq!(board.nearest_edge(e + 0.2), note);
+        assert_eq!(board.nearest_edge(e - 0.2), note);
+    }
+    assert_eq!(board.nearest_edge(-50.0), 0);
+    assert_eq!(board.nearest_edge(5000.0), 128);
+    // dragged a key side to a point between two boundaries takes the nearer
+    let map = Rect::new(8.0, 0.0, 704.0, 100.0);
+    let mid = (board.edge(60) + board.edge(61)) / 2.0;
+    let from = ((0, 127), (1, 127));
+    let low = |x: f32| {
+        keys::dragged(from, keys::Edge::Low, map, &board, x, 0.0)
+            .0
+            .0
+    };
+    assert_eq!(low(mid - 0.3), 60);
+    assert_eq!(low(mid + 0.3), 61);
+}
+
+#[test]
+fn the_map_and_the_keyboard_are_one_row_with_a_four_pixel_gap() {
+    let (mut s, g) = studio();
+    multi(&mut s);
+    let v = s.channel_view(&g).unwrap();
+    let k = v.keys.as_ref().unwrap();
+    assert_eq!(keys::GAP, 4.0);
+    assert_eq!(k.board.view.y, k.map.bottom() + 4.0);
+    assert_eq!(k.board.view.h, 64.0, "no rail while the keys fit");
+    assert_eq!(k.panel.h, 208.0);
+    assert_eq!(keys::PANEL_H, 32.0 + 100.0 + 4.0 + 64.0 + 8.0);
+    assert_eq!(k.board.view.bottom() + keys::PAD, k.panel.bottom());
+    // no second keyboard under the panel
+    assert_eq!(k.panel.bottom(), v.r.bottom());
+    assert_eq!(v.keyboard(), Some(&k.board));
+    // a press in the gap is no key and does not take a side of a box
+    let (x, y) = (k.map.x + k.map.w / 2.0, k.map.bottom() + 2.0);
+    assert_eq!(k.board.key_at(x, y), None);
+    // the keyboard is the full range, its keys 64 high
+    let key = k.board.keys.iter().find(|p| p.pitch == 60).unwrap();
+    assert_eq!(key.r.bottom(), k.board.view.bottom());
+}
+
+#[test]
+fn a_window_under_the_least_width_scrolls_the_map_and_the_keyboard_together() {
+    let (mut s, _) = studio();
+    let (t, _) = multi(&mut s);
+    let narrow = s.geometry(600.0, 800.0);
+    let v = s.channel_view(&narrow).unwrap();
+    let k = v.keys.as_ref().unwrap();
+    // the keys keep the size they have at 720: 704 wide in all, 75 whites
+    assert_eq!(k.board.extent, 704.0);
+    assert!(k.board.extent > k.board.view.w);
+    assert_eq!(k.panel.h, keys::PANEL_SCROLL_H);
+    assert_eq!(keys::PANEL_SCROLL_H, 220.0);
+    assert_eq!(k.board.view.h, 76.0, "the keys and their rail");
+    let wide = s.geometry(720.0, 800.0);
+    let still = s.channel_view(&wide).unwrap().keys.unwrap();
+    let key = |b: &Keyboard| b.keys.iter().find(|p| p.pitch == 60).unwrap().r;
+    assert_eq!(key(&k.board).w, key(&still.board).w);
+    // the box of a whole-range layer is the whole 704, the map shows a part of it
+    assert_eq!(k.boxes[0].rect.w, 704.0);
+    // the wheel over the map and over the keyboard move both
+    let before = k.boxes[0].rect.x;
+    for (x, y) in [
+        (k.map.x + 10.0, k.map.y + 10.0),
+        (k.board.view.x + 10.0, k.board.view.y + 10.0),
+    ] {
+        s.channel.as_mut().unwrap().keyboard_scroll = 0.0;
+        assert!(s.channel_wheel(&narrow, x, y, -30.0, 0.0));
+        let moved = s.channel_view(&narrow).unwrap().keys.unwrap();
+        assert_eq!(moved.board.scroll, 30.0);
+        assert_eq!(moved.boxes[0].rect.x, before - 30.0);
+        assert_eq!(
+            moved.board.edge(60) - k.board.edge(60),
+            -30.0,
+            "the keyboard and the map shift the same"
+        );
+    }
+    // far to the right it stops at the end: the keyboard's last key ends at the view's right
+    s.channel.as_mut().unwrap().keyboard_scroll = 5000.0;
+    let end = s.channel_view(&narrow).unwrap().keys.unwrap();
+    assert_eq!(end.board.scroll, end.board.extent - end.board.view.w);
+    assert_eq!(end.board.edge(128), end.board.view.right());
+    assert_eq!(end.boxes[0].rect.right(), end.board.view.right());
+    // a side dragged to the map's right end carries the map along
+    s.channel.as_mut().unwrap().keyboard_scroll = 0.0;
+    let k = s.channel_view(&narrow).unwrap().keys.unwrap();
+    let (gx, gy) = mid(keys::grip(&k.boxes[0], keys::Edge::Low));
+    // (the whole-range box's low side is at the map's left: pull it right)
+    assert!(s.channel_press(&narrow, gx + 1.0, gy, 1));
+    s.channel_moved(&narrow, k.map.right() - 1.0, gy);
+    assert!(s.channel.as_ref().unwrap().keyboard_scroll > 0.0);
+    s.channel_up(&narrow);
+    let lays = keys::layers(&s.project().tracks[&t]).to_vec();
+    assert!(lays[0].keys.0 > 0);
+}
+
+#[test]
+fn the_keyboard_plays_and_glides_and_plays_again_on_return() {
+    let (mut s, g) = studio();
+    multi(&mut s);
+    let board = s.channel_view(&g).unwrap().keys.unwrap().board;
+    let at = |note: u8| {
+        let k = board.keys.iter().find(|k| k.pitch == note).unwrap();
+        (k.r.x + k.r.w / 2.0, k.r.bottom() - 5.0)
+    };
+    let note = |s: &Studio| s.channel.as_ref().unwrap().mouse_note.map(|n| n.0);
+    let (x, y) = at(60);
+    assert!(s.channel_press(&g, x, y, 1));
+    assert_eq!(note(&s), Some(60));
+    assert!(s.channel.as_ref().unwrap().key_down);
+    // glissando: another key plays, the same key again does not
+    let (x2, y2) = at(62);
+    s.channel_moved(&g, x2, y2);
+    assert_eq!(note(&s), Some(62));
+    s.channel_moved(&g, x2 + 1.0, y2);
+    assert_eq!(note(&s), Some(62));
+    // a black key (C#3, up in its top half)
+    let black = board.keys.iter().find(|k| k.pitch == 61).unwrap().r;
+    s.channel_moved(&g, black.x + black.w / 2.0, black.y + 5.0);
+    assert_eq!(note(&s), Some(61));
+    // out of the keyboard the note stops, the press is still down
+    s.channel_moved(&g, x2, board.view.y - 30.0);
+    assert_eq!(note(&s), None);
+    assert!(s.channel.as_ref().unwrap().key_down);
+    // back over a key plays that key
+    let (x3, y3) = at(64);
+    s.channel_moved(&g, x3, y3);
+    assert_eq!(note(&s), Some(64));
+    // out again and let go there: nothing plays afterwards
+    s.channel_moved(&g, x3, board.view.y - 30.0);
+    assert_eq!(note(&s), None);
+    assert!(s.channel_up(&g), "the release is taken");
+    assert!(!s.channel.as_ref().unwrap().key_down);
+    s.channel_moved(&g, x3, y3);
+    assert_eq!(note(&s), None, "a pointer that is not down plays nothing");
+    // Esc lets go of a press that is outside the keyboard
+    assert!(s.channel_press(&g, x, y, 1));
+    s.channel_moved(&g, x2, board.view.y - 30.0);
+    assert!(s.channel_escape());
+    s.channel_moved(&g, x3, y3);
+    assert_eq!(note(&s), None);
+}
+
+#[test]
+fn a_multi_instrument_window_has_no_second_keyboard() {
+    let (mut s, _) = studio();
+    let (_, _) = multi(&mut s);
+    let p = s.project();
+    let w = s.channel.as_ref().unwrap();
+    let (nw, nh) = natural_size(&p, w).unwrap();
+    let t = &p.tracks[&w.track];
+    let probe = flow::layout(&p, t, (0.0, 0.0));
+    let (_, tool) = tools_of(Rect::new(0.0, 0.0, nw, 0.0), true);
+    assert_eq!(nh, BAR_H + tool + probe.h + keys::PANEL_H);
+    // the lower keyboard (120) and the old 204 panel are gone: 116 less in all
+    assert_eq!(keys::PANEL_H, 208.0);
+    let v = view(&p, w, (nw, nh)).unwrap();
+    assert!(v.body.h >= probe.h - 0.5);
+    assert_eq!(v.keys.unwrap().panel.bottom(), nh);
 }
 
 #[test]

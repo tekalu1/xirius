@@ -193,11 +193,21 @@ pub struct ChannelWin {
     pub keyboard_scroll: f32,
     pub keyboard_drag: Option<crate::device::play::ScrollDrag>,
     pub mouse_note: Option<(u8, Option<u8>)>,
+    /// The pointer is down from a key: leaving the keyboard stops the note, and coming back
+    /// plays the key it comes to.
+    pub key_down: bool,
     /// Where the pointer is, over it or not.
     pub pointer: Option<(f32, f32)>,
     pub hot: Option<Part>,
     pub chosen: Option<Pick>,
     pub(crate) grab: Option<Grab>,
+}
+
+impl View {
+    /// The playable keyboard of a multi-instrument's figure.
+    pub fn keyboard(&self) -> Option<&crate::device::play::Keyboard> {
+        self.keys.as_ref().map(|k| &k.board)
+    }
 }
 
 impl ChannelWin {
@@ -210,6 +220,7 @@ impl ChannelWin {
             keyboard_scroll: 0.0,
             keyboard_drag: None,
             mouse_note: None,
+            key_down: false,
             pointer: None,
             hot: None,
             chosen: None,
@@ -232,7 +243,6 @@ pub struct View {
     pub flow: Flow,
     /// A multi-instrument's key range figure, under the body, when the window is wide enough.
     pub keys: Option<keys::Keys>,
-    pub keyboard: Option<crate::device::play::Keyboard>,
     /// The macro row, under the toolbar, while Macro Controls is on.
     pub macros: Option<MacroRow>,
 }
@@ -331,13 +341,12 @@ pub fn min_width(p: &Project, w: &ChannelWin) -> f32 {
     }
 }
 
-/// The bands of the window at a width: the toolbar, the macro row, the key range figure and the
-/// keyboard under the body.
+/// The bands of the window at a width: the toolbar, the macro row and the key range figure (its
+/// map and keyboard) under the body.
 struct Bands {
     tool: f32,
     macros: f32,
     panel: f32,
-    piano: f32,
 }
 
 fn bands(t: &Track, w: &ChannelWin, width: f32) -> Bands {
@@ -347,15 +356,13 @@ fn bands(t: &Track, w: &ChannelWin, width: f32) -> Bands {
     Bands {
         tool,
         macros: if w.macros { MACRO_H } else { 0.0 },
-        panel: if multi && width >= keys::LEAST_W {
+        panel: if !multi {
+            0.0
+        } else if width - 2.0 * keys::PAD < crate::device::play::KeySpec::LEAST_W {
+            // narrower than the keys' least width: the map and keyboard scroll, with a rail
+            keys::PANEL_SCROLL_H
+        } else {
             keys::PANEL_H
-        } else {
-            0.0
-        },
-        piano: if multi {
-            crate::device::play::Keyboard::HEIGHT + 16.0
-        } else {
-            0.0
         },
     }
 }
@@ -368,10 +375,7 @@ pub fn natural_size(p: &Project, w: &ChannelWin) -> Option<(f32, f32)> {
     let probe = flow::layout(p, t, (0.0, 0.0));
     let width = probe.w.max(min_width(p, w));
     let b = bands(t, w, width);
-    Some((
-        width,
-        BAR_H + b.tool + b.macros + probe.h + b.panel + b.piano,
-    ))
+    Some((width, BAR_H + b.tool + b.macros + probe.h + b.panel))
 }
 
 /// The window of `w`, which fills a surface of `size` (the Channel Editor's own window); none
@@ -379,13 +383,11 @@ pub fn natural_size(p: &Project, w: &ChannelWin) -> Option<(f32, f32)> {
 pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
     let t = p.tracks.get(&w.track)?;
     let probe = flow::layout(p, t, (0.0, 0.0));
-    let multi = !keys::layers(t).is_empty();
     let instrument = t.kind == xirius_core::model::TrackKind::Instrument;
     let Bands {
         tool: tool_h,
         macros: macro_h,
         panel: panel_h,
-        piano: piano_h,
     } = bands(t, w, size.0);
     let r = Rect::new(0.0, 0.0, size.0, size.1);
     let name = t.shown_name().to_string();
@@ -404,7 +406,7 @@ pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
         r.x,
         toolbar.bottom() + macro_h,
         r.w,
-        (r.h - BAR_H - tool_h - macro_h - panel_h - piano_h).max(0.0),
+        (r.h - BAR_H - tool_h - macro_h - panel_h).max(0.0),
     );
     let keys = (panel_h > 0.0).then(|| {
         let held = match &w.grab {
@@ -416,7 +418,14 @@ pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
             _ => None,
         };
         let panel = Rect::new(r.x, body.bottom(), r.w, panel_h);
-        keys::layout(t, panel, keys::chosen_layer(t, w.chosen), held, turning)
+        keys::layout(
+            t,
+            panel,
+            keys::chosen_layer(t, w.chosen),
+            held,
+            turning,
+            w.keyboard_scroll,
+        )
     });
     let (sx, sy) = clamp_scroll(w.scroll, &probe, body);
     // A flow narrower than the window sits in its middle; a wider one shows from its left.
@@ -436,18 +445,6 @@ pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
         body,
         flow,
         keys,
-        keyboard: multi.then(|| {
-            crate::device::play::Keyboard::new(
-                Rect::new(
-                    r.x + 8.0,
-                    body.bottom() + panel_h + 8.0,
-                    r.w - 16.0,
-                    crate::device::play::Keyboard::HEIGHT,
-                ),
-                w.keyboard_scroll,
-                crate::device::play::KeySpec::SAMPLER,
-            )
-        }),
         macros,
     })
 }
@@ -873,7 +870,7 @@ impl Studio {
         let held = self
             .channel
             .as_ref()
-            .is_some_and(|w| w.mouse_note.is_some() || w.keyboard_drag.is_some());
+            .is_some_and(|w| w.mouse_note.is_some() || w.key_down || w.keyboard_drag.is_some());
         if held {
             self.channel_note_off();
         }
@@ -893,7 +890,7 @@ impl Studio {
     }
 
     fn channel_note_on(&mut self, pitch: u8) {
-        self.channel_note_off();
+        self.channel_note_stop();
         let Some(track) = self.channel.as_ref().map(|w| w.track) else {
             return;
         };
@@ -928,10 +925,19 @@ impl Studio {
         }
     }
 
+    /// Lets go of the keyboard: the note stops and a pointer coming back plays nothing. True
+    /// when a key was held.
     pub(crate) fn channel_note_off(&mut self) -> bool {
-        if let Some(w) = &mut self.channel {
+        let down = self.channel.as_mut().is_some_and(|w| {
             w.keyboard_drag = None;
-        }
+            std::mem::take(&mut w.key_down)
+        });
+        self.channel_note_stop() || down
+    }
+
+    /// Stops the note the pointer plays; the pointer may still be down (and play again on a
+    /// key). True when one sounded.
+    fn channel_note_stop(&mut self) -> bool {
         let Some((track, (_, heard))) = self
             .channel
             .as_mut()
@@ -984,7 +990,7 @@ impl Studio {
         let Some(v) = self.channel_view(g).filter(|v| v.r.contains(x, y)) else {
             return false;
         };
-        if let Some(keyboard) = &v.keyboard
+        if let Some(keyboard) = v.keyboard()
             && keyboard.view.contains(x, y)
         {
             if let Some(drag) = keyboard.scroll_press(x, y) {
@@ -997,6 +1003,9 @@ impl Studio {
             }
             if let Some(pitch) = keyboard.key_at(x, y) {
                 self.channel_note_on(pitch);
+                if let Some(w) = &mut self.channel {
+                    w.key_down = true;
+                }
             }
             return true;
         }
@@ -1338,15 +1347,22 @@ impl Studio {
             w.keyboard_scroll = drag.position(x);
             return true;
         }
-        if let Some((pitch, _)) = self.channel.as_ref().and_then(|w| w.mouse_note) {
-            match self
+        if self
+            .channel
+            .as_ref()
+            .is_some_and(|w| w.key_down || w.mouse_note.is_some())
+        {
+            let sounding = self.channel.as_ref().and_then(|w| w.mouse_note);
+            let under = self
                 .channel_view(g)
-                .and_then(|v| v.keyboard)
-                .and_then(|k| k.key_at(x, y))
-            {
-                Some(next) if next != pitch => self.channel_note_on(next),
-                None => {
-                    self.channel_note_off();
+                .and_then(|v| v.keys)
+                .and_then(|k| k.board.key_at(x, y));
+            match (sounding, under) {
+                // another key, or the pointer back on one after it left the keyboard
+                (Some((pitch, _)), Some(next)) if next != pitch => self.channel_note_on(next),
+                (None, Some(next)) => self.channel_note_on(next),
+                (Some(_), None) => {
+                    self.channel_note_stop();
                 }
                 _ => {}
             }
@@ -1382,10 +1398,32 @@ impl Studio {
             Grab::Side {
                 layer, edge, from, ..
             } => {
-                let Some(k) = self.channel_view(g).and_then(|v| v.keys) else {
+                let Some(mut k) = self.channel_view(g).and_then(|v| v.keys) else {
                     return true;
                 };
-                let now = keys::dragged(from, edge, k.map, k.span, x, y);
+                // A side dragged to an end of a scrolling map carries it along.
+                let (left, right) = (
+                    k.map.x + keys::EDGE_SCROLL,
+                    k.map.right() - keys::EDGE_SCROLL,
+                );
+                let step = if x < left {
+                    x - left
+                } else if x > right {
+                    x - right
+                } else {
+                    0.0
+                };
+                if step != 0.0 && k.board.extent > k.board.view.w {
+                    let scroll = (k.board.scroll + step)
+                        .clamp(0.0, (k.board.extent - k.board.view.w).max(0.0));
+                    if let Some(w) = self.channel.as_mut() {
+                        w.keyboard_scroll = scroll;
+                    }
+                    if let Some(next) = self.channel_view(g).and_then(|v| v.keys) {
+                        k = next;
+                    }
+                }
+                let now = keys::dragged(from, edge, k.map, &k.board, x, y);
                 if let Some(w) = self.channel.as_mut() {
                     w.grab = Some(Grab::Side {
                         layer,
@@ -1623,8 +1661,9 @@ impl Studio {
     pub fn channel_wheel(&mut self, g: &Geometry, x: f32, y: f32, dx: f32, dy: f32) -> bool {
         if let Some(k) = self
             .channel_view(g)
-            .and_then(|v| v.keyboard)
-            .filter(|k| k.view.contains(x, y))
+            .and_then(|v| v.keys)
+            .filter(|k| k.board.view.contains(x, y) || k.map.contains(x, y))
+            .map(|k| k.board)
         {
             if let Some(w) = &mut self.channel {
                 w.keyboard_scroll = (k.scroll - if dx != 0.0 { dx } else { dy })

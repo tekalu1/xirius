@@ -9,24 +9,31 @@ use xirius_params::pitch;
 
 use xirius_design::FontSize;
 
+use crate::device::play::{KeySpec, Keyboard};
 use crate::draw::estimated_text_width;
 use crate::mixer::flow::Pick;
 use crate::studio::Rect;
 
 /// The least width of a window that shows the figure.
 pub const LEAST_W: f32 = 720.0;
-/// The room round the figure, its header's row, the map and the keyboard.
+/// The room round the figure, its header's row, the map, the gap and the keyboard.
 pub const PAD: f32 = 8.0;
 pub const HEAD_H: f32 = 32.0;
 pub const MAP_H: f32 = 100.0;
+/// The gap between the map and the keyboard.
+pub const GAP: f32 = 4.0;
 pub const KEYS_H: f32 = 64.0;
-pub const PANEL_H: f32 = HEAD_H + MAP_H + KEYS_H + PAD;
+pub const PANEL_H: f32 = HEAD_H + MAP_H + GAP + KEYS_H + PAD;
+/// A panel whose map and keyboard scroll sideways: the keyboard's rail is added.
+pub const PANEL_SCROLL_H: f32 = PANEL_H + RAIL_H;
+/// The rail under a scrolling keyboard: its gap and thickness, and the pixel after it.
+pub const RAIL_H: f32 = 12.0;
+/// While a side is dragged, the pointer this near an end of the map scrolls it.
+pub const EDGE_SCROLL: f32 = 12.0;
 /// A handle as it is drawn (long and thin) and how far from its side it is caught.
 pub const GRIP_L: f32 = 16.0;
 pub const GRIP_T: f32 = 4.0;
 const REACH: f32 = 5.0;
-/// A black key's height in the keyboard.
-pub const BLACK_H: f32 = 40.0;
 /// The Transpose field (the mock's `.field`): its height, least width and inset, the gap after
 /// a label and between the header's items, and how far a drag goes for a semitone.
 pub const FIELD_H: f32 = 22.0;
@@ -66,12 +73,6 @@ impl Edge {
 
 /// A layer's keys and velocities, each `low..=high`.
 pub type Ranges = ((u8, u8), (u8, u8));
-/// Keys and where each is drawn.
-pub type KeyRects = Vec<(u8, Rect)>;
-/// The keys the map and the keyboard show: the first and how many.
-pub type Span = (f32, f32);
-/// The fewest keys shown: six octaves.
-const LEAST_KEYS: u8 = 72;
 
 /// One layer's box.
 #[derive(Clone, Debug, PartialEq)]
@@ -88,8 +89,8 @@ pub struct Keys {
     pub panel: Rect,
     pub head: Rect,
     pub map: Rect,
-    pub keyboard: Rect,
-    pub span: Span,
+    /// The playable keyboard under the map; the map's keys are its (see [`Keyboard::edge`]).
+    pub board: Keyboard,
     pub boxes: Vec<LayerBox>,
     /// The layer the header names and whose box has the handles.
     pub chosen: usize,
@@ -151,57 +152,29 @@ pub fn chosen_layer(t: &Track, chosen: Option<Pick>) -> usize {
         .unwrap_or(0)
 }
 
-/// The keys the figure shows for the layers: from the C at or under the lowest key to the C at
-/// or over the highest, and six octaves at the least.
-pub fn span(layers: &[Layer]) -> Span {
-    // a range kept backwards counts from its lower key
-    let lo = (layers.iter().map(|l| l.keys.0.min(l.keys.1)).min())
-        .unwrap_or(0)
-        .min(127);
-    let hi = (layers.iter().map(|l| l.keys.0.max(l.keys.1)).max())
-        .unwrap_or(127)
-        .min(127);
-    let mut lo = lo / 12 * 12;
-    let mut end = (hi.div_ceil(12) * 12).saturating_add(1).min(128);
-    while end - lo < LEAST_KEYS {
-        if end < 128 {
-            end = (end + 12).min(128);
-        } else {
-            lo = lo.saturating_sub(12);
-        }
-    }
-    (f32::from(lo), f32::from(end - lo))
-}
-
-/// The left of key `k` in the map.
-pub fn key_x(map: Rect, span: Span, k: f32) -> f32 {
-    map.x + map.w * (k - span.0) / span.1
-}
-
 /// The height of velocity `v` (0..=127) in the map: the louder, the higher.
 pub fn vel_y(map: Rect, v: f32) -> f32 {
     map.bottom() - map.h * v / 127.0
 }
 
-/// A layer's box for its ranges.
-pub fn box_rect(map: Rect, span: Span, ((lo, hi), (soft, loud)): Ranges) -> Rect {
-    let x0 = key_x(map, span, f32::from(lo));
-    let x1 = key_x(map, span, f32::from(hi) + 1.0);
+/// A layer's box for its ranges: its sides on the keyboard's key boundaries.
+pub fn box_rect(map: Rect, board: &Keyboard, ((lo, hi), (soft, loud)): Ranges) -> Rect {
+    let x0 = board.edge(lo);
+    let x1 = board.edge(hi.saturating_add(1));
     let y0 = vel_y(map, f32::from(loud));
     let y1 = vel_y(map, f32::from(soft) - 1.0);
     Rect::new(x0, y0, x1 - x0, y1 - y0)
 }
 
-/// The figure in `panel` for the track's layers; `held` is a layer being dragged and its
-/// ranges now.
-/// `held` is a layer's ranges while a side of it is dragged; `turning`, its transpose while its
-/// field is.
+/// The figure in `panel` for the track's layers, the keyboard scrolled `scroll`. `held` is a
+/// layer's ranges while a side of it is dragged; `turning`, its transpose while its field is.
 pub fn layout(
     t: &Track,
     panel: Rect,
     chosen: usize,
     held: Option<(NodeId, Ranges)>,
     turning: Option<(NodeId, i8)>,
+    scroll: f32,
 ) -> Keys {
     let inner = Rect::new(
         panel.x + PAD,
@@ -211,8 +184,19 @@ pub fn layout(
     );
     let head = Rect::new(inner.x, inner.y, inner.w, HEAD_H);
     let map = Rect::new(inner.x, head.bottom(), inner.w, MAP_H);
-    let keyboard = Rect::new(inner.x, map.bottom(), inner.w, KEYS_H);
-    let span = span(layers(t));
+    // Under the least width the keys keep their size and the map and keyboard scroll together.
+    let scrolls = inner.w < KeySpec::LEAST_W;
+    let keyboard = Rect::new(
+        inner.x,
+        map.bottom() + GAP,
+        inner.w,
+        if scrolls {
+            Keyboard::view_height(KEYS_H)
+        } else {
+            KEYS_H
+        },
+    );
+    let board = Keyboard::new(keyboard, scroll, KeySpec::full(inner.w, KEYS_H));
     let boxes = layers(t)
         .iter()
         .enumerate()
@@ -223,7 +207,7 @@ pub fn layout(
             LayerBox {
                 id: l.id,
                 index,
-                rect: box_rect(map, span, ranges),
+                rect: box_rect(map, &board, ranges),
                 ranges,
             }
         })
@@ -249,8 +233,7 @@ pub fn layout(
         panel,
         head,
         map,
-        keyboard,
-        span,
+        board,
         boxes,
         chosen,
         transpose,
@@ -280,14 +263,14 @@ pub fn reach(b: &LayerBox, e: Edge) -> Rect {
     }
 }
 
-/// What in the figure is under the point: the chosen box's sides first, then the smallest box.
+/// What in the figure is under the point (the map, 5 round it and down to the keyboard): the chosen box's sides first, then the smallest box.
 pub fn hit(k: &Keys, x: f32, y: f32) -> Option<(NodeId, Option<Edge>)> {
     let m = k.map;
     let near = Rect::new(
         m.x - REACH,
         m.y - REACH,
         m.w + 2.0 * REACH,
-        m.h + 2.0 * REACH,
+        m.h + REACH + GAP,
     );
     if !near.contains(x, y) {
         return None;
@@ -304,10 +287,10 @@ pub fn hit(k: &Keys, x: f32, y: f32) -> Option<(NodeId, Option<Edge>)> {
         .map(|b| (b.id, None))
 }
 
-/// The ranges after the side `e` was dragged to the point: a side does not pass the other. Past
-/// the map's ends, the keys go on at the same scale.
-pub fn dragged(from: Ranges, e: Edge, map: Rect, span: Span, x: f32, y: f32) -> Ranges {
-    let key = |x: f32| ((x - map.x) / map.w * span.1 + span.0).round();
+/// The ranges after the side `e` was dragged to the point: a side does not pass the other. A
+/// key side snaps to the nearest key boundary of the keyboard.
+pub fn dragged(from: Ranges, e: Edge, map: Rect, board: &Keyboard, x: f32, y: f32) -> Ranges {
+    let key = |x: f32| f32::from(board.nearest_edge(x));
     let vel = |y: f32| ((map.bottom() - y) / map.h * 127.0).round();
     let ((lo, hi), (soft, loud)) = from;
     match e {
@@ -337,39 +320,4 @@ pub fn velocity_text((soft, loud): (u8, u8)) -> String {
 /// Is key `k` a black one?
 pub fn black(k: u8) -> bool {
     matches!(k % 12, 1 | 3 | 6 | 8 | 10)
-}
-
-/// The keyboard's keys, on the map's scale of a semitone each: a black key takes its own
-/// semitone, a white key its own and half of each black one beside it. Each white key's rect,
-/// then each black key's, with its key.
-pub fn key_rects(keyboard: Rect, span: Span) -> (KeyRects, KeyRects) {
-    let x = |k: f32| key_x(keyboard, span, k);
-    let mut whites = Vec::new();
-    let mut blacks = Vec::new();
-    let (first, n) = (span.0 as u8, span.1 as u8);
-    for k in first..first + n {
-        let kf = f32::from(k);
-        if black(k) {
-            blacks.push((
-                k,
-                Rect::new(x(kf), keyboard.y, x(kf + 1.0) - x(kf), BLACK_H),
-            ));
-        } else {
-            let left = if k > first && black(k - 1) {
-                kf - 0.5
-            } else {
-                kf
-            };
-            let right = if k + 1 < first + n && black(k + 1) {
-                kf + 1.5
-            } else {
-                kf + 1.0
-            };
-            whites.push((
-                k,
-                Rect::new(x(left), keyboard.y, x(right) - x(left), keyboard.h),
-            ));
-        }
-    }
-    (whites, blacks)
 }

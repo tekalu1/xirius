@@ -69,7 +69,7 @@ pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry) {
     if let Some(k) = &v.keys {
         paint_keys(pen, w, t, k);
     }
-    if let Some(k) = &v.keyboard {
+    if let Some(k) = v.keyboard() {
         let mut pressed = s
             .instruments
             .multi_pressed
@@ -152,11 +152,11 @@ fn paint_keys(pen: &mut Pen, w: &ChannelWin, t: &Track, k: &keys::Keys) {
     // The map: a line at each C, then the boxes, the chosen one over the rest.
     let m = k.map;
     pen.round(m, c.well, Radius::Xs);
-    let (first, n) = k.span;
-    for key in (first as u16 + 1..(first + n) as u16).filter(|key| key % 12 == 0) {
-        let x = keys::key_x(m, k.span, f32::from(key));
-        pen.fill(Rect::new(x, m.y, 1.0, m.h), c.line[0]);
-    }
+    pen.mask(m, |pen| {
+        for key in (12..=127u8).step_by(12) {
+            pen.fill(Rect::new(k.board.edge(key), m.y, 1.0, m.h), c.line[0]);
+        }
+    });
     let mut order: Vec<&keys::LayerBox> = k.boxes.iter().collect();
     order.sort_by_key(|b| b.index == k.chosen);
     let mut labels: Vec<Rect> = Vec::new();
@@ -173,10 +173,16 @@ fn paint_keys(pen: &mut Pen, w: &ChannelWin, t: &Track, k: &keys::Keys) {
     }
     labels.reverse();
     // A box past the map's ends while its side is dragged there is cut at them.
+    // (a scrolled map is cut at its sides: the padding stays clear of it)
+    let side = if k.board.extent > k.board.view.w {
+        0.0
+    } else {
+        keys::GRIP_T
+    };
     let near = Rect::new(
-        m.x - keys::GRIP_T,
+        m.x - side,
         m.y - keys::GRIP_T,
-        m.w + 2.0 * keys::GRIP_T,
+        m.w + 2.0 * side,
         m.h + 2.0 * keys::GRIP_T,
     );
     pen.mask(near, |pen| {
@@ -229,31 +235,6 @@ fn paint_keys(pen: &mut Pen, w: &ChannelWin, t: &Track, k: &keys::Keys) {
             }
         }
     });
-    // The keyboard, with each C named.
-    let (whites, blacks) = keys::key_rects(k.keyboard, k.span);
-    pen.fill(k.keyboard, c.line[0]);
-    for (_, r) in &whites {
-        pen.round(
-            Rect::new(r.x + 0.5, r.y, (r.w - 1.0).max(0.0), r.h - 1.0),
-            c.key_white,
-            Radius::Clip,
-        );
-    }
-    for (key, r) in &whites {
-        if key % 12 == 0 {
-            pen.text(
-                &xirius_params::pitch::name(*key),
-                FontSize::Small,
-                Weight::Regular,
-                c.key_label,
-                Rect::new(r.x + 2.0, r.bottom() - 16.0, 40.0, 16.0),
-                Align::Left,
-            );
-        }
-    }
-    for (_, r) in &blacks {
-        pen.round(*r, c.key_black, Radius::Clip);
-    }
 }
 
 impl View {

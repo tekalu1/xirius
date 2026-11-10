@@ -232,7 +232,7 @@ fn keyboard_stage(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: 
             let at = {
                 let s = studio.borrow();
                 let g = s.geometry(1280.0, 900.0);
-                let keyboard = s.channel_view(&g).unwrap().keyboard.unwrap();
+                let keyboard = s.channel_view(&g).unwrap().keys.unwrap().board;
                 let k = keyboard.keys.iter().find(|k| k.pitch == 48).unwrap();
                 point(px(k.r.x + k.r.w / 2.0), px(k.r.bottom() - 5.0))
             };
@@ -318,7 +318,7 @@ fn keyboard_stage(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: 
             .unwrap()
             .update(cx, |view, window, _| {
                 view.with(window, |s, g| {
-                    let keyboard = s.channel_view(g).unwrap().keyboard.unwrap();
+                    let keyboard = s.channel_view(g).unwrap().keys.unwrap().board;
                     let k = keyboard.keys.iter().find(|k| k.pitch == 48).unwrap();
                     (k.r.x + k.r.w / 2.0, k.r.bottom() - 5.0)
                 })
