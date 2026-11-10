@@ -109,7 +109,18 @@ fn the_insert_heading_menu_has_its_rows_in_order() {
     let (mut s, g) = mix();
     let vocal = track(&s, "Vocal");
     assert!(press(&mut s, &g, MixerHit::Heading(vocal, Area::Insert)));
-    assert_eq!(labels(&s), ["編集", "機器"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "インサートをコピー",
+            "インサートを貼り付け",
+            "インサートを後ろに貼り付け",
+            "エフェクトを追加…",
+            "スプリッターを追加",
+            "チャンネルの設定をコピー",
+            "チャンネルの設定を貼り付け"
+        ]
+    );
     assert_eq!(
         key(&s, "インサートをコピー"),
         if cfg!(target_os = "macos") {
@@ -183,7 +194,15 @@ fn the_head_the_name_and_the_rows_add_with_the_same_words() {
     close(&mut s);
     // the instrument heading
     assert!(press(&mut s, &g, MixerHit::Heading(keys, Area::Instrument)));
-    assert_eq!(labels(&s), ["機器", "表示"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "レイヤーを追加…",
+            "エフェクトを追加…",
+            "スプリッターを追加",
+            "チャンネルエディターを開く"
+        ]
+    );
     for label in ADDS {
         assert!(super::tests::all_labels(&s).iter().any(|s| s == label));
     }
@@ -341,10 +360,9 @@ fn a_splitter_and_a_branch_added_grow_the_strip_and_the_editor_alike() {
     // the splitter's row adds a branch
     assert!(press(&mut s, &g, MixerHit::Fold(vocal, id)));
     let got = super::tests::all_labels(&s);
-    assert_eq!(got[0], "機器");
-    assert_eq!(got[1], "分岐を追加");
+    assert_eq!(got[0], "分岐を追加");
     assert_eq!(
-        got[2..4],
+        got[1..3],
         ["エフェクトを後ろに追加…", "スプリッターを後ろに追加"]
     );
     assert!(choose(&mut s, &g, "分岐を追加"));

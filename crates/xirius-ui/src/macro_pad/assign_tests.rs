@@ -158,7 +158,18 @@ fn the_knob_menu_has_add_learn_remove_and_its_lane() {
     let cell = s.channel_view(&g).unwrap().macros.unwrap().cells[7];
     let (x, y) = mid(cell);
     assert!(s.channel_right(&g, x, y));
-    assert_eq!(labels(&s), ["編集", "MIDI", "オートメーション"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "割り当てを追加…",
+            "学習",
+            "割り当てを外す",
+            "名前を変更…",
+            "オートメーションを表示",
+            "MIDI 学習",
+            "MIDI 割り当てを解除"
+        ]
+    );
     pick(&mut s, &g, ADD);
     assert_eq!(
         s.popup.as_ref().map(|p| p.kind),

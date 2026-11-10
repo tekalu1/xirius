@@ -401,7 +401,14 @@ fn a_used_files_menu_puts_selects_reveals_renames_and_keeps_it_from_the_bin() {
     menu_of(&mut t, "Vocal_01.wav");
     assert_eq!(
         labels(&t.s),
-        ["編集", "選択", "トラック", "表示", "ファイル"]
+        [
+            "新しいトラックに置く",
+            "選んだトラックに置く",
+            "使っているクリップを選択",
+            "エクスプローラーで表示",
+            "名前を変更…",
+            "ごみ箱へ"
+        ]
     );
     let bin = row_of(&t.s, "ファイルをごみ箱へ");
     assert!(
@@ -418,7 +425,16 @@ fn a_used_files_menu_puts_selects_reveals_renames_and_keeps_it_from_the_bin() {
 fn an_unused_take_has_no_select_row_and_goes_to_the_bin() {
     let mut t = song("unused");
     menu_of(&mut t, "Vocal_02.wav");
-    assert_eq!(labels(&t.s), ["編集", "トラック", "表示", "ファイル"]);
+    assert_eq!(
+        labels(&t.s),
+        [
+            "新しいトラックに置く",
+            "選んだトラックに置く",
+            "エクスプローラーで表示",
+            "名前を変更…",
+            "ごみ箱へ"
+        ]
+    );
     assert!(row_of(&t.s, "ごみ箱へ").enabled);
     assert!(t.s.context_choose(&t.g, "ごみ箱へ"));
     assert!(t.s.context_choose(&t.g, "ファイルをごみ箱へ"));
@@ -481,7 +497,7 @@ fn copying_many_files_counts_them() {
 fn a_missing_files_menu_only_points_it_and_selects_its_clips() {
     let mut t = song("missing");
     menu_of(&mut t, "Bass.wav");
-    assert_eq!(labels(&t.s), ["選択", "ファイル"]);
+    assert_eq!(labels(&t.s), ["場所を指定…", "使っているクリップを選択"]);
 }
 
 #[test]
@@ -526,7 +542,15 @@ fn pointing_one_file_names_it_alone() {
 fn the_dots_menu_looks_for_the_missing_in_a_folder_and_dims_what_has_nothing_to_do() {
     let mut t = song("more");
     more(&mut t);
-    assert_eq!(labels(&t.s), ["表示", "ファイル"]);
+    assert_eq!(
+        labels(&t.s),
+        [
+            "見つからないファイルを探す…",
+            "外部のファイルを曲のフォルダーにコピー",
+            "曲のフォルダーをエクスプローラーで表示",
+            "使われていない録音を整理…"
+        ]
+    );
     assert!(t.s.context_choose(&t.g, "見つからないファイルを探す…"));
     let folder = t.root.path().join("見つけた");
     answer(&mut t, FileRequest::LocateFolder, &[folder]);
@@ -614,7 +638,14 @@ fn the_keys_go_from_row_to_row_fold_open_rename_and_open_the_menu() {
     assert!(t.s.context_open());
     assert_eq!(
         labels(&t.s),
-        ["編集", "選択", "トラック", "表示", "ファイル"]
+        [
+            "新しいトラックに置く",
+            "選んだトラックに置く",
+            "使っているクリップを選択",
+            "エクスプローラーで表示",
+            "名前を変更…",
+            "ごみ箱へ"
+        ]
     );
     assert!(t.s.mapped_key(&t.g, "escape", None, Mods::NONE));
     assert!(!t.s.context_open());

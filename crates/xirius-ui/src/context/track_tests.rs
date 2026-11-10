@@ -73,12 +73,12 @@ fn a_track_has_its_rows_in_the_order_of_the_mock() {
         [
             "名前を変更…",
             "チャンネルエディターを開く",
+            "オートメーションを表示",
+            "色",
             "編集",
             "トラック",
             "機器",
-            "オートメーション",
-            "表示",
-            "書き出し",
+            "書き出し"
         ]
     );
     // The press made the track the selection.
@@ -265,7 +265,18 @@ fn several_rows_have_the_rows_that_fit_all_of_them() {
     let (vocal, guitar) = (track(&s, "Vocal"), track(&s, "Guitar"));
     s.arrange.tracks = vec![RowKind::Track(vocal), RowKind::Track(guitar)];
     assert!(press_row(&mut s, &g, RowKind::Track(guitar)));
-    assert_eq!(labels(&s), ["編集", "トラック", "表示", "書き出し"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "新しいバスへまとめる",
+            "出力先を設定",
+            "フォルダーにまとめる",
+            "色",
+            "トラックを複製",
+            "ステムを書き出す…",
+            "トラックを削除"
+        ]
+    );
     // The press kept the selection.
     assert_eq!(s.arrange.tracks.len(), 2);
     let n = steps(&s);
@@ -293,7 +304,7 @@ fn the_output_of_several_rows_is_chosen_for_all_of_them_in_one_step() {
     s.arrange.tracks = vec![RowKind::Track(vocal), RowKind::Track(guitar)];
     assert!(press_row(&mut s, &g, RowKind::Track(vocal)));
     let n = steps(&s);
-    assert!(choose(&mut s, &g, "出力"));
+    assert!(choose(&mut s, &g, "出力先を設定"));
     assert!(super::tests::all_labels(&s).contains(&"マスター".to_string()));
     assert!(choose(&mut s, &g, "マスター"));
     assert_eq!(steps(&s), n + 1);
@@ -307,7 +318,19 @@ fn the_output_of_several_rows_is_chosen_for_all_of_them_in_one_step() {
 fn a_folder_has_its_rows_in_the_order_of_the_mock() {
     let (mut s, g) = studio();
     assert!(press_folder(&mut s, &g, "Rhythm"));
-    assert_eq!(labels(&s), ["編集", "選択", "トラック", "表示", "書き出し"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "名前を変更…",
+            "色",
+            "中のトラックにも塗る",
+            "中のトラックを選択",
+            "フォルダーを複製",
+            "ステムを書き出す",
+            "まとめを解く",
+            "フォルダーを削除"
+        ]
+    );
 }
 
 #[test]
@@ -428,7 +451,7 @@ fn the_room_under_the_last_row_adds_pastes_and_folds() {
     let (mut s, g) = studio();
     let (x, y) = under_the_rows(&s, &g);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(labels(&s), ["編集", "トラック", "表示"]);
+    assert_eq!(labels(&s), ["トラックを追加", "貼り付け", "フォルダー"]);
     assert_eq!(
         key(&s, "貼り付け"),
         if cfg!(target_os = "macos") {
@@ -453,7 +476,6 @@ fn the_folders_row_folds_every_folder_and_opens_them_again() {
     let (x, y) = under_the_rows(&s, &g);
     assert!(s.scene_context(&g, x, y));
     let n = steps(&s);
-    assert!(choose(&mut s, &g, "表示"));
     assert!(choose(&mut s, &g, "フォルダー"));
     assert!(choose(&mut s, &g, "すべて畳む"));
     assert_eq!(steps(&s), n);
@@ -462,7 +484,6 @@ fn the_folders_row_folds_every_folder_and_opens_them_again() {
     // The rows shrank; press the room under them now.
     let (x, y) = under_the_rows(&s, &g);
     assert!(s.scene_context(&g, x, y));
-    assert!(choose(&mut s, &g, "表示"));
     assert!(choose(&mut s, &g, "フォルダー"));
     assert!(choose(&mut s, &g, "すべて開く"));
     assert!(all.iter().all(|f| !s.is_collapsed(*f)));
@@ -516,7 +537,6 @@ fn the_colour_row_shows_the_tracks_colour_and_its_squares_check_the_current_one(
     let vocal = track(&s, "Vocal");
     let now = crate::draw::track_color(&s.project().tracks[&vocal]);
     assert!(press_track(&mut s, &g, "Vocal"));
-    assert!(choose(&mut s, &g, "表示"));
     assert_eq!(mark_of(&s, &g, "色"), Some(now));
     assert_eq!(mark_of(&s, &g, "名前を変更…"), None);
     assert!(choose(&mut s, &g, "色"));
@@ -545,6 +565,5 @@ fn the_colour_row_shows_the_tracks_colour_and_its_squares_check_the_current_one(
     // Choosing another colour moves the mark when the menu is opened again.
     assert!(choose_swatch(&mut s, &g, (now + 5) % 16));
     assert!(press_track(&mut s, &g, "Vocal"));
-    assert!(choose(&mut s, &g, "表示"));
     assert_eq!(mark_of(&s, &g, "色"), Some((now + 5) % 16));
 }

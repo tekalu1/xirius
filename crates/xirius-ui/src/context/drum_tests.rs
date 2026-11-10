@@ -35,7 +35,10 @@ fn the_map_button_is_there_only_in_the_drum_view_and_lists_the_maps() {
     assert_ne!(s.hit(&g, map.x + 4.0, map.y + 4.0), Hit::RollMap);
     press_at(&mut s, &g, Hit::RollView(true));
     press_at(&mut s, &g, Hit::RollMap);
-    assert_eq!(labels(&s), ["表示"]);
+    assert_eq!(
+        labels(&s),
+        ["ドラムマップ", "隠す", "行名を変更", "既定に戻す"]
+    );
     assert!(!enabled(&s, "既定に戻す"));
     let lit: Vec<String> = super::tests::all_rows(&s)
         .into_iter()
@@ -178,7 +181,17 @@ fn the_name_of_a_drum_row_has_its_name_hiding_and_place_in_its_menu() {
     let (mut s, g) = drums();
     let all = rows(&s, &g);
     name_menu(&mut s, &g, 36);
-    assert_eq!(labels(&s), ["編集", "選択", "表示"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "同じ高さのノートを選択",
+            "鍵盤の表示",
+            "名前を変更…",
+            "隠す",
+            "上へ移動",
+            "下へ移動"
+        ]
+    );
     assert!(!enabled(&s, "同じ高さのノートを選択"));
     assert!(!enabled(&s, "下へ移動"));
     assert!(choose(&mut s, &g, "上へ移動"));
@@ -207,7 +220,7 @@ fn the_name_of_a_drum_row_has_its_name_hiding_and_place_in_its_menu() {
 fn the_keyboard_keys_have_no_drum_rows_in_their_menu() {
     let (mut s, g) = roll();
     name_menu(&mut s, &g, 60);
-    assert_eq!(labels(&s), ["選択", "表示"]);
+    assert_eq!(labels(&s), ["同じ高さのノートを選択", "鍵盤の表示"]);
 }
 
 #[test]

@@ -726,7 +726,12 @@ fn the_factory_presets_come_back_from_the_browsers_menus() {
             .iter()
             .map(|r| r.label.as_str())
             .collect::<Vec<_>>(),
-        ["機器", "表示"]
+        [
+            "読み込む",
+            "お気に入り",
+            "",
+            "工場出荷のプリセットを読み込み直す"
+        ]
     );
     assert!(labels.contains(&"お気に入り".to_string()));
     assert!(choose(&mut s, &g, "工場出荷のプリセットを読み込み直す"));

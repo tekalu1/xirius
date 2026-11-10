@@ -69,13 +69,18 @@ fn context_catalog_covers_each_eq_band_type_and_switch_state() {
                     .unwrap();
                 s.point_menu(&g, 0, (0, band), 600.0, 300.0);
                 assert!(s.context_open());
-                assert_eq!(
-                    s.context_rows()
-                        .iter()
-                        .map(|r| r.label.as_str())
-                        .collect::<Vec<_>>(),
-                    ["機器"]
+                let rows: Vec<String> = s
+                    .context_rows()
+                    .into_iter()
+                    .filter(|r| !r.gap)
+                    .map(|r| r.label)
+                    .collect();
+                // Under 13 rows: no category group, the reset last.
+                assert!(
+                    rows.len() <= 12 && !rows.contains(&"機器".to_string()),
+                    "{rows:?}"
                 );
+                assert_eq!(rows.last().map(String::as_str), Some("既定に戻す"));
                 s.popup = None;
             }
         }

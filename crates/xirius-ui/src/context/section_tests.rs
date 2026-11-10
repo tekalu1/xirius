@@ -105,7 +105,23 @@ fn the_right_press_on_a_section_opens_its_menu_in_the_order_of_the_mock() {
     assert!(press_section(&mut s, &g, 7));
     assert!(s.context_open());
     assert_eq!(s.arrange.section, Some(s.project().sections[1].id));
-    assert_eq!(labels(&s), ["編集", "選択", "時間", "表示", "書き出し"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "セクション名を変更",
+            "色",
+            "複製",
+            "セクションをループ",
+            "セクションのものを選択",
+            "ここで分割",
+            "セクションを書き出す…",
+            "切り取り",
+            "コピー",
+            "貼り付け",
+            "削除",
+            "時間を削除"
+        ]
+    );
     assert_eq!(
         key(&s, "複製"),
         if cfg!(target_os = "macos") {
@@ -240,7 +256,7 @@ fn copy_then_paste_on_the_empty_band_puts_a_section_there() {
     assert!(choose(&mut s, &g, "コピー"));
     // The empty band after the last section.
     assert!(press_section(&mut s, &g, 15));
-    assert_eq!(labels(&s), ["編集", "時間"]);
+    assert_eq!(labels(&s), ["セクションを追加", "貼り付け"]);
     assert!(enabled(&s, "貼り付け"));
     assert_eq!(
         key(&s, "貼り付け"),
@@ -263,7 +279,7 @@ fn copy_then_paste_on_the_empty_band_puts_a_section_there() {
 fn the_empty_band_adds_a_named_section_on_the_bar_pressed() {
     let (mut s, g) = with_room();
     assert!(press_section(&mut s, &g, 15));
-    assert_eq!(labels(&s)[0], "編集");
+    assert_eq!(labels(&s)[0], "セクションを追加");
     // Nothing to paste.
     assert!(!enabled(&s, "貼り付け"));
     assert!(choose(&mut s, &g, "セクションを追加"));
@@ -371,7 +387,18 @@ fn the_loop_menu_has_the_loop_rows_and_the_time_rows() {
         .unwrap();
     let x = s.tick_x(&g, 5 * BAR) + 24.0;
     assert!(s.scene_context(&g, x, g.ruler.y + 4.0));
-    assert_eq!(labels(&s), ["編集", "選択", "時間", "書き出し"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "ループ",
+            "ループ範囲のものを選択",
+            "ループの中を書き出す…",
+            "複製",
+            "セクションにする",
+            "時間を挿入",
+            "時間を削除"
+        ]
+    );
     // The loop's key is the pad's slash alone, not "NumPad/ / /".
     assert_eq!(key(&s, "ループ"), "NumPad/");
     assert_eq!(

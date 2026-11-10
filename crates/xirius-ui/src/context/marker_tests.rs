@@ -11,7 +11,15 @@ fn ruler_add_and_marker_rows_run_and_undo() {
     s.song.run("marker.add", json!({"at": 4 * BAR})).unwrap();
     let r = s.marker_rect(&g, id).unwrap();
     assert!(s.scene_context(&g, r.x + 4.0, r.y + 4.0));
-    assert_eq!(labels(&s), ["編集", "時間", "表示"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "名前を変更…",
+            "次のマーカーまでをループに",
+            "色",
+            "マーカーを削除"
+        ]
+    );
     assert!(choose(&mut s, &g, "次のマーカーまでをループに"));
     assert_eq!(s.project().loop_range.unwrap().end, 4 * BAR);
     s.undo(&g);

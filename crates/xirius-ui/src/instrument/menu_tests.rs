@@ -130,7 +130,8 @@ fn open_presets_and_replace_go_where_the_row_says() {
             "Default",
             "上書き保存",
             "名前を付けて保存…",
-            "ファイルから読み込む…"
+            "ファイルから読み込む…",
+            "ブラウザーに表示"
         ]
     );
     s.context_restore(0);
@@ -269,7 +270,6 @@ fn an_external_instrument_opens_the_effective_process_choices_from_its_row() {
         .unwrap();
     right_press(&mut s, &g, t, id);
     assert!(s.context_path("動かす場所").is_some());
-    assert!(s.context_choose(&g, "機器"));
     let marks = crate::a11y::marks(&s, &g);
     assert!(marks.iter().any(|m| m.node.label() == Some("動かす場所")));
     self::pick(&mut s, &g, "process");

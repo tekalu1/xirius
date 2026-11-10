@@ -55,6 +55,38 @@ pub const CTX_V2: &[Shot] = &[
         name: "v2-track",
         acts: &[Act::Reset, staged(0), staged(20)],
     },
+    Shot {
+        name: "v2-clips",
+        acts: &[Act::Reset, staged(0), staged(14)],
+    },
+    Shot {
+        name: "v2-master",
+        acts: &[Act::Reset, staged(80), staged(93)],
+    },
+    Shot {
+        name: "v2-mixer-head",
+        acts: &[Act::Reset, staged(80), staged(81)],
+    },
+    Shot {
+        name: "v2-mixer-plugin",
+        acts: &[Act::Reset, staged(80), staged(88)],
+    },
+    Shot {
+        name: "v2-mixer-insert",
+        acts: &[Act::Reset, staged(80), staged(90)],
+    },
+    Shot {
+        name: "v2-take",
+        acts: &[
+            Act::Reset,
+            Act::Stage(Play::Window(crate::ctx2_shots::play), 0),
+            Act::Stage(Play::Window(crate::ctx2_shots::play), 20),
+        ],
+    },
+    Shot {
+        name: "v2-edge-left",
+        acts: &[Act::Reset, staged(0), staged(202), staged(200)],
+    },
 ];
 
 pub const CTX: &[Shot] = &[
@@ -485,7 +517,14 @@ pub(crate) fn choose(studio: &Rc<RefCell<Studio>>, label: &str, window: &mut Win
             }
             assert!(
                 popup.offset < popup.max_offset(g.size),
-                "unreachable row {label}"
+                "unreachable row {label}: row={row} off={} max={} cells={:?}",
+                popup.offset,
+                popup.max_offset(g.size),
+                layout
+                    .cells
+                    .iter()
+                    .map(|c| format!("{:?}", c.action))
+                    .collect::<Vec<_>>()
             );
             popup.offset += 1;
         };
@@ -503,17 +542,14 @@ fn play(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut A
         assert_eq!(studio.borrow().popup.as_ref().unwrap().ctx_parents.len(), 1);
         return;
     }
+    if stage == 202 {
+        // Near the clip's right end: the child has no room on the right and opens to the left.
+        let (x, y) = clip_spot(studio, window, "Guitar");
+        press((x + 150.0, y), MouseButton::Right, window, cx);
+        return;
+    }
     if stage == 201 {
-        for character in "ノーマライズ".chars() {
-            window.dispatch_keystroke(
-                gpui::Keystroke {
-                    key: character.to_string(),
-                    key_char: Some(character.to_string()),
-                    ..Default::default()
-                },
-                cx,
-            );
-        }
+        studio.borrow_mut().ask_text(None, "ノーマライズ", false);
         assert!(
             studio
                 .borrow()
@@ -738,6 +774,11 @@ fn tempo(stage: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut 
             let _ = s.song.run(
                 "tempo.set",
                 serde_json::json!({ "at": 8 * 3840, "bpm": 90 }),
+            );
+            // A point follows it, so "次のポイントまでの形" is enabled (a last point has none).
+            let _ = s.song.run(
+                "tempo.set",
+                serde_json::json!({ "at": 16 * 3840, "bpm": 120 }),
             );
             s.after_edit();
         }

@@ -43,19 +43,27 @@ pub(super) fn enabled(s: &Studio, label: &str) -> bool {
 
 pub(super) fn disabled_descendants(s: &Studio, label: &str) {
     fn check(item: &super::Item) {
-        if let super::Run::Sub(children) = &item.run {
-            assert!(item.enabled, "category remains reachable");
-            for child in children {
-                check(child);
+        match &item.run {
+            super::Run::Gap | super::Run::Title | super::Run::Back => {}
+            super::Run::Sub(children) => {
+                // A category group stays reachable so its disabled rows show their reason;
+                // a submenu of the caller follows its rows.
+                let group = super::layout::Category::ALL
+                    .iter()
+                    .any(|c| c.label() == item.label);
+                let any = children.iter().any(|c| c.enabled);
+                assert_eq!(item.enabled, group || any, "{} reachability", item.label);
+                for child in children {
+                    check(child);
+                }
             }
-        } else {
-            assert!(!item.enabled, "{} must stay disabled", item.label);
+            _ => assert!(!item.enabled, "{} must stay disabled", item.label),
         }
     }
     let item = all_items(s)
         .into_iter()
         .find(|i| i.label == label)
-        .expect("category");
+        .expect("row or submenu");
     check(item);
 }
 
@@ -132,12 +140,16 @@ pub(crate) fn choose(s: &mut Studio, g: &Geometry, label: &str) -> bool {
         assert!(s.context_pick(g, row), "ancestor of {label}");
     }
     let layout = s.popup.as_ref().expect("a menu is open").layout(g.size);
-    let cell = layout
+    let Some(cell) = layout
         .cells
         .iter()
         .rev()
         .find(|c| c.text == label && !matches!(c.look, crate::popup::Look::Input))
-        .unwrap_or_else(|| panic!("no cell {label}"));
+    else {
+        // Beside its parent a child panel shows no "戻る" (R6): the key goes back.
+        assert_eq!(label, "戻る", "no cell {label}");
+        return s.typed(g, "left", None);
+    };
     let (x, y) = (
         cell.rect.x + cell.rect.w / 2.0,
         cell.rect.y + cell.rect.h / 2.0,
@@ -172,7 +184,13 @@ fn a_press_on_an_empty_lane_opens_its_menu_and_a_row_runs_by_the_command() {
     assert!(s.context_open());
     assert_eq!(
         labels(&s),
-        ["貼り付け", "MIDI クリップを作成", "選択", "時間"]
+        [
+            "貼り付け",
+            "MIDI クリップを作成",
+            "再生位置を移動",
+            "マーカーを追加",
+            "選択"
+        ]
     );
     // Nothing was copied: paste is dim, and the row keeps its place.
     assert!(!enabled(&s, "貼り付け"));

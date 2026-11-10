@@ -104,7 +104,7 @@ fn failed_export_keeps_reopen_and_remove_operations() {
     let (mut s, g, _dir, _tmp) = exported("failed-menu");
     s.popup.as_mut().unwrap().export.as_mut().unwrap().cards[0].state = State::Failed;
     menu(&mut s, &g);
-    assert_eq!(labels(&s), ["編集", "書き出し"]);
+    assert_eq!(labels(&s), ["同じ設定で書き出しを開く", "一覧から削除"]);
     assert!(enabled(&s, "同じ設定で書き出しを開く"));
     assert!(enabled(&s, "一覧から削除"));
 }
@@ -113,7 +113,17 @@ fn failed_export_keeps_reopen_and_remove_operations() {
 fn a_finished_export_has_the_rows_of_the_matrix_and_the_old_ones_can_be_written_again() {
     let (mut s, g, dir, _tmp) = exported("rows");
     menu(&mut s, &g);
-    assert_eq!(labels(&s), ["表示", "書き出し", "ファイル"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "聴く",
+            "書き直す",
+            "同じ設定で書き出しを開く",
+            "曲に取り込む",
+            "エクスプローラーで表示",
+            "ごみ箱へ"
+        ]
+    );
     assert!(enabled(&s, "聴く"));
     assert!(enabled(&s, "エクスプローラーで表示"));
     assert!(!enabled(&s, "書き直す"), "the song has not changed");
@@ -590,7 +600,10 @@ fn a_stale_stem_is_written_again_alone_from_its_own_row() {
     // The menu of the file that did not change cannot write it again.
     let (x, y) = file_at(&s, &g, &card.kids[1].name);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(labels(&s), ["表示", "書き出し"]);
+    assert_eq!(
+        labels(&s),
+        ["聴く", "書き直す", "曲に取り込む", "エクスプローラーで表示"]
+    );
     assert!(enabled(&s, "聴く"));
     assert!(!enabled(&s, "書き直す"));
     s.ctx = None;

@@ -82,16 +82,12 @@ fn indexed_presets_keep_payloads_and_use_shared_categories() {
                 .iter()
                 .map(|i| i.label.as_str())
                 .collect();
-            assert_eq!(
-                roots,
-                [
-                    if entry.category == Category::Track {
-                        "トラック"
-                    } else {
-                        "機器"
-                    },
-                    "表示"
-                ]
+            // Up to 12 rows: no category groups, the rows as the caller gave them.
+            assert_eq!(roots[0], "読み込む");
+            assert!(
+                roots
+                    .iter()
+                    .all(|r| super::layout::Category::ALL.iter().all(|c| c.label() != *r))
             );
             let items = all_items(&s);
             assert!(items.iter().any(|i| matches!(&i.run, Run::Do(Act::Browse(BrowseAct::LoadPreset(id, name))) if *id == entry.id && *name == entry.name)));

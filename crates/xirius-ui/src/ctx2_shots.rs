@@ -457,7 +457,7 @@ fn type_number(studio: &Rc<RefCell<Studio>>, value: &str) {
     assert!(!s.context_open());
 }
 
-fn play(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) {
+pub(crate) fn play(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: &mut App) {
     match n {
         0 => {
             let mut s = studio.borrow_mut();

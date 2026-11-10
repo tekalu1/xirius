@@ -24,7 +24,18 @@ fn press_band(s: &mut Studio, g: &Geometry, bar: i64) -> bool {
 fn the_ruler_has_its_rows_in_the_order_of_the_mock() {
     let (mut s, g) = studio();
     assert!(press_ruler(&mut s, &g, 3));
-    assert_eq!(labels(&s), ["時間", "表示"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "ここから再生",
+            "マーカーを追加",
+            "ループの始まりをここに",
+            "ループの終わりをここに",
+            "テンポを設定…",
+            "拍子を設定",
+            "目盛り"
+        ]
+    );
 }
 
 #[test]
@@ -110,11 +121,22 @@ fn the_loop_band_has_the_loop_rows_and_the_rest_of_the_ruler_does_not() {
         .run("loop.set", json!({ "start": 4 * BAR, "end": 8 * BAR }))
         .unwrap();
     assert!(press_band(&mut s, &g, 6));
-    assert_eq!(labels(&s), ["編集", "選択", "時間", "書き出し"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "ループ",
+            "ループ範囲のものを選択",
+            "ループの中を書き出す…",
+            "複製",
+            "セクションにする",
+            "時間を挿入",
+            "時間を削除"
+        ]
+    );
     assert!(enabled(&s, "ループ"));
     // Outside the loop the band is the ruler's.
     assert!(press_band(&mut s, &g, 12));
-    assert_eq!(labels(&s)[0], "時間");
+    assert_eq!(labels(&s)[0], "ここから再生");
 }
 
 #[test]

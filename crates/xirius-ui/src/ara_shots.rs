@@ -232,9 +232,7 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
             let (x, y) = s.center_of(g, Hit::Ara(t, c)).expect("the badge");
             let hit = s.hit(g, x, y);
             s.press(g, hit);
-            assert_eq!(labels(s), ["オーディオ"]);
-            assert!(s.context_choose(g, "オーディオ"));
-            assert_eq!(labels(s), ["戻る", "編集", "再起動", "外す"]);
+            assert_eq!(labels(s), ["Sample ARA", "編集", "再起動", "外す"]);
         }
         9 => {
             closed(s);

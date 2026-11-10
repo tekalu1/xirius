@@ -68,12 +68,12 @@ fn a_midi_clip_has_its_own_rows_in_the_order_of_the_mock() {
             "ピアノロールで開く",
             "クリップを分割",
             "クリップを複製",
+            "クリップを削除",
+            "ループ範囲を設定",
+            "色",
             "編集",
             "クリップ",
-            "オーディオ",
             "MIDI",
-            "時間",
-            "表示",
             "書き出し",
         ]
     );
@@ -350,7 +350,6 @@ fn several_clips_get_the_rows_that_fit_all_of_them() {
             .find_map(|r| r.field.map(|f| f.text))
             .expect("the transpose field")
     };
-    assert!(choose(&mut s, &g, "クリップ"));
     assert_eq!(said(&s), "—");
     let field = s
         .context_rows()

@@ -64,11 +64,17 @@ fn a_note_has_the_rows_of_the_mock_and_is_selected_alone() {
         labels(&s),
         [
             "クオンタイズ（今のグリッド）",
+            "クオンタイズ（50%）",
+            "トランスポーズ",
+            "ベロシティ",
+            "長さ",
             "ノートを複製",
-            "ノートを削除",
-            "編集",
-            "MIDI",
-            "表示",
+            "ノートをミュート",
+            "値を入力",
+            "消しゴムツール",
+            "切り取り",
+            "コピー",
+            "ノートを削除"
         ]
     );
     assert_eq!(key(&s, "ノートを複製"), "D");
@@ -242,16 +248,12 @@ fn quantize_runs_to_the_grid_and_at_half_strength() {
         .unwrap();
     let (x, y) = note_at(&s, &g, 0);
     assert!(s.scene_context(&g, x, y));
-    assert!(choose(&mut s, &g, "クオンタイズ"));
-    assert_eq!(labels(&s), ["戻る", "50%"]);
-    s.context_restore(0);
     assert_eq!(key(&s, "クオンタイズ（今のグリッド）"), "Q");
-    assert!(choose(&mut s, &g, "50%"));
+    assert!(choose(&mut s, &g, "クオンタイズ（50%）"));
     let half = notes(&s, &g)[0].start;
     assert!(half < 1000 && half > 960, "{half}");
 
     assert!(s.scene_context(&g, x, y));
-    assert!(choose(&mut s, &g, "クオンタイズ"));
     assert!(choose(&mut s, &g, "クオンタイズ（今のグリッド）"));
     assert_eq!(notes(&s, &g)[0].start % 240, 0);
 }
@@ -261,7 +263,16 @@ fn the_empty_grid_pastes_selects_inverts_and_sets_the_grid() {
     let (mut s, g) = roll();
     let (x, y) = empty_at(&s, &g);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(labels(&s), ["編集", "選択", "表示"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "貼り付け",
+            "すべて選択",
+            "選択を反転",
+            "グリッド",
+            "消しゴムツール"
+        ]
+    );
     // Nothing was copied yet.
     assert!(!enabled(&s, "貼り付け"));
     assert!(choose(&mut s, &g, "すべて選択"));
@@ -302,7 +313,7 @@ fn a_press_on_the_ruler_above_the_grid_opens_the_rulers_menu_not_the_rolls() {
     let v = s.roll.view(&c);
     // The ruler above the grid has the arrangement's ruler menu (2026-11-05).
     assert!(s.roll_context(&g, v.grid.x + 20.0, v.grid.y - 6.0));
-    assert_eq!(labels(&s)[0], "時間");
+    assert_eq!(labels(&s)[0], "ここから再生");
 }
 
 /// KEY-025: the key on a row is the keymap's now, so a remap shows and an unbound row has none.

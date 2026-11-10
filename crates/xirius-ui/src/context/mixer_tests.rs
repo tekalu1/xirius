@@ -102,12 +102,14 @@ fn a_channel_head_has_its_rows_and_the_press_selects_the_track() {
     assert_eq!(
         labels(&s),
         [
+            "名前を変更…",
+            "チャンネルエディターを開く",
+            "オートメーションを表示",
+            "ステムを書き出す…",
             "編集",
             "トラック",
             "機器",
-            "オートメーション",
-            "表示",
-            "書き出し"
+            "表示"
         ]
     );
     assert_eq!(s.selected_row, Some(RowKind::Track(vocal)));
@@ -141,7 +143,15 @@ fn the_master_has_the_copy_rows_the_mixdown_and_the_lanes_only() {
     assert!(press_head(&mut s, &g, TrackId::MASTER));
     assert_eq!(
         labels(&s),
-        ["編集", "機器", "オートメーション", "表示", "書き出し"]
+        [
+            "チャンネルの設定をコピー",
+            "チャンネルの設定を貼り付け",
+            "エフェクトを追加…",
+            "スプリッターを追加",
+            "チャンネルエディターを開く",
+            "ミックスダウンを書き出す…",
+            "オートメーションを表示"
+        ]
     );
 }
 
@@ -176,7 +186,18 @@ fn the_fader_resets_to_zero_in_one_step_and_a_typed_value_sets_it() {
     ));
     let n = steps(&s);
     assert!(press(&mut s, &g, MixerHit::Fader(vocal)));
-    assert_eq!(labels(&s), ["MIDI", "トラック", "オートメーション"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "0 dB に戻す",
+            "値を入力…",
+            "オートメーションを表示",
+            "マクロコントロールに割り当て",
+            "すべてのポイントを削除",
+            "MIDI 学習",
+            "MIDI 割り当てを解除"
+        ]
+    );
     assert!(!enabled(&s, "すべてのポイントを削除"));
     assert!(choose(&mut s, &g, "0 dB に戻す"));
     assert_eq!(s.project().tracks[&vocal].volume_db, 0.0);
@@ -266,7 +287,18 @@ fn the_knob_resets_to_the_centre() {
         json!({ "ids": [vocal.to_string()], "pan": 0.5 })
     ));
     assert!(press(&mut s, &g, MixerHit::Pan(vocal)));
-    assert_eq!(labels(&s), ["MIDI", "トラック", "オートメーション"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "既定に戻す",
+            "値を入力…",
+            "オートメーションを表示",
+            "マクロコントロールに割り当て",
+            "すべてのポイントを削除",
+            "MIDI 学習",
+            "MIDI 割り当てを解除"
+        ]
+    );
     assert!(choose(&mut s, &g, "既定に戻す"));
     assert_eq!(s.project().tracks[&vocal].pan, 0.0);
     assert!(s.song.undo());
@@ -308,7 +340,18 @@ fn a_send_resets_its_level_shows_its_bus_and_comes_off_in_one_step() {
     assert_eq!(s.project().tracks[&vocal].sends[0].level_db, -9.0);
 
     assert!(press(&mut s, &g, MixerHit::SendPre(vocal, send)));
-    assert_eq!(labels(&s), ["トラック", "オートメーション", "表示"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "送り先",
+            "0 dB に戻す",
+            "ミュート",
+            "送り先のバスを表示",
+            "オートメーションを表示",
+            "マクロコントロールに割り当て",
+            "センドを削除"
+        ]
+    );
     assert!(choose(&mut s, &g, "センドを削除"));
     assert!(s.project().tracks[&vocal].sends.is_empty());
     assert!(s.song.undo());
@@ -328,10 +371,10 @@ fn an_effect_has_its_rows_and_a_duplicate_is_one_step() {
         [
             "画面を開く",
             "無効にする",
+            "オートメーションを表示",
+            "チャンネルエディターを開く",
             "編集",
-            "機器",
-            "オートメーション",
-            "表示"
+            "機器"
         ]
     );
     assert!(choose(&mut s, &g, "プラグインを複製"));
@@ -401,7 +444,7 @@ fn an_effect_is_copied_and_pasted_from_the_plus_row_of_another_channel() {
     let keys = track(&s, "Keys");
     let comp = add_effect(&mut s, vocal, "Comp");
     assert!(press(&mut s, &g, MixerHit::AddInsert(keys)));
-    assert_eq!(labels(&s), ["編集", "機器"]);
+    assert_eq!(labels(&s), ["エフェクトを追加…", "貼り付け"]);
     assert_eq!(
         super::tests::key(&s, "貼り付け"),
         if cfg!(target_os = "macos") {
@@ -494,7 +537,10 @@ fn the_room_right_of_the_last_strip_adds_a_bus_or_a_track() {
     let (x, y) = (last.x + last.w + 40.0, last.y + 60.0);
     assert!(g.drawer_body.contains(x, y), "no room right of the strips");
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(labels(&s), ["編集", "トラック", "表示"]);
+    assert_eq!(
+        labels(&s),
+        ["バスを追加", "トラックを追加", "貼り付け", "チャンネルの幅"]
+    );
     let n = s.project().tracks.len();
     assert!(choose(&mut s, &g, "バスを追加"));
     assert_eq!(s.project().tracks.len(), n + 1);
@@ -640,7 +686,10 @@ fn the_plus_row_lists_the_effects_used_lately_and_one_puts_it_in() {
     let b = insert_count(&s, keys);
     let n = steps(&s);
     assert!(press(&mut s, &g, MixerHit::AddInsert(keys)));
-    assert_eq!(labels(&s), ["編集", "機器"]);
+    assert_eq!(
+        labels(&s),
+        ["エフェクトを追加…", "最近使ったもの", "貼り付け"]
+    );
     assert!(choose(&mut s, &g, "最近使ったもの"));
     assert!(choose(&mut s, &g, "Compressor"));
     assert_eq!(insert_count(&s, keys), b + 1);

@@ -104,7 +104,7 @@ fn a_key_selects_the_notes_of_its_height_and_is_dim_where_there_are_none() {
     let x = f.keys.x + f.keys.w / 2.0;
 
     assert!(s.scene_context(&g, x, v.y(61) + v.row_h / 2.0));
-    assert_eq!(labels(&s), ["選択", "表示"]);
+    assert_eq!(labels(&s), ["同じ高さのノートを選択", "鍵盤の表示"]);
     assert!(!enabled(&s, "同じ高さのノートを選択"));
 
     assert!(s.scene_context(&g, x, v.y(62) + v.row_h / 2.0));
@@ -132,7 +132,7 @@ fn a_velocity_bar_takes_a_typed_value_and_evens_out_or_slopes_the_selected_bars(
     // Pressing a bar selects it alone; a typed value sets it.
     let (x, y) = at(&notes(&s, &g)[2]);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(labels(&s), ["MIDI"]);
+    assert_eq!(labels(&s), ["値を入力…", "揃える"]);
     assert_eq!(s.roll.selected.len(), 1);
     assert!(choose(&mut s, &g, "値を入力…"));
     for _ in 0..4 {
@@ -175,7 +175,16 @@ fn a_controller_point_takes_a_value_and_is_copied_cut_and_deleted_with_the_selec
     let (mut s, g, i) = with_cc1();
     let (x, y) = point_at(&s, &g, i, 480, 90);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(labels(&s), ["編集", "MIDI"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "値を入力…",
+            "次のポイントまでの形",
+            "切り取り",
+            "コピー",
+            "削除"
+        ]
+    );
     assert_eq!(
         key(&s, "切り取り"),
         if cfg!(target_os = "macos") {
@@ -302,7 +311,10 @@ fn the_empty_part_of_a_lane_adds_a_point_pastes_and_clears_the_lane() {
     let (mut s, g, i) = with_cc1();
     let (x, y) = lane_empty_at(&s, &g, i, 1440);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(labels(&s), ["編集", "MIDI"]);
+    assert_eq!(
+        labels(&s),
+        ["ここにポイントを追加", "貼り付け", "すべてのポイントを削除"]
+    );
     assert!(!enabled(&s, "貼り付け"));
     assert_eq!(
         key(&s, "貼り付け"),
@@ -348,7 +360,10 @@ fn the_tab_changes_the_controller_hides_the_lane_and_clears_its_points() {
     let (mut s, g, i) = with_cc1();
     let (x, y) = tab_at(&s, &g, i);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(labels(&s), ["MIDI", "表示"]);
+    assert_eq!(
+        labels(&s),
+        ["種類を変更", "このレーンを隠す", "すべてのポイントを削除"]
+    );
     assert!(choose(&mut s, &g, "種類を変更"));
     assert_eq!(
         labels(&s),

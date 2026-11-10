@@ -165,7 +165,17 @@ fn the_menu_of_a_take_row_uses_the_take_over_a_stretch_and_unpacks_it() {
         .id;
     let bar = Some((2 * BAR, 3 * BAR));
     assert!(s.take_context_over(id, bar, 400.0, 400.0));
-    assert_eq!(labels(&s), ["クリップ"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "このテイクを使用",
+            "選択範囲にこのテイクを使用",
+            "テイクを新しいトラックに展開",
+            "最後の周を取り消す",
+            "未使用のテイクをすべて削除",
+            "テイクを削除"
+        ]
+    );
     // Without a stretch under the pointer or chosen, the row says why it cannot run.
     assert!(s.take_context_over(id, None, 400.0, 400.0));
     assert!(!super::tests::enabled(&s, "選択範囲にこのテイクを使用"));

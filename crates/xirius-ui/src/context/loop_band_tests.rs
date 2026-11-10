@@ -259,7 +259,7 @@ fn the_right_press_on_either_ruler_has_the_same_menus() {
     let roll = roll_at(&s, &g, 6 * BAR, 5.0);
     assert!(s.roll_context(&g, roll.0, roll.1));
     assert_eq!(labels(&s), arrange_loop);
-    assert_eq!(arrange_loop[0], "編集");
+    assert_eq!(arrange_loop[0], "ループ");
     s.popup = None;
     // Elsewhere on the ruler: below the band's row, and in the row outside the band.
     for (t, dy) in [(10 * BAR, 20.0), (10 * BAR, 5.0)] {
@@ -270,7 +270,7 @@ fn the_right_press_on_either_ruler_has_the_same_menus() {
         let roll = roll_at(&s, &g, t, dy);
         assert!(s.roll_context(&g, roll.0, roll.1));
         assert_eq!(labels(&s), arrange_ruler);
-        assert_eq!(arrange_ruler[0], "時間");
+        assert_eq!(arrange_ruler[0], "ここから再生");
         s.popup = None;
     }
     // The roll's rows act at the roll's tick: its loop's end lands on bar 11.

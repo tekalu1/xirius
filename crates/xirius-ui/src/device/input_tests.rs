@@ -62,7 +62,6 @@ fn context_catalog_covers_builtin_graphs_and_delay_candidates() {
                 if name == "Delay"
                     && crate::context::tests::all_labels(&s).contains(&"1/4 T".into())
                 {
-                    assert!(s.context_choose(&g, "機器"));
                     for group in ["通常", "付点", "3連"] {
                         let at = s.context_path(group).unwrap()[0];
                         let crate::context::Run::Sub(rows) = &s.ctx.as_ref().unwrap().items[at].run

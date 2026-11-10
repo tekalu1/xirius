@@ -90,7 +90,16 @@ fn a_point_has_the_rows_of_the_mock() {
     let t = two_lanes(&mut s, &g, "Bass");
     let (x, y) = point_xy(&s, &g, t, 0, 1);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(labels(&s), ["編集", "オートメーション"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "値を入力…",
+            "次のポイントまでの形",
+            "切り取り",
+            "コピー",
+            "削除"
+        ]
+    );
     assert!(enabled(&s, "次のポイントまでの形"));
     // Pressing a point that was not selected selected it alone.
     let vol = AutoTarget::Volume;
@@ -188,7 +197,16 @@ fn a_press_on_a_line_adds_a_point_on_it_and_shapes_it() {
     let vol = AutoTarget::Volume;
     let (x, y) = mid_line(&s, &g, t, 0);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(labels(&s), ["編集", "オートメーション"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "ここにポイントを追加",
+            "この線の形",
+            "貼り付け",
+            "ループの中のポイントを削除",
+            "すべてのポイントを削除"
+        ]
+    );
     // Nothing was copied.
     assert!(!enabled(&s, "貼り付け"));
     assert!(enabled(&s, "この線の形"));
@@ -244,7 +262,10 @@ fn the_head_of_a_lane_adds_a_lane_hides_it_and_clears_it() {
     let row = *s.tree().row_of(RowKind::Track(t)).unwrap();
     let (x, y) = (g.column.x + 20.0, s.lane_top(&g, &row, 0) + 24.0);
     assert!(s.scene_context(&g, x, y));
-    assert_eq!(labels(&s), ["オートメーション"]);
+    assert_eq!(
+        labels(&s),
+        ["レーンを追加", "このレーンを隠す", "すべてのポイントを削除"]
+    );
     // The lanes this track can still take are the rows below.
     assert!(choose(&mut s, &g, "レーンを追加"));
     assert!(labels(&s).len() > 1);

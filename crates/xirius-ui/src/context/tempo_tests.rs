@@ -31,7 +31,14 @@ fn press_row(s: &mut Studio, g: &Geometry, bar: i64) -> bool {
 fn a_tempo_point_has_the_rows_of_the_mock() {
     let (mut s, g) = two_points();
     assert!(press_point(&mut s, &g, 1));
-    assert_eq!(labels(&s), ["時間"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "BPM を入力…",
+            "次のポイントまでの形",
+            "テンポポイントを削除"
+        ]
+    );
     assert!(enabled(&s, "テンポポイントを削除"));
 }
 
@@ -106,7 +113,14 @@ fn a_point_is_deleted_by_its_menu_in_one_step() {
 fn the_row_between_the_points_adds_a_point_with_the_tempo_that_stands_there() {
     let (mut s, g) = two_points();
     assert!(press_row(&mut s, &g, 4));
-    assert_eq!(labels(&s), ["編集", "時間"]);
+    assert_eq!(
+        labels(&s),
+        [
+            "ここにポイントを追加",
+            "貼り付け",
+            "テンポの変化をすべて削除"
+        ]
+    );
     assert!(!enabled(&s, "貼り付け"));
     let n = steps(&s);
     assert!(choose(&mut s, &g, "ここにポイントを追加"));
