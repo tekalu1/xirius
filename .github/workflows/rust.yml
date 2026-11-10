@@ -133,6 +133,15 @@ jobs:
           path: observations
       - name: complete context catalog
         run: python scripts/ci_tests.py --check-coverage observations --expected-shards 4
+      # Tests that passed only on a retry, from every shard, in this job's summary.
+      - uses: actions/download-artifact@v4
+        if: always()
+        with:
+          pattern: junit-${{ matrix.os }}-*
+          path: junit
+      - name: flaky tests
+        if: always()
+        run: python scripts/ci_tests.py --flaky-summary junit
 
   deny:
     name: cargo-deny

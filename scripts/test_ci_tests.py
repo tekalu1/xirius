@@ -78,5 +78,37 @@ class CoverageTests(unittest.TestCase):
         self.assertIn("save-if: ${{ github.ref == 'refs/heads/main' }}", workflow)
 
 
+class FlakyTests(unittest.TestCase):
+    JUNIT = """<testsuites><testsuite name="a">
+      <testcase name="t::ok" classname="a"/>
+      <testcase name="t::flaky" classname="a"><flakyFailure message="m"/></testcase>
+      <testcase name="t::bad" classname="a"><failure message="m"/><rerunFailure message="m"/></testcase>
+    </testsuite></testsuites>"""
+
+    def test_only_the_tests_that_passed_on_a_retry_are_flaky(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            junit = Path(tmp) / "junit.xml"
+            junit.write_text(self.JUNIT, encoding="utf-8")
+            self.assertEqual(ci_tests.flaky_tests(junit), ["a t::flaky"])
+
+    def test_the_summary_lists_each_test_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "one" / "junit.xml"
+            second = Path(tmp) / "two" / "junit.xml"
+            for junit in (first, second):
+                junit.parent.mkdir()
+                junit.write_text(self.JUNIT, encoding="utf-8")
+            summary = Path(tmp) / "summary.md"
+            with patch.dict("os.environ", {"GITHUB_STEP_SUMMARY": str(summary)}):
+                self.assertEqual(ci_tests.report_flaky([first, second], "x"), ["a t::flaky"])
+            self.assertEqual(summary.read_text(encoding="utf-8").count("`a t::flaky`"), 1)
+
+    def test_the_workflow_reports_the_retried_tests_of_every_shard(self):
+        workflow = (Path(__file__).resolve().parent.parent / ".github/workflows/rust.yml").read_text(encoding="utf-8")
+        aggregate = workflow.split("  check:\n", 1)[1].split("  deny:", 1)[0]
+        self.assertIn("--flaky-summary junit", aggregate)
+        self.assertIn("pattern: junit-${{ matrix.os }}-*", aggregate)
+
+
 if __name__ == "__main__":
     unittest.main()

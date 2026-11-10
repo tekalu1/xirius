@@ -12,6 +12,9 @@ archive.include = [
 
 [profile.ci]
 fail-fast = false
+# A test that fails and then passes is run once more and reported as flaky: ci_tests.py lists it
+# in the job summary, so it is seen and not buried. One retry only; a test that fails twice fails.
+retries = 1
 
 [profile.ci.junit]
 path = "junit.xml"

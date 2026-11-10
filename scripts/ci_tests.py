@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import context_catalog
@@ -125,6 +126,32 @@ def prepare():
     run(["cargo", "build", "--locked", "--workspace", "--bins", "--tests", "-j", "6"])
 
 
+JUNIT = Path("target/nextest/ci/junit.xml")
+
+
+def flaky_tests(junit):
+    """The tests of a nextest junit file that failed and then passed on a retry."""
+    found = []
+    for case in ET.parse(junit).iter("testcase"):
+        if case.find("flakyFailure") is not None or case.find("flakyError") is not None:
+            found.append(f"{case.get('classname')} {case.get('name')}")
+    return sorted(found)
+
+
+def report_flaky(junits, label):
+    """Names the retried tests as warnings and in the job summary (GITHUB_STEP_SUMMARY)."""
+    found = sorted({t for junit in junits for t in flaky_tests(junit)})
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    for test in found:
+        print(f"::warning title=Flaky test ({label})::{test} failed, then passed on a retry")
+    if summary and found:
+        with open(summary, "a", encoding="utf-8") as out:
+            out.write(f"### Flaky tests ({label}): {len(found)}\n\n")
+            out.write("Failed first, passed on a retry. A real bug can hide here: look at each.\n\n")
+            out.writelines(f"- `{test}`\n" for test in found)
+    return found
+
+
 def default_feature_commands():
     # Exercise ordinary dependencies without the UI's test-io and engine's warn_debug union.
     return [
@@ -161,10 +188,14 @@ def main():
     parser.add_argument("--coverage-dir", type=Path)
     parser.add_argument("--check-coverage", type=Path, help="check the combined observations")
     parser.add_argument("--expected-shards", type=int, default=0)
+    parser.add_argument("--flaky-summary", type=Path, help="list the retried tests of junit files under this directory")
     parser.add_argument("--doctest", action="store_true")
     parser.add_argument("--default-features", action="store_true")
     parser.add_argument("--legacy", action="store_true", help="run the original Cargo test groups")
     args = parser.parse_args()
+    if args.flaky_summary:
+        report_flaky(sorted(args.flaky_summary.rglob("junit.xml")), "all shards")
+        return 0
     if args.check_coverage and args.expected_shards:
         return int(not check_shards(args.check_coverage, args.expected_shards))
     if args.check_coverage:
@@ -223,7 +254,11 @@ def main():
                 command += ["--locked", *nextest_targets()]
             if args.partition:
                 command += ["--partition", args.partition]
-            run(command, environment)
+            try:
+                run(command, environment)
+            finally:
+                if JUNIT.is_file():
+                    report_flaky([JUNIT], args.partition or "all")
             if args.partition:
                 (coverage / "success.txt").write_text(args.partition + "\n", encoding="utf-8")
             if not args.run_archive:
