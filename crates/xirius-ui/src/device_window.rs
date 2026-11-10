@@ -691,11 +691,16 @@ impl Render for DeviceWindow {
             );
             Colors::new(theme).surface_1
         };
-        // The Macro Controls' marks belong to this window's own tree, in its own coordinates.
-        let marks = if self.macros {
-            crate::macro_pad::marks(&self.studio.borrow())
-        } else {
+        // The marks of what this window shows (Macro Controls, a device, the Channel Editor) belong
+        // to its own tree, in its own coordinates.
+        let marks = if self.menu_only {
             Vec::new()
+        } else if self.macros {
+            crate::macro_pad::marks(&self.studio.borrow())
+        } else if self.id.is_some() {
+            self.with(window, |s, g| crate::a11y::device_marks(s, g))
+        } else {
+            self.with(window, |s, g| crate::channel::marks(s, g))
         };
         div()
             .size_full()

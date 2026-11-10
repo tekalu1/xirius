@@ -377,10 +377,10 @@ fn ui_325_the_points_are_sliders_a_screen_reader_turns() {
                 .all(|m| m.children.is_empty())
         );
     };
-    once(&crate::a11y::marks(&s, &g));
+    once(&crate::a11y::device_marks(&s, &g));
     // Narrow, the bands not chosen have only their points.
     resize(&mut s, t, 520.0);
-    let marks = crate::a11y::marks(&s, &g);
+    let marks = crate::a11y::device_marks(&s, &g);
     once(&marks);
     let points: Vec<_> = marks
         .iter()
@@ -456,7 +456,7 @@ fn ui_325_the_points_are_sliders_a_screen_reader_turns() {
     assert!(crate::a11y::turn(&mut s, id, gain, Turn::To(6.0)));
     assert_eq!(s.song().steps(), before + 3);
     assert!((plain(&s, t, "mid1_gain") - 6.0).abs() < 0.01);
-    let marks = crate::a11y::marks(&s, &g);
+    let marks = crate::a11y::device_marks(&s, &g);
     let knob = marks
         .iter()
         .find(|m| m.key == format!("device-{id}-mid1_gain"))
@@ -485,7 +485,7 @@ fn ui_325_the_points_are_sliders_a_screen_reader_turns() {
 #[test]
 fn ui_326_the_tabs_the_spectrum_and_the_head_read_their_names() {
     let (mut s, g, t, id) = eq_window();
-    let marks = crate::a11y::marks(&s, &g);
+    let marks = crate::a11y::device_marks(&s, &g);
     let of = |marks: &[crate::a11y::Mark], p: &str| {
         marks
             .iter()
@@ -507,7 +507,7 @@ fn ui_326_the_tabs_the_spectrum_and_the_head_read_their_names() {
     assert_eq!(of(&marks, "mid1_freq").label(), Some("LMF Freq"));
 
     resize(&mut s, t, 480.0);
-    let marks = crate::a11y::marks(&s, &g);
+    let marks = crate::a11y::device_marks(&s, &g);
     let tab = of(&marks, "tab-2");
     assert_eq!(tab.role(), accesskit::Role::Tab);
     assert_eq!(tab.label(), Some("LMF"));
@@ -523,7 +523,7 @@ fn ui_325_a_points_slider_says_the_value_it_turns() {
     let x = fx(&s, t);
     let def = x.builtin().unwrap();
     let now = values(&x);
-    let marks = crate::a11y::marks(&s, &g);
+    let marks = crate::a11y::device_marks(&s, &g);
     let points: Vec<_> = marks
         .iter()
         .filter(|m| m.key.starts_with(&format!("device-{id}-point-")))
@@ -882,7 +882,7 @@ fn ui_326_the_points_menu_switches_its_band_and_the_reader_hears_it() {
     // The reader: the HMF point (narrow, its knobs not on show) is named off.
     resize(&mut s, t, 520.0);
     s.instruments.chosen.insert(id, (0, 2));
-    let marks = crate::a11y::marks(&s, &g);
+    let marks = crate::a11y::device_marks(&s, &g);
     let hmf = marks
         .iter()
         .find(|m| m.key == format!("device-{id}-point-mid2_freq"))

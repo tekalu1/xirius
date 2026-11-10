@@ -1764,9 +1764,10 @@ fn col_who(t: &xirius_core::model::Track, f: &Flow, col: &Column) -> String {
 /// its toolbar's buttons, a Button for each card (a device's with its power as a toggle, a
 /// splitter's with its mode) and, for each branch and layer, a Slider of its level in dB, a
 /// toggle Button for its mute and a Button that takes it away. A splitter's ＋ adds a branch
-/// when the reader presses it.
+/// when the reader presses it. They are the Channel Editor window's own tree, in the window's
+/// own coordinates.
 pub fn marks(s: &Studio, g: &Geometry) -> Vec<crate::a11y::Mark> {
-    use crate::a11y::{Mark, bounds};
+    use crate::a11y::{Mark, local_bounds as bounds};
     use gpui::accesskit;
     let Some(w) = &s.channel else {
         return Vec::new();

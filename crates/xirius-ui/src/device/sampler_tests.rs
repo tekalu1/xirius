@@ -458,7 +458,7 @@ fn ui_334_a_screen_reader_moves_a_layers_edge_as_a_slider() {
     assert!(s.window_drop(&g, x, y, &files), "{:?}", s.error);
     assert_eq!(ranges(&s, t, 0), [(0, 63), (64, 127)]);
     let n = spot(&s, &g, t, Mark::Edge(0));
-    let marks = crate::a11y::marks(&s, &g);
+    let marks = crate::a11y::device_marks(&s, &g);
     let edge = marks
         .iter()
         .find(|m| m.key == format!("device-{id}-spot-{n}"))
@@ -1305,7 +1305,7 @@ fn ui_333_reversed_the_keys_and_the_reader_turn_the_loops_ends_as_shown() {
     // value it moves, as it is forwards (the sixth review's low 3).
     let slider = |s: &Studio, key: &str| {
         let key = format!("device-{id}-point-file1.{key}");
-        let marks = crate::a11y::marks(s, &g);
+        let marks = crate::a11y::device_marks(s, &g);
         let m = marks
             .iter()
             .find(|m| m.key == key)
@@ -1417,7 +1417,7 @@ fn n6_smp_1_a_reversed_loops_end_past_the_cut_shows_where_it_sounds() {
     // The reader: what each reads where it is, and where it is.
     let slider = |s: &Studio, key: &str| {
         let key = format!("device-{id}-point-file1.{key}");
-        let marks = crate::a11y::marks(s, &g);
+        let marks = crate::a11y::device_marks(s, &g);
         let m = marks
             .iter()
             .find(|m| m.key == key)
@@ -1728,7 +1728,7 @@ fn ui_331_a_taller_drum_kit_grows_its_pads() {
 fn ui_333_the_spots_read_as_buttons() {
     let (mut s, g, t, id) = window("Drum Kit");
     add(&mut s, id, &["Kick.wav"]);
-    let marks = crate::a11y::marks(&s, &g);
+    let marks = crate::a11y::device_marks(&s, &g);
     let find = |label: &str| {
         marks
             .iter()
@@ -1753,7 +1753,7 @@ fn ui_333_the_spots_read_as_buttons() {
 fn l2_smp_6_zones_say_their_root_and_layers_say_layer() {
     let (mut s, g, _t, id) = window("Sampler");
     add(&mut s, id, &["Piano_C3.wav", "Piano_C4.wav"]);
-    let marks = crate::a11y::marks(&s, &g);
+    let marks = crate::a11y::device_marks(&s, &g);
     let labels: Vec<_> = marks.iter().filter_map(|m| m.node.label()).collect();
     assert!(labels.contains(&"Piano_C3, root C3"), "{labels:?}");
     assert!(labels.contains(&"Piano_C4, root C4"), "{labels:?}");
@@ -1762,7 +1762,7 @@ fn l2_smp_6_zones_say_their_root_and_layers_say_layer() {
     let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).expect("A1");
     s.instruments.drop_layers = true;
     assert!(s.window_drop(&g, x, y, &files), "{:?}", s.error);
-    let marks = crate::a11y::marks(&s, &g);
+    let marks = crate::a11y::device_marks(&s, &g);
     let labels: Vec<_> = marks.iter().filter_map(|m| m.node.label()).collect();
     assert!(labels.contains(&"Layer 0–63"), "{labels:?}");
     assert!(labels.contains(&"Layer 64–127"), "{labels:?}");
@@ -2763,5 +2763,40 @@ fn browse_selection_runs_on_owner_and_skips_occupied_pads() {
             assert_eq!(x.samples.len(), 3);
             assert_eq!(sampler::zones(&x.samples).len(), 3);
         }
+    }
+}
+
+#[test]
+fn the_main_windows_tree_has_no_device_marks_and_the_devices_window_has_them_locally() {
+    let (mut s, g, _, id) = window("Sampler");
+    fn keys(m: &crate::a11y::Mark, out: &mut Vec<String>) {
+        out.push(m.key.clone());
+        for c in &m.children {
+            keys(c, out);
+        }
+    }
+    // As the main window sees it: no device window is a surface of it.
+    s.instruments.detached_target = None;
+    let mut seen = Vec::new();
+    for m in &crate::a11y::marks(&s, &g) {
+        keys(m, &mut seen);
+    }
+    assert!(
+        seen.iter().all(|k| !k.starts_with("device-")),
+        "the main window's tree holds no device window mark: {seen:?}"
+    );
+    // The device's own window: its marks lie in its own surface, from (0, 0).
+    s.instruments.detached_target = Some(id);
+    let own = crate::a11y::device_marks(&s, &g);
+    assert!(!own.is_empty(), "the device window has its marks");
+    let frame = s.instruments.frame(0, &g);
+    assert_eq!((frame.x, frame.y), (0.0, 0.0));
+    for m in &own {
+        let b = m.node.bounds().unwrap();
+        assert!(
+            b.x0 >= 0.0 && b.y0 >= 0.0 && b.x1 <= f64::from(frame.w) && b.y1 <= f64::from(frame.h),
+            "{} lies inside the window's own surface: {b:?}",
+            m.key
+        );
     }
 }

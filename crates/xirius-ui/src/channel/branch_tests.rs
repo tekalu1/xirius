@@ -628,7 +628,7 @@ fn reader_press(s: &mut Studio, g: &Geometry, key: &str) -> bool {
             }
         })
     }
-    let hit = find(&crate::a11y::marks(s, g), key).expect("the mark has an action");
+    let hit = find(&crate::channel::marks(s, g), key).expect("the mark has an action");
     crate::a11y::press(s, g, hit)
 }
 

@@ -295,7 +295,7 @@ fn ui_330_the_reflections_light_and_a_dot_runs_down_the_tail() {
 #[test]
 fn ui_330_the_knobs_read_their_names_and_values() {
     let (s, g, _, id) = rev_window();
-    let marks = crate::a11y::marks(&s, &g);
+    let marks = crate::a11y::device_marks(&s, &g);
     let of = |p: &str| {
         marks
             .iter()

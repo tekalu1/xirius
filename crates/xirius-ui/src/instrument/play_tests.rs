@@ -587,7 +587,7 @@ fn plg_066_a_pad_held_ends_when_its_device_or_track_goes() {
 #[test]
 fn plg_066_the_keys_and_the_pads_read_their_notes() {
     let (s, g, _, id) = played(DEFAULT);
-    let marks = crate::a11y::marks(&s, &g);
+    let marks = crate::a11y::device_marks(&s, &g);
     let key = marks
         .iter()
         .find(|m| m.key == format!("device-{id}-key-60"))
@@ -605,7 +605,7 @@ fn plg_066_the_keys_and_the_pads_read_their_notes() {
     );
 
     let (s, g, _, id) = played("Drum Kit");
-    let marks = crate::a11y::marks(&s, &g);
+    let marks = crate::a11y::device_marks(&s, &g);
     let pad = marks
         .iter()
         .find(|m| m.key == format!("device-{id}-pad-36"))

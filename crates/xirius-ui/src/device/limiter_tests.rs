@@ -190,7 +190,7 @@ fn ui_328_the_history_keeps_five_seconds_with_the_gain_on_the_input() {
 fn ui_328_the_peaks_are_sample_peaks_and_the_input_reads_plus_over_full_scale() {
     let (mut s, g, _, id) = lim_window();
     let of = |s: &Studio, p: &str| {
-        crate::a11y::marks(s, &g)
+        crate::a11y::device_marks(s, &g)
             .into_iter()
             .find(|m| m.key == format!("device-{id}-{p}"))
             .unwrap_or_else(|| panic!("no mark for {p}"))

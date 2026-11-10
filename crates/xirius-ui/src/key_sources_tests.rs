@@ -270,7 +270,7 @@ fn the_amount_follows_the_pointer_and_lets_go_in_one_step() {
 fn the_reader_names_the_seat_and_each_part_of_a_row() {
     let (mut s, g, drums, _, comp) = studio();
     add(&mut s, comp, drums);
-    let marks = crate::a11y::marks(&s, &g);
+    let marks = crate::a11y::device_marks(&s, &g);
     let find = |marks: &[crate::a11y::Mark], key: String| {
         marks
             .iter()

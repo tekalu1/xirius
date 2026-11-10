@@ -337,3 +337,27 @@ fn the_macro_controls_panel_fills_its_window() {
         "the panel is a plain fill of the window's whole surface"
     );
 }
+
+/// The Channel Editor's and the devices' accessibility marks live in their own windows' trees
+/// (window-local coordinates), not in the main window's.
+#[test]
+fn the_channel_editors_and_the_devices_marks_are_in_their_own_windows_trees() {
+    let files = all();
+    let get = |n: &str| {
+        files
+            .iter()
+            .find(|(f, _)| f == n)
+            .map(|(_, c)| c.clone())
+            .unwrap()
+    };
+    let a11y = get("a11y.rs");
+    assert!(
+        !a11y.contains("channel::marks(s, g)") && !a11y.contains("out.extend(device_marks("),
+        "the main window's marks include neither the Channel Editor's nor a device's"
+    );
+    let window = get("device_window.rs");
+    assert!(
+        window.contains("crate::channel::marks(") && window.contains("crate::a11y::device_marks("),
+        "the Channel Editor's and the device's windows build their own marks"
+    );
+}

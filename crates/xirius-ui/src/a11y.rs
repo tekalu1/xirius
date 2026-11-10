@@ -480,9 +480,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     out.extend(start_marks(s, g));
     out.extend(inspector_marks(s, g));
     out.extend(instrument_marks(s, g));
-    out.extend(crate::channel::marks(s, g));
     out.extend(flow_marks(s, g));
-    out.extend(device_marks(s, g));
     out.extend(audition_mark(s, g));
     out.extend(preset_marks(s, g));
     out.extend(file_marks(s, g));
@@ -1335,10 +1333,12 @@ fn key_source_mark(
 /// segments is a Slider named as the window names it, with the value it reads;
 /// an on and off button is a toggle Button, a choice shown as its name a
 /// ComboBox. An EQ's band tabs are Tabs and its analyser's button a ComboBox
-/// (UI-326).
-fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
+/// (UI-326). They are the marks of a device's own window: its own tree, in the window's own
+/// coordinates (a device has no frame on any other surface).
+pub(crate) fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     use crate::device::control::{self, Look};
     use crate::instrument::window::{Part, live, source_of, values_of};
+    use local_bounds as bounds;
     let p = s.auto_shown();
     let mut out = Vec::new();
     for (i, w) in s.instruments.open.iter().enumerate() {

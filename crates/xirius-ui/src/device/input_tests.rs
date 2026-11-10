@@ -479,7 +479,7 @@ fn ui_324_a_learnt_knob_moves_the_parameter_once_still() {
 fn ui_324_every_control_reads_its_name_and_value() {
     let (mut s, g, t, id) = delay();
     unsynced(&mut s, id);
-    let marks = crate::a11y::marks(&s, &g);
+    let marks = crate::a11y::device_marks(&s, &g);
     let of = |p: &str| {
         marks
             .iter()

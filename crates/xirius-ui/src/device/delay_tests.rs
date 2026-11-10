@@ -244,7 +244,7 @@ fn ui_329_the_window_watches_its_probe_for_onsets() {
 fn ui_329_the_beats_box_and_the_time_box_read_their_values() {
     let (mut s, g, _, id) = del_window();
     let of = |s: &Studio, p: &str| {
-        crate::a11y::marks(s, &g)
+        crate::a11y::device_marks(s, &g)
             .into_iter()
             .find(|m| m.key == format!("device-{id}-{p}"))
             .unwrap_or_else(|| panic!("no mark for {p}"))

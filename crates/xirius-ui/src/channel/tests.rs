@@ -1805,3 +1805,55 @@ fn a_track_with_layers_needs_the_wider_least_width() {
     assert_eq!(keys::LEAST_W, 720.0);
     assert!(natural_size(&p, w).unwrap().0 >= 720.0);
 }
+
+fn mark_keys(m: &crate::a11y::Mark, out: &mut Vec<String>) {
+    out.push(m.key.clone());
+    for c in &m.children {
+        mark_keys(c, out);
+    }
+}
+
+#[test]
+fn the_main_windows_tree_has_no_channel_editor_marks_and_the_editors_has_them_locally() {
+    let (mut s, g) = studio();
+    vocal(&mut s);
+    let mut seen = Vec::new();
+    for m in &crate::a11y::marks(&s, &g) {
+        mark_keys(m, &mut seen);
+    }
+    assert!(
+        seen.iter().all(|k| !k.starts_with("channel-")),
+        "the main window's tree holds no Channel Editor mark: {seen:?}"
+    );
+    let own = marks(&s, &g);
+    assert_eq!(own.len(), 1);
+    let v = s.channel_view(&g).unwrap();
+    let root = own[0].node.bounds().unwrap();
+    assert_eq!(
+        (
+            root.x0 as f32,
+            root.y0 as f32,
+            root.x1 as f32,
+            root.y1 as f32
+        ),
+        (v.r.x, v.r.y, v.r.right(), v.r.bottom()),
+        "the root is the editor's own rect, without the main window's top bar in front"
+    );
+    assert!(!own[0].children.is_empty());
+    for c in &own[0].children {
+        let b = c.node.bounds().unwrap();
+        assert!(
+            b.x0 >= root.x0 && b.y0 >= root.y0 && b.x1 <= root.x1 && b.y1 <= root.y1,
+            "{} lies inside the editor's own surface: {b:?}",
+            c.key
+        );
+    }
+    let tool = own[0]
+        .children
+        .iter()
+        .find(|c| c.key.starts_with("channel-tool-"))
+        .expect("a tool button");
+    let (_, r) = v.tools[0];
+    let b = tool.node.bounds().unwrap();
+    assert_eq!((b.x0 as f32, b.y0 as f32), (r.x, r.y));
+}
