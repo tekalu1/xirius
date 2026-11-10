@@ -41,6 +41,14 @@ pub const SHOTS: &[Shot] = &[Shot {
     acts: &[Act::Stage(Play::Window(stage), 0)],
 }];
 
+/// The same windows opened in a normal launch (not parked): where and how big each one opens,
+/// and where it comes back after a move, a resize, a close and an open again. The windows are
+/// on the screen for the few seconds this takes; nothing is sent but window messages.
+pub const PLACE_SHOTS: &[Shot] = &[Shot {
+    name: "place-01-windows",
+    acts: &[Act::Stage(Play::Window(stage), 1)],
+}];
+
 const NAMES: [&str; 3] = ["built-in instrument", "channel editor", "macro controls"];
 const CHANNEL_TITLE: &str = "Xirius · Channel Editor";
 const MACROS_TITLE: &str = "Xirius · Macro Controls";
@@ -109,13 +117,15 @@ struct State {
     frames: Arc<AtomicU64>,
     track: xirius_core::id::TrackId,
     id: PluginId,
+    /// `PLACE_SHOTS`: the opening place and size, not the checks of the parked run.
+    place: bool,
 }
 
 thread_local! {
     static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
 }
 
-fn stage(_: u8, studio: &Rc<RefCell<Studio>>, _: &mut Window, cx: &mut App) {
+fn stage(mode: u8, studio: &Rc<RefCell<Studio>>, _: &mut Window, cx: &mut App) {
     let track = studio
         .borrow()
         .project()
@@ -145,6 +155,7 @@ fn stage(_: u8, studio: &Rc<RefCell<Studio>>, _: &mut Window, cx: &mut App) {
             frames: Arc::new(AtomicU64::new(0)),
             track,
             id,
+            place: mode == 1,
         });
     });
 }
@@ -330,7 +341,7 @@ pub(crate) fn ready(studio: &Rc<RefCell<Studio>>, _: &mut Window, cx: &mut App) 
             return true;
         };
         state.frames.fetch_add(1, Ordering::AcqRel);
-        let (track, id) = (state.track, state.id);
+        let (track, id, place) = (state.track, state.id, state.place);
         match &mut state.phase {
             Phase::Done => true,
             Phase::Opening(n) => {
@@ -353,7 +364,7 @@ pub(crate) fn ready(studio: &Rc<RefCell<Studio>>, _: &mut Window, cx: &mut App) 
                 std::thread::Builder::new()
                     .name("verify-probe".into())
                     .spawn(move || {
-                        let report = run(&link);
+                        let report = if place { run_place(&link) } else { run(&link) };
                         write(&report);
                         finished.store(true, Ordering::Release);
                     })
@@ -900,6 +911,117 @@ fn run(link: &Link) -> Value {
         "least_width": least, "multi_sizes": multi_sizes, "multi": multi,
         "pictures": pictures,
     })
+}
+
+/// The client area's top-left on the screen (what GPUI calls the window's origin).
+fn client_origin(h: isize) -> [i32; 2] {
+    let mut p = windows_sys::Win32::Foundation::POINT { x: 0, y: 0 };
+    // SAFETY: a plain query about a window of this process; the out-pointer is valid.
+    unsafe { windows_sys::Win32::Graphics::Gdi::ClientToScreen(h as _, &mut p) };
+    [p.x, p.y]
+}
+
+fn near(a: [i32; 2], b: [i32; 2]) -> bool {
+    (a[0] - b[0]).abs() <= 2 && (a[1] - b[1]).abs() <= 2
+}
+
+/// The windows opened in a normal launch: what each asked for, what it got, and what comes
+/// back after a move, a resize, a close and an open again. Sizes and places are physical px
+/// (the scale is in the report).
+fn run_place(link: &Link) -> Value {
+    let info0 = link.info();
+    let scale = info0["scale"].as_f64().unwrap_or(1.0) as f32;
+    let px = |v: f32| (v * scale).round() as i32;
+    let titles: Vec<String> = info0["titles"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|t| t.as_str().unwrap_or("").to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    if titles.len() != 3 {
+        return json!({"error": "no titles"});
+    }
+    let main = find(crate::screen::WINDOW_TITLE).unwrap_or(0);
+    link.frames(20);
+    let mr = rect(main);
+    let mo = client_origin(main);
+    let hs: Vec<isize> = titles.iter().map(|t| find(t).unwrap_or(0)).collect();
+    let nat = (
+        info0["natural"][0].as_f64().unwrap_or(0.0) as f32,
+        info0["natural"][1].as_f64().unwrap_or(0.0) as f32,
+    );
+    let least = info0["least_width"].as_f64().unwrap_or(0.0) as f32;
+    let (mw, mh) = (
+        info0["macro_size"][0].as_f64().unwrap_or(0.0) as f32,
+        info0["macro_size"][1].as_f64().unwrap_or(0.0) as f32,
+    );
+    // Requested size (logical, with the bar) and origin (physical) of each window.
+    let ce_w = nat.0.max(least);
+    let ce_origin = [mo[0] + px(60.0), mo[1] + px(80.0)];
+    let want: [([i32; 2], [i32; 2]); 3] = [
+        // The built-in's body is not asked of the probe: its size is what it had before.
+        ([0, 0], [mo[0] + px(40.0), mo[1] + px(60.0)]),
+        ([px(ce_w), px(nat.1)], ce_origin),
+        (
+            [px(mw), px(mh)],
+            [ce_origin[0] + px(16.0) + px(ce_w), ce_origin[1]],
+        ),
+    ];
+    let mut rows = Vec::new();
+    let mut moves = Vec::new();
+    for k in 0..3 {
+        let r = rect(hs[k]);
+        let c = client(hs[k]);
+        let (size_want, origin_want) = want[k];
+        let size_ok = k == 0 || near([c[0], c[1]], size_want);
+        rows.push(json!({
+            "window": NAMES[k], "scale": scale, "main_rect": mr, "main_client_origin": mo,
+            "requested_size_physical": size_want, "requested_origin_physical": origin_want,
+            "rect": r, "client": c, "client_origin": client_origin(hs[k]),
+            "size_ok": size_ok, "origin_ok": near(client_origin(hs[k]), origin_want),
+        }));
+    }
+    for k in 0..3 {
+        let before = rect(hs[k]);
+        // SAFETY: plain window position and size requests to windows of this process.
+        unsafe {
+            SetWindowPos(
+                hs[k] as _,
+                std::ptr::null_mut(),
+                before[0] + px(50.0),
+                before[1] + px(30.0),
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            )
+        };
+        link.frames(15);
+        if k < 2 {
+            let moved = rect(hs[k]);
+            set_size(hs[k], moved[2] + px(90.0), moved[3] + px(60.0));
+            link.frames(30);
+        }
+        let placed = rect(hs[k]);
+        let reopen_ok = matches!(link.ask(Want::Reopen(k)), Some(Ack::Reopened));
+        link.frames(30);
+        let h2 = find(&titles[k]).unwrap_or(0);
+        let again = rect(h2);
+        moves.push(json!({
+            "window": NAMES[k], "before_move": before, "moved_and_sized": placed,
+            "reopened": reopen_ok, "after_reopen": again,
+            "same_place": near([placed[0], placed[1]], [again[0], again[1]]),
+            "same_size": near([placed[2], placed[3]], [again[2], again[3]]),
+        }));
+    }
+    let dir = out_dir().unwrap_or_else(std::env::temp_dir);
+    let pictures = vec![
+        shot(&titles[0], "place-sampler", &dir),
+        shot(CHANNEL_TITLE, "place-channel", &dir),
+        shot(MACROS_TITLE, "place-macros", &dir),
+    ];
+    json!({"scale": scale, "opening": rows, "moved": moves, "pictures": pictures})
 }
 
 fn write(report: &Value) {

@@ -239,8 +239,6 @@ impl Windows {
             });
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
-            // Remember the place it opened at, so a reopen finds it though it was never moved.
-            positions.borrow_mut().insert(Key::Macros, window.bounds());
             cx.new(|cx| {
                 let mut view = DeviceWindow::new(
                     shared,

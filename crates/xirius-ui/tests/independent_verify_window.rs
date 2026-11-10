@@ -10,6 +10,8 @@
 //!   layers and 720 with; the Macro Controls cannot be resized;
 //! - a window that is closed and opened again comes back where it was, at the size it had.
 //!
+//! The last test is a normal launch (not parked): the windows show on the screen briefly.
+//!
 //! This opens real windows: it is not part of `scripts/ci_tests.py`'s runs (its name ends in
 //! `_window`).
 
@@ -47,6 +49,44 @@ fn run() -> (Value, tempfile::TempDir) {
     }
     assert!(out.status.success(), "the run failed: {err}");
     assert!(!err.contains("panicked"), "{err}");
+    let text = std::fs::read_to_string(dir.join("verify.json")).expect("the probe wrote it");
+    (serde_json::from_str(&text).unwrap(), tmp)
+}
+
+/// A normal launch (not parked): the windows are on the screen for a few seconds.
+fn run_placed() -> (Value, tempfile::TempDir) {
+    let tmp = tempfile::Builder::new()
+        .prefix("xirius-ui-place-window-")
+        .tempdir()
+        .unwrap();
+    let dir = tmp.path().to_path_buf();
+    support::sample_audio(&dir);
+    let out = Command::new(env!("CARGO_BIN_EXE_xirius-ui"))
+        .args([
+            "--at",
+            "100,100",
+            "--silent",
+            "--script",
+            "device-place",
+            "--shot",
+        ])
+        .arg(&dir)
+        .current_dir(&dir)
+        .env("XIRIUS_CRASH_DIR", dir.join("crashes"))
+        .output()
+        .expect("the app runs");
+    let err = String::from_utf8_lossy(&out.stderr);
+    if let Ok(keep) = std::env::var("XIRIUS_KEEP_VERIFY") {
+        let _ = std::fs::create_dir_all(&keep);
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.ends_with(".bmp") || name.starts_with("verify.") {
+                let _ = std::fs::copy(entry.path(), std::path::Path::new(&keep).join(&*name));
+            }
+        }
+    }
+    assert!(out.status.success(), "the run failed: {err}");
     let text = std::fs::read_to_string(dir.join("verify.json")).expect("the probe wrote it");
     (serde_json::from_str(&text).unwrap(), tmp)
 }
@@ -135,4 +175,22 @@ fn the_channel_editor_opens_at_its_content_and_never_below_its_least_width() {
         .find(|s| s["window"] == "macro controls")
         .unwrap();
     assert_eq!(macros["thick_frame"], false, "{macros}");
+}
+
+#[test]
+fn in_a_normal_launch_the_windows_open_where_and_as_big_as_asked_and_come_back() {
+    let (report, _tmp) = run_placed();
+    let opening = rows(&report, "opening");
+    assert_eq!(opening.len(), 3, "{report}");
+    for o in opening {
+        assert_eq!(o["size_ok"], true, "{o}");
+        assert_eq!(o["origin_ok"], true, "{o}");
+    }
+    let moved = rows(&report, "moved");
+    assert_eq!(moved.len(), 3, "{report}");
+    for m in moved {
+        assert_eq!(m["reopened"], true, "{m}");
+        assert_eq!(m["same_place"], true, "{m}");
+        assert_eq!(m["same_size"], true, "{m}");
+    }
 }

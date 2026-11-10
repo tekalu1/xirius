@@ -91,6 +91,8 @@ pub(crate) fn open<V: Render + 'static>(
         initial.origin = display.visible_bounds().origin;
     }
     let title = spec.title.clone();
+    let spec_key = spec.kind.key();
+    let positions = spec.positions.clone();
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(initial)),
@@ -110,11 +112,18 @@ pub(crate) fn open<V: Render + 'static>(
         },
         move |window, cx| {
             let view = build(window, cx);
-            if parked && !menu_only {
-                // A window created hidden keeps the system's default size until GPUI applies
-                // its initial placement, which only an activation does (and a parked window
-                // is never activated). Size it now, so a test sees the size it asked for.
+            if !menu_only {
+                // A window created hidden keeps the system's default place and size until
+                // GPUI applies its initial placement, which only an activation does, and
+                // these windows are shown without one (a parked window is never activated
+                // either). Place and size it now, so it opens as asked.
                 window.resize(initial.size);
+                place(&title, initial.origin, window.scale_factor());
+                if let Some((key, positions)) = spec_key.zip(positions.as_ref()) {
+                    // Remember it from the start, so a reopen finds it though it was never
+                    // moved (and the Macro Controls find where the Channel Editor is).
+                    positions.borrow_mut().insert(key, initial);
+                }
             }
             set_owner(&title);
             if !menu_only || parked {
@@ -123,6 +132,47 @@ pub(crate) fn open<V: Render + 'static>(
             view
         },
     )
+}
+
+/// Puts the client area of the window at `origin` (logical px). Windows only: elsewhere the
+/// platform places the window at the initial bounds it is created with.
+fn place(title: &str, origin: gpui::Point<Pixels>, scale: f32) {
+    #[cfg(not(windows))]
+    let _ = (title, origin, scale);
+    #[cfg(windows)]
+    if let Some(hwnd) = crate::park::own_handle(title) {
+        use windows_sys::Win32::Foundation::{POINT, RECT};
+        use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GetWindowRect, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SetWindowPos,
+        };
+        let mut at = POINT { x: 0, y: 0 };
+        let mut frame = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        // SAFETY: this process's window on the GUI thread; the out-pointers are valid for
+        // the calls. Only its position changes (no size, no activation).
+        unsafe {
+            if ClientToScreen(hwnd as _, &mut at) == 0 || GetWindowRect(hwnd as _, &mut frame) == 0
+            {
+                return;
+            }
+            let want_x = (f32::from(origin.x) * scale).round() as i32;
+            let want_y = (f32::from(origin.y) * scale).round() as i32;
+            SetWindowPos(
+                hwnd as _,
+                std::ptr::null_mut(),
+                frame.left + want_x - at.x,
+                frame.top + want_y - at.y,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+    }
 }
 
 /// Makes the main window the owner: the window is always in front of it, and goes with it
