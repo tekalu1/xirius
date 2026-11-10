@@ -549,4 +549,26 @@ mod tests {
         assert!(at.is_some_and(|r| r.open));
         assert_eq!(rows.iter().filter(|r| r.label == "Warm piano").count(), 2);
     }
+    #[test]
+    fn a_search_narrows_the_favourites_like_the_list() {
+        let mut cold = preset();
+        cold.id = "preset/two".into();
+        cold.name = "Cold pad".into();
+        cold.file = Some("two.xpreset".into());
+        let entries = [device(), preset(), cold];
+        let fav = BTreeSet::from([device().id, preset().id, "preset/two".into()]);
+        let none = BTreeSet::new();
+        // Nothing a favourite answers: no favourites section at all.
+        let rows = tree(&entries, "instruments", "zzz", &none, &none, &fav);
+        assert!(rows.is_empty());
+        // A hit: the section stays, holding only the favourites that answer.
+        let rows = tree(&entries, "instruments", "warm", &none, &none, &fav);
+        assert!(rows.iter().any(|r| r.key == "favourites"));
+        assert!(rows.iter().any(|r| r.key == "favourites/preset/preset/one"));
+        assert!(rows.iter().any(|r| r.key == "favourites/device/sampler"));
+        assert!(!rows.iter().any(|r| r.key == "favourites/preset/preset/two"));
+        // No search: the section is there with its favourites.
+        let rows = tree(&entries, "instruments", "", &none, &none, &fav);
+        assert!(rows.iter().any(|r| r.key == "favourites"));
+    }
 }
