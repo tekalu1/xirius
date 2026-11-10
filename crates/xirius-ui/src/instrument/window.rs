@@ -846,6 +846,36 @@ impl Windows {
         crate::mixer::dock::split(g.drawer_body, w, fold)
     }
 
+    /// The title bar of the window this surface is (an independent window shows one device),
+    /// with its index and rect.
+    pub(crate) fn surface_bar(
+        &self,
+        p: &Project,
+        g: &Geometry,
+    ) -> Option<(usize, Rect, title_bar::Bar)> {
+        let i = self
+            .open
+            .iter()
+            .position(|w| Some(w.plugin) == self.detached_target)?;
+        let r = self.frame(i, g);
+        if r.w <= 0.0 {
+            return None;
+        }
+        let (track, plugin, def) = live(p, &self.open[i])?;
+        Some((i, r, bar(r, p, track, plugin, def)))
+    }
+
+    /// The parts of this surface's bar that move its window: what [`Self::at`] calls the head
+    /// (UI-337).
+    pub(crate) fn drag_rects(&self, p: &Project, g: &Geometry) -> Vec<Rect> {
+        let Some((i, r, b)) = self.surface_bar(p, g) else {
+            return Vec::new();
+        };
+        title_bar::drag_rects(Rect::new(r.x, r.y, r.w, title_bar::BAR_H), &b, |x, y| {
+            self.at(p, g, x, y) == Some((i, Part::Head))
+        })
+    }
+
     /// The top window under a point, and the part of it. The face in the
     /// mixer's drawer is under every window. `p` is the song as the windows draw
     /// it ([`Studio::auto_shown`]): a switch a lane turns lays them out (AUT-016).

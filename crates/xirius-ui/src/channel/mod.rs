@@ -631,6 +631,13 @@ pub fn head_shown(w: &ChannelWin, col: &Column, flow: &Flow, held: Option<NodeId
     })
 }
 
+/// The parts of the window `v`'s bar that move it: what [`part_at`] calls the head (UI-337).
+pub fn drag_rects(v: &View) -> Vec<Rect> {
+    crate::title_bar::drag_rects(Rect::new(v.r.x, v.r.y, v.r.w, BAR_H), &v.bar, |x, y| {
+        part_at(v, x, y) == Some(Part::Head)
+    })
+}
+
 /// The part of the window `v` under a point.
 pub fn part_at(v: &View, x: f32, y: f32) -> Option<Part> {
     if !v.r.contains(x, y) {

@@ -17,6 +17,8 @@ use xirius_core::id::PluginId;
 
 pub(crate) type Positions = Rc<RefCell<HashMap<PluginId, Bounds<gpui::Pixels>>>>;
 
+#[cfg(windows)]
+pub(crate) mod drag_shots;
 pub(crate) mod input_shots;
 #[cfg(windows)]
 pub(crate) mod preset_shots;

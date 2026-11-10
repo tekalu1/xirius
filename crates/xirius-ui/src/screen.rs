@@ -2306,7 +2306,17 @@ fn step(run: &Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
             }
         }
         && crate::saving_shots::ready(&studio, window, cx)
-        && crate::otherproc_shots::ready(&studio, window, cx);
+        && crate::otherproc_shots::ready(&studio, window, cx)
+        && {
+            #[cfg(windows)]
+            {
+                crate::device_window::drag_shots::ready(&studio, window, cx)
+            }
+            #[cfg(not(windows))]
+            {
+                true
+            }
+        };
     // Handlers borrow the studio, so nothing here is held while dispatching.
     let acts: Option<&'static shot::Shot> = {
         let mut r = run.borrow_mut();

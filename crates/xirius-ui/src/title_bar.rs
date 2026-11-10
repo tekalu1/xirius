@@ -139,6 +139,79 @@ pub struct Bar {
     pub close: Rect,
 }
 
+impl Bar {
+    /// The seats a press acts on, by name: everything on the bar that is not its empty
+    /// (draggable) stretch. The hit tests of the windows that carry the bar list the same seats.
+    pub fn buttons(&self) -> Vec<(&'static str, Rect)> {
+        [
+            ("power", self.power),
+            ("prev", self.prev),
+            ("tag", Some(self.tag)),
+            ("next", self.next),
+            ("sidechain on", self.sidechain_on),
+            ("sidechain list", self.sidechain_list),
+            ("channel", self.channel),
+            ("destination", Some(self.destination)),
+            ("pin", Some(self.pin)),
+            ("close", Some(self.close)),
+        ]
+        .into_iter()
+        .filter_map(|(name, r)| r.map(|r| (name, r)))
+        .collect()
+    }
+}
+
+/// The rects of the bar `bar` that move the window (UI-337): the parts of it `is_head` says a press
+/// there takes the window by. `is_head` is the window's own hit test, so what Windows is told is
+/// the window's drag handle (`WindowControlArea::Drag`) cannot drift from what a press does. The
+/// bar is cut along the edges of its buttons and each cell is asked at its middle.
+pub fn drag_rects(bar: Rect, b: &Bar, is_head: impl Fn(f32, f32) -> bool) -> Vec<Rect> {
+    fn cuts(mut v: Vec<f32>, lo: f32, hi: f32) -> Vec<f32> {
+        v.retain(|c| (lo..=hi).contains(c));
+        v.sort_by(f32::total_cmp);
+        v.dedup_by(|a, b| (*a - *b).abs() < 1e-3);
+        v
+    }
+    let buttons = b.buttons();
+    let xs = cuts(
+        [bar.x, bar.right()]
+            .into_iter()
+            .chain(buttons.iter().flat_map(|(_, r)| [r.x, r.right()]))
+            .collect(),
+        bar.x,
+        bar.right(),
+    );
+    let ys = cuts(
+        [bar.y, bar.bottom()]
+            .into_iter()
+            .chain(buttons.iter().flat_map(|(_, r)| [r.y, r.bottom()]))
+            .collect(),
+        bar.y,
+        bar.bottom(),
+    );
+    let mut out = Vec::new();
+    for y in ys.windows(2) {
+        let mut run: Option<(f32, f32)> = None;
+        for x in xs.windows(2) {
+            let head =
+                x[1] > x[0] && y[1] > y[0] && is_head((x[0] + x[1]) / 2.0, (y[0] + y[1]) / 2.0);
+            run = match (head, run) {
+                (true, Some((from, _))) => Some((from, x[1])),
+                (true, None) => Some((x[0], x[1])),
+                (false, Some((from, to))) => {
+                    out.push(Rect::new(from, y[0], to - from, y[1] - y[0]));
+                    None
+                }
+                (false, None) => None,
+            };
+        }
+        if let Some((from, to)) = run {
+            out.push(Rect::new(from, y[0], to - from, y[1] - y[0]));
+        }
+    }
+    out
+}
+
 /// The built-ins whose bar keeps a side-chain seat (the report's «受ける
 /// 機器»: the compressor, the limiter, the gate when it comes).
 pub fn takes_sidechain(def: &BuiltinDef) -> bool {

@@ -389,6 +389,8 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("dawproject", dawproject_shots::SHOTS),
     ("dawproject-reference", dawproject_reference_shots::SHOTS),
     ("dblclick", dblclick_shots::SHOTS),
+    #[cfg(windows)]
+    ("device-drag", device_window::drag_shots::SHOTS),
     ("device-input", device_window::input_shots::SHOTS),
     ("devices", devices_shots::SHOTS),
     ("draw-length", draw_length_shots::SHOTS),
