@@ -624,6 +624,7 @@ impl Windows {
                     .get(&plugin.id)
                     .copied()
                     .unwrap_or((14.0 * play::Keyboard::PITCH - keyboard.view.w / 2.0).max(0.0)),
+                keyboard.spec,
             );
             b.keys = keyboard.keys.clone();
             crate::device::sampler::place_zones(&mut b, &plugin.samples, w.map_or(0, |w| w.pick));
@@ -1808,9 +1809,9 @@ impl Studio {
                     (self.instruments.open[i].plugin == plugin).then_some(part)
                 });
                 if let Some(Part::Key(next)) = next {
-                    // Once the pointer has left the keyboard, a new press is required.
-                    if next != pitch
-                        && self.instruments.note.is_some()
+                    // Back on a key after leaving the keyboard (its note ended there), the key
+                    // under the pointer sounds again.
+                    if (next != pitch || self.instruments.note.is_none())
                         && let Some(w) = self
                             .instruments
                             .open
@@ -1841,8 +1842,7 @@ impl Studio {
                             .position(|v| v.plugin == plugin)
                             .unwrap();
                         let body = self.instruments.body(self.instruments.frame(i, g), x0, def);
-                        body.keyboard
-                            .is_some_and(|k| k.view.contains(x, y) && y < k.view.y + 92.0)
+                        body.keyboard.is_some_and(|k| k.in_keys(x, y))
                     })
                 {
                     // A one-pixel key seam is still inside the keyboard.

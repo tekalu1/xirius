@@ -561,6 +561,7 @@ pub fn body(def: &BuiltinDef, s: &Shape) -> Body {
     let keyboard = play::Keyboard::new(
         Rect::new(PAD, y + ZONE_H + 4.0, inner, play::Keyboard::HEIGHT),
         0.0,
+        play::KeySpec::SAMPLER,
     );
     b.keys = keyboard.keys.clone();
     b.keyboard = Some(keyboard);

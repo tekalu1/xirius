@@ -445,6 +445,7 @@ pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
                     crate::device::play::Keyboard::HEIGHT,
                 ),
                 w.keyboard_scroll,
+                crate::device::play::KeySpec::SAMPLER,
             )
         }),
         macros,

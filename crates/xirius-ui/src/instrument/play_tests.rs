@@ -467,10 +467,20 @@ fn plg_066_drag_changes_keys_once_and_leaving_the_keyboard_ends_the_note() {
     assert_eq!(s.live_midi.sent.len(), sent + 2);
     assert!(s.instrument_moved(&g, 2.0, 2.0, false));
     assert_eq!(last_sent(&s), Some((t, NoteKind::Off { pitch: 62 })));
-    // Returning after leaving the keyboard does not restart a note.
+    // Returning to the keyboard sounds the key under the pointer again, the key it left
+    // from or another.
     assert!(s.instrument_moved(&g, x, y, false));
+    assert_eq!(s.live_midi.sent.len(), sent + 4);
+    assert!(matches!(last_sent(&s), Some((tt, NoteKind::On { pitch: 60, .. })) if tt == t));
+    assert!(s.instrument_moved(&g, x, y, false));
+    assert_eq!(s.live_midi.sent.len(), sent + 4, "still on the same key");
+    assert!(s.instrument_moved(&g, 2.0, 2.0, false));
+    assert_eq!(last_sent(&s), Some((t, NoteKind::Off { pitch: 60 })));
+    assert!(s.instrument_moved(&g, nx, ny, false));
+    assert!(matches!(last_sent(&s), Some((tt, NoteKind::On { pitch: 62, .. })) if tt == t));
     assert!(s.instrument_up());
-    assert_eq!(s.live_midi.sent.len(), sent + 3);
+    assert_eq!(last_sent(&s), Some((t, NoteKind::Off { pitch: 62 })));
+    assert_eq!(s.instruments.note, None);
     wait_sounding(&mut s, id, |n| n == 0);
 }
 
