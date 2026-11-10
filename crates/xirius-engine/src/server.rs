@@ -639,6 +639,65 @@ impl PluginLink {
     }
 }
 
+/// A host that ends on its own right after its greeting is refused is not a crash, whichever
+/// of the watcher and the refusal is seen first.
+#[cfg(test)]
+mod refused_start_tests {
+    use super::*;
+
+    fn starting() -> PluginServer {
+        let server = PluginServer::new(None);
+        {
+            let mut st = server.inner.lock();
+            st.starting = true;
+            st.epoch = 1;
+        }
+        server
+    }
+    fn refuse(server: &PluginServer) {
+        let e = server.inner.finish_start(1, Err("refused".into())).err();
+        assert_eq!(e.as_deref(), Some("refused"));
+    }
+    fn ended(server: &PluginServer) {
+        server.inner.went_down(1, Some(3), false, false);
+    }
+    fn assert_calm(server: &PluginServer) {
+        assert!(!server.crashed());
+        assert_eq!(server.status(&PluginLink::default()).crashes, 0);
+    }
+
+    #[test]
+    fn the_host_ending_before_the_refusal_is_noted_is_not_a_crash() {
+        let server = starting();
+        ended(&server);
+        refuse(&server);
+        assert_calm(&server);
+    }
+
+    #[test]
+    fn the_host_ending_after_the_refusal_is_noted_is_not_a_crash() {
+        let server = starting();
+        refuse(&server);
+        ended(&server);
+        assert_calm(&server);
+    }
+
+    #[test]
+    fn a_host_that_ends_during_a_start_that_goes_on_is_a_crash() {
+        let server = starting();
+        ended(&server);
+        let proc = Proc {
+            writer: mpsc::sync_channel(1).0,
+            epoch: 1,
+            stop: Arc::new(AtomicU8::new(KEEP)),
+            pid: 0,
+        };
+        assert!(server.inner.finish_start(1, Ok(proc)).is_err());
+        assert!(server.crashed());
+        assert_eq!(server.status(&PluginLink::default()).crashes, 1);
+    }
+}
+
 #[cfg(test)]
 mod capture_tests {
     use super::*;
@@ -1315,6 +1374,11 @@ struct State {
     crashed: bool,
     exit_code: Option<u32>,
     crashes: u64,
+    /// The newest host generation whose start was refused (wrong protocol, no greeting): its
+    /// ending is not a crash, whenever it is seen.
+    refused: u64,
+    /// How the host being started ended before its start was settled; decided when it is.
+    ended_early: Option<(Option<u32>, bool, bool)>,
     slots: HashMap<u32, SlotRec>,
     /// The instances asked to close whose host has not said so yet, with their links: what the
     /// host says about them until then still reaches the link (ENG-071).
@@ -2083,10 +2147,36 @@ impl Inner {
         st.closing.clear();
         drop(st);
         let result = self.spawn_proc(epoch);
+        self.finish_start(epoch, result)
+    }
+
+    /// Settles the start of host generation `epoch`. The host ends on its own right after a
+    /// refused greeting, which the watcher can see before the refusal is noted, so an ending
+    /// seen while the start is open waits here for the outcome.
+    fn finish_start<'a>(
+        self: &'a Arc<Self>,
+        epoch: u64,
+        result: Result<Proc, String>,
+    ) -> Result<MutexGuard<'a, State>, String> {
         let mut st = self.lock();
         st.starting = false;
         self.changed.notify_all();
-        let proc = result?;
+        let early = st.ended_early.take();
+        let proc = match result {
+            Ok(proc) => proc,
+            Err(e) => {
+                st.refused = epoch;
+                // The host's ending is cleaned up as asked for, not counted as a crash.
+                if let Some((code, _, hung)) = early {
+                    st.count_down(epoch, code, true, hung);
+                }
+                return Err(e);
+            }
+        };
+        if let Some((code, asked, hung)) = early {
+            st.count_down(epoch, code, asked, hung);
+            return Err("プラグインのプロセスが起動中に終了しました".into());
+        }
         if self.down_epoch.load(Ordering::Acquire) >= epoch {
             return Err("プラグインのプロセスが起動中に終了しました".into());
         }
@@ -2216,23 +2306,12 @@ impl Inner {
         self.down_epoch.fetch_max(epoch, Ordering::AcqRel);
         let mut st = self.lock();
         if st.epoch == epoch {
-            st.proc = None;
-            st.retire_process();
-            st.closing.clear();
-            if !asked {
-                st.crashed = true;
-                st.crashes += 1;
-                st.exit_code = code;
-                for rec in st.slots.values() {
-                    let crashed_in = rec
-                        .rings
-                        .as_ref()
-                        .is_some_and(|r| r.header().faulted.load(Ordering::Acquire) == epoch);
-                    let stalled = hung && rec.link.stalled_epoch.load(Ordering::Acquire) == epoch;
-                    if crashed_in || stalled {
-                        rec.link.faults.fetch_add(1, Ordering::Relaxed);
-                    }
-                }
+            if st.starting {
+                st.ended_early = Some((code, asked, hung));
+            } else {
+                // A refused start's host ends as asked for, whatever the watcher saw.
+                let asked = asked || st.refused == epoch;
+                st.count_down(epoch, code, asked, hung);
             }
         }
         drop(st);
@@ -2557,6 +2636,28 @@ fn merge_state(
     replay
 }
 impl State {
+    /// The host of generation `epoch` is gone: the plugins in it play dry, and unless it was
+    /// asked to end, that was a crash.
+    fn count_down(&mut self, epoch: u64, code: Option<u32>, asked: bool, hung: bool) {
+        self.proc = None;
+        self.retire_process();
+        self.closing.clear();
+        if !asked {
+            self.crashed = true;
+            self.crashes += 1;
+            self.exit_code = code;
+            for rec in self.slots.values() {
+                let crashed_in = rec
+                    .rings
+                    .as_ref()
+                    .is_some_and(|r| r.header().faulted.load(Ordering::Acquire) == epoch);
+                let stalled = hung && rec.link.stalled_epoch.load(Ordering::Acquire) == epoch;
+                if crashed_in || stalled {
+                    rec.link.faults.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
+    }
     fn retire_process(&mut self) {
         let links: Vec<_> = self
             .slots
