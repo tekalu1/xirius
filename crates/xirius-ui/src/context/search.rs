@@ -50,14 +50,8 @@ pub fn find(items: &[Item], query: &str) -> Vec<(Item, String)> {
                 {
                     let mut found = item.clone();
                     found.label = label;
-                    out.push((
-                        found,
-                        if breadcrumb.is_empty() {
-                            "直下".into()
-                        } else {
-                            breadcrumb
-                        },
-                    ));
+                    // A leaf in the first level has no path to show under its name.
+                    out.push((found, breadcrumb));
                 }
             }
         }
@@ -98,6 +92,21 @@ impl Studio {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_first_level_result_has_no_path_line() {
+        let tree = vec![
+            Item::act("コピー", "edit.copy", crate::context::Act::Folders(true)),
+            Item::sub(
+                "書き出す",
+                vec![Item::act("MIDI", "x", crate::context::Act::Folders(true))],
+            ),
+        ];
+        let found = find(&tree, "コピー");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].1, "", "no internal group name is shown");
+        assert_eq!(find(&tree, "midi")[0].1, "書き出す");
+    }
 
     #[test]
     fn results_are_leaves_without_group_separators() {
