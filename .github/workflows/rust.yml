@@ -87,7 +87,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest@0.9.151
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: tests-${{ matrix.os }}
       - name: run shard without building
@@ -127,14 +127,14 @@ jobs:
           assert os.environ["BUILD_RESULT"] == "success"
           assert os.environ["TEST_RESULT"] == "success"
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: coverage-${{ matrix.os }}-*
           path: observations
       - name: complete context catalog
         run: python scripts/ci_tests.py --check-coverage observations --expected-shards 4
       # Tests that passed only on a retry, from every shard, in this job's summary.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: always()
         with:
           pattern: junit-${{ matrix.os }}-*
