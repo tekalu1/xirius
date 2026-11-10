@@ -262,7 +262,7 @@ impl Studio {
     }
     pub fn fx_target(&self, g: &Geometry, x: f32, y: f32) -> Option<(TrackId, usize)> {
         let p = self.project();
-        let strips: Vec<_> = if self.mixer_shown() && self.mixer_body(g).contains(x, y) {
+        let strips: Vec<_> = if self.mixer_shown() && g.drawer_body.contains(x, y) {
             self.mixer_strips(g)
                 .into_iter()
                 .filter(|s| self.strip_holds(g, s, x, y))
@@ -606,7 +606,7 @@ impl Studio {
                             self.open_plugin(t, id);
                         } else {
                             self.mixer.chosen = Some(pick);
-                            self.dock_follow(g);
+                            self.follow_pick();
                             // the level row opens under it, in sight
                             self.reveal_pick(g, t, pick.1);
                         }

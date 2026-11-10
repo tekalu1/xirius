@@ -180,7 +180,7 @@ fn the_pad_dragged_sets_both_knobs_in_one_step() {
 }
 
 #[test]
-fn a_release_a_dialog_takes_still_lets_the_pad_and_the_grip_go() {
+fn a_release_a_dialog_takes_still_lets_the_pad_and_the_scroll_bar_go() {
     let (mut s, _) = studio();
     let t = track(&s, "Vocal");
     s.open_macros(t);
@@ -190,11 +190,10 @@ fn a_release_a_dialog_takes_still_lets_the_pad_and_the_grip_go() {
     assert!(s.macro_press(x, y));
     let (x, y) = pad_point(v.pad, (0.6, 0.3));
     assert!(s.macro_moved(x, y));
-    s.mixer.grip_drag = Some((0.0, 0.0));
     s.mixer.bar_grab = Some(0.0);
     s.let_go_drags();
     assert!(s.macro_pad.as_ref().unwrap().grab.is_none());
-    assert!(s.mixer.grip_drag.is_none() && s.mixer.bar_grab.is_none());
+    assert!(s.mixer.bar_grab.is_none());
     // the pad ends where it was, for the track it was pressed for
     assert_eq!(s.song().steps(), undo + 1);
     assert!((knob(&s, t, 0) - 0.6).abs() < 1e-9);

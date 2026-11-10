@@ -281,7 +281,6 @@ impl Screen {
         }
         if studio.zoom_box_move(x, y)
             || studio.mixer_bar_move(&g, x)
-            || studio.grip_move(&g, x)
             || studio.edge_move(&g, y)
             || studio.side_move(&g, x)
             || studio.pan_move(&g, x, y)
@@ -290,7 +289,7 @@ impl Screen {
             cx.notify();
             return;
         }
-        if studio.edge_hover(&g, x, y) | studio.side_hover(&g, x, y) | studio.grip_hover(&g, x, y) {
+        if studio.edge_hover(&g, x, y) | studio.side_hover(&g, x, y) {
             cx.notify();
         }
         if studio.mixer.level_drag.is_some() || studio.mixer.key_drag.is_some() {
@@ -437,10 +436,6 @@ impl Screen {
         {
             drop(studio);
             self.files(cx);
-            cx.notify();
-            return;
-        }
-        if studio.grip_down(&g, x, y) {
             cx.notify();
             return;
         }
@@ -770,7 +765,7 @@ impl Screen {
         }
         let g = geometry(&studio, window);
         let (x, y) = in_body(ev.position);
-        if studio.mixer_bar_up() || studio.grip_up() {
+        if studio.mixer_bar_up() {
             cx.notify();
             return;
         }
@@ -1919,7 +1914,6 @@ impl Render for Screen {
             .child(bar)
             .child(body)
             .child(bottom)
-            .children(crate::device_window::accessible(&self.studio, &g))
             .child(crate::opening_view::accessible(self.studio.clone(), &g))
             .child(crate::prepare_card::accessible(self.studio.clone(), &g))
             .child(crate::unsaved::accessible(self.studio.clone(), &g))

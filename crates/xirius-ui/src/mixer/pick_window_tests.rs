@@ -62,10 +62,6 @@ fn picked(w: f32) -> (Studio, Geometry, TrackId, PluginId) {
 fn a_picked_device_leaves_the_whole_drawer_for_the_strips_at_every_width() {
     for width in [760.0, crate::studio::WINDOW_MIN.0, 1600.0] {
         let (mut s, g, t, eq) = picked(width);
-        assert_eq!(s.docked(), None);
-        assert_eq!(s.mixer_split(&g), None);
-        assert_eq!(s.mixer_body(&g), g.drawer_body);
-        assert!(s.mixer_bands(&g).is_empty());
         assert!(s.instruments.detached.contains(&eq));
         assert_eq!(s.instruments.open[0].track, t);
         assert_eq!(s.instruments.frame(0, &g), Rect::default());
@@ -92,14 +88,13 @@ fn row_and_arrow_selection_replace_only_an_unpinned_view() {
 
 #[test]
 fn closing_the_independent_view_keeps_the_device_and_its_values() {
-    let (mut s, g, _, eq) = picked(1600.0);
+    let (mut s, _, _, eq) = picked(1600.0);
     let before = s.project().content_hash();
     let steps = s.song().steps();
     press(&mut s, eq, Part::Close);
     assert!(!s.instruments.is_open(eq));
     assert_eq!(s.project().content_hash(), before);
     assert_eq!(s.song().steps(), steps);
-    assert_eq!(s.mixer_body(&g), g.drawer_body);
 }
 
 #[test]
@@ -151,9 +146,8 @@ fn a_local_knob_drag_is_one_undoable_edit() {
 }
 
 #[test]
-fn independent_resize_does_not_take_space_from_the_mixer() {
-    let (mut s, g, _, eq) = picked(1600.0);
-    let mixer = s.mixer_body(&g);
+fn independent_resize_grows_the_window() {
+    let (mut s, _, _, eq) = picked(1600.0);
     let before = s.instruments.open[0].body;
     with_surface(&mut s, eq, |s, local| {
         let (x, y) = s.instrument_center(local, eq, Part::Resize).unwrap();
@@ -162,9 +156,6 @@ fn independent_resize_does_not_take_space_from_the_mixer() {
         s.instrument_up();
     });
     assert!(s.instruments.open[0].body.0 > before.0);
-    assert_eq!(s.mixer_body(&g), mixer);
-    assert!(!s.grip_down(&g, mixer.x + mixer.w / 2.0, mixer.y + 10.0));
-    assert!(!s.mixer.grip_focus);
 }
 
 #[test]
@@ -252,11 +243,9 @@ fn files_held_over_an_independent_drum_kit_reach_its_pads() {
             .map(|p| crate::device::sampler::pad_files(def, &x, p))
             .collect();
         assert_eq!(pads, vec![vec![0], vec![1], vec![]]);
-        assert_eq!(s.docked(), None);
         s.instruments.open[i].bank = Some(1);
         s.show_instrument(t, kit);
         let w = s.instruments.open.iter().find(|w| w.plugin == kit).unwrap();
-        assert!(!w.docked);
         assert_eq!(w.bank, Some(1), "the window shows the bank the face showed");
     });
 }

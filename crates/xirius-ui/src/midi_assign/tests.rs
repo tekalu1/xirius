@@ -236,21 +236,15 @@ fn a_knob_learned_for_a_macro_moves_its_targets_in_one_step() {
 /// Review 3 中1・低1: a part waiting for a knob, and the mixer's band and grip, were of the
 /// song that closed; track ids repeat between songs, so they must not reach the next one.
 #[test]
-fn another_song_drops_the_learning_and_the_mixers_band_and_grip() {
+fn another_song_drops_the_learning() {
     let (mut s, ids) = studio(1);
     let t = ids[0];
     plug(&mut s, &[(2, [0xb0, 21, 10])]);
     assert!(learn(&mut s, &format!("track.volume:{t}")));
-    s.mixer.lead = Some(t);
-    s.mixer.grip_focus = true;
-    s.mixer.grip_drag = Some((300.0, 10.0));
     s.song_replaced(Ok(None));
     assert!(s.live_midi.assign.learning.is_none());
     assert!(s.live_midi.assign.clash.is_none());
     assert_eq!(s.learning_hit(), None);
-    assert!(s.mixer.lead.is_none());
-    assert!(!s.mixer.grip_focus);
-    assert!(s.mixer.grip_drag.is_none());
     // the knob that turns next binds nothing
     polls(&mut s, 3);
     assert!(s.midimap().rows().is_empty());

@@ -622,13 +622,10 @@ pub fn paint_overlay(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     crate::ai::overlay(pen, studio, g);
     if studio.mixer_painted() {
         crate::mixer::paint::paint(pen, studio, g);
-        crate::mixer::dock::paint_grip(pen, studio, g);
-        crate::instrument::window::paint_docked(pen, studio, g);
     }
     crate::fx_chain::paint_headers(pen, studio, g);
     let started = std::time::Instant::now();
     crate::instrument::window::paint(pen, studio, g);
-    crate::device_window::paint_tip(pen, studio, g);
     studio
         .mixer
         .editor_paint_us

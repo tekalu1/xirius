@@ -48,20 +48,6 @@ impl Windows {
     }
 
     pub(crate) fn sync(&mut self, studio: &Rc<RefCell<Studio>>, main: &Window, cx: &mut App) {
-        // Migrate views created by older entry points without recreating a device.
-        {
-            let mut s = studio.borrow_mut();
-            let ids: Vec<_> = s
-                .instruments
-                .open
-                .iter_mut()
-                .map(|w| {
-                    w.docked = false;
-                    w.plugin
-                })
-                .collect();
-            s.instruments.detached.extend(ids);
-        }
         self.sync_channel(studio, main, cx);
         self.sync_macros(studio, main, cx);
         self.sync_preset(studio, main, cx);
@@ -643,7 +629,6 @@ impl Render for DeviceWindow {
                     } else {
                         crate::channel::paint::paint(&mut pen, &s, &g);
                     }
-                    paint_tip(&mut pen, &s, &g);
                     if let Some(p) = &s.popup {
                         let hot = match s.hover {
                             Hit::Item(i) => Some(i),
@@ -664,11 +649,6 @@ impl Render for DeviceWindow {
             },
         )
         .size_full();
-        let shared = self.studio.clone();
-        let owner = cx.entity().downgrade();
-        let marks = self.with(window, |s, g| {
-            accessible_for(&shared, s, g, 0.0, Some(owner))
-        });
         // The bar's empty parts, which the system moves the window by (UI-337). They come from the
         // very functions the press hit test uses, so the two cannot drift. The Presets popup has no
         // bar.
@@ -928,7 +908,6 @@ impl Render for DeviceWindow {
                 cx.refresh_windows();
             }))
             .child(body)
-            .children(marks)
             .children(drags.into_iter().map(|r| {
                 div()
                     .absolute()
@@ -1112,103 +1091,6 @@ impl gpui::EntityInputHandler for DeviceWindow {
         _: &mut Context<Self>,
     ) -> Option<usize> {
         None
-    }
-}
-
-pub(crate) fn accessible(
-    studio: &Rc<RefCell<Studio>>,
-    g: &Geometry,
-) -> Vec<gpui::Stateful<gpui::Div>> {
-    accessible_for(
-        studio,
-        &studio.borrow(),
-        g,
-        xirius_design::Layout::TOP_BAR_H,
-        None,
-    )
-}
-
-fn accessible_for(
-    shared: &Rc<RefCell<Studio>>,
-    s: &Studio,
-    g: &Geometry,
-    offset: f32,
-    owner: Option<gpui::WeakEntity<DeviceWindow>>,
-) -> Vec<gpui::Stateful<gpui::Div>> {
-    let p = s.auto_shown();
-    let mut places = Vec::new();
-    for (i, w) in s.instruments.open.iter().enumerate() {
-        let r = s.instruments.frame(i, g);
-        if r.w <= 0.0 {
-            continue;
-        }
-        if let Some((track, plugin, def)) = crate::instrument::window::live(&p, w) {
-            let destination = s
-                .instruments
-                .part_rect(r, &p, track, plugin, def, Part::Destination);
-            if destination.w > 0.0 {
-                places.push((
-                    crate::instrument::menu::Menu::Destination(w.track, w.plugin),
-                    destination,
-                ));
-            }
-        }
-    }
-    places
-        .into_iter()
-        .map(|(menu, b)| {
-            let shared = shared.clone();
-            let owner = owner.clone();
-            div()
-                .id(gpui::SharedString::from(format!("destination-{menu:?}")))
-                .absolute()
-                .left(px(b.x))
-                .top(px(b.y + offset))
-                .w(px(b.w))
-                .h(px(b.h))
-                .role(gpui::accesskit::Role::Button)
-                .aria_label("表示先")
-                .on_a11y_action(gpui::accesskit::Action::Click, move |_, window, cx| {
-                    if let Some(owner) = &owner {
-                        let _ = owner.update(cx, |view, cx| {
-                            view.with(window, |s, _| s.open_inst_menu(menu, b));
-                            cx.refresh_windows();
-                        });
-                    } else {
-                        shared.borrow_mut().open_inst_menu(menu, b);
-                        cx.refresh_windows();
-                    }
-                })
-        })
-        .collect()
-}
-
-pub(crate) fn paint_tip(pen: &mut Pen, s: &Studio, g: &Geometry) {
-    if s.popup.is_some() {
-        return;
-    }
-    let Some((id, Part::Destination)) = s.instruments.hot else {
-        return;
-    };
-    let Some(i) = s.instruments.open.iter().position(|w| w.plugin == id) else {
-        return;
-    };
-    let r = s.instruments.frame(i, g);
-    if r.w <= 0.0 {
-        return;
-    }
-    let p = s.auto_shown();
-    if let Some((track, plugin, def)) = crate::instrument::window::live(&p, &s.instruments.open[i])
-    {
-        let b = s
-            .instruments
-            .part_rect(r, &p, track, plugin, def, Part::Destination);
-        crate::hover_tip::balloon(
-            pen,
-            "表示先",
-            b,
-            crate::studio::Rect::new(0.0, 0.0, g.size.0, g.size.1),
-        );
     }
 }
 

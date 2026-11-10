@@ -203,7 +203,6 @@ mod tests {
             mixer: false,
             folded: false,
             record: false,
-            strips: 0,
         };
         let sized = |browser| {
             crate::studio::Geometry::sized_to(

@@ -10,7 +10,6 @@
 
 pub mod bench;
 pub(crate) mod choose;
-pub(crate) mod dock;
 pub(crate) mod editors;
 pub mod flow;
 pub(crate) mod group;
@@ -651,15 +650,6 @@ pub struct Mixer {
     pub layout_ns: Cell<u64>,
     /// The channel a double click on a track's head brought up, and when it did (ms).
     flash: Option<(TrackId, u64)>,
-    /// The band pressed last while the strips are folded: its strip stays open (MIX-046).
-    pub lead: Option<TrackId>,
-    /// The grip between the strips and the face is held: the face's width and the pointer's
-    /// x when it was taken (MIX-046).
-    pub grip_drag: Option<(f32, f32)>,
-    /// The grip was pressed last: ←→ move it (MIX-046).
-    pub grip_focus: bool,
-    /// The pointer is over the grip.
-    pub grip_hover: bool,
 }
 
 /// How long the channel brought up by `mixer.focus` is lit, and how long it stays at full.
@@ -1053,28 +1043,12 @@ impl Studio {
         }
     }
 
-    /// How wide `t`'s strip is: [`WIDE_W`] when its button widened it (MIX-045). While the
-    /// strips are folded (MIX-046), the one in front is [`WIDE_W`] and the others bands.
-    pub(crate) fn width_of(&self, g: &Geometry, t: TrackId) -> f32 {
-        if self.mixer_folded(g) {
-            if self.mixer_lead() == Some(t) {
-                WIDE_W
-            } else {
-                dock::BAND_W
-            }
-        } else if self.mixer.wide.contains(&t) {
+    /// How wide `t`'s strip is: [`WIDE_W`] when its button widened it (MIX-045).
+    pub(crate) fn width_of(&self, _g: &Geometry, t: TrackId) -> f32 {
+        if self.mixer.wide.contains(&t) {
             WIDE_W
         } else {
             self.strip_width()
-        }
-    }
-
-    /// The strips at [`WIDE_W`] now: the widened ones, or the one in front while folded.
-    fn wide_now(&self, g: &Geometry) -> HashSet<TrackId> {
-        if self.mixer_folded(g) {
-            self.mixer_lead().into_iter().collect()
-        } else {
-            self.mixer.wide.clone()
         }
     }
 
@@ -1132,7 +1106,7 @@ impl Studio {
     /// The part of the body the channels scroll in: all of it left of the master, which
     /// stays at the right edge (the master is not a channel that scrolls away).
     pub fn mixer_view(&self, g: &Geometry) -> Rect {
-        let body = self.mixer_body(g);
+        let body = g.drawer_body;
         let master = self.project().tracks.contains_key(&TrackId::MASTER);
         let w = if master {
             body.w - STRIP_GAP - self.width_of(g, TrackId::MASTER) - MASTER_GAP
@@ -1146,24 +1120,15 @@ impl Studio {
     /// master. A channel at the view's right edge may reach under the master, so the
     /// parts of a channel count only where [`Studio::mixer_view`] holds the point.
     pub fn mixer_strips(&self, g: &Geometry) -> Vec<StripLayout> {
-        self.mixer_row(g).0
-    }
-
-    /// The strips on screen and, while they are folded (MIX-046), the bands.
-    pub(crate) fn mixer_row(&self, g: &Geometry) -> (Vec<StripLayout>, Vec<(TrackId, Rect)>) {
         let p = self.project();
-        let body = self.mixer_body(g);
+        let body = g.drawer_body;
         let view = self.mixer_view(g);
-        let folded = self.mixer_folded(g);
-        let lead = self.mixer_lead();
-        let band = |t: TrackId| folded && lead != Some(t);
-        let mut bands = Vec::new();
         let (top, h) = (
             body.y + STRIP_GAP,
             (body.h - STRIP_GAP * 2.0 - BAR_H - BAR_GAP).max(0.0),
         );
         // the flows' height as each strip shows its own, at the width it has now
-        let wide = self.wide_now(g);
+        let wide = self.mixer.wide.clone();
         let rows = Rows::with(
             &p,
             flow::Look {
@@ -1183,20 +1148,12 @@ impl Studio {
                     return None;
                 }
                 let kind = p.tracks.get(&id)?.kind;
-                if band(id) {
-                    bands.push((id, Rect::new(x, top, width, h)));
-                    return None;
-                }
                 Some(StripLayout::sized(id, kind, x, top, h, rows, width))
             })
             .collect();
         if let Some(master) = p.tracks.get(&TrackId::MASTER) {
             let width = self.width_of(g, master.id);
             let x = body.right() - STRIP_GAP - width;
-            if band(master.id) {
-                bands.push((master.id, Rect::new(x, top, width, h)));
-                return (out, bands);
-            }
             out.push(StripLayout::sized(
                 master.id,
                 master.kind,
@@ -1207,21 +1164,12 @@ impl Studio {
                 width,
             ));
         }
-        (out, bands)
+        out
     }
 
-    /// How far the channels are scrolled, as far as they go. While they are folded
-    /// (MIX-046), the strip in front stays in sight.
+    /// How far the channels are scrolled, as far as they go.
     pub(crate) fn mixer_scroll(&self, g: &Geometry) -> f32 {
-        let s = self.mixer.scroll.min(self.mixer_max_scroll(g)).max(0.0);
-        if !self.mixer_folded(g) {
-            return s;
-        }
-        let Some(off) = self.mixer_lead().and_then(|t| self.strip_offset(g, t)) else {
-            return s;
-        };
-        let lo = (off + WIDE_W + 2.0 * STRIP_GAP - self.mixer_view(g).w).max(0.0);
-        s.max(lo).min(off)
+        self.mixer.scroll.min(self.mixer_max_scroll(g)).max(0.0)
     }
 
     /// Whether the point is on the strip: a channel only where the view shows it.
@@ -1252,7 +1200,7 @@ impl Studio {
         let view = self.mixer_view(g);
         let groove = Rect::new(
             view.x + STRIP_GAP,
-            self.mixer_body(g).bottom() - STRIP_GAP - BAR_H,
+            g.drawer_body.bottom() - STRIP_GAP - BAR_H,
             (view.w - STRIP_GAP * 2.0).max(0.0),
             BAR_H,
         );
@@ -1312,15 +1260,8 @@ impl Studio {
 
     /// What is under a point of the mixer, or `None` outside its strips.
     pub fn mixer_hit(&self, g: &Geometry, x: f32, y: f32) -> Option<MixerHit> {
-        if !self.mixer_shown() || !self.mixer_body(g).contains(x, y) {
+        if !self.mixer_shown() || !g.drawer_body.contains(x, y) {
             return None;
-        }
-        if let Some((t, _)) = self
-            .mixer_bands(g)
-            .into_iter()
-            .find(|(t, r)| r.contains(x, y) && (t.is_master() || self.mixer_view(g).contains(x, y)))
-        {
-            return Some(MixerHit::Strip(t));
         }
         let p = self.project();
         let s = self
@@ -1384,11 +1325,6 @@ impl Studio {
     /// The rectangle of a part of the mixer on screen.
     pub fn mixer_rect(&self, g: &Geometry, hit: MixerHit) -> Option<Rect> {
         let t = hit.track();
-        if let MixerHit::Strip(_) = hit
-            && let Some((_, r)) = self.mixer_bands(g).into_iter().find(|(x, _)| *x == t)
-        {
-            return Some(r);
-        }
         let s = self.mixer_strips(g).into_iter().find(|s| s.track == t)?;
         let p = self.project();
         let track = p.tracks.get(&t)?;
@@ -1573,9 +1509,6 @@ impl Studio {
         if self.refuse_frozen(hit) {
             return true;
         }
-        if self.mixer_folded(g) {
-            self.mixer.lead = Some(t);
-        }
         match hit {
             MixerHit::Strip(_)
             | MixerHit::Heading(..)
@@ -1646,7 +1579,7 @@ impl Studio {
                 // an empty branch is picked as a row is, so its level row opens under it
                 let pick = flow::Pick::Branch(n);
                 self.mixer.chosen = Some((t, pick));
-                self.dock_follow(g);
+                self.follow_pick();
                 self.reveal_pick(g, t, pick);
                 true
             }
@@ -1953,13 +1886,6 @@ impl Studio {
             self.mixer.open_later = Some(w);
             return true;
         }
-        // The face in the drawer comes out as a window (MIX-046).
-        if let Some(i) = self.instruments.dock_slot()
-            && self.instruments.open[i].plugin == id
-        {
-            self.show_instrument(t, id);
-            return true;
-        }
         if self.mixer.is_open(id) {
             let shown = self.editor_shown(id);
             self.close_editor(id);
@@ -1994,7 +1920,7 @@ impl Studio {
         let title = format!("{} · {}", plugin.name, track.shown_name());
         self.replace_unpinned_editors(id);
         self.device_sweep_end();
-        self.instruments.open.retain(|w| w.docked || w.pinned);
+        self.instruments.open.retain(|w| w.pinned);
         match self.open_vst3_window(plugin, title, None) {
             Ok(e) => self.mixer.editors.push(e),
             Err(e) => self.error = Some(e),
@@ -2214,7 +2140,7 @@ impl Studio {
     /// A wheel turn over the mixer: an insert or send list moves by a row,
     /// anywhere else the strips move sideways.
     pub fn mixer_wheel(&mut self, g: &Geometry, x: f32, y: f32, dx: f32, dy: f32) -> bool {
-        if !self.mixer_shown() || !self.mixer_body(g).contains(x, y) {
+        if !self.mixer_shown() || !g.drawer_body.contains(x, y) {
             return false;
         }
         let p = self.project();
@@ -2264,5 +2190,7 @@ impl Studio {
 mod editor_tests;
 #[cfg(test)]
 mod master_tests;
+#[cfg(test)]
+mod pick_window_tests;
 #[cfg(test)]
 mod tests;

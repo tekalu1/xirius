@@ -99,14 +99,12 @@ fn a_press_picks_and_opens_a_row_and_the_next_toggles_its_view() {
     click_row(&mut s, &g, t, eq);
     assert_eq!(s.mixer.chosen, Some((t, Pick::Plugin(eq))));
     // Selecting a built-in row opens its independent view immediately.
-    assert_eq!(s.docked(), None);
     assert!(s.instruments.is_open(eq));
     click_row(&mut s, &g, t, eq);
     assert!(!s.instruments.is_open(eq));
     click_row(&mut s, &g, t, eq);
     assert!(s.instruments.is_open(eq));
     assert_eq!(s.instruments.open.len(), 1);
-    assert_eq!(s.docked(), None);
     s.instruments.open.clear();
     // a press elsewhere lets the row go
     let fader = s.mixer_center(&g, MixerHit::Fader(t)).unwrap();

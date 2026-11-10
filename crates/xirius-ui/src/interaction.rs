@@ -99,9 +99,7 @@ impl Studio {
             || self.recovery.is_some()
             || self.file_request.is_some()
             || self.view_read.picker.is_some()
-            // A face the mixer docked comes from choosing a row, not from opening a window: it
-            // is no unfinished work (review 3 中3).
-            || self.instruments.open.iter().any(|w| !w.docked)
+            || !self.instruments.open.is_empty()
             // The CE's own window keeps its popup between callbacks in its GPUI view.
             || self.channel.is_some()
             || !self.mixer.editors.is_empty()

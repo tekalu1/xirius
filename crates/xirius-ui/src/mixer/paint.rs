@@ -30,18 +30,7 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
         _ => None,
     };
     let view = studio.mixer_view(g);
-    let (strips, bands) = studio.mixer_row(g);
-    for (t, r) in bands {
-        let shown = if t.is_master() {
-            r
-        } else {
-            let right = r.right().min(view.right());
-            let left = r.x.max(view.x);
-            Rect::new(left, r.y, (right - left).max(0.0), r.h)
-        };
-        pen.mask(shown, |pen| super::dock::paint(pen, studio, t, r));
-    }
-    for s in strips {
+    for s in studio.mixer_strips(g) {
         let Some(track) = p.tracks.get(&s.track) else {
             continue;
         };

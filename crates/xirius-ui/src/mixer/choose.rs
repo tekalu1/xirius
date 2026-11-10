@@ -312,7 +312,7 @@ impl Studio {
                 };
                 if let Some(next) = next {
                     self.mixer.chosen = Some((t, picks[next]));
-                    self.dock_follow(g);
+                    self.follow_pick();
                     self.reveal_pick(g, t, picks[next]);
                 }
             }
@@ -374,7 +374,7 @@ impl Studio {
                     // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
                     if self.run_command("plugin.remove", json!({ "ids": [id.to_string()] })) {
                         self.mixer.chosen = next.map(|x| (t, *x));
-                        self.dock_follow(g);
+                        self.follow_pick();
                     }
                 }
                 Pick::Plugin(_) => {}
@@ -441,3 +441,30 @@ impl Studio {
 #[cfg(test)]
 #[path = "choose_tests.rs"]
 mod tests;
+
+impl Studio {
+    /// The row picked on a strip opens its window, when it is a built-in device: it has a
+    /// window of its own (UI-098).
+    pub(crate) fn follow_pick(&mut self) {
+        if !self.mixer_shown() {
+            return;
+        }
+        let Some((t, Pick::Plugin(id))) = self.mixer.chosen else {
+            return;
+        };
+        let p = self.project();
+        let Some(plugin) = p
+            .tracks
+            .get(&t)
+            .and_then(|x| x.inserts.iter().find(|x| x.id == id))
+        else {
+            return;
+        };
+        if !crate::instrument::window::is_built_in(plugin) || self.health.crashed(id) {
+            return;
+        }
+        if !self.instruments.is_open(id) {
+            self.show_instrument(t, id);
+        }
+    }
+}

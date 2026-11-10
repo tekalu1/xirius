@@ -92,8 +92,9 @@ fn window_resize_is_called_in_few_places() {
 }
 
 /// Structs that have both `at: Option<(f32, f32)>` and `pinned: bool` (a window of its own
-/// place and pin drawn inside the screen). The stages that make them windows empty this list.
-const PLACED_AND_PINNED: &[&str] = &["Win"];
+/// place and pin drawn inside the screen). No window is drawn inside the screen any more, so
+/// none is allowed: a window's place is the OS's.
+const PLACED_AND_PINNED: &[&str] = &[];
 
 #[test]
 fn the_own_place_and_pin_structs_do_not_grow() {
@@ -151,8 +152,6 @@ enum Class {
     Popover,
     Transient,
     Section,
-    /// Painted inside the screen today, becomes a window (or goes) in the named stage.
-    Migrating(&'static str),
 }
 
 use Class::*;
@@ -169,20 +168,11 @@ const OVERLAY: &[(&str, Class)] = &[
     ("crate::zoom_input::paint", Popover),
     ("crate::ai::overlay", Section),
     ("crate::mixer::paint::paint", Section),
-    (
-        "crate::mixer::dock::paint_grip",
-        Migrating("stage 1d: MIX-046 dock"),
-    ),
-    (
-        "crate::instrument::window::paint_docked",
-        Migrating("stage 1d: dead in-screen code"),
-    ),
     ("crate::fx_chain::paint_headers", Section),
-    (
-        "crate::instrument::window::paint",
-        Migrating("stage 1d: dead in-screen code"),
-    ),
-    ("crate::device_window::paint_tip", Transient),
+    // No window is painted here (the main screen's frame for every device window is empty, see
+    // `the_main_screen_frames_no_device_window` in window_tests.rs); it stays for the drum kit's drag chip, which
+    // follows the pointer over this screen.
+    ("crate::instrument::window::paint", Transient),
     ("crate::browser_inst::paint", Popover),
     ("crate::fx_chain::paint_drag", Transient),
     ("crate::name_drag::paint", Transient),
@@ -272,18 +262,9 @@ fn the_overlay_paints_only_listed_surfaces() {
 }
 
 #[test]
-fn the_overlay_list_has_no_duplicates_and_few_migrating() {
+fn the_overlay_list_has_no_duplicates() {
     let names: BTreeSet<_> = OVERLAY.iter().map(|(n, _)| *n).collect();
     assert_eq!(names.len(), OVERLAY.len());
-    // The in-screen windows are on their way out; nothing else is "migrating".
-    let migrating = OVERLAY
-        .iter()
-        .filter(|(_, c)| matches!(c, Migrating(_)))
-        .count();
-    assert_eq!(
-        migrating, 3,
-        "the migrating surfaces are the 3 left to stage 1d"
-    );
 }
 
 /// The Macro Controls are a window of their own: nothing of an in-screen window is left of

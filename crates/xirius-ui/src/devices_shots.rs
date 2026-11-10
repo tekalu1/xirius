@@ -252,7 +252,6 @@ fn width(s: &mut Studio, id: PluginId, w: f32) {
     };
     if let Some(win) = s.instruments.open.iter_mut().find(|w| w.plugin == id) {
         win.body = layout::size(def, w);
-        win.placed_w = w;
     }
 }
 

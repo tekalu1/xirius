@@ -38,9 +38,6 @@ use crate::popup::PopupKind;
 use crate::studio::{Geometry, Rect, Studio};
 use crate::title_bar;
 
-/// How much of a window stays on the screen when it is dragged off.
-const KEEP_W: f32 = 80.0;
-
 /// The preset that is the device's own defaults (PLG-063).
 pub const DEFAULT: &str = xirius_core::xpreset::DEFAULT_PRESET;
 
@@ -136,18 +133,12 @@ pub struct Win {
     pub knobs: usize,
     /// Its body's size, as the device's layout wants it.
     pub body: (f32, f32),
-    /// Where its corner is, once it was dragged; else it sits where new ones go.
-    pub at: Option<(f32, f32)>,
     /// The pin is down: the window stays when another device opens. An
     /// unpinned one takes the next device in (UI-323).
     pub pinned: bool,
-    /// Its place in the cascade while it was not dragged: the count of
-    /// windows open when it came, so a window keeps its place when another
-    /// device fills it.
+    /// Its place in the cascade of the first positions of the independent windows: the count
+    /// of windows open when it came, so a window keeps its place when another device fills it.
     pub seat: usize,
-    /// The width its first device centred it by: the corner stays put
-    /// when a wider or narrower device fills it.
-    pub placed_w: f32,
     /// A Sampler's zone (its file) or a Drum Kit's pad the window shows, and the
     /// pad's layer (UI-333, UI-334).
     pub pick: usize,
@@ -158,20 +149,11 @@ pub struct Win {
     /// It had samples when it was last laid out: it takes its size again once its
     /// files come or all go.
     pub filled: bool,
-    /// It is the face at the right of the mixer's drawer (MIX-046), not a
-    /// window: it shows only with the mixer, and the drawer sets its place.
-    pub docked: bool,
 }
 
 /// What a press in a window took hold of.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Grab {
-    /// The bar: the window moves with the pointer.
-    Move {
-        plugin: PluginId,
-        from: (f32, f32),
-        pointer: (f32, f32),
-    },
     /// The corner (UI-331): the body's size when it was taken.
     Size {
         plugin: PluginId,
@@ -220,8 +202,7 @@ pub(crate) enum Grab {
 impl Grab {
     pub(crate) fn plugin(&self) -> PluginId {
         match *self {
-            Grab::Move { plugin, .. }
-            | Grab::Size { plugin, .. }
+            Grab::Size { plugin, .. }
             | Grab::Knob { plugin, .. }
             | Grab::Point { plugin, .. }
             | Grab::Note { plugin, .. }
@@ -243,7 +224,6 @@ impl Grab {
 /// A part of a window: the title bar's seats first (UI-322), then the body.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
-    Destination,
     /// The bar's drag handle: the name's band and the empty stretch.
     Head,
     Power,
@@ -404,8 +384,6 @@ pub struct Windows {
     pub(crate) sizes: HashMap<&'static str, (f32, f32)>,
     /// The note a key or a pad sounds (PLG-066).
     pub(crate) note: Option<Held>,
-    /// The width the face in the mixer's drawer was last given (MIX-046).
-    pub(crate) dock_w: Option<f32>,
     /// Shift is held over a drop of files: a Drum Kit takes them as the layers of one pad
     /// (UI-334).
     pub(crate) drop_layers: bool,
@@ -478,8 +456,6 @@ pub fn pad_velocity(y: f32, h: f32) -> u8 {
 pub const FLASH: std::time::Duration = std::time::Duration::from_millis(500);
 /// How wide the ring of an opened window is.
 const FLASH_W: f32 = 3.0;
-/// How far each new window sits from the one before it.
-pub const CASCADE: f32 = 28.0;
 /// The square in the bottom right corner that takes the window's size.
 pub const GRIP: f32 = 14.0;
 
@@ -503,12 +479,6 @@ pub fn fit_of(def: &BuiltinDef, want: (f32, f32), plugin: Option<&Plugin>) -> (f
 impl Windows {
     pub fn is_open(&self, id: PluginId) -> bool {
         self.open.iter().any(|w| w.plugin == id)
-    }
-
-    /// The window kept for the face in the mixer's drawer (MIX-046), shown or not: while the
-    /// drawer shows something else it has no frame. `Studio::docked` is the face shown.
-    pub fn dock_slot(&self) -> Option<usize> {
-        self.open.iter().position(|w| w.docked)
     }
 
     /// The value a control shows while it is dragged or swept.
@@ -736,7 +706,6 @@ impl Windows {
             Part::Sidechain => bar.sidechain_on.unwrap_or_default(),
             Part::Sources => bar.sidechain_list.unwrap_or_default(),
             Part::Channel => bar.channel.unwrap_or_default(),
-            Part::Destination => bar.destination,
             Part::Pin => bar.pin,
             Part::Close => bar.close,
             Part::Resize => grip(r),
@@ -829,31 +798,6 @@ impl Windows {
         Rect::default()
     }
 
-    /// The `i`th window's frame on a screen of `size`.
-    pub fn rect(&self, i: usize, size: (f32, f32)) -> Rect {
-        let (w, h) = self.open[i].body;
-        let h = title_bar::BAR_H + h;
-        let win = self.open[i];
-        let n = win.seat as f32;
-        let (x, y) = win.at.unwrap_or((
-            size.0 / 2.0 - win.placed_w / 2.0 + n * CASCADE,
-            64.0 + n * CASCADE,
-        ));
-        Rect::new(
-            x.clamp(0.0, (size.0 - KEEP_W).max(0.0)),
-            y.clamp(0.0, (size.1 - title_bar::BAR_H).max(0.0)),
-            w,
-            h,
-        )
-    }
-
-    /// The drawer split for the face `i` in the mixer's drawer (MIX-046).
-    pub(crate) fn dock_split(&self, i: usize, g: &Geometry) -> crate::mixer::dock::Split {
-        let w = self.open[i].body.0;
-        let fold = crate::mixer::dock::folded_w(usize::from(g.panels.strips));
-        crate::mixer::dock::split(g.drawer_body, w, fold)
-    }
-
     /// The title bar of the window this surface is (an independent window shows one device),
     /// with its index and rect.
     pub(crate) fn surface_bar(
@@ -888,11 +832,7 @@ impl Windows {
     /// mixer's drawer is under every window. `p` is the song as the windows draw
     /// it ([`Studio::auto_shown`]): a switch a lane turns lays them out (AUT-016).
     pub fn at(&self, p: &Project, g: &Geometry, x: f32, y: f32) -> Option<(usize, Part)> {
-        let order = (0..self.open.len())
-            .rev()
-            .filter(|&i| !self.open[i].docked)
-            .chain(self.dock_slot());
-        order.into_iter().find_map(|i| {
+        (0..self.open.len()).rev().find_map(|i| {
             let r = self.frame(i, g);
             if r.w <= 0.0 || !r.contains(x, y) {
                 return None;
@@ -911,7 +851,6 @@ impl Windows {
                     (b.sidechain_on, Part::Sidechain),
                     (b.sidechain_list, Part::Sources),
                     (b.channel, Part::Channel),
-                    (Some(b.destination), Part::Destination),
                     (Some(b.pin), Part::Pin),
                     (Some(b.close), Part::Close),
                 ]
@@ -920,7 +859,7 @@ impl Windows {
                 .map_or(Part::Head, |(_, part)| part);
                 return Some((i, part));
             }
-            if !w.docked && grip(r).contains(x, y) {
+            if grip(r).contains(x, y) {
                 return Some((i, Part::Resize));
             }
             let now = self.shown(plugin);
@@ -1326,8 +1265,7 @@ fn key_rect(keys: &[play::Key], pitch: u8) -> Rect {
 
 /// The body of the window whose frame is `r`, on the screen, for the values
 /// (0..1) it shows and the band chosen (an EQ's). A frame too low for the body
-/// at its width (the face in the mixer's drawer, MIX-046) has it narrower, as
-/// wide as fits, in its middle.
+/// at its width has it narrower, as wide as fits, in its middle.
 pub(crate) fn body_of(
     r: Rect,
     def: &BuiltinDef,
@@ -1434,11 +1372,11 @@ impl Studio {
         // A sweep on the device whose window this one takes in goes into the song first, on
         // the zone or the pad the window shows (the window gone, it would go to the first).
         let ins = &self.instruments;
-        let taken = !ins.open.iter().any(|w| w.plugin == id && !w.docked)
+        let taken = !ins.open.iter().any(|w| w.plugin == id)
             && ins
                 .open
                 .iter()
-                .rposition(|w| !w.pinned && !w.docked)
+                .rposition(|w| !w.pinned)
                 .is_some_and(|i| ins.sweep.is_some_and(|s| s.plugin == ins.open[i].plugin));
         if taken {
             self.device_sweep_end();
@@ -1446,16 +1384,7 @@ impl Studio {
         let p = self.project();
         self.instruments.prune(&p);
         let ins = &mut self.instruments;
-        // The face in the drawer comes out as a window (MIX-046), on the zone or pad and the
-        // layer it showed: the focus and the typed value there stay theirs.
         let shown = (0, 0, None);
-        if let Some(i) = ins.dock_slot().filter(|&i| ins.open[i].plugin == id) {
-            ins.open[i].docked = false;
-            ins.detached.insert(id);
-            ins.raise(i);
-            ins.flash = Some((id, std::time::Instant::now()));
-            return;
-        }
         match ins.open.iter().position(|w| w.plugin == id) {
             Some(i) => {
                 ins.raise(i);
@@ -1478,38 +1407,22 @@ impl Studio {
                     plugin: id,
                     knobs: def.params.len(),
                     body,
-                    // Centred as the others were, so it sits a step right
-                    // of them as well as a step down.
-                    placed_w: ins
-                        .open
-                        .iter()
-                        .rev()
-                        .find(|w| w.at.is_none() && !w.docked)
-                        .map_or(body.0, |w| w.placed_w),
-                    at: None,
                     pinned: false,
                     // The first place in the cascade no window sits at.
                     seat: (0..)
-                        .find(|n| {
-                            !ins.open
-                                .iter()
-                                .any(|w| w.seat == *n && w.at.is_none() && !w.docked)
-                        })
+                        .find(|n| !ins.open.iter().any(|w| w.seat == *n))
                         .unwrap_or(0),
                     pick: shown.0,
                     layer: shown.1,
                     bank: shown.2,
                     filled: !plugin.samples.is_empty(),
-                    docked: false,
                 };
                 // The windows are in the order they were last used.
-                match ins.open.iter().rposition(|w| !w.pinned && !w.docked) {
+                match ins.open.iter().rposition(|w| !w.pinned) {
                     Some(i) => {
                         let old = ins.open[i];
                         ins.open[i] = Win {
-                            at: old.at,
                             seat: old.seat,
-                            placed_w: old.placed_w,
                             ..win
                         };
                         ins.raise(i);
@@ -1579,26 +1492,10 @@ impl Studio {
             return false;
         };
         // A press on anything but a graph's point takes the keys from the point (UI-326).
-        if !matches!(part, Part::Point(..) | Part::Destination) {
+        if !matches!(part, Part::Point(..)) {
             self.instruments.on_point = None;
         }
-        // The face in the mixer's drawer (MIX-046): its destination menu and a
-        // double click on its bar take it out; pinning is disabled while docked.
-        if self.instruments.open[i].docked {
-            let w = self.instruments.open[i];
-            match part {
-                Part::Pin => return true,
-                Part::Head => {
-                    if clicks >= 2 {
-                        self.show_instrument(w.track, w.plugin);
-                    }
-                    return true;
-                }
-                Part::Resize => return true,
-                _ => {}
-            }
-        }
-        if !matches!(part, Part::Knob(_) | Part::Point(..) | Part::Destination) {
+        if !matches!(part, Part::Knob(_) | Part::Point(..)) {
             self.device_blur();
         }
         self.instruments.edge = None;
@@ -1607,15 +1504,6 @@ impl Studio {
         let w = self.instruments.open[i];
         let r = self.instruments.frame(i, g);
         match part {
-            Part::Destination => {
-                let anchor = live(&p, &w).map(|(track, plugin, def)| {
-                    self.instruments
-                        .part_rect(r, &p, track, plugin, def, Part::Destination)
-                });
-                if let Some(anchor) = anchor {
-                    self.open_inst_menu(Menu::Destination(w.track, w.plugin), anchor);
-                }
-            }
             Part::Close => {
                 self.close_device_view(w.plugin);
             }
@@ -1655,13 +1543,8 @@ impl Studio {
             Part::Spot(n) => {
                 self.window_spot(i, r, n, x);
             }
-            Part::Head => {
-                self.instruments.grab = Some(Grab::Move {
-                    plugin: w.plugin,
-                    from: (r.x, r.y),
-                    pointer: (x, y),
-                });
-            }
+            // The bar moves its window: the OS does it (`start_window_move`).
+            Part::Head => {}
             Part::Resize => {
                 self.instruments.grab = Some(Grab::Size {
                     plugin: w.plugin,
@@ -1832,25 +1715,6 @@ impl Studio {
             return true;
         }
         match self.instruments.grab {
-            Some(Grab::Move {
-                plugin,
-                from,
-                pointer,
-            }) => {
-                let at = (
-                    (from.0 + x - pointer.0).clamp(0.0, (g.size.0 - KEEP_W).max(0.0)),
-                    (from.1 + y - pointer.1).clamp(0.0, (g.size.1 - title_bar::BAR_H).max(0.0)),
-                );
-                if let Some(w) = self
-                    .instruments
-                    .open
-                    .iter_mut()
-                    .find(|w| w.plugin == plugin)
-                {
-                    w.at = Some(at);
-                }
-                true
-            }
             Some(Grab::Size {
                 plugin,
                 from,
@@ -2018,11 +1882,6 @@ impl Studio {
         match grab {
             Grab::Note { .. } => {
                 self.window_note_off();
-            }
-            Grab::Move { plugin, from, .. } => {
-                if let Some(w) = open.iter_mut().find(|w| w.plugin == plugin) {
-                    w.at = Some(from);
-                }
             }
             Grab::Size { plugin, from, .. } => {
                 if let Some(w) = open.iter_mut().find(|w| w.plugin == plugin) {
@@ -2407,30 +2266,11 @@ fn turn_key(w: &Win) -> String {
     format!("turn-{}-{}-{}", w.plugin, w.pick, w.layer)
 }
 
-/// The face in the mixer's drawer (MIX-046), under the windows.
-pub fn paint_docked(pen: &mut Pen, studio: &Studio, g: &Geometry) {
-    let p = studio.auto_shown();
-    let Some(i) = studio.docked() else {
-        return;
-    };
-    let w = studio.instruments.open[i];
-    let Some((track, plugin, def)) = live(&p, &w) else {
-        return;
-    };
-    let r = studio.instruments.frame(i, g);
-    if r.w > 0.0 {
-        paint_window(pen, studio, r, w, track, plugin, def);
-    }
-}
-
 /// The open windows, the last on top.
 pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     forget_turns(studio);
     let p = studio.auto_shown();
     for (i, w) in studio.instruments.open.iter().enumerate() {
-        if w.docked {
-            continue;
-        }
         let Some((track, plugin, def)) = live(&p, w) else {
             continue;
         };
@@ -2462,15 +2302,12 @@ fn paint_window(
 ) {
     let c = pen.c;
     // A floating panel: the soft shadow all round it (UI-007), then its face.
-    // The face in the mixer's drawer lies flat in it.
-    if !w.docked {
-        let at = Bounds::new(
-            point(px(pen.origin.0 + r.x), px(pen.origin.1 + r.y)),
-            size(px(r.w), px(r.h)),
-        );
-        pen.window
-            .paint_drop_shadows(at, Corners::all(px(Radius::M.px())), &c.float);
-    }
+    let at = Bounds::new(
+        point(px(pen.origin.0 + r.x), px(pen.origin.1 + r.y)),
+        size(px(r.w), px(r.h)),
+    );
+    pen.window
+        .paint_drop_shadows(at, Corners::all(px(Radius::M.px())), &c.float);
     pen.round(r, c.paper, Radius::M);
     pen.mask(r, |pen| {
         // The shared title bar (UI-322): the same part on every window.
@@ -2490,7 +2327,6 @@ fn paint_window(
                 modified,
                 steps: (true, true),
                 pinned: w.pinned,
-                popout: w.docked,
                 keyed: plugin.sidechain.as_ref().is_some_and(|sc| sc.on),
                 seats: seats(def, &source_of(&studio.project(), plugin)),
             },

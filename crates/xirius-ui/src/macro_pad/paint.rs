@@ -70,7 +70,6 @@ pub fn paint(pen: &mut Pen, s: &Studio) {
             modified: false,
             steps: (true, true),
             pinned: w.pinned,
-            popout: false,
             keyed: false,
             seats: title_bar::Seats::default(),
         },

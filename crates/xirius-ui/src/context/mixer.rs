@@ -58,7 +58,7 @@ impl Studio {
     /// mixer's, or is a part that has a menu elsewhere (the instrument, a plugin that
     /// went down).
     pub(super) fn mixer_context(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
-        if !self.mixer_shown() || !self.mixer_body(g).contains(x, y) {
+        if !self.mixer_shown() || !g.drawer_body.contains(x, y) {
             return false;
         }
         let Some(spot) = self.mixer_spot(g, x, y) else {

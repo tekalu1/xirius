@@ -205,32 +205,17 @@ fn a_preset_sets_every_knob_in_one_step() {
 }
 
 #[test]
-fn the_bar_drags_the_window_and_it_stays_in_reach() {
+fn the_bar_is_moved_by_the_os_and_a_second_window_opens_on_top() {
     let (mut s, g, t, id) = studio();
     s.show_instrument(t, id);
     s.instruments.detached_target = Some(id);
     let (x, y) = at(&mut s, &g, id, Part::Head);
     let before = s.instruments.frame(0, &g);
+    // The bar's move belongs to the OS: a press on it changes nothing in the window's frame.
     assert!(s.instrument_down(&g, x, y));
-    assert!(s.instrument_moved(&g, x + 40.0, y + 25.0, false));
-    assert!(s.instrument_up());
-    let after = s.instruments.rect(0, g.size);
-    // To within float rounding (the press was at the bar's centre).
-    assert!(
-        (after.x - before.x - 40.0).abs() < 1e-3,
-        "{after:?} {before:?}"
-    );
-    assert!(
-        (after.y - before.y - 25.0).abs() < 1e-3,
-        "{after:?} {before:?}"
-    );
-    // Dragged far off, a strip of it stays on the screen.
-    let (x, y) = at(&mut s, &g, id, Part::Head);
-    assert!(s.instrument_down(&g, x, y));
-    assert!(s.instrument_moved(&g, x + 5000.0, y + 5000.0, false));
-    assert!(s.instrument_up());
-    let r = s.instruments.frame(0, &g);
-    assert!(r.x <= g.size.0 - 80.0 && r.y <= g.size.1 - 30.0);
+    s.instrument_moved(&g, x + 40.0, y + 25.0, false);
+    s.instrument_up();
+    assert_eq!(s.instruments.frame(0, &g), before);
     // A second window opens a little lower and to the right, on top.
     let drums = s
         .project()
@@ -1269,4 +1254,14 @@ fn the_drag_rects_are_the_head_and_only_the_head() {
         let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
         assert!(!rects.iter().any(|d| d.contains(cx, cy)), "{name}");
     }
+}
+
+#[test]
+fn the_main_screen_frames_no_device_window() {
+    let (mut s, g, t, id) = studio();
+    s.show_instrument(t, id);
+    s.instruments.detached_target = None;
+    assert_eq!(s.instruments.frame(0, &g), Rect::default());
+    s.instruments.detached_target = Some(id);
+    assert!(s.instruments.frame(0, &g).w > 0.0);
 }

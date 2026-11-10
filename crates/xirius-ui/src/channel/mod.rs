@@ -1437,7 +1437,6 @@ impl Studio {
             w.grab = None;
         }
         self.macro_up();
-        self.mixer.grip_drag = None;
         self.mixer.bar_grab = None;
     }
 

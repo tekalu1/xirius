@@ -57,7 +57,6 @@ pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry) {
             modified,
             steps: s.chain_presets.steps(t),
             pinned: w.pinned,
-            popout: false,
             keyed: false,
             seats: title_bar::Seats::default(),
         },

@@ -477,7 +477,6 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     out.extend(crate::channel::marks(s, g));
     out.extend(crate::macro_pad::marks(s));
     out.extend(flow_marks(s, g));
-    out.extend(crate::mixer::dock::marks(s, g));
     out.extend(device_marks(s, g));
     out.extend(audition_mark(s, g));
     out.extend(preset_marks(s, g));
@@ -1343,7 +1342,7 @@ fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
         };
         let now = values_of(x, def);
         let r = s.instruments.frame(i, g);
-        // the face in a drawer that shows something else is not on the screen (MIX-046)
+        // a window this surface does not show has no frame here
         if r.w <= 0.0 {
             continue;
         }

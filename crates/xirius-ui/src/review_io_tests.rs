@@ -178,16 +178,7 @@ fn external_reads_preserve_settings_pick_search_and_inline_rename_composition() 
 }
 
 #[test]
-fn external_reads_preserve_a_value_typed_in_a_device_knob() {
-    device_knob_handoff(false);
-}
-
-#[test]
 fn external_reads_preserve_a_detached_devices_committed_and_marked_text() {
-    device_knob_handoff(true);
-}
-
-fn device_knob_handoff(detached: bool) {
     use crate::{instrument::window::Part, tools::Mods};
     let (_root, mut s) = setup();
     let g = s.geometry(1600.0, 1000.0);
@@ -201,10 +192,6 @@ fn device_knob_handoff(detached: bool) {
     let (k, _) = fx.builtin().unwrap().param("feedback").unwrap();
     s.show_instrument(t, fx.id);
     s.instruments.detached_target = Some(fx.id);
-    if detached {
-        s.move_device_view(fx.id, "external");
-        s.instruments.detached_target = Some(fx.id);
-    }
     let (x, y) = s.instrument_center(&g, fx.id, Part::Knob(k)).unwrap();
     for clicks in [1, 2] {
         assert!(s.instrument_press(&g, x, y, clicks, Mods::NONE));

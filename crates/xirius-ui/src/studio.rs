@@ -197,8 +197,6 @@ pub struct Panels {
     pub folded: bool,
     /// The record panel under the top bar (REC-007).
     pub record: bool,
-    /// The mixer's strips, the master's with them: the room they take folded (MIX-046).
-    pub strips: u16,
 }
 
 /// Where the regions sit, for a body of the given size.
@@ -244,7 +242,6 @@ impl Geometry {
                 mixer: false,
                 folded: false,
                 record: false,
-                strips: 0,
             },
         )
     }
@@ -1114,7 +1111,6 @@ impl Studio {
             mixer: self.mixer_shown(),
             record: self.rec_panel.open,
             folded: self.side_size.folded,
-            strips: u16::try_from(self.project().tracks.len()).unwrap_or(u16::MAX),
         };
         let head_w = self.tree.head_w.max(Layout::TRACK_HEAD_W);
         let head_w = self.side_size.head_w(w, panels, head_w);
@@ -2043,7 +2039,6 @@ impl Studio {
             return false;
         }
         self.name_key(key, mods)
-            || self.grip_key(g, key)
             || self.device_key(g, key, mods)
             || self.head_fader_key(key, mods)
             || self.value_key(key, mods)
@@ -2936,10 +2931,6 @@ impl Studio {
         self.scan_song_replaced();
         self.mixer.wide.clear();
         self.mixer.folds.clear();
-        self.mixer.lead = None;
-        self.mixer.grip_focus = false;
-        self.mixer.grip_drag = None;
-        self.mixer.grip_hover = false;
         // A part waiting for a knob was of the old song: the next knob would land on the
         // new song's part with the same id.
         let assign = &mut self.live_midi.assign;

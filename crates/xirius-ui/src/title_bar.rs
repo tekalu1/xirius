@@ -134,7 +134,6 @@ pub struct Bar {
     pub channel: Option<Rect>,
     /// The always-empty draggable stretch.
     pub space: Rect,
-    pub destination: Rect,
     pub pin: Rect,
     pub close: Rect,
 }
@@ -151,7 +150,6 @@ impl Bar {
             ("sidechain on", self.sidechain_on),
             ("sidechain list", self.sidechain_list),
             ("channel", self.channel),
-            ("destination", Some(self.destination)),
             ("pin", Some(self.pin)),
             ("close", Some(self.close)),
         ]
@@ -243,10 +241,6 @@ pub fn layout(r: Rect, track: &str, device: &str, seats: Seats<'_>) -> Bar {
     rx -= BTN + GAP;
     let pin = Rect::new(rx - BTN, cy, BTN, BTN);
     rx -= BTN + GAP;
-    // No window has a display destination any more (UI-337): the Channel Editor is its own window
-    // like the devices. The field stays for the on-screen paint of instrument/window.rs, which
-    // stage 1d removes.
-    let destination = Rect::default();
     let channel_w = if compact_device { 24.0 } else { BTN };
     let channel = seats
         .channel
@@ -354,7 +348,6 @@ pub fn layout(r: Rect, track: &str, device: &str, seats: Seats<'_>) -> Bar {
         sidechain_name,
         channel,
         space,
-        destination,
         pin,
         close,
     };
@@ -418,8 +411,6 @@ pub struct View<'a> {
     pub steps: (bool, bool),
     /// The pin is down: the `primary` pair paints it.
     pub pinned: bool,
-    /// The device sits in the mixer's drawer (MIX-046): the pin's place holds 「窓で開く」.
-    pub popout: bool,
     /// The device's sidechain is on: the seat's icon takes the mark's ink.
     pub keyed: bool,
     pub seats: Seats<'a>,
@@ -604,22 +595,7 @@ pub fn paint_with(pen: &mut Pen, r: Rect, bar: &Bar, v: &View<'_>) {
     if let Some(b) = bar.channel {
         pen.icon("route", icon_box(b), c.ink);
     }
-    if bar.destination.w > 0.0 {
-        let destination = bar.destination;
-        pen.icon(
-            "popout",
-            Rect::new(destination.x + 2.0, destination.y + 6.0, 16.0, 16.0),
-            c.ink,
-        );
-        pen.icon(
-            "chevron-down",
-            Rect::new(destination.x + 20.0, destination.y + 11.0, 6.0, 6.0),
-            c.ink,
-        );
-    }
-    if v.popout {
-        pen.icon("pin", icon_box(bar.pin), c.line[0]);
-    } else if v.pinned {
+    if v.pinned {
         let (face, ink) = c.primary;
         pen.round(bar.pin, face, Radius::S);
         pen.icon("pin", icon_box(bar.pin), ink);
@@ -838,7 +814,6 @@ mod tests {
             Some(b.tag),
             b.sidechain,
             b.channel,
-            Some(b.destination),
             Some(b.pin),
             Some(b.close),
         ]
@@ -873,7 +848,6 @@ mod tests {
             let channel = b.channel.expect("the channel editor has its own seat");
             assert!(sidechain.right() + GAP <= channel.x + 0.01);
             assert!(channel.right() <= b.pin.x + GAP + 0.01);
-            assert_eq!(b.destination.w, 0.0);
             assert!(b.pin.right() <= b.close.x + GAP + 0.01);
             assert_eq!(b.close.right(), r.right() - PAD);
             // The buttons are 28s and keep their width at any size.

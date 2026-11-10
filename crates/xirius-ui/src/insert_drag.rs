@@ -116,7 +116,7 @@ impl Studio {
     /// the arrangement.
     pub fn insert_drop(&self, g: &Geometry, from: TrackId, x: f32, y: f32) -> Option<Drop> {
         let p = self.project();
-        let strip = (self.mixer_shown() && self.mixer_body(g).contains(x, y))
+        let strip = (self.mixer_shown() && g.drawer_body.contains(x, y))
             .then(|| {
                 self.mixer_strips(g)
                     .into_iter()

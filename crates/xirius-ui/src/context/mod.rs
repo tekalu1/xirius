@@ -879,8 +879,7 @@ impl Studio {
             return self.roll_context(g, x, y);
         }
         if self.mixer_shown() && g.drawer_body.contains(x, y) {
-            // The device's face beside the strips (MIX-046) has no menu.
-            return self.mixer_body(g).contains(x, y) && self.mixer_context(g, x, y);
+            return self.mixer_context(g, x, y);
         }
         self.timeline_context(g, x, y)
     }
@@ -937,7 +936,7 @@ impl Studio {
             .find(|s| s.track == t)?
             .name;
         let at = (r.x + r.w / 2.0, r.y + r.h / 2.0);
-        self.mixer_body(g).contains(at.0, at.1).then_some(at)
+        g.drawer_body.contains(at.0, at.1).then_some(at)
     }
 
     /// The song position under a window x, on the grid.

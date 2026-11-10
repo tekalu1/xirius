@@ -1,21 +1,6 @@
-//! Moving an editor moves its view, never the device in the song (UI-337).
-use crate::popup::Choice;
+//! Opening and closing the view of a device never changes the device in the song (UI-337).
 use crate::studio::Studio;
 use xirius_core::id::PluginId;
-
-fn destinations(plugin: &xirius_core::model::Plugin) -> Vec<Choice> {
-    let rows: &[(&str, &str)] = if plugin.format == "vst3" || plugin.builtin().is_some() {
-        &[("external", "独立ウィンドウ")]
-    } else {
-        &[]
-    };
-    rows.iter()
-        .map(|(to, label)| Choice {
-            to: (*to).into(),
-            label: (*label).into(),
-        })
-        .collect()
-}
 
 impl Studio {
     pub(crate) fn close_device_view(&mut self, id: PluginId) {
@@ -45,41 +30,6 @@ impl Studio {
         self.instruments.open.retain(|w| w.plugin != id);
         self.instruments.detached.remove(&id);
         crate::instrument::window::forget_turns(self);
-    }
-    pub(crate) fn device_destinations(&self, id: PluginId) -> (Vec<Choice>, String) {
-        let p = self.project();
-        let Some(plugin) = p
-            .tracks
-            .values()
-            .flat_map(|t| &t.inserts)
-            .find(|p| p.id == id)
-        else {
-            return (Vec::new(), String::new());
-        };
-        if plugin.format == "vst3" {
-            return (destinations(plugin), "external".into());
-        }
-        if plugin.builtin().is_none() {
-            return (Vec::new(), String::new());
-        }
-        (destinations(plugin), "external".into())
-    }
-
-    pub(crate) fn move_device_view(&mut self, id: PluginId, destination: &str) {
-        if !matches!(destination, "mixer" | "internal" | "external") {
-            return;
-        }
-        if !self.instruments.is_open(id) {
-            return;
-        }
-        // Older callers may still ask for a docked or internal view. The device and
-        // its editing state stay intact; only the presentation is migrated.
-        self.instrument_up();
-        self.device_sweep_end();
-        self.instruments.detached.insert(id);
-        if let Some(w) = self.instruments.open.iter_mut().find(|w| w.plugin == id) {
-            w.docked = false;
-        }
     }
 }
 
@@ -134,7 +84,6 @@ mod tests {
             assert!(s.fx_up(&g, x, y, false));
             assert_eq!(s.mixer.chosen, Some((track, Row::Plugin(id))));
             assert!(s.instruments.detached.contains(&id), "{name}");
-            assert!(s.mixer_split(&g).is_none());
             s.show_instrument(track, id);
             assert_eq!(
                 s.instruments.open.iter().filter(|w| w.plugin == id).count(),
@@ -161,26 +110,7 @@ mod tests {
     }
 
     #[test]
-    fn vst_destinations_offer_only_an_independent_window() {
-        let mut s = Studio::sample();
-        let t = s
-            .project()
-            .tracks
-            .values()
-            .find(|t| t.name == "Keys")
-            .unwrap()
-            .id;
-        assert!(s.set_instrument(t, &Pick::built_in(crate::instrument::DEFAULT)));
-        let mut plugin = current(&s.project().tracks[&t]).unwrap().clone();
-        plugin.format = "vst3".into();
-        let menu = destinations(&plugin);
-        assert_eq!(menu.len(), 1);
-        assert_eq!(menu[0].to, "external");
-        assert_eq!(menu[0].label, "独立ウィンドウ");
-    }
-
-    #[test]
-    fn a_view_moves_without_changing_the_instance_values_or_pin_and_close_keeps_it() {
+    fn opening_a_view_again_keeps_the_instance_values_and_pin_and_close_keeps_the_device() {
         let mut s = Studio::sample();
         let t = s
             .project()
@@ -200,8 +130,8 @@ mod tests {
         s.run_command("plugin.bypass", serde_json::json!({"ids": [id]}));
         assert!(s.error.is_none(), "{:?}", s.error);
         let before = serde_json::to_value(&s.project().tracks[&t].inserts).unwrap();
-        for place in ["external", "external", "mixer", "internal", "external"] {
-            s.move_device_view(id, place);
+        for _ in 0..4 {
+            s.show_instrument(t, id);
             assert_eq!(
                 s.instruments.open.iter().filter(|w| w.plugin == id).count(),
                 1
@@ -214,8 +144,7 @@ mod tests {
                     .unwrap()
                     .pinned
             );
-            assert_eq!(s.device_destinations(id).1, "external");
-            assert!(!s.instruments.open[0].docked);
+            assert!(s.instruments.detached.contains(&id));
             assert_eq!(
                 serde_json::to_value(&s.project().tracks[&t].inserts).unwrap(),
                 before
@@ -252,12 +181,10 @@ mod tests {
             ids.push(current(&s.project().tracks[&track]).unwrap().id);
         }
         s.show_instrument(tracks[0], ids[0]);
-        s.move_device_view(ids[0], "external");
         s.show_instrument(tracks[1], ids[1]);
         assert!(!s.instruments.is_open(ids[0]));
         assert!(!s.instruments.detached.contains(&ids[0]));
         assert_eq!(current(&s.project().tracks[&tracks[0]]).unwrap().id, ids[0]);
-        s.move_device_view(ids[1], "external");
         s.instruments
             .open
             .iter_mut()
