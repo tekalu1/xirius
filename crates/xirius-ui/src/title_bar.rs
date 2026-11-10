@@ -243,15 +243,10 @@ pub fn layout(r: Rect, track: &str, device: &str, seats: Seats<'_>) -> Bar {
     rx -= BTN + GAP;
     let pin = Rect::new(rx - BTN, cy, BTN, BTN);
     rx -= BTN + GAP;
-    // Only the Channel Editor has a display destination. Built-in devices
-    // always have their own window and use this space for their preset group.
-    let destination = if device.is_empty() {
-        let seat = Rect::new(rx - BTN, cy, BTN, BTN);
-        rx -= BTN + GAP;
-        seat
-    } else {
-        Rect::default()
-    };
+    // No window has a display destination any more (UI-337): the Channel Editor is its own window
+    // like the devices. The field stays for the on-screen paint of instrument/window.rs, which
+    // stage 1d removes.
+    let destination = Rect::default();
     let channel_w = if compact_device { 24.0 } else { BTN };
     let channel = seats
         .channel

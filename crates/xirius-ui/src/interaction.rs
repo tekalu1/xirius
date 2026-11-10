@@ -102,8 +102,8 @@ impl Studio {
             // A face the mixer docked comes from choosing a row, not from opening a window: it
             // is no unfinished work (review 3 中3).
             || self.instruments.open.iter().any(|w| !w.docked)
-            // A detached CE also keeps its popup between callbacks in its GPUI view.
-            || self.channel.as_ref().is_some_and(|w| w.detached)
+            // The CE's own window keeps its popup between callbacks in its GPUI view.
+            || self.channel.is_some()
             || !self.mixer.editors.is_empty()
             || self.mixer.preset_panel.is_some()
             || self.pointer_held

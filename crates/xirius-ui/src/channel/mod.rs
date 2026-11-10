@@ -28,6 +28,7 @@ use crate::popup::PopupKind;
 use crate::studio::{Geometry, Rect, Studio};
 use crate::title_bar::{self, BAR_H, Bar};
 use flow::{CardKind, Chain, ColKind, Column, Flow, Key, Slot};
+use xirius_core::model::Track;
 
 /// A row of the toolbar.
 pub const TOOL_H: f32 = 40.0;
@@ -35,15 +36,8 @@ pub const TOOL_H: f32 = 40.0;
 pub const MACRO_H: f32 = 80.0;
 const MACRO_TOP: f32 = 8.0;
 pub const MACRO_CELL: f32 = 60.0;
-/// The window's least width (the mock's).
+/// The window's least width without layers (the mock's); with layers it is [`keys::LEAST_W`].
 pub const MIN_W: f32 = 520.0;
-/// How much of a dragged window stays on the screen.
-const KEEP_W: f32 = 80.0;
-/// Where a window that was not dragged sits, and the room it leaves under it.
-const TOP: f32 = 72.0;
-const ROOM_Y: f32 = 96.0;
-/// The room a window keeps from the screen's sides.
-const SIDE: f32 = 8.0;
 /// How far a card goes before it is dragged.
 const DRAG: f32 = 4.0;
 /// The toolbar's buttons.
@@ -114,7 +108,6 @@ impl Tool {
 /// A part of the window.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Part {
-    Destination,
     /// The bar: the window moves with the pointer.
     Head,
     Pin,
@@ -156,10 +149,6 @@ pub enum Part {
 /// What a press in the window took hold of.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Grab {
-    Move {
-        from: (f32, f32),
-        pointer: (f32, f32),
-    },
     /// A card: dragged once it went `DRAG` away, to the slot under the pointer.
     Card {
         pick: Pick,
@@ -194,15 +183,9 @@ pub(crate) enum Grab {
 /// The open channel editor.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChannelWin {
-    pub(crate) detached: bool,
-    pub(crate) detached_surface: bool,
     pub track: TrackId,
-    /// Where its corner is, once it was dragged.
-    pub at: Option<(f32, f32)>,
     /// The pin is down: another track's editor does not take its place.
     pub pinned: bool,
-    /// It is over the device windows (the last pressed of them).
-    pub top: bool,
     /// The macro column shows (MIX-041).
     pub macros: bool,
     /// How far the flow is scrolled down and right.
@@ -220,12 +203,8 @@ pub struct ChannelWin {
 impl ChannelWin {
     pub fn new(track: TrackId) -> ChannelWin {
         ChannelWin {
-            detached: false,
-            detached_surface: false,
             track,
-            at: None,
             pinned: false,
-            top: true,
             macros: false,
             scroll: (0.0, 0.0),
             keyboard_scroll: 0.0,
@@ -344,46 +323,71 @@ pub fn tools_of(r: Rect, instrument: bool) -> (Vec<(Tool, Rect)>, f32) {
     (out, h)
 }
 
-/// The window of `w` on a screen of `size`; none when its track is gone.
+/// The window's least width: the key range figure needs more room than the flow alone.
+pub fn min_width(p: &Project, w: &ChannelWin) -> f32 {
+    match p.tracks.get(&w.track) {
+        Some(t) if !keys::layers(t).is_empty() => keys::LEAST_W,
+        _ => MIN_W,
+    }
+}
+
+/// The bands of the window at a width: the toolbar, the macro row, the key range figure and the
+/// keyboard under the body.
+struct Bands {
+    tool: f32,
+    macros: f32,
+    panel: f32,
+    piano: f32,
+}
+
+fn bands(t: &Track, w: &ChannelWin, width: f32) -> Bands {
+    let multi = !keys::layers(t).is_empty();
+    let instrument = t.kind == xirius_core::model::TrackKind::Instrument;
+    let (_, tool) = tools_of(Rect::new(0.0, 0.0, width, 0.0), instrument);
+    Bands {
+        tool,
+        macros: if w.macros { MACRO_H } else { 0.0 },
+        panel: if multi && width >= keys::LEAST_W {
+            keys::PANEL_H
+        } else {
+            0.0
+        },
+        piano: if multi {
+            crate::device::play::Keyboard::HEIGHT + 16.0
+        } else {
+            0.0
+        },
+    }
+}
+
+/// The size the window opens at: the content's, with the bar (UI-337). The width is the flow's
+/// (never under [`min_width`]), the height the bands and the flow. The display's room is the
+/// opening's business.
+pub fn natural_size(p: &Project, w: &ChannelWin) -> Option<(f32, f32)> {
+    let t = p.tracks.get(&w.track)?;
+    let probe = flow::layout(p, t, (0.0, 0.0));
+    let width = probe.w.max(min_width(p, w));
+    let b = bands(t, w, width);
+    Some((
+        width,
+        BAR_H + b.tool + b.macros + probe.h + b.panel + b.piano,
+    ))
+}
+
+/// The window of `w`, which fills a surface of `size` (the Channel Editor's own window); none
+/// when its track is gone.
 pub fn view(p: &Project, w: &ChannelWin, size: (f32, f32)) -> Option<View> {
     let t = p.tracks.get(&w.track)?;
     let probe = flow::layout(p, t, (0.0, 0.0));
     let multi = !keys::layers(t).is_empty();
-    let least = if multi { keys::LEAST_W } else { MIN_W };
-    let width = if w.detached_surface {
-        size.0
-    } else {
-        probe.w.max(least).min((size.0 - 2.0 * SIDE).max(KEEP_W))
-    };
     let instrument = t.kind == xirius_core::model::TrackKind::Instrument;
-    let (_, tool_h) = tools_of(Rect::new(0.0, 0.0, width, 0.0), instrument);
-    let panel_h = if multi && width >= keys::LEAST_W {
-        keys::PANEL_H
-    } else {
-        0.0
-    };
-    let macro_h = if w.macros { MACRO_H } else { 0.0 };
-    let piano_h = if multi {
-        crate::device::play::Keyboard::HEIGHT + 16.0
-    } else {
-        0.0
-    };
-    let height = if w.detached_surface {
-        size.1
-    } else {
-        (BAR_H + tool_h + macro_h + probe.h + panel_h + piano_h).min((size.1 - ROOM_Y).max(200.0))
-    };
-    let (x, y) = if w.detached_surface {
-        (0.0, 0.0)
-    } else {
-        w.at.unwrap_or(((size.0 - width) / 2.0, TOP))
-    };
-    let r = Rect::new(
-        x.clamp(0.0, (size.0 - KEEP_W).max(0.0)),
-        y.clamp(0.0, (size.1 - BAR_H).max(0.0)),
-        width,
-        height,
-    );
+    let Bands {
+        tool: tool_h,
+        macros: macro_h,
+        panel: panel_h,
+        piano: piano_h,
+    } = bands(t, w, size.0);
+    let r = Rect::new(0.0, 0.0, size.0, size.1);
     let name = t.shown_name().to_string();
     let bar = title_bar::layout(
         Rect::new(r.x, r.y, r.w, BAR_H),
@@ -644,9 +648,6 @@ pub fn part_at(v: &View, x: f32, y: f32) -> Option<Part> {
         return None;
     }
     if y < v.r.y + BAR_H {
-        if v.bar.destination.contains(x, y) {
-            return Some(Part::Destination);
-        }
         if v.bar.pin.contains(x, y) {
             return Some(Part::Pin);
         }
@@ -866,11 +867,12 @@ pub fn crossed(from: &[f64], i: usize, dx: f32) -> Vec<f64> {
 }
 
 impl Studio {
-    pub(crate) fn channel_main_cancel(&mut self) -> bool {
-        let Some(w) = self.channel.as_ref().filter(|w| !w.detached) else {
-            return false;
-        };
-        let held = w.mouse_note.is_some() || w.keyboard_drag.is_some();
+    /// Esc in the editor's window lets go of a held key: true when one was held.
+    pub(crate) fn channel_escape(&mut self) -> bool {
+        let held = self
+            .channel
+            .as_ref()
+            .is_some_and(|w| w.mouse_note.is_some() || w.keyboard_drag.is_some());
         if held {
             self.channel_note_off();
         }
@@ -878,15 +880,11 @@ impl Studio {
     }
 
     pub(crate) fn main_focus_lost(&mut self) -> bool {
-        self.device_focus_lost() | self.channel_main_cancel()
+        self.device_focus_lost()
     }
 
-    /// The open channel editor as it is laid out.
+    /// The open channel editor as it is laid out in its own window, whose surface `g` is.
     pub fn channel_view(&self, g: &Geometry) -> Option<View> {
-        let w = self.channel.as_ref()?;
-        if w.detached && !w.detached_surface {
-            return None;
-        }
         let started = std::time::Instant::now();
         let v = view(&self.project(), self.channel.as_ref()?, g.size);
         self.mixer.took(started);
@@ -955,8 +953,8 @@ impl Studio {
         true
     }
 
-    /// Opens the channel editor of `t`: the open one comes to the top; another track's takes
-    /// its place unless its pin is down.
+    /// Opens the channel editor of `t` (its own window): the open one stays; another track's
+    /// takes its place unless its pin is down.
     pub fn open_channel(&mut self, t: TrackId) {
         if !self.project().tracks.contains_key(&t) {
             return;
@@ -969,40 +967,20 @@ impl Studio {
             self.channel_note_off();
         }
         match &mut self.channel {
-            Some(w) if w.track == t || w.pinned => {
-                w.top = true;
-            }
-            Some(w) => {
-                let at = w.at;
-                *w = ChannelWin {
-                    at,
-                    detached: w.detached,
-                    ..ChannelWin::new(t)
-                };
-            }
+            Some(w) if w.track == t || w.pinned => {}
+            Some(w) => *w = ChannelWin::new(t),
             None => self.channel = Some(ChannelWin::new(t)),
         }
     }
 
-    /// Is the channel editor under the point, over what it covers?
-    pub(crate) fn over_channel(&self, g: &Geometry, x: f32, y: f32) -> bool {
-        let Some(w) = &self.channel else {
-            return false;
-        };
-        if !w.top && self.over_instrument(g, x, y) {
-            return false;
-        }
+    /// Is the point inside the channel editor's window (`g` is its surface)?
+    fn over_channel(&self, g: &Geometry, x: f32, y: f32) -> bool {
         self.channel_view(g).is_some_and(|v| v.r.contains(x, y))
     }
 
     /// A press: true when the window took it.
     pub fn channel_press(&mut self, g: &Geometry, x: f32, y: f32, clicks: u32) -> bool {
-        if !self.over_channel(g, x, y) {
-            return false;
-        }
-        let Some(v) = self.channel_view(g) else {
-            self.channel_note_off();
-            self.channel = None;
+        let Some(v) = self.channel_view(g).filter(|v| v.r.contains(x, y)) else {
             return false;
         };
         if let Some(keyboard) = &v.keyboard
@@ -1029,13 +1007,8 @@ impl Studio {
         let Some(w) = self.channel.as_mut() else {
             return false;
         };
-        w.top = true;
         let t = w.track;
         match part {
-            Part::Destination => self.open_inst_menu(
-                crate::instrument::menu::Menu::ChannelDestination(t),
-                v.bar.destination,
-            ),
             Part::Close => {
                 self.channel_note_off();
                 self.channel = None;
@@ -1045,12 +1018,8 @@ impl Studio {
             Part::PrevPreset | Part::NextPreset => {
                 self.step_chain_preset(t, part == Part::NextPreset);
             }
-            Part::Head => {
-                w.grab = Some(Grab::Move {
-                    from: (v.r.x, v.r.y),
-                    pointer: (x, y),
-                })
-            }
+            // The system moves the window by its bar (`drag_rects`); a press is nothing here.
+            Part::Head => {}
             Part::Tool(tool) => {
                 let rect = v.tools.iter().find(|(x, _)| *x == tool).map(|(_, r)| *r);
                 self.channel_tool(t, tool, rect.unwrap_or(v.r), &v.flow);
@@ -1272,9 +1241,6 @@ impl Studio {
             .is_some_and(crate::instrument::window::is_built_in);
         if built_in {
             self.show_instrument(t, id);
-            if let Some(w) = self.channel.as_mut() {
-                w.top = false;
-            }
         } else if self.editor_shown(id) {
             self.raise_editor(id);
         } else {
@@ -1389,15 +1355,6 @@ impl Studio {
             return false;
         };
         match grab {
-            Grab::Move { from, pointer } => {
-                let at = (
-                    (from.0 + x - pointer.0).clamp(0.0, (g.size.0 - KEEP_W).max(0.0)),
-                    (from.1 + y - pointer.1).clamp(0.0, (g.size.1 - BAR_H).max(0.0)),
-                );
-                if let Some(w) = self.channel.as_mut() {
-                    w.at = Some(at);
-                }
-            }
             Grab::Card {
                 pick,
                 pointer,
@@ -1572,7 +1529,7 @@ impl Studio {
         if self.channel.is_none() {
             return false;
         }
-        let over = self.over_channel(g, x, y) && !self.over_macros(g, x, y);
+        let over = self.over_channel(g, x, y);
         let hot = if over {
             self.channel_view(g).and_then(|v| part_at(&v, x, y))
         } else {
@@ -1639,9 +1596,6 @@ impl Studio {
     /// The head value under a point, with the rect a drag sweeps: a column's level (its bar or
     /// value) or a branch's pan.
     pub(crate) fn channel_value_at(&self, g: &Geometry, x: f32, y: f32) -> Option<(Focus, Rect)> {
-        if !self.over_channel(g, x, y) {
-            return None;
-        }
         let w = self.channel.as_ref()?;
         let v = self.channel_view(g)?;
         let (node, which) = match part_at(&v, x, y)? {

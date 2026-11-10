@@ -81,11 +81,9 @@ fn it_opens_for_a_track_and_a_pinned_one_stays() {
     s.open_channel(keys);
     assert_eq!(s.channel.as_ref().unwrap().track, keys);
     s.channel.as_mut().unwrap().pinned = true;
-    s.channel.as_mut().unwrap().top = false;
     s.open_channel(vocal);
     let w = s.channel.as_ref().unwrap();
     assert_eq!(w.track, keys, "the pin keeps it");
-    assert!(w.top, "and brings it up");
 }
 
 #[test]
@@ -101,12 +99,12 @@ fn the_mixer_and_a_device_window_open_it() {
 }
 
 #[test]
-fn it_sits_in_the_middle_and_wraps_its_tools_when_narrow() {
+fn it_fills_its_window_and_wraps_its_tools_when_narrow() {
     let (mut s, g) = studio();
     vocal(&mut s);
     let v = s.channel_view(&g).unwrap();
     assert!(v.r.w >= MIN_W);
-    assert_eq!(v.r.x, (g.size.0 - v.r.w) / 2.0);
+    assert_eq!((v.r.x, v.r.y, v.r.w, v.r.h), (0.0, 0.0, g.size.0, g.size.1));
     let ys: Vec<f32> = v.tools.iter().map(|(_, r)| r.y).collect();
     assert!(ys.iter().all(|y| *y == ys[0]), "one row: {ys:?}");
     assert_eq!(v.toolbar.h, TOOL_H);
@@ -124,7 +122,7 @@ fn it_sits_in_the_middle_and_wraps_its_tools_when_narrow() {
     assert!(s.run_command("rack.branch.add", json!({"split": sp.unwrap()})));
     let narrow = s.geometry(360.0, 800.0);
     let v = s.channel_view(&narrow).unwrap();
-    assert_eq!(v.r.w, 360.0 - 2.0 * SIDE);
+    assert_eq!(v.r.w, 360.0);
     let y = |tool| v.tools.iter().find(|(t, _)| *t == tool).unwrap().1;
     assert!(y(Tool::Macros).y > y(Tool::Insert).y, "the macros go under");
     assert_eq!(y(Tool::Macros).x, v.r.x + TOOL_PAD);
@@ -750,7 +748,6 @@ fn a_built_in_opens_in_its_window_over_the_editor() {
     let (x, y) = mid(card(&v, Pick::Plugin(eq)).rect);
     assert!(s.channel_press(&g, x, y, 2));
     assert!(s.instruments.open.iter().any(|w| w.plugin == eq));
-    assert!(!s.channel.as_ref().unwrap().top);
 }
 
 #[test]
@@ -758,12 +755,16 @@ fn the_close_and_the_bar_drag_work() {
     let (mut s, g) = studio();
     vocal(&mut s);
     let v = s.channel_view(&g).unwrap();
+    // the bar's name is the window's handle: the system moves the window by it, a press and a
+    // move of the pointer change nothing here (the window is not on the screen's surface)
     let (x, y) = mid(v.bar.name);
+    assert_eq!(part_at(&v, x, y), Some(Part::Head));
+    assert!(drag_rects(&v).iter().any(|r| r.contains(x, y)));
     assert!(s.channel_press(&g, x, y, 1));
     s.channel_moved(&g, x + 40.0, y + 30.0);
     s.channel_up(&g);
     let after = s.channel_view(&g).unwrap();
-    assert_eq!((after.r.x, after.r.y), (v.r.x + 40.0, v.r.y + 30.0));
+    assert_eq!((after.r.x, after.r.y), (v.r.x, v.r.y));
     press(&mut s, &g, mid(after.bar.close));
     assert!(s.channel.is_none());
 }
@@ -893,10 +894,11 @@ fn multi_pointer_release(release: &str) {
             s.channel_up(&g);
         }
         "escape" => {
-            assert!(s.field_keys(&g, "escape", None, crate::tools::Mods::default()));
+            assert!(s.channel_escape());
         }
         "blur" => {
-            assert!(s.main_focus_lost());
+            // the window losing the focus lets the key go (device_window.rs)
+            assert!(s.channel_note_off());
         }
         _ => unreachable!(),
     }
@@ -1565,4 +1567,34 @@ fn the_drag_rects_are_the_head_and_only_the_head() {
         let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
         assert!(!rects.iter().any(|d| d.contains(cx, cy)), "{name}");
     }
+}
+
+#[test]
+fn it_opens_at_its_content_size_with_the_bar_and_never_under_its_least_width() {
+    let (mut s, _) = studio();
+    let (t, ..) = vocal(&mut s);
+    let p = s.project();
+    let w = s.channel.as_ref().unwrap();
+    let (nw, nh) = natural_size(&p, w).unwrap();
+    assert!(nw >= MIN_W);
+    let probe = flow::layout(&p, &p.tracks[&t], (0.0, 0.0));
+    let (_, tool) = tools_of(Rect::new(0.0, 0.0, nw, 0.0), false);
+    assert_eq!(nh, BAR_H + tool + probe.h, "bar, toolbar and flow");
+    assert_eq!(min_width(&p, w), MIN_W, "no layers: 520");
+    // the window of that size shows its whole flow
+    let v = view(&p, w, (nw, nh)).unwrap();
+    assert!(v.body.h >= probe.h - 0.5, "{} {}", v.body.h, probe.h);
+}
+
+#[test]
+fn a_track_with_layers_needs_the_wider_least_width() {
+    let (mut s, _) = studio();
+    let keys = track(&s, "Keys");
+    assert!(s.run_command("rack.layer.add", json!({"track":keys,"name":"Sampler"})));
+    s.open_channel(keys);
+    let p = s.project();
+    let w = s.channel.as_ref().unwrap();
+    assert_eq!(min_width(&p, w), keys::LEAST_W);
+    assert_eq!(keys::LEAST_W, 720.0);
+    assert!(natural_size(&p, w).unwrap().0 >= 720.0);
 }

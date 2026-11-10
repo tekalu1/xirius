@@ -217,7 +217,6 @@ fn keyboard_stage(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: 
     if n >= 6 {
         if n == 6 {
             let mut s = studio.borrow_mut();
-            s.channel.as_mut().unwrap().detached = false;
             s.select_row(Some(crate::tree::RowKind::Track(track)));
             s.live_midi_input(Box::new(xirius_engine::record::MockMidi::with_ports(
                 vec!["Keys".into()],
@@ -301,7 +300,6 @@ fn keyboard_stage(n: u8, studio: &Rc<RefCell<Studio>>, window: &mut Window, cx: 
         s.release_midi();
         assert!(s.run_command("rack.layer.add", json!({"track":track,"name":"Sampler"})));
         s.open_channel(track);
-        s.channel.as_mut().unwrap().detached = true;
         cx.refresh_windows();
         return;
     }

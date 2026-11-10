@@ -236,7 +236,6 @@ fn a_detached_channel_keeps_its_view_until_the_person_closes_it() {
     assert!(s.run_command("track.add.audio", json!({})));
     let track = *s.project().tracks.keys().next().unwrap();
     s.open_channel(track);
-    s.channel.as_mut().unwrap().detached = true;
     s.bind_window_io();
     let call = request(&mut s, "track.list", json!({}), RunOptions::human());
     assert!(call.join().unwrap().is_err());

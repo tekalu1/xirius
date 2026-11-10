@@ -94,7 +94,7 @@ impl Studio {
 
     /// Is one of the windows that float over the screen under the point?
     pub(crate) fn over_float(&self, g: &Geometry, x: f32, y: f32) -> bool {
-        self.over_channel(g, x, y) || self.over_macros(g, x, y) || self.over_instrument(g, x, y)
+        self.over_macros(g, x, y) || self.over_instrument(g, x, y)
     }
 
     /// A press let go: the rows take the height of what pressed (a touch, 32), so the press

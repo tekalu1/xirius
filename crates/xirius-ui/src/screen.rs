@@ -190,11 +190,7 @@ impl Screen {
             }
             return;
         }
-        if s.popup.is_none()
-            && (s.macro_right(&g, x, y)
-                || s.channel_right(&g, x, y)
-                || s.instrument_right(&g, x, y))
-        {
+        if s.popup.is_none() && (s.macro_right(&g, x, y) || s.instrument_right(&g, x, y)) {
             cx.notify();
             return;
         }
@@ -317,17 +313,11 @@ impl Screen {
             cx.notify();
             return;
         }
-        if studio.macro_moved(&g, x, y)
-            || studio.channel_moved(&g, x, y)
-            || studio.instrument_moved(&g, x, y, ev.modifiers.shift)
-        {
+        if studio.macro_moved(&g, x, y) || studio.instrument_moved(&g, x, y, ev.modifiers.shift) {
             cx.notify();
             return;
         }
-        if studio.macro_hover(&g, x, y)
-            | studio.channel_hover(&g, x, y)
-            | studio.instrument_hover(&g, x, y)
-        {
+        if studio.macro_hover(&g, x, y) | studio.instrument_hover(&g, x, y) {
             cx.notify();
         }
         if let Some(ctx) = studio.roll_input(&g) {
@@ -444,7 +434,6 @@ impl Screen {
         if studio.popup.is_none()
             && (studio.value_press(&g, x, y, ev.click_count as u32, mods(ev.modifiers))
                 || studio.macro_press(&g, x, y)
-                || studio.channel_press(&g, x, y, ev.click_count as u32)
                 || studio.instrument_press(&g, x, y, ev.click_count as u32, mods(ev.modifiers)))
         {
             drop(studio);
@@ -804,7 +793,7 @@ impl Screen {
             cx.notify();
             return;
         }
-        if studio.macro_up() || studio.channel_up(&g) || studio.instrument_up() {
+        if studio.macro_up() || studio.instrument_up() {
             cx.notify();
             return;
         }

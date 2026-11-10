@@ -30,15 +30,11 @@ const CROSS_H: f32 = 14.0;
 const LINE_CUT_W: f32 = 4.0;
 const LINE_CUT_H: f32 = 18.0;
 
-/// Paints the open channel editor: over the device windows when it was the last pressed,
-/// under them when not (`over` says which pass this is).
-pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry, over: bool) {
+/// Paints the open channel editor on its own window's surface (`g`).
+pub fn paint(pen: &mut Pen, s: &Studio, g: &Geometry) {
     let Some(w) = &s.channel else {
         return;
     };
-    if w.top != over {
-        return;
-    }
     let Some(v) = s.channel_view(g) else {
         return;
     };

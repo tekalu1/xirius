@@ -15,6 +15,8 @@ use crate::tools::Mods;
 fn studio() -> (Studio, Geometry) {
     let mut s = Studio::sample();
     s.instruments.open.clear();
+    // the editor's own window is the surface these tests work on: its scope is on
+    s.instruments.detached_channel = true;
     let g = s.geometry(1600.0, 1000.0);
     (s, g)
 }

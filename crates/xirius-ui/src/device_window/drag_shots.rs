@@ -139,7 +139,6 @@ fn stage(_: u8, studio: &Rc<RefCell<Studio>>, _: &mut Window, cx: &mut App) {
             .id;
         s.show_instrument(track, id);
         s.open_channel(track);
-        s.channel.as_mut().unwrap().detached = true;
         id
     };
     cx.refresh_windows();
@@ -330,7 +329,6 @@ pub(crate) fn ready(studio: &Rc<RefCell<Studio>>, _: &mut Window, cx: &mut App) 
                                 s.show_instrument(track, id);
                             } else {
                                 s.open_channel(track);
-                                s.channel.as_mut().unwrap().detached = true;
                             }
                             j.step = Step::Open;
                             drop(s);

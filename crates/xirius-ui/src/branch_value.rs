@@ -417,8 +417,9 @@ impl Studio {
     /// The branch value under a point, with the rect a drag sweeps: a strip's level bar or
     /// pan, or an editor head's.
     pub(crate) fn value_at(&self, g: &Geometry, x: f32, y: f32) -> Option<(Focus, Rect)> {
-        if let Some(at) = self.channel_value_at(g, x, y) {
-            return Some(at);
+        // The channel editor's own window is its own surface: its values are only there.
+        if self.instruments.detached_channel {
+            return self.channel_value_at(g, x, y);
         }
         if self.over_float(g, x, y) || !self.mixer_shown() {
             return None;

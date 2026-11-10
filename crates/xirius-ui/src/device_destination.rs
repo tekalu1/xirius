@@ -235,29 +235,6 @@ mod tests {
     }
 
     #[test]
-    fn channel_destination_preserves_track_pin_and_project() {
-        let mut s = Studio::sample();
-        let t = s
-            .project()
-            .tracks
-            .values()
-            .find(|t| t.name == "Vocal")
-            .unwrap()
-            .id;
-        s.open_channel(t);
-        s.channel.as_mut().unwrap().pinned = true;
-        let before = serde_json::to_value(s.project()).unwrap();
-        for to in ["external", "external", "internal"] {
-            s.inst_menu_pick(crate::instrument::menu::Menu::ChannelDestination(t), to);
-            let w = s.channel.as_ref().unwrap();
-            assert_eq!(w.track, t);
-            assert!(w.pinned);
-            assert_eq!(w.detached, to == "external");
-            assert_eq!(serde_json::to_value(s.project()).unwrap(), before);
-        }
-    }
-
-    #[test]
     fn replacing_an_unpinned_external_view_clears_its_surface_but_keeps_the_device() {
         let mut s = Studio::sample();
         let tracks: Vec<_> = s

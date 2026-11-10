@@ -161,7 +161,6 @@ fn setup(s: &mut Studio, g: &Geometry, n: u8) {
             }
             if let Some(w) = s.channel.as_mut() {
                 w.macros = true;
-                w.at = Some((12.0, 56.0));
             }
             // beside the editor when the screen has the room, else over its lower part
             let right = s.channel_view(g).map_or(0.0, |v| v.r.right());

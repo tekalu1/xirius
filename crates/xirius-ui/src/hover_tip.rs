@@ -427,6 +427,10 @@ fn anchor(s: &Studio, g: &Geometry, hit: Hit) -> Option<Rect> {
 /// The channel editor's ✖ and ＋ of a branch: 「分岐を削除」「分岐を追加」 (MIX-045).
 fn channel_control(s: &Studio, g: &Geometry) -> Option<(&'static str, Rect)> {
     use crate::channel::{Part, flow::ColKind, head_parts};
+    // Only inside the editor's own window: the main window has no view of it.
+    if !s.instruments.detached_channel {
+        return None;
+    }
     let w = s.channel.as_ref()?;
     let v = s.channel_view(g)?;
     match w.hot? {

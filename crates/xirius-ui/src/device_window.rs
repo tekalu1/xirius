@@ -206,7 +206,7 @@ impl Windows {
     }
 
     fn sync_channel(&mut self, studio: &Rc<RefCell<Studio>>, main: &Window, cx: &mut App) {
-        let wanted = studio.borrow().channel.as_ref().is_some_and(|w| w.detached);
+        let wanted = studio.borrow().channel.is_some();
         if !wanted {
             if let Some(handle) = self.channel.take() {
                 let _ = handle.update(cx, |_, window, _| window.remove_window());
@@ -222,14 +222,30 @@ impl Windows {
         let shared = studio.clone();
         let origin = main.bounds().origin;
         let positions = studio.borrow().instruments.positions.clone();
+        // It opens at its content's size and the bar's height; a size the person changed wins
+        // (`independent::open` takes the remembered one).
+        let (least, natural) = {
+            let s = studio.borrow();
+            let p = s.project();
+            s.channel
+                .as_ref()
+                .map(|w| {
+                    (
+                        crate::channel::min_width(&p, w),
+                        crate::channel::natural_size(&p, w),
+                    )
+                })
+                .unwrap_or((crate::channel::MIN_W, None))
+        };
+        let natural = natural.unwrap_or((800.0, 600.0));
         let spec = Spec {
             kind: Kind::Channel,
             title: "Xirius · Channel Editor".into(),
             initial: Bounds::new(
                 point(origin.x + px(60.0), origin.y + px(80.0)),
-                size(px(800.0), px(600.0)),
+                size(px(natural.0), px(natural.1)),
             ),
-            min_size: Some(size(px(crate::channel::MIN_W), px(240.0))),
+            min_size: Some(size(px(least), px(CHANNEL_MIN_H))),
             resizable: true,
             positions: Some(positions.clone()),
         };
@@ -243,9 +259,6 @@ impl Windows {
             });
             let focus = cx.focus_handle();
             window.focus(&focus, cx);
-            if !positions.borrow().contains_key(&Key::Channel) {
-                window.resize(size(px(800.0), px(600.0)));
-            }
             cx.new(|cx| {
                 DeviceWindow::new(
                     shared,
@@ -261,14 +274,16 @@ impl Windows {
             Ok(handle) => self.channel = Some(handle),
             Err(error) => {
                 let mut s = studio.borrow_mut();
-                if let Some(w) = s.channel.as_mut() {
-                    w.detached = false;
-                }
+                s.channel_note_off();
+                s.channel = None;
                 s.error = Some(format!("独立ウィンドウを開けません: {error}"));
             }
         }
     }
 }
+
+/// The Channel Editor's least height (the toolbar and a little of the flow under the bar).
+const CHANNEL_MIN_H: f32 = 240.0;
 
 struct DeviceWindow {
     studio: Rc<RefCell<Studio>>,
@@ -305,29 +320,19 @@ fn work_size(window: &Window, cx: &App) -> Option<(f32, f32)> {
     })
 }
 
-fn scope(s: &mut Studio, id: Option<PluginId>) -> (Option<PluginId>, bool, bool) {
+fn scope(s: &mut Studio, id: Option<PluginId>) -> (Option<PluginId>, bool) {
     let old = (
         s.instruments.detached_target,
         s.instruments.detached_channel,
-        s.channel.as_ref().is_some_and(|w| w.detached_surface),
     );
     s.instruments.detached_target = id;
     s.instruments.detached_channel = id.is_none();
-    if let Some(w) = &mut s.channel {
-        w.detached_surface = id.is_none();
-        if id.is_none() {
-            w.top = true;
-        }
-    }
     old
 }
 
-fn restore(s: &mut Studio, old: (Option<PluginId>, bool, bool)) {
+fn restore(s: &mut Studio, old: (Option<PluginId>, bool)) {
     s.instruments.detached_target = old.0;
     s.instruments.detached_channel = old.1;
-    if let Some(w) = &mut s.channel {
-        w.detached_surface = old.2;
-    }
 }
 
 /// Runs `f` with the Studio scoped to `id`'s independent surface: the pointer paths
@@ -459,7 +464,7 @@ impl Render for DeviceWindow {
         } else {
             let s = self.studio.borrow();
             self.id.map_or_else(
-                || s.channel.as_ref().is_some_and(|w| w.detached),
+                || s.channel.is_some(),
                 |id| s.instruments.detached.contains(&id) && s.instruments.is_open(id),
             )
         };
@@ -474,6 +479,21 @@ impl Render for DeviceWindow {
             let wanted = size(px(rect.x + rect.w + 6.0), px(rect.y + rect.h + 6.0));
             if window.viewport_size() != wanted {
                 window.resize(wanted);
+            }
+        }
+        if self.id.is_none() && !self.menu_only {
+            // The least width follows the layers: one added while it is open widens the least.
+            let least = {
+                let s = self.studio.borrow();
+                s.channel
+                    .as_ref()
+                    .map(|w| crate::channel::min_width(&s.project(), w))
+            };
+            let now = window.viewport_size();
+            if let Some(least) = least
+                && f32::from(now.width) < least
+            {
+                window.resize(size(px(least), now.height));
             }
         }
         {
@@ -525,7 +545,7 @@ impl Render for DeviceWindow {
                     } else if view.id.is_some() {
                         crate::instrument::window::paint(&mut pen, &s, &g);
                     } else {
-                        crate::channel::paint::paint(&mut pen, &s, &g, true);
+                        crate::channel::paint::paint(&mut pen, &s, &g);
                     }
                     paint_tip(&mut pen, &s, &g);
                     if let Some(p) = &s.popup {
@@ -609,6 +629,13 @@ impl Render for DeviceWindow {
                             if head {
                                 return true;
                             }
+                            // A press away from a branch value puts what is typed in; on one it
+                            // takes the keys, or starts the pan's drag.
+                            s.value_blur(g, x, y);
+                            if s.value_press(g, x, y, e.click_count as u32, modifiers(e.modifiers))
+                            {
+                                return false;
+                            }
                             s.channel_press(g, x, y, e.click_count as u32);
                             return false;
                         }
@@ -662,6 +689,10 @@ impl Render for DeviceWindow {
                         return;
                     }
                     if s.instruments.detached_channel {
+                        if s.mixer.level_drag.is_some() || s.mixer.key_drag.is_some() {
+                            s.level_move(x, e.modifiers.shift);
+                            return;
+                        }
                         s.channel_moved(g, x, y);
                         s.channel_hover(g, x, y);
                         return;
@@ -676,7 +707,9 @@ impl Render for DeviceWindow {
                 cx.listener(|this, _: &gpui::MouseUpEvent, window, cx| {
                     this.with(window, |s, g| {
                         if s.instruments.detached_channel {
-                            s.channel_up(g);
+                            if !s.level_up() {
+                                s.channel_up(g);
+                            }
                         } else {
                             s.instrument_up();
                         }
@@ -689,7 +722,9 @@ impl Render for DeviceWindow {
                 cx.listener(|this, _: &gpui::MouseUpEvent, window, cx| {
                     this.with(window, |s, g| {
                         if s.instruments.detached_channel {
-                            s.channel_up(g);
+                            if !s.level_up() {
+                                s.channel_up(g);
+                            }
                         } else {
                             s.instrument_up();
                         }
@@ -790,11 +825,8 @@ fn device_key_event(
         && s.popup.is_none()
         && k.key == "escape"
         && s.instruments.detached_channel
-        && s.channel
-            .as_ref()
-            .is_some_and(|w| w.mouse_note.is_some() || w.keyboard_drag.is_some())
+        && s.channel_escape()
     {
-        s.channel_note_off();
         return;
     }
     // Empty devices have no parameter stop; Tab still belongs to this window.
@@ -990,15 +1022,6 @@ fn accessible_for(
             }
         }
     }
-    if s.instruments.detached_target.is_none()
-        && let Some(v) = s.channel_view(g)
-        && let Some(w) = &s.channel
-    {
-        places.push((
-            crate::instrument::menu::Menu::ChannelDestination(w.track),
-            v.bar.destination,
-        ));
-    }
     places
         .into_iter()
         .map(|(menu, b)| {
@@ -1030,20 +1053,6 @@ fn accessible_for(
 
 pub(crate) fn paint_tip(pen: &mut Pen, s: &Studio, g: &Geometry) {
     if s.popup.is_some() {
-        return;
-    }
-    if s.instruments.detached_target.is_none()
-        && s.channel
-            .as_ref()
-            .is_some_and(|w| w.hot == Some(crate::channel::Part::Destination))
-        && let Some(v) = s.channel_view(g)
-    {
-        crate::hover_tip::balloon(
-            pen,
-            "表示先",
-            v.bar.destination,
-            crate::studio::Rect::new(0.0, 0.0, g.size.0, g.size.1),
-        );
         return;
     }
     let Some((id, Part::Destination)) = s.instruments.hot else {

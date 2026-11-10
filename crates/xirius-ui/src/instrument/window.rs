@@ -1595,10 +1595,6 @@ impl Studio {
         }
         self.instruments.edge = None;
         self.error = None;
-        // A device window pressed comes over the channel editor.
-        if let Some(c) = self.channel.as_mut() {
-            c.top = false;
-        }
         let i = self.instruments.raise(i);
         let w = self.instruments.open[i];
         let r = self.instruments.frame(i, g);

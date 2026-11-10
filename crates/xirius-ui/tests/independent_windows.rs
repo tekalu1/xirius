@@ -93,7 +93,7 @@ fn window_resize_is_called_in_few_places() {
 
 /// Structs that have both `at: Option<(f32, f32)>` and `pinned: bool` (a window of its own
 /// place and pin drawn inside the screen). The stages that make them windows empty this list.
-const PLACED_AND_PINNED: &[&str] = &["ChannelWin", "MacroWin", "Win"];
+const PLACED_AND_PINNED: &[&str] = &["MacroWin", "Win"];
 
 #[test]
 fn the_own_place_and_pin_structs_do_not_grow() {
@@ -178,10 +178,6 @@ const OVERLAY: &[(&str, Class)] = &[
         Migrating("stage 1d: dead in-screen code"),
     ),
     ("crate::fx_chain::paint_headers", Section),
-    (
-        "crate::channel::paint::paint",
-        Migrating("stage 1c: Channel Editor is a window"),
-    ),
     (
         "crate::instrument::window::paint",
         Migrating("stage 1d: dead in-screen code"),
@@ -289,7 +285,7 @@ fn the_overlay_list_has_no_duplicates_and_few_migrating() {
         .filter(|(_, c)| matches!(c, Migrating(_)))
         .count();
     assert_eq!(
-        migrating, 5,
-        "the migrating surfaces are the 5 of stages 1c/1d"
+        migrating, 4,
+        "the migrating surfaces are the 4 left to stages 1c/1d"
     );
 }
