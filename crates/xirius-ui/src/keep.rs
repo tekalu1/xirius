@@ -72,6 +72,9 @@ pub struct Keep {
     /// The recent songs as the last [`Keep::sync`] read them: what the entrance lists, not
     /// read again each frame (UI-261).
     listed: Vec<RecentSong>,
+    /// An empty draft the song being left kept: removed once the song is really gone, not
+    /// before (an open can still fail and leave the song where it was).
+    pub(crate) abandon: Option<PathBuf>,
 }
 
 impl Keep {
@@ -244,7 +247,15 @@ impl Keep {
 
     /// Is `dir` one of the app's own draft folders?
     pub fn is_draft_dir(&self, dir: &Path) -> bool {
-        self.drafts().is_some_and(|d| dir.starts_with(d))
+        use std::path::Component;
+        // Below `drafts` and never `drafts` itself; a `..` or `.` is never taken at its word.
+        self.drafts().is_some_and(|d| {
+            dir.starts_with(&d)
+                && dir.components().count() > d.components().count()
+                && dir
+                    .components()
+                    .all(|c| !matches!(c, Component::ParentDir | Component::CurDir))
+        })
     }
 
     fn new_draft_dir(&mut self, now: u64) -> Option<PathBuf> {
@@ -427,6 +438,10 @@ impl Studio {
 
     /// What the window has, for the next start.
     fn open_now(&self) -> LastOpen {
+        if self.empty_draft().is_some() {
+            // The draft is let go with the song: nothing is left for the next start to open.
+            return LastOpen::Empty;
+        }
         match self.song.record_dir() {
             Some(dir) => LastOpen::Song(dir),
             None if self.song.is_sample() && self.song.steps() == 0 => LastOpen::Sample,
@@ -442,6 +457,8 @@ impl Studio {
             .as_ref()
             .is_none_or(|seen| !Arc::ptr_eq(seen, &self.song.project()))
         {
+            // An edit after the song was let go of: it is no longer the empty one.
+            self.keep.abandon = None;
             if self.keep.closing_recent.is_some() || self.keep.recent_close_ready {
                 self.leaving_ready = false;
             }
@@ -534,6 +551,33 @@ impl Studio {
                 xirius_core::store::now_ms(),
             );
         }
+        self.keep.abandon = self.empty_draft();
+    }
+
+    /// The folder of the song's draft when the song is one nobody has put anything in: a
+    /// draft (no place of its own, in the app's drafts), no track but the master, no clip, and
+    /// the name it was born with. Anything else is kept, and a saved song never is one.
+    pub(crate) fn empty_draft(&self) -> Option<PathBuf> {
+        let dir = self.song.record_dir()?;
+        if !self.song.is_draft() || !self.keep.is_draft_dir(&dir) {
+            return None;
+        }
+        let project = self.project();
+        let bare = project.name == crate::song::EMPTY_NAME
+            && project.tracks.values().all(|t| {
+                matches!(t.kind, xirius_core::model::TrackKind::Master) && t.clips.is_empty()
+            });
+        bare.then_some(dir)
+    }
+
+    /// The song that was left is gone: its draft, if it was an empty one, goes too. Not
+    /// when the song now open is that very folder.
+    pub(crate) fn drop_abandoned_draft(&mut self) {
+        if let Some(dir) = self.keep.abandon.take()
+            && self.song.record_dir().as_deref() != Some(dir.as_path())
+        {
+            self.delete_old_draft(&dir);
+        }
     }
 
     /// The window closes: the song's folder is let go of, so the next start does not take
@@ -544,6 +588,7 @@ impl Studio {
             self.keep.closed_with(&self.open_now());
         }
         self.song.release();
+        self.drop_abandoned_draft();
     }
 }
 
@@ -558,7 +603,19 @@ impl Studio {
             if let Err(e) = crate::ancillary_io::dispatch(move || {
                 #[cfg(any(test, feature = "loading-probe"))]
                 xirius_core::io_test::before("draft_remove", &path).map_err(|e| e.to_string())?;
-                std::fs::remove_dir_all(path).map_err(|e| e.to_string())
+                // The song that kept the folder may still be letting go of its files.
+                let mut tries = 0;
+                loop {
+                    match std::fs::remove_dir_all(&path) {
+                        Ok(()) => return Ok(()),
+                        Err(_) if !path.exists() => return Ok(()),
+                        Err(e) if tries >= 10 => return Err(e.to_string()),
+                        Err(_) => {
+                            tries += 1;
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                        }
+                    }
+                }
             }) {
                 self.error = Some(e);
             }
@@ -1627,5 +1684,188 @@ mod tests {
             left.iter()
                 .any(|r| r.dir != first && r.dir.starts_with(root.join("drafts")))
         );
+    }
+
+    // ---- a song left with nothing in it keeps no draft
+
+    /// A studio whose song has only a tempo point: that is an edit, so it has a draft.
+    fn tempo_only(tag: &str) -> (Studio, PathBuf, PathBuf, tempfile::TempDir) {
+        let (mut s, root, tmp) = kept(tag);
+        assert!(s.run_command("tempo.set", json!({ "at": 0, "bpm": 150 })));
+        let draft = s.song.record_dir().expect("the first edit made a draft");
+        assert!(s.song.is_draft() && s.keep.is_draft_dir(&draft));
+        assert!(s.keep.settled_recent().iter().any(|r| r.dir == draft));
+        (s, root, draft, tmp)
+    }
+
+    /// A saved song with a track, in the folder `name` under `root`.
+    fn saved_song(root: &Path, name: &str) -> PathBuf {
+        let dir = root.join(name);
+        let mut o = Song::empty();
+        o.run("track.add.audio", json!({ "name": "t" })).unwrap();
+        o.save_as(&dir).unwrap();
+        drop(o);
+        dir
+    }
+
+    fn leave_by(s: &mut Studio, exit: &str, root: &Path) {
+        use crate::saving::Leave;
+        match exit {
+            "open" => {
+                let other = saved_song(root, "other");
+                s.start_leaving(Leave::File(crate::studio::FileRequest::Open, other));
+                s.wait_for_open_for_test();
+            }
+            "new" => {
+                s.start_leaving(Leave::New);
+                s.wait_for_open_for_test();
+            }
+            "sample" => {
+                s.start_leaving(Leave::Sample);
+                s.wait_for_open_for_test();
+            }
+            "home" => {
+                assert!(s.close_to_home());
+                s.wait_for_open_for_test();
+            }
+            "close" => {
+                let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+                while !s.request_close() {
+                    assert!(std::time::Instant::now() < end, "the close never ended");
+                    s.wait_for_save();
+                    s.keep.settle_recent();
+                    s.poll_recent_close();
+                }
+                s.release_song();
+            }
+            other => panic!("{other}"),
+        }
+        assert_eq!(s.error, None);
+        s.keep.settle_recent();
+    }
+
+    const EXITS: [&str; 5] = ["open", "new", "sample", "home", "close"];
+
+    #[test]
+    fn an_empty_draft_is_not_kept_when_the_song_is_left() {
+        for exit in EXITS {
+            let (mut s, root, draft, _tmp) = tempo_only(exit);
+            leave_by(&mut s, exit, &root);
+            assert!(!draft.exists(), "{exit}: the draft folder is gone");
+            assert!(
+                s.keep.settled_recent().iter().all(|r| r.dir != draft),
+                "{exit}: the row is gone"
+            );
+            if exit == "close" {
+                assert_eq!(s.keep.settled_last_open(), Some(LastOpen::Empty));
+            }
+        }
+    }
+
+    #[test]
+    fn a_draft_with_a_track_a_clip_or_a_name_is_kept() {
+        for exit in EXITS {
+            for what in ["track", "clip", "name"] {
+                let (mut s, root, draft, _tmp) = tempo_only(&format!("{exit}-{what}"));
+                match what {
+                    "track" => add(&mut s, "a"),
+                    "clip" => {
+                        assert!(s.run_command("track.add.instrument", json!({ "name": "a" })));
+                        let id = s
+                            .project()
+                            .tracks
+                            .values()
+                            .find(|t| t.name == "a")
+                            .unwrap()
+                            .id;
+                        assert!(s.run_command(
+                            "clip.add.midi",
+                            json!({ "track": id.to_string(), "at": 0, "length": 1920 })
+                        ));
+                    }
+                    _ => assert!(s.run_command("project.rename", json!({ "name": "mine" }))),
+                }
+                leave_by(&mut s, exit, &root);
+                assert!(draft.exists(), "{exit} {what}: the draft stays");
+                assert!(
+                    s.keep.settled_recent().iter().any(|r| r.dir == draft),
+                    "{exit} {what}: the row stays"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_saved_song_emptied_is_never_dropped_when_left() {
+        for exit in EXITS {
+            let (mut s, root, _tmp) = kept(&format!("saved-{exit}"));
+            add(&mut s, "a");
+            let place = root.join("mine");
+            s.finish_file_request_sync(crate::studio::FileRequest::SaveAs, &place);
+            assert_eq!(s.error, None);
+            let id = *s.project().tracks.keys().next_back().unwrap();
+            assert!(s.run_command("track.delete", json!({ "ids": [id] })));
+            assert_eq!(s.project().tracks.len(), 1, "only the master is left");
+            leave_by(&mut s, exit, &root);
+            assert!(place.join("project.json").exists(), "{exit}");
+            assert!(
+                s.keep
+                    .settled_recent()
+                    .iter()
+                    .any(|r| r.dir == place && !r.draft),
+                "{exit}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_edit_after_a_failed_leave_is_not_taken_for_an_empty_draft() {
+        let (mut s, _root, draft, _tmp) = tempo_only("stale");
+        s.keep.abandon = s.empty_draft();
+        assert_eq!(s.keep.abandon.as_deref(), Some(draft.as_path()));
+        add(&mut s, "a");
+        s.keep_beat(xirius_core::store::now_ms());
+        assert_eq!(s.keep.abandon, None);
+    }
+
+    #[test]
+    fn a_draft_is_there_while_open_and_a_crash_leaves_it_to_be_recovered() {
+        let (s, root, draft, tmp) = tempo_only("crash");
+        assert!(draft.join("project.json").exists());
+        let mut s = s;
+        let song = std::mem::replace(&mut s.song, Song::empty());
+        song.simulate_crash();
+        std::fs::write(draft.join("session.lock"), u32::MAX.to_string()).unwrap();
+        drop(s);
+        let mut s = launch(&root);
+        assert_eq!(s.error, None);
+        assert_eq!(s.song.record_dir(), Some(draft.clone()), "recovered");
+        assert!(draft.exists());
+        drop(tmp);
+        let _ = &mut s;
+    }
+
+    #[test]
+    fn only_a_folder_below_the_drafts_is_a_draft_folder() {
+        let (s, root, _tmp) = kept("guard");
+        let drafts = root.join("drafts");
+        std::fs::create_dir_all(drafts.join("one")).unwrap();
+        let outside = root.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("keep.txt"), "x").unwrap();
+        for dir in [
+            drafts.clone(),
+            drafts.join(".."),
+            drafts.join("..").join("outside"),
+            drafts.join("one").join("..").join("..").join("outside"),
+            outside.clone(),
+            root.clone(),
+        ] {
+            assert!(!s.keep.is_draft_dir(&dir), "{dir:?}");
+            s.keep.delete_draft(&dir);
+        }
+        assert!(outside.join("keep.txt").exists());
+        assert!(drafts.join("one").exists());
+        assert!(s.keep.is_draft_dir(&drafts.join("one")));
     }
 }

@@ -20,6 +20,7 @@ bootstrap だけに限る。窓を作った後は完了を poll する。
 | グルーヴ MIDI の取り込み | FIFO の `read_groove` | 曲の所有者が一致した結果だけ適用する |
 | 初回編集時の下書き | 次の idle・drag 終了後に `Saving` の Session worker | 同じ callback 内の後続編集と押している音を保持する。下書きは保存済みとは扱わない |
 | 保存後に不要になった下書き | application FIFO | 削除要求の受付。通常の曲を下書きとして削除しない |
+| 空のまま離れた曲の下書き | 同じ FIFO（保存後の削除と同じ入口） | 削除要求の受付。曲が実際に替わる・窓を閉じる時に出す。`drafts` の下だけを消し、消せなくても離れる操作は止めない（失敗は記録だけ） |
 | history・version・file・cleanup の実行 | `io_command` から既存の Session worker | 完了後の選択復元、一覧更新、MCP の返答 |
 | About・更新確認・クラッシュ記録・license | application FIFO。ダウンロードは既存の worker | 既存の画面に完成した値だけ反映する。検証が済むまで終了・インストールを予約しない |
 | ファイル・URL を OS で開く | application FIFO または `os` の desktop worker | 受付。OS プロセスの生成失敗は worker が記録する |

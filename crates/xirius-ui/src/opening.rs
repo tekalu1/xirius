@@ -293,6 +293,8 @@ impl Studio {
         // (N-par-1); not when the open is refused, nor when a version's copy leaves it open.
         if replace {
             self.device_sweep_end();
+            // Not every way out passes the keeping (closing to the start screen does not).
+            self.keep.abandon = self.empty_draft();
         }
         if let OpenRequest::Song(path) = &request {
             self.stop_tidy(path);

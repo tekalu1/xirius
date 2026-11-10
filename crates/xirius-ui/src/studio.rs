@@ -2903,6 +2903,8 @@ impl Studio {
         closing: Result<Option<xirius_session::cleanup::Closed>, String>,
         deferred: bool,
     ) {
+        // The song that was left had nothing in it: its draft is not kept.
+        self.drop_abandoned_draft();
         // A song is open: the start screen is done (UI-350).
         self.home = None;
         self.drag_drop();
