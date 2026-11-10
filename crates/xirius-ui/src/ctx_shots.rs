@@ -32,6 +32,14 @@ pub const CTX_V2: &[Shot] = &[
         acts: &[Act::Reset, staged(0), staged(13), staged(200)],
     },
     Shot {
+        name: "v2-clips",
+        acts: &[Act::Reset, staged(0), staged(14)],
+    },
+    Shot {
+        name: "v2-cpu-plugin",
+        acts: &[Act::Reset, staged(80), staged(220), staged(221)],
+    },
+    Shot {
         name: "v2-empty",
         acts: &[Act::Reset, staged(0), staged(1)],
     },
@@ -40,40 +48,36 @@ pub const CTX_V2: &[Shot] = &[
         acts: &[Act::Reset, staged(80), staged(88)],
     },
     Shot {
-        name: "v2-midi",
-        acts: &[Act::Reset, staged(0), staged(10)],
-    },
-    Shot {
-        name: "v2-note",
-        acts: &[Act::Reset, staged(60), staged(61)],
-    },
-    Shot {
-        name: "v2-search",
-        acts: &[Act::Reset, staged(0), staged(13), staged(201)],
-    },
-    Shot {
-        name: "v2-track",
-        acts: &[Act::Reset, staged(0), staged(20)],
-    },
-    Shot {
-        name: "v2-clips",
-        acts: &[Act::Reset, staged(0), staged(14)],
-    },
-    Shot {
         name: "v2-master",
         acts: &[Act::Reset, staged(80), staged(93)],
+    },
+    Shot {
+        name: "v2-midi",
+        acts: &[Act::Reset, staged(0), staged(10)],
     },
     Shot {
         name: "v2-mixer-head",
         acts: &[Act::Reset, staged(80), staged(81)],
     },
     Shot {
+        name: "v2-mixer-insert",
+        acts: &[Act::Reset, staged(80), staged(90)],
+    },
+    Shot {
         name: "v2-mixer-plugin",
         acts: &[Act::Reset, staged(80), staged(88)],
     },
     Shot {
-        name: "v2-mixer-insert",
-        acts: &[Act::Reset, staged(80), staged(90)],
+        name: "v2-note",
+        acts: &[Act::Reset, staged(60), staged(61)],
+    },
+    Shot {
+        name: "v2-pad",
+        acts: &[Act::Reset, staged(80), staged(210), staged(211)],
+    },
+    Shot {
+        name: "v2-search",
+        acts: &[Act::Reset, staged(0), staged(13), staged(201)],
     },
     Shot {
         name: "v2-take",
@@ -84,16 +88,8 @@ pub const CTX_V2: &[Shot] = &[
         ],
     },
     Shot {
-        name: "v2-pad",
-        acts: &[Act::Reset, staged(80), staged(210), staged(211)],
-    },
-    Shot {
-        name: "v2-cpu-plugin",
-        acts: &[Act::Reset, staged(80), staged(220), staged(221)],
-    },
-    Shot {
-        name: "v2-edge-left",
-        acts: &[Act::Reset, staged(0), staged(202), staged(200)],
+        name: "v2-track",
+        acts: &[Act::Reset, staged(0), staged(20)],
     },
 ];
 
