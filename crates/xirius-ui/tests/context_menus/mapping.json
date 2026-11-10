@@ -657,7 +657,6 @@
     "key": "midi",
     "target": "MIDIクリップ",
     "tobe": [
-      "編集",
       "クリップを削除"
     ],
     "category": "編集",
@@ -696,10 +695,10 @@
     "key": "midi",
     "target": "MIDIクリップ",
     "tobe": [
-      "オーディオ",
+      "クリップ",
       "ARA プラグインを追加…"
     ],
-    "category": "オーディオ",
+    "category": "クリップ",
     "label": "ARA プラグインを追加…",
     "command": "clip.ara.attach",
     "args": {
@@ -1980,9 +1979,7 @@
     "key": "note",
     "target": "ノート",
     "tobe": [
-      "MIDI",
-      "クオンタイズ",
-      "50%"
+      "クオンタイズ（50%）"
     ],
     "category": "MIDI",
     "label": "50%",
@@ -2544,7 +2541,6 @@
     "key": "multi-audio",
     "target": "複数オーディオクリップ",
     "tobe": [
-      "編集",
       "クリップを複製"
     ],
     "category": "編集",
@@ -2583,7 +2579,6 @@
     "key": "multi-audio",
     "target": "複数オーディオクリップ",
     "tobe": [
-      "編集",
       "クリップを削除"
     ],
     "category": "編集",
@@ -2596,7 +2591,6 @@
     "key": "multi-audio",
     "target": "複数オーディオクリップ",
     "tobe": [
-      "クリップ",
       "クリップを結合"
     ],
     "category": "クリップ",
@@ -3112,7 +3106,6 @@
     "key": "multi-midi",
     "target": "複数MIDIクリップ",
     "tobe": [
-      "編集",
       "クリップを複製"
     ],
     "category": "編集",
@@ -3151,7 +3144,6 @@
     "key": "multi-midi",
     "target": "複数MIDIクリップ",
     "tobe": [
-      "編集",
       "クリップを削除"
     ],
     "category": "編集",
@@ -3164,7 +3156,6 @@
     "key": "multi-midi",
     "target": "複数MIDIクリップ",
     "tobe": [
-      "クリップ",
       "クリップを結合"
     ],
     "category": "クリップ",
@@ -3203,10 +3194,10 @@
     "key": "multi-midi",
     "target": "複数MIDIクリップ",
     "tobe": [
-      "オーディオ",
+      "クリップ",
       "ARA プラグインを追加…"
     ],
-    "category": "オーディオ",
+    "category": "クリップ",
     "label": "ARA プラグインを追加…",
     "command": "clip.ara.attach",
     "args": {
@@ -3624,7 +3615,6 @@
     "key": "multi-mixed",
     "target": "オーディオ＋MIDI混在クリップ",
     "tobe": [
-      "編集",
       "クリップを複製"
     ],
     "category": "編集",
@@ -3663,7 +3653,6 @@
     "key": "multi-mixed",
     "target": "オーディオ＋MIDI混在クリップ",
     "tobe": [
-      "編集",
       "クリップを削除"
     ],
     "category": "編集",
@@ -3676,7 +3665,6 @@
     "key": "multi-mixed",
     "target": "オーディオ＋MIDI混在クリップ",
     "tobe": [
-      "クリップ",
       "クリップを結合"
     ],
     "category": "クリップ",
@@ -3715,10 +3703,10 @@
     "key": "multi-mixed",
     "target": "オーディオ＋MIDI混在クリップ",
     "tobe": [
-      "オーディオ",
+      "クリップ",
       "ARA プラグインを追加…"
     ],
-    "category": "オーディオ",
+    "category": "クリップ",
     "label": "ARA プラグインを追加…",
     "command": "clip.ara.attach",
     "args": {
@@ -4102,7 +4090,6 @@
     "key": "insert-states",
     "target": "インサート（外部・分岐の追加行）",
     "tobe": [
-      "機器",
       "有効にする"
     ],
     "category": "機器",
@@ -4315,7 +4302,6 @@
     "key": "flow-plugin",
     "target": "フローのプラグインカード",
     "tobe": [
-      "機器",
       "無効にする"
     ],
     "category": "機器",
@@ -4426,7 +4412,6 @@
     "key": "flow-plugin",
     "target": "フローのプラグインカード",
     "tobe": [
-      "表示",
       "画面を開く"
     ],
     "category": "表示",
@@ -8685,7 +8670,6 @@
     "key": "other-48",
     "target": "ミキサー通常ストリップ頭",
     "tobe": [
-      "編集",
       "名前を変更…"
     ],
     "category": "編集",
@@ -8858,7 +8842,6 @@
     "key": "other-48",
     "target": "ミキサー通常ストリップ頭",
     "tobe": [
-      "表示",
       "チャンネルエディターを開く"
     ],
     "category": "表示",
@@ -9161,7 +9144,6 @@
     "key": "other-49",
     "target": "バスの頭",
     "tobe": [
-      "編集",
       "名前を変更…"
     ],
     "category": "編集",
@@ -9253,7 +9235,6 @@
     "key": "other-49",
     "target": "バスの頭",
     "tobe": [
-      "表示",
       "チャンネルエディターを開く"
     ],
     "category": "表示",
