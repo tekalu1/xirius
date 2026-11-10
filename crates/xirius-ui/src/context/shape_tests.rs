@@ -151,11 +151,7 @@ fn a_scrolling_child_without_back_reaches_both_ends() {
     assert_eq!(offset, 0);
     assert!(max > 0, "the panel scrolls");
     assert!(!cells.iter().any(|(i, _)| *i == 0), "戻る is hidden");
-    let first = cells
-        .iter()
-        .find(|(i, _)| *i == 2)
-        .expect("1st row")
-        .clone();
+    let first = cells.iter().find(|(i, _)| *i == 2).expect("1st row");
     // ↓ through every row: the cursor row is always drawn.
     for _ in 0..30 {
         assert!(s.context_navigation(&g, "down"));
