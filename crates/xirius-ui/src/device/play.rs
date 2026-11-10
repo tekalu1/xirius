@@ -310,6 +310,9 @@ pub struct Keyboard {
     pub scroll: f32,
     pub extent: f32,
     pub spec: KeySpec,
+    /// The left of each note's key as the keyboard's top edge shows it, `low..=high`, then the
+    /// right end of the last (see [`Keyboard::edge`]).
+    edges: Vec<f32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -377,13 +380,40 @@ impl Keyboard {
                 black: true,
             });
         }
+        let edges = (spec.low..=spec.high + 1)
+            .map(|note| key_edge(&keys, spec, note))
+            .collect();
         Self {
             view,
             keys,
             scroll,
             extent,
             spec,
+            edges,
         }
+    }
+
+    /// Where the boundary left of `note`'s key is, as the keyboard's top edge shows it: a black
+    /// key's own left, a white key's left after a black key is that black key's right, and
+    /// between two white keys it is the line. `high + 1` is the right end of the keyboard. A
+    /// note out of the range gives the nearer end.
+    pub fn edge(&self, note: u8) -> f32 {
+        let i = usize::from(note.clamp(self.spec.low, self.spec.high.saturating_add(1)))
+            - usize::from(self.spec.low);
+        self.edges[i.min(self.edges.len() - 1)]
+    }
+
+    /// The boundary nearest to `x`, as the note whose key it is left of (`high + 1` for the
+    /// right end).
+    pub fn nearest_edge(&self, x: f32) -> u8 {
+        let mut best = (f32::INFINITY, self.spec.low);
+        for (i, e) in self.edges.iter().enumerate() {
+            let d = (e - x).abs();
+            if d < best.0 {
+                best = (d, self.spec.low + i as u8);
+            }
+        }
+        best.1
     }
 
     /// Whether a point is over the keys (not the rail under them).
@@ -466,6 +496,32 @@ impl Keyboard {
             pen.round(self.rail(), pen.c.surface_3, Radius::Xs);
             pen.round(self.thumb(), pen.c.scroll_thumb[0], Radius::Xs);
         }
+    }
+}
+
+/// The left boundary of `note`'s key among `keys` (see [`Keyboard::edge`]).
+fn key_edge(keys: &[Key], spec: KeySpec, note: u8) -> f32 {
+    let find = |p: u8| keys.iter().find(|k| k.pitch == p);
+    if note > spec.high {
+        return find(spec.high).map_or(0.0, |k| {
+            if k.black {
+                k.r.right()
+            } else {
+                k.r.right() + 1.0
+            }
+        });
+    }
+    let Some(k) = find(note) else {
+        return 0.0;
+    };
+    if k.black {
+        k.r.x
+    } else if note > spec.low
+        && let Some(below) = find(note - 1).filter(|b| b.black)
+    {
+        below.r.right()
+    } else {
+        k.r.x - 1.0
     }
 }
 
