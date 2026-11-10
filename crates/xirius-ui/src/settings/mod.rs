@@ -952,6 +952,22 @@ impl Studio {
         };
         ui.pointer = Some((x, y));
         if let Some(m) = ui.menu.take() {
+            // The ✖ of the list's search: it empties the words, the menu stays.
+            if m.menu
+                .layout
+                .cells
+                .iter()
+                .any(|c| c.clear_rect().is_some_and(|r| r.contains(x, y)))
+            {
+                let mut m = m;
+                if let Some(pick) = m.pick.as_mut() {
+                    pick.key("escape", None, g.size);
+                }
+                m.hover = None;
+                m.relayout();
+                ui.menu = Some(m);
+                return true;
+            }
             if m.menu.layout.rect.contains(x, y) {
                 if let Some(v) = m.menu.at(x, y).and_then(|i| menu_value(&m, i)) {
                     self.settings_pick(&m.kind, &v);

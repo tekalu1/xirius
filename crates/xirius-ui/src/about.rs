@@ -2064,7 +2064,13 @@ impl Studio {
             .about
             .as_mut()
             .filter(|v| v.open == Some(Item::Rust) && v.crashes.is_none())?;
-        if key == "backspace" {
+        if key == "escape" {
+            // Esc empties the words first; the next one shuts the popup.
+            if v.query.is_empty() {
+                return None;
+            }
+            v.query.clear();
+        } else if key == "backspace" {
             v.query.pop();
         } else {
             let ch = ch.filter(|c| !c.is_empty() && !c.chars().any(char::is_control))?;

@@ -20,7 +20,7 @@ use crate::topbar::BarButton;
 /// (the empty part of a pop-over, a row that only selects is still an operation).
 pub fn of_hit(hit: Hit) -> Option<(&'static str, &'static str)> {
     let m = match hit {
-        Hit::None | Hit::PopupBody | Hit::Item(_) => return None,
+        Hit::None | Hit::PopupBody | Hit::SearchClear | Hit::Item(_) => return None,
         // The toast takes its presses before the rest of the window.
         Hit::Toast(_) => return None,
         // The kind icon only answers a crashed plugin's bolt.
@@ -73,7 +73,7 @@ pub fn of_hit(hit: Hit) -> Option<(&'static str, &'static str)> {
         Hit::RailSettings => ("rail.settings", "settings.open"),
         Hit::Inspector(crate::inspector::Part::Field(_)) => ("inspector.field", "inspector.value"),
         Hit::Browser(h) => match h {
-            BrowserHit::Search => ("browser.search", "browser.search"),
+            BrowserHit::Search | BrowserHit::SearchClear => ("browser.search", "browser.search"),
             BrowserHit::ViewButton => ("browser.view", "browser.view.menu"),
             BrowserHit::Group(_) => ("browser.group", "browser.group.fold"),
             BrowserHit::Item(_) => ("browser.item", "browser.item.pick"),
@@ -165,7 +165,7 @@ pub fn of_hit(hit: Hit) -> Option<(&'static str, &'static str)> {
             Spot::Button(Button::Dawproject) => ("home.dawproject", "song.open_dawproject"),
             Spot::Device => ("home.no_device", "audio.no_device.menu"),
             // Typing there only filters the list.
-            Spot::Search => return None,
+            Spot::Search | Spot::SearchClear => return None,
             Spot::Row(..) => ("home.recent", "song.open_recent"),
         },
     };

@@ -211,7 +211,7 @@ pub fn general(
             );
         }
         let hot = b.hot(cell.rect);
-        b.ops.push(scene::Op::UpdateCell(cell, hot));
+        b.ops.push(scene::Op::UpdateCell(Box::new(cell), hot));
     }
     y
 }

@@ -327,7 +327,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             return Vec::new();
         };
         let layout = p.layout(g.size);
-        return layout
+        let mut out = layout
             .cells
             .iter()
             .enumerate()
@@ -336,6 +336,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                     let mut node = accesskit::Node::new(accesskit::Role::TextInput);
                     node.set_label("検索");
                     node.set_value(pick.field.value.clone());
+                    node.set_description(crate::search_box::count_info(pick.visible().len()));
                     node.set_bounds(bounds(c.rect));
                     return Some(Mark {
                         key: "search".into(),
@@ -348,7 +349,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                         edge: None,
                     });
                 }
-                // 「一致する…はありません」 as a status (UI-320).
+                // 「見つかりません」 as a status (UI-320).
                 if c.look == crate::popup::Look::Status {
                     let mut node = accesskit::Node::new(accesskit::Role::Status);
                     node.set_label(c.text.clone());
@@ -388,7 +389,29 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 }
                 None
             })
-            .collect();
+            .collect::<Vec<_>>();
+        if let Some(r) = layout
+            .cells
+            .iter()
+            .find(|c| c.is_search())
+            .and_then(|c| c.clear_rect())
+            .filter(|_| !pick.field.is_empty())
+        {
+            let mut node = accesskit::Node::new(accesskit::Role::Button);
+            node.set_label(crate::search_box::CLEAR_NAME);
+            node.set_bounds(bounds(r));
+            out.push(Mark {
+                key: "search-clear".into(),
+                children: Vec::new(),
+                node,
+                fold: None,
+                pick: None,
+                press: Some(Hit::SearchClear),
+                turn: None,
+                edge: None,
+            });
+        }
+        return out;
     }
     let p = s.project();
     let mut out = Vec::new();
@@ -482,6 +505,7 @@ pub fn marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
     out.extend(instrument_marks(s, g));
     out.extend(flow_marks(s, g));
     out.extend(audition_mark(s, g));
+    out.extend(browser_search_marks(s, g));
     out.extend(preset_marks(s, g));
     out.extend(file_marks(s, g));
     out.extend(drawer_marks(s, g));
@@ -690,7 +714,18 @@ pub fn home_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             Some(Spot::Search),
         );
         m.node.set_value(home.pick.field.value.clone());
+        m.node
+            .set_description(crate::search_box::count_info(home.pick.visible().len()));
         out.push(m);
+    }
+    if let Some(r) = l.clear {
+        out.push(mark(
+            "home-search-clear".into(),
+            accesskit::Role::Button,
+            crate::search_box::CLEAR_NAME.into(),
+            r,
+            Some(Spot::SearchClear),
+        ));
     }
     let rows = home.pick.nav();
     let mut list = mark(
@@ -826,6 +861,61 @@ pub fn drawer_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
             ));
             out.push(m);
         }
+    }
+    out
+}
+
+/// The browser's search field: a text input that says how many rows it found (the screen shows
+/// no count), and the ✖ that empties it, a Button named 「クリア」 (only while it has text).
+fn browser_search_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
+    use crate::browser::{BRow, BrowserHit};
+    if !s.browser.open {
+        return Vec::new();
+    }
+    let l = s.browser.layout(g.panel);
+    let mut out = Vec::new();
+    let mut node = accesskit::Node::new(accesskit::Role::TextInput);
+    node.set_label(crate::search_box::PLACEHOLDER);
+    node.set_bounds(bounds(l.search));
+    node.set_value(s.browser.search.value.clone());
+    if !s.browser.query().is_empty() {
+        let found = l
+            .rows
+            .iter()
+            .filter(|p| {
+                matches!(
+                    p.row,
+                    BRow::Item { .. } | BRow::Preset { .. } | BRow::File { .. }
+                )
+            })
+            .count();
+        node.set_description(crate::search_box::count_info(found));
+    }
+    out.push(Mark {
+        key: "browser-search".into(),
+        children: Vec::new(),
+        node,
+        fold: None,
+        pick: None,
+        press: Some(crate::studio::Hit::Browser(BrowserHit::Search)),
+        turn: None,
+        edge: None,
+    });
+    if !s.browser.search.is_empty() {
+        let r = crate::search_box::clear_rect(l.search, xirius_design::Space::X2.px());
+        let mut node = accesskit::Node::new(accesskit::Role::Button);
+        node.set_label(crate::search_box::CLEAR_NAME);
+        node.set_bounds(bounds(r));
+        out.push(Mark {
+            key: "browser-search-clear".into(),
+            children: Vec::new(),
+            node,
+            fold: None,
+            pick: None,
+            press: Some(crate::studio::Hit::Browser(BrowserHit::SearchClear)),
+            turn: None,
+            edge: None,
+        });
     }
     out
 }

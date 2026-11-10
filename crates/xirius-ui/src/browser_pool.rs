@@ -3,6 +3,7 @@
 
 use std::time::{Duration, Instant};
 
+use crate::browser::BrowserHit;
 use xirius_core::id::{ClipId, TrackId};
 use xirius_core::model::ClipBody;
 use xirius_design::{FontSize, Radius, Space, Weight};
@@ -149,6 +150,7 @@ impl Browser {
     /// Selecting a file of the pool: one that is there starts its audition, like on the files
     /// tab; a missing one only stops the one that played.
     pub fn select_pool(&mut self, key: &str, missing: bool) {
+        self.key_row = None;
         self.pool_heading = None;
         if missing {
             self.selected_file = Some(key.to_string());
@@ -540,6 +542,173 @@ impl crate::studio::Studio {
         }
     }
 
+    /// The keys between the search field and the list (the track browser and the files tab):
+    /// ↓ in the field goes to the first row and Enter picks it; in the list ↑↓ and Home/End
+    /// move, → opens and ← closes or goes to the parent, ↑ on the first row returns to the
+    /// field. The row the keys are on shows a focus ring.
+    pub(crate) fn browser_list_key(
+        &mut self,
+        g: &crate::studio::Geometry,
+        key: &str,
+        mods: crate::tools::Mods,
+    ) -> bool {
+        let track = self.browser.is_track_browser();
+        let files = self.browser.tab == RailTab::Files;
+        if !(self.browser.open && (track || files))
+            || !self.input_map.browser_focus
+            || self.popup.is_some()
+            || mods.ctrl
+            || mods.alt
+            || mods.shift
+        {
+            return false;
+        }
+        let l = self.browser.layout(g.panel);
+        let stops: Vec<usize> = l
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| {
+                matches!(
+                    p.row,
+                    BRow::Group { .. }
+                        | BRow::Item { .. }
+                        | BRow::Preset { .. }
+                        | BRow::Pool { .. }
+                        | BRow::File { .. }
+                        | BRow::Dir { .. }
+                )
+            })
+            .map(|(i, _)| i)
+            .collect();
+        if self.browser.typing {
+            return match key {
+                "down" if !stops.is_empty() => {
+                    self.browser.typing = false;
+                    self.stop_at(g, stops[0]);
+                    true
+                }
+                "enter" if !self.browser.query().is_empty() => {
+                    self.browser.typing = false;
+                    if let Some(&i) = stops
+                        .iter()
+                        .find(|&&i| !matches!(l.rows[i].row, BRow::Group { .. } | BRow::Dir { .. }))
+                    {
+                        self.stop_at(g, i);
+                    }
+                    true
+                }
+                _ => false,
+            };
+        }
+        let selected = |row: &BRow| match row {
+            BRow::Item { selected, .. }
+            | BRow::Preset { selected, .. }
+            | BRow::File { selected, .. }
+            | BRow::Pool { selected, .. } => *selected,
+            _ => false,
+        };
+        let at_row = self
+            .browser
+            .key_row
+            .filter(|i| stops.contains(i))
+            .or_else(|| stops.iter().copied().find(|&i| selected(&l.rows[i].row)));
+        let at = at_row.and_then(|i| stops.iter().position(|&j| j == i));
+        match key {
+            "up" | "down" | "home" | "end" => {
+                let Some(last) = stops.len().checked_sub(1) else {
+                    return false;
+                };
+                if key == "up" && at == Some(0) {
+                    self.browser.typing = true;
+                    self.browser.key_row = None;
+                    return true;
+                }
+                let next = match (key, at) {
+                    ("home", _) => 0,
+                    ("end", _) => last,
+                    ("down", None) => 0,
+                    ("up", None) => last,
+                    ("down", Some(i)) => (i + 1).min(last),
+                    (_, Some(i)) => i.saturating_sub(1),
+                    _ => return false,
+                };
+                self.stop_at(g, stops[next]);
+                true
+            }
+            "left" | "right" if track => {
+                let Some(i) = at_row else {
+                    return false;
+                };
+                let tree = self.browser.track_row(i);
+                let (branch, open) = match (&tree, &l.rows[i].row) {
+                    (Some(r), _) => (r.branch, r.open),
+                    (None, BRow::Group { open, .. }) => (true, *open),
+                    (None, BRow::Item { presets, .. }) => {
+                        (presets.is_some(), presets.unwrap_or(false))
+                    }
+                    _ => (false, false),
+                };
+                if branch && open == (key == "left") {
+                    let hit = match &l.rows[i].row {
+                        BRow::Group { .. } => BrowserHit::Group(i),
+                        _ => BrowserHit::Disclose(i),
+                    };
+                    self.browser.press(&l, hit);
+                    self.browser.key_row = Some(i);
+                    let l = self.browser.layout(g.panel);
+                    self.browser.clamp_scroll(&l);
+                } else if key == "left" {
+                    let depth = |j: usize| match (&self.browser.track_row(j), &l.rows[j].row) {
+                        (Some(r), _) => r.depth,
+                        (None, BRow::Group { .. }) => 0,
+                        (None, BRow::Item { .. }) => 1,
+                        _ => 2,
+                    };
+                    let mine = depth(i);
+                    if let Some(parent) = (0..i).rev().find(|&j| depth(j) < mine) {
+                        self.stop_at(g, parent);
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Puts the keys on the row `i`: it is chosen (a file is heard, a device selected) and the
+    /// list scrolls to it; a heading only takes the ring.
+    fn stop_at(&mut self, g: &crate::studio::Geometry, i: usize) {
+        let l = self.browser.layout(g.panel);
+        let Some(p) = l.rows.get(i) else {
+            return;
+        };
+        match &p.row {
+            BRow::Group { .. } | BRow::Dir { .. } | BRow::Pool { .. } | BRow::File { .. }
+                if !self.browser.is_track_browser() =>
+            {
+                self.pool_stop(g, i);
+            }
+            BRow::Item { .. } => {
+                self.browser.press(&l, BrowserHit::Item(i));
+            }
+            BRow::Preset { .. } => {
+                self.browser.press(&l, BrowserHit::Preset(i));
+            }
+            _ => {}
+        }
+        self.browser.key_row = Some(i);
+        let l = self.browser.layout(g.panel);
+        if let Some(p) = l.rows.get(i) {
+            if p.y < self.browser.scroll {
+                self.browser.scroll = p.y;
+            } else if p.y + p.h > self.browser.scroll + l.list.h {
+                self.browser.scroll = p.y + p.h - l.list.h;
+            }
+        }
+        self.browser.clamp_scroll(&l);
+    }
+
     /// Shift+F10 and the menu key on the tab: the selected file's menu, at the middle of its row.
     pub(crate) fn pool_key_menu(&mut self, g: &crate::studio::Geometry) -> bool {
         let l = self.browser.layout(g.panel);
@@ -579,6 +748,7 @@ impl crate::studio::Studio {
             }
             _ => return,
         }
+        self.browser.key_row = Some(i);
         self.follow_audition();
         let l = self.browser.layout(g.panel);
         let Some(p) = l

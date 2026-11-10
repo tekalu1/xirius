@@ -2,7 +2,7 @@
 //! Add input owners here and in the interaction coverage test when adding a field.
 use crate::{settings::field::Field, studio::Studio};
 use std::ops::Range;
-use xirius_design::{FontSize, Layout, Space, Weight};
+use xirius_design::{FontSize, Space, Weight};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ImeTarget {
@@ -85,7 +85,7 @@ impl Studio {
 
     /// The offset in the focused field's text nearest to the point `x`, when the press at
     /// (`x`, `y`) is on that field.
-    fn text_index(
+    pub(crate) fn text_index(
         &self,
         g: &crate::studio::Geometry,
         x: f32,
@@ -264,9 +264,7 @@ impl Studio {
                     Some(p) => p.layout(g.size).cells.first()?.text_room(),
                     None if home.is_some() => {
                         let h = home?;
-                        let pad = Space::X2.px();
-                        let tx = h.x + pad + Layout::ICON_SIZE + Space::X1.px();
-                        crate::studio::Rect::new(tx, h.y, (h.right() - pad - tx).max(0.0), h.h)
+                        crate::search_box::text_rect(h, Space::X2.px())
                     }
                     None => self
                         .settings

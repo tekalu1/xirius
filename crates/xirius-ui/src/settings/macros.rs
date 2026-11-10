@@ -183,12 +183,23 @@ fn input(b: &mut B, ui: &SettingsUi, r: Rect, id: FieldId, text: &str, placehold
     let c = b.c;
     let typing = ui.field.as_ref().filter(|f| f.id == id);
     if typing.is_some() {
-        b.ring(r, c.ring, c.paper, Radius::S, 1.5);
+        b.ring(r, c.ring, c.paper, Radius::S, crate::search_box::RING);
     } else {
         b.round(r, c.paper, Radius::S);
     }
+    let search = id == FieldId::MacroPick;
     b.item(r, Do::Field(id), None);
-    let tr = Rect::new(r.x + 8.0, r.y, r.w - 16.0, r.h);
+    // The command search is a search field: the magnifier at the left and the ✖ at the right
+    // end (its place kept), as the shared part (`search_box`) draws them.
+    let mut tr = Rect::new(r.x + 8.0, r.y, r.w - 16.0, r.h);
+    if search {
+        b.icon("search", parts::small_icon_at(r.x + 8.0, r), c.ink);
+        tr = crate::search_box::text_rect(r, 8.0);
+        if typing.is_some_and(|f| !f.is_empty()) {
+            let cr = crate::search_box::clear_rect(r, 8.0);
+            parts::icon_button(b, cr, "close", Do::ClearQuery, Some("クリア"));
+        }
+    }
     b.push_mask(tr);
     match typing {
         Some(f) => {
@@ -198,7 +209,7 @@ fn input(b: &mut B, ui: &SettingsUi, r: Rect, id: FieldId, text: &str, placehold
                     placeholder,
                     FontSize::Small,
                     Weight::Regular,
-                    c.ink,
+                    c.ink_on_toggle,
                     tr,
                     Align::Left,
                 );
@@ -224,7 +235,7 @@ fn input(b: &mut B, ui: &SettingsUi, r: Rect, id: FieldId, text: &str, placehold
                 placeholder,
                 FontSize::Small,
                 Weight::Regular,
-                c.ink,
+                c.ink_on_toggle,
                 tr,
                 Align::Left,
             );

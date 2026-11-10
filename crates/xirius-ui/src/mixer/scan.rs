@@ -1094,7 +1094,7 @@ impl Studio {
             "effects",
             |to| Action::Pick(to.to_string()),
         )
-        .named("一致する項目はありません");
+        .named("見つかりません");
         list.footer = self.scan_footer();
         list
     }

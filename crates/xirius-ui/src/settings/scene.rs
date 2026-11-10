@@ -15,7 +15,7 @@ use crate::studio::Rect;
 /// One thing to paint.
 #[derive(Clone)]
 pub enum Op {
-    UpdateCell(crate::popup::Cell, bool),
+    UpdateCell(Box<crate::popup::Cell>, bool),
     Fill(Rect, Hsla),
     Round(Rect, Hsla, Radius),
     Text(Text),

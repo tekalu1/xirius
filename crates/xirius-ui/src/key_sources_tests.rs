@@ -125,7 +125,7 @@ fn the_list_has_the_tracks_then_the_buses_without_its_own_channel() {
             .iter()
             .any(|r| r.key.unwrap().track == drums)
     );
-    assert_eq!(list.empty, "一致するチャンネルはありません");
+    assert_eq!(list.empty, "見つかりません");
 }
 
 #[test]

@@ -189,7 +189,7 @@ impl Studio {
             "input",
             |to| crate::popup::Action::Input(to.to_string()),
         )
-        .named("一致する入力はありません");
+        .named("見つかりません");
         if let Some(pick) = self.popup.as_mut().and_then(|p| p.pick.as_mut()) {
             pick.refill(list);
         }

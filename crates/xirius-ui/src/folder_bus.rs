@@ -91,7 +91,7 @@ pub fn pick(choices: Vec<Choice>, current: &str) -> crate::pick_list::PickList {
             ],
         ),
     ];
-    list.named("一致するバスはありません")
+    list.named("見つかりません")
 }
 
 /// The button on a folder's row. `top` is the row's top on screen.

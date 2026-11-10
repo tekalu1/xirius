@@ -280,6 +280,9 @@ impl Studio {
             if self.drag_space(key, true) {
                 return true;
             }
+            if self.browser_list_key(g, key, mods) {
+                return true;
+            }
             if self.pool_key(g, key, mods) {
                 return true;
             }

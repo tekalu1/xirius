@@ -1264,3 +1264,51 @@ fn every_command_is_classified_as_the_songs_or_the_windows() {
     }
     assert!(!is_window_command(""));
 }
+
+#[test]
+fn the_search_clear_shows_with_text_empties_it_and_keeps_the_field() {
+    let (mut s, g, _tmp) = kept(&["apple", "banana"]);
+    let l = s.home_layout(&g).unwrap();
+    assert!(l.clear.is_none(), "no ✖ without text");
+    let before = l.search.unwrap();
+    assert_eq!(before.h, crate::search_box::HEIGHT);
+    s.pick_text(None, "ban", false);
+    let l = s.home_layout(&g).unwrap();
+    assert_eq!(l.search.unwrap(), before, "the field does not move");
+    let c = l.clear.expect("the ✖");
+    assert_eq!(
+        l.at(c.x + c.w / 2.0, c.y + c.h / 2.0),
+        Some(Spot::SearchClear)
+    );
+    let marks = crate::a11y::marks(&s, &g);
+    let m = marks.iter().find(|m| m.key == "home-search-clear").unwrap();
+    assert_eq!(m.node.label(), Some(crate::search_box::CLEAR_NAME));
+    let field = marks.iter().find(|m| m.key == "home-search").unwrap();
+    assert_eq!(field.node.description(), Some("1 件"));
+    assert!(s.press(&g, Hit::Home(Spot::SearchClear)));
+    assert_eq!(home(&s).pick.field.value, "");
+    assert_eq!(home(&s).focus, Focus::Search);
+    assert!(s.home_layout(&g).unwrap().clear.is_none());
+}
+
+#[test]
+fn down_from_the_search_goes_to_the_first_row_and_up_on_it_returns() {
+    let (mut s, g, _tmp) = kept(&["a", "b"]);
+    s.home.as_mut().unwrap().focus = Focus::Search;
+    assert!(s.home_key(&g, "down", NONE));
+    assert_eq!((home(&s).focus, home(&s).pick.selected), (Focus::List, 0));
+    assert!(s.home_key(&g, "down", NONE));
+    assert_eq!(home(&s).pick.selected, 1);
+    assert!(s.home_key(&g, "up", NONE));
+    assert!(s.home_key(&g, "up", NONE));
+    assert_eq!(home(&s).focus, Focus::Search, "up on the first row returns");
+}
+
+#[test]
+fn nothing_found_on_the_start_screen_says_the_one_phrase() {
+    let (mut s, g, _tmp) = kept(&["a"]);
+    s.pick_text(None, "qqqq", false);
+    let marks = crate::a11y::marks(&s, &g);
+    let field = marks.iter().find(|m| m.key == "home-search").unwrap();
+    assert_eq!(field.node.description(), Some("見つかりません"));
+}

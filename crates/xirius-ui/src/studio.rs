@@ -157,6 +157,8 @@ pub enum Hit {
     Item(usize),
     /// A part of the open pop-over that does nothing.
     PopupBody,
+    /// The ✖ of the open pop-over's search field.
+    SearchClear,
     /// An entry of the empty song's screen (UI-074).
     Start(crate::start::Entry),
     /// 「オーディオデバイスなし」 under the entries (UI-350).
@@ -1238,7 +1240,7 @@ impl Studio {
             Some(mid(Rect::new(g.column.x + r.x, top + r.y, r.w, r.h)))
         };
         let at = match hit {
-            Hit::None | Hit::PopupBody => None,
+            Hit::None | Hit::PopupBody | Hit::SearchClear => None,
             Hit::MidiCancel => self.midi_pill(g).map(|(_, r)| mid(r)),
             Hit::Toast(part) => crate::toast::layout(self, g).and_then(|t| match part {
                 crate::toast::ToastPart::Body => Some(mid(t.text)),
@@ -1353,6 +1355,9 @@ impl Studio {
         if let Some(p) = &self.popup {
             let l = p.layout(g.size);
             if l.contains(x, y) {
+                if l.clear_at(x, y) {
+                    return Hit::SearchClear;
+                }
                 return l.item_at(x, y).map_or(Hit::PopupBody, Hit::Item);
             }
         }
@@ -1564,19 +1569,28 @@ impl Studio {
         }
         self.error = None;
         self.arm_cue = None;
-        if !matches!(hit, Hit::Browser(BrowserHit::Search)) {
+        if !matches!(
+            hit,
+            Hit::Browser(BrowserHit::Search | BrowserHit::SearchClear)
+        ) {
             self.browser.typing = false;
         }
         if !matches!(hit, Hit::Rec(_)) {
             self.rec_panel.focus = None;
         }
-        if self.popup.is_some() && !matches!(hit, Hit::Item(_) | Hit::PopupBody | Hit::Bar(_)) {
+        if self.popup.is_some()
+            && !matches!(
+                hit,
+                Hit::Item(_) | Hit::PopupBody | Hit::SearchClear | Hit::Bar(_)
+            )
+        {
             self.popup = None;
             return true;
         }
         match hit {
             Hit::None => false,
             Hit::PopupBody => false,
+            Hit::SearchClear => self.clear_popup_search(g),
             Hit::Toast(part) => {
                 match part {
                     crate::toast::ToastPart::Close => {

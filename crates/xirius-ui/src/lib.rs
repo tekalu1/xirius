@@ -232,6 +232,9 @@ pub mod plugin_crash_shots;
 pub mod plugin_down_shots;
 pub mod plugin_fixture_shots;
 pub mod plugin_keys;
+pub mod search_box;
+#[cfg(test)]
+mod search_field_tests;
 #[cfg(test)]
 mod text_field_tests;
 // Windows-only: these scenarios send Win32 messages to native plugin editor windows.

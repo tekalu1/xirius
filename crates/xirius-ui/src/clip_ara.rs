@@ -44,7 +44,7 @@ pub const NO_HOST: &str = "音声の装置が開いていないため、プラ�
 const NOT_ANALYSED: &str = "解析できませんでした";
 // design-lint: allow(guidance) 開けない理由のエラー。いつ開けるかを言わないと次が分からない
 const NOT_READY: &str = "プラグインの準備ができていません。解析が始まってから開いてください";
-const NO_MATCH: &str = "一致するプラグインはありません";
+const NO_MATCH: &str = "見つかりません";
 const NONE_FOUND: &str = "ARA に対応したプラグインが見つかりません";
 
 /// What the screen keeps of ARA between frames.

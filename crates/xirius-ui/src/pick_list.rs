@@ -10,7 +10,7 @@
 //!   all fell out hides.
 //! - ↑↓ moves the cursor, Enter picks its row; Esc clears the words first
 //!   and shuts the list on a second press.
-//! - Nothing matches: the rows hide and 「一致する…はありません」 shows
+//! - Nothing matches: the rows hide and 「見つかりません」 shows
 //!   (a UIA status, [`crate::a11y`]).
 //! - The list shrinks to [`MAX_H`] and the screen's edge; only the rows
 //!   under the search box scroll.
@@ -24,7 +24,7 @@ use xirius_design::{FontSize, Layout, Space};
 /// The tallest a list menu grows: it also shrinks to the screen's edge.
 pub const MAX_H: f32 = 480.0;
 /// What a list with no matches says, unless it names its own.
-pub const NO_MATCH: &str = "一致する項目はありません";
+pub const NO_MATCH: &str = "見つかりません";
 /// The heading a group shows: its height.
 const HEAD_H: f32 = 22.0;
 
@@ -167,7 +167,7 @@ pub struct PickList {
     pub groups: Vec<PickGroup>,
     /// Under the list; the query never filters these (プリセットの保存 ほか).
     pub footer: Vec<PickRow>,
-    /// What no matches says (「一致する…はありません」), read as a UIA status.
+    /// What no matches says (「見つかりません」), read as a UIA status.
     pub empty: String,
     /// The row the kind calls current when `on` is not enough (kept over
     /// `refill`: the automation target being replaced).
@@ -804,6 +804,9 @@ pub fn cells(pick: &PickList, w: f32, size: (f32, f32)) -> Vec<Cell> {
             if !row.enabled {
                 cell = disabled(cell, row);
             }
+            if typed && cell.look == Look::Row {
+                cell.query = query.clone();
+            }
             out.push(cell.foot());
         }
     }
@@ -908,7 +911,7 @@ impl Studio {
                     PickList::of_choices(crate::mixer::send_choices(&p, t), "", "cable", |to| {
                         Action::Pick(to.to_string())
                     })
-                    .named("一致するバスはありません");
+                    .named("見つかりません");
                 // Under the buses, the plug-ins on other strips that take a key (MIX-048): a
                 // pick sends this strip's sound to one, or takes the send away again.
                 let keys = crate::mixer::keys::key_rows(&p, t);
@@ -952,7 +955,7 @@ impl Studio {
                             Action::Output(to.to_string())
                         }
                     })
-                    .named("一致する行き先はありません")
+                    .named("見つかりません")
                 })
             }
             PopupKind::AutomationTargets(t, replace) => {
@@ -1141,6 +1144,33 @@ impl Studio {
         true
     }
 
+    /// The ✖ of a pop-over's search field: it empties the words and the field keeps the keys.
+    pub(crate) fn clear_popup_search(&mut self, g: &Geometry) -> bool {
+        if let Some(pick) = self.popup.as_mut().and_then(|p| p.pick.as_mut()) {
+            pick.key("escape", None, g.size);
+            return true;
+        }
+        if self.ctx.as_ref().is_some_and(|s| s.ask.is_none())
+            && let Some(search) = self.ctx.as_mut().and_then(|s| s.search.as_mut())
+        {
+            search.field = Field::new(FieldId::Search, String::new());
+            self.filter_context();
+            self.refresh_popup();
+            return true;
+        }
+        if let Some(p) = self.popup.as_mut()
+            && let Some(v) = p
+                .about
+                .as_mut()
+                .filter(|v| v.open == Some(crate::about::Item::Rust))
+        {
+            v.query.clear();
+            p.offset = 0;
+            return true;
+        }
+        true
+    }
+
     /// The list whose search box has the keyboard: a list menu's, or the
     /// settings' open list (UI-338).
     pub(crate) fn pick_typing(&self) -> Option<&PickList> {
@@ -1245,7 +1275,7 @@ mod tests {
         let status = l2
             .cells
             .iter()
-            .any(|c| c.look == Look::Status && c.text.contains("はありません"));
+            .any(|c| c.look == Look::Status && c.text == NO_MATCH);
         if status && empty && !pick.visible().is_empty() {
             n += 1;
         }

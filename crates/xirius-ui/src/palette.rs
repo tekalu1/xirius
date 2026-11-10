@@ -1200,6 +1200,17 @@ impl Studio {
             self.palette = None;
             return true;
         }
+        // The ✖ of the search row: it empties the words and the field keeps the keys.
+        if p.form.is_none()
+            && crate::search_box::clear_hit(l.search, Space::X4.px(), &p.field, x, y)
+        {
+            if let Some(p) = &mut self.palette {
+                p.edit(|f| {
+                    f.clear();
+                });
+            }
+            return false;
+        }
         let hit = l
             .rows
             .iter()
@@ -1425,9 +1436,7 @@ pub fn paint(pen: &mut Pen, palette: &Palette, g: &Geometry) {
 
 /// Where the typed text goes in the search row: after the magnifier.
 pub fn field_of(search: Rect) -> Rect {
-    let pad = Space::X4.px();
-    let x = search.x + pad + Layout::ICON_SIZE + Space::X2.px();
-    Rect::new(x, search.y, search.right() - pad - x, search.h)
+    crate::search_box::text_rect(search, Space::X4.px())
 }
 
 fn paint_search(pen: &mut Pen, palette: &Palette, r: Rect) {
@@ -1484,11 +1493,25 @@ fn paint_search(pen: &mut Pen, palette: &Palette, r: Rect) {
                 weight: Weight::Regular,
                 ink: c.ink_strong,
                 placeholder: form_field.map(|f| f.label.as_str()).unwrap_or("操作を探す"),
-                placeholder_ink: c.ink,
+                placeholder_ink: c.ink_on_toggle,
                 focused: true,
             },
         );
     });
+    if palette.form.is_none() && !palette.field.is_empty() {
+        let x = crate::search_box::clear_rect(r, pad);
+        let mark = Layout::ICON_SIZE;
+        pen.icon(
+            "close",
+            Rect::new(
+                x.x + (x.w - mark) / 2.0,
+                x.y + (x.h - mark) / 2.0,
+                mark,
+                mark,
+            ),
+            c.ink,
+        );
+    }
 }
 
 /// Where a row's parts go.

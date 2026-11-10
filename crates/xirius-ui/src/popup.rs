@@ -513,7 +513,7 @@ pub enum Look {
     Clean(crate::cleanup_dialog::CleanLook),
     /// The scroll thumb of a pick list with more rows than show (UI-297).
     Thumb,
-    /// 「一致する…はありません」: a status a screen reader reads (UI-320).
+    /// 「見つかりません」: a status a screen reader reads (UI-320).
     Status,
 }
 
@@ -544,6 +544,8 @@ pub struct Cell {
     pub spoken: String,
     /// The field the cell draws and edits, when it is one.
     pub field: Option<Box<crate::settings::field::Field>>,
+    /// The words typed in the list's search: the part of the name they match is bold.
+    pub query: String,
 }
 
 impl Cell {
@@ -564,6 +566,7 @@ impl Cell {
             tip: String::new(),
             spoken: String::new(),
             field: None,
+            query: String::new(),
         }
     }
 
@@ -579,11 +582,23 @@ impl Cell {
         self
     }
 
+    /// Whether the cell is a search field (the shared part's: ✖, ring).
+    pub(crate) fn is_search(&self) -> bool {
+        self.look == Look::Input && self.icon == Some("search")
+    }
+
+    /// The ✖ of a search field that has text.
+    pub(crate) fn clear_rect(&self) -> Option<Rect> {
+        (self.is_search() && !self.text.is_empty())
+            .then(|| crate::search_box::clear_rect(self.rect, Space::X2.px()))
+    }
+
     /// Where a field's text goes in the cell (after its icon, or inside the export name's box).
     pub(crate) fn text_room(&self) -> Rect {
         let r = self.rect;
         let pad = Space::X2.px();
         match self.look {
+            Look::Input if self.is_search() => crate::search_box::text_rect(r, pad),
             Look::Xp(_) => Rect::new(r.x + 10.0, r.y, (r.w - 20.0).max(0.0), r.h),
             _ => {
                 let tx = r.x + pad + Layout::ICON_SIZE + pad;
@@ -688,6 +703,13 @@ impl PopupLayout {
         }
     }
     /// The cell under a point that a press can use, or that has a tip to show.
+    /// A press on a search field's ✖.
+    pub fn clear_at(&self, x: f32, y: f32) -> bool {
+        self.cells
+            .iter()
+            .any(|c| c.clear_rect().is_some_and(|r| r.contains(x, y)))
+    }
+
     pub fn item_at(&self, x: f32, y: f32) -> Option<usize> {
         let (start, end) = if self.panels.is_empty() {
             (0, self.cells.len())
@@ -1674,13 +1696,14 @@ pub(crate) fn paint_cell(pen: &mut Pen, cell: &Cell, hot: bool) {
             let room = Rect::new(x, r.y, end - x, r.h);
             let name = fit(pen, &cell.text, room.w);
             pen.mask(room, |pen| {
-                pen.text(
+                crate::search_box::paint_matched(
+                    pen,
                     &name,
+                    &cell.query,
                     FontSize::Small,
                     Weight::Medium,
                     strong,
                     Rect::new(x, r.y, r.w, r.h),
-                    Align::Left,
                 );
             });
             if cell.icon == Some("chevron-right") {
@@ -1997,6 +2020,20 @@ pub(crate) fn paint_cell(pen: &mut Pen, cell: &Cell, hot: bool) {
                 r,
                 Align::Center,
             );
+        }
+        Look::Input if cell.is_search() => {
+            let temp;
+            let field = match &cell.field {
+                Some(f) => f,
+                None => {
+                    temp = crate::settings::field::Field::new(
+                        crate::settings::FieldId::Search,
+                        cell.text.clone(),
+                    );
+                    &temp
+                }
+            };
+            crate::search_box::paint(pen, r, field, &crate::search_box::Spec::new(cell.on));
         }
         Look::Input => {
             pen.round(r, c.field, Radius::S);

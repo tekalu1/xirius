@@ -303,7 +303,7 @@ fn the_insert_list_starts_with_the_splitter_and_its_keys_work() {
     assert!(s.fx_typed("q", Some("qqqqqq")));
     let list = s.popup.as_ref().unwrap().pick.as_ref().unwrap();
     assert!(list.visible().is_empty());
-    assert_eq!(list.empty, "一致する項目はありません");
+    assert_eq!(list.empty, "見つかりません");
     // Esc: the words go, then the list
     assert!(s.fx_typed("escape", None));
     assert!(s.popup.is_some());

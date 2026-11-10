@@ -127,7 +127,7 @@ impl Studio {
                 })
             })
             .collect();
-        Some(PickList::of(rows).named("一致する割り当て先はありません"))
+        Some(PickList::of(rows).named("見つかりません"))
     }
 
     /// A row of the list: the knob takes the target, or lets its own go.

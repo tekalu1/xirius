@@ -19,7 +19,6 @@ use xirius_session::recent::RecentSong;
 use crate::draw::{Align, Pen};
 use crate::pick_list::{PickKey, PickList, PickRow};
 use crate::popup::{Action, Cell, Look};
-use crate::settings::field::Look as FieldLook;
 use crate::studio::{FileRequest, Geometry, Hit, Rect, Studio};
 use crate::tools::Mods;
 
@@ -37,7 +36,7 @@ const BUTTON_PAD: f32 = 10.0;
 /// The heading over the list, with the search at its right.
 const HEAD_H: f32 = 28.0;
 const SEARCH_W: f32 = 180.0;
-const SEARCH_H: f32 = 26.0;
+const SEARCH_H: f32 = crate::search_box::HEIGHT;
 /// The buttons over the list in a narrow window.
 const NARROW_GAP: f32 = 20.0;
 /// The sample's tag.
@@ -138,6 +137,8 @@ pub enum Spot {
     /// 「オーディオデバイスなし」: its menu.
     Device,
     Search,
+    /// The ✖ in the search (only while it has text).
+    SearchClear,
     /// A row of the list: its place among the rows the search lets through, and its key
     /// (what it opens). A press finds its row again by the key, so a list built again
     /// between the pointer's read and the press does not move it to another song.
@@ -259,6 +260,8 @@ pub struct HomeLayout {
     pub cells: Vec<Cell>,
     /// The search box at the heading's right (with songs to search).
     pub search: Option<Rect>,
+    /// The ✖'s box in the search, while it has text.
+    pub clear: Option<Rect>,
     /// Each row that shows, by its place among the rows the search lets through.
     pub rows: Vec<(usize, Rect)>,
     /// The key of each of `rows`, in the same order.
@@ -377,6 +380,9 @@ impl HomeLayout {
             .iter()
             .map(|(i, _)| row_key(shown.get(*i).and_then(|r| r.act.as_ref())))
             .collect();
+        let clear = search
+            .filter(|_| !home.pick.field.is_empty())
+            .map(|r| crate::search_box::clear_rect(r, Space::X2.px()));
         HomeLayout {
             buttons,
             keys: !narrow,
@@ -384,6 +390,7 @@ impl HomeLayout {
             heading,
             cells,
             search,
+            clear,
             rows,
             row_keys,
             list_size,
@@ -411,6 +418,7 @@ impl HomeLayout {
             Spot::Button(b) => Some(self.button(b)),
             Spot::Device => self.no_device,
             Spot::Search => self.search,
+            Spot::SearchClear => self.clear,
             Spot::Row(i, _) => self.rows.iter().find(|(k, _)| *k == i).map(|(_, r)| *r),
         }
     }
@@ -420,6 +428,7 @@ impl HomeLayout {
             .into_iter()
             .map(Spot::Button)
             .chain(self.no_device.map(|_| Spot::Device))
+            .chain(self.clear.map(|_| Spot::SearchClear))
             .chain(self.search.map(|_| Spot::Search))
             .chain(
                 self.rows
@@ -570,6 +579,16 @@ impl Studio {
                     home.touched = true;
                 }
             }
+            // Emptied, and the search keeps the keys.
+            Spot::SearchClear => {
+                if let Some(home) = self.home.as_mut() {
+                    home.pick.field.clear();
+                    home.pick.selected = 0;
+                    home.pick.offset = 0;
+                    home.focus = Focus::Search;
+                    home.touched = true;
+                }
+            }
             Spot::Row(_, key) => {
                 let now = Instant::now();
                 let Some(home) = self.home.as_mut() else {
@@ -684,9 +703,22 @@ impl Studio {
                     home.focus = Focus::Button(Button::ALL[j]);
                     home.touched = true;
                 }
-                Focus::Search | Focus::List => {
-                    home.pick.key(key, None, size);
-                    home.focus = Focus::List;
+                // From the search, ↓ goes to the first row; ↑ on the first row returns to it.
+                Focus::Search => {
+                    if key == "down" {
+                        home.pick.settle(size);
+                        home.pick.selected = 0;
+                        crate::pick_list::keep_on_screen(&mut home.pick, size);
+                        home.focus = Focus::List;
+                    }
+                    home.touched = true;
+                }
+                Focus::List => {
+                    if key == "up" && home.pick.selected == 0 {
+                        home.focus = Focus::Search;
+                    } else {
+                        home.pick.key(key, None, size);
+                    }
                     home.touched = true;
                 }
             },
@@ -792,11 +824,6 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
             paint_tag(pen, *r, crate::song::SAMPLE_NAME);
         }
     }
-    if let Some(r) = l.search
-        && home.focus == Focus::Search
-    {
-        pen.outline(r, c.ring, Radius::Clip, 2.0);
-    }
     if home.focus == Focus::List
         && let Some((_, r)) = l.rows.iter().find(|(i, _)| *i == home.pick.selected)
     {
@@ -807,30 +834,9 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
 /// The search at the heading's right: what is typed, or 「検索」, and the caret while it has
 /// the keys.
 fn paint_search(pen: &mut Pen, home: &Home, r: Rect) {
-    let c = pen.c;
-    pen.round(r, c.surface_2, Radius::Clip);
-    let pad = Space::X2.px();
-    let icon = Rect::new(
-        r.x + pad,
-        r.y + (r.h - L::ICON_SIZE) / 2.0,
-        L::ICON_SIZE,
-        L::ICON_SIZE,
-    );
-    pen.icon("search", icon, c.ink);
-    let tx = icon.right() + Space::X1.px();
-    let room = Rect::new(tx, r.y, (r.right() - pad - tx).max(0.0), r.h);
-    home.pick.field.paint(
-        pen,
-        room,
-        FieldLook {
-            size: FontSize::Small,
-            weight: Weight::Regular,
-            ink: c.ink_strong,
-            placeholder: SEARCH,
-            placeholder_ink: c.ink_on_toggle,
-            focused: home.focus == Focus::Search,
-        },
-    );
+    let mut spec = crate::search_box::Spec::new(home.focus == Focus::Search);
+    spec.placeholder = SEARCH;
+    crate::search_box::paint(pen, r, &home.pick.field, &spec);
 }
 
 /// A button of the left column: 新規 filled, the others on the paper until the pointer is

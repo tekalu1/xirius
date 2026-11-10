@@ -22,7 +22,7 @@ use xirius_design::{FontSize, Layout, Radius, Space, Weight};
 
 use crate::draw::{Align, Pen};
 use crate::settings::FieldId;
-use crate::settings::field::{Field, Look};
+use crate::settings::field::Field;
 use crate::studio::Rect;
 
 // ------------------------------------------------------------------ the rail
@@ -397,6 +397,9 @@ pub struct Browser {
     pub selected_preset: Option<(&'static str, String)>,
     /// The selected row is brought into the list's view at the next look (「ブラウザーに表示」).
     pub(crate) reveal: bool,
+    /// The row (an index into the layout's rows) the keys moved to: it shows a focus ring until
+    /// the mouse or the field takes over again.
+    pub(crate) key_row: Option<usize>,
     pub selected_file: Option<String>,
     pub playing: Option<String>,
     pub scroll: f32,
@@ -446,6 +449,8 @@ impl Default for Browser {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BrowserHit {
     Search,
+    /// The ✖ at the search box's right end (only while it has text).
+    SearchClear,
     /// The button that opens the view choice.
     ViewButton,
     /// Index into [`BrowserLayout::rows`].
@@ -712,6 +717,7 @@ impl Browser {
             open_devices: HashSet::new(),
             selected_preset: None,
             reveal: false,
+            key_row: None,
             selected_file: None,
             playing: None,
             scroll: 0.0,
@@ -782,9 +788,13 @@ impl Browser {
             self.open = false;
             self.typing = false;
         } else {
+            // Switching between the open tabs keeps what was typed in the search; a
+            // browser that was shut starts empty.
+            if !self.open {
+                self.search.clear();
+            }
             self.open = true;
             self.tab = tab;
-            self.search.clear();
             self.typing = false;
             self.scroll = 0.0;
         }
@@ -1362,6 +1372,9 @@ impl Browser {
             return None;
         }
         if l.search.contains(x, y) {
+            if crate::search_box::clear_hit(l.search, Space::X2.px(), &self.search, x, y) {
+                return Some(BrowserHit::SearchClear);
+            }
             return Some(BrowserHit::Search);
         }
         if l.view.is_some_and(|r| r.contains(x, y)) {
@@ -1552,6 +1565,9 @@ impl Browser {
         };
         let at = match hit {
             BrowserHit::Search => Some(mid(l.search)),
+            BrowserHit::SearchClear => {
+                Some(mid(crate::search_box::clear_rect(l.search, Space::X2.px())))
+            }
             BrowserHit::ViewButton => l.view.map(mid),
             BrowserHit::PoolMenu => l.more.map(mid),
             BrowserHit::Pool(i) => row(i).map(|r| (r.x + r.w / 3.0, r.y + r.h / 2.0)),
@@ -1602,6 +1618,7 @@ impl Browser {
             || matches!(
                 hit,
                 BrowserHit::Search
+                    | BrowserHit::SearchClear
                     | BrowserHit::ViewButton
                     | BrowserHit::PoolMenu
                     | BrowserHit::Loc(_)
@@ -1616,10 +1633,16 @@ impl Browser {
 
     /// Applies a press. Returns what the screen has to do besides redrawing.
     pub fn press(&mut self, l: &BrowserLayout, hit: BrowserHit) -> BrowserEffect {
-        self.typing = hit == BrowserHit::Search;
+        self.typing = matches!(hit, BrowserHit::Search | BrowserHit::SearchClear);
+        self.key_row = None;
         let row = |i: usize| l.rows.get(i).map(|p| p.row.clone());
         match hit {
             BrowserHit::Search => {}
+            // Emptied, and the field keeps the keys.
+            BrowserHit::SearchClear => {
+                self.search.clear();
+                self.scroll = 0.0;
+            }
             BrowserHit::ViewButton => return BrowserEffect::ChooseView,
             BrowserHit::Group(i) => {
                 if let Some(BRow::Group { key, .. }) = row(i) {
@@ -1711,6 +1734,7 @@ impl Browser {
         if !self.typing {
             return false;
         }
+        self.key_row = None;
         match key {
             "escape" => {
                 if !self.search.clear() {
@@ -1811,14 +1835,9 @@ fn icon_box(r: Rect) -> Rect {
     )
 }
 
-/// Where the search box's text goes: after the magnifier.
+/// Where the search box's text goes: after the magnifier, short of the ✖'s place.
 pub fn search_text_rect(search: Rect) -> Rect {
-    Rect::new(
-        search.x + Space::X2.px() * 2.0 + Layout::ICON_SIZE,
-        search.y,
-        search.w - Layout::ICON_SIZE - Space::X2.px() * 3.0,
-        search.h,
-    )
+    crate::search_box::text_rect(search, Space::X2.px())
 }
 
 fn paint_panel(
@@ -1829,27 +1848,12 @@ fn paint_panel(
     motion: xirius_design::Motion,
 ) {
     let c = pen.c;
-    // The search box: a sunken well with the magnifier and the typed text.
-    pen.round(l.search, c.field, Radius::S);
-    let lens = Rect::new(
-        l.search.x + Space::X2.px(),
-        l.search.y + (l.search.h - Layout::ICON_SIZE) / 2.0,
-        Layout::ICON_SIZE,
-        Layout::ICON_SIZE,
-    );
-    pen.icon("search", lens, c.ink);
-    let text_r = search_text_rect(l.search);
-    browser.search.paint(
+    // The shared search field: well, ring, magnifier, text and the ✖.
+    crate::search_box::paint(
         pen,
-        text_r,
-        Look {
-            size: FontSize::Small,
-            weight: Weight::Regular,
-            ink: c.ink_strong,
-            placeholder: "検索",
-            placeholder_ink: c.ink,
-            focused: browser.typing,
-        },
+        l.search,
+        &browser.search,
+        &crate::search_box::Spec::new(browser.typing),
     );
     if let Some(v) = l.view {
         if hover == Some(BrowserHit::ViewButton) {
@@ -1992,6 +1996,9 @@ fn paint_panel(
                 i.checked_sub(usize::from(browser.scanning))
                     .and_then(|i| indexed.get(i)),
             );
+            if browser.key_row == Some(i) {
+                pen.outline(r, c.ring, Radius::S, crate::search_box::RING);
+            }
         }
     });
 }
@@ -2104,13 +2111,14 @@ fn paint_row(
         pen.mask(
             Rect::new(name_r.x, name_r.y, (name_r.w - meta_w).max(0.0), name_r.h),
             |pen| {
-                pen.text(
+                crate::search_box::paint_matched(
+                    pen,
                     &row.label,
+                    &browser.query(),
                     FontSize::Small,
                     Weight::Regular,
                     c.ink_strong,
                     name_r,
-                    Align::Left,
                 );
             },
         );
@@ -2233,13 +2241,14 @@ fn paint_row(
             let star = browser.fav_rect(r);
             let name_r = Rect::new(name_x, r.y, star.x - name_x, r.h);
             pen.mask(name_r, |pen| {
-                let w = pen.text(
+                let w = crate::search_box::paint_matched(
+                    pen,
                     item.name,
+                    &browser.query(),
                     FontSize::Small,
                     Weight::Medium,
                     pen.c.ink_strong,
                     name_r,
-                    Align::Left,
                 );
                 if *vendor_text {
                     pen.text(

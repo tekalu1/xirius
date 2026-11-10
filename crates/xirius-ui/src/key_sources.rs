@@ -154,7 +154,7 @@ pub fn list(
             tracks.push(row);
         }
     }
-    let mut out = PickList::of(Vec::new()).named("一致するチャンネルはありません");
+    let mut out = PickList::of(Vec::new()).named("見つかりません");
     out.groups.clear();
     if !tracks.is_empty() {
         out.groups.push(PickGroup::new("トラック", tracks));

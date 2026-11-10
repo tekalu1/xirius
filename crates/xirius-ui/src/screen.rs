@@ -1322,12 +1322,18 @@ impl EntityInputHandler for Screen {
 
     fn character_index_for_point(
         &mut self,
-        _: Point<Pixels>,
-        _: &mut Window,
+        point: Point<Pixels>,
+        window: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<usize> {
-        // The caret does not move by the pointer: it stays at the end.
-        None
+        // The character of the focused field under the point (the IME asks while it converts);
+        // `None` when the point is off the field.
+        let studio = self.studio.borrow();
+        let g = geometry(&studio, window);
+        let (x, y) = in_body(point);
+        let at = studio.text_index(&g, x, y, false)?;
+        let text = &studio.ime_field()?.value;
+        Some(crate::palette::utf16_len(text.get(..at)?))
     }
 }
 

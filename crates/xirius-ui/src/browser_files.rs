@@ -763,6 +763,7 @@ impl Browser {
     /// Selecting an audio file starts its audition (BRW-007); another file stops the one
     /// that played.
     pub fn select_file(&mut self, key: &str) {
+        self.key_row = None;
         self.prefs_selection_changed();
         self.pool_heading = None;
         self.selected_file = Some(key.to_string());

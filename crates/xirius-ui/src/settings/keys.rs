@@ -693,7 +693,12 @@ pub fn header(b: &mut B, ui: &SettingsUi, s: &Settings, left: f32, mid: f32, rig
     let pw = scene::width(preset, FontSize::Small) + 32.0;
     let room = more.x - 6.0 - left;
     let qw = 260f32.min(room - pw - 6.0).max(120.0);
-    let q = Rect::new(more.x - 6.0 - qw, mid - 15.0, qw, 30.0);
+    let q = Rect::new(
+        more.x - 6.0 - qw,
+        mid - crate::search_box::HEIGHT / 2.0,
+        qw,
+        crate::search_box::HEIGHT,
+    );
     let pr = Rect::new(q.x - 6.0 - pw, mid - 14.0, pw, 28.0);
     b.field(pr, preset, true);
     let n = s.keymap.changed_rows();
@@ -706,7 +711,7 @@ pub fn header(b: &mut B, ui: &SettingsUi, s: &Settings, left: f32, mid: f32, rig
     // The search: by the key pressed, or by name.
     let typing = ui.field.as_ref().filter(|f| f.id == FieldId::Search);
     if typing.is_some() {
-        b.ring(q, c.ink_blue, fc.well, Radius::S, 1.5);
+        b.ring(q, c.ring, fc.well, Radius::S, crate::search_box::RING);
     } else {
         b.round(q, fc.well, Radius::S);
     }
@@ -799,7 +804,7 @@ pub fn header(b: &mut B, ui: &SettingsUi, s: &Settings, left: f32, mid: f32, rig
                     "名前で検索",
                     FontSize::Small,
                     Weight::Regular,
-                    c.ink,
+                    c.ink_on_toggle,
                     tr,
                     Align::Left,
                 );
@@ -826,7 +831,7 @@ pub fn header(b: &mut B, ui: &SettingsUi, s: &Settings, left: f32, mid: f32, rig
                     "名前で検索",
                     FontSize::Small,
                     Weight::Regular,
-                    c.ink,
+                    c.ink_on_toggle,
                     tr,
                     Align::Left,
                 );

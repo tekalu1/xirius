@@ -163,7 +163,7 @@ impl Studio {
             "keys",
             |to| crate::popup::Action::Pick(to.to_string()),
         )
-        .named("一致するインストゥルメントはありません");
+        .named("見つかりません");
         list.footer = self.scan_footer();
         list
     }
