@@ -143,6 +143,7 @@ pub mod hover_tip;
 pub mod idle;
 pub mod import_choice_shots;
 pub mod import_shots;
+mod independent;
 pub mod inmeter;
 pub mod input;
 pub mod input_dispatch;

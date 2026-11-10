@@ -8,14 +8,14 @@ use crate::{
     tools::Mods,
 };
 use gpui::{
-    App, Bounds, Context, FocusHandle, IntoElement, MouseButton, Render, TitlebarOptions, Window,
-    WindowBounds, WindowControlArea, WindowDecorations, WindowHandle, WindowOptions, canvas, div,
-    point, prelude::*, px, size,
+    App, Bounds, Context, FocusHandle, IntoElement, MouseButton, Render, Window, WindowControlArea,
+    WindowHandle, canvas, div, point, prelude::*, px, size,
 };
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use xirius_core::id::PluginId;
 
-pub(crate) type Positions = Rc<RefCell<HashMap<PluginId, Bounds<gpui::Pixels>>>>;
+pub(crate) use crate::independent::Positions;
+use crate::independent::{Key, Kind, Spec};
 
 #[cfg(windows)]
 pub(crate) mod drag_shots;
@@ -43,39 +43,6 @@ impl Windows {
         }
     }
 
-    pub(crate) fn raise(&self, studio: &Studio) {
-        #[cfg(not(windows))]
-        let _ = studio;
-        #[cfg(windows)]
-        for title in studio
-            .instruments
-            .open
-            .iter()
-            .filter(|w| self.open.contains_key(&w.plugin))
-            .map(|w| format!("Xirius · {}", w.plugin))
-            .chain(
-                self.channel
-                    .iter()
-                    .map(|_| "Xirius · Channel Editor".into()),
-            )
-        {
-            if let Some(hwnd) = crate::park::own_handle(&title) {
-                use windows_sys::Win32::UI::WindowsAndMessaging::*;
-                // SAFETY: windows on this GUI thread; never TOPMOST and never activated.
-                unsafe {
-                    SetWindowPos(
-                        hwnd as _,
-                        HWND_TOP,
-                        0,
-                        0,
-                        0,
-                        0,
-                        SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-                    );
-                }
-            }
-        }
-    }
     pub(crate) fn sync(&mut self, studio: &Rc<RefCell<Studio>>, main: &Window, cx: &mut App) {
         // Migrate views created by older entry points without recreating a device.
         {
@@ -124,69 +91,54 @@ impl Windows {
             let title = format!("Xirius · {id}");
             let origin = main.bounds().origin;
             let positions = studio.borrow().instruments.positions.clone();
-            let remembered = positions.borrow().get(&id).copied();
-            let initial = remembered.unwrap_or_else(|| {
-                Bounds::new(
-                    point(
-                        origin.x + px(40.0 + 24.0 * win.seat as f32),
-                        origin.y + px(60.0 + 24.0 * win.seat as f32),
-                    ),
-                    size(px(win.body.0), px(win.body.1 + crate::title_bar::BAR_H)),
-                )
-            });
-            let initial = if std::env::var_os(xirius_vst3::OFFSCREEN_ENV).is_some() {
-                initial
-            } else {
-                cx.displays()
-                    .into_iter()
-                    .find(|d| d.bounds().contains(&initial.origin))
-                    .or_else(|| main.display(cx))
-                    .map_or(initial, |display| {
-                        fit_bounds(initial, display.visible_bounds())
-                    })
-            };
-            if let Some(w) = studio
-                .borrow_mut()
-                .instruments
-                .open
-                .iter_mut()
-                .find(|w| w.plugin == id)
-            {
-                w.body = (
-                    initial.size.width.into(),
-                    f32::from(initial.size.height) - crate::title_bar::BAR_H,
-                );
-            }
-            let result = cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(initial)),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some(title.clone().into()),
-                        appears_transparent: true,
-                        ..Default::default()
-                    }),
-                    window_decorations: Some(WindowDecorations::Client),
-                    focus: false,
-                    show: false,
-                    is_minimizable: false,
-                    is_resizable: true,
-                    ..Default::default()
-                },
-                move |window, cx| {
-                    let closing = shared.clone();
-                    window.on_window_should_close(cx, move |_, _| {
-                        let mut s = closing.borrow_mut();
-                        s.close_device_view(id);
-                        true
-                    });
-                    let focus = cx.focus_handle();
-                    window.focus(&focus, cx);
-                    show(&title);
-                    cx.new(|cx| {
-                        DeviceWindow::new(shared, Some(id), Some(positions), focus, window, cx)
-                    })
-                },
+            let initial = Bounds::new(
+                point(
+                    origin.x + px(40.0 + 24.0 * win.seat as f32),
+                    origin.y + px(60.0 + 24.0 * win.seat as f32),
+                ),
+                size(px(win.body.0), px(win.body.1 + crate::title_bar::BAR_H)),
             );
+            let spec = Spec {
+                kind: Kind::Device(id),
+                title,
+                initial,
+                min_size: None,
+                resizable: true,
+                positions: Some(positions.clone()),
+            };
+            let result = crate::independent::open(cx, main, spec, move |window, cx| {
+                let closing = shared.clone();
+                window.on_window_should_close(cx, move |_, _| {
+                    let mut s = closing.borrow_mut();
+                    s.close_device_view(id);
+                    true
+                });
+                let focus = cx.focus_handle();
+                window.focus(&focus, cx);
+                let size = window.bounds().size;
+                if let Some(w) = shared
+                    .borrow_mut()
+                    .instruments
+                    .open
+                    .iter_mut()
+                    .find(|w| w.plugin == id)
+                {
+                    w.body = (
+                        size.width.into(),
+                        f32::from(size.height) - crate::title_bar::BAR_H,
+                    );
+                }
+                cx.new(|cx| {
+                    DeviceWindow::new(
+                        shared,
+                        Some(id),
+                        Some((positions, Key::Device(id))),
+                        focus,
+                        window,
+                        cx,
+                    )
+                })
+            });
             match result {
                 Ok(handle) => {
                     self.open.insert(id, handle);
@@ -214,65 +166,39 @@ impl Windows {
             let _ = handle.update(cx, |_, window, _| window.remove_window());
         }
         let scale = dpi.max(96) as f32 / 96.0;
-        let mut initial = Bounds::new(
+        let initial = Bounds::new(
             point(px(x as f32 / scale), px(y as f32 / scale)),
             size(px(332.0), px(420.0)),
         );
-        if std::env::var_os(xirius_vst3::OFFSCREEN_ENV).is_none()
-            && let Some(display) = cx
-                .displays()
-                .into_iter()
-                .find(|d| d.bounds().contains(&initial.origin))
-                .or_else(|| main.display(cx))
-        {
-            initial = fit_bounds(initial, display.visible_bounds());
-        }
         let shared = studio.clone();
-        let parked = std::env::var_os(xirius_vst3::OFFSCREEN_ENV).is_some();
-        if parked && let Some(display) = main.display(cx) {
-            // GPUI replaces an off-display initial rectangle with its defaults.
-            // Create hidden on the display, then park before showing it.
-            initial.origin = display.visible_bounds().origin;
-        }
-        let result = cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(initial)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Presets".into()),
-                    appears_transparent: true,
-                    ..Default::default()
-                }),
-                window_decorations: Some(WindowDecorations::Client),
-                focus: !parked,
-                show: !parked,
-                is_minimizable: false,
-                is_resizable: false,
-                ..Default::default()
-            },
-            move |window, cx| {
-                let focus = cx.focus_handle();
-                window.focus(&focus, cx);
-                if parked {
-                    show("Presets");
-                }
-                cx.new(|cx| {
-                    let mut view = DeviceWindow::new(shared, Some(id), None, focus, window, cx);
-                    view.menu_only = true;
-                    view.with(window, |s, _| {
-                        s.open_inst_menu(
-                            crate::instrument::menu::Menu::Preset(track, id),
-                            crate::studio::Rect {
-                                x: 6.0,
-                                y: 0.0,
-                                w: 320.0,
-                                h: 0.0,
-                            },
-                        )
-                    });
-                    view
-                })
-            },
-        );
+        let spec = Spec {
+            kind: Kind::Presets,
+            title: "Presets".into(),
+            initial,
+            min_size: None,
+            resizable: false,
+            positions: None,
+        };
+        let result = crate::independent::open(cx, main, spec, move |window, cx| {
+            let focus = cx.focus_handle();
+            window.focus(&focus, cx);
+            cx.new(|cx| {
+                let mut view = DeviceWindow::new(shared, Some(id), None, focus, window, cx);
+                view.menu_only = true;
+                view.with(window, |s, _| {
+                    s.open_inst_menu(
+                        crate::instrument::menu::Menu::Preset(track, id),
+                        crate::studio::Rect {
+                            x: 6.0,
+                            y: 0.0,
+                            w: 320.0,
+                            h: 0.0,
+                        },
+                    )
+                });
+                view
+            })
+        });
         match result {
             Ok(handle) => self.preset = Some(handle),
             Err(error) => studio.borrow_mut().error = Some(error.to_string()),
@@ -295,38 +221,42 @@ impl Windows {
         }
         let shared = studio.clone();
         let origin = main.bounds().origin;
-        let result = cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds::new(
-                    point(origin.x + px(60.0), origin.y + px(80.0)),
-                    size(px(800.0), px(600.0)),
-                ))),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Xirius · Channel Editor".into()),
-                    appears_transparent: true,
-                    ..Default::default()
-                }),
-                window_decorations: Some(WindowDecorations::Client),
-                focus: false,
-                show: false,
-                window_min_size: Some(size(px(crate::channel::MIN_W), px(240.0))),
-                ..Default::default()
-            },
-            move |window, cx| {
-                let closing = shared.clone();
-                window.on_window_should_close(cx, move |_, _| {
-                    let mut s = closing.borrow_mut();
-                    s.channel_note_off();
-                    s.channel = None;
-                    true
-                });
-                let focus = cx.focus_handle();
-                window.focus(&focus, cx);
+        let positions = studio.borrow().instruments.positions.clone();
+        let spec = Spec {
+            kind: Kind::Channel,
+            title: "Xirius · Channel Editor".into(),
+            initial: Bounds::new(
+                point(origin.x + px(60.0), origin.y + px(80.0)),
+                size(px(800.0), px(600.0)),
+            ),
+            min_size: Some(size(px(crate::channel::MIN_W), px(240.0))),
+            resizable: true,
+            positions: Some(positions.clone()),
+        };
+        let result = crate::independent::open(cx, main, spec, move |window, cx| {
+            let closing = shared.clone();
+            window.on_window_should_close(cx, move |_, _| {
+                let mut s = closing.borrow_mut();
+                s.channel_note_off();
+                s.channel = None;
+                true
+            });
+            let focus = cx.focus_handle();
+            window.focus(&focus, cx);
+            if !positions.borrow().contains_key(&Key::Channel) {
                 window.resize(size(px(800.0), px(600.0)));
-                show("Xirius · Channel Editor");
-                cx.new(|cx| DeviceWindow::new(shared, None, None, focus, window, cx))
-            },
-        );
+            }
+            cx.new(|cx| {
+                DeviceWindow::new(
+                    shared,
+                    None,
+                    Some((positions, Key::Channel)),
+                    focus,
+                    window,
+                    cx,
+                )
+            })
+        });
         match result {
             Ok(handle) => self.channel = Some(handle),
             Err(error) => {
@@ -340,35 +270,6 @@ impl Windows {
     }
 }
 
-fn show(title: &str) {
-    #[cfg(not(windows))]
-    let _ = title;
-    #[cfg(windows)]
-    if let Some(hwnd) = crate::park::own_handle(title) {
-        if std::env::var_os(xirius_vst3::OFFSCREEN_ENV).is_some() {
-            use windows_sys::Win32::UI::WindowsAndMessaging::{
-                GWL_EXSTYLE, GetWindowLongW, SetWindowLongW, WS_EX_NOACTIVATE,
-            };
-            // SAFETY: only this test's parked window, before it is shown.
-            unsafe {
-                SetWindowLongW(
-                    hwnd as _,
-                    GWL_EXSTYLE,
-                    GetWindowLongW(hwnd as _, GWL_EXSTYLE) | WS_EX_NOACTIVATE as i32,
-                );
-            }
-            crate::park::park(title, crate::park::PARK_AT, crate::park::PARK_AT);
-        }
-        // SAFETY: the title lookup accepts only this process's window; never activates it.
-        unsafe {
-            windows_sys::Win32::UI::WindowsAndMessaging::ShowWindow(
-                hwnd as _,
-                windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE,
-            );
-        }
-    }
-}
-
 struct DeviceWindow {
     studio: Rc<RefCell<Studio>>,
     id: Option<PluginId>,
@@ -377,23 +278,6 @@ struct DeviceWindow {
     menu_only: bool,
     _activation: gpui::Subscription,
     _bounds: gpui::Subscription,
-}
-
-fn fit_bounds(
-    mut bounds: Bounds<gpui::Pixels>,
-    work: Bounds<gpui::Pixels>,
-) -> Bounds<gpui::Pixels> {
-    bounds.size.width = bounds.size.width.min(work.size.width);
-    bounds.size.height = bounds.size.height.min(work.size.height);
-    bounds.origin.x = bounds.origin.x.clamp(
-        work.origin.x,
-        work.origin.x + work.size.width - bounds.size.width,
-    );
-    bounds.origin.y = bounds.origin.y.clamp(
-        work.origin.y,
-        work.origin.y + work.size.height - bounds.size.height,
-    );
-    bounds
 }
 
 fn surface_geometry(s: &Studio, width: f32, height: f32) -> Geometry {
@@ -471,7 +355,7 @@ impl DeviceWindow {
     fn new(
         studio: Rc<RefCell<Studio>>,
         id: Option<PluginId>,
-        positions: Option<Positions>,
+        place: Option<(Positions, Key)>,
         focus: FocusHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -499,10 +383,10 @@ impl DeviceWindow {
             if view.menu_only {
                 return;
             }
+            if let Some((positions, key)) = &place {
+                positions.borrow_mut().insert(*key, window.bounds());
+            }
             if let Some(id) = view.id {
-                if let Some(positions) = &positions {
-                    positions.borrow_mut().insert(id, window.bounds());
-                }
                 let viewport = window.viewport_size();
                 let mut s = view.studio.borrow_mut();
                 let p = s.project();
@@ -1203,19 +1087,6 @@ mod tests {
             assert_eq!(rendered, observed);
             body = observed;
         }
-    }
-
-    #[test]
-    fn remembered_bounds_fit_the_current_work_area() {
-        let work = Bounds::new(point(px(100.0), px(50.0)), size(px(1200.0), px(800.0)));
-        let old = Bounds::new(point(px(2000.0), px(-500.0)), size(px(700.0), px(500.0)));
-        let fitted = fit_bounds(old, work);
-        assert_eq!(fitted.origin, point(px(600.0), px(50.0)));
-        assert_eq!(fitted.size, old.size);
-        assert_eq!(
-            fit_bounds(Bounds::new(old.origin, size(px(2000.0), px(1500.0))), work),
-            work
-        );
     }
 
     #[test]

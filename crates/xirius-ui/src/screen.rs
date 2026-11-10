@@ -2681,9 +2681,6 @@ pub fn run(opts: Options) {
                                 this.studio
                                     .borrow()
                                     .main_window_editor_event(window.is_window_active(), false);
-                                if window.is_window_active() {
-                                    this.device_windows.raise(&this.studio.borrow());
-                                }
                                 if !window.is_window_active() {
                                     this.last_caps = None;
                                     // The release will not come here (M-ui-3).
@@ -2696,7 +2693,6 @@ pub fn run(opts: Options) {
                             cx.observe_window_visibility(window, |this, visibility, _, _| {
                                 if visibility == gpui::WindowVisibility::Visible {
                                     this.studio.borrow().main_window_editor_event(false, true);
-                                    this.device_windows.raise(&this.studio.borrow());
                                 }
                             });
                         Screen {

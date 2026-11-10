@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 
 /// Files that open a client-decorated window that is not movable, and why.
 const NOT_MOVABLE: &[(&str, &str)] = &[(
-    "device_window.rs",
-    "the Presets popup (`menu_only`): no bar, a menu",
+    "independent.rs",
+    "the one entry of the independent windows: the views it opens (device_window.rs, checked      below) draw the bar and register the Drag areas; the Presets popup has no bar",
 )];
 
 fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -59,6 +59,11 @@ fn every_client_window_is_movable_or_listed() {
 
 #[test]
 fn the_independent_windows_register_their_drag_areas() {
+    let entry = std::fs::read_to_string(src().join("independent.rs")).unwrap();
+    assert!(
+        entry.contains("WindowDecorations::Client") && entry.contains("fn open"),
+        "independent.rs must be the entry that opens the client-decorated windows"
+    );
     let text = std::fs::read_to_string(src().join("device_window.rs")).unwrap();
     assert!(
         text.contains("WindowControlArea::Drag") && text.contains("drag_rects"),
