@@ -465,6 +465,18 @@ fn the_search_takes_text_from_the_ime() {
     let scene = s.settings_scene(&g);
     assert!(scene.field.is_some());
     assert!(scene.has_text(&label));
+    // The caret is placed when the pen paints, by the measure the glyphs are drawn with,
+    // not by the layout's estimate of the width.
+    fn carets(ops: &[super::scene::Op]) -> usize {
+        ops.iter()
+            .map(|op| match op {
+                super::scene::Op::Caret(..) => 1,
+                super::scene::Op::Mask(_, inner) => carets(inner),
+                _ => 0,
+            })
+            .sum()
+    }
+    assert_eq!(carets(&scene.ops), 1);
     // A name nothing has.
     s.settings_text(None, "ぞぞぞ", false);
     assert!(s.settings_scene(&g).has_text("見つかりません"));

@@ -819,8 +819,11 @@ pub fn header(b: &mut B, ui: &SettingsUi, s: &Settings, left: f32, mid: f32, rig
                     Align::Left,
                 )
             };
-            b.fill(
-                Rect::new(tr.x + tw + 1.0, q.y + 8.0, 1.5, q.h - 16.0),
+            b.caret(
+                &text,
+                FontSize::Small,
+                Weight::Regular,
+                Rect::new(tr.x, q.y + 8.0, 1.5, q.h - 16.0),
                 c.ink_strong,
             );
             b.scene.field = Some(Rect::new(tr.x, q.y, tw.max(1.0), q.h));

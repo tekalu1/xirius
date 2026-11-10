@@ -224,8 +224,11 @@ fn input(b: &mut B, ui: &SettingsUi, r: Rect, id: FieldId, text: &str, placehold
                     Align::Left,
                 )
             };
-            b.fill(
-                Rect::new(tr.x + tw + 1.0, r.y + 7.0, 1.5, r.h - 14.0),
+            b.caret(
+                &t,
+                FontSize::Small,
+                Weight::Regular,
+                Rect::new(tr.x, r.y + 7.0, 1.5, r.h - 14.0),
                 c.ink_strong,
             );
             b.scene.field = Some(Rect::new(tr.x, r.y, tw.max(1.0), r.h));

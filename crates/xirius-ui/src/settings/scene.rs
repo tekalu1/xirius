@@ -19,6 +19,9 @@ pub enum Op {
     Fill(Rect, Hsla),
     Round(Rect, Hsla, Radius),
     Text(Text),
+    /// The text caret: after `s` as the pen measures it (not the layout's estimate), so it
+    /// follows the painted glyphs. `r.x` is where the text starts.
+    Caret(String, FontSize, Weight, Rect, Hsla),
     Icon(&'static str, Rect, Hsla),
     /// An icon turned by a fraction of a round (a spinner).
     IconTurned(&'static str, Rect, Hsla, f32),
@@ -250,6 +253,13 @@ impl<'a> B<'a> {
         width(s, size)
     }
 
+    /// The caret after `s`, which starts at `r.x`.
+    pub fn caret(&mut self, s: &str, size: FontSize, weight: Weight, r: Rect, color: Hsla) {
+        let color = self.fade(color);
+        self.ops
+            .push(Op::Caret(s.to_string(), size, weight, r, color));
+    }
+
     pub fn icon(&mut self, name: &'static str, r: Rect, color: Hsla) {
         let color = self.fade(color);
         self.ops.push(Op::Icon(name, r, color));
@@ -352,6 +362,15 @@ pub fn paint(pen: &mut Pen, ops: &[Op]) {
                 } else {
                     pen.text(&t.s, t.size, t.weight, t.color, t.r, t.align);
                 }
+            }
+            Op::Caret(s, size, weight, r, c) => {
+                // One px clear of the last glyph; over an empty field, left of the placeholder.
+                let x = if s.is_empty() {
+                    -1.0
+                } else {
+                    pen.measure(s, *size, *weight) + 1.0
+                };
+                pen.fill(Rect::new(r.x + x, r.y, r.w, r.h), *c);
             }
             Op::Icon(name, r, c) => pen.icon(name, *r, *c),
             Op::IconTurned(name, r, c, turn) => pen.icon_turned(name, *r, *c, *turn),

@@ -601,7 +601,8 @@ impl Field {
                 Align::Left,
             );
             if look.focused {
-                self.caret_bar(pen, r, size, r.x);
+                // Left of the placeholder, not over its first letter.
+                self.caret_bar(pen, r, size, r.x - 1.0);
             }
             return;
         }
@@ -634,7 +635,8 @@ impl Field {
             }
             if look.focused && !self.has_selection() {
                 let x = pen.measure(&full[..at + self.marked.len()], size, weight);
-                self.caret_bar(pen, r, size, origin + x);
+                // One px clear of the last glyph: the bar starts at its advance, where the ink ends.
+                self.caret_bar(pen, r, size, origin + x + 1.0);
             }
         });
     }
