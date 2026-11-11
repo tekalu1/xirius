@@ -8310,7 +8310,7 @@ dependencies = [
 
 [[package]]
 name = "xirius-ara"
-version = "1.1.0-beta.14"
+version = "1.1.0-beta.15"
 dependencies = [
  "base64 0.22.1",
  "clap-sys",
@@ -8324,7 +8324,7 @@ dependencies = [
 
 [[package]]
 name = "xirius-clap"
-version = "1.1.0-beta.14"
+version = "1.1.0-beta.15"
 dependencies = [
  "clack-extensions",
  "clack-host",
@@ -8336,7 +8336,7 @@ dependencies = [
 
 [[package]]
 name = "xirius-cli"
-version = "1.1.0-beta.14"
+version = "1.1.0-beta.15"
 dependencies = [
  "embed-resource",
  "hound",
@@ -8353,7 +8353,7 @@ dependencies = [
 
 [[package]]
 name = "xirius-core"
-version = "1.1.0-beta.14"
+version = "1.1.0-beta.15"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -8371,14 +8371,14 @@ dependencies = [
 
 [[package]]
 name = "xirius-design"
-version = "1.1.0-beta.14"
+version = "1.1.0-beta.15"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "xirius-design-lint"
-version = "1.1.0-beta.14"
+version = "1.1.0-beta.15"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8392,7 +8392,7 @@ dependencies = [
 
 [[package]]
 name = "xirius-engine"
-version = "1.1.0-beta.14"
+version = "1.1.0-beta.15"
 dependencies = [
  "assert_no_alloc",
  "cpal",
@@ -8412,7 +8412,7 @@ dependencies = [
 
 [[package]]
 name = "xirius-mcp"
-version = "1.1.0-beta.14"
+version = "1.1.0-beta.15"
 dependencies = [
  "axum",
  "getrandom 0.3.4",
@@ -8426,11 +8426,11 @@ dependencies = [
 
 [[package]]
 name = "xirius-params"
-version = "1.1.0-beta.14"
+version = "1.1.0-beta.15"
 
 [[package]]
 name = "xirius-plugins"
-version = "1.1.0-beta.14"
+version = "1.1.0-beta.15"
 dependencies = [
  "base64 0.22.1",
  "embed-resource",
@@ -8447,7 +8447,7 @@ dependencies = [
 
 [[package]]
 name = "xirius-prefs"
-version = "1.1.0-beta.14"
+version = "1.1.0-beta.15"
 dependencies = [
  "serde_json",
  "tempfile",
@@ -8457,7 +8457,7 @@ dependencies = [
 
 [[package]]
 name = "xirius-session"
-version = "1.1.0-beta.14"
+version = "1.1.0-beta.15"
 dependencies = [
  "claxon",
  "ebur128",
@@ -8489,14 +8489,14 @@ dependencies = [
 
 [[package]]
 name = "xirius-stretch"
-version = "1.1.0-beta.14"
+version = "1.1.0-beta.15"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "xirius-test-clap"
-version = "1.1.0-beta.14"
+version = "1.1.0-beta.15"
 dependencies = [
  "clack-extensions",
  "clack-plugin",
@@ -8504,7 +8504,7 @@ dependencies = [
 
 [[package]]
 name = "xirius-test-vst3"
-version = "1.1.0-beta.14"
+version = "1.1.0-beta.15"
 dependencies = [
  "vst3",
  "windows-sys 0.61.2",
@@ -8512,7 +8512,7 @@ dependencies = [
 
 [[package]]
 name = "xirius-ui"
-version = "1.1.0-beta.14"
+version = "1.1.0-beta.15"
 dependencies = [
  "core-foundation 0.10.1",
  "core-foundation-sys",
@@ -8550,7 +8550,7 @@ dependencies = [
 
 [[package]]
 name = "xirius-update-sign"
-version = "1.1.0-beta.14"
+version = "1.1.0-beta.15"
 dependencies = [
  "ed25519-dalek",
  "rand_core 0.6.4",
@@ -8561,7 +8561,7 @@ dependencies = [
 
 [[package]]
 name = "xirius-vst3"
-version = "1.1.0-beta.14"
+version = "1.1.0-beta.15"
 dependencies = [
  "resvg",
  "rtrb",
