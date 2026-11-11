@@ -95,12 +95,12 @@ impl Studio {
         true
     }
 }
-/// The question's card; the deletion's has a second line of body, so it is taller.
+/// The question's card; the deletion's may be taller by extra (the approved mock's two lines fit the plain card).
 fn card(g: &Geometry, extra: f32) -> Rect {
     let r = crate::opening_view::confirm_card(g);
     Rect::new(r.x, r.y - 16.0 - extra / 2.0, r.w, r.h + 32.0 + extra)
 }
-const DRAFT_EXTRA: f32 = 24.0;
+const DRAFT_EXTRA: f32 = 0.0;
 /// The deletion's question, if that is what is asked.
 #[cfg(test)]
 pub(crate) fn draft_ask(s: &Studio) -> Option<&DraftAsk> {
@@ -170,7 +170,7 @@ pub(crate) fn paint(pen: &mut Pen, s: &Studio, g: &Geometry) -> bool {
             });
             cells[0] = cells[0].clone().text(title);
             for (i, text) in delete_body(ask).into_iter().enumerate() {
-                cells.push(Cell::new(line(48.0 + 24.0 * i as f32), Look::Label).text(text));
+                cells.push(Cell::new(line(48.0 + 20.0 * i as f32), Look::Label).text(text));
             }
             DELETE
         }
