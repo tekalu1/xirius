@@ -136,6 +136,15 @@ fn backspace_deletes_only_when_the_search_has_no_text_and_cmd_backspace_on_a_mac
     assert!(!delete::is_delete("a", NONE, true, true));
 }
 
+/// The key the menu row shows: the Mac's delete glyph there, 「Del」 elsewhere.
+fn menu_key() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "⌫"
+    } else {
+        "Del"
+    }
+}
+
 #[test]
 fn a_right_press_on_a_draft_row_opens_the_one_row_menu_and_chooses_the_row() {
     let (mut s, g, tmp) = listed(&[("old", false, 1), ("d1", true, 2)]);
@@ -151,7 +160,7 @@ fn a_right_press_on_a_draft_row_opens_the_one_row_menu_and_chooses_the_row() {
     let rows = s.context_rows();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].label, "削除");
-    assert_eq!(rows[0].key, "Del");
+    assert_eq!(rows[0].key, menu_key());
     assert_eq!((home(&s).pick.selected, home(&s).focus), (0, Focus::List));
     // Choosing it asks; nothing goes yet.
     assert!(s.context_pick(&g, 0));
@@ -474,7 +483,7 @@ fn a_screen_reader_reads_the_question_as_a_dialog_with_two_buttons_and_the_menu_
     assert_eq!(rows.len(), 1);
     assert_eq!(
         (rows[0].label.as_str(), rows[0].key.as_str()),
-        ("削除", "Del")
+        ("削除", menu_key())
     );
     s.ctx = None;
     s.popup = None;
