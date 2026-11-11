@@ -79,6 +79,26 @@ impl Studio {
         true
     }
 
+    /// The cursor goes to a row of the list (the shots'): the list has the focus.
+    pub(crate) fn home_choose(&mut self, row: usize) {
+        if let Some(home) = self.home.as_mut() {
+            home.pick.selected = row;
+            home.focus = Focus::List;
+            home.touched = true;
+        }
+    }
+
+    /// The middle of a row, as the layout puts it (the shots').
+    pub(crate) fn home_row_centre(&self, g: &Geometry, row: usize) -> Option<(f32, f32)> {
+        let layout = self.home_layout(g)?;
+        let r = layout
+            .rows
+            .iter()
+            .find(|(k, _)| *k == row)
+            .map(|(_, r)| *r)?;
+        Some((r.x + r.w / 2.0, r.y + r.h / 2.0))
+    }
+
     /// The menu of a draft row, at a point of the window: one row, 「削除」.
     fn open_draft_menu(&mut self, dir: PathBuf, x: f32, y: f32) {
         let key = xirius_prefs::chord::Chord::new(0, "Delete")

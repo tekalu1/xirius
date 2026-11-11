@@ -139,6 +139,7 @@ pub mod heavy_plugin_shots;
 mod held_input;
 pub mod history_time_shots;
 pub mod home;
+pub mod home_draft_delete_shots;
 pub mod hover_tip;
 pub mod idle;
 pub mod import_choice_shots;
@@ -496,6 +497,7 @@ pub const SCRIPTS: &[(&str, &[shot::Shot])] = &[
     ("ruler-drag", ruler_drag_shots::SHOTS),
     ("saving", saving_shots::SHOTS),
     ("screencmd", screencmd_shots::SHOTS),
+    ("home-draft-delete", home_draft_delete_shots::SHOTS),
     ("search-field", search_field_shots::SHOTS),
     ("settings", settings::shots::SHOTS),
     ("side", side_shots::SIDE),
