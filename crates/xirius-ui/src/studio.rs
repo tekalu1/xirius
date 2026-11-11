@@ -772,6 +772,8 @@ pub struct Studio {
     pub(crate) open_closing: Option<crate::opening::CloseJob>,
     pub(crate) saving: Option<crate::saving::Saving>,
     pub(crate) unsaved: Option<crate::unsaved::Question>,
+    /// UI-351: the draft the start list is deleting, until the worker has said.
+    pub(crate) draft_removal: Option<crate::home::delete::Removal>,
     /// The watch on the song's file for another app's save ([`crate::other_change`], UI-289).
     pub(crate) other: crate::other_change::OtherChange,
     pub(crate) view_read: crate::ancillary_io::ViewRead,
@@ -961,6 +963,7 @@ impl Studio {
             toast: None,
             saving: None,
             unsaved: None,
+            draft_removal: None,
             opening: None,
             open_generation: 0,
             open_closing: None,

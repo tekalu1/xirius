@@ -93,10 +93,10 @@ impl Studio {
 
     /// A right press at (`x`, `y`) in the body that no dialog, setting or palette took: the
     /// menu of what is there. The start screen covers the body, and what is under it is not
-    /// drawn: no menu of the song opens through it.
+    /// drawn: no menu of the song opens through it; only a draft's row has a menu (UI-351).
     pub(crate) fn window_right_press(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
         if self.home_shown() {
-            return false;
+            return self.home_right_press(g, x, y);
         }
         if self.popup.is_none() && self.instrument_right(g, x, y) {
             return true;

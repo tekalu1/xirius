@@ -22,6 +22,8 @@ use crate::popup::{Action, Cell, Look};
 use crate::studio::{FileRequest, Geometry, Hit, Rect, Studio};
 use crate::tools::Mods;
 
+pub(crate) mod delete;
+
 /// A window narrower than this: one column, the buttons in a row without their keys.
 pub const NARROW: f32 = 520.0;
 /// The room over the content, under the bar.
@@ -158,6 +160,9 @@ pub struct Home {
     touched: bool,
     /// The last press on a row: when, and which.
     click: Option<(Instant, RowKey)>,
+    /// A draft that was deleted (UI-351): its folder and the place its row had. The row that
+    /// moves up to that place is chosen once the list drops the draft.
+    after: Option<(PathBuf, usize)>,
 }
 
 impl Default for Home {
@@ -169,6 +174,7 @@ impl Default for Home {
             built: false,
             touched: false,
             click: None,
+            after: None,
         }
     }
 }
@@ -210,9 +216,16 @@ impl Home {
         let mut list = PickList::of(rows);
         list.field = self.pick.field.clone();
         list.offset = self.pick.offset;
-        list.selected = kept
+        let kept_at = kept
             .flatten()
-            .and_then(|act| list.nav().iter().position(|r| r.act.as_ref() == Some(&act)))
+            .and_then(|act| list.nav().iter().position(|r| r.act.as_ref() == Some(&act)));
+        // A deleted draft's row is gone: the row that moved up to its place is chosen, the one
+        // above when it was the last.
+        let after = self
+            .after
+            .take_if(|(dir, _)| !songs.iter().any(|s| &s.dir == dir));
+        list.selected = kept_at
+            .or_else(|| after.map(|(_, at)| at.min(list.nav().len().saturating_sub(1))))
             .unwrap_or(0);
         self.pick = list;
         if !self.has_songs() {
@@ -536,6 +549,11 @@ impl Studio {
 
     /// Once a frame: the rows follow the keeper's list of recent songs.
     pub(crate) fn home_tick(&mut self) -> bool {
+        let removed = self.poll_draft_removal();
+        self.home_rows_tick() || removed
+    }
+
+    fn home_rows_tick(&mut self) -> bool {
         // The start screen lies over an empty song. Once that song gains
         // anything (a drop, an outside edit), the song shows and the start
         // screen is over: undoing back to empty must not bring it back.
@@ -647,6 +665,8 @@ impl Studio {
     /// the search. Letters reach the search through the IME (`pick_typing`). Ctrl's keys go
     /// on to the key map (Ctrl+N, Ctrl+O).
     pub(crate) fn home_key(&mut self, g: &Geometry, key: &str, mods: Mods) -> bool {
+        // On a Mac the Mod key reaches here as Ctrl: Cmd+Backspace deletes, like Delete.
+        let cmd_delete = cfg!(target_os = "macos") && mods.ctrl && key == "backspace";
         // The window's own asks (the recovery, the unsaved song, a file dialog) keep the keys
         // whatever order the screen hands them out in.
         if !self.home_shown()
@@ -657,7 +677,7 @@ impl Studio {
             || self.unsaved.is_some()
             || self.file_request.is_some()
             || self.input_blocked()
-            || mods.ctrl
+            || (mods.ctrl && !cmd_delete)
             || mods.alt
         {
             return false;
@@ -668,6 +688,23 @@ impl Studio {
             return false;
         };
         let size = HomeLayout::of(home, g, no_device).list_size;
+        // UI-351: on the list, Delete asks to delete the cursor's draft; any other row does
+        // nothing, and the key stays the list's. In the search it is text editing as before.
+        if home.focus == Focus::List
+            && delete::is_delete(
+                key,
+                mods,
+                home.pick.field.value.is_empty(),
+                cfg!(target_os = "macos"),
+            )
+        {
+            self.home_ask_delete();
+            return true;
+        }
+        if home.focus == Focus::List && (key == "f10" && mods.shift || key == "menu" && !mods.shift)
+        {
+            return self.home_key_menu(g);
+        }
         match key {
             "tab" => {
                 let order = home.order();
@@ -752,7 +789,8 @@ impl Studio {
         (home.has_songs()
             && self.popup.is_none()
             && self.settings.is_none()
-            && self.palette.is_none())
+            && self.palette.is_none()
+            && self.unsaved.is_none())
         .then_some(&home.pick)
     }
 
@@ -904,5 +942,7 @@ fn paint_tag(pen: &mut Pen, r: Rect, name: &str) {
     );
 }
 
+#[cfg(test)]
+mod delete_tests;
 #[cfg(test)]
 mod tests;

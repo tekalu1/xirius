@@ -592,6 +592,28 @@ impl Studio {
     }
 }
 
+/// Removes the folder of a draft (the caller has checked it is one). The song that kept it
+/// may still be letting go of its files, so a held one is tried again for half a second.
+pub(crate) fn remove_draft_folder(path: &Path) -> Result<(), String> {
+    #[cfg(any(test, feature = "loading-probe"))]
+    xirius_core::io_test::before("draft_remove", path).map_err(|e| e.to_string())?;
+    let mut tries = 0;
+    loop {
+        // design-lint: allow(ui-blocking-io) PRJ-031: worker-only (the draft clean-up and the start list's deletion dispatch it).
+        match std::fs::remove_dir_all(path) {
+            Ok(()) => return Ok(()),
+            // design-lint: allow(ui-blocking-io) PRJ-031: worker-only (the draft clean-up and the start list's deletion dispatch it).
+            Err(_) if !path.exists() => return Ok(()),
+            Err(e) if tries >= 10 => return Err(e.to_string()),
+            Err(_) => {
+                tries += 1;
+                // design-lint: allow(ui-blocking-io) PRJ-031: worker-only (the draft clean-up and the start list's deletion dispatch it).
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+    }
+}
+
 impl Studio {
     pub(crate) fn delete_old_draft(&mut self, dir: &Path) {
         if !self.transport.is_windowed() {
@@ -600,23 +622,7 @@ impl Studio {
         }
         if self.keep.is_draft_dir(dir) {
             let path = dir.to_owned();
-            if let Err(e) = crate::ancillary_io::dispatch(move || {
-                #[cfg(any(test, feature = "loading-probe"))]
-                xirius_core::io_test::before("draft_remove", &path).map_err(|e| e.to_string())?;
-                // The song that kept the folder may still be letting go of its files.
-                let mut tries = 0;
-                loop {
-                    match std::fs::remove_dir_all(&path) {
-                        Ok(()) => return Ok(()),
-                        Err(_) if !path.exists() => return Ok(()),
-                        Err(e) if tries >= 10 => return Err(e.to_string()),
-                        Err(_) => {
-                            tries += 1;
-                            std::thread::sleep(std::time::Duration::from_millis(50));
-                        }
-                    }
-                }
-            }) {
+            if let Err(e) = crate::ancillary_io::dispatch(move || remove_draft_folder(&path)) {
                 self.error = Some(e);
             }
             self.keep.forget(dir);

@@ -99,6 +99,16 @@ pub fn crashed(dir: &Path) -> bool {
     }
 }
 
+/// Does a running process hold this song folder open? True when the folder holds a lock
+/// whose process is alive (this one's own included); a folder with no lock, or one left by a
+/// process that is gone, is not held.
+pub fn held(dir: &Path) -> bool {
+    fs::read_to_string(dir.join(LOCK))
+        .ok()
+        .and_then(|text| text.trim().parse::<u32>().ok())
+        .is_some_and(pid_alive)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

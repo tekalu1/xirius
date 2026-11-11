@@ -68,6 +68,8 @@ pub enum Run {
     Key(&'static str),
     /// A change of the screen that is not a command.
     Do(Act),
+    /// Asks whether this draft of the start screen's list goes (UI-351).
+    DeleteDraft(std::path::PathBuf),
     /// Back to the menu above.
     Back,
     /// The menu's small heading (the plugin's name over the menu of its badge, PLG-055).
@@ -210,7 +212,7 @@ impl Item {
     pub(crate) fn legacy(label: &str, kind: PopupKind, anchor: Rect, action: Action) -> Self {
         Self::new(label, Run::Legacy(kind, anchor, Box::new(action)))
     }
-    fn new(label: &str, run: Run) -> Item {
+    pub(crate) fn new(label: &str, run: Run) -> Item {
         Item {
             ledger_id: None,
             label: label.to_string(),
@@ -807,6 +809,7 @@ impl Studio {
                 self.open_popup(kind, anchor);
                 self.popup_action(g, *action)
             }
+            Run::DeleteDraft(dir) => self.home_ask_delete_of(&dir),
             Run::Gap
             | Run::Title
             | Run::Sub(_)

@@ -31,7 +31,7 @@ fn kept(names: &[&str]) -> (Studio, Geometry, tempfile::TempDir) {
 }
 
 /// One simulated output (`device`), or none: nothing is opened, the output is silent.
-fn with_device(s: &mut Studio, device: bool) {
+pub(super) fn with_device(s: &mut Studio, device: bool) {
     use xirius_engine::devices::{Device, Simulated};
     struct Quiet;
     impl xirius_engine::record::AudioInput for Quiet {
@@ -64,15 +64,15 @@ fn with_device(s: &mut Studio, device: bool) {
     s.poll_io();
 }
 
-fn home(s: &Studio) -> &Home {
+pub(super) fn home(s: &Studio) -> &Home {
     s.home.as_ref().expect("the start screen")
 }
 
-fn labels(s: &Studio) -> Vec<String> {
+pub(super) fn labels(s: &Studio) -> Vec<String> {
     home(s).pick.nav().iter().map(|r| r.label.clone()).collect()
 }
 
-const NONE: Mods = Mods::NONE;
+pub(super) const NONE: Mods = Mods::NONE;
 
 #[test]
 fn the_first_time_lists_only_the_sample_with_no_search_and_new_has_the_keys() {
@@ -731,7 +731,7 @@ fn assert_nothing_under(s: &mut Studio, tempo: usize) {
     );
 }
 
-fn row_spot(s: &Studio, g: &Geometry, i: usize) -> Spot {
+pub(super) fn row_spot(s: &Studio, g: &Geometry, i: usize) -> Spot {
     let l = s.home_layout(g).unwrap();
     let at = l.rows.iter().position(|(k, _)| *k == i).unwrap();
     Spot::Row(i, l.row_keys[at])
@@ -741,7 +741,7 @@ fn row_hit(s: &Studio, g: &Geometry, i: usize) -> Hit {
     Hit::Home(row_spot(s, g, i))
 }
 
-fn centre(r: Rect) -> (f32, f32) {
+pub(super) fn centre(r: Rect) -> (f32, f32) {
     (r.x + r.w / 2.0, r.y + r.h / 2.0)
 }
 
@@ -939,7 +939,7 @@ fn a_right_press_over_the_start_screen_opens_no_menu_of_the_song_under_it() {
 }
 
 /// What a key of the song could change, in one line.
-fn song_state(s: &Studio) -> String {
+pub(super) fn song_state(s: &Studio) -> String {
     format!(
         "{} {} {:?} {:?} {} {} {} {:?} {:?} {}",
         s.project().tracks.len(),
@@ -956,7 +956,7 @@ fn song_state(s: &Studio) -> String {
 }
 
 /// A key as the window runs it: the start screen's own keys first, then the rest.
-fn key(s: &mut Studio, g: &Geometry, k: &str, m: Mods, ch: Option<&str>) -> bool {
+pub(super) fn key(s: &mut Studio, g: &Geometry, k: &str, m: Mods, ch: Option<&str>) -> bool {
     if s.home_key(g, k, m) {
         return true;
     }
