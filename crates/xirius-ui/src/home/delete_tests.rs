@@ -11,7 +11,7 @@ type Seed<'a> = (&'a str, bool, u64);
 
 /// The start screen over these songs, oldest first (the list shows them newest first). A
 /// draft's folder is one of the keeper's own; a saved song's lies beside them.
-fn listed(songs: &[Seed]) -> (Studio, Geometry, tempfile::TempDir) {
+pub(super) fn listed(songs: &[Seed]) -> (Studio, Geometry, tempfile::TempDir) {
     let tmp = tempfile::tempdir().unwrap();
     let keep = crate::keep::Keep::at(tmp.path().join("keep"));
     for (name, draft, at) in songs {

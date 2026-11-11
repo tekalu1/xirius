@@ -41,9 +41,6 @@ const SEARCH_W: f32 = 180.0;
 const SEARCH_H: f32 = crate::search_box::HEIGHT;
 /// The buttons over the list in a narrow window.
 const NARROW_GAP: f32 = 20.0;
-/// The sample's tag.
-const TAG_H: f32 = 16.0;
-const TAG_PAD: f32 = 6.0;
 /// The key map's commands that work on the window and the app, not on a song, so the start
 /// screen takes them: a new song, opening one, the settings, the palette, the full screen and
 /// quitting (UI-350). Every other command works on the song under the screen and does
@@ -64,6 +61,8 @@ pub fn is_window_command(binding: &str) -> bool {
 }
 
 pub const SAMPLE_TAG: &str = "サンプル";
+/// What a draft's name ends in; a long name is cut before it, never through it (UI-351).
+pub const DRAFT_MARK: &str = "（保存前）";
 pub const RECENT: &str = "最近の曲";
 /// What the empty search says.
 pub const SEARCH: &str = "検索";
@@ -197,7 +196,7 @@ impl Home {
             .iter()
             .map(|s| {
                 let name = if s.draft {
-                    format!("{}（保存前）", s.name)
+                    format!("{}{DRAFT_MARK}", s.name)
                 } else {
                     s.name.clone()
                 };
@@ -378,6 +377,14 @@ impl HomeLayout {
             .map(|mut c| {
                 c.rect.x += list_x - pad;
                 c.rect.y += list_top - pad - row_h;
+                if c.look == Look::Row {
+                    if c.text.ends_with(DRAFT_MARK) {
+                        c.tail = DRAFT_MARK.to_string();
+                    }
+                    if c.action == Some(Action::OpenSample) {
+                        c.tag = SAMPLE_TAG;
+                    }
+                }
                 c
             })
             .collect();
@@ -842,7 +849,6 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     if let Some(r) = l.search {
         paint_search(pen, home, r);
     }
-    let rows = home.pick.visible();
     for cell in &l.cells {
         let hot = match cell.look {
             Look::Row => l
@@ -853,14 +859,6 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
             _ => false,
         };
         crate::popup::paint_cell(pen, cell, hot);
-    }
-    for (i, r) in &l.rows {
-        if rows
-            .get(*i)
-            .is_some_and(|row| row.act == Some(Action::OpenSample))
-        {
-            paint_tag(pen, *r, crate::song::SAMPLE_NAME);
-        }
     }
     if home.focus == Focus::List
         && let Some((_, r)) = l.rows.iter().find(|(i, _)| *i == home.pick.selected)
@@ -920,29 +918,9 @@ fn paint_button(pen: &mut Pen, b: Button, r: Rect, keys: bool, hot: bool) {
     }
 }
 
-/// The 「サンプル」 tag after the sample's name in its row.
-fn paint_tag(pen: &mut Pen, r: Rect, name: &str) {
-    let c = pen.c;
-    let pad = Space::X2.px();
-    let x =
-        r.x + pad + L::ICON_SIZE + pad + pen.measure(name, FontSize::Small, Weight::Medium) + pad;
-    let w = pen.measure(SAMPLE_TAG, FontSize::Micro, Weight::Medium) + 2.0 * TAG_PAD;
-    if x + w > r.right() - pad {
-        return;
-    }
-    let tag = Rect::new(x, r.y + (r.h - TAG_H) / 2.0, w, TAG_H);
-    pen.round(tag, c.surface_3, Radius::Clip);
-    pen.text(
-        SAMPLE_TAG,
-        FontSize::Micro,
-        Weight::Medium,
-        c.ink,
-        tag,
-        Align::Center,
-    );
-}
-
 #[cfg(test)]
 mod delete_tests;
+#[cfg(test)]
+mod row_tests;
 #[cfg(test)]
 mod tests;

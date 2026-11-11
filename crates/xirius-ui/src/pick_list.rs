@@ -769,6 +769,7 @@ pub fn cells(pick: &PickList, w: f32, size: (f32, f32)) -> Vec<Cell> {
                 cell = cell.tip(row.tip.clone());
             } else if crate::browser::text_width(&row.label, FontSize::Small)
                 > row_text_w(r, row.on || !row.enabled, icon.is_some())
+                    - crate::browser::text_width(&row.hint, FontSize::Caption)
             {
                 // A name the row cuts with 「…」 is said in full in the balloon.
                 cell = cell.tip(row.label.clone());

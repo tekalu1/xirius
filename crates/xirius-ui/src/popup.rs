@@ -552,6 +552,11 @@ pub struct Cell {
     pub field: Option<Box<crate::settings::field::Field>>,
     /// The words typed in the list's search: the part of the name they match is bold.
     pub query: String,
+    /// The end of the text a row never cuts: a long name loses its own middle-to-end instead
+    /// (the 「（保存前）」 mark of the start list, UI-351).
+    pub tail: String,
+    /// A small tag after a row's name, kept whole too (the start list's 「サンプル」).
+    pub tag: &'static str,
 }
 
 impl Cell {
@@ -573,6 +578,8 @@ impl Cell {
             spoken: String::new(),
             field: None,
             query: String::new(),
+            tail: String::new(),
+            tag: "",
         }
     }
 
@@ -1540,10 +1547,14 @@ pub(crate) fn tip_rect(cell: Rect, within: Rect, w: f32, lines: usize) -> Rect {
     Rect::new(x, y, w, h)
 }
 
-/// `s` as it fits in `w` of a row's name: whole, or its front and 「…」.
-fn fit(pen: &mut Pen, s: &str, w: f32) -> String {
-    let wide = |pen: &mut Pen, t: &str| pen.measure(t, FontSize::Small, Weight::Medium);
-    if wide(pen, s) <= w {
+/// The small tag after a row's name (「サンプル」): its height and the space inside its ends.
+const TAG_H: f32 = 16.0;
+const TAG_PAD: f32 = 6.0;
+
+/// `s` as it fits in `w` of a row's name (by any measure of a text's width): whole, or its
+/// front and 「…」.
+fn fit_by(s: &str, w: f32, mut wide: impl FnMut(&str) -> f32) -> String {
+    if wide(s) <= w {
         return s.to_string();
     }
     let chars: Vec<char> = s.chars().collect();
@@ -1552,7 +1563,7 @@ fn fit(pen: &mut Pen, s: &str, w: f32) -> String {
     while lo < hi {
         let mid = (lo + hi).div_ceil(2);
         let t: String = chars[..mid].iter().chain(['…'].iter()).collect();
-        if wide(pen, &t) <= w {
+        if wide(&t) <= w {
             lo = mid;
         } else {
             hi = mid - 1;
@@ -1560,6 +1571,19 @@ fn fit(pen: &mut Pen, s: &str, w: f32) -> String {
     }
     let kept: String = chars[..lo].iter().collect();
     format!("{}…", kept.trim_end())
+}
+
+/// A row's name in `room` wide: the cut `body`, then the `tail` whole, leaving `after` for
+/// what is drawn behind the name (the tag).
+pub(crate) fn row_name(
+    body: &str,
+    tail: &str,
+    room: f32,
+    after: f32,
+    mut wide: impl FnMut(&str) -> f32,
+) -> String {
+    let w = (room - wide(tail) - after).max(0.0);
+    format!("{}{tail}", fit_by(body, w, &mut wide))
 }
 
 /// The round badge at the head of a history row.
@@ -1696,18 +1720,33 @@ pub(crate) fn paint_cell(pen: &mut Pen, cell: &Cell, hot: bool) {
                 x += m + pad;
             }
             // The name ends before what the row shows at its right; a longer one is cut there
-            // with 「…」 (the pick lists keep their width, UI-297).
+            // with 「…」 (the pick lists keep their width, UI-297). The hint is always whole.
+            let hint_w = if cell.hint.is_empty() {
+                0.0
+            } else {
+                pen.measure(&cell.hint, FontSize::Caption, Weight::Regular) + pad
+            };
             let end = if cell.icon == Some("chevron-right")
                 || (cell.hint.is_empty() && (cell.on || cell.locked))
             {
                 r.right() - pad - Layout::ICON_SIZE - pad
-            } else if cell.hint.is_empty() {
-                r.right() - pad
+            } else if cell.locked {
+                r.right() - pad - Layout::ICON_SIZE - pad - hint_w
             } else {
-                r.right()
+                r.right() - pad - hint_w
             };
             let room = Rect::new(x, r.y, end - x, r.h);
-            let name = fit(pen, &cell.text, room.w);
+            // What follows the cut name stays whole: the tail of the text, then the tag.
+            let tail = cell.tail.as_str();
+            let body = cell.text.strip_suffix(tail).unwrap_or(&cell.text);
+            let tag_w = if cell.tag.is_empty() {
+                0.0
+            } else {
+                pen.measure(cell.tag, FontSize::Micro, Weight::Medium) + 2.0 * TAG_PAD + pad
+            };
+            let name = row_name(body, tail, room.w, tag_w, |t| {
+                pen.measure(t, FontSize::Small, Weight::Medium)
+            });
             pen.mask(room, |pen| {
                 crate::search_box::paint_matched(
                     pen,
@@ -1719,6 +1758,24 @@ pub(crate) fn paint_cell(pen: &mut Pen, cell: &Cell, hot: bool) {
                     Rect::new(x, r.y, r.w, r.h),
                 );
             });
+            if !cell.tag.is_empty() {
+                let w = tag_w - pad;
+                let tag = Rect::new(
+                    x + pen.measure(&name, FontSize::Small, Weight::Medium) + pad,
+                    r.y + (r.h - TAG_H) / 2.0,
+                    w,
+                    TAG_H,
+                );
+                pen.round(tag, c.surface_3, Radius::Clip);
+                pen.text(
+                    cell.tag,
+                    FontSize::Micro,
+                    Weight::Medium,
+                    c.ink,
+                    tag,
+                    Align::Center,
+                );
+            }
             if cell.icon == Some("chevron-right") {
                 pen.icon(
                     "chevron-right",
@@ -2772,5 +2829,48 @@ mod tests {
         assert_eq!(ago(10 * 60_000, 0), "10 分前");
         assert_eq!(ago(3 * 3_600_000, 0), "3 時間前");
         assert_eq!(ago(2 * 86_400_000, 0), "2 日前");
+    }
+}
+
+#[cfg(test)]
+mod row_name_tests {
+    use super::row_name;
+
+    /// Wide letters 10 px, the 「…」 and the mark's brackets alike: a stand-in for the pen.
+    fn wide(t: &str) -> f32 {
+        t.chars().count() as f32 * 10.0
+    }
+
+    #[test]
+    fn a_short_name_is_left_as_it_is() {
+        assert_eq!(
+            row_name("曲", "（保存前）", 200.0, 0.0, wide),
+            "曲（保存前）"
+        );
+        assert_eq!(row_name("曲", "", 200.0, 0.0, wide), "曲");
+    }
+
+    #[test]
+    fn a_long_name_is_cut_before_the_mark_and_the_mark_stays_whole() {
+        let body = "あ".repeat(40);
+        let name = row_name(&body, "（保存前）", 200.0, 0.0, wide);
+        assert!(name.ends_with("…（保存前）"), "{name}");
+        assert!(wide(&name) <= 200.0, "{name}");
+        // The most that fits: one more letter would pass the room.
+        assert!(wide(&name) + 10.0 > 200.0, "{name}");
+    }
+
+    #[test]
+    fn the_room_left_for_a_tag_is_kept() {
+        let body = "あ".repeat(40);
+        let name = row_name(&body, "", 200.0, 60.0, wide);
+        assert!(name.ends_with('…'), "{name}");
+        assert!(wide(&name) <= 140.0, "{name}");
+    }
+
+    #[test]
+    fn a_room_smaller_than_the_mark_leaves_the_mark_alone() {
+        let name = row_name("あいう", "（保存前）", 30.0, 0.0, wide);
+        assert!(name.ends_with("（保存前）"), "{name}");
     }
 }
