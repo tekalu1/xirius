@@ -1,6 +1,7 @@
 //! `--script home-draft-delete`: deleting an unsaved draft from the start screen's list
 //! (UI-351): the menu of a draft row, the question (first on 「戻る」, on 「削除」, with a long
-//! name) and the list once the draft is gone. Run once dark and once with `--light`. Silent;
+//! name) and the list once the draft is gone, and the long names of the rows (a draft's and a saved
+//! song's) cut before their time. Run once dark and once with `--light`. Silent;
 //! no OS input.
 
 use crate::shot::{Act, Play, Shot};
@@ -32,12 +33,19 @@ pub const SHOTS: &[Shot] = &[
         name: "hdd05-after",
         acts: &[Act::Reset, stage(4)],
     },
+    Shot {
+        name: "hdd06-long-rows",
+        acts: &[Act::Reset, stage(5)],
+    },
 ];
 
 const LONG: &str = "夜明け前のうた（仮）をギターとピアノで録り直したバージョン その3 最終";
+/// A saved song with a long name, listed only by the shot of the long rows.
+const LONG_SAVED: &str =
+    "海辺の町で作った組曲 第2楽章 ピアノとストリングスのための長いタイトルの曲";
 
 fn play(s: &mut Studio, g: &Geometry, n: u8) {
-    home(s, g);
+    home(s, g, n == 5);
     let g = &s.geometry(g.size.0, g.size.1);
     match n {
         0 => {
@@ -51,6 +59,7 @@ fn play(s: &mut Studio, g: &Geometry, n: u8) {
                 s.unsaved_key("tab");
             }
         }
+        5 => {}
         _ => {
             choose(s, 0);
             s.home_key(g, "delete", Mods::NONE);
@@ -81,7 +90,7 @@ fn row_centre(s: &mut Studio, g: &Geometry, row: usize) -> (f32, f32) {
 
 /// Four songs: two drafts (the newest edited just now, the other with a long name), a saved
 /// one and the sample. Folders of the shots' own.
-fn home(s: &mut Studio, g: &Geometry) {
+fn home(s: &mut Studio, g: &Geometry, long_saved: bool) {
     *s = Studio::new(crate::song::Song::empty());
     s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
     s.resized(g);
@@ -89,11 +98,16 @@ fn home(s: &mut Studio, g: &Geometry) {
     let _ = std::fs::remove_dir_all(&root);
     let keep = crate::keep::Keep::at(root.join("keep"));
     let now = xirius_core::store::now_ms();
-    for (name, draft, ago_ms) in [
+    let mut seeds = vec![
         ("朝の曲", false, 4 * 86_400_000),
         (LONG, true, 7 * 60_000),
         ("新しい曲", true, 0),
-    ] {
+    ];
+    if long_saved {
+        seeds.push((LONG_SAVED, false, 2 * 86_400_000));
+    }
+    let count = seeds.len();
+    for (name, draft, ago_ms) in seeds {
         let place = if draft {
             root.join("keep").join("drafts").join(format!("d{ago_ms}"))
         } else {
@@ -106,7 +120,7 @@ fn home(s: &mut Studio, g: &Geometry) {
     s.keep = keep;
     s.keep.sync(&s.song.project());
     let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while s.keep.listed().len() < 3 && std::time::Instant::now() < end {
+    while s.keep.listed().len() < count && std::time::Instant::now() < end {
         s.keep.poll_recent();
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
