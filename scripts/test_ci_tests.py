@@ -1,4 +1,6 @@
 """Test the shared test selection and fail-closed shard aggregation."""
+import contextlib
+import io
 import json
 import tempfile
 import unittest
@@ -99,8 +101,11 @@ class FlakyTests(unittest.TestCase):
                 junit.parent.mkdir()
                 junit.write_text(self.JUNIT, encoding="utf-8")
             summary = Path(tmp) / "summary.md"
-            with patch.dict("os.environ", {"GITHUB_STEP_SUMMARY": str(summary)}):
+            # The workflow command it prints is for the job log; a test must not emit one.
+            printed = io.StringIO()
+            with patch.dict("os.environ", {"GITHUB_STEP_SUMMARY": str(summary)}), contextlib.redirect_stdout(printed):
                 self.assertEqual(ci_tests.report_flaky([first, second], "x"), ["a t::flaky"])
+            self.assertEqual(printed.getvalue().count("::warning"), 1)
             self.assertEqual(summary.read_text(encoding="utf-8").count("`a t::flaky`"), 1)
 
     def test_the_workflow_reports_the_retried_tests_of_every_shard(self):
