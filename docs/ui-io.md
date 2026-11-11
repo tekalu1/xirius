@@ -108,6 +108,7 @@ cleanup・グルーヴ・通知・外部監視・クラッシュ記録・更新�
 | 更新 startup / 手動確認 → ready installer | release の受領を共通化し、不一致の ready と Ready phase を解除する | A の installer と B の回答を同時に受領しても、B の既存 Download ボタンに戻る |
 | cleanup read → キャッシュ受領 → 確認窓 | 一覧の受領と表示予約を分ける。入力・コマンド・別 popup の意図で予約を無効にする | read 保持中の Esc と別 popup。遅着した一覧が後の画面を置き換えない |
 | export.cancel の別プロセス向け分岐 | 自分のジョブの中止通知と、ディスク上の cancel 要求を分ける。窓から後者へ直接入る場合は拒否する | 通常の command は worker、窓の scan 中止は所有中ジョブのメモリー通知だけ |
+| 開始画面の保存前の曲の削除（UI-351） → `keep::remove_draft_folder` | 確認の後に `delete_old_draft`（`is_draft_dir` の確認・`ancillary_io`・`keep.forget`）へ渡す。ロックの確認とフォルダーの削除は worker で行い、UI スレッドは結果を受け取るだけ。`keep.rs` の `exists`・`remove_dir_all`・`sleep` はこの worker の中（ファイルが掴まれている間の再試行）にある | 生きているロックの曲は消さず行を残して通知する。削除に失敗した曲も行を残して通知する（`home::delete_tests`） |
 
 ## 利用者の操作と遅着結果の再監査
 
