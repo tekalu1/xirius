@@ -33,6 +33,12 @@ under the checkout's `target/`, because the callback uses `std::fs::rename`. Wit
 Windows CI retains the real recycle-bin check. Keep signing-test temporary directories outside any Git checkout; the
 production key-generation guard still refuses paths inside a repository.
 
+Every test run through nextest (the `default` profile and `ci`, which inherits it) has a
+per-test timeout in `.config/nextest.toml`: a test running over 60 seconds is printed as SLOW,
+and one still running after 5 minutes is killed with its child processes and fails as TIMEOUT,
+by name. The `cargo test` runs (`--default-features`, `--doctest`, `--legacy`, `--plugins`)
+do not go through nextest and have no such limit.
+
 ## CI stages
 
 Each OS builds one nextest archive, including normal executables and test plugins. Four
