@@ -492,7 +492,6 @@ impl Screen {
             cx.notify();
             return;
         }
-        let picking = studio.pick_typing().is_some() && studio.ask_field().is_none();
         // A field of text takes its editing keys first (Ctrl+A/Z/Y/C/X/V and the selecting keys).
         if text_key_with_clipboard(&mut studio, &k.key, m, cx) {
             cx.notify();
@@ -545,7 +544,6 @@ impl Screen {
                 code,
                 mods: m,
                 held: ev.is_held,
-                picking,
             },
         );
         if out.notify {
@@ -1915,11 +1913,10 @@ fn perform(act: &Act, run: &Run, window: &mut Window, cx: &mut App) {
                     cx,
                 );
                 // The letter follows the key, as Windows sends WM_CHAR after
-                // it; it reaches only an open palette's field, the one place
-                // that takes text through the IME's door.
-                if let (Some(letter), Some(p)) = (letter, run.studio.borrow_mut().palette.as_mut())
-                {
-                    p.replace_text(None, &letter);
+                // it; the field that owns the IME takes it, whatever kind of
+                // field it is (UI-338).
+                if let Some(letter) = letter {
+                    run.studio.borrow_mut().ime_replace(None, &letter, false);
                 }
             }
             // design-lint: allow(ui-blocking-io) PRJ-031: explicit screenshot/benchmark harness output, outside normal Studio callbacks.

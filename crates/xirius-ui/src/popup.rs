@@ -2662,8 +2662,9 @@ mod tests {
             String::new(),
         ));
         assert!(p.typing());
-        assert!(p.typed("a", Some("a")));
-        assert!(p.typed("b", Some("b")));
+        // The name's letters come through the IME's door (UI-338): the field's
+        // own text call puts them in; the key only edits.
+        p.naming.as_mut().unwrap().replace_text(None, "ab");
         assert!(p.typed("backspace", None));
         assert_eq!(p.naming.as_ref().map(|f| f.value.as_str()), Some("a"));
         assert_eq!(p.layout((1440.0, 860.0)).cells[0].look, Look::Input);

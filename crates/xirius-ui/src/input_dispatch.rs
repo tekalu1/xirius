@@ -59,8 +59,6 @@ pub(crate) struct KeyIn<'a> {
     pub code: Option<&'a str>,
     pub mods: Mods,
     pub held: bool,
-    /// A list's search box has the keys.
-    pub picking: bool,
 }
 
 /// What a key asks of the window once it has been dealt with.
@@ -179,9 +177,9 @@ impl Studio {
     /// Logical characters take consumed Shift out of punctuation (JIS `+`), while physical
     /// bindings use the window's base key. The optional character comes from the window/IME.
     /// A key that no ask, setting, palette or start-screen key took: what the song makes of it
-    /// (a field of a part, a letter of a list's search, a note of the PC keyboard, a key of
-    /// the key map). While the start screen shows, the song under it is not there to work on:
-    /// only the key map's window-wide commands run ([`crate::home::KEYS`]).
+    /// (a field's key that is not text, a note of the PC keyboard, a key of the key map). While
+    /// the start screen shows, the song under it is not there to work on: only the key map's
+    /// window-wide commands run ([`crate::home::KEYS`]).
     pub(crate) fn song_key(&mut self, g: &Geometry, k: KeyIn) -> KeyOut {
         let KeyIn {
             key,
@@ -191,16 +189,16 @@ impl Studio {
             code,
             mods: m,
             held,
-            picking,
         } = k;
         let covered = self.home_covers_keys();
         if !covered && self.field_keys(g, key, key_char, m) {
             return KeyOut::NOTIFY;
         }
-        // A list's search box (UI-338): its letters come through the IME
-        // (`EntityInputHandler` below), so the key brings none; a letter is
-        // still the list's, never a note or a shortcut.
-        if picking
+        // A field of text that owns the IME (UI-338): its letters come through
+        // the `EntityInputHandler`, so the key brings none; a letter is still
+        // the field's, never a note or a shortcut.
+        let field_ime = self.ime_target().is_some();
+        if field_ime
             && !m.ctrl
             && !m.alt
             && key_char.is_some_and(|c| !c.is_empty() && !c.chars().any(char::is_control))
@@ -208,7 +206,7 @@ impl Studio {
             return KeyOut::NOTIFY;
         }
         let keypad = mapped != key;
-        let ch = if picking { None } else { key_char };
+        let ch = if field_ime { None } else { key_char };
         let typed = !covered && !keypad && !m.ctrl && self.typed(g, key, ch);
         let played = !covered
             && !keypad

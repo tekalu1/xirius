@@ -2857,8 +2857,9 @@ mod tests {
         );
         b.press(&l, BrowserHit::Search);
         assert!(b.typing);
+        // The letters go through the IME's door (UI-338): the field's own text call.
         for ch in ["s", "u", "r"] {
-            assert!(b.typed(ch, Some(ch)));
+            b.search.replace_text(None, ch);
         }
         assert_eq!(names(&b.rows()), ["[シンセ 1]", "Surge XT"]);
         assert!(b.typed("backspace", None));

@@ -3689,8 +3689,8 @@ mod tests {
         click(&mut s, Hit::Browser(BrowserHit::Loc(1)));
         assert_eq!(s.browser.tab, RailTab::Effects);
         click(&mut s, Hit::Browser(BrowserHit::Search));
-        let g = geometry(&s);
-        assert!(s.typed(&g, "r", Some("reverb")));
+        // The letters of the search go through the IME's door (UI-338).
+        s.ime_replace(None, "reverb", false);
         assert!(
             s.browser
                 .library()
@@ -3863,7 +3863,7 @@ mod tests {
         assert!(s.song.is_saved());
         click(&mut s, Hit::Bar(BarButton::Saved));
         choose(&mut s, Action::NameVersion);
-        s.typed(&geometry(&s), "a", Some("初稿"));
+        s.ime_replace(None, "初稿", false);
         s.typed(&geometry(&s), "enter", None);
         assert_eq!(s.error, None);
         assert!(s.song.versions().iter().any(|v| v.name == "初稿"));
@@ -3947,7 +3947,7 @@ mod tests {
         let p = s.popup.as_ref().unwrap();
         assert_eq!(p.kind, PopupKind::Versions);
         assert_eq!(p.naming.as_ref().map(|f| f.value.as_str()), Some(""));
-        s.typed(&g, "a", Some("二稿"));
+        s.ime_replace(None, "二稿", false);
         s.typed(&g, "enter", None);
         assert_eq!(s.error, None);
         assert!(s.song.versions().iter().any(|v| v.name == "二稿"));
