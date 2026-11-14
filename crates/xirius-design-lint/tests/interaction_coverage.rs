@@ -51,7 +51,7 @@ fn owners(label: &str, source: &str) -> BTreeSet<String> {
     }
     impl<'ast> Visit<'ast> for Scan<'_> {
         fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
-            if item.trait_.as_ref().is_some_and(|(_, path, _)| {
+            if item.trait_.as_ref().is_some_and(|(path, _)| {
                 path.segments
                     .last()
                     .is_some_and(|s| s.ident == "EntityInputHandler")
@@ -259,7 +259,7 @@ fn the_native_text_handler_cannot_add_a_separate_input_route() {
                 && item
                     .trait_
                     .as_ref()
-                    .is_some_and(|(_, path, _)| path.is_ident("EntityInputHandler"))
+                    .is_some_and(|(path, _)| path.is_ident("EntityInputHandler"))
             {
                 routes.visit_item_impl(item);
             }
