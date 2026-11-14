@@ -1080,4 +1080,189 @@ mod tests {
                 .any(|i| matches!(i, Issue::Reserved { chord,.. } if chord == &ch("Alt+F4")))
         );
     }
+
+    /// `display_for` as it read before a call stopped building every row: build
+    /// all the rows, then look each of the row's keys back up. `rows` is taken
+    /// once by the caller so the whole check below stays quick.
+    fn display_for_reference(
+        k: &Keymap,
+        rows: &[Row],
+        context: &str,
+        command: &str,
+        os: Os,
+    ) -> String {
+        let mut out = Vec::new();
+        let mut seen = BTreeSet::new();
+        for ctx in catalog::chain(context) {
+            for row in rows.iter().filter(|r| {
+                r.context == ctx
+                    && (r.command == command
+                        || (!command.contains(char::is_whitespace)
+                            && r.command.split_whitespace().next() == Some(command)))
+            }) {
+                for chord in &row.keys {
+                    if k.lookup(context, chord)
+                        .is_some_and(|(_, cmd)| cmd == row.command)
+                        && seen.insert(chord.clone())
+                    {
+                        out.push(chord.display(os));
+                    }
+                }
+            }
+        }
+        out.join(" / ")
+    }
+
+    /// Every command a caller may name: the catalog's lines, their bare names,
+    /// what the user bound that is not listed, and names nothing answers.
+    fn every_command(k: &Keymap) -> Vec<String> {
+        let mut v: Vec<String> = ENTRIES.iter().map(|e| e.command.to_string()).collect();
+        v.extend(
+            ENTRIES
+                .iter()
+                .filter_map(|e| e.command.split_whitespace().next().map(str::to_string)),
+        );
+        for cmds in k.bindings().values() {
+            v.extend(cmds.iter().cloned());
+        }
+        v.extend(
+            ["nothing.bound", "note.transpose --by 99"]
+                .iter()
+                .map(|s| s.to_string()),
+        );
+        v.sort();
+        v.dedup();
+        v
+    }
+
+    /// Keymaps worth checking: the defaults, a second key on one command, a key
+    /// taken from another row (a conflict), a key taken away, a command the
+    /// catalog does not list, and other presets with and without the user's own.
+    fn keymap_states() -> Vec<(&'static str, Keymap)> {
+        let mut states = vec![("default", Keymap::default())];
+        let mut two = Keymap::default();
+        two.set("roll", &ch("F9"), "note.delete", None, Others::Keep);
+        states.push(("two-keys", two.clone()));
+        let mut stolen = Keymap::default();
+        stolen.set(
+            "roll",
+            &ch("Q"),
+            "note.duplicate",
+            Some(&ch("D")),
+            Others::Keep,
+        );
+        states.push(("stolen", stolen));
+        let mut unbound = Keymap::default();
+        unbound.unset("roll", &ch("D"), Some("note.duplicate"));
+        states.push(("unbound", unbound));
+        let mut unlisted = Keymap::default();
+        unlisted.set("roll", &ch("F12"), "draft.unlisted", None, Others::Keep);
+        states.push(("unlisted", unlisted));
+        for name in catalog::PRESET_NAMES {
+            if name == "studio-pro" {
+                continue;
+            }
+            let mut plain = Keymap {
+                preset: name.to_string(),
+                ..Keymap::default()
+            };
+            states.push(("preset", plain.clone()));
+            plain.add = two.add.clone();
+            states.push(("preset-mine", plain));
+        }
+        states
+    }
+
+    #[test]
+    fn display_for_says_what_it_said() {
+        for (name, k) in keymap_states() {
+            let commands = every_command(&k);
+            let rows = k.rows();
+            for os in [Os::Win, Os::Mac] {
+                for ctx in CONTEXTS.iter().map(|c| c.name).chain(["nowhere"]) {
+                    for cmd in &commands {
+                        assert_eq!(
+                            k.display_for(ctx, cmd, os),
+                            display_for_reference(&k, &rows, ctx, cmd, os),
+                            "{name} {ctx} {cmd} {os:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn display_for_follows_every_way_the_map_changes() {
+        let read = |k: &Keymap| k.display_for("roll", "note.delete", Os::Win);
+        let mut k = Keymap::default();
+        let before = read(&k);
+        // A key the user adds shows at once, and goes when it is taken away.
+        k.set("roll", &ch("F9"), "note.delete", None, Others::Keep);
+        assert!(read(&k).contains("F9"), "{}", read(&k));
+        k.unset("roll", &ch("F9"), Some("note.delete"));
+        assert_eq!(read(&k), before);
+        // A file another program wrote reads the new key.
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = crate::Settings::open(dir.path());
+        std::fs::write(
+            dir.path().join("keymap.toml"),
+            "[roll]\nF9 = \"note.delete\"\n",
+        )
+        .unwrap();
+        assert!(s.reload_if_changed());
+        assert!(read(&s.keymap).contains("F9"), "{}", read(&s.keymap));
+        // A preset switch shows that preset's keys, the user's own kept.
+        k.set("roll", &ch("F9"), "note.delete", None, Others::Keep);
+        k.preset = "cubase".into();
+        let mine = read(&k);
+        assert!(mine.contains("F9"), "{mine}");
+        assert_eq!(
+            mine,
+            display_for_reference(&k, &k.rows(), "roll", "note.delete", Os::Win)
+        );
+        // Back to the preset: the added key leaves.
+        k.reset(None, None, None);
+        let after = read(&k);
+        assert!(!after.contains("F9"), "{after}");
+        assert_eq!(
+            after,
+            display_for_reference(&k, &k.rows(), "roll", "note.delete", Os::Win)
+        );
+    }
+
+    #[test]
+    fn a_palettes_worth_of_keys_does_not_rebuild_the_table() {
+        // The list of commands comes from another map so `k` is still cold.
+        let commands = every_command(&Keymap::default());
+        let k = Keymap::default();
+        k.builds.set(0);
+        k.row_builds.set(0);
+        for cmd in &commands {
+            k.display_for("roll", cmd, Os::Win);
+        }
+        assert_eq!(
+            k.builds.get(),
+            1,
+            "the table is made once for a whole palette, not once a row"
+        );
+        assert_eq!(
+            k.row_builds.get(),
+            0,
+            "no row list is made for the palette's key chips"
+        );
+    }
+
+    #[test]
+    fn the_row_list_is_made_once_while_the_map_stands() {
+        let k = Keymap::default();
+        let first = k.rows();
+        k.builds.set(0);
+        k.row_builds.set(0);
+        for _ in 0..5 {
+            assert_eq!(k.rows(), first);
+        }
+        assert_eq!(k.row_builds.get(), 0);
+        assert_eq!(k.builds.get(), 0);
+    }
 }
