@@ -352,6 +352,8 @@ struct DeviceWindow {
     menu_only: bool,
     /// The Macro Controls (`id` is `None` as for the Channel Editor).
     macros: bool,
+    /// Files from another app are over this window (their light is cleaned on exit).
+    files_dragged: bool,
     _activation: gpui::Subscription,
     _bounds: gpui::Subscription,
 }
@@ -506,6 +508,7 @@ impl DeviceWindow {
             popup: None,
             menu_only: false,
             macros: false,
+            files_dragged: false,
             _activation: activation,
             _bounds: bounds,
         }
@@ -525,10 +528,101 @@ impl DeviceWindow {
         restore(&mut s, old);
         result
     }
+
+    /// Whether the device this window shows is one files drop onto (UI-333, UI-334): the
+    /// Channel Editor, the Macro Controls and the preset menu are not. Without this a file
+    /// let go on any other detached window would fall through to the song's lanes, whose
+    /// geometry is the main window's, not this surface's.
+    fn takes_files(&self) -> bool {
+        if self.menu_only {
+            return false;
+        }
+        let Some(id) = self.id else {
+            return false;
+        };
+        let s = self.studio.borrow();
+        let p = s.project();
+        s.instruments
+            .open
+            .iter()
+            .find(|w| w.plugin == id)
+            .and_then(|w| crate::instrument::window::live(&p, w))
+            .is_some_and(|(_, _, def)| crate::device::sampler::has_files(def))
+    }
+
+    /// Files dragged over the window: the light of what a drop there would do.
+    fn files_over(
+        &mut self,
+        ev: &gpui::DragMoveEvent<gpui::ExternalPaths>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.files_dragged = true;
+        let paths = ev.drag(cx).paths();
+        let (x, y) = (
+            f32::from(ev.event.position.x),
+            f32::from(ev.event.position.y),
+        );
+        if self.with(window, |s, g| {
+            s.files_moved(g, x, y, paths, ev.event.modifiers.shift)
+        }) {
+            // What was dropped on or told lives on the main window: every surface redraws.
+            cx.refresh_windows();
+        }
+    }
+
+    /// Files dropped on the window (UI-333, UI-334): the samples of the device it shows.
+    fn files_dropped(
+        &mut self,
+        paths: &gpui::ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.files_dragged = false;
+        let position = window.mouse_position();
+        let (x, y) = (f32::from(position.x), f32::from(position.y));
+        let shift = window.modifiers().shift;
+        self.with(window, |s, g| {
+            if s.input_blocked() {
+                s.drop_hover(false);
+            } else {
+                s.files_landed(g, x, y, paths.paths(), shift);
+            }
+        });
+        // The word of what was taken (and what was not) is the main window's toast.
+        cx.refresh_windows();
+    }
+
+    /// Shift pressed or let go while files are dragged over the window: what they would
+    /// do changes where the pointer is (N3-kit-1).
+    fn drag_modifiers(
+        &mut self,
+        ev: &gpui::ModifiersChangedEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.files_dragged {
+            return;
+        }
+        if self.with(window, |s, g| {
+            if s.input_blocked() {
+                false
+            } else {
+                s.drag_shift(g, ev.modifiers.shift)
+            }
+        }) {
+            cx.refresh_windows();
+        }
+    }
 }
 
 impl Render for DeviceWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Files dragged out of the window again leave no light behind.
+        if self.files_dragged && !cx.has_active_drag() {
+            self.files_dragged = false;
+            self.studio.borrow_mut().drop_hover(false);
+        }
         let live = if self.menu_only {
             self.popup.is_some()
                 && self.id.is_some_and(|id| {
@@ -919,6 +1013,11 @@ impl Render for DeviceWindow {
                 });
                 cx.refresh_windows();
             }))
+            .when(self.takes_files(), |d| {
+                d.on_drag_move(cx.listener(Self::files_over))
+                    .on_drop(cx.listener(Self::files_dropped))
+                    .on_modifiers_changed(cx.listener(Self::drag_modifiers))
+            })
             .child(body)
             .children(
                 marks
@@ -986,7 +1085,11 @@ fn device_key_event(
             && s.typed(
                 g,
                 &k.key,
-                if picking { None } else { k.key_char.as_deref() },
+                if picking {
+                    None
+                } else {
+                    k.key_char.as_deref()
+                },
             ))
         || (s.popup.is_none()
             && !keypad
@@ -1303,5 +1406,688 @@ mod tests {
         );
         restore(&mut s, old);
         assert_eq!(s.ime_target(), Some(crate::interaction::ImeTarget::Name));
+    }
+
+    mod headless {
+        use gpui::{
+            Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, Bounds, Capslock,
+            ClipboardItem, CursorStyle, DispatchEventResult, DisplayId, DummyKeyboardMapper,
+            ForegroundExecutor, GpuSpecs, HeadlessAtlas, Keymap, Modifiers, NoopTextSystem,
+            PathPromptOptions, Pixels, Platform, PlatformAtlas, PlatformDispatcher,
+            PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformKeyboardLayout,
+            PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Point, Priority,
+            PromptButton, PromptLevel, RequestFrameOptions, RunnableVariant, Scene, Size, Task,
+            ThermalState, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+            WindowControlArea, WindowParams, WindowVisibility, point, px, size,
+        };
+        use raw_window_handle::{
+            DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle,
+        };
+        use std::{
+            cell::{Cell, RefCell},
+            ffi::OsString,
+            path::{Path, PathBuf},
+            rc::Rc,
+            sync::Arc,
+            time::Duration,
+        };
+
+        struct InlineDispatcher;
+
+        impl PlatformDispatcher for InlineDispatcher {
+            fn is_main_thread(&self) -> bool {
+                true
+            }
+            fn dispatch(&self, runnable: RunnableVariant, _: Priority) {
+                runnable.run();
+            }
+            fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _: Priority) {
+                runnable.run();
+            }
+            fn dispatch_after(&self, _: Duration, _: RunnableVariant) {}
+            fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
+                f();
+            }
+        }
+
+        #[derive(Debug)]
+        struct HeadlessDisplay;
+
+        impl PlatformDisplay for HeadlessDisplay {
+            fn id(&self) -> DisplayId {
+                DisplayId::new(1)
+            }
+            fn uuid(&self) -> gpui::Result<uuid::Uuid> {
+                Ok(uuid::Uuid::nil())
+            }
+            fn bounds(&self) -> Bounds<Pixels> {
+                Bounds::new(point(px(0.0), px(0.0)), size(px(1920.0), px(1080.0)))
+            }
+        }
+
+        struct DummyLayout;
+
+        impl PlatformKeyboardLayout for DummyLayout {
+            fn id(&self) -> &str {
+                "us"
+            }
+            fn name(&self) -> &str {
+                "US"
+            }
+        }
+
+        type FrameRequest = Box<dyn FnMut(RequestFrameOptions)>;
+        type InputCallback = Box<dyn FnMut(PlatformInput) -> DispatchEventResult>;
+
+        pub(super) struct WindowState {
+            bounds: Cell<Bounds<Pixels>>,
+            display: Rc<dyn PlatformDisplay>,
+            atlas: Arc<dyn PlatformAtlas>,
+            request_frame: RefCell<Option<FrameRequest>>,
+            input: RefCell<Option<InputCallback>>,
+            input_handler: RefCell<Option<PlatformInputHandler>>,
+        }
+
+        #[derive(Clone)]
+        pub(super) struct HeadlessWindow(pub(super) Rc<WindowState>);
+
+        impl HasWindowHandle for HeadlessWindow {
+            fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
+                Err(HandleError::NotSupported)
+            }
+        }
+
+        impl HasDisplayHandle for HeadlessWindow {
+            fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+                Err(HandleError::NotSupported)
+            }
+        }
+
+        impl HeadlessWindow {
+            pub(super) fn draw(&self) {
+                let cb = self.0.request_frame.borrow_mut().take();
+                if let Some(mut cb) = cb {
+                    cb(RequestFrameOptions {
+                        force_render: true,
+                        ..Default::default()
+                    });
+                    *self.0.request_frame.borrow_mut() = Some(cb);
+                }
+            }
+
+            pub(super) fn dispatch(&self, ev: PlatformInput) {
+                let cb = self.0.input.borrow_mut().take();
+                if let Some(mut cb) = cb {
+                    cb(ev);
+                    *self.0.input.borrow_mut() = Some(cb);
+                }
+            }
+        }
+
+        impl PlatformWindow for HeadlessWindow {
+            fn bounds(&self) -> Bounds<Pixels> {
+                self.0.bounds.get()
+            }
+            fn is_maximized(&self) -> bool {
+                false
+            }
+            fn window_bounds(&self) -> WindowBounds {
+                WindowBounds::Windowed(self.0.bounds.get())
+            }
+            fn content_size(&self) -> Size<Pixels> {
+                self.0.bounds.get().size
+            }
+            fn resize(&mut self, size: Size<Pixels>) {
+                let mut b = self.0.bounds.get();
+                b.size = size;
+                self.0.bounds.set(b);
+            }
+            fn scale_factor(&self) -> f32 {
+                1.0
+            }
+            fn appearance(&self) -> WindowAppearance {
+                WindowAppearance::Dark
+            }
+            fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+                Some(self.0.display.clone())
+            }
+            fn mouse_position(&self) -> Point<Pixels> {
+                Point::default()
+            }
+            fn modifiers(&self) -> Modifiers {
+                Modifiers::default()
+            }
+            fn capslock(&self) -> Capslock {
+                Capslock::default()
+            }
+            fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
+                *self.0.input_handler.borrow_mut() = Some(input_handler);
+            }
+            fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
+                self.0.input_handler.borrow_mut().take()
+            }
+            fn prompt(
+                &self,
+                _: PromptLevel,
+                _: &str,
+                _: Option<&str>,
+                _: &[PromptButton],
+            ) -> Option<futures_channel::oneshot::Receiver<usize>> {
+                None
+            }
+            fn activate(&self) {}
+            fn is_active(&self) -> bool {
+                true
+            }
+            fn visibility(&self) -> WindowVisibility {
+                WindowVisibility::Visible
+            }
+            fn is_hovered(&self) -> bool {
+                true
+            }
+            fn background_appearance(&self) -> WindowBackgroundAppearance {
+                WindowBackgroundAppearance::Opaque
+            }
+            fn set_title(&mut self, _: &str) {}
+            fn set_background_appearance(&self, _: WindowBackgroundAppearance) {}
+            fn minimize(&self) {}
+            fn zoom(&self) {}
+            fn toggle_fullscreen(&self) {}
+            fn is_fullscreen(&self) -> bool {
+                false
+            }
+            fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
+                *self.0.request_frame.borrow_mut() = Some(callback);
+            }
+            fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {
+                *self.0.input.borrow_mut() = Some(callback);
+            }
+            fn on_active_status_change(&self, _: Box<dyn FnMut(bool)>) {}
+            fn on_visibility_change(&self, _: Box<dyn FnMut(WindowVisibility)>) {}
+            fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
+            fn on_resize(&self, _: Box<dyn FnMut(Size<Pixels>, f32)>) {}
+            fn on_moved(&self, _: Box<dyn FnMut()>) {}
+            fn on_should_close(&self, _: Box<dyn FnMut() -> bool>) {}
+            fn on_hit_test_window_control(&self, _: Box<dyn FnMut() -> Option<WindowControlArea>>) {
+            }
+            fn on_close(&self, _: Box<dyn FnOnce()>) {}
+            fn on_appearance_changed(&self, _: Box<dyn FnMut()>) {}
+            fn draw(&self, _: &Scene) {}
+            fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+                self.0.atlas.clone()
+            }
+            fn is_subpixel_rendering_supported(&self) -> bool {
+                false
+            }
+            #[cfg(target_os = "windows")]
+            fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND {
+                windows::Win32::Foundation::HWND(std::ptr::null_mut())
+            }
+            fn gpu_specs(&self) -> Option<GpuSpecs> {
+                None
+            }
+            fn update_ime_position(&self, _: Bounds<Pixels>) {}
+        }
+
+        pub(super) struct HeadlessPlatform {
+            background: BackgroundExecutor,
+            foreground: ForegroundExecutor,
+            text_system: Arc<dyn PlatformTextSystem>,
+            display: Rc<dyn PlatformDisplay>,
+            pub(super) windows: RefCell<Vec<HeadlessWindow>>,
+        }
+
+        impl HeadlessPlatform {
+            pub(super) fn new() -> Rc<Self> {
+                let dispatcher: Arc<dyn PlatformDispatcher> = Arc::new(InlineDispatcher);
+                Rc::new(Self {
+                    background: BackgroundExecutor::new(dispatcher.clone()),
+                    foreground: ForegroundExecutor::new(dispatcher),
+                    text_system: Arc::new(NoopTextSystem::new()),
+                    display: Rc::new(HeadlessDisplay),
+                    windows: RefCell::new(Vec::new()),
+                })
+            }
+        }
+
+        impl Platform for HeadlessPlatform {
+            fn background_executor(&self) -> BackgroundExecutor {
+                self.background.clone()
+            }
+            fn foreground_executor(&self) -> ForegroundExecutor {
+                self.foreground.clone()
+            }
+            fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
+                self.text_system.clone()
+            }
+            fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
+                on_finish_launching();
+            }
+            fn quit(&self) {}
+            fn restart(&self, _: Option<PathBuf>, _: Vec<OsString>) {}
+            fn activate(&self, _: bool) {}
+            fn hide(&self) {}
+            fn hide_other_apps(&self) {}
+            fn unhide_other_apps(&self) {}
+            fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
+                vec![self.display.clone()]
+            }
+            fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+                Some(self.display.clone())
+            }
+            fn active_window(&self) -> Option<AnyWindowHandle> {
+                None
+            }
+            fn open_window(
+                &self,
+                _: AnyWindowHandle,
+                options: WindowParams,
+            ) -> gpui::Result<Box<dyn PlatformWindow>> {
+                let win = HeadlessWindow(Rc::new(WindowState {
+                    bounds: Cell::new(options.bounds),
+                    display: self.display.clone(),
+                    atlas: Arc::new(HeadlessAtlas::default()),
+                    request_frame: RefCell::new(None),
+                    input: RefCell::new(None),
+                    input_handler: RefCell::new(None),
+                }));
+                self.windows.borrow_mut().push(win.clone());
+                Ok(Box::new(win))
+            }
+            fn window_appearance(&self) -> WindowAppearance {
+                WindowAppearance::Dark
+            }
+            fn open_url(&self, _: &str) {}
+            fn on_open_urls(&self, _: Box<dyn FnMut(Vec<String>)>) {}
+            fn register_url_scheme(&self, _: &str) -> Task<gpui::Result<()>> {
+                Task::ready(Ok(()))
+            }
+            fn prompt_for_paths(
+                &self,
+                _: PathPromptOptions,
+            ) -> futures_channel::oneshot::Receiver<gpui::Result<Option<Vec<PathBuf>>>>
+            {
+                unimplemented!()
+            }
+            fn prompt_for_new_path(
+                &self,
+                _: &Path,
+                _: Option<&str>,
+            ) -> futures_channel::oneshot::Receiver<gpui::Result<Option<PathBuf>>> {
+                unimplemented!()
+            }
+            fn can_select_mixed_files_and_dirs(&self) -> bool {
+                false
+            }
+            fn reveal_path(&self, _: &Path) {}
+            fn open_with_system(&self, _: &Path) {}
+            fn on_quit(&self, _: Box<dyn FnMut() -> bool>) {}
+            fn on_reopen(&self, _: Box<dyn FnMut()>) {}
+            fn on_system_sleep(&self, _: Box<dyn FnMut()>) {}
+            fn on_system_wake(&self, _: Box<dyn FnMut()>) {}
+            fn set_menus(&self, _: Vec<gpui::Menu>, _: &Keymap) {}
+            fn set_dock_menu(&self, _: Vec<gpui::MenuItem>, _: &Keymap) {}
+            fn on_app_menu_action(&self, _: Box<dyn FnMut(&dyn Action)>) {}
+            fn on_will_open_app_menu(&self, _: Box<dyn FnMut()>) {}
+            fn on_validate_app_menu_command(&self, _: Box<dyn FnMut(&dyn Action) -> bool>) {}
+            fn thermal_state(&self) -> ThermalState {
+                ThermalState::Nominal
+            }
+            fn on_thermal_state_change(&self, _: Box<dyn FnMut()>) {}
+            fn prevent_idle_sleep(&self, _: &str) -> Task<gpui::Result<ActivityGuard>> {
+                Task::ready(Ok(ActivityGuard::noop()))
+            }
+            fn app_path(&self) -> gpui::Result<PathBuf> {
+                Ok(PathBuf::new())
+            }
+            fn path_for_auxiliary_executable(&self, _: &str) -> gpui::Result<PathBuf> {
+                Ok(PathBuf::new())
+            }
+            fn set_cursor_style(&self, _: CursorStyle) {}
+            fn hide_cursor_until_mouse_moves(&self) {}
+            fn is_cursor_visible(&self) -> bool {
+                true
+            }
+            fn should_auto_hide_scrollbars(&self) -> bool {
+                false
+            }
+            fn read_from_clipboard(&self) -> Option<ClipboardItem> {
+                None
+            }
+            fn write_to_clipboard(&self, _: ClipboardItem) {}
+            fn write_credentials(&self, _: &str, _: &str, _: &[u8]) -> Task<gpui::Result<()>> {
+                Task::ready(Ok(()))
+            }
+            fn read_credentials(&self, _: &str) -> Task<gpui::Result<Option<(String, Vec<u8>)>>> {
+                Task::ready(Ok(None))
+            }
+            fn delete_credentials(&self, _: &str) -> Task<gpui::Result<()>> {
+                Task::ready(Ok(()))
+            }
+            fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
+                Box::new(DummyLayout)
+            }
+            fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
+                Rc::new(DummyKeyboardMapper)
+            }
+            fn on_keyboard_layout_change(&self, _: Box<dyn FnMut()>) {}
+        }
+
+        pub(super) struct BlankRoot;
+        impl gpui::Render for BlankRoot {
+            fn render(
+                &mut self,
+                _: &mut gpui::Window,
+                _: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                gpui::div()
+            }
+        }
+
+        /// The main window the `Windows::sync` call under test stands on. `independent::open`
+        /// looks the OS's window of a title up to parent and place, which a headless window
+        /// has none of: this is the same `cx.open_window` without that look-up.
+        pub(super) fn open_test<V: gpui::Render + 'static>(
+            cx: &mut gpui::App,
+            bounds: Bounds<Pixels>,
+            build: impl FnOnce(&mut gpui::Window, &mut gpui::App) -> gpui::Entity<V> + 'static,
+        ) -> gpui::Result<gpui::WindowHandle<V>> {
+            cx.open_window(
+                gpui::WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                build,
+            )
+        }
+    }
+
+    fn write_test_wav(path: &std::path::Path) {
+        let tone: Vec<f32> = (0..441).map(|i| (i as f32 * 0.1).sin() * 0.4).collect();
+        xirius_session::export::write_wav(path, &tone, &tone, 44_100, 16).unwrap();
+    }
+
+    #[test]
+    fn independent_device_window_accepts_external_file_drops_and_clears_preview() {
+        use crate::{
+            device::sampler::DropOn,
+            instrument::{Pick, current, window::Part},
+        };
+        use gpui::{
+            Application, Capslock, ExternalPaths, FileDropEvent, Modifiers, ModifiersChangedEvent,
+            PlatformInput, point, px, size,
+        };
+        use headless::{BlankRoot, HeadlessPlatform};
+
+        let dir = tempfile::tempdir().unwrap();
+        let kick = dir.path().join("Kick.wav");
+        let snare = dir.path().join("Snare.wav");
+        write_test_wav(&kick);
+        write_test_wav(&snare);
+
+        let mut s = Studio::sample();
+        s.geometry(1280.0, 800.0);
+        let track = s
+            .project()
+            .tracks
+            .values()
+            .find(|t| t.name == "Keys")
+            .unwrap()
+            .id;
+        assert!(s.set_instrument(track, &Pick::built_in("Drum Kit")));
+        let id = current(&s.project().tracks[&track]).unwrap().id;
+        s.show_instrument(track, id);
+
+        let studio = Rc::new(RefCell::new(s));
+        let windows = Rc::new(RefCell::new(Windows::default()));
+        let platform = HeadlessPlatform::new();
+
+        let _app = Application::with_platform(platform.clone()).run_embedded({
+            let studio = studio.clone();
+            let windows = windows.clone();
+            move |cx| {
+                let main = headless::open_test(
+                    cx,
+                    Bounds::new(point(px(0.0), px(0.0)), size(px(1280.0), px(800.0))),
+                    |_, cx| cx.new(|_| BlankRoot),
+                )
+                .unwrap();
+                let _ = main.update(cx, |_, main_win, cx| {
+                    windows.borrow_mut().sync(&studio, main_win, cx);
+                });
+            }
+        });
+
+        let dev_win = platform.windows.borrow()[1].clone();
+        dev_win.draw();
+
+        let (pad_pt, plane_pt) = {
+            let mut s = studio.borrow_mut();
+            let body = s.instruments.open[0].body;
+            let old = scope(&mut s, Some(id));
+            let g = surface_geometry(&s, body.0, body.1 + crate::title_bar::BAR_H);
+            let pad = s.instrument_center(&g, id, Part::Pad(36)).unwrap();
+            let plane = s.instrument_center(&g, id, Part::Body).unwrap();
+            restore(&mut s, old);
+            (point(px(pad.0), px(pad.1)), point(px(plane.0), px(plane.1)))
+        };
+
+        let mut paths = ExternalPaths::default();
+        paths.0.extend([kick.clone(), snare.clone()]);
+
+        // 1. Enter over empty pad 0 -> preview and DropOn::Plane (while kit has no samples) are set.
+        dev_win.dispatch(PlatformInput::FileDrop(FileDropEvent::Entered {
+            position: pad_pt,
+            paths: paths.clone(),
+        }));
+        {
+            let s = studio.borrow();
+            assert_eq!(
+                s.instruments.drop_on.map(|(p, on, _)| (p, on)),
+                Some((id, DropOn::Plane))
+            );
+            let preview = s
+                .instruments
+                .preview
+                .as_ref()
+                .expect("FileDrop::Entered on DeviceWindow should populate preview");
+            assert_eq!(preview.plugin, id);
+            assert_eq!(preview.pads.len(), 2);
+            assert!(!s.instruments.drop_layers);
+        }
+
+        // 2. Move over Drop plane -> DropOn::Plane is set.
+        dev_win.dispatch(PlatformInput::FileDrop(FileDropEvent::Pending {
+            position: plane_pt,
+        }));
+        assert_eq!(
+            studio
+                .borrow()
+                .instruments
+                .drop_on
+                .map(|(p, on, _)| (p, on)),
+            Some((id, DropOn::Plane))
+        );
+
+        // 3. Move back to pad 0 and toggle Shift -> drop_layers updates and stacks onto 1 pad.
+        dev_win.dispatch(PlatformInput::FileDrop(FileDropEvent::Pending {
+            position: pad_pt,
+        }));
+        dev_win.dispatch(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+            modifiers: Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+            capslock: Capslock::default(),
+        }));
+        {
+            let s = studio.borrow();
+            assert!(s.instruments.drop_layers);
+            let preview = s.instruments.preview.as_ref().unwrap();
+            assert_eq!(preview.pads.len(), 1);
+            assert_eq!(preview.pads[0].2, "Vel 2");
+        }
+        dev_win.dispatch(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+            modifiers: Modifiers::default(),
+            capslock: Capslock::default(),
+        }));
+        assert!(!studio.borrow().instruments.drop_layers);
+
+        // 4. Drag exits window -> next frame clears preview and drop_on.
+        dev_win.dispatch(PlatformInput::FileDrop(FileDropEvent::Exited));
+        dev_win.draw();
+        {
+            let s = studio.borrow();
+            assert_eq!(s.instruments.drop_on, None);
+            assert!(s.instruments.preview.is_none());
+        }
+
+        // 5. While input_blocked() is true, Entered and Submit are ignored.
+        studio.borrow_mut().transport.finishing_take = true;
+        dev_win.dispatch(PlatformInput::FileDrop(FileDropEvent::Entered {
+            position: pad_pt,
+            paths: paths.clone(),
+        }));
+        dev_win.dispatch(PlatformInput::FileDrop(FileDropEvent::Submit {
+            position: pad_pt,
+        }));
+        {
+            let mut s = studio.borrow_mut();
+            s.transport.finishing_take = false;
+            assert_eq!(s.instruments.drop_on, None);
+            assert!(s.instruments.preview.is_none());
+            assert!(
+                current(&s.project().tracks[&track])
+                    .unwrap()
+                    .samples
+                    .is_empty()
+            );
+        }
+
+        // 6. Real drop (Entered + Submit) loads both WAV files into the Drum Kit pads and supports single-step undo.
+        dev_win.dispatch(PlatformInput::FileDrop(FileDropEvent::Entered {
+            position: pad_pt,
+            paths,
+        }));
+        dev_win.dispatch(PlatformInput::FileDrop(FileDropEvent::Submit {
+            position: pad_pt,
+        }));
+        {
+            let mut s = studio.borrow_mut();
+            assert_eq!(s.instruments.drop_on, None);
+            assert!(s.instruments.preview.is_none());
+            let loaded = current(&s.project().tracks[&track])
+                .unwrap()
+                .samples
+                .clone();
+            assert_eq!(loaded.len(), 2);
+            assert!(loaded[0].ends_with("Kick.wav"));
+            assert!(loaded[1].ends_with("Snare.wav"));
+            let g = s.geometry(1280.0, 800.0);
+            assert!(s.undo(&g));
+            assert!(
+                current(&s.project().tracks[&track])
+                    .unwrap()
+                    .samples
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn every_sample_bearing_builtin_device_window_accepts_external_file_drops() {
+        use crate::instrument::{Pick, current, window::Part};
+        use gpui::{Application, ExternalPaths, FileDropEvent, PlatformInput, point, px, size};
+        use headless::{BlankRoot, HeadlessPlatform};
+
+        let dir = tempfile::tempdir().unwrap();
+        let wav = dir.path().join("Tone.wav");
+        write_test_wav(&wav);
+
+        let sample_defs: Vec<&xirius_params::BuiltinDef> = xirius_params::BUILTINS
+            .iter()
+            .copied()
+            .filter(|def| crate::device::sampler::has_files(def))
+            .collect();
+        assert!(
+            sample_defs.len() >= 2,
+            "expected at least Sampler and Drum Kit to accept sample files"
+        );
+
+        for def in sample_defs {
+            let mut s = Studio::sample();
+            s.geometry(1280.0, 800.0);
+            let track = s
+                .project()
+                .tracks
+                .values()
+                .find(|t| t.name == "Keys")
+                .unwrap()
+                .id;
+            assert!(s.set_instrument(track, &Pick::built_in(def.name)));
+            let id = current(&s.project().tracks[&track]).unwrap().id;
+            s.show_instrument(track, id);
+
+            let studio = Rc::new(RefCell::new(s));
+            let windows = Rc::new(RefCell::new(Windows::default()));
+            let platform = HeadlessPlatform::new();
+
+            let _app = Application::with_platform(platform.clone()).run_embedded({
+                let studio = studio.clone();
+                let windows = windows.clone();
+                move |cx| {
+                    let main = headless::open_test(
+                        cx,
+                        Bounds::new(point(px(0.0), px(0.0)), size(px(1280.0), px(800.0))),
+                        |_, cx| cx.new(|_| BlankRoot),
+                    )
+                    .unwrap();
+                    let _ = main.update(cx, |_, main_win, cx| {
+                        windows.borrow_mut().sync(&studio, main_win, cx);
+                    });
+                }
+            });
+
+            let dev_win = platform.windows.borrow()[1].clone();
+            dev_win.draw();
+
+            let drop_pt = {
+                let mut s = studio.borrow_mut();
+                let body = s.instruments.open[0].body;
+                let old = scope(&mut s, Some(id));
+                let g = surface_geometry(&s, body.0, body.1 + crate::title_bar::BAR_H);
+                let pt = s.instrument_center(&g, id, Part::Body).unwrap();
+                restore(&mut s, old);
+                point(px(pt.0), px(pt.1))
+            };
+
+            let mut paths = ExternalPaths::default();
+            paths.0.push(wav.clone());
+            dev_win.dispatch(PlatformInput::FileDrop(FileDropEvent::Entered {
+                position: drop_pt,
+                paths,
+            }));
+            assert!(
+                studio.borrow().instruments.drop_on.is_some(),
+                "built-in device `{}` ({}) did not highlight on FileDrop::Entered in DeviceWindow",
+                def.uid,
+                def.name
+            );
+
+            dev_win.dispatch(PlatformInput::FileDrop(FileDropEvent::Submit {
+                position: drop_pt,
+            }));
+            let loaded = current(&studio.borrow().project().tracks[&track])
+                .unwrap()
+                .samples
+                .clone();
+            assert_eq!(
+                loaded.len(),
+                1,
+                "built-in device `{}` ({}) did not load dropped sample in DeviceWindow",
+                def.uid,
+                def.name
+            );
+        }
     }
 }
