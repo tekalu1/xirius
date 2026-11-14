@@ -77,7 +77,7 @@ crate crossbeam-utils 0.8.23 MIT OR Apache-2.0
 crate crypto-common 0.1.7 MIT OR Apache-2.0
 crate crypto-common 0.2.2 MIT OR Apache-2.0
 crate ctor 1.0.13 Apache-2.0 OR MIT
-crate curve25519-dalek 4.1.3 BSD-3-Clause
+crate curve25519-dalek 5.0.0 BSD-3-Clause
 crate curve25519-dalek-derive 0.1.1 MIT OR Apache-2.0
 crate dasp_frame 0.11.0 MIT OR Apache-2.0
 crate dasp_sample 0.11.0 MIT OR Apache-2.0
@@ -93,9 +93,9 @@ crate displaydoc 0.2.7 MIT OR Apache-2.0
 crate dunce 1.0.5 CC0-1.0 OR MIT-0 OR Apache-2.0
 crate dwrote 0.11.5 MPL-2.0
 crate dyn-clone 1.0.20 MIT OR Apache-2.0
-crate ebur128 0.1.10 MIT
-crate ed25519 2.2.3 Apache-2.0 OR MIT
-crate ed25519-dalek 2.2.0 BSD-3-Clause
+crate ebur128 0.1.11 MIT
+crate ed25519 3.0.0 Apache-2.0 OR MIT
+crate ed25519-dalek 3.0.0 BSD-3-Clause
 crate either 1.19.0 MIT OR Apache-2.0
 crate enumn 0.1.14 MIT OR Apache-2.0
 crate equivalent 1.0.2 Apache-2.0 OR MIT
@@ -112,7 +112,7 @@ crate fax 0.2.7 MIT
 crate fdeflate 0.3.7 MIT OR Apache-2.0
 crate fixedbitset 0.5.7 MIT OR Apache-2.0
 crate flacenc 0.5.1 Apache-2.0
-crate flate2 1.1.10 MIT OR Apache-2.0
+crate flate2 1.1.11 MIT OR Apache-2.0
 crate float-cmp 0.9.0 MIT
 crate float-ord 0.3.2 MIT  OR  Apache-2.0
 crate float_next_after 1.0.0 MIT
@@ -124,7 +124,6 @@ crate foreign-types 0.5.0 MIT OR Apache-2.0
 crate foreign-types-macros 0.2.4 MIT OR Apache-2.0
 crate foreign-types-shared 0.3.1 MIT OR Apache-2.0
 crate form_urlencoded 1.2.2 MIT OR Apache-2.0
-crate fsevent-sys 4.1.0 MIT
 crate futures 0.3.34 MIT OR Apache-2.0
 crate futures-channel 0.3.34 MIT OR Apache-2.0
 crate futures-concurrency 7.7.1 MIT OR Apache-2.0
@@ -137,7 +136,6 @@ crate futures-sink 0.3.34 MIT OR Apache-2.0
 crate futures-task 0.3.34 MIT OR Apache-2.0
 crate futures-util 0.3.34 MIT OR Apache-2.0
 crate generic-array 0.14.7 MIT
-crate getrandom 0.2.17 MIT OR Apache-2.0
 crate getrandom 0.3.4 MIT OR Apache-2.0
 crate getrandom 0.4.3 MIT OR Apache-2.0
 crate gif 0.14.2 MIT OR Apache-2.0
@@ -201,8 +199,9 @@ crate leak 0.1.2 Apache-2.0 OR MIT
 crate leaky-cow 0.1.1 MIT  OR  Apache-2.0
 crate lebe 0.5.3 BSD-3-Clause
 crate libbz2-rs-sys 0.2.5 bzip2-1.0.6
-crate libc 0.2.190 MIT OR Apache-2.0
+crate libc 0.2.191 MIT OR Apache-2.0
 crate libloading 0.8.9 ISC
+crate libloading 0.9.0 ISC
 crate libm 0.2.16 MIT
 crate link-section 0.19.3 Apache-2.0 OR MIT
 crate linktime-proc-macro 0.2.3 Apache-2.0 OR MIT
@@ -228,7 +227,7 @@ crate miniz_oxide 0.8.9 MIT OR Zlib OR Apache-2.0
 crate miniz_oxide 0.9.1 MIT OR Zlib OR Apache-2.0
 crate mio 1.2.4 MIT
 crate moxcms 0.8.1 BSD-3-Clause OR Apache-2.0
-crate notify 8.2.0 CC0-1.0
+crate notify 8.2.2 CC0-1.0
 crate notify-types 2.1.0 MIT OR Apache-2.0
 crate nu-ansi-term 0.50.3 MIT
 crate num-complex 0.4.6 MIT OR Apache-2.0
@@ -248,6 +247,7 @@ crate objc2-core-foundation 0.3.2 Zlib OR Apache-2.0 OR MIT
 crate objc2-core-graphics 0.3.2 Zlib OR Apache-2.0 OR MIT
 crate objc2-core-location 0.3.2 Zlib OR Apache-2.0 OR MIT
 crate objc2-core-media 0.3.2 Zlib OR Apache-2.0 OR MIT
+crate objc2-core-services 0.3.2 Zlib OR Apache-2.0 OR MIT
 crate objc2-core-video 0.3.2 Zlib OR Apache-2.0 OR MIT
 crate objc2-encode 4.1.0 MIT
 crate objc2-foundation 0.2.2 MIT
@@ -292,7 +292,6 @@ crate quote 1.0.47 MIT OR Apache-2.0
 crate rand 0.9.5 MIT OR Apache-2.0
 crate rand 0.10.3 MIT OR Apache-2.0
 crate rand_chacha 0.9.0 MIT OR Apache-2.0
-crate rand_core 0.6.4 MIT OR Apache-2.0
 crate rand_core 0.9.5 MIT OR Apache-2.0
 crate rand_core 0.10.1 MIT OR Apache-2.0
 crate raw-cpuid 11.6.0 MIT
@@ -312,8 +311,8 @@ crate resvg 0.46.0 Apache-2.0 OR MIT
 crate rfd 0.17.2 MIT
 crate rgb 0.8.53 MIT
 crate rmcp 3.9.0 Apache-2.0
-crate roxmltree 0.21.1 MIT OR Apache-2.0
-crate rtrb 0.4.0 MIT OR Apache-2.0
+crate roxmltree 0.21.2 MIT OR Apache-2.0
+crate rtrb 0.4.1 MIT OR Apache-2.0
 crate rubato 0.16.2 MIT
 crate rustc-demangle 0.1.28 MIT OR Apache-2.0
 crate rustc-hash 2.1.3 Apache-2.0 OR MIT
@@ -341,7 +340,7 @@ crate sha2 0.10.9 MIT OR Apache-2.0
 crate sha2 0.11.1 MIT OR Apache-2.0
 crate sharded-slab 0.1.7 MIT
 crate signal-hook-registry 1.4.8 MIT OR Apache-2.0
-crate signature 2.2.0 Apache-2.0 OR MIT
+crate signature 3.0.0 Apache-2.0 OR MIT
 crate simd-adler32 0.3.10 MIT
 crate simplecss 0.2.2 Apache-2.0 OR MIT
 crate siphasher 1.0.4 MIT OR Apache-2.0
@@ -448,15 +447,11 @@ crate windows-registry 0.6.1 MIT OR Apache-2.0
 crate windows-result 0.4.1 MIT OR Apache-2.0
 crate windows-strings 0.5.1 MIT OR Apache-2.0
 crate windows-sys 0.48.0 MIT OR Apache-2.0
-crate windows-sys 0.60.2 MIT OR Apache-2.0
 crate windows-sys 0.61.2 MIT OR Apache-2.0
 crate windows-targets 0.48.5 MIT OR Apache-2.0
-crate windows-targets 0.53.5 MIT OR Apache-2.0
 crate windows-threading 0.2.1 MIT OR Apache-2.0
 crate windows_aarch64_msvc 0.48.5 MIT OR Apache-2.0
-crate windows_aarch64_msvc 0.53.1 MIT OR Apache-2.0
 crate windows_x86_64_msvc 0.48.5 MIT OR Apache-2.0
-crate windows_x86_64_msvc 0.53.1 MIT OR Apache-2.0
 crate winnow 0.7.15 MIT
 crate winnow 1.0.4 MIT
 crate wio 0.2.2 MIT OR Apache-2.0
@@ -1543,7 +1538,40 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ==== BSD-3-Clause
-used ed25519-dalek 2.2.0
+used curve25519-dalek 5.0.0
+
+Copyright (c) 2016-2021 isis agora lovecruft. All rights reserved.
+Copyright (c) 2016-2021 Henry de Valence. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+1. Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+==== BSD-3-Clause
+used ed25519-dalek 3.0.0
 
 Copyright (c) 2017-2019 isis agora lovecruft. All rights reserved.
 
@@ -1605,7 +1633,6 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
 USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ==== BSD-3-Clause
-used curve25519-dalek 4.1.3
 used exr 1.74.2
 used sha1_smol 1.0.1
 
@@ -1622,7 +1649,7 @@ Redistribution and use in source and binary forms, with or without modification,
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ==== CC0-1.0
-used notify 8.2.0
+used notify 8.2.2
 
 Creative Commons CC0 1.0 Universal
 
@@ -1668,6 +1695,7 @@ For these and/or other purposes and motivations, and without any expectation of 
 
 ==== ISC
 used libloading 0.8.9
+used libloading 0.9.0
 
 Copyright © 2015, Simonas Kazlauskas
 
@@ -1932,7 +1960,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ==== MIT
-used ebur128 0.1.10
+used ebur128 0.1.11
 
 Copyright (c) 2011 Jan Kokemüller
 Copyright (c) 2020 Sebastian Dröge <sebastian@centricular.com>
@@ -2311,7 +2339,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ==== MIT
-used flate2 1.1.10
+used flate2 1.1.11
 
 Copyright (c) 2014-2026 Alex Crichton
 
@@ -3375,66 +3403,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ==== MIT
-used ed25519 2.2.3
-used signature 2.2.0
-
-Copyright (c) 2018-2023 RustCrypto Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-==== MIT
-used getrandom 0.2.17
-
-Copyright (c) 2018-2024 The rust-random Project Developers
-Copyright (c) 2014 The Rust Project Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-==== MIT
 used block-buffer 0.12.1
 
 Copyright (c) 2018-2025 The RustCrypto Project Developers
@@ -3468,6 +3436,36 @@ used getrandom 0.3.4
 
 Copyright (c) 2018-2025 The rust-random Project Developers
 Copyright (c) 2014 The Rust Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+==== MIT
+used ed25519 3.0.0
+used signature 3.0.0
+
+Copyright (c) 2018-2026 RustCrypto Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -4405,7 +4403,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ==== MIT
-used libc 0.2.190
+used libc 0.2.191
 
 Copyright (c) The Rust Project Developers
 
@@ -4536,7 +4534,6 @@ DEALINGS IN THE SOFTWARE.
 used rand 0.10.3
 used rand 0.9.5
 used rand_chacha 0.9.0
-used rand_core 0.6.4
 used rand_core 0.9.5
 
 Copyright 2018 Developers of the Rand project
@@ -5316,6 +5313,7 @@ used objc2-core-foundation 0.3.2
 used objc2-core-graphics 0.3.2
 used objc2-core-location 0.3.2
 used objc2-core-media 0.3.2
+used objc2-core-services 0.3.2
 used objc2-core-video 0.3.2
 used objc2-encode 4.1.0
 used objc2-foundation 0.2.2
@@ -5345,16 +5343,12 @@ used windows-registry 0.6.1
 used windows-result 0.4.1
 used windows-strings 0.5.1
 used windows-sys 0.48.0
-used windows-sys 0.60.2
 used windows-sys 0.61.2
 used windows-targets 0.48.5
-used windows-targets 0.53.5
 used windows-threading 0.2.1
 used windows 0.62.2
 used windows_aarch64_msvc 0.48.5
-used windows_aarch64_msvc 0.53.1
 used windows_x86_64_msvc 0.48.5
-used windows_x86_64_msvc 0.53.1
 used zune-inflate 0.2.54
 
 MIT License
@@ -5708,7 +5702,7 @@ used proc-macro2 1.0.107
 used quote 1.0.47
 used ref-cast-impl 1.0.27
 used ref-cast 1.0.27
-used rtrb 0.4.0
+used rtrb 0.4.1
 used rustversion 1.0.23
 used semver 1.0.28
 used seq-macro 0.3.6
@@ -6000,31 +5994,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ==== MIT
-used fsevent-sys 4.1.0
-
-The MIT License (MIT)
-
-Copyright (c) 2015 Pierre Baillet
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-==== MIT
 used gif 0.14.2
 
 The MIT License (MIT)
@@ -6203,7 +6172,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ==== MIT
-used roxmltree 0.21.1
+used roxmltree 0.21.2
 
 The MIT License (MIT)
 
