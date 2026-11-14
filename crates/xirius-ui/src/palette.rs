@@ -2579,6 +2579,28 @@ mod tests {
         assert_eq!(s.playhead, 0);
     }
 
+    /// A remapped key shows in the row the next time the palette's rows are made,
+    /// and 既定に戻す puts it back.
+    #[test]
+    fn a_remapped_key_shows_in_its_row_right_away() {
+        let (mut s, g) = setup();
+        let before = row(&mut s, &g, "transport.play").key;
+        s.song
+            .run(
+                "keymap.set",
+                json!({"key": "Mod+Alt+F12", "command": "transport.play", "context": "global"}),
+            )
+            .unwrap();
+        let after = row(&mut s, &g, "transport.play").key;
+        assert!(
+            after.as_deref().is_some_and(|k| k.contains("F12")),
+            "{after:?}"
+        );
+        assert_ne!(before, after);
+        s.song.run("keymap.reset", json!({})).unwrap();
+        assert_eq!(row(&mut s, &g, "transport.play").key, before);
+    }
+
     #[test]
     fn save_without_a_folder_asks_where_and_versions_open_their_pop_over() {
         let (mut s, g) = setup();
