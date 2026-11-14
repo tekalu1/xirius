@@ -17,7 +17,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
-use rand_core::OsRng;
+use getrandom::{SysRng, rand_core::UnwrapErr};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -104,7 +104,7 @@ fn keygen(out: &Path) -> Result<(), String> {
     {
         return Err(format!("{} がありません", dir.display()));
     }
-    let key = SigningKey::generate(&mut OsRng);
+    let key = SigningKey::generate(&mut UnwrapErr(SysRng));
     // create_new: a key is never written over one that is there (even one that appeared after
     // a look).
     let mut file = std::fs::OpenOptions::new()
