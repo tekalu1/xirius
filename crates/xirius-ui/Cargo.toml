@@ -88,8 +88,11 @@ sha2 = "0.10"
 ed25519-dalek = "2"
 # glyph_cover.rs reads the literals of the source and the JIS X 0208 table (UI-005).
 encoding_rs = "0.8"
+futures-channel = "0.3"
 proc-macro2 = { version = "1", features = ["span-locations"] }
+raw-window-handle = "0.6"
 syn = { version = "2", features = ["full", "visit"] }
+uuid = "1"
 xirius-test-vst3 = { path = "../xirius-test-vst3" }
 # The stand-in ARA plugin of the window's save tests (PLG-036).
 xirius-ara = { path = "../xirius-ara" }
@@ -105,7 +108,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Threading",
 ] }
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_System_Com",
     "Win32_System_Variant",
