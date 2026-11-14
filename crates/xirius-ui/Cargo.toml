@@ -91,7 +91,7 @@ encoding_rs = "0.8"
 futures-channel = "0.3"
 proc-macro2 = { version = "1", features = ["span-locations"] }
 raw-window-handle = "0.6"
-syn = { version = "2", features = ["full", "visit"] }
+syn = { version = "3", features = ["full", "visit"] }
 uuid = "1"
 xirius-test-vst3 = { path = "../xirius-test-vst3" }
 # The stand-in ARA plugin of the window's save tests (PLG-036).
