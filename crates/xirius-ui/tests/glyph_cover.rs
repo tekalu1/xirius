@@ -198,10 +198,8 @@ fn every_key_of_every_preset_is_in_a_bundled_face_on_both_systems() {
     let mut problems = Vec::new();
     let mut shown = BTreeSet::new();
     for preset in PRESETS {
-        let keymap = Keymap {
-            preset: preset.name.to_string(),
-            ..Keymap::default()
-        };
+        let mut keymap = Keymap::default();
+        keymap.preset = preset.name.to_string();
         for row in keymap.rows() {
             for key in row.keys.iter().chain(&row.preset_keys) {
                 for os in [Os::Win, Os::Mac] {
