@@ -6,7 +6,9 @@
 //! stay as they are. Every change is made on the keys in effect and written back as the
 //! smallest difference from the preset.
 
+use std::cell::{Ref, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use serde_json::{Value, json};
 
@@ -19,7 +21,7 @@ pub const PRESET_VERSION: i64 = 1;
 /// (context, key) → its commands. Multiple commands are an unresolved conflict.
 pub type Bindings = BTreeMap<(String, Chord), Vec<String>>;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone)]
 pub struct Keymap {
     pub preset: String,
     /// Keys the user added, per context.
@@ -28,6 +30,37 @@ pub struct Keymap {
     pub unbind: BTreeMap<String, BTreeSet<Chord>>,
     /// Deliberately hiding a wider binding.
     pub shadow: BTreeSet<(String, Chord)>,
+    /// What `bindings()`/`rows()` last gave, and the fields it was read from.
+    /// The fields are compared on every read — a `set`, a line read from the
+    /// file, or a field written directly all look the same to it — so the next
+    /// read after any change makes them again.
+    resolved: RefCell<Option<Box<Resolved>>>,
+    /// How often the effective map and the row list were made, so a test can
+    /// tell a screen's worth of reads from a screen's worth of remakes.
+    #[cfg(test)]
+    builds: std::cell::Cell<usize>,
+    #[cfg(test)]
+    row_builds: std::cell::Cell<usize>,
+}
+
+impl PartialEq for Keymap {
+    fn eq(&self, other: &Keymap) -> bool {
+        self.preset == other.preset
+            && self.add == other.add
+            && self.unbind == other.unbind
+            && self.shadow == other.shadow
+    }
+}
+
+impl std::fmt::Debug for Keymap {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("Keymap")
+            .field("preset", &self.preset)
+            .field("add", &self.add)
+            .field("unbind", &self.unbind)
+            .field("shadow", &self.shadow)
+            .finish()
+    }
 }
 
 impl Default for Keymap {
@@ -37,7 +70,34 @@ impl Default for Keymap {
             add: BTreeMap::new(),
             unbind: BTreeMap::new(),
             shadow: BTreeSet::new(),
+            resolved: RefCell::new(None),
+            #[cfg(test)]
+            builds: std::cell::Cell::new(0),
+            #[cfg(test)]
+            row_builds: std::cell::Cell::new(0),
         }
+    }
+}
+
+/// The maps `bindings()` and `rows()` are read from, and the fields they came from.
+#[derive(Clone)]
+struct Resolved {
+    preset: String,
+    add: BTreeMap<String, BTreeMap<Chord, Vec<String>>>,
+    unbind: BTreeMap<String, BTreeSet<Chord>>,
+    shadow: BTreeSet<(String, Chord)>,
+    bindings: Arc<Bindings>,
+    preset_bindings: Arc<Bindings>,
+    rows: Option<Arc<Vec<Row>>>,
+}
+
+impl Resolved {
+    /// The fields still say what these maps were read from.
+    fn current(&self, k: &Keymap) -> bool {
+        self.preset == k.preset
+            && self.add == k.add
+            && self.unbind == k.unbind
+            && self.shadow == k.shadow
     }
 }
 
@@ -185,7 +245,51 @@ pub enum Others {
 impl Keymap {
     /// The keys in effect.
     pub fn bindings(&self) -> Bindings {
-        self.apply_to(preset_bindings(&self.preset))
+        (*self.shared_bindings()).clone()
+    }
+
+    /// The maps the fields stand for, shared by every read until they change.
+    fn resolve(&self) -> Ref<'_, Resolved> {
+        {
+            let mut slot = self.resolved.borrow_mut();
+            if slot.as_ref().is_none_or(|r| !r.current(self)) {
+                *slot = Some(Box::new(self.build()));
+            }
+        }
+        Ref::map(self.resolved.borrow(), |r| &**r.as_ref().unwrap())
+    }
+
+    /// `resolve()`'s make, counted in tests.
+    fn build(&self) -> Resolved {
+        #[cfg(test)]
+        self.builds.set(self.builds.get() + 1);
+        let preset_bindings = Arc::new(preset_bindings(&self.preset));
+        Resolved {
+            preset: self.preset.clone(),
+            add: self.add.clone(),
+            unbind: self.unbind.clone(),
+            shadow: self.shadow.clone(),
+            bindings: Arc::new(self.apply_to((*preset_bindings).clone())),
+            preset_bindings,
+            rows: None,
+        }
+    }
+
+    fn shared_bindings(&self) -> Arc<Bindings> {
+        self.resolve().bindings.clone()
+    }
+
+    fn shared_preset_bindings(&self) -> Arc<Bindings> {
+        self.resolve().preset_bindings.clone()
+    }
+
+    fn shared_rows(&self) -> Arc<Vec<Row>> {
+        if let Some(rows) = &self.resolve().rows {
+            return rows.clone();
+        }
+        let rows = Arc::new(self.build_rows());
+        self.resolved.borrow_mut().as_mut().unwrap().rows = Some(rows.clone());
+        rows
     }
 
     fn apply_to(&self, mut b: Bindings) -> Bindings {
@@ -208,7 +312,7 @@ impl Keymap {
 
     /// Keeps `b` as the keys in effect: the smallest difference from the preset.
     pub fn set_bindings(&mut self, b: &Bindings) {
-        let p = preset_bindings(&self.preset);
+        let p = self.shared_preset_bindings();
         self.shadow.retain(|key| b.contains_key(key));
         self.add.clear();
         self.unbind.clear();
@@ -243,16 +347,7 @@ impl Keymap {
 
     /// The command a key runs in `context` (or the contexts around it), and where it was found.
     pub fn lookup(&self, context: &str, chord: &Chord) -> Option<(String, String)> {
-        if context == "text" && chord.mods == 0 && chord.key.chars().count() == 1 {
-            return None;
-        }
-        let b = self.bindings();
-        for c in catalog::chain(context) {
-            if let Some(cmds) = b.get(&(c.to_string(), chord.clone())) {
-                return (cmds.len() == 1).then(|| (c.to_string(), cmds[0].clone()));
-            }
-        }
-        None
+        lookup_in(&self.shared_bindings(), context, chord)
     }
 
     /// Shortcut text for a command in the active context, including its wider contexts.
@@ -260,18 +355,12 @@ impl Keymap {
     pub fn display_for(&self, context: &str, command: &str, os: Os) -> String {
         let mut out = Vec::new();
         let mut seen = BTreeSet::new();
-        let rows = self.rows();
+        let b = self.shared_bindings();
+        let p = self.shared_preset_bindings();
         for ctx in catalog::chain(context) {
-            for row in rows.iter().filter(|r| {
-                r.context == ctx
-                    && (r.command == command
-                        || (!command.contains(char::is_whitespace)
-                            && r.command.split_whitespace().next() == Some(command)))
-            }) {
-                for chord in &row.keys {
-                    if self
-                        .lookup(context, chord)
-                        .is_some_and(|(_, cmd)| cmd == row.command)
+            for cmd in display_commands(&b, ctx, command) {
+                for chord in keys_in(&b, &p, ctx, &cmd) {
+                    if lookup_in(&b, context, &chord).is_some_and(|(_, c)| c == cmd)
                         && seen.insert(chord.clone())
                     {
                         out.push(chord.display(os));
@@ -285,8 +374,8 @@ impl Keymap {
     /// The keys of `command` in `context`, in the preset's order and then the user's.
     pub fn keys_of(&self, context: &str, command: &str) -> Vec<Chord> {
         keys_in(
-            &self.bindings(),
-            &preset_bindings(&self.preset),
+            &self.shared_bindings(),
+            &self.shared_preset_bindings(),
             context,
             command,
         )
@@ -294,15 +383,22 @@ impl Keymap {
 
     /// Every row: the catalog's, then the commands the user bound that it does not list.
     pub fn rows(&self) -> Vec<Row> {
-        rows_of(&self.bindings(), &preset_bindings(&self.preset))
+        (*self.shared_rows()).clone()
+    }
+
+    /// `rows()`'s make, counted in tests.
+    fn build_rows(&self) -> Vec<Row> {
+        #[cfg(test)]
+        self.row_builds.set(self.row_builds.get() + 1);
+        rows_of(&self.shared_bindings(), &self.shared_preset_bindings())
     }
 
     /// How many rows would change if the preset became `name` (the rows the user changed stay).
     pub fn rows_changed_by(&self, name: &str) -> usize {
-        let now = self.rows();
+        let now = self.shared_rows();
         let mut other = self.clone();
         other.preset = name.to_string();
-        let then = other.rows();
+        let then = other.shared_rows();
         then.iter()
             .filter(|r| {
                 now.iter()
@@ -314,7 +410,7 @@ impl Keymap {
 
     /// Rows the user changed from the preset.
     pub fn changed_rows(&self) -> usize {
-        self.rows().iter().filter(|r| r.changed()).count()
+        self.shared_rows().iter().filter(|r| r.changed()).count()
     }
 
     /// Binds `chord` to `command` in `context`. With `from`, the key replaces that key of the
@@ -374,7 +470,7 @@ impl Keymap {
 
     /// Back to the preset: all, one context, one key (in one context or all) or one row.
     pub fn reset(&mut self, context: Option<&str>, chord: Option<&Chord>, command: Option<&str>) {
-        let p = preset_bindings(&self.preset);
+        let p = self.shared_preset_bindings();
         let mut b = self.bindings();
         let in_ctx = |c: &str| context.is_none_or(|x| x == c);
         self.shadow.retain(|key| {
@@ -389,7 +485,7 @@ impl Keymap {
                     v.retain(|x| x != cmd);
                 }
             }
-            for ((c, k), v) in &p {
+            for ((c, k), v) in p.iter() {
                 if in_ctx(c) && v.iter().any(|x| x == cmd) {
                     let w = b.entry((c.clone(), k.clone())).or_default();
                     w.retain(|x| x != cmd);
@@ -414,7 +510,7 @@ impl Keymap {
 
     /// Conflicts, hidden keys and the system's keys.
     pub fn conflicts(&self, os: Os) -> Vec<Issue> {
-        let b = self.bindings();
+        let b = self.shared_bindings();
         let reserved: Vec<Chord> = match os {
             Os::Win => catalog::OS_RESERVED_WIN,
             Os::Mac => catalog::OS_RESERVED_MAC,
@@ -423,7 +519,7 @@ impl Keymap {
         .map(|k| Chord::parse(k, Os::Win).expect("reserved keys read"))
         .collect();
         // The preset's own narrow keys hide its wide ones on purpose (the roll's arrows, UI-088).
-        let preset = preset_bindings(&self.preset);
+        let preset = self.shared_preset_bindings();
         let deliberate = |ctx: &String, chord: &Chord, wider: &str| {
             let here = (ctx.clone(), chord.clone());
             let there = (wider.to_string(), chord.clone());
@@ -432,7 +528,7 @@ impl Keymap {
                 && preset.get(&there) == b.get(&there)
         };
         let mut out = Vec::new();
-        for ((ctx, chord), cmds) in &b {
+        for ((ctx, chord), cmds) in b.iter() {
             if cmds.len() > 1 {
                 out.push(Issue::Conflict {
                     context: ctx.clone(),
@@ -577,7 +673,7 @@ impl Keymap {
         s.push_str(&format!("preset = {}\n", tomlw::string(&self.preset)));
         s.push_str(&format!("preset-version = {PRESET_VERSION}\n"));
         let mut additions = self.add.clone();
-        let bindings = self.bindings();
+        let bindings = self.shared_bindings();
         for (ctx, chord) in &self.shadow {
             if let Some(commands) = bindings.get(&(ctx.clone(), chord.clone())) {
                 additions
@@ -622,7 +718,7 @@ impl Keymap {
 
     /// Everything in effect, for `keymap export --format json` and the CLI.
     pub fn to_json(&self, os: Os) -> Value {
-        let rows: Vec<Value> = self.rows().iter().map(|r| row_json(r, os)).collect();
+        let rows: Vec<Value> = self.shared_rows().iter().map(|r| row_json(r, os)).collect();
         json!({"preset": self.preset, "rows": rows})
     }
 }
@@ -640,6 +736,48 @@ fn ordered<'a>(keys: impl Iterator<Item = &'a String>) -> Vec<&'a String> {
         )
     });
     v
+}
+
+/// [`Keymap::lookup`] over a map already in hand.
+fn lookup_in(b: &Bindings, context: &str, chord: &Chord) -> Option<(String, String)> {
+    if context == "text" && chord.mods == 0 && chord.key.chars().count() == 1 {
+        return None;
+    }
+    for c in catalog::chain(context) {
+        if let Some(cmds) = b.get(&(c.to_string(), chord.clone())) {
+            return (cmds.len() == 1).then(|| (c.to_string(), cmds[0].clone()));
+        }
+    }
+    None
+}
+
+/// The commands [`Keymap::display_for`] reads in `ctx` for `command`, in the
+/// order `rows_of` gives them: the catalog's, then what the user bound that it
+/// does not list.
+fn display_commands(b: &Bindings, ctx: &str, command: &str) -> Vec<String> {
+    let matches = |cmd: &str| {
+        cmd == command
+            || (!command.contains(char::is_whitespace)
+                && cmd.split_whitespace().next() == Some(command))
+    };
+    let mut out: Vec<String> = ENTRIES
+        .iter()
+        .filter(|e| e.context == ctx && matches(e.command))
+        .map(|e| e.command.to_string())
+        .collect();
+    let mut extra: BTreeSet<&String> = BTreeSet::new();
+    for ((c, _), cmds) in b {
+        if c != ctx {
+            continue;
+        }
+        for cmd in cmds {
+            if matches(cmd) && catalog::entry(ctx, cmd).is_none() {
+                extra.insert(cmd);
+            }
+        }
+    }
+    out.extend(extra.into_iter().cloned());
+    out
 }
 
 fn keys_in(b: &Bindings, p: &Bindings, context: &str, command: &str) -> Vec<Chord> {

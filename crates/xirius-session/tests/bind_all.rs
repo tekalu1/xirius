@@ -101,10 +101,8 @@ fn each_layout_preset_is_a_complete_set_without_a_conflict_of_its_own() {
         .collect();
     assert!(names.len() >= 4, "{names:?}");
     for name in names {
-        let keymap = Keymap {
-            preset: name.into(),
-            ..Keymap::default()
-        };
+        let mut keymap = Keymap::default();
+        keymap.preset = name.into();
         assert_eq!(keymap.changed_rows(), 0, "{name}");
         let clashes: Vec<_> = keymap
             .conflicts(Os::Win)
