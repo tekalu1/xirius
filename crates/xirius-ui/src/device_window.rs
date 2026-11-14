@@ -1794,6 +1794,18 @@ mod tests {
                 None
             }
             fn write_to_clipboard(&self, _: ClipboardItem) {}
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            fn read_from_primary(&self) -> Option<ClipboardItem> {
+                None
+            }
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            fn write_to_primary(&self, _: ClipboardItem) {}
+            #[cfg(target_os = "macos")]
+            fn read_from_find_pasteboard(&self) -> Option<ClipboardItem> {
+                None
+            }
+            #[cfg(target_os = "macos")]
+            fn write_to_find_pasteboard(&self, _: ClipboardItem) {}
             fn write_credentials(&self, _: &str, _: &str, _: &[u8]) -> Task<gpui::Result<()>> {
                 Task::ready(Ok(()))
             }
