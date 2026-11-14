@@ -192,6 +192,9 @@ impl Studio {
                 Some(ImeTarget::Ask)
             } else if self.popup.as_ref().is_some_and(|p| p.pick.is_some()) {
                 Some(ImeTarget::Pick)
+            } else if self.popup.is_some() {
+                // A popup that takes no text covers every field behind it (UI-338).
+                None
             } else if self.instruments.entry.as_ref().is_some_and(|e| {
                 Some(e.plugin) == self.instruments.detached_target
                     || (self.instruments.detached_channel
@@ -232,6 +235,10 @@ impl Studio {
             Some(ImeTarget::Naming)
         } else if self.pick_typing().is_some() {
             Some(ImeTarget::Pick)
+        } else if self.popup.is_some() {
+            // A popup that takes no text covers every field behind it (UI-338):
+            // letters reach its own keys, not a hidden search or name.
+            None
         } else if self.settings.as_ref().is_some_and(|s| s.field.is_some()) {
             Some(ImeTarget::Settings)
         } else if self.instruments.entry.is_some() {
@@ -384,11 +391,6 @@ impl Studio {
             ImeTarget::Naming => self.naming_field(),
             ImeTarget::Browser => Some(&self.browser.search),
         }
-    }
-
-    /// Does a list's search box have the keys?
-    pub(crate) fn ime_picking(&self) -> bool {
-        self.ime_target() == Some(ImeTarget::Pick)
     }
 
     /// The name being typed in a version or export popup (a value box is a number, not this).

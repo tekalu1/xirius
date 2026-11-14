@@ -960,7 +960,6 @@ pub(super) fn key(s: &mut Studio, g: &Geometry, k: &str, m: Mods, ch: Option<&st
     if s.home_key(g, k, m) {
         return true;
     }
-    let picking = s.pick_typing().is_some() && s.ask_field().is_none();
     let out = s.song_key(
         g,
         crate::input_dispatch::KeyIn {
@@ -971,7 +970,6 @@ pub(super) fn key(s: &mut Studio, g: &Geometry, k: &str, m: Mods, ch: Option<&st
             code: None,
             mods: m,
             held: false,
-            picking,
         },
     );
     out.notify

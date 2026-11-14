@@ -1047,8 +1047,8 @@ fn device_key_event(
     if s.popup.is_none() && s.field_keys(g, &k.key, k.key_char.as_deref(), m) {
         return;
     }
-    let picking = s.ime_picking();
-    if !picking
+    let field_ime = s.ime_target().is_some();
+    if !field_ime
         && s.popup.is_none()
         && k.key == "escape"
         && s.instruments.detached_channel
@@ -1060,11 +1060,11 @@ fn device_key_event(
     if k.key == "tab" && !m.ctrl && !m.alt {
         return;
     }
-    // Search text arrives through the input handler, never as a song shortcut.
-    if picking && k.key == "space" && !m.ctrl && !m.alt {
+    // The field's text arrives through the input handler, never as a song shortcut.
+    if field_ime && k.key == "space" && !m.ctrl && !m.alt {
         return;
     }
-    if picking
+    if field_ime
         && !m.ctrl
         && !m.alt
         && k.key_char
@@ -1085,7 +1085,7 @@ fn device_key_event(
             && s.typed(
                 g,
                 &k.key,
-                if picking {
+                if field_ime {
                     None
                 } else {
                     k.key_char.as_deref()
@@ -1375,6 +1375,45 @@ mod tests {
         assert_eq!(s.ime_target(), Some(crate::interaction::ImeTarget::Head));
         s.ime_replace(None, ".5", false);
         assert_eq!(s.head_fader.entry.as_ref().unwrap().field.text(), "-3.5");
+        restore(&mut s, old);
+    }
+
+    /// A field in an independent window takes its letter once: the key event's
+    /// own path puts nothing in a field the IME owns — `WM_CHAR` comes through
+    /// the `EntityInputHandler` (UI-338).
+    #[test]
+    fn a_channel_window_field_takes_a_letter_once() {
+        use crate::settings::{Field, FieldId};
+        let mut s = Studio::sample();
+        let track = s
+            .project()
+            .tracks
+            .values()
+            .find(|t| t.name == "Keys")
+            .unwrap()
+            .id;
+        s.open_channel(track);
+        let old = scope(&mut s, None);
+        let local = surface_geometry(&s, 800.0, 600.0);
+        s.head_fader.entry = Some(crate::head_fader::Entry {
+            track,
+            field: Field::new(FieldId::Search, "-3".into()),
+            fresh: false,
+        });
+        assert_eq!(s.ime_target(), Some(crate::interaction::ImeTarget::Head));
+        device_key_event(
+            &mut s,
+            &local,
+            &gpui::KeyDownEvent {
+                keystroke: gpui::Keystroke::parse("k->k").unwrap(),
+                is_held: false,
+                prefer_character_input: false,
+            },
+            None,
+        );
+        assert_eq!(s.head_fader.entry.as_ref().unwrap().field.text(), "-3");
+        s.ime_replace(None, "k", false);
+        assert_eq!(s.head_fader.entry.as_ref().unwrap().field.text(), "-3k");
         restore(&mut s, old);
     }
 
