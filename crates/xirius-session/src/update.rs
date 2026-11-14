@@ -2690,6 +2690,29 @@ mod tests {
         assert_eq!(keypair().1, public);
     }
 
+    /// UI-282: a signature made by ed25519-dalek 2 is accepted under 3, and the same key and
+    /// message sign to the same bytes (the signing is deterministic). The values below were
+    /// recorded on 2.2.0; the key is the test's own, not the app's.
+    #[test]
+    fn a_signature_made_by_ed25519_dalek_2_is_accepted() {
+        let secret =
+            hex_array::<32>("3b6a27bcceb6a42d62a3a8d02a6f0d73613215771de243a63ac048a18b59da29")
+                .unwrap();
+        let public = "9fe2b057588066699dba4416c35ba1d3057be8195d8a3bd0df31e693649b7b83";
+        let signature = "12caf6fd85778e6aba2f355eb2d130bd5e575c61d9b89ff7d0f28a0e914df76da477d032dddecd0cfdea1ee7e49c72116c19d4ef034125d4549c82260833120f";
+        let message = b"xirius update signing test fixture v1";
+        assert_eq!(verify_signature(message, signature, public), Ok(()));
+        let key = ed25519_dalek::SigningKey::from_bytes(&secret);
+        let made_public = key
+            .verifying_key()
+            .to_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        assert_eq!(made_public, public);
+        assert_eq!(signed(&key, message), signature);
+    }
+
     /// UI-282: a manifest that requires a newer Xirius is refused, so a signed interim version
     /// cannot be handed to a program older than it.
     #[test]
