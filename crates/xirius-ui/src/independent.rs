@@ -54,6 +54,59 @@ impl Kind {
     }
 }
 
+/// One tracked window's frame on the screen, in the units the pointer's position comes
+/// in: where its client area sits, and how many of those units make one of the window's
+/// own logical pixels (its scale factor; 1.0 where everything is logical already).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Frame {
+    pub kind: Kind,
+    pub rect: crate::studio::Rect,
+    pub scale: f32,
+}
+
+/// The frontmost window at a point: what the OS answers where it can be asked, what the
+/// remembered bounds answer where it cannot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Top {
+    /// An independent window: its index in the `frames` given with it.
+    Window(usize),
+    /// The main window.
+    Main,
+    /// Another app's window, or nothing of ours.
+    Foreign,
+}
+
+/// Where a drag let go at `at` lands: the frontmost window there decides, not the window
+/// the drag's events go to. `at` and the `frames` are in the same screen units; the answer
+/// for an independent window is its local position, in its own logical pixels.
+pub(crate) fn resolve_over(at: (f32, f32), top: Top, frames: &[Frame]) -> Over {
+    match top {
+        Top::Main => Over::Main,
+        Top::Foreign => Over::Elsewhere,
+        Top::Window(i) => frames.get(i).map_or(Over::Elsewhere, |f| {
+            Over::Window(
+                f.kind,
+                ((at.0 - f.rect.x) / f.scale, (at.1 - f.rect.y) / f.scale),
+            )
+        }),
+    }
+}
+
+/// The frontmost window at `at` where the OS cannot be asked (macOS, tests): an
+/// independent window whose remembered bounds cover it, else the main window's own.
+/// The first frame wins where the windows overlap (the tracker lists them front to back).
+#[cfg(any(not(windows), test))]
+pub(crate) fn top_by_bounds(at: (f32, f32), main: crate::studio::Rect, frames: &[Frame]) -> Top {
+    if let Some(i) = frames.iter().position(|f| f.rect.contains(at.0, at.1)) {
+        return Top::Window(i);
+    }
+    if main.contains(at.0, at.1) {
+        Top::Main
+    } else {
+        Top::Foreign
+    }
+}
+
 /// The places of the windows, kept while the app is open (not saved across runs).
 pub(crate) type Positions = Rc<RefCell<HashMap<Key, Bounds<Pixels>>>>;
 
