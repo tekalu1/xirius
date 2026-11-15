@@ -75,7 +75,7 @@ impl Studio {
         }
         // A bounce or freeze not yet in the song is taken back first (ENG-033).
         if !redo && self.job_undo() {
-            self.error = None;
+            self.clear_error();
             return true;
         }
         let selection = self
@@ -126,7 +126,7 @@ impl Studio {
         // A step the disk cannot follow (a file renamed back, BRW-013) stays, and says why.
         let changed = match self.song.step_history(redo) {
             Ok(Some(data)) => {
-                self.error = None;
+                self.clear_error();
                 let command = if redo { "history.redo" } else { "history.undo" };
                 self.after_file_command(command, &data);
                 true

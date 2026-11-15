@@ -92,7 +92,7 @@ impl Studio {
                 clips,
                 mark,
             });
-            self.error = None;
+            self.clear_error();
             return true;
         }
         let Some((args, clips, freezing)) = self.job_check(name, args) else {
@@ -199,7 +199,7 @@ impl Studio {
             wait: crate::wait::begin(crate::wait::Kind::Line, &label),
             mark,
         });
-        self.error = None;
+        self.clear_error();
         // The tracks it makes take their place below.
         self.reshape();
     }
@@ -297,7 +297,7 @@ impl Studio {
                 match broke {
                     Some(e) => self.fail(e),
                     None => {
-                        self.error = None;
+                        self.clear_error();
                         self.arrange.touched();
                     }
                 }

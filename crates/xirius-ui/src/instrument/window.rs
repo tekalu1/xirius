@@ -1500,7 +1500,7 @@ impl Studio {
             self.device_blur();
         }
         self.instruments.edge = None;
-        self.error = None;
+        self.clear_error();
         let i = self.instruments.raise(i);
         let w = self.instruments.open[i];
         let r = self.instruments.frame(i, g);

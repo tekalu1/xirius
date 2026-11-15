@@ -231,7 +231,7 @@ impl Studio {
         // design-lint: allow(ui-blocking-io) PRJ-031: watcher worker or offline adapter; window callbacks return through other_change::window.
         match self.song.reload_from_disk() {
             Ok(Some(n)) => {
-                self.error = None;
+                self.clear_error();
                 self.after_edit();
                 if let Some(g) = g {
                     self.rebuild(g);

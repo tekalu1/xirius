@@ -1577,7 +1577,7 @@ impl Studio {
         if !matches!(hit, Hit::Inspector(_)) {
             self.field_blur();
         }
-        self.error = None;
+        self.clear_error();
         self.arm_cue = None;
         if !matches!(
             hit,
@@ -2854,7 +2854,7 @@ impl Studio {
         } else {
             Ok(None)
         };
-        self.error = None;
+        self.clear_error();
         let result = match request {
             FileRequest::Open => self.song.open(path),
             FileRequest::SaveAs => self.song.save_as(path),
@@ -2909,7 +2909,7 @@ impl Studio {
         self.keep_leaving();
         let closing = self.closing();
         self.song = Song::empty_after(&self.song);
-        self.error = None;
+        self.clear_error();
         self.song_replaced(closing);
     }
 

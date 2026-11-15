@@ -203,7 +203,7 @@ impl Studio {
                 .map(|t| t.id)
                 .collect();
             if !tracks.is_empty() {
-                self.error = None;
+                self.clear_error();
                 self.offer(FROZEN.into(), "フリーズを解除", Answer::Unfreeze(tracks));
                 return;
             }

@@ -1236,7 +1236,7 @@ impl Studio {
     /// A press on a clip with the tool it acts as. False when the press is
     /// finished (cut, erased, muted, or taken out of the selection).
     fn clip_down(&mut self, d: &Drag, t: TrackId, c: ClipId) -> bool {
-        self.error = None;
+        self.clear_error();
         let ids = json!([c.to_string()]);
         match d.tool {
             Tool::Cut => {
@@ -1604,7 +1604,7 @@ impl Studio {
         // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
         match self.song.run(command, args) {
             Ok(data) => {
-                self.error = None;
+                self.clear_error();
                 self.after_edit();
                 self.arrange.touched();
                 self.say_command(command, &said, &data);

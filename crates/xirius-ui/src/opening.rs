@@ -305,7 +305,7 @@ impl Studio {
         self.popup = None;
         self.palette = None;
         self.preparing = None;
-        self.error = None;
+        self.clear_error();
         // Both remote and local owner requests return identified value receipts;
         // state collection never enters an SDK on the window thread.
         // Writer flush and candidate construction belong to OpenJob.

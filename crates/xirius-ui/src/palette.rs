@@ -1048,7 +1048,7 @@ impl Studio {
 
     pub fn open_palette(&mut self, g: &Geometry) {
         self.popup = None;
-        self.error = None;
+        self.clear_error();
         self.browser.typing = false;
         let rows = self.palette_rows(g);
         self.palette = Some(Palette::new(rows));

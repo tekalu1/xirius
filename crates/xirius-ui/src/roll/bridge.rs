@@ -285,7 +285,7 @@ impl Studio {
             // design-lint: allow(ui-blocking-io) PRJ-031 review: Song::ensure_inline refuses unreviewed Session handlers; model edits enqueue history, and reviewed status/list calls use window caches.
             match self.song.run(edit.command, args) {
                 Ok(data) => {
-                    self.error = None;
+                    self.clear_error();
                     match edit.then {
                         Then::Clear => self.roll.selected.clear(),
                         Then::Select => {

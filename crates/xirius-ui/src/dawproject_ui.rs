@@ -241,7 +241,7 @@ impl Studio {
             busy: true,
             ..Toast::plain(job.text())
         });
-        self.error = None;
+        self.clear_error();
         self.dawproject = Some(job);
     }
 

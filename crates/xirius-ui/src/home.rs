@@ -646,7 +646,7 @@ impl Studio {
 
     fn home_button(&mut self, b: Button) {
         // What the strip says goes with the next press, as a click's does in `Studio::press`.
-        self.error = None;
+        self.clear_error();
         match b {
             Button::New => self.start_leaving(crate::saving::Leave::New),
             Button::Open => self.file_request = Some(FileRequest::Open),
@@ -656,7 +656,7 @@ impl Studio {
 
     /// Opens the cursor's row: its song, or the sample.
     fn home_open_chosen(&mut self) {
-        self.error = None;
+        self.clear_error();
         let Some(act) = self.home.as_ref().and_then(Home::chosen) else {
             return;
         };
