@@ -5,6 +5,7 @@ use super::*;
 use crate::song::Song;
 use crate::tools::Mods;
 use gpui::accesskit;
+use std::time::{Duration, Instant};
 
 /// The start screen with these songs remembered, oldest first (the list shows them newest
 /// first), on a PC with one audio device.
@@ -173,16 +174,45 @@ fn the_arrows_home_and_end_walk_the_list_and_enter_opens_the_row() {
 }
 
 #[test]
-fn a_double_press_on_a_row_opens_it_and_a_single_one_chooses_it() {
+fn a_press_on_a_row_opens_it() {
     let (mut s, g, _tmp) = kept(&["a"]);
     assert!(s.press(&g, row_hit(&s, &g, 1)));
     assert_eq!(home(&s).pick.selected, 1);
-    assert!(s.opening.is_none(), "one press only chooses");
-    assert!(s.press(&g, row_hit(&s, &g, 1)));
-    assert!(s.opening.is_some(), "the second press opens the sample");
+    assert!(s.opening.is_some(), "one press opens the sample");
     s.wait_for_open_for_test();
     assert!(s.song.is_sample());
     assert!(!s.home_shown());
+}
+
+/// A saved song and a draft open the same way: one press (2026-11-15 の利用者の決定).
+#[test]
+fn a_press_on_a_saved_song_and_a_draft_opens_them() {
+    use super::delete_tests::{dir_of, listed};
+    let now = xirius_core::store::now_ms();
+    let (mut s, g, tmp) = listed(&[("saved", false, now - 60_000), ("d1", true, now)]);
+    let at = centre(
+        s.home_layout(&g)
+            .unwrap()
+            .rect(row_spot(&s, &g, 0))
+            .unwrap(),
+    );
+    body_press(&mut s, &g, at, 1);
+    assert!(s.opening.is_some(), "one press opens the draft");
+    s.wait_for_open_for_test();
+    assert!(s.song.is_draft());
+    assert_eq!(s.song.record_dir(), Some(dir_of(&tmp, "d1")));
+
+    let (mut s, g, tmp) = listed(&[("saved", false, now - 60_000), ("d1", true, now)]);
+    let at = centre(
+        s.home_layout(&g)
+            .unwrap()
+            .rect(row_spot(&s, &g, 1))
+            .unwrap(),
+    );
+    body_press(&mut s, &g, at, 1);
+    assert!(s.opening.is_some(), "one press opens the saved song");
+    s.wait_for_open_for_test();
+    assert_eq!(s.song.dir(), Some(tmp.path().join("saved")));
 }
 
 #[test]
@@ -667,7 +697,9 @@ fn the_strip_over_the_start_screen_goes_with_the_next_press() {
     let (mut s, g, _tmp) = kept(&[]);
     s.error = Some("開けません".into());
     assert!(s.press(&g, row_hit(&s, &g, 0)));
-    assert!(s.error.is_none() && s.home_shown());
+    assert!(s.error.is_none(), "the press took the strip's message");
+    assert!(s.opening.is_some(), "and opened its row");
+    let (mut s, g, _tmp) = kept(&[]);
     s.error = Some("開けません".into());
     s.home.as_mut().unwrap().focus = Focus::Button(Button::Open);
     assert!(s.home_key(&g, "enter", NONE));
@@ -745,10 +777,10 @@ pub(super) fn centre(r: Rect) -> (f32, f32) {
     (r.x + r.w / 2.0, r.y + r.h / 2.0)
 }
 
-/// The first row lies over the hidden tempo band; a double press on it opens its song at once
+/// The first row lies over the hidden tempo band; a press on it opens its song at once
 /// and adds no tempo point.
 #[test]
-fn a_double_press_on_the_first_row_opens_it_and_leaves_the_song_under_alone() {
+fn a_press_on_the_first_row_opens_it_and_leaves_the_song_under_alone() {
     let (mut s, g, tmp) = kept(&["a", "b"]);
     let at = centre(s.home_layout(&g).unwrap().rows[0].1);
     assert_eq!(
@@ -758,7 +790,6 @@ fn a_double_press_on_the_first_row_opens_it_and_leaves_the_song_under_alone() {
     );
     let tempo = s.project().tempo.len();
     body_press(&mut s, &g, at, 1);
-    body_press(&mut s, &g, at, 2);
     assert_nothing_under(&mut s, tempo);
     assert!(s.opening.is_some(), "the row's song starts to open");
     s.wait_for_open_for_test();
@@ -850,7 +881,6 @@ fn a_press_after_the_list_was_built_again_opens_the_row_that_was_pressed() {
     s.keep.remember(&path, "c", false, 100);
     s.keep.settle_recent();
     s.keep.poll_recent();
-    s.press(&g, hit);
     s.press(&g, hit);
     assert!(s.opening.is_some());
     s.wait_for_open_for_test();

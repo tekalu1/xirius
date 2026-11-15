@@ -3,7 +3,7 @@
 //!
 //! Under the bar with only the logo: 「新規」「開く…」「DAWproject を開く…」 at the left, and
 //! 「最近の曲」 at the right, a [`PickList`] with its search, newest first, the sample last with
-//! its 「サンプル」 tag. Its top row is chosen at first; Enter or a double press opens it. The
+//! its 「サンプル」 tag. Its top row is chosen at first; Enter or a press opens it. The
 //! first time there is only the sample: no search, and 新規 has the keys. A window whose content
 //! is narrower than [`NARROW`] stacks it all in one column.
 //!
@@ -11,7 +11,6 @@
 //! until a song is open (`song_replaced_with` ends it).
 
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
 
 use xirius_design::{FontSize, Layout as L, Radius, Space, Weight};
 use xirius_session::recent::RecentSong;
@@ -68,8 +67,6 @@ pub const RECENT: &str = "最近の曲";
 pub const SEARCH: &str = "検索";
 /// What a screen reader calls the search (the mock's label).
 pub const SEARCH_NAME: &str = "最近の曲を検索";
-/// Two presses on the same row this close together open it.
-const DOUBLE: Duration = Duration::from_millis(500);
 
 /// What a row opens, as a number a [`Spot`] can carry.
 pub type RowKey = u64;
@@ -157,8 +154,6 @@ pub struct Home {
     built: bool,
     /// The person moved the keys: the first choice (the top row, or 新規) is theirs now.
     touched: bool,
-    /// The last press on a row: when, and which.
-    click: Option<(Instant, RowKey)>,
     /// A draft that was deleted (UI-351): its folder and the place its row had. The row that
     /// moves up to that place is chosen once the list drops the draft.
     after: Option<(PathBuf, usize)>,
@@ -172,7 +167,6 @@ impl Default for Home {
             songs: Vec::new(),
             built: false,
             touched: false,
-            click: None,
             after: None,
         }
     }
@@ -615,7 +609,6 @@ impl Studio {
                 }
             }
             Spot::Row(_, key) => {
-                let now = Instant::now();
                 let Some(home) = self.home.as_mut() else {
                     return false;
                 };
@@ -629,16 +622,10 @@ impl Studio {
                 else {
                     return true;
                 };
-                let twice = home
-                    .click
-                    .is_some_and(|(at, k)| k == key && now.duration_since(at) < DOUBLE);
                 home.pick.selected = i;
                 home.focus = Focus::List;
                 home.touched = true;
-                home.click = (!twice).then_some((now, key));
-                if twice {
-                    self.home_open_chosen();
-                }
+                self.home_open_chosen();
             }
         }
         true
