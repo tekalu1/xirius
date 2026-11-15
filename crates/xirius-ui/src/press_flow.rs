@@ -35,8 +35,10 @@ impl Studio {
         clicks: u32,
         mods: Mods,
     ) -> PressOut {
-        // The second press of a double-click on a start-screen row lands on the song that came
-        // up under it: it is the rest of that click, and the song does not take it.
+        // The presses that go on after a click on a start-screen row (a double-click, or one
+        // press after another: counts 2, 3, 4 …) land on the song that came up under it: they
+        // are the rest of that click, and the song does not take them. The place is let go by
+        // a press of its own (count 1), not by the one it swallows.
         if clicks >= 2
             && !self.home_shown()
             && self.preparing.is_none()
@@ -44,7 +46,6 @@ impl Studio {
             && (x - px).abs() <= 8.0
             && (y - py).abs() <= 8.0
         {
-            self.row_press = None;
             return PressOut::NOTIFY;
         }
         if clicks <= 1 {

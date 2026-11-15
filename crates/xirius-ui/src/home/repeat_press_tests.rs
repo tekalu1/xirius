@@ -206,3 +206,53 @@ fn a_press_on_the_song_that_came_up_at_the_rows_place_adds_no_step() {
         assert_eq!(s.project().tempo.len(), tempo, "{kind:?}: a tempo point");
     }
 }
+
+/// The song that came up under the top row, rested, with the row's place and a fresh geometry.
+fn up_under_the_top_row() -> (Studio, Geometry, (f32, f32), tempfile::TempDir) {
+    let (mut s, g, tmp) = listing();
+    let at = row_of(&s, &g, Kind::Draft);
+    press(&mut s, &g, at, 1);
+    s.wait_for_open_for_test();
+    run_for(&mut s, Duration::from_millis(300));
+    let g = s.geometry(1280.0, 720.0);
+    (s, g, at, tmp)
+}
+
+/// Pressing on and on at the row's place counts 2, 3, 4, 5 …: none of them is the song's.
+#[test]
+fn a_run_of_presses_that_began_on_a_row_never_reaches_the_song() {
+    let (want, _s0, _t0) = once(Kind::Draft);
+    let (mut s, g, at, _tmp) = up_under_the_top_row();
+    for clicks in 2..=5 {
+        press(&mut s, &g, at, clicks);
+        s.window_released(&g, at.0, at.1, Mods::NONE);
+        assert_eq!(song_of(&s), want, "clicks={clicks}");
+    }
+}
+
+/// A press of its own (count 1) ends the run: the next double press there is an ordinary one.
+#[test]
+fn a_press_of_its_own_after_the_run_makes_the_place_ordinary_again() {
+    let (mut s, g, at, _tmp) = up_under_the_top_row();
+    for clicks in 2..=5 {
+        press(&mut s, &g, at, clicks);
+        s.window_released(&g, at.0, at.1, Mods::NONE);
+    }
+    press(&mut s, &g, at, 1);
+    s.window_released(&g, at.0, at.1, Mods::NONE);
+    let tempo = s.project().tempo.len();
+    press(&mut s, &g, at, 2);
+    s.window_released(&g, at.0, at.1, Mods::NONE);
+    assert_eq!(s.project().tempo.len(), tempo + 1, "the tempo band took it");
+}
+
+/// What is remembered is a place: a press further than 8 px away is the song's.
+#[test]
+fn a_double_press_far_from_the_row_is_the_songs_even_with_a_place_remembered() {
+    let (mut s, g, at, _tmp) = up_under_the_top_row();
+    let tempo = s.project().tempo.len();
+    let far = (at.0 + 40.0, at.1);
+    press(&mut s, &g, far, 2);
+    s.window_released(&g, far.0, far.1, Mods::NONE);
+    assert_eq!(s.project().tempo.len(), tempo + 1, "the tempo band took it");
+}
