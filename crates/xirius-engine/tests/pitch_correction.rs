@@ -310,14 +310,16 @@ fn consonant_voice() -> (Vec<f32>, usize, usize, usize) {
     let second_noise_end = 38_400;
     let mut signal = vec![0.0; 48_000];
     let mut state = 0x1234_5678u32;
-    for i in first_noise..voice_start {
+    for sample in &mut signal[first_noise..voice_start] {
         state ^= state << 13;
         state ^= state >> 17;
         state ^= state << 5;
-        signal[i] = (state as f64 / u32::MAX as f64 * 0.2 - 0.1) as f32;
+        *sample = (state as f64 / u32::MAX as f64 * 0.2 - 0.1) as f32;
     }
     for (n, x) in signal[voice_start..voice_end].iter_mut().enumerate() {
-        let envelope = (n as f64 / 240.0).min(1.0).min((voice_end - voice_start - n) as f64 / 240.0);
+        let envelope = (n as f64 / 240.0)
+            .min(1.0)
+            .min((voice_end - voice_start - n) as f64 / 240.0);
         *x = (0.4 * envelope * (TAU * 270.0 * n as f64 / rate).sin()) as f32;
     }
     for x in &mut signal[voice_end..second_noise_end] {
@@ -347,6 +349,21 @@ fn consonants_are_exactly_delayed_and_the_voice_keeps_its_last_thirty_ms() {
     let pitch = estimate_hz(&output[end - 1_440..end], 48_000.0, 255.0, 285.0);
     let target = 440.0 * 2f64.powf((61.0 - 69.0) / 12.0);
     assert!((1200.0 * (pitch / target).log2()).abs() < 30.0);
+    let input_max = input
+        .windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .fold(0.0f32, f32::max);
+    for edge in [voice_start, voice_end] {
+        let at = edge + shift;
+        let jump = output[at - 480..at + 480]
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            jump < input_max * 1.5,
+            "edge {edge}: jump {jump}, input {input_max}"
+        );
+    }
 }
 
 #[test]
@@ -370,7 +387,10 @@ fn a_step_in_pitch_reaches_the_output_at_the_same_source_time() {
             break;
         }
     }
-    assert!(first_high.is_some_and(|at| at.abs_diff(step) <= 480), "step at {first_high:?}");
+    assert!(
+        first_high.is_some_and(|at| at.abs_diff(step) <= 480),
+        "step at {first_high:?}"
+    );
 }
 
 #[test]
@@ -386,14 +406,18 @@ fn speed_preserves_fast_vibrato_but_fast_setting_flattens_it() {
         })
         .collect();
     let mut depths = Vec::new();
-    for speed in [1.0, 200.0] {
+    for speed in [1.0, 20.0, 200.0] {
         let (mut device, handle) = stock::create("pitch-correction").unwrap();
         for (id, plain) in [("scale", 1.0), ("speed", speed)] {
             let spec = handle.def().param(id).unwrap().1;
             assert!(handle.set(id, spec.to_norm(plain)));
         }
         handle.probe().watch(true);
-        device.prepare(&ProcessSetup { sample_rate: rate, max_block: 128, mode: RenderMode::Offline });
+        device.prepare(&ProcessSetup {
+            sample_rate: rate,
+            max_block: 128,
+            mode: RenderMode::Offline,
+        });
         let mut cents = Vec::new();
         for at in (0..input.len()).step_by(128) {
             let end = (at + 128).min(input.len());
@@ -409,12 +433,120 @@ fn speed_preserves_fast_vibrato_but_fast_setting_flattens_it() {
         }
         let mean = cents.iter().sum::<f64>() / cents.len() as f64;
         let depth = (cents.iter().copied().fold(f64::NEG_INFINITY, f64::max)
-            - cents.iter().copied().fold(f64::INFINITY, f64::min)) / 2.0;
+            - cents.iter().copied().fold(f64::INFINITY, f64::min))
+            / 2.0;
+        eprintln!("speed {speed}: mean {mean:.3} cents, depth {depth:.3} cents");
         assert!(mean.abs() < 8.0, "speed {speed}: mean {mean}");
         depths.push(depth);
     }
-    assert!(depths[1] >= 28.0, "slow depth {}", depths[1]);
+    assert!(depths[2] >= 28.0, "slow depth {}", depths[2]);
     assert!(depths[0] <= 8.0, "fast depth {}", depths[0]);
+    assert!(depths[0] < depths[1] && depths[1] < depths[2]);
+
+    // Check the rendered sound as well as the processor's published pitch.
+    let mut audio_depths = Vec::new();
+    for speed in [1.0, 200.0] {
+        let (audio, delay, _) =
+            configured(rate, 512, &input, &[("scale", 1.0), ("speed", speed)], &[]);
+        let cents: Vec<f64> = (48_000..68_000)
+            .step_by(960)
+            .map(|q| {
+                let at = q + delay as usize;
+                let hz = estimate_hz(&audio[at..at + 2_400], rate, 255.0, 275.0);
+                1200.0 * (hz / 261.625_565).log2()
+            })
+            .collect();
+        let depth = (cents.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+            - cents.iter().copied().fold(f64::INFINITY, f64::min))
+            / 2.0;
+        eprintln!("rendered speed {speed}: depth {depth:.3} cents");
+        audio_depths.push(depth);
+    }
+    assert!(audio_depths[0] <= 10.0 && audio_depths[1] >= 28.0);
+}
+
+fn harmonic_envelope_peak(signal: &[f32], fundamental: f64, low: f64, high: f64) -> f64 {
+    let mut points = Vec::new();
+    for harmonic in 1..=(high / fundamental).ceil() as usize + 1 {
+        let hz = harmonic as f64 * fundamental;
+        if hz < low - fundamental || hz > high + fundamental {
+            continue;
+        }
+        let mut re = 0.0;
+        let mut im = 0.0;
+        for (i, sample) in signal.iter().enumerate() {
+            let window = 0.5 - 0.5 * (TAU * i as f64 / signal.len() as f64).cos();
+            let angle = TAU * hz * i as f64 / 48_000.0;
+            re += f64::from(*sample) * window * angle.cos();
+            im += f64::from(*sample) * window * angle.sin();
+        }
+        points.push((hz, (re * re + im * im).max(1e-20).ln()));
+    }
+    let best = points
+        .iter()
+        .enumerate()
+        .filter(|(_, (hz, _))| *hz >= low && *hz <= high)
+        .max_by(|a, b| a.1.1.total_cmp(&b.1.1))
+        .unwrap()
+        .0;
+    if best == 0 || best + 1 == points.len() {
+        return points[best].0;
+    }
+    let a = points[best - 1].1;
+    let b = points[best].1;
+    let c = points[best + 1].1;
+    let denominator = a - 2.0 * b + c;
+    let delta = if denominator.abs() > 1e-9 {
+        0.5 * (a - c) / denominator
+    } else {
+        0.0
+    };
+    points[best].0 + delta.clamp(-0.5, 0.5) * fundamental
+}
+
+#[test]
+fn three_semitone_shift_preserves_or_moves_the_formant_envelope() {
+    let rate = 48_000.0;
+    let f0 = 110.0;
+    let target = f0 * 2f64.powf(3.0 / 12.0);
+    let input: Vec<f32> = (0..96_000)
+        .map(|i| {
+            let phase = TAU * f0 * i as f64 / rate;
+            (1..=30)
+                .map(|h| {
+                    let hz = f0 * h as f64;
+                    let envelope = (-((hz - 800.0) / 220.0).powi(2)).exp()
+                        + 0.9 * (-((hz - 1600.0) / 280.0).powi(2)).exp();
+                    envelope * (phase * h as f64).sin()
+                })
+                .sum::<f64>() as f32
+                * 0.1
+        })
+        .collect();
+    let notes = [(
+        0,
+        NoteKind::On {
+            pitch: 48,
+            velocity: 1.0,
+        },
+    )];
+    let (on, delay, _) = configured(rate, 512, &input, &[("speed", 1.0)], &notes);
+    let (off, _, _) = configured(
+        rate,
+        512,
+        &input,
+        &[("speed", 1.0), ("formant", 0.0)],
+        &notes,
+    );
+    let at = 48_000 + delay as usize;
+    for (low, high) in [(650.0, 1000.0), (1400.0, 1850.0)] {
+        let original = harmonic_envelope_peak(&input[48_000..72_000], f0, low, high);
+        let kept = harmonic_envelope_peak(&on[at..at + 24_000], target, low, high);
+        let moved = harmonic_envelope_peak(&off[at..at + 24_000], target, low * 1.15, high * 1.25);
+        eprintln!("envelope {original:.1} {kept:.1} {moved:.1}");
+        assert!((kept / original - 1.0).abs() < 0.05);
+        assert!((moved / original - target / f0).abs() < 0.06);
+    }
 }
 
 #[test]
