@@ -301,8 +301,20 @@ pub static PITCH_CORRECTION: BuiltinDef = BuiltinDef {
     per_file: &[],
     per_pad: &[],
     params: &[
-        choice("key", "キー", &["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"], 0),
-        choice("scale", "スケール", &["Chromatic", "Major", "Minor", "Custom"], 0),
+        choice(
+            "key",
+            "キー",
+            &[
+                "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+            ],
+            0,
+        ),
+        choice(
+            "scale",
+            "スケール",
+            &["Chromatic", "Major", "Minor", "Custom"],
+            0,
+        ),
         ms("speed", "スピード", 1.0, 500.0, 20.0),
         ms("transition", "ノートトランジション", 1.0, 500.0, 100.0),
         pct("amount", "補正の量", 100.0, 100.0),

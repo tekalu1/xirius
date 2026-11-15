@@ -14,9 +14,8 @@ pub fn custom_norm(mask: u16) -> f64 {
 }
 
 pub fn scale_mask(norm: f64) -> u16 {
-    if norm >= CUSTOM_BASE {
-        (((norm.clamp(CUSTOM_BASE, 1.0) - CUSTOM_BASE) * f64::from(CHROMATIC)
-            / (1.0 - CUSTOM_BASE))
+    if norm >= CUSTOM_BASE - 0.000_001 {
+        (((norm.clamp(CUSTOM_BASE, 1.0) - CUSTOM_BASE) * f64::from(CHROMATIC) / (1.0 - CUSTOM_BASE))
             .round() as u16)
             & CHROMATIC
     } else if norm >= 0.5 {
@@ -31,4 +30,24 @@ pub fn scale_mask(norm: f64) -> u16 {
 /// Toggling a key always enters Custom. Bit zero is the selected Key.
 pub fn toggle_relative(norm: f64, relative: u8) -> f64 {
     custom_norm(scale_mask(norm) ^ (1 << (relative % 12)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_keyboard_mask_survives_the_song_value() {
+        for mask in 0..=CHROMATIC {
+            let stored = custom_norm(mask) as f32;
+            assert_eq!(scale_mask(f64::from(stored)), mask);
+            assert_eq!(
+                crate::PITCH_CORRECTION.params[1].to_plain(f64::from(stored)),
+                3.0
+            );
+        }
+        assert_eq!(scale_mask(0.0), CHROMATIC);
+        assert_eq!(scale_mask(1.0 / 3.0), MAJOR);
+        assert_eq!(scale_mask(2.0 / 3.0), MINOR);
+    }
 }
