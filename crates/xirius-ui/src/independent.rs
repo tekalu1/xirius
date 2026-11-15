@@ -332,4 +332,84 @@ mod tests {
         assert_eq!(Kind::Macros.key(), Some(Key::Macros));
         assert_eq!(Kind::Presets.key(), None);
     }
+
+    fn rect(x: f32, y: f32, w: f32, h: f32) -> crate::studio::Rect {
+        crate::studio::Rect::new(x, y, w, h)
+    }
+
+    #[test]
+    fn the_frontmost_window_at_the_point_decides() {
+        let id = PluginId(1);
+        let device = Frame {
+            kind: Kind::Device(id),
+            rect: rect(600.0, 60.0, 520.0, 500.0),
+            scale: 1.0,
+        };
+        let channel = Frame {
+            kind: Kind::Channel,
+            rect: rect(40.0, 80.0, 460.0, 560.0),
+            scale: 1.0,
+        };
+        let frames = [device, channel];
+        let main = rect(0.0, 0.0, 1440.0, 850.0);
+        // Over the device window: the answer is in its own coordinates.
+        assert_eq!(
+            resolve_over((720.0, 200.0), Top::Window(0), &frames),
+            Over::Window(Kind::Device(id), (120.0, 140.0))
+        );
+        // The bounds-derived top reaches the same answer.
+        assert_eq!(top_by_bounds((720.0, 200.0), main, &frames), Top::Window(0));
+        // The window's edge, just in and just out.
+        assert_eq!(
+            top_by_bounds((1119.9, 200.0), main, &frames),
+            Top::Window(0)
+        );
+        assert_eq!(top_by_bounds((1120.0, 200.0), main, &frames), Top::Main);
+        // Between two independent windows and off every window of ours.
+        assert_eq!(top_by_bounds((540.0, 200.0), main, &frames), Top::Main);
+        assert_eq!(top_by_bounds((2000.0, 200.0), main, &frames), Top::Foreign);
+        assert_eq!(
+            resolve_over((2000.0, 200.0), Top::Foreign, &frames),
+            Over::Elsewhere
+        );
+        // A window the OS names frontmost is local even where the event's window would
+        // not reach it.
+        assert_eq!(
+            resolve_over((50.0, 85.0), Top::Window(1), &frames),
+            Over::Window(Kind::Channel, (10.0, 5.0))
+        );
+    }
+
+    #[test]
+    fn the_scale_divides_the_screen_position_into_local_pixels() {
+        let id = PluginId(7);
+        // A 175% display: the client area spans 1.75 physical pixels per logical one.
+        let frames = [Frame {
+            kind: Kind::Device(id),
+            rect: rect(1050.0, 105.0, 910.0, 875.0),
+            scale: 1.75,
+        }];
+        assert_eq!(
+            resolve_over((1050.0, 105.0), Top::Window(0), &frames),
+            Over::Window(Kind::Device(id), (0.0, 0.0))
+        );
+        assert_eq!(
+            resolve_over((1400.0, 280.0), Top::Window(0), &frames),
+            Over::Window(Kind::Device(id), (200.0, 100.0))
+        );
+        // A window on a screen to the left (a negative origin) the same way.
+        let left = [Frame {
+            kind: Kind::Device(id),
+            rect: rect(-1600.0, 40.0, 800.0, 600.0),
+            scale: 1.0,
+        }];
+        assert_eq!(
+            top_by_bounds((-900.0, 200.0), rect(0.0, 0.0, 1440.0, 850.0), &left),
+            Top::Window(0)
+        );
+        assert_eq!(
+            resolve_over((-900.0, 200.0), Top::Window(0), &left),
+            Over::Window(Kind::Device(id), (700.0, 160.0))
+        );
+    }
 }

@@ -2345,4 +2345,193 @@ mod tests {
             );
         }
     }
+
+    /// A row dragged by the main window's own mouse events — `Screen::pressed` →
+    /// `Screen::moved` → `Windows::over` → `browser_row_over`, then `released` →
+    /// `file_up` — lands on the pad under the pointer, not the pad the device window's
+    /// remembered mouse position would name (UI-353). The pointer's place inside the
+    /// window is computed each event; a position the device window saw before does not
+    /// enter it.
+    #[test]
+    fn main_window_events_drop_on_the_pad_under_the_pointer() {
+        use crate::browser::{BrowserHit, RailTab};
+        use crate::device::sampler::{DropOn, pad_files};
+        use crate::import_shots::{file_row, make_place};
+        use crate::instrument::{Pick, current, window::Part};
+        use gpui::{
+            Application, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput,
+            PlatformWindow, point, px, size,
+        };
+        use headless::HeadlessPlatform;
+
+        let dir = tempfile::tempdir().unwrap();
+        let top = dir.path().join("素材");
+        make_place(&top);
+
+        let mut s = Studio::sample();
+        s.browser.press_rail(RailTab::Files);
+        s.browser.add_place_fixture(&top).unwrap();
+        s.browser.toggle_dir(&top.join("Loops").to_string_lossy());
+        crate::browser_files::settle_rows(&s.browser);
+        let track = s
+            .project()
+            .tracks
+            .values()
+            .find(|t| t.name == "Keys")
+            .unwrap()
+            .id;
+        assert!(s.set_instrument(track, &Pick::built_in("Drum Kit")));
+        let id = current(&s.project().tracks[&track]).unwrap().id;
+        s.show_instrument(track, id);
+        // The device window stands over the arrangement's side of the main window.
+        s.instruments.positions.borrow_mut().insert(
+            crate::independent::Key::Device(id),
+            Bounds::new(point(px(560.0), px(80.0)), size(px(560.0), px(520.0))),
+        );
+        let tracks = s.project().tracks.len();
+        let clips: usize = s.project().tracks.values().map(|t| t.clips.len()).sum();
+        // Where the file row sits in the main window's body, as `Screen` lays it out.
+        let row_at = {
+            let g = s.geometry(
+                1280.0,
+                800.0 - xirius_design::Layout::TOP_BAR_H - xirius_design::Layout::BOTTOM_BAR_H,
+            );
+            let i = file_row(&s, &g, "pad_44k.wav").expect("the wav row");
+            let l = s.browser.layout(g.panel);
+            s.browser.center_of(&l, BrowserHit::File(i)).unwrap()
+        };
+
+        let studio = Rc::new(RefCell::new(s));
+        let platform = HeadlessPlatform::new();
+        let _app = Application::with_platform(platform.clone()).run_embedded({
+            let studio = studio.clone();
+            move |cx| {
+                headless::open_test(
+                    cx,
+                    Bounds::new(point(px(0.0), px(0.0)), size(px(1280.0), px(800.0))),
+                    move |window, cx| crate::screen::Screen::for_test(studio.clone(), window, cx),
+                )
+                .unwrap();
+            }
+        });
+
+        let main_win = platform.windows.borrow()[0].clone();
+        main_win.draw();
+        let dev_win = platform.windows.borrow()[1].clone();
+        dev_win.draw();
+        let dev_origin = dev_win.bounds().origin;
+        assert_eq!(f32::from(dev_origin.x), 560.0);
+        // A point the main window's event carries for the device window's local `at`.
+        let screen = |at: (f32, f32)| {
+            point(
+                px(f32::from(dev_origin.x) + at.0),
+                px(f32::from(dev_origin.y) + at.1),
+            )
+        };
+        let mods = gpui::Modifiers::default();
+
+        // The pads the drag passes over, in the device window's own coordinates.
+        let (pad_a, pad_b, pad_seed) = {
+            let mut s = studio.borrow_mut();
+            let old = scope(&mut s, Some(id));
+            let body = s.instruments.open[0].body;
+            let g = surface_geometry(&s, body.0, body.1 + crate::title_bar::BAR_H);
+            let (a, b, c) = (
+                s.instrument_center(&g, id, Part::Pad(36)).unwrap(),
+                s.instrument_center(&g, id, Part::Pad(40)).unwrap(),
+                s.instrument_center(&g, id, Part::Pad(44)).unwrap(),
+            );
+            restore(&mut s, old);
+            (a, b, c)
+        };
+        // A position the device window saw once at `pad_seed`: it must not answer for the
+        // drag's pointer (its remembered `mouse_position` would be stale exactly so).
+        dev_win.dispatch(PlatformInput::MouseMove(MouseMoveEvent {
+            position: point(px(pad_seed.0), px(pad_seed.1)),
+            modifiers: mods,
+            pressed_button: None,
+        }));
+
+        // The press on the row, the moves onto the two pads, the let-go — all on the
+        // main window; the device window takes no more input for the whole drag.
+        main_win.dispatch(PlatformInput::MouseDown(MouseDownEvent {
+            button: MouseButton::Left,
+            position: point(
+                px(row_at.0),
+                px(row_at.1 + xirius_design::Layout::TOP_BAR_H),
+            ),
+            modifiers: mods,
+            click_count: 1,
+            first_mouse: false,
+        }));
+        assert!(studio.borrow().browser.file_drag.is_some());
+
+        main_win.dispatch(PlatformInput::MouseMove(MouseMoveEvent {
+            position: screen(pad_a),
+            modifiers: mods,
+            pressed_button: Some(MouseButton::Left),
+        }));
+        {
+            let s = studio.borrow();
+            assert!(
+                matches!(s.over, Over::Window(Kind::Device(over_id), _) if over_id == id),
+                "over: {:?}",
+                s.over
+            );
+            // The light follows the pointer: the pad's ghost on pad 0 (the chosen one,
+            // so its plane lights too), not the seeded pad 8.
+            let preview = s.instruments.preview.as_ref().expect("a drag's plan");
+            assert_eq!(preview.pads[0].0, 0);
+            assert_eq!(
+                s.instruments.drop_on.map(|(p, on, _)| (p, on)),
+                Some((id, DropOn::Plane)),
+                "the chosen pad's plane lights"
+            );
+        }
+        main_win.dispatch(PlatformInput::MouseMove(MouseMoveEvent {
+            position: screen(pad_b),
+            modifiers: mods,
+            pressed_button: Some(MouseButton::Left),
+        }));
+        {
+            let s = studio.borrow();
+            // Now on pad 4, not the chosen pad: the ghost moved there and the chosen
+            // pad's plane does not light for it (UI-353).
+            let preview = s.instruments.preview.as_ref().expect("a drag's plan");
+            assert_eq!(preview.pads[0].0, 4, "the light moved with the pointer");
+            assert_eq!(
+                s.instruments.drop_on, None,
+                "another pad's plane stays dark"
+            );
+        }
+        main_win.dispatch(PlatformInput::MouseUp(MouseUpEvent {
+            button: MouseButton::Left,
+            position: screen(pad_b),
+            modifiers: mods,
+            click_count: 1,
+        }));
+        {
+            let mut s = studio.borrow_mut();
+            crate::shot::run_for(&mut s, 10.0, |s| !s.input_blocked());
+            s.settle_browser_import();
+            s.browser.settle_prefs_io();
+            s.follow_browser();
+            assert_eq!(s.error, None, "{:?}", s.error);
+            assert_eq!(s.over, Over::Main, "over ends with the drag");
+            let p = s.project();
+            assert_eq!(p.tracks.len(), tracks, "the lanes take nothing");
+            assert_eq!(
+                p.tracks.values().map(|t| t.clips.len()).sum::<usize>(),
+                clips
+            );
+            let x = current(&p.tracks[&track]).cloned().unwrap();
+            assert_eq!(
+                pad_files(x.builtin().unwrap(), &x, 4).len(),
+                1,
+                "the pad under the pointer has the file"
+            );
+            assert!(pad_files(x.builtin().unwrap(), &x, 0).is_empty());
+            assert!(s.browser.file_drag.is_none());
+        }
+    }
 }
