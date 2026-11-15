@@ -25,6 +25,7 @@ const HOP: u64 = 256;
 pub struct PitchCorrection {
     params: Params,
     rate: f64,
+    prepared_range: usize,
     max_tau: usize,
     latency: usize,
     input: [Vec<f32>; 2],
@@ -48,6 +49,7 @@ impl PitchCorrection {
         Self {
             params,
             rate: 48_000.0,
+            prepared_range: 1,
             max_tau: 480,
             latency: 1920,
             input: [Vec::new(), Vec::new()],
@@ -109,7 +111,7 @@ impl PitchCorrection {
         if self.frame < (2 * max) as u64 {
             return None;
         }
-        let (lo, hi) = Self::bounds(self.params.index(RANGE));
+        let (lo, hi) = Self::bounds(self.prepared_range);
         let min_tau = (self.rate / hi).floor().max(2.0) as usize;
         let max_tau = (self.rate / lo).ceil().min(max as f64) as usize;
         let start = self.frame as i64 - (2 * max) as i64 + 1;
@@ -263,7 +265,10 @@ impl Processor for PitchCorrection {
     fn prepare(&mut self, setup: &ProcessSetup) {
         self.params.refresh();
         self.rate = setup.sample_rate;
-        let (lo, _) = Self::bounds(self.params.index(RANGE));
+        // Range sets the declared latency. The host rebuilds its delay graph
+        // around prepare(), so keep this choice fixed until the next prepare.
+        self.prepared_range = self.params.index(RANGE);
+        let (lo, _) = Self::bounds(self.prepared_range);
         self.max_tau = (self.rate / lo).ceil() as usize;
         self.latency = 4 * self.max_tau;
         let capacity = self.latency + 4 * self.max_tau + setup.max_block + 4;
@@ -336,7 +341,10 @@ impl Processor for PitchCorrection {
             }
             if t >= self.latency as u64 {
                 let out_frame = t - self.latency as u64;
-                if let Some(hz) = self.voiced_hz.filter(|_| amount > 0.0 && self.target.is_some()) {
+                if let Some(hz) = self
+                    .voiced_hz
+                    .filter(|_| amount > 0.0 && self.target.is_some())
+                {
                     let input_period = self.rate / hz;
                     let output_period = self.rate / self.out_hz.max(1.0);
                     while self.next_grain <= out_frame as f64 + input_period {
