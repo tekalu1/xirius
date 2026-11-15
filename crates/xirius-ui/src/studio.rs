@@ -840,6 +840,9 @@ pub struct Studio {
     pub(crate) skip_preparation_once: bool,
     /// The start screen, until a song is opened or made (UI-350).
     pub home: Option<crate::home::Home>,
+    /// Where a start-screen row was pressed: the next double press there, once the song is up
+    /// under it, is the rest of that click and is not the song's (UI-350).
+    pub(crate) row_press: Option<(f32, f32)>,
     /// The output's level the test tone's meters show, left and right, falling (UI-260).
     pub rig_out: [f32; 2],
     /// The test tone sounds.
@@ -1011,6 +1014,7 @@ impl Studio {
             preparing: None,
             skip_preparation_once: false,
             home: None,
+            row_press: None,
             rig_out: [0.0; 2],
             rig_tone: false,
             dawproject: None,
