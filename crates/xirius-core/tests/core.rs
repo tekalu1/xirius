@@ -640,6 +640,19 @@ fn every_history_command_undoes_and_redoes() {
         json!({"id": comp, "state": "off"}),
     );
     rig.step("plugin.sidechain.remove", json!({"id": comp, "from": lead}));
+    let note_receiver = id_of(&rig.step(
+        "plugin.add",
+        json!({"track": kick, "name": "Pitch Correction"}),
+    ));
+    rig.step(
+        "plugin.note_source.set",
+        json!({"id": note_receiver, "from": lead}),
+    );
+    rig.step(
+        "plugin.note_source.enable",
+        json!({"id": note_receiver, "state": "off"}),
+    );
+    rig.step("plugin.note_source.remove", json!({"id": note_receiver}));
     let key = id_of(&rig.step("plugin.add", json!({"track": kick, "name": "Compressor"})));
     rig.step(
         "plugin.param.set",
