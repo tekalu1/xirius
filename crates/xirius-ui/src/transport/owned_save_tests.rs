@@ -64,6 +64,41 @@ impl Drop for Gate {
 /// Only the copied fixture DLL is affected, including if an assertion panics.
 struct StateFailure(unsafe extern "system" fn(u32));
 
+/// Arms or clears the copied fixture's volatile state: getState answers bytes that differ
+/// every time while armed (a clock, a meter, a phase). Only that DLL is affected.
+struct Volatile(unsafe extern "system" fn(u32));
+
+impl Volatile {
+    fn new(path: &std::path::Path) -> Self {
+        let wide: Vec<_> = path.as_os_str().encode_wide().chain([0]).collect();
+        // SAFETY: the probed fixture remains loaded and this export takes one u32.
+        let set = unsafe {
+            std::mem::transmute::<
+                unsafe extern "system" fn() -> isize,
+                unsafe extern "system" fn(u32),
+            >(
+                GetProcAddress(
+                    GetModuleHandleW(wide.as_ptr()),
+                    c"FixtureVolatileState".as_ptr().cast(),
+                )
+                .unwrap(),
+            )
+        };
+        let volatile = Self(set);
+        volatile.set(true);
+        volatile
+    }
+    fn set(&self, arm: bool) {
+        // SAFETY: this copied DLL is still retained by the loader.
+        unsafe { (self.0)(u32::from(arm)) }
+    }
+}
+impl Drop for Volatile {
+    fn drop(&mut self) {
+        self.set(false);
+    }
+}
+
 #[test]
 fn complete_save_retries_failed_drum_target_and_keeps_notice_until_publication() {
     for (changed_patch, supersede) in [(false, false), (true, false), (true, true)] {
@@ -901,4 +936,103 @@ fn saving_does_not_write_or_wait_for_held_state_and_only_a_complete_retry_clears
         assert!(Instant::now() < deadline, "retirement watchdog");
         std::thread::yield_now();
     }
+}
+
+/// A plugin whose getState answers different bytes every time it is asked (a clock, a meter,
+/// a phase): the close's own capture of it must not look like a new edit. One close saves
+/// once, shows the saving veil once, and adds no stack of「プラグインの編集を反映」steps.
+#[test]
+fn a_close_takes_a_volatile_plugin_state_once_and_closes() {
+    use crate::context::key_more::WindowAsk;
+    xirius_test_vst3::fixture_marker();
+    let source = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("xirius_test_vst3.dll");
+    let root = tempfile::tempdir().unwrap();
+    let dll = root.path().join("volatile-state.vst3");
+    std::fs::copy(source, &dll).unwrap();
+    let catalog = Arc::new(Catalog {
+        entries: xirius_plugins::probe(&dll).unwrap(),
+        failures: Vec::new(),
+    });
+    let mut s = Studio::new(Song::empty());
+    s.keep = crate::keep::Keep::at(root.path().join("keep"));
+    let track = s
+        .song
+        .run("track.add.audio", json!({"name":"Fixture"}))
+        .unwrap()["id"]
+        .clone();
+    let added = s
+        .song
+        .run(
+            "plugin.add",
+            json!({"track":track,"name":"Fixture","format":"vst3","uid":catalog.entries[0].uid}),
+        )
+        .unwrap();
+    let plugin = added["id"].as_str().unwrap().to_string();
+    let dir = root.path().join("song");
+    s.song.save_as(&dir).unwrap();
+    s.transport.mode = OutputMode::Device;
+    s.transport.bind_window();
+    s.transport.set_catalog(catalog);
+    s.transport
+        .set_drivers(super::prepared::tests::quiet_drivers());
+    s.prepare_song();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while s.preparing.is_some() {
+        s.poll_preparing();
+        assert!(Instant::now() < deadline, "fixture preparation watchdog");
+        std::thread::yield_now();
+    }
+    assert!(s.error.is_none(), "{:?}", s.error);
+    // Write the first captured state before the close is asked for. The fixture now answers
+    // getState with bytes that differ every time, as volatile plugins do.
+    let volatile = Volatile::new(&dll);
+    assert!(s.start_save());
+    s.wait_for_save();
+    let generation = s.keep.save_generation();
+    let steps = s.song.steps();
+    s.window_ask = Some(WindowAsk::Quit);
+    let mut armed = false;
+    loop {
+        s.idle();
+        if s.keep.recent_close_since().is_some() && !armed {
+            // The close is armed and waiting on the recent list: a pull's answer that lands
+            // now is the close's own capture, not an edit made in the window. The volatile
+            // fixture answers differently every pull, so any collect makes such a step.
+            armed = true;
+            s.song
+                .run("plugin.state.set", json!({"id":plugin,"state":"QUJD"}))
+                .unwrap();
+        }
+        if s.take_window_ask() == Some(WindowAsk::Quit) && s.close_now() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the close did not finish: generation={} leaving={} saving={}",
+            s.keep.save_generation(),
+            s.leaving_ready,
+            s.saving.is_some()
+        );
+        assert!(
+            s.keep.save_generation() - generation <= 1,
+            "the close kept saving: generation={}",
+            s.keep.save_generation()
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        s.keep.save_generation() - generation,
+        1,
+        "one close, one save"
+    );
+    assert!(
+        s.song.steps() - steps <= 1,
+        "the capture is not a stack of history steps: {}",
+        s.song.steps() - steps
+    );
+    volatile.set(false);
 }

@@ -401,10 +401,17 @@ impl Studio {
             self.close_editor(id);
         }
         self.follow_mix();
+        // While the song is being left, answers to the close's own pulls go in at the cursor:
+        // they are not the person's edits (UI-354).
+        let leaving = self.leaving_song();
         let Some(host) = self.transport.host_mut() else {
             return keys;
         };
-        let edits = match self.song.collect_plugin_edits(host) {
+        let edits = match if leaving {
+            self.song.collect_plugin_edits_in_place(host)
+        } else {
+            self.song.collect_plugin_edits(host)
+        } {
             Ok(false) => false,
             Ok(true) => {
                 self.after_edit();

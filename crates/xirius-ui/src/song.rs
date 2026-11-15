@@ -341,6 +341,18 @@ impl Song {
             .map_err(|e| e.to_string())
     }
 
+    /// [`Song::collect_plugin_edits`] for a song being left: the states go in at the cursor
+    /// with no step of their own — the close's own capture is not an edit (UI-354). True when
+    /// the song changed.
+    pub fn collect_plugin_edits_in_place(
+        &mut self,
+        host: &mut SessionHost,
+    ) -> Result<bool, String> {
+        xirius_session::host::collect_plugin_states_in_place(&mut self.session, host)
+            .map(|c| c.changed)
+            .map_err(|e| e.to_string())
+    }
+
     /// Steps the person has made (the setup is not counted).
     pub fn steps(&self) -> usize {
         self.session.steps().len()

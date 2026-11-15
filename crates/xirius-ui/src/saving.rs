@@ -31,9 +31,9 @@ pub(crate) struct Saving {
     pub since: Instant,
     pub progress: Arc<SaveProgress>,
     pub target: Option<PathBuf>,
-    leaving: Option<Leave>,
+    pub(crate) leaving: Option<Leave>,
     draft: Option<PathBuf>,
-    close_when_done: bool,
+    pub(crate) close_when_done: bool,
     /// The person said the song's unwritten changes may be lost (UI-282: 「保存せずに進む」 on
     /// a song whose record could not be written): writes that fail again do not stop the close.
     lose_unwritten: bool,
@@ -582,6 +582,9 @@ impl Studio {
     ) {
         // A device's knob still turning is saved with the song, Save As too (N-par-1).
         self.device_sweep_end();
+        if matches!(leaving, Some(Leave::Close)) {
+            self.keep.close_retries += 1;
+        }
         let close_when_done = self.keep.save_started();
         self.leaving_ready = false;
         if close_when_done {
@@ -790,12 +793,23 @@ impl Studio {
             let collected = if let Some(reason) = error {
                 Err(CmdError::io(plugin_failure_reason(reason)).with_save_reason(reason))
             } else if let Some(host) = self.transport.host_mut() {
-                xirius_session::host::collect_pulled_states(
-                    self.song.session_mut(),
-                    host,
-                    pull,
-                    &xirius_core::session::RunOptions::human(),
-                )
+                // A song being left takes its plugins' states at the cursor: the capture the
+                // close itself made is not an edit, and a step added now would mark the song
+                // unsaved again and re-arm the capture (UI-354).
+                if save.leaving.is_some() || save.close_when_done {
+                    xirius_session::host::collect_pulled_in_place(
+                        self.song.session_mut(),
+                        host,
+                        pull,
+                    )
+                } else {
+                    xirius_session::host::collect_pulled_states(
+                        self.song.session_mut(),
+                        host,
+                        pull,
+                        &xirius_core::session::RunOptions::human(),
+                    )
+                }
                 .map(|_| ())
                 .map_err(|error| {
                     if error.io_kind.is_some() {
@@ -1184,13 +1198,23 @@ impl Studio {
             return self.request_recent_close();
         }
         if self.saving.is_none() {
-            self.start_leaving(Leave::Close);
+            if self.keep.close_retries >= CLOSE_RETRIES {
+                // The saves a close can make have a limit: the last one stands and the
+                // window goes, even if the next capture would answer differently (UI-354).
+                self.finish_leaving(Leave::Close);
+            } else {
+                self.start_leaving(Leave::Close);
+            }
         } else if let Some(save) = &mut self.saving {
             save.close_when_done = true;
         }
         self.leaving_ready && self.request_recent_close()
     }
 }
+
+/// Saves one close can make: a plugin whose capture answers differently every pull must not
+/// keep a close re-saving forever. The limit counts real saves of the same close (UI-354).
+const CLOSE_RETRIES: u8 = 4;
 
 pub(crate) fn card(g: &Geometry, progress: bool) -> Rect {
     let height = if progress { 108.0 } else { 84.0 };
