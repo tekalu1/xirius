@@ -8537,6 +8537,7 @@ area = "PLG"
 phase = "v1.1"
 source = "pitch-20261116/report.md § 5 ; pitch-20261116/report.md § 6 ; pitch-20261116/patents/report.md § 3"
 done_when = "pitch-correction のパラメーターを保存とオートメーションへ出し、単音 YIN 検出、最近傍の音階または受信ノートへの補正、TD-PSOLA と非声区間の遅延素通し、latency と窓向けの値を実装する。合成音の検出・補正・遅れ・ブロック不変・無確保の試験と実測、試聴 WAV を揃える"
+status = "done"
 
 [[item]]
 id = "MIX-051"
