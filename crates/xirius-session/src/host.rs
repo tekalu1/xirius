@@ -66,6 +66,9 @@ pub struct HostConfig {
     pub catalog: Option<Arc<xirius_plugins::Catalog>>,
     /// Where VST3 plugins run (`None`: [`Isolation::default`]).
     pub isolation: Option<Isolation>,
+    /// How long an in-process plugin's opening is waited for (`None`: [`OPEN_WAIT`]). Tests
+    /// set a short one to reach the "does not answer" failure.
+    pub open_wait: Option<Duration>,
 }
 
 /// What one [`SessionHost::sync`] did.
@@ -512,8 +515,17 @@ impl SessionHost {
             std::thread::sleep(Duration::from_millis(2));
         }
         self.builder.set_background(false);
+        let began = Instant::now();
         let built = self.builder.build_observed(p, Select::All, &mut track);
         self.builder.set_background(true);
+        let s = began.elapsed().as_secs_f64();
+        for failure in &built.failures {
+            xirius_engine::crash::note(&format!(
+                "preparation_failed name={} s={s:.3} reason={}",
+                failure.name,
+                crate::plugins::without_paths(&failure.reason)
+            ));
+        }
         if let Some(failure) = built.failures.iter().find(|f| f.track.is_none()) {
             return Err(format!("{}: {}", failure.name, failure.reason));
         }
@@ -535,6 +547,17 @@ impl SessionHost {
         self.poll();
         self.builder.plugins_mut().promote_opened();
         self.builder.note_open_times();
+        if built.failures.is_empty() {
+            xirius_engine::crash::note(&format!(
+                "preparation_retry_ok plugins={} s={:.3}",
+                hosted
+                    .iter()
+                    .map(|(_, x)| x.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+                began.elapsed().as_secs_f64()
+            ));
+        }
         self.graph = built.graph;
         self.structure = built.structure;
         self.mix = built.mix;
@@ -2313,6 +2336,11 @@ fn collect_edits(
 
 /// How long [`pull_plugin_states`] waits for the plugins in host processes to answer.
 pub const PULL_WAIT: Duration = Duration::from_millis(1500);
+
+/// How long the opening of a plugin on an owner thread is waited for before it fails: a
+/// plugin that is slow to load but answers is waited for, and only one over this limit gets
+/// the "does not answer" failure. [`PULL_WAIT`] is for state pulls, not for this.
+pub const OPEN_WAIT: Duration = Duration::from_secs(60);
 
 /// [`collect_plugin_states`] after reading every plugin's state, not only the ones that said
 /// they had changed (PLG-057). For the moments the song is written or left, and when a
