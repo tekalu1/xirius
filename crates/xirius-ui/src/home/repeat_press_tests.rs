@@ -1,0 +1,208 @@
+//! UI-350: a row pressed again. A person who is used to a double press (or who presses again a
+//! second later because nothing seemed to happen) must not cancel the open, start it over, or
+//! change the song that comes up.
+
+use super::tests::{centre, row_spot};
+use super::*;
+use crate::song::Song;
+use std::time::{Duration, Instant};
+
+/// Which kind of row is pressed.
+#[derive(Clone, Copy, Debug)]
+enum Kind {
+    Saved,
+    Draft,
+    Sample,
+}
+
+/// How long the window runs (frames and idle polls) between the two presses.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Gap {
+    Now,
+    Short,
+    Second,
+}
+
+impl Gap {
+    fn time(self) -> Duration {
+        match self {
+            Gap::Now => Duration::ZERO,
+            Gap::Short => Duration::from_millis(200),
+            Gap::Second => Duration::from_millis(1000),
+        }
+    }
+}
+
+/// Runs the window as it runs while nothing is pressed.
+fn run_for(s: &mut Studio, time: Duration) {
+    let end = Instant::now() + time;
+    loop {
+        s.idle();
+        s.tick();
+        s.home_tick();
+        if Instant::now() >= end {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// A song with a track and a few steps, saved: what the start screen lists.
+fn seeded(path: &std::path::Path) {
+    let mut seed = Song::sample();
+    seed.save_as(path).unwrap();
+}
+
+fn listing() -> (Studio, Geometry, tempfile::TempDir) {
+    let now = xirius_core::store::now_ms();
+    let tmp = tempfile::tempdir().unwrap();
+    let keep = crate::keep::Keep::at(tmp.path().join("keep"));
+    let saved = tmp.path().join("saved");
+    let draft = tmp.path().join("keep").join("drafts").join("d1");
+    for (path, name, is_draft, at) in [
+        (&saved, "saved", false, now - 60_000),
+        (&draft, "d1", true, now),
+    ] {
+        seeded(path);
+        keep.remember(path, name, is_draft, at);
+    }
+    let mut s = Studio::new(Song::empty());
+    super::tests::with_device(&mut s, true);
+    s.keep = keep;
+    s.keep.sync(&s.song.project());
+    s.keep.settle_recent();
+    s.keep.poll_recent();
+    s.home = Some(Home::default());
+    s.home_tick();
+    let g = s.geometry(1280.0, 720.0);
+    (s, g, tmp)
+}
+
+fn row_of(s: &Studio, g: &Geometry, kind: Kind) -> (f32, f32) {
+    let index = match kind {
+        Kind::Draft => 0,
+        Kind::Saved => 1,
+        Kind::Sample => 2,
+    };
+    centre(
+        s.home_layout(g)
+            .unwrap()
+            .rect(row_spot(s, g, index))
+            .unwrap(),
+    )
+}
+
+fn press(s: &mut Studio, g: &Geometry, at: (f32, f32), clicks: u32) -> bool {
+    let before = s.opening.is_some();
+    s.window_press(g, at.0, at.1, clicks, Mods::NONE);
+    before
+}
+
+/// Both presses, `gap` apart, on the same place of one row; returns whether the open was still
+/// running at the second press, and the song's state after it came up and rested.
+fn twice(kind: Kind, gap: Gap, second_clicks: u32) -> (bool, String, Studio, tempfile::TempDir) {
+    let (mut s, g, tmp) = listing();
+    let at = row_of(&s, &g, kind);
+    press(&mut s, &g, at, 1);
+    assert!(s.opening.is_some(), "{kind:?}: the first press opens");
+    run_for(&mut s, gap.time());
+    let running = press(&mut s, &g, at, second_clicks);
+    s.wait_for_open_for_test();
+    run_for(&mut s, Duration::from_millis(300));
+    let state = song_of(&s);
+    (running, state, s, tmp)
+}
+
+/// What a press must not change: the song itself (its tracks, tempo and notes), what undo
+/// holds, and whether it plays. What is selected is the view's, not the song's.
+fn song_of(s: &Studio) -> String {
+    format!(
+        "{} {} {}",
+        serde_json::to_string(&*s.project()).unwrap(),
+        s.song.steps(),
+        s.transport.playing
+    )
+}
+
+/// The same row opened by one press, to compare with.
+fn once(kind: Kind) -> (String, Studio, tempfile::TempDir) {
+    let (mut s, g, tmp) = listing();
+    let at = row_of(&s, &g, kind);
+    press(&mut s, &g, at, 1);
+    s.wait_for_open_for_test();
+    run_for(&mut s, Duration::from_millis(300));
+    let state = song_of(&s);
+    (state, s, tmp)
+}
+
+fn opened(s: &Studio, tmp: &tempfile::TempDir, kind: Kind) {
+    assert!(!s.home_shown(), "{kind:?}: the song is up");
+    assert!(s.opening.is_none());
+    match kind {
+        Kind::Saved => assert_eq!(s.song.dir(), Some(tmp.path().join("saved"))),
+        Kind::Draft => assert!(s.song.is_draft()),
+        Kind::Sample => assert!(s.song.is_sample()),
+    }
+}
+
+#[test]
+fn a_row_pressed_again_opens_its_song_once_and_changes_nothing() {
+    let mut bad = Vec::new();
+    for kind in [Kind::Saved, Kind::Draft, Kind::Sample] {
+        let (want, s0, _t0) = once(kind);
+        let steps = s0.song.steps();
+        for gap in [Gap::Now, Gap::Short, Gap::Second] {
+            // A double-click's second press comes at once or a moment after, not a second on.
+            for clicks in [1, 2] {
+                if clicks == 2 && gap == Gap::Second {
+                    continue;
+                }
+                let (running, state, s, tmp) = twice(kind, gap, clicks);
+                opened(&s, &tmp, kind);
+                let tag =
+                    format!("{kind:?} {gap:?} clicks={clicks} (open still running: {running})");
+                if state != want {
+                    let at = state
+                        .chars()
+                        .zip(want.chars())
+                        .position(|(a, b)| a != b)
+                        .unwrap_or(0);
+                    bad.push(format!("{tag}: the song differs at {at}"));
+                }
+                if s.song.steps() != steps {
+                    bad.push(format!("{tag}: steps {} -> {}", steps, s.song.steps()));
+                }
+                if s.error.is_some() {
+                    bad.push(format!("{tag}: error {:?}", s.error));
+                }
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{}",
+        bad.join(
+            "
+"
+        )
+    );
+}
+
+/// The second press, one second on, lands on the song that came up: whatever is under the
+/// row's place must not change the song (no clip, no tempo point, no step).
+#[test]
+fn a_press_on_the_song_that_came_up_at_the_rows_place_adds_no_step() {
+    for kind in [Kind::Saved, Kind::Draft, Kind::Sample] {
+        let (mut s, g, _tmp) = listing();
+        let at = row_of(&s, &g, kind);
+        press(&mut s, &g, at, 1);
+        s.wait_for_open_for_test();
+        run_for(&mut s, Duration::from_millis(1000));
+        let g = s.geometry(1280.0, 720.0);
+        let (steps, tempo) = (s.song.steps(), s.project().tempo.len());
+        press(&mut s, &g, at, 1);
+        s.window_released(&g, at.0, at.1, Mods::NONE);
+        assert_eq!(s.song.steps(), steps, "{kind:?}: a step was added");
+        assert_eq!(s.project().tempo.len(), tempo, "{kind:?}: a tempo point");
+    }
+}

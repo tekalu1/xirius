@@ -35,6 +35,21 @@ impl Studio {
         clicks: u32,
         mods: Mods,
     ) -> PressOut {
+        // The second press of a double-click on a start-screen row lands on the song that came
+        // up under it: it is the rest of that click, and the song does not take it.
+        if clicks >= 2
+            && !self.home_shown()
+            && self.preparing.is_none()
+            && let Some((px, py)) = self.row_press
+            && (x - px).abs() <= 8.0
+            && (y - py).abs() <= 8.0
+        {
+            self.row_press = None;
+            return PressOut::NOTIFY;
+        }
+        if clicks <= 1 {
+            self.row_press = None;
+        }
         // A press past the dialogs, the settings and the palette takes the keys from what had
         // them.
         self.press_keys(g, x, y);
@@ -58,7 +73,13 @@ impl Studio {
             return PressOut::NOTIFY;
         }
         if home {
-            return self.press_at_hit(g, x, y, clicks, mods);
+            let row = matches!(
+                self.hit(g, x, y),
+                crate::studio::Hit::Home(crate::home::Spot::Row(..))
+            );
+            let out = self.press_at_hit(g, x, y, clicks, mods);
+            self.row_press = row.then_some((x, y));
+            return out;
         }
         if self.mixer_bar_down(g, x, y) {
             return PressOut::NOTIFY;

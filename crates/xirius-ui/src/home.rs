@@ -910,6 +910,8 @@ mod delete_tests;
 #[cfg(test)]
 mod recent_file_tests;
 #[cfg(test)]
+mod repeat_press_tests;
+#[cfg(test)]
 mod row_tests;
 #[cfg(test)]
 mod tests;
