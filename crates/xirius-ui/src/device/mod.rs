@@ -12,6 +12,8 @@ pub mod graph;
 pub mod input;
 pub mod layout;
 pub mod limiter;
+#[cfg(test)]
+mod pad_select_tests;
 pub mod play;
 pub mod reverb;
 pub mod sampler;

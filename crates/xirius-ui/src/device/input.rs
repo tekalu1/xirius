@@ -122,24 +122,100 @@ impl Studio {
     }
 
     /// The control `k` of `plugin` goes to `value` in the song (one step);
-    /// false when it is there already.
+    /// false when it is there already. A Drum Kit's pads chosen together all go to it
+    /// (UI-357).
     pub(crate) fn device_set(&mut self, plugin: PluginId, k: usize, value: f64) -> bool {
-        let Some((_, def, now)) = self.device(plugin) else {
+        self.device_put(plugin, k, value, false)
+    }
+
+    /// [`Self::device_set`] for a knob turned: the pads chosen together with it move by as
+    /// much as it did, each stopping at its end, so what parts them stays (UI-357). A
+    /// choice, a switch and a value put back go to all of them as they are.
+    pub(crate) fn device_set_by(&mut self, plugin: PluginId, k: usize, value: f64) -> bool {
+        self.device_put(plugin, k, value, true)
+    }
+
+    fn device_put(&mut self, plugin: PluginId, k: usize, value: f64, by: bool) -> bool {
+        let Some((track, def, now)) = self.device(plugin) else {
             return false;
         };
         let (Some(spec), Some(before)) = (def.params.get(k), now.get(k)) else {
             return false;
         };
-        if (before - value).abs() <= 1e-9 {
+        let mut moved: Vec<(String, f64)> = Vec::new();
+        if (before - value).abs() > 1e-9 {
+            moved.push((spec.id.to_string(), value));
+        }
+        moved.extend(self.pad_peers(track, plugin, def, spec, value, value - before, by));
+        let Some(((first, v), rest)) = moved.split_first() else {
             return false;
+        };
+        let mut args = json!({ "id": plugin.to_string(), "param": first, "value": v });
+        if !rest.is_empty() {
+            let also: Vec<_> = rest
+                .iter()
+                .map(|(id, v)| json!({ "param": id, "value": v }))
+                .collect();
+            args["also"] = json!(also);
         }
         // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
-        let done = self.run_command(
-            "plugin.param.set",
-            json!({ "id": plugin.to_string(), "param": spec.id, "value": value }),
-        );
+        let done = self.run_command("plugin.param.set", args);
         self.device_unheard(done);
         true
+    }
+
+    /// What the other pads chosen with the Drum Kit's shown one take when its `spec` goes
+    /// to `value` (UI-357): their key and value. Only a pad with a sound, that no lane
+    /// holds, and whose value changes. `by`: a knob that moves by `delta` keeps their
+    /// differences; else they take `value`.
+    #[allow(clippy::too_many_arguments)]
+    fn pad_peers(
+        &self,
+        track: TrackId,
+        plugin: PluginId,
+        def: &'static BuiltinDef,
+        spec: &ParamSpec,
+        value: f64,
+        delta: f64,
+        by: bool,
+    ) -> Vec<(String, f64)> {
+        use xirius_params::{Curve, PADS, pad_key};
+        let chosen = self.instruments.pads_of(plugin);
+        let shown = self
+            .instruments
+            .win_of(plugin)
+            .map_or(0, |w| w.pick.min(PADS - 1));
+        let base = spec.id.split_once('.').map(|(_, b)| b);
+        let (true, Some(base)) = (def.uid == "drum-kit" && chosen.count_ones() > 1, base) else {
+            return Vec::new();
+        };
+        let p = self.project();
+        let Some(x) = p
+            .tracks
+            .get(&track)
+            .and_then(|t| t.inserts.iter().find(|x| x.id == plugin))
+        else {
+            return Vec::new();
+        };
+        (0..PADS)
+            .filter(|&pad| pad != shown && chosen & (1u128 << pad) != 0)
+            .filter(|&pad| !sampler::pad_files(def, x, pad).is_empty())
+            .filter_map(|pad| {
+                let key = pad_key(pad, base);
+                if self.param_locked(track, plugin, &key) {
+                    return None;
+                }
+                let spec = def.resolve(&key)?.spec;
+                let now = x.params.get(&key).copied().unwrap_or(spec.default_norm());
+                let smooth = !matches!(spec.curve, Curve::Choice(_) | Curve::Toggle);
+                let to = if by && smooth {
+                    control::snap(spec, (now + delta).clamp(0.0, 1.0))
+                } else {
+                    value
+                };
+                ((now - to).abs() > 1e-9).then_some((key, to))
+            })
+            .collect()
     }
 
     /// The controls `set` (parameter, value) of `plugin` go into the song as
@@ -625,7 +701,7 @@ impl Studio {
     /// own step there and not lost or put after them.
     pub(crate) fn device_sweep_end(&mut self) -> bool {
         match self.instruments.sweep.take() {
-            Some(s) => self.device_set(s.plugin, s.k, s.value),
+            Some(s) => self.device_set_by(s.plugin, s.k, s.value),
             None => false,
         }
     }

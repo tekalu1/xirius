@@ -1558,6 +1558,11 @@ pub(crate) fn device_marks(s: &Studio, g: &Geometry) -> Vec<Mark> {
                 if let Some(note) = spot.note {
                     label = format!("{label}, {}", crate::roll::pitch_name(note));
                 }
+                // Several pads chosen with Ctrl or Shift say how many (UI-357).
+                let chosen = s.instruments.pads_of(w.plugin).count_ones();
+                if def.uid == "drum-kit" && chosen > 1 {
+                    label = format!("{label}, {chosen} pads selected");
+                }
                 node.set_label(label);
                 node.set_bounds(bounds(spot.r));
                 out.push(mark(format!("device-{}-title", w.plugin), node));

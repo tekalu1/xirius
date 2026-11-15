@@ -323,6 +323,14 @@ impl Analyser {
     }
 }
 
+/// The Drum Kit pads chosen together (UI-357): a bit per pad, and the pad a Shift press
+/// reaches from.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PadSel {
+    pub set: u128,
+    pub anchor: usize,
+}
+
 /// The open windows, the last on top.
 #[derive(Debug, Default)]
 pub struct Windows {
@@ -354,6 +362,9 @@ pub struct Windows {
     pub hot: Option<(PluginId, Part)>,
     /// The point chosen on each device's graph: its graph and its index.
     pub chosen: HashMap<PluginId, (usize, usize)>,
+    /// The Drum Kit pads chosen together, by Ctrl and Shift (UI-357); a kit not here has
+    /// only the pad its window shows.
+    pub(crate) pads: HashMap<PluginId, PadSel>,
     /// The point last pressed (UI-326): a second press on it within [`DOUBLE`] types its
     /// value, putting back the band the first one switched.
     pub(crate) pressed: Option<Pressed>,
@@ -628,6 +639,17 @@ impl Windows {
             );
             b.keys = keyboard.keys.clone();
             crate::device::sampler::place_zones(&mut b, &plugin.samples, w.map_or(0, |w| w.pick));
+        }
+        // Every pad chosen together wears the outline of the one shown (UI-357).
+        if def.uid == "drum-kit" {
+            let set = self.pads_of(plugin.id);
+            for s in &mut b.spots {
+                if let Mark::Pad(n) = s.mark {
+                    s.on = 1u128
+                        .checked_shl(n as u32)
+                        .is_some_and(|bit| set & bit != 0);
+                }
+            }
         }
         // The edge held or moved by the keys shows it.
         for s in &mut b.spots {
@@ -986,6 +1008,7 @@ impl Windows {
         let open: Vec<PluginId> = self.open.iter().map(|w| w.plugin).collect();
         self.detached.retain(|id| open.contains(id));
         self.chosen.retain(|id, _| open.contains(id));
+        self.pads.retain(|id, _| open.contains(id));
         self.analysers.retain(|id, _| open.contains(id));
         self.meters.retain(|id, _| open.contains(id));
         self.dynamics.retain(|id, _| open.contains(id));
@@ -1067,6 +1090,73 @@ impl Windows {
             self.chosen.remove(&id);
         }
         true
+    }
+
+    /// The pads of the Drum Kit `id` that are chosen: the ones pressed with Ctrl or Shift,
+    /// or the one its window shows (UI-357). A bit per pad.
+    pub(crate) fn pads_of(&self, id: PluginId) -> u128 {
+        let Some(w) = self.open.iter().find(|w| w.plugin == id) else {
+            return 0;
+        };
+        let one = 1u128.checked_shl(w.pick as u32).unwrap_or(0);
+        self.pads
+            .get(&id)
+            .map(|s| s.set)
+            .filter(|set| set & one != 0)
+            .unwrap_or(one)
+    }
+
+    /// A press on pad `pad` of the Drum Kit `id` with `mods` (UI-357), as the track
+    /// list's: Ctrl turns the pad in or out (the last one stays), Shift chooses the run
+    /// from the one pressed before, and both add the run. The pad pressed is the one the
+    /// window shows. True when the press only chose (it does not sound).
+    pub(crate) fn choose_pad(
+        &mut self,
+        id: PluginId,
+        pad: usize,
+        mods: crate::tools::Mods,
+    ) -> bool {
+        let Some(shown) = self.open.iter().find(|w| w.plugin == id).map(|w| w.pick) else {
+            return false;
+        };
+        let bit = |n: usize| 1u128.checked_shl(n as u32).unwrap_or(0);
+        let had = self.pads_of(id);
+        let anchor = self.pads.get(&id).map_or(shown, |s| s.anchor);
+        let (set, anchor, show) = if mods.shift {
+            let (lo, hi) = (anchor.min(pad), anchor.max(pad));
+            let run = (lo..=hi).fold(0u128, |a, n| a | bit(n));
+            (if mods.ctrl { had | run } else { run }, anchor, pad)
+        } else if mods.ctrl {
+            if had & bit(pad) == 0 {
+                (had | bit(pad), pad, pad)
+            } else if had == bit(pad) {
+                (had, anchor, shown)
+            } else {
+                let rest = had & !bit(pad);
+                let show = if shown != pad {
+                    shown
+                } else if rest & bit(anchor) != 0 {
+                    anchor
+                } else {
+                    rest.trailing_zeros() as usize
+                };
+                (rest, if anchor == pad { show } else { anchor }, show)
+            }
+        } else {
+            (bit(pad), pad, pad)
+        };
+        if set == bit(show) {
+            self.pads.remove(&id);
+        } else {
+            self.pads.insert(id, PadSel { set, anchor });
+        }
+        // `pick` forgets what the other pad had; the chosen pads are kept.
+        let keep = self.pads.get(&id).copied();
+        self.pick(id, show, 0);
+        if let Some(k) = keep {
+            self.pads.insert(id, k);
+        }
+        mods.ctrl || mods.shift
     }
 
     /// The Drum Kit's window of `id` shows the pads of the bank `b`; the pad chosen stays
@@ -1531,7 +1621,13 @@ impl Studio {
             }
             Part::Pad(pitch) => {
                 // A press on a pad chooses it too, in a kit with no samples as well (UI-334).
-                self.instruments.pick(w.plugin, play::pad_of(pitch), 0);
+                // With Ctrl or Shift it only chooses: the pads chosen together (UI-357).
+                if self
+                    .instruments
+                    .choose_pad(w.plugin, play::pad_of(pitch), mods)
+                {
+                    return true;
+                }
                 // Higher up the pad is harder; it lights a moment however short the press.
                 let pad = live(&p, &w).and_then(|(track, plugin, def)| {
                     let at =
@@ -1936,7 +2032,7 @@ impl Studio {
             };
             let before = values_of(x, def)[k];
             if (before - value).abs() > 1e-9 {
-                self.device_set(plugin, k, value);
+                self.device_set_by(plugin, k, value);
             }
         }
         if let Grab::Edge {

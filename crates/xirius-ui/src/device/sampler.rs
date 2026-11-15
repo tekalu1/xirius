@@ -112,6 +112,9 @@ const ENV: [(&str, &str); 4] = [
 ];
 const FILTER: [&str; 3] = ["cutoff", "resonance", "drive"];
 const AMP: [&str; 5] = ["transpose", "fine", "volume", "pan", "velocity"];
+/// A Drum Kit's pad heads the first two of them Pitch (Transpose, Tune) and the last three
+/// Amp (Gain, Pan, Vel) (UI-357).
+const PITCH_N: usize = 2;
 /// The sample's buttons, from the left.
 const SAMPLE_BUTTONS: [&str; 3] = ["loop", "reverse", "normalize"];
 const BANKS: [&str; 8] = ["A", "B", "C", "D", "E", "F", "G", "H"];
@@ -462,8 +465,29 @@ fn voice(def: &BuiltinDef, b: &mut Body, x: f32, y: f32, w: f32) -> f32 {
         .push(name(Rect::new(env.x, y + 4.0, 60.0, NAME_H), "Env"));
     b.names
         .push(name(Rect::new(filter.x, y + 4.0, 60.0, NAME_H), "Filter"));
-    b.names
-        .push(name(Rect::new(ax, ay + 4.0, 60.0, NAME_H), "Amp"));
+    let kit = def.uid == "drum-kit";
+    let in_row = under && w <= AMP_ROW;
+    if kit && !in_row {
+        // Pitch over its two knobs, Amp over its three, one under the other.
+        b.names
+            .push(name(Rect::new(ax, ay + 4.0, 60.0, NAME_H), "Pitch"));
+        b.names.push(name(
+            Rect::new(ax, ay + HEAD_H + kh + 4.0, 60.0, NAME_H),
+            "Amp",
+        ));
+    } else if kit {
+        // One row of five: Pitch over the first two, Amp over the rest.
+        let cw = w / AMP.len() as f32;
+        b.names
+            .push(name(Rect::new(x, ay + 4.0, 60.0, NAME_H), "Pitch"));
+        b.names.push(name(
+            Rect::new(x + PITCH_N as f32 * cw, ay + 4.0, 60.0, NAME_H),
+            "Amp",
+        ));
+    } else {
+        b.names
+            .push(name(Rect::new(ax, ay + 4.0, 60.0, NAME_H), "Amp"));
+    }
     if let Some(k) = idx(def, "ftype") {
         let sw = control::segments_w(&def.params[k]);
         b.slots.push(Slot {
@@ -493,11 +517,23 @@ fn voice(def: &BuiltinDef, b: &mut Body, x: f32, y: f32, w: f32) -> f32 {
     let filter_ids: Vec<(&str, Option<&'static str>)> =
         FILTER.iter().map(|id| (*id, None)).collect();
     row(b, &filter_ids, filter);
-    let in_row = under && w <= AMP_ROW;
     for (i, id) in AMP.iter().enumerate() {
         let cell = if in_row {
             let cw = w / AMP.len() as f32;
             Rect::new(x + i as f32 * cw, ay + HEAD_H, cw, kh)
+        } else if kit {
+            // Pitch's two on the first line, Amp's three under their own heading.
+            let (col, line) = if i < PITCH_N {
+                (i, 0)
+            } else {
+                (i - PITCH_N, 1)
+            };
+            Rect::new(
+                ax + col as f32 * AMP_CELL,
+                ay + HEAD_H + line as f32 * (HEAD_H + kh),
+                AMP_CELL,
+                kh,
+            )
         } else {
             let (col, line) = ((i % 3) as f32, (i / 3) as f32);
             Rect::new(ax + col * AMP_CELL, ay + HEAD_H + line * kh, AMP_CELL, kh)
@@ -505,7 +541,12 @@ fn voice(def: &BuiltinDef, b: &mut Body, x: f32, y: f32, w: f32) -> f32 {
         b.slots.extend(slot(def, id, Look::Knob, DIAL_SM, cell));
     }
     let lines = if in_row { 1.0 } else { 2.0 };
-    (ky + kh).max(ay + HEAD_H + lines * kh)
+    let amp_foot = if kit && !in_row {
+        ay + 2.0 * (HEAD_H + kh)
+    } else {
+        ay + HEAD_H + lines * kh
+    };
+    (ky + kh).max(amp_foot)
 }
 
 /// Lays the zones' groups (the zones of the same keys, their left and right) side by side:
