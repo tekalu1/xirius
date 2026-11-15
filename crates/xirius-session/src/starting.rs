@@ -77,6 +77,9 @@ impl Starting {
         builder.set_background(true);
         builder.set_ara_live(true);
         builder.set_threaded_local(config.threaded_local);
+        if let Some(wait) = config.open_wait {
+            builder.plugins_mut().set_open_wait(wait);
+        }
         builder.set_catalog(config.catalog);
         if let Some(i) = config.isolation {
             builder.set_isolation(i);
@@ -199,6 +202,14 @@ impl Starting {
         }
         let built = self.builder.build_observed(p, Select::All, track);
         let failures = built.failures.clone();
+        let s = self.elapsed().as_secs_f64();
+        for failure in &failures {
+            xirius_engine::crash::note(&format!(
+                "preparation_failed name={} s={s:.3} reason={}",
+                failure.name,
+                crate::plugins::without_paths(&failure.reason)
+            ));
+        }
         if let Some(failure) = failures.iter().find(|f| f.track.is_none()) {
             return Err(format!("{}: {}", failure.name, failure.reason));
         }

@@ -5,12 +5,13 @@
 //! or is ended from outside, leaves nothing (ENG-062). A crash takes the mark off before it
 //! writes, and `tidy_at` later moves the pair into its own `<pid>-<stamp>` folder.
 use std::cell::UnsafeCell;
+use std::collections::VecDeque;
 use std::fs::File;
 use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_ACCESS_DENIED, EXCEPTION_ACCESS_VIOLATION, EXCEPTION_STACK_OVERFLOW,
     FILETIME, GENERIC_READ, GENERIC_WRITE, GetLastError, HANDLE, STILL_ACTIVE,
@@ -52,6 +53,12 @@ static MODULE_BUFFERS: CrashBuffers = CrashBuffers(UnsafeCell::new(ModuleBuffers
 static EXCEPTION_FILTER: AtomicBool = AtomicBool::new(false);
 /// A filter asked before the crash report, as a `usize` (0: none). See [`set_first_filter`].
 static FIRST_FILTER: AtomicUsize = AtomicUsize::new(0);
+
+/// The lines `note` was last given, for tests to read (the log's own file is opened
+/// delete-on-close, so nothing else can read it while the process lives). Bounded; `try_lock`
+/// only, so `note` never waits on it on a crash path.
+static NOTED: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
+const NOTED_MAX: usize = 64;
 
 /// The filter [`set_first_filter`] takes.
 pub type Filter = unsafe extern "system" fn(*const EXCEPTION_POINTERS) -> i32;
@@ -193,6 +200,12 @@ fn set_delete(file: &File, delete: bool) -> bool {
 
 /// Writes control-thread context; never call this from the audio thread.
 pub fn note(message: &str) {
+    if let Ok(mut noted) = NOTED.try_lock() {
+        if noted.len() == NOTED_MAX {
+            noted.pop_front();
+        }
+        noted.push_back(message.to_string());
+    }
     let Some(writer) = WRITER.get() else { return };
     for bytes in [message.as_bytes(), b"\n"] {
         let mut written = 0;
@@ -211,6 +224,15 @@ pub fn note(message: &str) {
             }
         }
     }
+}
+
+/// The lines `note` was last given (see `NOTED`), for tests.
+#[doc(hidden)]
+pub fn noted() -> Vec<String> {
+    NOTED
+        .try_lock()
+        .map(|n| n.iter().cloned().collect())
+        .unwrap_or_default()
 }
 
 pub fn log_failed() -> bool {

@@ -787,6 +787,9 @@ pub struct PluginLoader {
     intents: HashMap<PluginId, Option<Plugin>>,
     pending_owned: HashMap<PluginId, PendingOwned>,
     threaded_local: bool,
+    /// How long an owner-threaded open is waited for before it fails (`None`:
+    /// [`crate::host::OPEN_WAIT`]).
+    open_wait: Option<Duration>,
     process_setup: Option<ProcessSetup>,
     catalog: Option<Arc<Catalog>>,
     process_prefs: Option<xirius_prefs::Prefs>,
@@ -867,6 +870,36 @@ struct PendingOwned {
     job: crate::background::Job<OwnedPreload>,
     applied: Plugin,
     owner: String,
+    at: Instant,
+}
+
+/// The startup log's one line for an open that failed: what it was, why, and how long the
+/// open took. The plugin's name and kind only; a reason naming a file keeps none of its path.
+fn note_open_failed(x: &Plugin, took: Duration, reason: &str) {
+    xirius_engine::crash::note(&format!(
+        "plugin_open_failed name={} kind={:?} format={} s={:.3} reason={}",
+        x.name,
+        x.kind,
+        x.format,
+        took.as_secs_f64(),
+        without_paths(reason)
+    ));
+}
+
+/// `reason` on one line, with anything shaped like a file path replaced by <path>.
+pub(crate) fn without_paths(reason: &str) -> String {
+    reason
+        .replace('\n', " ")
+        .split(' ')
+        .map(|w| {
+            if w.contains('\\') || w.contains('/') {
+                "<path>"
+            } else {
+                w
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The class id a song keeps as 32 hex digits.
@@ -997,6 +1030,7 @@ impl PluginLoader {
         let generation = self.generation;
         let (dir, rate, tempo, process_setup) =
             (self.dir.clone(), self.rate, self.tempo, self.process_setup);
+        let open_wait = self.open_wait;
         let clap_names = self.clap_names.clone();
         let pressed = self.pressed.clone();
         Ok(move || Self {
@@ -1004,6 +1038,7 @@ impl PluginLoader {
             editor_contexts,
             intents,
             threaded_local: true,
+            open_wait,
             catalog,
             isolation,
             process_prefs,
@@ -1062,6 +1097,12 @@ impl PluginLoader {
     }
     pub(crate) fn set_threaded_local(&mut self, on: bool) {
         self.threaded_local = on;
+    }
+    pub(crate) fn set_open_wait(&mut self, wait: Duration) {
+        self.open_wait = Some(wait);
+    }
+    fn open_wait(&self) -> Duration {
+        self.open_wait.unwrap_or(crate::host::OPEN_WAIT)
     }
     pub(crate) fn set_setup(&mut self, setup: ProcessSetup) {
         self.process_setup = Some(setup);
@@ -1353,8 +1394,12 @@ impl PluginLoader {
         }
         let at = Instant::now();
         let out = self.open(owner, x);
+        let took = at.elapsed();
+        if let Err(e) = &out {
+            note_open_failed(x, took, e);
+        }
         self.took
-            .insert(x.id, (owner.to_string(), x.name.clone(), at.elapsed()));
+            .insert(x.id, (owner.to_string(), x.name.clone(), took));
         out
     }
 
@@ -1373,10 +1418,13 @@ impl PluginLoader {
             self.fresh_locals.len(),
             self.fresh_clap.len(),
         );
-        let result = self.open(owner, x).map(|(p, w)| {
-            let p: Box<dyn Processor> = Box::new(Readied::new(p, setup));
-            (p, w)
-        });
+        let result = self
+            .open(owner, x)
+            .map(|(p, w)| {
+                let p: Box<dyn Processor> = Box::new(Readied::new(p, setup));
+                (p, w)
+            })
+            .inspect_err(|e| note_open_failed(x, at.elapsed(), e));
         let list = if self.fresh.len() > before.0 {
             Fresh::Remote
         } else if self.fresh_locals.len() > before.1 {
@@ -1417,6 +1465,7 @@ impl PluginLoader {
         let snapshot = old
             .and_then(|old| old.owned.as_ref())
             .map(|old| old.snapshot());
+        let open_wait = self.open_wait;
         let job = crate::background::Job::spawn("local-preload", move || {
             let at = Instant::now();
             let mut value = original.clone();
@@ -1480,12 +1529,16 @@ impl PluginLoader {
             }
             let mut loader = PluginLoader::new(catalog);
             loader.set_threaded_local(true);
+            if let Some(wait) = open_wait {
+                loader.set_open_wait(wait);
+            }
             loader.set_sample_home(dir, rate);
             loader.set_setup(setup);
             loader.set_isolation(Isolation::InProcess);
             let result = loader
                 .open(&owner, &value)
-                .map(|(p, w)| (Box::new(Readied::new(p, &setup)) as Box<dyn Processor>, w));
+                .map(|(p, w)| (Box::new(Readied::new(p, &setup)) as Box<dyn Processor>, w))
+                .inspect_err(|e| note_open_failed(&value, at.elapsed(), e));
             let mut local = loader.locals.remove(&value.id);
             if let Some(local) = &mut local {
                 if let Some(basis) = &predecessor {
@@ -1518,10 +1571,12 @@ impl PluginLoader {
                         job,
                         applied: x.clone(),
                         owner: pending_owner,
+                        at: Instant::now(),
                     },
                 );
             }
             Err(error) => {
+                note_open_failed(x, Duration::ZERO, &error);
                 self.ready.insert(
                     x.id,
                     Ready {
@@ -1576,6 +1631,7 @@ impl PluginLoader {
                 Err(error) => {
                     // Keep an explicit failed receipt so the caller can finish the
                     // remaining tracks rather than starting this request again.
+                    note_open_failed(&pending.applied, pending.at.elapsed(), &error);
                     self.ready.insert(
                         id,
                         Ready {
@@ -1903,7 +1959,7 @@ impl PluginLoader {
             })?;
             // This synchronous builder entry is for non-UI callers. UI preloading
             // and the preparation coordinator use the asynchronous entry below.
-            let deadline = Instant::now() + crate::host::PULL_WAIT;
+            let deadline = Instant::now() + self.open_wait();
             let opened = loop {
                 if let Some(result) = ticket.poll() {
                     break result.map_err(|e| format!("専用所有スレッドで開けませんでした: {e}。主スレッドが必要なプラグインは別プロセスで開く設定を選んでください（ローカル実行の指定は変更していません）"))?;
