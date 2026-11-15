@@ -699,10 +699,13 @@ fn sample_io_held_owner_rejects_overlapping_input_and_returns_failures_and_warni
     // Unsupported files are still named after completion clears the pending error.
     assert!(s.window_drop(&g, x, y, &[files[0].clone(), files[2].clone()]));
     s.wait_for_save();
+    // The window is an independent one: what its drop failed on is said under it (UI-353).
     assert!(
-        s.error.as_deref().is_some_and(|e| e.contains("notes.txt")),
+        s.surface_error
+            .as_ref()
+            .is_some_and(|(i, e)| *i == id && e.contains("notes.txt")),
         "{:?}",
-        s.error
+        s.surface_error
     );
     assert!(s.run_command("plugin.samples.remove", json!({"id":id, "all":true})));
     assert!(plugin(&s, t).samples.is_empty());
@@ -712,11 +715,11 @@ fn sample_io_held_owner_rejects_overlapping_input_and_returns_failures_and_warni
     assert!(s.saving.is_some());
     s.wait_for_save();
     assert!(
-        s.error
-            .as_deref()
-            .is_some_and(|e| e.contains("見つかりません")),
+        s.surface_error
+            .as_ref()
+            .is_some_and(|(i, e)| *i == id && e.contains("見つかりません")),
         "{:?}",
-        s.error
+        s.surface_error
     );
     assert!(plugin(&s, t).samples.is_empty());
     assert_eq!(s.song().steps(), steps);
@@ -803,9 +806,11 @@ fn ui_334_shift_makes_layers_and_a_drop_off_the_pads_goes_to_the_pad_chosen() {
     assert_eq!(sampler::pad_files(k.builtin().unwrap(), &k, 30), [3]);
     assert!(k.samples[3].ends_with("Tom.wav"), "{:?}", k.samples);
     assert!(
-        s.error.as_deref().is_some_and(|e| e.contains("notes.txt")),
+        s.surface_error
+            .as_ref()
+            .is_some_and(|(i, e)| *i == id && e.contains("notes.txt")),
         "{:?}",
-        s.error
+        s.surface_error
     );
     // A1 has a file: a drop there takes its place (the mock's), and A1 is chosen.
     s.instruments.pick(id, 5, 0);
@@ -2728,10 +2733,12 @@ fn ui_333_a_window_another_device_takes_ends_its_sweep_on_the_zone_turned() {
 #[test]
 fn browse_selection_runs_on_owner_and_skips_occupied_pads() {
     use crate::studio::FileRequest;
+    // (name, pad picked, files taken, the pads filled and how many files each). The
+    // `_v<n>` names share one pad as its layers, as a drop groups them (UI-353).
     for (name, from, count, expected) in [
-        ("Drum Kit", Some(0), 1, vec![0]),
-        ("Drum Kit", Some(0), 3, vec![0, 2, 3]),
-        ("Drum Kit", Some(126), 3, vec![126, 127]),
+        ("Drum Kit", Some(0), 1, vec![(0, 1)]),
+        ("Drum Kit", Some(0), 3, vec![(0, 2), (2, 1)]),
+        ("Drum Kit", Some(127), 3, vec![(127, 2)]),
         ("Sampler", None, 3, vec![]),
     ] {
         let (dir, files) = wavs(&["Kick_v1.wav", "Kick_v2.wav", "Hat.wav"]);
@@ -2763,13 +2770,9 @@ fn browse_selection_runs_on_owner_and_skips_occupied_pads() {
         let x = plugin(&s, t);
         if name == "Drum Kit" {
             let def = x.builtin().unwrap();
-            for (i, pad) in expected.iter().enumerate() {
+            for (pad, n) in &expected {
                 let assigned = sampler::pad_files(def, &x, *pad);
-                assert_eq!(assigned.len(), 1);
-                assert!(
-                    x.samples[assigned[0]]
-                        .ends_with(files[i].file_name().unwrap().to_str().unwrap())
-                );
+                assert_eq!(assigned.len(), *n, "pad {pad}");
             }
             if from == Some(0) {
                 let kept = sampler::pad_files(def, &x, 1);
@@ -2787,6 +2790,109 @@ fn browse_selection_runs_on_owner_and_skips_occupied_pads() {
             assert_eq!(sampler::zones(&x.samples).len(), 3);
         }
     }
+}
+
+/// UI-353, approved 2026-11-14: the plane lights only when the pad the drop goes to is
+/// the chosen one. While another pad is aimed at the kit's own chip names it, but the
+/// plane does not light.
+#[test]
+fn ui_353_the_plane_lights_only_when_the_chosen_pad_takes_the_drop() {
+    let (_dir, files) = wavs(&["Snare.wav"]);
+    let (mut s, g, _t, id) = window("Drum Kit");
+    s.instruments.pick(id, 0, 0);
+    // Over A2: the plan names it, but the plane (the chosen pad's) does not light.
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(37)).unwrap();
+    assert!(s.window_drag(&g, x, y, &files, false));
+    let preview = s.instruments.preview.as_ref().unwrap();
+    assert_eq!(preview.plugin, id);
+    assert_eq!(preview.pads[0].0, 1, "the plan still names A2");
+    assert_eq!(
+        s.instruments.drop_on, None,
+        "the plane does not light while another pad is aimed at"
+    );
+    // Over A1, the chosen pad: the plane lights as before.
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).unwrap();
+    assert!(s.window_drag(&g, x, y, &files, false));
+    assert_eq!(
+        s.instruments.drop_on.map(|d| (d.0, d.1)),
+        Some((id, sampler::DropOn::Plane)),
+        "the plane lights for the chosen pad"
+    );
+}
+
+/// UI-353, approved 2026-11-14: what a drop on an independent window says is said under
+/// that window — a refused file and the files that did not fit — while the main
+/// window's own lines stay its own.
+#[test]
+fn ui_353_what_an_independent_windows_drop_says_is_said_there() {
+    let (_dir, files) = wavs(&["notes.txt", "Snare.wav"]);
+    let (mut s, g, _t, id) = window("Drum Kit");
+    let (x, y) = s.instrument_center(&g, id, Part::Pad(36)).unwrap();
+    // The text file is refused, the wav goes in.
+    assert!(s.window_drop(&g, x, y, &files), "{:?}", s.error);
+    assert_eq!(s.error, None, "the main window's line is untouched");
+    let (owner, said) = s.surface_error.as_ref().expect("the window's own line");
+    assert_eq!(*owner, id);
+    assert!(said.contains("notes.txt"), "{said}");
+    assert_eq!(s.error_shown(), Some(said.as_str()));
+    // The surface's own fault clears as the main one's would.
+    s.instruments.detached_target = None;
+    assert_eq!(s.error_shown(), None, "not the main window's to say");
+    s.instruments.detached_target = Some(id);
+
+    // What did not fit is said under the same window, not as a fault.
+    s.tell_on(id, "パッドに入りきらない 1 個は入れていません".into());
+    assert_eq!(
+        s.notice_text(),
+        Some("パッドに入りきらない 1 個は入れていません")
+    );
+    // The main window's word does not show on this surface, nor this one's on it.
+    s.tell("main".into());
+    assert_eq!(
+        s.notice_text(),
+        None,
+        "the main window's word stays its own"
+    );
+    s.instruments.detached_target = None;
+    assert_eq!(s.notice_text(), Some("main"));
+    s.instruments.detached_target = Some(id);
+
+    // A device not in an independent window says its faults on the main line as before.
+    s.instruments.detached.remove(&id);
+    s.surface_error = None;
+    s.error_on(id, "だめ".into());
+    assert_eq!(s.error.as_deref(), Some("だめ"));
+    assert!(s.surface_error.is_none());
+}
+
+/// UI-353: a drop an independent window did not take lands on nothing under it — the
+/// lanes and the track heads are the main window's geometry, not this surface's.
+#[test]
+fn ui_353_a_drop_an_independent_window_did_not_take_lands_on_nothing() {
+    let (_dir, files) = wavs(&["Snare.wav", "loop.mid"]);
+    let (mut s, _g, _t, id) = window("Drum Kit");
+    let tracks = s.project().tracks.len();
+    let clips: usize = s.project().tracks.values().map(|t| t.clips.len()).sum();
+    let steps = s.song.steps();
+    // Past the frame's edge on its own surface: nothing takes it, nothing under it does.
+    crate::device_window::with_surface(&mut s, id, |s, g| {
+        let body = s.instruments.open[0].body;
+        for (x, y) in [(-4.0, -4.0), (body.0 + 4.0, body.1 / 2.0)] {
+            assert!(
+                s.drop_files(g, x, y, &files),
+                "the drop is taken and ends there"
+            );
+            assert!(!s.drop_over);
+        }
+    });
+    assert_eq!(s.error, None);
+    let p = s.project();
+    assert_eq!(p.tracks.len(), tracks);
+    assert_eq!(
+        p.tracks.values().map(|t| t.clips.len()).sum::<usize>(),
+        clips
+    );
+    assert_eq!(s.song.steps(), steps, "no import, no command");
 }
 
 #[test]

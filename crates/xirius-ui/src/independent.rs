@@ -21,6 +21,20 @@ pub(crate) enum Kind {
     Presets,
 }
 
+/// What is under the pointer, as the main window last looked (UI-353): the window that is
+/// frontmost there decides what a drag let go does, not the window the mouse's events reach
+/// (Windows sends a drag's moves and its letting-go to the window it was pressed in).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) enum Over {
+    /// The main window: a drag let go does what the point under it would take.
+    #[default]
+    Main,
+    /// An independent window, with the pointer in its coordinates.
+    Window(Kind, (f32, f32)),
+    /// Another app's window is on top there, or nothing of ours is.
+    Elsewhere,
+}
+
 /// The windows whose place and size are remembered while the app is open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Key {

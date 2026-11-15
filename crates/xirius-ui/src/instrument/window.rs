@@ -2286,8 +2286,35 @@ pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
             pen.ring_outside(r, pen.c.ring.opacity(lit), Radius::M, FLASH_W);
         }
     }
-    if let Some(preview) = &studio.instruments.preview {
+    // The drop's plan is painted on the surface its pointer is in: the chip at the
+    // pointer's own coordinates (UI-353 — on the main window those are not this
+    // surface's).
+    if let Some(preview) = studio
+        .instruments
+        .preview
+        .as_ref()
+        .filter(|v| Some(v.plugin) == studio.instruments.detached_target)
+    {
         super::kit_drag::paint_chip(pen, preview);
+    }
+    // What a drop on this window said: under it, not at the main window's foot (UI-353).
+    if studio.instruments.detached_target.is_some() {
+        crate::notice::paint(pen, studio, g);
+        if let Some(error) = studio.error_shown() {
+            let r = studio.error_rect(g);
+            pen.round(r, pen.c.surface_3, Radius::S);
+            let error = error.to_string();
+            pen.mask(r, |pen| {
+                pen.text(
+                    &error,
+                    FontSize::Small,
+                    Weight::Medium,
+                    pen.c.ink,
+                    r,
+                    Align::Center,
+                );
+            });
+        }
     }
 }
 

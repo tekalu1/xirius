@@ -151,14 +151,18 @@ impl Studio {
         true
     }
 
-    /// Letting go of a held instrument: dropped where the pointer is.
-    pub fn lib_up(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
-        if self.file_up(g, x, y) {
+    /// Letting go of a held instrument: dropped where the pointer is. Let go on another
+    /// window in front of the main one (UI-353), it ends with nothing put down.
+    pub fn lib_up(&mut self, g: &Geometry, x: f32, y: f32, shift: bool) -> bool {
+        if self.file_up(g, x, y, shift) {
             return true;
         }
         let Some(d) = self.browser.drag.take() else {
             return false;
         };
+        if self.over != crate::independent::Over::Main {
+            return true;
+        }
         if let Some(held) = d.preset.as_ref().filter(|_| d.moved) {
             self.preset_drop(g, x, y, held);
         } else if d.moved {
@@ -197,6 +201,9 @@ impl Studio {
 /// track it would go to lit.
 pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
     crate::browser_pick::paint(pen, studio, g);
+    if studio.over != crate::independent::Over::Main {
+        return;
+    }
     let Some(d) = studio.browser.drag.as_ref().filter(|d| d.moved) else {
         return;
     };

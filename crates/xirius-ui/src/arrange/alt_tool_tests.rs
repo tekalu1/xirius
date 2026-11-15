@@ -76,7 +76,7 @@ fn win_up(s: &mut Studio, g: &Geometry, x: f32, y: f32, m: Mods) {
     s.ruler_drag_up();
     if s.name_drag_up(g, x, y)
         || s.fx_up(g, x, y, m.alt)
-        || s.lib_up(g, x, y)
+        || s.lib_up(g, x, y, false)
         || s.instrument_up()
         || s.drag_end()
     {

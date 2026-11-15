@@ -329,7 +329,7 @@ pub fn stage(s: &mut Studio, g: &Geometry, stage: u8) {
             let Some((x, y)) = s.browser.file_drag.as_ref().map(|d| d.at) else {
                 return;
             };
-            s.file_up(g, x, y);
+            s.file_up(g, x, y, false);
             let path = imported(s, "loop_120bpm.wav");
             let store = peaks::store_dir(s.song().dir().as_deref());
             wait(s, 10.0, |_| drawn(&path, &store));

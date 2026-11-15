@@ -720,6 +720,11 @@ pub struct Studio {
     pub follow: crate::follow::Follow,
     /// What the last command said when it failed.
     pub error: Option<String>,
+    /// What a drop on an independent window said when it failed: it shows at the foot of
+    /// that window, not the main one's (UI-353).
+    pub(crate) surface_error: Option<(xirius_core::id::PluginId, String)>,
+    /// What is under the pointer, as the main window last looked (UI-353).
+    pub(crate) over: crate::independent::Over,
     /// Editing the arrangement with the pointer (ARR, AUT, EDT).
     pub arrange: crate::arrange::Arrange,
     pub transport: crate::transport::Transport,
@@ -939,6 +944,8 @@ impl Studio {
             playhead: 0,
             follow: crate::follow::Follow::default(),
             error: None,
+            surface_error: None,
+            over: crate::independent::Over::default(),
             arrange: crate::arrange::Arrange::default(),
             transport: crate::transport::Transport::new(xirius_session::output::OutputMode::None),
             mixer: crate::mixer::Mixer::default(),

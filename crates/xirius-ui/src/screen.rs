@@ -265,6 +265,22 @@ impl Screen {
             }
             return;
         }
+        // A browser row's drag asks what is under the pointer, frontmost first, before the
+        // press flow lights its plan (UI-353): the button's window keeps the drag's events.
+        if ev.pressed_button.is_some()
+            && (studio.browser.file_drag.is_some() || studio.browser.drag.is_some())
+        {
+            let over = self.device_windows.over(window, (x, y), cx);
+            if over != studio.over {
+                let old = std::mem::replace(&mut studio.over, over);
+                for over in [old, studio.over] {
+                    if let crate::independent::Over::Window(kind, _) = over {
+                        self.device_windows.notify(kind, cx);
+                    }
+                }
+                cx.notify();
+            }
+        }
         if studio.window_moved(&g, x, y, mods(ev.modifiers)) {
             cx.notify();
         }
@@ -608,6 +624,11 @@ impl Screen {
         }
         let g = geometry(&studio, window);
         let (x, y) = in_body(ev.position);
+        // The release lands where the frontmost window under the pointer takes it
+        // (UI-353): the drag's window keeps its events, so this asks again.
+        if studio.browser.file_drag.is_some() || studio.browser.drag.is_some() {
+            studio.over = self.device_windows.over(window, (x, y), cx);
+        }
         if studio.window_released(&g, x, y, mods(ev.modifiers)) {
             cx.notify();
         }
@@ -633,6 +654,13 @@ impl Screen {
             if studio.drag_shift(&g, ev.modifiers.shift) {
                 cx.notify();
             }
+        }
+        // The same for a browser row's drag over a device window (UI-353).
+        if let crate::independent::Over::Window(kind, _) = studio.over
+            && studio.browser_row_over(ev.modifiers.shift)
+        {
+            self.device_windows.notify(kind, cx);
+            cx.notify();
         }
         if studio.recovery.is_some() || studio.sound_preparing() {
             return;

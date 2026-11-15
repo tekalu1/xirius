@@ -15,7 +15,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use xirius_core::id::PluginId;
 
 pub(crate) use crate::independent::Positions;
-use crate::independent::{Key, Kind, Spec};
+use crate::independent::{Key, Kind, Over, Spec};
 
 #[cfg(windows)]
 pub(crate) mod drag_shots;
@@ -46,6 +46,139 @@ impl Windows {
         }
         for (_, handle) in self.open.drain() {
             let _ = handle.update(cx, |_, window, _| window.remove_window());
+        }
+    }
+
+    /// Each independent window's kind and handle, in one list.
+    fn all(&self) -> Vec<(Kind, WindowHandle<DeviceWindow>)> {
+        let mut out: Vec<_> = self
+            .open
+            .iter()
+            .map(|(id, h)| (Kind::Device(*id), *h))
+            .collect();
+        if let Some(h) = self.channel {
+            out.push((Kind::Channel, h));
+        }
+        if let Some(h) = self.macros {
+            out.push((Kind::Macros, h));
+        }
+        if let Some(h) = self.preset {
+            out.push((Kind::Presets, h));
+        }
+        out
+    }
+
+    /// What is under the pointer, frontmost first (UI-353): the window that would see the
+    /// cursor there, not the one that holds the mouse's events while a drag's button is
+    /// down. `pos` is where the event said it is (main-local); the answer for an
+    /// independent window comes back in its own coordinates.
+    pub(crate) fn over(&self, main: &Window, pos: (f32, f32), cx: &mut App) -> Over {
+        let handles = self.all();
+        #[cfg(windows)]
+        {
+            let _ = pos;
+            self.over_at_cursor(main, &handles, cx)
+        }
+        #[cfg(not(windows))]
+        {
+            self.over_by_bounds(main, pos, &handles, cx)
+        }
+    }
+
+    /// Windows: the OS's own frontmost-window answer at the cursor (`WindowFromPoint`),
+    /// so a device window behind the main one, or behind another app's, is not mistaken
+    /// for being under it.
+    #[cfg(windows)]
+    fn over_at_cursor(
+        &self,
+        main: &Window,
+        handles: &[(Kind, WindowHandle<DeviceWindow>)],
+        cx: &mut App,
+    ) -> Over {
+        use windows_sys::Win32::Foundation::POINT;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GA_ROOT, GetAncestor, GetCursorPos, WindowFromPoint,
+        };
+        let mut at = POINT { x: 0, y: 0 };
+        // SAFETY: the GUI thread; `at` is a valid out-pointer for the call.
+        let top = unsafe {
+            if GetCursorPos(&mut at) == 0 {
+                return Over::Main;
+            }
+            WindowFromPoint(at)
+        };
+        if top.is_null() {
+            return Over::Elsewhere;
+        }
+        // SAFETY: `top` is a live HWND `WindowFromPoint` just returned.
+        let root = unsafe { GetAncestor(top, GA_ROOT) } as isize;
+        for (kind, handle) in handles {
+            let hit = handle
+                .update(cx, |_, window, _| {
+                    (hwnd_of(window) == root).then(|| {
+                        let at = window.mouse_position();
+                        (f32::from(at.x), f32::from(at.y))
+                    })
+                })
+                .ok()
+                .flatten();
+            if let Some(at) = hit {
+                return Over::Window(*kind, at);
+            }
+        }
+        if hwnd_of(main) == root {
+            Over::Main
+        } else {
+            Over::Elsewhere
+        }
+    }
+
+    /// Where there is no frontmost-window query to the OS (macOS): the bounds the open
+    /// windows last reported answer instead.
+    #[cfg(not(windows))]
+    fn over_by_bounds(
+        &self,
+        main: &Window,
+        pos: (f32, f32),
+        handles: &[(Kind, WindowHandle<DeviceWindow>)],
+        cx: &mut App,
+    ) -> Over {
+        let at = point(
+            main.bounds().origin.x + px(pos.0),
+            main.bounds().origin.y + px(pos.1),
+        );
+        for (kind, handle) in handles {
+            let hit = handle
+                .update(cx, |_, window, _| {
+                    window.bounds().contains(&at).then(|| {
+                        let at = window.mouse_position();
+                        (f32::from(at.x), f32::from(at.y))
+                    })
+                })
+                .ok()
+                .flatten();
+            if let Some(at) = hit {
+                return Over::Window(*kind, at);
+            }
+        }
+        if main.bounds().contains(&at) {
+            Over::Main
+        } else {
+            Over::Elsewhere
+        }
+    }
+
+    /// Repaints the window `kind` is, when it is still open (UI-353): what a drag lit
+    /// there changes even while the drag's events go to the main window.
+    pub(crate) fn notify(&self, kind: Kind, cx: &mut App) {
+        let handle = match kind {
+            Kind::Device(id) => self.open.get(&id).copied(),
+            Kind::Channel => self.channel,
+            Kind::Macros => self.macros,
+            Kind::Presets => self.preset,
+        };
+        if let Some(handle) = handle {
+            let _ = handle.update(cx, |_, _, cx| cx.notify());
         }
     }
 
@@ -427,6 +560,19 @@ pub(crate) fn with_surface<R>(
     let result = f(s, &g);
     restore(s, old);
     result
+}
+
+/// The OS's own handle of a GPUI window, as `WindowFromPoint` reports it.
+#[cfg(windows)]
+fn hwnd_of(window: &Window) -> isize {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let Ok(h) = HasWindowHandle::window_handle(window) else {
+        return 0;
+    };
+    match h.as_raw() {
+        RawWindowHandle::Win32(h) => h.hwnd.get(),
+        _ => 0,
+    }
 }
 
 impl DeviceWindow {
@@ -848,6 +994,10 @@ impl Render for DeviceWindow {
                             .is_some_and(|(_, part)| part == Part::Head)
                         {
                             return true;
+                        }
+                        // What a drop on this window said has its button under it (UI-353).
+                        if s.notice_press(g, x, y) {
+                            return false;
                         }
                         s.instrument_press(g, x, y, e.click_count as u32, modifiers(e.modifiers));
                         false

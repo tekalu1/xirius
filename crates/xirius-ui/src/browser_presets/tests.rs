@@ -441,7 +441,7 @@ fn click(s: &mut Studio, g: &Geometry, name: &str, clicks: usize) {
     s.mixer.browser_fx_focus = false;
     s.press(g, hit);
     assert!(s.lib_grab(g, hit, x, y, clicks));
-    s.lib_up(g, x, y);
+    s.lib_up(g, x, y, false);
 }
 
 /// The middle of a track's row in the lanes.
@@ -611,7 +611,7 @@ fn a_preset_dropped_on_a_track_loads_there() {
     s.press(&g, hit);
     assert!(s.lib_grab(&g, hit, x, y, 1));
     assert!(s.lib_move(at.0, at.1));
-    assert!(s.lib_up(&g, at.0, at.1));
+    assert!(s.lib_up(&g, at.0, at.1, false));
     assert_eq!(
         devices(&s, bass, uid("Compressor")),
         [Some("ドラムをまとめる".to_string())]
@@ -629,7 +629,7 @@ fn a_preset_dropped_on_a_track_loads_there() {
     let off = (g.panel.x + 10.0, g.panel.bottom() - 4.0);
     assert!(s.lib_move(off.0, off.1));
     assert_eq!(s.preset_drop_at(&g, off.0, off.1, true), Drop::Nothing);
-    assert!(s.lib_up(&g, off.0, off.1));
+    assert!(s.lib_up(&g, off.0, off.1, false));
     assert_eq!(
         devices(&s, bass, uid("Compressor")),
         [Some("ドラムをまとめる".to_string())]

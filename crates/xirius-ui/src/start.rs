@@ -197,7 +197,11 @@ impl Studio {
 
     /// Approved 2026-11-08: notifications stay above the transport regardless of the drawer.
     /// Keep their existing horizontal placement and simultaneous-message offsets.
+    /// An independent window has no transport: the notice sits at its own foot (UI-353).
     pub fn notification_foot(&self, g: &Geometry) -> Rect {
+        if self.instruments.own_surface() {
+            return Rect::new(0.0, 0.0, g.size.0, g.size.1);
+        }
         let across = self.foot(g);
         Rect::new(across.x, 0.0, across.w, g.size.1)
     }

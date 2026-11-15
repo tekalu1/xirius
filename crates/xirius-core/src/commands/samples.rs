@@ -222,19 +222,19 @@ pub fn kit_pads(
     }
 }
 
-/// Browse keeps the selected pad and skips occupied pads after it. Each selection is
-/// one sound, even when filenames resemble velocity layers.
-pub fn kit_browse(used: &[bool; PADS], from: usize, count: usize) -> (Vec<KitGroup>, Vec<usize>) {
+/// Browse keeps the selected pad and skips occupied pads after it. Names that differ
+/// only in a `_v<n>` or `_rr<n>` at the end share one pad as its layers, as a drop
+/// groups them (approved 2026-11-14, UI-353).
+pub fn kit_browse(
+    used: &[bool; PADS],
+    from: usize,
+    names: &[String],
+) -> (Vec<KitGroup>, Vec<usize>) {
     let from = from.min(PADS - 1);
-    let groups = (0..count)
-        .map(|i| KitGroup {
-            files: vec![i],
-            round_robin: false,
-        })
-        .collect();
+    let groups = kit_groups(names, false);
     let pads = (from..PADS)
         .filter(|p| *p == from || !used[*p])
-        .take(count)
+        .take(groups.len())
         .collect();
     (groups, pads)
 }
@@ -345,7 +345,7 @@ fn add(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
         ));
     }
     let (groups, pads) = if a.flag("browse") {
-        kit_browse(&used_pads(def, x), start.unwrap_or(0), names.len())
+        kit_browse(&used_pads(def, x), start.unwrap_or(0), &names)
     } else {
         let groups = kit_groups(&names, layers);
         let pads = kit_pads(&used_pads(def, x), start, groups.len(), layers);

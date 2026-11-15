@@ -102,6 +102,12 @@ impl Studio {
             self.drop_over = false;
             return true;
         }
+        // A drop an independent window did not take stays there: nothing under it gets it
+        // (UI-353; a lane of the main window's geometry is not under this surface).
+        if self.instruments.own_surface() {
+            self.drop_over = false;
+            return true;
+        }
         self.drop_over = false;
         let at = self.drop_tick(g, x, y);
         // Audio files become audio clips (UI-075).

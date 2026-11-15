@@ -688,7 +688,7 @@ fn a_row_drags_onto_the_lanes_and_a_missing_one_does_not() {
     assert!(t.s.lib_grab(&t.g, hit, x, y, 1));
     let to = (t.g.lanes.x + t.g.lanes.w * 0.6, t.g.lanes.bottom() - 30.0);
     assert!(t.s.lib_move(to.0, to.1));
-    assert!(t.s.lib_up(&t.g, to.0, to.1));
+    assert!(t.s.lib_up(&t.g, to.0, to.1, false));
     t.s.settle_browser_import();
     assert_eq!(t.s.error, None);
     assert_eq!(t.s.project().tracks.len(), tracks + 1);

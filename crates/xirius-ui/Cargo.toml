@@ -41,6 +41,9 @@ xirius-prefs = { path = "../xirius-prefs" }
 rfd = "0.17.2"
 serde_json = "1"
 unicode-segmentation = "1"
+# A window's OS handle (UI-353): what `WindowFromPoint` reports is matched against the
+# handles GPUI's `Window` exposes. Already what gpui-pre itself uses.
+raw-window-handle = "0.6.2"
 # The tools' cursors (pointer_os.rs) are bitmaps made for the system and handed to the window.
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
