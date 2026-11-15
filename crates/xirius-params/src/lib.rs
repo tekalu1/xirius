@@ -779,7 +779,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_catalogue_is_the_two_instruments_and_five_effects() {
+    fn the_catalogue_is_the_two_instruments_and_six_effects() {
         let names: Vec<_> = BUILTINS.iter().map(|d| d.name).collect();
         assert_eq!(
             names,
@@ -790,7 +790,8 @@ mod tests {
                 "Compressor",
                 "Reverb",
                 "Delay",
-                "Limiter"
+                "Limiter",
+                "Pitch Correction"
             ]
         );
         let instruments = BUILTINS

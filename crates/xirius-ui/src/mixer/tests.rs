@@ -187,7 +187,7 @@ fn an_insert_picked_from_the_scan_lands_on_the_strip_and_bypasses() {
     let popup = s.popup.as_ref().expect("the insert list");
     assert_eq!(popup.kind, PopupKind::Insert(t));
     // The splitter first, then the effects.
-    assert_eq!(popup.choices().len(), 8);
+    assert_eq!(popup.choices().len(), 9);
     assert_eq!(popup.choices()[0].to, scan::SPLITTER);
     let chosen = popup
         .choices()

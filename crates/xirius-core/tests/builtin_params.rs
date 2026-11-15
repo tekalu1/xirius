@@ -42,7 +42,8 @@ fn every_builtin_is_listed_with_its_parameters() {
             "Compressor",
             "Reverb",
             "Delay",
-            "Limiter"
+            "Limiter",
+            "Pitch Correction"
         ]
     );
     let comp = &list[3];

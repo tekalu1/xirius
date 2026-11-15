@@ -67,6 +67,13 @@ pub fn look(spec: &ParamSpec) -> Look {
 /// does not name here keeps its own label.
 pub fn name(def: &BuiltinDef, spec: &ParamSpec) -> &'static str {
     let own = match (def.uid, spec.id) {
+        ("pitch-correction", "key") => "Key",
+        ("pitch-correction", "scale") => "Scale",
+        ("pitch-correction", "speed") => "Speed",
+        ("pitch-correction", "transition") => "Note Transition",
+        ("pitch-correction", "amount") => "Amount",
+        ("pitch-correction", "formant") => "Formant",
+        ("pitch-correction", "range") => "Range",
         ("eq", "low_cut_on") => "Low Cut",
         ("eq", "low_cut_freq") => "LC Freq",
         ("eq", "low_cut_slope") => "LC Slope",
