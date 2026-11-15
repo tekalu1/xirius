@@ -1,12 +1,13 @@
 //! Folder packing retains the original positions for unpacking.
+use super::track;
 use super::*;
 use crate::command::EditCtx;
-use crate::id::{FolderId, IdKind};
+use crate::id::{FolderId, IdKind, TrackId};
 
 pub(super) fn defs() -> Vec<CommandDef> {
     vec![edit(
         "folder.unpack",
-        "フォルダーのまとめを解除します",
+        "フォルダーのまとめを解除します（フォルダーと一緒に作ったバスは、ほかで使われていなければ一緒に消えます）",
         vec![ArgDef::id("id", IdKind::Folder, "フォルダー").req()],
         unpack,
     )]
@@ -18,8 +19,11 @@ fn unpack(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
     let (parent, index) = p
         .find_node(Node::Folder(id))
         .ok_or_else(|| CmdError::not_found("フォルダーが見つかりません"))?;
+    let made: Vec<TrackId> = p.own_bus(id).into_iter().collect();
     p.detach(Node::Folder(id));
     p.folders.remove(&id);
+    // before the tracks go back to their places, which count the rows as they were before
+    track::remove_unused_buses(p, &made)?;
     let mut places = p.packed.remove(&id).unwrap_or_default();
     places.sort_by_key(|x| (x.parent, x.index));
     let mut remaining = children;

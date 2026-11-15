@@ -123,7 +123,14 @@ fn several_nodes_are_packed_into_one_new_folder_where_the_first_one_was() {
     let (a, b, c): (TrackId, TrackId, TrackId) =
         (a.parse().unwrap(), b.parse().unwrap(), c.parse().unwrap());
     // in column order, whatever the order of the ids
-    assert_eq!(column(&s), [Node::Folder(f), Node::Track(b)]);
+    // the new folder's bus is made right under it
+    let bus = s.project().folders[&f]
+        .bus
+        .expect("a bus is made with the folder");
+    assert_eq!(
+        column(&s),
+        [Node::Folder(f), Node::Track(bus), Node::Track(b)]
+    );
     assert_eq!(
         s.project().folders[&f].children,
         [Node::Track(a), Node::Track(c)]
@@ -146,8 +153,14 @@ fn what_is_inside_a_picked_folder_goes_along_and_is_not_moved_twice() {
     let r = run(&mut s, "folder.pack", json!({"ids": [x, f]}));
     let outer: FolderId = id_of(&r).parse().unwrap();
     let inner: FolderId = f.parse().unwrap();
-    assert_eq!(column(&s), [Node::Folder(outer)]);
-    assert_eq!(s.project().folders[&outer].children, [Node::Folder(inner)]);
+    let outer_bus = s.project().folders[&outer].bus.unwrap();
+    let inner_bus = s.project().folders[&inner].bus.unwrap();
+    // the picked folder takes its bus in; the outer folder has its own right under it
+    assert_eq!(column(&s), [Node::Folder(outer), Node::Track(outer_bus)]);
+    assert_eq!(
+        s.project().folders[&outer].children,
+        [Node::Folder(inner), Node::Track(inner_bus)]
+    );
     assert_eq!(
         s.project().folders[&inner].children,
         [Node::Track(x.parse().unwrap())]
@@ -197,15 +210,17 @@ fn a_folder_is_copied_with_its_tracks_clips_and_folders_under_new_ids() {
     assert_eq!(s.history().len(), n + 1);
     let copy: FolderId = id_of(&r).parse().unwrap();
     let p = s.project();
-    assert_eq!(p.root.len(), 2);
-    assert_eq!(p.root[1], Node::Folder(copy));
+    // Drums, its bus, the copy and the copy's bus
+    assert_eq!(p.root.len(), 4);
+    assert_eq!(p.root[2], Node::Folder(copy));
     assert_eq!(p.folders[&copy].name, "Drums コピー");
     let kids = &p.folders[&copy].children;
-    assert_eq!(kids.len(), 2);
+    // the inner folder, its bus, Kick
+    assert_eq!(kids.len(), 3);
     let Node::Folder(inner) = kids[0] else {
         panic!("{kids:?}")
     };
-    let Node::Track(kick) = kids[1] else {
+    let Node::Track(kick) = kids[2] else {
         panic!("{kids:?}")
     };
     assert_ne!(inner.to_string(), g);

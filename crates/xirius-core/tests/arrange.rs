@@ -174,7 +174,8 @@ fn clips_move_and_copy_across_rows_of_the_column() {
     );
     let copy = id_of(&r);
     assert_eq!(clip_on(s.project(), &copy), (a.parse().unwrap(), 2400, 960));
-    assert_eq!(s.project().tracks.len(), 4, "master + 3");
+    // master, the folder's bus (made with the folder) and the three tracks
+    assert_eq!(s.project().tracks.len(), 5, "master + folder bus + 3");
 }
 
 #[test]

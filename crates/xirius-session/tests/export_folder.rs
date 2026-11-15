@@ -158,6 +158,10 @@ fn arrange(mut s: Session, bus: bool) -> (Session, String, String) {
             "folder.bus.add",
             json!({ "id": f, "name": "Strings Bus" }),
         );
+    } else {
+        // a folder as it was in a song made before a folder came with a bus
+        let made = s.project().folders[&f.parse().unwrap()].bus.unwrap();
+        run(&mut s, "track.delete", json!({ "ids": [made.to_string()] }));
     }
     (s, f, c)
 }

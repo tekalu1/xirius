@@ -680,6 +680,7 @@ mod tests {
                     name: format!("Deep {i}"),
                     color: None,
                     bus: None,
+                    made_bus: None,
                     children,
                 },
             );

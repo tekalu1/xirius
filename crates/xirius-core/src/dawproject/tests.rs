@@ -279,6 +279,7 @@ fn song(dir: &Path) -> Project {
             name: "Band".into(),
             color: Some(palette(5)),
             bus: Some(gbus),
+            made_bus: None,
             children: vec![Node::Track(gtr)],
         },
     );
