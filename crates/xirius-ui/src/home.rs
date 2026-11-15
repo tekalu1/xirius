@@ -908,6 +908,8 @@ fn paint_button(pen: &mut Pen, b: Button, r: Rect, keys: bool, hot: bool) {
 #[cfg(test)]
 mod delete_tests;
 #[cfg(test)]
+mod recent_file_tests;
+#[cfg(test)]
 mod row_tests;
 #[cfg(test)]
 mod tests;
