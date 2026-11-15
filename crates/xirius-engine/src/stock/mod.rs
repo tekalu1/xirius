@@ -14,6 +14,7 @@ pub mod dsp;
 pub mod eq;
 pub mod files;
 mod limiter;
+mod pitch_correction;
 pub mod probe;
 pub mod reverb;
 mod sampler;
@@ -49,6 +50,10 @@ fn make(
         "eq" => (Box::new(eq::Eq::new(params)), None),
         "compressor" => (Box::new(compressor::Compressor::new(params)), None),
         "limiter" => (Box::new(limiter::Limiter::new(params)), None),
+        "pitch-correction" => (
+            Box::new(pitch_correction::PitchCorrection::new(params)),
+            None,
+        ),
         "delay" => (Box::new(delay::Delay::new(params)), None),
         "reverb" => (Box::new(reverb::Reverb::new(params)), None),
         "sampler" => {

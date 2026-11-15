@@ -46,6 +46,8 @@ pub struct Probe {
     /// How many voices of the Sampler or the Drum Kit sound, after the last block (PLG-066).
     /// Written whether or not a window watches.
     sounding: AtomicU32,
+    /// Pitch Correction's latest input/output Hz, target MIDI note and cents.
+    pitch: [AtomicU32; 4],
     /// Which of the EQ's samples go into the rings, as a [`Tap`].
     tap: AtomicU8,
     /// The window's ends of the EQ's rings: the mono input and output.
@@ -113,6 +115,7 @@ impl Probe {
                 AtomicU32::new(0),
             ],
             sounding: AtomicU32::new(0),
+            pitch: std::array::from_fn(|_| AtomicU32::new(0)),
             tap: AtomicU8::new(Tap::default() as u8),
             rings: Mutex::new(None),
             seam: [AtomicU8::new(0), AtomicU8::new(0)],
@@ -185,6 +188,24 @@ impl Probe {
     /// the other built-ins).
     pub fn sounding(&self) -> u32 {
         self.sounding.load(Ordering::Relaxed)
+    }
+
+    /// Latest Pitch Correction reading. Zero input Hz means unvoiced; target -1
+    /// means no target. The fields can straddle adjacent blocks, like `voice`.
+    pub fn pitch_view(&self) -> (f32, f32, i32, f32) {
+        (
+            f32::from_bits(self.pitch[0].load(Ordering::Relaxed)),
+            f32::from_bits(self.pitch[1].load(Ordering::Relaxed)),
+            self.pitch[2].load(Ordering::Relaxed) as i32,
+            f32::from_bits(self.pitch[3].load(Ordering::Relaxed)),
+        )
+    }
+
+    pub(crate) fn pitch(&self, input: f32, output: f32, target: i32, cents: f32) {
+        self.pitch[0].store(input.to_bits(), Ordering::Relaxed);
+        self.pitch[1].store(output.to_bits(), Ordering::Relaxed);
+        self.pitch[2].store(target as u32, Ordering::Relaxed);
+        self.pitch[3].store(cents.to_bits(), Ordering::Relaxed);
     }
 
     /// Which samples the EQ hands its analyser while watched.

@@ -330,6 +330,11 @@ impl Params {
         self.plain[i]
     }
 
+    /// The stored normalized value, for parameters with encoded subchoices.
+    pub fn norm(&self, i: usize) -> f64 {
+        f64::from(self.bank.norm(i))
+    }
+
     pub fn on(&self, i: usize) -> bool {
         self.plain[i] >= 0.5
     }
