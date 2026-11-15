@@ -398,6 +398,44 @@ pub fn paint_knob(pen: &mut Pen, cell: Rect, k: &KnobView) {
     paint_name(pen, cell, k.dial, k.name);
 }
 
+/// A knob that has no value (an empty Drum Kit pad's): the track of its sweep and its name
+/// in the dim ink, no value, arc or pointer.
+pub fn paint_knob_idle(pen: &mut Pen, cell: Rect, name: &str, dial: f32) {
+    crate::mixer::paint::knob_track(pen, dial_rect(cell, dial), 3.0);
+    let label = Rect::new(cell.x, cell.y + dial + 2.0 + VALUE_H, cell.w, NAME_H);
+    let ink = pen.c.scroll_thumb[0];
+    pen.mask(label, |pen| {
+        pen.text(
+            name,
+            FontSize::Micro,
+            Weight::Regular,
+            ink,
+            label,
+            Align::Center,
+        );
+    });
+}
+
+/// A row of segments that has no value (an empty Drum Kit pad's): the labels in the dim ink,
+/// none chosen.
+pub fn paint_segments_idle(pen: &mut Pen, r: Rect, spec: &ParamSpec) {
+    let c = pen.c;
+    pen.round(r, c.surface_3, Radius::S);
+    let labels = segment_labels(spec);
+    for (s, l) in segment_rects(r, spec).into_iter().zip(labels) {
+        pen.mask(s, |pen| {
+            pen.text(
+                l,
+                FontSize::Caption,
+                Weight::Regular,
+                c.scroll_thumb[0],
+                s,
+                Align::Center,
+            );
+        });
+    }
+}
+
 /// A control's name under its dial's value line.
 pub fn paint_name(pen: &mut Pen, cell: Rect, dial: f32, name: &str) {
     let ink = pen.c.ink;

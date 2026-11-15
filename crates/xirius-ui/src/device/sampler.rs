@@ -119,10 +119,11 @@ const BANKS: [&str; 8] = ["A", "B", "C", "D", "E", "F", "G", "H"];
 const LAYER_TAGS: [&str; 4] = ["Vel", "RR", "Rnd", "Stack"];
 
 /// The definition the window of `plugin` shows: the zone's (`pick`, a file) of a Sampler,
-/// the pad's of a Drum Kit, the device's own while it has no samples.
+/// the pad's of a Drum Kit (its empty ones too: their voice is shown dim), a Sampler's own
+/// while it has no samples.
 pub fn scoped(plugin: &Plugin, pick: usize) -> Option<&'static BuiltinDef> {
     let def = plugin.builtin()?;
-    if plugin.samples.is_empty() {
+    if plugin.samples.is_empty() && def.uid != "drum-kit" {
         return Some(def);
     }
     Some(match def.uid {
@@ -649,6 +650,37 @@ pub fn zone_x(keys: &[play::Key], lo: u8, hi: u8) -> (f32, f32) {
     (x0, x1.max(x0 + ZONE_MIN))
 }
 
+/// Layer Mode and Trigger from `y` at `rx`, `rw` wide, the second under the first when they
+/// do not fit. The y under them.
+fn mode_rows(def: &BuiltinDef, b: &mut Body, rx: f32, rw: f32, mut y: f32) -> f32 {
+    let mut cx = rx;
+    for (id, label, lw) in [
+        ("layer_mode", "Layer Mode", 74.0),
+        ("trigger", "Trigger", 50.0),
+    ] {
+        let Some(k) = idx(def, id) else { continue };
+        let sw = control::segments_w(&def.params[k]);
+        if cx > rx && cx + lw + sw > rx + rw {
+            cx = rx;
+            y += SEG_H + 6.0;
+        }
+        b.names.push(name(
+            Rect::new(cx, y + (SEG_H - NAME_H) / 2.0, lw, NAME_H),
+            label,
+        ));
+        b.slots.push(Slot {
+            k,
+            look: Look::Segments,
+            dial: SEG_H,
+            cell: Rect::new(cx + lw, y, sw, SEG_H),
+            label: Some(""),
+            dim: false,
+        });
+        cx += lw + sw + 16.0;
+    }
+    y + SEG_H + GAP
+}
+
 /// The Drum Kit's body for its files and the pad chosen (`s.pick`) and its layer (`s.layer`):
 /// the banks and the pads at the left, the chosen pad's editor beside them, the voice under
 /// both; at [`KIT_STACK`] or narrower, the pads centred over the editor (the mock's).
@@ -759,10 +791,34 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
     // An empty pad, in an empty kit or a filled one, is its name and the plane a sample is
     // dropped on: no Choke, modes or voice, so choosing one writes none of its values.
     let Some(x) = filled.filter(|_| !files.is_empty()) else {
+        // The window is as tall as for a pad with a sample, so choosing a pad or dropping
+        // one on it does not move it: the plane takes the editor's place (as far as a
+        // sample's row, one name and its default values reach), the voice sits under it
+        // where it does for a pad with a sample, dim and out of reach.
         let y = top + ROW_H + GAP;
-        let r = Rect::new(rx, y, rw, foot(y, EMPTY_H) - y);
+        let mut at = Body::default();
+        let mut ey = mode_rows(def, &mut at, rx, rw, y) + LAYER_H + GAP;
+        ey += sample_row(def, s.values, &mut at, (rx, ey), rw, "x") + GAP;
+        let r = Rect::new(rx, y, rw, foot(ey, WAVE_H) - y);
         drop_plane(&mut b, r);
-        b.h = r.bottom() + PAD;
+        let mut v = Body::default();
+        let vy = r.bottom().max(left_foot) + GAP + 4.0;
+        let foot = voice(def, &mut v, PAD, vy, w - 2.0 * PAD);
+        b.names
+            .extend(v.names.into_iter().map(|n| Name { dim: true, ..n }));
+        // The graphs are the voice's Env and Filter, after the wave's.
+        b.idle_graphs = v
+            .graphs
+            .into_iter()
+            .enumerate()
+            .map(|(n, r)| (n + 1, r))
+            .collect();
+        b.idle_slots = v
+            .slots
+            .into_iter()
+            .map(|s| Slot { dim: true, ..s })
+            .collect();
+        b.h = foot + PAD;
         return b;
     };
     b.names.push(name(
@@ -776,34 +832,7 @@ pub fn kit_body(def: &BuiltinDef, s: &Shape) -> Body {
         ROW_H,
         Rect::new(rx + rw - CHOKE_W, top, CHOKE_W, ROW_H),
     ));
-    // Layer Mode and Trigger, the second under the first when they do not fit.
-    let mut y = top + ROW_H + GAP;
-    let mut cx = rx;
-    for (id, label, lw) in [
-        ("layer_mode", "Layer Mode", 74.0),
-        ("trigger", "Trigger", 50.0),
-    ] {
-        let Some(k) = idx(def, id) else { continue };
-        let sw = control::segments_w(&def.params[k]);
-        if cx > rx && cx + lw + sw > rx + rw {
-            cx = rx;
-            y += SEG_H + 6.0;
-        }
-        b.names.push(name(
-            Rect::new(cx, y + (SEG_H - NAME_H) / 2.0, lw, NAME_H),
-            label,
-        ));
-        b.slots.push(Slot {
-            k,
-            look: Look::Segments,
-            dial: SEG_H,
-            cell: Rect::new(cx + lw, y, sw, SEG_H),
-            label: Some(""),
-            dim: false,
-        });
-        cx += lw + sw + 16.0;
-    }
-    y += SEG_H + GAP;
+    let mut y = mode_rows(def, &mut b, rx, rw, top + ROW_H + GAP);
     let layer = s.layer.min(files.len() - 1);
     b.names.push(name(
         Rect::new(rx, y + (LAYER_H - NAME_H) / 2.0, 48.0, NAME_H),

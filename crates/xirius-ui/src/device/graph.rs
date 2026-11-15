@@ -256,6 +256,9 @@ pub struct View<'a> {
     pub focused: bool,
     /// The device is bypassed: its curve dims.
     pub bypassed: bool,
+    /// The plane has no value to show (an empty Drum Kit pad's): its curve at the defaults,
+    /// dim, with no point.
+    pub idle: bool,
     /// What the analyser heard (dB at log-spaced frequencies): the input,
     /// then the output; empty when not shown.
     pub spectrum: [&'a [f32]; 2],
@@ -350,6 +353,9 @@ pub fn paint(pen: &mut Pen, def: &BuiltinDef, n: usize, r: Rect, values: &[f64],
             points(def, n, r, values)
         }
     };
+    if view.idle {
+        return;
+    }
     if matches!(def.uid, "sampler" | "drum-kit") && n == 0 {
         super::sampler::paint_handles(pen, r, &pts, view);
     } else {

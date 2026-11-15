@@ -1018,8 +1018,15 @@ impl Windows {
             }
             let filled = !plugin.samples.is_empty();
             if filled != w.filled {
-                let body = layout::size_of(def, w.body.0, Some(plugin));
                 let kit = def.uid == "drum-kit";
+                let need = layout::size_of(def, w.body.0, Some(plugin));
+                // A Drum Kit's need does not change with its files, so what the window was
+                // made taller by stays. A Sampler's does, and takes its new size.
+                let body = if kit {
+                    (need.0, need.1.max(w.body.1))
+                } else {
+                    need
+                };
                 self.open[n] = Win {
                     body,
                     pick: if kit { w.pick } else { 0 },
@@ -2416,6 +2423,7 @@ fn paint_window(
                     .is_some_and(|(id, graph, _)| (id, graph) == (plugin.id, n)),
                 focused,
                 bypassed: !plugin.runs(),
+                idle: false,
                 spectrum: analyser.map_or([&[][..], &[][..]], |a| {
                     [a.levels[0].as_slice(), a.levels[1].as_slice()]
                 }),
@@ -2431,6 +2439,19 @@ fn paint_window(
                 turn,
             };
             graph::paint(pen, def, n, plane, &shown, &view);
+        }
+        // An empty Drum Kit pad's voice: its planes at the defaults, dim like a bypassed
+        // device's, with no point to take.
+        if !body.idle_graphs.is_empty() {
+            let defaults: Vec<f64> = def.params.iter().map(|p| p.default_norm()).collect();
+            let view = graph::View {
+                bypassed: true,
+                idle: true,
+                ..graph::View::default()
+            };
+            for &(n, plane) in &body.idle_graphs {
+                graph::paint(pen, def, n, plane, &defaults, &view);
+            }
         }
         if let Some(button) = ins.spectrum_of(&body, plugin.id) {
             eq::paint_spectrum(pen, button, ins.tap(plugin.id), hot == Some(Part::Spectrum));
@@ -2587,6 +2608,15 @@ fn paint_window(
                 xirius_core::auto::AutoTarget::Param(plugin.id, spec.id.to_string()),
                 mark,
             );
+        }
+        for slot in &body.idle_slots {
+            let spec = &def.params[slot.k];
+            let name = slot.label.unwrap_or_else(|| control::name(def, spec));
+            match slot.look {
+                Look::Knob => control::paint_knob_idle(pen, slot.cell, name, slot.dial),
+                Look::Segments => control::paint_segments_idle(pen, slot.hit(def), spec),
+                _ => {}
+            }
         }
         // The corner's grip while the pointer is on it or holds it: three
         // dots in its corner (UI-331).

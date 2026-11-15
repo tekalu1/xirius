@@ -16,6 +16,8 @@ pub mod play;
 pub mod reverb;
 pub mod sampler;
 #[cfg(test)]
+mod sampler_height_tests;
+#[cfg(test)]
 mod sampler_tests;
 
 #[cfg(test)]

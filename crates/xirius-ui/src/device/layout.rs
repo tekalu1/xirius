@@ -189,6 +189,11 @@ pub struct Body {
     pub pads: Vec<Key>,
     /// A Sampler's and a Drum Kit's other parts (UI-333, UI-334).
     pub spots: Vec<Spot>,
+    /// A Drum Kit's voice while its pad is empty: drawn dim at their defaults and taking no
+    /// press, so the controls are seen to be there (their names are in `names`, dim).
+    pub idle_slots: Vec<Slot>,
+    /// The planes of that voice, each with the index of the graph it is drawn as.
+    pub idle_graphs: Vec<(usize, Rect)>,
 }
 
 impl Body {
@@ -203,6 +208,12 @@ impl Body {
         Body {
             slots: self.slots.into_iter().map(|s| s.at(dx, dy)).collect(),
             graphs: self.graphs.into_iter().map(m).collect(),
+            idle_slots: self.idle_slots.into_iter().map(|s| s.at(dx, dy)).collect(),
+            idle_graphs: self
+                .idle_graphs
+                .into_iter()
+                .map(|(n, r)| (n, m(r)))
+                .collect(),
             faces: self.faces.into_iter().map(m).collect(),
             names: self
                 .names
@@ -281,6 +292,16 @@ impl Body {
             if n == self.main {
                 r.h += dy;
             } else if under(r) {
+                r.y += dy;
+            }
+        }
+        for s in &mut self.idle_slots {
+            if under(&s.cell) {
+                s.cell.y += dy;
+            }
+        }
+        for (_, r) in &mut self.idle_graphs {
+            if under(r) {
                 r.y += dy;
             }
         }

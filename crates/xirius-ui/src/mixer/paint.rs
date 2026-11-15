@@ -541,6 +541,14 @@ pub(crate) fn knob(pen: &mut Pen, r: Rect, v: f32, from: f32, width: f32, disc: 
     );
 }
 
+/// A knob with no value: only the track of its sweep.
+pub(crate) fn knob_track(pen: &mut Pen, r: Rect, width: f32) {
+    let c = pen.c;
+    let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    let rad = r.w.min(r.h) / 2.0 - width / 2.0 - 0.5;
+    arc(pen, (cx, cy), rad, 0.0, 1.0, width, c.well);
+}
+
 /// Part of a knob's sweep, from `t0` to `t1` (0..1).
 fn arc(pen: &mut Pen, center: (f32, f32), rad: f32, t0: f32, t1: f32, width: f32, color: Hsla) {
     let (ox, oy) = pen.origin;
