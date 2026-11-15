@@ -121,12 +121,15 @@ impl RecentList {
     }
 
     fn read_checked(&self) -> xirius_core::CmdResult<Option<Value>> {
-        let text = match std::fs::read_to_string(&self.path) {
-            Ok(text) => text,
+        let bytes = match std::fs::read(&self.path) {
+            Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         };
-        let value = serde_json::from_str::<Value>(&text)
+        // A file written by hand may hold a byte-order mark or a name in another encoding: that
+        // spoils that one name, not the whole list.
+        let text = String::from_utf8_lossy(&bytes);
+        let value = serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}'))
             .ok()
             .filter(Value::is_object);
         #[cfg(test)]
