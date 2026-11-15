@@ -82,6 +82,17 @@ impl Shape {
         }
     }
 
+    /// What the shape carries that is heard as it changes: the gain on each side and the speed.
+    pub fn mix(&self) -> [f64; 3] {
+        [self.gain_l, self.gain_r, self.speed]
+    }
+
+    /// The shape with that [`Self::mix`] set to `mix` (the one a glide has got to).
+    pub fn with_mix(mut self, mix: [f64; 3]) -> Shape {
+        [self.gain_l, self.gain_r, self.speed] = mix;
+        self
+    }
+
     /// The level of a note at `velocity` (0..1): all of it with no spread, its square at the
     /// most.
     pub fn level(&self, velocity: f32) -> f64 {

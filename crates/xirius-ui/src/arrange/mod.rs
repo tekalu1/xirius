@@ -480,6 +480,32 @@ pub fn lane_value_y(target: &AutoTarget, v: f64) -> f32 {
     Arrange::LANE_PAD + (1.0 - n) * (LANE_H - Arrange::LANE_PAD * 2.0)
 }
 
+/// The Drum Kit's pad parameter a key names (`A1.volume`) and its pad, whichever plugin keeps
+/// it: only the Drum Kit has pads, so the key says it.
+pub fn pad_param(key: &str) -> Option<(usize, &'static xirius_params::ParamSpec)> {
+    let r = xirius_params::DRUM_KIT.resolve(key)?;
+    match r.scope {
+        xirius_params::Scope::Pad(pad) => Some((pad, r.spec)),
+        _ => None,
+    }
+}
+
+/// A pad as a lane or a list names it: `A1 Kick`, its name and its first sound's; just the
+/// name for a pad with no sound.
+pub fn pad_label(plugin: &xirius_core::model::Plugin, pad: usize) -> String {
+    let name = xirius_params::PAD_NAMES[pad % xirius_params::PADS];
+    let sound = plugin.builtin().and_then(|def| {
+        let file = crate::device::sampler::pad_files(def, plugin, pad)
+            .into_iter()
+            .next()?;
+        Some(crate::device::sampler::stem(plugin.samples.get(file)?))
+    });
+    match sound {
+        Some(sound) => format!("{name} {sound}"),
+        None => name.to_string(),
+    }
+}
+
 /// What a lane moves, in words.
 pub fn lane_name(p: &Project, t: &Track, target: &AutoTarget) -> String {
     match target {
@@ -496,11 +522,13 @@ pub fn lane_name(p: &Project, t: &Track, target: &AutoTarget) -> String {
             format!("センド · {to}")
         }
         AutoTarget::Param(pid, name) => {
-            let plugin = t
-                .inserts
-                .iter()
-                .find(|x| x.id == *pid)
-                .map_or("?", |x| x.name.as_str());
+            let plugin = t.inserts.iter().find(|x| x.id == *pid);
+            if let Some(plugin) = plugin
+                && let Some((pad, spec)) = pad_param(name)
+            {
+                return format!("{} · {}", pad_label(plugin, pad), spec.label);
+            }
+            let plugin = plugin.map_or("?", |x| x.name.as_str());
             format!("{plugin} · {name}")
         }
         AutoTarget::Branch(n, _) => {
@@ -549,7 +577,10 @@ pub fn value_text(target: &AutoTarget, v: f64) -> String {
             "ミュート解除"
         }
         .into(),
-        AutoTarget::Param(..) => format!("{v:.2}"),
+        AutoTarget::Param(_, key) => match pad_param(key) {
+            Some((_, spec)) => crate::device::control::text(spec, v),
+            None => format!("{v:.2}"),
+        },
         AutoTarget::Control(c) if c.is_button() => if v >= 0.5 { "オン" } else { "オフ" }.into(),
         AutoTarget::Control(_) => format!("{:.0} %", v * 100.0),
     }
@@ -583,10 +614,32 @@ pub fn targets_of(t: &Track) -> Vec<AutoTarget> {
                     .map(|p| AutoTarget::Param(plugin.id, p.id.to_string())),
             );
         }
+        if let Some(def) = plugin.builtin() {
+            // A Drum Kit's pads that have a sound, each with its voice (UI-358).
+            let voice = def.per_pad.iter().take_while(|p| p.id != "start");
+            for pad in 0..xirius_params::PADS {
+                if !crate::device::sampler::pad_files(def, plugin, pad).is_empty() {
+                    out.extend(
+                        voice.clone().map(|p| {
+                            AutoTarget::Param(plugin.id, xirius_params::pad_key(pad, p.id))
+                        }),
+                    );
+                }
+            }
+        }
         out.extend(
             plugin
                 .params
                 .keys()
+                .filter(|k| {
+                    // A value kept for a pad with no sound is not a lane to offer.
+                    let Some((pad, _)) = pad_param(k) else {
+                        return true;
+                    };
+                    plugin.builtin().is_some_and(|def| {
+                        !crate::device::sampler::pad_files(def, plugin, pad).is_empty()
+                    })
+                })
                 .map(|k| AutoTarget::Param(plugin.id, k.clone())),
         );
     }

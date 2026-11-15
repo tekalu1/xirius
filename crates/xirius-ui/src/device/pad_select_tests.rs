@@ -19,7 +19,7 @@ const BOTH: Mods = Mods {
     alt: false,
 };
 
-fn window(name: &str) -> (Studio, Geometry, TrackId, PluginId) {
+pub(super) fn window(name: &str) -> (Studio, Geometry, TrackId, PluginId) {
     let mut s = Studio::sample();
     let g = s.geometry(1600.0, 1000.0);
     let t = s
@@ -36,11 +36,11 @@ fn window(name: &str) -> (Studio, Geometry, TrackId, PluginId) {
     (s, g, t, id)
 }
 
-fn plugin(s: &Studio, t: TrackId) -> Plugin {
+pub(super) fn plugin(s: &Studio, t: TrackId) -> Plugin {
     current(&s.project().tracks[&t]).cloned().unwrap()
 }
 
-fn body(s: &Studio, g: &Geometry, t: TrackId) -> Body {
+pub(super) fn body(s: &Studio, g: &Geometry, t: TrackId) -> Body {
     let x = plugin(s, t);
     let def = s.instruments.def_of(&x).unwrap();
     let r = s.instruments.frame(0, g);
@@ -48,14 +48,14 @@ fn body(s: &Studio, g: &Geometry, t: TrackId) -> Body {
 }
 
 /// A sound on pad `n`.
-fn fill(s: &mut Studio, id: PluginId, n: usize) {
+pub(super) fn fill(s: &mut Studio, id: PluginId, n: usize) {
     let file = json!({ "file": "Kick.wav" });
     let args = json!({ "id": id.to_string(), "files": [file], "pad": xirius_params::PAD_NAMES[n] });
     assert!(s.run_command("plugin.samples.add", args), "{:?}", s.error);
 }
 
 /// Press pad `n` with `mods` and let go.
-fn press(s: &mut Studio, g: &Geometry, id: PluginId, n: usize, mods: Mods) {
+pub(super) fn press(s: &mut Studio, g: &Geometry, id: PluginId, n: usize, mods: Mods) {
     let (x, y) = s
         .instrument_center(g, id, Part::Pad(36 + n as u8))
         .expect("the pad");
@@ -84,13 +84,13 @@ fn value(s: &Studio, t: TrackId, pad: usize, id: &str) -> Option<f64> {
     plugin(s, t).params.get(&pad_key(pad, id)).copied()
 }
 
-fn put(s: &mut Studio, id: PluginId, pad: usize, name: &str, v: f64) {
+pub(super) fn put(s: &mut Studio, id: PluginId, pad: usize, name: &str, v: f64) {
     let args = json!({ "id": id.to_string(), "param": pad_key(pad, name), "value": v });
     assert!(s.run_command("plugin.param.set", args), "{:?}", s.error);
 }
 
 /// The centre of the control of the shown pad's `id`.
-fn centre(s: &Studio, g: &Geometry, t: TrackId, id: &str) -> (f32, f32) {
+pub(super) fn centre(s: &Studio, g: &Geometry, t: TrackId, id: &str) -> (f32, f32) {
     let x = plugin(s, t);
     let def = s.instruments.def_of(&x).unwrap();
     let b = body(s, g, t);
@@ -106,7 +106,7 @@ fn centre(s: &Studio, g: &Geometry, t: TrackId, id: &str) -> (f32, f32) {
 }
 
 /// A kit with sounds on pads 1..=3 (A2, A3, A4) and none on pad 4 (A5): all four chosen, A4 shown last.
-fn kit() -> (Studio, Geometry, TrackId, PluginId) {
+pub(super) fn kit() -> (Studio, Geometry, TrackId, PluginId) {
     let (mut s, g, t, id) = window("Drum Kit");
     for n in 1..=3 {
         fill(&mut s, id, n);

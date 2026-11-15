@@ -9,8 +9,9 @@ use xirius_core::auto::{AutoPoint, AutoTarget, BranchPart};
 use xirius_core::id::TrackId;
 use xirius_core::model::{MAX_DB, MIN_DB};
 use xirius_design::{FontSize, Layout, Radius, Space, Weight};
+use xirius_params::Curve;
 
-use crate::arrange::{lane_name, value_text};
+use crate::arrange::{lane_name, pad_param, value_text};
 use crate::browser::text_width;
 use crate::draw::{Align, Pen};
 use crate::popup::{Cell, LABEL_H, Look, PopupKind};
@@ -51,6 +52,13 @@ pub fn unit(target: &AutoTarget) -> &'static str {
         AutoTarget::Pan | AutoTarget::Branch(_, BranchPart::Pan) => "L−100 … R+100",
         AutoTarget::Mute | AutoTarget::Branch(_, BranchPart::Mute) => "0 か 1",
         AutoTarget::Control(c) if c.is_button() => "0 か 1",
+        AutoTarget::Param(_, key) if pad_param(key).is_some() => {
+            let spec = pad_param(key).map(|p| p.1).unwrap();
+            match spec.unit {
+                xirius_params::Unit::Pan => "L−100 … R+100",
+                u => u.symbol(),
+            }
+        }
         AutoTarget::Param(..) | AutoTarget::Control(_) => "%",
     }
 }
@@ -70,6 +78,18 @@ pub fn text(target: &AutoTarget, v: f64) -> String {
             if v >= 0.5 { "1" } else { "0" }.into()
         }
         AutoTarget::Control(c) if c.is_button() => if v >= 0.5 { "1" } else { "0" }.into(),
+        AutoTarget::Param(_, key) if pad_param(key).is_some() => {
+            let spec = pad_param(key).map(|p| p.1).unwrap();
+            let plain = spec.to_plain(v);
+            match spec.curve {
+                Curve::Choice(_) | Curve::Toggle => spec.text(plain),
+                _ if spec.unit == xirius_params::Unit::Pan => spec.text(plain),
+                _ => {
+                    let n = format!("{plain:.2}");
+                    n.trim_end_matches('0').trim_end_matches('.').to_string()
+                }
+            }
+        }
         AutoTarget::Param(..) | AutoTarget::Control(_) => format!("{}", (v * 100.0).round()),
     }
 }
@@ -114,6 +134,10 @@ pub fn parse(target: &AutoTarget, typed: &str) -> Option<f64> {
         }
         AutoTarget::Control(c) if c.is_button() => {
             number(&s).map(|n| if n >= 0.5 { 1.0 } else { 0.0 })
+        }
+        AutoTarget::Param(_, key) if pad_param(key).is_some() => {
+            let spec = pad_param(key).map(|p| p.1).unwrap();
+            spec.typed(typed).map(|plain| spec.to_norm(plain))
         }
         AutoTarget::Param(..) | AutoTarget::Control(_) => {
             number(&s).map(|n| (n / 100.0).clamp(0.0, 1.0))

@@ -18,7 +18,7 @@ use std::sync::Arc;
 use xirius_params::PADS;
 
 use super::bank::Params;
-use super::dsp::{Glide, Ramp, STEP, db_to_gain};
+use super::dsp::{Glide, Ramp, STEP, db_to_gain, smoothing};
 use super::files::{FileInbox, FileSet, LayerMode, Trigger};
 use super::voice::{Shape, Stage, Voice, data_of};
 use crate::processor::{AudioIo, NoteEvent, NoteKind, ProcessSetup, Processor};
@@ -45,6 +45,10 @@ pub struct DrumKit {
     born: u64,
     /// Each pad's voicing at the rate, worked out when a set arrives.
     shapes: [Shape; PADS],
+    /// What each pad's level, pan and speed are now: they glide to the shape's in the Glide
+    /// time while the pad sounds, so a write of automation does not step the voice.
+    heard: [[f64; 3]; PADS],
+    glide_a: f64,
     /// The next layer of each pad that plays its layers in turn.
     turns: [u32; PADS],
     /// Picks the layer of a pad that plays one at random.
@@ -65,6 +69,8 @@ impl DrumKit {
             velocities: [0.0; VOICES],
             born: 0,
             shapes: [Shape::default(); PADS],
+            heard: [[0.0; 3]; PADS],
+            glide_a: 0.0,
             turns: [0; PADS],
             seed: 0x9E37_79B9,
             volume: Ramp::new(1.0),
@@ -75,12 +81,28 @@ impl DrumKit {
     }
 
     /// Works out each pad's voicing at the rate.
-    fn shape_pads(&mut self) {
+    fn shape_pads(&mut self, glide: bool) {
         let Some(set) = &self.files else {
             return;
         };
-        for (shape, pad) in self.shapes.iter_mut().zip(&set.pads) {
+        for (p, (shape, pad)) in self.shapes.iter_mut().zip(&set.pads).enumerate() {
             *shape = Shape::new(&pad.voicing, self.rate, true);
+            // A pad that is not sounding starts at its new values; one that is glides.
+            if !glide || !self.voices.iter().any(|v| v.active() && v.pad == p) {
+                self.heard[p] = shape.mix();
+            }
+        }
+    }
+
+    /// One step of every pad's glide toward its shape.
+    fn glide_pads(&mut self) {
+        let keep = self.glide_a;
+        for (heard, shape) in self.heard.iter_mut().zip(&self.shapes) {
+            let to = shape.mix();
+            for (h, t) in heard.iter_mut().zip(to) {
+                let d = (*h - t) * keep;
+                *h = if d.abs() < 1e-5 { t } else { t + d };
+            }
         }
     }
 
@@ -199,7 +221,7 @@ impl DrumKit {
     /// A newer set keeps the voices whose file is still in their slot (with the pad's new
     /// cut and voicing) and fades the rest.
     fn take_set(&mut self) {
-        self.shape_pads();
+        self.shape_pads(true);
         let set = self.files.as_deref();
         for (k, v) in self.voices.iter_mut().enumerate() {
             if !v.active() {
@@ -249,7 +271,7 @@ impl DrumKit {
                 *v = Voice::IDLE;
                 continue;
             };
-            let shape = self.shapes[v.pad];
+            let shape = self.shapes[v.pad].with_mix(self.heard[v.pad]);
             let mut vol = vol;
             for i in from..to {
                 let Some((l, r)) = v.tick(slot, &shape, shape.speed) else {
@@ -274,7 +296,8 @@ impl Processor for DrumKit {
         self.turns = [0; PADS];
         self.params.refresh();
         self.glide.prepare(&self.params, self.rate);
-        self.shape_pads();
+        self.glide_a = smoothing(20.0, self.rate, STEP);
+        self.shape_pads(false);
         self.volume.set(db_to_gain(self.glide.get(VOLUME)));
         self.until_step = STEP;
     }
@@ -301,6 +324,7 @@ impl Processor for DrumKit {
             }
             if self.until_step == 0 {
                 self.glide.step(&mut self.params);
+                self.glide_pads();
                 self.until_step = STEP;
             }
             let mut end = (at + self.until_step).min(n);
@@ -504,6 +528,42 @@ mod tests {
         let up = hits(p.as_mut(), &[(0, on(36, 1.0))], 9_600);
         assert!(rms(&up[3_000..4_500]) > 0.1);
         assert_eq!(peak(&up[4_900..]), 0.0);
+    }
+
+    #[test]
+    fn a_pads_level_pan_and_pitch_glide_while_it_sounds() {
+        // A write of automation must not step the voice (UI-358): its level, its pan and its
+        // speed move to the new value over the Glide time (20 ms), not at the next block.
+        let plain = |h: &super::super::StockHandle, k: &str, v: f64| {
+            h.def().resolve(k).unwrap().spec.to_norm(v)
+        };
+        for (key, to) in [("A1.volume", -48.0), ("A1.pan", 100.0)] {
+            let (mut p, h) = kit(&[("a.wav", 0.4)], &[]);
+            let hold = vec![0.0; 2_000];
+            let (before, _) = render(p.as_mut(), &hold, &hold, &[(0, on(36, 1.0))]);
+            assert!(h.set(key, plain(&h, key, to)));
+            let (after, right) = render(p.as_mut(), &hold, &hold, &[]);
+            // The left side is what a hard right pan takes away, the whole of what -48 dB does.
+            let was = rms(&before[1_500..2_000]);
+            let now = rms(&after[..64]);
+            assert!(
+                now > was * 0.5,
+                "{key}: {now} after the write, {was} before it"
+            );
+            assert!(rms(&right[..64]) > 0.0);
+        }
+        // A semitone's step in transpose does not jump the pitch at once.
+        let (mut p, h) = kit(&[("a.wav", 0.4)], &[]);
+        let hold = vec![0.0; 2_000];
+        let (before, _) = render(p.as_mut(), &hold, &hold, &[(0, on(36, 1.0))]);
+        assert!(h.set("A1.transpose", plain(&h, "A1.transpose", 12.0)));
+        let (after, _) = render(p.as_mut(), &hold, &hold, &[]);
+        let crossings = |x: &[f32]| x.windows(2).filter(|w| w[0] < 0.0 && w[1] >= 0.0).count();
+        let first = crossings(&after[..240]);
+        let last = crossings(&after[1_700..1_940]);
+        let was = crossings(&before[1_700..1_940]);
+        assert!(first < was * 3 / 2, "{first} cycles at once, {was} before");
+        assert!(last > was * 3 / 2, "{last} cycles late, {was} before");
     }
 
     #[test]

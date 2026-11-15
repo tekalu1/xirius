@@ -54,6 +54,9 @@ pub struct PickRow {
     pub act: Option<Action>,
     /// Said in a balloon while the pointer is on it (a cut name in full).
     pub tip: String,
+    /// More words the search matches beside the label, each of them (a pad's lane: its
+    /// device, pad and sound, which its heading says).
+    pub find: String,
     /// A receiver's key source: the row shows its boxes instead of a check (UI-336).
     pub key: Option<crate::key_sources::KeyRow>,
 }
@@ -69,6 +72,7 @@ impl PickRow {
             note: false,
             act: None,
             tip: String::new(),
+            find: String::new(),
             key: None,
         }
     }
@@ -129,7 +133,12 @@ impl PickRow {
 
     /// Do the typed words match the name, never mind the case?
     fn matches(&self, query: &str) -> bool {
-        query.is_empty() || self.label.to_lowercase().contains(query)
+        query.is_empty()
+            || self.label.to_lowercase().contains(query)
+            || (!self.find.is_empty() && {
+                let all = format!("{} {}", self.find, self.label).to_lowercase();
+                query.split_whitespace().all(|w| all.contains(w))
+            })
     }
 }
 
@@ -972,25 +981,50 @@ impl Studio {
                     .map(|p| p.current.clone())
                     .unwrap_or_default();
                 let choices = self.auto_target_choices(t, replace.then_some(current.as_str()));
-                let mut list = PickList::of(
-                    choices
-                        .into_iter()
-                        .map(|c| {
-                            let to = c.to.strip_prefix("off:").unwrap_or(&c.to);
-                            let row = PickRow::new(c.label).on(replace && to == current);
-                            let act = Action::AutomationTarget(
-                                t,
-                                replace.then(|| current.clone()),
-                                to.to_string(),
-                            );
-                            if c.to.starts_with("off:") {
-                                row.act(act).disabled()
-                            } else {
-                                row.act(act)
-                            }
-                        })
-                        .collect(),
-                );
+                let p = self.project();
+                let mut plain = Vec::new();
+                // A Drum Kit's pads, one group each under "Drum Kit · A1 Kick" (UI-358).
+                let mut pads: Vec<(String, Vec<PickRow>)> = Vec::new();
+                for c in choices {
+                    let to = c.to.strip_prefix("off:").unwrap_or(&c.to);
+                    let mut row = PickRow::new(c.label.clone()).on(replace && to == current);
+                    let act = Action::AutomationTarget(
+                        t,
+                        replace.then(|| current.clone()),
+                        to.to_string(),
+                    );
+                    row = if c.to.starts_with("off:") {
+                        row.act(act).disabled()
+                    } else {
+                        row.act(act)
+                    };
+                    let pad = match to.parse::<xirius_core::auto::AutoTarget>() {
+                        Ok(xirius_core::auto::AutoTarget::Param(id, key)) => p
+                            .tracks
+                            .get(&t)
+                            .and_then(|track| track.inserts.iter().find(|x| x.id == id))
+                            .zip(crate::arrange::pad_param(&key)),
+                        _ => None,
+                    };
+                    let Some((plugin, (pad, spec))) = pad else {
+                        plain.push(row);
+                        continue;
+                    };
+                    let head = format!(
+                        "{} · {}",
+                        plugin.name,
+                        crate::arrange::pad_label(plugin, pad)
+                    );
+                    row.find = format!("{} {}", plugin.name, c.label);
+                    row.label = spec.label.to_string();
+                    match pads.last_mut() {
+                        Some((h, rows)) if *h == head => rows.push(row),
+                        _ => pads.push((head, vec![row])),
+                    }
+                }
+                let mut list = PickList::of(plain);
+                list.groups
+                    .extend(pads.into_iter().map(|(h, rows)| PickGroup::new(h, rows)));
                 list.current = current;
                 Some(list)
             }
