@@ -6450,8 +6450,8 @@ source = "mockups/daw-plan.html § 機能のマトリクス/編集"
 
 [[dropped]]
 id = "DROP-05"
-title = "Pitch Curves・Vocal Tune"
-reason = "ARA で Gliss・Melodyne を使う"
+title = "Pitch Curves（ノートごとの手動編集）"
+reason = "手動の曲線編集は ARA の機器に任せる。音階またはノートへその場で寄せる Pitch Correction は PLG-076 として戻した"
 source = "mockups/daw-plan.html § 機能のマトリクス/編集"
 
 [[dropped]]
@@ -8530,3 +8530,28 @@ source = "2026-11-15 の利用者のモック承認（drum-kit-routing.html の 
 after = ["EDT-076"]
 done_when = "＋→「フォルダー」と「フォルダーにまとめる」で、同じ名前のバスがフォルダーのすぐ下（同じ階層）にでき、フォルダーがそのバスにつながる（1 つの命令・1 回の取り消し。まとめるときは行の並びも戻る）。既にあるフォルダーは変えず、その右端の印の「新しいバス」は同じ形（フォルダーの名前・すぐ下・一緒に動く）。「つながない」はつなぎを外すだけ。フォルダーの削除・まとめを解くと、外で使われていない限り一緒にできたバスも消え（外の出力・センド・サイドチェーン・ほかのフォルダーのつなぎが残れば残し、つなぎだけ外す。つなぎ直した別のバスは消さない）、1 回の取り消しで全部戻る。名前はバスがフォルダーと同じ間は一緒に変わる。「一緒にできた」印はフォルダーの足しの 1 欄で、古い曲は印なしで読み、そのまま読み書きできる。行の移動・入れ子・複製・ルーティングのループの拒否は今のまま働く。窓を開かない命令・画面の試験、エンジンの音の流れの試験、DAWproject・フリーズ・書き出しの既存の試験と、実機の撮影（暗い・明るい）で確かめる"
 status = "done"
+[[item]]
+id = "PLG-076"
+title = "内蔵 Pitch Correction の音声処理とパラメーターを足す"
+area = "PLG"
+phase = "v1.1"
+source = "pitch-20261116/report.md § 5 ; pitch-20261116/report.md § 6 ; pitch-20261116/patents/report.md § 3"
+done_when = "pitch-correction のパラメーターを保存とオートメーションへ出し、単音 YIN 検出、最近傍の音階または受信ノートへの補正、TD-PSOLA と非声区間の遅延素通し、latency と窓向けの値を実装する。合成音の検出・補正・遅れ・ブロック不変・無確保の試験と実測、試聴 WAV を揃える"
+
+[[item]]
+id = "MIX-051"
+title = "Pitch Correction へのノートの送り元とエンジンの道を足す"
+area = "MIX"
+phase = "v1.1"
+source = "pitch-20261116/report.md § 1 ; pitch-20261116/report.md § 3"
+done_when = "Pitch Correction のノート送り元をモデル、コマンド、undo、エンジンのインサート経路に通し、遅れを揃える。MIX-047 の音声サイドチェーンとは別の経路とし、PLG-014 の MIDI FX（ノートを加工する機器）とは重ねない"
+after = ["PLG-076"]
+
+[[item]]
+id = "UI-359"
+title = "Pitch Correction の窓とノート送り元の席と印を足す"
+area = "UI"
+phase = "v1.1"
+source = "pitch-20261116/pitch-correction.html § 01 ; pitch-20261116/report.md § 9"
+done_when = "承認された窓の値・鍵盤・操作、タイトルバーのノート送り元、ミキサーとチャンネルエディターの印、オートメーションの表示を実装し、画面で確かめて docs/ui-approved.md に記録する"
+after = ["PLG-076", "MIX-051"]
