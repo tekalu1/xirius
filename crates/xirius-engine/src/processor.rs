@@ -98,6 +98,17 @@ pub trait Processor: Send {
     /// Called on the audio thread. `io.frames() <= setup.max_block`.
     fn process(&mut self, io: &mut AudioIo<'_>, events: &[NoteEvent]);
 
+    /// Collect the instrument track indices this processor's note receiving effects use.
+    /// Called only while building a plan.
+    fn note_sources(&self, _out: &mut Vec<usize>) {}
+
+    /// Give note receivers the current block before any track renders. Implementations must
+    /// use storage prepared off the audio thread.
+    fn note_block(&mut self, _source: usize, _events: &[NoteEvent], _start: u64, _reset: bool) {}
+
+    /// Absolute input latency, including the inserts before this processor.
+    fn note_delay(&mut self, _before: u32) {}
+
     /// Latency the processor adds, in frames.
     fn latency(&self) -> u32 {
         0

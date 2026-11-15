@@ -792,6 +792,7 @@ fn failed_latency_case(before: bool) {
                 state: None,
                 isolation: PluginIsolation::InProcess,
                 sidechain: None,
+                note_source: None,
                 preset: None,
             });
         }

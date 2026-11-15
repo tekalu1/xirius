@@ -799,6 +799,7 @@ impl Reader<'_> {
             state: None,
             isolation: PluginIsolation::default(),
             sidechain: None,
+            note_source: None,
             preset: None,
         };
         if let Some(ps) = kid(d, "Parameters") {
@@ -908,6 +909,7 @@ impl Reader<'_> {
             state: None,
             isolation: PluginIsolation::default(),
             sidechain: None,
+            note_source: None,
             preset: None,
         };
         x.bypass = !self.enabled(tid, d, def.name);

@@ -398,6 +398,17 @@ impl Builder {
         self.timed.clear();
         self.plugins.set_tempo(tmap.bpm_at(0));
         let kept = std::mem::take(&mut self.retry_keep);
+        // A kept processor remembers its source's old graph index. Rebuild the small set of
+        // tracks in a note-routed song so a reorder cannot leave that index pointing elsewhere.
+        let kept = if p
+            .tracks
+            .values()
+            .any(|t| t.inserts.iter().any(|x| x.note_source.is_some()))
+        {
+            BTreeMap::new()
+        } else {
+            kept
+        };
 
         let mut tracks = Vec::with_capacity(graph.tracks.len());
         for (i, id) in graph.tracks.iter().enumerate() {
@@ -465,7 +476,7 @@ impl Builder {
                     channel: m.channel.clamp(1, 16) - 1,
                 })
             });
-            if included && !unavailable {
+            if scope.includes_notes(*id) && !unavailable {
                 spec.timeline = self.timeline(p, t, &tmap, &mut warnings);
             }
             if self.strict_preparation && !unavailable {
@@ -1030,6 +1041,15 @@ impl Builder {
             if let Some(k) = key_spec(g, scope, x, out.len()) {
                 keys.push(k);
             }
+            let p = if let Some(from) = x
+                .note_source
+                .filter(|s| s.on && x.takes_notes())
+                .and_then(|s| g.track_index(s.track))
+            {
+                Box::new(xirius_engine::note_input::NoteInput::new(p, from)) as Box<dyn Processor>
+            } else {
+                p
+            };
             out.push(p);
         };
         for x in plugins
@@ -1379,6 +1399,7 @@ mod retry_tests {
                         mode: KeyMode::Output,
                     }],
                 }),
+                note_source: None,
             });
         let mut builder = Builder::new(48_000, None);
         let _original = builder.build(&p, Select::All);

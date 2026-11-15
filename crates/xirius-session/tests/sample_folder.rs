@@ -25,6 +25,7 @@ fn session(dir: &Path, uid: &str) -> Session {
         params: Default::default(),
         state: None,
         sidechain: None,
+        note_source: None,
         preset: None,
         samples: Vec::new(),
         isolation: PluginIsolation::default(),

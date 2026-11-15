@@ -52,6 +52,7 @@ fn plugin_states_pulled_twice_report_which_differ() {
             state: None,
             isolation: PluginIsolation::InProcess,
             sidechain: None,
+            note_source: None,
             preset: None,
         };
         t.inserts.push(model_plugin.clone());

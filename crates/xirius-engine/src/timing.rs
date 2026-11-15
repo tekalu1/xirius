@@ -239,6 +239,18 @@ impl Processor for Timed {
         self.child = Some((done, took));
     }
 
+    fn note_sources(&self, out: &mut Vec<usize>) {
+        self.inner.note_sources(out);
+    }
+
+    fn note_block(&mut self, source: usize, events: &[NoteEvent], start: u64, reset: bool) {
+        self.inner.note_block(source, events, start, reset);
+    }
+
+    fn note_delay(&mut self, before: u32) {
+        self.inner.note_delay(before);
+    }
+
     fn child_time(&self) -> Option<(u64, u64)> {
         self.inner.child_time()
     }

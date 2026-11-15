@@ -46,6 +46,7 @@ fn fixture(id: u64, uid: &str, latency: f64) -> Plugin {
         state: None,
         isolation: PluginIsolation::InProcess,
         sidechain: None,
+        note_source: None,
         preset: None,
     }
 }

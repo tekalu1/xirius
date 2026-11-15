@@ -266,6 +266,7 @@ impl Chain {
             let mut x = x.clone();
             x.id = PluginId(devices.len() as u64 + 1);
             x.sidechain = None;
+            x.note_source = None;
             plugins.insert(id, x.id);
             devices.push(x);
         }

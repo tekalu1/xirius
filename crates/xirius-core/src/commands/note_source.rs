@@ -1,0 +1,115 @@
+//! The one instrument track whose notes a receiving effect takes (MIX-051).
+use super::*;
+use crate::id::{IdKind, PluginId, TrackId};
+use crate::model::{NoteSource, Plugin, TrackKind};
+
+pub(super) fn defs() -> Vec<CommandDef> {
+    let plugin = || ArgDef::id("id", IdKind::Plugin, "ノートを受けるプラグイン").req();
+    vec![
+        edit(
+            "plugin.note_source.set",
+            "プラグインのノートの送り元を設定します",
+            vec![
+                plugin(),
+                ArgDef::id("from", IdKind::Track, "送り元のトラック").req(),
+            ],
+            |p, _, a| {
+                let id: PluginId = a.id("id")?;
+                let from: TrackId = a.id("from")?;
+                let name = p.track(from)?.name.clone();
+                if p.track(from)?.kind != TrackKind::Instrument {
+                    return Err(CmdError::conflict(format!(
+                        "{name} はインストゥルメントのトラックではありません"
+                    )));
+                }
+                let x = receiving_plugin(p, id)?;
+                if !x.takes_notes() {
+                    return Err(CmdError::conflict(format!(
+                        "{} はノートを受けられません",
+                        x.name
+                    )));
+                }
+                x.note_source = Some(NoteSource {
+                    on: true,
+                    track: from,
+                });
+                Ok(Output::msg(format!(
+                    "{id} のノートの送り元を {name} に設定しました"
+                )))
+            },
+        ),
+        destroy(
+            "plugin.note_source.remove",
+            "プラグインのノートの送り元を外します",
+            vec![plugin()],
+            |p, _, a| {
+                let id: PluginId = a.id("id")?;
+                let x = receiving_plugin(p, id)?;
+                if x.note_source.take().is_none() {
+                    return Err(CmdError::not_found(format!(
+                        "プラグイン {id} にノートの送り元がありません"
+                    )));
+                }
+                Ok(Output::msg(format!("{id} のノートの送り元を外しました")))
+            },
+        ),
+        edit(
+            "plugin.note_source.enable",
+            "ノートの送り元の入・切を切り替えます",
+            vec![
+                plugin(),
+                ArgDef::choice("state", &["on", "off"], "入・切").req(),
+            ],
+            |p, _, a| {
+                let id: PluginId = a.id("id")?;
+                let on = a.str("state")? == "on";
+                let x = receiving_plugin(p, id)?;
+                let Some(source) = &mut x.note_source else {
+                    return Err(CmdError::not_found(format!(
+                        "プラグイン {id} にノートの送り元がありません"
+                    )));
+                };
+                source.on = on;
+                Ok(Output::msg(format!(
+                    "{id} のノートの送り元を{}",
+                    onoff_word(on)
+                )))
+            },
+        ),
+        read(
+            "plugin.note_source.list",
+            "ノートの送り元を表示します",
+            vec![plugin()],
+            |p, _, _, a| {
+                let id: PluginId = a.id("id")?;
+                let owner = super::track::plugin_owner(p, id)?;
+                let x = p
+                    .track(owner)?
+                    .inserts
+                    .iter()
+                    .find(|x| x.id == id)
+                    .expect("found");
+                let source = x.note_source;
+                let name = source
+                    .and_then(|s| p.tracks.get(&s.track))
+                    .map(|t| t.name.as_str());
+                Ok(Output::with(
+                    format!("{id} のノートの送り元"),
+                    json!({
+                        "id": id.to_string(), "on": source.is_some_and(|s| s.on),
+                        "from": source.map(|s| s.track.to_string()), "name": name,
+                    }),
+                ))
+            },
+        ),
+    ]
+}
+
+fn receiving_plugin(p: &mut Project, id: PluginId) -> CmdResult<&mut Plugin> {
+    let owner = super::track::plugin_owner(p, id)?;
+    Ok(p.track_mut(owner)?
+        .inserts
+        .iter_mut()
+        .find(|x| x.id == id)
+        .expect("found"))
+}

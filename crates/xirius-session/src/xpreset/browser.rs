@@ -581,6 +581,7 @@ fn as_track(value: &Value) -> CmdResult<TrackPreset> {
             deactivated: false,
             isolation: Default::default(),
             sidechain: None,
+            note_source: None,
             preset: Some(p.name.clone()),
         };
         let rack = xirius_core::rack::Rack {

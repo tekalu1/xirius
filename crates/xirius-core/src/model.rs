@@ -187,6 +187,9 @@ pub struct Plugin {
     /// Songs without one write nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sidechain: Option<Sidechain>,
+    /// One instrument track whose notes this effect receives (MIX-051).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note_source: Option<NoteSource>,
     /// The preset last loaded on this device (PLG-063), so a window can name it. Turning a
     /// knob does not clear it; the preset list is what says whether it still matches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -194,6 +197,11 @@ pub struct Plugin {
 }
 
 impl Plugin {
+    /// Whether this effect can receive notes from another instrument track.
+    pub fn takes_notes(&self) -> bool {
+        self.builtin().is_some_and(|d| d.uid == "pitch-correction")
+    }
+
     /// Whether the plugin is part of the sound while the song plays.
     pub fn runs(&self) -> bool {
         !self.bypass && !self.deactivated
@@ -342,6 +350,14 @@ pub struct Sidechain {
     /// The sources, in the order they were added.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<KeySource>,
+}
+
+/// Notes are independent of audio sidechain routing and do not create an audio edge.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct NoteSource {
+    #[serde(default)]
+    pub on: bool,
+    pub track: TrackId,
 }
 
 /// One channel a plug-in's key is taken from.
@@ -1539,6 +1555,13 @@ impl Project {
     /// edge would make the routing loop. Returns the dropped count; an
     /// emptied sidechain folds back to `None`.
     pub fn prune_key_sources(&mut self, plugin: &mut Plugin, owner: TrackId) -> usize {
+        if plugin.note_source.is_some_and(|s| {
+            self.tracks
+                .get(&s.track)
+                .is_none_or(|t| t.kind != TrackKind::Instrument)
+        }) {
+            plugin.note_source = None;
+        }
         let Some(mut sc) = plugin.sidechain.take() else {
             return 0;
         };
@@ -1621,13 +1644,22 @@ impl Project {
         self.tracks.remove(&id);
         for t in self.tracks.values_mut() {
             let refs = t.output == Some(Output::Bus(id)) || t.sends.iter().any(|s| s.to == id);
+            let notes = t
+                .inserts
+                .iter()
+                .any(|x| x.note_source.is_some_and(|s| s.track == id));
             let keys = t
                 .inserts
                 .iter()
                 .filter_map(|x| x.sidechain.as_ref())
                 .any(|sc| sc.sources.iter().any(|s| s.track == id));
-            if refs || keys {
+            if refs || keys || notes {
                 let t = Arc::make_mut(t);
+                for x in &mut t.inserts {
+                    if x.note_source.is_some_and(|s| s.track == id) {
+                        x.note_source = None;
+                    }
+                }
                 if t.output == Some(Output::Bus(id)) {
                     t.output = Some(Output::Master);
                 }
@@ -1893,6 +1925,26 @@ impl Project {
                 }
             }
             for x in &t.inserts {
+                if let Some(notes) = x.note_source {
+                    if !x.takes_notes() {
+                        return Err(CmdError::conflict(format!(
+                            "{} はノートを受けられません",
+                            x.name
+                        )));
+                    }
+                    let source = self.track(notes.track).map_err(|_| {
+                        CmdError::conflict(format!(
+                            "{} のノートの送り元 {} がありません",
+                            x.name, notes.track
+                        ))
+                    })?;
+                    if source.kind != TrackKind::Instrument {
+                        return Err(CmdError::conflict(format!(
+                            "{} はインストゥルメントのトラックではありません",
+                            source.name
+                        )));
+                    }
+                }
                 let Some(sc) = &x.sidechain else {
                     continue;
                 };

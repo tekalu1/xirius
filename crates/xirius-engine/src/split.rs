@@ -355,6 +355,32 @@ impl Processor for SplitProc {
         "Splitter"
     }
 
+    fn note_sources(&self, out: &mut Vec<usize>) {
+        for b in &self.branches {
+            for p in &b.inserts {
+                p.note_sources(out);
+            }
+        }
+    }
+
+    fn note_block(&mut self, source: usize, events: &[NoteEvent], start: u64, reset: bool) {
+        for b in &mut self.branches {
+            for p in &mut b.inserts {
+                p.note_block(source, events, start, reset);
+            }
+        }
+    }
+
+    fn note_delay(&mut self, before: u32) {
+        for b in &mut self.branches {
+            let mut at = before;
+            for p in &mut b.inserts {
+                p.note_delay(at);
+                at = at.saturating_add(p.latency());
+            }
+        }
+    }
+
     fn prepare(&mut self, setup: &ProcessSetup) {
         for b in &mut self.branches {
             for p in &mut b.inserts {

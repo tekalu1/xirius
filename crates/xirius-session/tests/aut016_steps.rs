@@ -45,6 +45,7 @@ fn a_plug_in_in_a_host_tells_the_steps_of_its_switch() {
         state: None,
         isolation: PluginIsolation::Dedicated,
         sidechain: None,
+        note_source: None,
         preset: None,
     });
     p.tracks.insert(tid, Arc::new(t));

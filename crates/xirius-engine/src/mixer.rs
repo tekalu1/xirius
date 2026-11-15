@@ -320,6 +320,7 @@ pub struct PlanShape {
     pub automation: crate::automation_time::Timing,
     /// The inserts inside splitters, for their automation (ENG-074).
     pub nested: crate::split::Nested,
+    pub note_sources: Vec<usize>,
 }
 
 /// A node's own latency (source and inserts) and where its signal goes.
@@ -699,6 +700,8 @@ struct Chain {
     source: Box<dyn Processor>,
     inserts: Vec<Box<dyn Processor>>,
     events: Vec<NoteEvent>,
+    /// Timeline events already gathered by the note-routing prepass for this block.
+    notes_queued: bool,
     dropped_events: u64,
     timeline: Timeline,
     /// Pitches the timeline has started and not yet released.
@@ -778,6 +781,12 @@ pub struct Plan {
     compensation: (Vec<Compensation>, Vec<Compensation>),
     latency: u32,
     nested: crate::split::Nested,
+    note_sources: Vec<usize>,
+    note_events: Vec<NoteEvent>,
+    note_live: Vec<(usize, NoteEvent)>,
+    note_clock: u64,
+    note_next: Option<u64>,
+    note_force_reset: bool,
     /// The events pushed, for the tests (UI-312).
     #[cfg(test)]
     pub(crate) pushed: Vec<(usize, NoteEvent)>,
@@ -1050,6 +1059,7 @@ impl Plan {
                             source: t.source,
                             inserts: t.inserts,
                             events: Vec::with_capacity(MAX_EVENTS_PER_BLOCK),
+                            notes_queued: false,
                             dropped_events: 0,
                             timeline: t.timeline,
                             held: [false; 128],
@@ -1342,6 +1352,12 @@ impl Plan {
             latency,
             automation,
             nested: crate::split::Nested::default(),
+            note_sources: Vec::new(),
+            note_events: Vec::with_capacity(MAX_EVENTS_PER_BLOCK),
+            note_live: Vec::with_capacity(MAX_EVENTS_PER_BLOCK),
+            note_clock: 0,
+            note_next: None,
+            note_force_reset: false,
             routes,
             setup,
             tracks,
@@ -1384,7 +1400,43 @@ impl Plan {
                 .collect(),
             master: crate::split::Nested::of(&plan.master.inserts),
         };
-        if plan.tracks.len() >= 8 {
+        // Configure each receiving inlet with the delay to its audio input. This uses the
+        // same prepared timings as automation and the sidechain main path.
+        for (i, t) in plan.tracks.iter_mut().enumerate() {
+            if let Some(c) = t.as_mut().and_then(|t| t.chain.as_mut()) {
+                c.source.note_delay(0);
+                for (j, p) in c.inserts.iter_mut().enumerate() {
+                    p.note_delay(plan.automation.tracks[i].insert(j));
+                    p.note_sources(&mut plan.note_sources);
+                }
+                c.source.note_sources(&mut plan.note_sources);
+            }
+        }
+        for (i, b) in plan.buses.iter_mut().enumerate() {
+            for (j, p) in b.inserts.iter_mut().enumerate() {
+                p.note_delay(plan.automation.buses[i].insert(j));
+                p.note_sources(&mut plan.note_sources);
+            }
+        }
+        for (j, p) in plan.master.inserts.iter_mut().enumerate() {
+            p.note_delay(plan.automation.master.insert(j));
+            p.note_sources(&mut plan.note_sources);
+        }
+        if plan.keep_from.iter().any(Option::is_some)
+            && let Some(old) = &previous
+        {
+            plan.note_sources.extend_from_slice(&old.note_sources);
+        }
+        plan.note_sources.sort_unstable();
+        plan.note_sources.dedup();
+        if !plan.note_sources.is_empty() {
+            // Note events are gathered before rendering. No track may lend its chain to a
+            // prefetch worker, and no pool may race with the inlet's block preparation.
+            for t in plan.tracks.iter_mut().flatten() {
+                t.prefetch = None;
+            }
+        }
+        if plan.note_sources.is_empty() && plan.tracks.len() >= 8 {
             let workers = std::thread::available_parallelism()
                 .map_or(1, |n| n.get())
                 .min(8);
@@ -1401,7 +1453,7 @@ impl Plan {
     /// Builds persistent track workers on the control thread. Routing always joins their
     /// outputs in track order, so parallel rendering has the same summation as one worker.
     pub fn set_workers(&mut self, count: usize) -> std::io::Result<()> {
-        self.pool = if count <= 1 || self.tracks.len() <= 1 {
+        self.pool = if !self.note_sources.is_empty() || count <= 1 || self.tracks.len() <= 1 {
             None
         } else {
             Some(crate::parallel::TrackPool::new(
@@ -1425,6 +1477,7 @@ impl Plan {
             routes: self.routes.clone(),
             automation: self.automation.clone(),
             nested: self.nested.clone(),
+            note_sources: self.note_sources.clone(),
         }
     }
 
@@ -1608,6 +1661,7 @@ impl Plan {
     /// Ends every note the timelines have started, at the start of the next block. Used when the
     /// transport stops or jumps. A track that took live input goes back to being prefetched.
     pub fn release_notes(&mut self) {
+        self.note_force_reset = true;
         for t in self.tracks.iter_mut().flatten() {
             Self::release_track(t);
             if let Some(p) = &mut t.prefetch {
@@ -1651,10 +1705,24 @@ impl Plan {
                 Self::release_track(t);
             }
         }
-        t.chain.as_mut().is_some_and(|c| c.source.live_input(input))
+        let accepted = t.chain.as_mut().is_some_and(|c| c.source.live_input(input));
+        if accepted
+            && self.note_sources.contains(&track)
+            && self.note_live.len() < self.note_live.capacity()
+        {
+            self.note_live.push((
+                track,
+                NoteEvent {
+                    offset: 0,
+                    kind: input.kind,
+                },
+            ));
+        }
+        accepted
     }
 
     pub fn release_live_inputs(&mut self) {
+        self.note_force_reset = true;
         for track in self.tracks.iter_mut().flatten() {
             if let Some(prefetch) = &mut track.prefetch {
                 prefetch.set_hot(true);
@@ -1766,6 +1834,9 @@ impl Plan {
     /// into the song, so the timelines play; with `None` they stay silent.
     pub fn process_at(&mut self, out_l: &mut [f32], out_r: &mut [f32], pos: Option<u64>) {
         let n = out_l.len().min(out_r.len()).min(self.setup.max_block);
+        if !self.note_sources.is_empty() {
+            self.prepare_note_block(n, pos);
+        }
         for b in &mut self.buses {
             b.buf.clear(n);
         }
@@ -1913,6 +1984,55 @@ impl Plan {
         out_r[..n].copy_from_slice(&m.buf.r[..n]);
     }
 
+    /// Gather the guide notes before any recipient renders. A fixed scratch buffer avoids
+    /// borrowing a guide track and a recipient at once, and works in either track order.
+    fn prepare_note_block(&mut self, n: usize, pos: Option<u64>) {
+        let reset = std::mem::take(&mut self.note_force_reset) || self.note_next != pos;
+        self.note_next = pos.map(|p| p.saturating_add(n as u64));
+        let start = self.note_clock;
+        self.note_clock = self.note_clock.saturating_add(n as u64);
+        for &source in &self.note_sources {
+            self.note_events.clear();
+            if let Some(c) = self
+                .tracks
+                .get_mut(source)
+                .and_then(Option::as_mut)
+                .and_then(|t| t.chain.as_mut())
+            {
+                if reset {
+                    c.release();
+                }
+                if let Some(pos) = pos {
+                    Self::queue_timeline(c, pos, n as u64);
+                    c.notes_queued = true;
+                }
+                self.note_events.extend_from_slice(&c.events);
+            }
+            for &(from, event) in &self.note_live {
+                if from == source && self.note_events.len() < self.note_events.capacity() {
+                    self.note_events.push(event);
+                }
+            }
+            for t in self.tracks.iter_mut().flatten() {
+                if let Some(c) = t.chain.as_mut() {
+                    c.source.note_block(source, &self.note_events, start, reset);
+                    for p in &mut c.inserts {
+                        p.note_block(source, &self.note_events, start, reset);
+                    }
+                }
+            }
+            for b in &mut self.buses {
+                for p in &mut b.inserts {
+                    p.note_block(source, &self.note_events, start, reset);
+                }
+            }
+            for p in &mut self.master.inserts {
+                p.note_block(source, &self.note_events, start, reset);
+            }
+        }
+        self.note_live.clear();
+    }
+
     /// Renders a track's block into `t.buf`. A track with a prefetch takes the block from its
     /// worker's ring while the transport runs and nothing is live; otherwise the audio thread
     /// renders the chain itself and, when the transport runs, lends it out for the next blocks.
@@ -1984,7 +2104,11 @@ impl Plan {
         right.fill(0.0);
         let n = left.len().min(right.len());
         if let Some(pos) = pos {
-            Self::queue_timeline(c, pos, n as u64);
+            if !std::mem::take(&mut c.notes_queued) {
+                Self::queue_timeline(c, pos, n as u64);
+            }
+        } else {
+            c.notes_queued = false;
         }
         if let Some(m) = &mut c.midi {
             m.take_events(&c.events);

@@ -41,6 +41,7 @@ fn plugin(e: &Entry) -> Plugin {
         params: Default::default(),
         state: None,
         sidechain: None,
+        note_source: None,
         preset: None,
         samples: vec![],
         isolation: PluginIsolation::InProcess,

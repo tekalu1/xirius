@@ -36,6 +36,7 @@ fn gain_keyed_by(id: u64, src: TrackId, mode: KeyMode) -> Plugin {
                 mode,
             }],
         }),
+        note_source: None,
         preset: None,
     }
 }

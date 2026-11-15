@@ -250,6 +250,7 @@ pub fn feeding(p: &Project, target: TrackId) -> HashSet<TrackId> {
 pub struct Scope {
     pub select: Select,
     up: Option<HashSet<TrackId>>,
+    note_sources: HashSet<TrackId>,
 }
 
 impl Scope {
@@ -258,7 +259,18 @@ impl Scope {
             Select::All => None,
             Select::Track(id) | Select::Bus(id) => Some(feeding(p, id)),
         };
-        Scope { select, up }
+        // A stem still needs the guide track's notes even when that track's audio is excluded.
+        let note_sources = p
+            .tracks
+            .values()
+            .flat_map(|t| &t.inserts)
+            .filter_map(|x| x.note_source.filter(|s| s.on).map(|s| s.track))
+            .collect();
+        Scope {
+            select,
+            up,
+            note_sources,
+        }
     }
 
     pub fn is_stem(&self) -> bool {
@@ -267,6 +279,10 @@ impl Scope {
 
     pub fn includes(&self, id: TrackId) -> bool {
         self.up.as_ref().is_none_or(|u| u.contains(&id))
+    }
+
+    pub fn includes_notes(&self, id: TrackId) -> bool {
+        self.includes(id) || self.note_sources.contains(&id)
     }
 
     fn target(&self) -> Option<TrackId> {

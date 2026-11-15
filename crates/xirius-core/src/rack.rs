@@ -1378,6 +1378,7 @@ mod tests {
             samples: Vec::new(),
             isolation: Default::default(),
             sidechain: None,
+            note_source: None,
             preset: None,
         }
     }

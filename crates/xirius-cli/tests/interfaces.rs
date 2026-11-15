@@ -103,13 +103,18 @@ impl Endpoint for Mcp {
         let (mut value, error) = self.gateway.call(&tool, args.as_object().unwrap()).unwrap();
         assert!(!error, "{value}");
         if value["confirmation_required"] == true {
-            assert_eq!(name, "ai.permission.set");
+            assert!(matches!(
+                name,
+                "ai.permission.set" | "plugin.note_source.remove"
+            ));
             assert_eq!(value["receipt"]["state"], "accepted");
-            assert_eq!(
-                self.session.lock().unwrap().ai_permission(),
-                AiPermission::Edit,
-                "AI cannot raise its own permission"
-            );
+            if name == "ai.permission.set" {
+                assert_eq!(
+                    self.session.lock().unwrap().ai_permission(),
+                    AiPermission::Edit,
+                    "AI cannot raise its own permission"
+                );
+            }
             let id = value["receipt"]["id"].clone();
             let token = value["decision"]["token"].clone();
             let (decision, error) = self
@@ -135,10 +140,12 @@ impl Endpoint for Mcp {
                 assert!(Instant::now() < deadline, "{value}");
                 std::thread::sleep(Duration::from_millis(10));
             }
-            assert_eq!(
-                self.session.lock().unwrap().ai_permission(),
-                AiPermission::Save
-            );
+            if name == "ai.permission.set" {
+                assert_eq!(
+                    self.session.lock().unwrap().ai_permission(),
+                    AiPermission::Save
+                );
+            }
         }
         self.expand(value)
     }
@@ -207,4 +214,33 @@ fn exercise(endpoint: &dyn Endpoint) {
 fn seven_mvp_commands_have_the_same_cli_and_mcp_editing_contract() {
     exercise(&Cli::new());
     exercise(&Mcp::new());
+}
+
+#[test]
+fn note_source_commands_have_the_same_cli_and_mcp_contract() {
+    for endpoint in [&Cli::new() as &dyn Endpoint, &Mcp::new() as &dyn Endpoint] {
+        let source =
+            endpoint.run("track.add.instrument", json!({"name":"Melody"}))["data"]["id"].clone();
+        let vocal = endpoint.run("track.add.audio", json!({"name":"Vocal"}))["data"]["id"].clone();
+        let plugin = endpoint.run(
+            "plugin.add",
+            json!({"track":vocal,"name":"Pitch Correction"}),
+        )["data"]["id"]
+            .clone();
+        endpoint.run("plugin.note_source.set", json!({"id":plugin,"from":source}));
+        let value = endpoint.run("plugin.note_source.list", json!({"id":plugin}));
+        assert_eq!(value["data"]["from"], source);
+        endpoint.run(
+            "plugin.note_source.enable",
+            json!({"id":plugin,"state":"off"}),
+        );
+        assert_eq!(
+            endpoint.run("plugin.note_source.list", json!({"id":plugin}))["data"]["on"],
+            false
+        );
+        endpoint.run("plugin.note_source.remove", json!({"id":plugin}));
+        assert!(
+            endpoint.run("plugin.note_source.list", json!({"id":plugin}))["data"]["from"].is_null()
+        );
+    }
 }

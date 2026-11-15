@@ -55,6 +55,7 @@ fn real_heavy_plugins_prepare_without_failed_tracks() {
             state: None,
             isolation: PluginIsolation::InProcess,
             sidechain: None,
+            note_source: None,
             preset: None,
         });
         p.tracks.insert(id, Arc::new(t));

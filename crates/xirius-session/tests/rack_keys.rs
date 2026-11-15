@@ -35,6 +35,7 @@ fn gain(id: u64, key_from: Option<TrackId>) -> Plugin {
                 mode: KeyMode::Output,
             }],
         }),
+        note_source: None,
         preset: None,
     }
 }

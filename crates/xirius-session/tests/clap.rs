@@ -115,6 +115,7 @@ fn song(wav: &Path, uid: &str, state: Option<String>) -> Project {
         state,
         isolation: PluginIsolation::InProcess,
         sidechain: None,
+        note_source: None,
         preset: None,
     });
     p.tracks.insert(TRACK, Arc::new(track));

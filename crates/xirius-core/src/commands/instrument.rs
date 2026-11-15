@@ -126,6 +126,7 @@ fn replace_plugin(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Outpu
         state: None,
         isolation: Default::default(),
         sidechain: None,
+        note_source: None,
         preset: None,
     };
     if x.builtin().is_some() {
@@ -259,6 +260,7 @@ pub(super) fn add_with_instrument(p: &mut Project, _: &EditCtx<'_>, a: &Args) ->
         state: None,
         isolation: Default::default(),
         sidechain: None,
+        note_source: None,
         preset: None,
     });
     if let Some(x) = track.inserts.last_mut().filter(|x| x.builtin().is_some()) {

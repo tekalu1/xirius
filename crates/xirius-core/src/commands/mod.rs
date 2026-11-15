@@ -56,6 +56,7 @@ mod menu;
 mod midi_edit;
 mod misc;
 mod note;
+mod note_source;
 mod note_value;
 pub(crate) mod overlap;
 mod prefs;
@@ -94,6 +95,7 @@ pub fn all() -> Vec<CommandDef> {
     v.extend(track::defs());
     v.extend(send_menu::defs());
     v.extend(sidechain::defs());
+    v.extend(note_source::defs());
     v.extend(samples::defs());
     v.extend(control::defs());
     v.extend(insert::defs());

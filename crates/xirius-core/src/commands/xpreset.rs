@@ -505,6 +505,7 @@ fn plugin_of(dev: &PresetDevice, name: &str, id: PluginId) -> Plugin {
         state: dev.state.clone(),
         isolation: Default::default(),
         sidechain: None,
+        note_source: None,
         preset: Some(name.to_string()),
     };
     x.fix_keys();

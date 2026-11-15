@@ -56,6 +56,7 @@ fn song(kind: PluginKind, uid: &str) -> Project {
         state: None,
         isolation: PluginIsolation::InProcess,
         sidechain: None,
+        note_source: None,
         preset: None,
     });
     p.tracks.insert(id, Arc::new(t));

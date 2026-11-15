@@ -29,6 +29,7 @@ fn effect(id: u64, format: &str, uid: &str, sidechain: Option<Sidechain>) -> Plu
         samples: Vec::new(),
         isolation: PluginIsolation::Dedicated,
         sidechain,
+        note_source: None,
         preset: None,
     }
 }

@@ -34,6 +34,7 @@ fn plugin(id: u64, uid: &str) -> Plugin {
         state: None,
         isolation: PluginIsolation::Dedicated,
         sidechain: None,
+        note_source: None,
         preset: None,
     }
 }

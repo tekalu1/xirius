@@ -100,6 +100,7 @@ fn prepare(s: &mut Studio, _: u8) {
                     state: None,
                     isolation: PluginIsolation::InProcess,
                     sidechain: None,
+                    note_source: None,
                     preset: None,
                 });
             }

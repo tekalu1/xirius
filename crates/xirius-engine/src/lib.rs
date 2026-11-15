@@ -26,6 +26,7 @@ pub mod midi_out;
 pub mod mixer;
 pub mod monitor;
 pub mod multi;
+pub mod note_input;
 mod parallel;
 pub mod performance;
 pub mod plugin;

@@ -353,6 +353,7 @@ pub(crate) fn plugin_value(x: &Plugin) -> Value {
         // Sidechain sources name this song's channels; a preset carries the
         // plug-in's settings, not the wiring around it (MIX-047).
         o.remove("sidechain");
+        o.remove("note_source");
     }
     v
 }
@@ -550,6 +551,7 @@ pub(crate) fn parse_plugin(n: usize, v: &Value, rows: &mut Vec<Adjust>) -> Optio
         state,
         isolation,
         sidechain: None,
+        note_source: None,
         // The device preset it was on (PLG-063); carried along like the samples.
         preset: o.get("preset").and_then(Value::as_str).map(str::to_string),
     })
@@ -643,6 +645,7 @@ mod tests {
             params: Default::default(),
             state: None,
             sidechain: None,
+            note_source: None,
             preset: None,
             samples: vec![
                 "Media/Imports/Kick.wav".into(),

@@ -57,6 +57,7 @@ fn song_with(
         state: None,
         isolation,
         sidechain: None,
+        note_source: None,
         preset: None,
     };
     t.inserts.push(plugin(PID, isolation));
