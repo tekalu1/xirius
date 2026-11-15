@@ -3,12 +3,15 @@ use std::collections::BTreeMap;
 use std::f64::consts::TAU;
 use std::sync::Arc;
 
-use xirius_core::id::{ClipId, Node, NoteId, PluginId, TrackId};
+use serde_json::json;
+use xirius_core::id::{ClipId, FolderId, Node, NoteId, PluginId, TrackId};
 use xirius_core::model::{
-    Clip, ClipBody, Note, NoteSource, Plugin, PluginIsolation, PluginKind, Project, Track,
-    TrackKind,
+    Clip, ClipBody, Folder, Frozen, Note, NoteSource, Plugin, PluginIsolation, PluginKind, Project,
+    Track, TrackKind,
 };
+use xirius_core::session::{RunOptions, Session};
 use xirius_session::build::Builder;
+use xirius_session::commands::{self, shared_registry};
 use xirius_session::export;
 use xirius_session::graph::Select;
 
@@ -188,4 +191,146 @@ fn voice_stem_uses_muted_guide_even_when_guide_audio_is_outside_scope() {
     .unwrap();
     let chromatic = pitch_at(&off.left[25_000..37_000], 245.0, 290.0);
     assert!((chromatic - 277.18).abs() < 6.0, "chromatic={chromatic}");
+}
+
+#[test]
+fn freezing_the_guide_does_not_change_the_vocal_stem() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = voice_file(dir.path());
+    let (mut project, voice, _) = song(&file);
+    let source = project
+        .tracks
+        .values()
+        .find(|t| t.kind == TrackKind::Instrument)
+        .unwrap()
+        .id;
+    let render = |p: &Project| {
+        export::render(
+            &mut Builder::new(48_000, None),
+            p,
+            Select::Track(voice),
+            0,
+            96_000,
+            0,
+        )
+        .unwrap()
+        .left
+    };
+    let before = render(&project);
+    Arc::make_mut(project.tracks.get_mut(&source).unwrap()).frozen = Some(Frozen {
+        file: file.to_string_lossy().into_owned(),
+        start: 0,
+    });
+    assert!(
+        before == render(&project),
+        "freeze preserves the guide notes"
+    );
+    Arc::make_mut(project.tracks.get_mut(&source).unwrap()).frozen = None;
+    assert!(
+        before == render(&project),
+        "unfreeze restores the same sound"
+    );
+}
+
+#[test]
+fn freezing_and_bouncing_the_receiving_track_keep_the_guided_pitch() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = voice_file(dir.path());
+    let (project, voice, _) = song(&file);
+    let mut session = Session::with_registry(project, shared_registry());
+    commands::attach(&mut session, Default::default());
+    session.save_as(dir.path().join("song")).unwrap();
+    let render = |s: &Session| {
+        export::render(
+            &mut Builder::new(48_000, s.dir().map(std::path::Path::to_path_buf)),
+            s.project(),
+            Select::All,
+            0,
+            96_000,
+            0,
+        )
+        .unwrap()
+        .left
+    };
+    let before = render(&session);
+    let guided = pitch_at(&before[25_000..37_000], 245.0, 290.0);
+    assert!((guided - 261.63).abs() < 6.0, "before={guided}");
+    let args = |id: TrackId| {
+        json!({"ids": [id.to_string()]})
+            .as_object()
+            .unwrap()
+            .clone()
+    };
+    commands::run(
+        &mut session,
+        None,
+        "track.freeze",
+        &args(voice),
+        &RunOptions::human(),
+    )
+    .unwrap();
+    let frozen = render(&session);
+    let frozen_pitch = pitch_at(&frozen[25_000..37_000], 245.0, 290.0);
+    assert!((frozen_pitch - 261.63).abs() < 6.0, "frozen={frozen_pitch}");
+    commands::run(
+        &mut session,
+        None,
+        "track.unfreeze",
+        &args(voice),
+        &RunOptions::human(),
+    )
+    .unwrap();
+    commands::run(
+        &mut session,
+        None,
+        "track.bounce",
+        &args(voice),
+        &RunOptions::human(),
+    )
+    .unwrap();
+    let bounced = render(&session);
+    let bounced_pitch = pitch_at(&bounced[25_000..37_000], 245.0, 290.0);
+    assert!(
+        (bounced_pitch - 261.63).abs() < 6.0,
+        "bounced={bounced_pitch}"
+    );
+}
+
+#[test]
+fn guide_inside_a_folder_still_reaches_the_vocal_stem() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = voice_file(dir.path());
+    let (mut project, voice, _) = song(&file);
+    let source = project
+        .tracks
+        .values()
+        .find(|t| t.kind == TrackKind::Instrument)
+        .unwrap()
+        .id;
+    let folder = FolderId(project.alloc());
+    project.folders.insert(
+        folder,
+        Folder {
+            id: folder,
+            name: "instruments".into(),
+            color: None,
+            bus: None,
+            made_bus: None,
+            children: vec![Node::Track(source)],
+        },
+    );
+    project.root.retain(|n| *n != Node::Track(source));
+    project.root.insert(0, Node::Folder(folder));
+    project.validate().unwrap();
+    let stem = export::render(
+        &mut Builder::new(48_000, None),
+        &project,
+        Select::Track(voice),
+        0,
+        96_000,
+        0,
+    )
+    .unwrap();
+    let guided = pitch_at(&stem.left[25_000..37_000], 245.0, 290.0);
+    assert!((guided - 261.63).abs() < 6.0, "guided={guided}");
 }
