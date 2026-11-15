@@ -294,11 +294,127 @@ fn ranges_report_the_exact_delay_and_unvoiced_sound_passes_unchanged() {
             *x = (state as f64 / u32::MAX as f64 * 0.2 - 0.1) as f32;
         }
         let (out, latency, _) = configured(rate, 512, &noise, &[("range", range)], &[]);
-        assert_eq!(latency, 4 * (rate / low).ceil() as u32);
+        let period = (rate / low).ceil() as u32;
+        assert_eq!(latency, (5 * period).div_ceil(2) + 1);
         let delay = latency as usize;
         assert_eq!(&out[..delay], &vec![0.0; delay]);
         assert_eq!(&out[delay..], &noise[..noise.len() - delay]);
     }
+}
+
+fn consonant_voice() -> (Vec<f32>, usize, usize, usize) {
+    let rate = 48_000.0;
+    let first_noise = 4_800;
+    let voice_start = 9_600;
+    let voice_end = 33_600;
+    let second_noise_end = 38_400;
+    let mut signal = vec![0.0; 48_000];
+    let mut state = 0x1234_5678u32;
+    for i in first_noise..voice_start {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        signal[i] = (state as f64 / u32::MAX as f64 * 0.2 - 0.1) as f32;
+    }
+    for (n, x) in signal[voice_start..voice_end].iter_mut().enumerate() {
+        let envelope = (n as f64 / 240.0).min(1.0).min((voice_end - voice_start - n) as f64 / 240.0);
+        *x = (0.4 * envelope * (TAU * 270.0 * n as f64 / rate).sin()) as f32;
+    }
+    for x in &mut signal[voice_end..second_noise_end] {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        *x = (state as f64 / u32::MAX as f64 * 0.2 - 0.1) as f32;
+    }
+    (signal, voice_start, voice_end, second_noise_end)
+}
+
+#[test]
+fn consonants_are_exactly_delayed_and_the_voice_keeps_its_last_thirty_ms() {
+    let (input, voice_start, voice_end, second_noise_end) = consonant_voice();
+    let (output, latency, _) = configured(48_000.0, 512, &input, &[], &[]);
+    let shift = latency as usize;
+    let join = 240; // 5 ms on each side of the voice/noise junction.
+    assert_eq!(
+        &output[shift + 4_800 + join..shift + voice_start - join],
+        &input[4_800 + join..voice_start - join]
+    );
+    assert_eq!(
+        &output[shift + voice_end + join..shift + second_noise_end - join],
+        &input[voice_end + join..second_noise_end - join]
+    );
+    let end = shift + voice_end - 300;
+    let pitch = estimate_hz(&output[end - 1_440..end], 48_000.0, 255.0, 285.0);
+    let target = 440.0 * 2f64.powf((61.0 - 69.0) / 12.0);
+    assert!((1200.0 * (pitch / target).log2()).abs() < 30.0);
+}
+
+#[test]
+fn a_step_in_pitch_reaches_the_output_at_the_same_source_time() {
+    let rate = 48_000.0;
+    let step = 19_200;
+    let mut phase = 0.0;
+    let input: Vec<f32> = (0..43_200)
+        .map(|i| {
+            phase += TAU * if i < step { 270.0 } else { 330.0 } / rate;
+            (0.4 * phase.sin()) as f32
+        })
+        .collect();
+    let (output, delay, _) = configured(rate, 512, &input, &[], &[]);
+    let mut first_high = None;
+    for center in (step - 2_400..step + 2_400).step_by(240) {
+        let at = center + delay as usize;
+        let hz = estimate_hz(&output[at - 480..at + 480], rate, 260.0, 345.0);
+        if hz > 300.0 {
+            first_high = Some(center);
+            break;
+        }
+    }
+    assert!(first_high.is_some_and(|at| at.abs_diff(step) <= 480), "step at {first_high:?}");
+}
+
+#[test]
+fn speed_preserves_fast_vibrato_but_fast_setting_flattens_it() {
+    let rate = 48_000.0;
+    let mut phase = 0.0;
+    let input: Vec<f32> = (0..72_000)
+        .map(|i| {
+            let cents = 30.0 + 40.0 * (TAU * 5.5 * i as f64 / rate).sin();
+            let hz = 261.625_565 * 2f64.powf(cents / 1200.0);
+            phase += TAU * hz / rate;
+            (0.4 * phase.sin()) as f32
+        })
+        .collect();
+    let mut depths = Vec::new();
+    for speed in [1.0, 200.0] {
+        let (mut device, handle) = stock::create("pitch-correction").unwrap();
+        for (id, plain) in [("scale", 1.0), ("speed", speed)] {
+            let spec = handle.def().param(id).unwrap().1;
+            assert!(handle.set(id, spec.to_norm(plain)));
+        }
+        handle.probe().watch(true);
+        device.prepare(&ProcessSetup { sample_rate: rate, max_block: 128, mode: RenderMode::Offline });
+        let mut cents = Vec::new();
+        for at in (0..input.len()).step_by(128) {
+            let end = (at + 128).min(input.len());
+            let mut left = input[at..end].to_vec();
+            let mut right = left.clone();
+            device.process(&mut AudioIo::new(&mut left, &mut right), &[]);
+            if at > 48_000 {
+                let hz = f64::from(handle.probe().pitch_view().1);
+                if hz > 0.0 {
+                    cents.push(1200.0 * (hz / 261.625_565).log2());
+                }
+            }
+        }
+        let mean = cents.iter().sum::<f64>() / cents.len() as f64;
+        let depth = (cents.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+            - cents.iter().copied().fold(f64::INFINITY, f64::min)) / 2.0;
+        assert!(mean.abs() < 8.0, "speed {speed}: mean {mean}");
+        depths.push(depth);
+    }
+    assert!(depths[1] >= 28.0, "slow depth {}", depths[1]);
+    assert!(depths[0] <= 8.0, "fast depth {}", depths[0]);
 }
 
 #[test]
