@@ -37,7 +37,7 @@ pub(super) fn listed(songs: &[Seed]) -> (Studio, Geometry, tempfile::TempDir) {
     (s, g, tmp)
 }
 
-fn dir_of(tmp: &tempfile::TempDir, name: &str) -> PathBuf {
+pub(super) fn dir_of(tmp: &tempfile::TempDir, name: &str) -> PathBuf {
     tmp.path().join("keep").join("drafts").join(name)
 }
 
