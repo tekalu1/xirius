@@ -111,7 +111,7 @@ impl Studio {
         if let Some(previous) = self.live_midi.opening_error.take()
             && self.error.as_ref() == Some(&previous)
         {
-            self.error = None;
+            self.clear_error();
         }
         self.live_midi.resume = false;
         self.live_midi.retry_at = None;

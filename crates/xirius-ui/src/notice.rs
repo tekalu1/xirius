@@ -211,6 +211,13 @@ impl Studio {
         self.surface_error = Some((id, text));
     }
 
+    /// Both fault lines out: what the main window's `error` going means holds for the
+    /// line a detached window's surface keeps too (UI-353).
+    pub(crate) fn clear_error(&mut self) {
+        self.error = None;
+        self.surface_error = None;
+    }
+
     /// The fault line the surface being drawn has to show (UI-353): a device window's
     /// own of its drops, or the main window's `error`.
     pub(crate) fn error_shown(&self) -> Option<&str> {

@@ -1738,7 +1738,7 @@ impl Studio {
                 self.transport.loss.receive(&data, &self.project(), rate);
                 self.transport.finished_take = None;
                 self.transport.end_take();
-                self.error = None;
+                self.clear_error();
                 self.after_edit();
             }
             Err(e) => self.error = Some(e),
@@ -1836,7 +1836,7 @@ impl Studio {
                     self.track_browser_answer(command, &data);
                     return true;
                 }
-                self.error = None;
+                self.clear_error();
                 self.after_edit();
                 if let Some(args) = &preset {
                     self.chain_preset_ran(command, args, &data);
@@ -1919,7 +1919,7 @@ impl Studio {
         }
         // What was said while the player started is over once it started (or gave up).
         if self.error.as_deref() == Some(PREPARING) {
-            self.error = None;
+            self.clear_error();
         }
         let continued = self.poll_macro();
         if self.saving.is_some() || self.opening.is_some() {
@@ -2070,7 +2070,7 @@ impl Studio {
         match tried {
             Ok(()) => {
                 if self.error.is_some() && shown {
-                    self.error = None;
+                    self.clear_error();
                 }
                 self.tell(reopened.into());
                 true

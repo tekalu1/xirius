@@ -589,7 +589,7 @@ impl Studio {
         }
         self.popup = None;
         self.palette = None;
-        self.error = None;
+        self.clear_error();
         self.roll.cancel();
         self.pc_keys_release();
         self.sound_roll_audition();

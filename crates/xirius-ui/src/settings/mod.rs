@@ -819,7 +819,7 @@ impl Studio {
     pub fn open_settings(&mut self, section: Section) {
         self.popup = None;
         self.palette = None;
-        self.error = None;
+        self.clear_error();
         self.browser.typing = false;
         self.poll_io();
         // The plugin page reads the scan's list; it is read from the cache once.

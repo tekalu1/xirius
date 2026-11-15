@@ -328,7 +328,7 @@ impl Studio {
             }
             return false;
         };
-        self.error = None;
+        self.clear_error();
         let t = v.track;
         let Some(w) = self.macro_pad.as_mut() else {
             return false;

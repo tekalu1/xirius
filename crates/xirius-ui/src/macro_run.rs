@@ -32,7 +32,7 @@ impl Studio {
             self.error = Some(format!("マクロ「{name}」に手順がありません"));
             return true;
         }
-        self.error = None;
+        self.clear_error();
         // A wheel's step that is still open must not be closed with the macro's group (P3-7 of
         // review 15).
         self.close_wheel_group();

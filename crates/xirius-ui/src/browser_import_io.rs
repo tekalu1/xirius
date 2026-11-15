@@ -107,7 +107,7 @@ impl Studio {
                             }
                         }
                         if ok {
-                            self.error = None;
+                            self.clear_error();
                             self.after_edit();
                             let project = self.project();
                             let made = project.tracks.values().find_map(|t| {

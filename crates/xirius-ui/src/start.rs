@@ -363,7 +363,7 @@ impl Studio {
     ) -> Option<xirius_core::id::TrackId> {
         match made {
             Ok(data) => {
-                self.error = None;
+                self.clear_error();
                 self.after_edit();
                 data["id"].as_str()?.parse().ok()
             }

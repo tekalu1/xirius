@@ -520,7 +520,7 @@ impl Studio {
                 })
                 .unwrap_or_else(|| "入力値が無効".into());
             self.palette.as_mut().unwrap().form.as_mut().unwrap().error = Some(label);
-            self.error = None;
+            self.clear_error();
             return true;
         }
         if on_screen(command) {
@@ -548,7 +548,7 @@ impl Studio {
             .and_then(|palette| palette.form.as_mut())
         {
             form.error = Some("適用できません".into());
-            self.error = None;
+            self.clear_error();
         }
         true
     }
@@ -598,11 +598,11 @@ impl Studio {
                 palette.form = Some(form);
                 palette.replace_result_fields(fields);
                 self.palette = Some(palette);
-                self.error = None;
+                self.clear_error();
                 true
             }
             Err(error) => {
-                self.error = None;
+                self.clear_error();
                 if let Some(form) = self.palette.as_mut().and_then(|p| p.form.as_mut()) {
                     form.error = Some(format!("取得できません: {error}"));
                 }

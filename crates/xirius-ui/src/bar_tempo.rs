@@ -162,7 +162,7 @@ impl Studio {
         // A press the bar takes leaves the inspector's field (UI-312).
         self.field_blur();
         self.popup = None;
-        self.error = None;
+        self.clear_error();
         self.bar_edit.focus = true;
         if clicks >= 2 {
             self.bar_edit.drag = None;

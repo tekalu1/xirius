@@ -188,7 +188,7 @@ impl Studio {
                                     .adopt_disk_project(disk, &xirius_core::command::Author::Human)
                                 {
                                     Ok(Some((n, _))) => {
-                                        self.error = None;
+                                        self.clear_error();
                                         self.after_edit();
                                         let geometry = g(self);
                                         self.rebuild(&geometry);

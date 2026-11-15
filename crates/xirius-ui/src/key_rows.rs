@@ -33,7 +33,7 @@ impl Studio {
                 let to = args.get("to").and_then(Value::as_str).unwrap_or_default();
                 match xirius_core::nav::destination(&self.project(), self.playhead, to) {
                     Ok(at) => {
-                        self.error = None;
+                        self.clear_error();
                         // design-lint: allow(ui-blocking-io) PRJ-031: transport playhead seek updates memory and submits an engine command.
                         self.seek(at);
                         Some(true)
@@ -136,7 +136,7 @@ impl Studio {
             return false;
         };
         let extend = args.get("extend").and_then(Value::as_bool).unwrap_or(false);
-        self.error = None;
+        self.clear_error();
         if !self.arrange.focus
             && let Some(ctx) = self.roll_input(g)
         {

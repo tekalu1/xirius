@@ -361,7 +361,7 @@ impl Studio {
 
     /// A press on a handle. False when it is finished (a point erased).
     pub(super) fn fx_down(&mut self, d: &Drag, t: TrackId, c: ClipId, part: FxPart) -> bool {
-        self.error = None;
+        self.clear_error();
         if let FxPart::Point(index) = part
             && (d.mods.alt || d.tool == Tool::Eraser)
         {

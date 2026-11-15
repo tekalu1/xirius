@@ -106,7 +106,7 @@ impl Studio {
             self.error = Some(e);
             return true;
         }
-        self.error = None;
+        self.clear_error();
         self.poll_io();
         if from_entry && self.device_has_inputs() {
             self.start_audio(g);
@@ -120,7 +120,7 @@ impl Studio {
         let p = self.project();
         match self.transport.test_tone(&p, self.song.dir()) {
             Ok(_) => {
-                self.error = None;
+                self.clear_error();
                 self.rig_tone = true;
             }
             Err(e) => self.error = Some(e),

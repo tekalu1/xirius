@@ -432,7 +432,7 @@ impl Studio {
         self.keep_leaving();
         let closing = self.closing();
         self.song = Song::sample_after(&self.song);
-        self.error = None;
+        self.clear_error();
         self.song_replaced(closing);
     }
 
