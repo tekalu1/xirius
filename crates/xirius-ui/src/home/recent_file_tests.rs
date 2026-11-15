@@ -2,7 +2,7 @@
 //! hand here (a folder that is gone, one with nothing in it, a song that is cut short, entries
 //! of the wrong shape), the way a file edited outside the app or left by a crash looks.
 
-use super::tests::{home, labels, with_device};
+use super::tests::{labels, with_device};
 use super::*;
 use crate::song::Song;
 use serde_json::json;
@@ -100,8 +100,6 @@ fn one_bad_entry_leaves_the_other_rows_listed() {
         rows.contains(&crate::song::SAMPLE_NAME.to_string()),
         "{rows:?}"
     );
-    eprintln!("rows: {rows:?}");
-    let _ = home;
 }
 
 #[test]
