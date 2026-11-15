@@ -72,23 +72,53 @@ impl Windows {
     /// cursor there, not the one that holds the mouse's events while a drag's button is
     /// down. `pos` is where the event said it is (main-local); the answer for an
     /// independent window comes back in its own coordinates.
-    pub(crate) fn over(&self, main: &Window, pos: (f32, f32), cx: &mut App) -> Over {
+    pub(crate) fn over(&self, main: &Window, _pos: (f32, f32), cx: &mut App) -> Over {
         let handles = self.all();
-        #[cfg(windows)]
+        // A headless test's windows are not the OS's, so its build takes the bounds way
+        // on every OS.
+        #[cfg(all(windows, not(test)))]
         {
-            let _ = pos;
             self.over_at_cursor(main, &handles, cx)
         }
-        #[cfg(not(windows))]
+        #[cfg(any(not(windows), test))]
         {
-            self.over_by_bounds(main, pos, &handles, cx)
+            self.over_by_bounds(main, _pos, &handles, cx)
         }
+    }
+
+    /// Each tracked window's frame for the position resolution: `screen` answers the
+    /// client area's rectangle and how many screen units one of the window's logical
+    /// pixels is, in the units `at` comes in.
+    #[cfg(any(not(windows), test))]
+    fn frames(
+        handles: &[(Kind, WindowHandle<DeviceWindow>)],
+        cx: &mut App,
+        mut screen: impl FnMut(&Window) -> (crate::studio::Rect, f32),
+    ) -> Vec<crate::independent::Frame> {
+        handles
+            .iter()
+            .filter_map(|(kind, handle)| {
+                handle
+                    .update(cx, |_, window, _| {
+                        let (rect, scale) = screen(window);
+                        crate::independent::Frame {
+                            kind: *kind,
+                            rect,
+                            scale,
+                        }
+                    })
+                    .ok()
+            })
+            .collect()
     }
 
     /// Windows: the OS's own frontmost-window answer at the cursor (`WindowFromPoint`),
     /// so a device window behind the main one, or behind another app's, is not mistaken
-    /// for being under it.
-    #[cfg(windows)]
+    /// for being under it. The position inside it comes from the cursor's place on the
+    /// screen every time (`ScreenToClient` over the window's scale), never from
+    /// `Window::mouse_position` — mouse events go to the window that owns the drag, so
+    /// what that window remembers is the stale place its pointer last left.
+    #[cfg(all(windows, not(test)))]
     fn over_at_cursor(
         &self,
         main: &Window,
@@ -96,6 +126,7 @@ impl Windows {
         cx: &mut App,
     ) -> Over {
         use windows_sys::Win32::Foundation::POINT;
+        use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
         use windows_sys::Win32::UI::WindowsAndMessaging::{
             GA_ROOT, GetAncestor, GetCursorPos, WindowFromPoint,
         };
@@ -112,30 +143,56 @@ impl Windows {
         }
         // SAFETY: `top` is a live HWND `WindowFromPoint` just returned.
         let root = unsafe { GetAncestor(top, GA_ROOT) } as isize;
+        // Each tracked window's OS handle, and its client area in the physical pixels
+        // `GetCursorPos` answers with.
+        let mut hwnds = Vec::with_capacity(handles.len());
+        let mut frames = Vec::with_capacity(handles.len());
         for (kind, handle) in handles {
-            let hit = handle
+            let Some(frame) = handle
                 .update(cx, |_, window, _| {
-                    (hwnd_of(window) == root).then(|| {
-                        let at = window.mouse_position();
-                        (f32::from(at.x), f32::from(at.y))
-                    })
+                    let scale = window.scale_factor();
+                    let mut o = POINT { x: 0, y: 0 };
+                    // SAFETY: `hwnd` is this process's live window; `o` out-points it.
+                    unsafe { ClientToScreen(hwnd_of(window) as *mut core::ffi::c_void, &mut o) };
+                    let size = window.bounds().size;
+                    (
+                        hwnd_of(window),
+                        crate::independent::Frame {
+                            kind: *kind,
+                            rect: crate::studio::Rect::new(
+                                o.x as f32,
+                                o.y as f32,
+                                f32::from(size.width) * scale,
+                                f32::from(size.height) * scale,
+                            ),
+                            scale,
+                        },
+                    )
                 })
                 .ok()
-                .flatten();
-            if let Some(at) = hit {
-                return Over::Window(*kind, at);
-            }
+            else {
+                continue;
+            };
+            hwnds.push(frame.0);
+            frames.push(frame.1);
         }
-        if hwnd_of(main) == root {
-            Over::Main
+        let top = if hwnd_of(main) == root {
+            crate::independent::Top::Main
         } else {
-            Over::Elsewhere
-        }
+            match hwnds.iter().position(|h| *h != 0 && *h == root) {
+                Some(i) => crate::independent::Top::Window(i),
+                None => crate::independent::Top::Foreign,
+            }
+        };
+        crate::independent::resolve_over((at.x as f32, at.y as f32), top, &frames)
     }
 
-    /// Where there is no frontmost-window query to the OS (macOS): the bounds the open
-    /// windows last reported answer instead.
-    #[cfg(not(windows))]
+    /// Where there is no frontmost-window query to the OS (macOS, headless tests): the
+    /// bounds the open windows last reported answer instead — an independent window in
+    /// front of the main one wins the point it covers. `pos` is inside the main
+    /// window's body; the screen position it means has the window's origin and its top
+    /// bar added back.
+    #[cfg(any(not(windows), test))]
     fn over_by_bounds(
         &self,
         main: &Window,
@@ -143,29 +200,26 @@ impl Windows {
         handles: &[(Kind, WindowHandle<DeviceWindow>)],
         cx: &mut App,
     ) -> Over {
-        let at = point(
-            main.bounds().origin.x + px(pos.0),
-            main.bounds().origin.y + px(pos.1),
+        let rect = |window: &Window| {
+            let b = window.bounds();
+            (
+                crate::studio::Rect::new(
+                    f32::from(b.origin.x),
+                    f32::from(b.origin.y),
+                    f32::from(b.size.width),
+                    f32::from(b.size.height),
+                ),
+                1.0,
+            )
+        };
+        let frames = Self::frames(handles, cx, rect);
+        let (main_rect, _) = rect(main);
+        let at = (
+            main_rect.x + pos.0,
+            main_rect.y + pos.1 + xirius_design::Layout::TOP_BAR_H,
         );
-        for (kind, handle) in handles {
-            let hit = handle
-                .update(cx, |_, window, _| {
-                    window.bounds().contains(&at).then(|| {
-                        let at = window.mouse_position();
-                        (f32::from(at.x), f32::from(at.y))
-                    })
-                })
-                .ok()
-                .flatten();
-            if let Some(at) = hit {
-                return Over::Window(*kind, at);
-            }
-        }
-        if main.bounds().contains(&at) {
-            Over::Main
-        } else {
-            Over::Elsewhere
-        }
+        let top = crate::independent::top_by_bounds(at, main_rect, &frames);
+        crate::independent::resolve_over(at, top, &frames)
     }
 
     /// Repaints the window `kind` is, when it is still open (UI-353): what a drag lit
@@ -563,7 +617,7 @@ pub(crate) fn with_surface<R>(
 }
 
 /// The OS's own handle of a GPUI window, as `WindowFromPoint` reports it.
-#[cfg(windows)]
+#[cfg(all(windows, not(test)))]
 fn hwnd_of(window: &Window) -> isize {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     let Ok(h) = HasWindowHandle::window_handle(window) else {
