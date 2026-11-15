@@ -168,3 +168,85 @@ fn a_right_press_on_a_pads_knob_offers_its_lane_and_makes_it() {
     assert_eq!(lanes, [format!("param:{id}:{shown}.volume")]);
     let _ = (body(&s, &g, t), plugin(&s, t));
 }
+
+/// Every row of the open list, by the target it picks.
+fn listed(s: &mut Studio, t: TrackId) -> Vec<String> {
+    let list = open_list(s, t);
+    list.visible().iter().map(|r| r.to().to_string()).collect()
+}
+
+fn file_key_of(id: PluginId, key: &str) -> String {
+    format!("param:{id}:{key}")
+}
+
+#[test]
+fn the_target_list_leaves_out_the_per_file_values() {
+    for device in ["Drum Kit", "Sampler"] {
+        let (mut s, _, t, id) = window(device);
+        if device == "Drum Kit" {
+            fill(&mut s, id, 0);
+            fill(&mut s, id, 1);
+        } else {
+            let file = json!({ "file": "Kick.wav" });
+            let args = json!({ "id": id.to_string(), "files": [file] });
+            assert!(s.run_command("plugin.samples.add", args), "{:?}", s.error);
+        }
+        // The song keeps which file sits in which pad, and each file's own range.
+        for key in ["file1.pad", "file2.pad", "file1.start", "file2.gain"] {
+            let args = json!({"id": id.to_string(), "param": key, "value": 0.5});
+            assert!(
+                s.run_command("plugin.param.set", args),
+                "{device} {key}: {:?}",
+                s.error
+            );
+        }
+        let kept = s.project().tracks[&t]
+            .inserts
+            .iter()
+            .filter(|x| x.id == id)
+            .flat_map(|x| x.params.keys())
+            .any(|k| k.starts_with("file"));
+        assert!(kept, "{device}: the song keeps the file value");
+        let rows = listed(&mut s, t);
+        assert!(
+            !rows.iter().any(|r| r.contains(":file")),
+            "{device}: {rows:?}"
+        );
+        // A value of the device itself stays.
+        assert!(
+            rows.contains(&file_key_of(id, "volume")),
+            "{device}: {rows:?}"
+        );
+    }
+}
+
+#[test]
+fn the_target_list_keeps_the_pads_with_a_sound() {
+    let (mut s, _, t, id) = window("Drum Kit");
+    fill(&mut s, id, 0);
+    let rows = listed(&mut s, t);
+    assert!(
+        rows.contains(&target(id, 0, "volume").to_string()),
+        "{rows:?}"
+    );
+}
+
+#[test]
+fn a_lane_of_a_per_file_value_still_loads_and_still_shows_in_the_list() {
+    let (mut s, _, t, id) = window("Drum Kit");
+    fill(&mut s, id, 0);
+    let key = file_key_of(id, "file1.pad");
+    let args = json!({ "track": t.to_string(), "target": key });
+    assert!(s.run_command("auto.lane.add", args), "{:?}", s.error);
+    assert_eq!(s.project().tracks[&t].automation.len(), 1);
+    let rows = listed(&mut s, t);
+    assert!(
+        rows.iter().any(|r| r.ends_with(&key)),
+        "the lane's own row is kept: {rows:?}"
+    );
+    assert!(
+        !rows.iter().any(|r| r.contains(":file2.")),
+        "no other file's row: {rows:?}"
+    );
+    assert_eq!(s.project().tracks[&t].automation.len(), 1);
+}

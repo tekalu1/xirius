@@ -586,6 +586,15 @@ pub fn value_text(target: &AutoTarget, v: f64) -> String {
     }
 }
 
+/// Whether a key is a sample file's value: `file<n>.<id>`.
+fn is_file_key(key: &str) -> bool {
+    key.split_once('.').is_some_and(|(head, _)| {
+        head.get(..4)
+            .is_some_and(|h| h.eq_ignore_ascii_case("file"))
+            && head[4..].parse::<usize>().is_ok()
+    })
+}
+
 /// Everything a track's lanes can move, in the order of the target list.
 pub fn targets_of(t: &Track) -> Vec<AutoTarget> {
     let mut out = vec![AutoTarget::Volume, AutoTarget::Pan, AutoTarget::Mute];
@@ -632,6 +641,11 @@ pub fn targets_of(t: &Track) -> Vec<AutoTarget> {
                 .params
                 .keys()
                 .filter(|k| {
+                    // Which file sits in which pad, and a file's own range, are the device's
+                    // bookkeeping, not a knob to move; a lane a song already has still shows.
+                    if is_file_key(k) {
+                        return false;
+                    }
                     // A value kept for a pad with no sound is not a lane to offer.
                     let Some((pad, _)) = pad_param(k) else {
                         return true;
