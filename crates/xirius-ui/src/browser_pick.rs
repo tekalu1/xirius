@@ -157,15 +157,23 @@ impl Studio {
             return self.unlight_window_drag();
         }
         let shift = crate::os_shift::held(shift);
-        crate::device_window::with_surface(self, id, |s, g| {
+        let lit = crate::device_window::with_surface(self, id, |s, g| {
             s.instruments.drop_layers = shift;
             s.window_drag(g, x, y, &[path], shift)
-        })
+        });
+        if lit {
+            self.browser.lit_window = true;
+        }
+        lit
     }
 
     /// The drop's plan on a device window goes: the drag left it, or ended on it. True
-    /// when something shown went.
+    /// when something shown went. Only a light a row's drag lit goes out — files from
+    /// the OS's file window light the same fields and theirs stays (UI-353).
     pub(crate) fn unlight_window_drag(&mut self) -> bool {
+        if !std::mem::take(&mut self.browser.lit_window) {
+            return false;
+        }
         let changed = self.instruments.preview.is_some()
             || self.instruments.drop_on.is_some()
             || self.instruments.dragged != Default::default();
@@ -178,6 +186,7 @@ impl Studio {
 
     /// Letting go of a held file row: where the frontmost window under the pointer takes
     /// it (UI-353) — a device window's samples, the arrangement's lanes, or nowhere.
+    /// The drag over, `over` stands for a fresh pointer again.
     pub fn file_up(&mut self, g: &Geometry, x: f32, y: f32, shift: bool) -> bool {
         let Some(d) = self.browser.file_drag.take() else {
             return false;
@@ -203,6 +212,7 @@ impl Studio {
             }
         }
         self.unlight_window_drag();
+        self.over = Over::Main;
         true
     }
 

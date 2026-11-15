@@ -1013,7 +1013,7 @@ impl Studio {
         let Some(part) = part_at(&v, x, y) else {
             return true;
         };
-        self.error = None;
+        self.clear_error();
         let Some(w) = self.channel.as_mut() else {
             return false;
         };
@@ -1477,6 +1477,12 @@ impl Studio {
         }
         self.macro_up();
         self.mixer.bar_grab = None;
+        // A browser row's drag ends with the button gone too (UI-353): what it lit on a
+        // window goes out, and `over` stands for a fresh pointer again.
+        self.browser.file_drag = None;
+        self.browser.drag = None;
+        self.unlight_window_drag();
+        self.over = crate::independent::Over::Main;
     }
 
     pub fn channel_up(&mut self, g: &Geometry) -> bool {

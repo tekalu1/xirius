@@ -370,6 +370,10 @@ pub struct Browser {
     pub drag: Option<crate::browser_inst::LibDrag>,
     /// A file row being dragged out of the list (UI-046).
     pub file_drag: Option<crate::browser_pick::FileDrag>,
+    /// The drop's plan a row's drag lit on an independent window (UI-353): only a row's
+    /// light is put out by `unlight_window_drag` — files from the OS's file window lit
+    /// theirs the same way and it is not a row's to take.
+    pub lit_window: bool,
     /// Where the peaks of files outside the song go instead of the user's store (a script's).
     pub peak_store: Option<PathBuf>,
     closed_groups: HashSet<String>,
@@ -702,6 +706,7 @@ impl Browser {
             show_hidden: false,
             drag: None,
             file_drag: None,
+            lit_window: false,
             peak_store: None,
             closed_groups: HashSet::new(),
             places: Vec::new(),

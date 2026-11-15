@@ -160,7 +160,9 @@ impl Studio {
         let Some(d) = self.browser.drag.take() else {
             return false;
         };
-        if self.over != crate::independent::Over::Main {
+        // The drag over, `over` stands for a fresh pointer again (UI-353).
+        let over = std::mem::replace(&mut self.over, crate::independent::Over::Main);
+        if over != crate::independent::Over::Main {
             return true;
         }
         if let Some(held) = d.preset.as_ref().filter(|_| d.moved) {
