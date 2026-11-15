@@ -8547,6 +8547,7 @@ phase = "v1.1"
 source = "pitch-20261116/report.md § 1 ; pitch-20261116/report.md § 3"
 done_when = "Pitch Correction のノート送り元をモデル、コマンド、undo、エンジンのインサート経路に通し、遅れを揃える。MIX-047 の音声サイドチェーンとは別の経路とし、PLG-014 の MIDI FX（ノートを加工する機器）とは重ねない"
 after = ["PLG-076"]
+status = "done"
 
 [[item]]
 id = "UI-359"
