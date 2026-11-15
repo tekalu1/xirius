@@ -3774,8 +3774,11 @@ mod tests {
             choose(&mut s, Action::AddTrack(kind));
             assert!(s.popup.is_none());
             assert_eq!(s.song.steps(), n, "{kind}");
-            assert_eq!(s.tree.rows.len(), rows + 1, "{kind}");
-            let added = if kind == "folder" { 0 } else { 1 };
+            // the folder's row and the row of its bus
+            let row_count = if kind == "folder" { 2 } else { 1 };
+            assert_eq!(s.tree.rows.len(), rows + row_count, "{kind}");
+            // a folder comes with a bus of its name
+            let added = 1;
             assert_eq!(s.project().tracks.len(), tracks + added, "{kind}");
         }
         // ファイルから… asks the OS's file window for files (UI-017).

@@ -316,7 +316,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         edit(
             "track.move",
-            "トラックやフォルダーを移動します。--into でフォルダーの中へ（root で最上位へ）、--out で 1 つ上の階層へ、--by で同じ階層の中で上下に移動",
+            "トラックやフォルダーを移動します。--into でフォルダーの中へ（root で最上位へ）、--out で 1 つ上の階層へ、--by で同じ階層の中で上下に移動。フォルダーと一緒に作ったバスは、フォルダーのすぐ下に付いて動きます",
             vec![
                 ArgDef::ids(IdKind::Node, "移動するトラックかフォルダー"),
                 ArgDef::text("into", "移動先のフォルダーの ID または root"),
@@ -697,13 +697,13 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         edit(
             "folder.add",
-            "フォルダーを追加します（入れ子にでき、バスに接続できます。フォルダー自体は音を出しません）",
+            "フォルダーを追加します。同じ名前のバスがフォルダーのすぐ下にでき、フォルダーに接続されます（入れ子にでき、フォルダー自体は音を出しません。1 回の取り消しで両方とも元に戻ります）",
             where_args(),
             add_folder,
         ),
         edit(
             "folder.rename",
-            "フォルダーの名前を変更します",
+            "フォルダーの名前を変更します（フォルダーと一緒に作ったバスが同じ名前のままなら、バスの名前も変わります）",
             vec![
                 ArgDef::id("id", IdKind::Folder, "フォルダー").req(),
                 ArgDef::text("name", "新しい名前").req(),
@@ -711,7 +711,13 @@ pub(super) fn defs() -> Vec<CommandDef> {
             |p, _, a| {
                 let id: FolderId = a.id("id")?;
                 let name = name_arg(a)?;
+                // the bus made with the folder keeps its name until it is named on its own
+                let old = p.folder(id)?.name.clone();
+                let bus = p.own_bus(id).filter(|b| p.tracks[b].name == old);
                 p.folder_mut(id)?.name = name.clone();
+                if let Some(b) = bus {
+                    p.track_mut(b)?.name = name.clone();
+                }
                 Ok(Output::msg(format!(
                     "{id} の名前を「{name}」に変更しました"
                 )))
@@ -719,7 +725,7 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         destroy(
             "folder.delete",
-            "フォルダーを削除します。中身は 1 つ上の階層へ移動します（--with-tracks で中のトラックごと削除）",
+            "フォルダーを削除します。中身は 1 つ上の階層へ移動します（--with-tracks で中のトラックごと削除）。フォルダーと一緒に作ったバスは、ほかで使われていなければ一緒に消えます",
             vec![
                 ArgDef::id("id", IdKind::Folder, "フォルダー").req(),
                 ArgDef::flag("with-tracks", "中のトラックとフォルダーも削除する"),
@@ -752,15 +758,14 @@ pub(super) fn defs() -> Vec<CommandDef> {
         ),
         edit(
             "folder.bus.add",
-            "新しいバスを作成し、フォルダーをそのバスに接続します（1 回の取り消しで両方とも元に戻ります）",
+            "新しいバスを作成し、フォルダーをそのバスに接続します（1 回の取り消しで両方とも元に戻ります）。バスはフォルダーの行のすぐ下に作り、フォルダーと一緒に動き、フォルダーを消すと（ほかで使われていなければ）一緒に消えます",
             vec![
                 ArgDef::id("id", IdKind::Folder, "フォルダー").req(),
-                ArgDef::text("name", "バスの名前（省略時は自動で付けます）"),
+                ArgDef::text("name", "バスの名前（省略時はフォルダーと同じ名前）"),
                 ArgDef::text(
                     "into",
-                    "バスの追加先のフォルダーの ID（root または省略時は最上位）",
-                )
-                .default(json!("root")),
+                    "バスの追加先のフォルダーの ID（root で最上位。省略時はフォルダーのすぐ下）",
+                ),
             ],
             add_folder_bus,
         ),
@@ -1202,7 +1207,34 @@ fn set_midi_out(p: &mut Project, a: &Args, port: &str) -> CmdResult<Output> {
     )))
 }
 
-fn move_nodes(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
+/// A moved folder takes the bus made with it along, to the row right under it.
+fn move_nodes(p: &mut Project, cx: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
+    let nodes = node_ids(p, a)?;
+    let followers: Vec<(FolderId, TrackId)> = nodes
+        .iter()
+        .filter_map(|n| match n {
+            Node::Folder(f) => p.attached_bus(*f).map(|b| (*f, b)),
+            Node::Track(_) => None,
+        })
+        .filter(|(_, b)| !nodes.contains(&Node::Track(*b)))
+        .collect();
+    // `--by` steps over rows, so folder and bus step together; the others are placed by index
+    // among the rows that stay, and the bus is put under the folder afterwards
+    if a.opt_i64("by").is_some() {
+        for (_, b) in &followers {
+            p.detach(Node::Track(*b));
+        }
+    }
+    let out = move_rows(p, cx, a)?;
+    for (f, b) in followers {
+        p.detach(Node::Track(b));
+        let (parent, i) = p.find_node(Node::Folder(f)).expect("in the column");
+        p.children_mut(parent).insert(i + 1, Node::Track(b));
+    }
+    Ok(out)
+}
+
+fn move_rows(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
     let nodes = node_ids(p, a)?;
     let (into, by, out) = (a.opt_str("into"), a.opt_i64("by"), a.flag("out"));
     if usize::from(into.is_some()) + usize::from(by.is_some()) + usize::from(out) != 1 {
@@ -1366,18 +1398,52 @@ fn add_send_to_new_bus(p: &mut Project, cx: &EditCtx<'_>, a: &Args) -> CmdResult
 
 fn add_folder_bus(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
     let f: FolderId = a.id("id")?;
-    p.folder_mut(f)?;
-    let bus = add_track(p, a, TrackKind::Bus)?;
-    let to: TrackId = bus.data["id"]
-        .as_str()
-        .and_then(|id| id.parse().ok())
-        .ok_or_else(|| CmdError::invalid("バスを作成できませんでした"))?;
-    p.folder_mut(f)?.bus = Some(to);
+    let folder_name = p.folder(f)?.name.clone();
+    let name = match a.opt_str("name").map(str::trim).filter(|n| !n.is_empty()) {
+        Some(n) => n.to_string(),
+        None => folder_name,
+    };
+    let to = match a.opt_str("into") {
+        // a place of its own: the end of that folder, not under the folder's row
+        Some(_) => {
+            let parent = parent_arg(p, a, "into")?;
+            let to = new_bus(p, name);
+            insert_at(p, parent, None, Node::Track(to))?;
+            link_made_bus(p, f, to);
+            to
+        }
+        None => make_folder_bus(p, f, name),
+    };
     let name = &p.track(to)?.name;
     Ok(Output::with(
         format!("バス「{name}」 {to} を作成し、{f} を接続しました"),
         json!({ "id": to.to_string(), "folder": f.to_string() }),
     ))
+}
+
+/// A bus that is in the song but not yet in the column.
+fn new_bus(p: &mut Project, name: String) -> TrackId {
+    let id = TrackId(p.alloc());
+    let mut track = Track::new(id, TrackKind::Bus, name);
+    track.color = Some(p.next_track_color());
+    p.tracks.insert(id, Arc::new(track));
+    id
+}
+
+/// The folder plays to `bus`, and the bus is the one made with it.
+fn link_made_bus(p: &mut Project, f: FolderId, bus: TrackId) {
+    let folder = p.folders.get_mut(&f).expect("folder exists");
+    folder.bus = Some(bus);
+    folder.made_bus = Some(bus);
+}
+
+/// Makes a bus under the folder's row, in the same list, and connects the folder to it.
+pub(super) fn make_folder_bus(p: &mut Project, f: FolderId, name: String) -> TrackId {
+    let bus = new_bus(p, name);
+    let (parent, i) = p.find_node(Node::Folder(f)).expect("in the column");
+    p.children_mut(parent).insert(i + 1, Node::Track(bus));
+    link_made_bus(p, f, bus);
+    bus
 }
 
 fn set_send(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
@@ -1785,11 +1851,16 @@ fn add_folder(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
             name: name.clone(),
             color: None,
             bus: None,
+            made_bus: None,
             children: Vec::new(),
         },
     );
     insert_at(p, parent, a.opt_i64("index"), Node::Folder(id))?;
-    Ok(created(&format!("フォルダー「{name}」"), id))
+    let bus = make_folder_bus(p, id, name.clone());
+    Ok(Output::with(
+        format!("フォルダー「{name}」 {id} とバス {bus} を作成しました"),
+        json!({ "id": id.to_string(), "bus": bus.to_string() }),
+    ))
 }
 
 pub(super) fn delete_folder(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdResult<Output> {
@@ -1807,6 +1878,7 @@ pub(super) fn delete_folder(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdRe
             out.push(f);
         }
         collect(p, id, &mut folders);
+        let made: Vec<TrackId> = folders.iter().filter_map(|f| p.own_bus(*f)).collect();
         p.detach(Node::Folder(id));
         for t in &tracks {
             // out of the column first, so `delete_track` finds nothing to detach twice
@@ -1815,17 +1887,35 @@ pub(super) fn delete_folder(p: &mut Project, _: &EditCtx<'_>, a: &Args) -> CmdRe
         for f in &folders {
             p.folders.remove(f);
         }
+        let buses = remove_unused_buses(p, &made)?;
         return Ok(Output::msg(format!(
-            "フォルダーと {} トラックを削除しました",
-            tracks.len()
+            "フォルダーと {} トラックを削除しました{}",
+            tracks.len() + buses,
+            if buses > 0 {
+                "（一緒に作ったバスを含む）"
+            } else {
+                ""
+            }
         )));
     }
+    let made: Vec<TrackId> = p.own_bus(id).into_iter().collect();
     let (parent, i) = p.find_node(Node::Folder(id)).expect("in the column");
     let kids = std::mem::take(&mut p.folder_mut(id)?.children);
     let n = kids.len();
     p.children_mut(parent).splice(i..=i, kids);
     p.folders.remove(&id);
+    remove_unused_buses(p, &made)?;
     Ok(Output::msg(format!(
         "フォルダーを削除しました（中の {n} 件は 1 つ上の階層へ移動しました）"
     )))
+}
+
+/// Removes the buses made with folders that are gone, unless something else plays to them
+/// (see [`Project::unused_buses`]). Returns how many went.
+pub(super) fn remove_unused_buses(p: &mut Project, made: &[TrackId]) -> CmdResult<usize> {
+    let gone = p.unused_buses(made);
+    for b in &gone {
+        p.delete_track(*b)?;
+    }
+    Ok(gone.len())
 }

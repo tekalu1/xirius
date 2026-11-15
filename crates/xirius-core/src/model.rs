@@ -964,6 +964,11 @@ pub struct Folder {
     /// Connected bus: tracks inside without their own output play into it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bus: Option<TrackId>,
+    /// The bus made together with the folder (or added by "new bus"). It counts as the
+    /// folder's own only while the folder still plays to it: a bus the folder was
+    /// connected to afterwards is never this. A song without the key reads as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub made_bus: Option<TrackId>,
     #[serde(default)]
     pub children: Vec<Node>,
 }
@@ -1360,6 +1365,52 @@ impl Project {
         out
     }
 
+    /// The bus made together with the folder, while the folder still plays to it.
+    pub fn own_bus(&self, f: FolderId) -> Option<TrackId> {
+        let folder = self.folders.get(&f)?;
+        let b = folder.made_bus?;
+        (folder.bus == Some(b) && self.tracks.contains_key(&b)).then_some(b)
+    }
+
+    /// The folder's own bus while it sits right under the folder: it moves with it.
+    pub fn attached_bus(&self, f: FolderId) -> Option<TrackId> {
+        let b = self.own_bus(f)?;
+        let (parent, i) = self.find_node(Node::Folder(f))?;
+        (self.children(parent).get(i + 1) == Some(&Node::Track(b))).then_some(b)
+    }
+
+    /// Of the buses made with folders that are gone, those nothing else plays to: no track
+    /// outside them has one as its output, a send's target or a sidechain's source, and no
+    /// folder is connected to one. Call it once the folders are removed.
+    pub fn unused_buses(&self, made: &[TrackId]) -> Vec<TrackId> {
+        let mut set: Vec<TrackId> = made
+            .iter()
+            .copied()
+            .filter(|b| self.tracks.contains_key(b) && !b.is_master())
+            .collect();
+        loop {
+            let used = |b: TrackId| {
+                self.folders.values().any(|f| f.bus == Some(b))
+                    || self.tracks.iter().any(|(id, t)| {
+                        !set.contains(id)
+                            && (t.output == Some(Output::Bus(b))
+                                || t.sends.iter().any(|s| s.to == b)
+                                || t.inserts.iter().any(|x| {
+                                    x.sidechain
+                                        .as_ref()
+                                        .is_some_and(|sc| sc.sources.iter().any(|s| s.track == b))
+                                }))
+                    })
+            };
+            let unused: Vec<TrackId> = set.iter().copied().filter(|b| !used(*b)).collect();
+            if unused.len() == set.len() {
+                return set;
+            }
+            // a bus that stays is an outside user of the ones it feeds: test again
+            set = unused;
+        }
+    }
+
     // ---- routing ---------------------------------------------------------
 
     /// Where a channel really plays to, following the folder's bus when the
@@ -1609,6 +1660,9 @@ impl Project {
         for f in self.folders.values_mut() {
             if f.bus == Some(id) {
                 f.bus = None;
+            }
+            if f.made_bus == Some(id) {
+                f.made_bus = None;
             }
         }
         Ok(())

@@ -1160,7 +1160,12 @@ impl Builder {
     }
 
     fn folder(&mut self, name: &str, into: &str) -> String {
-        Self::id(&self.run("folder.add", json!({ "name": name, "into": into })))
+        let made = self.run("folder.add", json!({ "name": name, "into": into }));
+        // The sample is a song as it was before folders came with a bus: it keeps its rows.
+        if let Some(bus) = made["bus"].as_str() {
+            self.run("track.delete", json!({ "ids": [bus] }));
+        }
+        Self::id(&made)
     }
 
     fn track(&mut self, kind: &str, name: &str, into: &str, color: usize) -> String {

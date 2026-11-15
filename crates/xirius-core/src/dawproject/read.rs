@@ -564,6 +564,7 @@ impl Reader<'_> {
                     },
                     color,
                     bus,
+                    made_bus: None,
                     children: kids_out,
                 },
             );

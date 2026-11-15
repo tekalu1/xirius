@@ -466,6 +466,55 @@ fn a_folder_passes_no_sound_but_its_bus_collects_its_tracks() {
     assert!(close(measure(&s).rms(), only_b, 1e-4));
 }
 
+#[test]
+fn a_track_in_a_new_folder_plays_through_the_bus_made_with_the_folder_to_the_master() {
+    let mut s = song("folder-made-bus");
+    let r = run(&mut s, "folder.add", json!({ "name": "Drums" }));
+    let (f, bus) = (id_of(&r), r.data["bus"].as_str().unwrap().to_string());
+    let a = id_of(&run(
+        &mut s,
+        "track.add.instrument",
+        json!({ "name": "A", "into": f }),
+    ));
+    support::tone(&mut s, a.parse().unwrap());
+    let c = id_of(&run(
+        &mut s,
+        "clip.add.midi",
+        json!({ "track": a, "at": 0, "bars": 1 }),
+    ));
+    run(
+        &mut s,
+        "note.add",
+        json!({ "clip": c, "at": 0, "pitch": 60, "length": 3840 }),
+    );
+    let (_b, _) = voice(&mut s, "B", 67, 1.0);
+    // with the folder's bus at unity the song sounds as if the folder were not there
+    let direct = measure(&s).rms();
+    assert!(direct > 0.0);
+
+    // the bus's fader scales A (which plays to it) and not B (which plays to the master)
+    run(
+        &mut s,
+        "track.volume.set",
+        json!({ "ids": [bus], "db": -120.0 }),
+    );
+    let only_b = measure(&s).rms();
+    assert!(only_b > 0.0 && only_b < direct, "A went with the bus");
+
+    // muted, it is the same; and when the folder is gone the bus goes and A plays direct again
+    run(
+        &mut s,
+        "track.volume.set",
+        json!({ "ids": [bus], "db": 0.0 }),
+    );
+    run(&mut s, "track.mute", json!({ "ids": [bus], "on": true }));
+    assert!(close(measure(&s).rms(), only_b, 1e-4));
+    run(&mut s, "track.mute", json!({ "ids": [bus], "on": false }));
+    run(&mut s, "folder.unpack", json!({ "id": f }));
+    assert!(!s.project().tracks.contains_key(&bus.parse().unwrap()));
+    assert!(close(measure(&s).rms(), direct, 1e-4));
+}
+
 // ---- inserts -----------------------------------------------------------------------------
 
 #[test]

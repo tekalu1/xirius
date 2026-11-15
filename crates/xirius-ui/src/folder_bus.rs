@@ -173,22 +173,9 @@ impl Studio {
         };
         self.popup = None;
         if to == NEW {
-            // Named as the mixer's new bus is (MIX-025), made at the top so the folder can
-            // play to it.
-            let name = {
-                let p = self.project();
-                let n = p
-                    .tracks
-                    .values()
-                    .filter(|t| t.kind == TrackKind::Bus)
-                    .count();
-                format!("バス {}", n + 1)
-            };
+            // Named as the folder and made right under it, as a new folder's bus is.
             // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
-            self.run_command(
-                "folder.bus.add",
-                json!({ "id": f.to_string(), "name": name, "into": "root" }),
-            );
+            self.run_command("folder.bus.add", json!({ "id": f.to_string() }));
         } else {
             // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
             self.run_command("folder.bus.set", json!({ "id": f.to_string(), "bus": to }));
@@ -202,6 +189,7 @@ impl Studio {
 mod tests {
     use super::*;
     use crate::tree::RowKind;
+    use xirius_core::id::Node;
 
     fn studio() -> (Studio, Geometry) {
         let mut s = Studio::sample();
@@ -309,7 +297,12 @@ mod tests {
             assert_eq!(p.tracks.len(), tracks + 1);
             let bus = p.folders[&f].bus.expect("connected");
             assert_eq!(p.tracks[&bus].kind, TrackKind::Bus);
-            assert_eq!(p.tracks[&bus].name, "バス 1");
+            // named as the folder, and right under it
+            assert_eq!(p.tracks[&bus].name, "Rhythm");
+            assert_eq!(
+                p.find_node(Node::Track(bus)).unwrap().1,
+                p.find_node(Node::Folder(f)).unwrap().1 + 1
+            );
         }
         // The button names the new bus.
         let row = *s.tree().row_of(RowKind::Folder(f)).unwrap();
