@@ -299,6 +299,77 @@ fn a_file_row_let_go_on_a_window_that_takes_no_files_drops_nothing() {
     assert_eq!(s.project().tracks.len(), tracks);
 }
 
+/// `over` stands for a fresh pointer once the row's drag ends (UI-353): a release the
+/// screen asked `over` about does not keep a window named, so a later drag's modifiers
+/// and lights are not sent where the pointer is not.
+#[test]
+fn letting_go_of_a_row_puts_over_back_on_the_main_window() {
+    let (mut s, _top, _tmp) = studio("release");
+    let g = geometry(&s);
+    let (_, id) = detached(&mut s, "Drum Kit");
+    grab(&mut s, &g, "loop_120bpm.wav");
+    s.lib_move(100.0, 400.0);
+    s.over = Over::Window(Kind::Device(id), (-4.0, -4.0));
+    assert!(s.lib_up(&g, 100.0, 400.0, false));
+    assert_eq!(s.over, Over::Main, "file row's over ends with it");
+    // An instrument row ends the same way.
+    s.browser.drag = Some(crate::browser_inst::LibDrag {
+        name: "Drum Kit",
+        icon: "drums",
+        from: (0.0, 0.0),
+        at: (10.0, 10.0),
+        moved: true,
+        preset: None,
+    });
+    s.over = Over::Elsewhere;
+    assert!(s.lib_up(&g, 10.0, 10.0, false));
+    assert_eq!(s.over, Over::Main, "instrument row's over ends with it");
+}
+
+/// What a row's drag lit goes with it — but only that: files dragged in from the OS's
+/// file window light the same plan on a device window, and a row's move finding no row
+/// in hand does not take their light out (UI-353).
+#[test]
+fn a_row_drag_puts_out_only_the_light_it_lit() {
+    let (mut s, top, _tmp) = studio("light");
+    let (_, id) = detached(&mut s, "Drum Kit");
+    let pad = crate::device_window::with_surface(&mut s, id, |s, g| {
+        s.instrument_center(g, id, Part::Pad(36)).expect("a pad")
+    });
+    // As files from the OS's file window arriving: the window's own plan lights.
+    crate::device_window::with_surface(&mut s, id, |s, g| {
+        assert!(s.files_moved(g, pad.0, pad.1, &[top.join("pad_44k.wav")], false));
+    });
+    assert!(s.instruments.preview.is_some());
+    assert!(s.instruments.drop_on.is_some());
+    // No row in hand, `over` left on that window (a release did not reach here): the
+    // move's upkeep takes nothing the files lit.
+    s.over = Over::Window(Kind::Device(id), pad);
+    assert!(!s.browser_row_over(false));
+    assert!(
+        s.instruments.preview.is_some(),
+        "the files' light is not a row's to put out"
+    );
+    assert!(s.instruments.drop_on.is_some());
+}
+
+/// The fault line a detached window's surface keeps goes when the main window's own
+/// line would (UI-353): what clears `error` clears it.
+#[test]
+fn a_detached_windows_fault_line_goes_with_the_main_ones() {
+    let (mut s, _top, _tmp) = studio("fault");
+    let (_, id) = detached(&mut s, "Drum Kit");
+    s.error_on(id, "そのままでは読み込めません".into());
+    assert_eq!(s.error, None);
+    assert_eq!(
+        s.surface_error.as_ref().map(|e| e.0),
+        Some(id),
+        "the fault is the window's own line"
+    );
+    s.clear_error();
+    assert_eq!(s.surface_error, None);
+}
+
 #[test]
 fn a_double_press_on_a_folder_goes_into_it() {
     let (mut s, top, _tmp) = studio("enter");

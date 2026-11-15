@@ -111,7 +111,7 @@ fn mods(m: Modifiers) -> Mods {
     }
 }
 
-struct Screen {
+pub(crate) struct Screen {
     device_windows: crate::device_window::Windows,
     pending_save_input: HeldInput,
     context_touch: crate::context::touch::Touch<MouseDownEvent>,
@@ -2458,6 +2458,43 @@ fn slider_turn(
         (_, Some(ActionData::Value(v))) => Turn::To(v.trim().parse().ok()?),
         _ => return None,
     })
+}
+
+#[cfg(test)]
+impl Screen {
+    /// A screen for a headless test's own window: the fields the opening path fills with
+    /// the process's services are the defaults a scripted window would start with.
+    pub(crate) fn for_test(
+        studio: Rc<RefCell<Studio>>,
+        window: &mut Window,
+        cx: &mut gpui::App,
+    ) -> gpui::Entity<Screen> {
+        let colors = Rc::new(Colors::new(THEME));
+        let background =
+            cx.new(|_| crate::roll::layer::Background::new(studio.clone(), colors.clone()));
+        let focus = cx.focus_handle();
+        window.focus(&focus, cx);
+        cx.new(|cx| Screen {
+            device_windows: Default::default(),
+            pending_save_input: HeldInput::default(),
+            context_touch: Default::default(),
+            replaying_touch: false,
+            studio,
+            colors,
+            focus,
+            background,
+            fixed_theme: None,
+            #[cfg(windows)]
+            pointer_window: None,
+            #[cfg(windows)]
+            pointer_looks: 0,
+            _ai_server: None,
+            files_dragged: false,
+            last_caps: None,
+            _activation: None,
+            _visibility: cx.observe_window_visibility(window, |_, _, _, _| {}),
+        })
+    }
 }
 
 /// Gives the keys to the field of text that has them; Ctrl+C / X / V go through the clipboard.
