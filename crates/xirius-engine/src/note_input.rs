@@ -82,14 +82,12 @@ impl Processor for NoteInput {
                     e.kind,
                 ));
             } else {
-                // Bounded RT storage: abandon the backlog and release held notes on the
-                // next process call rather than leaving an unmatched note-on sounding.
+                // The dropped backlog may contain the matching note-off. Release held
+                // notes and ignore the remainder of this batch; accepting a later on
+                // from it could leave that note sounding forever.
                 self.pending.clear();
                 self.reset = true;
-                self.pending.push((
-                    start.saturating_add(u64::from(e.offset) + u64::from(self.delay)),
-                    e.kind,
-                ));
+                return;
             }
         }
     }

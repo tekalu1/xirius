@@ -58,6 +58,9 @@ pub struct TrackSpec {
     pub output: Output,
     /// Played while the transport runs.
     pub timeline: Timeline,
+    /// Guide notes retained from an instrument's clips while its sound is frozen.
+    /// This timeline is read only by note routing, never by the instrument.
+    pub note_timeline: Option<Timeline>,
     /// A MIDI port the track's notes and controllers go to (ENG-028).
     pub midi: Option<Box<MidiTarget>>,
     /// Whether the instrument and inserts may be rendered ahead of the transport by a worker
@@ -130,6 +133,7 @@ impl TrackSpec {
             sends: Vec::new(),
             output: Output::Master,
             timeline: Timeline::default(),
+            note_timeline: None,
             midi: None,
             prefetch: true,
             keys: Vec::new(),
@@ -704,6 +708,7 @@ struct Chain {
     notes_queued: bool,
     dropped_events: u64,
     timeline: Timeline,
+    note_timeline: Option<Timeline>,
     /// Pitches the timeline has started and not yet released.
     held: [bool; 128],
     /// Controllers the timeline has moved and not yet put back to rest.
@@ -1062,6 +1067,7 @@ impl Plan {
                             notes_queued: false,
                             dropped_events: 0,
                             timeline: t.timeline,
+                            note_timeline: t.note_timeline,
                             held: [false; 128],
                             moved: [false; CONTROL_NUMBERS],
                             chase: false,
@@ -1430,13 +1436,25 @@ impl Plan {
         plan.note_sources.sort_unstable();
         plan.note_sources.dedup();
         if !plan.note_sources.is_empty() {
-            // Note events are gathered before rendering. No track may lend its chain to a
-            // prefetch worker, and no pool may race with the inlet's block preparation.
-            for t in plan.tracks.iter_mut().flatten() {
-                t.prefetch = None;
+            // The guide chain is read while preparing the block, and an inlet is filled
+            // immediately before rendering. Keep only those chains at home. Every other
+            // track can still prefetch; all chains join before the next preparation.
+            for (i, t) in plan.tracks.iter_mut().enumerate() {
+                let Some(t) = t else { continue };
+                let receives = t.chain.as_ref().is_some_and(|c| {
+                    let mut sources = Vec::new();
+                    c.source.note_sources(&mut sources);
+                    for p in &c.inserts {
+                        p.note_sources(&mut sources);
+                    }
+                    !sources.is_empty()
+                });
+                if plan.note_sources.binary_search(&i).is_ok() || receives {
+                    t.prefetch = None;
+                }
             }
         }
-        if plan.note_sources.is_empty() && plan.tracks.len() >= 8 {
+        if plan.tracks.len() >= 8 {
             let workers = std::thread::available_parallelism()
                 .map_or(1, |n| n.get())
                 .min(8);
@@ -1453,7 +1471,7 @@ impl Plan {
     /// Builds persistent track workers on the control thread. Routing always joins their
     /// outputs in track order, so parallel rendering has the same summation as one worker.
     pub fn set_workers(&mut self, count: usize) -> std::io::Result<()> {
-        self.pool = if !self.note_sources.is_empty() || count <= 1 || self.tracks.len() <= 1 {
+        self.pool = if count <= 1 || self.tracks.len() <= 1 {
             None
         } else {
             Some(crate::parallel::TrackPool::new(
@@ -2007,12 +2025,25 @@ impl Plan {
                     c.notes_queued = true;
                 }
                 self.note_events.extend_from_slice(&c.events);
+                if let (Some(pos), Some(notes)) = (pos, c.note_timeline.as_ref()) {
+                    for note in notes.notes_in(pos, pos.saturating_add(n as u64)) {
+                        if self.note_events.len() == self.note_events.capacity() {
+                            break;
+                        }
+                        self.note_events.push(NoteEvent {
+                            offset: (note.frame - pos) as u32,
+                            kind: note.kind,
+                        });
+                    }
+                }
             }
             for &(from, event) in &self.note_live {
                 if from == source && self.note_events.len() < self.note_events.capacity() {
                     self.note_events.push(event);
                 }
             }
+            self.note_events
+                .sort_unstable_by_key(|e| (e.offset, matches!(e.kind, NoteKind::On { .. })));
             for t in self.tracks.iter_mut().flatten() {
                 if let Some(c) = t.chain.as_mut() {
                     c.source.note_block(source, &self.note_events, start, reset);

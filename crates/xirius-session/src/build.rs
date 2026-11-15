@@ -478,6 +478,14 @@ impl Builder {
             });
             if scope.includes_notes(*id) && !unavailable {
                 spec.timeline = self.timeline(p, t, &tmap, &mut warnings);
+                if t.kind == TrackKind::Instrument && t.frozen.is_some() {
+                    // Freeze replaces the sound with a WAV, but a receiving effect still
+                    // follows the original MIDI clips. Keep these notes away from the
+                    // frozen track's source processor.
+                    let mut original = t.as_ref().clone();
+                    original.frozen = None;
+                    spec.note_timeline = Some(self.timeline(p, &original, &tmap, &mut warnings));
+                }
             }
             if self.strict_preparation && !unavailable {
                 warnings
