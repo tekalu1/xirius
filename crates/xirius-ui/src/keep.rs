@@ -48,6 +48,9 @@ pub struct Keep {
     applied_revision: u64,
     save_generation: u64,
     recent_close_save_generation: u64,
+    /// Saves the current close has started; the cap keeps a volatile capture from re-saving
+    /// forever (UI-354).
+    pub(crate) close_retries: u8,
     closing_recent: Option<std::time::Instant>,
     recent_close_ready: bool,
     recent_close_project: Option<Arc<Project>>,
@@ -114,6 +117,7 @@ impl Keep {
         self.graph_retry = None;
         self.plugin_state_failed = false;
         self.plugin_state_reason = None;
+        self.close_retries = 0;
         self.seen = Some(project.clone());
         self.flash_until = 0;
         self.failed = None;
@@ -215,10 +219,17 @@ impl Keep {
         self.recent_close_ready = false;
         self.recent_close_project = None;
         self.recent_close_open = None;
+        self.close_retries = 0;
     }
 
     pub(crate) fn recent_close_since(&self) -> Option<std::time::Instant> {
         self.closing_recent
+    }
+
+    /// Saves started, for the tests: one close must save once.
+    #[cfg(test)]
+    pub(crate) fn save_generation(&self) -> u64 {
+        self.save_generation
     }
 
     /// The recent songs as the last [`Keep::sync`] read them.
@@ -456,8 +467,15 @@ impl Studio {
             .seen
             .as_ref()
             .is_none_or(|seen| !Arc::ptr_eq(seen, &self.song.project()))
+            && self
+                .keep
+                .seen
+                .as_ref()
+                .is_none_or(|seen| !only_states_captured(seen, &self.song.project()))
         {
-            // An edit after the song was let go of: it is no longer the empty one.
+            // An edit after the song was let go of: it is no longer the empty one. A change
+            // only in the plugins' captured state and parameters is the close's own capture,
+            // not an edit made in the window (UI-354).
             self.keep.abandon = None;
             if self.keep.closing_recent.is_some() || self.keep.recent_close_ready {
                 self.leaving_ready = false;
@@ -628,6 +646,35 @@ impl Studio {
             self.keep.forget(dir);
         }
     }
+
+    /// The song is being left: its save or the close's recent-list step is in flight, so a
+    /// collect of plugin answers now is the leave's own capture, not an edit (UI-354).
+    pub(crate) fn leaving_song(&self) -> bool {
+        self.leaving_ready
+            || self.keep.recent_close_since().is_some()
+            || self.keep.recent_close_ready
+            || self
+                .saving
+                .as_ref()
+                .is_some_and(|s| s.leaving.is_some() || s.close_when_done)
+    }
+}
+
+/// `a` and `b` differ only in the plugins' captured state and parameters: what a save, an
+/// open, or a close pulled out of the plugins itself (PLG-057), not an edit the person made
+/// in the window. Plugins added or taken away, or any other field moved, still count.
+fn only_states_captured(a: &Project, b: &Project) -> bool {
+    fn bare(p: &Project) -> Project {
+        let mut p = p.clone();
+        for t in p.tracks.values_mut() {
+            for x in &mut Arc::make_mut(t).inserts {
+                x.state = None;
+                x.params = Default::default();
+            }
+        }
+        p
+    }
+    bare(a) == bare(b)
 }
 
 #[cfg(test)]

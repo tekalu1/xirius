@@ -118,6 +118,8 @@ pub struct Collected {
     pub result: Option<RunResult>,
     /// The parameter moves, oldest first.
     pub params: Vec<ParamEvent>,
+    /// The song's model changed, in place or by a step.
+    pub changed: bool,
 }
 
 /// A particular failed live plan. A save retry may keep this ticket while it
@@ -2106,6 +2108,22 @@ pub fn collect_pulled_states(
     collect_pulled(session, host, pull, Put::Step(opts), false)
 }
 
+/// [`collect_plugin_states`] for a song being left: what the plugins answer goes in at the
+/// cursor with no「プラグインの編集を反映」step of its own ([`Session::amend`]). A close's own
+/// capture is not an edit the person made, and a step added while a save writes is a step the
+/// save may not keep.
+pub fn collect_plugin_states_in_place(
+    session: &mut Session,
+    host: &mut SessionHost,
+) -> CmdResult<Collected> {
+    let edits = host
+        .builder
+        .plugins_mut()
+        .current_edits(session.project(), None)
+        .map_err(xirius_core::CmdError::io)?;
+    collect_edits(session, host, Put::InPlace, edits, false)
+}
+
 /// [`collect_pulled_states`] for the plugins a paste replaces or copies (MIX-045): what they
 /// answered goes in the song at the cursor with no step of its own ([`Session::amend`]), so
 /// the paste's one step is what an undo takes back, and the replaced plugins come back with
@@ -2321,12 +2339,14 @@ fn collect_edits(
                 })?;
             }
         }
+        out.changed = true;
     }
     if !taken.is_empty() {
         host.sync(session.project());
     }
     // The ARA plugins' edits: their archives, in place and only when changed (ARC-025).
     if crate::ara::take_archives(session, host.builder.ara(), wait)? {
+        out.changed = true;
         host.sync(session.project());
     }
     // Every link is asked, so none keeps a change for the next time.

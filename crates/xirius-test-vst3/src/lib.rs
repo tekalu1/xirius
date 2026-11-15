@@ -297,7 +297,12 @@ impl Latency {
         let Some(stream) = (unsafe { vst3::ComRef::from_raw(state) }) else {
             return kInvalidArgument;
         };
-        let mut bytes = self.delay.load(Ordering::Relaxed).to_le_bytes();
+        let value = if STATE_VOLATILE.load(Ordering::Relaxed) != 0 {
+            STATE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        } else {
+            self.delay.load(Ordering::Relaxed)
+        };
+        let mut bytes = value.to_le_bytes();
         // SAFETY: valid stream and a four-byte buffer that outlives the call.
         unsafe { stream.write(bytes.as_mut_ptr().cast(), 4, std::ptr::null_mut()) }
     }
@@ -779,6 +784,8 @@ static TERMINATED: AtomicU32 = AtomicU32::new(0);
 static TERMINATED_AWAY: AtomicU32 = AtomicU32::new(0);
 static STATE_AWAY: AtomicU32 = AtomicU32::new(0);
 static STATE_FAIL: AtomicU32 = AtomicU32::new(0);
+static STATE_VOLATILE: AtomicU32 = AtomicU32::new(0);
+static STATE_COUNTER: AtomicU32 = AtomicU32::new(0);
 static STATE_ENTERED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static STATE_RELEASE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static OPEN_ENTERED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -827,6 +834,14 @@ pub extern "system" fn FixtureStateAway() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "system" fn FixtureStateFailure(fail: u32) {
     STATE_FAIL.store(fail, Ordering::Release);
+}
+
+/// While armed, getState answers bytes that differ every time it is asked, as plugins do
+/// whose saved bytes are never twice the same (a clock, a meter, a phase). For the window's
+/// close-save tests: a pull must not be counted as the person's edit.
+#[unsafe(no_mangle)]
+pub extern "system" fn FixtureVolatileState(arm: u32) {
+    STATE_VOLATILE.store(arm, Ordering::Release);
 }
 
 #[cfg(not(target_os = "windows"))]
