@@ -319,6 +319,61 @@ fn the_wheel_on_choke_moves_the_chosen_pads_to_the_same_group() {
     assert_eq!(value(&s, t, 4, "choke"), None);
 }
 
+/// Press the Choke box, then pick `label` from the list it opens.
+fn choke_pick(s: &mut Studio, g: &Geometry, t: TrackId, label: &str) {
+    let (x, y) = centre(s, g, t, "choke");
+    assert!(s.instrument_press(g, x, y, 1, Mods::NONE));
+    s.instrument_up();
+    assert!(s.ctx.is_some(), "the Choke box opens its list");
+    assert!(crate::context::tests::choose(s, g, label));
+}
+
+#[test]
+fn the_choke_box_opens_its_list_and_a_pick_writes_the_shown_pad() {
+    let (mut s, g, t, id) = window("Drum Kit");
+    for n in [1, 2] {
+        fill(&mut s, id, n);
+    }
+    press(&mut s, &g, id, 2, Mods::NONE);
+    choke_pick(&mut s, &g, t, "7"); // the ninth choice: None, Self, 1, 2 ...
+    let x = plugin(&s, t);
+    let spec = s.instruments.def_of(&x).unwrap();
+    let want = spec
+        .resolve(&pad_key(2, "choke"))
+        .unwrap()
+        .spec
+        .to_norm(8.0);
+    assert_eq!(value(&s, t, 2, "choke"), Some(want));
+    assert_eq!(value(&s, t, 1, "choke"), None, "the other pad is left");
+}
+
+#[test]
+fn a_choke_picked_with_three_pads_chosen_goes_to_all_three_in_one_step() {
+    let (mut s, g, t, _) = kit();
+    let steps = s.song().steps();
+    choke_pick(&mut s, &g, t, "7"); // the ninth choice: None, Self, 1, 2 ...
+    let x = plugin(&s, t);
+    let spec = s.instruments.def_of(&x).unwrap();
+    let want = spec
+        .resolve(&pad_key(3, "choke"))
+        .unwrap()
+        .spec
+        .to_norm(8.0);
+    for n in [1, 2, 3] {
+        assert_eq!(value(&s, t, n, "choke"), Some(want), "pad {n}");
+    }
+    assert_eq!(
+        value(&s, t, 4, "choke"),
+        None,
+        "a pad with no sound gets none"
+    );
+    assert_eq!(s.song().steps(), steps + 1, "one undo step");
+    assert!(s.run_command("history.undo", json!({})));
+    for n in [1, 2, 3] {
+        assert_ne!(value(&s, t, n, "choke"), Some(want), "pad {n} came back");
+    }
+}
+
 #[test]
 fn plain_presses_and_single_pads_write_the_shown_pad_only() {
     let (mut s, g, t, id) = kit();
@@ -354,4 +409,50 @@ fn a_screen_reader_hears_the_pads_chosen_and_how_many() {
         .filter(|m| m.key.contains("-pad-") && m.node.is_selected() == Some(true))
         .count();
     assert_eq!(selected, 4, "the empty pad 4 is chosen too");
+}
+
+fn title(s: &Studio, g: &Geometry, t: TrackId) -> crate::device::layout::Spot {
+    body(s, g, t)
+        .spots
+        .into_iter()
+        .find(|x| x.mark == crate::device::layout::Mark::Title)
+        .expect("the title")
+}
+
+#[test]
+fn the_title_of_pads_chosen_together_lists_them_in_the_order_chosen() {
+    use xirius_params::PAD_NAMES as N;
+    let (mut s, g, t, id) = kit();
+    let x = title(&s, &g, t);
+    assert_eq!(x.text, format!("{} {} {} {}", N[4], N[1], N[2], N[3]));
+    assert!(x.sub.is_empty() && x.note.is_none(), "no one sound or note");
+    // The face still shows the last pressed pad; one pad is its name, sound and note.
+    assert_eq!(shown(&s), 3);
+    press(&mut s, &g, id, 2, Mods::NONE);
+    let x = title(&s, &g, t);
+    assert_eq!(x.text, N[2]);
+    assert!(!x.sub.is_empty() && x.note.is_some());
+}
+
+#[test]
+fn a_run_and_a_pad_added_with_ctrl_list_in_order_and_a_screen_reader_hears_every_name() {
+    use xirius_params::PAD_NAMES as N;
+    let (mut s, g, t, id) = window("Drum Kit");
+    for n in 1..=3 {
+        fill(&mut s, id, n);
+    }
+    press(&mut s, &g, id, 1, Mods::NONE);
+    press(&mut s, &g, id, 3, Mods::shift());
+    press(&mut s, &g, id, 0, Mods::ctrl());
+    assert_eq!(
+        title(&s, &g, t).text,
+        format!("{} {} {} {}", N[1], N[2], N[3], N[0])
+    );
+    let marks = crate::a11y::device_marks(&s, &g);
+    let m = marks.iter().find(|m| m.key.ends_with("-title")).unwrap();
+    let label = m.node.label().unwrap().to_string();
+    assert!(
+        label.contains(N[3]) && label.contains("4 pads selected"),
+        "{label}"
+    );
 }

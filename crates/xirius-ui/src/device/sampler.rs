@@ -1812,9 +1812,27 @@ pub fn paint_spots(pen: &mut Pen, body: &Body, hot: Option<usize>) {
             }
             // The pad's name, its sample's, its note: the mock's `.dk-pn`.
             Mark::Title => {
-                let w = pen.measure(&s.text, FontSize::Small, Weight::Semibold);
+                // Pads chosen together: as many names as fit, then "…" (the full list is
+                // the accessible name's).
+                let text = if s.note.is_none() && s.text.contains(' ') {
+                    let mut t = s.text.clone();
+                    while pen.measure(&t, FontSize::Small, Weight::Semibold) > r.w
+                        && t.contains(' ')
+                    {
+                        t.truncate(t.trim_end_matches(|c| c != ' ').trim_end().len());
+                        t.push('…');
+                        if pen.measure(&t, FontSize::Small, Weight::Semibold) <= r.w {
+                            break;
+                        }
+                        t.pop();
+                    }
+                    t
+                } else {
+                    s.text.clone()
+                };
+                let w = pen.measure(&text, FontSize::Small, Weight::Semibold);
                 pen.text(
-                    &s.text,
+                    &text,
                     FontSize::Small,
                     Weight::Semibold,
                     c.ink_strong,

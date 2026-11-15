@@ -8499,7 +8499,7 @@ area = "UI"
 phase = "v1.1"
 source = "2026-11-15 の利用者の承認（Drum Kit のパッドの面とオートメーションの名前）"
 after = ["UI-355"]
-done_when = "Drum Kit の下の段の見出しが Env・Filter・Pitch（Transpose・Tune）・Amp（Gain・Pan・Vel）で、空のパッドの暗い段も同じ。Sampler の見出しは変わらない。パッドは Ctrl で入れる・外す（最後の 1 つは外せない）、Shift で範囲、Ctrl+Shift で範囲を足し、窓の題と面は最後に押したパッド。Ctrl・Shift 付きの押しは音を出さない。つまみ・スイッチ・Choke・Layer Mode・Trigger・Alt の初期値戻しは、選んだ音のあるパッドの全部に書き（つまみは差を保ち、端で止まり、戻すと差が戻る）、1 操作が取り消し 1 回、音の無いパッドには値を書かない。読み上げは選んだパッドの数を言う。新しい命令は足さず `plugin.param.set` の `also` で書く。窓を開かない試験と、実機の撮影（暗い形と明るい形）で確かめる"
+done_when = "Drum Kit の下の段の見出しが Env・Filter・Pitch（Transpose・Tune）・Amp（Gain・Pan・Vel）で、空のパッドの暗い段も同じ。Sampler の見出しは変わらない。パッドは Ctrl で入れる・外す（最後の 1 つは外せない）、Shift で範囲、Ctrl+Shift で範囲を足し、窓の面は最後に押したパッド、題は選んだパッドの名前を押した順に並べる（「A2 A3 A4」、入りきらなければ「…」で終え、読み上げには全部）。Ctrl・Shift 付きの押しは音を出さない。つまみ・スイッチ・Choke・Layer Mode・Trigger・Alt の初期値戻しは、選んだ音のあるパッドの全部に書き（つまみは差を保ち、端で止まり、戻すと差が戻る）、1 操作が取り消し 1 回、音の無いパッドには値を書かない。読み上げは選んだパッドの数を言う。新しい命令は足さず `plugin.param.set` の `also` で書く。窓を開かない試験と、実機の撮影（暗い形と明るい形）で確かめる"
 status = "done"
 
 [[item]]

@@ -325,10 +325,12 @@ impl Analyser {
 
 /// The Drum Kit pads chosen together (UI-357): a bit per pad, and the pad a Shift press
 /// reaches from.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct PadSel {
     pub set: u128,
     pub anchor: usize,
+    /// The chosen pads in the order they were chosen: the title lists them so.
+    pub order: Vec<usize>,
 }
 
 /// The open windows, the last on top.
@@ -648,6 +650,20 @@ impl Windows {
                     s.on = 1u128
                         .checked_shl(n as u32)
                         .is_some_and(|bit| set & bit != 0);
+                }
+            }
+            // Several chosen: the title is their names in the order chosen, without the
+            // one pad's sample and note (the mock's "A2 A3 A4").
+            if set.count_ones() > 1 {
+                let names: Vec<&str> = self
+                    .pad_order(plugin.id)
+                    .into_iter()
+                    .map(|n| xirius_params::PAD_NAMES[n.min(xirius_params::PADS - 1)])
+                    .collect();
+                if let Some(t) = b.spots.iter_mut().find(|s| s.mark == layout::Mark::Title) {
+                    t.text = names.join(" ");
+                    t.sub.clear();
+                    t.note = None;
                 }
             }
         }
@@ -1106,6 +1122,15 @@ impl Windows {
             .unwrap_or(one)
     }
 
+    /// The chosen pads of the Drum Kit `id` in the order they were chosen (UI-357).
+    pub(crate) fn pad_order(&self, id: PluginId) -> Vec<usize> {
+        let set = self.pads_of(id);
+        match self.pads.get(&id) {
+            Some(s) if s.set == set => s.order.clone(),
+            _ => (0..128).filter(|n| set & (1u128 << n) != 0).collect(),
+        }
+    }
+
     /// A press on pad `pad` of the Drum Kit `id` with `mods` (UI-357), as the track
     /// list's: Ctrl turns the pad in or out (the last one stays), Shift chooses the run
     /// from the one pressed before, and both add the run. The pad pressed is the one the
@@ -1148,10 +1173,24 @@ impl Windows {
         if set == bit(show) {
             self.pads.remove(&id);
         } else {
-            self.pads.insert(id, PadSel { set, anchor });
+            let old = self
+                .pads
+                .get(&id)
+                .map_or_else(|| vec![shown], |s| s.order.clone());
+            let mut order: Vec<usize> = if mods.shift && !mods.ctrl {
+                Vec::new()
+            } else {
+                old.into_iter().filter(|n| set & bit(*n) != 0).collect()
+            };
+            for n in (0..128).filter(|n| set & bit(*n) != 0) {
+                if !order.contains(&n) {
+                    order.push(n);
+                }
+            }
+            self.pads.insert(id, PadSel { set, anchor, order });
         }
         // `pick` forgets what the other pad had; the chosen pads are kept.
-        let keep = self.pads.get(&id).copied();
+        let keep = self.pads.get(&id).cloned();
         self.pick(id, show, 0);
         if let Some(k) = keep {
             self.pads.insert(id, k);

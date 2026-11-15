@@ -822,6 +822,34 @@ impl Studio {
             return;
         }
         let Some(band) = super::eq::band_of(def, k) else {
+            // Any other choice (a pad's Choke): each of its labels, the pads chosen together
+            // with the shown one taking the pick too (UI-357).
+            let xirius_params::Curve::Choice(labels) = spec.curve else {
+                return;
+            };
+            let Some((track, _, _)) = self.device(w.plugin) else {
+                return;
+            };
+            let at = spec.to_plain(now).round().max(0.0) as usize;
+            let items = labels
+                .iter()
+                .enumerate()
+                .map(|(n, label)| {
+                    let value = spec.to_norm(n as f64);
+                    let mut args =
+                        json!({ "id": w.plugin.to_string(), "param": spec.id, "value": value });
+                    let also: Vec<_> = self
+                        .pad_peers(track, w.plugin, def, spec, value, 0.0, false)
+                        .into_iter()
+                        .map(|(id, v)| json!({ "param": id, "value": v }))
+                        .collect();
+                    if !also.is_empty() {
+                        args["also"] = json!(also);
+                    }
+                    self.ctx_as(label, "plugin.param.set", args).on(n == at)
+                })
+                .collect();
+            self.open_context(items, x, y);
             return;
         };
         let b = &xirius_params::EQ_BANDS[band];
