@@ -983,7 +983,16 @@ impl Studio {
                         self.scan_not_started(error.to_string());
                         return true;
                     }
-                    self.error = Some(error.to_string());
+                    // A device window's own load says its fault under that window (UI-353).
+                    let on = (name == "plugin.samples.load")
+                        .then(|| raw.get("id").and_then(|v| v.as_str()))
+                        .flatten()
+                        .and_then(|id| id.parse::<xirius_core::id::PluginId>().ok())
+                        .filter(|id| self.instruments.detached.contains(id));
+                    match on {
+                        Some(id) => self.error_on(id, error.to_string()),
+                        None => self.error = Some(error.to_string()),
+                    }
                     if let Some(ui) = &mut self.settings {
                         ui.tell(error.to_string(), None);
                     }

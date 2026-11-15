@@ -277,6 +277,12 @@ impl Studio {
     /// The files the OS's window gave for 「サンプルを置き換え…」 or 「サンプルを足す…」:
     /// the first in place of the sample, or all of them the pad's new layers, in one step.
     pub(crate) fn samples_picked(&mut self, request: FileRequest, paths: &[PathBuf]) {
+        let id = match request {
+            FileRequest::BrowseSamples(id, _)
+            | FileRequest::Sample(id, _)
+            | FileRequest::PadSamples(id, _) => id,
+            _ => return,
+        };
         let list: Vec<_> = paths
             .iter()
             .map(|p| json!({ "path": p.to_string_lossy() }))
@@ -311,7 +317,12 @@ impl Studio {
             _ => return,
         };
         // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
-        self.run_command("plugin.samples.load", args);
+        if !self.run_command("plugin.samples.load", args) {
+            // 「サンプルを…」 was asked on `id`'s window: its fault is said there (UI-353).
+            if let Some(e) = self.error.take() {
+                self.error_on(id, e);
+            }
+        }
     }
 
     /// The `j`th velocity layer of the chosen pad of `plugin`'s window ends at `hi`: one
@@ -466,7 +477,9 @@ impl Studio {
             )
         });
         if paths.is_empty() {
-            self.error = refused;
+            if let Some(r) = refused {
+                self.error_on(w.plugin, r);
+            }
             return true;
         }
         // All of them in one load: one step, and the layers of a pad stay together.
@@ -487,10 +500,14 @@ impl Studio {
         }
         // design-lint: allow(ui-blocking-io) PRJ-031 review: guarded UI dispatcher; Session I/O is deferred and macros await the actual owner before continuing.
         if !self.run_command("plugin.samples.load", args) {
+            // The drop's fault is said in the window it fell on (UI-353).
+            if let Some(e) = self.error.take() {
+                self.error_on(w.plugin, e);
+            }
             return true;
         }
-        if refused.is_some() {
-            self.error = refused;
+        if let Some(r) = refused {
+            self.error_on(w.plugin, r);
         }
         // The pad the first file went to: the one dropped on (N3-kit-2: the pads from it
         // take the files, the ones that had files too).

@@ -30,6 +30,10 @@ pub struct Notice {
     /// The command whose step it reports, when it reports one: an undo or a new drag takes
     /// away its own notice and leaves the others (MIX-045).
     pub command: Option<&'static str>,
+    /// The independent window it belongs to (UI-353): what a drop on a device's own
+    /// window did is said under that window, not at the main one's foot. `None` is the
+    /// main surface's.
+    pub on: Option<xirius_core::id::PluginId>,
 }
 
 /// The button at the end of a notice, and what a press on it does.
@@ -161,6 +165,7 @@ impl Studio {
             since: Instant::now(),
             button: None,
             command: None,
+            on: None,
         });
     }
 
@@ -174,7 +179,49 @@ impl Studio {
                 press,
             }),
             command: None,
+            on: None,
         });
+    }
+
+    /// Says `text` for [`SHOWN`] under `id`'s own window when that window is an
+    /// independent one (UI-353): what a drop on it did is said there, not at the main
+    /// window's foot. A device still in the main window's face keeps the main line.
+    pub(crate) fn tell_on(&mut self, id: xirius_core::id::PluginId, text: String) {
+        if !self.instruments.detached.contains(&id) {
+            self.tell(text);
+            return;
+        }
+        self.notice = Some(Notice {
+            text,
+            since: Instant::now(),
+            button: None,
+            command: None,
+            on: Some(id),
+        });
+    }
+
+    /// `text` is the fault of what `id`'s own window did (UI-353): said under it when it
+    /// is an independent window, in place of what it said before. A device still in the
+    /// main window's face keeps the main window's line.
+    pub(crate) fn error_on(&mut self, id: xirius_core::id::PluginId, text: String) {
+        if !self.instruments.detached.contains(&id) {
+            self.error = Some(text);
+            return;
+        }
+        self.surface_error = Some((id, text));
+    }
+
+    /// The fault line the surface being drawn has to show (UI-353): a device window's
+    /// own of its drops, or the main window's `error`.
+    pub(crate) fn error_shown(&self) -> Option<&str> {
+        match self.instruments.detached_target {
+            Some(id) => self
+                .surface_error
+                .as_ref()
+                .filter(|e| e.0 == id)
+                .map(|e| e.1.as_str()),
+            None => self.error.as_deref(),
+        }
     }
 
     /// Takes the notice away when it reports `command`'s step.
@@ -196,7 +243,7 @@ impl Studio {
     fn shown_notice(&self) -> Option<&Notice> {
         self.notice
             .as_ref()
-            .filter(|n| n.since.elapsed() < n.shown())
+            .filter(|n| n.since.elapsed() < n.shown() && n.on == self.instruments.detached_target)
     }
 
     /// The button label of what is being said, if it has one.
@@ -393,7 +440,7 @@ pub fn place(studio: &Studio, g: &Geometry, text: &str, button: Option<&str>) ->
     let foot = studio.notification_foot(g);
     let w = (crate::browser::text_width(text, FontSize::Small) + Space::X4.px() * 2.0 + extra)
         .min(foot.w);
-    let lift = if studio.error.is_some() {
+    let lift = if studio.error_shown().is_some() {
         H + Space::X1.px()
     } else {
         0.0

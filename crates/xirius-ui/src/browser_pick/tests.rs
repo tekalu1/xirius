@@ -1,11 +1,15 @@
 //! Files dragged out of the browser and files from the OS's file window (UI-017, UI-046,
 //! BRW-005), on folders made for each test.
 
+use xirius_core::id::{PluginId, TrackId};
 use xirius_core::model::{ClipBody, TrackKind};
 
 use super::*;
 use crate::browser::RailTab;
 use crate::import_shots::{file_row, make_place, over_audio};
+use crate::independent::{Kind, Over};
+use crate::instrument::window::Part;
+use crate::instrument::{Pick, current};
 
 /// A folder of the test's own, removed when dropped (also when the test fails).
 fn folder(name: &str) -> tempfile::TempDir {
@@ -81,7 +85,7 @@ fn a_file_dragged_onto_an_audio_track_is_a_clip_there_and_one_undo_takes_it_away
     let name = s.project().tracks[&track].name.clone();
     assert_eq!(drop_label(&s, &g, &d), Some(format!("{name} に置く")));
 
-    assert!(s.lib_up(&g, x, y));
+    assert!(s.lib_up(&g, x, y, false));
     s.settle_browser_import();
     s.browser.settle_prefs_io();
     s.follow_browser();
@@ -112,7 +116,7 @@ fn a_midi_file_dragged_onto_the_lanes_is_a_track_of_its_own() {
         drop_label(&s, &g, &d).as_deref(),
         Some("新しいトラックに置く")
     );
-    s.lib_up(&g, x, y);
+    s.lib_up(&g, x, y, false);
     s.settle_browser_import();
     s.browser.settle_prefs_io();
     s.follow_browser();
@@ -132,7 +136,7 @@ fn a_press_that_does_not_move_or_lets_go_off_the_arrangement_puts_nothing() {
     let g = geometry(&s);
     let steps = s.song.steps();
     let at = grab(&mut s, &g, "loop_96bpm.wav");
-    assert!(s.lib_up(&g, at.0, at.1));
+    assert!(s.lib_up(&g, at.0, at.1, false));
     s.settle_browser_import();
     s.browser.settle_prefs_io();
     s.follow_browser();
@@ -141,12 +145,158 @@ fn a_press_that_does_not_move_or_lets_go_off_the_arrangement_puts_nothing() {
     s.lib_move(at.0 + 40.0, at.1 + 40.0);
     let d = s.browser.file_drag.clone().unwrap();
     assert_eq!(drop_label(&s, &g, &d), None);
-    assert!(s.lib_up(&g, at.0 + 40.0, at.1 + 40.0));
+    assert!(s.lib_up(&g, at.0 + 40.0, at.1 + 40.0, false));
     s.settle_browser_import();
     s.browser.settle_prefs_io();
     s.follow_browser();
     assert_eq!(s.song.steps(), steps);
     assert_eq!(s.error, None);
+}
+
+/// Keys plays `name`, its window an independent one (UI-353).
+fn detached(s: &mut Studio, name: &str) -> (TrackId, PluginId) {
+    let t = s
+        .project()
+        .tracks
+        .values()
+        .find(|t| t.name == "Keys")
+        .unwrap()
+        .id;
+    assert!(s.set_instrument(t, &Pick::built_in(name)), "{:?}", s.error);
+    let id = current(&s.project().tracks[&t]).unwrap().id;
+    s.show_instrument(t, id);
+    (t, id)
+}
+
+/// A file row dragged onto a Drum Kit's own window loads the pad it falls on, its
+/// plan lit while it is over it and the main window's chip gone (UI-353).
+#[test]
+fn a_file_row_dropped_on_a_detached_drum_kit_loads_its_pad() {
+    let (mut s, top, _tmp) = studio("device");
+    let g = geometry(&s);
+    let (t, id) = detached(&mut s, "Drum Kit");
+    let steps = s.song.steps();
+    let tracks = s.project().tracks.len();
+    let pad = crate::device_window::with_surface(&mut s, id, |s, g| {
+        s.instrument_center(g, id, Part::Pad(36))
+            .expect("A1 in sight")
+    });
+    // The pad it falls on is chosen by the drop (N3-kit-2).
+    s.instruments.pick(id, 3, 0);
+    let kick = top.join("pad_44k.wav");
+
+    grab(&mut s, &g, "pad_44k.wav");
+    s.lib_move(20.0, 20.0);
+    assert!(s.browser.file_drag.as_ref().unwrap().moved);
+    // Over the window's pad: its own drop's plan lights (as files out of the OS's
+    // file window would light it), not the lanes'.
+    s.over = Over::Window(Kind::Device(id), pad);
+    assert!(s.browser_row_over(false));
+    assert_eq!(s.instruments.preview.as_ref().unwrap().plugin, id);
+    // Leaving the window unlights it again.
+    s.over = Over::Main;
+    assert!(s.browser_row_over(false));
+    assert!(s.instruments.preview.is_none());
+    assert!(s.instruments.drop_on.is_none());
+    // Back over it and let go: the pad takes the file; the lanes take nothing.
+    s.over = Over::Window(Kind::Device(id), pad);
+    assert!(s.browser_row_over(false));
+    assert!(s.lib_up(&g, 20.0, 20.0, false));
+    assert_eq!(s.error, None, "{:?}", s.error);
+    assert!(s.browser.file_drag.is_none());
+    assert!(s.instruments.preview.is_none());
+    {
+        let p = s.project();
+        assert_eq!(p.tracks.len(), tracks, "no track or clip on the lanes");
+        assert!(clips_of(&s, &kick).is_empty());
+        let x = current(&p.tracks[&t]).cloned().unwrap();
+        assert_eq!(
+            crate::device::sampler::pad_files(x.builtin().unwrap(), &x, 0).len(),
+            1,
+            "A1 has the file"
+        );
+    }
+    assert_eq!(
+        s.instruments.open[0].pick, 0,
+        "the pad dropped on is chosen"
+    );
+    // One undo takes the load back.
+    assert_eq!(s.song.steps(), steps + 1);
+    assert!(s.undo(&g));
+    let x = current(&s.project().tracks[&t]).cloned().unwrap();
+    assert!(crate::device::sampler::pad_files(x.builtin().unwrap(), &x, 0).is_empty());
+}
+
+/// A file row dragged onto a Sampler's own window is its sample (UI-353).
+#[test]
+fn a_file_row_dropped_on_a_detached_sampler_loads_it() {
+    let (mut s, top, _tmp) = studio("sampler");
+    let g = geometry(&s);
+    let (t, id) = detached(&mut s, "Sampler");
+    let tracks = s.project().tracks.len();
+    let at = crate::device_window::with_surface(&mut s, id, |s, g| {
+        s.instrument_center(g, id, Part::Body)
+            .expect("the sampler's body")
+    });
+    let pad_wav = top.join("pad_44k.wav");
+    grab(&mut s, &g, "pad_44k.wav");
+    s.lib_move(20.0, 20.0);
+    s.over = Over::Window(Kind::Device(id), at);
+    assert!(s.lib_up(&g, 20.0, 20.0, false));
+    assert_eq!(s.error, None, "{:?}", s.error);
+    let p = s.project();
+    assert_eq!(p.tracks.len(), tracks);
+    assert!(clips_of(&s, &pad_wav).is_empty());
+    assert_eq!(current(&p.tracks[&t]).unwrap().samples.len(), 1);
+}
+
+/// A row let go on another kind of independent window, on a device window's own
+/// edge, or off every window of ours ends the drag with nothing put down (UI-353).
+#[test]
+fn a_file_row_let_go_on_a_window_that_takes_no_files_drops_nothing() {
+    let (mut s, _top, _tmp) = studio("cancel");
+    let g = geometry(&s);
+    let (_, id) = detached(&mut s, "Drum Kit");
+    let tracks = s.project().tracks.len();
+    let clips: usize = s.project().tracks.values().map(|t| t.clips.len()).sum();
+    let steps = s.song.steps();
+    for over in [
+        Over::Window(Kind::Channel, (10.0, 10.0)),
+        Over::Window(Kind::Macros, (10.0, 10.0)),
+        Over::Window(Kind::Device(id), (-4.0, -4.0)),
+        Over::Elsewhere,
+    ] {
+        grab(&mut s, &g, "loop_120bpm.wav");
+        s.lib_move(100.0, 400.0);
+        assert!(s.browser.file_drag.as_ref().unwrap().moved);
+        s.over = over;
+        assert!(s.lib_up(&g, 100.0, 400.0, false));
+        s.settle_browser_import();
+        s.browser.settle_prefs_io();
+        s.follow_browser();
+        assert_eq!(s.error, None, "{over:?}");
+        let p = s.project();
+        assert_eq!(p.tracks.len(), tracks, "{over:?}");
+        assert_eq!(
+            p.tracks.values().map(|t| t.clips.len()).sum::<usize>(),
+            clips,
+            "{over:?}"
+        );
+    }
+    assert_eq!(s.song.steps(), steps, "nothing ran, nothing to undo");
+    // An instrument row's drag ends the same way.
+    s.browser.drag = Some(crate::browser_inst::LibDrag {
+        name: "Drum Kit",
+        icon: "drums",
+        from: (0.0, 0.0),
+        at: (10.0, 10.0),
+        moved: true,
+        preset: None,
+    });
+    s.over = Over::Elsewhere;
+    assert!(s.lib_up(&g, 10.0, 10.0, false));
+    assert!(s.browser.drag.is_none());
+    assert_eq!(s.project().tracks.len(), tracks);
 }
 
 #[test]

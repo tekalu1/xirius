@@ -121,6 +121,15 @@ impl Studio {
             return;
         }
         self.error = None;
+        // A device window's own load clears the fault it had said (UI-353).
+        if xirius_session::sample_files::NAMES.contains(&name)
+            && let Some(id) = result.data["plugin"]
+                .as_str()
+                .and_then(|id| id.parse::<xirius_core::id::PluginId>().ok())
+            && self.surface_error.as_ref().is_some_and(|e| e.0 == id)
+        {
+            self.surface_error = None;
+        }
         self.track_browser_answer(name, &result.data);
         self.after_edit();
         if xirius_session::sample_files::NAMES.contains(&name) {

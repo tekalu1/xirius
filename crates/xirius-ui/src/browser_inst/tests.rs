@@ -60,7 +60,7 @@ fn drag(s: &mut Studio, g: &Geometry, name: &str, to: (f32, f32)) {
     s.press(g, hit);
     assert!(s.lib_grab(g, hit, x, y, 1));
     assert!(s.lib_move(to.0, to.1));
-    assert!(s.lib_up(g, to.0, to.1));
+    assert!(s.lib_up(g, to.0, to.1, false));
 }
 
 fn instrument_name(p: &Project, t: TrackId) -> Option<String> {
@@ -82,7 +82,7 @@ fn a_double_click_makes_a_new_track() {
     let (hit, x, y) = item(&s, &g, "Sampler");
     s.press(&g, hit);
     assert!(s.lib_grab(&g, hit, x, y, 1));
-    assert!(s.lib_up(&g, x, y));
+    assert!(s.lib_up(&g, x, y, false));
     assert_eq!(tracks(&s), before.len(), "a single click only selects");
     assert_eq!(s.browser.selected_item, Some("Sampler"));
     s.press(&g, hit);
@@ -159,12 +159,12 @@ fn let_go_off_the_tracks_or_unmoved_nothing_changes() {
     s.lib_grab(&g, hit, x, y, 1);
     s.lib_move(x + 2.0, y + 2.0);
     assert!(!s.browser.drag.as_ref().unwrap().moved);
-    s.lib_up(&g, lane(&s, &g, keys).0, lane(&s, &g, keys).1);
+    s.lib_up(&g, lane(&s, &g, keys).0, lane(&s, &g, keys).1, false);
     assert_eq!(s.song().steps(), steps);
     assert_eq!(instrument_name(&s.project(), keys), None);
     // Nothing is held: the pointer's moves are not taken.
     assert!(!s.lib_move(x, y));
-    assert!(!s.lib_up(&g, x, y));
+    assert!(!s.lib_up(&g, x, y, false));
 }
 
 #[test]

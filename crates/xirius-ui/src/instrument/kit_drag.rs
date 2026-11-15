@@ -176,7 +176,7 @@ impl Studio {
         y: f32,
     ) -> Option<(PluginId, sampler::DropOn, Rect)> {
         let p = self.auto_shown();
-        let (i, _) = self.instruments.at(&p, g, x, y)?;
+        let (i, part) = self.instruments.at(&p, g, x, y)?;
         let w = self.instruments.open[i];
         let (_, plugin, def) = live(&p, &w)?;
         if !sampler::has_files(def) {
@@ -187,6 +187,14 @@ impl Studio {
         let head = title_bar::BAR_H;
         let inside = Rect::new(r.x + 4.0, r.y + head, r.w - 8.0, r.h - head - 4.0);
         let (on, at) = sampler::drop_on(&body, def.uid == "drum-kit", inside, x, y)?;
+        // The plane is the chosen pad's (approved 2026-11-14, UI-353): while another pad
+        // is aimed at, the drop lands there, so the plane does not light.
+        if on == sampler::DropOn::Plane
+            && let Part::Pad(pitch) = part
+            && play::pad_of(pitch) != w.pick.min(PADS - 1)
+        {
+            return None;
+        }
         Some((w.plugin, on, at))
     }
 

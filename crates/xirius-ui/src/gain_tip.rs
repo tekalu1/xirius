@@ -39,21 +39,35 @@ impl Studio {
             return;
         }
         if command == "plugin.samples.load" {
+            // Said under the window the load was asked on, when that is an independent
+            // device window (UI-353): its drop's word does not land on the main foot.
+            let on = data["plugin"]
+                .as_str()
+                .and_then(|id| id.parse::<xirius_core::id::PluginId>().ok())
+                .filter(|id| self.instruments.detached.contains(id));
             // Keep the warning when the owner returns, too: starting an asynchronous
             // load only accepted the request, it had not yet skipped these files.
             if let Some(skipped) = data["skipped"].as_array() {
                 let names: Vec<_> = skipped.iter().filter_map(Value::as_str).collect();
                 if !names.is_empty() {
-                    self.error = Some(format!(
+                    let text = format!(
                         "「{}」は読み込めません（音声ファイルに対応しています）",
                         names.join("」「")
-                    ));
+                    );
+                    match on {
+                        Some(id) => self.error_on(id, text),
+                        None => self.error = Some(text),
+                    }
                 }
             }
             // The files past H16 did not go in: said, not as a fault (N4-kit-1).
             let n = data["left_out"].as_u64().unwrap_or(0);
             if n > 0 {
-                self.tell(format!("パッドに入りきらない {n} 個は入れていません"));
+                let text = format!("パッドに入りきらない {n} 個は入れていません");
+                match on {
+                    Some(id) => self.tell_on(id, text),
+                    None => self.tell(text),
+                }
             }
             return;
         }

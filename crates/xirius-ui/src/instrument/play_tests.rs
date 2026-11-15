@@ -360,12 +360,13 @@ fn sample_io_transition(device: &str, fail: bool, remove: bool) {
     assert!(s.saving.is_some());
     s.wait_for_save();
     if fail {
+        // The window is an independent one: a drop's fault is said under it (UI-353).
         assert!(
-            s.error
-                .as_deref()
-                .is_some_and(|e| e.contains("見つかりません")),
+            s.surface_error
+                .as_ref()
+                .is_some_and(|(i, e)| *i == id && e.contains("見つかりません")),
             "{:?}",
-            s.error
+            s.surface_error
         );
         assert!(!s.instruments.open[0].filled);
         sample_io_empty_is_silent(&mut s, t, id, pitch);

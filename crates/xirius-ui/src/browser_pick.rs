@@ -11,6 +11,7 @@ use xirius_design::{FontSize, Radius, Space, Weight};
 
 use crate::browser::{BRow, BrowserHit};
 use crate::draw::{Align, Pen};
+use crate::independent::{Kind, Over};
 use crate::studio::{FileRequest, Geometry, Hit, Rect, Studio};
 
 /// How far the pointer goes before a press on a file row becomes a drag.
@@ -139,14 +140,69 @@ impl Studio {
         true
     }
 
-    /// Letting go of a held file row: put where the pointer is, when that is the arrangement.
-    pub fn file_up(&mut self, g: &Geometry, x: f32, y: f32) -> bool {
+    /// A file row held while `over` names what is under the pointer: over a device window
+    /// the drop's plan lights there, as files out of the OS's file window would light it
+    /// (UI-353). True when the light changed. The pointer is in the surface's coordinates.
+    pub(crate) fn browser_row_over(&mut self, shift: bool) -> bool {
+        let drag = self
+            .browser
+            .file_drag
+            .as_ref()
+            .filter(|d| d.moved)
+            .map(|d| d.path.clone());
+        let (Over::Window(Kind::Device(id), (x, y)), Some(path)) = (self.over, drag) else {
+            return self.unlight_window_drag();
+        };
+        if self.input_blocked() || !self.instruments.is_open(id) {
+            return self.unlight_window_drag();
+        }
+        let shift = crate::os_shift::held(shift);
+        crate::device_window::with_surface(self, id, |s, g| {
+            s.instruments.drop_layers = shift;
+            s.window_drag(g, x, y, &[path], shift)
+        })
+    }
+
+    /// The drop's plan on a device window goes: the drag left it, or ended on it. True
+    /// when something shown went.
+    pub(crate) fn unlight_window_drag(&mut self) -> bool {
+        let changed = self.instruments.preview.is_some()
+            || self.instruments.drop_on.is_some()
+            || self.instruments.dragged != Default::default();
+        self.instruments.preview = None;
+        self.instruments.drop_on = None;
+        self.instruments.dragged = Default::default();
+        self.instruments.drop_layers = false;
+        changed
+    }
+
+    /// Letting go of a held file row: where the frontmost window under the pointer takes
+    /// it (UI-353) — a device window's samples, the arrangement's lanes, or nowhere.
+    pub fn file_up(&mut self, g: &Geometry, x: f32, y: f32, shift: bool) -> bool {
         let Some(d) = self.browser.file_drag.take() else {
             return false;
         };
-        if d.moved && !self.start_shown() && (g.lanes.contains(x, y) || g.column.contains(x, y)) {
-            self.drop_files(g, x, y, &[d.path]);
+        match self.over {
+            Over::Window(Kind::Device(id), (sx, sy)) if d.moved && !self.input_blocked() => {
+                if self.instruments.is_open(id) {
+                    crate::device_window::with_surface(self, id, |s, sg| {
+                        s.files_landed(sg, sx, sy, &[d.path], shift)
+                    });
+                }
+            }
+            // Let go on any other window in front, or off every window of ours: it ends
+            // with nothing put down, and says nothing.
+            Over::Window(..) | Over::Elsewhere => {}
+            Over::Main => {
+                if d.moved
+                    && !self.start_shown()
+                    && (g.lanes.contains(x, y) || g.column.contains(x, y))
+                {
+                    self.drop_files(g, x, y, &[d.path]);
+                }
+            }
         }
+        self.unlight_window_drag();
         true
     }
 
@@ -223,8 +279,12 @@ fn file_name(path: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// The dragged file at the pointer, with what letting go does.
+/// The dragged file at the pointer, with what letting go does. Only while the pointer is
+/// over the main window: over a device window, that window's own chip says it (UI-353).
 pub fn paint(pen: &mut Pen, studio: &Studio, g: &Geometry) {
+    if studio.over != Over::Main {
+        return;
+    }
     let Some(d) = studio.browser.file_drag.as_ref().filter(|d| d.moved) else {
         return;
     };

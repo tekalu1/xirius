@@ -175,6 +175,9 @@ impl Studio {
                 || self.fx_move(x, y)
                 || self.lib_move(x, y)
             {
+                // A browser row may be over an independent window: its drop's plan
+                // lights there (UI-353).
+                self.browser_row_over(mods.shift);
                 return true;
             }
         }
@@ -217,14 +220,15 @@ impl Studio {
             return true;
         }
         self.ruler_drag_up();
-        if mods.alt && self.replace_file_up(g, x, y) {
+        if mods.alt && self.over == crate::independent::Over::Main && self.replace_file_up(g, x, y)
+        {
             return true;
         }
         if self.level_up()
             || self.insert_drag_up(g, x, y, mods.shift)
             || self.name_drag_up(g, x, y)
             || self.fx_up(g, x, y, mods.alt)
-            || self.lib_up(g, x, y)
+            || self.lib_up(g, x, y, mods.shift)
             || self.instrument_up()
             || self.drag_end()
         {

@@ -154,7 +154,7 @@ fn load(cx: &ExtContext<'_>, args: &Args, dry: bool) -> CmdResult<Plan> {
             xirius_core::commands::samples::kit_browse(
                 &used_pads(x.builtin().unwrap(), &x),
                 from.unwrap_or(0),
-                names.len(),
+                &names,
             )
         } else {
             (
