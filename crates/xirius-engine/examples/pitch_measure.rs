@@ -7,7 +7,7 @@ use std::io::{self, BufWriter, Write};
 use std::path::Path;
 use std::time::Instant;
 
-use xirius_engine::processor::{AudioIo, ProcessSetup, RenderMode};
+use xirius_engine::processor::{AudioIo, NoteEvent, NoteKind, ProcessSetup, RenderMode};
 use xirius_engine::stock;
 
 const RATE: f64 = 48_000.0;
@@ -39,8 +39,16 @@ fn voice(seconds: f64, kind: usize) -> Vec<f32> {
 }
 
 fn render(input: &[f32], range: f64, amount: f64) -> (Vec<f32>, usize, (f32, f32, i32, f32)) {
+    render_with(input, &[("range", range), ("amount", amount)], &[])
+}
+
+fn render_with(
+    input: &[f32],
+    settings: &[(&str, f64)],
+    notes: &[NoteEvent],
+) -> (Vec<f32>, usize, (f32, f32, i32, f32)) {
     let (mut p, h) = stock::create("pitch-correction").unwrap();
-    for (id, value) in [("range", range), ("amount", amount)] {
+    for &(id, value) in settings {
         let spec = h.def().param(id).unwrap().1;
         assert!(h.set(id, spec.to_norm(value)));
     }
@@ -58,7 +66,7 @@ fn render(input: &[f32], range: f64, amount: f64) -> (Vec<f32>, usize, (f32, f32
         let end = (at + 512).min(left.len());
         p.process(
             &mut AudioIo::new(&mut left[at..end], &mut right[at..end]),
-            &[],
+            if at == 0 { notes } else { &[] },
         );
     }
     (left, latency, probe.pitch_view())
@@ -88,27 +96,10 @@ fn wav(path: &Path, samples: &[f32]) -> io::Result<()> {
     Ok(())
 }
 
-fn band_peak(signal: &[f32], low: usize, high: usize) -> (usize, f64) {
-    let mut best = (0, 0.0);
-    for hz in (low..=high).step_by(5) {
-        let mut re = 0.0;
-        let mut im = 0.0;
-        for (i, sample) in signal.iter().enumerate() {
-            let window = 0.5 - 0.5 * (TAU * i as f64 / signal.len() as f64).cos();
-            let angle = TAU * hz as f64 * i as f64 / RATE;
-            re += f64::from(*sample) * window * angle.cos();
-            im += f64::from(*sample) * window * angle.sin();
-        }
-        let power = re * re + im * im;
-        if power > best.1 {
-            best = (hz, power);
-        }
-    }
-    best
-}
-
-fn cpu() -> f64 {
-    let (mut p, _) = stock::create("pitch-correction").unwrap();
+fn cpu(range: f64) -> f64 {
+    let (mut p, h) = stock::create("pitch-correction").unwrap();
+    let spec = h.def().param("range").unwrap().1;
+    assert!(h.set("range", spec.to_norm(range)));
     p.prepare(&ProcessSetup {
         sample_rate: RATE,
         max_block: 512,
@@ -146,29 +137,91 @@ fn main() -> io::Result<()> {
             "{name}: detector {:.3} Hz, target {}, output {:.3} Hz",
             view.0, view.2, view.1
         );
-        if kind == 0 {
-            let start = delay + 24_000;
-            for (label, low, high) in [("F1", 550, 1100), ("F2", 1250, 1900)] {
-                let input_peak = band_peak(&before[start..start + 12_000], low, high);
-                let output_peak = band_peak(&after[start..start + 12_000], low, high);
-                println!(
-                    "{label}: before {} Hz, after {} Hz",
-                    input_peak.0, output_peak.0
-                );
-            }
-        }
     }
-    println!(
-        "48 kHz, 512 frames, one instance, release CPU: {:.2}% of real time",
-        cpu()
-    );
     for range in 0..3 {
         let source = voice(0.3, 0);
         let (_, delay, _) = render(&source, range as f64, 0.0);
         println!(
-            "range {range}: {delay} frames, {:.3} ms",
-            delay as f64 / RATE * 1000.0
+            "range {range}: {delay} frames, {:.3} ms, release CPU {:.3}%",
+            delay as f64 / RATE * 1000.0,
+            cpu(range as f64)
         );
+    }
+    let mut consonants = vec![0.0f32; 96_000];
+    let mut state = 0x1234_5678u32;
+    for sample in &mut consonants[9_600..19_200] {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        *sample = (state as f64 / u32::MAX as f64 * 0.2 - 0.1) as f32;
+    }
+    for (i, sample) in consonants.iter_mut().enumerate().take(76_800).skip(19_200) {
+        *sample = (0.4 * (TAU * 270.0 * i as f64 / RATE).sin()) as f32;
+    }
+    for x in &mut consonants[76_800..86_400] {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        *x = (state as f64 / u32::MAX as f64 * 0.2 - 0.1) as f32;
+    }
+    let (after, delay, _) = render(&consonants, 1.0, 100.0);
+    let mut before = vec![0.0; consonants.len()];
+    before[delay..].copy_from_slice(&consonants[..consonants.len() - delay]);
+    wav(&directory.join("consonants-before.wav"), &before)?;
+    wav(&directory.join("consonants-after.wav"), &after)?;
+
+    let f0 = 110.0;
+    let formant_voice: Vec<f32> = (0..96_000)
+        .map(|i| {
+            let phase = TAU * f0 * i as f64 / RATE;
+            (1..=30)
+                .map(|h| {
+                    let hz = f0 * h as f64;
+                    let envelope = (-((hz - 800.0) / 220.0).powi(2)).exp()
+                        + 0.9 * (-((hz - 1600.0) / 280.0).powi(2)).exp();
+                    envelope * (phase * h as f64).sin()
+                })
+                .sum::<f64>() as f32
+                * 0.1
+        })
+        .collect();
+    let note = [NoteEvent {
+        offset: 0,
+        kind: NoteKind::On {
+            pitch: 48,
+            velocity: 1.0,
+        },
+    }];
+    wav(
+        &directory.join("three-semitones-before.wav"),
+        &formant_voice,
+    )?;
+    for (label, formant) in [("on", 1.0), ("off", 0.0)] {
+        let (audio, _, _) = render_with(
+            &formant_voice,
+            &[("speed", 1.0), ("formant", formant)],
+            &note,
+        );
+        wav(
+            &directory.join(format!("three-semitones-formant-{label}.wav")),
+            &audio,
+        )?;
+    }
+    let mut phase = 0.0;
+    let vibrato_voice: Vec<f32> = (0..96_000)
+        .map(|i| {
+            let cents = 30.0 + 40.0 * (TAU * 5.5 * i as f64 / RATE).sin();
+            phase += TAU * 261.625_565 * 2f64.powf(cents / 1200.0) / RATE;
+            (0.4 * phase.sin()) as f32
+        })
+        .collect();
+    wav(&directory.join("speed-vibrato-before.wav"), &vibrato_voice)?;
+    for speed in [1.0, 20.0, 200.0] {
+        let (audio, _, _) = render_with(&vibrato_voice, &[("speed", speed), ("scale", 1.0)], &[]);
+        wav(
+            &directory.join(format!("speed-vibrato-{speed:.0}ms-after.wav")),
+            &audio,
+        )?;
     }
     Ok(())
 }
