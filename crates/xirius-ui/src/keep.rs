@@ -227,7 +227,7 @@ impl Keep {
     }
 
     /// Saves started, for the tests: one close must save once.
-    #[cfg(test)]
+    #[cfg(all(test, windows))]
     pub(crate) fn save_generation(&self) -> u64 {
         self.save_generation
     }
