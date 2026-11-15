@@ -938,12 +938,16 @@ fn saving_does_not_write_or_wait_for_held_state_and_only_a_complete_retry_clears
     }
 }
 
-/// A plugin whose getState answers different bytes every time it is asked (a clock, a meter,
-/// a phase): the close's own capture of it must not look like a new edit. One close saves
-/// once, shows the saving veil once, and adds no stack of「プラグインの編集を反映」steps.
-#[test]
-fn a_close_takes_a_volatile_plugin_state_once_and_closes() {
-    use crate::context::key_more::WindowAsk;
+/// A song dir, a prepared studio, and the armed volatile fixture: shared ground for the
+/// close-capture tests. The returned `Volatile` keeps the fixture answering differently every
+/// pull until it is dropped or cleared.
+fn volatile_studio() -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    Studio,
+    String,
+    Volatile,
+) {
     xirius_test_vst3::fixture_marker();
     let source = std::env::current_exe()
         .unwrap()
@@ -987,13 +991,36 @@ fn a_close_takes_a_volatile_plugin_state_once_and_closes() {
         std::thread::yield_now();
     }
     assert!(s.error.is_none(), "{:?}", s.error);
+    (root, dir, s, plugin, Volatile::new(&dll))
+}
+
+/// The fixture plugin's `state` text in `project.json` on disk (None-safe).
+fn saved_plugin_state(dir: &std::path::Path) -> Option<String> {
+    let project: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("project.json")).unwrap()).unwrap();
+    project["project"]["tracks"]
+        .as_object()
+        .unwrap()
+        .values()
+        .flat_map(|t| t["inserts"].as_array().unwrap().iter())
+        .find_map(|p| p["state"].as_str().map(str::to_string))
+}
+
+/// A plugin whose getState answers different bytes every time it is asked (a clock, a meter,
+/// a phase): the close's own capture of it must not look like a new edit. One close saves
+/// once, shows the saving veil once, and adds no stack of「プラグインの編集を反映」steps.
+#[test]
+fn a_close_takes_a_volatile_plugin_state_once_and_closes() {
+    use crate::context::key_more::WindowAsk;
+    let (_root, dir, mut s, plugin, volatile) = volatile_studio();
+    let _ = dir;
     // Write the first captured state before the close is asked for. The fixture now answers
     // getState with bytes that differ every time, as volatile plugins do.
-    let volatile = Volatile::new(&dll);
     assert!(s.start_save());
     s.wait_for_save();
     let generation = s.keep.save_generation();
     let steps = s.song.steps();
+    let deadline = Instant::now() + Duration::from_secs(30);
     s.window_ask = Some(WindowAsk::Quit);
     let mut armed = false;
     loop {
@@ -1033,6 +1060,175 @@ fn a_close_takes_a_volatile_plugin_state_once_and_closes() {
         s.song.steps() - steps <= 1,
         "the capture is not a stack of history steps: {}",
         s.song.steps() - steps
+    );
+    volatile.set(false);
+}
+
+/// The close's capture is applied in place (no history step) — but it must still reach the
+/// disk. After the window closes, `project.json` holds the freshly pulled state, not the one
+/// the earlier save wrote, and `history/index.json` has not grown (UI-354).
+#[test]
+fn a_close_writes_the_captured_state_without_a_step() {
+    use crate::context::key_more::WindowAsk;
+    let (_root, dir, mut s, _plugin, volatile) = volatile_studio();
+    assert!(s.start_save());
+    s.wait_for_save();
+    let before = saved_plugin_state(&dir);
+    let steps = s.song.steps();
+    let generation = s.keep.save_generation();
+    s.window_ask = Some(WindowAsk::Quit);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut seen = Vec::new();
+    loop {
+        s.idle();
+        let state = s
+            .song
+            .project()
+            .tracks
+            .values()
+            .flat_map(|t| t.inserts.iter())
+            .find_map(|p| p.state.clone());
+        if seen.last() != Some(&state) {
+            seen.push(state);
+        }
+        if s.take_window_ask() == Some(WindowAsk::Quit) && s.close_now() {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the close did not finish");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // The history writer may still be flushing after the last save.
+    let index = dir.join("history/index.json");
+    let mut cursor = None;
+    while Instant::now() < deadline {
+        if let Ok(text) = std::fs::read_to_string(&index) {
+            let index: serde_json::Value = serde_json::from_str(&text).unwrap();
+            cursor = index["cursor"].as_u64();
+            if cursor == Some(steps as u64) {
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        cursor,
+        Some(steps as u64),
+        "the in-place capture added no history step (steps={steps})"
+    );
+    let captured = seen.last().unwrap().clone();
+    assert_ne!(
+        before, captured,
+        "the fixture answered a different state, so the check is not vacuous"
+    );
+    assert_eq!(
+        s.keep.save_generation() - generation,
+        1,
+        "one close, one save"
+    );
+    // Re-read the song the close left: the captured state is in it.
+    s.song.open(&dir).unwrap();
+    let reopened = s
+        .song
+        .project()
+        .tracks
+        .values()
+        .flat_map(|t| t.inserts.iter())
+        .find_map(|p| p.state.clone());
+    assert_eq!(reopened, captured, "the close's capture is on the disk");
+    volatile.set(false);
+}
+
+/// A real unsaved edit next to a volatile plugin still saves once and survives the close:
+/// the edit is part of the project the one close save writes (UI-354).
+#[test]
+fn an_unsaved_edit_and_a_volatile_plugin_close_with_one_save() {
+    use crate::context::key_more::WindowAsk;
+    let (_root, dir, mut s, _plugin, volatile) = volatile_studio();
+    assert!(s.start_save());
+    s.wait_for_save();
+    s.song
+        .run("track.add.audio", json!({"name":"Unsaved take"}))
+        .unwrap();
+    let generation = s.keep.save_generation();
+    s.window_ask = Some(WindowAsk::Quit);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        s.idle();
+        if s.take_window_ask() == Some(WindowAsk::Quit) && s.close_now() {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the close did not finish");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        s.keep.save_generation() - generation,
+        1,
+        "one close, one save"
+    );
+    s.song.open(&dir).unwrap();
+    assert!(
+        s.song
+            .project()
+            .tracks
+            .values()
+            .any(|t| t.name == "Unsaved take"),
+        "the unsaved edit is on the disk"
+    );
+    volatile.set(false);
+}
+
+/// Changes that are not the close's own capture still cancel the close — but the retry limit
+/// bounds it: every armed close is sabotaged by a real edit, so it saves `CLOSE_RETRIES`
+/// times and then closes anyway (UI-354).
+#[test]
+fn a_close_sabotaged_by_real_edits_stops_at_the_retry_cap() {
+    use crate::context::key_more::WindowAsk;
+    let (_root, _dir, mut s, _plugin, volatile) = volatile_studio();
+    assert!(s.start_save());
+    s.wait_for_save();
+    let generation = s.keep.save_generation();
+    s.window_ask = Some(WindowAsk::Quit);
+    let mut sabotage = 0u32;
+    let mut was_armed = false;
+    let mut armings = 0u32;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        s.idle();
+        let armed = s.keep.recent_close_since().is_some();
+        if armed && !was_armed {
+            armings += 1;
+            if armings <= 4 {
+                // A real (non-capture) edit lands while the close waits on the recent list:
+                // `only_states_captured` cannot cover it, so this close's save is spent.
+                sabotage += 1;
+                s.song
+                    .run(
+                        "track.add.audio",
+                        json!({"name":format!("sabotage {sabotage}")}),
+                    )
+                    .unwrap();
+            }
+        }
+        was_armed = armed;
+        if s.take_window_ask() == Some(WindowAsk::Quit) && s.close_now() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the close did not finish: generation={}",
+            s.keep.save_generation()
+        );
+        assert!(
+            s.keep.save_generation() - generation <= 4,
+            "the close kept saving past the cap: generation={}",
+            s.keep.save_generation()
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        s.keep.save_generation() - generation,
+        4,
+        "the cap bounded the saves, then the window closed"
     );
     volatile.set(false);
 }
