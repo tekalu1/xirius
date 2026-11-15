@@ -291,6 +291,26 @@ pub static LIMITER: BuiltinDef = BuiltinDef {
     ],
 };
 
+/// The custom keyboard mask is encoded inside the normalized Scale value. See
+/// [`crate::pitch_correction`] for the stable encoding and decoding functions.
+pub static PITCH_CORRECTION: BuiltinDef = BuiltinDef {
+    uid: "pitch-correction",
+    name: "Pitch Correction",
+    kind: Kind::Effect,
+    retired: &[],
+    per_file: &[],
+    per_pad: &[],
+    params: &[
+        choice("key", "キー", &["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"], 0),
+        choice("scale", "スケール", &["Chromatic", "Major", "Minor", "Custom"], 0),
+        ms("speed", "スピード", 1.0, 500.0, 20.0),
+        ms("transition", "ノートトランジション", 1.0, 500.0, 100.0),
+        pct("amount", "補正の量", 100.0, 100.0),
+        toggle("formant", "フォルマント", true),
+        choice("range", "音域", &["Low", "Mid", "High"], 1),
+    ],
+};
+
 /// The Sampler's and the Drum Kit's sound, the same knobs in both (PLG-067, PLG-068): the
 /// envelope, the filter and the amp. The Sampler has one set for the device, the Drum Kit one
 /// per pad.
@@ -465,4 +485,5 @@ pub static BUILTINS: &[&BuiltinDef] = &[
     &REVERB,
     &DELAY,
     &LIMITER,
+    &PITCH_CORRECTION,
 ];

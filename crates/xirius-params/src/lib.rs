@@ -14,11 +14,12 @@
 mod catalog;
 pub mod eq;
 pub mod pitch;
+pub mod pitch_correction;
 mod steps;
 
 pub use catalog::{
     BUILTINS, CHOKES, COMPRESSOR, DELAY, DIVISIONS, DRUM_KIT, EQ, FEELS, FILTER_TYPES, LAYER_MODES,
-    LIMITER, PAD_NAMES, PADS, REVERB, SAMPLER, SLOPES, TRIGGERS,
+    LIMITER, PAD_NAMES, PADS, PITCH_CORRECTION, REVERB, SAMPLER, SLOPES, TRIGGERS,
 };
 pub use eq::{BandType, EQ_BANDS, EqBand};
 pub use steps::{MAX_LIST, clap_steps, vst3_steps};
