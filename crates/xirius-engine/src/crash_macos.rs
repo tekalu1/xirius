@@ -59,6 +59,15 @@ pub fn note(message: &str) {
         text.push('\n');
     }
 }
+/// The lines `note` was last given, for tests.
+#[doc(hidden)]
+pub fn noted() -> Vec<String> {
+    CONTEXT
+        .get()
+        .and_then(|(_, text)| text.try_lock().ok().map(|s| s.clone()))
+        .map(|text| text.lines().map(str::to_string).collect())
+        .unwrap_or_default()
+}
 pub fn exception_filter_installed() -> bool {
     false
 }
