@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 
 /// The start screen with these songs remembered, oldest first (the list shows them newest
 /// first), on a PC with one audio device.
-fn kept(names: &[&str]) -> (Studio, Geometry, tempfile::TempDir) {
-    let tmp = tempfile::tempdir().unwrap();
+fn kept(names: &[&str]) -> (crate::shot::TestFolder, Studio, Geometry) {
+    let tmp = crate::shot::TestFolder::new("xirius-ui-home-");
     let keep = crate::keep::Keep::at(tmp.path().join("keep"));
     for (i, name) in names.iter().enumerate() {
         let path = tmp.path().join(name);
@@ -28,7 +28,7 @@ fn kept(names: &[&str]) -> (Studio, Geometry, tempfile::TempDir) {
     s.home = Some(Home::default());
     s.home_tick();
     let g = s.geometry(1280.0, 720.0);
-    (s, g, tmp)
+    (tmp, s, g)
 }
 
 /// One simulated output (`device`), or none: nothing is opened, the output is silent.
@@ -77,7 +77,7 @@ pub(super) const NONE: Mods = Mods::NONE;
 
 #[test]
 fn the_first_time_lists_only_the_sample_with_no_search_and_new_has_the_keys() {
-    let (s, g, _tmp) = kept(&[]);
+    let (_tmp, s, g) = kept(&[]);
     assert!(s.home_shown());
     assert_eq!(labels(&s), [crate::song::SAMPLE_NAME]);
     assert_eq!(home(&s).focus, Focus::Button(Button::New));
@@ -98,7 +98,7 @@ fn the_first_time_lists_only_the_sample_with_no_search_and_new_has_the_keys() {
 
 #[test]
 fn songs_list_newest_first_with_the_sample_last_and_the_top_row_chosen() {
-    let (s, g, _tmp) = kept(&["older", "newer"]);
+    let (_tmp, s, g) = kept(&["older", "newer"]);
     assert_eq!(labels(&s), ["newer", "older", crate::song::SAMPLE_NAME]);
     assert_eq!(home(&s).focus, Focus::List);
     assert_eq!(home(&s).pick.selected, 0);
@@ -126,7 +126,7 @@ fn songs_list_newest_first_with_the_sample_last_and_the_top_row_chosen() {
 
 #[test]
 fn tab_walks_new_open_dawproject_search_and_the_list() {
-    let (mut s, g, _tmp) = kept(&["a"]);
+    let (_tmp, mut s, g) = kept(&["a"]);
     let tab = Mods::NONE;
     let back = Mods {
         shift: true,
@@ -154,7 +154,7 @@ fn tab_walks_new_open_dawproject_search_and_the_list() {
 
 #[test]
 fn the_arrows_home_and_end_walk_the_list_and_enter_opens_the_row() {
-    let (mut s, g, tmp) = kept(&["a", "b", "c"]);
+    let (tmp, mut s, g) = kept(&["a", "b", "c"]);
     assert!(s.home_key(&g, "down", NONE));
     assert_eq!(home(&s).pick.selected, 1);
     assert!(s.home_key(&g, "end", NONE));
@@ -175,7 +175,7 @@ fn the_arrows_home_and_end_walk_the_list_and_enter_opens_the_row() {
 
 #[test]
 fn a_press_on_a_row_opens_it() {
-    let (mut s, g, _tmp) = kept(&["a"]);
+    let (_tmp, mut s, g) = kept(&["a"]);
     assert!(s.press(&g, row_hit(&s, &g, 1)));
     assert_eq!(home(&s).pick.selected, 1);
     assert!(s.opening.is_some(), "one press opens the sample");
@@ -189,7 +189,7 @@ fn a_press_on_a_row_opens_it() {
 fn a_press_on_a_saved_song_and_a_draft_opens_them() {
     use super::delete_tests::{dir_of, listed};
     let now = xirius_core::store::now_ms();
-    let (mut s, g, tmp) = listed(&[("saved", false, now - 60_000), ("d1", true, now)]);
+    let (tmp, mut s, g) = listed(&[("saved", false, now - 60_000), ("d1", true, now)]);
     let at = centre(
         s.home_layout(&g)
             .unwrap()
@@ -202,7 +202,7 @@ fn a_press_on_a_saved_song_and_a_draft_opens_them() {
     assert!(s.song.is_draft());
     assert_eq!(s.song.record_dir(), Some(dir_of(&tmp, "d1")));
 
-    let (mut s, g, tmp) = listed(&[("saved", false, now - 60_000), ("d1", true, now)]);
+    let (tmp, mut s, g) = listed(&[("saved", false, now - 60_000), ("d1", true, now)]);
     let at = centre(
         s.home_layout(&g)
             .unwrap()
@@ -217,7 +217,7 @@ fn a_press_on_a_saved_song_and_a_draft_opens_them() {
 
 #[test]
 fn typing_goes_to_the_search_and_esc_clears_it() {
-    let (mut s, g, _tmp) = kept(&["apple", "banana"]);
+    let (_tmp, mut s, g) = kept(&["apple", "banana"]);
     assert!(s.home_typing().is_some());
     assert!(
         !s.human_interaction_active(),
@@ -244,7 +244,7 @@ fn typing_goes_to_the_search_and_esc_clears_it() {
 /// is someone's work, as everywhere (UI-350 review).
 #[test]
 fn another_field_over_the_idle_start_screen_is_someones_work() {
-    let (mut s, _, _tmp) = kept(&["apple"]);
+    let (_tmp, mut s, _) = kept(&["apple"]);
     assert!(s.home_typing_idle());
     assert!(!s.human_interaction_active());
     s.input_map.name = Some(crate::track_name::Name {
@@ -257,7 +257,7 @@ fn another_field_over_the_idle_start_screen_is_someones_work() {
 
 #[test]
 fn space_and_enter_press_the_focused_button() {
-    let (mut s, g, _tmp) = kept(&[]);
+    let (_tmp, mut s, g) = kept(&[]);
     assert!(s.home_key(&g, "down", NONE));
     assert_eq!(home(&s).focus, Focus::Button(Button::Open));
     assert!(s.home_key(&g, "space", NONE));
@@ -276,7 +276,7 @@ fn space_and_enter_press_the_focused_button() {
 
 #[test]
 fn ctrl_n_and_ctrl_o_work_and_the_songs_keys_do_not() {
-    let (mut s, g, _tmp) = kept(&["a"]);
+    let (_tmp, mut s, g) = kept(&["a"]);
     let ctrl = |k: &str| {
         (
             k.to_string(),
@@ -306,7 +306,7 @@ fn ctrl_n_and_ctrl_o_work_and_the_songs_keys_do_not() {
 
 #[test]
 fn a_narrow_window_stacks_one_column_with_the_buttons_in_a_row_without_their_keys() {
-    let (s, _, _tmp) = kept(&["a"]);
+    let (_tmp, s, _) = kept(&["a"]);
     let wide = s.geometry(1280.0, 720.0);
     let l = s.home_layout(&wide).unwrap();
     assert!(l.keys);
@@ -353,7 +353,7 @@ fn a_narrow_window_stacks_one_column_with_the_buttons_in_a_row_without_their_key
 /// (UI-350 review).
 #[test]
 fn a_wide_window_puts_the_content_at_the_top_as_the_mock_has_it() {
-    let (s, g, _tmp) = kept(&["a", "b"]);
+    let (_tmp, s, g) = kept(&["a", "b"]);
     let l = s.home_layout(&g).unwrap();
     let new = l.button(Button::New);
     assert_eq!(new.y, TOP, "at the top, not in the middle");
@@ -382,7 +382,7 @@ fn a_wide_window_puts_the_content_at_the_top_as_the_mock_has_it() {
 /// part inside the body.
 #[test]
 fn the_smallest_window_keeps_two_columns_inside_the_body() {
-    let (s, _, _tmp) = kept(&["a", "b", "c"]);
+    let (_tmp, s, _) = kept(&["a", "b", "c"]);
     let g = s.geometry(960.0, 600.0);
     let l = s.home_layout(&g).unwrap();
     assert!(l.keys, "the wide form");
@@ -407,7 +407,7 @@ fn the_smallest_window_keeps_two_columns_inside_the_body() {
 fn the_wheel_over_the_list_scrolls_it() {
     let names: Vec<String> = (0..12).map(|i| format!("s{i:02}")).collect();
     let names: Vec<&str> = names.iter().map(String::as_str).collect();
-    let (mut s, _, _tmp) = kept(&names);
+    let (_tmp, mut s, _) = kept(&names);
     // Low enough that the 12 songs and the sample do not all fit.
     let g = s.geometry(960.0, 360.0);
     let l = s.home_layout(&g).unwrap();
@@ -439,7 +439,7 @@ fn the_wheel_over_the_list_scrolls_it() {
 /// not the start screen (UI-350 review).
 #[test]
 fn the_start_screen_ends_when_the_song_under_it_changes() {
-    let (mut s, g, _tmp) = kept(&["a"]);
+    let (_tmp, mut s, g) = kept(&["a"]);
     assert!(s.home_shown());
     assert!(s.run_command("track.add.audio", serde_json::json!({"name": "x"})));
     s.home_tick();
@@ -458,7 +458,7 @@ fn the_start_screen_ends_when_the_song_under_it_changes() {
 /// The window's own asks keep the keys over the start screen (UI-350 review).
 #[test]
 fn the_windows_asks_keep_the_keys_from_the_start_screen() {
-    let (mut s, g, _tmp) = kept(&["a", "b"]);
+    let (_tmp, mut s, g) = kept(&["a", "b"]);
     s.file_request = Some(FileRequest::Open);
     let at = home(&s).pick.selected;
     assert!(!s.home_key(&g, "down", NONE));
@@ -472,7 +472,7 @@ fn the_windows_asks_keep_the_keys_from_the_start_screen() {
 /// line with no device (UI-350 review).
 #[test]
 fn a_screen_reader_reads_the_new_songs_entries() {
-    let (mut s, g, _tmp) = kept(&["a"]);
+    let (_tmp, mut s, g) = kept(&["a"]);
     assert!(s.press(&g, Hit::Home(Spot::Button(Button::New))));
     s.wait_for_open_for_test();
     assert!(s.start_shown() && !s.home_shown());
@@ -519,7 +519,7 @@ fn a_screen_reader_reads_the_new_songs_entries() {
 
 #[test]
 fn with_no_device_the_line_under_the_buttons_opens_its_menu() {
-    let (mut s, g, _tmp) = kept(&["a"]);
+    let (_tmp, mut s, g) = kept(&["a"]);
     with_device(&mut s, false);
     let l = s.home_layout(&g).unwrap();
     let line = l.no_device.expect("the line");
@@ -544,7 +544,7 @@ fn with_no_device_the_line_under_the_buttons_opens_its_menu() {
 
 #[test]
 fn a_screen_reader_reads_the_buttons_the_search_and_the_list() {
-    let (mut s, g, _tmp) = kept(&["a"]);
+    let (_tmp, mut s, g) = kept(&["a"]);
     with_device(&mut s, false);
     let marks = crate::a11y::marks(&s, &g);
     use accesskit::Role;
@@ -667,7 +667,7 @@ fn closing_from_the_song_menu_asks_first_when_the_plugin_state_was_not_kept() {
 /// paints again once a song is open.
 #[test]
 fn the_mixer_is_not_painted_under_the_start_screen() {
-    let (mut s, _g, _tmp) = kept(&[]);
+    let (_tmp, mut s, _g) = kept(&[]);
     s.drawer_open = true;
     s.tab = crate::studio::DrawerTab::Mixer;
     assert!(s.mixer_shown() && s.home_shown());
@@ -681,7 +681,7 @@ fn the_mixer_is_not_painted_under_the_start_screen() {
 /// nothing real is listed or opened.
 #[test]
 fn the_start_screen_does_not_watch_the_inputs() {
-    let (mut s, _g, _tmp) = kept(&[]);
+    let (_tmp, mut s, _g) = kept(&[]);
     s.transport.mode = xirius_session::output::OutputMode::Device;
     s.poll_io();
     assert!(!s.transport.observe_inputs);
@@ -694,12 +694,12 @@ fn the_start_screen_does_not_watch_the_inputs() {
 /// the song: a click on the list (by the way every click comes), or a button pressed with Enter.
 #[test]
 fn the_strip_over_the_start_screen_goes_with_the_next_press() {
-    let (mut s, g, _tmp) = kept(&[]);
+    let (_tmp, mut s, g) = kept(&[]);
     s.error = Some("開けません".into());
     assert!(s.press(&g, row_hit(&s, &g, 0)));
     assert!(s.error.is_none(), "the press took the strip's message");
     assert!(s.opening.is_some(), "and opened its row");
-    let (mut s, g, _tmp) = kept(&[]);
+    let (_tmp, mut s, g) = kept(&[]);
     s.error = Some("開けません".into());
     s.home.as_mut().unwrap().focus = Focus::Button(Button::Open);
     assert!(s.home_key(&g, "enter", NONE));
@@ -711,7 +711,7 @@ fn the_strip_over_the_start_screen_goes_with_the_next_press() {
 /// no player starting. The window's way of starting the sound (in the background) is used.
 #[test]
 fn closing_to_the_start_screen_starts_no_sound_behind_it() {
-    let (mut s, _g, _tmp) = kept(&[]);
+    let (_tmp, mut s, _g) = kept(&[]);
     s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
     s.transport.bind_window();
     let opened = |s: &mut Studio| {
@@ -781,7 +781,7 @@ pub(super) fn centre(r: Rect) -> (f32, f32) {
 /// and adds no tempo point.
 #[test]
 fn a_press_on_the_first_row_opens_it_and_leaves_the_song_under_alone() {
-    let (mut s, g, tmp) = kept(&["a", "b"]);
+    let (tmp, mut s, g) = kept(&["a", "b"]);
     let at = centre(s.home_layout(&g).unwrap().rows[0].1);
     assert_eq!(
         s.arrange_spot(&g, at.0, at.1),
@@ -799,7 +799,7 @@ fn a_press_on_the_first_row_opens_it_and_leaves_the_song_under_alone() {
 /// A single press with the pen tool picked draws nothing on the hidden tempo band.
 #[test]
 fn a_press_on_the_first_row_with_the_pen_adds_no_tempo_point() {
-    let (mut s, g, _tmp) = kept(&["a", "b"]);
+    let (_tmp, mut s, g) = kept(&["a", "b"]);
     s.tool = crate::tools::Tool::Draw;
     let at = centre(s.home_layout(&g).unwrap().rows[0].1);
     let tempo = s.project().tempo.len();
@@ -813,7 +813,7 @@ fn a_press_on_the_first_row_with_the_pen_adds_no_tempo_point() {
 /// wherever the hidden parts under them reach.
 #[test]
 fn the_search_box_the_buttons_and_the_last_row_take_their_presses() {
-    let (mut s, g, _tmp) = kept(&["a", "b", "c"]);
+    let (_tmp, mut s, g) = kept(&["a", "b", "c"]);
     let tempo = s.project().tempo.len();
     let l = s.home_layout(&g).unwrap();
     let search = centre(l.search.unwrap());
@@ -842,7 +842,7 @@ fn the_search_box_the_buttons_and_the_last_row_take_their_presses() {
 /// Moving and letting go over the start screen reach nothing under it either.
 #[test]
 fn moving_and_letting_go_over_the_start_screen_reach_nothing_under_it() {
-    let (mut s, g, _tmp) = kept(&["a", "b"]);
+    let (_tmp, mut s, g) = kept(&["a", "b"]);
     let at = centre(s.home_layout(&g).unwrap().rows[0].1);
     s.mixer.bar_grab = Some(0.0);
     assert!(s.window_moved(&g, at.0, at.1, Mods::NONE));
@@ -871,7 +871,7 @@ fn the_tempo_band_still_takes_a_double_press_without_the_start_screen() {
 /// press's read of the row and its handling: a draft put first moves every row down.
 #[test]
 fn a_press_after_the_list_was_built_again_opens_the_row_that_was_pressed() {
-    let (mut s, g, tmp) = kept(&["a", "b"]);
+    let (tmp, mut s, g) = kept(&["a", "b"]);
     let at = centre(s.home_layout(&g).unwrap().rows[0].1);
     let hit = s.hit(&g, at.0, at.1);
     assert_eq!(hit, row_hit(&s, &g, 0));
@@ -931,7 +931,7 @@ fn menu_places(
 /// screen the insert row opens its menu as it did.
 #[test]
 fn a_right_press_over_the_start_screen_opens_no_menu_of_the_song_under_it() {
-    let (mut s, _, _tmp) = kept(&["a"]);
+    let (_tmp, mut s, _) = kept(&["a"]);
     let t = with_insert_row(&mut s);
     let g = s.geometry(1280.0, 720.0);
     assert!(s.home_shown());
@@ -1009,7 +1009,7 @@ pub(super) fn key(s: &mut Studio, g: &Geometry, k: &str, m: Mods, ch: Option<&st
 /// song under the start screen.
 #[test]
 fn the_songs_keys_and_the_pc_keyboard_do_nothing_under_the_start_screen() {
-    let (mut s, g, _tmp) = kept(&["a"]);
+    let (_tmp, mut s, g) = kept(&["a"]);
     s.pc_keys.on = true;
     let before = song_state(&s);
     let ctrl = Mods::ctrl();
@@ -1053,7 +1053,7 @@ fn the_songs_keys_and_the_pc_keyboard_do_nothing_under_the_start_screen() {
     // Letters of the PC keyboard: with a search box in front of them they are the box's; with
     // none (the first time) they are nobody's.
     for first_time in [false, true] {
-        let (mut s, g, _tmp) = kept(if first_time { &[] } else { &["a"] });
+        let (_tmp, mut s, g) = kept(if first_time { &[] } else { &["a"] });
         s.pc_keys.on = true;
         let before = song_state(&s);
         for c in "asdfghjkl;zxcvbnmqwertyuiop1234567890".chars() {
@@ -1089,7 +1089,7 @@ fn the_pc_keyboard_and_undo_work_without_the_start_screen() {
 /// settings, the palette and the search box.
 #[test]
 fn the_start_screens_own_keys_still_work() {
-    let (mut s, g, _tmp) = kept(&["a", "b"]);
+    let (_tmp, mut s, g) = kept(&["a", "b"]);
     assert!(key(&mut s, &g, "down", NONE, None));
     assert!(key(&mut s, &g, "up", NONE, None));
     assert!(key(&mut s, &g, "tab", NONE, None));
@@ -1105,7 +1105,7 @@ fn the_start_screens_own_keys_still_work() {
     assert!(s.opening.is_some());
     s.wait_for_open_for_test();
 
-    let (mut s, g, _tmp) = kept(&["a"]);
+    let (_tmp, mut s, g) = kept(&["a"]);
     assert!(key(&mut s, &g, "o", Mods::ctrl(), Some("o")));
     assert_eq!(s.file_request, Some(FileRequest::Open));
     s.file_request = None;
@@ -1295,7 +1295,7 @@ fn every_command_is_classified_as_the_songs_or_the_windows() {
 
 #[test]
 fn the_search_clear_shows_with_text_empties_it_and_keeps_the_field() {
-    let (mut s, g, _tmp) = kept(&["apple", "banana"]);
+    let (_tmp, mut s, g) = kept(&["apple", "banana"]);
     let l = s.home_layout(&g).unwrap();
     assert!(l.clear.is_none(), "no ✖ without text");
     let before = l.search.unwrap();
@@ -1321,7 +1321,7 @@ fn the_search_clear_shows_with_text_empties_it_and_keeps_the_field() {
 
 #[test]
 fn down_from_the_search_goes_to_the_first_row_and_up_on_it_returns() {
-    let (mut s, g, _tmp) = kept(&["a", "b"]);
+    let (_tmp, mut s, g) = kept(&["a", "b"]);
     s.home.as_mut().unwrap().focus = Focus::Search;
     assert!(s.home_key(&g, "down", NONE));
     assert_eq!((home(&s).focus, home(&s).pick.selected), (Focus::List, 0));
@@ -1334,7 +1334,7 @@ fn down_from_the_search_goes_to_the_first_row_and_up_on_it_returns() {
 
 #[test]
 fn nothing_found_on_the_start_screen_says_the_one_phrase() {
-    let (mut s, g, _tmp) = kept(&["a"]);
+    let (_tmp, mut s, g) = kept(&["a"]);
     s.pick_text(None, "qqqq", false);
     let marks = crate::a11y::marks(&s, &g);
     let field = marks.iter().find(|m| m.key == "home-search").unwrap();

@@ -42,7 +42,14 @@ fn fixture(tmp: &std::path::Path) -> std::path::PathBuf {
 }
 
 fn check(other_capture: bool) {
-    let tmp = tempfile::tempdir().unwrap();
+    // Beside the fixture's copies (`xirius_test_vst3::copies_dir`): the copy loaded in this
+    // process keeps a folder in the temporary folder from being removed on Windows.
+    let deps = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let tmp = tempfile::tempdir_in(xirius_test_vst3::copies_dir(&deps)).unwrap();
     let dll = fixture(tmp.path());
     let entries = xirius_plugins::probe(&dll).unwrap();
     let mut s = Session::with_registry(

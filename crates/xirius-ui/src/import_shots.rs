@@ -8,7 +8,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use xirius_core::model::TrackKind;
-use xirius_session::peaks;
 
 use crate::browser::{BRow, BrowserHit, RailTab};
 use crate::shot::{Act, Shot, Target};
@@ -331,7 +330,7 @@ pub fn stage(s: &mut Studio, g: &Geometry, stage: u8) {
             };
             s.file_up(g, x, y, false);
             let path = imported(s, "loop_120bpm.wav");
-            let store = peaks::store_dir(s.song().dir().as_deref());
+            let store = s.song().peak_store();
             wait(s, 10.0, |_| drawn(&path, &store));
         }
         6 => {
@@ -341,7 +340,7 @@ pub fn stage(s: &mut Studio, g: &Geometry, stage: u8) {
             s.scroll.1 = f32::MAX;
             s.clamp_scroll(g);
             let pad = imported(s, "pad_44k.wav");
-            let store = peaks::store_dir(s.song().dir().as_deref());
+            let store = s.song().peak_store();
             wait(s, 10.0, |_| drawn(&pad, &store));
         }
         7 => s.finish_picked(FileRequest::Place, &[place().join("Drums")]),

@@ -13,6 +13,10 @@ The tests with a real ARA plugin are `#[ignore]`d, so a run without one never pa
 skipping: each needs its variable set to the plugin's file (`docs/ara-verification.md`), and
 fails when it is not.
 
+The tests run with a temporary folder of the run's own, and a test that writes to the person's
+Xirius folders or leaves a file in the temporary folder fails the run by name
+(`leftovers.py`).
+
 Standard library only.
 """
 import argparse
@@ -27,6 +31,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import context_catalog
+import leftovers
 
 # The integration tests that open windows, by package.
 WINDOW_TESTS = {
@@ -238,37 +243,47 @@ def main():
         environment["CARGO_BUILD_JOBS"] = "6"
         if not args.plugins:
             environment["XIRIUS_CONTEXT_COVERAGE_DIR"] = str(coverage.resolve())
-        if selected is not None:
-            if args.legacy:
-                prepare()
-            for command in selected:
-                run(command, environment)
-        else:
-            nextest_version()
-            command = ["cargo", "nextest", "run", "--no-fail-fast", "-P", "ci", "-E", test_filter()]
-            if args.run_archive:
-                command += ["--archive-file", str(args.run_archive), "--workspace-remap", str(Path.cwd()),
-                            "--extract-to", str(Path.cwd())]
-            else:
-                prepare()
-                command += ["--locked", *nextest_targets()]
-            if args.partition:
-                command += ["--partition", args.partition]
-            try:
-                run(command, environment)
-            finally:
-                if JUNIT.is_file():
-                    report_flaky([JUNIT], args.partition or "all")
-            if args.partition:
-                (coverage / "success.txt").write_text(args.partition + "\n", encoding="utf-8")
-            if not args.run_archive:
-                for command in default_feature_commands():
-                    run(command, environment)
-                run(["cargo", "test", "--locked", "-j", "6", "--workspace", "--doc"], environment)
+        # What the tests write outside their own folders fails the run (`leftovers.py`).
+        with leftovers.Watch(Path(__file__).resolve().parent.parent, environment) as watch:
+            run_tests(args, selected, coverage, watch.environment)
+            failures = watch.finish()
+        if failures:
+            print("\n".join(failures), file=sys.stderr)
+            return 1
         if not (args.plugins or args.doctest or args.default_features or args.partition):
             if not context_catalog.check(coverage, Path(__file__).resolve().parent.parent):
                 return 1
     return 0
+
+
+def run_tests(args, selected, coverage, environment):
+    if selected is not None:
+        if args.legacy:
+            prepare()
+        for command in selected:
+            run(command, environment)
+    else:
+        nextest_version()
+        command = ["cargo", "nextest", "run", "--no-fail-fast", "-P", "ci", "-E", test_filter()]
+        if args.run_archive:
+            command += ["--archive-file", str(args.run_archive), "--workspace-remap", str(Path.cwd()),
+                        "--extract-to", str(Path.cwd())]
+        else:
+            prepare()
+            command += ["--locked", *nextest_targets()]
+        if args.partition:
+            command += ["--partition", args.partition]
+        try:
+            run(command, environment)
+        finally:
+            if JUNIT.is_file():
+                report_flaky([JUNIT], args.partition or "all")
+        if args.partition:
+            (coverage / "success.txt").write_text(args.partition + "\n", encoding="utf-8")
+        if not args.run_archive:
+            for command in default_feature_commands():
+                run(command, environment)
+            run(["cargo", "test", "--locked", "-j", "6", "--workspace", "--doc"], environment)
 
 
 if __name__ == "__main__":

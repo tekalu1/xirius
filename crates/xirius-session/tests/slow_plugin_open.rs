@@ -95,8 +95,9 @@ fn a_plugin_slow_to_open_is_waited_for_and_no_track_fails() {
 /// startup log gets one line for the failed open and one for the failed preparation.
 #[test]
 fn a_plugin_past_the_open_limit_fails_with_the_same_words_and_log_lines() {
+    // The report's files stay open until the process ends: the build's folder keeps them.
     xirius_engine::crash::install_at(
-        &std::env::temp_dir().join(format!("slow-open-{}", std::process::id())),
+        &std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("slow_plugin_open"),
         "slow-open-test",
         false,
     )

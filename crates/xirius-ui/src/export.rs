@@ -3052,16 +3052,13 @@ mod tests {
 
     /// The sample saved in a folder of its own, which goes when the guard is dropped (also
     /// when the test fails).
-    fn saved(tag: &str) -> (Studio, std::path::PathBuf, tempfile::TempDir) {
-        let dir_tmp = tempfile::Builder::new()
-            .prefix(&format!("xirius-export-ui-{tag}-"))
-            .tempdir()
-            .unwrap();
+    fn saved(tag: &str) -> (crate::shot::TestFolder, Studio, std::path::PathBuf) {
+        let dir_tmp = crate::shot::TestFolder::new(&format!("xirius-export-ui-{tag}-"));
         let dir = dir_tmp.path().join("song");
         let mut s = Studio::sample();
         s.command(|song| song.save_as(&dir));
         assert!(s.error.is_none(), "{:?}", s.error);
-        (s, dir, dir_tmp)
+        (dir_tmp, s, dir)
     }
 
     /// The buttons on that are blue, with the balloon of what they start from.
@@ -3155,7 +3152,7 @@ mod tests {
 
     #[test]
     fn without_the_encoder_only_mp3_is_held_back() {
-        let (mut s, dir, _tmp) = saved("nolame");
+        let (_tmp, mut s, dir) = saved("nolame");
         let g = s.geometry(1600.0, 900.0);
         s.open_export(Rect::new(1500.0, -40.0, 28.0, 28.0));
         s.export.mp3_error = Some(mp3::CANNOT_LOAD.to_string());
@@ -3212,7 +3209,7 @@ mod tests {
             );
             return;
         }
-        let (mut s, dir, _tmp) = saved("mp3");
+        let (_tmp, mut s, dir) = saved("mp3");
         let g = s.geometry(1600.0, 900.0);
         s.open_export(Rect::new(1500.0, -40.0, 28.0, 28.0));
         assert!(view(&s).mp3_error.is_none());
@@ -3356,7 +3353,7 @@ mod tests {
 
     #[test]
     fn opening_the_song_again_starts_from_the_range_last_exported() {
-        let (mut s, dir, _tmp) = saved("range");
+        let (_tmp, mut s, dir) = saved("range");
         let g = s.geometry(1600.0, 900.0);
         let sections = s.project().sections.clone();
         assert!(sections.len() >= 2, "the sample song has sections");
@@ -3390,7 +3387,7 @@ mod tests {
 
     #[test]
     fn a_range_a_row_asks_for_is_not_replaced_by_the_one_the_song_remembers() {
-        let (mut s, dir, _tmp) = saved("asked");
+        let (_tmp, mut s, dir) = saved("asked");
         let g = s.geometry(1600.0, 900.0);
         s.song
             .run("loop.set", json!({"start": 3840, "end": 7680}))

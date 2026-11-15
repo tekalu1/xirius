@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn actual_watch_and_reload_gates_leave_frames_input_and_idle_available() {
         for operation in ["watch_register", "watch_metadata", "external_project_read"] {
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::shot::TestFolder::new("xirius-ui-other-change-");
             let dir = root.path().join("song");
             let mut s = Studio::new(Song::empty());
             // Keep this gate about external-file adoption, not the browser's owner job.

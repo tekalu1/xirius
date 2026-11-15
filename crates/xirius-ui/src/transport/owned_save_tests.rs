@@ -114,7 +114,8 @@ fn complete_save_retry_case(changed_patch: bool, supersede: bool) {
         .parent()
         .unwrap()
         .join("xirius_test_vst3.dll");
-    let root = tempfile::tempdir().unwrap();
+    let root =
+        tempfile::tempdir_in(xirius_test_vst3::copies_dir(source.parent().unwrap())).unwrap();
     let dll = root.path().join("drum-save.vst3");
     std::fs::copy(source, &dll).unwrap();
     let catalog = Arc::new(Catalog {
@@ -343,7 +344,8 @@ fn rejected_sdk_state_keeps_a_safe_reason_through_edits_disk_failures_and_mcp_re
         .parent()
         .unwrap()
         .join("xirius_test_vst3.dll");
-    let root = tempfile::tempdir().unwrap();
+    let root =
+        tempfile::tempdir_in(xirius_test_vst3::copies_dir(source.parent().unwrap())).unwrap();
     let dll = root.path().join("rejected-state.vst3");
     std::fs::copy(source, &dll).unwrap();
     let catalog = Arc::new(Catalog {
@@ -570,7 +572,8 @@ fn held_sdk_initialization_can_be_abandoned_before_the_sdk_returns() {
         .parent()
         .unwrap()
         .join("xirius_test_vst3.dll");
-    let root = tempfile::tempdir().unwrap();
+    let root =
+        tempfile::tempdir_in(xirius_test_vst3::copies_dir(source.parent().unwrap())).unwrap();
     let dll = root.path().join("held-init.vst3");
     std::fs::copy(source, &dll).unwrap();
     let catalog = Arc::new(Catalog {
@@ -657,7 +660,8 @@ fn saving_does_not_write_or_wait_for_held_state_and_only_a_complete_retry_clears
         .parent()
         .unwrap()
         .join("xirius_test_vst3.dll");
-    let temp = tempfile::tempdir().unwrap();
+    let temp =
+        tempfile::tempdir_in(xirius_test_vst3::copies_dir(source.parent().unwrap())).unwrap();
     let dll = temp.path().join("held-state.vst3");
     std::fs::copy(source, &dll).unwrap();
     let catalog = Arc::new(Catalog {
@@ -954,7 +958,8 @@ fn volatile_studio() -> (
         .parent()
         .unwrap()
         .join("xirius_test_vst3.dll");
-    let root = tempfile::tempdir().unwrap();
+    let root =
+        tempfile::tempdir_in(xirius_test_vst3::copies_dir(source.parent().unwrap())).unwrap();
     let dll = root.path().join("volatile-state.vst3");
     std::fs::copy(source, &dll).unwrap();
     let catalog = Arc::new(Catalog {

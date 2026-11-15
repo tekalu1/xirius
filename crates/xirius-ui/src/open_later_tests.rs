@@ -24,7 +24,6 @@ struct Slow {
 impl Slow {
     fn on() -> Self {
         crate::plugin_reload_shots::require_plugin_host();
-        let root = tempfile::tempdir().unwrap();
         let base = std::env::current_exe()
             .unwrap()
             .parent()
@@ -37,6 +36,7 @@ impl Slow {
         .into_iter()
         .find(|p| p.is_file())
         .expect("build fixture");
+        let root = tempfile::tempdir_in(xirius_test_vst3::copies_dir(&base)).unwrap();
         let dll = root.path().join("opening.dll");
         std::fs::copy(source, &dll).unwrap();
         Self { root, dll }

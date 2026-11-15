@@ -200,6 +200,50 @@ struct Pending {
     edits: u64,
 }
 
+/// A test's record of a preference read on the shared readers, from its request until it has
+/// run or been dropped from the queue: a test folder goes only after its reads (`wait_read`).
+#[cfg(test)]
+struct Reading(Option<PathBuf>);
+#[cfg(test)]
+static READING: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+#[cfg(test)]
+impl Reading {
+    fn new(file: Option<PathBuf>) -> Self {
+        if let Some(file) = &file {
+            READING
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(file.clone());
+        }
+        Self(file)
+    }
+}
+#[cfg(test)]
+impl Drop for Reading {
+    fn drop(&mut self) {
+        if let Some(file) = &self.0 {
+            let mut reading = READING.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(at) = reading.iter().position(|f| f == file) {
+                reading.swap_remove(at);
+            }
+        }
+    }
+}
+/// Waits (at most 30 s) until no preference read of a file under `folder` is queued or running.
+#[cfg(test)]
+pub(crate) fn wait_read(folder: &std::path::Path) {
+    let end = Instant::now() + std::time::Duration::from_secs(30);
+    while READING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .any(|f| f.starts_with(folder))
+        && Instant::now() < end
+    {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct PrefsIo {
     pub(crate) favourite_edits: std::collections::BTreeMap<String, bool>,
@@ -387,7 +431,11 @@ impl crate::browser::Browser {
         let legacy = self.prefs_io.legacy.clone();
         self.prefs_io.next += 1;
         let key = self.prefs_io.next;
+        #[cfg(test)]
+        let reading = Reading::new(path.clone());
         let read = move || {
+            #[cfg(test)]
+            let _reading = reading;
             #[cfg(test)]
             xirius_core::io_test::before(
                 match work {

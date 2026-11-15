@@ -21,7 +21,7 @@ fn folder(name: &str) -> tempfile::TempDir {
 
 /// The sample song with the browser's files open on a place of WAV and MIDI files, its
 /// Loops folder open. The place goes when the guard is dropped.
-fn studio(name: &str) -> (Studio, PathBuf, tempfile::TempDir) {
+fn studio(name: &str) -> (tempfile::TempDir, Studio, PathBuf) {
     let top_tmp = folder(name);
     let top = top_tmp.path().join("素材");
     make_place(&top);
@@ -30,7 +30,7 @@ fn studio(name: &str) -> (Studio, PathBuf, tempfile::TempDir) {
     s.browser.add_place_fixture(&top).unwrap();
     s.browser.toggle_dir(&top.join("Loops").to_string_lossy());
     crate::browser_files::settle_rows(&s.browser);
-    (s, top, top_tmp)
+    (top_tmp, s, top)
 }
 
 fn geometry(s: &Studio) -> Geometry {
@@ -65,7 +65,7 @@ fn grab(s: &mut Studio, g: &Geometry, name: &str) -> (f32, f32) {
 
 #[test]
 fn a_file_dragged_onto_an_audio_track_is_a_clip_there_and_one_undo_takes_it_away() {
-    let (mut s, top, _tmp) = studio("track");
+    let (_tmp, mut s, top) = studio("track");
     let g = geometry(&s);
     let loop_ = top.join("Loops/loop_120bpm.wav");
     let steps = s.song.steps();
@@ -105,7 +105,7 @@ fn a_file_dragged_onto_an_audio_track_is_a_clip_there_and_one_undo_takes_it_away
 
 #[test]
 fn a_midi_file_dragged_onto_the_lanes_is_a_track_of_its_own() {
-    let (mut s, _, _tmp) = studio("midi");
+    let (_tmp, mut s, _) = studio("midi");
     let g = geometry(&s);
     let tracks = s.project().tracks.len();
     let (x, y) = over_audio(&s, &g).unwrap();
@@ -132,7 +132,7 @@ fn a_midi_file_dragged_onto_the_lanes_is_a_track_of_its_own() {
 
 #[test]
 fn a_press_that_does_not_move_or_lets_go_off_the_arrangement_puts_nothing() {
-    let (mut s, _, _tmp) = studio("still");
+    let (_tmp, mut s, _) = studio("still");
     let g = geometry(&s);
     let steps = s.song.steps();
     let at = grab(&mut s, &g, "loop_96bpm.wav");
@@ -172,7 +172,7 @@ fn detached(s: &mut Studio, name: &str) -> (TrackId, PluginId) {
 /// plan lit while it is over it and the main window's chip gone (UI-353).
 #[test]
 fn a_file_row_dropped_on_a_detached_drum_kit_loads_its_pad() {
-    let (mut s, top, _tmp) = studio("device");
+    let (_tmp, mut s, top) = studio("device");
     let g = geometry(&s);
     let (t, id) = detached(&mut s, "Drum Kit");
     let steps = s.song.steps();
@@ -230,7 +230,7 @@ fn a_file_row_dropped_on_a_detached_drum_kit_loads_its_pad() {
 /// A file row dragged onto a Sampler's own window is its sample (UI-353).
 #[test]
 fn a_file_row_dropped_on_a_detached_sampler_loads_it() {
-    let (mut s, top, _tmp) = studio("sampler");
+    let (_tmp, mut s, top) = studio("sampler");
     let g = geometry(&s);
     let (t, id) = detached(&mut s, "Sampler");
     let tracks = s.project().tracks.len();
@@ -254,7 +254,7 @@ fn a_file_row_dropped_on_a_detached_sampler_loads_it() {
 /// edge, or off every window of ours ends the drag with nothing put down (UI-353).
 #[test]
 fn a_file_row_let_go_on_a_window_that_takes_no_files_drops_nothing() {
-    let (mut s, _top, _tmp) = studio("cancel");
+    let (_tmp, mut s, _top) = studio("cancel");
     let g = geometry(&s);
     let (_, id) = detached(&mut s, "Drum Kit");
     let tracks = s.project().tracks.len();
@@ -304,7 +304,7 @@ fn a_file_row_let_go_on_a_window_that_takes_no_files_drops_nothing() {
 /// and lights are not sent where the pointer is not.
 #[test]
 fn letting_go_of_a_row_puts_over_back_on_the_main_window() {
-    let (mut s, _top, _tmp) = studio("release");
+    let (_tmp, mut s, _top) = studio("release");
     let g = geometry(&s);
     let (_, id) = detached(&mut s, "Drum Kit");
     grab(&mut s, &g, "loop_120bpm.wav");
@@ -331,7 +331,7 @@ fn letting_go_of_a_row_puts_over_back_on_the_main_window() {
 /// in hand does not take their light out (UI-353).
 #[test]
 fn a_row_drag_puts_out_only_the_light_it_lit() {
-    let (mut s, top, _tmp) = studio("light");
+    let (_tmp, mut s, top) = studio("light");
     let (_, id) = detached(&mut s, "Drum Kit");
     let pad = crate::device_window::with_surface(&mut s, id, |s, g| {
         s.instrument_center(g, id, Part::Pad(36)).expect("a pad")
@@ -357,7 +357,7 @@ fn a_row_drag_puts_out_only_the_light_it_lit() {
 /// line would (UI-353): what clears `error` clears it.
 #[test]
 fn a_detached_windows_fault_line_goes_with_the_main_ones() {
-    let (mut s, _top, _tmp) = studio("fault");
+    let (_tmp, mut s, _top) = studio("fault");
     let (_, id) = detached(&mut s, "Drum Kit");
     s.error_on(id, "そのままでは読み込めません".into());
     assert_eq!(s.error, None);
@@ -372,7 +372,7 @@ fn a_detached_windows_fault_line_goes_with_the_main_ones() {
 
 #[test]
 fn a_double_press_on_a_folder_goes_into_it() {
-    let (mut s, top, _tmp) = studio("enter");
+    let (_tmp, mut s, top) = studio("enter");
     let g = geometry(&s);
     let l = s.browser.layout(g.panel);
     let i = l
@@ -392,7 +392,7 @@ fn a_double_press_on_a_folder_goes_into_it() {
 
 #[test]
 fn from_file_puts_each_file_at_the_playhead_and_says_what_it_could_not() {
-    let (mut s, top, _tmp) = studio("picked");
+    let (_tmp, mut s, top) = studio("picked");
     let tracks = s.project().tracks.len();
     let steps = s.song.steps();
     let bar = s.project().time_map().bar_start(5);
@@ -427,7 +427,7 @@ fn from_file_puts_each_file_at_the_playhead_and_says_what_it_could_not() {
 
 #[test]
 fn the_folder_window_gives_the_browser_a_tab() {
-    let (mut s, top, _tmp) = studio("place");
+    let (_tmp, mut s, top) = studio("place");
     s.finish_picked(FileRequest::Place, &[top.join("Drums")]);
     s.settle_browser_import();
     s.browser.settle_prefs_io();
@@ -444,7 +444,7 @@ fn the_folder_window_gives_the_browser_a_tab() {
 
 #[test]
 fn the_plus_of_the_tabs_and_from_file_ask_the_screen_for_a_file_window() {
-    let (mut s, _, _tmp) = studio("ask");
+    let (_tmp, mut s, _) = studio("ask");
     let g = geometry(&s);
     let l = s.browser.layout(g.panel);
     let (x, y) = s.browser.center_of(&l, BrowserHit::LocAdd).unwrap();

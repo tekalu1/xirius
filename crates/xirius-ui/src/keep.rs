@@ -684,22 +684,19 @@ mod tests {
     use super::*;
 
     /// A folder of the test's own, removed when dropped (also when the test fails).
-    fn scratch(tag: &str) -> tempfile::TempDir {
-        tempfile::Builder::new()
-            .prefix(&format!("xirius-ui-keep-{tag}-"))
-            .tempdir()
-            .unwrap()
+    fn scratch(tag: &str) -> crate::shot::TestFolder {
+        crate::shot::TestFolder::new(&format!("xirius-ui-keep-{tag}-"))
     }
 
     /// A studio that keeps its songs in a folder of the test's own; the folder goes when the
-    /// guard is dropped.
-    fn kept(tag: &str) -> (Studio, PathBuf, tempfile::TempDir) {
+    /// guard is dropped. The guard comes first, so a test's bindings drop it after the studio.
+    fn kept(tag: &str) -> (crate::shot::TestFolder, Studio, PathBuf) {
         let root_tmp = scratch(tag);
         let root = root_tmp.path().to_path_buf();
         let mut s = Studio::new(Song::empty());
         s.keep = Keep::at(root.clone());
         s.keep.sync(&s.song.project());
-        (s, root, root_tmp)
+        (root_tmp, s, root)
     }
 
     fn add(s: &mut Studio, name: &str) {
@@ -732,7 +729,7 @@ mod tests {
             mpsc,
         };
         use std::time::{Duration, Instant};
-        let (mut s, root, _tmp) = kept("callbacks");
+        let (_tmp, mut s, root) = kept("callbacks");
         s.keep.settle_recent();
         let gate = Gate::new();
         let held = gate.0.clone();
@@ -795,7 +792,7 @@ mod tests {
             std::io::ErrorKind::StorageFull,
             std::io::ErrorKind::Other,
         ] {
-            let (mut s, root, _tmp) = kept("close-error");
+            let (_tmp, mut s, root) = kept("close-error");
             add(&mut s, "draft");
             s.keep.settle_recent();
             s.keep.poll_recent();
@@ -828,7 +825,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_readonly_recent_file_does_not_prevent_the_first_close() {
-        let (mut s, root, _tmp) = kept("readonly-close");
+        let (_tmp, mut s, root) = kept("readonly-close");
         add(&mut s, "saved");
         s.keep.settle_recent();
         s.keep.poll_recent();
@@ -888,7 +885,7 @@ mod tests {
         use std::process::{Child, Command, Stdio};
         use std::sync::mpsc;
         use std::time::{Duration, Instant};
-        let (mut s, root, _tmp) = kept("process-lock-close");
+        let (_tmp, mut s, root) = kept("process-lock-close");
         s.keep.settle_recent();
         s.keep.poll_recent();
         let mut command = Command::new(std::env::current_exe().unwrap());
@@ -972,7 +969,7 @@ mod tests {
     fn os_lock_wait_and_multiple_handles_share_one_fifo_without_blocking_the_ui() {
         use std::sync::mpsc;
         use std::time::Duration;
-        let (mut s, root, _tmp) = kept("os-lock");
+        let (_tmp, mut s, root) = kept("os-lock");
         s.keep.settle_recent();
         s.keep.poll_recent();
         let lock = std::fs::OpenOptions::new()
@@ -1019,7 +1016,7 @@ mod tests {
         };
         use std::time::Duration;
         for fail in [false, true] {
-            let (mut s, root, _tmp) = kept("close-save-as");
+            let (_tmp, mut s, root) = kept("close-save-as");
             add(&mut s, "saved");
             let original = root.join("original");
             s.finish_file_request_sync(crate::studio::FileRequest::SaveAs, &original);
@@ -1121,7 +1118,7 @@ mod tests {
     fn a_close_called_off_tells_the_recent_list_again() {
         use std::time::{Duration, Instant};
 
-        let (mut s, _root, _tmp) = kept("calledoff");
+        let (_tmp, mut s, _root) = kept("calledoff");
         add(&mut s, "first");
         let end = Instant::now() + Duration::from_secs(15);
         while !s.request_close() {
@@ -1141,6 +1138,8 @@ mod tests {
             s.keep.closing_recent.is_some(),
             "and tells the recent list again"
         );
+        // The list is told on its thread; it is done before the test's folder goes.
+        s.keep.settle_recent();
     }
 
     #[test]
@@ -1198,7 +1197,7 @@ mod tests {
     fn worker_panics_retain_the_fifo_and_allow_poll_submit_and_close() {
         use std::sync::atomic::{AtomicBool, Ordering};
         for operation in ["write", "recent_readback"] {
-            let (mut s, root, _tmp) = kept("worker-panic");
+            let (_tmp, mut s, root) = kept("worker-panic");
             s.keep.settle_recent();
             s.keep.poll_recent();
             let watch = root.join("recent.json");
@@ -1231,7 +1230,7 @@ mod tests {
 
     #[test]
     fn a_failed_draft_registration_is_reported_without_losing_the_draft_files() {
-        let (mut s, root, _tmp) = kept("recent-failure");
+        let (_tmp, mut s, root) = kept("recent-failure");
         let recent = root.join("recent.json");
         let watch = recent.clone();
         let observation = xirius_core::io_test::observe(Arc::new(move |op, path| {
@@ -1268,7 +1267,7 @@ mod tests {
 
     #[test]
     fn a_song_with_nothing_done_has_nothing_to_lose() {
-        let (s, _, _tmp) = kept("nothing");
+        let (_tmp, s, _) = kept("nothing");
         assert_eq!(s.keep.mark(&s.song, 1000), SaveMark::Saved);
     }
 
@@ -1277,7 +1276,7 @@ mod tests {
         use xirius_core::error::PluginStateFailure;
         for windowed in [false, true] {
             for plugin_failure in [false, true] {
-                let (mut s, _, _tmp) = kept("draft-reason");
+                let (_tmp, mut s, _) = kept("draft-reason");
                 if windowed {
                     s.transport.bind_window();
                 }
@@ -1315,7 +1314,7 @@ mod tests {
 
     #[test]
     fn an_edit_flashes_saving_then_saved_with_no_save_made() {
-        let (mut s, root, _tmp) = kept("flash");
+        let (_tmp, mut s, root) = kept("flash");
         let before = xirius_core::store::now_ms();
         add(&mut s, "a");
         let after = xirius_core::store::now_ms();
@@ -1347,7 +1346,7 @@ mod tests {
 
     #[test]
     fn the_draft_is_listed_and_goes_when_the_song_is_saved_in_a_place_of_its_own() {
-        let (mut s, root, _tmp) = kept("draft");
+        let (_tmp, mut s, root) = kept("draft");
         add(&mut s, "a");
         let draft = s.song.record_dir().unwrap();
         assert_eq!(s.keep.settled_recent().len(), 1);
@@ -1366,7 +1365,7 @@ mod tests {
 
     #[test]
     fn delete_draft_refuses_a_folder_that_is_not_a_draft() {
-        let (s, root, _tmp) = kept("refuse");
+        let (_tmp, s, root) = kept("refuse");
         let other = root.join("someone-elses-song");
         std::fs::create_dir_all(&other).unwrap();
         s.keep.delete_draft(&other);
@@ -1375,7 +1374,7 @@ mod tests {
 
     #[test]
     fn the_recent_list_is_newest_first_and_leaves_out_folders_that_are_gone() {
-        let (s, root, _tmp) = kept("recent");
+        let (_tmp, s, root) = kept("recent");
         for (i, name) in ["a", "b", "c"].iter().enumerate() {
             let d = root.join(name);
             std::fs::create_dir_all(&d).unwrap();
@@ -1418,7 +1417,7 @@ mod tests {
 
     #[test]
     fn the_beat_makes_an_automatic_save_point_every_thirty_seconds_and_only_for_a_change() {
-        let (mut s, _, _tmp) = kept("beat");
+        let (_tmp, mut s, _) = kept("beat");
         add(&mut s, "a");
         let t0 = xirius_core::store::now_ms();
         assert!(!s.keep_beat(t0 + 1_000) || s.keep.autosaves == 0);
@@ -1445,7 +1444,7 @@ mod tests {
 
     #[test]
     fn an_automatic_save_point_waits_while_a_take_is_recorded_and_comes_after() {
-        let (mut s, _, _tmp) = kept("recording");
+        let (_tmp, mut s, _) = kept("recording");
         add(&mut s, "a");
         let t0 = xirius_core::store::now_ms();
         s.transport.recording = true;
@@ -1459,7 +1458,7 @@ mod tests {
 
     #[test]
     fn an_automatic_save_point_waits_while_an_export_runs() {
-        let (mut s, _, _tmp) = kept("export");
+        let (_tmp, mut s, _) = kept("export");
         add(&mut s, "a");
         let t0 = xirius_core::store::now_ms();
         s.export.jobs.push(json!({ "state": "running" }));
@@ -1473,7 +1472,7 @@ mod tests {
 
     #[test]
     fn a_failed_record_keeps_the_failure_mark_until_a_save_point_is_written() {
-        let (mut s, _, _tmp) = kept("failed");
+        let (_tmp, mut s, _) = kept("failed");
         add(&mut s, "a");
         let t0 = xirius_core::store::now_ms();
         s.keep.failed = Some("disk full".into());
@@ -1487,7 +1486,7 @@ mod tests {
 
     #[test]
     fn edits_on_a_slow_disk_do_not_stop_the_window() {
-        let (mut s, _, _tmp) = kept("slow");
+        let (_tmp, mut s, _) = kept("slow");
         add(&mut s, "a");
         s.song.flush_writes();
         let slow = std::time::Duration::from_millis(300);
@@ -1515,7 +1514,7 @@ mod tests {
 
     #[test]
     fn a_step_the_thread_could_not_write_shows_the_failure_mark_and_warning() {
-        let (mut s, _, _tmp) = kept("thread-failed");
+        let (_tmp, mut s, _) = kept("thread-failed");
         add(&mut s, "a");
         s.song.flush_writes();
         let history = s.song.record_dir().unwrap().join("history");
@@ -1565,7 +1564,7 @@ mod tests {
 
     #[test]
     fn a_new_song_goes_back_to_the_empty_entrance_and_keeps_the_one_it_left() {
-        let (mut s, _, _tmp) = kept("new");
+        let (_tmp, mut s, _) = kept("new");
         add(&mut s, "a");
         let left = s.song.record_dir().unwrap();
         assert!(!s.start_shown());
@@ -1589,7 +1588,7 @@ mod tests {
 
     #[test]
     fn the_new_entry_of_the_song_menu_and_ctrl_n_do_the_same() {
-        let (mut s, _, _tmp) = kept("new-entry");
+        let (_tmp, mut s, _) = kept("new-entry");
         add(&mut s, "a");
         let g = s.geometry(1440.0, 860.0);
         assert!(s.key(&g, "n", true, false));
@@ -1699,7 +1698,7 @@ mod tests {
 
     #[test]
     fn a_recent_song_in_the_menu_opens_that_song() {
-        let (mut s, root, _tmp) = kept("menu-recent");
+        let (_tmp, mut s, root) = kept("menu-recent");
         // Two songs, each left behind as the other is started.
         add(&mut s, "first");
         let first = s.song.record_dir().unwrap();
@@ -1742,13 +1741,13 @@ mod tests {
     // ---- a song left with nothing in it keeps no draft
 
     /// A studio whose song has only a tempo point: that is an edit, so it has a draft.
-    fn tempo_only(tag: &str) -> (Studio, PathBuf, PathBuf, tempfile::TempDir) {
-        let (mut s, root, tmp) = kept(tag);
+    fn tempo_only(tag: &str) -> (crate::shot::TestFolder, Studio, PathBuf, PathBuf) {
+        let (tmp, mut s, root) = kept(tag);
         assert!(s.run_command("tempo.set", json!({ "at": 0, "bpm": 150 })));
         let draft = s.song.record_dir().expect("the first edit made a draft");
         assert!(s.song.is_draft() && s.keep.is_draft_dir(&draft));
         assert!(s.keep.settled_recent().iter().any(|r| r.dir == draft));
-        (s, root, draft, tmp)
+        (tmp, s, root, draft)
     }
 
     /// A saved song with a track, in the folder `name` under `root`.
@@ -1802,7 +1801,7 @@ mod tests {
     #[test]
     fn an_empty_draft_is_not_kept_when_the_song_is_left() {
         for exit in EXITS {
-            let (mut s, root, draft, _tmp) = tempo_only(exit);
+            let (_tmp, mut s, root, draft) = tempo_only(exit);
             leave_by(&mut s, exit, &root);
             assert!(!draft.exists(), "{exit}: the draft folder is gone");
             assert!(
@@ -1819,7 +1818,7 @@ mod tests {
     fn a_draft_with_a_track_a_clip_or_a_name_is_kept() {
         for exit in EXITS {
             for what in ["track", "clip", "name"] {
-                let (mut s, root, draft, _tmp) = tempo_only(&format!("{exit}-{what}"));
+                let (_tmp, mut s, root, draft) = tempo_only(&format!("{exit}-{what}"));
                 match what {
                     "track" => add(&mut s, "a"),
                     "clip" => {
@@ -1851,7 +1850,7 @@ mod tests {
     #[test]
     fn a_saved_song_emptied_is_never_dropped_when_left() {
         for exit in EXITS {
-            let (mut s, root, _tmp) = kept(&format!("saved-{exit}"));
+            let (_tmp, mut s, root) = kept(&format!("saved-{exit}"));
             add(&mut s, "a");
             let place = root.join("mine");
             s.finish_file_request_sync(crate::studio::FileRequest::SaveAs, &place);
@@ -1873,7 +1872,7 @@ mod tests {
 
     #[test]
     fn an_edit_after_a_failed_leave_is_not_taken_for_an_empty_draft() {
-        let (mut s, _root, draft, _tmp) = tempo_only("stale");
+        let (_tmp, mut s, _root, draft) = tempo_only("stale");
         s.keep.abandon = s.empty_draft();
         assert_eq!(s.keep.abandon.as_deref(), Some(draft.as_path()));
         add(&mut s, "a");
@@ -1883,24 +1882,24 @@ mod tests {
 
     #[test]
     fn a_draft_is_there_while_open_and_a_crash_leaves_it_to_be_recovered() {
-        let (s, root, draft, tmp) = tempo_only("crash");
+        let (tmp, s, root, draft) = tempo_only("crash");
         assert!(draft.join("project.json").exists());
         let mut s = s;
         let song = std::mem::replace(&mut s.song, Song::empty());
         song.simulate_crash();
         std::fs::write(draft.join("session.lock"), u32::MAX.to_string()).unwrap();
         drop(s);
-        let mut s = launch(&root);
+        let s = launch(&root);
         assert_eq!(s.error, None);
         assert_eq!(s.song.record_dir(), Some(draft.clone()), "recovered");
         assert!(draft.exists());
+        drop(s);
         drop(tmp);
-        let _ = &mut s;
     }
 
     #[test]
     fn only_a_folder_below_the_drafts_is_a_draft_folder() {
-        let (s, root, _tmp) = kept("guard");
+        let (_tmp, s, root) = kept("guard");
         let drafts = root.join("drafts");
         std::fs::create_dir_all(drafts.join("one")).unwrap();
         let outside = root.join("outside");

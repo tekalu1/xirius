@@ -779,7 +779,7 @@ fn fill(s: &mut Studio, id: PluginId, files: &[std::path::PathBuf]) {
 /// Turns the screen's poll until the peaks of `files` are there to draw, or ten seconds.
 fn wait_peaks(s: &mut Studio, files: &[std::path::PathBuf]) {
     use std::time::{Duration, Instant};
-    let store = xirius_session::peaks::store_dir(s.song().dir().as_deref());
+    let store = s.song().peak_store();
     let end = Instant::now() + Duration::from_secs(10);
     while Instant::now() < end
         && !files

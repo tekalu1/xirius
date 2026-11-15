@@ -239,6 +239,7 @@ mod tests {
 
     #[test]
     fn reload_restarts_the_running_host_without_reopening_the_song_or_editing_history() {
+        let _records = crate::shot::CrashRecords::new();
         xirius_test_vst3::fixture_marker();
         let mut s = Studio::sample();
         prepare(&mut s, 0);
@@ -288,6 +289,7 @@ mod tests {
 
     #[test]
     fn the_palette_reload_row_is_enabled_only_for_a_crash_and_uses_the_live_host() {
+        let _records = crate::shot::CrashRecords::new();
         xirius_test_vst3::fixture_marker();
         let mut s = Studio::sample();
         prepare(&mut s, 0);

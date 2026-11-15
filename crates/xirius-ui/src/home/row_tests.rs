@@ -17,7 +17,7 @@ fn rows(s: &Studio, g: &Geometry) -> Vec<Cell> {
 #[test]
 fn a_draft_row_keeps_its_mark_whole_and_the_sample_row_its_tag() {
     let now = xirius_core::store::now_ms();
-    let (s, g, _tmp) = listed(&[
+    let (_tmp, s, g) = listed(&[
         ("saved", false, now - 86_400_000),
         (LONG, true, now - 60_000),
     ]);
@@ -34,7 +34,7 @@ fn a_draft_row_keeps_its_mark_whole_and_the_sample_row_its_tag() {
 #[test]
 fn the_name_drawn_ends_before_the_time_and_the_mark_remains() {
     let now = xirius_core::store::now_ms();
-    let (s, g, _tmp) = listed(&[
+    let (_tmp, s, g) = listed(&[
         ("saved", false, now - 86_400_000),
         (LONG, true, now - 60_000),
     ]);
@@ -54,7 +54,7 @@ fn the_name_drawn_ends_before_the_time_and_the_mark_remains() {
 #[test]
 fn a_long_saved_name_has_the_same_room_and_no_mark() {
     let now = xirius_core::store::now_ms();
-    let (s, g, _tmp) = listed(&[(LONG, false, now - 4 * 86_400_000)]);
+    let (_tmp, s, g) = listed(&[(LONG, false, now - 4 * 86_400_000)]);
     let cell = rows(&s, &g).remove(0);
     assert_eq!(cell.text, LONG);
     assert_eq!(cell.tail, "");
@@ -64,7 +64,7 @@ fn a_long_saved_name_has_the_same_room_and_no_mark() {
 #[test]
 fn the_screen_reader_is_told_the_whole_name() {
     let now = xirius_core::store::now_ms();
-    let (s, g, _tmp) = listed(&[(LONG, true, now - 60_000)]);
+    let (_tmp, s, g) = listed(&[(LONG, true, now - 60_000)]);
     let marks = crate::a11y::marks(&s, &g);
     let list = marks.last().unwrap();
     let said: Vec<String> = list

@@ -2987,11 +2987,8 @@ used {} {}
         }
     }
 
-    fn scratch(tag: &str) -> tempfile::TempDir {
-        tempfile::Builder::new()
-            .prefix(&format!("xirius-ui-update-{tag}-"))
-            .tempdir()
-            .unwrap()
+    fn scratch(tag: &str) -> crate::shot::TestFolder {
+        crate::shot::TestFolder::new(&format!("xirius-ui-update-{tag}-"))
     }
 
     /// A signed manifest and the three small files of a release (UI-282).
@@ -4102,6 +4099,8 @@ used {} {}
         );
         let tmp = scratch("outlives");
         let root = tmp.path();
+        let temporary = root.join("tmp");
+        std::fs::create_dir_all(&temporary).unwrap();
         // A job this test runs in that lets nothing leave would keep the installer in ours as
         // well; then only the crash is tried.
         // SAFETY: the job is ours, its limits are a zeroed structure of the right size, and
@@ -4133,6 +4132,8 @@ used {} {}
             ])
             .env("XIRIUS_UPDATE_CLOSE_TEST", root)
             .env_remove("XIRIUS_UPDATE_CLOSE_ROLE")
+            // It falls over without removing its files: they are made in the test's folder.
+            .envs(["TMP", "TEMP", "TMPDIR"].map(|name| (name, &temporary)))
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED)

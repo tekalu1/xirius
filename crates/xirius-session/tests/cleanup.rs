@@ -43,6 +43,9 @@ impl Dir {
 
 impl Drop for Dir {
     fn drop(&mut self) {
+        // An import asks for the file's peaks, which a thread of their own writes in the song's
+        // `Peaks/`; one still writing there would leave the folder behind.
+        xirius_session::peaks::wait();
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }

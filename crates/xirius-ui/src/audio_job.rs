@@ -512,6 +512,7 @@ mod tests {
 
     #[test]
     fn ctrl_z_while_a_slow_bounce_runs_takes_it_out_of_the_queue() {
+        let _tmp = crate::shot::TestTemp::new();
         let (mut s, g) = setup();
         let (steps, tracks) = (s.song.steps(), s.project().tracks.len());
         assert!(bounce(&mut s, "Vocal", LONG), "{:?}", s.error);
@@ -541,6 +542,7 @@ mod tests {
 
     #[test]
     fn jobs_asked_for_together_go_into_the_song_in_order() {
+        let _tmp = crate::shot::TestTemp::new();
         let (mut s, g) = setup();
         let ids = |s: &Studio| -> Vec<TrackId> { s.project().tracks.keys().copied().collect() };
         let at_first = ids(&s);
@@ -574,6 +576,7 @@ mod tests {
 
     #[test]
     fn an_edit_made_after_it_is_taken_back_before_the_waiting_job() {
+        let _tmp = crate::shot::TestTemp::new();
         let (mut s, g) = setup();
         let vocal = track(&s, "Vocal").to_string();
         let tracks = s.project().tracks.len();
@@ -594,6 +597,7 @@ mod tests {
 
     #[test]
     fn a_job_waiting_since_before_one_went_into_the_song_is_still_taken_back_first() {
+        let _tmp = crate::shot::TestTemp::new();
         let (mut s, g) = setup();
         let tracks = s.project().tracks.len();
         assert!(bounce(&mut s, "Vocal", 2), "{:?}", s.error);

@@ -23,6 +23,9 @@ use xirius_session::output::OutputMode;
 struct Rig {
     dir: PathBuf,
     s: Session,
+    /// The test's own folder, with `dir` in it; removed after the session, also when the test
+    /// fails.
+    tmp: tempfile::TempDir,
 }
 
 fn session(dir: &Path) -> Session {
@@ -46,11 +49,15 @@ fn session_with(dir: &Path, p: Project) -> Session {
 }
 
 fn rig(tag: &str) -> Rig {
-    let dir = std::env::temp_dir().join(format!("xirius-xpresets-{}-{tag}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let tmp = tempfile::Builder::new()
+        .prefix(&format!("xirius-xpresets-{tag}-"))
+        .tempdir()
+        .unwrap();
+    let dir = tmp.path().join("presets");
     Rig {
         dir: dir.clone(),
         s: session(&dir),
+        tmp,
     }
 }
 
@@ -1278,8 +1285,7 @@ fn y9_a_path_outside_the_presets_folder_is_not_removed_or_renamed() {
     let mut r = rig("y9");
     let (t, eq) = eq_track(&mut r);
     save(&mut r, &t, &eq, "Here");
-    let away = std::env::temp_dir().join(format!("xirius-xpresets-{}-y9away", std::process::id()));
-    let _ = std::fs::remove_dir_all(&away);
+    let away = r.tmp.path().join("away");
     std::fs::create_dir_all(&away).unwrap();
     let x = away.join("x.xpreset");
     std::fs::copy(eq_dir(&r).join("Here.xpreset"), &x).unwrap();
@@ -1322,8 +1328,7 @@ fn sampler_song(r: &mut Rig, tag: &str, files: &[&str]) -> (Session, String, Pat
     let mut p = r.s.project().clone();
     Arc::make_mut(p.tracks.get_mut(&tid).unwrap()).inserts[0].samples =
         files.iter().map(|f| f.to_string()).collect();
-    let song = std::env::temp_dir().join(format!("xirius-xpresets-{}-{tag}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&song);
+    let song = r.tmp.path().join(tag);
     let mut s = session_with(&r.dir, p);
     s.save_as(&song).unwrap();
     for f in files {
@@ -1812,8 +1817,7 @@ fn y14_a_kits_pads_and_choke_come_back_with_its_preset() {
     let x = plugin(&mut r.s, &t, "Drum Kit");
     let tid: TrackId = t.parse().unwrap();
     let files = ["kit/Snare_a.wav", "kit/Snare_b.wav", "kit/Hat.wav"];
-    let song = std::env::temp_dir().join(format!("xirius-xpresets-{}-y14", std::process::id()));
-    let _ = std::fs::remove_dir_all(&song);
+    let song = r.tmp.path().join("y14");
     {
         let mut p = r.s.project().clone();
         let k = &mut Arc::make_mut(p.tracks.get_mut(&tid).unwrap()).inserts[0];
@@ -1970,8 +1974,7 @@ fn y16_a_sample_is_looked_for_by_its_sound_and_only_where_it_may_be() {
     assert_eq!(track(&s, &t).inserts[0].samples, ["Media/Kick.wav"]);
 
     // A preset that names places off the song's folder.
-    let outside =
-        std::env::temp_dir().join(format!("xirius-xpresets-{}-y16out", std::process::id()));
+    let outside = r.tmp.path().join("y16out");
     std::fs::create_dir_all(&outside).unwrap();
     for name in ["Far.wav", "Up.wav", "Share.wav", "Device.wav"] {
         std::fs::write(outside.join(name), format!("RIFF {name}")).unwrap();

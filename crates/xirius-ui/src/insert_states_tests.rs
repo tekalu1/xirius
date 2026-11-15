@@ -408,6 +408,7 @@ fn a_wait_cut_short_still_reads_the_plugins_in_this_process() {
 
 #[test]
 fn a_plugin_whose_host_went_down_is_copied_as_the_song_last_had_it() {
+    let _records = crate::shot::CrashRecords::new();
     let Song {
         mut s,
         g,

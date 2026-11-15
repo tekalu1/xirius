@@ -153,6 +153,8 @@ fn poll_until_taken(s: &mut Studio, steps: usize, wait: Duration) -> bool {
 
 #[test]
 fn a_vst3_effects_window_opens_on_the_instance_that_plays_and_its_knob_is_one_step() {
+    // A plugin may write into the temporary folder (Vital leaves `vital_versions.txt`).
+    let _temp = crate::shot::TestTemp::new();
     let _one = one_at_a_time();
     let Some(entries) = entries(EFFECT) else {
         return;
@@ -207,6 +209,8 @@ fn a_vst3_effects_window_opens_on_the_instance_that_plays_and_its_knob_is_one_st
 
 #[test]
 fn a_vst3_instruments_window_opens_from_the_keys_button_and_the_mixer() {
+    // A plugin may write into the temporary folder (Vital leaves `vital_versions.txt`).
+    let _temp = crate::shot::TestTemp::new();
     let _one = one_at_a_time();
     let Some((entries, name)) = INSTRUMENTS
         .iter()
@@ -276,6 +280,8 @@ fn a_window_that_cannot_open_says_why() {
 /// are not heard.
 #[test]
 fn without_output_the_window_is_of_an_instance_apart() {
+    // A plugin may write into the temporary folder (Vital leaves `vital_versions.txt`).
+    let _temp = crate::shot::TestTemp::new();
     let _one = one_at_a_time();
     let Some(entries) = entries(EFFECT) else {
         return;

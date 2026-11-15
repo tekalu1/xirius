@@ -53,9 +53,9 @@ fn seeded(path: &std::path::Path) {
     seed.save_as(path).unwrap();
 }
 
-fn listing() -> (Studio, Geometry, tempfile::TempDir) {
+fn listing() -> (crate::shot::TestFolder, Studio, Geometry) {
     let now = xirius_core::store::now_ms();
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::shot::TestFolder::new("xirius-ui-home-");
     let keep = crate::keep::Keep::at(tmp.path().join("keep"));
     let saved = tmp.path().join("saved");
     let draft = tmp.path().join("keep").join("drafts").join("d1");
@@ -75,7 +75,7 @@ fn listing() -> (Studio, Geometry, tempfile::TempDir) {
     s.home = Some(Home::default());
     s.home_tick();
     let g = s.geometry(1280.0, 720.0);
-    (s, g, tmp)
+    (tmp, s, g)
 }
 
 fn row_of(s: &Studio, g: &Geometry, kind: Kind) -> (f32, f32) {
@@ -100,8 +100,12 @@ fn press(s: &mut Studio, g: &Geometry, at: (f32, f32), clicks: u32) -> bool {
 
 /// Both presses, `gap` apart, on the same place of one row; returns whether the open was still
 /// running at the second press, and the song's state after it came up and rested.
-fn twice(kind: Kind, gap: Gap, second_clicks: u32) -> (bool, String, Studio, tempfile::TempDir) {
-    let (mut s, g, tmp) = listing();
+fn twice(
+    kind: Kind,
+    gap: Gap,
+    second_clicks: u32,
+) -> (crate::shot::TestFolder, bool, String, Studio) {
+    let (tmp, mut s, g) = listing();
     let at = row_of(&s, &g, kind);
     press(&mut s, &g, at, 1);
     assert!(s.opening.is_some(), "{kind:?}: the first press opens");
@@ -110,7 +114,7 @@ fn twice(kind: Kind, gap: Gap, second_clicks: u32) -> (bool, String, Studio, tem
     s.wait_for_open_for_test();
     run_for(&mut s, Duration::from_millis(300));
     let state = song_of(&s);
-    (running, state, s, tmp)
+    (tmp, running, state, s)
 }
 
 /// What a press must not change: the song itself (its tracks, tempo and notes), what undo
@@ -125,17 +129,17 @@ fn song_of(s: &Studio) -> String {
 }
 
 /// The same row opened by one press, to compare with.
-fn once(kind: Kind) -> (String, Studio, tempfile::TempDir) {
-    let (mut s, g, tmp) = listing();
+fn once(kind: Kind) -> (crate::shot::TestFolder, String, Studio) {
+    let (tmp, mut s, g) = listing();
     let at = row_of(&s, &g, kind);
     press(&mut s, &g, at, 1);
     s.wait_for_open_for_test();
     run_for(&mut s, Duration::from_millis(300));
     let state = song_of(&s);
-    (state, s, tmp)
+    (tmp, state, s)
 }
 
-fn opened(s: &Studio, tmp: &tempfile::TempDir, kind: Kind) {
+fn opened(s: &Studio, tmp: &crate::shot::TestFolder, kind: Kind) {
     assert!(!s.home_shown(), "{kind:?}: the song is up");
     assert!(s.opening.is_none());
     match kind {
@@ -149,7 +153,7 @@ fn opened(s: &Studio, tmp: &tempfile::TempDir, kind: Kind) {
 fn a_row_pressed_again_opens_its_song_once_and_changes_nothing() {
     let mut bad = Vec::new();
     for kind in [Kind::Saved, Kind::Draft, Kind::Sample] {
-        let (want, s0, _t0) = once(kind);
+        let (_t0, want, s0) = once(kind);
         let steps = s0.song.steps();
         for gap in [Gap::Now, Gap::Short, Gap::Second] {
             // A double-click's second press comes at once or a moment after, not a second on.
@@ -157,7 +161,7 @@ fn a_row_pressed_again_opens_its_song_once_and_changes_nothing() {
                 if clicks == 2 && gap == Gap::Second {
                     continue;
                 }
-                let (running, state, s, tmp) = twice(kind, gap, clicks);
+                let (tmp, running, state, s) = twice(kind, gap, clicks);
                 opened(&s, &tmp, kind);
                 let tag =
                     format!("{kind:?} {gap:?} clicks={clicks} (open still running: {running})");
@@ -193,7 +197,7 @@ fn a_row_pressed_again_opens_its_song_once_and_changes_nothing() {
 #[test]
 fn a_press_on_the_song_that_came_up_at_the_rows_place_adds_no_step() {
     for kind in [Kind::Saved, Kind::Draft, Kind::Sample] {
-        let (mut s, g, _tmp) = listing();
+        let (_tmp, mut s, g) = listing();
         let at = row_of(&s, &g, kind);
         press(&mut s, &g, at, 1);
         s.wait_for_open_for_test();
@@ -208,21 +212,21 @@ fn a_press_on_the_song_that_came_up_at_the_rows_place_adds_no_step() {
 }
 
 /// The song that came up under the top row, rested, with the row's place and a fresh geometry.
-fn up_under_the_top_row() -> (Studio, Geometry, (f32, f32), tempfile::TempDir) {
-    let (mut s, g, tmp) = listing();
+fn up_under_the_top_row() -> (crate::shot::TestFolder, Studio, Geometry, (f32, f32)) {
+    let (tmp, mut s, g) = listing();
     let at = row_of(&s, &g, Kind::Draft);
     press(&mut s, &g, at, 1);
     s.wait_for_open_for_test();
     run_for(&mut s, Duration::from_millis(300));
     let g = s.geometry(1280.0, 720.0);
-    (s, g, at, tmp)
+    (tmp, s, g, at)
 }
 
 /// Pressing on and on at the row's place counts 2, 3, 4, 5 …: none of them is the song's.
 #[test]
 fn a_run_of_presses_that_began_on_a_row_never_reaches_the_song() {
-    let (want, _s0, _t0) = once(Kind::Draft);
-    let (mut s, g, at, _tmp) = up_under_the_top_row();
+    let (_t0, want, _s0) = once(Kind::Draft);
+    let (_tmp, mut s, g, at) = up_under_the_top_row();
     for clicks in 2..=5 {
         press(&mut s, &g, at, clicks);
         s.window_released(&g, at.0, at.1, Mods::NONE);
@@ -233,7 +237,7 @@ fn a_run_of_presses_that_began_on_a_row_never_reaches_the_song() {
 /// A press of its own (count 1) ends the run: the next double press there is an ordinary one.
 #[test]
 fn a_press_of_its_own_after_the_run_makes_the_place_ordinary_again() {
-    let (mut s, g, at, _tmp) = up_under_the_top_row();
+    let (_tmp, mut s, g, at) = up_under_the_top_row();
     for clicks in 2..=5 {
         press(&mut s, &g, at, clicks);
         s.window_released(&g, at.0, at.1, Mods::NONE);
@@ -249,7 +253,7 @@ fn a_press_of_its_own_after_the_run_makes_the_place_ordinary_again() {
 /// What is remembered is a place: a press further than 8 px away is the song's.
 #[test]
 fn a_double_press_far_from_the_row_is_the_songs_even_with_a_place_remembered() {
-    let (mut s, g, at, _tmp) = up_under_the_top_row();
+    let (_tmp, mut s, g, at) = up_under_the_top_row();
     let tempo = s.project().tempo.len();
     let far = (at.0 + 40.0, at.1);
     press(&mut s, &g, far, 2);

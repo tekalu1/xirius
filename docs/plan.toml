@@ -6127,6 +6127,15 @@ done_when = "TMP・TEMP を既定のまま cargo test --workspace を 1 回流�
 status = "done"
 
 [[item]]
+id = "ARC-046"
+title = "試験は利用者の Xirius の置き場（クラッシュの記録・波形・設定・一覧）に何も書かず、一時フォルダーに何も残さない。python scripts/ci_tests.py がそれを見張る"
+area = "ARC"
+phase = "v1"
+source = "mockups/rev4-spec.md § 確かめ方"
+done_when = "python scripts/ci_tests.py を 2 回流して、どちらも %LOCALAPPDATA%/Xirius・%APPDATA%/Xirius（macOS は ~/Library の Application Support・Caches・Logs の Xirius）に増えた・変わった・消えた物が無く、実行の一時フォルダーに残った物が無い。プラグインのホストを落とす試験は XIRIUS_CRASH_DIR を自分のフォルダーに向け、試験のフォルダーは失敗しても消える。ci_tests.py は終わりに両方を比べ、残った物の名前を出して失敗する（別の Xirius が動いている間は、利用者の置き場の差を警告にとどめる。scripts/test_ci_tests.py）。製品の動き（試験でないとき）は変わらない"
+status = "done"
+
+[[item]]
 id = "ARC-029"
 title = "ほかの会社のプラグインの画面の試験（vendor_editor_windows）が、混んだ PC で落ちない。プラグインは 1 本のスレッドで作り・見せ・放し、窓と Space の届きは時間ではなく実物を待つ"
 area = "ARC"

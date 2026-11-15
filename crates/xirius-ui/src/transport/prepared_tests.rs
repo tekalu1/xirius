@@ -622,7 +622,10 @@ fn retained_retry(cancel: bool) {
     use std::os::windows::ffi::OsStrExt;
     use std::sync::atomic::AtomicUsize;
     use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
-    let root = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir_in(xirius_test_vst3::copies_dir(
+        std::env::current_exe().unwrap().parent().unwrap(),
+    ))
+    .unwrap();
     let dll = root.path().join("retry.vst3");
     std::fs::copy(
         std::env::current_exe()

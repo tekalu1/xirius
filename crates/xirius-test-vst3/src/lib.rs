@@ -46,6 +46,27 @@ pub fn fixture_path(deps: &std::path::Path) -> std::path::PathBuf {
         }).clone()
     }
 }
+/// Where a test keeps a copy of the fixture and the files beside it: a folder under the test
+/// build directory, removed by cargo clean, not the temporary folder. A DLL loaded in a test's
+/// process cannot be removed on Windows until that process ends, so the test's own folder stays
+/// after it; the next test that asks removes those older than a test may run (nextest stops one
+/// after 5 minutes, `.config/nextest.toml`).
+pub fn copies_dir(deps: &std::path::Path) -> std::path::PathBuf {
+    let dir = deps.join("xirius-test-copies");
+    let _ = std::fs::create_dir_all(&dir);
+    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let old = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > std::time::Duration::from_secs(15 * 60));
+        if old {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+    dir
+}
 /// Momentary test trigger: a positive point exits the hosting process during processing.
 pub const CRASH_PARAMETER: u32 = 3;
 /// Independent observable value for consecutive owner-command regression tests.

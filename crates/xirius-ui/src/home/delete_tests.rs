@@ -11,8 +11,8 @@ type Seed<'a> = (&'a str, bool, u64);
 
 /// The start screen over these songs, oldest first (the list shows them newest first). A
 /// draft's folder is one of the keeper's own; a saved song's lies beside them.
-pub(super) fn listed(songs: &[Seed]) -> (Studio, Geometry, tempfile::TempDir) {
-    let tmp = tempfile::tempdir().unwrap();
+pub(super) fn listed(songs: &[Seed]) -> (crate::shot::TestFolder, Studio, Geometry) {
+    let tmp = crate::shot::TestFolder::new("xirius-ui-home-");
     let keep = crate::keep::Keep::at(tmp.path().join("keep"));
     for (name, draft, at) in songs {
         let path = if *draft {
@@ -34,10 +34,10 @@ pub(super) fn listed(songs: &[Seed]) -> (Studio, Geometry, tempfile::TempDir) {
     s.home = Some(Home::default());
     s.home_tick();
     let g = s.geometry(1280.0, 720.0);
-    (s, g, tmp)
+    (tmp, s, g)
 }
 
-pub(super) fn dir_of(tmp: &tempfile::TempDir, name: &str) -> PathBuf {
+pub(super) fn dir_of(tmp: &crate::shot::TestFolder, name: &str) -> PathBuf {
     tmp.path().join("keep").join("drafts").join(name)
 }
 
@@ -77,7 +77,7 @@ fn delete_chosen(s: &mut Studio, g: &Geometry) {
 
 #[test]
 fn delete_on_a_draft_in_the_list_asks_and_removes_nothing_yet() {
-    let (mut s, g, tmp) = listed(&[("old", false, 1), ("d1", true, 2)]);
+    let (tmp, mut s, g) = listed(&[("old", false, 1), ("d1", true, 2)]);
     assert_eq!(labels(&s)[0], "d1（保存前）");
     select(&mut s, 0, Focus::List);
     assert!(key(&mut s, &g, "delete", NONE, None));
@@ -88,7 +88,7 @@ fn delete_on_a_draft_in_the_list_asks_and_removes_nothing_yet() {
 
 #[test]
 fn delete_does_nothing_on_a_saved_song_the_sample_or_a_button() {
-    let (mut s, g, tmp) = listed(&[("old", false, 1), ("d1", true, 2)]);
+    let (tmp, mut s, g) = listed(&[("old", false, 1), ("d1", true, 2)]);
     let before = song_state(&s);
     // A saved song and the sample.
     for row in [1, 2] {
@@ -109,7 +109,7 @@ fn delete_does_nothing_on_a_saved_song_the_sample_or_a_button() {
 
 #[test]
 fn delete_in_the_search_stays_text_editing() {
-    let (mut s, g, _tmp) = listed(&[("d1", true, 2)]);
+    let (_tmp, mut s, g) = listed(&[("d1", true, 2)]);
     s.home.as_mut().unwrap().focus = Focus::Search;
     s.pick_text(None, "d", false);
     select(&mut s, 0, Focus::Search);
@@ -147,7 +147,7 @@ fn menu_key() -> &'static str {
 
 #[test]
 fn a_right_press_on_a_draft_row_opens_the_one_row_menu_and_chooses_the_row() {
-    let (mut s, g, tmp) = listed(&[("old", false, 1), ("d1", true, 2)]);
+    let (tmp, mut s, g) = listed(&[("old", false, 1), ("d1", true, 2)]);
     select(&mut s, 1, Focus::Button(Button::New));
     let at = centre(
         s.home_layout(&g)
@@ -170,7 +170,7 @@ fn a_right_press_on_a_draft_row_opens_the_one_row_menu_and_chooses_the_row() {
 
 #[test]
 fn a_right_press_on_a_saved_song_the_sample_or_nothing_opens_no_menu_and_goes_no_further() {
-    let (mut s, g, _tmp) = listed(&[("old", false, 1), ("d1", true, 2)]);
+    let (_tmp, mut s, g) = listed(&[("old", false, 1), ("d1", true, 2)]);
     for row in [1, 2] {
         let at = centre(
             s.home_layout(&g)
@@ -192,7 +192,7 @@ fn the_menu_key_and_shift_f10_open_the_draft_rows_menu_and_no_other() {
         shift: true,
         ..NONE
     };
-    let (mut s, g, _tmp) = listed(&[("old", false, 1), ("d1", true, 2)]);
+    let (_tmp, mut s, g) = listed(&[("old", false, 1), ("d1", true, 2)]);
     select(&mut s, 0, Focus::List);
     assert!(key(&mut s, &g, "menu", NONE, None));
     assert!(s.context_open());
@@ -221,7 +221,7 @@ fn the_menu_key_and_shift_f10_open_the_draft_rows_menu_and_no_other() {
 
 #[test]
 fn the_question_starts_on_back_and_enter_only_goes_back() {
-    let (mut s, g, tmp) = listed(&[("d1", true, 2)]);
+    let (tmp, mut s, g) = listed(&[("d1", true, 2)]);
     select(&mut s, 0, Focus::List);
     assert!(key(&mut s, &g, "delete", NONE, None));
     // Enter again and again: the first goes back, and nothing is deleted.
@@ -253,7 +253,7 @@ fn the_question_starts_on_back_and_enter_only_goes_back() {
 #[test]
 fn the_question_names_the_song_and_says_when_it_was_edited() {
     let now = xirius_core::store::now_ms();
-    let (mut s, g, _tmp) = listed(&[
+    let (_tmp, mut s, g) = listed(&[
         ("d2", true, now.saturating_sub(5 * 60_000)),
         ("d1", true, now),
     ]);
@@ -299,7 +299,7 @@ fn a_long_name_is_cut_on_its_own_side_and_the_tail_stays() {
 
 #[test]
 fn the_question_takes_every_key_and_press_from_the_screen_and_the_song() {
-    let (mut s, g, tmp) = listed(&[("a", false, 1), ("d1", true, 2)]);
+    let (tmp, mut s, g) = listed(&[("a", false, 1), ("d1", true, 2)]);
     select(&mut s, 0, Focus::List);
     let before = song_state(&s);
     assert!(key(&mut s, &g, "delete", NONE, None));
@@ -330,7 +330,7 @@ fn the_question_takes_every_key_and_press_from_the_screen_and_the_song() {
 
 #[test]
 fn pressing_the_buttons_of_the_question_answers_it() {
-    let (mut s, g, tmp) = listed(&[("d1", true, 2)]);
+    let (tmp, mut s, g) = listed(&[("d1", true, 2)]);
     select(&mut s, 0, Focus::List);
     assert!(key(&mut s, &g, "delete", NONE, None));
     let (back, delete) = crate::unsaved::delete_buttons(&g);
@@ -348,7 +348,7 @@ fn pressing_the_buttons_of_the_question_answers_it() {
 
 #[test]
 fn the_row_that_moves_up_is_chosen_the_focus_stays_and_nothing_is_said() {
-    let (mut s, g, tmp) = listed(&[
+    let (tmp, mut s, g) = listed(&[
         ("d1", true, 1),
         ("d2", true, 2),
         ("d3", true, 3),
@@ -375,14 +375,14 @@ fn the_row_that_moves_up_is_chosen_the_focus_stays_and_nothing_is_said() {
 
 #[test]
 fn deleting_the_row_that_ends_the_list_chooses_the_one_above_and_the_sample_alone_stays() {
-    let (mut s, g, tmp) = listed(&[("d1", true, 1), ("d2", true, 2)]);
+    let (tmp, mut s, g) = listed(&[("d1", true, 1), ("d2", true, 2)]);
     // The row that takes the place is the sample's.
     select(&mut s, 1, Focus::List);
     delete_chosen(&mut s, &g);
     assert_eq!(labels(&s), ["d2（保存前）", crate::song::SAMPLE_NAME]);
     assert_eq!(chosen_label(&s), crate::song::SAMPLE_NAME);
     // With a search that hides the sample, the last row goes and the one above is chosen.
-    let (mut s, g, tmp2) = listed(&[("d1", true, 1), ("d2", true, 2)]);
+    let (tmp2, mut s, g) = listed(&[("d1", true, 1), ("d2", true, 2)]);
     s.home.as_mut().unwrap().pick.field.value = "d".into();
     s.home_tick();
     assert_eq!(labels(&s), ["d2（保存前）", "d1（保存前）"]);
@@ -404,7 +404,7 @@ fn deleting_the_row_that_ends_the_list_chooses_the_one_above_and_the_sample_alon
 }
 #[test]
 fn a_draft_with_a_live_lock_is_kept_and_the_person_is_told() {
-    let (mut s, g, tmp) = listed(&[("d1", true, 1)]);
+    let (tmp, mut s, g) = listed(&[("d1", true, 1)]);
     std::fs::write(
         dir_of(&tmp, "d1").join("session.lock"),
         std::process::id().to_string(),
@@ -420,7 +420,7 @@ fn a_draft_with_a_live_lock_is_kept_and_the_person_is_told() {
 
 #[test]
 fn a_draft_with_a_dead_lock_goes() {
-    let (mut s, g, tmp) = listed(&[("d1", true, 1)]);
+    let (tmp, mut s, g) = listed(&[("d1", true, 1)]);
     std::fs::write(dir_of(&tmp, "d1").join("session.lock"), "4000000000").unwrap();
     select(&mut s, 0, Focus::List);
     delete_chosen(&mut s, &g);
@@ -430,7 +430,7 @@ fn a_draft_with_a_dead_lock_goes() {
 
 #[test]
 fn a_folder_that_will_not_go_keeps_its_row_and_says_so() {
-    let (mut s, g, tmp) = listed(&[("d1", true, 1)]);
+    let (tmp, mut s, g) = listed(&[("d1", true, 1)]);
     let dir = dir_of(&tmp, "d1");
     let held = dir.clone();
     let _watch = xirius_core::io_test::observe(std::sync::Arc::new(move |op, path| {
@@ -453,7 +453,7 @@ fn a_folder_that_will_not_go_keeps_its_row_and_says_so() {
 
 #[test]
 fn delete_while_the_list_is_filtered_deletes_the_shown_draft() {
-    let (mut s, g, tmp) = listed(&[("alpha", true, 1), ("beta", true, 2)]);
+    let (tmp, mut s, g) = listed(&[("alpha", true, 1), ("beta", true, 2)]);
     s.home.as_mut().unwrap().pick.field.value = "alp".into();
     s.home_tick();
     select(&mut s, 0, Focus::List);
@@ -466,7 +466,7 @@ fn delete_while_the_list_is_filtered_deletes_the_shown_draft() {
 
 #[test]
 fn a_non_draft_dir_is_never_handed_to_the_worker() {
-    let (mut s, _g, tmp) = listed(&[("old", false, 1)]);
+    let (tmp, mut s, _g) = listed(&[("old", false, 1)]);
     s.begin_draft_delete(tmp.path().join("old"));
     assert!(s.draft_removal.is_none());
     assert!(tmp.path().join("old").exists());
@@ -474,7 +474,7 @@ fn a_non_draft_dir_is_never_handed_to_the_worker() {
 
 #[test]
 fn a_screen_reader_reads_the_question_as_a_dialog_with_two_buttons_and_the_menu_as_one_row() {
-    let (mut s, g, _tmp) = listed(&[("d1", true, 1)]);
+    let (_tmp, mut s, g) = listed(&[("d1", true, 1)]);
     select(&mut s, 0, Focus::List);
     assert!(crate::unsaved::said(&s, &g).is_none());
     // The menu: one row, 「削除」.

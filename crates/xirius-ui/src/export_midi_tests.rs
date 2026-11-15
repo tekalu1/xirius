@@ -53,11 +53,15 @@ fn live(s: &Studio, g: &Geometry) -> Vec<Act> {
 }
 
 /// The sample saved in a folder of its own, which goes when the guard is dropped.
-fn saved(tag: &str) -> (Studio, Geometry, std::path::PathBuf, tempfile::TempDir) {
-    let tmp = tempfile::Builder::new()
-        .prefix(&format!("xirius-midi-ui-{tag}-"))
-        .tempdir()
-        .unwrap();
+fn saved(
+    tag: &str,
+) -> (
+    crate::shot::TestFolder,
+    Studio,
+    Geometry,
+    std::path::PathBuf,
+) {
+    let tmp = crate::shot::TestFolder::new(&format!("xirius-midi-ui-{tag}-"));
     let dir = tmp.path().join("song");
     let mut s = Studio::sample();
     s.command(|song| song.save_as(&dir));
@@ -65,7 +69,7 @@ fn saved(tag: &str) -> (Studio, Geometry, std::path::PathBuf, tempfile::TempDir)
     let g = s.geometry(1600.0, 900.0);
     s.open_export(Rect::new(1500.0, -40.0, 28.0, 28.0));
     act(&mut s, &g, Act::Midi);
-    (s, g, dir, tmp)
+    (tmp, s, g, dir)
 }
 
 /// The files a card's export wrote, taken away first so the delete sends nothing to the bin.
@@ -80,7 +84,7 @@ fn delete(s: &mut Studio, g: &Geometry, job: &str) {
 
 #[test]
 fn the_midi_kind_lists_the_instrument_tracks_and_leaves_the_format_out() {
-    let (mut s, g, _dir, _tmp) = saved("kind");
+    let (_tmp, mut s, g, _dir) = saved("kind");
     let v = view(&s);
     assert!(v.midi && !v.stems);
     let ins = midi_export::instrument_tracks(&s.project());
@@ -122,7 +126,7 @@ fn the_midi_kind_lists_the_instrument_tracks_and_leaves_the_format_out() {
 
 #[test]
 fn a_file_for_each_track_needs_the_track_in_its_name() {
-    let (mut s, g, _dir, _tmp) = saved("name");
+    let (_tmp, mut s, g, _dir) = saved("name");
     act(&mut s, &g, Act::Each(true));
     act(&mut s, &g, Act::EditName);
     s.popup.as_mut().unwrap().naming = Some(crate::settings::field::Field::new(
@@ -147,7 +151,7 @@ fn a_file_for_each_track_needs_the_track_in_its_name() {
 
 #[test]
 fn one_file_is_written_into_the_midi_folder_and_its_card_cannot_be_listened_to() {
-    let (mut s, g, dir, _tmp) = saved("one");
+    let (_tmp, mut s, g, dir) = saved("one");
     act(&mut s, &g, Act::Go);
     assert!(s.error.is_none(), "{:?}", s.error);
     let v = view(&s);
@@ -188,7 +192,7 @@ fn one_file_is_written_into_the_midi_folder_and_its_card_cannot_be_listened_to()
 
 #[test]
 fn a_file_for_each_track_lists_the_files_under_one_card() {
-    let (mut s, g, dir, _tmp) = saved("each");
+    let (_tmp, mut s, g, dir) = saved("each");
     act(&mut s, &g, Act::Each(true));
     let ins = midi_export::instrument_tracks(&s.project());
     act(&mut s, &g, Act::Go);
@@ -228,7 +232,7 @@ fn a_file_for_each_track_lists_the_files_under_one_card() {
 
 #[test]
 fn the_span_of_a_selection_is_written_and_kept_for_the_same_settings() {
-    let (mut s, g, _dir, _tmp) = saved("span");
+    let (_tmp, mut s, g, _dir) = saved("span");
     let bar = 3840;
     s.export.range = Range::Selection;
     s.export.fixed_span = Some((bar, 3 * bar));

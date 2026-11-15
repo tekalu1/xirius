@@ -565,7 +565,7 @@ pub fn paint(
     let Some(path) = source(dir.as_deref(), file) else {
         return false;
     };
-    let store = peaks::store_dir(dir.as_deref());
+    let store = studio.song().peak_store();
     let mid = inner.y + inner.h / 2.0;
     let peaks = match look(&path, &store) {
         Look::Missing => return false,

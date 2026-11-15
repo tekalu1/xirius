@@ -77,6 +77,17 @@ fn tone(path: &std::path::Path, amp: f32) {
     w.finalize().unwrap();
 }
 
+/// The test's folder, beside the fixture's copies (`xirius_test_vst3::copies_dir`): the copy
+/// loaded in this process keeps a folder in the temporary folder from being removed on Windows.
+fn scratch() -> tempfile::TempDir {
+    let deps = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    tempfile::tempdir_in(xirius_test_vst3::copies_dir(&deps)).unwrap()
+}
+
 /// The test's private fixture path. Windows gets a copy beside the temp files
 /// so its gate files stay private; on macOS the fixture is already a signed
 /// per-process bundle directory, which `fs::copy` cannot clone, so it loads in
@@ -121,7 +132,7 @@ fn capture(h: &mut SessionHost, a: &mut AudioEngine) -> xirius_session::plugins:
 }
 
 fn scenario(kept: bool) {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = scratch();
     let file = tmp.path().join("hit.wav");
     let other = tmp.path().join("new.wav");
     tone(&file, 0.8);
@@ -508,7 +519,7 @@ fn saved_retry_and_process_refresh_keep_automated_healthy_tracks_ready_after_ano
 fn keyed_route_case(placement: usize, automated: bool) {
     use xirius_core::id::SendId;
     use xirius_core::model::{KeyMode, KeySource, Sidechain};
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = scratch();
     let hit = tmp.path().join("hit.wav");
     let changed = tmp.path().join("changed.wav");
     tone(&hit, 0.8);
@@ -725,7 +736,7 @@ fn failed_latency_case(before: bool) {
     use xirius_core::model::{
         Clip, ClipBody, Plugin, PluginIsolation, PluginKind, Track, TrackKind,
     };
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = scratch();
     let path = tmp.path().join("impulse.wav");
     let mut writer = hound::WavWriter::create(
         &path,

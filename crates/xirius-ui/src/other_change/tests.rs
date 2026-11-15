@@ -16,7 +16,7 @@ use xirius_session::output::OutputMode;
 
 #[test]
 fn preparation_never_registers_or_stats_a_watch_even_after_look_interval() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::shot::TestFolder::new("xirius-ui-other-change-");
     let (mut s, _, dir) = studio(root.path());
     let path = dir.clone();
     let _observe = xirius_core::io_test::observe(std::sync::Arc::new(move |op, p| {
@@ -114,7 +114,7 @@ fn text(s: &Studio) -> Option<&str> {
 
 #[test]
 fn ui_289_a_clean_song_takes_the_file_as_one_step_and_undo_is_the_toast_s_button() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::shot::TestFolder::new("xirius-ui-other-change-");
     let (mut s, g, dir) = studio(root.path());
     let steps = s.song.history().len();
     other_app(&dir, &["B", "C"]);
@@ -144,7 +144,7 @@ fn ui_289_a_clean_song_takes_the_file_as_one_step_and_undo_is_the_toast_s_button
 
 #[test]
 fn ui_289_ctrl_z_takes_the_file_back_as_one_step_and_the_toast_goes_with_it() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::shot::TestFolder::new("xirius-ui-other-change-");
     let (mut s, g, dir) = studio(root.path());
     mine(&mut s, "A");
     s.key(&g, "s", true, false);
@@ -162,7 +162,7 @@ fn ui_289_ctrl_z_takes_the_file_back_as_one_step_and_the_toast_goes_with_it() {
 
 #[test]
 fn ui_289_unsaved_changes_ask_first_and_x_keeps_the_screen_s_song_until_the_next_change() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::shot::TestFolder::new("xirius-ui-other-change-");
     let (mut s, g, dir) = studio(root.path());
     // The other app opens before the screen's edit, so it does not have it (PRJ-023).
     let mut cli = Session::open(&dir).unwrap();
@@ -203,7 +203,7 @@ fn ui_289_unsaved_changes_ask_first_and_x_keeps_the_screen_s_song_until_the_next
 
 #[test]
 fn ui_289_the_question_goes_when_the_screen_saves_over_the_file() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::shot::TestFolder::new("xirius-ui-other-change-");
     let (mut s, g, dir) = studio(root.path());
     let mut cli = Session::open(&dir).unwrap();
     mine(&mut s, "Mine");
@@ -219,7 +219,7 @@ fn ui_289_the_question_goes_when_the_screen_saves_over_the_file() {
 
 #[test]
 fn ui_289_the_screen_s_own_save_is_not_another_app_s() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::shot::TestFolder::new("xirius-ui-other-change-");
     let (mut s, g, _dir) = studio(root.path());
     let steps = s.song.history().len();
     mine(&mut s, "A");
@@ -237,7 +237,7 @@ fn ui_289_the_screen_s_own_save_is_not_another_app_s() {
 
 #[test]
 fn ui_289_a_run_of_writes_comes_in_once() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::shot::TestFolder::new("xirius-ui-other-change-");
     let (mut s, _g, dir) = studio(root.path());
     let steps = s.song.history().len();
     // Supply notice times and the polling clock: disk speed under the default
@@ -264,7 +264,7 @@ fn ui_289_a_run_of_writes_comes_in_once() {
 
 #[test]
 fn ui_289_a_drag_puts_it_off_until_the_button_comes_up() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::shot::TestFolder::new("xirius-ui-other-change-");
     let (mut s, _g, dir) = studio(root.path());
     s.pointer_held = true;
     other_app(&dir, &["B"]);
@@ -278,7 +278,7 @@ fn ui_289_a_drag_puts_it_off_until_the_button_comes_up() {
 
 #[test]
 fn ui_289_a_warning_is_not_covered_by_the_news() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::shot::TestFolder::new("xirius-ui-other-change-");
     let (mut s, _g, dir) = studio(root.path());
     s.warn("保存できません".to_string(), None);
     other_app(&dir, &["B"]);
@@ -291,7 +291,7 @@ fn ui_289_a_warning_is_not_covered_by_the_news() {
 
 #[test]
 fn ui_289_playing_goes_on_through_the_load() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::shot::TestFolder::new("xirius-ui-other-change-");
     let (mut s, _g, dir) = studio(root.path());
     s.transport.mode = OutputMode::Silent { paced: true };
     assert!(s.toggle_play());
@@ -311,7 +311,7 @@ fn ui_289_playing_goes_on_through_the_load() {
 
 #[test]
 fn ui_289_the_os_s_notice_comes_before_the_look_at_the_file_s_time() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::shot::TestFolder::new("xirius-ui-other-change-");
     let (mut s, _g, dir) = studio(root.path());
     assert!(
         s.other.watch.as_ref().unwrap()._os.is_some(),

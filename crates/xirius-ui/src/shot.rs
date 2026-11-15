@@ -163,6 +163,169 @@ pub(crate) fn fixture_run_id() -> &'static str {
     })
 }
 
+/// The crash records of the plugin hosts a test takes down on purpose, in a folder of the
+/// test's own instead of the person's `Crashes` (`XIRIUS_CRASH_DIR`, read by each host as it
+/// starts). Made before the test starts a host; removed when dropped, once the hosts still
+/// closing have let go of their own records.
+#[cfg(test)]
+pub(crate) struct CrashRecords(std::path::PathBuf);
+
+#[cfg(test)]
+impl CrashRecords {
+    pub(crate) fn new() -> CrashRecords {
+        let dir = tempfile::Builder::new()
+            .prefix("xirius-ui-crash-records-")
+            .tempdir()
+            .unwrap()
+            .keep();
+        // SAFETY: nextest runs each test in a process of its own (docs/testing.md), and this is
+        // set before the test starts a thread.
+        unsafe { std::env::set_var("XIRIUS_CRASH_DIR", &dir) };
+        CrashRecords(dir)
+    }
+}
+
+#[cfg(test)]
+impl Drop for CrashRecords {
+    fn drop(&mut self) {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::fs::remove_dir_all(&self.0).is_err()
+            && self.0.exists()
+            && std::time::Instant::now() < end
+        {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+}
+
+/// The temporary folder (`TMP`, `TEMP`, `TMPDIR`) of a test whose song writes where a song not
+/// saved anywhere does: a bounce's or a freeze's files, an opened `.dawproject`'s audio. A folder
+/// of the test's own, made before the test starts a thread and removed when dropped (the process
+/// ends with the test, so the variables are not put back).
+#[cfg(test)]
+pub(crate) struct TestTemp(std::path::PathBuf);
+
+#[cfg(test)]
+impl TestTemp {
+    pub(crate) fn new() -> TestTemp {
+        let dir = tempfile::Builder::new()
+            .prefix("xirius-ui-test-temp-")
+            .tempdir()
+            .unwrap()
+            .keep();
+        for name in ["TMP", "TEMP", "TMPDIR"] {
+            // SAFETY: as in `CrashRecords::new`.
+            unsafe { std::env::set_var(name, &dir) };
+        }
+        TestTemp(dir)
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestTemp {
+    fn drop(&mut self) {
+        remove_patiently(&self.0);
+    }
+}
+
+/// A folder of a test's own, removed when dropped (also when the test fails). Before it goes, it
+/// waits for the songs closed under it to be put away on their threads (`song::wait_retired`)
+/// and for the browser's places read and written there (`browser_prefs_io::wait_read`,
+/// `browser_prefs_save::wait_written`), and it tries again for a while when Windows refuses a
+/// file a thread or a program that is ending still holds. Declare it before the studio, so that
+/// the studio is dropped first.
+#[cfg(test)]
+pub(crate) struct TestFolder(std::path::PathBuf);
+
+#[cfg(test)]
+impl TestFolder {
+    pub(crate) fn new(prefix: &str) -> TestFolder {
+        TestFolder(
+            tempfile::Builder::new()
+                .prefix(prefix)
+                .tempdir()
+                .unwrap()
+                .keep(),
+        )
+    }
+
+    pub(crate) fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+
+    /// Removes the folder now (once), as dropping it does.
+    pub(crate) fn remove(&mut self) {
+        if self.0.as_os_str().is_empty() {
+            return;
+        }
+        crate::song::wait_retired(&self.0);
+        wait_unused(&self.0);
+        crate::browser_prefs_io::wait_read(&self.0);
+        crate::browser_prefs_save::wait_written(&self.0);
+        remove_patiently(&std::mem::take(&mut self.0));
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestFolder {
+    fn drop(&mut self) {
+        self.remove();
+    }
+}
+
+#[cfg(test)]
+static USING: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// Work on a thread of its own that may still write in a test's folder, such as a song's
+/// session on its save worker: the folder goes only after it is dropped (`wait_unused`).
+#[cfg(test)]
+pub(crate) struct Using(std::path::PathBuf);
+
+#[cfg(test)]
+impl Using {
+    pub(crate) fn new(folder: &std::path::Path) -> Using {
+        USING
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(folder.to_path_buf());
+        Using(folder.to_path_buf())
+    }
+}
+
+#[cfg(test)]
+impl Drop for Using {
+    fn drop(&mut self) {
+        let mut using = USING.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(at) = using.iter().position(|f| f == &self.0) {
+            using.swap_remove(at);
+        }
+    }
+}
+
+/// Waits (at most 30 s) until no work marked `Using` a path under `folder` is left.
+#[cfg(test)]
+fn wait_unused(folder: &std::path::Path) {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while USING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .any(|f| f.starts_with(folder))
+        && std::time::Instant::now() < end
+    {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// Removes `dir`, trying again for up to 10 s while something still holds a file in it.
+#[cfg(test)]
+fn remove_patiently(dir: &std::path::Path) {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::fs::remove_dir_all(dir).is_err() && dir.exists() && std::time::Instant::now() < end {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 /// Stage `n` of the piano roll's part of [`SCRIPT`].
 const fn roll(n: u8) -> Act {
     Act::Stage(Play::Laid(crate::roll::probe::shot), n)

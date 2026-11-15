@@ -133,6 +133,10 @@ pub struct Song {
     /// The screen's commands (`screen_ops`) a run over the session asked for (KEY-012): an AI's
     /// over MCP. The window runs them on its next frame ([`crate::studio::Studio::run_asked`]).
     asked: Arc<Mutex<Asked>>,
+    /// A test's folder for the song's places, presets, app files and peaks: last, so it is
+    /// removed after the session that writes there is put away.
+    #[cfg(test)]
+    test_folder: crate::shot::TestFolder,
 }
 
 mod files;
@@ -204,6 +208,9 @@ impl Song {
     pub fn simulate_crash(self) {
         let mut song = std::mem::ManuallyDrop::new(self);
         std::mem::replace(&mut song.session, Session::new("")).simulate_crash();
+        // Only the song is left as a killed process leaves it; a test's own folder still goes.
+        #[cfg(test)]
+        song.test_folder.remove();
     }
 
     /// The session, for what reads its state directly (the AI's marks).
@@ -603,6 +610,23 @@ impl Song {
             return None;
         }
         self.session.dir().map(Path::to_path_buf)
+    }
+
+    /// Where the peaks of the song's audio are kept (`peaks::store_dir`). A test's song not
+    /// saved anywhere keeps them in its own folder, not in the person's cache.
+    pub fn peak_store(&self) -> PathBuf {
+        let dir = self.dir();
+        #[cfg(test)]
+        if dir.is_none() {
+            return self.test_folder.path().join("peaks");
+        }
+        xirius_session::peaks::store_dir(dir.as_deref())
+    }
+
+    /// The folder a test's song keeps its files in when the song names none.
+    #[cfg(test)]
+    pub(crate) fn test_folder(&self) -> &Path {
+        self.test_folder.path()
     }
 
     /// Kept on disk and not changed since.
@@ -1022,15 +1046,23 @@ impl Song {
                 )),
             )
         });
-        let places_file = test_presets_dir().map(|p| p.join("browser.json"));
+        // A test's song keeps its places, presets and app files in a folder of its own, removed
+        // with it, so a test never reads or writes the person's, nor another test's.
+        #[cfg(test)]
+        let test_folder = crate::shot::TestFolder::new("xirius-ui-song-");
+        #[cfg(test)]
+        let test_dir = |name: &str| Some(test_folder.path().join(name));
+        #[cfg(not(test))]
+        let test_dir = |_: &str| None::<PathBuf>;
+        let places_file = test_dir("places").map(|p| p.join("browser.json"));
         let extras = ExtExtras {
             places_file: places_file.clone(),
             io_settings: Some(settings.clone()),
             midi: None,
             midi_out: None,
             trash: trash.clone(),
-            track_presets: test_presets_dir(),
-            presets: test_presets_dir(),
+            track_presets: test_dir("track-presets"),
+            presets: test_dir("presets"),
         };
         xirius_session::commands::attach_with(&mut session, config, extras);
         // An edit returns before its step reaches the disk, so a slow disk does not stop the
@@ -1044,7 +1076,7 @@ impl Song {
             io: io.clone(),
             settings: settings.clone(),
         }));
-        session.add_extension(Box::new(app_ext(settings.clone())));
+        session.add_extension(Box::new(app_ext(settings.clone(), test_dir("app"))));
         let asked = Arc::new(Mutex::new(Asked::default()));
         session.add_extension(Box::new(ScreenExt {
             asked: asked.clone(),
@@ -1065,6 +1097,8 @@ impl Song {
             sample: false,
             trash,
             asked,
+            #[cfg(test)]
+            test_folder,
         }
     }
 
@@ -1296,36 +1330,16 @@ impl Builder {
     }
 }
 
-/// Where the tests keep track presets: a folder of their own for each song, so a test never
-/// reads the presets of the person running it, nor those of another test.
-#[cfg(test)]
-fn test_presets_dir() -> Option<PathBuf> {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    static NEXT: AtomicUsize = AtomicUsize::new(0);
-    Some(std::env::temp_dir().join(format!(
-        "xirius-ui-track-presets-{}-{}",
-        crate::shot::fixture_run_id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    )))
-}
-
-#[cfg(not(test))]
-fn test_presets_dir() -> Option<PathBuf> {
-    None
-}
-
 /// `song.recent` and `app.update.check` (UI-261, UI-262): the app's folder and the system's
 /// `curl`; a test's read a folder of its own and never reach the network.
 #[cfg(not(test))]
-fn app_ext(settings: xirius_prefs::Shared) -> xirius_session::app::AppExt {
+fn app_ext(settings: xirius_prefs::Shared, _: Option<PathBuf>) -> xirius_session::app::AppExt {
     xirius_session::app::AppExt::standard(settings)
 }
 
 #[cfg(test)]
-fn app_ext(settings: xirius_prefs::Shared) -> xirius_session::app::AppExt {
-    let root = test_presets_dir()
-        .expect("a test's folder")
-        .with_extension("app");
+fn app_ext(settings: xirius_prefs::Shared, root: Option<PathBuf>) -> xirius_session::app::AppExt {
+    let root = root.expect("a test's folder");
     xirius_session::app::AppExt {
         root,
         settings,
@@ -1337,7 +1351,9 @@ impl Drop for Song {
     fn drop(&mut self) {
         if self.windowed {
             let session = std::mem::replace(&mut self.session, Session::new(""));
-            let _ = xirius_session::background::Job::spawn("closed-session", move || {
+            #[cfg(test)]
+            let dir = retiring_dir(&session);
+            let job = xirius_session::background::Job::spawn("closed-session", move || {
                 #[cfg(any(test, feature = "loading-probe"))]
                 if let Some(dir) = session.dir() {
                     let _ = xirius_core::io_test::before("session_retire", dir);
@@ -1345,7 +1361,53 @@ impl Drop for Song {
                 drop(session);
                 Ok(())
             });
+            // A test's folder waits for the history to reach it before it goes (`wait_retired`).
+            #[cfg(test)]
+            retiring(job, dir);
+            #[cfg(not(test))]
+            drop(job);
         }
+    }
+}
+
+/// The closed songs still being put away on their threads, by folder (tests only).
+#[cfg(test)]
+static RETIRING: Mutex<Vec<(PathBuf, xirius_session::background::Job<()>)>> =
+    Mutex::new(Vec::new());
+
+#[cfg(test)]
+fn retiring_dir(session: &Session) -> Option<PathBuf> {
+    let dir = session.dir()?;
+    Some(std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf()))
+}
+
+/// Cancelled as dropping the job would: the work still runs, and `finished` says when.
+#[cfg(test)]
+fn retiring(job: Result<xirius_session::background::Job<()>, String>, dir: Option<PathBuf>) {
+    if let (Ok(job), Some(dir)) = (job, dir) {
+        job.cancel();
+        RETIRING
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((dir, job));
+    }
+}
+
+/// Waits (at most 30 s) until no closed song under `folder` is still being put away: a test
+/// removes its folder only after the history written on closing has reached it.
+#[cfg(test)]
+pub(crate) fn wait_retired(folder: &Path) {
+    let folder = std::fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let mut jobs = RETIRING.lock().unwrap_or_else(|e| e.into_inner());
+        jobs.retain(|(_, job)| !job.finished());
+        if !jobs.iter().any(|(dir, _)| dir.starts_with(&folder)) || std::time::Instant::now() > end
+        {
+            return;
+        }
+        drop(jobs);
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
 

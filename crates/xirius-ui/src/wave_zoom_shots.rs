@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use xirius_core::id::{ClipId, TrackId};
-use xirius_session::{peaks, samples};
+use xirius_session::samples;
 
 use crate::arrange::probe::track;
 use crate::shot::{Act, Play, Shot};
@@ -128,7 +128,7 @@ fn read_samples(s: &mut Studio, secs: f64) {
 
 /// Turns the screen's poll until the peaks of the file are there to draw, or ten seconds.
 fn wait_peaks(s: &mut Studio) {
-    let store = peaks::store_dir(s.song().dir().as_deref());
+    let store = s.song().peak_store();
     let end = Instant::now() + Duration::from_secs(10);
     while Instant::now() < end && !matches!(wave::look(&wav_path(), &store), Look::Ready(_)) {
         s.idle();

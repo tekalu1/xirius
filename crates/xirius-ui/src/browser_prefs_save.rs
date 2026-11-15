@@ -222,6 +222,27 @@ pub(crate) fn wait_accepted(file: &Path) {
         state = work.wake.wait(state).unwrap_or_else(|e| e.into_inner());
     }
 }
+/// Waits (at most 30 s) until no save of a file under `folder` is queued or being written: a
+/// test removes its folder only after the writer is done with it.
+#[cfg(test)]
+pub(crate) fn wait_written(folder: &Path) {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let work = writer();
+    let mut state = work.state.lock().unwrap_or_else(|e| e.into_inner());
+    while (state
+        .active
+        .as_deref()
+        .is_some_and(|f| f.starts_with(folder))
+        || state.queued.keys().any(|f| f.starts_with(folder)))
+        && std::time::Instant::now() < end
+    {
+        state = work
+            .wake
+            .wait_timeout(state, std::time::Duration::from_millis(50))
+            .unwrap_or_else(|e| e.into_inner())
+            .0;
+    }
+}
 /// Used by the application's asynchronous last-window shutdown, also by its process test.
 /// Pending keeps the application alive. Done includes terminal, explicit save failures.
 pub(crate) fn finish() -> Option<Vec<String>> {

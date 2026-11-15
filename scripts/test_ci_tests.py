@@ -2,12 +2,16 @@
 import contextlib
 import io
 import json
+import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 import ci_tests
+import leftovers
 
 
 class SelectionTests(unittest.TestCase):
@@ -113,6 +117,144 @@ class FlakyTests(unittest.TestCase):
         aggregate = workflow.split("  check:\n", 1)[1].split("  deny:", 1)[0]
         self.assertIn("--flaky-summary junit", aggregate)
         self.assertIn("pattern: junit-${{ matrix.os }}-*", aggregate)
+
+
+class LeftoverTests(unittest.TestCase):
+    def watch(self, tmp, processes=()):
+        place = Path(tmp) / "place"
+        (place / "Crashes").mkdir(parents=True, exist_ok=True)
+        (place / "prefs.toml").write_text("a")
+        checkout = Path(tmp) / "checkout"
+        checkout.mkdir(exist_ok=True)
+        real = leftovers.foreign_xirius
+        patcher = patch.object(leftovers, "foreign_xirius",
+                               side_effect=lambda c, t, p=None: real(c, t, list(processes)))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return place, leftovers.Watch(checkout, {"PATH": "x"}, places=[place], every=60)
+
+    def test_the_places_named_are_the_programs_default_folders(self):
+        windows = leftovers.user_places({"LOCALAPPDATA": "L", "APPDATA": "R"}, "win32")
+        self.assertEqual(windows, [Path("L/Xirius"), Path("R/Xirius")])
+        mac = leftovers.user_places({"HOME": "/h"}, "darwin")
+        self.assertEqual(mac, [Path("/h/Library/Application Support/Xirius"), Path("/h/Library/Caches/Xirius"),
+                               Path("/h/Library/Logs/Xirius")])
+        self.assertEqual(leftovers.user_places({"HOME": "/h"}, "linux"), [Path("/h/.config/xirius"),
+                                                                          Path("/h/.cache/xirius")])
+
+    def test_a_run_that_leaves_nothing_passes_and_removes_its_temporary_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            place, watch = self.watch(tmp)
+            with watch:
+                self.assertEqual(watch.environment["TMP"], str(watch.temporary))
+                self.assertEqual(watch.environment["TMPDIR"], str(watch.temporary))
+                self.assertEqual(watch.environment["PATH"], "x")
+                (watch.temporary / "a-test").mkdir()
+                (watch.temporary / "a-test" / "f").write_text("x")
+                shutil.rmtree(watch.temporary / "a-test")
+                self.assertEqual(watch.finish(), [])
+            self.assertFalse(watch.temporary.exists())
+
+    def test_a_file_written_in_the_places_or_left_in_the_temporary_folder_fails_by_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            place, watch = self.watch(tmp)
+            with watch, contextlib.redirect_stdout(io.StringIO()):
+                (place / "Crashes" / "1-2.dmp").write_text("x")
+                (place / "prefs.toml").write_text("bb")
+                (watch.temporary / "xirius-x-1").mkdir()
+                (watch.temporary / "xirius-x-1" / "f").write_text("x")
+                failures = "\n".join(watch.finish())
+            self.assertIn("+ " + str(place / "Crashes" / "1-2.dmp"), failures)
+            self.assertIn("~ " + str(place / "prefs.toml"), failures)
+            self.assertIn("xirius-x-1" + os.sep + " (1 inside)", failures)
+            self.assertFalse(watch.temporary.exists())
+
+    def test_the_shared_list_of_running_jobs_counts_only_for_what_is_left_in_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            place, watch = self.watch(tmp)
+            with watch:
+                self.assertTrue((watch.temporary / "Xirius" / "jobs").is_dir())
+                self.assertEqual(watch.finish(), [])
+            place, watch = self.watch(tmp)
+            with watch, contextlib.redirect_stdout(io.StringIO()):
+                (watch.temporary / "Xirius" / "jobs" / "7-1.json").write_text("x")
+                (watch.temporary / "Xirius" / "Bounces").mkdir()
+                failures = "\n".join(watch.finish())
+            self.assertIn("Xirius" + os.sep + "jobs" + os.sep + "7-1.json", failures)
+            self.assertIn("Xirius" + os.sep + "Bounces" + os.sep + " (0 inside)", failures)
+            self.assertNotIn("Xirius" + os.sep + " (", failures)
+
+    def test_beside_another_xirius_the_places_warn_but_the_temporary_folder_still_counts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            installed = str(Path(tmp) / "elsewhere" / "Xirius.exe")
+            place, watch = self.watch(tmp, [("Xirius.exe", installed)])
+            printed = io.StringIO()
+            with watch, contextlib.redirect_stdout(printed):
+                (place / "Crashes" / "1-2.dmp").write_text("x")
+                self.assertEqual(watch.finish(), [])
+            self.assertIn("warning", printed.getvalue())
+            self.assertIn("1-2.dmp", printed.getvalue())
+            place, watch = self.watch(tmp, [("Xirius.exe", installed)])
+            with watch, contextlib.redirect_stdout(io.StringIO()):
+                (watch.temporary / "left").write_text("x")
+                self.assertEqual(len(watch.finish()), 2)
+
+    def test_a_watch_that_cannot_start_removes_its_temporary_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            place, watch = self.watch(tmp)
+            with patch.object(leftovers, "listing", side_effect=OSError("x")), self.assertRaises(OSError):
+                with watch:
+                    pass
+            self.assertFalse(watch.temporary.exists())
+
+    def test_this_checkouts_programs_and_the_ones_the_tests_copied_are_not_another_xirius(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            checkout, temporary = Path(tmp) / "c", Path(tmp) / "t"
+            processes = [("xirius-plugin-host.exe", str(checkout / "target" / "debug" / "xirius-plugin-host.exe")),
+                         ("xirius-copy.exe", str(temporary / "a" / "xirius-copy.exe")),
+                         ("other.exe", str(Path(tmp) / "other.exe")),
+                         ("xirius-engine", None),
+                         ("Xirius.exe", str(Path(tmp) / "app" / "Xirius.exe"))]
+            self.assertEqual(leftovers.foreign_xirius(checkout, temporary, processes),
+                             [str(Path(tmp) / "app" / "Xirius.exe")])
+
+    def test_the_tests_run_inside_the_watch_and_what_they_leave_fails_the_run(self):
+        seen = []
+
+        def run(command, environment=None):
+            seen.append((command[:3], environment))
+            if command[:2] == ["cargo", "test"]:
+                Path(environment["TMP"], "left-by-a-test").mkdir()
+
+        printed = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, patch("sys.argv", ["ci_tests.py", "--doctest"]), \
+                patch.object(ci_tests, "run", side_effect=run), \
+                patch.object(ci_tests.leftovers, "user_places", return_value=[Path(tmp) / "none"]), \
+                contextlib.redirect_stdout(printed), contextlib.redirect_stderr(printed):
+            self.assertEqual(ci_tests.main(), 1)
+        self.assertEqual(len(seen), 1)
+        temporary = seen[0][1]["TMP"]
+        self.assertEqual(seen[0][1]["TEMP"], temporary)
+        self.assertIn("left-by-a-test", printed.getvalue())
+        self.assertFalse(Path(temporary).exists())
+
+    def test_what_failing_tests_leave_is_named_too(self):
+        seen = []
+
+        def run(command, environment=None):
+            seen.append(environment)
+            Path(environment["TMP"], "left-by-a-failing-test").mkdir()
+            raise subprocess.CalledProcessError(1, command)
+
+        printed = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, patch("sys.argv", ["ci_tests.py", "--doctest"]), \
+                patch.object(ci_tests, "run", side_effect=run), \
+                patch.object(ci_tests.leftovers, "user_places", return_value=[Path(tmp) / "none"]), \
+                contextlib.redirect_stdout(printed), contextlib.redirect_stderr(printed):
+            with self.assertRaises(subprocess.CalledProcessError):
+                ci_tests.main()
+        self.assertIn("left-by-a-failing-test", printed.getvalue())
+        self.assertFalse(Path(seen[0]["TMP"]).exists())
 
 
 if __name__ == "__main__":

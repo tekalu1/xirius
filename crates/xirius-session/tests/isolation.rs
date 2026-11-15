@@ -53,8 +53,20 @@ impl Dir {
 
 impl Drop for Dir {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        // A host still closing keeps its crash record open for a moment (`crash_records`).
+        let end = Instant::now() + Duration::from_secs(10);
+        while std::fs::remove_dir_all(&self.0).is_err() && self.0.exists() && Instant::now() < end {
+            thread::sleep(Duration::from_millis(50));
+        }
     }
+}
+
+/// The crash records of the hosts a test takes down on purpose go to `dir`'s folder
+/// (`XIRIUS_CRASH_DIR`, read by each host as it starts), not to the person's `Crashes`.
+fn crash_records(dir: &Dir) {
+    // SAFETY: nextest runs each test in a process of its own (docs/testing.md), and this is set
+    // before the test starts a thread.
+    unsafe { std::env::set_var("XIRIUS_CRASH_DIR", dir.path().join("crashes")) };
 }
 
 fn run(s: &mut Session, name: &str, args: Value) -> RunResult {
@@ -928,6 +940,7 @@ fn a_plugin_moved_to_another_process_keeps_its_state_and_the_move_is_one_undo_st
 fn a_plugin_that_takes_the_shared_host_down_is_suggested_a_host_of_its_own() {
     let Some(g) = gain() else { return };
     let dir = Dir::new("suggest");
+    crash_records(&dir);
     let (mut s, song_dir, pid) = song(&dir, &g, 60.0);
     set_mode(&mut s, &pid, "shared");
     let (mut host, pull) = start_with(&s, &song_dir, &g, per_plugin(&g));

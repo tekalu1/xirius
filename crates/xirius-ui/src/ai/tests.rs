@@ -393,6 +393,7 @@ fn the_curves_start_at_zero_and_end_at_one() {
 
 #[test]
 fn the_ai_lists_and_cancels_a_bounce_the_window_runs_and_the_song_stays() {
+    let _tmp = crate::shot::TestTemp::new();
     let (mut s, _) = studio();
     let mut wire = Wire::new();
     let vocal = s

@@ -39,6 +39,25 @@ and one still running after 5 minutes is killed with its child processes and fai
 by name. The `cargo test` runs (`--default-features`, `--doctest`, `--legacy`, `--plugins`)
 do not go through nextest and have no such limit.
 
+## What a test may leave
+
+A test writes nothing to the person's Xirius folders (`%LOCALAPPDATA%\Xirius` and
+`%APPDATA%\Xirius` on Windows; `~/Library/Application Support/Xirius`, `~/Library/Caches/Xirius`
+and `~/Library/Logs/Xirius` on macOS) and leaves nothing in the temporary folder. It keeps its
+files in a folder it removes also when it fails (`tempfile::TempDir`, or `shot::TestFolder` in
+the UI crate, which waits for a closed song's history, for work on other threads that still
+writes in it, and for files a program that is ending still holds), and names the folders of what it starts: a test that makes a plugin host fall
+over sets `XIRIUS_CRASH_DIR` to a folder of its own (`shot::CrashRecords` in the UI crate), and
+one that bounces or exports from an unsaved song points the temporary folder at one of its own
+(`shot::TestTemp`). A plugin a test loads into its own process cannot be removed on Windows
+until the process ends; it is copied under `target/` (`xirius_test_vst3::copies_dir`).
+
+`scripts/ci_tests.py` runs the tests with a temporary folder of the run's own and lists the
+Xirius folders before and after. Anything new, changed or gone there, or left in the run's
+temporary folder, fails the run by name (`scripts/leftovers.py`). When an Xirius that is not this
+checkout's runs meanwhile (the installed app, a run in another checkout), what changed in the
+Xirius folders is printed as a warning instead; the temporary folder always counts.
+
 ## CI stages
 
 Each OS builds one nextest archive, including normal executables and test plugins. Four

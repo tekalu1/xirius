@@ -26,6 +26,9 @@ struct Rig {
     _turn: MutexGuard<'static, ()>,
     dir: PathBuf,
     s: Session,
+    /// The test's own folder, with `dir` in it; removed after the session, also when the test
+    /// fails.
+    _tmp: tempfile::TempDir,
 }
 
 fn plugin_entry(uid: &str) -> Entry {
@@ -58,14 +61,17 @@ fn session(catalog: Option<Catalog>) -> Session {
 
 fn rig(tag: &str) -> Rig {
     let turn = TURN.lock().unwrap_or_else(|e| e.into_inner());
-    let dir =
-        std::env::temp_dir().join(format!("xirius-track-presets-{}-{tag}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let tmp = tempfile::Builder::new()
+        .prefix(&format!("xirius-track-presets-{tag}-"))
+        .tempdir()
+        .unwrap();
+    let dir = tmp.path().join("presets");
     unsafe { std::env::set_var("XIRIUS_TRACK_PRESETS", &dir) };
     Rig {
         _turn: turn,
         dir,
         s: session(None),
+        _tmp: tmp,
     }
 }
 

@@ -687,12 +687,17 @@ impl Studio {
             })
             .map(|_| self.song.places_path());
         let mut session = self.song.take_session_for_save();
+        // The session may write in the song's test folder after the song is dropped.
+        #[cfg(test)]
+        let using = crate::shot::Using::new(self.song.test_folder());
         let delay = self.save_test_delay;
         #[cfg(test)]
         let failing = self.save_test_failure;
         #[cfg(not(test))]
         let failing = false;
         std::thread::spawn(move || {
+            #[cfg(test)]
+            let _using = using;
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 if let Some(file) = &places_barrier {
                     crate::browser_prefs_save::wait_accepted(file);

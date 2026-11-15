@@ -2519,7 +2519,7 @@ fn paint_window(
         let peaks = sampler::wave_file(plugin, w.pick, w.layer).and_then(|file| {
             let dir = studio.song().dir();
             let path = crate::wave::source(dir.as_deref(), file)?;
-            let store = xirius_session::peaks::store_dir(dir.as_deref());
+            let store = studio.song().peak_store();
             match crate::wave::look(&path, &store) {
                 crate::wave::Look::Ready(p) => Some(p),
                 _ => None,

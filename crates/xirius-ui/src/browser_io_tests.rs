@@ -165,7 +165,7 @@ fn actual_idle_and_browser_callbacks_do_not_wait_for_each_io_route() {
             s.idle();
             let g = s.geometry(1440.0, 860.0);
             s.browser.layout(g.panel);
-            wave::look(&source, &peaks::store_dir(s.song.dir().as_deref()));
+            wave::look(&source, &s.song.peak_store());
             wave::poll();
         }
         release.release();

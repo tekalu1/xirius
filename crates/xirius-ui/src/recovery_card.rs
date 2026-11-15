@@ -263,17 +263,14 @@ mod tests {
     use serde_json::json;
 
     /// A folder of the test's own, removed when dropped (also when the test fails).
-    fn scratch(tag: &str) -> tempfile::TempDir {
-        tempfile::Builder::new()
-            .prefix(&format!("xirius-ui-card-{tag}-"))
-            .tempdir()
-            .unwrap()
+    fn scratch(tag: &str) -> crate::shot::TestFolder {
+        crate::shot::TestFolder::new(&format!("xirius-ui-card-{tag}-"))
     }
 
     /// A song with `n` edits after its save, whose process "went down": the session is
     /// leaked so its lock stays, then the lock is rewritten to name a process that is gone.
     /// The song's folder goes when the guard is dropped.
-    fn crashed_song(tag: &str, edits: usize) -> (tempfile::TempDir, std::path::PathBuf) {
+    fn crashed_song(tag: &str, edits: usize) -> (crate::shot::TestFolder, std::path::PathBuf) {
         let dir_tmp = scratch(tag);
         let dir = dir_tmp.path().join("song");
         let mut s = Song::empty();

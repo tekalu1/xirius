@@ -76,17 +76,23 @@ mod relay_tests {
     #[test]
     fn consecutive_relays_leave_an_unreported_real_sdk_edit_intact() {
         xirius_test_clap::fixture_marker();
-        let root = tempfile::tempdir().unwrap();
-        let dll = std::env::current_exe()
+        let deps = std::env::current_exe()
             .unwrap()
             .parent()
             .unwrap()
-            .join(format!(
-                "{}xirius_test_clap{}",
-                std::env::consts::DLL_PREFIX,
-                std::env::consts::DLL_SUFFIX
-            ));
-        let bundle = root.path().join("relay.clap");
+            .to_path_buf();
+        let dll = deps.join(format!(
+            "{}xirius_test_clap{}",
+            std::env::consts::DLL_PREFIX,
+            std::env::consts::DLL_SUFFIX
+        ));
+        // The copy is loaded in this process, which on Windows keeps it from being removed
+        // until the process ends: it is kept under the test build directory, in a folder this
+        // test empties when it starts, not in the temporary folder.
+        let root = deps.join("xirius-relay-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let bundle = root.join("relay.clap");
         std::fs::copy(dll, &bundle).unwrap();
         let mut host = Host {
             out: tempfile::tempfile().unwrap(),

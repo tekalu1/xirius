@@ -499,6 +499,7 @@ fn a_press_on_a_row_does_not_open_the_menu_of_the_room_under_the_rows() {
 
 #[test]
 fn the_snowflake_freezes_the_track_on_a_thread_and_lets_it_go() {
+    let _tmp = crate::shot::TestTemp::new();
     let (mut s, g) = studio();
     let vocal = crate::arrange::probe::track(&s, "Vocal");
     let hit = Hit::Freeze(vocal);

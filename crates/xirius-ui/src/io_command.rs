@@ -269,7 +269,7 @@ mod tests {
     #[test]
     fn all_device_reset_scopes_are_rejected_before_memory_or_disk_changes_from_ui_and_mcp() {
         use xirius_mcp::Host;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::shot::TestFolder::new("xirius-ui-io-command-");
         let (mut s, track) = recording(root.path());
         s.toggle_record();
         assert!(s.transport.recording, "{:?}", s.error);
@@ -344,7 +344,7 @@ mod tests {
     #[test]
     fn automatic_record_stop_and_placement_continue_while_settings_io_is_held() {
         for idle in [false, true] {
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::shot::TestFolder::new("xirius-ui-io-command-");
             let (mut s, track) = recording(root.path());
             let end_tick = i64::from(s.project().ppq) * 4;
             s.song
@@ -444,7 +444,7 @@ mod tests {
 
     #[test]
     fn settings_write_never_holds_shared_locks_or_marks_a_failed_plugin_saved() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::shot::TestFolder::new("xirius-ui-io-command-");
         let mut s = Studio::new(Song::empty());
         s.song.save_as(&root.path().join("song")).unwrap();
         s.song.settings().lock().unwrap().dir = Some(root.path().join("prefs"));
@@ -499,7 +499,7 @@ mod tests {
 
     #[test]
     fn session_drop_returns_before_history_and_export_retirement() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::shot::TestFolder::new("xirius-ui-retire-");
         let mut song = Song::empty();
         song.save_as(&root.path().join("song")).unwrap();
         song.bind_window_resources();
@@ -530,7 +530,7 @@ mod tests {
 
     #[test]
     fn late_settings_read_cannot_undo_an_explicit_persisted_command() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::shot::TestFolder::new("xirius-ui-io-command-");
         let mut s = Studio::new(Song::empty());
         s.song.settings().lock().unwrap().dir = Some(root.path().to_owned());
         std::fs::write(root.path().join("prefs.toml"), "[ui]\ntheme = 'dark'\n").unwrap();
@@ -611,7 +611,7 @@ mod tests {
             {
                 continue;
             }
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::shot::TestFolder::new("xirius-ui-io-command-");
             let mut s = Studio::new(Song::empty());
             s.song.save_as(&root.path().join("song")).unwrap();
             s.bind_window_io();
@@ -633,7 +633,7 @@ mod tests {
         {
             assert!(handles(name), "{name}");
         }
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::shot::TestFolder::new("xirius-ui-io-command-");
         let samples = root.path().join("samples");
         crate::import_shots::make_place(&samples);
         let mut s = Studio::new(Song::empty());

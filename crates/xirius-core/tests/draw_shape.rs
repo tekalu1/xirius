@@ -24,12 +24,12 @@ fn id(v: &Value) -> String {
     v["id"].as_str().expect("an id").to_string()
 }
 
-fn temp_dir(tag: &str) -> std::path::PathBuf {
-    let base = std::env::temp_dir().join(format!("xirius-draw-shape-{}", std::process::id()));
-    let dir = base.join(tag);
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&base).unwrap();
-    dir
+/// A folder of the test's own, removed when dropped (also when the test fails).
+fn scratch() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("xirius-draw-shape-")
+        .tempdir()
+        .unwrap()
 }
 
 #[test]
@@ -54,7 +54,8 @@ fn the_pencil_shape_is_chosen_by_name_and_cycled_without_a_history_step() {
 fn the_pencil_shape_survives_save_and_reopen_and_an_old_view_still_opens() {
     let mut s = Session::new("t");
     run(&mut s, "tool.draw.shape", json!({"shape": "saw"}));
-    let dir = temp_dir("shape-save");
+    let tmp = scratch();
+    let dir = tmp.path().join("shape-save");
     s.save_as(&dir).unwrap();
     drop(s);
     let reopened = Session::open(&dir).unwrap();

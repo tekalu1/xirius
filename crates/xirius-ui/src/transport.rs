@@ -2604,6 +2604,7 @@ mod tests {
 
     impl Drop for Scratch {
         fn drop(&mut self) {
+            crate::song::wait_retired(&self.0);
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }
@@ -2632,8 +2633,8 @@ mod tests {
 
     #[test]
     fn a_window_keeps_closed_takes_when_placement_fails_and_can_retry() {
-        let mut s = studio(paced());
         let dir = Scratch::new("place-retry");
+        let mut s = studio(paced());
         s.song.save_as(&dir.0).unwrap();
         let vocal = track(&s, "Vocal");
         s.song.toggle_arm(vocal).unwrap();
@@ -2697,8 +2698,8 @@ mod tests {
 
     #[test]
     fn recording_from_the_button_grows_a_take_and_stopping_puts_it_in_as_one_step() {
-        let mut s = studio(paced());
         let dir = Scratch::new("record");
+        let mut s = studio(paced());
         s.song.save_as(&dir.0).unwrap();
         let (vocal, keys) = (track(&s, "Vocal"), track(&s, "Keys"));
         s.song.toggle_arm(vocal).unwrap();
@@ -2756,8 +2757,8 @@ mod tests {
 
     #[test]
     fn every_armed_track_records_at_once_and_one_the_input_lacks_is_said() {
-        let mut s = studio(paced());
         let dir = Scratch::new("record-many");
+        let mut s = studio(paced());
         s.song.save_as(&dir.0).unwrap();
         let vocal = track(&s, "Vocal");
         let old: Vec<TrackId> = s.project().tracks.keys().copied().collect();
@@ -3287,6 +3288,7 @@ mod tests {
 
     #[test]
     fn every_way_to_another_song_tidies_the_closed_one_off_the_screens_thread_and_says_it() {
+        let _tmp = crate::shot::TestTemp::new();
         let made = Scratch::new("tidy-ways-dawproject");
         let out = made.0.join("Other.dawproject");
         let mut s = studio(paced());
@@ -3383,10 +3385,10 @@ mod tests {
 
     #[test]
     fn an_unsaved_song_has_nothing_to_tidy_and_a_test_never_fills_the_recycle_bin() {
+        let dir = Scratch::new("cleanup-refused");
         let mut s = studio(paced());
         assert_eq!(s.close_song(), Ok(0));
         // The sample's own refusal: a test that forgot its bin hears of it.
-        let dir = Scratch::new("cleanup-refused");
         s.song.save_as(&dir.0).unwrap();
         let stray = dir.0.join("Recordings").join("stray.wav");
         std::fs::create_dir_all(stray.parent().unwrap()).unwrap();
@@ -3779,9 +3781,9 @@ mod tests {
         let refuse = Arc::new(std::sync::Mutex::new(Some(NO_INPUT.to_string())));
         let lost = Arc::new(std::sync::Mutex::new(None));
         let asked = Arc::new(AtomicUsize::new(0));
+        let dir = Scratch::new("input-silent");
         let mut s = studio(OutputMode::Device);
         s.transport.set_drivers(input_held(&refuse, &lost, &asked));
-        let dir = Scratch::new("input-silent");
         s.song.save_as(&dir.0).unwrap();
         let vocal = track(&s, "Vocal");
         s.song.toggle_arm(vocal).unwrap();
@@ -3846,9 +3848,9 @@ mod tests {
         let refuse = Arc::new(std::sync::Mutex::new(None));
         let lost = Arc::new(std::sync::Mutex::new(None));
         let asked = Arc::new(AtomicUsize::new(0));
+        let dir = Scratch::new("input-lost");
         let mut s = studio(OutputMode::Device);
         s.transport.set_drivers(input_held(&refuse, &lost, &asked));
-        let dir = Scratch::new("input-lost");
         s.song.save_as(&dir.0).unwrap();
         let vocal = track(&s, "Vocal");
         s.song.toggle_arm(vocal).unwrap();

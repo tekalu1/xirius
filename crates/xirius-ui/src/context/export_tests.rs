@@ -53,11 +53,15 @@ fn bin_in(dir: &std::path::Path) -> xirius_session::cleanup::Trash {
 
 /// A song in a folder with one finished mixdown, and the panel open. The folder goes when the
 /// guard is dropped (also when the test fails).
-fn exported(tag: &str) -> (Studio, Geometry, std::path::PathBuf, tempfile::TempDir) {
-    let dir_tmp = tempfile::Builder::new()
-        .prefix(&format!("xirius-ctx-export-{tag}-"))
-        .tempdir()
-        .unwrap();
+fn exported(
+    tag: &str,
+) -> (
+    crate::shot::TestFolder,
+    Studio,
+    Geometry,
+    std::path::PathBuf,
+) {
+    let dir_tmp = crate::shot::TestFolder::new(&format!("xirius-ctx-export-{tag}-"));
     let dir = dir_tmp.path().join("song");
     let mut s = Studio::new(crate::song::Song::sample_with_trash(bin_in(dir_tmp.path())));
     s.command(|song| song.save_as(&dir));
@@ -66,7 +70,7 @@ fn exported(tag: &str) -> (Studio, Geometry, std::path::PathBuf, tempfile::TempD
     s.open_export(ANCHOR);
     assert!(s.export_action(crate::export::Act::Go));
     assert!(until(&mut s, |s| cards(s)[0].state == State::Done));
-    (s, g, dir, dir_tmp)
+    (dir_tmp, s, g, dir)
 }
 
 /// The middle of the first card.
@@ -101,7 +105,7 @@ fn panel_open(s: &Studio) -> bool {
 
 #[test]
 fn failed_export_keeps_reopen_and_remove_operations() {
-    let (mut s, g, _dir, _tmp) = exported("failed-menu");
+    let (_tmp, mut s, g, _dir) = exported("failed-menu");
     s.popup.as_mut().unwrap().export.as_mut().unwrap().cards[0].state = State::Failed;
     menu(&mut s, &g);
     assert_eq!(labels(&s), ["同じ設定で書き出しを開く", "一覧から削除"]);
@@ -111,7 +115,7 @@ fn failed_export_keeps_reopen_and_remove_operations() {
 
 #[test]
 fn a_finished_export_has_the_rows_of_the_matrix_and_the_old_ones_can_be_written_again() {
-    let (mut s, g, dir, _tmp) = exported("rows");
+    let (_tmp, mut s, g, dir) = exported("rows");
     menu(&mut s, &g);
     assert_eq!(
         labels(&s),
@@ -156,7 +160,7 @@ fn a_finished_export_has_the_rows_of_the_matrix_and_the_old_ones_can_be_written_
 
 #[test]
 fn listen_and_show_take_the_file_the_card_wrote() {
-    let (mut s, g, dir, _tmp) = exported("listen");
+    let (_tmp, mut s, g, dir) = exported("listen");
     let path = s.export.jobs[0]["result"]["path"]
         .as_str()
         .unwrap()
@@ -180,7 +184,7 @@ fn listen_and_show_take_the_file_the_card_wrote() {
 
 #[test]
 fn the_same_settings_open_the_panel_as_that_export_was_made() {
-    let (mut s, g, dir, _tmp) = exported("same");
+    let (_tmp, mut s, g, dir) = exported("same");
     s.export_action(crate::export::Act::Format(
         xirius_session::export::Format::Flac,
     ));
@@ -199,7 +203,7 @@ fn the_same_settings_open_the_panel_as_that_export_was_made() {
 
 #[test]
 fn the_trash_asks_once_and_takes_the_card_away() {
-    let (mut s, g, dir, _tmp) = exported("trash");
+    let (_tmp, mut s, g, dir) = exported("trash");
     // The files go first, so nothing reaches the real trash.
     let path = s.export.jobs[0]["result"]["path"]
         .as_str()
@@ -224,7 +228,7 @@ fn the_trash_asks_once_and_takes_the_card_away() {
 
 #[test]
 fn the_cards_trash_button_asks_before_touching_a_written_file() {
-    let (mut s, g, dir, _tmp) = exported("button-confirm");
+    let (_tmp, mut s, g, dir) = exported("button-confirm");
     let job = s.export.jobs[0]["job"].as_str().unwrap().to_string();
     let path = s.export.jobs[0]["result"]["path"]
         .as_str()
@@ -247,7 +251,7 @@ fn windowed_export_menu_confirm_and_file_actions_do_not_wait_for_metadata() {
     use super::export::{ExportAct, Row};
     use crate::browser_io_tests::Release;
     use std::sync::{Arc, mpsc};
-    let (mut s, g, _, root) = exported("metadata-gate");
+    let (root, mut s, g, _) = exported("metadata-gate");
     let job = s.export.jobs[0]["job"].as_str().unwrap().to_owned();
     let file = s.export.jobs[0]["result"]["path"]
         .as_str()
@@ -306,7 +310,7 @@ fn windowed_export_menu_confirm_and_file_actions_do_not_wait_for_metadata() {
 
 #[test]
 fn windowed_delete_closes_preview_and_deletes_once_without_losing_the_request() {
-    let (mut s, _, _, root) = exported("preview-delete");
+    let (root, mut s, _, _) = exported("preview-delete");
     let job = s.export.jobs[0]["job"].as_str().unwrap().to_owned();
     let file = std::path::PathBuf::from(s.export.jobs[0]["result"]["path"].as_str().unwrap());
     s.transport.mode = xirius_session::output::OutputMode::Silent { paced: true };
@@ -346,7 +350,7 @@ fn windowed_delete_closes_preview_and_deletes_once_without_losing_the_request() 
 
 #[test]
 fn off_a_card_the_panel_takes_the_press_without_a_menu() {
-    let (mut s, g, dir, _tmp) = exported("blank");
+    let (_tmp, mut s, g, dir) = exported("blank");
     let r = s.popup.as_ref().unwrap().layout(g.size).rect;
     assert!(s.scene_context(&g, r.x + 4.0, r.y + 4.0));
     assert!(!s.context_open());
@@ -356,7 +360,7 @@ fn off_a_card_the_panel_takes_the_press_without_a_menu() {
 
 #[test]
 fn the_rows_are_the_export_commands_with_a_job() {
-    let (mut s, g, dir, _tmp) = exported("commands");
+    let (_tmp, mut s, g, dir) = exported("commands");
     let job = s.export.jobs[0]["job"].as_str().unwrap().to_string();
     let path = s.export.jobs[0]["result"]["path"]
         .as_str()
@@ -391,7 +395,7 @@ fn the_rows_are_the_export_commands_with_a_job() {
 
 #[test]
 fn the_rewrite_row_stays_in_its_place_whether_it_is_dim_or_not() {
-    let (mut s, g, dir, _tmp) = exported("dim");
+    let (_tmp, mut s, g, dir) = exported("dim");
     menu(&mut s, &g);
     let fresh = labels(&s);
     assert!(!enabled(&s, "書き直す"));
@@ -408,7 +412,7 @@ fn the_rewrite_row_stays_in_its_place_whether_it_is_dim_or_not() {
 
 #[test]
 fn an_out_of_date_export_stays_out_of_date_when_the_song_is_opened_again() {
-    let (mut s, g, dir, _tmp) = exported("reopen");
+    let (_tmp, mut s, g, dir) = exported("reopen");
     let job = cards(&s)[0].job.clone();
     s.popup = None;
     let t = *s.project().tracks.keys().next().unwrap();
@@ -438,7 +442,7 @@ fn an_out_of_date_export_stays_out_of_date_when_the_song_is_opened_again() {
 
 #[test]
 fn an_export_from_before_records_kept_the_song_can_still_be_written_again() {
-    let (mut s, g, dir, _tmp) = exported("old");
+    let (_tmp, mut s, g, dir) = exported("old");
     let job = cards(&s)[0].job.clone();
     s.popup = None;
     s.new_song_sync();
@@ -481,7 +485,7 @@ fn an_export_from_before_records_kept_the_song_can_still_be_written_again() {
 
 #[test]
 fn the_card_and_its_menu_bring_the_files_in_at_the_head_of_the_exported_range() {
-    let (mut s, g, dir, _tmp) = exported("import");
+    let (_tmp, mut s, g, dir) = exported("import");
     let head = s.export.jobs[0]["base"]["span"][0].as_i64().unwrap();
     s.playhead = head + 7680;
     for how in ["button", "menu"] {

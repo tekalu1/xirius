@@ -16,8 +16,8 @@ use xirius_core::{
 };
 use xirius_mcp::Host;
 
-fn setup() -> (tempfile::TempDir, Studio) {
-    let root = tempfile::tempdir().unwrap();
+fn setup() -> (crate::shot::TestFolder, Studio) {
+    let root = crate::shot::TestFolder::new("xirius-ui-review-");
     let mut s = Studio::new(Song::empty());
     s.song.save_as(&root.path().join("song")).unwrap();
     let file = s.song.places_file.as_ref().unwrap();
@@ -321,7 +321,7 @@ fn external_reads_preserve_palette_search_forms_and_menu_composition() {
 fn external_reads_preserve_note_move_and_resize_until_mouse_up_and_undo() {
     use crate::tools::Mods;
     for resize in [false, true] {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::shot::TestFolder::new("xirius-ui-review-");
         let mut s = Studio::sample();
         s.song.save_as(&root.path().join("song")).unwrap();
         let g = s.geometry(1440.0, 820.0);
@@ -418,7 +418,7 @@ fn picker_answers_keep_their_own_reservation_and_cannot_cross_songs() {
 fn late_groove_results_cannot_replace_later_choices_or_editor_intent() {
     use crate::quantize_panel::QAct;
     for choice in 0..7 {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::shot::TestFolder::new("xirius-ui-review-");
         let mut s = Studio::sample();
         s.song.save_as(&root.path().join("song")).unwrap();
         s.song.load_settings(&root.path().join("settings"));

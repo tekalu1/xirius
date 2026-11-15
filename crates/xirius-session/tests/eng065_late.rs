@@ -50,7 +50,7 @@ fn the_player_does_not_wait_for_the_hosts_and_what_they_say_comes_later() {
         .parent()
         .unwrap()
         .to_path_buf();
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempfile::tempdir_in(xirius_test_vst3::copies_dir(&deps)).unwrap();
     let dll = tmp.path().join("late.dll");
     std::fs::copy(xirius_test_vst3::fixture_path(&deps), &dll).unwrap();
     let entries = probe(&dll).unwrap();

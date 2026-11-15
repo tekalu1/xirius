@@ -213,7 +213,7 @@ fn add_takes(s: &mut Studio, t: TrackId, from: usize, n: usize) {
 fn settle(s: &mut Studio, secs: f32) {
     // The run draws nothing, so the peaks are asked for here, as a drawn clip would.
     let dir = s.song().dir();
-    let store = xirius_session::peaks::store_dir(dir.as_deref());
+    let store = s.song().peak_store();
     let project = s.project();
     let files: Vec<_> = project
         .tracks

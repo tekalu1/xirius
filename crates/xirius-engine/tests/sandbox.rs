@@ -52,6 +52,36 @@ fn installed(name: &str) -> Option<PathBuf> {
     }
 }
 
+/// A folder for the crash records of the hosts a test takes down on purpose (`XIRIUS_CRASH_DIR`,
+/// read by each host as it starts), instead of the person's `Crashes`. Removed when dropped, once
+/// the hosts still closing have let go of their own records.
+struct CrashRecords(tempfile::TempDir);
+
+impl CrashRecords {
+    fn new() -> CrashRecords {
+        let dir = tempfile::Builder::new()
+            .prefix("xirius-crash-records-")
+            .tempdir()
+            .unwrap();
+        // SAFETY: nextest runs each test in a process of its own (docs/testing.md), and this is
+        // set before the test starts a thread.
+        unsafe { std::env::set_var("XIRIUS_CRASH_DIR", dir.path()) };
+        CrashRecords(dir)
+    }
+}
+
+impl Drop for CrashRecords {
+    fn drop(&mut self) {
+        let end = Instant::now() + Duration::from_secs(10);
+        while std::fs::remove_dir_all(self.0.path()).is_err()
+            && self.0.path().exists()
+            && Instant::now() < end
+        {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+}
+
 fn server() -> PluginServer {
     PluginServer::new(Some(env!("CARGO_BIN_EXE_xirius-plugin-host").into()))
 }
@@ -459,6 +489,7 @@ fn delay_compensation_lines_the_remote_plugin_up_to_the_sample() {
 
 #[test]
 fn offline_a_crash_leaves_the_dry_signal_playing() {
+    let _records = CrashRecords::new();
     let Some(bundle) = installed("Kilohearts/kHs Gain.vst3") else {
         return;
     };
@@ -629,6 +660,7 @@ fn a_hung_host_is_killed_and_bypassed() {
 /// Two plugins share a host; the one that crashes or hangs it is the one counted (PLG-022).
 #[test]
 fn a_host_that_goes_down_is_put_on_the_plugin_that_took_it_down() {
+    let _records = CrashRecords::new();
     let Some(bundle) = installed("Kilohearts/kHs Gain.vst3") else {
         return;
     };

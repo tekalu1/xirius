@@ -95,6 +95,7 @@ fn with_four_left_out(dir: &Path) -> PathBuf {
 
 #[test]
 fn the_song_menu_asks_where_to_write_and_what_to_open() {
+    let _tmp = crate::shot::TestTemp::new();
     let dir = folder("menu");
     let (mut s, g) = studio_in(dir.path());
     assert!(s.press(&g, Hit::Bar(BarButton::SongName)));
@@ -110,6 +111,7 @@ fn the_song_menu_asks_where_to_write_and_what_to_open() {
 
 #[test]
 fn writing_says_how_far_then_names_the_file_with_what_it_left_out_and_its_folder() {
+    let _tmp = crate::shot::TestTemp::new();
     let dir = folder("export");
     let (mut s, g) = studio_in(dir.path());
     let expected = xirius_session::dawproject::skipped(&s.project(), None, true);
@@ -166,6 +168,7 @@ fn writing_says_how_far_then_names_the_file_with_what_it_left_out_and_its_folder
 
 #[test]
 fn writing_over_a_file_sends_the_old_one_to_the_bin() {
+    let _tmp = crate::shot::TestTemp::new();
     let dir = folder("over");
     let (mut s, _g) = studio_in(dir.path());
     let out = dir.path().join("Song.dawproject");
@@ -182,6 +185,7 @@ fn writing_over_a_file_sends_the_old_one_to_the_bin() {
 
 #[test]
 fn a_written_song_opens_again_as_a_new_unsaved_song_with_its_tracks() {
+    let _tmp = crate::shot::TestTemp::new();
     let dir = folder("round");
     let (mut s, _g) = studio_in(dir.path());
     let names = |p: &xirius_core::model::Project| {
@@ -218,6 +222,7 @@ fn a_written_song_opens_again_as_a_new_unsaved_song_with_its_tracks() {
 
 #[test]
 fn what_could_not_be_read_is_a_count_on_the_toast_and_a_list_behind_see() {
+    let _tmp = crate::shot::TestTemp::new();
     let dir = folder("left");
     let path = with_four_left_out(dir.path());
     let mut s = Studio::new(Song::empty());
@@ -252,6 +257,7 @@ fn what_could_not_be_read_is_a_count_on_the_toast_and_a_list_behind_see() {
 
 #[test]
 fn a_file_that_cannot_be_read_leaves_the_song_and_says_so() {
+    let _tmp = crate::shot::TestTemp::new();
     let dir = folder("bad");
     let bad = dir.path().join("bad.dawproject");
     std::fs::write(&bad, b"not a zip").unwrap();
@@ -267,6 +273,7 @@ fn a_file_that_cannot_be_read_leaves_the_song_and_says_so() {
 
 #[test]
 fn one_at_a_time() {
+    let _tmp = crate::shot::TestTemp::new();
     let dir = folder("one");
     let path = with_four_left_out(dir.path());
     let mut s = Studio::new(Song::empty());
@@ -281,6 +288,7 @@ fn one_at_a_time() {
 
 #[test]
 fn a_dragged_dawproject_names_itself_and_opens_where_it_is_dropped() {
+    let _tmp = crate::shot::TestTemp::new();
     let dir = folder("drop");
     let path = with_four_left_out(dir.path());
     let mut s = Studio::sample();
@@ -308,6 +316,7 @@ fn a_dragged_dawproject_names_itself_and_opens_where_it_is_dropped() {
 
 #[test]
 fn the_list_is_as_wide_as_its_longest_row_and_scrolls_past_twelve() {
+    let _tmp = crate::shot::TestTemp::new();
     let short = List {
         title: NOT_READ.into(),
         rows: vec![("シーン".into(), "4".into())],
@@ -336,6 +345,7 @@ fn the_list_is_as_wide_as_its_longest_row_and_scrolls_past_twelve() {
 
 #[test]
 fn with_extension_adds_the_ending_once() {
+    let _tmp = crate::shot::TestTemp::new();
     assert_eq!(
         with_extension(Path::new("a/b")),
         PathBuf::from("a/b.dawproject")
@@ -386,6 +396,7 @@ fn scanned_with(uid: &str) -> xirius_plugins::Catalog {
 
 #[test]
 fn a_plugin_this_pc_does_not_have_is_listed_and_kept_with_its_state() {
+    let _tmp = crate::shot::TestTemp::new();
     let dir = folder("plugin");
     let path = readme_song(dir.path());
     let missing = "Bass の Surge XT（この PC に無い）";

@@ -21,7 +21,6 @@ use gpui::{
 use serde_json::json;
 use xirius_core::id::{ClipId, TrackId};
 use xirius_design::Layout;
-use xirius_session::peaks;
 
 use crate::arrange::probe::{hold, track};
 use crate::shot::{Act, Play, Shot, Target};
@@ -213,7 +212,7 @@ fn rect_of(s: &Studio, g: &Geometry, t: TrackId, c: ClipId) -> Rect {
 
 /// Turns the screen's poll until the peaks of `path` are there to draw, or ten seconds.
 fn wait_peaks(s: &mut Studio, path: &std::path::Path) {
-    let store = peaks::store_dir(s.song().dir().as_deref());
+    let store = s.song().peak_store();
     let end = Instant::now() + Duration::from_secs(10);
     while Instant::now() < end && !matches!(wave::look(path, &store), Look::Ready(_)) {
         s.idle();

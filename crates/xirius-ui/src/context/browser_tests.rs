@@ -392,7 +392,7 @@ fn folder(name: &str) -> tempfile::TempDir {
 
 /// The sample song with the files tab on a place of WAV and MIDI files, its Loops folder
 /// open. The place goes when the guard is dropped.
-fn files(name: &str) -> (Studio, Geometry, PathBuf, tempfile::TempDir) {
+fn files(name: &str) -> (tempfile::TempDir, Studio, Geometry, PathBuf) {
     let top_tmp = folder(name);
     let top = top_tmp.path().join("素材");
     make_place(&top);
@@ -404,7 +404,7 @@ fn files(name: &str) -> (Studio, Geometry, PathBuf, tempfile::TempDir) {
         .insert(top.join("Loops").to_string_lossy().into_owned());
     crate::browser_files::settle_rows(&s.browser);
     let g = s.geometry(1440.0, 860.0);
-    (s, g, top, top_tmp)
+    (top_tmp, s, g, top)
 }
 
 fn press_file(s: &mut Studio, g: &Geometry, name: &str) {
@@ -450,7 +450,7 @@ fn audio_clips(s: &Studio, file: &Path) -> Vec<(TrackId, i64)> {
 
 #[test]
 fn a_file_goes_on_a_new_track_or_the_selected_audio_track_in_one_step() {
-    let (mut s, g, top, _tmp) = files("file");
+    let (_tmp, mut s, g, top) = files("file");
     let wav = top.join("Loops/loop_120bpm.wav");
     press_file(&mut s, &g, "loop_120bpm.wav");
     assert_eq!(
@@ -502,7 +502,7 @@ fn a_file_goes_on_a_new_track_or_the_selected_audio_track_in_one_step() {
 
 #[test]
 fn a_midi_file_goes_on_a_new_track_only() {
-    let (mut s, g, top, _tmp) = files("midi");
+    let (_tmp, mut s, g, top) = files("midi");
     let mid = std::fs::read_dir(&top)
         .unwrap()
         .flatten()
@@ -525,7 +525,7 @@ fn a_midi_file_goes_on_a_new_track_only() {
 
 #[test]
 fn the_explorer_row_names_the_path_and_opens_nothing_outside_the_real_window() {
-    let (mut s, g, top, _tmp) = files("reveal");
+    let (_tmp, mut s, g, top) = files("reveal");
     assert!(!s.os_files);
     press_file(&mut s, &g, "loop_120bpm.wav");
     assert!(choose(&mut s, &g, "エクスプローラーで表示"));
@@ -540,7 +540,7 @@ fn the_explorer_row_names_the_path_and_opens_nothing_outside_the_real_window() {
 
 #[test]
 fn file_and_folder_favourites_are_kept_in_the_existing_preferences() {
-    let (mut s, g, top, _tmp) = files("favorites");
+    let (_tmp, mut s, g, top) = files("favorites");
     let pref = top.join("browser.json");
     s.browser.use_prefs_fixture(pref.clone()).unwrap();
     s.browser.add_place_fixture(&top).unwrap();
@@ -564,7 +564,7 @@ fn file_and_folder_favourites_are_kept_in_the_existing_preferences() {
 
 #[test]
 fn a_folder_becomes_a_tab_and_is_dim_once_it_is() {
-    let (mut s, g, top, _tmp) = files("dir");
+    let (_tmp, mut s, g, top) = files("dir");
     let steps0 = steps(&s);
     press_dir(&mut s, &g, "Drums");
     assert_eq!(
@@ -595,7 +595,7 @@ fn a_folder_becomes_a_tab_and_is_dim_once_it_is() {
 
 #[test]
 fn a_tab_is_renamed_or_taken_away_but_the_songs_is_not() {
-    let (mut s, g, top, _tmp) = files("tab");
+    let (_tmp, mut s, g, top) = files("tab");
     // The song's tab.
     press_tab(&mut s, &g, 0);
     assert_eq!(
@@ -633,7 +633,7 @@ fn a_tab_is_renamed_or_taken_away_but_the_songs_is_not() {
 
 #[test]
 fn a_name_a_tab_already_has_is_refused_and_the_old_name_stays() {
-    let (mut s, g, _, _tmp) = files("same");
+    let (_tmp, mut s, g, _) = files("same");
     let other_tmp = folder("same2");
     let other = other_tmp.path().join("音");
     std::fs::create_dir_all(&other).unwrap();
@@ -653,7 +653,7 @@ fn a_name_a_tab_already_has_is_refused_and_the_old_name_stays() {
 
 #[test]
 fn a_right_press_off_the_rows_opens_no_menu() {
-    let (mut s, g, _, _tmp) = files("none");
+    let (_tmp, mut s, g, _) = files("none");
     let l = s.browser.layout(g.panel);
     // The blank under the last row of the files, and the search box.
     assert!(!s.lib_context(&g, l.list.x + 4.0, l.list.bottom() - 1.0));
@@ -692,7 +692,7 @@ fn bin_in(dir: &Path) -> xirius_session::cleanup::Trash {
 }
 
 /// [`files`] with a song whose recycle bin is `bin` in the test's own folder.
-fn binned(name: &str) -> (Studio, Geometry, PathBuf, tempfile::TempDir) {
+fn binned(name: &str) -> (tempfile::TempDir, Studio, Geometry, PathBuf) {
     let tmp = folder(name);
     let top = tmp.path().join("素材");
     make_place(&top);
@@ -703,7 +703,7 @@ fn binned(name: &str) -> (Studio, Geometry, PathBuf, tempfile::TempDir) {
         .open_dirs
         .insert(top.join("Loops").to_string_lossy().into_owned());
     let g = s.geometry(1440.0, 860.0);
-    (s, g, top, tmp)
+    (tmp, s, g, top)
 }
 
 /// Types `text` into the name box the menu turned into, in place of what it had, and
@@ -738,7 +738,7 @@ fn close(s: &mut Studio) {
 
 #[test]
 fn a_rename_of_a_used_file_points_its_clips_at_the_new_name_in_one_step() {
-    let (mut s, g, top, _tmp) = files("rename");
+    let (_tmp, mut s, g, top) = files("rename");
     let old = top.join("Loops/loop_120bpm.wav");
     let new = top.join("Loops/groove.wav");
     press_file(&mut s, &g, "loop_120bpm.wav");
@@ -791,7 +791,7 @@ fn a_rename_of_a_used_file_points_its_clips_at_the_new_name_in_one_step() {
 
 #[test]
 fn an_undo_the_disk_cannot_follow_keeps_the_clips_on_the_new_name_and_says_why() {
-    let (mut s, g, top, _tmp) = files("rename-blocked");
+    let (_tmp, mut s, g, top) = files("rename-blocked");
     let old = top.join("Loops/loop_120bpm.wav");
     let new = top.join("Loops/groove.wav");
     press_file(&mut s, &g, "loop_120bpm.wav");
@@ -826,7 +826,7 @@ fn an_undo_the_disk_cannot_follow_keeps_the_clips_on_the_new_name_and_says_why()
 
 #[test]
 fn a_folder_is_renamed_and_a_name_in_use_is_refused() {
-    let (mut s, g, top, _tmp) = files("rename-dir");
+    let (_tmp, mut s, g, top) = files("rename-dir");
     let steps0 = steps(&s);
     press_dir(&mut s, &g, "Drums");
     assert!(choose(&mut s, &g, "名前を変更…"));
@@ -855,7 +855,7 @@ fn a_folder_is_renamed_and_a_name_in_use_is_refused() {
 
 #[test]
 fn a_new_folder_takes_a_name_the_folder_does_not_have() {
-    let (mut s, g, top, _tmp) = files("new-dir");
+    let (_tmp, mut s, g, top) = files("new-dir");
     let steps0 = steps(&s);
     press_dir(&mut s, &g, "Drums");
     assert!(choose(&mut s, &g, "新しいフォルダー"));
@@ -885,7 +885,7 @@ fn a_new_folder_takes_a_name_the_folder_does_not_have() {
 
 #[test]
 fn the_recycle_bin_asks_once_and_what_the_song_uses_is_dim() {
-    let (mut s, g, top, tmp) = binned("trash");
+    let (tmp, mut s, g, top) = binned("trash");
     let bin = tmp.path().join("bin");
     // A file the song does not use: one question, then the bin.
     press_file(&mut s, &g, "loop_120bpm.wav");
@@ -940,7 +940,7 @@ fn the_recycle_bin_asks_once_and_what_the_song_uses_is_dim() {
 
 #[test]
 fn the_folder_of_the_open_song_is_not_renamed_or_binned() {
-    let (mut s, g, top, _tmp) = binned("own");
+    let (_tmp, mut s, g, top) = binned("own");
     s.song.save_as(&top.join("曲")).unwrap();
     crate::browser_files::forget();
     press_dir(&mut s, &g, "曲");

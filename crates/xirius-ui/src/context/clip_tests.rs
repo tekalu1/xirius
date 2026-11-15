@@ -677,6 +677,7 @@ fn following_the_tempo_is_one_step_and_shows_a_check() {
 
 #[test]
 fn reversing_from_the_menu_is_one_step_and_a_frozen_track_offers_to_unfreeze() {
+    let _tmp = crate::shot::TestTemp::new();
     let (mut s, g) = studio();
     with_sound(&mut s, "reverse");
     let vocal = track(&s, "Vocal");
@@ -724,6 +725,7 @@ fn reversing_from_the_menu_is_one_step_and_a_frozen_track_offers_to_unfreeze() {
 
 #[test]
 fn a_clip_bounce_from_the_menu_runs_on_a_thread_and_lands_as_one_step() {
+    let _tmp = crate::shot::TestTemp::new();
     let (mut s, g) = studio();
     let vocal = track(&s, "Vocal");
     let before = s.project().tracks[&vocal].clips.len();
@@ -773,6 +775,7 @@ fn a_range_bounces_from_its_own_menu_and_from_the_key() {
 
 #[test]
 fn the_square_on_a_bouncing_clip_stops_the_bounce_and_leaves_the_song_alone() {
+    let _tmp = crate::shot::TestTemp::new();
     let (mut s, g) = studio();
     let vocal = track(&s, "Vocal");
     let c = s.project().tracks[&vocal].clips[0].clone();
@@ -834,6 +837,7 @@ fn the_square_on_a_bouncing_clip_stops_the_bounce_and_leaves_the_song_alone() {
 
 #[test]
 fn a_bounce_in_place_shows_on_its_clip_and_makes_no_row() {
+    let _tmp = crate::shot::TestTemp::new();
     let (mut s, g) = studio();
     let vocal = track(&s, "Vocal");
     let c = s.project().tracks[&vocal].clips[0].clone();
@@ -947,6 +951,7 @@ fn a_range_deletes_or_duplicates_what_lies_in_it_from_its_own_menu() {
 
 #[test]
 fn a_midi_clip_and_several_clips_bounce_from_their_menus_as_one_step() {
+    let _tmp = crate::shot::TestTemp::new();
     let (mut s, g) = studio();
     let tracks = s.project().tracks.len();
     // A MIDI clip.

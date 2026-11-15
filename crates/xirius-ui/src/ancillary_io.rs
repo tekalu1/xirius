@@ -332,7 +332,7 @@ mod tests {
             "groove_read",
             "draft_create",
         ] {
-            let root = tempfile::tempdir().unwrap();
+            let root = crate::shot::TestFolder::new("xirius-ui-ancillary-");
             let mut s = crate::studio::Studio::new(crate::song::Song::empty());
             if operation != "draft_create" {
                 s.song.save_as(&root.path().join("song")).unwrap();
@@ -496,7 +496,7 @@ mod tests {
 
     #[test]
     fn held_view_read_does_not_block_gestures_frames_or_idle_and_writes_follow_in_order() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::shot::TestFolder::new("xirius-ui-ancillary-");
         let path = dir.path().join("view.json");
         std::fs::write(
             &path,

@@ -69,8 +69,14 @@ fn a_faulting_plugin_leaves_the_app_and_the_song_playing() {
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let dir = Dir(root);
-    // As the app starts: its crash report filter, then the plugin.
-    xirius_engine::crash::install_at(&dir.0.join("crashes"), "ara-crash-test", true).unwrap();
+    // As the app starts: its crash report filter, then the plugin. The report's files stay open
+    // until the process ends, so they are kept in the build's folder, not in one the test removes.
+    xirius_engine::crash::install_at(
+        &PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("ara_crash"),
+        "ara-crash-test",
+        true,
+    )
+    .unwrap();
 
     // Faults until it is mended, as a plugin updated after a crash.
     static MENDED: AtomicBool = AtomicBool::new(false);
