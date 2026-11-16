@@ -1,21 +1,23 @@
-"""What a test run leaves behind: files in the person's Xirius folders, and files in the temporary
-folder.
+"""What a test run leaves behind: files in the Xirius folders, and files in the temporary folder.
 
 `ci_tests.py` runs the tests with the temporary folder (`TMP`, `TEMP`, `TMPDIR`) pointed at a
-folder of the run's own, and lists the Xirius folders of the person running them before and
-after. A test writes neither: it keeps its files in a folder it removes, and gives the programs
-it starts their folders (`XIRIUS_CRASH_DIR`, `XIRIUS_CONFIG_DIR`, ...). After the run, anything
-new, changed or gone in the Xirius folders, and anything left in the run's temporary folder,
-fails the run by name.
+folder of the run's own, and with the variables the programs find the person's folders by
+pointed at another, empty at the start, as on a PC where Xirius never ran (`stand_in`): the tests
+cannot reach the person's folders, and a file a test makes in a folder that was there already
+on the PC running them is not missed. A test writes in neither: it keeps its files in a folder
+it removes, and gives the programs it starts their folders (`XIRIUS_CRASH_DIR`,
+`XIRIUS_CONFIG_DIR`, ...). After the run, anything in the Xirius folders of the stand-in,
+anything new, changed or gone in the person's Xirius folders (listed before and after), and
+anything left in the run's temporary folder, fails the run by name.
 
 The programs keep the jobs running in any of their processes in one folder under the temporary
 folder (`xirius_core::running::folder`, `Xirius/jobs`), and leave the folder for the next. The
 watch makes it before the run, so it counts only for what is left in it.
 
 An Xirius that is not this checkout's (the installed app, or a test run in another checkout)
-may write to those folders while the tests run; when one is seen, what changed there is printed
-as a warning instead of failing the run. The temporary folder is the run's own and always
-counts.
+may write to the person's folders while the tests run; when one is seen, what changed there is
+printed as a warning instead of failing the run. The stand-in and the temporary folder are the
+run's own and always count.
 
 Standard library only.
 """
@@ -57,6 +59,33 @@ def user_places(environ=None, platform=None):
             cache = Path(environ.get("XDG_CACHE_HOME") or home / ".cache")
             places += [config / "xirius", cache / "xirius"]
     return places
+
+
+def stand_in(root, environ=None, platform=None):
+    """The variables that point the folders `user_places` names at `root`, a folder of the run's
+    own, with the folders a person's account has there made empty. Only what the programs find
+    those folders by is changed: on Windows `LOCALAPPDATA` and `APPDATA`; on macOS `HOME`, with
+    cargo's and rustup's folders (`CARGO_HOME`, `RUSTUP_HOME`) named where they were, so the
+    tools that start the tests still find them; elsewhere `XDG_CONFIG_HOME` and `XDG_CACHE_HOME`."""
+    environ = os.environ if environ is None else environ
+    platform = sys.platform if platform is None else platform
+    root = Path(root)
+    if platform == "win32":
+        values = {"LOCALAPPDATA": root / "Local", "APPDATA": root / "Roaming"}
+        folders = list(values.values())
+    elif platform == "darwin":
+        values = {"HOME": root}
+        if environ.get("HOME"):
+            home = Path(environ["HOME"])
+            values["CARGO_HOME"] = Path(environ.get("CARGO_HOME") or home / ".cargo")
+            values["RUSTUP_HOME"] = Path(environ.get("RUSTUP_HOME") or home / ".rustup")
+        folders = [root / "Library" / name for name in ("Application Support", "Caches", "Logs")]
+    else:
+        values = {"XDG_CONFIG_HOME": root / ".config", "XDG_CACHE_HOME": root / ".cache"}
+        folders = list(values.values())
+    for folder in folders:
+        folder.mkdir(parents=True, exist_ok=True)
+    return {name: str(value) for name, value in values.items()}
 
 
 def listing(roots):
@@ -178,23 +207,35 @@ def foreign_xirius(checkout, temporary, processes=None):
 
 
 class Watch:
-    """Around a test run: the run's temporary folder, the listings, and the Xirius programs not
-    this checkout's seen every few seconds. `environment` is what the tests run with."""
+    """Around a test run: the run's temporary folder and stand-in for the person's folders, the
+    listings, and the Xirius programs not this checkout's seen every few seconds. `environment`
+    is what the tests run with; `places` are the person's Xirius folders."""
 
     def __init__(self, checkout, environment, places=None, every=2.0):
         self.checkout = Path(checkout)
         self.places = user_places() if places is None else places
         self.temporary = Path(tempfile.mkdtemp(prefix="xirius-test-run-"))
+        self.stand_in = Path(tempfile.mkdtemp(prefix="xirius-test-places-"))
         for shared in SHARED:
             (self.temporary / shared).mkdir(parents=True)
         self.environment = dict(environment)
         for name in ("TMP", "TEMP", "TMPDIR"):
             self.environment[name] = str(self.temporary)
+        try:
+            self.environment.update(stand_in(self.stand_in, environment))
+        except BaseException:
+            self._remove()
+            raise
+        self.stand_in_places = user_places(self.environment)
         self.every = every
         self.foreign = set()
         self._stop = threading.Event()
         self._thread = None
         self.before = {}
+
+    def _remove(self):
+        shutil.rmtree(self.temporary, ignore_errors=True)
+        shutil.rmtree(self.stand_in, ignore_errors=True)
 
     def _look(self):
         self.foreign.update(foreign_xirius(self.checkout, self.temporary))
@@ -208,7 +249,7 @@ class Watch:
             self.before = listing(self.places)
             self._look()
         except BaseException:
-            shutil.rmtree(self.temporary, ignore_errors=True)
+            self._remove()
             raise
         self._thread = threading.Thread(target=self._sample, daemon=True)
         self._thread.start()
@@ -216,15 +257,22 @@ class Watch:
 
     def finish(self):
         """The lines that fail the run (empty: it left nothing), after printing the warnings.
-        Removes the run's temporary folder."""
+        Removes the run's temporary folder and stand-in."""
         self._stop.set()
         if self._thread:
             self._thread.join()
         self._look()
         changed = differences(self.before, listing(self.places))
+        made = differences({}, listing(self.stand_in_places))
         left = left_in(self.temporary, SHARED)
-        shutil.rmtree(self.temporary, ignore_errors=True)
+        self._remove()
         failures = []
+        if made:
+            failures.append("the tests wrote to the Xirius folders they ran with, empty at the start ("
+                            + ", ".join(map(str, self.stand_in_places)) + "):")
+            failures += ["  " + line for line in made[:SHOWN]]
+            if len(made) > SHOWN:
+                failures.append(f"  ... and {len(made) - SHOWN} more")
         if changed and self.foreign:
             print("warning: the tests ran beside another Xirius ("
                   + ", ".join(sorted(self.foreign)) + "); what changed in its folders is not counted:")
@@ -249,7 +297,7 @@ class Watch:
                 self._stop.set()
                 if self._thread:
                     self._thread.join()
-                shutil.rmtree(self.temporary, ignore_errors=True)
+                self._remove()
             else:
                 # Failed tests are named by their own output; what they left is named here.
                 failures = self.finish()

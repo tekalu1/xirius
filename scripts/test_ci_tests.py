@@ -142,6 +142,57 @@ class LeftoverTests(unittest.TestCase):
         self.assertEqual(leftovers.user_places({"HOME": "/h"}, "linux"), [Path("/h/.config/xirius"),
                                                                           Path("/h/.cache/xirius")])
 
+    def test_the_stand_in_points_only_the_variables_the_programs_find_the_folders_by(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            windows = leftovers.stand_in(root / "w", {"LOCALAPPDATA": "L", "APPDATA": "R", "PATH": "x"}, "win32")
+            self.assertEqual(windows, {"LOCALAPPDATA": str(root / "w" / "Local"),
+                                       "APPDATA": str(root / "w" / "Roaming")})
+            self.assertEqual(leftovers.user_places(windows, "win32"),
+                             [root / "w" / "Local" / "Xirius", root / "w" / "Roaming" / "Xirius"])
+            mac = leftovers.stand_in(root / "m", {"HOME": "/h", "RUSTUP_HOME": "/r"}, "darwin")
+            self.assertEqual(mac, {"HOME": str(root / "m"), "CARGO_HOME": str(Path("/h/.cargo")),
+                                   "RUSTUP_HOME": str(Path("/r"))})
+            self.assertEqual(leftovers.user_places(mac, "darwin"),
+                             [root / "m" / "Library/Application Support/Xirius",
+                              root / "m" / "Library/Caches/Xirius", root / "m" / "Library/Logs/Xirius"])
+            linux = leftovers.stand_in(root / "x", {"HOME": "/h"}, "linux")
+            self.assertEqual(leftovers.user_places({"HOME": "/h", **linux}, "linux"),
+                             [root / "x" / ".config" / "xirius", root / "x" / ".cache" / "xirius"])
+            for folder, platform in ((root / "w", "win32"), (root / "m", "darwin"), (root / "x", "linux")):
+                environment = {"HOME": "/h", **leftovers.stand_in(folder, {"HOME": "/h"}, platform)}
+                for place in leftovers.user_places(environment, platform):
+                    self.assertTrue(place.parent.is_dir(), place)
+                    self.assertFalse(place.exists(), place)
+
+    def test_the_tests_run_with_the_persons_folders_pointed_at_an_empty_folder_of_the_runs_own(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            place, watch = self.watch(tmp)
+            with watch:
+                ran_with = leftovers.user_places(watch.environment)
+                self.assertTrue(ran_with)
+                self.assertEqual(ran_with, watch.stand_in_places)
+                for folder in ran_with:
+                    self.assertTrue(folder.is_relative_to(watch.stand_in), folder)
+                    self.assertFalse(folder.exists(), folder)
+                self.assertEqual(watch.finish(), [])
+            self.assertFalse(watch.stand_in.exists())
+
+    def test_what_the_tests_make_in_the_empty_folders_fails_by_name_even_beside_another_xirius(self):
+        installed = ("Xirius.exe", str(Path(tempfile.gettempdir()) / "elsewhere" / "Xirius.exe"))
+        for processes in ((), (installed,)):
+            with tempfile.TemporaryDirectory() as tmp:
+                place, watch = self.watch(tmp, processes)
+                with watch, contextlib.redirect_stdout(io.StringIO()):
+                    first, last = watch.stand_in_places[0], watch.stand_in_places[-1]
+                    (first / "Crashes").mkdir(parents=True)
+                    last.mkdir(parents=True, exist_ok=True)
+                    (last / "browser.json.lock").write_text("")
+                    failures = "\n".join(watch.finish())
+                self.assertIn("+ " + str(first / "Crashes"), failures)
+                self.assertIn("+ " + str(last / "browser.json.lock"), failures)
+                self.assertFalse(watch.stand_in.exists())
+
     def test_a_run_that_leaves_nothing_passes_and_removes_its_temporary_folder(self):
         with tempfile.TemporaryDirectory() as tmp:
             place, watch = self.watch(tmp)
@@ -237,6 +288,25 @@ class LeftoverTests(unittest.TestCase):
         self.assertEqual(seen[0][1]["TEMP"], temporary)
         self.assertIn("left-by-a-test", printed.getvalue())
         self.assertFalse(Path(temporary).exists())
+
+    def test_the_tests_cannot_reach_the_persons_folders_and_what_they_make_instead_fails_the_run(self):
+        seen = []
+        real = leftovers.user_places
+
+        def run(command, environment=None):
+            seen.append(environment)
+            (real(environment)[0] / "Crashes").mkdir(parents=True)
+
+        printed = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, patch("sys.argv", ["ci_tests.py", "--doctest"]),                 patch.object(ci_tests, "run", side_effect=run),                 patch.object(ci_tests.leftovers, "user_places",
+                             side_effect=lambda environ=None, platform=None:
+                             [Path(tmp) / "person"] if environ is None else real(environ, platform)),                 contextlib.redirect_stdout(printed), contextlib.redirect_stderr(printed):
+            self.assertEqual(ci_tests.main(), 1)
+            self.assertFalse((Path(tmp) / "person").exists())
+        made = real(seen[0])[0] / "Crashes"
+        self.assertNotIn(made.parent, real())
+        self.assertIn("+ " + str(made), printed.getvalue())
+        self.assertFalse(made.exists())
 
     def test_what_failing_tests_leave_is_named_too(self):
         seen = []

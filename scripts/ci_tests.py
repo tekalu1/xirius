@@ -13,9 +13,10 @@ The tests with a real ARA plugin are `#[ignore]`d, so a run without one never pa
 skipping: each needs its variable set to the plugin's file (`docs/ara-verification.md`), and
 fails when it is not.
 
-The tests run with a temporary folder of the run's own, and a test that writes to the person's
-Xirius folders or leaves a file in the temporary folder fails the run by name
-(`leftovers.py`).
+The tests run with a temporary folder of the run's own and with the person's folders pointed at
+an empty folder of the run's own (as on a PC where Xirius never ran); a test that writes to the
+Xirius folders, there or the person's, or leaves a file in the temporary folder fails the run by
+name (`leftovers.py`).
 
 Standard library only.
 """

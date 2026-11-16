@@ -46,17 +46,28 @@ A test writes nothing to the person's Xirius folders (`%LOCALAPPDATA%\Xirius` an
 and `~/Library/Logs/Xirius` on macOS) and leaves nothing in the temporary folder. It keeps its
 files in a folder it removes also when it fails (`tempfile::TempDir`, or `shot::TestFolder` in
 the UI crate, which waits for a closed song's history, for work on other threads that still
-writes in it, and for files a program that is ending still holds), and names the folders of what it starts: a test that makes a plugin host fall
-over sets `XIRIUS_CRASH_DIR` to a folder of its own (`shot::CrashRecords` in the UI crate), and
-one that bounces or exports from an unsaved song points the temporary folder at one of its own
-(`shot::TestTemp`). A plugin a test loads into its own process cannot be removed on Windows
+writes in it, and for files a program that is ending still holds), and names the folders of what it starts: a test that starts a plugin host
+sets `XIRIUS_CRASH_DIR` to a folder of its own before it starts a thread (each host makes its
+crash records as it starts, whether it falls over or not; `shot::CrashRecords` in the UI crate,
+`crash_records::CrashRecords` in the engine's and the session's tests); one that opens the
+browser or scans plugins with a song of its own names its files too (`XIRIUS_BROWSER_FILE`,
+`XIRIUS_PLUGIN_CACHE`, or the scan options of its song); and one that bounces or exports from an
+unsaved song points the temporary folder at one of its own (`shot::TestTemp`). A plugin a test loads into its own process cannot be removed on Windows
 until the process ends; it is copied under `target/` (`xirius_test_vst3::copies_dir`).
 
-`scripts/ci_tests.py` runs the tests with a temporary folder of the run's own and lists the
-Xirius folders before and after. Anything new, changed or gone there, or left in the run's
-temporary folder, fails the run by name (`scripts/leftovers.py`). When an Xirius that is not this
+`scripts/ci_tests.py` runs the tests with a temporary folder of the run's own, and with the
+variables the programs find the person's folders by pointed at an empty folder of the run's own,
+as on a PC where Xirius never ran: `LOCALAPPDATA` and `APPDATA` on Windows; `HOME` on macOS, with
+`CARGO_HOME` and `RUSTUP_HOME` left naming cargo's and rustup's folders; `XDG_CONFIG_HOME` and
+`XDG_CACHE_HOME` elsewhere. A test cannot reach the person's folders that way, and a file it makes
+there is not missed because the same file was already on the PC (an empty `Crashes`, a lock
+file, a plugin list). Anything in the Xirius folders of that stand-in after the run, anything new,
+changed or gone in the person's Xirius folders (listed before and after), and anything left in
+the run's temporary folder fails the run by name (`scripts/leftovers.py`). When an Xirius that is not this
 checkout's runs meanwhile (the installed app, a run in another checkout), what changed in the
-Xirius folders is printed as a warning instead; the temporary folder always counts.
+person's Xirius folders is printed as a warning instead; the stand-in and the temporary folder
+always count. A run outside `ci_tests.py` (`cargo nextest run`, `cargo test`) uses the person's
+folders: the tests still write nothing there, but nothing checks it.
 
 ## CI stages
 
